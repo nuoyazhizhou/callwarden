@@ -673,6 +673,15 @@ fencing_counter: 42
 
 P4 之前不把任何 claimed 字段称为安全租约，也不以 lease 为由引入中央调度器。
 
+### 13.2.1 冻结规格三件套同步
+
+当一个任务声明同步冻结的协同规格时，`docs/design/requirements.md`、
+`docs/design/multi-llm-contract-driven-collaboration-design.md` 与
+`docs/design/tasks.md` 是不可拆分的三件套。纳样/审计检查同时核验：三条精确路径均在
+`required_paths` 中、均出现在 `change_audit` 的实际变更集，且 `allowed_paths` 不包含
+`AGENTS.md`。因此仅修改 AGENTS.md、或仅修改其中一两份规格，都以结构化失败拒绝；该
+规则不允许用运行说明、提示词或其他文档替代冻结规格（Requirement 12.30）。
+
 **Lease 的边界（正面陈述，Requirements 14.32、11.13）**：Lease 保证的是**daemon 在线期间的并发正确性**——同一 task/role 在任一时刻只有一个有效持有者，旧持有者在新 lease 生效后无法再写入（fencing）。**防篡改保证不属于 Lease**，它归属于 Attestation 校验与追加式 Evidence_Ledger：无有效 daemon 签发 Attestation 的记录判为 invalid（见 13.5.7 第三级），既有 payload 不可原地改写（见 9.2）。因此文档、CLI 输出与 gate 原因中**不得**把 Lease 描述为"能防止离线直接改库"或"不可绕过"；正确表述是"Lease 在 daemon 在线时保证并发正确性，篡改抵抗由 Attestation 与账本追加性提供"。
 
 ### 13.3 Stage_Toggle：阶段启用的可判定表达
@@ -809,6 +818,16 @@ END PROCEDURE
 **排除 Windows AF_UNIX**（14.21）。Windows 10 1803+ 确实支持 `AF_UNIX` SOCK_STREAM，传输层甚至可以与 Unix 侧共用同一套抽象，迁移成本最低。但它不提供 peer credential，也不支持辅助数据（无 `SCM_RIGHTS` 等价物）。也就是说：省下的是传输代码，换来的是身份无法证明。这个交换不可接受——Requirement 14.5 在该端点上根本无法成立，后续 Attestation、workspace ACL、Independent_Review 全部失去根基。
 
 **排除 localhost TCP 与本机 HTTPS 端点**（14.20）。本机任何用户的任何进程都能连 `127.0.0.1`，OS 不提供对端身份，因此必须自造 token 或客户端证书体系；而这套凭据本身又要落盘保护，于是回到"用文件 ACL 保护凭据"，等价于绕一圈回到命名管道的 ACL，安全性反而更差（多了一个可窃取的中间凭据）。成本侧还额外背上：证书/密钥的生成与轮换、端口占用与冲突、防火墙与杀软对本机监听端口的干扰、以及企业环境对"本机监听端口"的合规审查。更差的安全性配更高的成本，因此排除。跨机访问是独立议题，不在本文范围。
+
+**版本化 HTTP MVP 开发例外**（Requirements 14.40–14.48）。上述结论继续约束
+默认、发布、跨用户与企业 transport；它不再被误读为“任何开发 profile 永久禁止 TCP”。
+`http-mvp-transport-profile/v1` 只允许显式 opt-in 的
+`dev_loopback_unauthenticated`：动态 IP loopback HTTP/JSON-RPC、无 token/TLS、无
+Peer_Credential、无生产安全声明。它不得满足跨用户 ACL、Attestation issuer 或
+Independent_Review 身份证明；非 loopback bind 必须在 listener 建立前 fail closed。
+选择此 profile 后 client 对所有 operation class 禁止 SQLite/Named Pipe/UDS fallback，
+从而不会把开发 transport 失败静默变成另一条 authority。完整协议、manifest、worker 和
+registry 约束以 `http-daemon-mvp-compatibility-contract.md` 的冻结 v1 为唯一实现入口。
 
 **端点命名与 ACL**（14.18、14.3）：管道名为 `\\.\pipe\callwarden-<user-sid>`，按用户 SID 隔离；安全描述符只授权 owner SID 的 connect 与读写权限（可选附加 local administrators），其他任何 SID 不授权。其访问范围与 Unix domain socket 的 owner + 0660 等价，因此两平台的授权面是同一条语义，而不是两套强度。
 
@@ -1092,6 +1111,16 @@ Degraded_Mode 下执行的任何操作，都要随产出记录或查询结果记
 - 只读查询返回的 Freshness_Status 是**查询时刻**的派生值，不构成 gate 结论；gate 结论只由 CLI 写路径在串行化点产生并记录。
 - 三平台暴露等价的 RPC 方法集（见 13.5.1）；某平台缺方法即视为该平台不支持协同能力，而不是"只支持只读"。
 
+#### 13.5.9 `task_loop` 公开 capability 前置（Task_Loop_Publication_Authority）
+
+**[拟新增 cw-task-loop/v1，0A 冻结]** 三段式治理（Executor/Reviewer/Adjudicator，见 `docs/design/requirements.md#Requirement 15` 与 `docs/design/cw-role-handoff-task-loop.md`）的公开路由与 control-plane 提升，在本设计 13.5 的 daemon/transport 之上新增一层 capability authority。它只描述**门槛语义**，具体权限记录、锁序与审计 event 的 schema 由冻结任务文档承载，本文不重复定义（对齐原则：素材放一份，跨文档只引用）。
+
+- 公开 capability 复用现有 `StageToggleStore`之外新增 `task_loop_public` authority 与 `task_loop_capability_promotion_events`；在 0A–0C 能力权限修订与 gate 接入通过 preflight 前，public discovery 与所有已知 public RPC 一律返回 `E_TASK_LOOP_CAPABILITY_DISABLED`（fail-closed）。
+- `CapabilityMutationGate` 的全局锁序（`CapabilityMutationGate → Capability Authority store transaction → task-DB transaction`）与"不可持 DB 事务等待 gate、不可持 authority-store 锁时再拿 task-DB 事务"由 Requirement 15 AC 23 冻结。
+- `task_loop.public_promote` 需真实注册的 control-plane 身份、空间级 `Task_Loop_Publication_Authority` 的 id/revision/fencing/validity、Internal permit 指纹、task-4 证据、schema 指纹、runtime binary hash 与 daemon 代际，先提交完整审计事件再安装内存 Public permit，区分 `durable_authorization` 与 `permit_installation`，且不从事后历史事件自动恢复 public permit（Requirement 15 AC 24）。
+- public capability 改状态时必须在 mutation gate 内、domain 提交前的最终 recheck 重新校验 permit 绑定；authority 不可读 fail-closed 到 `E_CAPABILITY_AUTHORITY_UNAVAILABLE`，不匹配或撤销清除内存 permit 并沿确定性错误 savepoint 路径返回 `E_TASK_LOOP_CAPABILITY_REVOKED`（Requirement 15 AC 25）。
+- `verdict.submit`、`reveal.submit`、`evidence.append`、`gate.decide` 与 `task_loop.*` 写路径只能在本设计 13.5 的 daemon 串行化点执行，且仅在"原生 handler + 负向测试 → MCP/CLI 转发 → 拒绝旧兜底 → 移除旧公开写路径"顺序完成后才可标为可用；期间保持禁用，不增加 SQLite fallback。
+
 ## 14. 分阶段落地
 
 ### P0：不改 schema 的 blind-review 对照实验
@@ -1168,7 +1197,7 @@ Degraded_Mode 下执行的任何操作，都要随产出记录或查询结果记
 | 昂贵 verifier 出事务        | verifier 在写事务外执行；事务内只提交不可变记录与状态转换                                  | 14.16              |
 | CLI 写 / MCP 只读接口面     | 写命令经 daemon；Role_View、Evidence、Freshness、gate 查询为只读工具                       | 14.17              |
 | Windows 端点 ACL 与实例保活 | 管道名按 owner SID 派生；SDDL 只授权 owner（可选 administrators）；≥2 实例且服务前补建     | 14.18, 14.19       |
-| 端点实现负向约束            | 无 Windows AF_UNIX 端点、无监听 TCP 端口、无本机 HTTPS 协同 RPC 入口                       | 14.20, 14.21       |
+| 端点实现负向约束            | 默认/发布配置无 Windows AF_UNIX、监听 TCP 或本机 HTTPS；仅冻结的 `dev_loopback_unauthenticated` 可显式动态 loopback HTTP | 14.20, 14.21, 14.40–14.48 |
 | daemon 自动唤起与单实例     | 三平台唤起路径可用；并发唤起后同一用户端点只有一个 daemon 进程                             | 14.22–14.26        |
 | Degraded_Mode 分级          | 只读与 Index_Write 降级执行；Governance_Write fail closed 且状态不变；降级记录带标记与原因 | 14.27–14.31, 14.33 |
 
@@ -1296,7 +1325,9 @@ Degraded_Mode 下执行的任何操作，都要随产出记录或查询结果记
 - 空 scope 发布警告：`research`/`design`/`review` 三个 profile 的空 scope 发布都**发布成功**并返回一条非阻断 Structured_Warning；断言警告码稳定，且 i18n key 在 `zh_CN` 与 `en_US` 两个 catalog 中均可解析；断言警告同时出现在发布返回值与 CLI 输出两处；断言接受语义未变（Envelope 记为 `unscoped`，7.12 判定不受影响）。
 - macOS 跨用户 ACL 可测性（两层策略）：**单元层**用 mock 伪造非当前 UID/GID 的 Peer_Credential，断言 owner 比较不匹配时走拒绝路径并返回 Structured_Reason；**集成层**用 `sudo -u` 创建临时测试用户，以该用户身份发起 Unix domain socket 连接，真实验证 macOS ACL 阻断。两层都需要：GHA macOS runner 默认单用户，无法天然构造跨用户连接，mock 覆盖的是判定逻辑（比较分支、错误码、状态不变），真实连接覆盖的是 `LOCAL_PEERCRED` 的实际行为与 socket 文件权限（0660 + owner）是否真的挡住其他用户——前者不能证明后者，因为 mock 绕过了内核凭证获取与文件系统权限检查这两个真正的执行点。
 - Windows 管道 SDDL：安全描述符只授权 owner SID（可选 local administrators）；其他 SID 的连接尝试被拒。
-- 负向验收：不存在 AF_UNIX 端点实现，也不存在监听 TCP 端口或本机 HTTPS 端点的协同 RPC 入口。
+- 负向验收：默认/发布配置不存在 AF_UNIX、监听 TCP 或本机 HTTPS 协同 RPC；HTTP MVP
+  profile 只绑定动态 loopback，拒绝 wildcard/LAN/remote/proxy publish，且验证 stale manifest、
+  8 MiB 上限、request_id 冲突、worker governance write 与任意 SQLite fallback 均 fail closed。
 
 ### 16.2 集成测试
 
@@ -1326,7 +1357,7 @@ Degraded_Mode 下执行的任何操作，都要随产出记录或查询结果记
 24. 降级写入的 Evidence 不能满足 Blocking_Clause（Property 27）：Degraded_Mode 下直连追加 Evidence，恢复 daemon 后跑 gate，断言该 Evidence 判 invalid、apply 被拒，且审计可按 Degraded_Mode 标记区分来源。
 25. 命名管道 accept 竞态窗口内连接不失败（Property 28）：Windows 上高频并发连接，断言无 pipe-busy 与端点缺失错误。
 26. Windows 管道 SDDL 只允许 owner SID：以其他用户身份连接被拒并返回 Structured_Reason。
-27. 端点实现负向验收：扫描实现与配置，断言不存在 Windows AF_UNIX 端点、监听 TCP 端口或本机 HTTPS 协同 RPC 入口（14.20、14.21）。
+27. 端点实现负向验收：扫描默认/发布实现与配置，断言不存在 Windows AF_UNIX、监听 TCP 或本机 HTTPS 协同 RPC；唯一例外是显式 `dev_loopback_unauthenticated`，并断言动态 loopback-only、非 loopback 在 listener/manifest 前被拒、无生产安全声明（14.20、14.21、14.40–14.48）。
 28. 大量引用下的 Verifier 撤销（6.13、6.20–6.23）：构造被大量 Evidence 引用的 verifier 并撤销，断言 apply 被拒、账本只增加一条撤销记录、**未产生逐条失效事件**、既有 payload 逐字节不变，并按撤销前某次 gate decision 记录的三元组与判定时间断言该次判定时刻尚未被撤销。
 29. `solo` 政策端到端（5.12–5.17）：将 Independence_Policy 置为 `solo` 后，单个 Session 完成实现与盲评并成功 apply，断言 gate decision 记录"独立审核按政策豁免"与当时政策取值、verdict 仍带 `unproven_independence`，且 1.4/1.6/1.8 判定未被放宽；随后改回 `required`，断言同一任务的旧 gate decision 不被复用、必须重新评估；`high_risk` 任务请求 `solo` 被拒且保留原取值。
 30. 密钥轮换端到端（10.10–10.18）：以同一组历史 verdict/Evidence 作为 fixture，先执行 `rotated` 撤销，断言轮换前签发的历史 verdict/Evidence 仍然有效、`task_apply` 结论不因轮换改变；再在同一 fixture 上执行 `compromised` 撤销，断言这些记录全部判为 `invalid`、`task_apply` 被拒；对比两次 `task_apply` 结论必须不同，并断言两种情形下账本各自只增加了**一条** `Attestation_Revocation_Record`。
@@ -1616,6 +1647,7 @@ Windows 上 daemon 监听命名管道 Daemon_Endpoint 期间，始终维持至�
 15. **Verifier 撤销走查询时派生，不物化逐条失效事件**：判据是"freshness 本就是查询时派生状态"（见 9.2）。撤销是低频管理动作，而 Evidence 是高基数事实；把撤销物化成 O(N) 条失效事件会带来与收益不成比例的写放大——WAL 膨胀与长写锁占用换来的只是一份可以随时算出来的结论。因此撤销只追加**一条**不可变 `Verifier_Revocation_Record`，`invalid` 由三元组匹配在查询时派生。可审计性不下降：由"单条不可变撤销记录"加"gate decision 记录的 Verifier 三元组与权威时钟判定时间"共同保证任一时点的撤销状态可复算。个体失效（如 payload 校验失败）仍走个体失效事件，被取消的只是"撤销时必须逐条写"（见 9.2.2）。
 16. **独立性豁免改前件，不改后件**：判据是"不能让保证在需要它的场合失效"。`solo` 实现为"该 profile 不再**要求** Independent_Review"，于是 Property 5 的前件为假、属性本身依然成立；若实现为"允许未证明的独立性满足条款"，Requirement 1.5 与 Property 5 会同时失效。豁免的代价通过四条约束兜住：存 daemon 配置存储且不可由请求参数设置、每次变更可审计、`high_risk` 禁用、结论如实记录为"按政策豁免"而非"独立性已证明"（见 8.2.1 与 6.4）。
 17. **Attestation 撤销区分 `compromised` 与 `rotated`，不一刀切**：决策 15 已经为 Verifier 撤销确立了"单条不可变撤销记录 + 查询时派生"的做法，对称性因此支持在 Attestation 撤销上复用同一机制。但**整套照搬是错的**：密钥轮换不是密钥泄露。若只有一条无条件规则，一次例行轮换就会把该 issuer/key 签发过的整个历史账本判为 `invalid`，而追加式账本存在的意义恰恰是保住这份审计价值——为了低频运维动作摧毁历史审计性，代价与收益完全不成比例。因此 `Revocation_Mode` 是**必填字段且无默认值**：`compromised` 下真实签发与伪造签发不可区分，只能忽略签发时间、命中全部匹配记录；`rotated` 下轮换前的签发仍然可信，只命中签发时间晚于撤销时间的记录。两个方向的默认值都不安全——默认 `compromised` 会让每次例行轮换都变成破坏性操作，默认 `rotated` 会在密钥泄露时静默放过用泄露密钥伪造的历史记录，所以该字段必须由发起者显式给出，而不是由系统替他猜。撤销同样不修改既有 payload，个体失效仍走 Requirement 6.6 的失效事件（见 13.5.5 与 Property 32）。
+18. **HTTP MVP 只以版本化开发 profile 豁免默认 TCP 禁令**：默认/发布/企业 transport 的 Named Pipe/UDS 与 Peer_Credential 决策不变。`dev_loopback_unauthenticated` 只解决本机开发期统一 transport 与 self-bootstrap，不伪装成跨用户 ACL 或生产安全；选择 HTTP 后完全禁用客户端 SQLite/legacy transport fallback。这样例外的能力和风险都被一个可审查的版本边界包住，而不是让 Requirements 14.20 与 HTTP 实现静默冲突。
 
 ## 20. 验收边界
 

@@ -12,7 +12,7 @@
 
 **D0 的两项已决策**：
 
-1. **Windows 传输定为命名管道**（Requirements 14.2、14.18–14.21）。判据只有一条：操作系统是否为该连接提供不可伪造的对端身份。命名管道名由 owner user SID 派生（`\\.\pipe\callwarden-<user-sid>`），安全描述符仅授权 owner SID（可选 local administrators），访问范围等价 Unix domain socket 的 owner + 0660；daemon 维持 ≥2 个管道实例并在服务每个已接受连接之前补建替换实例，消除 accept 之间的竞态窗口。Windows AF_UNIX、localhost TCP 与本机 HTTPS 端点全部排除，因为 OS 不为其提供 Peer_Credential，Requirement 14.5 无法成立。
+1. **Windows 默认安全传输定为命名管道；HTTP MVP 使用版本化开发例外**（Requirements 14.2、14.18–14.21、14.40–14.48）。默认发布、企业、远程及任何需要 Peer_Credential/跨用户 ACL 的协同路径仍使用命名管道：管道名由 owner user SID 派生（`\\.\pipe\callwarden-<user-sid>`），安全描述符仅授权 owner SID（可选 local administrators），访问范围等价 Unix domain socket 的 owner + 0660；daemon 维持 ≥2 个管道实例并在服务每个已接受连接之前补建替换实例。旧的“localhost TCP 一律排除”绝对门禁在 `http-mvp-transport-profile/v1` 下被替代：只有显式选择 `dev_loopback_unauthenticated` 时，才允许动态绑定 `127.0.0.0/8` 或 `::1` 的 HTTP/JSON-RPC；该 profile 不提供 Peer_Credential、生产安全、跨用户 ACL 或远程授权。`0.0.0.0`、`::`、LAN、远程、代理/容器发布及未声明 profile 的 TCP 监听仍 fail closed。
 2. **daemon 不可用时"先唤起 + 按操作分级"**（Requirements 14.22–14.33）。客户端连不上端点时先尝试启动 daemon，并在有界等待窗口（默认 10 秒、按客户端时钟计量）内指数退避重试，成功即在该连接继续原请求；启动前必须取跨进程互斥，保证同一用户端点最多一个 daemon 进程，不产生第二个串行化点。唤起失败后进入 Degraded_Mode 并按 `class(op)` 分流：只读查询与 Index_Write 允许直连 SQLite，Governance_Write 一律 fail closed 并返回带稳定错误码、i18n key 与可执行恢复指引的 Structured_Reason；降级模式下的所有操作都记录 Degraded_Mode 标记与降级原因。降级产物因缺少 daemon 签发的有效 Attestation 而判 invalid，因此不需要任何物理写屏障。
 
 **P4 Lease 的正面边界**（Requirements 11.13、14.32）：Lease 是 daemon 在线期间的并发正确性保证；防篡改归属于 Attestation 校验与追加式 Evidence_Ledger，任何代码、CLI 输出与文档都不得把 Lease 描述为能防止离线直接改库。
@@ -20,7 +20,7 @@
 ### 阶段门禁
 
 - **G0（P0→P1）**：至少 30 个有效任务且至少 10 个非平凡 `code_change`（按 Requirement 12.26 的行数与符号门槛判定）；Requirements 12.10–12.13 全部满足；Requirements 12.15–12.20 无暂停条件；Requirements 12.27–12.29 的灰区观察不得未决；至少 90% Treatment 可证明 verdict-before-reveal 且 blind view 无禁止字段。未满足时只报告方向、恢复现有 review 流程并创建新批次，不得执行任何 P1 schema/API 任务。
-- **GD（D0→P1）**：Windows 命名管道传输与服务化、命名管道多实例保活与 accept 竞态消除（≥2 实例且服务前补建）、管道名按 owner SID 派生且 SDDL 仅授权 owner SID、端点负向约束（无 Windows AF_UNIX、无监听 TCP 端口、无本机 HTTPS 协同 RPC 入口）、Windows 对端令牌 SID 等强度 ACL（覆盖 Unix build 每一个 UID 校验点）、macOS 无 pid 身份派生与 launchd 端到端验收、三平台自动唤起可用且并发唤起只产生一个 daemon（一个串行化点）、Degraded_Mode 三类分流正确（只读与 Index_Write 直连成功、Governance_Write fail closed 且 Structured_Reason 含平台具体恢复指引）、Degraded_Mode 标记与降级原因可审计区分、缺少有效 Attestation 的记录判 invalid 且不满足任何 Blocking_Clause、daemon 进程内唯一串行化点、Authoritative_Clock、daemon 侧 Attestation 签发、并发读写无数据库锁错误与并发 gate 快照隔离、Stage_Toggle 三级作用域与前置阶段校验、daemon 配置存储同时承载 Stage_Toggle 与 Independence_Policy 的取值与变更审计（每次变更带发起者 Peer_Identity 与 Authoritative_Clock 时间、禁止由单次请求参数设置；政策语义本身在 P1 落地，随 4.5 验收）、跨类操作按组成部分分级正确（`components(op)` 拆分、Index_Write 组成部分直连执行、Governance_Write 组成部分 fail closed、任务与步骤状态不推进、不产生 Evidence 与 gate decision；`task_report_step` 实例的端到端验收随 4.8/4.28 在 P1 落地）、Stage_Toggle 存储过渡与保值迁移通过验收（`Experiment_Batch_Config` 承载期无 schema 变更、迁移按原作用域保值且带发起者与权威时钟时间、迁移后只读 daemon 存储）、稳定错误码目录与 `zh_CN`/`en_US` 双语 i18n 解析，全部通过自动化验收。任一项未通过时，不得开始任务 4（P1）的 schema/API 任务。GD 与 G0 相互独立：P0 可先于 D0 完成，但 P1 必须同时满足 G0 与 GD。
+- **GD（D0→P1）**：Windows 命名管道传输与服务化、命名管道多实例保活与 accept 竞态消除（≥2 实例且服务前补建）、管道名按 owner SID 派生且 SDDL 仅授权 owner SID、profile-aware 端点约束（默认/生产/企业路径无监听 TCP；仅 `dev_loopback_unauthenticated` 可动态监听 IP loopback；wildcard/LAN/远程/代理或容器发布一律拒绝）、Windows 对端令牌 SID 等强度 ACL（覆盖 Unix build 每一个 UID 校验点）、macOS 无 pid 身份派生与 launchd 端到端验收、三平台自动唤起可用且并发唤起只产生一个 daemon（一个串行化点）、Degraded_Mode 三类分流正确（只读与 Index_Write 直连成功、Governance_Write fail closed 且 Structured_Reason 含平台具体恢复指引）、Degraded_Mode 标记与降级原因可审计区分、缺少有效 Attestation 的记录判 invalid 且不满足任何 Blocking_Clause、daemon 进程内唯一串行化点、Authoritative_Clock、daemon 侧 Attestation 签发、并发读写无数据库锁错误与并发 gate 快照隔离、Stage_Toggle 三级作用域与前置阶段校验、daemon 配置存储同时承载 Stage_Toggle 与 Independence_Policy 的取值与变更审计（每次变更带发起者 Peer_Identity 与 Authoritative_Clock 时间、禁止由单次请求参数设置；政策语义本身在 P1 落地，随 4.5 验收）、跨类操作按组成部分分级正确（`components(op)` 拆分、Index_Write 组成部分直连执行、Governance_Write 组成部分 fail closed、任务与步骤状态不推进、不产生 Evidence 与 gate decision；`task_report_step` 实例的端到端验收随 4.8/4.28 在 P1 落地）、Stage_Toggle 存储过渡与保值迁移通过验收（`Experiment_Batch_Config` 承载期无 schema 变更、迁移按原作用域保值且带发起者与权威时钟时间、迁移后只读 daemon 存储）、稳定错误码目录与 `zh_CN`/`en_US` 双语 i18n 解析，全部通过自动化验收。任一项未通过时，不得开始任务 4（P1）的 schema/API 任务。GD 与 G0 相互独立：P0 可先于 D0 完成，但 P1 必须同时满足 G0 与 GD。
 - **G1（P1→P2）**：P1 migration、Envelope/View/Verdict/Evidence/Gate、CLI/MCP、属性与集成测试全部通过；`task_report_step` 与 `task_apply` 已共享门禁语义，`task_close` 仅收尾。
 - **G2（P2→P3）**：artifact/interface 依赖、provider 解析与环检测迁移及测试通过；未引入复杂 DAG 调度。
 - **G3（P3→P4）**：agent/session/model identity、attestation、blind 顺序与独立审核证明迁移及测试通过；身份不等同 ownership。
@@ -99,6 +99,7 @@
 - [~] 2. G0 检查点：确认 P0 自动化测试通过，并仅在真实批次输出 `eligible_for_p1=true` 时继续
   - Ensure all tests pass, ask the user if questions arise.
   - 若样本不足、任一成功条件未满足、存在未解决灰区或任一暂停条件触发，停止在此处；保留记录并通过新批次复验，禁止开始任务 4（P1）。
+  - 若任务声明同步冻结规格，`required_paths` 与实际 `change_audit` 必须同时精确覆盖 `requirements.md`、协同 design 与 `tasks.md` 三份文档；`allowed_paths` 不得将 `AGENTS.md` 作为替代。仅改 AGENTS.md 或缺少任一规格文档均不得纳样/通过检查。
   - 任务 3（D0）与 P0 相互独立（Requirement 13.17），不受 G0 阻塞，可与 P0 并行推进。
 
 - [ ] 3. D0：跨平台 daemon 化（P1 的前置阶段，与 P0 相互独立）
@@ -110,7 +111,7 @@
     - 三平台暴露等价的协同 RPC 方法集（Envelope 发布、verdict 提交、Reveal、Evidence 追加、gate 评估、Protected_Mutation 路由）；缺方法即视为该平台不支持协同能力，不实现“只支持只读”的中间态。
     - **管道命名与 SDDL**：管道名由 owner user SID 派生（`\\.\pipe\callwarden-<user-sid>`），安全描述符只授权 owner SID 的 connect 与读写（可选附加 local administrators），其他 SID 一律不授权，使访问范围等价 Unix socket 的 owner + 0660。
     - **实例保活（硬要求）**：预创建 ≥2 个管道实例，并在服务每个已接受连接**之前**补建替换实例，消除两次 accept 之间的 pipe-busy / 端点缺失竞态窗口。这不是优化项，顺序颠倒即重新引入竞态。
-    - **端点负向约束**：实现与配置层面不得存在 Windows AF_UNIX 端点、监听 TCP 端口或本机 HTTPS 协同 RPC 入口；OS 不为这些连接提供 Peer_Credential，Requirement 14.5 在其上无法成立。
+    - **端点负向约束**：Windows 默认/生产/企业传输不得出现 AF_UNIX、监听 TCP 或本机 HTTPS 协同 RPC；唯一例外是显式 `http-mvp-transport-profile/v1:dev_loopback_unauthenticated` 的动态 IP-loopback HTTP listener。该 listener 不满足 Requirement 14.5 的 Peer_Credential 语义，不得冒充默认安全传输；wildcard、LAN、远程、代理/容器发布及未声明 profile 必须拒绝。
     - **所有权**：新增 `rust_ext/src/daemon/transport.rs`、`rust_ext/src/daemon/transport_windows.rs`。
     - **依赖门禁**：完成 3.24（Windows 平台依赖已就位）；不依赖 G0。
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.18, 14.19, 14.20, 14.21_
@@ -274,14 +275,14 @@
   - [ ]* 3.22 编写 D0 传输、载荷、SDDL 与错误码单元测试
     - 覆盖 Windows 命名管道端点建立与三平台 RPC 方法集等价性、`canonical_bytes_b64` 超尺寸与摘要不符被拒、每个 D0 失败路径的错误码稳定且在 `zh_CN` 与 `en_US` 均可解析（对应 Property 12）。
     - 增加 Windows 管道 SDDL 验收：安全描述符只授权 owner SID（可选 local administrators），以其他用户 SID 连接被拒并返回 Structured_Reason。
-    - 增加端点实现负向验收：扫描实现与配置，断言不存在 Windows AF_UNIX 端点、监听 TCP 端口或本机 HTTPS 协同 RPC 入口。
+    - 增加 profile-aware 端点负向验收：默认/生产/企业配置断言不存在 Windows AF_UNIX、监听 TCP 或本机 HTTPS 协同 RPC；HTTP MVP 配置只允许动态 `127.0.0.0/8`/`::1`，并断言 wildcard、LAN、远程、代理/容器发布、缺少 profile 与把开发 profile 声称为生产安全均 fail closed。
     - **所有权**：新增 `tests/test_daemon_cross_platform_unit.py`。
     - **依赖门禁**：完成 3.1、3.6、3.13。
     - _Requirements: 14.1–14.4, 14.10, 14.18, 14.20, 14.21, 1.12_
 
   - [~] 3.23 同步 D0 平台、部署与阶段能力文档
     - 更新 daemon 平台支持矩阵（Linux/macOS/Windows 端点与传输能力）、CLI 写命令参考、只读 MCP 工具清单、部署与服务化指南（含 macOS launchd 与 Windows 服务托管）以及实施状态。
-    - 记录 Windows 端点决策：命名管道、按 owner SID 派生的管道名与仅授权 owner SID 的 SDDL、多实例保活与 accept 竞态消除，以及排除 AF_UNIX / 监听 TCP / 本机 HTTPS 的理由（OS 不提供 Peer_Credential）。
+    - 记录 Windows 端点决策：命名管道仍是默认/生产/企业安全传输，按 owner SID 派生管道名并用 SDDL 仅授权 owner SID；同时记录 `http-mvp-transport-profile/v1:dev_loopback_unauthenticated` 是唯一版本化开发例外，仅动态 IP loopback、无 Peer_Credential/跨用户 ACL/远程授权，不得扩展到 wildcard、LAN、远程或代理/容器发布。
     - 记录 daemon 不可用时的行为：自动唤起机制与有界等待窗口（默认 10 秒、可配置）、三平台唤起方式、单实例互斥，以及 Degraded_Mode 三类分流（只读与 Index_Write 直连、Governance_Write fail closed 并给出平台具体拉起命令）与 Degraded_Mode 标记的审计用途；说明降级产物因缺有效 Attestation 判 invalid，因此系统不设物理写屏障。
     - 按 Requirements 14.32、11.13 正面陈述 P4 Lease 边界：daemon 在线期间的并发正确性保证，防篡改归属 Attestation 与追加式 Evidence_Ledger，不得描述为能防止离线直接改库。
     - D0 未完成前 P1–P4 仍标记 planned/unavailable，且不得声明 P1 门禁可用。
@@ -910,12 +911,51 @@
   - Ensure all tests pass, ask the user if questions arise.
   - 运行迁移、属性、单元、CLI/MCP 与跨阶段集成测试，并运行完整 daemon 回归 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`；确认 P0 记录未被当作 P1 Evidence，`task_close` 仍仅收尾，lease 未绕过 Identity/role/Gate，且代码、CLI 输出与文档均按 Requirements 14.32、11.13 正面陈述 Lease 边界（在线并发正确性 + 防篡改归 Attestation 与账本追加性），无"防离线改库"类表述。
 
+- [~] 12. HTTP Daemon MVP：以版本化 loopback HTTP API 完成 compatibility-first 自举
+  - **父任务**：`T-1786590214634-9e740cdc`。Legacy Baseline `T-1786590722456-db00d074` 及 B1–B6 已 closed；旧 M0/M2/B 证据保持只读，不作为 HTTP round-trip 的替代。
+  - **Transport Profile**：唯一允许的 HTTP MVP profile 为 `http-mvp-transport-profile/v1:dev_loopback_unauthenticated`。它必须显式 opt-in、动态绑定 `127.0.0.0/8` 或 `::1`，不提供生产安全、Peer_Credential、跨用户 ACL、远程授权或企业 transport；wildcard、LAN、远程、代理/容器发布 fail closed。默认发布仍使用 Named Pipe/UDS。
+  - **客户端边界**：HTTP 模式的 discovery、connectivity、authority、protocol 或业务错误均不得触发 SQLite、Named Pipe 或 UDS fallback；未迁移工具只能通过 daemon 管理的 compatibility worker 或结构化 unsupported/error 返回。
+  - **依赖图**：`H0 closed → (H1 || H2) → H1/H2 closed → H2I PASS/closed → H3 → H4A PASS/closed → H4B parent/children → H5`。只有 H1/H2 可并行；任何 claim 必须由 daemon 对 current Role Contract 和前置状态 fail closed 校验，文档声明不能替代权威任务合同。
+  - [~] 12.1 H0 契约与 registry：`T-1786590214634-9e740cdc-sub-1`
+    - 冻结 HTTP/JSON-RPC、manifest、8 MiB/deadline/cancel/jobs/request_id dedup、compatibility worker、operation class、capability registry 与负向验收。
+    - 整改子任务 `T-1786636204991-9561efa8` 同步三份真相源并为 H1/H2/H3 补齐权威领取合同。
+  - [ ] 12.2 H1 Rust HTTP server：`T-1786590214634-9e740cdc-sub-2`
+    - H0 closed 后方可领取；实现动态 loopback listener、health/capabilities/v1/rpc、原子 manifest 与非 loopback 拒绝。
+  - [ ] 12.3 H2 Python HTTP client：`T-1786590214634-9e740cdc-sub-3`
+    - H0 closed 后可与 H1 并行；HTTP 模式不得直连 SQLite 或静默切换旧 transport。
+  - [ ] 12.4 H2I 真实进程集成门：`T-1786590214634-9e740cdc-h2i`
+    - 仅在 H1/H2 Reviewer PASS 且 Coordinator close 后领取；必须使用 fresh daemon 与 production `DaemonClient`，PASS/closed 前 H3 不得领取。
+  - [ ] 12.5 H3 daemon-managed compatibility worker：`T-1786590214634-9e740cdc-sub-4`
+    - 仅 daemon child stdin/stdout 私有 IPC；worker 不接收 DB path、不选择 active workspace、禁止 governance_write，index_write 经 daemon 单写串行化。
+  - [ ] 12.6 H4A 核心 MCP/CLI self-bootstrap：`T-1786590214634-9e740cdc-sub-5`
+    - 该既有 H4 ID 从 H0 起正式解释为 H4A；不得重复创建。完成核心工具真实 HTTP 自举后交独立复审。
+  - [ ] 12.7 H4B 237 工具 HTTP cutover：`T-1786590214634-9e740cdc-h4b`
+    - 仅在 H4A Reviewer PASS 且 Coordinator close 后领取；父任务负责 registry/ownership 规划，六个非重叠 children 分别为：
+      - native read/query：`T-1786590214634-9e740cdc-h4b-native-read`
+      - compatibility read：`T-1786590214634-9e740cdc-h4b-compat-read`
+      - index-write/job：`T-1786590214634-9e740cdc-h4b-index-job`
+      - governance/unsupported/error：`T-1786590214634-9e740cdc-h4b-unsupported-error`
+      - registry/docs：`T-1786590214634-9e740cdc-h4b-registry-docs`
+      - full matrix/evidence：`T-1786590214634-9e740cdc-h4b-full-matrix`
+  - [ ] 12.8 H5 fresh runtime 与独立复审：`T-1786590214634-9e740cdc-sub-6`
+    - 只有当前 Git/runtime/binary provenance、真实 HTTP 自举证据和完整 capability matrix 均通过，Coordinator 才可按子任务依赖顺序 apply/close。
+
+- [~] 0A Capability Authority 修订与前置规划：`T-1786983518146-812072e0`
+  - **父任务**：`T-1786983366974-8811ccec`（Req 15 三角色治理实施）。规划前置，不实现生产代码；目标是把 `task_loop_public` 公开 capability 的权限与门禁从文档冻结为可作 1D0/0B/0C 依据的规则集。
+  - **范围**：冻结 `Task_Loop_Publication_Authority`、schema/migration、id/revision/fencing/expiry/revoke、identity、clock、API、审计、默认 disabled、`CapabilityMutationGate` 锁序、evidence invalidation writer inventory 与 daemon-only routing。与 `requirements.md`、`multi-llm-contract-driven-collaboration-design.md`、`tasks.md` 对齐；若既有冻结规则足够，只补缺口并记录不变项。
+  - **权威产物**：
+    - schema：新增 public authority 记录 `task_loop_public` 与审计事件表 `task_loop_capability_promotion_events`（含 id/revision/fencing/validity、Internal permit 指纹、schema 指纹、runtime binary hash、daemon 代际）；迁移保留既有取值，等价于 Requirement 13.19 的保值迁移。
+    - 门禁：`CapabilityMutationGate` 全局锁序 `CapabilityMutationGate → Capability Authority store transaction → task-DB transaction`；无路径持 DB 事务等待 gate，也无路径持 authority-store 锁时再拿 task-DB 事务（Requirement 15 AC 23）。
+    - 提升：`task_loop.public_promote` 需真实注册 control-plane 身份 + 空间级 authority id/revision/fencing/validity + 证据 + schema/runtime/daemon 指纹，审计先行，区分 `durable_authorization` 与 `permit_installation`，不从历史事件自恢复 public permit（AC 24）。
+    - 路由：public discovery 与已知 public RPC 在 0A–0C preflight 通过前一律 `E_TASK_LOOP_CAPABILITY_DISABLED`；`verdict.submit`/`reveal.submit`/`evidence.append`/`gate.decide`/`task_loop.*` 写路径仅 daemon handler，且仅在原生 handler+负向测试 → MCP/CLI 转发 → 拒绝旧兜底 → 移除旧公开写路径顺序完成后可用，不增加 SQLite fallback。
+  - **子阶段**（父 `T-1786983518146-812072e0`，子实现任务按需拆分）：0B existing authority 与 gate 接入 → 0C capability authority 与 gate 独立验收；届时以本清单为准。
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP；执行时仍应优先保留全部 hard-gate 属性测试。
 - P1 的开始条件不是“P0 与 D0 代码完成”，而是 G0 对**真实、冻结协议实验批次**输出 `eligible_for_p1=true`，且 GD 的每一项交付物通过自动化验收；dependency graph 的 wave 顺序不能替代这两个条件判断。
 - D0 与 P0 相互独立（Requirement 13.17）：D0 不阻塞 P0 批次，P0 也不是 D0 的前置；但 P1 必须同时满足 G0 与 GD。
-- Windows 传输已决策为命名管道（Requirements 14.2、14.18–14.21）：按 owner SID 派生管道名、SDDL 仅授权 owner SID、≥2 实例且服务前补建；AF_UNIX、监听 TCP 与本机 HTTPS 一律排除，判据是 OS 是否提供不可伪造的对端身份。
+- Windows 默认/生产/企业传输仍是命名管道（Requirements 14.2、14.18–14.21），按 owner SID 派生管道名、SDDL 仅授权 owner SID、≥2 实例且服务前补建。旧的“监听 TCP 一律排除”已由 Requirements 14.40–14.48 的版本化例外替代：仅 `http-mvp-transport-profile/v1:dev_loopback_unauthenticated` 可动态绑定 IP loopback；它不具备 Peer_Credential、生产安全、跨用户 ACL 或远程授权，wildcard/LAN/远程/代理或容器发布仍一律排除。
 - daemon 不可用已决策为"先唤起 + 按操作分级"（Requirements 14.22–14.33）：自动唤起（有界窗口默认 10 秒、退避重试、跨进程互斥保单实例）→ 唤起失败进入 Degraded_Mode → 只读与 Index_Write 允许直连、Governance_Write 一律 fail closed 并给出可执行恢复指引 → 降级产物因缺有效 Attestation 判 invalid，因此不设物理写屏障。
 - P4 Lease 的边界按 Requirements 14.32、11.13 正面陈述：daemon 在线期间的并发正确性保证；防篡改归属 Attestation 与追加式 Evidence_Ledger；不得描述为能防止离线直接改库。
 - 所有阶段必须复用现有任务状态机和 `work_next_job`、target fields、change audit、`task_symbol_changes`、completion review、`task_report_step`、`task_apply`、`task_close`、Reopen；禁止平行状态机。

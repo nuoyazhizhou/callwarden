@@ -146,7 +146,7 @@ wsl -- bash -lc "mkdir -p /run/callwarden /var/lib/callwarden /var/log/callwarde
 
 ```bash
 # 1. 编译 Rust daemon binary（Linux target）
-wsl -- bash -lc "cd /mnt/c/git_work/callwarden/rust_ext && cargo build --release --bin cw_daemon"
+wsl -- bash -lc "cd /mnt/c/git_work/callwarden/rust_ext && cargo build --no-default-features --release --bin cw-daemon"
 
 # 2. 安装 systemd unit
 wsl -- bash -lc "cp /mnt/c/git_work/callwarden/cicd/callwarden-daemon.service /etc/systemd/system/ && systemctl daemon-reload"

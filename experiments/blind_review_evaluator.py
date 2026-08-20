@@ -52,6 +52,13 @@ from .blind_review_protocol import (
     ExperimentErrorCode,
     ExperimentProtocolError,
 )
+from .blind_review_views import (
+    DISCLOSURE_LABEL,
+    IMPLEMENTER_NOTES_FIELD,
+    MINIMAL_BLIND_VIEW_FIELDS,
+    PROHIBITED_FIELDS,
+    _has_notes,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +85,8 @@ class EvaluatorErrorCode:
     PAUSE_TRIGGERED = "EXP_PAUSE_TRIGGERED"
     # 输入记录缺失/非法，无法完成确定性评估（fail-closed，不静默 pass）。
     EVALUATION_INPUT_INVALID = "EXP_EVALUATION_INPUT_INVALID"
+    # 12.10：任一组没有可计算的 recall 分母，缺陷检出效果不可比较。
+    DEFECT_COVERAGE_INSUFFICIENT = "EXP_DEFECT_COVERAGE_INSUFFICIENT"
 
 
 # 错误码 → i18n key（完整路径，位于 errors.* 命名空间）。词条由任务 1.4 写入 catalog；
@@ -89,6 +98,7 @@ EVALUATOR_I18N_KEYS: Dict[str, str] = {
     EvaluatorErrorCode.GRAY_ZONE_UNRESOLVED: "errors.experiment_gray_zone_unresolved",
     EvaluatorErrorCode.PAUSE_TRIGGERED: "errors.experiment_pause_triggered",
     EvaluatorErrorCode.EVALUATION_INPUT_INVALID: "errors.experiment_evaluation_input_invalid",
+    EvaluatorErrorCode.DEFECT_COVERAGE_INSUFFICIENT: "errors.experiment_defect_coverage_insufficient",
 }
 
 # 捆绑的双语默认文案：catalog 尚未收录对应 key 时（1.4 之前）仍可按当前语言解析出可读消息。
@@ -116,6 +126,10 @@ _EVALUATOR_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
     "errors.experiment_evaluation_input_invalid": {
         "zh_CN": "实验评估输入非法：{detail}；fail-closed 拒绝评估，不静默通过。",
         "en_US": "Experiment evaluation input is invalid: {detail}; evaluation is rejected fail-closed and never passes silently.",
+    },
+    "errors.experiment_defect_coverage_insufficient": {
+        "zh_CN": "实验批次 {batch_id} 缺少可计算的缺陷覆盖：Control 分母 {control_denom}，Treatment 分母 {treatment_denom}；12.10 只能判定为未满足，不能把空分母当作 recall=0。",
+        "en_US": "Experiment batch {batch_id} lacks measurable defect coverage: Control denominator {control_denom}, Treatment denominator {treatment_denom}; 12.10 cannot be satisfied and an empty denominator is not treated as recall=0.",
     },
 }
 
@@ -467,6 +481,13 @@ class SampleRecord:
                     detail=f"{name} 不能为负数: {value}"))
             return value
 
+        def _token_usage() -> int:
+            """Unavailable token usage is honest null and excluded from totals."""
+            raw = record.get("token_usage", 0)
+            if raw is None:
+                return 0
+            return _nonnegative_int("token_usage")
+
         def _nonnegative_float(name: str, default: float = 0.0) -> float:
             try:
                 value = float(record.get(name, default))
@@ -494,7 +515,7 @@ class SampleRecord:
             verified_false_positives=_nonnegative_int("verified_false_positives"),
             verified_misses=_nonnegative_int("verified_misses"),
             review_duration_seconds=_nonnegative_float("review_duration_seconds"),
-            token_usage=_nonnegative_int("token_usage"),
+            token_usage=_token_usage(),
             reopen_events=_nonnegative_int("reopen_events"),
             post_apply_defects=_nonnegative_int("post_apply_defects"),
             post_apply_rollbacks=_nonnegative_int("post_apply_rollbacks"),
@@ -544,6 +565,9 @@ class GroupMetrics:
     first_pass_findings: int = 0
     final_findings: int = 0
     token_usage: int = 0
+    # 12.10：保留 recall 分母，区分真实 0 recall 与“没有可估计缺陷”。
+    recall_denominator: int = 0
+    recall_defined: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -603,6 +627,8 @@ def compute_group_metrics(group: str, samples: Sequence[SampleRecord]) -> GroupM
 
     # recall = tp / (tp + misses)，分母为锁定 recall 分母（12.6）。
     recall_denom = tp + misses
+    m.recall_denominator = recall_denom
+    m.recall_defined = recall_denom > 0
     m.recall = _safe_rate(tp, recall_denom)
     m.recall_ci = wilson_confidence_interval(tp, recall_denom)
 
@@ -633,6 +659,146 @@ def compute_group_metrics(group: str, samples: Sequence[SampleRecord]) -> GroupM
     m.post_apply_defects = sum(s.post_apply_defects for s in own)
     m.post_apply_rollbacks = sum(s.post_apply_rollbacks for s in own)
     return m
+
+
+def validate_blind_view_records(
+    records: Sequence[Dict[str, Any]],
+    metric_groups: Sequence[Tuple[str, str]],
+    expected_batch_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """校验指标样本实际使用了声明的 Control/Treatment 视图。
+
+    G0 的两组只有在披露条件真的不同、且每个指标样本都能回溯到唯一首轮视图时
+    才可比较。旧批次可能只写了 ``implementer_notes_included=False`` 的共同视图；
+    这种记录不能被当作 Control，也不能静默降级为通过。
+
+    Args:
+        records: 批次 JSONL 中的全部记录。
+        metric_groups: ``(task_id, group)``，来源为有效 review_metrics 记录。
+        expected_batch_id: 当前报告批次；提供后拒绝跨批次视图记录。
+
+    Returns:
+        可直接写入报告的稳定字典；该函数不修改历史记录。
+    """
+    views_by_task: Dict[str, List[Dict[str, Any]]] = {}
+    for record in records:
+        if record.get("record_type") != "blind_view":
+            continue
+        if record.get("phase", "pre_verdict") != "pre_verdict":
+            continue
+        task_id = record.get("task_id")
+        if task_id:
+            views_by_task.setdefault(str(task_id), []).append(record)
+
+    reasons: List[Dict[str, Any]] = []
+    seen_metrics: Dict[str, str] = {}
+    control_notes = 0
+    treatment_blind = 0
+
+    for raw_task_id, raw_group in metric_groups:
+        task_id = str(raw_task_id)
+        group = str(raw_group)
+        if task_id in seen_metrics:
+            reasons.append({
+                "condition": "duplicate_metric_sample",
+                "task_id": task_id,
+                "groups": [seen_metrics[task_id], group],
+            })
+            continue
+        seen_metrics[task_id] = group
+        views = views_by_task.get(task_id, [])
+        if len(views) != 1:
+            reasons.append({
+                "condition": "view_provenance",
+                "task_id": task_id,
+                "group": group,
+                "pre_verdict_view_count": len(views),
+            })
+            continue
+
+        view = views[0]
+        if (expected_batch_id is not None
+                and str(view.get("batch_id", "")) != str(expected_batch_id)):
+            reasons.append({
+                "condition": "view_batch_mismatch",
+                "task_id": task_id,
+                "expected_batch_id": str(expected_batch_id),
+                "view_batch_id": view.get("batch_id"),
+            })
+        view_group = str(view.get("group", ""))
+        payload = view.get("payload") or {}
+        expected_disclosed = list(MINIMAL_BLIND_VIEW_FIELDS)
+        expected_excluded = list(PROHIBITED_FIELDS)
+        if group == GroupAssignment.CONTROL.value:
+            expected_disclosed.append(IMPLEMENTER_NOTES_FIELD)
+        elif group == GroupAssignment.TREATMENT.value:
+            expected_excluded.append(IMPLEMENTER_NOTES_FIELD)
+        if list(view.get("disclosed_fields", [])) != expected_disclosed:
+            reasons.append({
+                "condition": "disclosure_list_mismatch",
+                "task_id": task_id,
+                "field": "disclosed_fields",
+                "expected": expected_disclosed,
+                "actual": view.get("disclosed_fields"),
+            })
+        if list(view.get("excluded_fields", [])) != expected_excluded:
+            reasons.append({
+                "condition": "disclosure_list_mismatch",
+                "task_id": task_id,
+                "field": "excluded_fields",
+                "expected": expected_excluded,
+                "actual": view.get("excluded_fields"),
+            })
+        if view.get("disclosure_label") != DISCLOSURE_LABEL:
+            reasons.append({
+                "condition": "disclosure_label_mismatch",
+                "task_id": task_id,
+                "expected": DISCLOSURE_LABEL,
+                "actual": view.get("disclosure_label"),
+            })
+        if view.get("is_view_manifest") is not False:
+            reasons.append({
+                "condition": "view_manifest_flag_invalid",
+                "task_id": task_id,
+                "actual": view.get("is_view_manifest"),
+            })
+        notes_present = bool(
+            view.get("implementer_notes_included")
+            and _has_notes(payload.get(IMPLEMENTER_NOTES_FIELD))
+        )
+        if view_group != group:
+            reasons.append({
+                "condition": "view_group_mismatch",
+                "task_id": task_id,
+                "metric_group": group,
+                "view_group": view_group,
+            })
+        if group == GroupAssignment.CONTROL.value:
+            if notes_present:
+                control_notes += 1
+            else:
+                reasons.append({
+                    "condition": "control_notes_missing",
+                    "task_id": task_id,
+                    "detail": "Control 首轮视图没有可审计的 Implementer_Notes",
+                })
+        elif group == GroupAssignment.TREATMENT.value:
+            if not notes_present and not view.get("implementer_notes_included") and "implementer_notes" not in payload:
+                treatment_blind += 1
+            else:
+                reasons.append({
+                    "condition": "treatment_blind_view_leak",
+                    "task_id": task_id,
+                    "detail": "Treatment 首轮视图包含 Implementer_Notes",
+                })
+
+    return {
+        "passed": not reasons,
+        "metric_sample_count": len(metric_groups),
+        "control_notes_count": control_notes,
+        "treatment_blind_count": treatment_blind,
+        "reasons": reasons,
+    }
 
 
 def relative_change(treatment_value: float, control_value: float) -> float:
@@ -732,8 +898,23 @@ def evaluate_success(
 
     # 12.10 缺陷检测：recall 相对 Control 提升 >= 阈值（相对变化，非百分点），
     # 或额外确认高风险缺陷 >= 阈值且 critical miss 未增加。
-    recall_improvement = relative_change(treatment.recall, control.recall)
-    recall_path = recall_improvement >= thresholds.recall_relative_improvement_min
+    # 兼容旧调用方手工构造 GroupMetrics 的 positional/keyword API：只要已有
+    # 原始 TP+misses 分子分母，就可推断 recall 已定义；真正空分母仍保持 undefined。
+    control_recall_denom = control.recall_denominator or (
+        control.true_positives + control.verified_misses
+    )
+    treatment_recall_denom = treatment.recall_denominator or (
+        treatment.true_positives + treatment.verified_misses
+    )
+    recall_defined = control_recall_denom > 0 and treatment_recall_denom > 0
+    recall_improvement = (
+        relative_change(treatment.recall, control.recall)
+        if recall_defined else None
+    )
+    recall_path = bool(
+        recall_defined
+        and recall_improvement >= thresholds.recall_relative_improvement_min
+    )
     extra_defects_path = (
         treatment.confirmed_high_risk_defects >= thresholds.additional_high_risk_defects_min
         and treatment.verified_misses <= control.verified_misses
@@ -743,10 +924,21 @@ def evaluate_success(
         "condition": "defect_detection",
         "satisfied": result.defect_detection_satisfied,
         "recall_relative_improvement": recall_improvement,
+        "recall_defined": recall_defined,
+        "control_recall_denominator": control_recall_denom,
+        "treatment_recall_denominator": treatment_recall_denom,
         "recall_relative_improvement_min": thresholds.recall_relative_improvement_min,
         "confirmed_high_risk_defects": treatment.confirmed_high_risk_defects,
         "additional_high_risk_defects_min": thresholds.additional_high_risk_defects_min,
     })
+    if not recall_defined:
+        result.reasons.append(make_evaluator_reason(
+            EvaluatorErrorCode.DEFECT_COVERAGE_INSUFFICIENT,
+            severity="warning",
+            batch_id=batch_id,
+            control_denom=control_recall_denom,
+            treatment_denom=treatment_recall_denom,
+        ).to_dict())
 
     # 12.11 误报：Treatment fp_rate - Control fp_rate（绝对差）<= 阈值。
     fp_abs_diff = treatment.false_positive_rate - control.false_positive_rate

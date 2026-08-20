@@ -1,0 +1,34 @@
+{
+  "schema": "callwarden-task-remediation-evidence/v1",
+  "task_id": "T-1786984798905-d08ee4ac",
+  "remediation_task_id": "T-1787043668441-8f98862c",
+  "failed_step_id": "S-1786984798905-8fe97f58",
+  "historical_remediation_step_id": "T-1786985562137-a1ed84c0",
+  "new_remediation_steps": [
+    "S-1787043668442-8f9c4dc0"
+  ],
+  "workspace_instance_id": "c4338f713c490556",
+  "authority": {
+    "authority_id": "LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/6e2dc5ba26fd4b595f72356e1de389694159165cac1caf6ee746be7239395408",
+    "task_db_fingerprint": "6e2dc5ba26fd4b595f72356e1de389694159165cac1caf6ee746be7239395408",
+    "daemon_pid": 49628,
+    "daemon_generation": "pid-49628",
+    "protocol_version": 1
+  },
+  "source": {
+    "docs/design/cw-role-handoff-task-loop.md": "07a5643bd94088c1ff172f574fa80a0866edc5e62a85ba97fad73e32801102ab",
+    "candidate_commit": "a8bed07d435dc3b24a40a7c247268fc513350dfa",
+    "candidate_capture_run": 109,
+    "historical_contaminated_capture_run": 108
+  },
+  "checks": {
+    "historical_failed_step_immutable": true,
+    "historical_evidence_immutable": true,
+    "task_step_resolve_attempt": "E_REMEDIATION_STEP_MISMATCH",
+    "resolution_event": "pending",
+    "evidence_append": "pending",
+    "gate_decision": "pending"
+  },
+  "generated_by": "codex-0a1-remediation-executor",
+  "generated_at_authority_timestamp": 1787043681.0090945
+}

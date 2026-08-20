@@ -1,0 +1,34 @@
+{
+  "schema": "task-bound-evidence-gate-v1",
+  "task_id": "T-1787031451808-d78cb519",
+  "remediation_task_id": "T-1787036952794-f3d19a10",
+  "step_id": "S-1787036952812-f4df2594",
+  "workspace": {
+    "project_root": "C:/git_work/callwarden",
+    "workspace_instance_id": "c4338f713c490556",
+    "authority_id": "LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/6e2dc5ba26fd4b595f72356e1de389694159165cac1caf6ee746be7239395408",
+    "endpoint": "http://127.0.0.1:8772",
+    "task_db_fingerprint": "6e2dc5ba26fd4b595f72356e1de389694159165cac1caf6ee746be7239395408",
+    "daemon_pid": 49628,
+    "daemon_generation": "pid-49628"
+  },
+  "source_hashes": {
+    "rust_ext/src/daemon/task_collab.rs": "001250030bf81ab07bb3574f3b684fdfa1e636fa",
+    "rust_ext/src/daemon/dispatch.rs": "572b257a27dbba64fcc75f8e4a460b62c1d38a7c"
+  },
+  "checks": {
+    "cargo_check_bin_cw_daemon": "pass",
+    "cargo_test_task_bound_evidence_and_gate_are_idempotent": "pass",
+    "historical_failed_step_mutated": false,
+    "historical_evidence_mutated": false,
+    "local_sqlite_fallback": false
+  },
+  "evidence": {
+    "evidence_id": "EV-T-1787036952794-f3d19a10-001",
+    "evidence_type": "test_run",
+    "payload_hash": "sha256:119edc9309a47d54be7a9aef7586fcd045fa6c3f5b05900d5ec3ea3d466bcd28",
+    "gate_request_id": "gate-T-1787036952794-f3d19a10-001",
+    "verifier": "cargo-test-and-daemon-evidence-gate",
+    "verifier_version": "v1"
+  }
+}

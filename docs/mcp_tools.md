@@ -2,6 +2,23 @@
 
 Call Warden 通过 MCP（Model Context Protocol）Server 暴露 237 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
+> **HTTP MVP 路由状态（H4B-N/C/I/E 收口）**：237 个公开工具的 backend 归类由 H0 冻结的
+> capability registry（`.trae-cn/evidence/http-daemon-capability-matrix.json`）唯一真相源决定：
+> **python_compat 193 / rust_native 44 / legacy_local 0**。HTTP 模式下：
+> - Rust `compat_route`（`rust_ext/src/daemon/http_server.rs`）将 107 个 read_only
+>   python_compat 方法路由到 H3 compat worker（第一批 H4C-1 默认 2 + H4C-2 符号组 17 +
+>   H4C-3 任务组 16 + H4C 第二批 compat read/index/governance 72，见
+>   `COMPAT_ROUTE_WHITELIST`）；
+>   两端一致性由 `server/compat_registry.py` 的 `RUST_COMPAT_ROUTE` /
+>   `validate_against_rust_route` 对齐门保证；
+> - 44 个 `rust_native` 方法走 Rust daemon dispatch（真实 RPC，如 `query.issues` /
+>   `query.tests`、`lease.*` 等）；
+> - 其余 python_compat 方法在 HTTP 模式统一 fail-closed：返回结构化
+>   `E_HTTP_COMPAT_UNSUPPORTED`（含 `tool` / `backend=python_compat` 与中文 message），
+>   不构造 CodeGraphDB，不得在 HTTP 失败时回退 SQLite、Named Pipe 或 UDS；
+> - `legacy_local` 方法仅 Legacy Baseline（stdio MCP/CLI）可用，HTTP 不可达。
+> `available` 必须由真实 route evidence 证明，不能从静态注册数推导。
+
 ## MCP 协议简介
 
 MCP（Model Context Protocol）是 Anthropic 推出的开放协议，用于 AI Agent 与外部工具/数据源通信。Call Warden 实现了 MCP Server，支持：
@@ -28,19 +45,24 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 |---|--------|--------|----------|-----------------|
 | 1 | **Workspace & Database** | 16 | workspace / db 构建 / branch | 1. Workspace & Database |
 | 2 | **Query & Search** | 24 | 符号 / 文件 / 语义搜索 / 摘要 / RAG / Token 账本 | 2. Query & Search |
-| 3 | **Call Chain Analysis** | 12 | 调用链 / 拓扑 / 循环 / 孤儿 / 模块图 / 热力图 | 3. Call Chain Analysis |
+| 3 | **Call Chain Analysis** | 14 | 调用链 / 拓扑 / 循环 / 孤儿 / 模块图 / 热力图 / 调用差异 | 3. Call Chain Analysis |
 | 4 | **Code Health & Metrics** | 12 | 度量 / 健康检查 / 演化 / 热点 / 流失 / 缺陷关联 | 4. Code Health & Metrics |
-| 5 | **Task Orchestration** | 22 | 任务 CRUD / 审批 / 质量门禁 / 符号归因 / capture-diff | 5. Task Orchestration |
+| 5 | **Task Orchestration** | 30 | 任务 CRUD / 审批 / 质量门禁 / 符号归因 / capture-diff / 后台 job / 任务-提交关联 | 5. Task Orchestration |
 | 6 | **Agent Rule Memory** | 11 | 候选 / 审核 / 生效 / 同步 / 提取 / 清理 / 种子 | 6. Agent Rule Memory |
 | 7 | **Audit & Bootstrap** | 10 | 审计链 / 密钥轮换 / 自举 / 检查门禁 / 安全护栏 | 7. Audit & Bootstrap |
-| 8 | **Git Integration** | 5 | git 历史 / commit / 变更 / 统计 / 符号历史 | 8. Git Integration |
-| 9 | **Semgrep & Defects** | 16 | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 / 符号静态检查 / 变更-缺陷关联 | 9. Semgrep & Defects |
+| 8 | **Git Integration** | 6 | git 历史 / commit / 变更 / 统计 / 符号历史 / 快照对比 | 8. Git Integration |
+| 9 | **Semgrep & Defects** | 18 | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 / 符号静态检查 / 变更-缺陷关联 | 9. Semgrep & Defects |
 | 10 | **Coverage & Ownership** | 19 | 注释 / 测试覆盖率 / 测试 case 关联 / 测试稳定性 / CODEOWNERS / 所有权 / 注释恢复 | 10. Coverage & Ownership |
 | 11 | **GC** | 11 | 外部符号 / retention / policy / 备份 / 审计 | 11. GC |
-| 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
-| **合计** | **179** | | |
+| 12 | **Diagnostics** | 26 | clone 检测 / clone group / LSP / 安全编辑 / 跨仓库分析 / clone 感知影响 | 12. Diagnostics |
+| 13 | **构建上下文感知** | 9 | 工具链注册 / build context / resolved edges / 指标 | —（L5 新增域） |
+| 14 | **只读协同查询** | 6 | 协同证据 / 门禁决策 / 角色视图 / 新鲜度 | —（P1 协同域） |
+| 15 | **依赖图与环检测** | 10 | 依赖边 / 接口提供者 / 环检测 / 版本校验 / 工件身份 | —（P2 域） |
+| 16 | **Assignment 与 Lease** | 8 | lease 获取 / 续租 / 释放 / assignment 创建撤销 | —（P4 域） |
+| 17 | **Identity 与 Attestation** | 7 | 动作身份 / 会话隔离 / attestation 撤销 / 注册 | —（P3 域） |
+| **合计** | **237** | | |
 
-> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 237（含若干跨分类工具、L5 构建上下文感知工具、协同/身份/依赖查询与写工具）。本表只统计每个分类独有的工具。
+> **注**：合计 237 与注册的 MCP 工具数一致（237 个工具全部归入 17 个主分类，无遗漏）。其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 等独立能力域（对应需求 L5 与 P1-P4 增量模块），无对应 CLI 主分类。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -131,6 +153,7 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 | 测试稳定性 | `get_test_stability` | `cw tests --history` | pass_rate / recent_failures / by_test |
 | 变更-缺陷关联 | `get_defect_correlation` | `cw evolution --defects` | change_count / defect_count / defect_rate |
 | Semgrep 扫描 | `run_semgrep_scan` | `cw semgrep scan` | 扫描入库 |
+| Semgrep 异步扫描 | `semgrep_scan_async` | — | 后台 job 扫描，不阻塞 MCP 请求 |
 | Semgrep 统计 | `get_semgrep_stats` | `cw semgrep stats` | findings 汇总 |
 | Semgrep findings | `get_semgrep_findings` | `cw semgrep list` | 按条件查询 |
 | 问题汇总 | `get_issue_summary` | `cw --issue-summary` | 按模块/严重度聚合 |
@@ -161,6 +184,10 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 | 场景 | MCP 工具 | 对应 CLI | 说明 |
 |------|---------|---------|------|
 | 检测克隆 | `detect_clones` | `cw clone detect` | Type-1/2/3 检测 |
+| 异步克隆检测 | `detect_clones_async` | — | 后台 job 检测，不阻塞 MCP 请求 |
+| 克隆组列表 | `list_clone_groups` | — | 读取 async 结果，按相似度降序 |
+| 克隆组详情 | `get_clone_group_detail` | — | 组详情 + 成员符号 |
+| 克隆组统计 | `get_clone_group_stats` | — | total/type1-3/成员/文件数 |
 | 列出克隆 | `list_clones` | `cw clone list` | 支持按 symbol_id 过滤 |
 | 克隆统计 | `get_clone_stats` | `cw clone stats` | 数量/影响文件/类型分布 |
 | 清空克隆 | `clear_clones` | `cw clone clear` | 清空检测结果 |
@@ -173,19 +200,19 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 
 #### [2] Query & Search（24 个）
 
-`search_symbols`、`get_symbol`、`get_symbol_location`、`get_file_symbols`、`get_symbol_history`、`get_file_history`、`get_recent_changes`、`get_symbol_content_by_hash`、`file_read`、`file_grep`、`file_list`、`file_symbol_content`、`semantic_search`、`find_similar_functions`、`embed_symbols`、`embed_single_symbol`、`generate_summary`、`get_summary`、`project_brief`、`repo_map`、`ask_codebase`、`record_token_savings`、`get_token_savings_report`
+`search_symbols`、`get_symbol`、`get_symbol_location`、`get_file_symbols`、`get_symbol_history`、`get_file_history`、`get_recent_changes`、`get_symbol_content_by_hash`、`file_read`、`file_grep`、`file_list`、`file_symbol_content`、`semantic_search`、`find_similar_functions`、`embed_symbols`、`embed_symbols_async`、`embed_single_symbol`、`generate_summary`、`get_summary`、`project_brief`、`repo_map`、`ask_codebase`、`record_token_savings`、`get_token_savings_report`
 
-#### [3] Call Chain Analysis（12 个）
+#### [3] Call Chain Analysis（14 个）
 
-`get_callers`、`get_callees`、`get_impact`、`get_call_chain_down`、`get_top_callers`、`get_orphan_symbols`、`get_deepest_functions`、`get_module_call_stats`、`detect_cycles`、`get_call_heatmap`、`export_module_graph`、`get_topological_order`
+`get_callers`、`get_callees`、`get_impact`、`get_call_chain_down`、`get_top_callers`、`get_orphan_symbols`、`get_deepest_functions`、`get_module_call_stats`、`detect_cycles`、`get_call_heatmap`、`export_module_graph`、`get_topological_order`、`diff_callers`、`diff_callees`
 
 #### [4] Code Health & Metrics（12 个）
 
 `get_code_metrics_summary`、`get_complexity_hotspots`、`get_coupling_analysis`、`get_function_metrics`、`get_largest_functions`、`get_most_coupled_functions`、`get_code_health_check`、`check_file_health`、`evolution_frequency`、`defect_correlation`、`hotspot_evolution`、`churn_analysis`
 
-#### [5] Task Orchestration（22 个）
+#### [5] Task Orchestration（30 个）
 
-`task_create`、`task_create_subtask`、`task_split`、`task_create_from_plan`、`task_plan_template`、`task_next_step`、`work_next_job`、`task_resolve_block`、`task_report_step`、`task_rollback`、`task_apply`、`task_close`、`task_capture_diff`、`task_list`、`task_status`、`task_status_tree`、`task_completion_review`、`task_quality_findings`、`task_resolve_quality_finding`、`record_task_symbol_change`、`link_edit_audit_symbols`、`get_task_symbol_changes`、`get_symbol_change_tasks`
+`task_create`、`task_create_subtask`、`task_split`、`task_create_from_plan`、`task_plan_template`、`task_next_step`、`work_next_job`、`task_resolve_block`、`task_report_step`、`task_rollback`、`task_apply`、`task_close`、`task_capture_diff`、`task_list`、`task_status`、`task_status_tree`、`task_completion_review`、`task_quality_findings`、`task_resolve_quality_finding`、`record_task_symbol_change`、`link_edit_audit_symbols`、`get_task_symbol_changes`、`get_symbol_change_tasks`、`cancel_job`、`list_jobs`、`get_job_stats`、`wait_for_job`、`get_job_status`、`get_task_commits`、`get_commit_tasks`
 
 #### [6] Agent Rule Memory（11 个）
 
@@ -195,25 +222,45 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 
 `audit_verify_chain`、`rotate_audit_signing_key`、`list_audit_signing_keys`、`bootstrap_status`、`run_check_gate`、`resolve_gate_findings`、`guardrail_scan`、`guardrail_check_edit`、`guardrail_list_rules`、`guardrail_add_rule`
 
-#### [8] Git Integration（5 个）
+#### [8] Git Integration（6 个）
 
-`import_git_history`、`get_git_commits`、`get_commit_changes`、`get_git_stats`、`get_symbol_commit_history`
+`import_git_history`、`get_git_commits`、`get_commit_changes`、`get_git_stats`、`get_symbol_commit_history`、`compare_snapshots`
 
-#### [9] Semgrep & Defects（14 个）
+#### [9] Semgrep & Defects（18 个）
 
-`run_semgrep_scan`、`get_semgrep_stats`、`get_semgrep_findings`、`get_issue_summary`、`find_issues`、`defect_search`、`defect_suggest_fix`、`defect_learn`、`defect_stats`、`blast_radius`、`get_vulnerability_blast_radius`、`diff_to_symbol`、`review_readiness`、`cross_layer_impact`
+`run_semgrep_scan`、`semgrep_scan_async`、`scan_semgrep_incremental`、`get_semgrep_stats`、`get_semgrep_findings`、`get_issue_summary`、`get_symbol_issues`、`find_issues`、`defect_search`、`defect_suggest_fix`、`defect_learn`、`defect_stats`、`get_defect_correlation`、`blast_radius`、`get_vulnerability_blast_radius`、`diff_to_symbol`、`review_readiness`、`cross_layer_impact`
 
-#### [10] Coverage & Ownership（15 个）
+#### [10] Coverage & Ownership（19 个）
 
-`get_comment_coverage`、`get_uncommented_symbols`、`get_test_coverage`、`get_comment_from_version`、`restore_comment`、`restore_all_comments`、`import_coverage`、`get_coverage_for_symbol`、`find_uncovered_functions`、`test_impact_selection`、`who_to_ask`、`get_ownership_map`、`parse_codeowners`、`import_codeowners`、`import_git_blame`
+`get_comment_coverage`、`get_uncommented_symbols`、`get_test_coverage`、`get_test_cases`、`get_tested_functions`、`get_test_coverage_summary`、`get_test_stability`、`get_comment_from_version`、`restore_comment`、`restore_all_comments`、`import_coverage`、`get_coverage_for_symbol`、`find_uncovered_functions`、`test_impact_selection`、`who_to_ask`、`get_ownership_map`、`parse_codeowners`、`import_codeowners`、`import_git_blame`
 
 #### [11] GC（11 个）
 
 `get_project_dependencies`、`import_project_dependencies`、`prune_external_symbols`、`gc_retention`、`gc_policy_get`、`gc_policy_set`、`gc_archive_list`、`gc_archive_inspect`、`gc_archive_import`、`gc_audit_list`、`gc_audit_get`
 
-#### [12] Diagnostics（21 个）
+#### [12] Diagnostics（26 个）
 
-`detect_clones`、`list_clones`、`get_clone_stats`、`clear_clones`、`propose_edit`、`propose_range_patch`、`propose_symbol_patch`、`propose_symbol_id_patch`、`revert_edit`、`get_edit_history`、`get_edit_stats`、`detect_cross_repo_deps`、`find_shared_symbols`、`cross_repo_impact`、`cross_repo_summary`、`lsp_hover`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`、`lsp_completion`、`lsp_check_available`
+`detect_clones`、`detect_clones_async`、`list_clone_groups`、`get_clone_group_detail`、`get_clone_group_stats`、`list_clones`、`get_clone_stats`、`clear_clones`、`get_clone_aware_impact`、`propose_edit`、`propose_range_patch`、`propose_symbol_patch`、`propose_symbol_id_patch`、`revert_edit`、`get_edit_history`、`get_edit_stats`、`detect_cross_repo_deps`、`find_shared_symbols`、`cross_repo_impact`、`cross_repo_summary`、`lsp_hover`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`、`lsp_completion`、`lsp_check_available`
+
+#### [13] 构建上下文感知（9 个）
+
+`get_toolchain`、`list_toolchains`、`get_build_context`、`list_build_contexts`、`get_active_build_context`、`get_workspace_toolchains`、`get_resolved_edges`、`count_resolved_edges`、`get_metrics`
+
+#### [14] 只读协同查询（6 个）
+
+`append_evidence`、`find_evidence`、`get_freshness_status`、`get_gate_decision`、`get_role_view`、`submit_verdict`
+
+#### [15] 依赖图与环检测（10 个）
+
+`build_hard_dependency_edges`、`get_dependency_edges`、`detect_cycle`、`validate_revision_dependencies`、`publish_interface`、`get_interface_providers`、`select_interface_provider`、`import_envelope_dependencies`、`record_artifact_identity`、`get_artifact_freshness`
+
+#### [16] Assignment 与 Lease（8 个）
+
+`lease_acquire`、`lease_renew`、`lease_release`、`lease_status`、`lease_list_events`、`assignment_create`、`assignment_show`、`assignment_revoke`
+
+#### [17] Identity 与 Attestation（7 个）
+
+`record_action_identity`、`get_action_identity`、`check_action_identity`、`check_session_separation`、`get_attestation_validity`、`register_attestation_revocation`、`list_attestation_revocations`
 
 > **注**：以下章节按原有功能分组保留各工具的详细参数与返回值说明。MCP 工具命名不重命名，仅审计与归档（详见 `.mcp_audit.md` §5 设计决策）。
 
@@ -375,6 +422,15 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 运行 Semgrep 扫描并将结果存入数据库。
 - **参数**：`config: str = "p/default"`, `languages: list = None`, `timeout: int = 300`
 - **返回**：`dict`
+
+### `semgrep_scan_async`
+异步运行 Semgrep 扫描（后台 job，不阻塞 MCP 请求）。把 Semgrep CLI 扫描提交为
+后台 job（bounded external process，受 timeout 限制），立即返回 job_id，适合大型
+代码库，避免同步执行导致 MCP 请求超时。
+- **参数**：`config: str = "p/default"`, `languages: list = None`, `timeout: int = 300`
+- **返回**：`dict` — `{job_id, status: "pending", job_type: "semgrep_scan", message: "submitted"}`
+- **与 `run_semgrep_scan` 差异**：本工具不等待扫描完成，提交后立即返回；
+  扫描结果查询配合后台任务接口（如 `get_job_status`）获取进度。
 
 ### `scan_semgrep_incremental`
 增量 Semgrep 扫描：只扫描 git diff 变更文件并清理旧 findings（A14 修复，2026-07-20）。
@@ -840,6 +896,53 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 
 > **三角关联场景**：`task_capture_diff`（传 source_commit_hash）→ `get_task_commits`（task→commit）→ `get_commit_tasks`（commit→task）→ `get_symbol_change_tasks`（symbol→task）。配合 CLI `cw task show` / `cw symbol-history` / `cw git show` 的关联段输出。
 
+### `detect_clones_async`
+异步检测重复代码（后台 job，不阻塞 MCP 请求）。把 clone detect 提交为后台 job，
+存 clone groups（不展开 pairs），立即返回 job_id，适合 20 万符号级别的代码库，
+避免同步执行导致 MCP 请求超时。
+- **参数**：`file_filter: str = ""`, `min_lines: int = 5`, `similarity_threshold: float = 0.8`
+- **返回**：`dict` — `{job_id, status: "pending", job_type: "clone_detect", message: "submitted"}`
+- **与 `detect_clones` 差异**：本工具不等待检测完成，提交后立即返回。
+
+### `list_clone_groups`
+列出 clone groups（Phase 7.0 新增），读取 `detect_clones_async` 的结果。每组含
+representative + member_count，不展开成 pairs，避免 N×N 爆炸。
+- **参数**：`clone_type: int = 0`（0=全部，1/2/3 对应 Type-N）, `min_similarity: float = 0.0`, `limit: int = 100`
+- **返回**：`list[dict]` — clone group 列表，按相似度降序
+
+### `get_clone_group_detail`
+获取 clone group 详情（含成员符号）。
+- **参数**：`group_id: int`, `members_limit: int = 100`
+- **返回**：`dict` — `{"group": {...}, "members": [{"symbol_id", "name", "qualified_name", "file_path", "start_line"}, ...]}`；group 不存在时返回 `{"error": "group not found: <id>"}`
+
+### `get_clone_group_stats`
+获取 clone groups 统计信息。
+- **参数**：无
+- **返回**：`dict` — `{total_groups, type1, type2, type3, total_members, affected_files, affected_symbols}`
+
+### `cancel_job`
+请求取消后台任务。
+- **参数**：`job_id: str`
+- **返回**：`dict` — `{cancelled: bool, job_id}`
+- **行为**：pending 状态直接标记为 cancelled；running 状态设置 cancel_requested，
+  executor 轮询后退出；终态无操作。
+
+### `list_jobs`
+列出后台任务（job 管理查询，与 `cancel_job` / `wait_for_job` 配套）。
+- **参数**：`job_type: str = ""`（任务类型过滤，如 `"clone_detect"`）, `status: str = ""`（状态过滤，如 `"running"`）, `limit: int = 100`
+- **返回**：`list[dict]` — 任务列表，按 `created_at` 降序
+
+### `get_job_stats`
+获取任务统计信息。
+- **参数**：无
+- **返回**：`dict` — `{pending, running, completed, cancelled, failed, total}`
+
+### `wait_for_job`
+等待后台任务完成并返回 `result_summary`（Phase 7.4）。适用于
+"submit → wait → get result" 模式。
+- **参数**：`job_id: str`（如 `"J-1783698970719-3a4b5c6d"`）, `timeout: float = 30.0`, `poll_interval: float = 0.5`
+- **返回**：`dict` — `{job_id, status: "completed"/"cancelled"/"failed"/"timeout", progress, result_summary, error, elapsed}`；job 不存在时返回 `{"error": "job not found: <id>"}`
+
 ---
 
 ## 文件操作工具
@@ -939,6 +1042,14 @@ Agent 通过 MCP 读取代码，完全替代 IDE 内置 Read/Grep/Glob 工具。
 为所有函数生成向量嵌入（首次使用前需执行）。
 - **参数**：`force: bool = False`
 - **返回**：`dict` — `{total, success, skipped, failed}`
+
+### `embed_symbols_async`
+异步嵌入向量（后台 job，不阻塞 MCP 请求）。把 vector embedding 提交为后台 job，
+立即返回 job_id，适合 20 万符号级别的代码库，避免同步执行导致 MCP 请求超时。
+- **参数**：`batch_size: int = 32`, `force: bool = False`
+- **返回**：`dict` — `{job_id, status: "pending", job_type: "vector_embed", message: "submitted"}`
+- **与 `embed_symbols` 差异**：本工具不等待嵌入完成，提交后立即返回；
+  `force=False` 为增量模式，只嵌入尚未有嵌入的符号。
 
 ### `embed_single_symbol`
 为单个函数生成向量嵌入。
@@ -1632,15 +1743,15 @@ Agent 提供稳定的行为约束。
 
 ---
 
-## L5 构建上下文感知工具（ToolchainMixin）
+## 构建上下文感知工具（ToolchainMixin）
 
-L5 为固件/嵌入式 C/C++ 场景提供"构建上下文感知"能力。核心模型是双层调用关系：
+构建上下文感知面向固件/嵌入式 C/C++ 场景，核心模型是双层调用关系：
 - **raw_calls**：从源码直接解析出的原始调用（CAS 共享、`file_hash` 索引，与构建上下文无关）
 - **resolved_edges**：基于某个 `build_context`（编译宏、include 路径、工具链版本）解析后的跨文件调用边（`workspace_id`+`build_context_hash` 隔离）
 
 构建上下文来源：`compile_commands.json`（clangd compilation database）、Kconfig/.config、toolchain probe（`gcc -dM -E`）。
 
-> **设计原则**：所有 L5 MCP 工具均为**只读查询**。写操作（`register`/`bind`/`import`/`activate`/`delete`）走 CLI `cw build-context ...`，避免与 MCP 长连接撞 SQLite 锁。
+> **设计原则**：所有构建上下文感知 MCP 工具均为**只读查询**。写操作（`register`/`bind`/`import`/`activate`/`delete`）走 CLI `cw build-context ...`，避免与 MCP 长连接撞 SQLite 锁。
 
 ### `list_toolchains`
 
@@ -1693,7 +1804,7 @@ L5 为固件/嵌入式 C/C++ 场景提供"构建上下文感知"能力。核心�
 
 ### `get_resolved_edges(workspace_id, build_context_hash, caller_symbol_id?, limit=100)`
 
-查询某个构建上下文下的解析后调用边。这是 L5 的核心查询——给定宏定义/include 路径后，哪些跨文件调用边是真实可达的。
+查询某个构建上下文下的解析后调用边。这是构建上下文感知的核心查询——给定宏定义/include 路径后，哪些跨文件调用边是真实可达的。
 
 - **参数**：
   - `workspace_id: int`
@@ -2219,7 +2330,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 **讨论结论**：237 个工具已够用，应优化组合查询路径而非继续扩功能面。
 
 1. **当前状态盘点**：
-   - 工具数：237（含 L5 构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）
+   - 工具数：237（含构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）
    - 12 主分类已覆盖所有 Agent 常见任务场景
    - 已实现的"组合工具"：`compare_snapshots` / `diff_callers` / `diff_callees` / `get_clone_aware_impact` / `get_defect_correlation` / `get_symbol_issues`（聚合 Semgrep + Guardrail findings）
 
@@ -2245,3 +2356,18 @@ pip install tree-sitter tree-sitter-languages fastmcp
 - [CLI 命令参考](cli_reference.md)：CLI 等价命令
 - [架构设计](architecture.md)：Mixin 架构与扩展指南
 - [快速开始](quickstart.md)：完整示例会话
+
+## 路由矩阵与收敛架构（T01/T05）
+
+> 2026-08-20 起，239 个 MCP 工具的路由由
+> `deliverables/software-company/tool_migration_matrix.json` 单一真相源维护
+> （项目：cw-rust-client-convergence）。
+
+- **自描述接口**：daemon 提供 `GET /v1/meta/tools`，返回 239 工具
+  `{name, module, target_backend, rpc_method, op_class, batch, status}`。
+- **一致性门禁**：`scripts/verify_route_matrix.py`（239/239 机器核对）、
+  `scripts/check_client_purity.py`（Python 薄壳 0 业务 SQL）。
+- **协议**：`docs/design/rust-client-convergence-protocol.md`。
+- **迁移指南**：`docs/design/cw-rust-client-convergence-migration-guide.md`。
+- **差异工具**（本次补齐文档）：`task_remediation_create`（task.remediation.create）、
+  `task_step_resolve`（task.step.resolve）——两个 P1 collab 写工具此前文档未收录。

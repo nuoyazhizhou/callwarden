@@ -90,3 +90,10 @@ Rust API 必须返回稳定错误码：`DB_OPEN_FAILED`、`DB_LOCKED`、`SCHEMA_
 1. v1→v3 的数据形状迁移（`files` 到 `file_instances`、symbols/calls/file_versions 重建）尚未以 Rust versioned migration 实现；当前实现会安全拒绝，而不是假装迁移成功。
 2. `CodeGraphDB` 的业务写事务仍使用 Python `sqlite3` 连接，尚未完全改为 Rust-owned transaction；这需要后续 BuildService/Manifest/Task 写路径迁移共同完成。
 3. v1/v2/v10/v41/v42 fixtures、kill-9、跨平台和双 UID 矩阵尚未全部执行；现有 focused tests 不能替代完整验收。
+
+## 9. 2026-08-08 收尾记录
+
+- 修复 `rust_ext/src/storage.rs` SCHEMA_VERSION 漂移（44→47）：`T-1785919930949` 已同步 daemon/mod.rs 与 abi_contract.rs 至 47，但遗漏 storage.rs；现全部对齐 `db/schema.py`（47）。
+- 确认 `SCHEMA_TABLES_SQL`/`SCHEMA_INDEXES_SQL` 仅作参考常量，生产 schema 走编译期嵌入 `db/schema.py` 的 `canonical_schema_sql()`，无需同步。
+- 修复后 `cargo test --lib storage::` 8 passed / 0 failed（建库、legacy v1-v3 迁移、checksum 策略 A、backup/checkpoint、SCHEMA_TOO_NEW）。
+- 阻塞关闭项目不变：业务写事务 Rust-owned 化仍依赖 C4/C6（Manifest/BuildService 写路径迁移）；完整验收矩阵由 C9/C10 覆盖。

@@ -1,0 +1,89 @@
+sequenceDiagram
+    participant A as Agent A (MCP Client)
+    participant MA as MCP Server A (Python thin)
+    participant B as Agent B (MCP Client)
+    participant MB as MCP Server B (Python thin)
+    participant D as cw-daemon (Rust, 共享单实例)
+    participant SP as SerializationPoint
+    participant TC as task_collab store
+
+    A->>MA: tools/call task.create {title, workspace}
+    B->>MB: tools/call task.create {title, workspace}
+    MA->>D: POST /v1/rpc task.create (workspace_instance_id)
+    MB->>D: POST /v1/rpc task.create (workspace_instance_id)
+    D->>SP: is_protected_mutation("task.create") → execute(fn)
+    SP->>TC: fn1: task_collab.handle_task_create (lock acquired)
+    TC-->>SP: task#1 created
+    SP-->>D: ok response (task#1)
+    D-->>MA: {ok, task#1}
+    SP->>TC: fn2: task_collab.handle_task_create (wait → lock)
+    TC-->>SP: task#2 created
+    SP-->>D: ok response (task#2)
+    D-->>MB: {ok, task#2}
+    Note over D,TC: 单实例 daemon 内全序串行，无数据丢失、无 E_* 误冲突
+
+sequenceDiagram
+    participant Ag as Agent
+    participant TS as McpToolShell (Python thin)
+    participant RH as RouteHelper
+    participant HC as HttpDaemonRpcClient
+    participant HS as HttpServer (Rust)
+    participant DP as Dispatch
+    participant TR as ToolRegistry
+    participant H as Native Handler (fs/metrics/admin/edit/query)
+
+    Ag->>TS: tools/call build_graph
+    TS->>RH: _route("workspace.build_graph", {})
+    RH->>RH: inject_workspace_id(params) → {workspace_instance_id}
+    RH->>HC: call_with_autostart("workspace.build_graph", params)
+    HC->>HS: POST /v1/rpc
+    HS->>DP: dispatch_rpc(method, params)
+    DP->>TR: lookup("workspace.build_graph") → rust_native
+    DP->>H: handle_workspace_build_graph(peer, params)
+    H-->>DP: {ok, true}
+    DP-->>HS: ok envelope
+    HS-->>HC: {ok, true}
+    HC-->>RH: true
+    RH-->>TS: true (原样返回，无映射/无本地逻辑)
+    TS-->>Ag: result true
+
+sequenceDiagram
+    participant Ag as Agent
+    participant TS as McpToolShell
+    participant HC as HttpDaemonRpcClient
+    participant HS as HttpServer (Rust)
+    participant DP as Dispatch
+    participant CA as CompatAdapter
+    participant PW as Python H3 compat worker (过渡期)
+
+    Ag->>TS: tools/call get_impact
+    TS->>HC: call("get_impact", {workspace_instance_id})
+    HC->>HS: POST /v1/rpc get_impact
+    HS->>DP: dispatch_rpc
+    DP->>DP: compat_route("get_impact") → python_compat
+    DP->>CA: dispatch_arc("get_impact", params)
+    CA->>PW: 帧调度 (worker_protocol_version, request_id, params)
+    PW-->>CA: 帧结果 (结构化)
+    CA-->>DP: ok
+    DP-->>HS: ok envelope
+    HS-->>HC: result
+    HC-->>TS: result
+    TS-->>Ag: result (行为与 native 一致)
+    Note over DP,PW: 白名单只减不加；M2 deadline 后此路径删除
+
+sequenceDiagram
+    participant U as User / Script
+    participant CLI as cli/main.py (Python thin)
+    participant RH as RouteHelper
+    participant HC as HttpDaemonRpcClient
+    participant AU as daemon_autostart
+
+    U->>CLI: cw status
+    CLI->>RH: route_rpc("query.status", {}, READ_ONLY)
+    RH->>HC: call_with_autostart
+    HC->>AU: resolve endpoint + ensure_daemon (有界窗口 10s)
+    AU-->>HC: 启动失败 / manifest 不匹配
+    HC-->>RH: DaemonUnavailableError (E_HTTP_DAEMON_UNAVAILABLE)
+    RH-->>CLI: 抛错（绝不回退本地 SQLite）
+    CLI-->>U: 明确报错 "daemon 不可用：请先运行 cw daemon start"
+    Note over U,CLI: M4：无本地只读降级，local/legacy 仅测试可用

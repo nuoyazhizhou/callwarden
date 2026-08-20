@@ -1,0 +1,55 @@
+{
+  "batch_id": "B-1786007826323-60a9ada9",
+  "evidence_role": "read_only_historical_batch_binding",
+  "authority": "batch_specific_reviewer_home",
+  "reviewer_home": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9",
+  "experiments_dir": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments",
+  "immutable": true,
+  "files": {
+    "jsonl": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments\\B-1786007826323-60a9ada9.jsonl",
+      "sha256": "5aca1f76f1d66f93971276a0d9959642325918bccd02f746d0f7032dcd92912f",
+      "bytes": 6713481,
+      "record_count": 112,
+      "record_types": {
+        "blind_view": 32,
+        "review_metrics": 30,
+        "verdict_change": 30,
+        "reveal_event": 15,
+        "invalid_sample": 4,
+        "disclosure": 1
+      }
+    },
+    "report": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments\\report_B-1786007826323-60a9ada9.json",
+      "sha256": "d801bcee52337bc6d317bec73672610913283cfeded57f500b5ab5099df9cb1b",
+      "bytes": 11897
+    },
+    "manifest": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments\\manifest_B-1786007826323-60a9ada9.json",
+      "sha256": "e334c13773af4e7f3ac6c2b3680967a5f52436d940b793872ccdc8130796a022",
+      "bytes": 21679
+    },
+    "evidence_manifest": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments\\evidence_manifest_B-1786007826323-60a9ada9.json",
+      "sha256": "a6cf384303d6debf6c6056758819855d84d665cfa2a5d4951b07a777403b6b99",
+      "bytes": 1528
+    },
+    "blind_package_manifest": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments\\blind_package_manifest_B-1786007826323-60a9ada9.json",
+      "sha256": "18afba04c8024aeaccad550632da11c853c6575e3ebfee3c5965a3c95d47f43c",
+      "bytes": 5732
+    },
+    "batch_config": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\g0-reviewer-B-1786007826323-60a9ada9\\.callwarden\\experiments\\batch_config.json",
+      "sha256": "0da5be966ea125e2befa625b7b3a126caf2fb5396973c6d61c4b0b2b9f6f6ca9",
+      "bytes": 5843
+    }
+  },
+  "verification": {
+    "resolve_paths_from_this_machine": true,
+    "compare_hashes_before_and_after_review": true,
+    "do_not_copy_or_rewrite_historical_files": true,
+    "source_of_truth_for_p08_state": "jsonl_and_report_in_reviewer_home"
+  }
+}

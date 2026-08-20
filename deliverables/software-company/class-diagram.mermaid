@@ -1,0 +1,122 @@
+classDiagram
+    class Backend {
+        <<enum>>
+        RUST_NATIVE
+        TASK_RPC
+        PYTHON_COMPAT
+        DECLARED_UNAVAILABLE
+    }
+    class OpClass {
+        <<enum>>
+        READ_ONLY
+        PROTECTED_MUTATION
+        GOVERNANCE_WRITE
+    }
+    class ToolRoute {
+        +str name
+        +str module
+        +Backend current_backend
+        +Backend target_backend
+        +str rpc_method
+        +OpClass op_class
+        +str batch
+        +str status
+        +validate() Result
+    }
+    class ToolRegistry {
+        +Dict~str, ToolRoute~ routes
+        +lookup(method) Optional~ToolRoute~
+        +iter() Iterator~ToolRoute~
+        +validate_coverage(total) Result
+        +list_by_backend(backend) List~ToolRoute~
+    }
+    ToolRegistry o-- ToolRoute : 239 entries
+    ToolRoute --> Backend
+    ToolRoute --> OpClass
+
+    class DaemonState {
+        +Instant start_time
+        +u32 schema_version
+        +u32 pid
+        +Arc~TaskCollabStore~ task_collab_store
+        +str authority_id
+        +str transport
+        +str task_db_fingerprint
+        +Option~Arc~TaskLoopControlPlane~~ task_loop_control
+    }
+    class DaemonStateExt {
+        <<trait>>
+        +handle_query_stats(peer, params) Result~Value, DaemonRpcError~
+        +handle_workspace_register(peer, params) Result~Value, DaemonRpcError~
+        +handle_task_create(peer, params) Result~Value, DaemonRpcError~
+        +handle_workspace_file_read(peer, params) Result~Value, DaemonRpcError~
+        +handle_query_metrics_summary(peer, params) Result~Value, DaemonRpcError~
+        +handle_job_submit(peer, params) Result~Value, DaemonRpcError~
+        +handle_admin_gc_policy_set(peer, params) Result~Value, DaemonRpcError~
+        +handle_edit_propose(peer, params) Result~Value, DaemonRpcError~
+    }
+    class Dispatch {
+        +dispatch_rpc(state, peer, method, params, fds, sp) Value
+        -dispatch_inner(state, peer, method, params, fds) Result~Value, DaemonRpcError~
+        -require_workspace_owner(peer, params) Result
+    }
+    class SerializationPoint {
+        +execute(fn) Result~T, DaemonRpcError~
+        +execute_with_timeout(fn, timeout) Result~T, DaemonRpcError~
+        +try_acquire() bool
+    }
+    class CompatAdapter {
+        +worker_status() str
+        +dispatch_arc(method, params) Result~Value, DaemonRpcError~
+        +stop()
+    }
+    class HttpServer {
+        +str capability_registry_revision
+        +handle_rpc(req) Response
+        +meta_tools() Value
+    }
+    class DaemonRpcError {
+        +str code
+        +str message
+        +invalid_params(msg) DaemonRpcError
+        +method_not_found(method) DaemonRpcError
+        +permission_denied(msg) DaemonRpcError
+    }
+    DaemonState ..|> DaemonStateExt : impl
+    Dispatch --> DaemonState : &mut S (DaemonStateExt)
+    Dispatch --> SerializationPoint : protected mutations
+    Dispatch --> ToolRegistry : lookup fallback
+    Dispatch --> CompatAdapter : compat fallback (过渡期)
+    HttpServer --> Dispatch : dispatch_rpc
+    HttpServer --> ToolRegistry : meta_tools
+
+    class HttpDaemonRpcClient {
+        -str _resolved_endpoint
+        -Dict~str,str~ _workspace_instance_by_root
+        +call(method, params) Any
+        +call_with_autostart(method, params) Any
+        +discover() str
+        +verify_health(endpoint, manifest) None
+        +configure_workspace(project_root) None
+        +_ensure_remote_snapshot(db_path) Optional~str~
+    }
+    class RouteHelper {
+        +route_rpc(rpc_method, params, op_class) Any
+        +inject_workspace_id(params) Dict
+        +fail_closed(method, exc) NoReturn
+    }
+    class McpToolShell {
+        +register(mcp) None
+        +_route(method, params) Any
+    }
+    class CliDispatcher {
+        +dispatch(subcommand, args) int
+        +call_daemon(method, params) Any
+    }
+    class DaemonUnavailableError {
+        +str code
+    }
+    RouteHelper --> HttpDaemonRpcClient : call_with_autostart
+    McpToolShell --> RouteHelper
+    CliDispatcher --> RouteHelper
+    RouteHelper --> DaemonUnavailableError : raise (fail-closed)

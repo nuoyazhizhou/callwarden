@@ -71,7 +71,7 @@ $HOME/.callwarden/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v46**
+当前 Schema 版本：**v50**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -114,6 +114,10 @@ v43 P1 契约驱动事件表（task_contract_revisions / task_role_view_events /
 v44 P2 依赖图与环检测表（task_dependencies / artifact_identities / interface_identities / interface_provider_selections / dependency_edges + 索引，artifact/interface identity 与 freshness）
 v45 P3 Identity/Attestation 表（action_identities / attestation_records / attestation_revocation_records，Agent 身份审计：agent_id/session_id/model_id/role + 撤销账本 Revocation_Mode CHECK 约束）
 v46 P4 assignment/lease 表（task_assignments / task_leases / task_lease_events，token 只存 hash，同 task+role 单一当前 lease 部分唯一索引）
+v47 Agent 协同任务表（task_events 加 role/agent_session_id/contract_hash，agent_registrations 表，daemon TaskCollabStore 权威单写）
+v48 guardrail_findings workspace_id 归属（0 → 真实 workspace，避免 orphan 隔离失败）
+v49 复审 P0-1 修复（v48 陈旧二进制抢先打标缺列自愈 + storage.rs 列级校验短路）
+v50 Agent Identity + Role Contract（agent_registrations 扩展 identity 最小字段：agent_instance_id/client_id/provider/model_id/model_mode/system_fingerprint/runtime_hash/session_id/role；新增 role_contracts 冻结合同表：skill/prompt hash、allowed/forbidden paths、commands、acceptance_checks、required_evidence、handoff_to、independence、revision/is_current）
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。
@@ -1121,6 +1125,35 @@ daemon 提供四个不可替代的能力，这些能力是 P1 Protected_Mutation
 - SDDL 仅授权 owner SID，等强度于 Unix socket owner + mode 0660（Requirement 14.3）
 - 预创建 spare pipe instance 消除 accept 竞态（Requirement 14.19）
 - 多实例保活：daemon 退出时由 watcher 重启，单实例互斥防止重复启动
+
+**HTTP MVP Transport Profile v1（开发 overlay）**：默认/发布/企业端点继续遵守上表；
+仅在显式选择 `dev_loopback_unauthenticated` 时，Rust daemon 增加动态 IP loopback
+HTTP/1.1 JSON-RPC listener。该 listener 不产生 OS Peer_Credential，因而不提供跨用户 ACL、
+Attestation issuer、Independent Reviewer 身份证明或远程安全。它必须拒绝 wildcard、LAN、
+remote、proxy/container publish；选择 HTTP 后 client 对所有 operation class 禁止 SQLite、
+Named Pipe 或 UDS fallback。manifest、protocol、worker IPC 和 capability registry 的冻结合同见
+[HTTP Daemon MVP Compatibility Contract](design/http-daemon-mvp-compatibility-contract.md)。
+
+```text
+MCP / CLI / Agent
+        |
+        | explicit dev_loopback_unauthenticated (HTTP/JSON-RPC v1)
+        v
+Rust cw-daemon: loopback listener -> existing dispatch / job registry
+        |                              |
+        | rust_native                  +-> daemon serialization point
+        v
+daemon-owned Python child (private length-prefixed stdin/stdout)
+        |
+        +-- read_only
+        +-- index_write (daemon serialized)
+        +-- governance_write (forbidden)
+```
+
+HTTP manifest 使用 authority-scoped、owner-only 文件，先 canonical SHA-256 校验，再核对
+PID/process start、binary hash、Git、schema、profile、protocol 与 `/health`；任何 stale 或
+authority mismatch 都 fail closed。compatibility worker frame 不含 DB path，由 daemon 注入并
+验证 workspace context，worker 不得自行选择 active workspace。
 
 **实现**：传输抽象位于 [rust_ext/src/daemon/transport/](../rust_ext/src/daemon/transport/)，
 平台无关的 listen/accept/request 循环由 `Transport` trait 抽象，各平台实现 `UnixTransport`

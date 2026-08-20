@@ -172,6 +172,8 @@ class ExperimentErrorCode:
     INELIGIBLE_SAMPLE = "EXP_INELIGIBLE_SAMPLE"
     # Stage_Toggle 作用域或取值非法（Requirement 13.18）。
     INVALID_TOGGLE = "EXP_INVALID_TOGGLE"
+    # 分组模式或 pair slot 非法。
+    INVALID_PROTOCOL = "EXP_INVALID_PROTOCOL"
     # Experiment_Batch_Config 读写失败。
     CONFIG_IO = "EXP_CONFIG_IO"
     # 试图让 P0 解析依赖 P1–P4 开关（Requirement 13.21 / 13.17，防御性）。
@@ -189,6 +191,7 @@ EXPERIMENT_I18N_KEYS: Dict[str, str] = {
     ExperimentErrorCode.BATCH_NOT_FOUND: "errors.experiment_batch_not_found",
     ExperimentErrorCode.INELIGIBLE_SAMPLE: "errors.experiment_ineligible_sample",
     ExperimentErrorCode.INVALID_TOGGLE: "errors.experiment_invalid_toggle",
+    ExperimentErrorCode.INVALID_PROTOCOL: "errors.experiment_invalid_protocol",
     ExperimentErrorCode.CONFIG_IO: "errors.experiment_config_io",
     ExperimentErrorCode.P0_MUST_NOT_READ_P1_P4: "errors.experiment_p0_must_not_read_p1_p4",
 }
@@ -223,6 +226,10 @@ _BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
     "errors.experiment_invalid_toggle": {
         "zh_CN": "非法的 P0 Stage_Toggle 作用域或取值：{detail}。",
         "en_US": "Invalid P0 Stage_Toggle scope or value: {detail}.",
+    },
+    "errors.experiment_invalid_protocol": {
+        "zh_CN": "实验协议参数非法：{detail}。",
+        "en_US": "Experiment protocol parameter is invalid: {detail}.",
     },
     "errors.experiment_config_io": {
         "zh_CN": "Experiment_Batch_Config 读写失败：{detail}。",
@@ -532,9 +539,12 @@ class BatchProtocol:
     success_thresholds: SuccessThresholds
     pause_thresholds: PauseThresholds
     invalid_reasons: Tuple[InvalidSampleReason, ...]
+    # 旧协议使用 hash；后继 G0 批次可显式启用 paired，让同一 strata 的
+    # pair_slot=0/1 必然分到相反组别。
+    assignment_mode: str = "hash"
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "inclusion_rules": self.inclusion_rules.to_dict(),
             "stratification_dimensions": [d.value for d in self.stratification_dimensions],
             "random_seed": self.random_seed,
@@ -544,6 +554,10 @@ class BatchProtocol:
             "pause_thresholds": self.pause_thresholds.to_dict(),
             "invalid_reasons": [r.value for r in self.invalid_reasons],
         }
+        # 不把默认值写入旧协议，保持历史 fingerprint 和重放兼容。
+        if self.assignment_mode != "hash":
+            payload["assignment_mode"] = self.assignment_mode
+        return payload
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BatchProtocol":
@@ -558,6 +572,7 @@ class BatchProtocol:
             success_thresholds=SuccessThresholds.from_dict(d["success_thresholds"]),
             pause_thresholds=PauseThresholds.from_dict(d["pause_thresholds"]),
             invalid_reasons=tuple(InvalidSampleReason(r) for r in d["invalid_reasons"]),
+            assignment_mode=d.get("assignment_mode", "hash"),
         )
 
     def fingerprint(self) -> str:
@@ -569,13 +584,46 @@ class BatchProtocol:
         canonical = json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    def assign_group(self, strata_key: str) -> GroupAssignment:
+    def assign_group(
+        self,
+        strata_key: str,
+        pair_slot: Optional[int] = None,
+        pair_id: Optional[str] = None,
+    ) -> GroupAssignment:
         """确定性分层随机分组（Requirement 12.3）。
 
         以冻结的 random_seed 与分层键（profile/risk/diff size/language/reviewer-model
         pair 的组合）做 SHA-256，按最低位奇偶映射到 Control/Treatment。
         使用 hashlib 而非内置 hash()，保证跨进程、跨运行可复现（任务 1.5 验证）。
         """
+        if self.assignment_mode not in {"hash", "paired", "paired_v2"}:
+            raise ExperimentProtocolError(
+                make_reason(ExperimentErrorCode.INVALID_PROTOCOL,
+                            detail=f"unsupported assignment_mode: {self.assignment_mode}"))
+        if self.assignment_mode in {"paired", "paired_v2"}:
+            if pair_slot not in (0, 1):
+                raise ExperimentProtocolError(
+                    make_reason(ExperimentErrorCode.INVALID_PROTOCOL,
+                                detail="paired assignment requires pair_slot 0 or 1"))
+            if self.assignment_mode == "paired" and pair_id is not None:
+                raise ExperimentProtocolError(
+                    make_reason(ExperimentErrorCode.INVALID_PROTOCOL,
+                                detail="paired uses legacy strata assignment; use paired_v2 for pair_id"))
+            if self.assignment_mode == "paired_v2" and (not pair_id or not str(pair_id).strip()):
+                raise ExperimentProtocolError(
+                    make_reason(ExperimentErrorCode.INVALID_PROTOCOL,
+                                detail="paired assignment requires a unique pair_id"))
+            assignment_key = strata_key if self.assignment_mode == "paired" else f"{strata_key}:{pair_id}"
+            digest = hashlib.sha256(
+                f"{self.random_seed}:{assignment_key}".encode("utf-8")
+            ).digest()
+            base = digest[0] & 1
+            # slot 0 保留确定性基线，slot 1 强制取反，形成真正的 pair。
+            return GroupAssignment.CONTROL if (base ^ pair_slot) == 0 else GroupAssignment.TREATMENT
+        if pair_slot is not None or pair_id is not None:
+            raise ExperimentProtocolError(
+                make_reason(ExperimentErrorCode.INVALID_PROTOCOL,
+                            detail="hash assignment does not accept pair_slot or pair_id"))
         digest = hashlib.sha256(f"{self.random_seed}:{strata_key}".encode("utf-8")).digest()
         return GroupAssignment.CONTROL if (digest[0] & 1) == 0 else GroupAssignment.TREATMENT
 
@@ -841,7 +889,7 @@ def default_invalid_reasons() -> Tuple[InvalidSampleReason, ...]:
     return tuple(InvalidSampleReason)
 
 
-def build_default_protocol(random_seed: int) -> BatchProtocol:
+def build_default_protocol(random_seed: int, assignment_mode: str = "hash") -> BatchProtocol:
     """用默认组件构造一个完整协议（Requirement 12.3）。
 
     random_seed 由调用方给定并冻结进批次，保证分组可复现。
@@ -855,6 +903,7 @@ def build_default_protocol(random_seed: int) -> BatchProtocol:
         success_thresholds=default_success_thresholds(),
         pause_thresholds=default_pause_thresholds(),
         invalid_reasons=default_invalid_reasons(),
+        assignment_mode=assignment_mode,
     )
 
 

@@ -72,6 +72,14 @@ G0 批次核实发现 change_audit 归因污染，已修复（commit 4fa3384）�
 
 ## 第 4 步：评估与 G0 判定（12.10–12.13 / 12.15–12.20 / 12.27–12.29）
 
+### 4.0 评估前硬门禁
+
+- [ ] 每个有效 `review_metrics` 都能回溯到唯一 `pre_verdict` `blind_view`。
+- [ ] Control 首轮视图真实包含 `Implementer_Notes`；Treatment 首轮视图真实不包含。
+- [ ] Control/Treatment 两组均有可计算的 Recall 分母（`TP + misses > 0`）。空分母必须报告
+  `EXP_DEFECT_COVERAGE_INSUFFICIENT`，不得把 undefined 当作 `0.0`。
+- [ ] 不允许通过回写历史 JSONL、改变阈值或手工补 nontrivial 来修复门禁失败；必须创建新批次。
+
 - [ ] 最小样本：≥30 有效 + ≥10 非平凡（12.9）
 - [ ] **12.10 缺陷检测成功**：Treatment 召回率相对提升 ≥15%，或额外发现 ≥2 个确认高危缺陷且无关键遗漏增加
 - [ ] **12.11 误报成功**：Treatment FP 率 ≤ Control +10 个百分点（绝对差）

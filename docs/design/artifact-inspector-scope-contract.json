@@ -1,0 +1,15 @@
+{
+  "task_id": "T-1785024538957-b4bc9f03",
+  "profile": "code_change",
+  "required_paths": [
+    "release/inspect_pyinstaller_bundle.py",
+    ".github/workflows/",
+    "tests/test_release_bundle_inspector.py"
+  ],
+  "allowed_paths": [
+    "release/",
+    ".github/workflows/",
+    "tests/test_release_bundle_inspector.py",
+    "docs/design/"
+  ]
+}

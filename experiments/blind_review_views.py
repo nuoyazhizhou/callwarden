@@ -54,6 +54,10 @@ class ViewErrorCode:
     INTEGRITY_INCIDENT = "EXP_INTEGRITY_INCIDENT"
     # 必需来源字段缺失，无法构造最小 blind view（Requirement 12.2 排除条件）。
     VIEW_SOURCE_MISSING = "EXP_VIEW_SOURCE_MISSING"
+    # Control 首轮必须有可审计的 Implementer_Notes，避免两组退化成同一视图。
+    CONTROL_NOTES_MISSING = "EXP_CONTROL_NOTES_MISSING"
+    # 候选来源包含既有 Reviewer/实验结论，不能进入新的盲评批次。
+    PRIOR_REVIEW_CONTAMINATION = "EXP_PRIOR_REVIEW_CONTAMINATION"
 
 
 # 错误码 → i18n key（完整路径，位于 errors.* 命名空间）。
@@ -64,6 +68,8 @@ VIEW_I18N_KEYS: Dict[str, str] = {
     ViewErrorCode.INVALID_SAMPLE: "errors.experiment_invalid_sample",
     ViewErrorCode.INTEGRITY_INCIDENT: "errors.experiment_integrity_incident",
     ViewErrorCode.VIEW_SOURCE_MISSING: "errors.experiment_view_source_missing",
+    ViewErrorCode.CONTROL_NOTES_MISSING: "errors.experiment_control_notes_missing",
+    ViewErrorCode.PRIOR_REVIEW_CONTAMINATION: "errors.experiment_prior_review_contamination",
 }
 
 # 捆绑的双语默认文案：i18n catalog 尚未收录对应 key 时（1.4 之前），仍可按当前语言解析。
@@ -83,6 +89,14 @@ _VIEW_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
     "errors.experiment_view_source_missing": {
         "zh_CN": "任务 {task_id} 缺少构造最小 blind view 所需的来源字段 '{field}'；无法纳样（Requirement 12.2）。",
         "en_US": "Task {task_id} is missing source field '{field}' required to build a minimum blind view; it cannot be admitted (Requirement 12.2).",
+    },
+    "errors.experiment_control_notes_missing": {
+        "zh_CN": "Control 任务 {task_id} 缺少 Implementer_Notes 文件；不能把没有 notes 的共同视图当作对照组纳入 G0。",
+        "en_US": "Control task {task_id} has no Implementer_Notes file; a shared view without notes cannot be admitted as the G0 control arm.",
+    },
+    "errors.experiment_prior_review_contamination": {
+        "zh_CN": "任务 {task_id} 的盲视图来源包含既有 Reviewer 或实验结论（{source}）；禁止纳样并保持 fail-closed。",
+        "en_US": "Task {task_id} has prior Reviewer or experiment conclusions in its blind-view source ({source}); admission is rejected fail-closed.",
     },
 }
 
@@ -224,6 +238,45 @@ PROHIBITED_FIELDS: List[str] = [
     "suggested_review_focus",       # 建议审核重点
 ]
 
+# 仅拦截高置信度的历史评审来源。普通任务描述中的“修复 P0/P1”不能单独触发，
+# 必须同时出现独立复审/Reviewer 语境或明确的评审结论标记。
+_REVIEW_SOURCE_PATH_MARKERS = (
+    "independent-review",
+    "independent_review",
+    "review-report",
+    "review_report",
+    "re-audit",
+    "reaudit",
+    "复审报告",
+    "复审结论",
+    "独立复审",
+)
+_REVIEW_CONTEXT_MARKERS = (
+    "prior reviewer",
+    "previous reviewer",
+    "reviewer verdict",
+    "reviewer conclusion",
+    "independent review",
+    "独立评审",
+    "独立复审",
+    "既有评审",
+    "之前评审",
+    "reviewer 结论",
+)
+_REVIEW_OUTCOME_MARKERS = (
+    "reject apply",
+    "rejected apply",
+    "reject close",
+    "rejected close",
+    "拒绝 apply",
+    "拒绝 close",
+    "拒绝应用",
+    "eligible_for_p1",
+    "not_eligible",
+    "p0",
+    "p1",
+)
+
 # 披露清单标注：实验披露清单，**不是** View_Manifest（Req 12.25）。
 DISCLOSURE_LABEL = "experiment_disclosure_list"
 
@@ -300,7 +353,9 @@ def _has_notes(notes: Any) -> bool:
     """判断 Implementer_Notes 是否非空（None/空串/空容器视为无）。"""
     if notes is None:
         return False
-    if isinstance(notes, (str, list, dict, tuple, set)):
+    if isinstance(notes, str):
+        return bool(notes.strip())
+    if isinstance(notes, (list, dict, tuple, set)):
         return len(notes) > 0
     return True
 
@@ -334,6 +389,57 @@ def _assert_no_prohibited_fields(task_id: str, value: Any) -> None:
         raise ViewDisclosureError(make_view_reason(
             ViewErrorCode.DISCLOSURE_VIOLATION,
             task_id=task_id, field=field_name))
+
+
+def _contains_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    """检查小写文本是否包含任一高置信度标记。"""
+    lowered = text.lower()
+    return any(marker in lowered for marker in markers)
+
+
+def find_prior_review_contamination(source: Any) -> Optional[str]:
+    """查找会污染新盲评的历史 Reviewer/实验结论来源。
+
+    这里不把普通任务中的 ``P0``/``P1`` 单独当成污染；只有复审文件路径，或
+    Reviewer 语境与明确评审结果同时出现时才拒绝纳样。这样可以保留正常的
+    “修复 P0/P1”任务，同时阻止把上一轮复审报告再次交给 Treatment。
+    """
+    rows_by_field = (
+        ("change_audit_diffs", getattr(source, "change_audit_diffs", [])),
+        ("step_targets", getattr(source, "step_targets", [])),
+        ("open_quality_findings", getattr(source, "open_quality_findings", [])),
+    )
+    for field_name, rows in rows_by_field:
+        if not isinstance(rows, (list, tuple)):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            path = str(row.get("file_path") or row.get("target_file") or "")
+            path_lower = path.lower()
+            if path and _contains_any_marker(path_lower, _REVIEW_SOURCE_PATH_MARKERS):
+                return f"{field_name}.path:{path}"
+
+            text_parts = [
+                str(row.get("message") or ""),
+                str(row.get("diff") or ""),
+                str(row.get("source") or ""),
+            ]
+            text = " ".join(text_parts)
+            has_context = _contains_any_marker(text, _REVIEW_CONTEXT_MARKERS)
+            has_outcome = _contains_any_marker(text, _REVIEW_OUTCOME_MARKERS)
+            if has_context and has_outcome:
+                return f"{field_name}.content"
+
+    # 任务标题/描述可能直接携带上一轮结论；仍要求“评审语境 + 结果”双重命中。
+    task_text = " ".join((
+        str(getattr(source, "task_title", "") or ""),
+        str(getattr(source, "task_description", "") or ""),
+    ))
+    if (_contains_any_marker(task_text, _REVIEW_CONTEXT_MARKERS)
+            and _contains_any_marker(task_text, _REVIEW_OUTCOME_MARKERS)):
+        return "task_metadata"
+    return None
 
 
 def build_minimal_blind_view(
@@ -389,6 +495,13 @@ def build_minimal_blind_view(
         if not hasattr(source, required):
             raise ViewDisclosureError(make_view_reason(
                 ViewErrorCode.VIEW_SOURCE_MISSING, task_id=task_id, field=required))
+
+    contamination = find_prior_review_contamination(source)
+    if contamination:
+        raise ViewDisclosureError(make_view_reason(
+            ViewErrorCode.PRIOR_REVIEW_CONTAMINATION,
+            task_id=task_id,
+            source=contamination))
 
     # 由现有字段构成 payload（Req 12.25 的 allowlist 字段）。先做递归禁止字段
     # 检查，再复制值，避免调用方在记录写入前修改嵌套对象造成披露边界漂移。

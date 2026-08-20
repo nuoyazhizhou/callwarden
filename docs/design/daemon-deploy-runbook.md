@@ -9,7 +9,8 @@
 
 ### 二进制
 
-- `cw_daemon`：独立 Rust binary（`cargo build --bin cw_daemon --release`），提供 UDS JSON-RPC server
+- `cw_daemon`：独立 Rust binary（`cargo build --no-default-features --release --bin cw-daemon`，Linux），提供 UDS JSON-RPC server
+  - `--no-default-features` 必需：daemon 为独立二进制，不能以 PyO3 `extension-module` 默认特性链接（cdylib 不链接 libpython，bin 链接会缺 `Py_*` 符号），仅 Python 扩展（`.so`/`.pyd`）才用默认特性构建
 - `cw`：Python CLI，内含 `cw daemon <action>` 子命令作为 RPC 客户端，调用运行中的 `cw_daemon`
 
 ### 命令对应关系
@@ -40,8 +41,8 @@ systemd unit 使用 `Type=notify`，`cw_daemon` 启动后通过 `NOTIFY_SOCKET` 
 ```bash
 # 1. 构建 cw_daemon binary（Linux 主机或交叉编译）
 cd rust_ext
-cargo build --release --bin cw_daemon
-# 产物：target/release/cw_daemon
+cargo build --no-default-features --release --bin cw-daemon
+# 产物：target/release/cw-daemon
 
 # 2. 创建 callwarden 用户和组
 sudo useradd -r -s /usr/sbin/nologin callwarden
@@ -522,3 +523,105 @@ cw-agent 是 **user service**，cw_daemon 是 **system service**。systemd 不�
 1. 重启 agent：`systemctl --user restart callwarden-agent`
 2. 检查 `~/.callwarden/agent_session.json` 中 epoch 是否为 0
 3. 手动 ping daemon 并查看 daemon 日志确认 `workspace.connect` 是否被调用
+
+## 10. Windows / WSL / Linux 共存部署与运维
+
+> 任务：T-1786330576149-d2cd128c（共存契约）
+> 契约：windows-wsl-daemon-coexistence-contract.md（§7 安装与启动 / §6 故障恢复）
+
+### 10.1 部署模型选择
+
+| 场景 | CW_AUTHORITY | CW_DAEMON_TRANSPORT | 端点 | 说明 |
+| --- | --- | --- | --- | --- |
+| Windows 本地 CLI/MCP/Agent | auto（→windows-host） | named-pipe | `\\.\pipe\callwarden-<sid>` | Windows daemon |
+| WSL 访问 Windows authority | windows-host | windows-bridge | `127.0.0.1:<port>` | Windows bridge → Named Pipe |
+| WSL 原生 workspace | wsl-local | uds | `/tmp/callwarden-<uid>.sock` | WSL local daemon |
+| Linux 原生主机 | linux-system | uds | `/run/callwarden/callwarden.sock` | systemd daemon |
+
+**禁止**：WSL 直接打开 `/mnt/c/.../callwarden.db`（SQLite/WAL/SHM）；Windows authority
+不可用时不得偷偷写 WSL 本地库（fail-closed）。
+
+### 10.2 Windows daemon + bridge 部署
+
+```bash
+# 1. 构建（Windows）
+cargo build --release --no-default-features --bin cw-daemon --bin cw-bridge
+
+# 2. 生成 bridge token（仅当前用户可读）
+#    Windows PowerShell：
+#    New-Item -Path "$env:USERPROFILE\.callwarden\bridge.token" -ItemType File -Force
+#    Set-Content -Path "$env:USERPROFILE\.callwarden\bridge.token" -Value (New-Guid).ToString()
+#    # ACL 仅当前用户：icacls ... /inheritance:r /grant:r "$env:USERNAME:(R,W)"
+
+# 3. 启动 daemon（Named Pipe）
+cw-daemon serve
+
+# 4. 启动 bridge（WSL 共享启用时）
+$env:CW_BRIDGE_ENDPOINT = "127.0.0.1:8456"
+$env:CW_BRIDGE_TOKEN_FILE = "$env:USERPROFILE\.callwarden\bridge.token"
+cw-bridge
+
+# 5. 健康检查
+cw daemon health   # 返回 authority_id/transport/task_db_fingerprint
+cw daemon bridge   # bridge transport + downstream daemon 可达（或 cw bridge health 兼容别名）
+```
+
+### 10.3 WSL client（访问 Windows authority）
+
+```bash
+# 环境变量（WSL shell）
+export CW_AUTHORITY=windows-host
+export CW_DAEMON_TRANSPORT=windows-bridge
+export CW_BRIDGE_ENDPOINT=127.0.0.1:8456
+export CW_BRIDGE_TOKEN_FILE=/mnt/c/Users/<user>/.callwarden/bridge.token
+
+# 验证握手（authority pin）
+python -c "from callwarden.server.daemon_client import UnixDaemonRpcClient; \
+  c=UnixDaemonRpcClient(); print(c.hello())"
+# 期望：authority_id 为 windows-host，transport 为 windows-bridge
+
+# 任务写（经 bridge → Windows daemon，禁止本地 fallback）
+python cw.py task list
+```
+
+### 10.4 WSL local daemon（独立 authority）
+
+```bash
+# 环境变量（WSL ext4，禁止 /mnt/c）
+export CW_AUTHORITY=wsl-local
+export CW_DAEMON_TRANSPORT=uds
+export CW_DAEMON_SOCKET=/tmp/callwarden-$(id -u).sock
+export CW_DAEMON_TASK_DB=$HOME/.callwarden/callwarden.db
+export CW_DAEMON_DATA_ROOT=$HOME/.callwarden/daemon
+export CW_DAEMON_REGISTRY_DB=$HOME/.callwarden/daemon/registry.db
+
+# 启动
+cw-daemon serve
+
+# 健康检查
+cw daemon health   # authority 为 wsl-local
+```
+
+### 10.5 双 daemon 同时运行
+
+- 两 daemon 的 `task_db` / `registry` / `data_root` / `codegraph` 路径不得交集
+  （启动时 `validate_internal_storage` + `validate_no_storage_overlap` 校验，
+  冲突返回 `E_AUTHORITY_STORAGE_CONFLICT` 并 exit 1）；
+- WSL local daemon 的 DB/WAL/SHM/CAS 全在 WSL ext4；
+- Windows authority 与 WSL authority 的任务默认互不可见。
+
+### 10.6 故障恢复检查清单
+
+| 故障 | 行为 | 检查命令 |
+| --- | --- | --- |
+| Windows daemon 不可用 | WSL 写请求 fail-closed（E_AUTHORITY_UNAVAILABLE） | `python cw.py task list`（应报 E_AUTHORITY_UNAVAILABLE） |
+| bridge 重启 | 客户端重连同一 authority；request_id 幂等 | 重发同一 request_id，daemon 返回已提交结果 |
+| authority 改变 | 客户端 `verify_authority` 拒绝（E_AUTHORITY_MISMATCH） | 检查 client 日志 |
+| 双 daemon 路径冲突 | 启动失败（E_AUTHORITY_STORAGE_CONFLICT） | `cw-daemon serve` exit 1 |
+
+### 10.7 权限检查清单
+
+1. `bridge.token` 仅当前 Windows 用户可读（ACL 拒绝 Everyone/Users）；
+2. WSL 不直连 `/mnt/c` SQLite；
+3. WSL local daemon 的 UDS socket 归属当前用户（`/tmp/callwarden-<uid>.sock`）；
+4. Linux systemd daemon 的 UDS 在 `callwarden-clients` 组（如需多用户）。

@@ -230,11 +230,11 @@ pub struct ParseDiagnostics {
 
 ### 4.4 Schema 版本同步状态
 
-SCHEMA_VERSION = 47
-RUST_SCHEMA_VERSION = 47
+SCHEMA_VERSION = 57
+RUST_SCHEMA_VERSION = 57
 
-- `SCHEMA_VERSION`（Python 真相源，`db/schema.py`）：v47 = task_events / agent_registrations（`_migrate_v46_to_v47`）+ v46 P4 assignment/lease 三表（task_assignments / task_leases / task_lease_events）+ partial UNIQUE 索引。
-- `RUST_SCHEMA_VERSION`（Rust 官方迁移常量，`rust_ext/src/sqlite_query.rs`）：**v47 已同步**。daemon TaskCollabStore 打开权威任务库（`~/.callwarden/callwarden.db`）时执行 `migrate_connection` 正式迁移并校验实际 schema version，与 Python `_migrate_v46_to_v47` 幂等等价（同一 SCHEMA_SQL 全量建表 + schema_version 落 47）。镜像常量 `abi_contract.rs:SCHEMA_VERSION` 已同步为 47。
+- `SCHEMA_VERSION`（Python 真相源，`db/schema.py`）：v57 = Verdict/Gate schema 与 legacy fail-closed（cw-role-handoff-task-loop.md §4.2/§8.1，1E）——新增 `verdict_normalization_rules` / `verdict_normalization_rule_revocations` 两表 + `('verdict-normalization/v1')` 初始 rule row；`task_contract_revisions` 增加 `normalization_version` / `normalization_rules_hash` 绑定；`task_verdict_events` / `task_gate_decisions` 各增加 Role Contract 绑定 provenance 列（`step_id`、`role_contract_lineage_id`、`role_contract_revision_id`、`role_contract_revision`、`role_contract_hash`、`canonicalization_version` / `canonicalization_rules_hash`）与所用 normalization version/hash；历史 verdict/gate/contract 无绑定只读显示 `UNVERIFIED`，不回填改写。v56 = step→Role Contract binding（§8.1.4，1C）。v55 = Role Contract lineage/c14n（§8.1.2，1B）。v54 = task_loop 公共能力 promotion 权威账本（§8.1.5，1D3B）。v53 = Task workspace authority binding（§8.1.1，1A）。v52 = Task-domain operation store（§8.1.3/§8.1.4，1D1）。v51 = Workspace runtime policy（self_bootstrap / standard）。v50 = Agent Identity + Role Contract。v49 = 复审 P0-1 修复 + v48 guardrail_findings workspace_id 归属 + v47 task_events / agent_registrations + v46 P4 assignment/lease 三表。
+- `RUST_SCHEMA_VERSION`（Rust 官方迁移常量，`rust_ext/src/sqlite_query.rs`）：**v57 已同步**。daemon TaskCollabStore 打开权威任务库时执行 `migrate_connection` 正式迁移并校验实际 schema version，与 Python 迁移幂等等价。v57（1E）经 `CREATE TABLE IF NOT EXISTS` 建表 + `execute_existing_schema` ALTER 补齐新列 + `seed_verdict_normalization_rule` 幂等播种 `verdict-normalization/v1`；1E 的 schema 播种在 `sqlite_query.rs` 与 `storage.rs` 共用同一真相源。既有库从 56→57 走 canonical schema DDL 幂等补齐新表/新列并播种规则 row。镜像常量 `abi_contract.rs:SCHEMA_VERSION` 已同步为 57。
 - 一致性测试 `tests/test_abi_contract.py` 以本声明为真相源：`SCHEMA_VERSION` 与 `schema.py` 严格相等；`RUST_SCHEMA_VERSION` 与 `abi_contract.rs` 严格相等（记录镜像滞后，而非允许任意漂移）。
 
 ## 5. 错误码枚举

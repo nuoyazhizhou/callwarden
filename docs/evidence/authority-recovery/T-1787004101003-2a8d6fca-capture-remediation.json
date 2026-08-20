@@ -1,0 +1,47 @@
+{
+  "schema": "callwarden-task-remediation-evidence/v1",
+  "task_id": "T-1787004101003-2a8d6fca",
+  "remediation_task_id": "T-1786987073956-bb1b5ff9",
+  "failed_step_id": "S-1787004101003-26fc12ef",
+  "historical_remediation_step_id": "T-1787004643891-7326f074",
+  "new_remediation_steps": [],
+  "workspace_instance_id": "a477d38cf495fefd",
+  "authority": {
+    "authority_id": "LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/0809e48d494fab730aa8e80bd57722c941a4d7acbf4a64e2bf185ba842d39871",
+    "endpoint": "http://127.0.0.1:8772",
+    "task_db_fingerprint": "0809e48d494fab730aa8e80bd57722c941a4d7acbf4a64e2bf185ba842d39871",
+    "workspace_instance_id": "a477d38cf495fefd",
+    "daemon_generation": "manifest-1786972953534543800",
+    "manifest_hash": "cfe522211cb15884c5b43ccb7b84fc7d0b6bd7836d3e5078cd9e9c90bd46ce15",
+    "protocol_version": 1
+  },
+  "capture_isolation": {
+    "mode": "exact_whitelist",
+    "decision": "共享 dirty/untracked 文件（AGENTS.md）污染全量 capture（E_CAPTURE_SCOPE_CONTAMINATED）；按 §6 验收行改用 exact_whitelist，仅归因任务白名单内文件，拒绝吸收共享 dirty 文件",
+    "whitelist": [
+      "docs/design/cw-role-handoff-task-loop.md",
+      "config.py"
+    ],
+    "excluded_shared_dirty": [
+      "AGENTS.md"
+    ]
+  },
+  "source": {
+    "docs/design/cw-role-handoff-task-loop.md": "8d24f81492d1986967287b9ce1761c2840dd810d3a5556da5d1a745a09db836c",
+    "candidate_commit": "6bf7353bef984ecd7065b6820948421b00c0cd4e",
+    "baseline": "HEAD",
+    "attribution": "design doc §4.6 authority preflight 冻结由本任务产出，属 task-owned 变更"
+  },
+  "checks": {
+    "historical_failed_step_immutable": true,
+    "historical_evidence_immutable": true,
+    "shared_dirty_excluded": true,
+    "whitelist_aligned_capture": true,
+    "task_step_resolve_attempt": "pending",
+    "resolution_event": "pending",
+    "evidence_append": "pending",
+    "gate_decision": "pending"
+  },
+  "generated_by": "callwarden-agent",
+  "generated_at_authority_timestamp": 1787155900.0
+}

@@ -13,17 +13,17 @@ Call Warden 把 150+ 个 CLI 命令按功能聚合为 13 个主分类，每个�
 
 | # | 主分类 | 涵盖范围 | 主要 subcommand | 等价 --flag（deprecated） |
 |---|--------|----------|-----------------|--------------------------|
-| 1 | **Workspace & Database** | 工作区管理、数据库刷新、状态概览、watcher、分支感知 | `workspace list/register/set/delete`、`refresh --all/--watch/<paths>`、`stats`、`status` | `--list-workspaces`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--refresh-all`、`--refresh`、`--watch`、`--stats`、`--status` |
-| 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复 | `search`、`symbol`、`file`、`query`、`brief`、`map` | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
+| 1 | **Workspace & Database** | 工作区管理、数据库刷新、状态概览、watcher、分支感知 | `workspace list/register/set/delete/generate-ignore`、`refresh --all/--watch/<paths>`、`stats`、`status` | `--list-workspaces`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--refresh-all`、`--refresh`、`--watch`、`--stats`、`--status` |
+| 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引 | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status` | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
 | 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | `callers`、`callees`、`call-chain`、`impact`、`topo` | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap` |
-| 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented` | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented` |
-| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、capture-diff、质量审查、拆分 | `task create/next/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容） |
+| 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard` | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented` |
+| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、派工查询、capture-diff、质量审查、拆分 | `task create/next/next-action/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容） |
 | 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log` | — |
 | 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁 | `audit verify/rotate-key/keys`、`bootstrap status` | — |
 | 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | `git import/log/show/stats`、`symbol-history` | `--git-import`、`--git-log`、`--git-show`、`--git-stats` |
 | 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联 | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects` | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary` |
 | 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）| `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
-| 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show` | — |
+| 11 | **GC** | 归档、恢复、清理、策略、备份、审计、孤儿库清理、多库迁移 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show`、`gc db-cleanup`、`gc db-migrate-single` | — |
 | 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置 | `doctor`、`install`、`install-agent`、`install-hook`、`setup` | — |
 | 13 | **Migration Rollback** | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关 | `rollback register/show/config/set/is-rolled-back` | — |
 
@@ -44,6 +44,32 @@ cw server --check-imports
 随后立即退出；它不会同步 AGENTS.md、预下载 Semgrep 规则或进入 stdio 循环。发布流水线
 用该模式验证冻结包中的 FastMCP 动态依赖，成功时输出
 `Call Warden MCP imports OK`。
+
+---
+
+## HTTP daemon MVP 路由状态（H4B-N/C/I/E 收口）
+
+HTTP MVP transport 为可选监听，默认关闭。仅当 `cw daemon serve --http-bind 127.0.0.1:<port>`
+显式设置（或环境变量 `CW_DAEMON_TRANSPORT=http`）时启用，绑定地址必须是 loopback
+（`dev_loopback_unauthenticated` 安全档）。HTTP 端点：`GET /health`、`GET /capabilities`、
+`POST /v1/rpc`（JSON-RPC 2.0）、`POST /v1/jobs`。
+
+工具/方法在 HTTP 模式下的可达性由 H0 冻结的 capability registry 决定（backend 归类
+**python_compat 193 / rust_native 44 / legacy_local 0**，见
+`.trae-cn/evidence/http-daemon-capability-matrix.json`）：
+
+- **`rust_native`（44）**：走 Rust daemon dispatch（真实 RPC，如 `query.issues`、
+  `query.tests`、`lease.*` 等）；
+- **python_compat 路由（107）**：107 个 read_only 方法（第一批 H4C-1 默认 2 +
+  H4C-2 符号组 17 + H4C-3 任务组 16 + H4C 第二批 compat read/index/governance 72）
+  经 Rust `compat_route` 路由到 H3 compat
+  worker（与 `server/compat_registry.py` 的 `RUST_COMPAT_ROUTE` 两端对齐）；
+- **其余 python_compat（86）**：HTTP 模式统一 fail-closed，返回结构化
+  `E_HTTP_COMPAT_UNSUPPORTED`，不构造 CodeGraphDB，不回退 SQLite / Named Pipe / UDS；
+- **`legacy_local`（0）**：HTTP 无 legacy_local 方法；该分类仅 Legacy Baseline
+  （stdio MCP / CLI）可用。
+
+CLI 本地路径（stdio / Named Pipe / UDS）不受影响，`cw` 子命令仍按既有行为工作。
 
 ---
 
@@ -165,6 +191,26 @@ cw gc audit show <AUDIT_ID>
 ```
 
 输出指定审计记录的完整详情：策略参数（policy_json）、候选数量（candidate_counts）、实删数量（deleted_counts）、备份路径、备份大小、operator、起止时间、错误信息（仅 failed 时）。
+
+### `gc db-cleanup`：清理孤儿数据库
+
+扫描 `~/.callwarden/` 下所有数据库，找出孤儿数据库（测试残留 / 已删除项目的旧 hash 库），默认 dry-run 仅预览，不会删除任何文件。
+
+```bash
+cw gc db-cleanup                      # 预览（默认，不删除）
+cw gc db-cleanup --apply              # 实际删除孤儿数据库
+cw gc db-cleanup --all-but-current    # 除当前 workspace 外全部标记为孤儿
+```
+
+### `gc db-migrate-single`：旧版多库 → 用户级单库迁移
+
+将旧版按项目 hash 隔离的多库（`~/.callwarden/<16位hash>/callwarden.db`）迁移到用户级单库（`~/.callwarden/callwarden.db`），迁移 workspaces / tasks / task_steps 表。默认 dry-run 仅预览；符号图谱数据建议迁移后运行 `cw refresh --all` 重建。迁移后旧 `<hash>/` 目录保留作备份，用户确认后可手动删除。
+
+```bash
+cw gc db-migrate-single                       # 预览（默认，不写入）
+cw gc db-migrate-single --apply               # 执行迁移
+cw gc db-migrate-single --apply --no-backup   # 跳过迁移前的单库备份
+```
 
 ---
 
@@ -552,6 +598,18 @@ cw --stats
 
 以 JSON 格式输出统计信息，便于脚本解析。
 
+### `graph build-from-c`：Rust 并行构建 GraphStore（F11）
+
+从 C 文件列表用 rayon 并行构建内存 GraphStore（CSR），供后续调用链查询。只读实验命令（仅解析 + 内存构 CSR，不写数据库）。
+
+```bash
+cw graph build-from-c <directory>                  # 递归扫描 .c 文件构建 CSR
+cw graph build-from-c <dir> --threads 8            # 指定 rayon 线程数（默认自动）
+cw graph build-from-c <dir> --dump out.cwsnap      # 构建后 dump 到 .cwsnap 快照
+cw graph build-from-c <dir> --max-files 5000       # 限制最大文件数（默认 10000）
+cw graph build-from-c <dir> --query <QN>           # 构建后查询指定符号 callers（自检）
+```
+
 ---
 
 ## 查询命令
@@ -608,6 +666,24 @@ cw --topo --topo-limit 100
 ```
 
 按依赖深度排序，底层（被调用最多）在前。
+
+### `fts rebuild`：重建 FTS5 全文索引
+
+从 symbols 表重建 FTS5 索引，用于修复中断刷新后全文搜索为空的问题。
+
+```bash
+cw fts rebuild
+```
+
+输出：`symbols_count` / `fts_rows` / `triggers_recreated` / `elapsed`；若 `fts_rows != symbols_count` 打印 mismatch 警告。
+
+### `fts status`：查看 FTS5 索引状态
+
+```bash
+cw fts status
+```
+
+输出 FTS5 索引状态（行数、triggers、一致性）。
 
 ---
 
@@ -822,6 +898,23 @@ cw task next <task_id>
 当前 workspace 的 `active_task_id` 字段，替代 `CALLWARDEN_TASK_ID` 环境变量。
 后续 `cw task capture-diff --auto` 会优先从该字段读取 task_id，无需手动 export。
 连续 claim 多个任务时后者覆盖前者。
+
+### `task next-action`：查询系统派工（只读）
+
+```bash
+cw task next-action <task_id>
+cw task next-action <task_id> --json
+```
+
+`task.next_action` 是任务下一合法动作的唯一权威来源：daemon 侧 evaluator
+按任务状态/角色/角色合同推导 `decision`（`READY`/`WAITING`/`BLOCKED`/`COMPLETE`）、
+`action`（`CLAIM`/`REVIEW`/`ADJUDICATE`/`REVISE`/`WAIT`/`NONE`）、`required_role`、
+`step_id`、`routing`（下一棒角色/动作与理由）与 `blocking_conditions`。
+
+- **只读**：不领取步骤、不写任务状态。
+- **权威在 daemon**：evaluator 只在 Rust daemon 中实现；daemon 未启动时返回
+  `E_DAEMON_UNAVAILABLE`，local 模式无 evaluator（fail-closed），不会本地推算。
+- `--json` 输出原始决策供脚本/客户端解析；`cw-task-loop` Skill 依此逐字渲染角色卡。
 
 ### `task report`：回报结果
 
@@ -1358,6 +1451,28 @@ cw --comment-coverage --coverage-by module   # 按 module/file/kind
 
 ```bash
 cw --test-coverage
+```
+
+### `health-report`：项目整体健康报告
+
+聚合基础统计 + 演化热点（Top 5）+ 问题统计（Semgrep findings 按 severity）+ Token 节省，一眼看清项目健康状态。只读。
+
+```bash
+cw health-report          # 文本报告
+cw health-report --json   # JSON 输出
+```
+
+### `dashboard`：项目综合状态驾驶舱
+
+聚合 7 个 section（overview / code_scale / code_quality / call_graph / task_risk / audit / evolution）+ 风险预警列表。默认 quick 模式（100K 符号约 280ms）。只读。
+
+```bash
+cw dashboard                               # quick 模式（默认）
+cw dashboard --full                        # 完整模式（含圈复杂度计算，大仓库较慢）
+cw dashboard --with-cycles                 # 启用调用循环检测
+cw dashboard --with-evolution              # 演化趋势（需先导入 git history）
+cw dashboard --risks --top 10              # 风险预警 Top 10（默认 5）
+cw dashboard --json                        # JSON 输出
 ```
 
 ---
@@ -1962,6 +2077,17 @@ cw git destructive-log 50           # 最近 50 条
 cw git destructive-log --type force_push  # 仅 force push 记录
 ```
 
+### `git check-ref-transaction`：审计 ref 更新
+
+Git reference-transaction hook 调用，审计破坏性 ref 更新（reset_hard / branch -f / force push），软护栏仅记录到 `destructive_operations` 表，不拦截 working tree 破坏。
+
+```bash
+cw git check-ref-transaction <old_value> <new_value> <ref_name> [flags]
+cw git check-ref-transaction 0000... abcdef1234 refs/heads/main forced
+```
+
+- `flags`：ref-transaction flags（如 `forced`），可选
+
 ---
 
 ## 向量与语义搜索命令
@@ -2084,9 +2210,19 @@ cw --set-workspace 1
 cw --delete-workspace my_project
 ```
 
+### `workspace generate-ignore`：自动生成 .callwardenignore
+
+基于项目特征自动生成 `.callwardenignore`，默认 dry-run 仅预览不写入。
+
+```bash
+cw workspace generate-ignore                 # 预览（默认，当前目录）
+cw workspace generate-ignore <dir>           # 指定扫描目录
+cw workspace generate-ignore --apply         # 实际写入 .callwardenignore
+```
+
 ---
 
-## 构建上下文命令（L5：构建上下文感知）
+## 构建上下文命令（构建上下文感知）
 
 `cw build-context` 子命令组管理构建上下文（build context），用于区分同一份代码在不同编译配置（debug/release、不同 board、不同 include path）下的调用图。resolved_edges 按 `(workspace_id, build_context_hash)` 隔离，支持多构建配置并存。
 
@@ -2164,6 +2300,15 @@ Resolved edges computed for: debug
 ```bash
 cw build-context edges 1 3a2f1b8c --limit 20
 cw build-context edges 1 3a2f1b8c --caller 42
+```
+
+### `toolchain list-bound`：列出绑定到 workspace 的工具链
+
+列出绑定到指定 workspace 的工具链。
+
+```bash
+cw toolchain list-bound <workspace_id>
+cw toolchain list-bound 1 --build-context-hash 3a2f1b8c   # 按 build context 过滤
 ```
 
 ---
@@ -2517,6 +2662,74 @@ cw daemon metrics --local --reset
 `requests_total{method, status}` / `request_duration_seconds{method}` /
 `errors_total{type}` / `jobs_submitted_total` / `job_duration_seconds{handler}` 等
 内置指标。
+
+### daemon 运维命令（bridge / snapshot）
+
+以下命令为 daemon runbook 运维命令，不需要 workspace_id（`build-context set-active` 除外）。
+
+#### `daemon bridge`：检查 Windows bridge 配置与连通性
+
+Windows bridge 健康检查（bridge transport + 端口/token 配置）。
+
+```bash
+cw daemon bridge                          # 检查默认配置
+cw daemon bridge --endpoint tcp://127.0.0.1:8888   # 覆盖 bridge 端点
+cw daemon bridge --token-file <path>      # 覆盖 bridge token 文件路径
+```
+
+#### `daemon snapshot-stats`：查询 SnapshotCache 统计
+
+查询 daemon 内 SnapshotCache 统计（hit / miss / evictions）。
+
+```bash
+cw daemon snapshot-stats
+```
+
+#### `daemon snapshot-list`：列出 daemon 已知 snapshot
+
+```bash
+cw daemon snapshot-list
+```
+
+#### `daemon snapshot-evict`：驱逐 snapshot 缓存
+
+驱逐指定 workspace 的 snapshot 缓存。
+
+```bash
+cw daemon snapshot-evict <workspace_id>
+```
+
+#### `daemon toolchain build-context set-active`：设置 active build context
+
+设置指定 workspace 的 active build context（daemon 侧）。
+
+```bash
+cw daemon toolchain build-context set-active <workspace_id> <build_context_hash>
+```
+
+> 注意与本地 CLI 的 `cw build-context activate <WORKSPACE_ID> <HASH>` 区分：前者设置 daemon 内存 registry 中的 active context，后者写本地库 active 标志。
+
+### `cw-agent` 子命令（start / stop / status）
+
+`cw-agent` 是 per-UID 文件监控 agent，通过 IPC 将文件变更转发给 Enterprise Daemon：
+
+```bash
+cw-agent start [--watch-dir DIR] [--workspace-id ID]   # 启动 watcher（前台运行）
+cw-agent stop                                          # 读取 PID 文件，发送 SIGTERM
+cw-agent status                                        # 查询 agent 运行状态
+```
+
+PID 文件路径：`~/.callwarden/agent.pid`（per-UID）。
+
+### `config check-role`：检查平台角色支持
+
+检查当前平台是否支持指定角色。
+
+```bash
+cw config check-role <role>
+```
+
+`role` 取值：`local` / `client` / `agent` / `daemon` / `all`。
 
 ### 平台门禁
 

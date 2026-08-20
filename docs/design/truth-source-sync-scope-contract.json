@@ -1,0 +1,14 @@
+{
+  "task_id": "T-1786022678812-6b270725",
+  "profile": "design",
+  "required_paths": [
+    "docs/design/requirements.md",
+    "docs/design/multi-llm-contract-driven-collaboration-design.md",
+    "docs/design/tasks.md"
+  ],
+  "allowed_paths": [
+    "docs/design/requirements.md",
+    "docs/design/multi-llm-contract-driven-collaboration-design.md",
+    "docs/design/tasks.md"
+  ]
+}
