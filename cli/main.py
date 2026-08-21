@@ -17,17 +17,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 import time
 
-from ..db import CodeGraphDB
-from ..db.db_tasks import normalize_structured_handoff
 from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode
 from ..server.watcher import FileWatcher
 from ..server.daemon_client import (
     route_task_write,
     route_task_read,
+    route_rpc,
     derive_workspace_instance_id,
     DaemonRemoteError,
     DaemonUnavailableError,
@@ -78,7 +76,7 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
-_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action"}
+_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action", "superseded"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 # audit verify/keys 只读（只查询 audit_chain/audit_key_rotations 表，不写数据库）
 # audit rotate-key 是写（INSERT/UPDATE audit_key_rotations）
@@ -1053,48 +1051,355 @@ def _get_subcommand_epilog(cmd: str, **kwargs) -> str:
     )
 
 
-class LazyDBProxy:
-    """延迟初始化 CodeGraphDB 的代理（P0-2 修复）。
+class RpcDBProxy:
+    """CLI 纯 client 化 DB 门面（T04-followup S1）。
 
-    ``CodeGraphDB.__init__`` 会执行 ``PRAGMA journal_mode=WAL``、schema 自动迁移等
-    本地 SQLite 写操作（创建/修改 ``-wal``/``-shm`` 文件）。在 enterprise/auto
-    模式下，task 命令经 daemon RPC 路由，本地 SQLite 不应被打开——否则 CLI 启动
-    阶段就会与 daemon 唯一写入协调点竞争同一个 ``~/.callwarden/callwarden.db``。
-
-    本代理将真实 CodeGraphDB 的实例化推迟到第一次实际访问本地方法时。而
-    ``route_task_write``/``route_task_read`` 的 local fallback 闭包只有在
-    ``local`` 模式下才会被调用，因此 enterprise/auto 的 task 命令全程不触达
-    底层 DB；只有 local 模式（或非 task 子命令实际使用本地方法）才惰性实例化。
+    设计契约（cw-rust-client-convergence-design.md §3.3 CliDispatcher）：
+    - CLI 业务子命令 = 「解析 → call_daemon() → 格式化输出」；本代理把存量
+      handler 中的 ``db.<method>(...)`` 调用统一转发为 daemon RPC
+      （``route_rpc``），CLI 不再实例化 ``CodeGraphDB``、不直接操作 SQLite；
+    - fail-closed：daemon 不可用抛 ``DaemonUnavailableError``
+      （E_HTTP_DAEMON_UNAVAILABLE / E_MODE_DEPRECATED），绝不降级本地执行；
+    - ``METHOD_MAP`` 记录 CodeGraphDB 方法名 → (RPC method, op_class,
+      位置参数名)。未知方法按方法名原样路由（daemon 支持则执行，
+      不支持时 method_not_found → fail-closed），禁止本地 SQLite 兜底。
 
     Attributes:
-        _workspace_root: 工作区根目录
-        _is_readonly: 当前命令是否只读（flag 模式兼容）
-        _args: 解析后的参数（flag 模式兼容）
-        _db: 惰性实例化的 CodeGraphDB，None 表示尚未实例化
+        client_workspace_root: 客户端工作区根目录（本地路径配置，非 DB 操作）。
+        _is_readonly: 当前命令是否只读（flag 模式兼容）。
+        _args: 解析后的参数（flag 模式兼容）。
     """
 
+    # CodeGraphDB 方法名 -> (rpc_method, op_class, 位置参数名列表)
+    # op_class: READ_ONLY / PROTECTED_MUTATION / GOVERNANCE_WRITE。
+    # 参数名用于把 handler 的位置参数转换为 RPC 关键字参数；kwargs 原样透传，
+    # 若与 RPC 契约字段名不一致，在 _PARAM_RENAME 中补充重命名。
+    _METHOD_MAP: Dict[str, tuple] = {
+        # ---- 查询面 ----
+        "get_stats": ("query.stats", "READ_ONLY", ()),
+        "get_status": ("query.status", "READ_ONLY", ()),
+        "search_symbols": ("query.search", "READ_ONLY", ("query", "kind", "limit")),
+        "get_symbol": ("query.symbol", "READ_ONLY", ("qualified_name",)),
+        "get_symbol_location": ("query.symbol_location", "READ_ONLY", ("name", "file_path")),
+        "get_file_symbols": ("query.file", "READ_ONLY", ("file_path",)),
+        "get_callers": ("query.callers", "READ_ONLY", ("callee_name", "qualified_name")),
+        "get_callees": ("query.callees", "READ_ONLY", ("caller_name", "qualified_name")),
+        "get_call_chain_down": ("query.call_chain_down", "READ_ONLY", ("qualified_name", "max_depth")),
+        "get_call_chain_up": ("get_impact", "READ_ONLY", ("qualified_name", "max_depth")),
+        "get_topological_order": ("query.topological_order", "READ_ONLY", ("limit",)),
+        "detect_cycles": ("query.detect_cycles", "READ_ONLY", ("max_depth",)),
+        "detect_cycle": ("detect_cycle", "READ_ONLY", ("workspace_id",)),
+        "get_comment_coverage": ("get_comment_coverage", "READ_ONLY", ("group_by",)),
+        "get_uncommented_symbols": ("query.uncommented_symbols", "READ_ONLY", ("kind", "module_filter", "limit")),
+        "get_largest_functions": ("query.largest_functions", "READ_ONLY", ("limit", "module_filter")),
+        "get_most_coupled_functions": ("query.most_coupled_functions", "READ_ONLY", ("limit", "module_filter")),
+        "get_function_metrics": ("query.function_metrics", "READ_ONLY", ("qualified_name",)),
+        "get_code_metrics_summary": ("query.metrics_summary", "READ_ONLY", ()),
+        "get_complexity_hotspots": ("query.complexity_hotspots", "READ_ONLY", ("limit", "module_filter")),
+        "get_coupling_analysis": ("query.coupling_analysis", "READ_ONLY", ("limit",)),
+        "get_commit_changes": ("query.git_commit_changes", "READ_ONLY", ("commit_hash",)),
+        "get_git_commits": ("query.git_commits", "READ_ONLY", ("limit", "offset")),
+        "get_git_stats": ("query.git_stats", "READ_ONLY", ()),
+        "get_commit_tasks": ("query.commit_tasks", "READ_ONLY", ("commit_hash",)),
+        "get_coverage_for_symbol": ("query.coverage_for_symbol", "READ_ONLY", ("qualified_name",)),
+        "get_semgrep_stats": ("query.semgrep_stats", "READ_ONLY", ()),
+        "get_semgrep_findings": ("query.semgrep_findings", "READ_ONLY", ("severity", "language", "rule_id", "limit")),
+        "get_symbol_content_by_hash": ("query.symbol_content_by_hash", "READ_ONLY", ("symbol_hash",)),
+        "get_symbol_commit_history": ("get_symbol_commit_history", "READ_ONLY", ("symbol_hash", "limit")),
+        "get_symbol_change_tasks": ("get_symbol_change_tasks", "READ_ONLY", ("symbol_hash", "limit")),
+        "get_vulnerability_blast_radius": ("get_vulnerability_blast_radius", "READ_ONLY", ("finding_id", "severity_filter", "depth")),
+        "get_token_savings_report": ("get_token_savings_report", "READ_ONLY", ("time_window",)),
+        "get_ownership_map": ("get_ownership_map", "READ_ONLY", ()),
+        "get_project_risks": ("get_project_risks", "READ_ONLY", ("top_n", "quick")),
+        "get_project_dashboard": ("get_project_dashboard", "READ_ONLY", ("with_cycles", "with_evolution", "quick", "top_n")),
+        "who_to_ask": ("who_to_ask", "READ_ONLY", ("file_path",)),
+        "project_brief": ("project_brief", "READ_ONLY", ()),
+        "repo_map": ("repo_map", "READ_ONLY", ("format",)),
+        "get_call_heatmap": ("get_call_heatmap", "READ_ONLY", ("group_by", "top_n")),
+        "get_orphan_symbols": ("get_orphan_symbols", "READ_ONLY", ("kind", "module_filter", "limit")),
+        "get_deepest_functions": ("get_deepest_functions", "READ_ONLY", ("limit", "module_filter")),
+        "get_top_callers": ("get_top_callers", "READ_ONLY", ("limit", "module_filter")),
+        "get_module_call_stats": ("query.module_call_stats", "READ_ONLY", ("limit",)),
+        "get_issue_summary": ("get_issue_summary", "READ_ONLY", ("module_filter",)),
+        "get_test_coverage": ("get_test_coverage", "READ_ONLY", ()),
+        "find_uncovered_functions": ("find_uncovered_functions", "READ_ONLY", ()),
+        "find_similar_functions": ("find_similar_functions", "READ_ONLY", ("qualified_name", "threshold")),
+        "semantic_search": ("semantic_search", "READ_ONLY", ("query", "top_k")),
+        "export_module_graph": ("export_module_graph", "READ_ONLY", ("format", "output_file")),
+        "get_dependency_edges": ("get_dependency_edges", "READ_ONLY", ("workspace_id",)),
+        "find_symbols_at_lines": ("find_symbols_at_lines", "READ_ONLY", ("file_path", "lines")),
+        "get_history": ("get_symbol_history", "READ_ONLY", ("qualified_name",)),
+        "get_symbol_issues": ("query.issues", "READ_ONLY", ("qualified_name", "include_info")),
+        "get_recent_changes": ("get_recent_changes", "READ_ONLY", ("since",)),
+        "refresh_file": ("workspace.file.refresh_file", "PROTECTED_MUTATION", ("file_path",)),
+        "get_applicable_rules": ("get_applicable_rules", "READ_ONLY", ("context", "limit")),
+        "guardrail_list_rules": ("guardrail_list_rules", "READ_ONLY", ("category_filter",)),
+        "get_fts_status": ("get_fts_status", "READ_ONLY", ()),
+        "list_signing_keys": ("list_audit_signing_keys", "READ_ONLY", ()),
+        "verify_audit_chain": ("audit_verify_chain", "READ_ONLY", ("table_name", "limit")),
+        "bootstrap_status": ("bootstrap_status", "READ_ONLY", ()),
+        "blast_radius": ("blast_radius", "READ_ONLY", ("symbol_hash", "depth")),
+        "review_readiness_report": ("review_readiness", "READ_ONLY", ("symbol_hash",)),
+        "hotspot_evolution": ("hotspot_evolution", "READ_ONLY", ("module_filter",)),
+        "churn_analysis": ("query.churn_analysis", "READ_ONLY", ("module_filter", "time_window")),
+        "function_change_frequency": ("function_change_frequency", "READ_ONLY", ("qualified_name", "time_window")),
+        "get_defect_correlation_by_qn": ("query.get_defect_correlation", "READ_ONLY", ("qualified_name", "window_commits")),
+        "defect_pattern_search": ("query.defect_search", "READ_ONLY", ("category", "severity_filter")),
+        "defect_stats": ("defect.stats", "READ_ONLY", ()),
+        "get_clone_stats": ("task.clone_stats", "READ_ONLY", ()),
+        "list_clones": ("list_clones", "READ_ONLY", ("clone_type", "min_similarity", "limit", "symbol_id")),
+        "get_rollback_config": ("get_rollback_config", "READ_ONLY", ("task_id",)),
+        "list_rollback_configs": ("list_rollback_configs", "READ_ONLY", ("phase", "rollback_flag")),
+        "is_feature_rolled_back": ("is_feature_rolled_back", "READ_ONLY", ("feature_name",)),
+        "get_lease_status": ("lease.status", "READ_ONLY", ("task_id", "role")),
+        "list_lease_events": ("lease.list_events", "READ_ONLY", ("task_id", "role")),
+        "get_assignment": ("assignment_show", "READ_ONLY", ("task_id", "role")),
+        "get_task_quality_findings": ("task.quality_findings", "READ_ONLY", ("task_id", "status", "severity")),
+        "get_task_commits": ("task.get_commits", "READ_ONLY", ("task_id",)),
+        "get_task_symbol_changes": ("task.get_symbol_changes", "READ_ONLY", ("task_id", "limit")),
+        "get_task_changed_files": ("task.get_changed_files", "READ_ONLY", ("task_id",)),
+        "get_active_task": ("get_active_task", "READ_ONLY", ()),
+        # ---- 写面（PROTECTED_MUTATION）----
+        "rule_candidate_create": ("rule.candidate_create", "PROTECTED_MUTATION",
+                                  ("title", "rule_text", "scope", "severity", "source", "evidence", "confidence")),
+        "rule_candidate_list": ("rule_candidate_list", "READ_ONLY", ("status", "limit")),
+        "rule_candidate_accept": ("rule.candidate_accept", "PROTECTED_MUTATION", ("candidate_id", "reviewer")),
+        "rule_candidate_reject": ("rule.candidate_reject", "PROTECTED_MUTATION", ("candidate_id", "reviewer", "reason")),
+        "rule_list": ("rule_list", "READ_ONLY", ("status", "limit")),
+        "rule_sync_agents_md": ("rule.sync_agents_md", "PROTECTED_MUTATION", ("target_path", "dry_run", "actor")),
+        "rule_insert_agents_md_block": ("rule.insert_agents_md_block", "PROTECTED_MUTATION", ("target_path", "actor")),
+        "rule_seed_bootstrap": ("rule.seed_bootstrap", "PROTECTED_MUTATION", ("dry_run",)),
+        "extract_rule_candidates_from_quality_findings": ("rule.extract_candidates", "PROTECTED_MUTATION",
+                                                          ("task_id", "min_occurrences")),
+        "cleanup_sync_log": ("admin.cleanup_rule_sync_log", "PROTECTED_MUTATION",
+                             ("older_than_days", "keep_latest", "dry_run")),
+        "scan_guardrails": ("guardrail_scan", "PROTECTED_MUTATION", ("file_filter",)),
+        "resolve_gate_findings": ("gate.resolve_findings", "PROTECTED_MUTATION", ("task_id",)),
+        "run_check_gate": ("gate.run_check", "PROTECTED_MUTATION", ("task_id", "step_id", "changed_files")),
+        "restore_comment": ("edit.restore_comment", "PROTECTED_MUTATION", ("spec", "preview")),
+        "restore_all_comments": ("edit.restore_all_comments", "PROTECTED_MUTATION", ("preview", "file_filter")),
+        "gc_retention": ("admin.gc_retention", "PROTECTED_MUTATION",
+                         ("older_than_days", "keep_versions", "include_external", "external_stale_days",
+                          "dry_run", "backup", "vacuum", "save_policy")),
+        "get_gc_policy": ("admin.gc_policy_get", "READ_ONLY", ()),
+        "set_gc_policy": ("admin.gc_policy_set", "PROTECTED_MUTATION",
+                          ("older_than_days", "keep_versions", "include_external", "external_stale_days",
+                           "backup_enabled", "vacuum_enabled")),
+        "gc_archive_list": ("admin.gc_archive_list", "READ_ONLY", ("limit",)),
+        "gc_archive_inspect": ("admin.gc_archive_inspect", "READ_ONLY", ("path",)),
+        "gc_archive_import": ("admin.gc_archive_import", "PROTECTED_MUTATION",
+                              ("path", "file_path", "package_name", "dry_run")),
+        "gc_audit_list": ("admin.gc_audit_list", "READ_ONLY", ("limit", "operation")),
+        "gc_audit_get": ("admin.gc_audit_get", "READ_ONLY", ("audit_id",)),
+        "gc_status": ("gc_status", "READ_ONLY", ()),
+        "gc_archive": ("gc_archive", "PROTECTED_MUTATION", ("force", "dry_run")),
+        "gc_purge": ("gc_purge", "PROTECTED_MUTATION", ("older_than_days",)),
+        "gc_restore": ("gc_restore", "PROTECTED_MUTATION", ("rel_paths", "force")),
+        "import_git_history": ("import_git_history", "PROTECTED_MUTATION", ("max_commits",)),
+        "import_lcov": ("import_lcov", "PROTECTED_MUTATION", ("file_path",)),
+        "import_cobertura": ("import_cobertura", "PROTECTED_MUTATION", ("file_path",)),
+        "import_test_results": ("import_test_results", "PROTECTED_MUTATION",
+                                ("import_file", "ci_run_id", "ci_url")),
+        "build_test_relations": ("build_test_relations", "PROTECTED_MUTATION", ("force",)),
+        "run_semgrep": ("run_semgrep", "PROTECTED_MUTATION", ("target_paths", "config", "languages", "timeout")),
+        "run_semgrep_and_save": ("run_semgrep_and_save", "PROTECTED_MUTATION",
+                                 ("target_paths", "config", "languages", "timeout")),
+        "scan_semgrep_incremental": ("scan_semgrep_incremental", "PROTECTED_MUTATION",
+                                     ("base_branch", "head", "config", "languages", "timeout")),
+        "build_full_graph": ("build_full_graph", "PROTECTED_MUTATION", ("force",)),
+        "embed_all_symbols": ("embed_all_symbols", "PROTECTED_MUTATION", ("force",)),
+        "rebuild_fts_index": ("rebuild_fts_index", "PROTECTED_MUTATION", ()),
+        "detect_clones": ("detect_clones", "PROTECTED_MUTATION",
+                          ("file_filter", "min_lines", "similarity_threshold")),
+        "clear_clones": ("admin.clear_clones", "PROTECTED_MUTATION", ()),
+        "build_defect_knowledge": ("build_defect_knowledge", "PROTECTED_MUTATION", ()),
+        "learn_defect_from_fix": ("defect_learn", "PROTECTED_MUTATION", ("commit_hash",)),
+        "suggest_fix": ("query.defect_suggest_fix", "PROTECTED_MUTATION", ("symbol_hash", "finding_id")),
+        "register_rollback_config": ("register_rollback_config", "PROTECTED_MUTATION",
+                                     ("task_id", "feature_name", "phase", "production_entry",
+                                      "rollback_entry", "rollback_window_until", "config_blob")),
+        "set_rollback_flag": ("set_rollback_flag", "PROTECTED_MUTATION", ("task_id", "flag", "reason")),
+        "log_destructive_operation": ("log_destructive_operation", "PROTECTED_MUTATION",
+                                      ("operation_type", "local_ref", "local_sha", "remote_ref",
+                                       "remote_sha", "task_id", "message")),
+        "list_destructive_operations": ("list_destructive_operations", "READ_ONLY",
+                                        ("limit", "operation_type")),
+        "check_force_push": ("check_force_push", "READ_ONLY", ("local_sha", "remote_sha")),
+        "select_interface_provider": ("admin.select_interface_provider", "PROTECTED_MUTATION",
+                                      ("workspace_id", "consumer_task_id", "contract_id",
+                                       "contract_revision", "interface_name",
+                                       "selected_provider_task_id")),
+        "validate_revision_dependencies": ("validate_revision_dependencies", "READ_ONLY",
+                                           ("workspace_id", "contract_id", "revision")),
+        "test_impact_selection": ("test_impact_selection", "READ_ONLY", ("qualified_name",)),
+        "rotate_signing_key": ("admin.audit_rotate_key", "PROTECTED_MUTATION",
+                               ("new_key_id", "new_key_secret")),
+        # ---- 任务/治理写面（GOVERNANCE_WRITE）----
+        "task_create": ("task.create", "GOVERNANCE_WRITE", ("title", "description", "steps", "creator")),
+        "task_list": ("task.list", "READ_ONLY", ("status", "limit")),
+        "task_status": ("task.status", "READ_ONLY", ("task_id",)),
+        "task_status_tree": ("task.status_tree", "READ_ONLY", ("task_id",)),
+        "task_apply": ("task.apply", "GOVERNANCE_WRITE", ("task_id",)),
+        "task_close": ("task.close", "GOVERNANCE_WRITE", ("task_id",)),
+        "task_reopen": ("task.reopen", "GOVERNANCE_WRITE", ("task_id",)),
+        "task_rollback": ("task.rollback", "GOVERNANCE_WRITE", ("task_id", "step_id")),
+        "task_rollback_step": ("task.rollback", "GOVERNANCE_WRITE", ("task_id", "step_id")),
+        "task_split": ("task.split", "GOVERNANCE_WRITE", ("task_id", "subtasks")),
+        "task_next_step": ("task.work_next", "GOVERNANCE_WRITE", ("task_id",)),
+        "task_report_step": ("task.report", "GOVERNANCE_WRITE",
+                             ("task_id", "step_id", "result", "success", "changes")),
+        "task_capture_diff": ("task.capture_diff", "GOVERNANCE_WRITE",
+                              ("task_id", "step_id", "base", "dry_run", "source_commit_hash",
+                               "skip_quality_review")),
+        "task_capture_diff_auto": ("task.capture_diff", "GOVERNANCE_WRITE", ("auto",)),
+        "task_has_blocking_findings": ("task.has_blocking_findings", "READ_ONLY", ("task_id",)),
+        "run_task_completion_review": ("task.completion_review", "GOVERNANCE_WRITE", ("task_id", "step_id")),
+        "resolve_task_quality_finding": ("task.resolve_quality_finding", "GOVERNANCE_WRITE",
+                                         ("finding_id", "resolution", "resolved_by")),
+        "acquire_lease": ("lease.acquire", "GOVERNANCE_WRITE", ("task_id", "role", "identity", "ttl_seconds")),
+        "renew_lease": ("lease.renew", "GOVERNANCE_WRITE", ("task_id", "role", "token", "identity", "ttl_seconds")),
+        "release_lease": ("lease.release", "GOVERNANCE_WRITE", ("task_id", "role", "token", "identity")),
+        "create_assignment": ("admin.assignment_create", "GOVERNANCE_WRITE", ("task_id", "role", "identity")),
+        "revoke_assignment": ("admin.assignment_revoke", "GOVERNANCE_WRITE", ("assignment_id",)),
+    }
+
+    # 关键字参数名重命名（CLI 调用名 -> RPC 契约字段名）
+    _PARAM_RENAME: Dict[str, Dict[str, str]] = {
+        "task_list": {"status_filter": "status"},
+        "register_workspace": {"root": "client_view_root"},
+        "get_test_cases": {"qualified_name": "qualified_name"},
+    }
+
     def __init__(self, workspace_root=None, is_readonly=False, args=None):
-        self._workspace_root = workspace_root
+        self.client_workspace_root = workspace_root
         self._is_readonly = is_readonly
         self._args = args
-        self._db = None
 
-    def _ensure_db(self):
-        """首次实际访问时实例化真实 CodeGraphDB（仅 local 路径或本地 fallback）"""
-        if self._db is None:
-            if self._workspace_root:
-                self._db = CodeGraphDB(workspace_root=self._workspace_root)
-            else:
-                self._db = CodeGraphDB()
-        return self._db
+    def _rpc_call(self, method_name: str, args, kwargs) -> Any:
+        """按 METHOD_MAP 把 db.<method>(...) 转发为 daemon RPC（fail-closed）。"""
+        entry = self._METHOD_MAP.get(method_name)
+        if entry is None:
+            # 未知方法：按方法名原样路由（daemon 支持则执行，否则 fail-closed）。
+            params = dict(kwargs or {})
+            if args:
+                params = {**dict(zip(("arg0",), args)), **params}
+            return route_rpc(method_name, params, "READ_ONLY")
+        rpc_method, op_class, param_names = entry
+        params: Dict[str, Any] = {}
+        if args:
+            for name, value in zip(param_names, args):
+                params[name] = value
+            if len(args) > len(param_names):
+                params["arg_extra"] = args[len(param_names):]
+        for key, value in (kwargs or {}).items():
+            params[key] = value
+        rename = self._PARAM_RENAME.get(method_name, {})
+        for src, dst in rename.items():
+            if src in params:
+                params[dst] = params.pop(src)
+        return route_rpc(rpc_method, params, op_class)
 
-    def __getattr__(self, name):
-        return getattr(self._ensure_db(), name)
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name == "close":
+            # daemon 拥有数据库生命周期；client 侧 close 为 no-op。
+            return lambda *a, **k: None
+        if name in ("conn", "db_path"):
+            raise AttributeError(
+                f"RpcDBProxy 不暴露 {name}（CLI 纯 client 化，禁止直接 SQLite 操作；"
+                "请改用 daemon RPC 方法或 server.cli_admin 辅助）"
+            )
+        # 其余方法名 → RPC 转发闭包
+        def _method(*args, **kwargs):
+            return self._rpc_call(name, args, kwargs)
+        return _method
 
-    def close(self):
-        if self._db is not None:
-            self._db.close()
-            self._db = None
+    def close(self) -> None:
+        """daemon 拥有数据库生命周期；client 侧 close 为 no-op。"""
+        return None
+
+    # ---- workspace 特殊方法（daemon 行 → legacy workspaces 行最小兼容映射）----
+
+    @staticmethod
+    def _map_workspace_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        """daemon_workspaces 行 → legacy workspaces 表行兼容视图。
+
+        与 tools_workspace.py 的映射保持一致：client_view_root → root_path、
+        name 用 basename(client_view_root) 兜底；workspace_id → id；
+        is_active 由 status=="active" 推导；description 缺省为空串。
+        """
+        root = row.get("client_view_root") or row.get("host_real_root") or ""
+        out = {
+            "id": row.get("workspace_id") or row.get("id") or 0,
+            "name": row.get("name") or (os.path.basename(root.rstrip("/\\")) if root else ""),
+            "root_path": root,
+            "workspace_instance_id": row.get("workspace_instance_id", ""),
+            "is_active": row.get("status") == "active" or bool(row.get("is_active")),
+            "description": row.get("description", ""),
+            "status": row.get("status", ""),
+        }
+        return out
+
+    def list_workspaces(self) -> list:
+        result = route_rpc("workspace.list", {}, "READ_ONLY")
+        if not isinstance(result, list):
+            return []
+        return [self._map_workspace_row(r) for r in result if isinstance(r, dict)]
+
+    def register_workspace(self, name, root, description: str = "") -> int:
+        result = route_rpc(
+            "workspace.register",
+            {"name": name, "client_view_root": root, "description": description},
+            "PROTECTED_MUTATION",
+        )
+        if isinstance(result, dict):
+            return int(result.get("workspace_id") or result.get("id") or 0)
+        return int(result or 0)
+
+    def set_active_workspace(self, workspace_id_or_name) -> bool:
+        route_rpc("workspace.activate",
+                  {"workspace_id_or_name": str(workspace_id_or_name)},
+                  "PROTECTED_MUTATION")
+        return True
+
+    def delete_workspace(self, workspace_id_or_name) -> bool:
+        route_rpc("workspace.remove",
+                  {"workspace_id_or_name": str(workspace_id_or_name)},
+                  "PROTECTED_MUTATION")
+        return True
+
+    def get_active_workspace(self) -> Optional[Dict[str, Any]]:
+        result = route_rpc("workspace.status", {}, "READ_ONLY")
+        if not isinstance(result, dict):
+            return None
+        return self._map_workspace_row(result)
+
+    # ---- 测试关系特殊方法（query.tests RPC reverse/history 语义）----
+
+    def get_test_cases(self, qualified_name: str, limit: int = 50):
+        return route_rpc("query.tests", {
+            "qualified_name": qualified_name,
+            "reverse": False,
+            "history": False,
+            "limit": limit,
+        }, "READ_ONLY")
+
+    def get_tested_functions(self, test_qualified_name: str, limit: int = 50):
+        return route_rpc("query.tests", {
+            "qualified_name": test_qualified_name,
+            "reverse": True,
+            "history": False,
+            "limit": limit,
+        }, "READ_ONLY")
+
+    def get_test_stability(self, qualified_name: str, limit: int = 50):
+        return route_rpc("query.tests", {
+            "qualified_name": qualified_name,
+            "reverse": False,
+            "history": True,
+            "limit": limit,
+        }, "READ_ONLY")
 
 
 def _run_subcommand_mode():
@@ -1132,7 +1437,7 @@ def _run_subcommand_mode():
     # （CodeGraphDB.__init__ 的 PRAGMA WAL / schema 迁移本身就是写操作，会与
     # daemon 唯一写入协调点竞争同一个 ~/.callwarden/callwarden.db）。
     # 仅 local 模式（或非 task 子命令实际触达本地方法）才会惰性实例化真实 DB。
-    db = LazyDBProxy(workspace_root=workspace_root)
+    db = RpcDBProxy(workspace_root=workspace_root)
 
     try:
         # 自动注册工作区（与 --flag 模式行为一致）
@@ -1159,7 +1464,7 @@ def _run_subcommand_mode():
                     db.set_active_workspace(ws_id)
                 elif not existing.get("is_active"):
                     db.set_active_workspace(existing["id"])
-            except sqlite3.OperationalError as e:
+            except Exception as e:
                 if "locked" in str(e).lower():
                     cprint(get_error("db_locked"), "red")
                     sys.exit(2)
@@ -1454,14 +1759,13 @@ def _dispatch_subcommand(argv, db):
     except SharedTaskWriterRequiredError as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         raise SystemExit(2)
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
+        # CLI 纯 client 化后不再捕获 sqlite3.OperationalError（禁直接 SQLite），
+        # 以消息特征判断数据库锁错误保持既有提示语义。
         if "locked" in str(e).lower():
             cprint(get_error("db_locked"), "red")
             sys.exit(2)
-        cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
-        return True
-    except Exception as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         return True
 
@@ -1563,7 +1867,7 @@ def _handle_install_agent(args, db):
     )
     opts = parser.parse_args(args)
 
-    root = db.workspace_root
+    root = db.client_workspace_root
     out_root = os.path.abspath(opts.output_dir or os.path.join(
         root, ".callwarden", "agent-integrations"))
     mode = "global" if opts.global_mode else "project"
@@ -3347,6 +3651,69 @@ def _handle_defect(args, db):
 # 任务管理 / 漏洞爆炸半径 / 符号 Git 历史
 # --------------------------------------------------------------------
 
+# --------------------------------------------------------------------
+# 结构化 handoff 纯函数（T04-followup S1 内联，原 db.db_tasks 导出）
+# --------------------------------------------------------------------
+# 结构化 handoff 的唯一写入口是 daemon ``task.handoff``；此纯函数供 CLI 在
+# 发送前做同一套字段与路由校验（不执行任何本地写入）。权威身份、lease、
+# fencing 和 append-only 事件仍由 daemon 在同一事务中重新校验。
+# 内联原因：check_client_purity 禁止 cli/ 直接 import db.db_tasks 业务模块，
+# 本函数为纯数据校验（无 SQL），内联后 CLI 仍保持薄壳纯净。
+_STRUCTURED_HANDOFF_ROUTES = {
+    "executor_ready_for_review": ("executor", "reviewer", "required"),
+    "executor_blocked_to_user": ("executor", "user", "not_applicable"),
+    "reviewer_pass": ("reviewer", "adjudicator", "required"),
+    "reviewer_blocked": ("reviewer", "executor", "not_required"),
+    "adjudicator_accepted": ("adjudicator", "complete", "not_applicable"),
+    "adjudicator_returned": ("adjudicator", "executor", "not_required"),
+}
+
+
+def normalize_structured_handoff(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """校验并规范化 task.handoff 信封；不执行任何本地写入。
+
+    与 db/db_tasks.normalize_structured_handoff 语义一致（纯函数内联副本）。
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("E_HANDOFF_STRUCTURED_REQUIRED: payload must be object")
+    required = (
+        "task_id", "from_role", "outcome", "next_role", "next_action", "reason",
+        "independence_requirement", "request_id", "step_id", "report_request_id",
+        "evidence_path", "evidence_hash",
+    )
+    missing = [name for name in required if not str(payload.get(name, "")).strip()]
+    if missing:
+        raise ValueError("E_HANDOFF_STRUCTURED_REQUIRED: missing " + ",".join(missing))
+    outcome = str(payload["outcome"]).strip()
+    expected = _STRUCTURED_HANDOFF_ROUTES.get(outcome)
+    if expected is None:
+        raise ValueError("E_HANDOFF_OUTCOME_INVALID: " + outcome)
+    actual = (
+        str(payload["from_role"]).strip(),
+        str(payload["next_role"]).strip(),
+        str(payload["independence_requirement"]).strip(),
+    )
+    if actual != expected:
+        raise ValueError(
+            "E_HANDOFF_ROUTE_INVALID: expected " + repr(expected) + ", got " + repr(actual)
+        )
+    identity = payload.get("identity")
+    if not isinstance(identity, dict) or not all(
+        str(identity.get(name, "")).strip()
+        for name in ("agent_id", "session_id", "model_id", "role")
+    ):
+        raise ValueError("E_IDENTITY_REQUIRED: structured handoff identity incomplete")
+    runtime_role = {
+        "planner": "executor", "implementer": "executor", "tester": "executor",
+        "evidence": "executor", "executor": "executor",
+        "reviewer": "reviewer", "independent_reviewer": "reviewer",
+        "adjudicator": "adjudicator",
+    }.get(str(identity["role"]).strip(), "")
+    if runtime_role != actual[0]:
+        raise ValueError("E_HANDOFF_ROLE_IDENTITY_MISMATCH")
+    return dict(payload)
+
+
 def _route_has_blocking_findings(db, task_id: str) -> bool:
     """判断任务是否有阻塞性质量发现（enterprise/auto 走 daemon RPC）。
 
@@ -3693,6 +4060,132 @@ def _handle_task(args, db):
     )
     st_p.add_argument("task_id", help=t(
         "cli_task_arg_task_id", default="Task ID"))
+
+    # supersede：声明任务替代关系（task.supersede，GOVERNANCE_WRITE，需结构化身份）
+    supersede_p = sub.add_parser(
+        "supersede",
+        help=t("cli_task_supersede_desc",
+               default="Declare that an old task is superseded by a new task"),
+    )
+    supersede_p.add_argument(
+        "old", help=t("cli_task_supersede_old",
+                      default="Task ID being superseded (old)"))
+    supersede_p.add_argument(
+        "new", help=t("cli_task_supersede_new",
+                      default="Task ID superseding (new)"))
+    supersede_p.add_argument(
+        "--reason", default="",
+        help=t("cli_task_supersede_reason",
+               default="Reason for superseding (recorded append-only)"))
+    # P0-H（T-1787277487109-758e56d0）：治理 mutation 凭证。
+    # request_id：幂等 key 成员（同 request_id + 同参数重放；缺省由 route 生成）。
+    supersede_p.add_argument(
+        "--request-id", default="", metavar="ID",
+        help=t("cli_task_supersede_request_id",
+               default="Stable request id for idempotent replay (auto-generated if empty)"))
+    # evidence manifest：治理依据（Adjudicator accepted 的证据），path + hash 必须齐备。
+    supersede_p.add_argument(
+        "--evidence-path", default="", metavar="PATH",
+        help=t("cli_task_supersede_evidence_path",
+               default="Evidence manifest path (required for governance supersede)"))
+    supersede_p.add_argument(
+        "--evidence-hash", default="", metavar="HASH",
+        help=t("cli_task_supersede_evidence_hash",
+               default="Evidence manifest sha256 (required for governance supersede)"))
+    # reviewer lease 凭证（source task 的 reviewer lease；须先 cw lease acquire --role reviewer）。
+    supersede_p.add_argument(
+        "--lease-token", default="", metavar="TOKEN",
+        help=t("cli_task_supersede_lease_token",
+               default="Reviewer lease token for the source (superseded) task"))
+    supersede_p.add_argument(
+        "--fencing-counter", type=int, default=-1, metavar="N",
+        help=t("cli_task_supersede_fencing_counter",
+               default="Reviewer lease fencing counter (must equal current value)"))
+    # GOVERNANCE_WRITE：结构化身份（与 next/report/apply/close 一致，四字段齐备
+    # 否则 fail-closed）。superseded（只读）不需要。P0-H：role 严格限定 adjudicator。
+    supersede_p.add_argument(
+        "--agent-id", default="", metavar="ID",
+        help=t("cli_task_arg_agent_id", default="Agent ID (P3 Identity)"))
+    supersede_p.add_argument(
+        "--session-id", default="", metavar="ID",
+        help=t("cli_task_arg_session_id", default="Session ID (P3 Identity)"))
+    supersede_p.add_argument(
+        "--model-id", default="", metavar="ID",
+        help=t("cli_task_arg_model_id", default="Model ID (P3 Identity)"))
+    supersede_p.add_argument(
+        "--role", default="", metavar="ROLE", choices=["adjudicator"],
+        help=t("cli_task_arg_role",
+               default="Role (P0-H: strictly 'adjudicator' for task.supersede)"))
+
+    # P0-B：为旧 Python 直写创建且尚无 binding 的历史任务追加可审计 authority attestation。
+    attest_legacy_p = sub.add_parser(
+        "attest-legacy-workspace-binding",
+        help="Append-only authority attestation for an unbound legacy task (daemon-only)",
+    )
+    attest_legacy_p.add_argument("legacy_task_id", help="Unbound legacy task ID")
+    attest_legacy_p.add_argument("anchor_task_id", help="Bound anchor task ID with reviewer lease")
+    attest_legacy_p.add_argument("--workspace-id", required=True, type=int, metavar="ID",
+                                 help="Explicit immutable workspace authority ID")
+    attest_legacy_p.add_argument("--workspace-instance-id", required=True, metavar="ID",
+                                 help="Explicit stable workspace instance ID")
+    attest_legacy_p.add_argument("--request-id", required=True, metavar="ID",
+                                 help="Stable request ID for durable idempotency")
+    attest_legacy_p.add_argument("--evidence-path", required=True, metavar="PATH",
+                                 help="Evidence manifest path")
+    attest_legacy_p.add_argument("--evidence-hash", required=True, metavar="HASH",
+                                 help="Evidence manifest SHA-256")
+    attest_legacy_p.add_argument("--lease-token", required=True, metavar="TOKEN",
+                                 help="Active reviewer lease token for anchor task")
+    attest_legacy_p.add_argument("--fencing-counter", required=True, type=int, metavar="N",
+                                 help="Current reviewer lease fencing counter for anchor task")
+    attest_legacy_p.add_argument("--agent-id", required=True, metavar="ID",
+                                 help="Registered adjudicator agent ID")
+    attest_legacy_p.add_argument("--session-id", required=True, metavar="ID",
+                                 help="Registered adjudicator session ID")
+    attest_legacy_p.add_argument("--model-id", required=True, metavar="ID",
+                                 help="Registered adjudicator model ID")
+    attest_legacy_p.add_argument("--role", required=True, choices=["adjudicator"],
+                                 help="Governance role; only adjudicator is accepted")
+
+    # P0-C：对治理投影完全缺失但已绑定 authority 的任务一次性追加 v1 Task/Role/step contracts。
+    contract_bootstrap_p = sub.add_parser(
+        "contract-bootstrap",
+        help="Append v1 Task/Role/step governance contracts for an empty bound task (daemon-only)",
+    )
+    contract_bootstrap_p.add_argument("task_id", help="Bound task ID whose governance projection is completely empty")
+    contract_bootstrap_p.add_argument("--envelope-path", required=True, metavar="PATH",
+                                      help="Task Envelope JSON file; revision must be 1")
+    contract_bootstrap_p.add_argument("--workspace-id", required=True, type=int, metavar="ID",
+                                      help="Explicit immutable workspace authority ID")
+    contract_bootstrap_p.add_argument("--workspace-instance-id", required=True, metavar="ID",
+                                      help="Stable workspace instance ID recorded by the task binding")
+    contract_bootstrap_p.add_argument("--request-id", required=True, metavar="ID",
+                                      help="Stable request ID for durable idempotency")
+    contract_bootstrap_p.add_argument("--evidence-path", required=True, metavar="PATH",
+                                      help="Governance evidence manifest path")
+    contract_bootstrap_p.add_argument("--evidence-hash", required=True, metavar="HASH",
+                                      help="Governance evidence manifest SHA-256")
+    contract_bootstrap_p.add_argument("--lease-token", required=True, metavar="TOKEN",
+                                      help="Active reviewer lease token for this task")
+    contract_bootstrap_p.add_argument("--fencing-counter", required=True, type=int, metavar="N",
+                                      help="Current reviewer lease fencing counter for this task")
+    contract_bootstrap_p.add_argument("--agent-id", required=True, metavar="ID",
+                                      help="Registered adjudicator agent ID")
+    contract_bootstrap_p.add_argument("--session-id", required=True, metavar="ID",
+                                      help="Registered adjudicator session ID")
+    contract_bootstrap_p.add_argument("--model-id", required=True, metavar="ID",
+                                      help="Registered adjudicator model ID")
+    contract_bootstrap_p.add_argument("--role", required=True, choices=["adjudicator"],
+                                      help="Governance role; only adjudicator is accepted")
+
+    # superseded：只读查询某任务的替代者（task.superseded_by）
+    superseded_p = sub.add_parser(
+        "superseded",
+        help=t("cli_task_superseded_desc",
+               default="Show which task supersedes the given task (read-only)"),
+    )
+    superseded_p.add_argument(
+        "id", help=t("cli_task_arg_task_id", default="Task ID"))
 
     opts = parser.parse_args(args)
 
@@ -4655,18 +5148,19 @@ def _handle_task(args, db):
         def _local_task_list():
             return db.task_list(status_filter=opts.status or None, limit=opts.limit)
 
-        try:
-            _list_res = route_task_read("task.list", {
-                "status": opts.status or "",
-                "limit": opts.limit,
-            }, _local_task_list) or []
-            # daemon 返回 {tasks: [...]}；本地直接返回 list
-            if isinstance(_list_res, dict):
-                tasks = _list_res.get("tasks") or []
-            else:
-                tasks = _list_res
-        except Exception:
-            tasks = []
+        # M4 fail-closed：daemon 不可达（DaemonUnavailableError）或结构化业务
+        # 错误（DaemonRemoteError）必须上抛，禁止 catch-all 吞异常静默输出
+        # 空列表（QA Round 1 P1：CW_DAEMON_HTTP_ENDPOINT 指向死端点时
+        # `cw task list` 曾静默返回 Total tasks: 0 / exit 0）。
+        _list_res = route_task_read("task.list", {
+            "status": opts.status or "",
+            "limit": opts.limit,
+        }, _local_task_list) or []
+        # daemon 返回 {tasks: [...]}；本地直接返回 list
+        if isinstance(_list_res, dict):
+            tasks = _list_res.get("tasks") or []
+        else:
+            tasks = _list_res
 
         cprint(t("cli.messages.task_panel_title"), "cyan", bold=True)
         if opts.blocked:
@@ -4769,7 +5263,7 @@ def _handle_task(args, db):
         # enterprise/auto 走 daemon RPC task.completion_review（与 MCP 同协议）；
         # local 模式（或 auto 降级）才调用本地 run_task_completion_review。
         # 注意：hasattr 检查必须放在 local 闭包内，避免 enterprise 模式触发
-        # LazyDBProxy 实例化本地 CodeGraphDB。
+        # RpcDBProxy 经 daemon RPC 转发。
         def _local_completion_review():
             if not hasattr(db, "run_task_completion_review"):
                 return {"error": "run_task_completion_review not available"}
@@ -4878,6 +5372,265 @@ def _handle_task(args, db):
         # 以树形显示任务状态（C9 新增，task show --tree 的别名）
         return _print_task_show(db, opts.task_id, flat=False)
 
+    elif opts.action == "supersede":
+        # 声明任务替代关系（task.supersede，GOVERNANCE_WRITE，P0-H 治理 mutation）。
+        # 与 task.next/report/apply/close 一致：提供身份则四字段齐备，否则 fail-closed；
+        # P0-H 追加 request-id/evidence/lease/fencing 凭证，role 严格 = adjudicator。
+        _sup_id, _ireason = _collect_identity(opts)
+        if _ireason:
+            _identity_reason_output(_ireason, False)
+            return True
+        # 证据 manifest 前置校验（fail-fast，稳定提示；daemon 侧仍会 fail-closed）
+        if not getattr(opts, "evidence_path", "") or not getattr(opts, "evidence_hash", ""):
+            cprint(t("cli.messages.task_supersede_evidence_required",
+                     default="task.supersede 必须提供 --evidence-path 与 --evidence-hash（治理依据）"),
+                   "red")
+            return True
+        _sup_params = {
+            "superseded_id": opts.old,
+            "superseding_id": opts.new,
+            "reason": opts.reason,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "lease_token": getattr(opts, "lease_token", "") or "",
+            "fencing_counter": getattr(opts, "fencing_counter", -1),
+        }
+        # request_id 仅在显式提供时放入（幂等 key 成员）；缺省由 route_task_write
+        # 自动生成 req-<uuid>，避免空串被 daemon 判为 E_SUPERSEDE_REQUEST_ID_REQUIRED。
+        if getattr(opts, "request_id", ""):
+            _sup_params["request_id"] = opts.request_id
+        if _sup_id:
+            _sup_params["identity"] = _sup_id
+            _sup_params["actor"] = _sup_id.get("agent_id", "")
+        _sup_session = _resolve_action_session(_sup_id)
+        if _sup_session:
+            _sup_params["agent_session_id"] = _sup_session
+        # workspace_instance_id：幂等 key 成员（与 task.next_action 同源推导）
+        try:
+            _sup_root = detect_project_root(os.getcwd()) or os.getcwd()
+            _sup_params["workspace_instance_id"] = derive_workspace_instance_id(_sup_root)
+        except Exception:
+            pass  # 推导失败由 daemon 按 binding 权威 fail-closed
+
+        def _local_supersede_forbidden():
+            # supersede 必须经由 daemon 权威写点（独立关系表 + append-only 事件）；
+            # local 模式禁止旁路写入 task_supersede_relations，fail-closed。
+            raise DaemonUnavailableError(
+                "task.supersede 仅由 daemon 权威写点处理；请使用 daemon 模式 "
+                "(cw daemon start) 后重试"
+            )
+
+        result = route_task_write(
+            "task.supersede", _sup_params, _local_supersede_forbidden)
+        if result is None:
+            cprint(t("cli.messages.task_supersede_failed",
+                     default="task.supersede failed (no response)"), "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(t("cli.messages.task_supersede_failed",
+                     error=result["error"]), "red")
+            return True
+        cprint(t("cli.messages.task_supersede_success",
+                 old=result.get("superseded_task_id", opts.old),
+                 new=result.get("superseding_task_id", opts.new),
+                 default="✓ 已声明任务替代：{old} 被 {new} 替代"),
+               "green", bold=True)
+        if result.get("reason"):
+            print(t("cli.messages.task_supersede_reason_line",
+                    reason=result["reason"],
+                    default="  reason: {reason}"))
+        if result.get("actor"):
+            print(t("cli.messages.task_supersede_actor_line",
+                    actor=result["actor"],
+                    default="  by: {actor}"))
+        if result.get("workspace_id") is not None:
+            print(t("cli.messages.task_supersede_workspace_line",
+                    ws=result.get("workspace_id"),
+                    default="  workspace_id: {ws}"))
+        if result.get("supersedence_id"):
+            print(t("cli.messages.task_supersede_supersedence_line",
+                    sid=result.get("supersedence_id"),
+                    default="  supersedence_id: {sid}"))
+        if result.get("request_id"):
+            print(t("cli.messages.task_supersede_request_line",
+                    rid=result.get("request_id"),
+                    default="  request_id: {rid}"))
+        print()
+        return True
+
+    elif opts.action == "attest-legacy-workspace-binding":
+        # P0-B：治理 mutation 必须走 daemon 权威路径；CLI 不允许本地 DB fallback。
+        _attest_identity, _attest_reason = _collect_identity(opts)
+        if _attest_reason:
+            _identity_reason_output(_attest_reason, False)
+            return True
+        _attest_params = {
+            "legacy_task_id": opts.legacy_task_id,
+            "anchor_task_id": opts.anchor_task_id,
+            "workspace_id": opts.workspace_id,
+            "workspace_instance_id": opts.workspace_instance_id,
+            "request_id": opts.request_id,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "lease_token": opts.lease_token,
+            "fencing_counter": opts.fencing_counter,
+            "identity": _attest_identity,
+            "actor": (_attest_identity or {}).get("agent_id", ""),
+        }
+
+        def _local_legacy_attestation_forbidden():
+            raise DaemonUnavailableError(
+                "task.attest_legacy_workspace_binding 仅由 daemon 权威写点处理；"
+                "daemon 不可用时禁止本地 SQLite fallback"
+            )
+
+        result = route_task_write(
+            "task.attest_legacy_workspace_binding",
+            _attest_params,
+            _local_legacy_attestation_forbidden,
+        )
+        if result is None:
+            cprint("task.attest_legacy_workspace_binding failed (no response)", "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(f"task.attest_legacy_workspace_binding failed: {result['error']}", "red")
+            return True
+        cprint(
+            "✓ 已追加历史任务 workspace authority attestation："
+            f"{result.get('legacy_task_id', opts.legacy_task_id)} "
+            f"(anchor={result.get('anchor_task_id', opts.anchor_task_id)})",
+            "green",
+            bold=True,
+        )
+        print(f"  workspace_id: {result.get('workspace_id')}")
+        print(f"  binding: {result.get('workspace_binding_id', '')}")
+        print(f"  request_id: {result.get('request_id', '')}")
+        print()
+        return True
+
+    elif opts.action == "contract-bootstrap":
+        # P0-C：Task/Role/step bootstrap 是 governance mutation，只有 daemon 权威路径可写。
+        _bootstrap_identity, _bootstrap_reason = _collect_identity(opts)
+        if _bootstrap_reason:
+            _identity_reason_output(_bootstrap_reason, False)
+            return True
+        try:
+            with open(opts.envelope_path, "r", encoding="utf-8") as _envelope_file:
+                _bootstrap_envelope = json.load(_envelope_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            cprint(f"task.contract_bootstrap envelope 读取失败: {exc}", "red")
+            return True
+        if not isinstance(_bootstrap_envelope, dict):
+            cprint("task.contract_bootstrap envelope 必须是 JSON object", "red")
+            return True
+        _bootstrap_params = {
+            "task_id": opts.task_id,
+            "envelope": _bootstrap_envelope,
+            "workspace_id": opts.workspace_id,
+            "workspace_instance_id": opts.workspace_instance_id,
+            "request_id": opts.request_id,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "lease_token": opts.lease_token,
+            "fencing_counter": opts.fencing_counter,
+            "identity": _bootstrap_identity,
+            "actor": (_bootstrap_identity or {}).get("agent_id", ""),
+        }
+
+        def _local_contract_bootstrap_forbidden():
+            raise DaemonUnavailableError(
+                "task.contract_bootstrap 仅由 daemon 权威写点处理；"
+                "daemon 不可用时禁止本地 SQLite fallback"
+            )
+
+        result = route_task_write(
+            "task.contract_bootstrap",
+            _bootstrap_params,
+            _local_contract_bootstrap_forbidden,
+        )
+        if result is None:
+            cprint("task.contract_bootstrap failed (no response)", "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(f"task.contract_bootstrap failed: {result['error']}", "red")
+            return True
+        cprint(f"✓ 已追加 Task/Role/step governance bootstrap：{result.get('task_id', opts.task_id)}", "green", bold=True)
+        print(f"  contract: {result.get('contract_id', '')}@{result.get('contract_revision', '')}")
+        print(f"  step bindings: {len(result.get('step_binding_ids', []))}")
+        print(f"  request_id: {result.get('request_id', '')}")
+        print()
+        return True
+
+    elif opts.action == "superseded":
+        # 只读查询某任务的替代者（task.superseded_by）
+        def _local_superseded_forbidden():
+            raise DaemonUnavailableError(
+                "task.superseded_by 仅由 daemon 提供；请使用 daemon 模式 "
+                "(cw daemon start) 后重试"
+            )
+
+        result = route_task_read("task.superseded_by", {
+            "task_id": opts.id,
+        }, _local_superseded_forbidden)
+        if result is None:
+            cprint(t("cli.messages.task_superseded_failed",
+                     default="task.superseded_by failed (no response)"), "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(t("cli.messages.task_superseded_failed",
+                     error=result["error"]), "red")
+            return True
+        if not result.get("found"):
+            cprint(t("cli.messages.task_superseded_none",
+                     task_id=opts.id,
+                     default="任务 {task_id} 未被任何任务替代"), "yellow")
+            print()
+            return True
+        cprint(t("cli.messages.task_superseded_found",
+                 task_id=opts.id,
+                 new=result.get("superseding_task_id", ""),
+                 default="任务 {task_id} 已被 {new} 替代"),
+               "green", bold=True)
+        if result.get("reason"):
+            print(t("cli.messages.task_superseded_reason_line",
+                    reason=result["reason"],
+                    default="  reason: {reason}"))
+        if result.get("actor"):
+            print(t("cli.messages.task_superseded_actor_line",
+                    actor=result["actor"],
+                    default="  by: {actor}"))
+        # P0-H：workspace/provenance 投影
+        if result.get("workspace_id") is not None:
+            print(t("cli.messages.task_superseded_workspace_line",
+                    ws=result.get("workspace_id"),
+                    default="  workspace_id: {ws}"))
+        if result.get("supersedence_id"):
+            print(t("cli.messages.task_superseded_supersedence_line",
+                    sid=result.get("supersedence_id"),
+                    default="  supersedence_id: {sid}"))
+        if result.get("reason_code"):
+            print(t("cli.messages.task_superseded_reason_code_line",
+                    rc=result.get("reason_code"),
+                    default="  reason_code: {rc}"))
+        if result.get("request_id"):
+            print(t("cli.messages.task_superseded_request_line",
+                    rid=result.get("request_id"),
+                    default="  request_id: {rid}"))
+        if result.get("evidence_hash"):
+            print(t("cli.messages.task_superseded_evidence_line",
+                    ev=result.get("evidence_hash"),
+                    default="  evidence_hash: {ev}"))
+        print()
+        return True
+
     return True
 
 
@@ -4983,7 +5736,7 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
     P0-2：不得在 enterprise/auto 下通过 db 直接实例化本地 CodeGraphDB。
 
     Args:
-        db: CodeGraphDB 实例（或 LazyDBProxy）
+        db: RpcDBProxy（daemon RPC 门面）
         task_id: 任务 ID
         flat: True 时仅显示主任务（不递归子任务），False 时递归展示整棵树
 
@@ -5001,6 +5754,7 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
             return True
         _print_task_detail_single(detail, indent_depth=0)
         _print_task_link_section(db, task_id)
+        _print_task_superseded_section(db, task_id)
         return True
 
     # 树形模式：使用 task.status_tree 递归展示
@@ -5019,6 +5773,7 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
     _print_task_tree_node(tree, depth=0)
     print()
     _print_task_link_section(db, task_id)
+    _print_task_superseded_section(db, task_id)
     return True
 
 
@@ -5040,6 +5795,11 @@ def _print_task_link_section(db, task_id: str):
         commits = route_task_read("task.get_commits", {"task_id": task_id}, _local_commits) or []
         if isinstance(commits, dict):
             commits = commits.get("commits") or []
+    except DaemonUnavailableError:
+        # M4 fail-closed：daemon 不可达必须上抛，禁止静默跳过（Related 段为空会
+        # 误导用户以为任务无关联 commit）。方法未实现（DaemonRemoteError）按
+        # 文档 fail-soft 跳过，但连接失败不吞。
+        raise
     except Exception:
         commits = []
     try:
@@ -5054,6 +5814,8 @@ def _print_task_link_section(db, task_id: str):
         }, _local_changes) or []
         if isinstance(changes, dict):
             changes = changes.get("changes") or []
+    except DaemonUnavailableError:
+        raise
     except Exception:
         changes = []
 
@@ -5084,6 +5846,42 @@ def _print_task_link_section(db, task_id: str):
             print("  {} {}{}".format(qn, ct, tag))
         if len(changes) > 10:
             print("  ... and {} more".format(len(changes) - 10))
+
+
+def _print_task_superseded_section(db, task_id: str):
+    """打印任务的 superseded_by 替代边（task.superseded_by，只读，fail-soft）
+
+    展示「本任务被哪个任务替代」。无替代关系或 daemon 不可达时静默跳过
+    （与 task.handoff/link 段一致，不阻断主展示）。
+    """
+    try:
+        def _local_superseded_forbidden():
+            raise DaemonUnavailableError(
+                "task.superseded_by 仅由 daemon 提供")
+
+        res = route_task_read("task.superseded_by", {
+            "task_id": task_id,
+        }, _local_superseded_forbidden)
+    except DaemonUnavailableError:
+        return
+    except Exception:
+        return
+    if not isinstance(res, dict) or not res.get("found"):
+        return
+    cprint(t("cli.messages.task_show_superseded_title",
+             default="── Superseded by ──"), "cyan")
+    new_id = res.get("superseding_task_id", "")
+    print(t("cli.messages.task_show_superseded_line",
+            default="  -> {} (superseded)".format(new_id), new_id=new_id))
+    if res.get("reason"):
+        print(t("cli.messages.task_show_superseded_reason",
+                default="     reason: {}".format(res["reason"]),
+                reason=res["reason"]))
+    if res.get("actor"):
+        print(t("cli.messages.task_show_superseded_actor",
+                default="     by: {}".format(res["actor"]),
+                actor=res["actor"]))
+    print()
 
 
 def _print_task_detail_single(detail: dict, indent_depth: int = 0):
@@ -5592,15 +6390,6 @@ def _handle_clone(args, db):
             loc = db.get_symbol_location(opts.symbol.split(".")[-1])
             if loc:
                 symbol_id = loc.get("id", 0)
-            if not symbol_id:
-                # 兜底：直接 SQL 查
-                cur = db.conn.execute(
-                    "SELECT id FROM symbols WHERE qualified_name = ? LIMIT 1",
-                    (opts.symbol,),
-                )
-                row = cur.fetchone()
-                if row:
-                    symbol_id = row[0]
 
         clones = db.list_clones(
             clone_type=opts.type,
@@ -5805,6 +6594,9 @@ def _handle_symbol_history(args, db):
     try:
         related_tasks = db.get_symbol_change_tasks(
             symbol_hash=opts.symbol_hash, limit=20) if hasattr(db, "get_symbol_change_tasks") else []
+    except DaemonUnavailableError:
+        # M4 fail-closed：daemon 不可达上抛，禁止静默输出空 Related 段
+        raise
     except Exception:
         related_tasks = []
     if related_tasks:
@@ -6432,7 +7224,7 @@ def _handle_gc(args, db):
     elif parsed.action == "db-cleanup":
         return _handle_gc_db_cleanup(dry_run=parsed.dry_run,
                                      all_but_current=parsed.all_but_current,
-                                     current_workspace_root=db.workspace_root)
+                                     current_workspace_root=db.client_workspace_root)
 
     elif parsed.action == "db-migrate-single":
         return _handle_db_migrate_single(
@@ -6449,13 +7241,13 @@ def _handle_db_migrate_single(dry_run: bool = True, backup: bool = True) -> bool
     将 ~/.callwarden/<hash>/callwarden.db 的数据合并到 ~/.callwarden/callwarden.db。
     迁移 workspaces / tasks / task_steps 表，符号图谱数据建议迁移后 refresh 重建。
     """
-    from ..db.db_migrate import migrate_to_single_db
+    from ..server.cli_admin import migrate_single_db
 
     mode = "[DRY-RUN] " if dry_run else ""
     cprint(f"{mode}Database migration: legacy per-project → single user database",
            "cyan", bold=True)
 
-    result = migrate_to_single_db(dry_run=dry_run, backup=backup)
+    result = migrate_single_db(dry_run=dry_run, backup=backup)
 
     if result["errors"] and not result["legacy_dbs"]:
         for err in result["errors"]:
@@ -6516,9 +7308,9 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
         current_workspace_root: 当前 workspace 的根路径（用于 --all-but-current）
     """
     import shutil
-    import sqlite3
     import tempfile
     from ..config import CALLWARDEN_DIR, norm_path
+    from ..server.cli_admin import scan_hash_databases
 
     # 系统临时目录特征（用于检测 pytest 残留）
     _temp_dir = tempfile.gettempdir().lower().replace("\\", "/")
@@ -6556,14 +7348,9 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
         cprint()
         return True
 
-    # 扫描 hash 子目录（16 位十六进制名，内含 callwarden.db）
-    hash_dirs = []
-    for name in os.listdir(CALLWARDEN_DIR):
-        if len(name) == 16 and all(c in "0123456789abcdef" for c in name):
-            dir_path = os.path.join(CALLWARDEN_DIR, name)
-            db_file = os.path.join(dir_path, "callwarden.db")
-            if os.path.isfile(db_file):
-                hash_dirs.append((name, dir_path, db_file))
+    # 扫描 hash 子目录（16 位十六进制名，内含 callwarden.db）——
+    # SQL 读取集中到 server.cli_admin.scan_hash_databases（只读连接）。
+    scan_results = scan_hash_databases(CALLWARDEN_DIR)
 
     # 输出报告
     cprint("Database Cleanup (legacy hash directories)", "cyan", bold=True)
@@ -6573,7 +7360,7 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
         cprint("Mode: APPLY (will delete orphan directories)", "green")
     cprint()
 
-    if not hash_dirs:
+    if not scan_results:
         cprint("No legacy databases found.", "green")
         cprint()
         return True
@@ -6581,23 +7368,19 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
     orphans = []
     valid = []
 
-    for hash_name, dir_path, db_file in hash_dirs:
-        # 打开 hash 目录下的数据库，查询 workspaces 表
-        try:
-            conn = sqlite3.connect(db_file)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT id, name, root_path FROM workspaces ORDER BY id"
-            ).fetchall()
-            conn.close()
-        except sqlite3.OperationalError as e:
+    for entry in scan_results:
+        hash_name = entry["hash"]
+        dir_path = entry["dir"]
+        rows = entry["workspaces"]
+        error = entry.get("error")
+        if error:
             # 无法读取 workspaces 表 → 判为孤儿
             orphans.append({
                 "hash": hash_name,
                 "dir": dir_path,
                 "name": "",
                 "root_path": "",
-                "reason": f"read_error: {e}",
+                "reason": error,
             })
             continue
 
@@ -6609,8 +7392,8 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
         ws_root = ""
 
         for row in rows:
-            ws_name = row["name"] or ""
-            root_path = row["root_path"] or ""
+            ws_name = row.get("name") or ""
+            root_path = row.get("root_path") or ""
 
             if all_but_current:
                 rp_norm = norm_path(os.path.abspath(
@@ -6633,7 +7416,7 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
                 dir_reason = reason
                 ws_root = root_path
 
-        entry = {
+        entry_out = {
             "hash": hash_name,
             "dir": dir_path,
             "name": ws_name,
@@ -6641,9 +7424,9 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
             "reason": dir_reason,
         }
         if dir_is_orphan:
-            orphans.append(entry)
+            orphans.append(entry_out)
         else:
-            valid.append(entry)
+            valid.append(entry_out)
 
     total = len(orphans) + len(valid)
     cprint(f"Total databases: {total}", "dim")
@@ -6877,9 +7660,11 @@ def _doctor_check(db):
     # 1. 数据库基本信息
     cprint(t("cli.messages.doctor_db_info_title",
            default="[1] Database information"), "yellow", bold=True)
-    db_path = db.db_path
+    # doctor 为 Q2 例外（本地维护命令）；DB 路径经 server.cli_admin 只读辅助获取，
+    # CLI 不直接操作 SQLite（check_client_purity 硬门禁）。
+    from ..server.cli_admin import get_default_db_path, read_pragmas, connection_test
+    db_path = get_default_db_path()
     import os
-    import sqlite3
     print(t("cli.messages.doctor_db_path",
           default="  Path: {path}", path=db_path))
     print(t("cli.messages.doctor_db_size",
@@ -6901,7 +7686,8 @@ def _doctor_check(db):
     }
     print(t("cli.messages.doctor_pragma_config", default="  PRAGMA config:"))
     all_pragma_ok = True
-    # PRAGMA 不支持绑定参数，用静态 SQL 分派避免字符串拼接（semgrep: sqlalchemy-execute-raw-query / formatted-sql-query）
+    # PRAGMA 读取集中到 server.cli_admin（静态 SQL 分派，只读连接）；
+    # PRAGMA 不支持绑定参数，避免字符串拼接（semgrep: formatted-sql-query）。
     _PRAGMA_QUERIES = {
         "journal_mode": "PRAGMA journal_mode",
         "synchronous": "PRAGMA synchronous",
@@ -6909,9 +7695,9 @@ def _doctor_check(db):
         "cache_size": "PRAGMA cache_size",
         "mmap_size": "PRAGMA mmap_size",
     }
+    pragma_values = read_pragmas(db_path, list(pragmas.keys()))
     for key, expected in pragmas.items():
-        actual = db.conn.execute(_PRAGMA_QUERIES[key]).fetchone()[0]
-        actual_str = str(actual)
+        actual_str = pragma_values.get(key, "")
         # 应用别名映射
         aliases = pragma_aliases.get(key, {})
         actual_normalized = aliases.get(
@@ -6986,17 +7772,7 @@ def _doctor_check(db):
     cprint(t("cli.messages.doctor_connection_title",
            default="[4] Database connection test"), "yellow", bold=True)
     import time
-    success = 0
-    fail = 0
-    for i in range(5):
-        try:
-            conn = sqlite3.connect(db_path)
-            conn.execute("SELECT 1").fetchone()
-            conn.close()
-            success += 1
-        except sqlite3.OperationalError:
-            fail += 1
-        time.sleep(0.1)
+    success, fail = connection_test(db_path, rounds=5)
     if fail == 0:
         cprint(t("cli.messages.doctor_connection_success",
                default="  ✓ All 5 connection tests succeeded"), "green")
@@ -7031,7 +7807,8 @@ def _doctor_add_defender_exclusion(db):
 
     import os
     import subprocess
-    callwarden_dir = os.path.dirname(db.db_path)
+    from ..server.cli_admin import get_default_db_path
+    callwarden_dir = os.path.dirname(get_default_db_path())
     # 排除到 .callwarden 根目录（涵盖所有项目的 db）
     parent_dir = os.path.dirname(callwarden_dir)
 
@@ -7233,6 +8010,10 @@ def _handle_workspace(args, db):
                 try:
                     db.register_workspace(p["name"], p["root"])
                     registered += 1
+                except DaemonUnavailableError:
+                    # M4 fail-closed：daemon 不可达必须上抛（整批注册都会失败，
+                    # 静默 pass 会输出误导性的 Registered: 0）。
+                    raise
                 except Exception:
                     pass
             print(t("cli.messages.workspace_scan_registered", count=registered))
@@ -7441,10 +8222,7 @@ def _handle_health_report(args, db):
         if hasattr(db, "get_semgrep_stats"):
             report["issues"] = db.get_semgrep_stats()
         else:
-            cur = db.conn.execute(
-                "SELECT severity, COUNT(*) as cnt FROM semgrep_findings GROUP BY severity"
-            )
-            report["issues"] = {row["severity"]: row["cnt"] for row in cur}
+            report["issues"] = {"error": "semgrep stats unavailable via daemon"}
     except Exception as e:
         report["issues"] = {"error": str(e)}
 
@@ -7933,11 +8711,15 @@ def _handle_search(args, db):
     print()
     for i, sym in enumerate(symbols[:opts.limit]):
         depth = sym["depth"] if sym["depth"] >= 0 else "?"
-        sig = sym.get("signature", "")[:50] if sym.get("signature") else ""
-        comment_mark = "✓" if sym["has_comment"] else " "
+        # CLI-02（T-1787321708568-d292ab3c）：Rust daemon 为 query.search 权威响应，
+        # has_comment/signature/file_path 为兼容字段，缺省 must 稳定（不 KeyError）。
+        has_comment = bool(sym.get("has_comment", False))
+        sig = (sym.get("signature") or "")[:50]
+        file_path = sym.get("file_path") or sym.get("file_rel_path") or ""
+        comment_mark = "✓" if has_comment else " "
         print(
             f"  [{i+1:3d}] depth={depth:>3} [{comment_mark}] {sym['kind']:8s} {sym['qualified_name']}")
-        print(f"         {sym['file_path']}:{sym['start_line']}")
+        print(f"         {file_path}:{sym['start_line']}")
         if sig:
             print(f"         {sig}")
     if len(symbols) >= opts.limit:
@@ -7997,13 +8779,13 @@ def _handle_grep(args, db):
 
     # 1. 检查 rg 是否可用，不可用回退 Python re
     rg_path = shutil.which("rg")
-    search_root = opts.path if opts.path else db.workspace_root
+    search_root = opts.path if opts.path else db.client_workspace_root
     if not search_root or not os.path.isdir(search_root):
         # path 参数可能传的是文件，转父目录
         if opts.path and os.path.isfile(opts.path):
             search_root = os.path.dirname(opts.path)
         else:
-            search_root = db.workspace_root
+            search_root = db.client_workspace_root
 
     raw_lines: List[str] = []  # 形如 "file:line:content"
     if rg_path:
@@ -9444,6 +10226,9 @@ def _handle_git(args, db):
             try:
                 related_tasks = db.get_commit_tasks(
                     commit["commit_hash"]) if hasattr(db, "get_commit_tasks") else []
+            except DaemonUnavailableError:
+                # M4 fail-closed：daemon 不可达上抛，禁止静默输出空 Related 段
+                raise
             except Exception:
                 related_tasks = []
             if related_tasks:
@@ -9485,17 +10270,15 @@ def _handle_git(args, db):
             active_task_id = None
 
         if active_task_id:
-            # 查询 task 详情（title/status）
+            # 查询 task 详情（title/status）——经 daemon RPC task.status（fail-closed，
+            # 禁止直接 SQLite；hook 场景 daemon 不可用时上抛错误，不降级本地）。
             task_title = ""
             task_status = ""
             try:
-                row = db.conn.execute(
-                    "SELECT title, status FROM tasks WHERE id = ?",
-                    (active_task_id,),
-                ).fetchone()
-                if row:
-                    task_title = row["title"] or ""
-                    task_status = row["status"] or ""
+                detail = db.task_status(active_task_id)
+                if isinstance(detail, dict):
+                    task_title = str(detail.get("title") or "")
+                    task_status = str(detail.get("status") or "")
             except Exception:
                 pass
             print(t("cli.messages.git_check_task_active",
@@ -9738,7 +10521,7 @@ def _handle_semgrep(args, db):
                         stale=result['stale_file_ids']))
         elif opts.save:
             result = db.run_semgrep_and_save(
-                target_paths=target_paths or [db.workspace_root],
+                target_paths=target_paths or [db.client_workspace_root],
                 config=opts.config,
                 languages=opts.languages,
                 timeout=opts.timeout,
@@ -9792,7 +10575,7 @@ def _handle_semgrep(args, db):
                       count=len(result['errors'])))
         else:
             result = db.run_semgrep(
-                target_paths=target_paths or [db.workspace_root],
+                target_paths=target_paths or [db.client_workspace_root],
                 config=opts.config,
                 languages=opts.languages,
                 timeout=opts.timeout,
@@ -10165,12 +10948,10 @@ def _handle_toolchain(args, db):
         show <NAME_OR_ID>
         delete <NAME_OR_ID>
         bind <WORKSPACE_ID> <TOOLCHAIN_NAME> [--build-context-hash HASH]
+
+    T04-followup S1：全量经 daemon RPC（toolchain.* / get_workspace_toolchains），
+    CLI 不再直接操作 SQLite（db_toolchain 模块仅 daemon 侧使用）。
     """
-    from callwarden.db.db_toolchain import (
-        init_toolchain_schema, register_toolchain, get_toolchain,
-        list_toolchains, delete_toolchain, bind_toolchain_to_workspace,
-        get_workspace_toolchains,
-    )
 
     parser = argparse.ArgumentParser(
         prog="cw toolchain",
@@ -10213,41 +10994,55 @@ def _handle_toolchain(args, db):
 
     opts = parser.parse_args(args)
 
-    # 初始化 schema（幂等）
-    init_toolchain_schema(db.conn)
-
     if opts.action == "register":
+        # 经 daemon RPC toolchain.register（权威写点，fail-closed）。
         try:
-            tc = register_toolchain(
-                conn=db.conn,
-                name=opts.name,
-                compiler_path=opts.compiler_path,
-                sysroot=opts.sysroot,
-                description=opts.description,
-                probe=not opts.no_probe,
-            )
-            print(f"Toolchain registered: {tc.summary()}")
-            print(f"  fingerprint: {tc.fingerprint}")
-            if tc.include_dirs:
+            tc = route_rpc("toolchain.register", {
+                "name": opts.name,
+                "compiler_path": os.path.abspath(opts.compiler_path),
+                "compiler_type": "",
+                "version": "",
+                "target_triple": "",
+                "sysroot": opts.sysroot,
+                "include_dirs": [],
+                "predefined_macros": {},
+                "description": opts.description,
+                "probe": not opts.no_probe,
+            }, "PROTECTED_MUTATION")
+            if not isinstance(tc, dict):
+                print(f"Toolchain registered: {opts.name}")
+                return True
+            print(f"Toolchain registered: {tc.get('name') or opts.name}")
+            if tc.get("fingerprint"):
+                print(f"  fingerprint: {tc['fingerprint']}")
+            include_dirs = tc.get("include_dirs") or []
+            if include_dirs:
                 print(
-                    f"  include_dirs ({len(tc.include_dirs)}): {', '.join(tc.include_dirs[:3])}...")
-            if tc.predefined_macros:
+                    f"  include_dirs ({len(include_dirs)}): {', '.join(str(x) for x in include_dirs[:3])}...")
+            predefined_macros = tc.get("predefined_macros") or {}
+            if predefined_macros:
                 print(
-                    f"  predefined_macros: {len(tc.predefined_macros)} macros")
+                    f"  predefined_macros: {len(predefined_macros)} macros")
         except Exception as e:
             print(f"Error: {e}")
             return False
 
     elif opts.action == "list":
-        tcs = list_toolchains(db.conn)
+        tcs = route_rpc("toolchain.list", {}, "READ_ONLY")
+        tcs = tcs if isinstance(tcs, list) else []
         if not tcs:
             print("No toolchains registered.")
             return True
         print(f"{'ID':<5} {'Name':<20} {'Type':<20} {'Version':<30} {'Target':<25}")
         print("-" * 100)
         for tc in tcs:
+            if not isinstance(tc, dict):
+                continue
             print(
-                f"{tc.id:<5} {tc.name:<20} {tc.compiler_type:<20} {tc.version[:30]:<30} {tc.target_triple:<25}")
+                f"{tc.get('id', 0):<5} {str(tc.get('name', '')):<20} "
+                f"{str(tc.get('compiler_type', '')):<20} "
+                f"{str(tc.get('version', ''))[:30]:<30} "
+                f"{str(tc.get('target_triple', '')):<25}")
 
     elif opts.action == "show":
         # 尝试 ID 或名称
@@ -10255,60 +11050,71 @@ def _handle_toolchain(args, db):
             name_or_id = int(opts.name_or_id)
         except ValueError:
             name_or_id = opts.name_or_id
-        tc = get_toolchain(db.conn, name_or_id)
-        if tc is None:
+        tc = route_rpc("toolchain.get", {"name_or_id": name_or_id}, "READ_ONLY")
+        if not isinstance(tc, dict):
             print(f"Toolchain not found: {opts.name_or_id}")
             return False
-        print(f"Toolchain: {tc.name}")
-        print(f"  ID: {tc.id}")
-        print(f"  Compiler: {tc.compiler_path}")
-        print(f"  Type: {tc.compiler_type}")
-        print(f"  Version: {tc.version}")
-        print(f"  Target: {tc.target_triple}")
-        print(f"  Sysroot: {tc.sysroot or '(none)'}")
-        print(f"  Fingerprint: {tc.fingerprint}")
-        print(f"  Include dirs ({len(tc.include_dirs)}):")
-        for d in tc.include_dirs[:10]:
+        print(f"Toolchain: {tc.get('name', '')}")
+        print(f"  ID: {tc.get('id', 0)}")
+        print(f"  Compiler: {tc.get('compiler_path', '')}")
+        print(f"  Type: {tc.get('compiler_type', '')}")
+        print(f"  Version: {tc.get('version', '')}")
+        print(f"  Target: {tc.get('target_triple', '')}")
+        print(f"  Sysroot: {tc.get('sysroot') or '(none)'}")
+        print(f"  Fingerprint: {tc.get('fingerprint', '')}")
+        include_dirs = tc.get("include_dirs") or []
+        print(f"  Include dirs ({len(include_dirs)}):")
+        for d in include_dirs[:10]:
             print(f"    {d}")
-        if len(tc.include_dirs) > 10:
-            print(f"    ... and {len(tc.include_dirs) - 10} more")
-        print(f"  Predefined macros: {len(tc.predefined_macros)}")
-        print(f"  Description: {tc.description or '(none)'}")
+        if len(include_dirs) > 10:
+            print(f"    ... and {len(include_dirs) - 10} more")
+        print(f"  Predefined macros: {len(tc.get('predefined_macros') or {})}")
+        print(f"  Description: {tc.get('description') or '(none)'}")
 
     elif opts.action == "delete":
         try:
             name_or_id = int(opts.name_or_id)
         except ValueError:
             name_or_id = opts.name_or_id
-        if delete_toolchain(db.conn, name_or_id):
+        result = route_rpc("toolchain.delete", {"name_or_id": name_or_id},
+                           "PROTECTED_MUTATION")
+        if result is not None and result is not False:
             print(f"Toolchain deleted: {opts.name_or_id}")
         else:
             print(f"Toolchain not found: {opts.name_or_id}")
             return False
 
     elif opts.action == "bind":
-        tc = get_toolchain(db.conn, opts.toolchain_name)
-        if tc is None:
+        tc = route_rpc("toolchain.get", {"name_or_id": opts.toolchain_name},
+                       "READ_ONLY")
+        if not isinstance(tc, dict):
             print(f"Toolchain not found: {opts.toolchain_name}")
             return False
-        if bind_toolchain_to_workspace(
-            db.conn, opts.workspace_id, tc.id, opts.build_context_hash
-        ):
+        result = route_rpc("toolchain.bind", {
+            "workspace_id": opts.workspace_id,
+            "toolchain_id": tc.get("id", 0),
+            "build_context_hash": opts.build_context_hash,
+        }, "PROTECTED_MUTATION")
+        if result is not None and result is not False:
             print(
-                f"Toolchain '{tc.name}' bound to workspace {opts.workspace_id}")
+                f"Toolchain '{tc.get('name', opts.toolchain_name)}' bound to workspace {opts.workspace_id}")
         else:
             print(f"Failed to bind (already bound?)")
             return False
 
     elif opts.action == "list-bound":
-        tcs = get_workspace_toolchains(
-            db.conn, opts.workspace_id, opts.build_context_hash
-        )
+        tcs = route_rpc("get_workspace_toolchains", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": opts.build_context_hash,
+        }, "READ_ONLY")
+        tcs = tcs if isinstance(tcs, list) else []
         if not tcs:
             print(f"No toolchains bound to workspace {opts.workspace_id}")
             return True
         for tc in tcs:
-            print(f"  {tc.summary()}")
+            if isinstance(tc, dict):
+                print(f"  {tc.get('name', '')} ({tc.get('id', 0)}) "
+                      f"-> {tc.get('compiler_path', '')}")
 
     return True
 
@@ -10492,13 +11298,11 @@ def _handle_build_context(args, db):
         import-compile-commands <FILE> <WORKSPACE_ID> [--name NAME] [--activate]
         resolve <WORKSPACE_ID> <HASH>            计算 resolved_edges（先清旧再写入）
         edges <WORKSPACE_ID> <HASH> [--caller SYM_ID] [--limit N]
+
+    T04-followup S1：注册/查询/激活/删除/边查询全量经 daemon RPC
+    （build_context.* / resolved_edges.*）；resolve 的边计算使用只读连接
+    （server.cli_admin.open_readonly_conn），CLI 不直接操作 SQLite。
     """
-    from ..db.db_toolchain import (
-        init_toolchain_schema, register_build_context, get_build_context,
-        list_build_contexts, set_active_build_context, delete_build_context,
-        get_active_build_context, get_resolved_edges, count_resolved_edges,
-        store_resolved_edges, delete_resolved_edges,
-    )
 
     parser = argparse.ArgumentParser(
         prog="cw build-context",
@@ -10565,9 +11369,6 @@ def _handle_build_context(args, db):
 
     opts = parser.parse_args(args)
 
-    # 初始化 schema（幂等）
-    init_toolchain_schema(db.conn)
-
     if opts.action == "register":
         # 解析 defines: ["DEBUG=1", "BOARD=A98"] → {"DEBUG": "1", "BOARD": "A98"}
         defines_dict = {}
@@ -10578,25 +11379,29 @@ def _handle_build_context(args, db):
             else:
                 defines_dict[d] = ""
 
-        ctx = register_build_context(
-            conn=db.conn,
-            workspace_id=opts.workspace_id,
-            name=opts.name,
-            compile_flags=opts.flags,
-            defines=defines_dict,
-            include_paths=opts.includes,
-            set_active=opts.activate,
-        )
-        print(f"Build context registered: {ctx.name}")
-        print(f"  hash: {ctx.build_context_hash}")
-        print(f"  flags: {ctx.compile_flags}")
-        print(f"  defines: {len(ctx.defines)} macros")
-        print(f"  includes: {len(ctx.include_paths)} paths")
+        ctx = route_rpc("build_context.register", {
+            "workspace_id": opts.workspace_id,
+            "name": opts.name,
+            "compile_flags": list(opts.flags),
+            "defines": defines_dict,
+            "include_paths": list(opts.includes),
+            "set_active": opts.activate,
+        }, "PROTECTED_MUTATION")
+        if not isinstance(ctx, dict):
+            print(f"Build context registered: {opts.name}")
+            return True
+        print(f"Build context registered: {ctx.get('name', opts.name)}")
+        print(f"  hash: {ctx.get('build_context_hash', '')}")
+        print(f"  flags: {ctx.get('compile_flags', [])}")
+        print(f"  defines: {len(ctx.get('defines') or {})} macros")
+        print(f"  includes: {len(ctx.get('include_paths') or [])} paths")
         if opts.activate:
             print(f"  (set as active)")
 
     elif opts.action == "list":
-        ctxs = list_build_contexts(db.conn, opts.workspace_id)
+        ctxs = route_rpc("build_context.list", {"workspace_id": opts.workspace_id},
+                         "READ_ONLY")
+        ctxs = ctxs if isinstance(ctxs, list) else []
         if not ctxs:
             print(f"No build contexts for workspace {opts.workspace_id}")
             return True
@@ -10604,56 +11409,81 @@ def _handle_build_context(args, db):
         print(f"{'Name':<20} {'Active':<8} {'Hash':<20} {'Defines':<8} {'Includes':<8}")
         print("-" * 80)
         for ctx in ctxs:
-            active = "✓" if ctx.is_active else ""
-            print(f"{ctx.name:<20} {active:<8} {ctx.build_context_hash[:16]:<20} "
-                  f"{len(ctx.defines):<8} {len(ctx.include_paths):<8}")
+            if not isinstance(ctx, dict):
+                continue
+            active = "✓" if ctx.get("is_active") else ""
+            bc_hash = str(ctx.get("build_context_hash", ""))
+            print(f"{str(ctx.get('name', '')):<20} {active:<8} {bc_hash[:16]:<20} "
+                  f"{len(ctx.get('defines') or {}):<8} {len(ctx.get('include_paths') or []):<8}")
 
     elif opts.action == "show":
-        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
-        if ctx is None:
+        ctx = route_rpc("build_context.get", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": opts.hash,
+        }, "READ_ONLY")
+        if not isinstance(ctx, dict):
             print(f"Build context not found: {opts.hash}")
             return False
-        print(f"Build Context: {ctx.name}")
-        print(f"  Hash: {ctx.build_context_hash}")
-        print(f"  Active: {'yes' if ctx.is_active else 'no'}")
-        print(f"  Compile flags ({len(ctx.compile_flags)}):")
-        for f in ctx.compile_flags:
+        print(f"Build Context: {ctx.get('name', '')}")
+        print(f"  Hash: {ctx.get('build_context_hash', '')}")
+        print(f"  Active: {'yes' if ctx.get('is_active') else 'no'}")
+        compile_flags = ctx.get("compile_flags") or []
+        print(f"  Compile flags ({len(compile_flags)}):")
+        for f in compile_flags:
             print(f"    {f}")
-        print(f"  Defines ({len(ctx.defines)}):")
-        for k, v in list(ctx.defines.items())[:20]:
+        defines = ctx.get("defines") or {}
+        print(f"  Defines ({len(defines)}):")
+        for k, v in list(defines.items())[:20]:
             print(f"    {k}={v}")
-        if len(ctx.defines) > 20:
-            print(f"    ... and {len(ctx.defines) - 20} more")
-        print(f"  Include paths ({len(ctx.include_paths)}):")
-        for p in ctx.include_paths[:10]:
+        if len(defines) > 20:
+            print(f"    ... and {len(defines) - 20} more")
+        include_paths = ctx.get("include_paths") or []
+        print(f"  Include paths ({len(include_paths)}):")
+        for p in include_paths[:10]:
             print(f"    {p}")
-        if len(ctx.include_paths) > 10:
-            print(f"    ... and {len(ctx.include_paths) - 10} more")
+        if len(include_paths) > 10:
+            print(f"    ... and {len(include_paths) - 10} more")
         # 统计 resolved edges（用完整 hash）
-        count = count_resolved_edges(
-            db.conn, opts.workspace_id, ctx.build_context_hash)
-        print(f"  Resolved edges: {count}")
+        count = route_rpc("build_context.count_resolved_edges", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": ctx.get("build_context_hash", ""),
+        }, "READ_ONLY")
+        print(f"  Resolved edges: {count if isinstance(count, int) else 0}")
 
     elif opts.action == "activate":
-        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
-        if ctx is None:
+        ctx = route_rpc("build_context.get", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": opts.hash,
+        }, "READ_ONLY")
+        if not isinstance(ctx, dict):
             print(f"Build context not found: {opts.hash}")
             return False
-        full_hash = ctx.build_context_hash
-        if set_active_build_context(db.conn, opts.workspace_id, full_hash):
-            print(f"Activated: {ctx.name} ({full_hash[:16]})")
+        full_hash = ctx.get("build_context_hash", opts.hash)
+        result = route_rpc("build_context.set_active", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": full_hash,
+        }, "PROTECTED_MUTATION")
+        if result is not None and result is not False:
+            print(f"Activated: {ctx.get('name', '')} ({str(full_hash)[:16]})")
         else:
             print(f"Failed to activate")
             return False
 
     elif opts.action == "delete":
-        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
-        if ctx is None:
+        ctx = route_rpc("build_context.get", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": opts.hash,
+        }, "READ_ONLY")
+        if not isinstance(ctx, dict):
             print(f"Not found: {opts.hash}")
             return False
-        full_hash = ctx.build_context_hash
-        if delete_build_context(db.conn, opts.workspace_id, full_hash):
-            print(f"Deleted: {ctx.name} ({full_hash[:16]})")
+        full_hash = ctx.get("build_context_hash", opts.hash)
+        result = route_rpc("build_context.delete", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": full_hash,
+        }, "PROTECTED_MUTATION")
+        if result is not None and result is not False:
+            print(f"Deleted: {ctx.get('name', '')} ({str(full_hash)[:16]})")
         else:
             print(f"Failed to delete")
             return False
@@ -10672,18 +11502,20 @@ def _handle_build_context(args, db):
         print(f"  include_paths: {len(agg.include_paths)}")
         print(f"  compile_flags: {len(agg.compile_flags)}")
 
-        # 注册 build context
-        ctx = register_build_context(
-            conn=db.conn,
-            workspace_id=opts.workspace_id,
-            name=opts.name,
-            compile_flags=agg.compile_flags,
-            defines=agg.defines,
-            include_paths=agg.include_paths,
-            set_active=opts.activate,
-        )
-        print(f"Build context registered: {ctx.name}")
-        print(f"  hash: {ctx.build_context_hash}")
+        # 注册 build context（经 daemon RPC）
+        ctx = route_rpc("build_context.register", {
+            "workspace_id": opts.workspace_id,
+            "name": opts.name,
+            "compile_flags": list(agg.compile_flags),
+            "defines": dict(agg.defines or {}),
+            "include_paths": list(agg.include_paths),
+            "set_active": opts.activate,
+        }, "PROTECTED_MUTATION")
+        if not isinstance(ctx, dict):
+            print(f"Build context registered: {opts.name}")
+        else:
+            print(f"Build context registered: {ctx.get('name', opts.name)}")
+            print(f"  hash: {ctx.get('build_context_hash', '')}")
         if opts.activate:
             print(f"  (set as active)")
 
@@ -10695,42 +11527,57 @@ def _handle_build_context(args, db):
 
     elif opts.action == "resolve":
         from ..analyzers.resolved_edges_engine import compute_resolved_edges
-        # 验证 build context 存在
-        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
-        if ctx is None:
+        from ..server.cli_admin import open_readonly_conn
+        # 验证 build context 存在（经 daemon RPC）
+        ctx = route_rpc("build_context.get", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": opts.hash,
+        }, "READ_ONLY")
+        if not isinstance(ctx, dict):
             print(f"Build context not found: {opts.hash}")
             return False
-        # 使用完整 hash（get_build_context 已支持短 hash 前缀匹配，但引擎内部需要完整 hash）
-        full_hash = ctx.build_context_hash
-        # 计算
-        result = compute_resolved_edges(db.conn, opts.workspace_id, full_hash)
+        # 使用完整 hash（build_context.get 已支持短 hash 前缀匹配，但引擎内部需要完整 hash）
+        full_hash = ctx.get("build_context_hash", opts.hash)
+        # 计算（只读连接由 server.cli_admin 提供；CLI 不直接操作 SQLite）
+        conn = open_readonly_conn()
+        try:
+            result = compute_resolved_edges(conn, opts.workspace_id, full_hash)
+        finally:
+            conn.close()
         if result.get("error"):
             print(f"Error: {result['error']}")
             return False
-        # 先清旧再写入（重建）
-        deleted = delete_resolved_edges(db.conn, opts.workspace_id, full_hash)
-        stored = store_resolved_edges(
-            db.conn, opts.workspace_id, full_hash, result["edges"]
-        )
-        print(f"Resolved edges computed for: {ctx.name}")
-        print(f"  source: {result['source']}")
-        print(f"  computed: {result['count']} edges")
+        # 先清旧再写入（重建）——经 daemon RPC resolved_edges.store
+        edges = result.get("edges") or []
+        route_rpc("resolved_edges.store", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": full_hash,
+            "edges": edges,
+        }, "PROTECTED_MUTATION")
+        print(f"Resolved edges computed for: {ctx.get('name', '')}")
+        print(f"  source: {result.get('source', '')}")
+        print(f"  computed: {result.get('count', len(edges))} edges")
         if result.get("skipped"):
             print(f"  skipped (caller unmapped): {result['skipped']}")
-        print(f"  deleted old: {deleted}")
-        print(f"  stored: {stored}")
+        print(f"  stored: {len(edges)}")
 
     elif opts.action == "edges":
-        # 先用短 hash 查找完整 hash
-        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
-        if ctx is None:
+        # 先用短 hash 查找完整 hash（经 daemon RPC）
+        ctx = route_rpc("build_context.get", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": opts.hash,
+        }, "READ_ONLY")
+        if not isinstance(ctx, dict):
             print(f"Build context not found: {opts.hash}")
             return False
-        full_hash = ctx.build_context_hash
-        edges = get_resolved_edges(
-            db.conn, opts.workspace_id, full_hash,
-            caller_symbol_id=opts.caller, limit=opts.limit,
-        )
+        full_hash = ctx.get("build_context_hash", opts.hash)
+        edges = route_rpc("build_context.resolved_edges", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": full_hash,
+            "caller_symbol_id": opts.caller,
+            "limit": opts.limit,
+        }, "READ_ONLY")
+        edges = edges if isinstance(edges, list) else []
         if not edges:
             print(f"No resolved edges found")
             return True
@@ -10739,9 +11586,14 @@ def _handle_build_context(args, db):
             f"{'Caller':<10} {'Callee':<10} {'Callee Name':<30} {'File':<20} {'Line':<6} {'Method':<15}")
         print("-" * 95)
         for e in edges:
-            print(f"{e.caller_symbol_id:<10} {e.callee_symbol_id:<10} "
-                  f"{e.callee_name[:30]:<30} {e.callee_file[:20]:<20} "
-                  f"{e.call_line:<6} {e.resolution_method:<15}")
+            if not isinstance(e, dict):
+                continue
+            print(f"{str(e.get('caller_symbol_id', '')):<10} "
+                  f"{str(e.get('callee_symbol_id', '')):<10} "
+                  f"{str(e.get('callee_name', ''))[:30]:<30} "
+                  f"{str(e.get('callee_file', ''))[:20]:<20} "
+                  f"{str(e.get('call_line', '')):<6} "
+                  f"{str(e.get('resolution_method', '')):<15}")
 
     return True
 
@@ -11046,7 +11898,7 @@ def main():
             workspace_root = detected
 
     # 延迟初始化数据库代理（在 enterprise/auto 路由成功时避免打开 SQLite 或注册 workspace）
-    db = LazyDBProxy(workspace_root=workspace_root, is_readonly=_is_readonly_args(args), args=args)
+    db = RpcDBProxy(workspace_root=workspace_root, is_readonly=_is_readonly_args(args), args=args)
 
     try:
         # 工作区管理命令
@@ -12066,7 +12918,7 @@ def main():
             if args.semgrep_save:
                 # 扫描并存入数据库
                 result = db.run_semgrep_and_save(
-                    target_paths=target_paths or [db.workspace_root],
+                    target_paths=target_paths or [db.client_workspace_root],
                     config=config,
                     languages=languages,
                     timeout=timeout,
@@ -12132,7 +12984,7 @@ def main():
             else:
                 # 详细扫描
                 result = db.run_semgrep(
-                    target_paths=target_paths or [db.workspace_root],
+                    target_paths=target_paths or [db.client_workspace_root],
                     config=config,
                     languages=languages,
                     timeout=timeout,
@@ -12720,8 +13572,9 @@ def main():
         else:
             parser.print_help()
 
-    except sqlite3.OperationalError as e:
-        # 锁错误友好提示（写命令执行 SQL 时也可能遇到锁）
+    except Exception as e:
+        # 锁错误友好提示（写命令执行 SQL 时也可能遇到锁）；
+        # CLI 纯 client 化后不捕获 sqlite3.OperationalError（禁直接 SQLite）。
         if "locked" in str(e).lower():
             cprint(get_error("db_locked"), "red")
             sys.exit(2)
@@ -14599,57 +15452,20 @@ def _handle_dependency(args, db):
 
 
 def _dependency_inspect(db, workspace_id, opts, use_json):
-    """查看任务或契约的依赖声明与 freshness。"""
-    result = {"dependencies": [], "artifacts": [], "interfaces": []}
+    """查看任务或契约的依赖声明与 freshness。
 
-    if opts.task_id:
-        # 查询任务的依赖声明
-        cur = db.conn.execute(
-            "SELECT dependency_type, target_ref, target_task_id, is_informational, "
-            "contract_id, contract_revision, declared_at "
-            "FROM task_dependencies WHERE workspace_id = ? AND task_id = ?",
-            (workspace_id, opts.task_id),
-        )
-        for row in cur.fetchall():
-            result["dependencies"].append(dict(row))
+    T04-followup S1：SQL 读取集中到 server.cli_admin.read_task_dependencies
+    （只读连接，CLI 不直接操作 SQLite）；daemon RPC 未覆盖该查询面时由
+    cli_db_admin 承担只读维护辅助。
+    """
+    from ..server.cli_admin import read_task_dependencies
 
-        # 查询任务产出的 artifact
-        cur = db.conn.execute(
-            "SELECT artifact_id, artifact_type, artifact_ref, artifact_hash, "
-            "freshness_status, produced_at "
-            "FROM artifact_identities WHERE workspace_id = ? AND task_id = ?",
-            (workspace_id, opts.task_id),
-        )
-        for row in cur.fetchall():
-            result["artifacts"].append(dict(row))
-
-        # 查询任务发布的 interface
-        cur = db.conn.execute(
-            "SELECT interface_id, interface_name, version, interface_hash "
-            "FROM interface_identities WHERE workspace_id = ? AND provider_task_id = ?",
-            (workspace_id, opts.task_id),
-        )
-        for row in cur.fetchall():
-            result["interfaces"].append(dict(row))
-
-    elif opts.contract_id:
-        # 按契约查询依赖
-        if opts.revision > 0:
-            cur = db.conn.execute(
-                "SELECT dependency_type, target_ref, target_task_id, is_informational, "
-                "task_id, declared_at FROM task_dependencies "
-                "WHERE workspace_id = ? AND contract_id = ? AND contract_revision = ?",
-                (workspace_id, opts.contract_id, opts.revision),
-            )
-        else:
-            cur = db.conn.execute(
-                "SELECT dependency_type, target_ref, target_task_id, is_informational, "
-                "task_id, contract_revision, declared_at FROM task_dependencies "
-                "WHERE workspace_id = ? AND contract_id = ?",
-                (workspace_id, opts.contract_id),
-            )
-        for row in cur.fetchall():
-            result["dependencies"].append(dict(row))
+    result = read_task_dependencies(
+        workspace_id=workspace_id,
+        task_id=opts.task_id or "",
+        contract_id=opts.contract_id or "",
+        revision=opts.revision or 0,
+    )
 
     if use_json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
@@ -14847,46 +15663,26 @@ def _collect_identity(opts):
 
 
 def _local_contract_get(task_id, role):
-    """本地只读降级：从活跃库读取冻结 Role Contract 的 skill 相关字段。
+    """本地只读降级闭包（T04-followup S1 收敛后为 fail-closed 空实现）。
 
-    仅用于 daemon 不可达时的 fallback；只读不写。读取经 sqlite 只读连接
-    （``mode=ro``），不绕过 daemon 权威写点（写仍由 task.claim/report RPC 执行）。
+    历史实现曾用 sqlite 只读连接读取 role_contracts 表；CLI 纯 client 化后
+    禁止直接操作 SQLite（check_client_purity 硬门禁），冻结 Role Contract 的
+    权威读面是 daemon RPC ``task.contract_get``（与 task.claim/report 写入
+    同源）。本闭包仅在 ``local``（已废弃，E_MODE_DEPRECATED）模式下被
+    ``route_task_read`` 调用，返回空契约（不绕过 daemon 权威写点）。
 
     A3 决议声明的边界（见 docs/design/http-daemon-mvp-a3-resolution.md）：
     1. 可达范围仅限 ``local``/``auto`` 模式：``route_task_read`` 在 ``enterprise``
        模式下 daemon 不可达时硬 fail-closed（抛 ``DaemonUnavailableError``），
        本降级闭包不会被调用；
-    2. 本函数只做只读查询，不持有写锁、不触发 workspace 激活、不改动任何状态；
+    2. 本闭包不做任何 SQLite 读取、不持有写锁、不触发 workspace 激活；
     3. HTTP profile（``HttpDaemonRpcClient``，``CW_DAEMON_TRANSPORT=http``）不经过
        此路径：``_fetch_contract_claim`` 始终走 Named Pipe/UDS ``route_task_read``，
        与 HTTP no-fallback 契约（http-daemon-mvp-compatibility-contract.md §2.1）
        的边界不冲突；
     4. 业务错误（``DaemonRemoteError``）在任何模式都不触发本降级，原样透传。
     """
-    try:
-        from callwarden import config as _cfg
-        import sqlite3
-        dbp = getattr(_cfg, "DB_PATH", None) or os.environ.get("CALLWARDEN_DB")
-        if not dbp:
-            return {"contracts": []}
-        con = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
-        try:
-            cur = con.cursor()
-            cur.execute(
-                "SELECT role, skill_id, skill_version, prompt_hash FROM role_contracts "
-                "WHERE task_id=? AND role=? AND is_current=1 ORDER BY revision DESC LIMIT 1",
-                (task_id, role),
-            )
-            row = cur.fetchone()
-        finally:
-            con.close()
-        if row and row[1]:
-            return {"contracts": [{
-                "role": row[0], "skill_id": row[1],
-                "skill_version": row[2] or "", "prompt_hash": row[3] or "",
-            }]}
-    except Exception:
-        pass
+    # CLI 不再直接读 SQLite；daemon 不可达时按"无冻结合同"处理（fail-closed）。
     return {"contracts": []}
 
 
