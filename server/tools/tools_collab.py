@@ -439,11 +439,6 @@ def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
     return db
 
 
-def _h_get_role_view(ctx: CompatCallContext) -> Any:
-    """worker handler：获取任务角色视图（只读，复刻 _collab_direct_read role_view.get）"""
-    return _collab_direct_read(_bind_readonly_db(ctx), "role_view.get", ctx.params)
-
-
 def _h_find_evidence(ctx: CompatCallContext) -> Any:
     """worker handler：查询 Evidence 记录（只读，复刻 evidence.query）"""
     return _collab_direct_read(_bind_readonly_db(ctx), "evidence.query", ctx.params)
@@ -459,11 +454,10 @@ def _h_gate_decision(ctx: CompatCallContext) -> Any:
     return _collab_direct_read(_bind_readonly_db(ctx), "gate.decision.query", ctx.params)
 
 
-# collab 组只读白名单（4 个）：get_role_view / find_evidence /
-# get_freshness_status / get_gate_decision。写语义工具（submit_verdict /
-# append_evidence，governance_write）不接入，fail-closed。
+# collab 组只读白名单（原 4 个；get_role_view 已 MCP-001 迁移 rust_native，
+# T-1787321708699-da5d8224，移除 compat 注册，剩 3 个）。写语义工具
+# （submit_verdict / append_evidence，governance_write）不接入，fail-closed。
 _COLLAB_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_role_view": _h_get_role_view,
     "find_evidence": _h_find_evidence,
     "get_freshness_status": _h_get_freshness_status,
     "get_gate_decision": _h_gate_decision,
@@ -474,7 +468,7 @@ _COLLAB_READ_ONLY_METHODS: Dict[str, Any] = {
 register_compat_routes(
     _COLLAB_READ_ONLY_METHODS,
     workspace_scope=_COLLAB_COMPAT_SCOPE,
-    description="H4C-2 第三批 collab 组只读工具（4 个，T-1786747295227-b876fddf 步骤#0）",
+    description="H4C-2 第三批 collab 组只读工具（3 个；get_role_view 已 MCP-001 迁移 rust_native）",
 )
 
 

@@ -968,6 +968,41 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.create"))
         }
     }
+    fn handle_task_supersede(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_supersede(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.supersede"))
+        }
+    }
+    fn handle_task_superseded_by(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_superseded_by(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.superseded_by"))
+        }
+    }
+    fn handle_task_attest_legacy_workspace_binding(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_attest_legacy_workspace_binding(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.attest_legacy_workspace_binding",
+            ))
+        }
+    }
     fn handle_task_claim(
         &mut self,
         peer: PeerCredential,
@@ -1054,6 +1089,17 @@ pub trait DaemonStateExt {
             store.handle_task_contract_set(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.contract_set"))
+        }
+    }
+    fn handle_task_contract_bootstrap(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_contract_bootstrap(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.contract_bootstrap"))
         }
     }
     fn handle_task_contract_get(
@@ -1441,6 +1487,10 @@ pub trait DaemonStateExt {
                 "verdict.submit" => store.handle_verdict_submit(peer, params),
                 "evidence.append" => store.handle_evidence_append(peer, params),
                 "evidence.query" => store.handle_evidence_query(peer, params),
+                // MCP-001（T-1787321708699-da5d8224）：role_view.get 迁移 rust_native。
+                // HTTP RPC 方法名与 capability row 一致为 get_role_view；compat worker
+                // 内部曾用 role_view.get 别名，这里两者都接同一 handler（向后兼容）。
+                "get_role_view" | "role_view.get" => store.handle_get_role_view(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -1670,14 +1720,22 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.remediation.create",
     "task.step.resolve",
     "task.handoff",
+    // 任务替代（supersede）治理写：独立关系表 + append-only 事件。
+    // P0-H（T-1787277487109-758e56d0）：经 serial writer 串行化点应用；
+    // 全部 mutation 参数由 handle_task_supersede 做 authority/lease/fencing/
+    // ledger 门禁（同 route_task_write，daemon 不可用 fail-closed）。
+    "task.supersede",
     "task.rollback",
     "task.reopen",
     "task.apply",
     "task.close",
     "task.contract_set",
+    "task.contract_bootstrap",
     "task.capture_diff",
     "task.split",
     "task.create_from_plan",
+    // P0-B：历史无 binding task 的 append-only authority attestation。
+    "task.attest_legacy_workspace_binding",
     "task.resolve_quality_finding",
     "task.create_subtask",
     "task.record_symbol_change",
@@ -1762,6 +1820,17 @@ pub fn is_protected_mutation(method: &str) -> bool {
 /// `handle_convergence_rpc` 分发到 fs_handlers / metrics_handlers /
 /// job_runner / admin_handlers / edit_handlers。
 pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
+    // S2（P0-compat 批次 1）：查询面 compat 迁 native（6）
+    "get_top_callers",
+    "get_orphan_symbols",
+    "get_deepest_functions",
+    "get_comment_coverage",
+    "get_call_heatmap",
+    "find_uncovered_functions",
+    // S2（P0-compat 批次 2）：toolchain 组（3，读权威 task DB）
+    "list_toolchains",
+    "get_toolchain",
+    "get_workspace_toolchains",
     // 文件/构建面（T02-fs，9）
     "workspace.build_graph",
     "workspace.build_directory",
@@ -2265,9 +2334,16 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.apply" => state.handle_task_apply(peer, params),
         "task.close" => state.handle_task_close(peer, params),
         "task.contract_set" => state.handle_task_contract_set(peer, params),
+        "task.contract_bootstrap" => state.handle_task_contract_bootstrap(peer, params),
         "task.contract_get" => state.handle_task_contract_get(peer, params),
         "task.capture_diff" => state.handle_task_capture_diff(peer, params),
         "task.split" => state.handle_task_split(peer, params),
+        // supersede 治理：声明/查询任务替代关系（独立关系表 + append-only 事件，不改被替代任务行）
+        "task.supersede" => state.handle_task_supersede(peer, params),
+        "task.superseded_by" => state.handle_task_superseded_by(peer, params),
+        "task.attest_legacy_workspace_binding" => {
+            state.handle_task_attest_legacy_workspace_binding(peer, params)
+        },
         "task.create_from_plan" => state.handle_task_create_from_plan(peer, params),
         "task.completion_review" => state.handle_task_completion_review(peer, params),
         "task.resolve_quality_finding" => state.handle_task_resolve_quality_finding(peer, params),
@@ -2292,6 +2368,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "verdict.submit"
         | "reveal.submit"
         | "gate.decide"
+        | "get_role_view"
         | "role_view.get"
         | "evidence.append"
         | "evidence.query"
