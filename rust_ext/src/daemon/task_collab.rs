@@ -23,10 +23,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::clock::AuthoritativeClock;
 use super::dispatch::{DaemonRpcError, PeerCredential};
+use super::task_supersede::{validate_supersede_schema, verify_registered_identity};
+use super::task_loop::operation_store::{DedupeOutcome, LedgerProvenance, OperationStore, ParamsRules};
+use super::task_loop::task_contract_bootstrap::{bootstrap_task_governance_contracts, BootstrapInput};
+
 use crate::canonicalize::sha256_hex;
 use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEMA_VERSION};
 
@@ -37,6 +41,36 @@ use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEM
 const TASK_COLLAB_TABLES: [&str; 5] = [
     "tasks", "task_steps", "task_events", "agent_registrations", "action_identities",
 ];
+
+/// 规范 JSON SHA-256（MCP-001 role_view.get 用）。
+///
+/// 语义与 Python `_canonical_json` + `_compute_hash` 完全一致：
+/// `json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
+/// —— 递归按 key 排序、无多余空格、紧凑分隔符。serde_json preserve_order
+/// 保留插入顺序，因此此处显式排序 key 后再序列化。
+fn canonical_json_sha256(value: &Value) -> String {
+    fn sort_keys(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                let mut out = Map::new();
+                for key in keys {
+                    out.insert(key.clone(), sort_keys(&map[key]));
+                }
+                Value::Object(out)
+            }
+            Value::Array(items) => {
+                Value::Array(items.iter().map(sort_keys).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    let sorted = sort_keys(value);
+    // serde_json 紧凑序列化（无空格）；ensure_ascii=false 等价于 UTF-8 直出
+    let canonical = serde_json::to_string(&sorted).unwrap_or_default();
+    sha256_hex(canonical.as_bytes())
+}
 
 /// daemon 实际读写依赖的列（官方 v49 schema 权威清单，db/schema.py）。
 /// 迁移后只读校验这些列存在，防止历史库缺列导致 daemon 查询失败；
@@ -66,20 +100,20 @@ const TASK_COLLAB_COLUMNS: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Clone, Debug)]
-struct ActionIdentity {
-    agent_id: String,
-    agent_instance_id: String,
-    client_id: String,
-    provider: String,
-    model_id: String,
-    model_mode: String,
-    system_fingerprint: String,
-    session_id: String,
-    role: String,
-    runtime_hash: String,
+pub(crate) struct ActionIdentity {
+    pub(crate) agent_id: String,
+    pub(crate) agent_instance_id: String,
+    pub(crate) client_id: String,
+    pub(crate) provider: String,
+    pub(crate) model_id: String,
+    pub(crate) model_mode: String,
+    pub(crate) system_fingerprint: String,
+    pub(crate) session_id: String,
+    pub(crate) role: String,
+    pub(crate) runtime_hash: String,
 }
 
-fn parse_action_identity(params: &Value) -> Result<Option<ActionIdentity>, DaemonRpcError> {
+pub(crate) fn parse_action_identity(params: &Value) -> Result<Option<ActionIdentity>, DaemonRpcError> {
     let Some(raw) = params.get("identity") else { return Ok(None); };
     if raw.is_null() || raw.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) {
         return Ok(None);
@@ -116,7 +150,7 @@ fn parse_action_identity(params: &Value) -> Result<Option<ActionIdentity>, Daemo
     Ok(Some(identity))
 }
 
-fn record_action_identity(
+pub(crate) fn record_action_identity(
     tx: &Transaction<'_>,
     task_id: &str,
     identity: &ActionIdentity,
@@ -142,11 +176,16 @@ fn record_action_identity(
     Ok(())
 }
 
-fn now_ts() -> f64 {
+pub(crate) fn task_now_ts() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+// 兼容本模块既有内部调用；跨模块只使用 task_now_ts。
+fn now_ts() -> f64 {
+    task_now_ts()
 }
 
 /// 返回已由 append-only `step_resolved` 事件解析的 failed step 集合。
@@ -383,7 +422,7 @@ fn optional_workspace_id_param(params: &Value) -> Option<i64> {
 /// - 无 binding → `E_TASK_WORKSPACE_UNBOUND` fail-closed（旧 task 保持无 binding，
 ///   v1 派工/lease 一律拒绝，绝不回退 active workspace 或客户端 numeric id）；
 /// - 显式 requested 与 binding 不一致 → `E_WORKSPACE_AUTHORITY_MISMATCH`。
-fn task_bound_workspace_id(
+pub(crate) fn task_bound_workspace_id(
     conn: &Connection,
     task_id: &str,
     requested_workspace_id: Option<i64>,
@@ -458,7 +497,7 @@ fn authoritative_now_text() -> String {
 ///   （capability 未就绪，禁止无 provenance 绑定）；
 /// - 同 workspace/instance 已有 capture 时只允许相同稳定 identity 的 re-attestation
 ///   （revision 递增、supersedes 指向前一条），identity 改变 → mismatch。
-fn bind_task_to_workspace(
+pub(crate) fn bind_task_to_workspace(
     tx: &Transaction<'_>,
     task_id: &str,
     workspace_id: i64,
@@ -993,7 +1032,7 @@ fn parse_subtasks_from_plan_text(plan_text: &str) -> Vec<(String, String, Vec<Ma
 // ============================================
 
 pub struct TaskCollabStore {
-    conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
     seq_counter: Arc<Mutex<i64>>,
     dedup_cache: Arc<Mutex<HashMap<String, Value>>>,
     /// daemon 权威时钟（lease 受保护写校验必需）。
@@ -1025,6 +1064,9 @@ impl TaskCollabStore {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
 
         Self::migrate_and_verify(&conn)?;
+        // P0-H（T-1787277487109-758e56d0）：supersede 表已入 canonical v59 schema，
+        // 此处仅做列级 fail-closed 校验（不再以启动期 DDL 创建/掩盖迁移）。
+        validate_supersede_schema(&conn)?;
 
         let max_seq: i64 = conn
             .query_row("SELECT COALESCE(MAX(monotonic_seq), 0) FROM task_events", [], |r| r.get(0))
@@ -1074,6 +1116,9 @@ impl TaskCollabStore {
 
     pub fn from_connection(conn: Connection) -> Result<Self, DaemonRpcError> {
         Self::migrate_and_verify(&conn)?;
+        // P0-H（T-1787277487109-758e56d0）：supersede 表已入 canonical v59 schema，
+        // 此处仅做列级 fail-closed 校验（不再以启动期 DDL 创建/掩盖迁移）。
+        validate_supersede_schema(&conn)?;
 
         let max_seq: i64 = conn
             .query_row("SELECT COALESCE(MAX(monotonic_seq), 0) FROM task_events", [], |r| r.get(0))
@@ -1161,10 +1206,43 @@ impl TaskCollabStore {
         Ok(())
     }
 
-    fn next_seq(&self) -> i64 {
+    /// 单调递增事件序号（进程内自增；跨重启以 DB MAX(monotonic_seq) 恢复）。
+    pub(crate) fn next_seq(&self) -> i64 {
         let mut seq = self.seq_counter.lock().unwrap();
         *seq += 1;
         *seq
+    }
+
+    /// task_events append-only 审计行写入 helper（P0-H：task.supersede 复用）。
+    ///
+    /// 与 apply/close/claim 的事件写模式一致（task_id/from_status/to_status/
+    /// reason_code/reason/actor_identity/agent_session_id/role/monotonic_seq/
+    /// authoritative_timestamp），只追加，不改变任何任务字段。返回新事件 id。
+    pub(crate) fn append_task_event(
+        tx: &Transaction<'_>,
+        task_id: &str,
+        from_status: &str,
+        to_status: &str,
+        reason_code: &str,
+        reason: &str,
+        actor_identity: &str,
+        actor_session_id: &str,
+        role: &str,
+        seq: i64,
+        ts: f64,
+    ) -> Result<i64, DaemonRpcError> {
+        tx.execute(
+            "INSERT INTO task_events
+             (task_id, from_status, to_status, reason_code, reason, actor_identity,
+              agent_session_id, role, monotonic_seq, authoritative_timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                task_id, from_status, to_status, reason_code, reason,
+                actor_identity, actor_session_id, role, seq, ts
+            ],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("追加 task_events 失败: {}", e)))?;
+        Ok(tx.last_insert_rowid())
     }
 
     /// 获取任务当前 claim 的声明者与 agent_session_id。
@@ -1252,7 +1330,7 @@ impl TaskCollabStore {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("agent-{}", owner_key));
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -1293,7 +1371,7 @@ impl TaskCollabStore {
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("agent-{}", peer.owner_key()));
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let conn = self.conn.lock().unwrap();
         let updated = conn
             .execute(
@@ -1356,7 +1434,7 @@ impl TaskCollabStore {
             .map(|s| s.to_string())
             .unwrap_or_else(generate_task_id);
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let seq = self.next_seq();
 
         let mut conn = self.conn.lock().unwrap();
@@ -1439,7 +1517,7 @@ impl TaskCollabStore {
 
         // A2/A3 身份与合同门禁（fail-closed，先于事务执行的只读校验）。
         let identity = parse_action_identity(params)?;
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
 
         if let Some(id) = &identity {
@@ -2005,7 +2083,7 @@ impl TaskCollabStore {
         }
 
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
@@ -2086,6 +2164,123 @@ impl TaskCollabStore {
     }
 
     /// A3：读取任务当前冻结的 Role Contract 列表（可指定 role 过滤）。
+    /// P0-C：对治理投影完全缺失但已绑定 authority 的历史/自举任务追加 v1 Task
+    /// Contract、三角色 lineage/revision 和 executor step bindings。该入口绝不更新
+    /// 任何既有 projection；一次成功必须由 adjudicator reviewer lease/fencing 与 evidence
+    /// 证明，且经 operation ledger 保证持久幂等。
+    pub fn handle_task_contract_bootstrap(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params.get("task_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let request_id = params.get("request_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let workspace_instance_id = params.get("workspace_instance_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let workspace_id = optional_workspace_id_param(params).ok_or_else(|| {
+            DaemonRpcError::new("E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED", "task.contract_bootstrap 必须携带 workspace_id > 0")
+        })?;
+        if task_id.is_empty() || request_id.is_empty() || workspace_instance_id.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_CONTRACT_BOOTSTRAP_PARAMS_REQUIRED",
+                "task.contract_bootstrap 必须携带 task_id、request_id、workspace_instance_id",
+            ));
+        }
+        let envelope = params.get("envelope").cloned().ok_or_else(|| {
+            DaemonRpcError::new("E_TASK_CONTRACT_BOOTSTRAP_ENVELOPE_REQUIRED", "task.contract_bootstrap 必须携带 envelope")
+        })?;
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new("E_TASK_CONTRACT_BOOTSTRAP_IDENTITY_REQUIRED", "task.contract_bootstrap 必须携带完整 identity")
+        })?;
+        if identity.role != "adjudicator" {
+            return Err(DaemonRpcError::new(
+                "E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED",
+                format!("仅允许 role=adjudicator，实际 role={}", identity.role),
+            ));
+        }
+        let (token, counter) = Self::require_lease_params(params)?;
+        let evidence_path = params.get("evidence_path").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let evidence_hash = params.get("evidence_hash").and_then(|v| v.as_str()).unwrap_or("").trim();
+        if evidence_path.is_empty() || evidence_hash.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_CONTRACT_BOOTSTRAP_EVIDENCE_REQUIRED",
+                "task.contract_bootstrap 必须携带 evidence_path 与 evidence_hash",
+            ));
+        }
+
+        let method = "task.contract_bootstrap";
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        let dedupe = operation_store.dedupe(&conn, workspace_instance_id, method, request_id, params)?;
+        let (rules, canonical_params_hash): (ParamsRules, String) = match dedupe {
+            DedupeOutcome::Replay { response_or_error_json } => {
+                if let Some(err) = response_or_error_json.get("error") {
+                    let code = err.get("code").and_then(|v| v.as_str()).unwrap_or("E_TASK_CONTRACT_BOOTSTRAP_REPLAY_ERROR");
+                    let message = err.get("message").and_then(|v| v.as_str()).unwrap_or("bootstrap deterministic rejection");
+                    return Err(DaemonRpcError::new(code, message));
+                }
+                return Ok(response_or_error_json);
+            }
+            DedupeOutcome::FirstRequest { rules, canonical_params_hash } => (rules, canonical_params_hash),
+        };
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DaemonRpcError::internal_error(format!("开启 task contract bootstrap 事务失败: {e}"))
+        })?;
+        let provenance = LedgerProvenance { workspace_id: Some(workspace_id), task_id: Some(task_id.to_string()), ..Default::default() };
+        let record_reject = |tx: &Transaction<'_>, code: &str, message: &str| -> DaemonRpcError {
+            let body = serde_json::json!({"error":{"code":code,"message":message}});
+            let _ = operation_store.record_result(tx, workspace_instance_id, method, request_id, &rules, &canonical_params_hash, &provenance, &body);
+            DaemonRpcError::new(code, message)
+        };
+        macro_rules! reject { ($code:expr, $message:expr) => {{ let err = record_reject(&tx, $code, $message); let _ = tx.commit(); return Err(err); }}; }
+
+        let bound_workspace = match task_bound_workspace_id(&tx, task_id, Some(workspace_id)) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        let binding_instance: String = match tx.query_row(
+            "SELECT c.workspace_instance_id FROM task_workspace_bindings b JOIN workspace_authority_captures c ON c.workspace_capture_id=b.workspace_capture_id WHERE b.task_id=?1 AND b.workspace_id=?2",
+            params![task_id, bound_workspace], |r| r.get(0),
+        ) {
+            Ok(value) => value,
+            Err(_) => reject!("E_TASK_CONTRACT_BOOTSTRAP_AUTHORITY_UNAVAILABLE", "task 缺少可复核的 workspace authority capture"),
+        };
+        if binding_instance != workspace_instance_id {
+            reject!("E_WORKSPACE_AUTHORITY_MISMATCH", &format!("task binding workspace_instance_id={} 与请求 {} 不一致", binding_instance, workspace_instance_id));
+        }
+        if let Err(e) = verify_registered_identity(&tx, &identity) { reject!(&e.code, &e.message); }
+        if let Err(e) = self.validate_reviewer_lease_for_adjudication(&tx, task_id, &token, counter, &identity) {
+            let code = if e.code == "E_LEASE_FENCING_STALE" { "E_TASK_CONTRACT_BOOTSTRAP_FENCED" } else { &e.code };
+            reject!(code, &e.message);
+        }
+        let status: String = match tx.query_row("SELECT status FROM tasks WHERE id=?1", [task_id], |r| r.get(0)) {
+            Ok(value) => value,
+            Err(_) => reject!("E_TASK_CONTRACT_BOOTSTRAP_TASK_NOT_FOUND", &format!("task 不存在: {task_id}")),
+        };
+        let input = BootstrapInput { task_id: task_id.to_string(), envelope, created_by: identity.agent_id.clone() };
+        let result = match bootstrap_task_governance_contracts(&tx, &input, bound_workspace) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        let ts = task_now_ts();
+        let seq = self.next_seq();
+        if let Err(e) = TaskCollabStore::append_task_event(
+            &tx, task_id, &status, &status, "task_contract_bootstrapped",
+            &serde_json::json!({"request_id":request_id,"evidence_path":evidence_path,"evidence_hash":evidence_hash}).to_string(),
+            &identity.agent_id, &identity.session_id, &identity.role, seq, ts,
+        ) { return Err(e); }
+        if let Err(e) = record_action_identity(&tx, task_id, &identity, method, seq, ts) { return Err(e); }
+        let mut full = result.as_object().cloned().unwrap_or_default();
+        full.insert("request_id".to_string(), Value::String(request_id.to_string()));
+        full.insert("evidence_path".to_string(), Value::String(evidence_path.to_string()));
+        full.insert("evidence_hash".to_string(), Value::String(evidence_hash.to_string()));
+        full.insert("fencing_counter".to_string(), Value::Number(counter.into()));
+        full.insert("authoritative_timestamp".to_string(), serde_json::json!(ts));
+        let full = Value::Object(full);
+        operation_store.record_result(&tx, workspace_instance_id, method, request_id, &rules, &canonical_params_hash, &provenance, &full)?;
+        tx.commit().map_err(|e| DaemonRpcError::internal_error(format!("提交 task contract bootstrap 事务失败: {e}")))?;
+        Ok(full)
+    }
+
     pub fn handle_task_contract_get(
         &self,
         _peer: PeerCredential,
@@ -2196,7 +2391,7 @@ impl TaskCollabStore {
             .or_else(|| identity.as_ref().map(|id| id.session_id.clone()))
             .unwrap_or_else(|| owner_key.clone());
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
 
         // A3：合同任务 report 必须匹配已冻结角色（handoff 角色不匹配即拒绝）。
@@ -2635,7 +2830,7 @@ impl TaskCollabStore {
             "source_check_items": source_scope.3,
             "request_id": request_id,
         }).to_string();
-        let ts = now_ts();
+        let ts = task_now_ts();
         tx.execute(
             "INSERT INTO task_steps
              (id, task_id, step_index, action, target_file, target_symbol, check_items, status, result, created_at, completed_at)
@@ -2755,7 +2950,7 @@ impl TaskCollabStore {
             return Err(DaemonRpcError::new("E_REMEDIATION_STEP_MISMATCH", "remediation provenance 与 failed_step_id 不一致"));
         }
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let reason = serde_json::json!({
             "request_id": request_id,
             "failed_step_id": failed_step_id,
@@ -2857,7 +3052,7 @@ impl TaskCollabStore {
         }
 
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
@@ -3375,7 +3570,7 @@ impl TaskCollabStore {
         let commit_hash = params.get("commit_hash").and_then(|v| v.as_str()).unwrap_or("");
         let workspace_snapshot_id = params.get("workspace_snapshot_id").and_then(|v| v.as_str()).unwrap_or("");
         let graph_refresh_version = params.get("graph_refresh_version").and_then(|v| v.as_str()).unwrap_or("");
-        let ts = now_ts();
+        let ts = task_now_ts();
         conn.execute(
             "INSERT INTO task_evidence_events
              (evidence_id, task_id, contract_id, contract_revision, contract_hash,
@@ -3604,7 +3799,7 @@ impl TaskCollabStore {
                 "同一 request_id 已绑定不同 Gate evidence/step/payload",
             ));
         }
-        let ts = now_ts();
+        let ts = task_now_ts();
         let decision_id = format!("GD-{}", &sha256_hex(format!("{}:{}", task_id, request_id).as_bytes())[..24]);
         conn.execute(
             "INSERT INTO task_gate_decisions
@@ -4022,6 +4217,131 @@ impl TaskCollabStore {
         }))
     }
 
+    // MCP-001（T-1787321708699-da5d8224）：role_view.get 从 python_compat 迁移为
+    // Rust native。语义与 Python db_task_reviews.get_role_view + tools_collab
+    // _collab_direct_read("role_view.get") 完全一致：
+    //   - 从 task_contract_revisions 取最新 envelope_payload；
+    //   - 按 (role, "1.0", "blind") allowlist 过滤字段；
+    //   - allowlist/contract/content/view_manifest 四类 hash 用规范 JSON
+    //     （key 排序、无空格，等价 Python _canonical_json）计算。
+    pub fn handle_get_role_view(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
+        let role = params
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let role = if role.is_empty() { "implementer" } else { role.as_str() };
+
+        // 从最新契约 Envelope 生成 Role_View（view_type=role, stage=blind）
+        let envelope: Value = {
+            let conn = self.conn.lock().unwrap();
+            let row: Option<String> = conn
+                .query_row(
+                    "SELECT envelope_payload FROM task_contract_revisions \
+                     WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                    params![task_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取 task_contract_revisions 失败: {e}"))
+                })?;
+            match row {
+                Some(payload) if !payload.is_empty() => {
+                    serde_json::from_str(&payload).unwrap_or(Value::Object(Map::new()))
+                }
+                _ => Value::Object(Map::new()),
+            }
+        };
+
+        let allowed: Vec<&str> = match role {
+            "planner" => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "clauses", "blocking_clauses",
+            ],
+            "reviewer" => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "allowed_edit_scope", "actual_changes",
+                "symbol_changes", "test_runs", "open_quality_findings", "clauses",
+                "blocking_clauses",
+            ],
+            "tester" => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "clauses", "test_cases", "test_runs",
+            ],
+            // 默认 implementer（含未知 role 兼容 Python 语义）
+            _ => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "allowed_edit_scope", "clauses",
+                "blocking_clauses",
+            ],
+        };
+        let allowed_set: HashSet<&str> = allowed.iter().copied().collect();
+
+        // 过滤 content：envelope 中在 allowlist 内的字段保留，其余进 excluded
+        let mut filtered: Map<String, Value> = Map::new();
+        let mut excluded: Vec<String> = Vec::new();
+        if let Some(obj) = envelope.as_object() {
+            for (key, value) in obj {
+                if allowed_set.contains(key.as_str()) {
+                    filtered.insert(key.clone(), value.clone());
+                } else {
+                    excluded.push(key.clone());
+                }
+            }
+        }
+        excluded.sort();
+
+        let mut sorted_allowed: Vec<&str> = allowed.clone();
+        sorted_allowed.sort_unstable();
+        let allowlist_def_hash = canonical_json_sha256(&Value::Array(
+            sorted_allowed.iter().map(|s| Value::String(s.to_string())).collect(),
+        ));
+        let contract_hash = envelope
+            .get("contract_hash")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| canonical_json_sha256(&envelope));
+        let content_hash = canonical_json_sha256(&Value::Object(filtered.clone()));
+
+        let manifest = json!({
+            "view_type": role,
+            "view_version": "1.0",
+            "stage": "blind",
+            "contract_hash": contract_hash,
+            "allowlist_hash": allowlist_def_hash,
+            "content_hash": content_hash,
+        });
+        let view_manifest_hash = canonical_json_sha256(&manifest);
+
+        let mut result = Map::new();
+        result.insert("task_id".to_string(), Value::String(task_id.to_string()));
+        result.insert("view_type".to_string(), Value::String(role.to_string()));
+        result.insert("view_version".to_string(), Value::String("1.0".to_string()));
+        result.insert("stage".to_string(), Value::String("blind".to_string()));
+        result.insert("view_manifest_hash".to_string(), Value::String(view_manifest_hash));
+        result.insert("contract_hash".to_string(), Value::String(contract_hash));
+        result.insert("content".to_string(), Value::Object(filtered));
+        result.insert(
+            "allowed_fields".to_string(),
+            Value::Array(sorted_allowed.iter().map(|s| Value::String(s.to_string())).collect()),
+        );
+        result.insert(
+            "excluded_fields".to_string(),
+            Value::Array(excluded.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+        Ok(Value::Object(result))
+    }
+
     pub fn handle_task_wait(
         &self,
         _peer: PeerCredential,
@@ -4160,7 +4480,7 @@ impl TaskCollabStore {
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
         let reason = params.get("reason").and_then(|v| v.as_str()).unwrap_or("rollback requested");
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -4211,7 +4531,7 @@ impl TaskCollabStore {
         let reviewer = params.get("reviewer").and_then(|v| v.as_str()).unwrap_or("reviewer");
         let identity = parse_action_identity(params)?;
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -4256,12 +4576,12 @@ impl TaskCollabStore {
         Ok(val)
     }
 
-    /// 强制解析 lease 受保护写凭证（task.apply / task.close 门禁）。
+    /// 强制解析 lease 受保护写凭证（task.apply / task.close / task.supersede 门禁）。
     ///
-    /// daemon 权威路径下 apply/close 必须持有完整 reviewer lease 凭证。
+    /// daemon 权威路径下 apply/close/supersede 必须持有完整 reviewer lease 凭证。
     /// 缺少 lease_token 或 fencing_counter，或只提供其一，一律 fail-closed 返回
     /// E_LEASE_REQUIRED；禁止再沿用旧版"缺凭证即跳过校验"的兼容行为。
-    fn require_lease_params(params: &Value) -> Result<(String, i64), DaemonRpcError> {
+    pub(crate) fn require_lease_params(params: &Value) -> Result<(String, i64), DaemonRpcError> {
         let token = params.get("lease_token").and_then(|v| v.as_str());
         let counter = params.get("fencing_counter").and_then(|v| v.as_i64());
         match (token, counter) {
@@ -4282,7 +4602,7 @@ impl TaskCollabStore {
     /// 4. 已过期（Authoritative_Clock）→ E_LEASE_EXPIRED
     /// 5. fencing counter 不一致 → E_LEASE_FENCING_STALE
     /// 6. holder Identity 不一致（提供时）→ E_LEASE_HOLDER_MISMATCH
-    fn validate_lease_for_mutation(
+    pub(crate) fn validate_lease_for_mutation(
         &self,
         conn: &Connection,
         task_id: &str,
@@ -4367,7 +4687,86 @@ impl TaskCollabStore {
         Ok(())
     }
 
+        /// P0-E：治理写入中的 reviewer lease 由独立 Reviewer 持有、由独立
+    /// Adjudicator 执行。此方法不得用于普通 mutation：普通 mutation 仍使用
+    /// validate_lease_for_mutation 的同一 holder 语义。
+    pub(crate) fn validate_reviewer_lease_for_adjudication(
+        &self,
+        conn: &Connection,
+        task_id: &str,
+        token: &str,
+        fencing_counter: i64,
+        adjudicator: &ActionIdentity,
+    ) -> Result<(), DaemonRpcError> {
+        if adjudicator.role != "adjudicator" {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_ADJUDICATOR_ROLE_REQUIRED",
+                format!("跨角色 reviewer lease 仅允许 adjudicator，实际 role={}", adjudicator.role),
+            ));
+        }
+        let clock = self.clock.as_ref().ok_or_else(|| DaemonRpcError::new(
+            "E_LEASE_CLOCK_UNAVAILABLE",
+            format!("lease clock 不可用，治理写操作拒绝（task={}）", task_id),
+        ))?;
+        let (lease_id, token_hash, active_counter, expires_at, reviewer_agent_id, reviewer_session_id): (String, String, i64, f64, String, String) = conn.query_row(
+            "SELECT lease_id, token_hash, fencing_counter, expires_at, agent_id, session_id \
+             FROM task_leases WHERE task_id=?1 AND role='reviewer' AND status='active' \
+             ORDER BY id ASC LIMIT 1",
+            params![task_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).map_err(|_| DaemonRpcError::new(
+            "E_LEASE_NOT_FOUND",
+            format!("task={} 无 active reviewer lease，治理写操作必须先独立 review", task_id),
+        ))?;
+        if sha256_hex(token.as_bytes()) != token_hash {
+            return Err(DaemonRpcError::new("E_LEASE_TOKEN_MISMATCH", format!("token hash 不匹配 (lease_id={})", lease_id)));
+        }
+        if clock.now_secs() as f64 > expires_at {
+            return Err(DaemonRpcError::new("E_LEASE_EXPIRED", format!("lease {} 已过期", lease_id)));
+        }
+        if fencing_counter != active_counter {
+            return Err(DaemonRpcError::new(
+                "E_LEASE_FENCING_STALE",
+                format!("fencing counter {} != 当前 {}；旧 holder 写入被拒绝", fencing_counter, active_counter),
+            ));
+        }
+        let (reviewer_instance_id, registered_session_id, registered_role, registered_status): (String, String, String, String) = conn.query_row(
+            "SELECT agent_instance_id, session_id, role, status FROM agent_registrations WHERE agent_id=?1",
+            params![reviewer_agent_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).map_err(|_| DaemonRpcError::new(
+            "E_GOVERNANCE_REVIEWER_UNREGISTERED",
+            format!("reviewer lease holder {} 未注册", reviewer_agent_id),
+        ))?;
+        if registered_status != "active" || registered_role != "reviewer" || registered_session_id != reviewer_session_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_INVALID",
+                format!("reviewer lease holder {} 必须为 active registered reviewer 且 session 一致", reviewer_agent_id),
+            ));
+        }
+        if adjudicator.agent_id == reviewer_agent_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT",
+                "Adjudicator 不得等于 reviewer lease holder agent_id",
+            ));
+        }
+        if !reviewer_instance_id.is_empty() && reviewer_instance_id == adjudicator.agent_instance_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_INSTANCE",
+                "Adjudicator 不得等于 reviewer lease holder agent_instance_id",
+            ));
+        }
+        if adjudicator.session_id == reviewer_session_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION",
+                "Adjudicator 不得等于 reviewer lease holder session_id",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn handle_task_apply(
+
         &self,
         peer: PeerCredential,
         params: &Value,
@@ -4380,7 +4779,7 @@ impl TaskCollabStore {
         let reviewer = params.get("reviewer").and_then(|v| v.as_str()).unwrap_or("reviewer");
         let identity = parse_action_identity(params)?;
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -4446,7 +4845,7 @@ impl TaskCollabStore {
         let reviewer = params.get("reviewer").and_then(|v| v.as_str()).unwrap_or("reviewer");
         let identity = parse_action_identity(params)?;
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -5220,7 +5619,7 @@ impl TaskCollabStore {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
 
@@ -5316,7 +5715,7 @@ impl TaskCollabStore {
         let plan_file = params.get("plan_file").and_then(|v| v.as_str()).unwrap_or("");
         let subtasks_param = params.get("subtasks").and_then(|v| v.as_array());
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut created_subtasks = Vec::new();
 
         let mut conn = self.conn.lock().unwrap();
@@ -5404,7 +5803,7 @@ impl TaskCollabStore {
         let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("Root Plan Task");
         let plan_file = params.get("plan_file").and_then(|v| v.as_str()).unwrap_or("");
         let root_task_id = generate_task_id();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -5559,7 +5958,7 @@ impl TaskCollabStore {
                 .ok_or_else(|| DaemonRpcError::invalid_params("steps 必须是 JSON array"))?,
         };
         let task_id = generate_task_id();
-        let ts = now_ts();
+        let ts = task_now_ts();
         let seq = self.next_seq();
 
         let mut conn = self.conn.lock().unwrap();
@@ -5647,7 +6046,7 @@ impl TaskCollabStore {
         let symbol_hash_before = params.get("symbol_hash_before").and_then(|v| v.as_str()).unwrap_or("");
         let hash_after = if !symbol_hash.is_empty() { symbol_hash } else { symbol_hash_before };
         let change_type = params.get("change_type").and_then(|v| v.as_str()).unwrap_or("modified");
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -5734,7 +6133,7 @@ impl TaskCollabStore {
 
         // 4. 逐符号对比写入 task_symbol_changes + audit_chain 签名
         let mut linked: Vec<Value> = Vec::new();
-        let ts = now_ts();
+        let ts = task_now_ts();
         for qualified_name in names {
             let before_sym = before.get(qualified_name);
             let after_sym = after.get(qualified_name);
@@ -7394,8 +7793,41 @@ mod tests {
         })
     }
 
+        #[test]
+    fn p0e_adjudicator_can_use_distinct_registered_reviewer_lease_only() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        seed_task_binding(&store, "T-P0E-LEASE");
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let reviewer_registration = serde_json::json!({
+            "agent_id":"review-agent", "agent_name":"reviewer", "identity": {"agent_id":"review-agent", "agent_instance_id":"review-inst", "session_id":"review-session", "model_id":"review-model", "role":"reviewer"}
+        });
+        store.handle_agent_register(peer.clone(), &reviewer_registration).unwrap();
+        let adjudicator_registration = serde_json::json!({
+            "agent_id":"adjudicator-agent", "agent_name":"adjudicator", "identity": {"agent_id":"adjudicator-agent", "agent_instance_id":"adjudicator-inst", "session_id":"adjudicator-session", "model_id":"adjudicator-model", "role":"adjudicator"}
+        });
+        store.handle_agent_register(peer, &adjudicator_registration).unwrap();
+        seed_reviewer_lease(&store, "T-P0E-LEASE", "p0e-token", 7, "review-agent", "review-session", "review-model");
+        let adjudicator = parse_action_identity(&serde_json::json!({"identity": adjudicator_registration["identity"].clone()})).unwrap().unwrap();
+        let conn = store.conn.lock().unwrap();
+        store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &adjudicator).unwrap();
+
+        let same_agent = ActionIdentity { agent_id:"review-agent".to_string(), agent_instance_id:"other-instance".to_string(), client_id:String::new(), provider:String::new(), model_id:"adj-model".to_string(), model_mode:String::new(), system_fingerprint:String::new(), session_id:"adj-session".to_string(), role:"adjudicator".to_string(), runtime_hash:String::new() };
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &same_agent).unwrap_err().code, "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT");
+        let same_instance = ActionIdentity { agent_id:"other-agent".to_string(), agent_instance_id:"review-inst".to_string(), client_id:String::new(), provider:String::new(), model_id:"adj-model".to_string(), model_mode:String::new(), system_fingerprint:String::new(), session_id:"adj-session".to_string(), role:"adjudicator".to_string(), runtime_hash:String::new() };
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &same_instance).unwrap_err().code, "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_INSTANCE");
+        let same_session = ActionIdentity { agent_id:"other-agent".to_string(), agent_instance_id:"other-instance".to_string(), client_id:String::new(), provider:String::new(), model_id:"adj-model".to_string(), model_mode:String::new(), system_fingerprint:String::new(), session_id:"review-session".to_string(), role:"adjudicator".to_string(), runtime_hash:String::new() };
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &same_session).unwrap_err().code, "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION");
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "wrong-token", 7, &adjudicator).unwrap_err().code, "E_LEASE_TOKEN_MISMATCH");
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 6, &adjudicator).unwrap_err().code, "E_LEASE_FENCING_STALE");
+    }
+
     // ============================================
     // M7: Lease Control Plane（Req 11.2-11.9, 14.11, 14.30）
+
     // ============================================
 
     #[test]
