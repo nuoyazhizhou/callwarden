@@ -570,14 +570,6 @@ def _h_get_coverage_for_symbol(ctx: CompatCallContext) -> Any:
     return _bind_readonly_db(ctx).get_coverage_for_symbol(ctx.params.get("qualified_name", ""))
 
 
-def _h_find_uncovered_functions(ctx: CompatCallContext) -> Any:
-    """worker handler：低覆盖率函数（只读）"""
-    return _bind_readonly_db(ctx).find_uncovered_functions(
-        module_filter=ctx.params.get("module_filter", ""),
-        threshold=ctx.params.get("threshold", 50),
-    )
-
-
 def _h_test_impact_selection(ctx: CompatCallContext) -> Any:
     """worker handler：测试影响选择（只读）"""
     return _bind_readonly_db(ctx).test_impact_selection(ctx.params.get("qualified_name", ""))
@@ -694,11 +686,12 @@ def _h_defect_learn(ctx: CompatCallContext) -> Any:
 # 保持 python_compat（W4-3 决策，见 ledger §9.24）。
 # review_readiness 依赖 blast_radius 与 cross_layer_impact（均未迁移），
 # 保持 python_compat（W4-2 决策，见 ledger §9.23）。
+# find_uncovered_functions 已 S2 迁移 rust_native
+# （T-1787209948470-a59bcf9c#S2-query-compat-batch1），从本白名单移除。
 _SUMMARY_READ_ONLY_METHODS: Dict[str, Any] = {
     "get_summary": _h_get_summary,
     "project_brief": _h_project_brief,
     "repo_map": _h_repo_map,
-    "find_uncovered_functions": _h_find_uncovered_functions,
     "test_impact_selection": _h_test_impact_selection,
     "who_to_ask": _h_who_to_ask,
     "get_ownership_map": _h_get_ownership_map,

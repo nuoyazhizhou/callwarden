@@ -22,7 +22,10 @@ use super::claim::{claim_step, ClaimStepInput, LedgerKey as ClaimLedgerKey};
 use super::contract_set::{
     set_task_contract, ContractPayload, LedgerKey as ContractLedgerKey, SetContractInput,
 };
-use super::create::{create_task, CreateTaskInput, LedgerKey as CreateLedgerKey, WorkspaceCaptureInput};
+use super::create::{
+    create_task, registry_identity_hash, CreateTaskInput, LedgerKey as CreateLedgerKey,
+    WorkspaceCaptureInput,
+};
 use super::next_action::{
     evaluate_next_action, NextActionInput, ERR_TASK_NOT_FOUND_OR_UNAUTHORIZED,
     ERR_WORKSPACE_AUTHORITY_MISMATCH, ERR_WORKSPACE_AUTHORITY_UNAVAILABLE,
@@ -639,14 +642,43 @@ fn two_instances_same_workspace_chain_continuity_per_instance() {
 }
 
 #[test]
-fn stale_binding_not_current_capture_same_instance_rejected() {
-    // 「当前 capture」检查按实例限定后语义保持：同实例内 binding 引用的 capture 必须是
-    // 该实例最新 revision；旧 capture 引用仍拒绝（不因多实例放宽）。
+fn historical_binding_capture_same_identity_is_accepted() {
+    // binding 是创建时不可变 provenance snapshot。相同 stable identity 的后续
+    // re-attestation 产生 rev2 后，rev1 binding 仍应通过 authority 门禁；后续只会
+    // 因 task contract 缺失返回 BLOCKED，而不是 authority mismatch。
     let mut conn = fresh_db();
     setup_task(&mut conn, "t-a"); // ws-inst-1 capture rev1
-    setup_task(&mut conn, "t-b"); // ws-inst-1 capture rev2（成为该实例新的当前 capture）
+    setup_task(&mut conn, "t-b"); // ws-inst-1 capture rev2（same identity）
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect("same-identity historical binding capture 应通过 authority 门禁");
+    assert!(resp.is_object());
+    assert_eq!(resp["decision"], serde_json::json!("BLOCKED"));
+    assert!(resp["blocking_conditions"][0]
+        .as_str()
+        .unwrap_or("")
+        .contains("Task Contract"));
+}
+
+#[test]
+fn historical_binding_capture_identity_change_is_rejected() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // binding points to manifest-a / rev1
+    setup_task(&mut conn, "t-b"); // rev2 is current
+    let changed_identity = registry_identity_hash(
+        "ws-inst-1",
+        "client-view-hash",
+        "host-root-hash",
+        "manifest-b",
+    );
+    conn.execute(
+        "UPDATE workspace_authority_captures \
+         SET workspace_manifest_hash = 'manifest-b', registry_identity_hash = ?1 \
+         WHERE workspace_id = 1 AND workspace_instance_id = 'ws-inst-1' AND capture_revision = 2",
+        [changed_identity],
+    )
+    .unwrap();
     let err = evaluate_next_action(&conn, "ws-inst-1", "t-a")
-        .expect_err("binding 指向同实例非当前 capture 必须拒绝");
+        .expect_err("current capture 的稳定 identity 变化必须使旧 binding fail-closed");
     assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
 }
 

@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-pub const RUST_SCHEMA_VERSION: i64 = 57;
+pub const RUST_SCHEMA_VERSION: i64 = 59;
 
 const EMBEDDED_SCHEMA_SOURCE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../db/schema.py"));
@@ -754,6 +754,63 @@ pub(crate) fn current_schema_version(conn: &Connection) -> Result<i64, rusqlite:
     )
 }
 
+/// v59（P0-H，T-1787277487109-758e56d0）：task_supersede 双表 v59 列幂等补齐。
+///
+/// 针对「版本已被抢先打标为 59（或 ≤58 走迁移）但既有 supersede 基础表仍缺
+/// v59 列」的库：`CREATE TABLE IF NOT EXISTS` 不会 ALTER 既有表，必须在迁移/
+/// 短路路径显式补列（无损 ALTER ADD COLUMN，不动历史行；与 Python
+/// `db_base._migrate_v58_to_v59` 的补列语义一致）。全新库由 schema_sql_block
+/// 建齐，本函数对缺表/满列库均为 no-op。
+fn ensure_supersede_v59_compat(conn: &Connection) -> Result<(), String> {
+    const RELATION_V59_COLUMNS: &[(&str, &str)] = &[
+        ("workspace_id", "INTEGER NOT NULL DEFAULT 0"),
+        ("supersedence_id", "TEXT NOT NULL DEFAULT ''"),
+        ("reason_code", "TEXT NOT NULL DEFAULT 'governance_supersede'"),
+        ("actor_agent_id", "TEXT NOT NULL DEFAULT ''"),
+        ("actor_session_id", "TEXT NOT NULL DEFAULT ''"),
+        ("actor_model_id", "TEXT NOT NULL DEFAULT ''"),
+        ("actor_role", "TEXT NOT NULL DEFAULT ''"),
+        ("request_id", "TEXT NOT NULL DEFAULT ''"),
+        ("lease_id", "TEXT NOT NULL DEFAULT ''"),
+        ("fencing_counter", "INTEGER NOT NULL DEFAULT -1"),
+        ("evidence_path", "TEXT NOT NULL DEFAULT ''"),
+        ("evidence_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("authoritative_timestamp", "REAL NOT NULL DEFAULT 0"),
+    ];
+    for table in ["task_supersede_relations", "task_supersede_events"] {
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                rusqlite::params![table],
+                |r| r.get::<_, i64>(0).map(|v| v > 0),
+            )
+            .map_err(|e| format!("cannot inspect {table}: {e}"))?;
+        if !exists {
+            continue; // 全新库由 schema_sql_block 建齐
+        }
+        let existing: Vec<String> = {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(|e| format!("cannot inspect {table}: {e}"))?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| format!("cannot inspect {table}: {e}"))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(|e| format!("cannot inspect {table}: {e}"))?);
+            }
+            out
+        };
+        for (column, ddl) in RELATION_V59_COLUMNS {
+            if !existing.iter().any(|c| c == column) {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+                    .map_err(|e| format!("cannot add {table}.{column}: {e}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 事务化官方 schema 迁移（与 Python `_migrate_schema` 等价，幂等）。
 ///
 /// pub(crate)：供 daemon TaskCollabStore 等组件在打开权威库后调用，
@@ -774,6 +831,15 @@ pub(crate) fn migrate_connection(conn: &Connection) -> Result<i64, String> {
 
     let current = current_schema_version(conn)
         .map_err(|error| format!("cannot read schema version: {error}"))?;
+
+    // P0-H（T-1787277487109-758e56d0）：v59 supersede 列幂等自愈。
+    // 短路检查（current >= RUST_SCHEMA_VERSION）之前无条件执行：防止"版本已被
+    // 抢先打标为 59 但 supersede 表仍缺 v59 列"的库（CREATE TABLE IF NOT EXISTS
+    // 不 ALTER 既有基础表）在短路路径静默通过后，由 validate_supersede_schema
+    // fail-closed 拒绝服务（v49 同类教训：短路路径必须做列级校验/补齐）。
+    // 无损 ALTER ADD COLUMN，不动历史行；与 Python `_migrate_v58_to_v59` 一致。
+    ensure_supersede_v59_compat(conn).map_err(|error| format!("supersede v59 compat failed: {error}"))?;
+
     if current >= RUST_SCHEMA_VERSION {
         return Ok(current);
     }
@@ -805,9 +871,9 @@ pub(crate) fn migrate_connection(conn: &Connection) -> Result<i64, String> {
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version, applied_at, description)
              VALUES (?1, ?2, ?3)",
-            rusqlite::params![RUST_SCHEMA_VERSION, now, "Rust schema migration to v57"],
+            rusqlite::params![RUST_SCHEMA_VERSION, now, "Rust schema migration to v59"],
         )
-        .map_err(|error| format!("cannot publish schema version 57: {error}"))?;
+        .map_err(|error| format!("cannot publish schema version 59: {error}"))?;
         Ok::<(), String>(())
     })();
 
@@ -1049,6 +1115,64 @@ mod tests {
             )
             .unwrap();
         assert_eq!(revocations, 0);
+    }
+
+    #[test]
+    fn supersede_v59_compat_backfills_columns_on_stale_versioned_db() {
+        // 模拟"版本已被抢先打标为 59 但 supersede 基础表仍缺 v59 列"的既有库
+        // （CREATE TABLE IF NOT EXISTS 不 ALTER 既有表；短路路径必须自愈补列，
+        // 否则 validate_supersede_schema 会 fail-closed 拒绝服务）。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL, description TEXT DEFAULT '');
+             INSERT INTO schema_version (version, applied_at, description) VALUES (59, 1.0, 'stale 59 stamp');
+             CREATE TABLE task_supersede_relations (
+                 superseded_task_id TEXT NOT NULL,
+                 superseding_task_id TEXT NOT NULL,
+                 reason TEXT DEFAULT '',
+                 actor TEXT NOT NULL,
+                 created_at REAL NOT NULL,
+                 PRIMARY KEY (superseded_task_id, superseding_task_id)
+             );
+             CREATE TABLE task_supersede_events (
+                 event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 superseded_task_id TEXT NOT NULL,
+                 superseding_task_id TEXT NOT NULL,
+                 reason TEXT DEFAULT '',
+                 actor TEXT NOT NULL,
+                 monotonic_seq INTEGER NOT NULL,
+                 authoritative_timestamp REAL NOT NULL
+             );
+             INSERT INTO task_supersede_relations
+                 (superseded_task_id, superseding_task_id, reason, actor, created_at)
+                 VALUES ('OLD','NEW','legacy','implementer-workbuddy-v1', 1.0);
+            ",
+        )
+        .unwrap();
+        // migrate_connection 短路路径（current==59）必须补列后返回，不抛错
+        assert_eq!(migrate_connection(&conn).unwrap(), RUST_SCHEMA_VERSION);
+        let cols: Vec<String> = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(task_supersede_relations)")
+                .unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert!(cols.contains(&"workspace_id".to_string()), "relations 缺 workspace_id");
+        assert!(cols.contains(&"supersedence_id".to_string()));
+        assert!(cols.contains(&"evidence_hash".to_string()));
+        // 历史行保留（无损 ALTER）
+        let (old, new, ws): (String, String, i64) = conn
+            .query_row(
+                "SELECT superseded_task_id, superseding_task_id, workspace_id \
+                 FROM task_supersede_relations",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((old.as_str(), new.as_str(), ws), ("OLD", "NEW", 0));
     }
 
     #[test]

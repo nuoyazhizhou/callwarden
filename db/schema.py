@@ -1893,6 +1893,82 @@ CREATE TABLE IF NOT EXISTS verdict_normalization_rule_revocations (
     revoked_by TEXT NOT NULL,
     authoritative_revoked_at TEXT NOT NULL
 );
+
+-- ============================================
+-- v59: task.supersede 治理权威 schema（T-1787277487109-758e56d0，P0-H）
+-- ============================================
+-- 将 task_supersede_relations / task_supersede_events 从 Rust 启动期临时 DDL
+-- （task_supersede.rs::SUPERSCEDE_SCHEMA_SQL）纳入 checksummed canonical schema。
+-- 基础任务（T-1787203926824-9f873bfc-sub-1）已实现的公开名词保持不变：
+--   - superseded_task_id = predecessor（被替代旧任务）
+--   - superseding_task_id = successor（替代新任务）
+-- 列名与基础验收数据（权威库 OLD→NEW / OLD→C 多出边）保持兼容，不重命名。
+-- PK(superseded_task_id, superseding_task_id) 即「唯一 outgoing edge」：
+-- 同一 (predecessor, successor) 边至多一条（基础"不重复"语义），且全局唯一
+-- 蕴含同 workspace 唯一；允许多个 predecessor 指向同一 successor、一个
+-- predecessor 指向多个 successor（多出边，与 BFS 环检测验收一致）；self edge
+-- 由写入门禁 E_SUPERSEDE_SELF_REFERENCE 拒绝。
+-- 新增列覆盖 authority/durability/provenance：
+--   workspace_id（task_workspace_bindings 权威归属）、supersedence_id（稳定标识）、
+--   reason_code、actor agent/session/model/role、request_id（幂等 key 成员）、
+--   lease_id/fencing_counter（Adjudicator reviewer-lease 门禁）、
+--   evidence_path/evidence_hash（证据 manifest）、authoritative_timestamp。
+-- 历史 relation/event 行只追加，禁止 UPDATE/DELETE；旧任务字段一律不动。
+CREATE TABLE IF NOT EXISTS task_supersede_relations (
+    superseded_task_id TEXT NOT NULL,
+    superseding_task_id TEXT NOT NULL,
+    reason TEXT DEFAULT '',
+    actor TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    workspace_id INTEGER NOT NULL DEFAULT 0,
+    supersedence_id TEXT NOT NULL DEFAULT '',
+    reason_code TEXT NOT NULL DEFAULT 'governance_supersede',
+    actor_agent_id TEXT NOT NULL DEFAULT '',
+    actor_session_id TEXT NOT NULL DEFAULT '',
+    actor_model_id TEXT NOT NULL DEFAULT '',
+    actor_role TEXT NOT NULL DEFAULT '',
+    request_id TEXT NOT NULL DEFAULT '',
+    lease_id TEXT NOT NULL DEFAULT '',
+    fencing_counter INTEGER NOT NULL DEFAULT -1,
+    evidence_path TEXT NOT NULL DEFAULT '',
+    evidence_hash TEXT NOT NULL DEFAULT '',
+    authoritative_timestamp REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (superseded_task_id, superseding_task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_supersede_relations_superseding
+    ON task_supersede_relations(superseding_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_supersede_relations_workspace
+    ON task_supersede_relations(workspace_id, superseded_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_supersede_relations_supersedence
+    ON task_supersede_relations(supersedence_id);
+
+CREATE TABLE IF NOT EXISTS task_supersede_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    superseded_task_id TEXT NOT NULL,
+    superseding_task_id TEXT NOT NULL,
+    reason TEXT DEFAULT '',
+    actor TEXT NOT NULL,
+    monotonic_seq INTEGER NOT NULL,
+    authoritative_timestamp REAL NOT NULL,
+    workspace_id INTEGER NOT NULL DEFAULT 0,
+    supersedence_id TEXT NOT NULL DEFAULT '',
+    reason_code TEXT NOT NULL DEFAULT 'governance_supersede',
+    actor_agent_id TEXT NOT NULL DEFAULT '',
+    actor_session_id TEXT NOT NULL DEFAULT '',
+    actor_model_id TEXT NOT NULL DEFAULT '',
+    actor_role TEXT NOT NULL DEFAULT '',
+    request_id TEXT NOT NULL DEFAULT '',
+    lease_id TEXT NOT NULL DEFAULT '',
+    fencing_counter INTEGER NOT NULL DEFAULT -1,
+    evidence_path TEXT NOT NULL DEFAULT '',
+    evidence_hash TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_task_supersede_events_superseded
+    ON task_supersede_events(superseded_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_supersede_events_superseding
+    ON task_supersede_events(superseding_task_id);
+CREATE INDEX IF NOT EXISTS idx_task_supersede_events_workspace
+    ON task_supersede_events(workspace_id, superseded_task_id);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -2018,7 +2094,23 @@ CREATE TABLE IF NOT EXISTS verdict_normalization_rule_revocations (
 #      revision id/revision/hash、canonicalization version/hash）与所用
 #      normalization version/hash；历史 verdict/gate/contract 无绑定只读显示
 #      UNVERIFIED，不回填改写。
-SCHEMA_VERSION = 57
+# v58: 补 v53-v57 表/列定义漂移（T-1787203926824-9f873bfc）— commit 030fd8c
+#      在 v57 已发布后向 SCHEMA_SQL 补入了 11 张 v53-v57 表（canonicalization_rule_sets/
+#      revocations、task_operation_ledger、workspace_authority_captures、
+#      task_workspace_bindings、task_loop_capability_promotion_events、
+#      role_contract_lineages/revisions、task_step_role_contract_bindings、
+#      verdict_normalization_rules/revocations）与既有表的 20 个新列
+#      （task_contract_revisions ×2、task_verdict_events ×9、task_gate_decisions ×9），
+#      但未递增版本号，导致 v57 库 checksum 失配且缺表 → Rust storage fail-closed。
+#      bump v58 强制走迁移路径：CREATE TABLE IF NOT EXISTS 幂等补建缺失表 +
+#      ALTER TABLE ADD COLUMN 补列（lossless，不动已有数据），随后重写 stored checksum。
+# v59: task.supersede 治理权威 schema（T-1787277487109-758e56d0，P0-H）—
+#      将 task_supersede_relations / task_supersede_events 从 Rust 启动期临时 DDL
+#      （ensure_supersede_schema）纳入 checksummed canonical schema，并补齐
+#      workspace/provenance/request/lease/fencing/evidence 列与 workspace/
+#      supersedence 索引。既有库（已有基础 5 列表）经 db_base._migrate_v58_to_v59
+#      ALTER ADD COLUMN 无损补齐（不动历史行）；RUST_SCHEMA_VERSION 同步 58→59。
+SCHEMA_VERSION = 59
 
 
 # ============================================

@@ -11,13 +11,13 @@
 实现：基于 `ast` 精确扫描（忽略注释/文档字符串中的字样），
 避免正则误报 docstring 中的 "get_db()" 描述。
 
-门禁分层（T04 部分落地，见交付摘要 §CLI）：
+门禁分层（T04-followup S1 已收敛）：
 - **硬门禁（必须 0 违例）**：`server/tools/`（239 工具薄壳化）、`cw.py`
   （SQLite 预热已移除）；
-- **软门禁（报告 + 白名单）**：`cli/`——存量 `cli/main.py` 的本地业务实现
-  （15K 行、~318 处 DB 引用）已列入 `LEGACY_CLI_ALLOWLIST`，迁移 ticket
-  `T04-followup`；其余 `cli/*.py`（daemon_commands/agent/client/console 等）
-  同样软扫描，新违例一律拒绝（只减不加）。
+- **软门禁（必须 0 违例）**：`cli/`——存量 `cli/main.py`（15K 行、~318 处
+  DB 引用）已按 T04-followup S1 迁移为 daemon RPC 转发（RpcDBProxy +
+  route_rpc），白名单已清空；其余 `cli/*.py`（daemon_commands/agent/client/
+  console 等）同规则扫描，新违例一律拒绝（只减不加）。
 
 退出码：0 = 通过（硬门禁 0 违例，软门禁违例均在白名单内）；1 = 失败。
 """
@@ -36,13 +36,10 @@ HARD_PATHS = ["server/tools", "cw.py"]
 # 软门禁：报告 + 白名单（存量合法遗留，迁移后移除）
 SOFT_PATHS = ["cli"]
 
-# 存量遗留白名单（绝对/相对路径）：T04-followup 迁移 cli/main.py 后移除。
-# cli/main.py 当前承载 ~318 处本地 DB 业务实现（query/search/task/gc 等子命令），
-# 本轮收敛将其整体列入遗留清单（不改对外命令行为），后续按迁移指南逐命令转
-# route_rpc()。新增文件一律不得加入本白名单。
-LEGACY_CLI_ALLOWLIST: Set[str] = {
-    "cli/main.py",
-}
+# 存量遗留白名单：T04-followup S1 已完成 cli/main.py 迁移（daemon RPC 转发 +
+# 移除 sqlite3/CodeGraphDB/db 业务模块直接调用），白名单应为空。
+# 新增文件一律不得加入本白名单（只减不加）。
+LEGACY_CLI_ALLOWLIST: Set[str] = set()
 
 
 def scan_ast(path: str) -> List[str]:
@@ -192,11 +189,9 @@ def main() -> int:
             print(f"  - {v}")
         return 1
 
-    print("通过: server/tools + cw.py 纯净（0 违例）")
+    print("通过: server/tools + cw.py + cli/ 纯净（0 违例）")
     if legacy_report:
-        print("提示: cli/main.py 为存量遗留（T04-followup 迁移中），未计入失败：")
-        for v in legacy_report:
-            print(f"  {v}")
+        print("提示: 白名单存量已清零（T04-followup S1 迁移完成），无遗留报告")
     return 0
 
 

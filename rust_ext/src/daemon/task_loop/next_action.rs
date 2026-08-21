@@ -181,22 +181,39 @@ fn verify_capture(
             format!("capture {workspace_capture_id} 的 registry_identity_hash 无法复核（重算不一致）"),
         ));
     }
-    // task binding 引用的 capture 必须是该 workspace（同 instance）的当前 authority capture。
-    let current_capture: String = conn
+    // task binding 引用的是创建时的不可变 provenance snapshot，不能因为同一稳定
+    // identity 的后续 re-attestation 推进 capture revision 就失效。读取 current capture
+    // 只为验证 authority identity 未发生真实变化；不得 UPDATE binding 指针。
+    let current: (String, String, String, String, String) = conn
         .query_row(
-            "SELECT workspace_capture_id FROM workspace_authority_captures \
+            "SELECT workspace_capture_id, client_view_root_hash, host_real_root_hash, \
+                    workspace_manifest_hash, registry_identity_hash \
+             FROM workspace_authority_captures \
              WHERE workspace_id = ?1 AND workspace_instance_id = ?2 \
              ORDER BY capture_revision DESC LIMIT 1",
             rusqlite::params![cap_workspace_id, cap_instance],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|e| infra_error(&format!("workspace 当前 capture 读取失败: {e}")))?;
-    if current_capture != workspace_capture_id {
+    let (current_capture_id, current_view_hash, current_host_hash, current_manifest_hash, current_identity_hash) = current;
+    let current_recomputed = registry_identity_hash(
+        &cap_instance,
+        &current_view_hash,
+        &current_host_hash,
+        &current_manifest_hash,
+    );
+    if current_recomputed != current_identity_hash {
+        return Err(DaemonRpcError::new(
+            ERR_WORKSPACE_AUTHORITY_MISMATCH,
+            format!("当前 capture {current_capture_id} 的 registry_identity_hash 无法复核（重算不一致）"),
+        ));
+    }
+    if current_identity_hash != identity_hash {
         return Err(DaemonRpcError::new(
             ERR_WORKSPACE_AUTHORITY_MISMATCH,
             format!(
-                "task binding 引用的 capture {workspace_capture_id} 不是 workspace {cap_workspace_id} \
-                 instance {cap_instance} 的当前 authority capture {current_capture}"
+                "task binding capture {workspace_capture_id} 的稳定 identity 与当前 capture \
+                 {current_capture_id} 不一致；不可变 binding 必须保持 UNVERIFIED"
             ),
         ));
     }

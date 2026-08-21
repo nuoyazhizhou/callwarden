@@ -160,10 +160,15 @@ class TestRustStorageService:
             db_path = os.path.join(tmpdir, "fail_closed.db")
             storage_initialize_or_migrate(db_path, SCHEMA_VERSION)
             conn = sqlite3.connect(db_path)
+            # 构造真正的 schema 漂移：篡改 checksum + 删除 canonical 表。
+            # 注意：仅篡改 checksum 且表结构完整时，策略 A
+            # （T-1785831377544-d99b57de）会重写 checksum 而非报错，因此必须
+            # 同时删除表让形状校验失败，Rust 才会 fail-closed。
             conn.execute(
                 "UPDATE schema_migrations SET checksum='tampered' WHERE version=?",
                 (SCHEMA_VERSION,),
             )
+            conn.execute("DROP TABLE IF EXISTS task_dependencies")
             conn.commit()
             conn.close()
 

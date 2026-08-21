@@ -252,5 +252,7 @@ def test_assignment_does_not_authorize_write(db):
 
 
 def test_schema_version_is_46(db):
-    assert SCHEMA_VERSION == 50
+    # P4 lease/assignment 由 v46 引入；版本号此后持续递增（当前 v58），
+    # 断言 >= 46 而不是硬编码精确值（与 test_audit_chain 等既有测试一致）。
+    assert SCHEMA_VERSION >= 46
     assert issubclass(CodeGraphDB, LeaseMixin)

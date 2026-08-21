@@ -545,6 +545,31 @@ fn missing_compat_columns(conn: &Connection) -> Result<Vec<(String, String, &'st
         ("agent_registrations", "runtime_hash", "TEXT DEFAULT ''"),
         ("agent_registrations", "session_id", "TEXT DEFAULT ''"),
         ("agent_registrations", "role", "TEXT DEFAULT ''"),
+        // v57（1E，T-1787203926824-9f873bfc）：commit 030fd8c 在 v57 已发布后
+        // 才把 verdict/gate provenance 列补入 canonical SCHEMA_SQL，但未 bump
+        // 版本号，导致既有 v57 库缺列。这些列定义与 sqlite_query.rs
+        // execute_existing_schema 的列级清单保持同一真相源；缺列时强制走
+        // 迁移事务，由 apply_task_contract_v57_compat 幂等补列。
+        ("task_contract_revisions", "normalization_version", "TEXT DEFAULT ''"),
+        ("task_contract_revisions", "normalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "step_id", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "role_contract_lineage_id", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "role_contract_revision_id", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "role_contract_revision", "INTEGER DEFAULT 0"),
+        ("task_verdict_events", "role_contract_hash", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "canonicalization_version", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "canonicalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "normalization_version", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "normalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "step_id", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "role_contract_lineage_id", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "role_contract_revision_id", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "role_contract_revision", "INTEGER DEFAULT 0"),
+        ("task_gate_decisions", "role_contract_hash", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "canonicalization_version", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "canonicalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "normalization_version", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "normalization_rules_hash", "TEXT DEFAULT ''"),
     ];
     let mut missing = Vec::new();
     for (table, column, definition) in COMPAT_COLUMNS {
@@ -645,6 +670,51 @@ fn apply_agent_registrations_v50_compat(tx: &Transaction<'_>) -> Result<(), rusq
         if !has_column_tx(tx, "agent_registrations", column)? {
             tx.execute(
                 &format!("ALTER TABLE agent_registrations ADD COLUMN {column} TEXT DEFAULT ''"),
+                [],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// v57（1E，T-1787203926824-9f873bfc）：为既有库补齐 Task Contract / Verdict /
+/// Gate 的 provenance 与 normalization 绑定列。
+///
+/// 背景：commit 030fd8c 在 v57 已发布后向 canonical db/schema.py SCHEMA_SQL 补入
+/// 这些列（task_contract_revisions ×2、task_verdict_events ×9、
+/// task_gate_decisions ×9），但未递增版本号，导致既有 v57 库（1）stored checksum
+/// 与当前二进制失配，（2）缺 11 张 v53-v57 表，（3）缺上述列。CREATE TABLE IF
+/// NOT EXISTS 不会给已存在表加列，必须显式 ALTER TABLE 补齐；本函数在 canonical
+/// SCHEMA_SQL 执行前调用（与 apply_guardrail_findings_v48_compat /
+/// apply_agent_registrations_v50_compat 同一模式），幂等，绝不动已有数据行。
+/// 全新库时表由 SCHEMA_SQL 建齐，本函数探测到列已存在会跳过，无副作用。
+fn apply_task_contract_v57_compat(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    const COMPAT_COLUMNS: &[(&str, &str, &str)] = &[
+        ("task_contract_revisions", "normalization_version", "TEXT DEFAULT ''"),
+        ("task_contract_revisions", "normalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "step_id", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "role_contract_lineage_id", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "role_contract_revision_id", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "role_contract_revision", "INTEGER DEFAULT 0"),
+        ("task_verdict_events", "role_contract_hash", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "canonicalization_version", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "canonicalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "normalization_version", "TEXT DEFAULT ''"),
+        ("task_verdict_events", "normalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "step_id", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "role_contract_lineage_id", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "role_contract_revision_id", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "role_contract_revision", "INTEGER DEFAULT 0"),
+        ("task_gate_decisions", "role_contract_hash", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "canonicalization_version", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "canonicalization_rules_hash", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "normalization_version", "TEXT DEFAULT ''"),
+        ("task_gate_decisions", "normalization_rules_hash", "TEXT DEFAULT ''"),
+    ];
+    for (table, column, definition) in COMPAT_COLUMNS {
+        if table_exists_tx(tx, table)? && !has_column_tx(tx, table, column)? {
+            tx.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
                 [],
             )?;
         }
@@ -1318,6 +1388,14 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
     // 会跳过，无副作用。
     apply_agent_registrations_v50_compat(&tx).map_err(|e| {
         format!("MIGRATION_FAILED: Failed to apply agent_registrations v50 compat: {}", e)
+    })?;
+    // v57/v58（1E，T-1787203926824-9f873bfc）：既有库的 task_contract_revisions /
+    // task_verdict_events / task_gate_decisions 可能缺少 provenance 与 normalization
+    // 绑定列（v57 发布后 schema.py 补列但未 bump 版本号导致）。**必须先补列，再执行
+    // canonical SCHEMA_SQL**——与 v48/v50 compat 同一模式；ALTER TABLE 幂等，
+    // 只加列不动数据，全新库时表尚不存在会跳过，无副作用。
+    apply_task_contract_v57_compat(&tx).map_err(|e| {
+        format!("MIGRATION_FAILED: Failed to apply task contract v57 compat: {}", e)
     })?;
     tx.execute_batch(&canonical_schema_sql()?)
         .map_err(|e| format!("SCHEMA_CREATE_FAILED: Failed to execute SCHEMA_SQL: {}", e))?;

@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 [CmdletBinding()]
 param(
@@ -20,7 +20,12 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# PS 5.1 兼容（T-1787203926824-9f873bfc-sub-1 部署修复）：EAP=Stop 下
+# `@(& native 2>&1)` 会把原生 stderr 首行（cargo "Compiling ..."、cw.exe 的
+# Python traceback 等）转为终止错误，导致脚本在构建/验证阶段莫名中止。
+# 脚本全部关键路径已显式检查 $LASTEXITCODE 并 throw，故改用 Continue 不削弱安全
+# 性；真正的异常（throw/终止性错误）仍会进入 catch 触发回滚。
+$ErrorActionPreference = "Continue"
 
 if ($TaskId -notmatch '^T-[0-9]+-[0-9a-z-]+$') {
     throw "TaskId 必须是实际任务 ID，例如 T-1786346158666-e9316534；禁止使用占位符"
@@ -48,6 +53,44 @@ function Info([string]$Message) { Write-Host "[runtime-refresh] $Message" -Foreg
 function Digest([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+# Replace-FileWithRetry — [IO.File]::Replace 的幂等封装（T-1787203926824-9f873bfc）。
+#
+# Windows 下目标文件被正在运行的进程（cw.py server MCP / compat_worker / daemon）
+# 以 DLL/pyd 方式映射时，Replace/Delete 会抛共享冲突（"无法删除要被替换的文件"）。
+# 构建阶段刻意不停止现有 MCP/daemon，因此部署阶段需要：
+#   1. 有界重试（容忍瞬时句柄释放）；
+#   2. 持续失败时给出可操作的错误信息（列出占用方，提示 -RestartMcp 或手动停止）。
+# 失败后抛出异常；调用方（Deploy-CoreExtensions / Restore-CoreExtensions）按原
+# 回滚语义处理。
+function Replace-FileWithRetry([string]$Stage, [string]$Destination, [string]$Backup,
+    [int]$Attempts = 5, [int]$DelayMs = 1000) {
+    $lastError = $null
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            [IO.File]::Replace($Stage, $Destination, $Backup, $true)
+            return
+        } catch {
+            $lastError = $_
+            if ($i -lt $Attempts) {
+                Start-Sleep -Milliseconds $DelayMs
+            }
+        }
+    }
+    $hint = ""
+    try {
+        $holders = @()
+        foreach ($p in @(Owned-Processes)) {
+            $holders += "$($p.kind)(PID $($p.pid))"
+        }
+        if ($holders.Count -gt 0) {
+            $hint = " 检测到运行中的占用进程: $($holders -join ', ')。"
+        }
+    } catch { }
+    throw "无法替换 $Destination：目标文件被正在运行的进程占用" +
+        "（$($lastError.Exception.Message)）。$hint 请先停止占用进程后重试，" +
+        "或在调用脚本时传入 -RestartMcp 由脚本停止 MCP 再部署。"
 }
 
 function Require-WindowsPython314 {
@@ -142,7 +185,7 @@ function Deploy-CoreExtensions([string]$SourcePath, [object[]]$Targets, [string]
             $stage = "$destination.$([guid]::NewGuid().ToString('N')).new"
             try {
                 Copy-Item -LiteralPath $SourcePath -Destination $stage -ErrorAction Stop
-                [IO.File]::Replace($stage, $destination, $backup, $true)
+                Replace-FileWithRetry $stage $destination $backup
             } finally {
                 if (Test-Path -LiteralPath $stage -PathType Leaf) { Remove-Item -LiteralPath $stage -Force }
             }
@@ -169,7 +212,7 @@ function Restore-CoreExtensions([object[]]$Deployed) {
         $stage = "$($item.path).$([guid]::NewGuid().ToString('N')).rollback"
         try {
             Copy-Item -LiteralPath $item.backup -Destination $stage -ErrorAction Stop
-            [IO.File]::Replace($stage, $item.path, $item.backup, $true)
+            Replace-FileWithRetry $stage $item.path $item.backup -Attempts 2 -DelayMs 500
         } finally {
             if (Test-Path -LiteralPath $stage -PathType Leaf) { Remove-Item -LiteralPath $stage -Force }
         }
@@ -180,8 +223,15 @@ function Verify-AuthorityCli([string]$CwExePath, [string]$VerificationTaskId) {
     $output = @(& $CwExePath lease status $VerificationTaskId --role implementer 2>&1)
     $code = $LASTEXITCODE
     $text = $output -join "`n"
-    if ($code -ne 0 -or $text -match 'MIGRATION_FAILED: schema checksum mismatch') {
+    # authority 验证只关心"新部署的 callwarden_core 能否无迁移错误打开权威库"。
+    # 迁移/打开类错误必须 fail-closed；业务错误（如 E_TASK_WORKSPACE_UNBOUND：
+    # 任务未绑定 workspace）与部署无关，仅记录不阻断——v58 迁移后新建的
+    # task_workspace_bindings 表对历史任务可能为空（T-1787203926824-9f873bfc）。
+    if ($text -match 'MIGRATION_FAILED|SCHEMA_TOO_NEW|INTEGRITY_FAILED|DB_OPEN_FAILED|ImportError|SCHEMA_CREATE_FAILED') {
         throw "权威 cw.exe lease status 未通过 migration authority 验证：$text"
+    }
+    if ($code -ne 0) {
+        Info "权威 cw.exe lease status 返回业务错误（exit=$code），migration authority 通过：$($text -replace '\s+', ' ')"
     }
     return [pscustomobject]@{ executable = $CwExePath; exit_code = $code; output = $text }
 }
@@ -198,7 +248,8 @@ function Owned-Processes {
         $daemon = ($p.Name -match "^cw-daemon(?:\.exe)?$") -and
             (($normalizedExe -match $repoPattern) -or ($normalizedCmd -match $repoPattern) -or
              ($normalizedExe -match $runtimePattern) -or ($normalizedCmd -match $runtimePattern))
-        $mcp = ($normalizedCmd -match "cw\.py[\s\\]+server") -and
+        $mcp = (($normalizedCmd -match "cw\.py[\s\\]+server") -or
+            ($normalizedCmd -match "compat_worker\.py")) -and
             ($normalizedCmd -match $repoPattern)
         $bridge = ($p.Name -match "^cw-bridge(?:\.exe)?$") -and
             (($normalizedExe -match $repoPattern) -or ($normalizedCmd -match $repoPattern) -or
@@ -475,12 +526,17 @@ try {
     }
     $coreRuntime = Resolve-CoreRuntimeTargets
     $coreBackupRoot = Join-Path $VersionRoot "$version.core-backup"
+    # -RestartMcp 的 MCP 停止必须发生在 Deploy-CoreExtensions **之前**：Windows 下
+    # 正在运行的 cw.py server / compat_worker 进程以 DLL 方式映射 callwarden_core.pyd，
+    # 若先替换再停止会因共享冲突抛"无法删除要被替换的文件"（T-1787203926824-9f873bfc）。
+    # 默认（未传 -RestartMcp）保持"不停止现有 MCP"的设计意图，由
+    # Replace-FileWithRetry 重试并给出明确占用提示。
+    if ($RestartMcp) { $before | Where-Object kind -eq "mcp" | ForEach-Object { Stop-Owned $_ } }
     $coreDeployed = Deploy-CoreExtensions $coreSource $coreRuntime.targets $coreBackupRoot
     $result.core_runtime = $coreDeployed
     $result.authority_cli = Verify-AuthorityCli $coreRuntime.cw_exe $TaskId
 
     $endpointValue = Endpoint; $result.endpoint = $endpointValue
-    if ($RestartMcp) { $before | Where-Object kind -eq "mcp" | ForEach-Object { Stop-Owned $_ } }
     # P2：daemon 停止不再在此处无条件执行；统一在 runtime/current 替换后
     # 由 Ensure-DaemonSingleInstance 做"探针去重 + 启动"（存在新实例则复用）。
 
