@@ -1,0 +1,1 @@
+{"result": "created", "response": {"task_id": "T-1787321020926-b7ed7500", "status": "open", "title": "CLI-01 [Gate/control_plane]：cw daemon health / manifest / capability 诊断链路", "step_count": 4, "contract_count": 3, "monotonic_seq": 1786265395936, "workspace_id": 1, "workspace_binding_id": "tb-T-1787321020926-b7ed7500-ws-1", "workspace_capture_id": "wc-ws-1-3086255512"}}

@@ -559,14 +559,9 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     ("get_symbol_history", "read_only"),
     ("get_recent_changes", "read_only"),
     ("get_impact", "read_only"),
-    ("get_top_callers", "read_only"),
-    ("get_orphan_symbols", "read_only"),
-    ("get_deepest_functions", "read_only"),
     ("get_comment_from_version", "read_only"),
     ("get_issue_summary", "read_only"),
     ("find_issues", "read_only"),
-    ("get_comment_coverage", "read_only"),
-    ("get_call_heatmap", "read_only"),
     ("get_test_coverage", "read_only"),
     ("export_module_graph", "read_only"),
     // H4C-3 任务组只读工具（13 项，T-1786716190783-ba187c88#H4C-3；
@@ -594,7 +589,6 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     ("get_summary", "read_only"),
     ("project_brief", "read_only"),
     ("repo_map", "read_only"),
-    ("find_uncovered_functions", "read_only"),
     ("test_impact_selection", "read_only"),
     ("who_to_ask", "read_only"),
     ("get_ownership_map", "read_only"),
@@ -636,17 +630,16 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     // H4C-2 第三批 toolchain/edge 组只读工具（8 项，T-1786747295227-49c90d68#步骤#1；
     // list_build_contexts / get_build_context / get_active_build_context /
     // get_resolved_edges / count_resolved_edges 已 W3-1 迁移 rust_native，
-    // T-1786861820150-bfe5e805，剩 3 项）
-    ("list_toolchains", "read_only"),
-    ("get_toolchain", "read_only"),
-    ("get_workspace_toolchains", "read_only"),
+    // T-1786861820150-bfe5e805；list_toolchains / get_toolchain /
+    // get_workspace_toolchains 已 S2 批次2 迁移 rust_native，T-1787209948470-a59bcf9c）
     // H4C-2 第三批规则查询组只读工具（3 项，T-1786747295227-49c90d68 整改：
     // rule_candidate_list/rule_list/get_applicable_rules 纯 SELECT 接入 worker）
     ("rule_candidate_list", "read_only"),
     ("rule_list", "read_only"),
     ("get_applicable_rules", "read_only"),
-    // H4C-2 第三批 collab 组只读工具（4 项，T-1786747295227-b876fddf#步骤#0）
-    ("get_role_view", "read_only"),
+    // H4C-2 第三批 collab 组只读工具（4 项，T-1786747295227-b876fddf#步骤#0；
+    // get_role_view 已 MCP-001 迁移 rust_native 并移除白名单，
+    // T-1787321708699-da5d8224，剩 3 项）
     ("find_evidence", "read_only"),
     ("get_freshness_status", "read_only"),
     ("get_gate_decision", "read_only"),
@@ -1593,9 +1586,9 @@ fn build_capability_registry() -> Result<Value, String> {
     add("get_file_history", "get_file_history", "get-file-history", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-file-history-ok", "fixture-get-file-history-err", "T-1786886251769-22b94ee8-sub-1#W4-1", "");
     add("get_recent_changes", "get_recent_changes", "get-recent-changes", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-recent-changes-ok", "fixture-get-recent-changes-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
     add("get_impact", "get_impact", "get-impact", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-impact-ok", "fixture-get-impact-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
-    add("get_top_callers", "get_top_callers", "get-top-callers", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-top-callers-ok", "fixture-get-top-callers-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
-    add("get_orphan_symbols", "get_orphan_symbols", "get-orphan-symbols", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-orphan-symbols-ok", "fixture-get-orphan-symbols-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
-    add("get_deepest_functions", "get_deepest_functions", "get-deepest-functions", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-deepest-functions-ok", "fixture-get-deepest-functions-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
+    add("get_top_callers", "get_top_callers", "get-top-callers", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-top-callers-ok", "fixture-get-top-callers-err", "T-1787209948470-a59bcf9c#S2-query-compat-batch1", "");
+    add("get_orphan_symbols", "get_orphan_symbols", "get-orphan-symbols", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-orphan-symbols-ok", "fixture-get-orphan-symbols-err", "T-1787209948470-a59bcf9c#S2-query-compat-batch1", "");
+    add("get_deepest_functions", "get_deepest_functions", "get-deepest-functions", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-deepest-functions-ok", "fixture-get-deepest-functions-err", "T-1787209948470-a59bcf9c#S2-query-compat-batch1", "");
     // W2-1（T-1786840097330-dec66710）：get_module_call_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
     add("get_module_call_stats", "get_module_call_stats", "get-module-call-stats", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-module-call-stats-ok", "fixture-get-module-call-stats-err", "T-1786840097330-dec66710#W2-1", "");
@@ -1608,8 +1601,8 @@ fn build_capability_registry() -> Result<Value, String> {
     // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除（91->90）。
     add("get_semgrep_findings", "get_semgrep_findings", "get-semgrep-findings", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-semgrep-findings-ok", "fixture-get-semgrep-findings-err", "T-1786861820151-deb64c48#W3-3", "");
-    add("get_comment_coverage", "get_comment_coverage", "get-comment-coverage", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-comment-coverage-ok", "fixture-get-comment-coverage-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
-    add("get_call_heatmap", "get_call_heatmap", "get-call-heatmap", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-call-heatmap-ok", "fixture-get-call-heatmap-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
+    add("get_comment_coverage", "get_comment_coverage", "get-comment-coverage", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-comment-coverage-ok", "fixture-get-comment-coverage-err", "T-1787209948470-a59bcf9c#S2-query-compat-batch1", "");
+    add("get_call_heatmap", "get_call_heatmap", "get-call-heatmap", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-call-heatmap-ok", "fixture-get-call-heatmap-err", "T-1787209948470-a59bcf9c#S2-query-compat-batch1", "");
     add("get_test_coverage", "get_test_coverage", "get-test-coverage", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-test-coverage-ok", "fixture-get-test-coverage-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
     add("export_module_graph", "export_module_graph", "export-module-graph", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-export-module-graph-ok", "fixture-export-module-graph-err", "T-1786716190783-ba187c88#H4C-2", "legacy-python");
     // H4C-3 任务组只读工具（13 项，workspace scope，T-1786716190783-ba187c88#H4C-3；
@@ -1658,7 +1651,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // rust_native，backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST
     // 对应条目已移除。
     add("get_coverage_for_symbol", "get_coverage_for_symbol", "get-coverage-for-symbol", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-coverage-for-symbol-ok", "fixture-get-coverage-for-symbol-err", "T-1786886251769-22b94ee8-sub-2#W4-2", "");
-    add("find_uncovered_functions", "find_uncovered_functions", "find-uncovered-functions", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-find-uncovered-functions-ok", "fixture-find-uncovered-functions-err", "T-1786747295213-64204cce#H4C-2-B2", "legacy-python");
+    add("find_uncovered_functions", "find_uncovered_functions", "find-uncovered-functions", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-find-uncovered-functions-ok", "fixture-find-uncovered-functions-err", "T-1787209948470-a59bcf9c#S2-query-compat-batch1", "");
     add("test_impact_selection", "test_impact_selection", "test-impact-selection", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-test-impact-selection-ok", "fixture-test-impact-selection-err", "T-1786747295213-64204cce#H4C-2-B2", "legacy-python");
     add("who_to_ask", "who_to_ask", "who-to-ask", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-who-to-ask-ok", "fixture-who-to-ask-err", "T-1786747295213-64204cce#H4C-2-B2", "legacy-python");
     add("get_ownership_map", "get_ownership_map", "get-ownership-map", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-ownership-map-ok", "fixture-get-ownership-map-err", "T-1786747295213-64204cce#H4C-2-B2", "legacy-python");
@@ -1725,9 +1718,9 @@ fn build_capability_registry() -> Result<Value, String> {
     // H4C-2 第三批：rules 组只读（8 项；list_build_contexts / get_build_context /
     // get_active_build_context / get_resolved_edges / count_resolved_edges 已 W3-1
     // 迁移 rust_native，T-1786861820150-bfe5e805，剩 3 项）
-    add("list_toolchains", "list_toolchains", "list-toolchains", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-list-toolchains-ok", "fixture-list-toolchains-err", "T-1786747295227-49c90d68#H4C-2-B3", "legacy-python");
-    add("get_toolchain", "get_toolchain", "get-toolchain", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-toolchain-ok", "fixture-get-toolchain-err", "T-1786747295227-49c90d68#H4C-2-B3", "legacy-python");
-    add("get_workspace_toolchains", "get_workspace_toolchains", "get-workspace-toolchains", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-workspace-toolchains-ok", "fixture-get-workspace-toolchains-err", "T-1786747295227-49c90d68#H4C-2-B3", "legacy-python");
+    add("list_toolchains", "list_toolchains", "list-toolchains", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-list-toolchains-ok", "fixture-list-toolchains-err", "T-1787209948470-a59bcf9c#S2-toolchain-compat-batch2", "");
+    add("get_toolchain", "get_toolchain", "get-toolchain", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-get-toolchain-ok", "fixture-get-toolchain-err", "T-1787209948470-a59bcf9c#S2-toolchain-compat-batch2", "");
+    add("get_workspace_toolchains", "get_workspace_toolchains", "get-workspace-toolchains", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-get-workspace-toolchains-ok", "fixture-get-workspace-toolchains-err", "T-1787209948470-a59bcf9c#S2-toolchain-compat-batch2", "");
     // W3-1（T-1786861820150-bfe5e805）：list_build_contexts 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
     add("list_build_contexts", "list_build_contexts", "list-build-contexts", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-list-build-contexts-ok", "fixture-list-build-contexts-err", "T-1786861820150-bfe5e805#W3-1", "");
@@ -1748,7 +1741,9 @@ fn build_capability_registry() -> Result<Value, String> {
     add("rule_list", "rule_list", "rule-list", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-rule-list-ok", "fixture-rule-list-err", "T-1786747295227-49c90d68#H4C-2-B3", "legacy-python");
     add("get_applicable_rules", "get_applicable_rules", "get-applicable-rules", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-applicable-rules-ok", "fixture-get-applicable-rules-err", "T-1786747295227-49c90d68#H4C-2-B3", "legacy-python");
     // H4C-2 第三批：collab 组只读（4 项，T-1786747295227-b876fddf#H4C-2-B3）
-    add("get_role_view", "get_role_view", "get-role-view", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-role-view-ok", "fixture-get-role-view-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
+    // MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native，
+    // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
+    add("get_role_view", "get_role_view", "get-role-view", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-role-view-ok", "fixture-get-role-view-err", "T-1787321708699-da5d8224#MCP-001", "");
     add("find_evidence", "find_evidence", "find-evidence", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-find-evidence-ok", "fixture-find-evidence-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     add("get_freshness_status", "get_freshness_status", "get-freshness-status", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-freshness-status-ok", "fixture-get-freshness-status-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     add("get_gate_decision", "get_gate_decision", "get-gate-decision", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-gate-decision-ok", "fixture-get-gate-decision-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
@@ -1767,6 +1762,14 @@ fn build_capability_registry() -> Result<Value, String> {
     // H4C-2 第三批：p4 assignment 只读（1 项，T-1786747295227-b876fddf#H4C-2-B3；
     // lease_* 5 项 rust_native 走 daemon dispatch，不在此 registry）
     add("assignment_show", "assignment_show", "assignment-show", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-assignment-show-ok", "fixture-assignment-show-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
+
+    // P0-H（T-1787277487109-758e56d0）：task.supersede 治理 mutation。
+    // 不宣传为 enabled（status != available）：只有 Adjudicator accepted 且
+    // promotion verifier PASS 后才列入 A′ Phase 0 allowed capability（届时
+    // 由 promotion 任务把 status 提升为 available 并补 /capabilities 测试）。
+    // task.superseded_by（只读投影）同样不宣传 enabled，随 promotion 一并开放。
+    add("task.supersede", "task.supersede", "task-supersede", "rust_native", "pending_promotion", "governance_write", "authority", false, "/v1/rpc", "fixture-task-supersede-ok", "fixture-task-supersede-err", "T-1787277487109-758e56d0#P0-H", "");
+    add("task.superseded_by", "task.superseded_by", "task-superseded", "rust_native", "pending_promotion", "read_only", "authority", false, "/v1/rpc", "fixture-task-superseded-ok", "fixture-task-superseded-err", "T-1787277487109-758e56d0#P0-H", "");
 
     drop(add);
 
