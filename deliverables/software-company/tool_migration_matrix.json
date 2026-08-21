@@ -2463,7 +2463,7 @@
       {
         "task_id": "T-1787321708568-d292ab3c",
         "owner": "executor-workbuddy-v1",
-        "updated_at": "2026-08-21",
+        "updated_at": "2026-08-22",
         "note": "CLI-02 (A' control_plane): cw search <query> daemon-only 读取链路 Rust daemon 化。Python 仅作 HTTP thin client + 格式化（.get 兼容缺省，不 KeyError）；Rust daemon query.search 为权威，响应经 normalize_search_results 输出 file_path/signature/has_comment 兼容字段（与 Rust CLI compat 层一致）。",
         "commands": [
           {
@@ -2484,7 +2484,7 @@
               "invalid_params (缺 query)",
               "E_HTTP_DAEMON_UNAVAILABLE (daemon 不可达)"
             ],
-            "evidence": "tests/test_cli02_search_daemon_only.py (7 passed) + CLI 冒烟 cw search alpha (exit 0)",
+            "evidence": "tests/test_cli02_search_daemon_only.py (7 passed) + tests/test_cli_02_http_rpc.py (3 passed) + CLI 冒烟 cw search alpha (exit 0)",
             "no_local_sqlite_fallback": true
           }
         ]
