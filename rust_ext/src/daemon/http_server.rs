@@ -1744,7 +1744,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
     add("get_role_view", "get_role_view", "get-role-view", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-role-view-ok", "fixture-get-role-view-err", "T-1787321708699-da5d8224#MCP-001", "");
-    add("find_evidence", "find_evidence", "find-evidence", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-find-evidence-ok", "fixture-find-evidence-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
+    add("find_evidence", "find_evidence", "find-evidence", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-find-evidence-ok", "fixture-find-evidence-err", "T-1787321708760-de068a9c#MCP-002", "");
     add("get_freshness_status", "get_freshness_status", "get-freshness-status", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-freshness-status-ok", "fixture-get-freshness-status-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     add("get_gate_decision", "get_gate_decision", "get-gate-decision", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-gate-decision-ok", "fixture-get-gate-decision-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     // H4C-2 第三批：p2 依赖图/环检测组只读（5 项，T-1786747295227-b876fddf#H4C-2-B3）

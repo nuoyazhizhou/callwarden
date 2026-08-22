@@ -4342,6 +4342,91 @@ impl TaskCollabStore {
         Ok(Value::Object(result))
     }
 
+    // MCP-002（T-1787321708760-de068a9c）：find_evidence 从 python_compat 迁移为
+    // Rust native。语义与 Python tools_collab._h_find_evidence +
+    // db_task_reviews 的 evidence.query 完全一致：从 task_evidence_events 按
+    // task_id / contract_id / verifier / limit 过滤查询，返回 {"items": [...], "count": N}。
+    pub fn handle_find_evidence(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let contract_id = params
+            .get("contract_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let verifier = params
+            .get("verifier")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(50);
+        let limit = if limit < 0 { 50 } else { limit as i64 };
+
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT evidence_id, task_id, evidence_type, event_type, commit_hash,
+                    workspace_snapshot_id, file_hashes, symbol_hashes, graph_refresh_version,
+                    verifier_name, verifier_version, verifier_config_hash, producer_identity,
+                    produced_at, payload_hash
+             FROM task_evidence_events WHERE 1=1",
+        );
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(ref t) = task_id {
+            sql.push_str(" AND task_id = ?");
+            binds.push(t.clone());
+        }
+        if let Some(ref c) = contract_id {
+            sql.push_str(" AND evidence_id LIKE ?");
+            binds.push(format!("%{}%", c));
+        }
+        if let Some(ref v) = verifier {
+            sql.push_str(" AND verifier_name = ?");
+            binds.push(v.clone());
+        }
+        sql.push_str(" ORDER BY id DESC LIMIT ?");
+        binds.push(limit.to_string());
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_evidence_events 失败: {}", e)))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+                let mut m = Map::new();
+                m.insert("evidence_id".to_string(), Value::String(r.get(0)?));
+                m.insert("task_id".to_string(), Value::String(r.get(1)?));
+                m.insert("evidence_type".to_string(), Value::String(r.get(2)?));
+                m.insert("event_type".to_string(), Value::String(r.get(3)?));
+                m.insert("commit_hash".to_string(), Value::String(r.get(4)?));
+                m.insert("workspace_snapshot_id".to_string(), Value::String(r.get(5)?));
+                m.insert("file_hashes".to_string(), Value::String(r.get(6)?));
+                m.insert("symbol_hashes".to_string(), Value::String(r.get(7)?));
+                m.insert("graph_refresh_version".to_string(), Value::String(r.get(8)?));
+                m.insert("verifier_name".to_string(), Value::String(r.get(9)?));
+                m.insert("verifier_version".to_string(), Value::String(r.get(10)?));
+                m.insert("verifier_config_hash".to_string(), Value::String(r.get(11)?));
+                m.insert("producer_identity".to_string(), Value::String(r.get(12)?));
+                m.insert("produced_at".to_string(), Value::Number(serde_json::Number::from_f64(r.get(13)?).unwrap()));
+                m.insert("payload_hash".to_string(), Value::String(r.get(14)?));
+                Ok(Value::Object(m))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 task_evidence_events 失败: {}", e)))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| DaemonRpcError::internal_error(format!("读取 task_evidence_events 失败: {}", e)))?);
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items.clone()));
+        result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
+        Ok(Value::Object(result))
+    }
+
     pub fn handle_task_wait(
         &self,
         _peer: PeerCredential,

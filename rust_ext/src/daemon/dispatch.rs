@@ -1491,6 +1491,10 @@ pub trait DaemonStateExt {
                 // HTTP RPC 方法名与 capability row 一致为 get_role_view；compat worker
                 // 内部曾用 role_view.get 别名，这里两者都接同一 handler（向后兼容）。
                 "get_role_view" | "role_view.get" => store.handle_get_role_view(peer, params),
+                // MCP-002（T-1787321708760-de068a9c）：find_evidence 迁移 rust_native。
+                // 语义与 Python tools_collab._h_find_evidence + evidence.query 一致：
+                // 从 task_evidence_events 按 task_id/contract_id/verifier/limit 过滤查询。
+                "find_evidence" => store.handle_find_evidence(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2370,6 +2374,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "gate.decide"
         | "get_role_view"
         | "role_view.get"
+        | "find_evidence"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"
