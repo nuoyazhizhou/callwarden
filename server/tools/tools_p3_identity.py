@@ -327,11 +327,10 @@ def _h_list_attestation_revocations(ctx: CompatCallContext) -> Any:
         )
 
 
-# p3 只读白名单（4 个；get_action_identity 已 MCP-010 迁移 rust_native，移除 compat
-# 注册）：写语义工具（record_action_identity / register_attestation_revocation，
-# governance_write）不接入，fail-closed。
+# p3 只读白名单（3 个；get_action_identity 已 MCP-010、check_action_identity 已 MCP-011
+# 迁移 rust_native，移除 compat 注册）：写语义工具（record_action_identity /
+# register_attestation_revocation，governance_write）不接入，fail-closed。
 _P3_READ_ONLY_METHODS: Dict[str, Any] = {
-    "check_action_identity": _h_check_action_identity,
     "check_session_separation": _h_check_session_separation,
     "get_attestation_validity": _h_get_attestation_validity,
     "list_attestation_revocations": _h_list_attestation_revocations,

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-22T16:47:16",
+  "generated_at": "2026-08-22T16:57:14",
   "total_tools": 239,
   "backends": [
     "rust_native",
@@ -200,11 +200,11 @@
       "name": "check_action_identity",
       "module": "tools_p3_identity",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "check_action_identity",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-011",
+      "status": "migrated"
     },
     {
       "name": "check_session_separation",

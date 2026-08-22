@@ -5260,6 +5260,96 @@ impl TaskCollabStore {
         }
     }
 
+    // MCP-011（T-1787321709518-0b31a484）：check_action_identity 迁移 rust_native。
+    // 语义与 Python tools_p3_identity._h_check_action_identity 一致：解析 identity JSON
+    // 字符串 → 校验结构化身份（agent_id/session_id/model_id/role 四字段齐全 +
+    // require_role 匹配）→ 返回 {"valid": bool, "reason": {...}}。
+    pub fn handle_check_action_identity(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let identity_str = params
+            .get("identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let require_role = params
+            .get("require_role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // 1. 解析 identity JSON 字符串（_p3_resolve_identity_arg）
+        if identity_str.trim().is_empty() {
+            let mut reason = Map::new();
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+            reason.insert("detail".to_string(), Value::String("identity 必须是 JSON 对象 {agent_id, session_id, model_id, role}".to_string()));
+            let mut result = Map::new();
+            result.insert("valid".to_string(), Value::Bool(false));
+            result.insert("reason".to_string(), Value::Object(reason));
+            return Ok(Value::Object(result));
+        }
+        let parsed: Result<Value, _> = serde_json::from_str(&identity_str);
+        let parsed = match parsed {
+            Ok(v) => v,
+            Err(_) => {
+                let mut reason = Map::new();
+                reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+                reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+                reason.insert("detail".to_string(), Value::String("identity 必须是 JSON 对象 {agent_id, session_id, model_id, role}".to_string()));
+                let mut result = Map::new();
+                result.insert("valid".to_string(), Value::Bool(false));
+                result.insert("reason".to_string(), Value::Object(reason));
+                return Ok(Value::Object(result));
+            }
+        };
+        let obj = match parsed.as_object() {
+            Some(o) => o,
+            None => {
+                let mut reason = Map::new();
+                reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+                reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+                reason.insert("detail".to_string(), Value::String("identity 必须是 JSON 对象".to_string()));
+                let mut result = Map::new();
+                result.insert("valid".to_string(), Value::Bool(false));
+                result.insert("reason".to_string(), Value::Object(reason));
+                return Ok(Value::Object(result));
+            }
+        };
+
+        let agent_id = obj.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let session_id = obj.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let model_id = obj.get("model_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let role = obj.get("role").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // 2. validate_action_identity（纯逻辑，无 DB 查询）
+        let valid;
+        let mut reason = Map::new();
+        if agent_id.is_empty() || session_id.is_empty() || model_id.is_empty() || role.is_empty() {
+            valid = false;
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+            reason.insert("detail".to_string(), Value::String("缺失必要的 Identity 字段 (agent_id, session_id, model_id, role)".to_string()));
+        } else if !require_role.is_empty() && role != require_role {
+            valid = false;
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_ROLE_MISMATCH".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_role_mismatch".to_string()));
+            reason.insert("detail".to_string(), Value::String(format!("角色不匹配: 期望 {}, 实际 {}", require_role, role)));
+            reason.insert("expected_role".to_string(), Value::String(require_role.clone()));
+            reason.insert("actual_role".to_string(), Value::String(role.clone()));
+        } else {
+            valid = true;
+            reason.insert("code".to_string(), Value::String("OK".to_string()));
+        }
+
+        let mut result = Map::new();
+        result.insert("valid".to_string(), Value::Bool(valid));
+        result.insert("reason".to_string(), Value::Object(reason));
+        Ok(Value::Object(result))
+    }
+
     // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
     fn detect_cycle_find_shortest(
         graph: &BTreeMap<String, Vec<String>>,

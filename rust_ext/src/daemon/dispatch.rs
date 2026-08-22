@@ -1528,6 +1528,10 @@ pub trait DaemonStateExt {
                 // 语义与 Python db_task_identity.get_action_identity 一致：按 workspace_id +
                 // action_id 查询 action_identities 单行（全部列），无匹配返回 None。
                 "get_action_identity" => store.handle_get_action_identity(peer, params),
+                // MCP-011（T-1787321709518-0b31a484）：check_action_identity 迁移 rust_native。
+                // 语义与 Python tools_p3_identity._h_check_action_identity 一致：解析 identity
+                // JSON 字符串 → 校验四字段 + require_role → 返回 valid/reason。
+                "check_action_identity" => store.handle_check_action_identity(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2416,6 +2420,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "validate_revision_dependencies"
         | "get_dependency_edges"
         | "get_action_identity"
+        | "check_action_identity"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"

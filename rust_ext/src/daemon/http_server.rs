@@ -652,8 +652,8 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     // MCP-009 迁移 rust_native 并移除白名单，T-1787321709365-021050a8，p2 组全部迁移）
     // H4C-2 第三批 p3 身份/证明组只读工具（5 项，T-1786747295227-b876fddf#步骤#1；
     // get_action_identity 已 MCP-010 迁移 rust_native 并移除白名单，
-    // T-1787321709432-060d1128，剩 4 项）
-    ("check_action_identity", "read_only"),
+    // T-1787321709432-060d1128；check_action_identity 已 MCP-011 迁移 rust_native
+    // 并移除白名单，T-1787321709518-0b31a484，剩 3 项）
     ("check_session_separation", "read_only"),
     ("get_attestation_validity", "read_only"),
     ("list_attestation_revocations", "read_only"),
@@ -1757,7 +1757,7 @@ fn build_capability_registry() -> Result<Value, String> {
     add("get_dependency_edges", "get_dependency_edges", "get-dependency-edges", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-dependency-edges-ok", "fixture-get-dependency-edges-err", "T-1787321709365-021050a8#MCP-009", "");
     // H4C-2 第三批：p3 身份/证明组只读（5 项，T-1786747295227-b876fddf#H4C-2-B3）
     add("get_action_identity", "get_action_identity", "get-action-identity", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-action-identity-ok", "fixture-get-action-identity-err", "T-1787321709432-060d1128#MCP-010", "");
-    add("check_action_identity", "check_action_identity", "check-action-identity", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-check-action-identity-ok", "fixture-check-action-identity-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
+    add("check_action_identity", "check_action_identity", "check-action-identity", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-check-action-identity-ok", "fixture-check-action-identity-err", "T-1787321709518-0b31a484#MCP-011", "");
     add("check_session_separation", "check_session_separation", "check-session-separation", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-check-session-separation-ok", "fixture-check-session-separation-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     add("get_attestation_validity", "get_attestation_validity", "get-attestation-validity", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-attestation-validity-ok", "fixture-get-attestation-validity-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     add("list_attestation_revocations", "list_attestation_revocations", "list-attestation-revocations", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-list-attestation-revocations-ok", "fixture-list-attestation-revocations-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
