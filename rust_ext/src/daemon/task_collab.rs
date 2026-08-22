@@ -5206,6 +5206,60 @@ impl TaskCollabStore {
         Ok(Value::Object(m))
     }
 
+    // MCP-010（T-1787321709432-060d1128）：get_action_identity 迁移 rust_native。
+    // 语义与 Python db_task_identity.get_action_identity 一致：按 workspace_id + action_id
+    // 查询 action_identities 单行（全部列），无匹配返回 None。
+    pub fn handle_get_action_identity(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let action_id = params
+            .get("action_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, action_id, action_type, task_id, \
+                        contract_id, contract_revision, agent_id, session_id, \
+                        model_id, role, recorded_at \
+                 FROM action_identities \
+                 WHERE workspace_id = ? AND action_id = ?",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 action_identities 失败: {}", e)))?;
+        let found = stmt
+            .query_row(params![workspace_id, action_id], |r| {
+                let mut m = Map::new();
+                m.insert("id".to_string(), Value::Number(r.get::<_, i64>(0)?.into()));
+                m.insert("workspace_id".to_string(), Value::Number(r.get::<_, i64>(1)?.into()));
+                m.insert("action_id".to_string(), Value::String(r.get::<_, String>(2)?));
+                m.insert("action_type".to_string(), Value::String(r.get::<_, String>(3)?));
+                m.insert("task_id".to_string(), Value::String(r.get::<_, String>(4)?));
+                m.insert("contract_id".to_string(), Value::String(r.get::<_, String>(5)?));
+                m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(6)?.into()));
+                m.insert("agent_id".to_string(), Value::String(r.get::<_, String>(7)?));
+                m.insert("session_id".to_string(), Value::String(r.get::<_, String>(8)?));
+                m.insert("model_id".to_string(), Value::String(r.get::<_, String>(9)?));
+                m.insert("role".to_string(), Value::String(r.get::<_, String>(10)?));
+                m.insert("recorded_at".to_string(), Value::Number(serde_json::Number::from_f64(r.get::<_, f64>(11)?).unwrap_or(serde_json::Number::from(0))));
+                Ok(Value::Object(m))
+            })
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 action_identities 失败: {}", e)))?;
+
+        match found {
+            Some(v) => Ok(v),
+            None => Ok(Value::Null),
+        }
+    }
+
     // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
     fn detect_cycle_find_shortest(
         graph: &BTreeMap<String, Vec<String>>,

@@ -1524,6 +1524,10 @@ pub trait DaemonStateExt {
                 // 语义与 Python db_task_dependencies.get_dependency_edges 一致：查询
                 // dependency_edges 全部列按 created_at 排序，可选按 task_id 过滤。
                 "get_dependency_edges" => store.handle_get_dependency_edges(peer, params),
+                // MCP-010（T-1787321709432-060d1128）：get_action_identity 迁移 rust_native。
+                // 语义与 Python db_task_identity.get_action_identity 一致：按 workspace_id +
+                // action_id 查询 action_identities 单行（全部列），无匹配返回 None。
+                "get_action_identity" => store.handle_get_action_identity(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2411,6 +2415,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "detect_cycle"
         | "validate_revision_dependencies"
         | "get_dependency_edges"
+        | "get_action_identity"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"
