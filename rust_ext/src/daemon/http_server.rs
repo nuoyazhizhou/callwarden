@@ -643,10 +643,11 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     ("find_evidence", "read_only"),
     ("get_freshness_status", "read_only"),
     ("get_gate_decision", "read_only"),
-    // H4C-2 第三批 p2 依赖图/环检测组只读工具（5 项，T-1786747295227-b876fddf#步骤#1）
-    ("get_artifact_freshness", "read_only"),
-    ("get_interface_providers", "read_only"),
-    ("detect_cycle", "read_only"),
+    // H4C-2 第三批 p2 依赖图/环检测组只读工具（5 项，T-1786747295227-b876fddf#步骤#1；
+    // get_artifact_freshness 已 MCP-005 迁移 rust_native 并移除白名单，
+    // T-1787321709137-2df7bd97；get_interface_providers 已 MCP-006 迁移 rust_native
+    // 并移除白名单，T-1787321709098-f2236ea0；detect_cycle 已 MCP-007 迁移 rust_native
+    // 并移除白名单，T-1787321709179-f6fdf5bc，剩 2 项）
     ("validate_revision_dependencies", "read_only"),
     ("get_dependency_edges", "read_only"),
     // H4C-2 第三批 p3 身份/证明组只读工具（5 项，T-1786747295227-b876fddf#步骤#1）
@@ -1750,7 +1751,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // H4C-2 第三批：p2 依赖图/环检测组只读（5 项，T-1786747295227-b876fddf#H4C-2-B3）
     add("get_artifact_freshness", "get_artifact_freshness", "get-artifact-freshness", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-artifact-freshness-ok", "fixture-get-artifact-freshness-err", "T-1787321709017-ed4e79b0#MCP-005", "");
     add("get_interface_providers", "get_interface_providers", "get-interface-providers", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-interface-providers-ok", "fixture-get-interface-providers-err", "T-1787321709098-f2236ea0#MCP-006", "");
-    add("detect_cycle", "detect_cycle", "detect-cycle", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-detect-cycle-ok", "fixture-detect-cycle-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
+    add("detect_cycle", "detect_cycle", "detect-cycle", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-detect-cycle-ok", "fixture-detect-cycle-err", "T-1787321709179-f6fdf5bc#MCP-007", "");
     add("validate_revision_dependencies", "validate_revision_dependencies", "validate-revision-dependencies", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-validate-revision-dependencies-ok", "fixture-validate-revision-dependencies-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     add("get_dependency_edges", "get_dependency_edges", "get-dependency-edges", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-get-dependency-edges-ok", "fixture-get-dependency-edges-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
     // H4C-2 第三批：p3 身份/证明组只读（5 项，T-1786747295227-b876fddf#H4C-2-B3）

@@ -1511,6 +1511,11 @@ pub trait DaemonStateExt {
                 // 语义与 Python tools_p2_graph._h_get_interface_providers + db_task_dependencies
                 // .get_interface_providers 一致：从 interface_identities 查询 provider 列表。
                 "get_interface_providers" => store.handle_get_interface_providers(peer, params),
+                // MCP-007（T-1787321709179-f6fdf5bc）：detect_cycle 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_detect_cycle + db_task_dependencies
+                // .detect_cycle 一致：从 dependency_edges 取 workspace 内 is_hard=1 边，
+                // DFS 三色 + BFS 最短 path 检测环。
+                "detect_cycle" => store.handle_detect_cycle(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2395,6 +2400,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "get_gate_decision"
         | "get_artifact_freshness"
         | "get_interface_providers"
+        | "detect_cycle"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"

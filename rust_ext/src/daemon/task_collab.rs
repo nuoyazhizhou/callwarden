@@ -17,7 +17,7 @@
 //! 官方事务化迁移管理（与 Python `_migrate_schema` 同一版本审计，SCHEMA_VERSION=51），
 //! 本模块只做只读校验，不再内嵌旁路 DDL。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -4733,6 +4733,178 @@ impl TaskCollabStore {
         result.insert("items".to_string(), Value::Array(items.clone()));
         result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
         Ok(Value::Object(result))
+    }
+
+    // MCP-007（T-1787321709179-f6fdf5bc）：detect_cycle 从 python_compat 迁移为
+    // Rust native。语义与 Python db_task_dependencies.detect_cycle 完全一致：
+    //   - 从 dependency_edges 取 workspace 内 is_hard=1 的边；
+    //   - DFS 三色标记检测环，定位 cycle_start_node；
+    //   - BFS 从 cycle_start_node 回到自身找最短 cycle path。
+    // 返回 {"has_cycle": bool, "cycle_path": [str], "checked_nodes": int}。
+    pub fn handle_detect_cycle(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let conn = self.conn.lock().unwrap();
+        let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT DISTINCT provider_task_id, consumer_task_id \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? AND is_hard = 1",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let rows = stmt
+                .query_map(params![workspace_id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            for row in rows {
+                let (provider, consumer) = row
+                    .map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?;
+                graph.entry(provider).or_default().push(consumer);
+            }
+        }
+
+        if graph.is_empty() {
+            let mut result = Map::new();
+            result.insert("has_cycle".to_string(), Value::Bool(false));
+            result.insert("cycle_path".to_string(), Value::Array(vec![]));
+            result.insert("checked_nodes".to_string(), Value::Number(serde_json::Number::from(0)));
+            return Ok(Value::Object(result));
+        }
+
+        // DFS 三色标记检测环（0=WHITE, 1=GRAY, 2=BLACK）
+        let mut color: HashMap<String, u8> = HashMap::new();
+        let mut cycle_start_node: Option<String> = None;
+
+        fn dfs_detect(
+            node: &str,
+            graph: &BTreeMap<String, Vec<String>>,
+            color: &mut HashMap<String, u8>,
+            found: &mut Option<String>,
+        ) -> bool {
+            color.insert(node.to_string(), 1);
+            if let Some(neighbors) = graph.get(node) {
+                for nb in neighbors {
+                    let c = color.get(nb).copied().unwrap_or(0);
+                    if c == 1 {
+                        *found = Some(nb.clone());
+                        return true;
+                    }
+                    if c == 0 {
+                        if dfs_detect(nb, graph, color, found) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            color.insert(node.to_string(), 2);
+            false
+        }
+
+        for node in graph.keys() {
+            if color.get(node).copied().unwrap_or(0) == 0 {
+                if dfs_detect(node, &graph, &mut color, &mut cycle_start_node) {
+                    break;
+                }
+            }
+        }
+
+        if cycle_start_node.is_none() {
+            let mut result = Map::new();
+            result.insert("has_cycle".to_string(), Value::Bool(false));
+            result.insert("cycle_path".to_string(), Value::Array(vec![]));
+            result.insert("checked_nodes".to_string(), Value::Number(serde_json::Number::from(graph.len())));
+            return Ok(Value::Object(result));
+        }
+
+        let start = cycle_start_node.clone().unwrap();
+        let cycle_path = Self::detect_cycle_find_shortest(&graph, &start);
+
+        let mut result = Map::new();
+        result.insert("has_cycle".to_string(), Value::Bool(true));
+        result.insert(
+            "cycle_path".to_string(),
+            Value::Array(cycle_path.into_iter().map(Value::String).collect()),
+        );
+        result.insert("checked_nodes".to_string(), Value::Number(serde_json::Number::from(graph.len())));
+        Ok(Value::Object(result))
+    }
+
+    // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
+    fn detect_cycle_find_shortest(
+        graph: &BTreeMap<String, Vec<String>>,
+        start: &str,
+    ) -> Vec<String> {
+        use std::collections::VecDeque;
+        let mut queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
+        queue.push_back((start.to_string(), vec![start.to_string()]));
+        let mut visited: HashSet<String> = HashSet::new();
+        visited.insert(start.to_string());
+        while let Some((node, path)) = queue.pop_front() {
+            if let Some(neighbors) = graph.get(&node) {
+                for nb in neighbors {
+                    if nb == start && path.len() >= 1 {
+                        let mut p = path.clone();
+                        p.push(start.to_string());
+                        return p;
+                    }
+                    if !visited.contains(nb) {
+                        visited.insert(nb.clone());
+                        let mut np = path.clone();
+                        np.push(nb.clone());
+                        queue.push_back((nb.clone(), np));
+                    }
+                }
+            }
+        }
+        Self::detect_cycle_find_any(graph, start)
+    }
+
+    // DFS 回退：从 start 出发找任意回到 start 的 cycle path。
+    fn detect_cycle_find_any(
+        graph: &BTreeMap<String, Vec<String>>,
+        start: &str,
+    ) -> Vec<String> {
+        let mut path: Vec<String> = Vec::new();
+        let mut visited: HashSet<String> = HashSet::new();
+        fn dfs(
+            node: &str,
+            graph: &BTreeMap<String, Vec<String>>,
+            start: &str,
+            path: &mut Vec<String>,
+            visited: &mut HashSet<String>,
+        ) -> Vec<String> {
+            path.push(node.to_string());
+            visited.insert(node.to_string());
+            if let Some(neighbors) = graph.get(node) {
+                for nb in neighbors {
+                    if nb == start && path.len() >= 1 {
+                        let mut p = path.clone();
+                        p.push(start.to_string());
+                        return p;
+                    }
+                    if !visited.contains(nb) {
+                        let r = dfs(nb, graph, start, path, visited);
+                        if !r.is_empty() {
+                            return r;
+                        }
+                    }
+                }
+            }
+            path.pop();
+            visited.remove(node);
+            Vec::new()
+        }
+        dfs(start, graph, start, &mut path, &mut visited)
     }
 
     /// 复刻 Python db_task_evidence.derive_freshness 的核心派生逻辑（snapshot/hash
@@ -10549,6 +10721,49 @@ mod tests {
             )
             .unwrap();
         assert!(capture_count >= 1, "task.create 必须写入 workspace authority capture");
+    }
+
+    #[test]
+    fn test_handle_detect_cycle_native_parity() {
+        // MCP-007：detect_cycle Rust native 与 Python db_task_dependencies.detect_cycle
+        // 语义一致：workspace 内 is_hard=1 边构成环时返回 has_cycle=true + 最短 cycle path；
+        // 无边 workspace 返回 has_cycle=false。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+
+        // 构造硬依赖环：A -> B -> C -> A（workspace_id=1, is_hard=1）
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO dependency_edges \
+                 (workspace_id, provider_task_id, consumer_task_id, edge_type, source_type, contract_id, contract_revision, is_hard, created_at) VALUES \
+                 (1, 'A', 'B', 'hard_dep', 'task', 'C-1', 1, 1, 1.0), \
+                 (1, 'B', 'C', 'hard_dep', 'task', 'C-1', 1, 1, 1.0), \
+                 (1, 'C', 'A', 'hard_dep', 'task', 'C-1', 1, 1, 1.0);",
+            )
+            .unwrap();
+        }
+
+        let r = store
+            .handle_detect_cycle(peer.clone(), &serde_json::json!({"workspace_id": 1}))
+            .unwrap();
+        assert_eq!(r["has_cycle"], serde_json::Value::Bool(true));
+        let path = r["cycle_path"].as_array().expect("cycle_path 应为数组");
+        assert!(!path.is_empty(), "有环时 cycle_path 非空");
+        // 最短环应为 4 节点（A->B->C->A 含首尾）
+        assert_eq!(path.len(), 4, "最短 cycle path 应为 A,B,C,A（4 节点）");
+        assert_eq!(path[0], serde_json::json!("A"));
+        assert_eq!(path[path.len() - 1], serde_json::json!("A"));
+        assert_eq!(r["checked_nodes"], serde_json::json!(3));
+
+        // 另一 workspace 无边 → 无环
+        let empty = store
+            .handle_detect_cycle(peer, &serde_json::json!({"workspace_id": 2}))
+            .unwrap();
+        assert_eq!(empty["has_cycle"], serde_json::Value::Bool(false));
+        assert_eq!(empty["cycle_path"].as_array().unwrap().len(), 0);
     }
 }
 
