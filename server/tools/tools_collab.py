@@ -439,31 +439,24 @@ def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
     return db
 
 
-def _h_get_freshness_status(ctx: CompatCallContext) -> Any:
-    """worker handler：查询 Evidence Freshness_Status（只读，复刻 freshness.status）"""
-    return _collab_direct_read(_bind_readonly_db(ctx), "freshness.status", ctx.params)
-
-
 def _h_gate_decision(ctx: CompatCallContext) -> Any:
     """worker handler：查询 gate decision 历史（只读，复刻 gate.decision.query）"""
     return _collab_direct_read(_bind_readonly_db(ctx), "gate.decision.query", ctx.params)
 
 
-# collab 组只读白名单（原 4 个；get_role_view 已 MCP-001 迁移 rust_native，
-# T-1787321708699-da5d8224；find_evidence 已 MCP-002 迁移 rust_native，
-# T-1787321708760-de068a9c，移除 compat 注册，剩 2 个）。写语义工具
-# （submit_verdict / append_evidence，governance_write）不接入，fail-closed。
+# collab 组只读白名单（原 4 个；get_role_view 已 MCP-001、find_evidence 已 MCP-002、
+# get_freshness_status 已 MCP-003 迁移 rust_native，均移除 compat 注册，剩 1 个）。
+# 写语义工具（submit_verdict / append_evidence，governance_write）不接入，fail-closed。
 _COLLAB_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_freshness_status": _h_get_freshness_status,
     "get_gate_decision": _h_gate_decision,
 }
 
 # 模块级注册：worker 装配 import 本 .module 时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
+# 同步 RUST_COMPAT_ROUTE（R * 侧 http_server.rs 白名单在步骤#2 同步）。
 register_compat_routes(
     _COLLAB_READ_ONLY_METHODS,
     workspace_scope=_COLLAB_COMPAT_SCOPE,
-    description="H4C-2 第三批 collab 组只读工具（2 个；get_role_view/find_evidence 已迁移 rust_native）",
+    description="H4C-2 第三批 collab 组只读工具（1 个；get_role_view/find_evidence/get_freshness_status 已迁移 rust_native）",
 )
 
 

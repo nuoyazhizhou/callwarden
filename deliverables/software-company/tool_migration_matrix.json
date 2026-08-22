@@ -38,11 +38,11 @@
       "name": "get_freshness_status",
       "module": "tools_collab",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_freshness_status",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-003",
+      "status": "migrated"
     },
     {
       "name": "get_gate_decision",

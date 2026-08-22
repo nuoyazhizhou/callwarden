@@ -1495,6 +1495,10 @@ pub trait DaemonStateExt {
                 // 语义与 Python tools_collab._h_find_evidence + evidence.query 一致：
                 // 从 task_evidence_events 按 task_id/contract_id/verifier/limit 过滤查询。
                 "find_evidence" => store.handle_find_evidence(peer, params),
+                // MCP-003（T-1787321708856-e3c10624）：get_freshness_status 迁移 rust_native。
+                // 语义与 Python db_task_evidence.derive_freshness 一致：
+                // 全序 invalid > superseded > stale > fresh，派生 Evidence 新鲜度。
+                "get_freshness_status" => store.handle_get_freshness_status(  peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2375,6 +2379,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "get_role_view"
         | "role_view.get"
         | "find_evidence"
+        | "get_freshness_status"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"

@@ -4427,6 +4427,180 @@ impl TaskCollabStore {
         Ok(Value::Object(result))
     }
 
+    // MCP-003 （T-1787321708856-e3c10624）：get_freshness_status 从 python_compat
+    // 迁移为 Rust native。语义与 Python db_task_evidence.derive_freshness 一致：
+    // 全序优先级 invalid > superseded > stale > fresh（Req 6.15）。当前调用方
+    // 仅传 evidence_id/task_id（snapshot/hash 为 None，stale 分支不触发）。
+    pub fn handle_get_freshness_status(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let evidence_id = params
+            .get("evidence_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let conn = self.conn.lock().unwrap();
+        // 当前契约 revision（无契约时取 0）
+        let current_rev: i64 = if let Some(ref t) = task_id {
+            conn.query_row(
+                "SELECT MAX(revision) FROM task_contract_revisions WHERE task_id = ?",
+                params![t],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+        } else {
+            0
+        };
+
+        // 收集待查询 evidence_id
+        let mut ids: Vec<String> = Vec::new();
+        if let Some(ref eid) = evidence_id {
+            if !eid.is_empty() {
+                ids.push(eid.clone());
+            }
+        } else if let Some(ref t) = task_id {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT evidence_id FROM task_evidence_events \
+                     WHERE task_id = ? AND event_type = ?",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_evidence_events 失败: {}", e)))?;
+            let rows = stmt
+                .query_map(params![t, "evidence_appended"], |r| r.get::<_, String>(0))
+                .map_err(|e| DaemonRpcError::internal_error(format!("映射 evidence_id 失败: {}", e)))?;
+            for row in rows {
+                if let Ok(eid) = row {
+                    ids.push(eid);
+                }
+            }
+        }
+
+        let mut items: Vec<Value> = Vec::new();
+        for eid in ids {
+            if eid.is_empty() {
+                continue;
+            }
+            let status = Self::derive_evidence_freshness(&conn, &eid, current_rev);
+            items.push(json!({"evidence_id": eid, "status": status}));
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items));
+        Ok(Value::Object(result))
+    }
+
+    /// 复刻 Python db_task_evidence.derive_freshness 的核心派生逻辑（snapshot/hash
+    /// 比较维度在调用方未传入时跳过，保持与 Python 「freshness.status」 RPC 一致）。
+    fn derive_evidence_freshness(
+        conn: &rusqlite::Connection,
+        evidence_id: &str,
+        current_contract_revision: i64,
+    ) -> String {
+        const FRESHNESS_FRESH: &str = "fresh";
+        const FRESHNESS_STALE: &str = "stale";
+        const FRESHNESS_INVALID: &str = "invalid";
+        const FRESHNESS_SUPERSEDED: &str = "superseded";
+
+        // 查找原始 Evidence（event_type = evidence_appended）
+        let row = conn
+            .query_row(
+                "SELECT verifier_name, verifier_version, verifier_config_hash, \
+                 contract_revision, workspace_snapshot_id, file_hashes, symbol_hashes, \
+                 graph_refresh_version FROM task_evidence_events \
+                 WHERE evidence_id = ? AND event_type = ?",
+                params![evidence_id, "evidence_appended"],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<  _, Option<String>>(2)?,
+                        r.get::<_, Option<i64>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<String>>(5)?,
+                        r.get::<_, Option<String>>(6)?,
+                        r.get::<_, Option<String>>(7)?,
+                    ))
+                },
+            )
+            .optional();
+
+        let row = match row {
+            Ok(Some(r)) => r,
+            Ok(None) => return FRESHNESS_INVALID.to_string(),
+            Err(_) => return "unknown".to_string(),
+        };
+
+        let (v_name, v_version, v_config, bound_revision, _snap, _fh, _sh, _gv) = row;
+        let mut candidates: Vec<(i32, &str)> = Vec::new();
+
+        // 1. 个体失效：存在 original_evidence_ref = evidence_id 的 invalidated 事件
+        let invalidated: bool = conn
+            .query_row(
+                "SELECT 1 FROM task_evidence_events \
+                 WHERE original_evidence_ref = ? AND event_type = ?",
+                params![evidence_id, "evidence_invalidated"],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+            .is_some();
+        if invalidated {
+            candidates.push((3, FRESHNESS_INVALID));
+        }
+
+        // 2. Verifier 注册/信任/撤销
+        if let (Some(name), Some(ver), Some(cfg)) = (&v_name, &v_version, &v_config) {
+            let trust: Option<String> = conn
+                .query_row(
+                    "SELECT trust_status FROM verifier_registry \
+                     WHERE name = ? AND version = ? AND config_hash = ?",
+                    params![name, ver, cfg],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok();
+            if trust.is_none() {
+                candidates.push((3, FRESHNESS_INVALID));
+            } else if trust.as_deref() != Some("trusted") {
+                candidates.push((3, FRESHNESS_INVALID));
+            }
+            let revoked: bool = conn
+                .query_row(
+                    "SELECT 1 FROM verifier_revocation_records \
+                     WHERE verifier_name = ? AND verifier_version = ? AND verifier_config_hash = ?",
+                    params![name, ver, cfg],
+                    |r| r.get::<_, i64>(0),
+                )
+                .ok()
+                .is_some();
+            if revoked {
+                candidates.push((3, FRESHNESS_INVALID));
+            }
+        }
+
+        // 3. superseded：当前契约 revision 前进
+        if let Some(br) = bound_revision {
+            if current_contract_revision > br {
+                candidates.push((2, FRESHNESS_SUPERSEDED));
+            }
+        }
+
+        // 4. stale：snapshot/file/symbol/graph 维度——仅当调用方传入时比较；
+        //    本 RPC 调用方未传入，默认跳过（与 Python freshness.status 一致）。
+
+        if candidates.is_empty() {
+            return FRESHNESS_FRESH.to_string();
+        }
+        // 按优先级（invalid=3 > superseded=2 > stale=1 > fresh=0）取最高
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates[0].1.to_string()
+    }
+
     pub fn handle_task_wait(
         &self,
         _peer: PeerCredential,
