@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-20T06:46:14",
+  "generated_at": "2026-08-22T15:28:42",
   "total_tools": 239,
   "backends": [
     "rust_native",
@@ -50,7 +50,7 @@
       "current_backend": "unknown",
       "target_backend": "rust_native",
       "rpc_method": "get_gate_decision",
-      "op_class":  "READ_ONLY",
+      "op_class": "READ_ONLY",
       "batch": "MCP-004",
       "status": "migrated"
     },
@@ -109,11 +109,11 @@
       "name": "detect_cycle",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "detect_cycle",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-007",
+      "status": "migrated"
     },
     {
       "name": "get_artifact_freshness",
