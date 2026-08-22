@@ -4585,6 +4585,87 @@ impl TaskCollabStore {
         Ok(Value::Object(result))
     }
 
+    // MCP-005（T-1787321709017-ed4e79b0）：get_artifact_freshness 从 python_compat
+    // 迁移为 Rust native。语义与 Python tools_p2_graph._h_get_artifact_freshness +
+    // db_task_dependencies.get_artifact_freshness 一致：从 artifact_identities 按
+    // workspace_id + task_id (+ artifact_ref) 取最新一条。
+    pub fn handle_get_artifact_freshness(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let artifact_ref = params
+            .get("artifact_ref")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let conn = self.conn.lock().unwrap();
+        let (sql, binds): (String, Vec<String>) = if let Some(ref a) = artifact_ref {
+            if a.is_empty() {
+                (
+                    "SELECT artifact_id, freshness_status, artifact_hash, produced_at \
+                     FROM artifact_identities \
+                     WHERE workspace_id = ? AND task_id = ? \
+                     ORDER BY produced_at DESC LIMIT 1".to_string(),
+                    vec![workspace_id.to_string(), task_id.clone().unwrap_or_default()],
+                )
+            } else {
+                (
+                    "SELECT artifact_id, freshness_status, artifact_hash, produced_at \
+                     FROM artifact_identities \
+                     WHERE workspace_id = ? AND task_id = ? AND artifact_ref = ? \
+                     ORDER BY produced_at DESC LIMIT 1".to_string(),
+                    vec![workspace_id.to_string(), task_id.clone().unwrap_or_default(), a.clone()],
+                )
+            }
+        } else {
+            (
+                "SELECT artifact_id, freshness_status, artifact_hash, produced_at \
+                 FROM artifact_identities \
+                 WHERE workspace_id = ? AND task_id = ? \
+                 ORDER BY produced_at DESC LIMIT 1".to_string(),
+                vec![workspace_id.to_string(), task_id.clone().unwrap_or_default()],
+            )
+        };
+
+        let row = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 artifact_identities 失败: {}", e)))?
+            .query_row(
+                rusqlite::params_from_iter(binds.iter()),
+                |r| {
+                    let mut m = Map::new();
+                    m.insert("artifact_id".to_string(), Value::String(r.get(0)?));
+                    m.insert("freshness_status".to_string(), Value::String(r.get(1)?));
+                    m.insert("artifact_hash".to_string(), Value::String(r.get(2)?));
+                    m.insert(
+                        "produced_at".to_string(),
+                        Value::Number(serde_json::Number::from_f64(r.get(3)?).unwrap()),
+                    );
+                    Ok(Value::Object(m))
+                },
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 artifact_identities 失败: {}", e)))?;
+
+        match row {
+            Some(v) => Ok(v),
+            None => {
+                let mut nf = Map::new();
+                nf.insert("found".to_string(), Value::Bool(false));
+                Ok(Value::Object(nf))
+            }
+        }
+    }
+
     /// 复刻 Python db_task_evidence.derive_freshness 的核心派生逻辑（snapshot/hash
     /// 比较维度在调用方未传入时跳过，保持与 Python 「freshness.status」 RPC 一致）。
     fn derive_evidence_freshness(

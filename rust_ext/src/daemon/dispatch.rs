@@ -1503,6 +1503,10 @@ pub trait DaemonStateExt {
                 // 语义与 Python tools_collab._h_gate_decision + gate.decision.query 一致：
                 // 从 task_gate_decisions 按 task_id/decision_id(gate_id) 过滤查询。
                 "get_gate_decision" => store.handle_get_gate_decision(peer, params),
+                // MCP-005（T-1787321709017-ed4e79b0）：get_artifact_freshness 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_get_artifact_freshness + db_task_dependencies
+                // .get_artifact_freshness 一致：从 artifact_identities 查询最新 artifact 新鲜度。
+                "get_artifact_freshness" => store.handle_get_artifact_freshness(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2385,6 +2389,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "find_evidence"
         | "get_freshness_status"
         | "get_gate_decision"
+        | "get_artifact_freshness"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"

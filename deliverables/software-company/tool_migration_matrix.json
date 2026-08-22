@@ -119,11 +119,11 @@
       "name": "get_artifact_freshness",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_artifact_freshness",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-005",
+      "status": "migrated"
     },
     {
       "name": "get_dependency_edges",
