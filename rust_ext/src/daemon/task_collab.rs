@@ -5350,6 +5350,83 @@ impl TaskCollabStore {
         Ok(Value::Object(result))
     }
 
+    // MCP-012（T-1787321709584-0f2573f4）：check_session_separation 迁移 rust_native。
+    // 语义与 Python tools_p3_identity._h_check_session_separation 一致：解析 reviewer/
+    // implementer_identity JSON 字符串 → 非 dict 返回 E_IDENTITY_INCOMPLETE → 校验
+    // Reviewer Session 与 Implementer Session 不同（相等 → E_IDENTITY_SESSION_NOT_SEPARATED）
+    // → 返回 {"valid": bool, "reason": {...}}。
+    pub fn handle_check_session_separation(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let reviewer_str = params
+            .get("reviewer_identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let implementer_str = params
+            .get("implementer_identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // 解析并校验两方 identity 均为 JSON 对象
+        let reviewer = Self::parse_identity_object(&reviewer_str);
+        let implementer = Self::parse_identity_object(&implementer_str);
+        let (reviewer, implementer) = match (reviewer, implementer) {
+            (Ok(r), Ok(i)) => (r, i),
+            _ => {
+                let mut reason = Map::new();
+                reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+                reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+                reason.insert("detail".to_string(), Value::String("reviewer/implementer_identity 必须是 JSON 对象".to_string()));
+                let mut result = Map::new();
+                result.insert("valid".to_string(), Value::Bool(false));
+                result.insert("reason".to_string(), Value::Object(reason));
+                return Ok(Value::Object(result));
+            }
+        };
+
+        // validate_session_separation：session_id 均非空且相等 → 未分离
+        let reviewer_session = reviewer.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let implementer_session = implementer.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        let valid;
+        let mut reason = Map::new();
+        if !reviewer_session.is_empty() && !implementer_session.is_empty()
+            && reviewer_session == implementer_session
+        {
+            valid = false;
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_SESSION_NOT_SEPARATED".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_session_not_separated".to_string()));
+            reason.insert("detail".to_string(), Value::String(format!(
+                "Reviewer Session ({}) 等于 Implementer Session", reviewer_session
+            )));
+            reason.insert("reviewer_session".to_string(), Value::String(reviewer_session.clone()));
+            reason.insert("implementer_session".to_string(), Value::String(implementer_session.clone()));
+        } else {
+            valid = true;
+            reason.insert("code".to_string(), Value::String("OK".to_string()));
+        }
+
+        let mut result = Map::new();
+        result.insert("valid".to_string(), Value::Bool(valid));
+        result.insert("reason".to_string(), Value::Object(reason));
+        Ok(Value::Object(result))
+    }
+
+    // 解析 identity JSON 字符串为对象；空串/非法 JSON/非对象均返回 Err。
+    fn parse_identity_object(s: &str) -> Result<Map<String, Value>, ()> {
+        if s.trim().is_empty() {
+            return Err(());
+        }
+        match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(m)) => Ok(m),
+            _ => Err(()),
+        }
+    }
+
     // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
     fn detect_cycle_find_shortest(
         graph: &BTreeMap<String, Vec<String>>,

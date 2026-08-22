@@ -1532,6 +1532,10 @@ pub trait DaemonStateExt {
                 // 语义与 Python tools_p3_identity._h_check_action_identity 一致：解析 identity
                 // JSON 字符串 → 校验四字段 + require_role → 返回 valid/reason。
                 "check_action_identity" => store.handle_check_action_identity(peer, params),
+                // MCP-012（T-1787321709584-0f2573f4）：check_session_separation 迁移 rust_native。
+                // 语义与 Python tools_p3_identity._h_check_session_separation 一致：解析
+                // reviewer/implementer_identity JSON → 校验 session 分离 → 返回 valid/reason。
+                "check_session_separation" => store.handle_check_session_separation(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2421,6 +2425,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "get_dependency_edges"
         | "get_action_identity"
         | "check_action_identity"
+        | "check_session_separation"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"
