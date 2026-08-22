@@ -5119,6 +5119,93 @@ impl TaskCollabStore {
         }
     }
 
+    // MCP-009（T-1787321709365-021050a8）：get_dependency_edges 迁移 rust_native。
+    // 语义与 Python db_task_dependencies.get_dependency_edges 一致：查询硬依赖图边
+    // （dependency_edges 全部列，按 created_at 排序），可选按 task_id 过滤
+    // （provider_task_id 或 consumer_task_id 匹配）。返回行数组（与 Python dict 行
+    // 键名一致：id/workspace_id/provider_task_id/consumer_task_id/edge_type/
+    // source_type/contract_id/contract_revision/is_hard/created_at）。
+    pub fn handle_get_dependency_edges(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let conn = self.conn.lock().unwrap();
+        let rows: Vec<Value> = if task_id.is_empty() {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, provider_task_id, consumer_task_id, \
+                            edge_type, source_type, contract_id, contract_revision, \
+                            is_hard, created_at \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? \
+                     ORDER BY created_at",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let items = stmt
+                .query_map(params![workspace_id], |r| {
+                    Self::map_dependency_edge_row(r)
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            let mut out = Vec::new();
+            for it in items {
+                out.push(it.map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?);
+            }
+            out
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, provider_task_id, consumer_task_id, \
+                            edge_type, source_type, contract_id, contract_revision, \
+                            is_hard, created_at \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? AND (provider_task_id = ? OR consumer_task_id = ?) \
+                     ORDER BY created_at",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let items = stmt
+                .query_map(params![workspace_id, task_id, task_id], |r| {
+                    Self::map_dependency_edge_row(r)
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            let mut out = Vec::new();
+            for it in items {
+                out.push(it.map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?);
+            }
+            out
+        };
+
+        Ok(Value::Array(rows))
+    }
+
+    // 将 dependency_edges 一行映射为与 Python dict 行一致的 JSON 对象。
+    fn map_dependency_edge_row(
+        r: &rusqlite::Row,
+    ) -> Result<Value, rusqlite::Error> {
+        let mut m = Map::new();
+        m.insert("id".to_string(), Value::Number(r.get::<_, i64>(0)?.into()));
+        m.insert("workspace_id".to_string(), Value::Number(r.get::<_, i64>(1)?.into()));
+        m.insert("provider_task_id".to_string(), Value::String(r.get::<_, String>(2)?));
+        m.insert("consumer_task_id".to_string(), Value::String(r.get::<_, String>(3)?));
+        m.insert("edge_type".to_string(), Value::String(r.get::<_, String>(4)?));
+        m.insert("source_type".to_string(), Value::String(r.get::<_, String>(5)?));
+        m.insert("contract_id".to_string(), Value::String(r.get::<_, String>(6)?));
+        m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(7)?.into()));
+        m.insert("is_hard".to_string(), Value::Number(r.get::<_, i64>(8)?.into()));
+        m.insert("created_at".to_string(), Value::Number(serde_json::Number::from_f64(r.get::<_, f64>(9)?).unwrap_or(serde_json::Number::from(0))));
+        Ok(Value::Object(m))
+    }
+
     // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
     fn detect_cycle_find_shortest(
         graph: &BTreeMap<String, Vec<String>>,

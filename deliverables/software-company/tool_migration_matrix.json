@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-22T15:42:52",
+  "generated_at": "2026-08-22T16:36:57",
   "total_tools": 239,
   "backends": [
     "rust_native",
@@ -129,11 +129,11 @@
       "name": "get_dependency_edges",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_dependency_edges",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-009",
+      "status": "migrated"
     },
     {
       "name": "get_interface_providers",

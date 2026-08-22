@@ -1520,6 +1520,10 @@ pub trait DaemonStateExt {
                 // 语义与 Python tools_p2_graph._h_validate_revision_dependencies 一致：内存模拟
                 // build_hard_dependency_edges（不写表），合并现有硬边做环检测，返回 valid/errors。
                 "validate_revision_dependencies" => store.handle_validate_revision_dependencies(peer, params),
+                // MCP-009（T-1787321709365-021050a8）：get_dependency_edges 迁移 rust_native。
+                // 语义与 Python db_task_dependencies.get_dependency_edges 一致：查询
+                // dependency_edges 全部列按 created_at 排序，可选按 task_id 过滤。
+                "get_dependency_edges" => store.handle_get_dependency_edges(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2406,6 +2410,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "get_interface_providers"
         | "detect_cycle"
         | "validate_revision_dependencies"
+        | "get_dependency_edges"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"
