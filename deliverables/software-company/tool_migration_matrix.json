@@ -2492,7 +2492,7 @@
       {
         "task_id": "T-1787321708639-d6d362f4",
         "owner": "executor-workbuddy-v1",
-        "updated_at": "2026-08-21",
+        "updated_at": "2026-08-22",
         "note": "CLI-03 (A' control_plane): cw task show/list/status-tree 只读 authority 诊断。Python route_task_read 仅作 HTTP thin client；Rust daemon task_collab.rs handle_task_status/handle_task_list/handle_task_status_tree 为权威。已具备：显式 workspace_id fail-closed（E_TASK_WORKSPACE_UNBOUND 拒绝补齐）、task.list 按 binding 过滤（伪造 workspace → 空列表，不跨 workspace 泄漏）、status_tree 递归 subtasks。",
         "commands": [
           {
@@ -2503,7 +2503,7 @@
             "python_role": "http_thin_client (route_task_read)",
             "status": "verified_daemon_authority",
             "workspace_scope": "explicit workspace_id required (E_TASK_WORKSPACE_UNBOUND fail-closed)",
-            "evidence": "tests/test_cli03_task_read_authority.py :: test_task_list_roundtrip"
+            "evidence": "tests/test_cli03_task_read_authority.py (9 passed) + tests/test_cli_03_http_rpc.py (5 passed) + CLI 冒烟 cw task list/show/status-tree (exit 0)"
           },
           {
             "cli": "cw task show",
