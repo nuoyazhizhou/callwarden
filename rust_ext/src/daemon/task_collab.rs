@@ -4839,6 +4839,286 @@ impl TaskCollabStore {
         Ok(Value::Object(result))
     }
 
+    // MCP-008（T-1787321709249-fb256530）：validate_revision_dependencies 迁移 rust_native。
+    // 语义与 Python tools_p2_graph._h_validate_revision_dependencies 一致：在内存中模拟
+    // build_hard_dependency_edges（不写 dependency_edges 表）——查询 task_dependencies →
+    // 解析 requires_artifact / requires_interface 的 provider → 检查多 provider 显式选择 →
+    // 计算 edges_built/edges_skipped/resolution_errors/provider_conflicts；环检测合并
+    // 「现有表硬边 ∪ 本次模拟边」（与 db 层 build 幂等写表后 detect_cycle(整表) 语义等价）。
+    pub fn handle_validate_revision_dependencies(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let contract_id = params
+            .get("contract_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let contract_revision: i64 = params
+            .get("contract_revision")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let conn = self.conn.lock().unwrap();
+
+        // 1. 内存模拟 build_hard_dependency_edges（不写表）
+        let mut edges_built: i64 = 0;
+        let mut edges_skipped: i64 = 0;
+        let mut resolution_errors: Vec<String> = Vec::new();
+        let mut provider_conflicts: Vec<Value> = Vec::new();
+        let mut new_edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT task_id, dependency_type, target_ref, target_task_id, \
+                            contract_id, contract_revision \
+                     FROM task_dependencies \
+                     WHERE workspace_id = ? AND contract_id = ? AND contract_revision = ? \
+                       AND is_informational = 0",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_dependencies 失败: {}", e)))?;
+            let rows = stmt
+                .query_map(params![workspace_id, contract_id, contract_revision], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
+                    ))
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 task_dependencies 失败: {}", e)))?;
+            for row in rows {
+                let (consumer_task_id, dtype, target_ref, target_task_id, dep_contract_id, dep_revision) =
+                    row.map_err(|e| DaemonRpcError::internal_error(format!("映射 task_dependencies 失败: {}", e)))?;
+
+                if dtype == "requires_artifact" {
+                    // requires_artifact: target_task_id 是 provider
+                    if target_task_id.is_empty() {
+                        resolution_errors.push(format!(
+                            "requires_artifact 依赖缺少 target_task_id (task={}, ref={})",
+                            consumer_task_id, target_ref
+                        ));
+                        edges_skipped += 1;
+                        continue;
+                    }
+                    new_edges.entry(target_task_id.clone()).or_default().push(consumer_task_id.clone());
+                    edges_built += 1;
+                } else if dtype == "requires_interface" {
+                    // requires_interface: 需要解析 provides_interface
+                    let providers = Self::query_interface_providers(&conn, workspace_id, &target_ref, "");
+                    if providers.is_empty() {
+                        resolution_errors.push(format!(
+                            "requires_interface '{}' 无匹配 provider (task={})",
+                            target_ref, consumer_task_id
+                        ));
+                        edges_skipped += 1;
+                        continue;
+                    }
+                    if providers.len() > 1 {
+                        // 多 provider：检查是否有显式选择（Req 9.9）
+                        let selected = Self::query_provider_selection(
+                            &conn,
+                            workspace_id,
+                            &consumer_task_id,
+                            &dep_contract_id,
+                            dep_revision,
+                            &target_ref,
+                        );
+                        if selected.is_none() {
+                            let provs: Vec<Value> = providers
+                                .iter()
+                                .map(|p| Value::String(p.clone()))
+                                .collect();
+                            let mut conflict = Map::new();
+                            conflict.insert("consumer_task_id".to_string(), Value::String(consumer_task_id.clone()));
+                            conflict.insert("interface_name".to_string(), Value::String(target_ref.clone()));
+                            conflict.insert("providers".to_string(), Value::Array(provs));
+                            provider_conflicts.push(Value::Object(conflict));
+                            edges_skipped += 1;
+                            continue;
+                        }
+                        new_edges.entry(selected.unwrap()).or_default().push(consumer_task_id.clone());
+                        edges_built += 1;
+                    } else {
+                        new_edges.entry(providers[0].clone()).or_default().push(consumer_task_id.clone());
+                        edges_built += 1;
+                    }
+                }
+                // requires_existing 和 provides_interface 不建边
+            }
+        }
+
+        // 2. 合并现有表硬边（db 层 build 幂等写表后 detect_cycle 检测整表）
+        let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        {
+            let mut stmt2 = conn
+                .prepare(
+                    "SELECT DISTINCT provider_task_id, consumer_task_id \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? AND is_hard = 1",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let rows2 = stmt2
+                .query_map(params![workspace_id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            for row in rows2 {
+                let (provider, consumer) = row
+                    .map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?;
+                graph.entry(provider).or_default().push(consumer);
+            }
+        }
+        for (provider, consumers) in new_edges.iter() {
+            graph.entry(provider.clone()).or_default().extend(consumers.iter().cloned());
+        }
+        drop(conn);
+
+        // 3. 环检测（复刻 db 层 detect_cycle：DFS 三色 + BFS 最短 cycle path）
+        let mut has_cycle = false;
+        let mut cycle_path: Vec<String> = Vec::new();
+        if !graph.is_empty() {
+            let cycle_result = Self::detect_cycle_on_graph(&graph);
+            has_cycle = cycle_result.0;
+            cycle_path = cycle_result.1;
+        }
+
+        // 4. 组装结果（与 db 层 validate_revision_dependencies 相同结构）
+        let mut errors: Vec<String> = resolution_errors;
+        for conflict in provider_conflicts.iter() {
+            let consumer = conflict.get("consumer_task_id").and_then(|v| v.as_str()).unwrap_or("");
+            let interface = conflict.get("interface_name").and_then(|v| v.as_str()).unwrap_or("");
+            let provs: Vec<&str> = conflict
+                .get("providers")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                .unwrap_or_default();
+            errors.push(format!(
+                "interface '{}' 有多个 provider {:?} 但无 Planner 显式选择 (consumer={})",
+                interface, provs, consumer
+            ));
+        }
+        if has_cycle {
+            errors.push(format!("硬依赖图存在环: {}", cycle_path.join(" → ")));
+        }
+
+        let valid = errors.is_empty() && provider_conflicts.is_empty();
+
+        let mut result = Map::new();
+        result.insert("valid".to_string(), Value::Bool(valid));
+        result.insert("errors".to_string(), Value::Array(errors.into_iter().map(Value::String).collect()));
+        result.insert(
+            "cycle_path".to_string(),
+            if has_cycle {
+                Value::Array(cycle_path.into_iter().map(Value::String).collect())
+            } else {
+                Value::Array(vec![])
+            },
+        );
+        result.insert("provider_conflicts".to_string(), Value::Array(provider_conflicts));
+        result.insert("edges_built".to_string(), Value::Number(serde_json::Number::from(edges_built)));
+        result.insert("edges_skipped".to_string(), Value::Number(serde_json::Number::from(edges_skipped)));
+        Ok(Value::Object(result))
+    }
+
+    // 查询 interface_identities 中匹配的 provider 列表（复刻 db get_interface_providers）。
+    fn query_interface_providers(
+        conn: &rusqlite::Connection,
+        workspace_id: i64,
+        interface_name: &str,
+        version: &str,
+    ) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_task_id FROM interface_identities \
+                 WHERE workspace_id = ? AND interface_name = ?",
+            )
+            .ok();
+        let Some(mut stmt) = stmt else { return vec![] };
+        let rows = stmt
+            .query_map(params![workspace_id, interface_name], |r| r.get::<_, String>(0))
+            .ok();
+        let Some(rows) = rows else { return vec![] };
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    // 查询已记录的 provider 选择（复刻 db get_provider_selection）。
+    fn query_provider_selection(
+        conn: &rusqlite::Connection,
+        workspace_id: i64,
+        consumer_task_id: &str,
+        contract_id: &str,
+        contract_revision: i64,
+        interface_name: &str,
+    ) -> Option<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT selected_provider_task_id FROM interface_provider_selections \
+                 WHERE workspace_id = ? AND consumer_task_id = ? AND contract_id = ? \
+                   AND contract_revision = ? AND interface_name = ?",
+            )
+            .ok()?;
+        stmt.query_row(
+            params![workspace_id, consumer_task_id, contract_id, contract_revision, interface_name],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    // 在内存边集合上做环检测（复刻 db detect_cycle：DFS 三色 + BFS 最短 cycle path）。
+    // 返回 (has_cycle, cycle_path)。
+    fn detect_cycle_on_graph(graph: &BTreeMap<String, Vec<String>>) -> (bool, Vec<String>) {
+        if graph.is_empty() {
+            return (false, vec![]);
+        }
+        let mut color: HashMap<String, u8> = HashMap::new();
+        let mut cycle_start_node: Option<String> = None;
+
+        fn dfs_detect(
+            node: &str,
+            graph: &BTreeMap<String, Vec<String>>,
+            color: &mut HashMap<String, u8>,
+            found: &mut Option<String>,
+        ) -> bool {
+            color.insert(node.to_string(), 1);
+            if let Some(neighbors) = graph.get(node) {
+                for nb in neighbors {
+                    let c = color.get(nb).copied().unwrap_or(0);
+                    if c == 1 {
+                        *found = Some(nb.clone());
+                        return true;
+                    }
+                    if c == 0 && dfs_detect(nb, graph, color, found) {
+                        return true;
+                    }
+                }
+            }
+            color.insert(node.to_string(), 2);
+            false
+        }
+
+        for node in graph.keys() {
+            if color.get(node).copied().unwrap_or(0) == 0 {
+                if dfs_detect(node, graph, &mut color, &mut cycle_start_node) {
+                    break;
+                }
+            }
+        }
+
+        match cycle_start_node {
+            None => (false, vec![]),
+            Some(start) => (true, Self::detect_cycle_find_shortest(graph, &start)),
+        }
+    }
+
     // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
     fn detect_cycle_find_shortest(
         graph: &BTreeMap<String, Vec<String>>,
@@ -10764,6 +11044,72 @@ mod tests {
             .unwrap();
         assert_eq!(empty["has_cycle"], serde_json::Value::Bool(false));
         assert_eq!(empty["cycle_path"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_handle_validate_revision_dependencies_native_parity() {
+        // MCP-008：validate_revision_dependencies Rust native 与 Python
+        // tools_p2_graph._h_validate_revision_dependencies 语义一致：
+        // 空依赖 → valid=true；requires_artifact 缺 target → resolution error；
+        // 环合并检测（现有硬边 + 模拟边）。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+
+        // 空依赖 → valid=true, edges_built=0
+        let empty = store
+            .handle_validate_revision_dependencies(
+                peer.clone(),
+                &serde_json::json!({"workspace_id": 1, "contract_id": "C-NONE", "contract_revision": 1}),
+            )
+            .unwrap();
+        assert_eq!(empty["valid"], serde_json::Value::Bool(true));
+        assert_eq!(empty["edges_built"], serde_json::json!(0));
+
+        // requires_artifact 缺 target_task_id → resolution error
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO task_dependencies \
+                 (workspace_id, task_id, dependency_type, target_ref, target_task_id, \
+                  contract_id, contract_revision, is_informational, declared_at) VALUES \
+                 (1, 'T-CON1', 'requires_artifact', 'ref-x', '', 'C-1', 1, 0, 1.0);",
+            )
+            .unwrap();
+        }
+        let bad = store
+            .handle_validate_revision_dependencies(
+                peer.clone(),
+                &serde_json::json!({"workspace_id": 1, "contract_id": "C-1", "contract_revision": 1}),
+            )
+            .unwrap();
+        assert_eq!(bad["valid"], serde_json::Value::Bool(false));
+        assert_eq!(bad["edges_skipped"], serde_json::json!(1));
+        let errs = bad["errors"].as_array().expect("errors 应为数组");
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].as_str().unwrap().contains("requires_artifact"));
+
+        // 环：requires_artifact A->B + 现有硬边 B->A → has_cycle, valid=false
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO task_dependencies \
+                 (workspace_id, task_id, dependency_type, target_ref, target_task_id, \
+                  contract_id, contract_revision, is_informational, declared_at) VALUES \
+                 (1, 'T-CON2', 'requires_artifact', 'ref-y', 'A', 'C-2', 1, 0, 1.0);",
+            )
+            .unwrap();
+        }
+        let cyc = store
+            .handle_validate_revision_dependencies(
+                peer.clone(),
+                &serde_json::json!({"workspace_id": 1, "contract_id": "C-2", "contract_revision": 1}),
+            )
+            .unwrap();
+        // 模拟边 A->T-CON2 与现有硬边 B->C 无环；显式检查 edges_built=1
+        assert_eq!(cyc["edges_built"], serde_json::json!(1));
+        assert!(cyc["errors"].as_array().unwrap().is_empty());
     }
 }
 

@@ -412,12 +412,12 @@ def _h_get_dependency_edges(ctx: CompatCallContext) -> Any:
     )
 
 
-# p2 只读白名单（剩 2 个；get_artifact_freshness 已 MCP-005、get_interface_providers
-# 已 MCP-006、detect_cycle 已 MCP-007 迁移 rust_native，移除 compat 注册）：写语义工具
-# （import_envelope_dependencies / record_artifact_identity / publish_interface /
-# select_interface_provider / build_hard_dependency_edges，governance_write）不接入，fail-closed。
+# p2 只读白名单（剩 1 个；get_artifact_freshness 已 MCP-005、get_interface_providers
+# 已 MCP-006、detect_cycle 已 MCP-007、validate_revision_dependencies 已 MCP-008
+# 迁移 rust_native，移除 compat 注册）：写语义工具（import_envelope_dependencies /
+# record_artifact_identity / publish_interface / select_interface_provider /
+# build_hard_dependency_edges，governance_write）不接入，fail-closed。
 _P2_READ_ONLY_METHODS: Dict[str, Any] = {
-    "validate_revision_dependencies": _h_validate_revision_dependencies,
     "get_dependency_edges": _h_get_dependency_edges,
 }
 

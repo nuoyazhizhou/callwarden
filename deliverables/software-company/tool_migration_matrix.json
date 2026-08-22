@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-22T15:28:42",
+  "generated_at": "2026-08-22T15:42:52",
   "total_tools": 239,
   "backends": [
     "rust_native",
@@ -190,11 +190,11 @@
       "name": "validate_revision_dependencies",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "validate_revision_dependencies",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-008",
+      "status": "migrated"
     },
     {
       "name": "check_action_identity",

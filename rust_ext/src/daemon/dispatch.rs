@@ -1516,6 +1516,10 @@ pub trait DaemonStateExt {
                 // .detect_cycle 一致：从 dependency_edges 取 workspace 内 is_hard=1 边，
                 // DFS 三色 + BFS 最短 path 检测环。
                 "detect_cycle" => store.handle_detect_cycle(peer, params),
+                // MCP-008（T-1787321709249-fb256530）：validate_revision_dependencies 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_validate_revision_dependencies 一致：内存模拟
+                // build_hard_dependency_edges（不写表），合并现有硬边做环检测，返回 valid/errors。
+                "validate_revision_dependencies" => store.handle_validate_revision_dependencies(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2401,6 +2405,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "get_artifact_freshness"
         | "get_interface_providers"
         | "detect_cycle"
+        | "validate_revision_dependencies"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"
