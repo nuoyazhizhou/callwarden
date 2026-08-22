@@ -4666,6 +4666,75 @@ impl TaskCollabStore {
         }
     }
 
+    // MCP-006（T-1787321709098-f2236ea0）：get_interface_providers 从 python_compat
+    // 迁移为 Rust native。语义与 Python tools_p2_graph._h_get_interface_providers +
+    // db_task_dependencies.get_interface_providers 一致：从 interface_identities 按
+    // workspace_id + interface_name (+ version) 查询 provider 列表。
+    pub fn handle_get_interface_providers(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let interface_name = params
+            .get("interface_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let version = params
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        let conn = self.conn.lock().unwrap();
+        let (sql, binds): (String, Vec<String>) = if version.is_empty() {
+            (
+                "SELECT interface_id, interface_name, version, interface_hash, \
+                 provider_task_id, contract_id, contract_revision \
+                 FROM interface_identities \
+                 WHERE workspace_id = ? AND interface_name = ?".to_string(),
+                vec![workspace_id.to_string(), interface_name.clone()],
+            )
+        } else {
+            (
+                "SELECT interface_id, interface_name, version, interface_hash, \
+                 provider_task_id, contract_id, contract_revision \
+                 FROM interface_identities \
+                 WHERE workspace_id = ? AND interface_name = ? AND version = ?".to_string(),
+                vec![workspace_id.to_string(), interface_name.clone(), version.clone()],
+            )
+        };
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 interface_identities 失败: {}", e)))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+                let mut m = Map::new();
+                m.insert("interface_id".to_string(), Value::String(r.get(0)?));
+                m.insert("interface_name".to_string(), Value::String(r.get(1)?));
+                m.insert("version".to_string(), Value::String(r.get(2)?));
+                m.insert("interface_hash".to_string(), Value::String(r.get(3)?));
+                m.insert("provider_task_id".to_string(), Value::String(r.get(4)?));
+                m.insert("contract_id".to_string(), Value::String(r.get(5)?));
+                m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(6)?.into()));
+                Ok(Value::Object(m))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 interface_identities 失败: {}", e)))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| DaemonRpcError::internal_error(format!("读取 interface_identities 失败: {}", e)))?);
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items.clone()));
+        result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
+        Ok(Value::Object(result))
+    }
+
     /// 复刻 Python db_task_evidence.derive_freshness 的核心派生逻辑（snapshot/hash
     /// 比较维度在调用方未传入时跳过，保持与 Python 「freshness.status」 RPC 一致）。
     fn derive_evidence_freshness(
