@@ -4496,6 +4496,95 @@ impl TaskCollabStore {
         Ok(Value::Object(result))
     }
 
+    // MCP-004（T-1787321708926-e7ebfac4）：get_gate_decision 从 python_compat
+    // 迁移为 Rust native。语义与 Python tools_collab._h_gate_decision +
+    // gate.decision.query 一致：从 task_gate_decisions 按 task_id/decision_id
+    // (gate_id) 过滤查询，按 decision_time DESC 限流。
+    pub fn handle_get_gate_decision(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let gate_id = params
+            .get("gate_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let limit: i64 = params
+            .get("limit")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(20);
+
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT decision_id, task_id, contract_id, contract_revision, contract_hash, \
+             decision, reason, clause_decisions, verifier_triples, resolved_stage_toggle_set, \
+             independence_policy_value, independence_waiver_marker, event_type, decision_time, \
+             step_id, role_contract_lineage_id, role_contract_revision_id, role_contract_revision, \
+             role_contract_hash, canonicalization_version, canonicalization_rules_hash, \
+             normalization_version, normalization_rules_hash, workspace_id \
+             FROM task_gate_decisions WHERE 1=1",
+        );
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(ref t) = task_id {
+            sql.push_str(" AND task_id = ?");
+            binds.push(t.clone());
+        }
+        if let Some(ref g) = gate_id {
+            if !g.is_empty() {
+                sql.push_str(" AND decision_id = ?");
+                binds.push(g.clone());
+            }
+        }
+        sql.push_str(" ORDER BY decision_time DESC LIMIT ?");
+        binds.push(limit.to_string());
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_gate_decisions 失败: {}", e)))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+                let mut m = Map::new();
+                m.insert("decision_id".to_string(), Value::String(r.get(0)?));
+                m.insert("task_id".to_string(), Value::String(r.get(1)?));
+                m.insert("contract_id".to_string(), Value::String(r.get(2)?));
+                m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(3)?.into()));
+                m.insert("contract_hash".to_string(), Value::String(r.get(4)?));
+                m.insert("decision".to_string(), Value::String(r.get(5)?));
+                m.insert("reason".to_string(), Value::String(r.get(6)?));
+                m.insert("clause_decisions".to_string(), Value::String(r.get(7)?));
+                m.insert("verifier_triples".to_string(), Value::String(r.get(8)?));
+                m.insert("resolved_stage_toggle_set".to_string(), Value::String(r.get(9)?));
+                m.insert("independence_policy_value".to_string(), Value::String(r.get(10)?));
+                m.insert("independence_waiver_marker".to_string(), Value::String(r.get(11)?));
+                m.insert("event_type".to_string(), Value::String(r.get(12)?));
+                m.insert("decision_time".to_string(), Value::Number(serde_json::Number::from_f64(r.get(13)?).unwrap()));
+                m.insert("step_id".to_string(), Value::String(r.get(14)?));
+                m.insert("role_contract_lineage_id".to_string(), Value::String(r.get(15)?));
+                m.insert("role_contract_revision_id".to_string(), Value::String(r.get(16)?));
+                m.insert("role_contract_revision".to_string(), Value::Number(r.get::<_, i64>(17)?.into()));
+                m.insert("role_contract_hash".to_string(), Value::String(r.get(18)?));
+                m.insert("canonicalization_version".to_string(), Value::String(r.get(19)?));
+                m.insert("canonicalization_rules_hash".to_string(), Value::String(r.get(20)?));
+                m.insert("normalization_version".to_string(), Value::String(r.get(21)?));
+                m.insert("normalization_rules_hash".to_string(), Value::String(r.get(22)?));
+                m.insert("workspace_id".to_string(), Value::Number(r.get::<_, i64>(23)?.into()));
+                Ok(Value::Object(m))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 task_gate_decisions 失败: {}", e)))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| DaemonRpcError::internal_error(format!("读取 task_gate_decisions 失败: {}", e)))?);
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items.clone()));
+        result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
+        Ok(Value::Object(result))
+    }
+
     /// 复刻 Python db_task_evidence.derive_freshness 的核心派生逻辑（snapshot/hash
     /// 比较维度在调用方未传入时跳过，保持与 Python 「freshness.status」 RPC 一致）。
     fn derive_evidence_freshness(
