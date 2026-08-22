@@ -139,11 +139,11 @@
       "name": "get_interface_providers",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_interface_providers",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-006",
+      "status": "migrated"
     },
     {
       "name": "import_envelope_dependencies",
