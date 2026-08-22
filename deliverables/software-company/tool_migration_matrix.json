@@ -2546,7 +2546,7 @@
           ".trae-cn/evidence/http-daemon-capability-matrix.json: backend=rust_native + metadata",
           "tests/test_http_daemon_capability_matrix.py: RUST_NATIVE_EXPECTED + 计数 57→58/180→179"
         ],
-        "evidence": "tests/test_mcp01_get_role_view_http_rpc.py (7 passed: golden parity / default role / reviewer allowlist / missing task_id / unknown task / daemon unavailable / restart) + capability matrix 回归通过 + live round-trip view_manifest_hash=e3b8e276...",
+        "evidence": "tests/test_mcp_get_role_view_http_rpc.py (7 passed: golden parity / default role / reviewer allowlist / missing task_id / unknown task / daemon unavailable / restart) + capability matrix 回归通过 + live round-trip view_manifest_hash=e3b8e276...",
         "no_local_sqlite_fallback": true
       }
     ]
