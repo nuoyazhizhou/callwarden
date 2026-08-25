@@ -5073,10 +5073,13 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "findings":
-        # 查询任务质量发现（enterprise/auto 走 daemon RPC task.quality_findings）
+        # CLI-083：质量发现只由 Rust daemon 提供。此 command 只组装请求参数和
+        # 格式化输出；local 模式或 daemon 不可用时 fail-closed，绝不读取本地 SQLite。
         def _local_findings():
-            return db.get_task_quality_findings(
-                opts.task_id, status=opts.status, severity=opts.severity)
+            raise DaemonUnavailableError(
+                "task.quality_findings 仅由 daemon 提供；local 模式禁止本地 "
+                "get_task_quality_findings 业务路径，请使用 daemon 模式"
+            )
 
         findings = route_task_read("task.quality_findings", {
             "task_id": opts.task_id,

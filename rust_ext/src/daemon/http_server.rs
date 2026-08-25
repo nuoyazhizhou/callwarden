@@ -1776,6 +1776,10 @@ fn build_capability_registry() -> Result<Value, String> {
     // lease_* 5 项 rust_native 走 daemon dispatch，不在此 registry）
     add("assignment_show", "assignment_show", "assignment-show", "python_compat", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-assignment-show-ok", "fixture-assignment-show-err", "T-1786747295227-b876fddf#H4C-2-B3", "legacy-python");
 
+    // CLI-083（T-1787322799648-dc001930）：cw task findings 的 daemon-only
+    // 质量发现查询。HTTP 入口仅通过 /v1/rpc 进入 dispatch，Python CLI 无本地回退。
+    add("task.quality_findings", "task.quality_findings", "task-findings", "rust_native", "available", "read_only", "workspace", false, "/v1/rpc", "fixture-task-quality-findings-ok", "fixture-task-quality-findings-err", "T-1787322799648-dc001930#CLI-083", "");
+
     // P0-H（T-1787277487109-758e56d0）：task.supersede 治理 mutation。
     // 不宣传为 enabled（status != available）：只有 Adjudicator accepted 且
     // promotion verifier PASS 后才列入 A′ Phase 0 allowed capability（届时
@@ -1986,6 +1990,9 @@ mod tests {
         assert_eq!(v["methods"]["get_module_call_stats"]["backend"], "rust_native");
         assert_eq!(v["methods"]["get_semgrep_stats"]["backend"], "rust_native");
         assert_eq!(v["methods"]["stats_top_files"]["status"], "available");
+        assert_eq!(v["methods"]["task.quality_findings"]["backend"], "rust_native");
+        assert_eq!(v["methods"]["task.quality_findings"]["status"], "available");
+        assert_eq!(v["methods"]["task.quality_findings"]["cli_entry"], "task-findings");
     }
 
     #[tokio::test]

@@ -21,6 +21,12 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 #[path = "query_handlers.rs"]
 mod query_handlers;
 
+/// CLI-083：`cw task findings` 专用 daemon transport handler。模块在此内联，
+/// 避免修改 CLI-083 白名单之外的 daemon module registry。
+#[path = "cli_local_findings_handlers.rs"]
+mod cli_local_findings_handlers;
+use cli_local_findings_handlers::handle_get_task_quality_findings;
+
 /// peer credential（来自 SO_PEERCRED 或 Windows Named Pipe）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerCredential {
@@ -1343,7 +1349,7 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
-            store.handle_task_quality_findings(peer, params)
+            handle_get_task_quality_findings(store, peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.quality_findings"))
         }
