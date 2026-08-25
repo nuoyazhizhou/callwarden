@@ -1,0 +1,17 @@
+{
+  "task_id": "T-1787407700109-f5562c60",
+  "reviewer_identity": {
+    "agent_id": "cw-reviewer-p0j-v1",
+    "agent_instance_id": "inst-cw-reviewer-p0j-v1-20260822",
+    "session_id": "sess-cw-reviewer-p0j-20260822",
+    "role": "reviewer"
+  },
+  "lease": {
+    "lease_id": "L-825413881db8128d",
+    "fencing_counter": 1,
+    "acquired_at": 1787407759.0,
+    "expires_at": 1787411359.0,
+    "role": "reviewer"
+  },
+  "role_session_handle": "cw-reviewer-p0j-v1"
+}

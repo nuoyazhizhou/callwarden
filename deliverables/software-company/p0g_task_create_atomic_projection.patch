@@ -1,0 +1,53 @@
+diff --git a/rust_ext/src/daemon/task_collab.rs b/rust_ext/src/daemon/task_collab.rs
+--- a/rust_ext/src/daemon/task_collab.rs
++++ b/rust_ext/src/daemon/task_collab.rs
+@@ -1428,5 +1428,24 @@ impl TaskCollabStore {
+                 .as_array()
+                 .ok_or_else(|| DaemonRpcError::invalid_params("role_contracts 必须是 JSON array"))?,
+         };
++        let task_contract_envelope = params
++            .get("task_contract_envelope")
++            .cloned()
++            .ok_or_else(|| DaemonRpcError::new(
++                "E_TASK_CREATE_GOVERNANCE_ENVELOPE_REQUIRED",
++                "task.create 必须携带 task_contract_envelope；禁止事后治理 backfill",
++            ))?;
++        if steps.is_empty() {
++            return Err(DaemonRpcError::new(
++                "E_TASK_CREATE_STEPS_REQUIRED",
++                "task.create 必须至少含一个可绑定 step",
++            ));
++        }
++        if role_contracts.len() != 3 {
++            return Err(DaemonRpcError::new(
++                "E_TASK_CREATE_ROLE_CONTRACTS_REQUIRED",
++                "task.create 必须一次性提供 executor/reviewer/adjudicator 三份 Role Contract",
++            ));
++        }
+ 
+         let task_id = params
+@@ -1473,5 +1492,17 @@ impl TaskCollabStore {
+         if !role_contracts.is_empty() {
+             insert_role_contracts(&tx, &task_id, role_contracts, &peer.owner_key(), ts)?;
+         }
++        // P0-G：Task、immutable binding、steps、legacy role contracts、Task Contract
++        // revision-1、三角色 lineage/revision 与 executor step binding 必须属于同一
++        // transaction；任一投影失败均回滚，禁止再以批量 backfill 修复。
++        let governance_projection = bootstrap_task_governance_contracts(
++            &tx,
++            &BootstrapInput {
++                task_id: task_id.clone(),
++                envelope: task_contract_envelope,
++                created_by: peer.owner_key(),
++            },
++            workspace_id,
++        )?;
+ 
+         tx.commit()
+@@ -1487,4 +1519,6 @@ impl TaskCollabStore {
+         res.insert("workspace_id".to_string(), Value::Number(serde_json::Number::from(workspace_id)));
+         res.insert("workspace_binding_id".to_string(), Value::String(binding_id));
+         res.insert("workspace_capture_id".to_string(), Value::String(capture_id));
++        res.insert("task_contract_revision".to_string(), Value::Number(serde_json::Number::from(1)));
++        res.insert("governance_projection".to_string(), governance_projection);
+         let val = Value::Object(res);

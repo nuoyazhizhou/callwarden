@@ -1,0 +1,122 @@
+{
+  "db": "C:\\Users\\wanpi\\.callwarden\\callwarden.db",
+  "tasks": {
+    "T-1787293818274-1b87b6c4": {
+      "task_contract_revisions": [],
+      "role_contract_lineages": [],
+      "role_contract_revisions": [],
+      "step_bindings": [],
+      "legacy_role_contracts": [
+        {
+          "role": "adjudicator",
+          "revision": 1,
+          "is_current": 1
+        },
+        {
+          "role": "executor",
+          "revision": 1,
+          "is_current": 1
+        },
+        {
+          "role": "reviewer",
+          "revision": 1,
+          "is_current": 1
+        }
+      ],
+      "steps": [
+        {
+          "id": "S-1787293818275-1b902688",
+          "step_index": 0,
+          "action": "implement",
+          "status": "pending",
+          "target_file": "rust_ext/src/daemon/task_supersede.rs"
+        },
+        {
+          "id": "S-1787293818275-1b9131b8",
+          "step_index": 1,
+          "action": "wire",
+          "status": "pending",
+          "target_file": "rust_ext/src/daemon/dispatch.rs"
+        },
+        {
+          "id": "S-1787293818275-1b915f08",
+          "step_index": 2,
+          "action": "adapt_client_cli",
+          "status": "pending",
+          "target_file": "server/daemon_client.py; cli/main.py"
+        },
+        {
+          "id": "S-1787293818275-1b917bf0",
+          "step_index": 3,
+          "action": "test",
+          "status": "pending",
+          "target_file": "rust_ext/src/daemon/*test*.rs; tests/"
+        },
+        {
+          "id": "S-1787293818275-1b919bf8",
+          "step_index": 4,
+          "action": "release_verify",
+          "status": "pending",
+          "target_file": "runtime/current"
+        }
+      ],
+      "workspace_binding": [
+        {
+          "workspace_id": 1,
+          "workspace_capture_id": "wc-ws-1-462286080",
+          "workspace_instance_id": "ws-1",
+          "capture_revision": 7,
+          "registry_identity_hash": "sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1"
+        }
+      ]
+    },
+    "T-1787293451688-c14b1e44": {
+      "task_contract_revisions": [],
+      "role_contract_lineages": [],
+      "role_contract_revisions": [],
+      "step_bindings": [],
+      "legacy_role_contracts": [
+        {
+          "role": "adjudicator",
+          "revision": 1,
+          "is_current": 1
+        },
+        {
+          "role": "executor",
+          "revision": 1,
+          "is_current": 1
+        },
+        {
+          "role": "reviewer",
+          "revision": 1,
+          "is_current": 1
+        }
+      ],
+      "steps": [
+        {
+          "id": "S-1787293451689-c155c72c",
+          "step_index": 0,
+          "action": "govern",
+          "status": "pending",
+          "target_file": "deliverables/software-company/aprime_recovery_parent_task_contract.md"
+        },
+        {
+          "id": "S-1787293451689-c157beb0",
+          "step_index": 1,
+          "action": "verify",
+          "status": "pending",
+          "target_file": "deliverables/software-company/aprime_role_contracts/"
+        }
+      ],
+      "workspace_binding": [
+        {
+          "workspace_id": 1,
+          "workspace_capture_id": "wc-ws-1-3243431736",
+          "workspace_instance_id": "ws-1",
+          "capture_revision": 6,
+          "registry_identity_hash": "sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1"
+        }
+      ]
+    }
+  }
+}

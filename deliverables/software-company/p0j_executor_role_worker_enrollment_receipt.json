@@ -1,0 +1,12 @@
+{
+  "endpoint": "http://127.0.0.1:7129",
+  "worker": {
+    "ok": true,
+    "role_worker_id": "cw-executor-p0j-v1",
+    "role_instance_id": "inst-cw-executor-p0j-v1-20260822",
+    "role": "executor",
+    "credential_delivery": "response_once",
+    "recorded_at": 1787404578.2069888
+  },
+  "role_session_handle": "cw-executor-p0j-v1"
+}

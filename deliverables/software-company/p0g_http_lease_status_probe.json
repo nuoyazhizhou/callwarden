@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "response": {
+    "status": "active",
+    "lease_id": "L-82a53493e8ee4bf7",
+    "task_id": "T-1787321020926-b7ed7500",
+    "role": "reviewer",
+    "agent_id": "reviewer-wb-186loop",
+    "session_id": "sess-reviewer-wb-186loop-2",
+    "model_id": "deepseek-v4-flash",
+    "token_hash": "d03a5afc42a41b5ea71380ba4f99d86ee53b37ccc69f03ed8aae9146ad50901f",
+    "fencing_counter": 3,
+    "acquired_at": 1787362295.0,
+    "expires_at": 1787365895.0
+  }
+}

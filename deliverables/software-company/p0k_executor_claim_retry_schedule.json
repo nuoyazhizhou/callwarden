@@ -1,0 +1,6 @@
+{
+  "next_run_local": "2026-08-22T23:14:00+08:00",
+  "task_name": "Callwarden-P0K-ExecutorClaimRetry",
+  "task_id": "T-1787407700109-f5562c60",
+  "reason": "previous executor lease token was not persisted after pre-claim validation failure; retry only after natural expiry"
+}

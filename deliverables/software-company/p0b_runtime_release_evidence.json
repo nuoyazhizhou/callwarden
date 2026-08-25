@@ -1,0 +1,145 @@
+﻿{
+    "task_id":  "T-1787293818274-1b87b6c4",
+    "status":  "passed",
+    "started_at":  "2026-08-21T06:48:20.1415833Z",
+    "finished_at":  "2026-08-21T06:54:15.2405650Z",
+    "git_head":  "b345b9a3d656d2f41a88415f103881650b5d456d",
+    "configuration":  "release",
+    "target_dir":  "C:\\git_work\\callwarden\\rust_ext\\target\\stage-refresh",
+    "runtime_version":  "20260821-144820-b345b9a3d656-ee12f55a",
+    "repository":  "C:\\git_work\\callwarden",
+    "endpoint":  "\\\\.\\pipe\\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001",
+    "binaries":  [
+                     {
+                         "name":  "cw-daemon.exe",
+                         "path":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+                         "sha256":  "9011eb073532561e55582e766657ebd4678d4ecb841840e40b7d25bad65af1dd"
+                     },
+                     {
+                         "name":  "cw.exe",
+                         "path":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw.exe",
+                         "sha256":  "ee4fd3e62cfe9ea620a14724d8c9e6eca77e1e0cbe7f6adadfbf9593207085e0"
+                     },
+                     {
+                         "name":  "cw-client.exe",
+                         "path":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-client.exe",
+                         "sha256":  "ca0e447f37d32b3b74245a33a0f319d686cff1b4fe4e393166e45749866c032e"
+                     },
+                     {
+                         "name":  "cw-agent.exe",
+                         "path":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-agent.exe",
+                         "sha256":  "f5f98dd1e540dd950fdcdd873d8802e7d7a2f2e0c0cb55131a1b53fcd1b46606"
+                     },
+                     {
+                         "name":  "cw-bridge.exe",
+                         "path":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-bridge.exe",
+                         "sha256":  "3970ca95085d8cf57c06718e40920b647942602faa2073bd2549220c9e47441e"
+                     }
+                 ],
+    "processes_before":  [
+                             {
+                                 "pid":  27536,
+                                 "name":  "cw-daemon.exe",
+                                 "executable":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+                                 "command_line":  "\"C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe\" --socket \\\\.\\pipe\\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001 ",
+                                 "kind":  "daemon"
+                             },
+                             {
+                                 "pid":  37992,
+                                 "name":  "python.exe",
+                                 "executable":  "C:\\Python314\\python.exe",
+                                 "command_line":  "\"C:\\Python314\\python.exe\" C:\\git_work\\callwarden\\server\\compat_worker.py",
+                                 "kind":  "mcp"
+                             },
+                             {
+                                 "pid":  8064,
+                                 "name":  "python.exe",
+                                 "executable":  "C:\\Python314\\python.exe",
+                                 "command_line":  "C:\\Python314\\python.exe C:\\git_work\\callwarden\\cw.py server --transport stdio",
+                                 "kind":  "mcp"
+                             }
+                         ],
+    "processes_after":  [
+                            {
+                                "pid":  49472,
+                                "name":  "python.exe",
+                                "executable":  "C:\\Python314\\python.exe",
+                                "command_line":  "C:\\Python314\\python.exe C:\\git_work\\callwarden\\cw.py server --transport stdio",
+                                "kind":  "mcp"
+                            },
+                            {
+                                "pid":  17808,
+                                "name":  "cw-daemon.exe",
+                                "executable":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+                                "command_line":  "\"C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe\" --socket \\\\.\\pipe\\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001 ",
+                                "kind":  "daemon"
+                            },
+                            {
+                                "pid":  25716,
+                                "name":  "python.exe",
+                                "executable":  "C:\\Python314\\python.exe",
+                                "command_line":  "\"C:\\Python314\\python.exe\" C:\\git_work\\callwarden\\server\\compat_worker.py",
+                                "kind":  "mcp"
+                            }
+                        ],
+    "python":  {
+                   "executable":  "C:\\Python314\\python.exe",
+                   "version":  "3.14"
+               },
+    "pyo3_python":  "C:\\Python314\\python.exe",
+    "daemon_runtime":  {
+                           "pid":  17808,
+                           "executable":  "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+                           "sha256":  "9011eb073532561e55582e766657ebd4678d4ecb841840e40b7d25bad65af1dd",
+                           "expected_sha256":  "9011eb073532561e55582e766657ebd4678d4ecb841840e40b7d25bad65af1dd",
+                           "python_dependency_mode":  "python_free",
+                           "python_dependencies":  [
+
+                                                   ],
+                           "ping_exit_code":  0,
+                           "ping_output":  "{\n  \"status\": \"ok\",\n  \"peer_uid\": 4294967295,\n  \"pid\": 17808,\n  \"authority_id\": \"unknown-host/windows/S-1-5-21-1583625257-826939952-3615027596-1001/7e7ab14d0a252a6f7bfc4347d2ac2956898dcd7782f298cc009ed52e4e70961d\",\n  \"transport\": \"http\",\n  \"task_db_fingerprint\": \"7e7ab14d0a252a6f7bfc4347d2ac2956898dcd7782f298cc009ed52e4e70961d\",\n  \"protocol_version\": 1,\n  \"timestamp\": 1787295252.6825516\n}"
+                       },
+    "core_runtime":  [
+                         {
+                             "kind":  "repository_source",
+                             "path":  "C:\\git_work\\callwarden\\callwarden_core.pyd",
+                             "backup":  "C:\\Users\\wanpi\\.callwarden\\runtime\\versions\\20260821-144820-b345b9a3d656-ee12f55a.core-backup\\repository_source-callwarden_core.pyd",
+                             "sha256":  "9a91e2d069f6ad0c73fa33e51f220c491634c6a2f798261b316a3dd410bebfbb",
+                             "python_dependency_mode":  "python314_direct",
+                             "python_dependencies":  [
+                                                         "python314.dll"
+                                                     ]
+                         },
+                         {
+                             "kind":  "python314_site_package",
+                             "path":  "C:\\Users\\wanpi\\AppData\\Roaming\\Python\\Python314\\site-packages\\callwarden_core\\callwarden_core.cp314-win_amd64.pyd",
+                             "backup":  "C:\\Users\\wanpi\\.callwarden\\runtime\\versions\\20260821-144820-b345b9a3d656-ee12f55a.core-backup\\python314_site_package-callwarden_core.cp314-win_amd64.pyd",
+                             "sha256":  "9a91e2d069f6ad0c73fa33e51f220c491634c6a2f798261b316a3dd410bebfbb",
+                             "python_dependency_mode":  "python314_direct",
+                             "python_dependencies":  [
+                                                         "python314.dll"
+                                                     ]
+                         }
+                     ],
+    "authority_cli":  {
+                          "executable":  "C:\\Users\\wanpi\\AppData\\Roaming\\Python\\Python314\\Scripts\\cw.exe",
+                          "exit_code":  0,
+                          "output":  "Lease Status\n  status: none\n  task_id: T-1787293818274-1b87b6c4\n  role: implementer"
+                      },
+    "smoke":  [
+                  {
+                      "command":  "C:\\Python314\\python.exe C:\\git_work\\callwarden\\cw.py --version",
+                      "exit_code":  0,
+                      "output":  "callwarden 0.3.23"
+                  },
+                  {
+                      "command":  "C:\\Python314\\python.exe C:\\git_work\\callwarden\\cw.py daemon ping",
+                      "exit_code":  0,
+                      "output":  "{\n  \"status\": \"ok\",\n  \"peer_uid\": 4294967295,\n  \"pid\": 17808,\n  \"authority_id\": \"unknown-host/windows/S-1-5-21-1583625257-826939952-3615027596-1001/7e7ab14d0a252a6f7bfc4347d2ac2956898dcd7782f298cc009ed52e4e70961d\",\n  \"transport\": \"http\",\n  \"task_db_fingerprint\": \"7e7ab14d0a252a6f7bfc4347d2ac2956898dcd7782f298cc009ed52e4e70961d\",\n  \"protocol_version\": 1,\n  \"timestamp\": 1787295254.5397139\n}"
+                  }
+              ],
+    "rollback":  false,
+    "error":  null,
+    "daemon_start_action":  "start",
+    "daemon_start_pid":  17808
+}

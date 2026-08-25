@@ -1,0 +1,31 @@
+{
+  "card": "CLI-01",
+  "commit_hash": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+  "committed_head_file_hashes": {
+    "rust_ext/src/daemon/dispatch.rs": "1ae824d786c560776d6445aba6884b3c5efea03ce178b763d236f7d0cebe40be",
+    "rust_ext/src/daemon/http_server.rs": "62721b8e90037397647991cc035f2f3cd1d2887443a769a7d70cb74c7d65215f",
+    "server/daemon_autostart.py": "634142718fd8877b1816549c1f01009aec40dc30ea112c6a3408f3f0d46619e2"
+  },
+  "evidence_type": "diagnostic_run",
+  "live_diagnostics": {
+    "capabilities_summary": {},
+    "health": {
+      "capability_registry_revision": "http-mvp-cap-registry-v1",
+      "endpoint": "http://127.0.0.1:7548",
+      "git_commit": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+      "pid": 18424,
+      "schema_version": 58,
+      "security_profile": "dev_loopback_unauthenticated",
+      "worker_status": "healthy"
+    }
+  },
+  "manifest_version": "1",
+  "notes": "CLI-01 Gate verifiable evidence: live daemon HTTP diagnostics + committed-HEAD file hashes (reproducible, independent of dirty working tree).",
+  "produced_at": "2026-08-23T07:56:38.707158Z",
+  "task_id": "T-1787321020926-b7ed7500",
+  "verifier": {
+    "config_hash": "sha256:0f51286833bdff00595dedcd8100a6f7b0367d81eab0926b887c44647badf2c8",
+    "name": "daemon-http-diagnostic",
+    "version": "1"
+  }
+}

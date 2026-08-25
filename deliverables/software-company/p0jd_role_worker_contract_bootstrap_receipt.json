@@ -1,0 +1,42 @@
+{
+  "endpoint": "http://127.0.0.1:7129",
+  "task_id": "T-1787402257549-67ba81e6",
+  "identity_policy": "role_worker_v1",
+  "result": {
+    "ok": true,
+    "task_id": "T-1787402257549-67ba81e6",
+    "workspace_id": 1,
+    "contract_id": "TC-T-1787402257549-67ba81e6",
+    "contract_revision": 1,
+    "contract_hash": "sha256:bcf907f69553d0773ea1b78da833254ef77c71673105125a52f254b35cea03d7",
+    "role_contracts": [
+      {
+        "role": "executor",
+        "lineage_id": "rcl-T-1787402257549-67ba81e6-executor",
+        "revision_id": "rcr-T-1787402257549-67ba81e6-executor-r1",
+        "hash": "sha256:d33d84562ade457be5175c749cda99d94b2355b9ec97c14da750eb0ceb928ad9"
+      },
+      {
+        "role": "reviewer",
+        "lineage_id": "rcl-T-1787402257549-67ba81e6-reviewer",
+        "revision_id": "rcr-T-1787402257549-67ba81e6-reviewer-r1",
+        "hash": "sha256:9f76bfc7f0335d80b2572136f0b86c1d2b220762b24a5f9b911d7132b89765a0"
+      },
+      {
+        "role": "adjudicator",
+        "lineage_id": "rcl-T-1787402257549-67ba81e6-adjudicator",
+        "revision_id": "rcr-T-1787402257549-67ba81e6-adjudicator-r1",
+        "hash": "sha256:dada4543b176a21b89175dbe583251d7bf82cd6f3a00ae77906feb477d0336d7"
+      }
+    ],
+    "step_binding_ids": [
+      "sb-T-1787402257549-67ba81e6-S-1787402257708-21705598-r1",
+      "sb-T-1787402257549-67ba81e6-S-1787402257708-2170b8d0-r1"
+    ],
+    "request_id": "p0jd-role-worker-bootstrap-a2e95718-d1e9-4b1c-88d0-8754aacda1ab",
+    "evidence_path": "deliverables/software-company/deploy_governance_task_id_evidence.md",
+    "evidence_hash": "sha256:ee46f55e3aca90aedf835fd69766d33dd64cda9f5e55a8588259f467d881b86c",
+    "fencing_counter": 1,
+    "authoritative_timestamp": 1787404788.4588058
+  }
+}

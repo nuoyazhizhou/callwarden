@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "role_worker_id": "cw-executor-p0j-v1",
+  "role": "executor",
+  "status": "active",
+  "created_at": 1787404578.2069888,
+  "revoked_at": 0.0,
+  "revocation_reason": "",
+  "instances": [
+    {
+      "role_instance_id": "inst-cw-executor-p0j-v1-20260822",
+      "status": "active",
+      "created_at": 1787404578.2069888,
+      "retired_at": 0.0
+    }
+  ]
+}

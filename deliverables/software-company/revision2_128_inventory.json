@@ -1,0 +1,2900 @@
+{
+  "epic": "T-1787293451688-c14b1e44",
+  "mechanical_rev1_total": 181,
+  "stringified_array_count": 180,
+  "empty_dependencies_count": 180,
+  "both_defects_count": 180,
+  "inventory": [
+    {
+      "contract_id": "TC-T-1787293451688-c14b1e44",
+      "task_id": "T-1787293451688-c14b1e44",
+      "task_status": "in_progress",
+      "task_parent_id": "T-1787203926824-9f873bfc",
+      "workspace_id": 1,
+      "created_at": 1787364627.966381,
+      "stringified_array": false,
+      "empty_dependencies": false,
+      "flags": {}
+    },
+    {
+      "contract_id": "TC-T-1787321708926-e7ebfac4",
+      "task_id": "T-1787321708926-e7ebfac4",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364729.5692532,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709017-ed4e79b0",
+      "task_id": "T-1787321709017-ed4e79b0",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364729.7806413,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709098-f2236ea0",
+      "task_id": "T-1787321709098-f2236ea0",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364730.0136843,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709179-f6fdf5bc",
+      "task_id": "T-1787321709179-f6fdf5bc",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364730.202997,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709249-fb256530",
+      "task_id": "T-1787321709249-fb256530",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364730.4219897,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709365-021050a8",
+      "task_id": "T-1787321709365-021050a8",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364730.700512,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709432-060d1128",
+      "task_id": "T-1787321709432-060d1128",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364730.9255137,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709518-0b31a484",
+      "task_id": "T-1787321709518-0b31a484",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364731.1469586,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709584-0f2573f4",
+      "task_id": "T-1787321709584-0f2573f4",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364731.357824,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709651-131e1880",
+      "task_id": "T-1787321709651-131e1880",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364731.5856502,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709710-169c2da8",
+      "task_id": "T-1787321709710-169c2da8",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364731.8326435,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709770-1a3de640",
+      "task_id": "T-1787321709770-1a3de640",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364732.0408113,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709835-1e194764",
+      "task_id": "T-1787321709835-1e194764",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364732.257724,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709894-21a00d8c",
+      "task_id": "T-1787321709894-21a00d8c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364732.4805784,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321709955-2537b8b4",
+      "task_id": "T-1787321709955-2537b8b4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364732.6768467,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710012-289c54c4",
+      "task_id": "T-1787321710012-289c54c4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364732.8864694,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710069-2c03f5e0",
+      "task_id": "T-1787321710069-2c03f5e0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364733.1192636,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710140-3047f444",
+      "task_id": "T-1787321710140-3047f444",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364733.3499756,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710300-39d0baf0",
+      "task_id": "T-1787321710300-39d0baf0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364733.5622861,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710397-3f9a9028",
+      "task_id": "T-1787321710397-3f9a9028",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364733.7864351,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710484-44c1c940",
+      "task_id": "T-1787321710484-44c1c940",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364734.0197542,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710544-485efa78",
+      "task_id": "T-1787321710544-485efa78",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364734.27114,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710602-4bcbb50c",
+      "task_id": "T-1787321710602-4bcbb50c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364734.4723017,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710659-4f3acb88",
+      "task_id": "T-1787321710659-4f3acb88",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364734.679416,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710720-52daa72c",
+      "task_id": "T-1787321710720-52daa72c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364734.8982835,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710784-56a998b8",
+      "task_id": "T-1787321710784-56a998b8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364735.0969563,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710849-5a85f634",
+      "task_id": "T-1787321710849-5a85f634",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364735.4695022,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710913-5e5558a4",
+      "task_id": "T-1787321710913-5e5558a4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364735.6576574,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321710977-62266414",
+      "task_id": "T-1787321710977-62266414",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364735.862557,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711035-659d600c",
+      "task_id": "T-1787321711035-659d600c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364736.0599098,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711142-6c00c7b8",
+      "task_id": "T-1787321711142-6c00c7b8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364736.2408316,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711218-707e9d24",
+      "task_id": "T-1787321711218-707e9d24",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364736.4506917,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711292-74eefc14",
+      "task_id": "T-1787321711292-74eefc14",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364736.679326,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711354-78a01118",
+      "task_id": "T-1787321711354-78a01118",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364736.870655,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711419-7c795b78",
+      "task_id": "T-1787321711419-7c795b78",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364737.1510031,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711485-80694f68",
+      "task_id": "T-1787321711485-80694f68",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364737.3473902,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711567-854fb8b4",
+      "task_id": "T-1787321711567-854fb8b4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364737.5519178,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711671-8b84382c",
+      "task_id": "T-1787321711671-8b84382c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364737.7697847,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711747-900bc900",
+      "task_id": "T-1787321711747-900bc900",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364737.9621484,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711827-94d36268",
+      "task_id": "T-1787321711827-94d36268",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364738.1678898,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711882-9812b654",
+      "task_id": "T-1787321711882-9812b654",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364738.4476898,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321711941-9b9a78d4",
+      "task_id": "T-1787321711941-9b9a78d4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364738.6586366,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712002-9f3f403c",
+      "task_id": "T-1787321712002-9f3f403c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364738.9042342,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712071-a3580d34",
+      "task_id": "T-1787321712071-a3580d34",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364739.117497,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712131-a6f798c4",
+      "task_id": "T-1787321712131-a6f798c4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364739.3466046,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712197-aae29150",
+      "task_id": "T-1787321712197-aae29150",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364739.560064,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712254-ae4cba14",
+      "task_id": "T-1787321712254-ae4cba14",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364739.7852764,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712317-b20200ec",
+      "task_id": "T-1787321712317-b20200ec",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364739.9865215,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712383-b5f00e24",
+      "task_id": "T-1787321712383-b5f00e24",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364740.1847446,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712440-b95892fc",
+      "task_id": "T-1787321712440-b95892fc",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364740.403792,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712498-bcc9ba60",
+      "task_id": "T-1787321712498-bcc9ba60",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364740.644369,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712571-c126ad70",
+      "task_id": "T-1787321712571-c126ad70",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364740.848175,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712641-c5517dbc",
+      "task_id": "T-1787321712641-c5517dbc",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364741.0829656,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712696-c896d134",
+      "task_id": "T-1787321712696-c896d134",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364741.2886436,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712758-cc574178",
+      "task_id": "T-1787321712758-cc574178",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364741.505201,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712826-d05f6f5c",
+      "task_id": "T-1787321712826-d05f6f5c",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364741.7399378,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712895-d47d25c0",
+      "task_id": "T-1787321712895-d47d25c0",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364741.9663756,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321712961-d86f42d0",
+      "task_id": "T-1787321712961-d86f42d0",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364742.2065575,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713038-dd021610",
+      "task_id": "T-1787321713038-dd021610",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364742.4206243,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713116-e1a76170",
+      "task_id": "T-1787321713116-e1a76170",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364742.6843696,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713179-e565d9cc",
+      "task_id": "T-1787321713179-e565d9cc",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364742.9033947,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713237-e8e1f1f8",
+      "task_id": "T-1787321713237-e8e1f1f8",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364743.1251123,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713303-ecc6ada4",
+      "task_id": "T-1787321713303-ecc6ada4",
+      "task_status": "closed",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364743.3764977,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713365-f084e3fc",
+      "task_id": "T-1787321713365-f084e3fc",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364743.5987768,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713424-f4071e14",
+      "task_id": "T-1787321713424-f4071e14",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364743.8303382,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713485-f7a90848",
+      "task_id": "T-1787321713485-f7a90848",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364744.0469744,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787321713551-fb94f87c",
+      "task_id": "T-1787321713551-fb94f87c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364744.243842,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794470-a75de064",
+      "task_id": "T-1787322794470-a75de064",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364744.4621387,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794529-aae5f8d4",
+      "task_id": "T-1787322794529-aae5f8d4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364744.679893,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794614-affbd0b4",
+      "task_id": "T-1787322794614-affbd0b4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364744.8946557,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794681-b3f8e33c",
+      "task_id": "T-1787322794681-b3f8e33c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364745.093337,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794745-b7c1ed10",
+      "task_id": "T-1787322794745-b7c1ed10",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364745.309044,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794809-bb8f0658",
+      "task_id": "T-1787322794809-bb8f0658",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364745.525907,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794865-beea9d08",
+      "task_id": "T-1787322794865-beea9d08",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364745.7403848,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794927-c29e6894",
+      "task_id": "T-1787322794927-c29e6894",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364745.9462175,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322794986-c6229cec",
+      "task_id": "T-1787322794986-c6229cec",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364746.1625836,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795054-ca2e2694",
+      "task_id": "T-1787322795054-ca2e2694",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364746.3622382,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795108-cd691968",
+      "task_id": "T-1787322795108-cd691968",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364746.5751712,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795173-d141864c",
+      "task_id": "T-1787322795173-d141864c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364746.7673266,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795245-d58f1cf0",
+      "task_id": "T-1787322795245-d58f1cf0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364747.0049684,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795307-d949b968",
+      "task_id": "T-1787322795307-d949b968",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364747.2259846,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795374-dd442bac",
+      "task_id": "T-1787322795374-dd442bac",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364747.4435883,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795431-e0a47a2c",
+      "task_id": "T-1787322795431-e0a47a2c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364747.646672,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795483-e3c04150",
+      "task_id": "T-1787322795483-e3c04150",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364747.846018,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795588-e9fdfecc",
+      "task_id": "T-1787322795588-e9fdfecc",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364748.0741322,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795664-ee8f9090",
+      "task_id": "T-1787322795664-ee8f9090",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364748.3640406,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795725-f22932d8",
+      "task_id": "T-1787322795725-f22932d8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364748.5824542,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795775-f52e96bc",
+      "task_id": "T-1787322795775-f52e96bc",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364748.7979455,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795829-f85a6d98",
+      "task_id": "T-1787322795829-f85a6d98",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364749.0094135,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795894-fc39c6c0",
+      "task_id": "T-1787322795894-fc39c6c0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364749.2090876,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322795956-fff62664",
+      "task_id": "T-1787322795956-fff62664",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364749.401636,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796027-04260ab0",
+      "task_id": "T-1787322796027-04260ab0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364749.7223449,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796090-07e97aec",
+      "task_id": "T-1787322796090-07e97aec",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364749.9324722,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796155-0bc98e68",
+      "task_id": "T-1787322796155-0bc98e68",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364750.165381,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796219-0f9d3760",
+      "task_id": "T-1787322796219-0f9d3760",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364750.3731775,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796275-12f3c370",
+      "task_id": "T-1787322796275-12f3c370",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364750.6546345,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796365-1852e1e8",
+      "task_id": "T-1787322796365-1852e1e8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364750.8725293,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796421-1ba86fac",
+      "task_id": "T-1787322796421-1ba86fac",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364751.1154644,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796483-1f5d4730",
+      "task_id": "T-1787322796483-1f5d4730",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364751.3913627,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796578-2508cfc4",
+      "task_id": "T-1787322796578-2508cfc4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364751.6314576,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796634-285466c0",
+      "task_id": "T-1787322796634-285466c0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364751.9071524,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796701-2c5e2698",
+      "task_id": "T-1787322796701-2c5e2698",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364752.1243985,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796764-3014c724",
+      "task_id": "T-1787322796764-3014c724",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364752.3523598,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796833-3431cb68",
+      "task_id": "T-1787322796833-3431cb68",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364752.57487,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796916-3926ce34",
+      "task_id": "T-1787322796916-3926ce34",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364752.807658,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322796984-3d3e2df0",
+      "task_id": "T-1787322796984-3d3e2df0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364753.0135167,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797056-4189cf68",
+      "task_id": "T-1787322797056-4189cf68",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364753.22514,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797118-45326058",
+      "task_id": "T-1787322797118-45326058",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364753.4443407,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797185-49338448",
+      "task_id": "T-1787322797185-49338448",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364753.6844945,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797263-4dd9dd94",
+      "task_id": "T-1787322797263-4dd9dd94",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364754.3613465,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797327-51aada2c",
+      "task_id": "T-1787322797327-51aada2c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364754.6199658,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797385-5518ba1c",
+      "task_id": "T-1787322797385-5518ba1c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364754.84669,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797455-594a8390",
+      "task_id": "T-1787322797455-594a8390",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364755.0582068,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797511-5c99e860",
+      "task_id": "T-1787322797511-5c99e860",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364755.2667072,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797571-6031e2d4",
+      "task_id": "T-1787322797571-6031e2d4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364755.5890224,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797641-645edd08",
+      "task_id": "T-1787322797641-645edd08",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364755.8128815,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797727-697cd6f0",
+      "task_id": "T-1787322797727-697cd6f0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364756.0219972,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797796-6da4f0b4",
+      "task_id": "T-1787322797796-6da4f0b4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364756.2720964,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797861-717ae658",
+      "task_id": "T-1787322797861-717ae658",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364756.4732735,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797930-7595285c",
+      "task_id": "T-1787322797930-7595285c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364756.6729603,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322797980-7895fb80",
+      "task_id": "T-1787322797980-7895fb80",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364756.8772528,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798105-800faaa0",
+      "task_id": "T-1787322798105-800faaa0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364757.0849216,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798172-840ee260",
+      "task_id": "T-1787322798172-840ee260",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364757.3077166,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798237-87e3fc18",
+      "task_id": "T-1787322798237-87e3fc18",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364757.5048902,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798303-8bd1779c",
+      "task_id": "T-1787322798303-8bd1779c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364757.7310064,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798366-8f9cbfa8",
+      "task_id": "T-1787322798366-8f9cbfa8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364757.950727,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798433-939358c4",
+      "task_id": "T-1787322798433-939358c4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364758.1802158,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798497-9762fae0",
+      "task_id": "T-1787322798497-9762fae0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364758.445651,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798591-9d0507b8",
+      "task_id": "T-1787322798591-9d0507b8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364758.8710554,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798663-a14caa24",
+      "task_id": "T-1787322798663-a14caa24",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364759.1824615,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798722-a4d2c340",
+      "task_id": "T-1787322798722-a4d2c340",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364759.4212623,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798801-a98790f0",
+      "task_id": "T-1787322798801-a98790f0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364759.7895465,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798858-ace77210",
+      "task_id": "T-1787322798858-ace77210",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364760.0143905,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798916-b06209dc",
+      "task_id": "T-1787322798916-b06209dc",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364760.2483194,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322798971-b3a9f30c",
+      "task_id": "T-1787322798971-b3a9f30c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364760.467269,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799021-b69c2990",
+      "task_id": "T-1787322799021-b69c2990",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364760.751849,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799077-b9fe69b8",
+      "task_id": "T-1787322799077-b9fe69b8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364760.9906538,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799131-bd2db3c8",
+      "task_id": "T-1787322799131-bd2db3c8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364761.1974955,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799188-c09db9b8",
+      "task_id": "T-1787322799188-c09db9b8",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364761.4517014,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799244-c3f2f9c0",
+      "task_id": "T-1787322799244-c3f2f9c0",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364761.656734,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799302-c75c1d94",
+      "task_id": "T-1787322799302-c75c1d94",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364761.8892767,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799364-cb120c64",
+      "task_id": "T-1787322799364-cb120c64",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364762.1348684,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799418-ce4698f0",
+      "task_id": "T-1787322799418-ce4698f0",
+      "task_status": "in_progress",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364762.3675718,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799482-d215a638",
+      "task_id": "T-1787322799482-d215a638",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364762.6192935,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799532-d51d9d18",
+      "task_id": "T-1787322799532-d51d9d18",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364762.8409853,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799580-d7f9eeec",
+      "task_id": "T-1787322799580-d7f9eeec",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364763.068159,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799648-dc001930",
+      "task_id": "T-1787322799648-dc001930",
+      "task_status": "in_progress",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364763.298144,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799711-dfc17ba4",
+      "task_id": "T-1787322799711-dfc17ba4",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364763.54435,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799770-e34ac71c",
+      "task_id": "T-1787322799770-e34ac71c",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364763.797136,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799850-e804f55c",
+      "task_id": "T-1787322799850-e804f55c",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364764.0576231,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799910-eb9a737c",
+      "task_id": "T-1787322799910-eb9a737c",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364764.2938933,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322799980-efcb2090",
+      "task_id": "T-1787322799980-efcb2090",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364764.5588622,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800040-f35e9b74",
+      "task_id": "T-1787322800040-f35e9b74",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364764.9561195,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800112-f7a9dc0c",
+      "task_id": "T-1787322800112-f7a9dc0c",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364765.1537611,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800171-fb277560",
+      "task_id": "T-1787322800171-fb277560",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364765.3990436,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800239-ff34cf18",
+      "task_id": "T-1787322800239-ff34cf18",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364765.610681,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800298-02bb7c40",
+      "task_id": "T-1787322800298-02bb7c40",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364765.820257,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800362-068ff314",
+      "task_id": "T-1787322800362-068ff314",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364766.0183692,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800435-0aebf778",
+      "task_id": "T-1787322800435-0aebf778",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364766.2221339,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322800492-0e4a5838",
+      "task_id": "T-1787322800492-0e4a5838",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364766.4213748,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787322971676-e9aae4d4",
+      "task_id": "T-1787322971676-e9aae4d4",
+      "task_status": "review",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364766.6250453,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323460311-ae9d7d30",
+      "task_id": "T-1787323460311-ae9d7d30",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364766.8204067,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323460404-b425b074",
+      "task_id": "T-1787323460404-b425b074",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364767.0451856,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323460500-b9e232bc",
+      "task_id": "T-1787323460500-b9e232bc",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364767.2669902,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323460580-bea19180",
+      "task_id": "T-1787323460580-bea19180",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364767.4771378,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323460652-c2eaada8",
+      "task_id": "T-1787323460652-c2eaada8",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364767.7250867,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323460703-c5f65380",
+      "task_id": "T-1787323460703-c5f65380",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364767.9281816,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461012-d8597160",
+      "task_id": "T-1787323461012-d8597160",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364768.1291788,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461079-dc5ac87c",
+      "task_id": "T-1787323461079-dc5ac87c",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364768.3379817,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461150-e09e1a9c",
+      "task_id": "T-1787323461150-e09e1a9c",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364768.537722,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461213-e46199b0",
+      "task_id": "T-1787323461213-e46199b0",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364768.7310984,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461285-e8a7a12c",
+      "task_id": "T-1787323461285-e8a7a12c",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364768.9501014,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461346-ec4e03e8",
+      "task_id": "T-1787323461346-ec4e03e8",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364769.1768692,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461404-efba3d30",
+      "task_id": "T-1787323461404-efba3d30",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364769.4229622,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461464-f351e600",
+      "task_id": "T-1787323461464-f351e600",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364769.652255,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461541-f7e6ec24",
+      "task_id": "T-1787323461541-f7e6ec24",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364769.8925633,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461623-fcc66abc",
+      "task_id": "T-1787323461623-fcc66abc",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364770.175038,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461683-0059e5a0",
+      "task_id": "T-1787323461683-0059e5a0",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364770.3782094,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461742-03e6a000",
+      "task_id": "T-1787323461742-03e6a000",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364770.592806,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    },
+    {
+      "contract_id": "TC-T-1787323461802-077bee78",
+      "task_id": "T-1787323461802-077bee78",
+      "task_status": "open",
+      "task_parent_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "created_at": 1787364770.7970953,
+      "stringified_array": true,
+      "empty_dependencies": true,
+      "flags": {
+        "acceptance_clauses": "stringified",
+        "allowed_edit_scope": "stringified",
+        "interfaces": "stringified",
+        "dependencies": "empty"
+      }
+    }
+  ]
+}

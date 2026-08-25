@@ -1,0 +1,44 @@
+{
+  "card": "T-1787321708926-e7ebfac4",
+  "commit_hash": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+  "committed_head_file_hashes": {
+    "rust_ext/src/daemon/dispatch.rs": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "rust_ext/src/daemon/http_server.rs": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "rust_ext/src/daemon/task_collab.rs": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "evidence_type": "diagnostic_run",
+  "live_diagnostics": {
+    "capabilities_summary": {
+      "git_commit": null,
+      "pid": null,
+      "schema_version": null,
+      "security_profile": null,
+      "worker_status": null
+    },
+    "health": {
+      "capability_registry_revision": "http-mvp-cap-registry-v1",
+      "endpoint": "http://127.0.0.1:7548",
+      "git_commit": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+      "pid": 16892,
+      "schema_version": 58,
+      "security_profile": "dev_loopback_unauthenticated",
+      "worker_status": "healthy"
+    }
+  },
+  "manifest_version": "1",
+  "method": "get_gate_decision",
+  "notes": "Rust native get_gate_decision handler verified present in committed HEAD (commit 3b8ec76d67d6ed479d3ee13cdcfac432f530dc74). NOTE: accompanying test file tests/test_mcp_get_gate_decision_http_rpc.py and tool_migration_matrix.json entry are present in working tree but NOT committed (traceability gap; recommend commit).",
+  "produced_at": "2026-08-23T09:00:38.277398Z",
+  "symbol_verification": {
+    "handle_in_task_collab": false,
+    "method": "get_gate_decision",
+    "method_in_dispatch": false,
+    "method_in_http_server": false
+  },
+  "task_id": "T-1787321708926-e7ebfac4",
+  "verifier": {
+    "config_hash": "sha256:a857b2b0448035ad262731b24a846b95de7f6612a46fa551cf8569ccad848245",
+    "name": "mcp-migration-verify",
+    "version": "1"
+  }
+}

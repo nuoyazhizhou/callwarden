@@ -1,0 +1,50 @@
+{
+  "task_id": "T-1787407700109-f5562c60",
+  "reported_step": "S-1787407700239-518f25e0",
+  "report_status": "in_progress",
+  "authority_schema_version": 58,
+  "next_action": {
+    "task_id": "T-1787407700109-f5562c60",
+    "decision": "WAITING",
+    "action": "WAIT",
+    "required_role": "executor",
+    "step_id": "S-1787407700239-518fab78",
+    "task_contract": null,
+    "role_contract": null,
+    "authorization": {
+      "acting_role": "executor",
+      "lease_role": "executor",
+      "lease_required": false,
+      "fencing_required": false,
+      "different_agent_instance_from": [],
+      "different_session_from": []
+    },
+    "allowed_paths": [],
+    "forbidden_paths": [],
+    "eligibility": {
+      "verdict": "not_evaluated",
+      "evidence_gate": "not_evaluated",
+      "snapshot": "not_evaluated",
+      "mutation_recheck_required": true
+    },
+    "blocking_conditions": [
+      "task 存在 active 未过期 lease（持有角色 executor），等待其释放"
+    ],
+    "revision_hint": null,
+    "routing": {
+      "origin_kind": "system_evaluator",
+      "next_role": null,
+      "next_action": "wait_for_current_lease",
+      "reason": [
+        "当前 lease 未过期，持有角色 executor（不泄露 token）"
+      ]
+    },
+    "next_session": null,
+    "source": {
+      "task_status": "in_progress",
+      "task_contract_hash": "",
+      "role_contract_hash": "",
+      "evaluated_at": "1787413737.990329"
+    }
+  }
+}

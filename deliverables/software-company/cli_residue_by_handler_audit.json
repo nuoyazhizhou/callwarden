@@ -1,0 +1,2046 @@
+{
+  "handler_count": 93,
+  "call_count": 247,
+  "handlers": [
+    {
+      "file": "cli/daemon_commands.py",
+      "handler": "run_daemon_command",
+      "calls": [
+        {
+          "file": "cli/daemon_commands.py",
+          "handler": "run_daemon_command",
+          "line": 471,
+          "call": "UnixDaemonRpcClient"
+        },
+        {
+          "file": "cli/daemon_commands.py",
+          "handler": "run_daemon_command",
+          "line": 614,
+          "call": "UnixDaemonRpcClient"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_agent_start",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_agent_start",
+          "line": 13879,
+          "call": "UnixDaemonRpcClient"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_agent_status",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_agent_status",
+          "line": 14043,
+          "call": "UnixDaemonRpcClient"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_dependency_cycle",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_dependency_cycle",
+          "line": 15507,
+          "call": "db.detect_cycle"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_dependency_explain",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_dependency_explain",
+          "line": 15524,
+          "call": "db.validate_revision_dependencies"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_dependency_list",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_dependency_list",
+          "line": 15488,
+          "call": "db.get_dependency_edges"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_dependency_provider_select",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_dependency_provider_select",
+          "line": 15547,
+          "call": "db.select_interface_provider"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_assignment",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_assignment",
+          "line": 16375,
+          "call": "db.get_assignment"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_assignment",
+          "line": 16389,
+          "call": "db.revoke_assignment"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_assignment",
+          "line": 16406,
+          "call": "db.create_assignment"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_audit",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_audit",
+          "line": 6048,
+          "call": "db.verify_audit_chain"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_audit",
+          "line": 6109,
+          "call": "db.rotate_signing_key"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_audit",
+          "line": 6140,
+          "call": "db.list_signing_keys"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_bootstrap",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_bootstrap",
+          "line": 6195,
+          "call": "db.bootstrap_status"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_brief",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_brief",
+          "line": 10885,
+          "call": "db.project_brief"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_build_context",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_build_context",
+          "line": 11493,
+          "call": "import_compile_commands"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_build_context",
+          "line": 11538,
+          "call": "open_readonly_conn"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_build_context",
+          "line": 11540,
+          "call": "compute_resolved_edges"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_call_chain",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_call_chain",
+          "line": 9415,
+          "call": "db.get_call_chain_down"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_callees",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_callees",
+          "line": 9387,
+          "call": "db.get_callees"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_callers",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_callers",
+          "line": 9360,
+          "call": "db.get_callers"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_check_gate",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_check_gate",
+          "line": 6645,
+          "call": "db.resolve_gate_findings"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_check_gate",
+          "line": 6654,
+          "call": "db.get_task_changed_files"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_check_gate",
+          "line": 6660,
+          "call": "db.run_check_gate"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_churn",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_churn",
+          "line": 3385,
+          "call": "db.churn_analysis"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_clone",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_clone",
+          "line": 6356,
+          "call": "db.detect_clones"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_clone",
+          "line": 6385,
+          "call": "db.get_symbol"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_clone",
+          "line": 6390,
+          "call": "db.get_symbol_location"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_clone",
+          "line": 6394,
+          "call": "db.list_clones"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_clone",
+          "line": 6421,
+          "call": "db.get_clone_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_clone",
+          "line": 6436,
+          "call": "db.clear_clones"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_comment_coverage",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_comment_coverage",
+          "line": 9841,
+          "call": "db.get_comment_coverage"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_complexity",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_complexity",
+          "line": 9771,
+          "call": "db.get_complexity_hotspots"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_coupled_fns",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_coupled_fns",
+          "line": 10044,
+          "call": "db.get_most_coupled_functions"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_coupling",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_coupling",
+          "line": 9805,
+          "call": "db.get_coupling_analysis"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_coverage",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_coverage",
+          "line": 10741,
+          "call": "db.import_lcov"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_coverage",
+          "line": 10743,
+          "call": "db.import_cobertura"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_coverage",
+          "line": 10760,
+          "call": "db.get_coverage_for_symbol"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_coverage",
+          "line": 10786,
+          "call": "db.find_uncovered_functions"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_dashboard",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_dashboard",
+          "line": 8344,
+          "call": "db.get_project_dashboard"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_dashboard",
+          "line": 8355,
+          "call": "db.get_project_risks"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_dashboard",
+          "line": 8529,
+          "call": "db.get_project_risks"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_defect",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_defect",
+          "line": 3483,
+          "call": "db.defect_pattern_search"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_defect",
+          "line": 3522,
+          "call": "db.suggest_fix"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_defect",
+          "line": 3565,
+          "call": "db.learn_defect_from_fix"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_defect",
+          "line": 3585,
+          "call": "db.defect_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_defect",
+          "line": 3630,
+          "call": "db.build_defect_knowledge"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_dependency",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_dependency",
+          "line": 15430,
+          "call": "db.get_active_workspace"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_evolution",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_evolution",
+          "line": 3210,
+          "call": "db.get_defect_correlation_by_qn"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_evolution",
+          "line": 3233,
+          "call": "db.function_change_frequency"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_file",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_file",
+          "line": 9306,
+          "call": "db.get_file_symbols"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_fn_metrics",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_fn_metrics",
+          "line": 10074,
+          "call": "db.get_function_metrics"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_fts",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_fts",
+          "line": 7584,
+          "call": "db.rebuild_fts_index"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_fts",
+          "line": 7599,
+          "call": "db.get_fts_status"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_function_issues",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_function_issues",
+          "line": 9947,
+          "call": "db.get_function_issues"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_gc",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6871,
+          "call": "db.gc_archive"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6890,
+          "call": "db.gc_restore"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6904,
+          "call": "db.gc_status"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6932,
+          "call": "db.gc_purge"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6945,
+          "call": "db.get_gc_policy"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6947,
+          "call": "db.set_gc_policy"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 6959,
+          "call": "db.gc_retention"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 7043,
+          "call": "db.gc_archive_list"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 7065,
+          "call": "db.gc_archive_inspect"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 7098,
+          "call": "db.gc_audit_list"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 7132,
+          "call": "db.gc_audit_get"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_gc",
+          "line": 7183,
+          "call": "db.gc_archive_import"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_git",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10173,
+          "call": "db.import_git_history"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10185,
+          "call": "db.get_git_commits"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10199,
+          "call": "db.get_commit_changes"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10223,
+          "call": "db.get_commit_tasks"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10245,
+          "call": "db.get_git_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10264,
+          "call": "db.get_active_task"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10274,
+          "call": "db.task_status"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10300,
+          "call": "db.check_force_push"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10308,
+          "call": "db.get_active_task"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10314,
+          "call": "db.log_destructive_operation"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10370,
+          "call": "db.get_active_task"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10376,
+          "call": "db.log_destructive_operation"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_git",
+          "line": 10399,
+          "call": "db.list_destructive_operations"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_grep",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_grep",
+          "line": 8886,
+          "call": "db.find_symbols_at_lines"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_guardrail",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_guardrail",
+          "line": 2966,
+          "call": "db.scan_guardrails"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_guardrail",
+          "line": 2969,
+          "call": "db.guardrail_list_rules"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_guardrail",
+          "line": 3004,
+          "call": "db.guardrail_list_rules"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_health_report",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_health_report",
+          "line": 8209,
+          "call": "db.get_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_health_report",
+          "line": 8216,
+          "call": "db.hotspot_evolution"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_health_report",
+          "line": 8223,
+          "call": "db.get_semgrep_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_health_report",
+          "line": 8232,
+          "call": "db.get_token_savings_report"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_hotspot",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_hotspot",
+          "line": 3317,
+          "call": "db.hotspot_evolution"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_impact",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_impact",
+          "line": 3053,
+          "call": "db.blast_radius"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_issues",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_issues",
+          "line": 8953,
+          "call": "db.get_symbol_issues"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_largest_fns",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_largest_fns",
+          "line": 10015,
+          "call": "db.get_largest_functions"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_lease",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_lease",
+          "line": 16218,
+          "call": "db.get_lease_status"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_lease",
+          "line": 16228,
+          "call": "db.list_lease_events"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_lease",
+          "line": 16253,
+          "call": "db.acquire_lease"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_lease",
+          "line": 16280,
+          "call": "db.renew_lease"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_lease",
+          "line": 16302,
+          "call": "db.release_lease"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_map",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_map",
+          "line": 10930,
+          "call": "db.repo_map"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_metrics",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_metrics",
+          "line": 9730,
+          "call": "db.get_code_metrics_summary"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_ownership_map",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_ownership_map",
+          "line": 10852,
+          "call": "db.get_ownership_map"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_query",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_query",
+          "line": 9330,
+          "call": "db.get_symbol_location"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_refresh",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_refresh",
+          "line": 8093,
+          "call": "db.build_full_graph"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_refresh",
+          "line": 8096,
+          "call": "db.rule_sync_agents_md"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_refresh",
+          "line": 8130,
+          "call": "db.refresh_file"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_review",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_review",
+          "line": 3116,
+          "call": "db.review_readiness_report"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rollback",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rollback",
+          "line": 11204,
+          "call": "db.register_rollback_config"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rollback",
+          "line": 11224,
+          "call": "db.get_rollback_config"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rollback",
+          "line": 11244,
+          "call": "db.list_rollback_configs"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rollback",
+          "line": 11258,
+          "call": "db.set_rollback_flag"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rollback",
+          "line": 11271,
+          "call": "db.is_feature_rolled_back"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_applicable",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_applicable",
+          "line": 2550,
+          "call": "db.get_applicable_rules"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_candidate",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_candidate",
+          "line": 2466,
+          "call": "db.rule_candidate_create"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_candidate",
+          "line": 2483,
+          "call": "db.rule_candidate_list"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_candidate",
+          "line": 2502,
+          "call": "db.rule_candidate_accept"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_candidate",
+          "line": 2514,
+          "call": "db.rule_candidate_reject"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_cleanup_sync_log",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_cleanup_sync_log",
+          "line": 2693,
+          "call": "db.cleanup_sync_log"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_extract",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_extract",
+          "line": 2621,
+          "call": "db.extract_rule_candidates_from_quality_findings"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_insert_block",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_insert_block",
+          "line": 2608,
+          "call": "db.rule_insert_agents_md_block"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_list",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_list",
+          "line": 2528,
+          "call": "db.rule_list"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_seed_bootstrap",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_seed_bootstrap",
+          "line": 2647,
+          "call": "db.rule_seed_bootstrap"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_rule_sync",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_rule_sync",
+          "line": 2567,
+          "call": "db.rule_sync_agents_md"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_search",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_search",
+          "line": 8706,
+          "call": "db.search_symbols"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_semgrep",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_semgrep",
+          "line": 10501,
+          "call": "db.scan_semgrep_incremental"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_semgrep",
+          "line": 10519,
+          "call": "db.run_semgrep_and_save"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_semgrep",
+          "line": 10536,
+          "call": "db.get_semgrep_summary"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_semgrep",
+          "line": 10573,
+          "call": "db.run_semgrep"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_semgrep",
+          "line": 10623,
+          "call": "db.get_semgrep_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_semgrep",
+          "line": 10663,
+          "call": "db.get_semgrep_findings"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_stats",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_stats",
+          "line": 8173,
+          "call": "db.get_stats"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_status",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_status",
+          "line": 8591,
+          "call": "db.get_status"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_symbol",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_symbol",
+          "line": 9213,
+          "call": "db.get_symbol"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_symbol_history",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_symbol_history",
+          "line": 6558,
+          "call": "db.get_symbol_commit_history"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_symbol_history",
+          "line": 6595,
+          "call": "db.get_symbol_change_tasks"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_test_impact",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_test_impact",
+          "line": 6714,
+          "call": "db.test_impact_selection"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_tests",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_tests",
+          "line": 9057,
+          "call": "db.import_test_results"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_tests",
+          "line": 9079,
+          "call": "db.get_test_stability"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_tests",
+          "line": 9119,
+          "call": "db.build_test_relations"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_tests",
+          "line": 9135,
+          "call": "db.get_tested_functions"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_tests",
+          "line": 9158,
+          "call": "db.get_test_cases"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_topo",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_topo",
+          "line": 9448,
+          "call": "db.get_topological_order"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_uncommented",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_uncommented",
+          "line": 9904,
+          "call": "db.get_uncommented_symbols"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_vuln_blast",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_vuln_blast",
+          "line": 6460,
+          "call": "db.get_vulnerability_blast_radius"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_who",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_who",
+          "line": 10816,
+          "call": "db.who_to_ask"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_handle_workspace",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7937,
+          "call": "db.list_workspaces"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7951,
+          "call": "db.register_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7959,
+          "call": "db.set_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7961,
+          "call": "db.set_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7963,
+          "call": "db.get_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7974,
+          "call": "db.delete_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 7976,
+          "call": "db.delete_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_handle_workspace",
+          "line": 8011,
+          "call": "db.register_workspace"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_identity_revoke",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_identity_revoke",
+          "line": 15941,
+          "call": "db.get_active_workspace"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local",
+          "line": 3726,
+          "call": "db.task_has_blocking_findings"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_apply",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_apply",
+          "line": 4743,
+          "call": "db.task_apply"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_capture_auto",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_capture_auto",
+          "line": 4893,
+          "call": "db.task_capture_diff_auto"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_capture_manual",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_capture_manual",
+          "line": 4993,
+          "call": "db.task_capture_diff"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_changes",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_changes",
+          "line": 5809,
+          "call": "db.get_task_symbol_changes"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_close",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_close",
+          "line": 4801,
+          "call": "db.task_close"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_commits",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_commits",
+          "line": 5793,
+          "call": "db.get_task_commits"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_completion_review",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_completion_review",
+          "line": 5270,
+          "call": "db.run_task_completion_review"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_create",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_create",
+          "line": 4229,
+          "call": "db.task_create"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_findings",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_findings",
+          "line": 5073,
+          "call": "db.get_task_quality_findings"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_next",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_next",
+          "line": 4255,
+          "call": "db.task_next_step"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_reopen",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_reopen",
+          "line": 4857,
+          "call": "db.task_reopen"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_report",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_report",
+          "line": 4487,
+          "call": "db.task_report_step"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_resolve_finding",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_resolve_finding",
+          "line": 5114,
+          "call": "db.resolve_task_quality_finding"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_rollback",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_rollback",
+          "line": 4677,
+          "call": "db.task_rollback_step"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_local_rollback",
+          "line": 4678,
+          "call": "db.task_rollback"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_split",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_split",
+          "line": 5347,
+          "call": "db.task_split"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_status",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_status",
+          "line": 5749,
+          "call": "db.task_status"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_task_exists",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_task_exists",
+          "line": 5329,
+          "call": "db.task_status"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_task_list",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_task_list",
+          "line": 5149,
+          "call": "db.task_list"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_local_tree",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_local_tree",
+          "line": 5764,
+          "call": "db.task_status_tree"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_route_lease_write",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_route_lease_write",
+          "line": 16095,
+          "call": "UnixDaemonRpcClient"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "_run_subcommand_mode",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "_run_subcommand_mode",
+          "line": 1458,
+          "call": "db.list_workspaces"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_run_subcommand_mode",
+          "line": 1463,
+          "call": "db.register_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_run_subcommand_mode",
+          "line": 1464,
+          "call": "db.set_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_run_subcommand_mode",
+          "line": 1466,
+          "call": "db.set_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "_run_subcommand_mode",
+          "line": 1476,
+          "call": "db.close"
+        }
+      ]
+    },
+    {
+      "file": "cli/main.py",
+      "handler": "main",
+      "calls": [
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11902,
+          "call": "db.list_workspaces"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11917,
+          "call": "db.register_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11927,
+          "call": "db.set_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11929,
+          "call": "db.set_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11931,
+          "call": "db.get_active_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11943,
+          "call": "db.delete_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11945,
+          "call": "db.delete_workspace"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11957,
+          "call": "db.build_full_graph"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11960,
+          "call": "db.rule_sync_agents_md"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11991,
+          "call": "db.get_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 11995,
+          "call": "db.get_status"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12092,
+          "call": "db.get_symbol_location"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12099,
+          "call": "db.get_callers"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12109,
+          "call": "db.get_callees"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12121,
+          "call": "db.get_topological_order"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12128,
+          "call": "db.get_file_symbols"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12146,
+          "call": "db.refresh_file"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12168,
+          "call": "db.get_history"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12183,
+          "call": "db.get_symbol_content_by_hash"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12194,
+          "call": "db.get_symbol_content_by_hash"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12195,
+          "call": "db.get_symbol_content_by_hash"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12226,
+          "call": "db.get_recent_changes"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12275,
+          "call": "db.restore_comment"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12302,
+          "call": "db.restore_all_comments"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12334,
+          "call": "db.get_comment_coverage"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12389,
+          "call": "db.get_uncommented_symbols"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12416,
+          "call": "db.search_symbols"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12440,
+          "call": "db.get_symbol"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12498,
+          "call": "db.get_call_chain_up"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12519,
+          "call": "db.get_call_chain_down"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12543,
+          "call": "db.get_top_callers"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12570,
+          "call": "db.get_orphan_symbols"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12600,
+          "call": "db.get_deepest_functions"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12620,
+          "call": "db.get_module_call_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12639,
+          "call": "db.detect_cycles"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12672,
+          "call": "db.export_module_graph"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12691,
+          "call": "db.get_call_heatmap"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12729,
+          "call": "db.get_test_coverage"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12776,
+          "call": "db.get_function_issues"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12836,
+          "call": "db.get_issue_summary"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12916,
+          "call": "db.run_semgrep_and_save"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12935,
+          "call": "db.get_semgrep_summary"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 12982,
+          "call": "db.run_semgrep"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13039,
+          "call": "db.get_semgrep_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13084,
+          "call": "db.get_semgrep_findings"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13126,
+          "call": "db.import_git_history"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13138,
+          "call": "db.get_git_commits"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13151,
+          "call": "db.get_commit_changes"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13177,
+          "call": "db.get_git_stats"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13198,
+          "call": "db.get_code_metrics_summary"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13227,
+          "call": "db.get_complexity_hotspots"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13253,
+          "call": "db.get_coupling_analysis"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13277,
+          "call": "db.get_largest_functions"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13293,
+          "call": "db.get_most_coupled_functions"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13310,
+          "call": "db.get_function_metrics"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13344,
+          "call": "db.semantic_search"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13365,
+          "call": "db.embed_all_symbols"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13379,
+          "call": "db.find_similar_functions"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13415,
+          "call": "db.project_brief"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13448,
+          "call": "db.repo_map"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13466,
+          "call": "db.import_lcov"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13468,
+          "call": "db.import_cobertura"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13485,
+          "call": "db.get_coverage_for_symbol"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13511,
+          "call": "db.find_uncovered_functions"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13528,
+          "call": "db.who_to_ask"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13553,
+          "call": "db.get_ownership_map"
+        },
+        {
+          "file": "cli/main.py",
+          "handler": "main",
+          "line": 13579,
+          "call": "db.close"
+        }
+      ]
+    }
+  ]
+}

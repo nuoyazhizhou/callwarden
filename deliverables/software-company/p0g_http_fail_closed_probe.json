@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "received_error_code": "E_TASK_CONTRACT_REVISE_PREVIOUS_HASH_REQUIRED",
+  "message": "E_TASK_CONTRACT_REVISE_PREVIOUS_HASH_REQUIRED: task.contract_revise 必须携带 expected_previous_hash",
+  "expected_error_code": "E_TASK_CONTRACT_REVISE_PREVIOUS_HASH_REQUIRED",
+  "passed": true,
+  "mutation_attempt": "no expected_previous_hash; handler should reject before identity/lease/transaction"
+}

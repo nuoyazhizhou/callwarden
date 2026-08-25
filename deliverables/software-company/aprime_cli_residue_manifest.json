@@ -1,0 +1,2253 @@
+{
+  "format": "cw.aprime.cli-residue.v2",
+  "parent_id": "T-1787293451688-c14b1e44",
+  "source": "deliverables/software-company/cli_residue_by_handler_audit.json",
+  "card_count": 93,
+  "cards": [
+    {
+      "card_key": "CLI-004",
+      "command": "cw daemon（metrics/ping/workspace/publish/query）",
+      "python_file": "cli/daemon_commands.py",
+      "python_handler": "run_daemon_command",
+      "direct_calls": [
+        "UnixDaemonRpcClient"
+      ],
+      "lines": [
+        471,
+        614
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc（HTTP transport 下的 ping/metrics/workspace/query/publish 已有或新增 method branch）"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-005",
+      "command": "cw-agent start",
+      "python_file": "cli/main.py",
+      "python_handler": "_agent_start",
+      "direct_calls": [
+        "UnixDaemonRpcClient"
+      ],
+      "lines": [
+        13879
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc（HTTP transport 下的 ping/metrics/workspace/query/publish 已有或新增 method branch）"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-006",
+      "command": "cw-agent status",
+      "python_file": "cli/main.py",
+      "python_handler": "_agent_status",
+      "direct_calls": [
+        "UnixDaemonRpcClient"
+      ],
+      "lines": [
+        14043
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc（HTTP transport 下的 ping/metrics/workspace/query/publish 已有或新增 method branch）"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-007",
+      "command": "cw dependency cycle",
+      "python_file": "cli/main.py",
+      "python_handler": "_dependency_cycle",
+      "direct_calls": [
+        "db.detect_cycle"
+      ],
+      "lines": [
+        15507
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/dependency_query_handlers.rs::handle_detect_cycle (由 MCP-007 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-007"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-008",
+      "command": "cw dependency explain",
+      "python_file": "cli/main.py",
+      "python_handler": "_dependency_explain",
+      "direct_calls": [
+        "db.validate_revision_dependencies"
+      ],
+      "lines": [
+        15524
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/dependency_query_handlers.rs::handle_validate_revision_dependencies (由 MCP-008 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-008"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-009",
+      "command": "cw dependency list",
+      "python_file": "cli/main.py",
+      "python_handler": "_dependency_list",
+      "direct_calls": [
+        "db.get_dependency_edges"
+      ],
+      "lines": [
+        15488
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/dependency_query_handlers.rs::handle_get_dependency_edges (由 MCP-009 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-009"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-010",
+      "command": "cw dependency provider-select",
+      "python_file": "cli/main.py",
+      "python_handler": "_dependency_provider_select",
+      "direct_calls": [
+        "db.select_interface_provider"
+      ],
+      "lines": [
+        15547
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.select_interface_provider]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-011",
+      "command": "cw assignment",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_assignment",
+      "direct_calls": [
+        "db.create_assignment",
+        "db.get_assignment",
+        "db.revoke_assignment"
+      ],
+      "lines": [
+        16375,
+        16389,
+        16406
+      ],
+      "port_type": "assignment_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_assignment_handlers.rs::handle_create_assignment",
+        "rust_ext/src/daemon/cli_handle_assignment_handlers.rs::handle_get_assignment",
+        "rust_ext/src/daemon/cli_handle_assignment_handlers.rs::handle_revoke_assignment"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-012",
+      "command": "cw audit",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_audit",
+      "direct_calls": [
+        "db.list_signing_keys",
+        "db.rotate_signing_key",
+        "db.verify_audit_chain"
+      ],
+      "lines": [
+        6048,
+        6109,
+        6140
+      ],
+      "port_type": "task_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_audit_handlers.rs::handle_list_signing_keys",
+        "rust_ext/src/daemon/cli_handle_audit_handlers.rs::handle_rotate_signing_key",
+        "rust_ext/src/daemon/cli_handle_audit_handlers.rs::handle_verify_audit_chain"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-013",
+      "command": "cw bootstrap",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_bootstrap",
+      "direct_calls": [
+        "db.bootstrap_status"
+      ],
+      "lines": [
+        6195
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/task_read_handlers.rs::handle_bootstrap_status (由 MCP-066 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-066"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-014",
+      "command": "cw brief",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_brief",
+      "direct_calls": [
+        "db.project_brief"
+      ],
+      "lines": [
+        10885
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_project_brief (由 MCP-030 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-030"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-015",
+      "command": "cw build-context",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_build_context",
+      "direct_calls": [
+        "compute_resolved_edges",
+        "import_compile_commands",
+        "open_readonly_conn"
+      ],
+      "lines": [
+        11493,
+        11538,
+        11540
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/build_context_handlers.rs::handle_import_compile_commands / handle_resolve"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-016",
+      "command": "cw call-chain",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_call_chain",
+      "direct_calls": [
+        "db.get_call_chain_down"
+      ],
+      "lines": [
+        9415
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.call_chain_down]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-017",
+      "command": "cw callees",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_callees",
+      "direct_calls": [
+        "db.get_callees"
+      ],
+      "lines": [
+        9387
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.callees]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-018",
+      "command": "cw callers",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_callers",
+      "direct_calls": [
+        "db.get_callers"
+      ],
+      "lines": [
+        9360
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.callers]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-019",
+      "command": "cw check-gate",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_check_gate",
+      "direct_calls": [
+        "db.get_task_changed_files",
+        "db.resolve_gate_findings",
+        "db.run_check_gate"
+      ],
+      "lines": [
+        6645,
+        6654,
+        6660
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_check_gate_handlers.rs::handle_get_task_changed_files",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=gate.resolve_findings]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=gate.run_check]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-020",
+      "command": "cw churn",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_churn",
+      "direct_calls": [
+        "db.churn_analysis"
+      ],
+      "lines": [
+        3385
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.churn_analysis]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-021",
+      "command": "cw clone",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_clone",
+      "direct_calls": [
+        "db.clear_clones",
+        "db.detect_clones",
+        "db.get_clone_stats",
+        "db.get_symbol",
+        "db.get_symbol_location",
+        "db.list_clones"
+      ],
+      "lines": [
+        6356,
+        6385,
+        6390,
+        6394,
+        6421,
+        6436
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.clear_clones]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.job_submit]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.clone_stats]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol_location]",
+        "rust_ext/src/daemon/task_read_handlers.rs::handle_list_clones (由 MCP-067 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-067"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-022",
+      "command": "cw comment-coverage",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_comment_coverage",
+      "direct_calls": [
+        "db.get_comment_coverage"
+      ],
+      "lines": [
+        9841
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=get_comment_coverage]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-023",
+      "command": "cw complexity",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_complexity",
+      "direct_calls": [
+        "db.get_complexity_hotspots"
+      ],
+      "lines": [
+        9771
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.complexity_hotspots]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-024",
+      "command": "cw coupled-fns",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_coupled_fns",
+      "direct_calls": [
+        "db.get_most_coupled_functions"
+      ],
+      "lines": [
+        10044
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.most_coupled_functions]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-025",
+      "command": "cw coupling",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_coupling",
+      "direct_calls": [
+        "db.get_coupling_analysis"
+      ],
+      "lines": [
+        9805
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.coupling_analysis]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-026",
+      "command": "cw coverage",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_coverage",
+      "direct_calls": [
+        "db.find_uncovered_functions",
+        "db.get_coverage_for_symbol",
+        "db.import_cobertura",
+        "db.import_lcov"
+      ],
+      "lines": [
+        10741,
+        10743,
+        10760,
+        10786
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=find_uncovered_functions]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.coverage_for_symbol]",
+        "rust_ext/src/daemon/cli_handle_coverage_handlers.rs::handle_import_cobertura",
+        "rust_ext/src/daemon/cli_handle_coverage_handlers.rs::handle_import_lcov"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-027",
+      "command": "cw dashboard",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_dashboard",
+      "direct_calls": [
+        "db.get_project_dashboard",
+        "db.get_project_risks"
+      ],
+      "lines": [
+        8344,
+        8355,
+        8529
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_dashboard_handlers.rs::handle_get_project_dashboard",
+        "rust_ext/src/daemon/cli_handle_dashboard_handlers.rs::handle_get_project_risks"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-028",
+      "command": "cw defect",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_defect",
+      "direct_calls": [
+        "db.build_defect_knowledge",
+        "db.defect_pattern_search",
+        "db.defect_stats",
+        "db.learn_defect_from_fix",
+        "db.suggest_fix"
+      ],
+      "lines": [
+        3483,
+        3522,
+        3565,
+        3585,
+        3630
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_defect_handlers.rs::handle_build_defect_knowledge",
+        "rust_ext/src/daemon/cli_handle_defect_handlers.rs::handle_defect_pattern_search",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=defect.stats]",
+        "rust_ext/src/daemon/cli_handle_defect_handlers.rs::handle_learn_defect_from_fix",
+        "rust_ext/src/daemon/cli_handle_defect_handlers.rs::handle_suggest_fix"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-029",
+      "command": "cw dependency",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_dependency",
+      "direct_calls": [
+        "db.get_active_workspace"
+      ],
+      "lines": [
+        15430
+      ],
+      "port_type": "graph_snapshot",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.status]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-030",
+      "command": "cw evolution",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_evolution",
+      "direct_calls": [
+        "db.function_change_frequency",
+        "db.get_defect_correlation_by_qn"
+      ],
+      "lines": [
+        3210,
+        3233
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_evolution_handlers.rs::handle_function_change_frequency",
+        "rust_ext/src/daemon/cli_handle_evolution_handlers.rs::handle_get_defect_correlation_by_qn"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-031",
+      "command": "cw file",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_file",
+      "direct_calls": [
+        "db.get_file_symbols"
+      ],
+      "lines": [
+        9306
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.file]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-032",
+      "command": "cw fn-metrics",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_fn_metrics",
+      "direct_calls": [
+        "db.get_function_metrics"
+      ],
+      "lines": [
+        10074
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.function_metrics]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-033",
+      "command": "cw fts",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_fts",
+      "direct_calls": [
+        "db.get_fts_status",
+        "db.rebuild_fts_index"
+      ],
+      "lines": [
+        7584,
+        7599
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_fts_handlers.rs::handle_get_fts_status",
+        "rust_ext/src/daemon/cli_handle_fts_handlers.rs::handle_rebuild_fts_index"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-034",
+      "command": "cw function-issues",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_function_issues",
+      "direct_calls": [
+        "db.get_function_issues"
+      ],
+      "lines": [
+        9947
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_function_issues_handlers.rs::handle_get_function_issues"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-035",
+      "command": "cw gc",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_gc",
+      "direct_calls": [
+        "db.gc_archive",
+        "db.gc_archive_import",
+        "db.gc_archive_inspect",
+        "db.gc_archive_list",
+        "db.gc_audit_get",
+        "db.gc_audit_list",
+        "db.gc_purge",
+        "db.gc_restore",
+        "db.gc_retention",
+        "db.gc_status",
+        "db.get_gc_policy",
+        "db.set_gc_policy"
+      ],
+      "lines": [
+        6871,
+        6890,
+        6904,
+        6932,
+        6945,
+        6947,
+        6959,
+        7043,
+        7065,
+        7098,
+        7132,
+        7183
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_gc_handlers.rs::handle_gc_archive",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.gc_archive_import]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.gc_archive_inspect]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.gc_archive_list]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.gc_audit_get]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.gc_audit_list]",
+        "rust_ext/src/daemon/cli_handle_gc_handlers.rs::handle_gc_purge",
+        "rust_ext/src/daemon/cli_handle_gc_handlers.rs::handle_gc_restore",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=admin.gc_retention]",
+        "rust_ext/src/daemon/cli_handle_gc_handlers.rs::handle_gc_status",
+        "rust_ext/src/daemon/cli_handle_gc_handlers.rs::handle_get_gc_policy",
+        "rust_ext/src/daemon/cli_handle_gc_handlers.rs::handle_set_gc_policy"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-036",
+      "command": "cw git",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_git",
+      "direct_calls": [
+        "db.check_force_push",
+        "db.get_active_task",
+        "db.get_commit_changes",
+        "db.get_commit_tasks",
+        "db.get_git_commits",
+        "db.get_git_stats",
+        "db.import_git_history",
+        "db.list_destructive_operations",
+        "db.log_destructive_operation",
+        "db.task_status"
+      ],
+      "lines": [
+        10173,
+        10185,
+        10199,
+        10223,
+        10245,
+        10264,
+        10274,
+        10300,
+        10308,
+        10314,
+        10370,
+        10376,
+        10399
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_git_handlers.rs::handle_check_force_push",
+        "rust_ext/src/daemon/cli_handle_git_handlers.rs::handle_get_active_task",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.git_commit_changes]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.commit_tasks]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.git_commits]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.git_stats]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.job_submit]",
+        "rust_ext/src/daemon/cli_handle_git_handlers.rs::handle_list_destructive_operations",
+        "rust_ext/src/daemon/cli_handle_git_handlers.rs::handle_log_destructive_operation",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.status]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-037",
+      "command": "cw grep",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_grep",
+      "direct_calls": [
+        "db.find_symbols_at_lines"
+      ],
+      "lines": [
+        8886
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_grep_handlers.rs::handle_find_symbols_at_lines"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-038",
+      "command": "cw guardrail",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_guardrail",
+      "direct_calls": [
+        "db.guardrail_list_rules",
+        "db.scan_guardrails"
+      ],
+      "lines": [
+        2966,
+        2969,
+        3004
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_guardrail_list_rules (由 MCP-037 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/cli_handle_guardrail_handlers.rs::handle_scan_guardrails"
+      ],
+      "mcp_dependencies": [
+        "MCP-037"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-039",
+      "command": "cw health-report",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_health_report",
+      "direct_calls": [
+        "db.get_semgrep_stats",
+        "db.get_stats",
+        "db.get_token_savings_report",
+        "db.hotspot_evolution"
+      ],
+      "lines": [
+        8209,
+        8216,
+        8223,
+        8232
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.semgrep_stats]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.stats]",
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_get_token_savings_report (由 MCP-040 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_hotspot_evolution (由 MCP-046 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-040",
+        "MCP-046"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-040",
+      "command": "cw hotspot",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_hotspot",
+      "direct_calls": [
+        "db.hotspot_evolution"
+      ],
+      "lines": [
+        3317
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_hotspot_evolution (由 MCP-046 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-046"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-041",
+      "command": "cw impact",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_impact",
+      "direct_calls": [
+        "db.blast_radius"
+      ],
+      "lines": [
+        3053
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_blast_radius (由 MCP-038 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-038"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-042",
+      "command": "cw issues",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_issues",
+      "direct_calls": [
+        "db.get_symbol_issues"
+      ],
+      "lines": [
+        8953
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.issues]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-043",
+      "command": "cw largest-fns",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_largest_fns",
+      "direct_calls": [
+        "db.get_largest_functions"
+      ],
+      "lines": [
+        10015
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.largest_functions]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-044",
+      "command": "cw lease",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_lease",
+      "direct_calls": [
+        "db.acquire_lease",
+        "db.get_lease_status",
+        "db.list_lease_events",
+        "db.release_lease",
+        "db.renew_lease"
+      ],
+      "lines": [
+        16218,
+        16228,
+        16253,
+        16280,
+        16302
+      ],
+      "port_type": "assignment_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_lease_handlers.rs::handle_acquire_lease",
+        "rust_ext/src/daemon/cli_handle_lease_handlers.rs::handle_get_lease_status",
+        "rust_ext/src/daemon/cli_handle_lease_handlers.rs::handle_list_lease_events",
+        "rust_ext/src/daemon/cli_handle_lease_handlers.rs::handle_release_lease",
+        "rust_ext/src/daemon/cli_handle_lease_handlers.rs::handle_renew_lease"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-045",
+      "command": "cw map",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_map",
+      "direct_calls": [
+        "db.repo_map"
+      ],
+      "lines": [
+        10930
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_repo_map (由 MCP-031 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-031"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-046",
+      "command": "cw metrics",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_metrics",
+      "direct_calls": [
+        "db.get_code_metrics_summary"
+      ],
+      "lines": [
+        9730
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.metrics_summary]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-047",
+      "command": "cw ownership-map",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_ownership_map",
+      "direct_calls": [
+        "db.get_ownership_map"
+      ],
+      "lines": [
+        10852
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_get_ownership_map (由 MCP-034 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-034"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-048",
+      "command": "cw query",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_query",
+      "direct_calls": [
+        "db.get_symbol_location"
+      ],
+      "lines": [
+        9330
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol_location]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-049",
+      "command": "cw refresh",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_refresh",
+      "direct_calls": [
+        "db.build_full_graph",
+        "db.refresh_file",
+        "db.rule_sync_agents_md"
+      ],
+      "lines": [
+        8093,
+        8096,
+        8130
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_refresh_handlers.rs::handle_build_full_graph",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.file.refresh_file]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.sync_agents_md]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-050",
+      "command": "cw review",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_review",
+      "direct_calls": [
+        "db.review_readiness_report"
+      ],
+      "lines": [
+        3116
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_review_handlers.rs::handle_review_readiness_report"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-051",
+      "command": "cw rollback",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rollback",
+      "direct_calls": [
+        "db.get_rollback_config",
+        "db.is_feature_rolled_back",
+        "db.list_rollback_configs",
+        "db.register_rollback_config",
+        "db.set_rollback_flag"
+      ],
+      "lines": [
+        11204,
+        11224,
+        11244,
+        11258,
+        11271
+      ],
+      "port_type": "task_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/rollback_handlers.rs::handle_register_rollback_config / handle_rollback_query / handle_set_rollback_flag",
+        "rust_ext/src/daemon/cli_handle_rollback_handlers.rs::handle_is_feature_rolled_back"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-052",
+      "command": "cw rule-applicable",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_applicable",
+      "direct_calls": [
+        "db.get_applicable_rules"
+      ],
+      "lines": [
+        2550
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/security_query_handlers.rs::handle_get_applicable_rules (由 MCP-062 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-062"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-053",
+      "command": "cw rule-candidate",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_candidate",
+      "direct_calls": [
+        "db.rule_candidate_accept",
+        "db.rule_candidate_create",
+        "db.rule_candidate_list",
+        "db.rule_candidate_reject"
+      ],
+      "lines": [
+        2466,
+        2483,
+        2502,
+        2514
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.candidate_accept]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.candidate_create]",
+        "rust_ext/src/daemon/security_query_handlers.rs::handle_rule_candidate_list (由 MCP-060 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.candidate_reject]"
+      ],
+      "mcp_dependencies": [
+        "MCP-060"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-054",
+      "command": "cw rule-cleanup-sync-log",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_cleanup_sync_log",
+      "direct_calls": [
+        "db.cleanup_sync_log"
+      ],
+      "lines": [
+        2693
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_rule_cleanup_sync_log_handlers.rs::handle_cleanup_sync_log"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-055",
+      "command": "cw rule-extract",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_extract",
+      "direct_calls": [
+        "db.extract_rule_candidates_from_quality_findings"
+      ],
+      "lines": [
+        2621
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.extract_candidates]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-056",
+      "command": "cw rule-insert-block",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_insert_block",
+      "direct_calls": [
+        "db.rule_insert_agents_md_block"
+      ],
+      "lines": [
+        2608
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.insert_agents_md_block]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-057",
+      "command": "cw rule-list",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_list",
+      "direct_calls": [
+        "db.rule_list"
+      ],
+      "lines": [
+        2528
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/security_query_handlers.rs::handle_rule_list (由 MCP-061 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-061"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-058",
+      "command": "cw rule-seed-bootstrap",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_seed_bootstrap",
+      "direct_calls": [
+        "db.rule_seed_bootstrap"
+      ],
+      "lines": [
+        2647
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.seed_bootstrap]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-059",
+      "command": "cw rule-sync",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_rule_sync",
+      "direct_calls": [
+        "db.rule_sync_agents_md"
+      ],
+      "lines": [
+        2567
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.sync_agents_md]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-060",
+      "command": "cw search",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_search",
+      "direct_calls": [
+        "db.search_symbols"
+      ],
+      "lines": [
+        8706
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.search]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-061",
+      "command": "cw semgrep",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_semgrep",
+      "direct_calls": [
+        "db.get_semgrep_findings",
+        "db.get_semgrep_stats",
+        "db.get_semgrep_summary",
+        "db.run_semgrep",
+        "db.run_semgrep_and_save",
+        "db.scan_semgrep_incremental"
+      ],
+      "lines": [
+        10501,
+        10519,
+        10536,
+        10573,
+        10623,
+        10663
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.semgrep_findings]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.semgrep_stats]",
+        "rust_ext/src/daemon/cli_handle_semgrep_handlers.rs::handle_get_semgrep_summary",
+        "rust_ext/src/daemon/cli_handle_semgrep_handlers.rs::handle_run_semgrep",
+        "rust_ext/src/daemon/cli_handle_semgrep_handlers.rs::handle_run_semgrep_and_save",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.job_submit]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-062",
+      "command": "cw stats",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_stats",
+      "direct_calls": [
+        "db.get_stats"
+      ],
+      "lines": [
+        8173
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.stats]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-063",
+      "command": "cw status",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_status",
+      "direct_calls": [
+        "db.get_status"
+      ],
+      "lines": [
+        8591
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.status]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-064",
+      "command": "cw symbol",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_symbol",
+      "direct_calls": [
+        "db.get_symbol"
+      ],
+      "lines": [
+        9213
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-065",
+      "command": "cw symbol-history",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_symbol_history",
+      "direct_calls": [
+        "db.get_symbol_change_tasks",
+        "db.get_symbol_commit_history"
+      ],
+      "lines": [
+        6558,
+        6595
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/task_read_handlers.rs::handle_get_symbol_change_tasks (由 MCP-063 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/semantic_query_handlers.rs::handle_get_symbol_commit_history (由 MCP-026 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-063",
+        "MCP-026"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-066",
+      "command": "cw test-impact",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_test_impact",
+      "direct_calls": [
+        "db.test_impact_selection"
+      ],
+      "lines": [
+        6714
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_test_impact_selection (由 MCP-032 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-032"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-067",
+      "command": "cw tests",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_tests",
+      "direct_calls": [
+        "db.build_test_relations",
+        "db.get_test_cases",
+        "db.get_test_stability",
+        "db.get_tested_functions",
+        "db.import_test_results"
+      ],
+      "lines": [
+        9057,
+        9079,
+        9119,
+        9135,
+        9158
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_handle_tests_handlers.rs::handle_build_test_relations",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.tests]",
+        "rust_ext/src/daemon/cli_handle_tests_handlers.rs::handle_import_test_results"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-068",
+      "command": "cw topo",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_topo",
+      "direct_calls": [
+        "db.get_topological_order"
+      ],
+      "lines": [
+        9448
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.topological_order]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-069",
+      "command": "cw uncommented",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_uncommented",
+      "direct_calls": [
+        "db.get_uncommented_symbols"
+      ],
+      "lines": [
+        9904
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.uncommented_symbols]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-070",
+      "command": "cw vuln-blast",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_vuln_blast",
+      "direct_calls": [
+        "db.get_vulnerability_blast_radius"
+      ],
+      "lines": [
+        6460
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_get_vulnerability_blast_radius (由 MCP-041 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-041"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-071",
+      "command": "cw who",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_who",
+      "direct_calls": [
+        "db.who_to_ask"
+      ],
+      "lines": [
+        10816
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_who_to_ask (由 MCP-033 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-033"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-072",
+      "command": "cw workspace",
+      "python_file": "cli/main.py",
+      "python_handler": "_handle_workspace",
+      "direct_calls": [
+        "db.delete_workspace",
+        "db.get_active_workspace",
+        "db.list_workspaces",
+        "db.register_workspace",
+        "db.set_active_workspace"
+      ],
+      "lines": [
+        7937,
+        7951,
+        7959,
+        7961,
+        7963,
+        7974,
+        7976,
+        8011
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.remove]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.status]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.list]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.register]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.activate]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-073",
+      "command": "cw identity-revoke",
+      "python_file": "cli/main.py",
+      "python_handler": "_identity_revoke",
+      "direct_calls": [
+        "db.get_active_workspace"
+      ],
+      "lines": [
+        15941
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.status]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-074",
+      "command": "cw local",
+      "python_file": "cli/main.py",
+      "python_handler": "_local",
+      "direct_calls": [
+        "db.task_has_blocking_findings"
+      ],
+      "lines": [
+        3726
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_local_handlers.rs::handle_task_has_blocking_findings"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-075",
+      "command": "cw local-apply",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_apply",
+      "direct_calls": [
+        "db.task_apply"
+      ],
+      "lines": [
+        4743
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.apply]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-076",
+      "command": "cw local-capture-auto",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_capture_auto",
+      "direct_calls": [
+        "db.task_capture_diff_auto"
+      ],
+      "lines": [
+        4893
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_local_capture_auto_handlers.rs::handle_task_capture_diff_auto"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-077",
+      "command": "cw local-capture-manual",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_capture_manual",
+      "direct_calls": [
+        "db.task_capture_diff"
+      ],
+      "lines": [
+        4993
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.capture_diff]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-078",
+      "command": "cw local-changes",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_changes",
+      "direct_calls": [
+        "db.get_task_symbol_changes"
+      ],
+      "lines": [
+        5809
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.get_symbol_changes]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-079",
+      "command": "cw local-close",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_close",
+      "direct_calls": [
+        "db.task_close"
+      ],
+      "lines": [
+        4801
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.close]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-080",
+      "command": "cw local-commits",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_commits",
+      "direct_calls": [
+        "db.get_task_commits"
+      ],
+      "lines": [
+        5793
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.get_commits]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-081",
+      "command": "cw local-completion-review",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_completion_review",
+      "direct_calls": [
+        "db.run_task_completion_review"
+      ],
+      "lines": [
+        5270
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_local_completion_review_handlers.rs::handle_run_task_completion_review"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-082",
+      "command": "cw local-create",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_create",
+      "direct_calls": [
+        "db.task_create"
+      ],
+      "lines": [
+        4229
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.create]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-083",
+      "command": "cw local-findings",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_findings",
+      "direct_calls": [
+        "db.get_task_quality_findings"
+      ],
+      "lines": [
+        5073
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_local_findings_handlers.rs::handle_get_task_quality_findings"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-084",
+      "command": "cw local-next",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_next",
+      "direct_calls": [
+        "db.task_next_step"
+      ],
+      "lines": [
+        4255
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.claim]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-085",
+      "command": "cw local-reopen",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_reopen",
+      "direct_calls": [
+        "db.task_reopen"
+      ],
+      "lines": [
+        4857
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_local_reopen_handlers.rs::handle_task_reopen"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-086",
+      "command": "cw local-report",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_report",
+      "direct_calls": [
+        "db.task_report_step"
+      ],
+      "lines": [
+        4487
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.report]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-087",
+      "command": "cw local-resolve-finding",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_resolve_finding",
+      "direct_calls": [
+        "db.resolve_task_quality_finding"
+      ],
+      "lines": [
+        5114
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_local_resolve_finding_handlers.rs::handle_resolve_task_quality_finding"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-088",
+      "command": "cw local-rollback",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_rollback",
+      "direct_calls": [
+        "db.task_rollback",
+        "db.task_rollback_step"
+      ],
+      "lines": [
+        4677,
+        4678
+      ],
+      "port_type": "task_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.rollback]",
+        "rust_ext/src/daemon/rollback_handlers.rs::handle_register_rollback_config / handle_rollback_query / handle_set_rollback_flag"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-089",
+      "command": "cw local-split",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_split",
+      "direct_calls": [
+        "db.task_split"
+      ],
+      "lines": [
+        5347
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.split]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-090",
+      "command": "cw local-status",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_status",
+      "direct_calls": [
+        "db.task_status"
+      ],
+      "lines": [
+        5749
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.status]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-091",
+      "command": "cw local-task-exists",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_task_exists",
+      "direct_calls": [
+        "db.task_status"
+      ],
+      "lines": [
+        5329
+      ],
+      "port_type": "task_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.status]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-092",
+      "command": "cw local-task-list",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_task_list",
+      "direct_calls": [
+        "db.task_list"
+      ],
+      "lines": [
+        5149
+      ],
+      "port_type": "task_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.list]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-093",
+      "command": "cw local-tree",
+      "python_file": "cli/main.py",
+      "python_handler": "_local_tree",
+      "direct_calls": [
+        "db.task_status_tree"
+      ],
+      "lines": [
+        5764
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.status_tree]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-094",
+      "command": "cw internal lease-write",
+      "python_file": "cli/main.py",
+      "python_handler": "_route_lease_write",
+      "direct_calls": [
+        "UnixDaemonRpcClient"
+      ],
+      "lines": [
+        16095
+      ],
+      "port_type": "assignment_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc（HTTP transport 下的 ping/metrics/workspace/query/publish 已有或新增 method branch）"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-095",
+      "command": "cw run-subcommand-mode",
+      "python_file": "cli/main.py",
+      "python_handler": "_run_subcommand_mode",
+      "direct_calls": [
+        "db.close",
+        "db.list_workspaces",
+        "db.register_workspace",
+        "db.set_active_workspace"
+      ],
+      "lines": [
+        1458,
+        1463,
+        1464,
+        1466,
+        1476
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_run_subcommand_mode_handlers.rs::handle_close",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.list]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.register]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.activate]"
+      ],
+      "mcp_dependencies": [],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    },
+    {
+      "card_key": "CLI-096",
+      "command": "cw main",
+      "python_file": "cli/main.py",
+      "python_handler": "main",
+      "direct_calls": [
+        "db.build_full_graph",
+        "db.close",
+        "db.delete_workspace",
+        "db.detect_cycles",
+        "db.embed_all_symbols",
+        "db.export_module_graph",
+        "db.find_similar_functions",
+        "db.find_uncovered_functions",
+        "db.get_active_workspace",
+        "db.get_call_chain_down",
+        "db.get_call_chain_up",
+        "db.get_call_heatmap",
+        "db.get_callees",
+        "db.get_callers",
+        "db.get_code_metrics_summary",
+        "db.get_comment_coverage",
+        "db.get_commit_changes",
+        "db.get_complexity_hotspots",
+        "db.get_coupling_analysis",
+        "db.get_coverage_for_symbol",
+        "db.get_deepest_functions",
+        "db.get_file_symbols",
+        "db.get_function_issues",
+        "db.get_function_metrics",
+        "db.get_git_commits",
+        "db.get_git_stats",
+        "db.get_history",
+        "db.get_issue_summary",
+        "db.get_largest_functions",
+        "db.get_module_call_stats",
+        "db.get_most_coupled_functions",
+        "db.get_orphan_symbols",
+        "db.get_ownership_map",
+        "db.get_recent_changes",
+        "db.get_semgrep_findings",
+        "db.get_semgrep_stats",
+        "db.get_semgrep_summary",
+        "db.get_stats",
+        "db.get_status",
+        "db.get_symbol",
+        "db.get_symbol_content_by_hash",
+        "db.get_symbol_location",
+        "db.get_test_coverage",
+        "db.get_top_callers",
+        "db.get_topological_order",
+        "db.get_uncommented_symbols",
+        "db.import_cobertura",
+        "db.import_git_history",
+        "db.import_lcov",
+        "db.list_workspaces",
+        "db.project_brief",
+        "db.refresh_file",
+        "db.register_workspace",
+        "db.repo_map",
+        "db.restore_all_comments",
+        "db.restore_comment",
+        "db.rule_sync_agents_md",
+        "db.run_semgrep",
+        "db.run_semgrep_and_save",
+        "db.search_symbols",
+        "db.semantic_search",
+        "db.set_active_workspace",
+        "db.who_to_ask"
+      ],
+      "lines": [
+        11902,
+        11917,
+        11927,
+        11929,
+        11931,
+        11943,
+        11945,
+        11957,
+        11960,
+        11991,
+        11995,
+        12092,
+        12099,
+        12109,
+        12121,
+        12128,
+        12146,
+        12168,
+        12183,
+        12194,
+        12195,
+        12226,
+        12275,
+        12302,
+        12334,
+        12389,
+        12416,
+        12440,
+        12498,
+        12519,
+        12543,
+        12570,
+        12600,
+        12620,
+        12639,
+        12672,
+        12691,
+        12729,
+        12776,
+        12836,
+        12916,
+        12935,
+        12982,
+        13039,
+        13084,
+        13126,
+        13138,
+        13151,
+        13177,
+        13198,
+        13227,
+        13253,
+        13277,
+        13293,
+        13310,
+        13344,
+        13365,
+        13379,
+        13415,
+        13448,
+        13466,
+        13468,
+        13485,
+        13511,
+        13528,
+        13553,
+        13579
+      ],
+      "port_type": "cli_command_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_build_full_graph",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_close",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.remove]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.detect_cycles]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_embed_all_symbols",
+        "rust_ext/src/daemon/query_compat_handlers.rs::handle_export_module_graph (由 MCP-023 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/semantic_query_handlers.rs::handle_find_similar_functions (由 MCP-025 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=find_uncovered_functions]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.status]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.call_chain_down]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_get_call_chain_up",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=get_call_heatmap]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.callees]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.callers]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.metrics_summary]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=get_comment_coverage]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.git_commit_changes]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.complexity_hotspots]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.coupling_analysis]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.coverage_for_symbol]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=get_deepest_functions]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.file]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_get_function_issues",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.function_metrics]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.git_commits]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.git_stats]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_get_history",
+        "rust_ext/src/daemon/query_compat_handlers.rs::handle_get_issue_summary (由 MCP-020 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.largest_functions]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.module_call_stats]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.most_coupled_functions]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=get_orphan_symbols]",
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_get_ownership_map (由 MCP-034 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/query_compat_handlers.rs::handle_get_recent_changes (由 MCP-017 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.semgrep_findings]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.semgrep_stats]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_get_semgrep_summary",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.stats]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.status]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol_content_by_hash]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.symbol_location]",
+        "rust_ext/src/daemon/query_compat_handlers.rs::handle_get_test_coverage (由 MCP-022 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=get_top_callers]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.topological_order]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.uncommented_symbols]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_import_cobertura",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=task.job_submit]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_import_lcov",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.list]",
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_project_brief (由 MCP-030 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.file.refresh_file]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.register]",
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_repo_map (由 MCP-031 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=edit.restore_all_comments]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=edit.restore_comment]",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=rule.sync_agents_md]",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_run_semgrep",
+        "rust_ext/src/daemon/cli_main_handlers.rs::handle_run_semgrep_and_save",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=query.search]",
+        "rust_ext/src/daemon/semantic_query_handlers.rs::handle_semantic_search (由 MCP-024 迁移后供本 CLI 调用)",
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc [method=workspace.activate]",
+        "rust_ext/src/daemon/summary_query_handlers.rs::handle_who_to_ask (由 MCP-033 迁移后供本 CLI 调用)"
+      ],
+      "mcp_dependencies": [
+        "MCP-023",
+        "MCP-025",
+        "MCP-020",
+        "MCP-034",
+        "MCP-017",
+        "MCP-022",
+        "MCP-030",
+        "MCP-031",
+        "MCP-024",
+        "MCP-033"
+      ],
+      "gate": false,
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若 mcp_dependencies 非空，所有列出的 MCP 卡也必须 applied；若所属端口另有已 applied Gate，按该 Gate 领取。"
+    }
+  ]
+}

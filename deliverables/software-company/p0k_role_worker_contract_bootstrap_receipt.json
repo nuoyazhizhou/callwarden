@@ -1,0 +1,44 @@
+{
+  "endpoint": "http://127.0.0.1:1219",
+  "task_id": "T-1787407700109-f5562c60",
+  "identity_policy": "role_worker_v1",
+  "result": {
+    "ok": true,
+    "task_id": "T-1787407700109-f5562c60",
+    "workspace_id": 1,
+    "contract_id": "TC-T-1787407700109-f5562c60",
+    "contract_revision": 1,
+    "contract_hash": "sha256:0cf3e35f0595524289799445c343bc1958cf0692e9559126f7cb42393a0d48fd",
+    "role_contracts": [
+      {
+        "role": "executor",
+        "lineage_id": "rcl-T-1787407700109-f5562c60-executor",
+        "revision_id": "rcr-T-1787407700109-f5562c60-executor-r1",
+        "hash": "sha256:a08695bf9182c425590d0062ac3000bc695a0a49e6574a686417434cc07b48f1"
+      },
+      {
+        "role": "reviewer",
+        "lineage_id": "rcl-T-1787407700109-f5562c60-reviewer",
+        "revision_id": "rcr-T-1787407700109-f5562c60-reviewer-r1",
+        "hash": "sha256:ba0cc709f196917085146bd1d23319191728143148fcd42b5b591af7de31e138"
+      },
+      {
+        "role": "adjudicator",
+        "lineage_id": "rcl-T-1787407700109-f5562c60-adjudicator",
+        "revision_id": "rcr-T-1787407700109-f5562c60-adjudicator-r1",
+        "hash": "sha256:4dea3c8f27c9e6a0777b9dd5bf11a7d7a8018728b26f5cbb191ecc7984893d6c"
+      }
+    ],
+    "step_binding_ids": [
+      "sb-T-1787407700109-f5562c60-S-1787407700239-518d7c7c-r1",
+      "sb-T-1787407700109-f5562c60-S-1787407700239-518ea368-r1",
+      "sb-T-1787407700109-f5562c60-S-1787407700239-518f25e0-r1",
+      "sb-T-1787407700109-f5562c60-S-1787407700239-518fab78-r1"
+    ],
+    "request_id": "p0k-role-worker-bootstrap-dcf28c33-4e78-4a6b-840a-be5d6df199d5",
+    "evidence_path": "deliverables/software-company/p0k_role_worker_bootstrap_evidence.md",
+    "evidence_hash": "sha256:d0554e727ff7eccf2415377640a7bd27032ef060ea9cf4ee9d62a7871241a6c9",
+    "fencing_counter": 1,
+    "authoritative_timestamp": 1787407822.504745
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "task_id": "T-1787407700109-f5562c60",
+  "reported_step": "S-1787407700239-518ea368",
+  "test_step": "S-1787407700239-518f25e0",
+  "claim_status": "in_progress",
+  "authority_manifest": "http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+  "authority_pid_checked": true,
+  "health_status": "healthy",
+  "authority_schema_version": 58,
+  "authority_git_commit": "3f8a6d8028cdf5651eb57e4ea14792851ad28fc3"
+}

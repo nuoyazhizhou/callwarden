@@ -1,0 +1,57 @@
+浠诲姟璇︽儏
+--------------------------------------------------
+  ID: T-1787305268313-06fcef5c
+  鏍囬: P0-D锛欼mmutable Binding 涓?Workspace Capture Freshness 涓€鑷存€т慨澶?
+  鐘舵€? open
+  鎻忚堪: # P0-D锛欼mmutable Binding 涓?Workspace Capture Freshness 涓€鑷存€т慨澶?
+
+**鐖朵换鍔★細** `T-1787203926824-9f873bfc`  
+**浠诲姟绫诲瀷锛?* governance / 鐙珛淇浠诲姟  
+**闂锛?* `task.next_action::verify_capture` 鍚屾椂澹版槑 task binding 涓嶅彲鍙橈紝鍗磋姹傚叾 `workspace_capture_id` 蹇呴』绛変簬鍚?instance 鐨勫綋鍓?capture revision銆備换浣曞悓绋冲畾韬唤鐨?re-attestation 閮戒細鎺ㄨ繘 capture revision锛屼娇宸茬粦瀹氫换鍔″湪鏃犱换浣曡韩浠藉彉鍖栨椂姘镐箙琚鍒や负 `E_WORKSPACE_AUTHORITY_MISMATCH`銆?
+
+> 姝ｇ‘璇箟锛歚task_workspace_bindings.workspace_capture_id` 鏄换鍔″垱寤烘椂鐨?*涓嶅彲鍙?provenance snapshot**锛屼笉搴斿洜鍚屼竴绋冲畾 identity 鐨勫悗缁?capture revision 鑰岃 UPDATE銆傞獙璇佽€呭繀椤绘帴鍙楀悓涓€杩炵画 capture 閾句腑銆乺egistry identity 鍙噸绠椾笖涓庡綋鍓?revision identity 涓€鑷寸殑鍘嗗彶 capture锛涘彧鍦?binding capture 缂哄け銆侀摼涓嶈繛缁€亀orkspace/instance 涓嶄竴鑷淬€乮dentity 鏃犳硶閲嶇畻鎴栨渶鏂?capture 鐨?stable identity 涓?binding capture 涓嶅悓锛堣〃绀?authority identity 鍙樺寲锛夋椂 fail-closed銆?
+
+## 1. 鍏佽鑼冨洿
+
+| 鏂囦欢 | 淇敼鐩爣 |
+|---|---|
+| `rust_ext/src/daemon/task_loop/next_action.rs` | 淇 `verify_capture`锛氬垹闄も€渂inding capture 蹇呴』绛変簬 current capture ID鈥濈殑閿欒瑕佹眰锛屾敼涓?binding/current 涓ょ stable identity 鍚屼竴鎬ф牎楠岋紝淇濈暀鎵€鏈夌己澶?璺?workspace/instance/identity 閲嶇畻/閾炬柇瑁傛嫆缁濄€?|
+| `rust_ext/src/daemon/task_loop/next_action_test.rs` | 澧炲姞瑕嗙洊 historical binding capture锛坮evision n-1锛変笌 current capture锛坮evision n锛夊悓 identity 鏃跺彲娲惧彂銆乮dentity changed 鏃舵嫆缁濄€佹棫 capture 缂哄け鏃舵嫆缁濈殑娴嬭瘯銆?|
+
+## 2. 绂佹鑼冨洿
+
+涓嶅緱淇敼 `task_workspace_bindings` 鏃㈡湁琛岋紱涓嶅緱鏂板 rebind RPC锛涗笉寰椾慨鏀?capture/binding schema锛涗笉寰楀急鍖?identity hash 閲嶇畻鎴?workspace instance 瑙ｆ瀽锛涗笉寰楁敼 `task.contract_set`銆丳0-B legacy attestation銆乻upersede銆佹楠ゃ€佷换鍔＄姸鎬佹垨 Executor 韬唤銆?
+
+## 3. 楠屾敹
+
+1. 鍘嗗彶 binding capture 涓庡綋鍓?capture 澶勪簬鍚?workspace/instance銆佽繛缁摼銆佺浉鍚?`registry_identity_hash` 鏃讹紝`task.next_action` 鍙户缁繘鍏?Task Contract/step 闂ㄧ锛屼笉杩斿洖 authority mismatch銆?
+2. 鏈€鏂?capture identity 涓?binding capture identity 涓嶅悓锛屼粛杩斿洖 `E_WORKSPACE_AUTHORITY_MISMATCH`銆?
+3. binding capture 缂哄け銆乧apture 閾句笉杩炵画銆亀orkspace/instance mismatch銆侀噸绠?identity 涓嶄竴鑷翠粛 fail-closed銆?
+4. 鐩稿叧 Rust 鍗曞厓娴嬭瘯閫氳繃锛況elease runtime 鐨?`task.next_action` 鍙拡瀵?A鈥?鎭㈠浠诲姟瓒婅繃 authority freshness 闃舵锛堝悗缁嫢缂?Task Contract锛屽簲鍙姤鍛?Task Contract 闃绘柇锛夈€?
+
+## 4. Handoff
+
+```text
+Handoff:
+  from_role: executor
+  outcome: executor_ready_for_review
+  next_role: reviewer
+  next_action: 鐙珛楠岃瘉 P0-D 娌℃湁鏇存柊涓嶅彲鍙?binding锛屼笖浠呭厑璁?same-identity capture re-attestation锛屼笉浼氭妸鐪熸鐨?workspace identity 鍙樺寲闄嶇骇涓哄彲娲惧彂銆?
+  reason: capture revision 鏄?append-only provenance 璁板綍锛屼笉寰楀弽鍚戜娇鏃㈡湁 immutable binding 澶辨晥銆?
+  independence_requirement: required
+```
+
+  鍒涘缓鑰? S-1-5-21-1583625257-826939952-3615027596-1001
+  鍒涘缓鏃堕棿: 2026-08-21 17:41:08
+  杩涘害: 0/3 (0.0%)
+  姝ラ锛? 涓級:
+    #0 [pending] implement
+        鏂囦欢: rust_ext/src/daemon/task_loop/next_action.rs
+        绗﹀彿: verify_capture
+    #1 [pending] test
+        鏂囦欢: rust_ext/src/daemon/task_loop/next_action_test.rs
+        绗﹀彿: capture freshness tests
+    #2 [pending] release_verify
+        鏂囦欢: runtime/current
+        绗﹀彿: task.next_action authority proof
+

@@ -1,0 +1,505 @@
+{
+  "format": "cw.aprime.server-authority.v1",
+  "parent_id": "T-1787293451688-c14b1e44",
+  "source": "deliverables/software-company/server_authority_residue_audit.json",
+  "card_count": 19,
+  "cards": [
+    {
+      "card_key": "SRV-001",
+      "python_file": "server/_mcp_common.py",
+      "subsystem": " mcp common",
+      "handlers": [
+        "_get_db_path_for_daemon"
+      ],
+      "calls": [
+        "get_db"
+      ],
+      "lines": [
+        50
+      ],
+      "port_type": "service_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/_mcp_common_handlers.rs::handle_get_db_path_for_daemon"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-002",
+      "python_file": "server/audit_log.py",
+      "subsystem": "audit log",
+      "handlers": [
+        "_get_conn",
+        "_init_db"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        239,
+        246
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/audit_log_handlers.rs::handle_get_conn",
+        "rust_ext/src/daemon/audit_log_handlers.rs::handle_init_db"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-003",
+      "python_file": "server/backup_restore.py",
+      "subsystem": "backup restore",
+      "handlers": [
+        "_backup_file",
+        "_is_rust_backup_rolled_back"
+      ],
+      "calls": [
+        "_sqlite3.connect",
+        "sqlite3.connect"
+      ],
+      "lines": [
+        104,
+        485,
+        486
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/backup_restore_handlers.rs::handle_backup_file",
+        "rust_ext/src/daemon/backup_restore_handlers.rs::handle_is_rust_backup_rolled_back"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-004",
+      "python_file": "server/cli_admin.py",
+      "subsystem": "cli admin",
+      "handlers": [
+        "connection_test",
+        "open_readonly_conn",
+        "read_pragmas",
+        "read_task_dependencies",
+        "scan_hash_databases"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        37,
+        65,
+        99,
+        147,
+        211
+      ],
+      "port_type": "service_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/cli_admin_handlers.rs::handle_connection_test",
+        "rust_ext/src/daemon/cli_admin_handlers.rs::handle_open_readonly_conn",
+        "rust_ext/src/daemon/cli_admin_handlers.rs::handle_read_pragmas",
+        "rust_ext/src/daemon/cli_admin_handlers.rs::handle_read_task_dependencies",
+        "rust_ext/src/daemon/cli_admin_handlers.rs::handle_scan_hash_databases"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-005",
+      "python_file": "server/daemon_autostart.py",
+      "subsystem": "daemon autostart",
+      "handlers": [
+        "_try_connect_tcp",
+        "_try_connect_unix",
+        "try_http_connect"
+      ],
+      "calls": [
+        "sock.connect"
+      ],
+      "lines": [
+        223,
+        245,
+        989
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/daemon_autostart_handlers.rs::handle_try_connect_tcp",
+        "rust_ext/src/daemon/daemon_autostart_handlers.rs::handle_try_connect_unix",
+        "rust_ext/src/daemon/daemon_autostart_handlers.rs::handle_try_http_connect"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-006",
+      "python_file": "server/daemon_client.py",
+      "subsystem": "daemon client",
+      "handlers": [
+        "_get_db",
+        "_inject_workspace_id",
+        "_sql_fallback_detect_cycles",
+        "_sql_fallback_get_call_chain_down",
+        "_sql_fallback_get_callees",
+        "_sql_fallback_get_callers",
+        "_sql_fallback_get_stats",
+        "_sql_fallback_get_symbol",
+        "_sql_fallback_get_topological_order",
+        "_sql_fallback_search_symbols",
+        "call_with_fd",
+        "publish_snapshot"
+      ],
+      "calls": [
+        "conn.connect",
+        "db._get_active_workspace_id",
+        "db.detect_cycles",
+        "db.get_call_chain_down",
+        "db.get_callees",
+        "db.get_callers",
+        "db.get_stats",
+        "db.get_symbol",
+        "db.get_topological_order",
+        "db.search_symbols",
+        "get_db",
+        "sqlite3.connect"
+      ],
+      "lines": [
+        805,
+        839,
+        1735,
+        1739,
+        1743,
+        1747,
+        1751,
+        1755,
+        1759,
+        1763,
+        1771,
+        3256,
+        3257
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_get_db",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_inject_workspace_id",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_detect_cycles",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_get_call_chain_down",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_get_callees",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_get_callers",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_get_stats",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_get_symbol",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_get_topological_order",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_sql_fallback_search_symbols",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_call_with_fd",
+        "rust_ext/src/daemon/daemon_client_handlers.rs::handle_publish_snapshot"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-007",
+      "python_file": "server/daemon_protocol.py",
+      "subsystem": "daemon protocol",
+      "handlers": [
+        "_is_rust_protocol_rolled_back"
+      ],
+      "calls": [
+        "_sqlite3.connect"
+      ],
+      "lines": [
+        61
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/daemon_protocol_handlers.rs::handle_is_rust_protocol_rolled_back"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-008",
+      "python_file": "server/daemon_server.py",
+      "subsystem": "daemon server",
+      "handlers": [
+        "_get_workspace_resources",
+        "_is_rust_acl_rolled_back",
+        "_is_rust_health_rolled_back",
+        "_registry_conn",
+        "dispatch",
+        "get_registry_conn"
+      ],
+      "calls": [
+        "_sqlite3.connect",
+        "sqlite3.connect"
+      ],
+      "lines": [
+        109,
+        160,
+        300,
+        612,
+        622,
+        677,
+        1398
+      ],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/daemon_server_handlers.rs::handle_get_workspace_resources",
+        "rust_ext/src/daemon/daemon_server_handlers.rs::handle_is_rust_acl_rolled_back",
+        "rust_ext/src/daemon/daemon_server_handlers.rs::handle_is_rust_health_rolled_back",
+        "rust_ext/src/daemon/daemon_server_handlers.rs::handle_registry_conn",
+        "rust_ext/src/daemon/daemon_server_handlers.rs::handle_dispatch",
+        "rust_ext/src/daemon/daemon_server_handlers.rs::handle_get_registry_conn"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-009",
+      "python_file": "server/durable_staging.py",
+      "subsystem": "durable staging",
+      "handlers": [
+        "__init__"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        92
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/durable_staging_handlers.rs::handle_init"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-010",
+      "python_file": "server/health_check.py",
+      "subsystem": "health check",
+      "handlers": [
+        "_check_db_registry",
+        "_recover_cas_db",
+        "_recover_stale_jobs",
+        "_recover_workspace_registry"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        238,
+        437,
+        494,
+        528
+      ],
+      "port_type": "runtime_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/health_check_handlers.rs::handle_check_db_registry",
+        "rust_ext/src/daemon/health_check_handlers.rs::handle_recover_cas_db",
+        "rust_ext/src/daemon/health_check_handlers.rs::handle_recover_stale_jobs",
+        "rust_ext/src/daemon/health_check_handlers.rs::handle_recover_workspace_registry"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-011",
+      "python_file": "server/job_executor.py",
+      "subsystem": "job executor",
+      "handlers": [
+        "start"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        193
+      ],
+      "port_type": "runtime_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/job_executor_handlers.rs::handle_start"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-012",
+      "python_file": "server/metrics.py",
+      "subsystem": "metrics",
+      "handlers": [
+        "_is_rust_metrics_rolled_back"
+      ],
+      "calls": [
+        "_sqlite3.connect"
+      ],
+      "lines": [
+        71
+      ],
+      "port_type": "runtime_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/metrics_handlers.rs::handle_is_rust_metrics_rolled_back"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-013",
+      "python_file": "server/query_budget.py",
+      "subsystem": "query budget",
+      "handlers": [
+        "_is_rust_budget_rolled_back"
+      ],
+      "calls": [
+        "_sqlite3.connect"
+      ],
+      "lines": [
+        79
+      ],
+      "port_type": "runtime_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/query_budget_handlers.rs::handle_is_rust_budget_rolled_back"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-014",
+      "python_file": "server/replicator.py",
+      "subsystem": "replicator",
+      "handlers": [
+        "_is_rust_cas_write_rolled_back",
+        "_is_rust_replicator_query_rolled_back",
+        "daemon_handle_refresh"
+      ],
+      "calls": [
+        "_sqlite3.connect",
+        "sqlite3.connect"
+      ],
+      "lines": [
+        81,
+        111,
+        675
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/replicator_handlers.rs::handle_is_rust_cas_write_rolled_back",
+        "rust_ext/src/daemon/replicator_handlers.rs::handle_is_rust_replicator_query_rolled_back",
+        "rust_ext/src/daemon/replicator_handlers.rs::handle_daemon_handle_refresh"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-015",
+      "python_file": "server/schema_migrator.py",
+      "subsystem": "schema migrator",
+      "handlers": [
+        "apply_migrations",
+        "get_current_version",
+        "get_migration_history",
+        "validate_schema"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        169,
+        196,
+        235,
+        302
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/schema_migrator_handlers.rs::handle_apply_migrations",
+        "rust_ext/src/daemon/schema_migrator_handlers.rs::handle_get_current_version",
+        "rust_ext/src/daemon/schema_migrator_handlers.rs::handle_get_migration_history",
+        "rust_ext/src/daemon/schema_migrator_handlers.rs::handle_validate_schema"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-016",
+      "python_file": "server/snapshot_gc.py",
+      "subsystem": "snapshot gc",
+      "handlers": [
+        "_delete_backup_history_record",
+        "_delete_expired_audit_logs",
+        "_delete_migration_log_record",
+        "_get_registered_snapshot_ids",
+        "_scan_expired_audit_logs",
+        "_scan_expired_backup_history",
+        "_scan_expired_migrations_log",
+        "_scan_orphaned_workspaces",
+        "_vacuum_databases"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        218,
+        272,
+        326,
+        365,
+        401,
+        477,
+        487,
+        499,
+        515
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_delete_backup_history_record",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_delete_expired_audit_logs",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_delete_migration_log_record",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_get_registered_snapshot_ids",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_scan_expired_audit_logs",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_scan_expired_backup_history",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_scan_expired_migrations_log",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_scan_orphaned_workspaces",
+        "rust_ext/src/daemon/snapshot_gc_handlers.rs::handle_vacuum_databases"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-017",
+      "python_file": "server/stage_toggle_migration.py",
+      "subsystem": "stage toggle migration",
+      "handlers": [
+        "migrate_p0_toggles"
+      ],
+      "calls": [
+        "sqlite3.connect"
+      ],
+      "lines": [
+        122
+      ],
+      "port_type": "service_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/stage_toggle_migration_handlers.rs::handle_migrate_p0_toggles"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-018",
+      "python_file": "server/staging_log.py",
+      "subsystem": "staging log",
+      "handlers": [
+        "_is_rust_staging_log_rolled_back"
+      ],
+      "calls": [
+        "_sqlite3.connect"
+      ],
+      "lines": [
+        53
+      ],
+      "port_type": "governance_projection",
+      "rust_targets": [
+        "rust_ext/src/daemon/staging_log_handlers.rs::handle_is_rust_staging_log_rolled_back"
+      ],
+      "execution_dependency": "CLI-01 applied；本卡预建不等于可领取。若依赖现有 daemon transport/authority card，则在其 applied 后领取。"
+    },
+    {
+      "card_key": "SRV-019",
+      "python_file": "repository-wide",
+      "subsystem": "Python authority zero-residue final gate",
+      "handlers": [
+        "final_zero_python_authority_audit"
+      ],
+      "calls": [
+        "AST/grep/negative runtime probes"
+      ],
+      "lines": [],
+      "port_type": "control_plane",
+      "rust_targets": [
+        "rust_ext/src/daemon/dispatch.rs::dispatch_rpc",
+        "rust_ext/src/daemon/http_server.rs::capability registry"
+      ],
+      "execution_dependency": "所有 SRV、CLI、MCP 与 INT 卡均 applied；本卡是最终 Gate，不得在此前声称 Python 已无业务 authority。"
+    }
+  ]
+}

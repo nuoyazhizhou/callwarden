@@ -1,0 +1,16 @@
+{
+  "transport": "http-daemon",
+  "endpoint": "http://127.0.0.1:3437",
+  "requested_task_id": "T-1787402257549-67ba81e6",
+  "result": {
+    "task_id": "T-1787402257549-67ba81e6",
+    "status": "open",
+    "title": "P0-J-D：受控运行时刷新 Task ID 兼容与部署归属修复",
+    "step_count": 3,
+    "contract_count": 3,
+    "monotonic_seq": 1786265396452,
+    "workspace_id": 1,
+    "workspace_binding_id": "tb-T-1787402257549-67ba81e6-ws-1",
+    "workspace_capture_id": "wc-ws-1-560658072"
+  }
+}

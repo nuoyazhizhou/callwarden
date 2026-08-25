@@ -1,0 +1,11 @@
+{
+  "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+  "lease": {
+    "lease_id": "L-5c31aa41d9b291e2",
+    "fencing_counter": 2,
+    "acquired_at": 1787403856.0,
+    "expires_at": 1787407456.0,
+    "role": "executor"
+  },
+  "role_session_handle": "cw-p0j-dispatch-recovery"
+}

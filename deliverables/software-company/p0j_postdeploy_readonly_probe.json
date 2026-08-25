@@ -1,0 +1,120 @@
+{
+  "endpoint": "http://127.0.0.1:8799",
+  "daemon_binary_sha256": "f7d33fb715fa767b3d7e203348447f042883e92cb351e155513f9edb038c2fa2",
+  "role_worker_status": {
+    "error_type": "DaemonRemoteError",
+    "message": "method_not_found: 未知方法: role_worker.status"
+  },
+  "p0j_contract": {
+    "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+    "contracts": [
+      {
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "role-worker-identity-v1",
+        "prompt_template_id": "cw.p0j.adjudicator.role-worker.v1",
+        "prompt_hash": "p0j-adjudicator-role-worker-v1",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/role_worker.rs\",\"rust_ext/src/daemon/task_loop/mod.rs\",\"rust_ext/src/daemon/task_collab.rs\",\"rust_ext/src/daemon/task_supersede.rs\",\"rust_ext/src/daemon/dispatch.rs\",\"rust_ext/src/sqlite_query.rs\",\"db/schema.py\",\"server/daemon_client.py\",\"cli/main.py\",\"cli/task_commands.py\",\"rust_ext/src/daemon/*test*.rs\",\"tests/test_role_worker_identity*.py\",\"deliverables/software-company/p0j_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation outside daemon migrations\",\"provider account token storage in task DB\",\"A′ migration task contract revisions\",\"task.apply\",\"task.close\"]",
+        "commands": "[\"verify reviewer evidence\",\"lease/fencing and role worker proofs\"]",
+        "acceptance_checks": "[\"apply/close only after independent PASS\",\"no historical identity overwrite\",\"no credential disclosure\"]",
+        "required_evidence": "[\"verdict\",\"runtime provenance audit\",\"final next_action COMPLETE\"]",
+        "handoff_to": "complete",
+        "independence": "{\"mode\":\"role_worker_separation_required\"}",
+        "revision": 1,
+        "contract_id": "RC-T-P0J-ROLE-WORKER-IDENTITY-adjudicator-2",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "executor",
+        "skill_id": "none",
+        "skill_version": "role-worker-identity-v1",
+        "prompt_template_id": "cw.p0j.executor.role-worker.v1",
+        "prompt_hash": "p0j-executor-role-worker-v1",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/role_worker.rs\",\"rust_ext/src/daemon/task_loop/mod.rs\",\"rust_ext/src/daemon/task_collab.rs\",\"rust_ext/src/daemon/task_supersede.rs\",\"rust_ext/src/daemon/dispatch.rs\",\"rust_ext/src/sqlite_query.rs\",\"db/schema.py\",\"server/daemon_client.py\",\"cli/main.py\",\"cli/task_commands.py\",\"rust_ext/src/daemon/*test*.rs\",\"tests/test_role_worker_identity*.py\",\"deliverables/software-company/p0j_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation outside daemon migrations\",\"provider account token storage in task DB\",\"A′ migration task contract revisions\",\"task.apply\",\"task.close\"]",
+        "commands": "[\"cargo test targeted role-worker\",\"Python HTTP round-trip\",\"CLI enrollment smoke\"]",
+        "acceptance_checks": "[\"authorization uses local role worker credential\",\"runtime changes append provenance only\",\"no local SQLite fallback\"]",
+        "required_evidence": "[\"migration evidence\",\"Rust tests\",\"HTTP/CLI probes\"]",
+        "handoff_to": "reviewer",
+        "independence": "{\"mode\":\"role_worker_separation_required\"}",
+        "revision": 1,
+        "contract_id": "RC-T-P0J-ROLE-WORKER-IDENTITY-executor-0",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "role-worker-identity-v1",
+        "prompt_template_id": "cw.p0j.reviewer.role-worker.v1",
+        "prompt_hash": "p0j-reviewer-role-worker-v1",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/role_worker.rs\",\"rust_ext/src/daemon/task_loop/mod.rs\",\"rust_ext/src/daemon/task_collab.rs\",\"rust_ext/src/daemon/task_supersede.rs\",\"rust_ext/src/daemon/dispatch.rs\",\"rust_ext/src/sqlite_query.rs\",\"db/schema.py\",\"server/daemon_client.py\",\"cli/main.py\",\"cli/task_commands.py\",\"rust_ext/src/daemon/*test*.rs\",\"tests/test_role_worker_identity*.py\",\"deliverables/software-company/p0j_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation outside daemon migrations\",\"provider account token storage in task DB\",\"A′ migration task contract revisions\",\"task.apply\",\"task.close\"]",
+        "commands": "[\"independent source review\",\"negative matrix replay\"]",
+        "acceptance_checks": "[\"no account/model binding reintroduced\",\"role separation is verifiable\",\"migration is append-only\"]",
+        "required_evidence": "[\"review report\",\"test output\",\"authority schema proof\"]",
+        "handoff_to": "adjudicator",
+        "independence": "{\"mode\":\"role_worker_separation_required\"}",
+        "revision": 1,
+        "contract_id": "RC-T-P0J-ROLE-WORKER-IDENTITY-reviewer-1",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      }
+    ]
+  },
+  "p0jd_contract": {
+    "task_id": "T-1787402257549-67ba81e6",
+    "contracts": [
+      {
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "deploy-governance-task-id-v1",
+        "prompt_template_id": "cw.deploy-governance.adjudicator.v1",
+        "prompt_hash": "deploy-governance-adjudicator-v1",
+        "allowed_paths": "[\"scripts/refresh_shared_runtime.ps1\",\"tests/test_refresh_shared_runtime_task_id.py\",\"deliverables/software-company/deploy_governance_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation\",\"manual runtime/current replacement\",\"manual cw-daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply\",\"task.close\",\"P0-J role worker source paths\",\"CLI-02/CLI-03/MCP-001 governance mutations\"]",
+        "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"PowerShell targeted task-id validation test\"]",
+        "acceptance_checks": "[\"actual opaque CW task IDs such as T-P0J-ROLE-WORKER-IDENTITY are accepted by the refresh gate\",\"legacy numeric task IDs remain accepted\",\"malformed values, path separators, whitespace, shell metacharacters and option-like task IDs remain rejected\",\"deployment attribution uses the exact accepted TaskId without substitution\",\"no runtime file is manually replaced and no direct SQLite write is performed\"]",
+        "required_evidence": "[\"targeted validation test output\",\"diff showing only allowed files\",\"controlled deployment receipt after independent review\"]",
+        "handoff_to": "complete",
+        "independence": "{\"mode\":\"legacy_identity_compatible_until_role_worker_v1_deployed\"}",
+        "revision": 1,
+        "contract_id": "RC-T-1787402257549-67ba81e6-adjudicator-2",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "executor",
+        "skill_id": "none",
+        "skill_version": "deploy-governance-task-id-v1",
+        "prompt_template_id": "cw.deploy-governance.executor.v1",
+        "prompt_hash": "deploy-governance-executor-v1",
+        "allowed_paths": "[\"scripts/refresh_shared_runtime.ps1\",\"tests/test_refresh_shared_runtime_task_id.py\",\"deliverables/software-company/deploy_governance_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation\",\"manual runtime/current replacement\",\"manual cw-daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply\",\"task.close\",\"P0-J role worker source paths\",\"CLI-02/CLI-03/MCP-001 governance mutations\"]",
+        "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"PowerShell targeted task-id validation test\"]",
+        "acceptance_checks": "[\"actual opaque CW task IDs such as T-P0J-ROLE-WORKER-IDENTITY are accepted by the refresh gate\",\"legacy numeric task IDs remain accepted\",\"malformed values, path separators, whitespace, shell metacharacters and option-like task IDs remain rejected\",\"deployment attribution uses the exact accepted TaskId without substitution\",\"no runtime file is manually replaced and no direct SQLite write is performed\"]",
+        "required_evidence": "[\"targeted validation test output\",\"diff showing only allowed files\",\"controlled deployment receipt after independent review\"]",
+        "handoff_to": "reviewer",
+        "independence": "{\"mode\":\"legacy_identity_compatible_until_role_worker_v1_deployed\"}",
+        "revision": 1,
+        "contract_id": "RC-T-1787402257549-67ba81e6-executor-0",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "deploy-governance-task-id-v1",
+        "prompt_template_id": "cw.deploy-governance.reviewer.v1",
+        "prompt_hash": "deploy-governance-reviewer-v1",
+        "allowed_paths": "[\"scripts/refresh_shared_runtime.ps1\",\"tests/test_refresh_shared_runtime_task_id.py\",\"deliverables/software-company/deploy_governance_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation\",\"manual runtime/current replacement\",\"manual cw-daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply\",\"task.close\",\"P0-J role worker source paths\",\"CLI-02/CLI-03/MCP-001 governance mutations\"]",
+        "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"PowerShell targeted task-id validation test\"]",
+        "acceptance_checks": "[\"actual opaque CW task IDs such as T-P0J-ROLE-WORKER-IDENTITY are accepted by the refresh gate\",\"legacy numeric task IDs remain accepted\",\"malformed values, path separators, whitespace, shell metacharacters and option-like task IDs remain rejected\",\"deployment attribution uses the exact accepted TaskId without substitution\",\"no runtime file is manually replaced and no direct SQLite write is performed\"]",
+        "required_evidence": "[\"targeted validation test output\",\"diff showing only allowed files\",\"controlled deployment receipt after independent review\"]",
+        "handoff_to": "adjudicator",
+        "independence": "{\"mode\":\"legacy_identity_compatible_until_role_worker_v1_deployed\"}",
+        "revision": 1,
+        "contract_id": "RC-T-1787402257549-67ba81e6-reviewer-1",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      }
+    ]
+  }
+}

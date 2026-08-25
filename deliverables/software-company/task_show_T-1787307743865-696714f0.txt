@@ -1,0 +1,47 @@
+浠诲姟璇︽儏
+--------------------------------------------------
+  ID: T-1787307743865-696714f0
+  鏍囬: P0-E锛欰djudicator / Reviewer lease delegation锛圓鈥?娌荤悊鏀跺熬鍓嶇疆锛?
+  鐘舵€? open
+  鎻忚堪: # P0-E锛欰djudicator 浣跨敤 Reviewer Lease 鐨勮法瑙掕壊濮旀墭鏍￠獙
+
+**鐖朵换鍔★細** `T-1787203926824-9f873bfc`  
+**浠诲姟绫诲瀷锛?* governance / 鐙珛淇浠诲姟  
+**鐩爣锛?* 淇褰撳墠 `validate_lease_for_mutation` 灏嗘墍鏈?lease holder 涓庤皟鐢ㄨ韩浠藉己鍒剁浉绛夛紝瀵艰嚧宸叉敞鍐屻€佺嫭绔嬬殑 Adjudicator 鏃犳硶鍦ㄦ寔鏈?Reviewer 宸茶幏鍙?lease token/fencing 鐨勫墠鎻愪笅瀹屾垚 `task.supersede`銆乣task.attest_legacy_workspace_binding`銆乣task.contract_bootstrap` 鐨勭煕鐩俱€?
+
+> **娌荤悊涓嶅彉閲忋€?* Reviewer 鍙栧緱 reviewer lease锛岃瘉鏄庡叾宸茬粡鐙珛瀹￠槄骞舵巿鏉冭娌荤悊绐楀彛锛汚djudicator 浠ヨ嚜韬湡瀹炪€佸凡娉ㄥ唽鐨?`role=adjudicator` identity 鎵ц鏈€缁?mutation銆傚洜姝わ紝Adjudicator 涓嶈兘浼鎴?Reviewer锛屼篃涓嶈兘鍜?Reviewer 浣跨敤鍚屼竴 `agent_id`銆乣agent_instance_id` 鎴?`session_id`銆傚彈淇濇姢娌荤悊鏂规硶蹇呴』鏍￠獙涓や汉鍒嗙锛岃€岄潪閿欒鍦拌姹?Adjudicator 绛変簬 Reviewer lease holder銆?
+
+## 1. 鏈€灏忓疄鐜拌寖鍥?
+
+| 灞?| 鏂囦欢 / 鍑芥暟 | 蹇呴』瀹炵幇 |
+|---|---|---|
+| Rust lease policy | `rust_ext/src/daemon/task_collab.rs` | 鏂板鏄庣‘鍛藉悕鐨?`validate_reviewer_lease_for_adjudication`锛屼繚鐣欑幇鏈?`validate_lease_for_mutation` 鐨勫悓涓€韬唤璇箟渚涙櫘閫?mutation 浣跨敤銆傛柊鏂规硶闇€鏍￠獙 active reviewer lease銆乼oken hash銆乪xpiry銆乫encing銆乴ease holder registered/active/reviewer role锛屼互鍙?holder 涓?adjudicator 鐨?agent/instance/session 涓夐噸鍒嗙銆?|
+| Rust governance 璋冪敤鐐?| `rust_ext/src/daemon/task_supersede.rs`銆乣rust_ext/src/daemon/task_collab.rs` | 浠呮浛鎹?`task.supersede`銆乣task.attest_legacy_workspace_binding`銆乣task.contract_bootstrap` 瀵?reviewer lease 鐨勯獙璇佽皟鐢ㄣ€傚叾浠?`task.apply`銆乣task.close`銆佹櫘閫?claim/report/handoff 缁濅笉鏀瑰彉銆?|
+| Test | `rust_ext/src/daemon/task_supersede.rs` 鎴栦笓灞炴不鐞嗘祴璇?| 瑕嗙洊锛氫笉鍚?registered reviewer/adjudicator 姝ｅ悜锛涘悓 agent銆佸悓 instance銆佸悓 session 閫愰」鎷掔粷锛沴ease holder 闈?reviewer/涓嶆椿璺冩嫆缁濓紱token/fencing/expiry 鎷掔粷锛涙櫘閫氬悓涓€韬唤 validation 淇濇寔鍘熻涔夈€?|
+| Release | `runtime/current` | release build銆乨aemon ping銆佷竴涓己鍑瘉 fail-closed probe锛涗笉寰椾互鐪熷疄浠诲姟鎵ц mutation 浣滀负 smoke銆?|
+
+## 2. 绂佹鑼冨洿
+
+涓嶅緱闄嶄綆 `task.supersede`銆丳0-B銆丳0-C 瀵瑰畬鏁?identity銆佽瘉鎹€亀orkspace authority銆乷peration ledger 鐨勮姹傦紱涓嶅緱璁?Adjudicator acquire/release Reviewer lease锛涗笉寰楄鐩栨棦鏈?reviewer verdict锛涗笉寰椾慨鏀?task 鐘舵€併€乥inding/capture銆乻chema 鎴栦娇鐢ㄧ洿鎺?SQLite 鍐欏叆锛涗笉寰楁敼鍔?Executor銆丷eviewer銆丄djudicator 涓変唤鍚姩妯℃澘鐨勮鑹茶竟鐣屻€?
+
+## 3. 鍚庣画鍙楁帶鐢ㄩ€?
+
+P0-E 缁忕嫭绔?Reviewer PASS 涓庣嫭绔?Adjudicator `ACCEPT 鈫?apply 鈫?close 鈫?COMPLETE` 鍚庯紝鎵嶅彲鐢辩湡瀹?Reviewer 鑾峰彇瀵瑰簲浠诲姟鐨?reviewer lease锛屽啀鐢辩嫭绔?Adjudicator 渚濇璋冪敤 P0-C `task.contract_bootstrap`锛圥0-B銆丄鈥?鎭㈠鐖朵换鍔★級銆丳0-B legacy attestation 鍜?P0-H `task.supersede`銆傛瘡姝ュ潎椤荤嫭绔?request ID 涓?evidence manifest/hash銆?
+
+  鍒涘缓鑰? S-1-5-21-1583625257-826939952-3615027596-1001
+  鍒涘缓鏃堕棿: 2026-08-21 18:22:23
+  杩涘害: 0/4 (0.0%)
+  姝ラ锛? 涓級:
+    #0 [pending] implement
+        鏂囦欢: rust_ext/src/daemon/task_collab.rs
+        绗﹀彿: validate_reviewer_lease_for_adjudication
+    #1 [pending] wire
+        鏂囦欢: rust_ext/src/daemon/task_supersede.rs; rust_ext/src/daemon/task_collab.rs
+        绗﹀彿: governance reviewer lease call sites
+    #2 [pending] test
+        鏂囦欢: rust_ext/src/daemon/*test*.rs; tests/
+        绗﹀彿: P0-E cross-role lease matrix
+    #3 [pending] release_verify
+        鏂囦欢: runtime/current
+        绗﹀彿: P0-E daemon round-trip
+

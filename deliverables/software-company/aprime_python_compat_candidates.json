@@ -1,0 +1,637 @@
+{
+  "source": "deliverables/software-company/tool_migration_matrix.json",
+  "source_generated_at": "2026-08-20T06:46:14",
+  "candidate_count": 70,
+  "candidates": [
+    {
+      "name": "find_evidence",
+      "module": "tools_collab",
+      "rpc_method": "find_evidence",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_freshness_status",
+      "module": "tools_collab",
+      "rpc_method": "get_freshness_status",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_gate_decision",
+      "module": "tools_collab",
+      "rpc_method": "get_gate_decision",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_role_view",
+      "module": "tools_collab",
+      "rpc_method": "get_role_view",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "detect_cycle",
+      "module": "tools_p2_graph",
+      "rpc_method": "detect_cycle",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_artifact_freshness",
+      "module": "tools_p2_graph",
+      "rpc_method": "get_artifact_freshness",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_dependency_edges",
+      "module": "tools_p2_graph",
+      "rpc_method": "get_dependency_edges",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_interface_providers",
+      "module": "tools_p2_graph",
+      "rpc_method": "get_interface_providers",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "validate_revision_dependencies",
+      "module": "tools_p2_graph",
+      "rpc_method": "validate_revision_dependencies",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "check_action_identity",
+      "module": "tools_p3_identity",
+      "rpc_method": "check_action_identity",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "check_session_separation",
+      "module": "tools_p3_identity",
+      "rpc_method": "check_session_separation",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_action_identity",
+      "module": "tools_p3_identity",
+      "rpc_method": "get_action_identity",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_attestation_validity",
+      "module": "tools_p3_identity",
+      "rpc_method": "get_attestation_validity",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "list_attestation_revocations",
+      "module": "tools_p3_identity",
+      "rpc_method": "list_attestation_revocations",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "assignment_show",
+      "module": "tools_p4_lease",
+      "rpc_method": "assignment_show",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "export_module_graph",
+      "module": "tools_query",
+      "rpc_method": "export_module_graph",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "find_issues",
+      "module": "tools_query",
+      "rpc_method": "find_issues",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_comment_from_version",
+      "module": "tools_query",
+      "rpc_method": "get_comment_from_version",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_impact",
+      "module": "tools_query",
+      "rpc_method": "get_impact",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_issue_summary",
+      "module": "tools_query",
+      "rpc_method": "get_issue_summary",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_recent_changes",
+      "module": "tools_query",
+      "rpc_method": "get_recent_changes",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_symbol_history",
+      "module": "tools_query",
+      "rpc_method": "get_symbol_history",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_test_coverage",
+      "module": "tools_query",
+      "rpc_method": "get_test_coverage",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "cross_repo_impact",
+      "module": "tools_security",
+      "rpc_method": "cross_repo_impact",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "cross_repo_summary",
+      "module": "tools_security",
+      "rpc_method": "cross_repo_summary",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "find_shared_symbols",
+      "module": "tools_security",
+      "rpc_method": "find_shared_symbols",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_applicable_rules",
+      "module": "tools_security",
+      "rpc_method": "get_applicable_rules",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_edit_history",
+      "module": "tools_security",
+      "rpc_method": "get_edit_history",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "list_branches",
+      "module": "tools_security",
+      "rpc_method": "list_branches",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "lsp_check_available",
+      "module": "tools_security",
+      "rpc_method": "lsp_check_available",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "lsp_completion",
+      "module": "tools_security",
+      "rpc_method": "lsp_completion",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "lsp_definition",
+      "module": "tools_security",
+      "rpc_method": "lsp_definition",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "lsp_diagnostics",
+      "module": "tools_security",
+      "rpc_method": "lsp_diagnostics",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "lsp_hover",
+      "module": "tools_security",
+      "rpc_method": "lsp_hover",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "lsp_references",
+      "module": "tools_security",
+      "rpc_method": "lsp_references",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "merge_preview",
+      "module": "tools_security",
+      "rpc_method": "merge_preview",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "rule_candidate_list",
+      "module": "tools_security",
+      "rpc_method": "rule_candidate_list",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "rule_list",
+      "module": "tools_security",
+      "rpc_method": "rule_list",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "find_similar_functions",
+      "module": "tools_semantic",
+      "rpc_method": "find_similar_functions",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_project_dependencies",
+      "module": "tools_semantic",
+      "rpc_method": "get_project_dependencies",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_symbol_commit_history",
+      "module": "tools_semantic",
+      "rpc_method": "get_symbol_commit_history",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "parse_codeowners",
+      "module": "tools_semantic",
+      "rpc_method": "parse_codeowners",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "semantic_search",
+      "module": "tools_semantic",
+      "rpc_method": "semantic_search",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "ask_codebase",
+      "module": "tools_summary",
+      "rpc_method": "ask_codebase",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "blast_radius",
+      "module": "tools_summary",
+      "rpc_method": "blast_radius",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "cross_layer_impact",
+      "module": "tools_summary",
+      "rpc_method": "cross_layer_impact",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "defect_learn",
+      "module": "tools_summary",
+      "rpc_method": "defect_learn",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "evolution_frequency",
+      "module": "tools_summary",
+      "rpc_method": "evolution_frequency",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_clone_aware_impact",
+      "module": "tools_summary",
+      "rpc_method": "get_clone_aware_impact",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_ownership_map",
+      "module": "tools_summary",
+      "rpc_method": "get_ownership_map",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_summary",
+      "module": "tools_summary",
+      "rpc_method": "get_summary",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_token_savings_report",
+      "module": "tools_summary",
+      "rpc_method": "get_token_savings_report",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_vulnerability_blast_radius",
+      "module": "tools_summary",
+      "rpc_method": "get_vulnerability_blast_radius",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "guardrail_check_edit",
+      "module": "tools_summary",
+      "rpc_method": "guardrail_check_edit",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "guardrail_list_rules",
+      "module": "tools_summary",
+      "rpc_method": "guardrail_list_rules",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "guardrail_scan",
+      "module": "tools_summary",
+      "rpc_method": "guardrail_scan",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "hotspot_evolution",
+      "module": "tools_summary",
+      "rpc_method": "hotspot_evolution",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "project_brief",
+      "module": "tools_summary",
+      "rpc_method": "project_brief",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "repo_map",
+      "module": "tools_summary",
+      "rpc_method": "repo_map",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "review_readiness",
+      "module": "tools_summary",
+      "rpc_method": "review_readiness",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "test_impact_selection",
+      "module": "tools_summary",
+      "rpc_method": "test_impact_selection",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "who_to_ask",
+      "module": "tools_summary",
+      "rpc_method": "who_to_ask",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "audit_verify_chain",
+      "module": "tools_task",
+      "rpc_method": "audit_verify_chain",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "bootstrap_status",
+      "module": "tools_task",
+      "rpc_method": "bootstrap_status",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_clone_group_detail",
+      "module": "tools_task",
+      "rpc_method": "get_clone_group_detail",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "get_symbol_change_tasks",
+      "module": "tools_task",
+      "rpc_method": "get_symbol_change_tasks",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "list_audit_signing_keys",
+      "module": "tools_task",
+      "rpc_method": "list_audit_signing_keys",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "list_clone_groups",
+      "module": "tools_task",
+      "rpc_method": "list_clone_groups",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "list_clones",
+      "module": "tools_task",
+      "rpc_method": "list_clones",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    },
+    {
+      "name": "task_plan_template",
+      "module": "tools_task",
+      "rpc_method": "task_plan_template",
+      "op_class": "READ_ONLY",
+      "batch": "P0-compat",
+      "status": "transition",
+      "target_backend": "python_compat"
+    }
+  ]
+}

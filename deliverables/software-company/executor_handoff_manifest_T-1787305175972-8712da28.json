@@ -1,0 +1,75 @@
+{
+  "manifest_version": "p0-executor-handoff/v1",
+  "task_id": "T-1787305175972-8712da28",
+  "task_name": "P0-C task contract bootstrap",
+  "executor_identity": {
+    "agent_id": "executor-manus-governance-v1",
+    "session_id": "manus-governance-reconciliation-20260821",
+    "model_id": "manus-agent",
+    "role": "executor"
+  },
+  "created_at": "2026-08-21T11:02:02.872463+00:00",
+  "summary": "Implemented daemon-native, append-only task.contract_bootstrap; atomically initializes Task Contract, role contract lineage/revisions and executor step bindings only where the complete governance projection is absent.",
+  "step_results": {
+    "implement": "Rust task-loop domain and daemon handler completed.",
+    "wire": "Protected dispatch and operation ledger registration completed.",
+    "adapt_client_cli": "daemon-only client wrapper and CLI command completed.",
+    "test": "Targeted Rust and Python/CLI validation completed.",
+    "release_verify": "Released before P0-E; later P0-E release includes this source baseline."
+  },
+  "test_results": [
+    "task_contract_bootstrap targeted library tests: 2 passed, 0 failed",
+    "CLI parser and Python module compile checks passed",
+    "runtime probe: empty request rejected as E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED"
+  ],
+  "runtime_ping_after_latest_release": {
+    "status": "ok",
+    "peer_uid": 4294967295,
+    "pid": 28008,
+    "authority_id": "unknown-host/windows/S-1-5-21-1583625257-826939952-3615027596-1001/ef281e4cf0f084c261a2aef0200fac6576da336cafd65fdd0fb006f0b04252d4",
+    "transport": "http",
+    "task_db_fingerprint": "ef281e4cf0f084c261a2aef0200fac6576da336cafd65fdd0fb006f0b04252d4",
+    "protocol_version": 1,
+    "timestamp": 1787310122.87211
+  },
+  "artifact_hashes": {
+    "rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs": {
+      "sha256": "1a3c08ca7fbb16fc3aef82a952e67b97c5597b3396136c59ef0e070a4b1ccbba",
+      "bytes": 14450
+    },
+    "rust_ext/src/daemon/task_loop/mod.rs": {
+      "sha256": "3bbfdb8b460f02dd78856aab6ed54362d961f4d1d4628e827832e27d2f7caf7e",
+      "bytes": 2238
+    },
+    "rust_ext/src/daemon/task_collab.rs": {
+      "sha256": "df380b84cb0f0d3182a72b0f4206583a890596f0277ab8e7f7492d273fb617c9",
+      "bytes": 471476
+    },
+    "rust_ext/src/daemon/dispatch.rs": {
+      "sha256": "1f7cff0035048603e0b1767ad866e9058c85873a4164d77ba05bef38c8b162ce",
+      "bytes": 116947
+    },
+    "rust_ext/src/daemon/task_loop/operation_store.rs": {
+      "sha256": "d4b28d268a5e70b090af6ec75c1afacc69edca0af8e14b4b51211173482a00c4",
+      "bytes": 36423
+    },
+    "server/daemon_client.py": {
+      "sha256": "9a8c2411f59f9a4602bdeba26807b412fd387ff2077238ad0532e293e95dd77a",
+      "bytes": 165227
+    },
+    "cli/main.py": {
+      "sha256": "0a449d6cbb6ec0a157353d02d10dc8c1aebb7e8fcd7090f1747ea95c6cb18c6c",
+      "bytes": 744288
+    },
+    "deliverables/software-company/p0c_task_contract_bootstrap_test.log": {
+      "sha256": "a86ba62bb8adef7912a60e35cd7d039248cc55775c47d6fdc973c4d877740c3a",
+      "bytes": 31145
+    },
+    "deliverables/software-company/p0c_runtime_probe.json": {
+      "sha256": "a7f5503760b221ec076af966d738f3bd4a33384d3904d887176d566d295e0f9a",
+      "bytes": 603
+    }
+  },
+  "missing_artifacts": [],
+  "reviewer_scope": "Read-only independent verification of source diffs, test logs, runtime probe/ping, release baseline and append-only/no-direct-SQL claims."
+}

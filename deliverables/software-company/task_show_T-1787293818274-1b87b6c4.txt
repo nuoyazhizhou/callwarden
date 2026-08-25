@@ -1,0 +1,88 @@
+浠诲姟璇︽儏
+--------------------------------------------------
+  ID: T-1787293818274-1b87b6c4
+  鏍囬: P0-B锛氬巻鍙蹭换鍔?workspace authority attestation / binding锛坰upersede 鍓嶇疆锛?
+  鐘舵€? open
+  鎻忚堪: # P0-B锛氬巻鍙蹭换鍔?workspace authority attestation / binding锛坰upersede 鍓嶇疆锛?
+
+**鐖朵换鍔★細** `T-1787203926824-9f873bfc`  
+**浠诲姟绫诲瀷锛?* governance / 鐙珛淇浠诲姟  
+**鍒涘缓瑙掕壊锛?* executor / planner  
+**瀹炴柦瑙掕壊锛?* executor / implementer  
+**鐙珛澶嶅锛?* reviewer / independent_reviewer  
+**鏈€缁堟敹灏撅細** adjudicator  
+**鐩爣宸ヤ綔鍖猴細** `workspace_id=1`銆乣workspace_instance_id=ws-1`
+
+> 鐩殑锛氫负鍘嗗彶涓婄敱鏃?Python 鐩村啓璺緞鍒涘缓銆佸洜鑰?*浠庢湭鎷ユ湁涓嶅彲鍙?`task_workspace_binding`** 鐨勪换鍔℃彁渚涗竴涓寮忋€乤ppend-only銆佸彲瀹¤銆佸箓绛夈€乫ail-closed 鐨?authority attestation/binding RPC銆傝鑳藉姏鍙敤浜庤В闄?`task.supersede` 鐨勫彲楠岃瘉鍓嶇疆鏉′欢锛涗笉寰楄鐩栦换浣曟棦鏈?binding銆佷换鍔＄姸鎬併€佹弿杩般€乿erdict銆乧lose 鏃堕棿鎴栧巻鍙蹭簨浠躲€?
+
+## 1. 闂浜嬪疄涓庤寖鍥?
+
+`task.supersede` 宸叉纭姹傝鏇夸唬浠诲姟涓?successor 閮芥嫢鏈夊悓涓€ workspace authority binding銆傚綋鍓?`T-1787203937201-0a156564`锛圫2-original锛変负 `open` 涓旀病鏈?`task_workspace_bindings` 琛岋紱A鈥?successor `T-1787293451688-c14b1e44` 鍜?S2-rebuilt 鍧囩粦瀹?`workspace_id=1 / ws-1`銆傚洜姝わ紝鐩存帴瀵?original 鍙戣捣 supersede 搴?fail-closed锛岃€岀洿鎺?SQLite 琛ュ啓 binding 浼氱粫杩?audit銆乮dentity銆乴ease/fencing 涓?operation ledger銆?
+
+鏈换鍔″彧瀹炵幇**鍘嗗彶鏃犵粦瀹氫换鍔＄殑琛ュ厖鎬?attestation**銆傚畠涓嶅疄鐜?supersede锛屼笉鎵ц瀹為檯 supersede锛屼笉鏂板浠讳綍 MCP 涓氬姟宸ュ叿杩佺Щ锛屼笉淇敼 A鈥?70 涓?`python_compat` scope锛屼篃涓嶅鐞?`cli/main.py` 鐨?296 澶?S1-review 寮曠敤娓呯悊銆?
+
+## 2. 鏂拌兘鍔涘悎鍚?
+
+鏂板 daemon-native governance mutation锛歚task.attest_legacy_workspace_binding`銆?
+
+| 鍙傛暟 | 瑙勫垯 |
+|---|---|
+| `legacy_task_id` | 蹇呴』瀛樺湪锛屼笖灏氭棤 `task_workspace_bindings` 琛屻€傚凡鏈?binding 涓€寰嬫嫆缁濓紝涓嶆洿鏂版垨鏇挎崲銆?|
+| `anchor_task_id` | 蹇呴』瀛樺湪涓斿凡缁忕粦瀹氾紱鍏呭綋鍘嗗彶 attestation 鐨勬巿鏉冮敋鐐广€備笉寰楃瓑浜?`legacy_task_id`銆?|
+| `workspace_id`銆乣workspace_instance_id` | 蹇呴』鏄惧紡鎻愪緵锛屽苟涓?anchor 鐨勪笉鍙彉 binding/capture 鍙婄ǔ瀹?workspace identity 涓€鑷淬€?|
+| `identity` | 蹇呴』鏄凡娉ㄥ唽鐨勫畬鏁村洓瀛楁韬唤锛屼笖 `role=adjudicator`銆?|
+| `lease_token`銆乣fencing_counter` | 蹇呴』鏄?**anchor_task_id** 涓婃湁鏁?reviewer lease 鐨勭湡瀹炲嚟璇侊紱鐢ㄤ簬鍦?legacy task 灏氭湭缁戝畾銆佹棤娉曡嚜琛屽彇寰?lease 鏃跺缓绔嬩竴娆℃€?bootstrap governance 鎺堟潈銆?|
+| `request_id` | 蹇呴』杩涘叆鎸佷箙鍖?operation ledger锛涘悓 canonical 鍙傛暟閲嶆斁杩斿洖鍘熺粨鏋滐紝鍙傛暟涓嶄竴鑷存嫆缁濄€?|
+| `evidence_path`銆乣evidence_hash` | 蹇呴』鎸囧悜鍙鐜?evidence manifest锛涚己澶变竴寰?fail-closed銆?|
+
+鎴愬姛鏃跺繀椤诲湪**涓€涓?SQLite 浜嬪姟**涓畬鎴愶細鏈夋晥鐨?authority/identity/lease/fencing/domain 鏍￠獙銆佽拷鍔犳垨澶嶇敤涓?anchor 绋冲畾 identity 鐩哥鐨?`workspace_authority_capture`銆佹彃鍏?legacy task 鐨勫敮涓€ `task_workspace_binding`銆佸啓鍏ュ甫 actor/lease/fencing/evidence provenance 鐨?append-only `task_events` 瀹¤琛岋紝浠ュ強鍐欏叆鍙噸鏀?operation ledger result銆備换鍔＄殑 `status`銆乨escription銆乿erdict銆乧lose 瀛楁涓嶅緱鏀瑰彉銆?
+
+瀹屾垚 P0-B 鍚庯紝legacy task 蹇呴』浠嶄负 `open`锛屼絾鍙嚟鍏跺垰鑾峰緱鐨?binding 姝ｅ父鍙栧緱鑷繁鐨?reviewer lease锛涗箣鍚庣敱鐙珛 Adjudicator 瀵?legacy task 涓?A鈥?successor 鍙﹁鎵ц姝ｅ紡 `task.supersede`銆?
+
+## 3. 鍏佽璺緞涓?Rust 鐩爣
+
+| 灞?| 鍏佽璺緞 / 鍑芥暟 | 鍏蜂綋浜や粯 |
+|---|---|---|
+| Rust domain | `rust_ext/src/daemon/task_collab.rs` | 灏嗕弗鏍煎璁¤繃鐨?workspace binding/capture helper 鎻愬崌涓哄彈闄?`pub(crate)` 澶嶇敤鎺ュ彛锛涗笉寰楁斁瀹?create 璺緞鐨?explicit authority 瑙勫垯銆?|
+| Rust governance | `rust_ext/src/daemon/task_supersede.rs` | 鏂板 `handle_task_attest_legacy_workspace_binding`锛堟垨鍚岀瓑涓撶敤 handler锛夊強 domain validation銆乷peration-ledger dedupe銆乤nchor lease/fencing 鏍￠獙銆乤ppend-only audit銆傚鐢?P0-H stable error 璁捐锛屼笉澶嶇敤/澶嶅埗涓嶅畨鍏ㄦ湰鍦?SQL銆?|
+| Rust dispatch | `rust_ext/src/daemon/dispatch.rs` | 灏嗙簿纭?RPC 鍚嶇О璺敱鍒?handler锛涙湭鍛戒腑鎴栦笉瀹屾暣鍙傛暟涓€寰?fail-closed銆?|
+| Python thin client | `server/daemon_client.py` | 澧炲姞鏃犳湰鍦?SQLite fallback 鐨?`task_attest_legacy_workspace_binding` 鍖呰锛屽畬鏁撮€忎紶 authority銆乮dentity銆乴ease/fencing銆乺equest/evidence 瀛楁銆?|
+| Python CLI | `cli/main.py` | 澧炲姞 `cw task attest-legacy-workspace-binding` 瀛愬懡浠ゅ拰鍙傛暟鏍￠獙锛屽彧璋冪敤 daemon-native client锛屼笉寰楁湰鍦拌ˉ鍐欍€?|
+| 娴嬭瘯 | Rust 鍗曟祴涓?Python CLI/client 娴嬭瘯 | 瑕嗙洊姝ｅ父 attestation銆侀噸鏀俱€佸凡鏈?binding銆佽法 workspace anchor銆佽韩浠界己澶?瑙掕壊閿欒銆乴ease 缂哄け鎴?stale fencing銆佽瘉鎹己澶便€乴egacy/anchor 鑷紩鐢ㄣ€佹棫 task status 涓嶅彉銆乨irect local fallback 绂佹銆?|
+
+## 4. 绂佹鑼冨洿
+
+涓嶅緱淇敼 SQLite schema锛涗笉寰楃洿鎺ユ墽琛?`INSERT/UPDATE` 鍒扮敤鎴风湡瀹炴暟鎹簱浠ヨˉ缁戝畾锛涗笉寰楁敼鏃?S2 鐨勬爣棰樸€佹弿杩般€乻tatus銆乿erdict銆乣closed_at` 鎴栧巻鍙?evidence锛涗笉寰楀湪鏈换鍔′腑瀹炴柦 `task.supersede`銆乣task.apply`銆乣task.close`锛涗笉寰楁洿鏀瑰伐鍏疯縼绉荤煩闃碉紱涓嶅緱閲嶅啓 CLI-01 鎴?S1-review scope銆?
+
+## 5. 瀹炴柦姝ラ銆佹祴璇曚笌楠屾敹
+
+1. **Contract/route implementation銆?* 瀹屾垚 daemon handler銆佸彈闄?helper銆乨ispatch銆乼hin client 鍜?CLI 閫傞厤锛涙墍鏈夊啓鍏ヤ粎鐢?daemon 鍦ㄥ悓涓€浜嬪姟鎵ц銆?
+2. **姝ｅ悜 fixture銆?* 浠ヤ复鏃?DB 鏋勯€犲凡缁戝畾 anchor 涓庢棤 binding legacy task锛涗娇鐢?registered adjudicator identity銆乤nchor reviewer lease/fencing 鍜?manifest 鎴愬姛 attestation銆傞獙璇?legacy binding 涓?anchor 鐨?workspace/stable identity 鐩哥锛宼ask status 鏈彉锛宎udit/ledger 瀹屾暣銆?
+3. **骞傜瓑鍜屽苟鍙戣涔夈€?* 鍚?request replay 杩斿洖鍚屼竴 attestation 缁撴灉锛涘悓 request 涓嶅悓 canonical 鍙傛暟琚嫆锛涘苟鍙?閲嶈瘯涓嶈兘浜х敓绗簩 binding/capture/event銆?
+4. **璐熷悜鐭╅樀銆?* 鑷冲皯瑕嗙洊锛氬凡缁戝畾 legacy銆佽法 workspace銆乤nchor 鏈粦瀹氥€乻elf-reference銆佺己澶?identity銆侀敊璇?role銆佽韩浠芥湭娉ㄥ唽銆乴ease 缂哄け銆乴ease token 涓嶇銆乻tale fencing銆佽瘉鎹己澶便€亀orkspace instance 涓嶇涓?daemon 涓嶅彲鐢ㄦ椂 Python/CLI 鏃?local fallback銆?
+5. **release evidence銆?* 鎵ц鍚堢害鎸囧畾娴嬭瘯骞朵互 release daemon 瀹為檯 RPC round-trip 楠岃瘉锛涜褰?build/version/PID銆乵anifest hash銆佸叧閿搷搴斾笌鍙鏁版嵁搴撴姇褰便€備笉寰椾互闈欐€佹簮鐮佹垨娴嬭瘯鏇夸唬 runtime proof銆?
+
+## 6. 瀹屾垚涓庝氦鎺?
+
+Executor 鐨勫畬鎴愪粎涓?scope 鍐呬唬鐮併€佹祴璇曞拰 evidence 宸插氨缁紝骞朵互 `executor_ready_for_review` 浜ょ粰鐙珛 Reviewer銆俁eviewer PASS 浠呭彲浜ょ粰 Adjudicator銆侫djudicator ACCEPT 鍚庡繀椤讳互鐪熷疄韬唤涓?reviewer lease/fencing 瀵?**P0-B 鑷韩**鎵ц `apply 鈫?close 鈫?task.next_action=COMPLETE`锛汸0-B 鐨勬垚鍔熶笉鑷姩 supersede 浠讳綍鏃?S2銆備袱涓?S2 鐨?supersede 灞炰簬鍚庣画鐙珛娌荤悊鍔ㄤ綔銆?
+
+  鍒涘缓鑰? S-1-5-21-1583625257-826939952-3615027596-1001
+  鍒涘缓鏃堕棿: 2026-08-21 14:30:18
+  杩涘害: 0/5 (0.0%)
+  姝ラ锛? 涓級:
+    #0 [pending] implement
+        鏂囦欢: rust_ext/src/daemon/task_supersede.rs
+        绗﹀彿: handle_task_attest_legacy_workspace_binding
+    #1 [pending] wire
+        鏂囦欢: rust_ext/src/daemon/dispatch.rs
+        绗﹀彿: task.attest_legacy_workspace_binding route
+    #2 [pending] adapt_client_cli
+        鏂囦欢: server/daemon_client.py; cli/main.py
+        绗﹀彿: task_attest_legacy_workspace_binding
+    #3 [pending] test
+        鏂囦欢: rust_ext/src/daemon/*test*.rs; tests/
+        绗﹀彿: P0-B positive/idempotent/negative matrix
+    #4 [pending] release_verify
+        鏂囦欢: runtime/current
+        绗﹀彿: release daemon P0-B round-trip
+

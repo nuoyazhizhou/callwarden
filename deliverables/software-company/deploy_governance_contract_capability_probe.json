@@ -1,0 +1,18 @@
+{
+  "contract_get:T-1787402257549-67ba81e6": {
+    "error_type": "DaemonUnavailableError",
+    "message": "E_HTTP_DAEMON_UNAVAILABLE: 无法连接 daemon (url=http://127.0.0.1:3437/v1/rpc): [WinError 10061] 由于目标计算机积极拒绝，无法连接。"
+  },
+  "contract_get:T-P0J-ROLE-WORKER-IDENTITY": {
+    "error_type": "DaemonUnavailableError",
+    "message": "E_HTTP_DAEMON_UNAVAILABLE: 无法连接 daemon (url=http://127.0.0.1:3437/v1/rpc): [WinError 10061] 由于目标计算机积极拒绝，无法连接。"
+  },
+  "capability:task.contract_revise": {
+    "error_type": "DaemonUnavailableError",
+    "message": "E_HTTP_DAEMON_UNAVAILABLE: 无法连接 daemon (url=http://127.0.0.1:3437/v1/rpc): [WinError 10061] 由于目标计算机积极拒绝，无法连接。"
+  },
+  "capability:task.contract_bootstrap": {
+    "error_type": "DaemonUnavailableError",
+    "message": "E_HTTP_DAEMON_UNAVAILABLE: 无法连接 daemon (url=http://127.0.0.1:3437/v1/rpc): [WinError 10061] 由于目标计算机积极拒绝，无法连接。"
+  }
+}

@@ -1,0 +1,83 @@
+浠诲姟璇︽儏
+--------------------------------------------------
+  ID: T-1787305175972-8712da28
+  鏍囬: P0-C锛歍ask Contract bootstrap / publication锛圓鈥?璋冨害鍓嶇疆锛?
+  鐘舵€? open
+  鎻忚堪: # P0-C锛歍ask Contract bootstrap / publication锛圓鈥?璋冨害鍓嶇疆锛?
+
+**鐖朵换鍔★細** `T-1787203926824-9f873bfc`  
+**浠诲姟绫诲瀷锛?* governance / 鐙珛淇浠诲姟  
+**鐩爣锛?* 涓哄凡缁戝畾 workspace銆佷絾 `task_contract_revisions` 涓虹┖鐨勫巻鍙叉垨鑷妇浠诲姟鎻愪緵鍞竴鐨?daemon-native銆乤ppend-only銆乨urably idempotent銆乫ail-closed 鐨?Task Envelope 鍒濆鍙戝竷鑳藉姏锛涜В闄?`task.next_action` 鐨?Task Contract 缂哄け闃绘柇銆?
+
+> **鍓嶇疆浜嬪疄銆?* `task.next_action` 鍦ㄥ畬鎴?authority capture 澶嶆牳鍚庯紝鐩存帴璇诲彇 `task_contract_revisions`銆傛棤琛屻€佸 contract_id 骞惰鎴?revision 閾句笉杩炵画鍧囪繑鍥?`BLOCKED/NONE`銆傜幇鏈?`task.contract_set` 鍐欑殑鏄?`role_contract_lineages` / `role_contract_revisions`锛屽苟**涓嶄細**鍐?`task_contract_revisions`锛屽洜姝や笉鑳戒慨澶嶈繖涓€闃绘柇銆?
+
+## 1. 鏂?RPC 鍚堝悓
+
+鏂板 protected mutation锛歚task.contract_bootstrap`銆?
+
+| 鍙傛暟 | 绾︽潫 |
+|---|---|
+| `task_id` | 蹇呴』瀛樺湪銆佸凡鏈変笉鍙彉 `task_workspace_binding`锛屼笖灏氭棤浠讳綍 `task_contract_revisions` 琛屻€傚凡鏈変换浣?revision 涓€寰嬫嫆缁濓紝绂佹瑕嗙洊/鏂板缓绗簩 contract_id銆?|
+| `workspace_id` / `workspace_instance_id` | 蹇呴』鏄惧紡缁欏嚭锛屽苟涓?task binding/capture 鐨?workspace 涓€鑷达紱capture 蹇呴』鍦ㄨ姹?instance 閾句腑涓哄綋鍓?revision锛屽鐢?`task.next_action` 鍚岀瓑 authority 鏍￠獙銆?|
+| `envelope` | 蹇呴』鏄畬鏁?Task Envelope 鍒濆 revision锛歚contract_id`銆乣revision=1`銆佸悎娉?profile銆乷bjective銆乮nterfaces銆乤llowed_edit_scope銆乤cceptance_clauses銆乺isks銆乺ollback銆乨ependencies銆俬andler 瀵?canonical payload锛堟帓闄?`contract_hash`銆乣created_at`銆乣created_by`锛夌敤鐜版湁 envelope 瑙勮寖杩涜 SHA-256 澶嶆牳骞惰嚜琛屾寔涔呭寲 hash銆?|
+| `identity` | 宸叉敞鍐屽畬鏁村洓瀛楁韬唤锛屼弗鏍?`role=adjudicator`銆?|
+| `lease_token` / `fencing_counter` | 璇?**task_id** 鐨勬湁鏁?reviewer lease锛涜嫢 v1 lease 鑾峰彇璺緞涓嶄緷璧?Task Contract锛屽垯蹇呴』鍦ㄦ祴璇曚腑璇佹槑銆傝嫢涓嶈兘鑾峰彇 lease锛孭0-C 蹇呴』淇濇寔 fail-closed 骞舵槑纭繑鍥炵ǔ瀹氶敊璇€?|
+| `request_id` | Operation Ledger 骞傜瓑 key 鎴愬憳锛涚浉鍚?canonical 鍙傛暟鍙閲嶆斁锛屽鐢?ID 浣嗗弬鏁颁笉鍚屾嫆缁濄€?|
+| `evidence_path` / `evidence_hash` | 浠诲姟 bootstrap 鐨勫璁′緷鎹紱缂哄け鎷掔粷銆?|
+
+鎴愬姛鏃跺繀椤诲湪鍚屼竴 SQLite transaction 杩藉姞锛氫竴琛?`task_contract_revisions` revision 1銆佹潈濞?`task_events`锛堜笉鏀瑰彉 task status锛夈€乤ction identity audit 涓?ledger result銆備笉寰楀啓 `UPDATE/DELETE`锛屼笉寰楁敼 task row銆亀orkspace binding/capture銆乺ole contract revision銆乻tep 鎴?verdict銆?
+
+## 2. 鍏佽璺緞涓庝氦浠?
+
+| 灞?| 鍏佽鏂囦欢 | 蹇呴』浜や粯 |
+|---|---|---|
+| Rust domain | `rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs`銆乣rust_ext/src/daemon/task_loop/mod.rs` | Envelope 涓ユ牸瑙ｆ瀽銆乧anonical hash銆乥inding/capture/identity/lease/evidence 鏍￠獙銆佸悓浜嬪姟 ledger/audit/revision 鍐欏叆銆?|
+| Rust adapter | `rust_ext/src/daemon/task_collab.rs` | 涓撶敤 handler锛岃皟鐢?task-loop domain锛涗笉娣峰叆 `task.contract_set` 鐨?Role Contract 璇箟銆?|
+| Rust dispatch | `rust_ext/src/daemon/dispatch.rs` | handler shim銆佺簿纭?method route銆丳rotected Mutation 涓茶鍖栥€?|
+| Python thin client / CLI | `server/daemon_client.py`銆乣cli/main.py` | daemon-only wrapper/`cw task contract-bootstrap`锛涙棤 SQLite fallback銆?|
+| Test | Rust task-loop/daemon tests锛孭ython client/CLI tests | 姝ｅ悜銆侀噸鏀俱€乺equest mismatch銆佸凡鏈?contract銆佺己 binding銆佹棫 capture銆亀orkspace mismatch銆乮nvalid envelope/hash銆乮dentity/role/lease/fencing/evidence 鎷掔粷銆乼ask status 涓嶅彉銆乺untime round trip銆?|
+
+## 3. 鍏佽鐨勯鎵圭敤閫?
+
+P0-C 缁忕嫭绔?Reviewer PASS 鍜?Adjudicator `apply 鈫?close 鈫?COMPLETE` 鍚庯紝鎵嶅彲浣滀负娌荤悊鑳藉姏鐢ㄤ簬锛?
+
+1. `T-1787293818274-1b87b6c4`锛圥0-B锛夊彂甯?`design` Task Envelope revision 1锛?
+2. `T-1787293451688-c14b1e44`锛圓鈥?鎭㈠鐖朵换鍔★級鍙戝竷 `design` Task Envelope revision 1锛?
+3. 浠呭湪 P0-B 涓?A鈥?鐖剁殑 task-level contracts銆乻tep Role Contract bindings銆乤uthority capture 鍧囬€氳繃 `task.next_action` 鍚庯紝璁╃嫭绔?Executor 鍐嶉鍙栦笅涓€姝ャ€?
+
+## 4. 绂佹鑼冨洿
+
+涓嶅緱鐩存帴 SQL 琛ユ彃 contract revision锛涗笉寰楁妸 `task.contract_set` 璇О涓?Task Contract 鍙戝竷锛涗笉寰楁洿鏂板凡鏈?capture/binding锛涗笉寰楀湪 P0-C 涓墽琛?legacy attestation銆丼2 supersede銆丆LI-01 鍒涘缓銆乼ask.apply 鎴?task.close锛涗笉寰楁敼鍙樼敤鎴峰凡鏈?Executor 鐨勮韩浠姐€乴ease 鎴栦换鍔＄姸鎬併€?
+
+## 5. Handoff
+
+```text
+Handoff:
+  from_role: executor
+  outcome: executor_ready_for_review
+  next_role: reviewer
+  next_action: 鐙珛瀹￠槄 task.contract_bootstrap 鏄惁鍙垵濮嬪寲绌?Task Contract銆佹槸鍚︽纭鏍?authority/envelope/identity/lease/evidence/ledger锛屼互鍙婂叏閮?runtime proof銆?
+  reason: 鐜版湁 task.contract_set 鍙啓 Role Contract锛屾棤娉曡В闄?task.next_action 瀵?task_contract_revisions 鐨?BLOCKED锛汸0-C 鏄渶灏忎笖鍞竴鐨勬寮忎慨澶嶅叆鍙ｃ€?
+  independence_requirement: required
+```
+
+  鍒涘缓鑰? S-1-5-21-1583625257-826939952-3615027596-1001
+  鍒涘缓鏃堕棿: 2026-08-21 17:39:35
+  杩涘害: 0/5 (0.0%)
+  姝ラ锛? 涓級:
+    #0 [pending] implement
+        鏂囦欢: rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs
+        绗﹀彿: bootstrap_task_contract
+    #1 [pending] wire
+        鏂囦欢: rust_ext/src/daemon/task_collab.rs; rust_ext/src/daemon/dispatch.rs
+        绗﹀彿: task.contract_bootstrap
+    #2 [pending] adapt_client_cli
+        鏂囦欢: server/daemon_client.py; cli/main.py
+        绗﹀彿: task_contract_bootstrap
+    #3 [pending] test
+        鏂囦欢: rust_ext/src/daemon/task_loop/*test*.rs; tests/
+        绗﹀彿: P0-C positive/idempotent/negative matrix
+    #4 [pending] release_verify
+        鏂囦欢: runtime/current
+        绗﹀彿: P0-C daemon round-trip
+

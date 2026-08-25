@@ -1,0 +1,52 @@
+{
+  "generated_at_epoch": 1787370760,
+  "source": "contract_backfill_authority_audit.json",
+  "active_reviewer_wb_186loop_count": 187,
+  "earliest_expires_at_epoch": 1787365895,
+  "latest_expires_at_epoch": 1787451170,
+  "expired_now_count": 1,
+  "not_expired_count": 186,
+  "release_path": "Only formal lease.release with the original raw token/identity, or existing daemon TTL/stale-holder recovery after expiry; no direct SQLite update.",
+  "sample": [
+    {
+      "task_id": "T-1787321020926-b7ed7500",
+      "lease_id": "L-82a53493e8ee4bf7",
+      "fencing_counter": 3,
+      "acquired_at": 1787362295.0,
+      "expires_at": 1787365895.0,
+      "status": "active"
+    },
+    {
+      "task_id": "T-1787293451688-c14b1e44",
+      "lease_id": "L-6ebee8fdaa8f68e8",
+      "fencing_counter": 1,
+      "acquired_at": 1787364627.0,
+      "expires_at": 1787451027.0,
+      "status": "active"
+    },
+    {
+      "task_id": "T-1787305268313-06fcef5c",
+      "lease_id": "L-2d2debd3e5de7566",
+      "fencing_counter": 1,
+      "acquired_at": 1787364728.0,
+      "expires_at": 1787451128.0,
+      "status": "active"
+    },
+    {
+      "task_id": "T-1787305175972-8712da28",
+      "lease_id": "L-f5f7b9f1be0a7c0f",
+      "fencing_counter": 1,
+      "acquired_at": 1787364728.0,
+      "expires_at": 1787451128.0,
+      "status": "active"
+    },
+    {
+      "task_id": "T-1787293818274-1b87b6c4",
+      "lease_id": "L-ffc0a1a1bbbbede0",
+      "fencing_counter": 1,
+      "acquired_at": 1787364728.0,
+      "expires_at": 1787451128.0,
+      "status": "active"
+    }
+  ]
+}

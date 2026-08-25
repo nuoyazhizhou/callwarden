@@ -1,0 +1,15 @@
+{
+  "ping": {
+    "status": "ok",
+    "peer_uid": 4294967295,
+    "pid": 46580,
+    "authority_id": "unknown-host/windows/S-1-5-21-1583625257-826939952-3615027596-1001/ccef883e5ffd3b78b39f776121069ad865aa3b8b7fcb35a0ca4e638107a96b66",
+    "transport": "http",
+    "task_db_fingerprint": "ccef883e5ffd3b78b39f776121069ad865aa3b8b7fcb35a0ca4e638107a96b66",
+    "protocol_version": 1,
+    "timestamp": 1787307628.799198
+  },
+  "contract_bootstrap_probe": {
+    "expected_rejection": "E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED: task.contract_bootstrap 必须携带 workspace_id > 0"
+  }
+}

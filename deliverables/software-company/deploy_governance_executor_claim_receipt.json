@@ -1,0 +1,51 @@
+{
+  "endpoint": "http://127.0.0.1:3437",
+  "task_id": "T-1787402257549-67ba81e6",
+  "register": {
+    "agent_id": "cw-executor-p0j-local",
+    "status": "registered",
+    "agent_instance_id": "inst-cw-executor-p0j-local-20260822",
+    "session_id": "sess-cw-executor-p0j-20260822",
+    "role": "executor"
+  },
+  "lease": {
+    "lease_id": "L-3113d106a8deefe3",
+    "fencing_counter": 1,
+    "acquired_at": 1787402316.0,
+    "expires_at": 1787405916.0,
+    "role": "executor",
+    "task_id": "T-1787402257549-67ba81e6"
+  },
+  "claim": {
+    "task_id": "T-1787402257549-67ba81e6",
+    "status": "in_progress",
+    "claimed_by": "sess-cw-executor-p0j-20260822",
+    "step_id": "S-1787402257708-216f2740",
+    "step_index": 0,
+    "action": "freeze_task_id_grammar",
+    "target_file": "scripts/refresh_shared_runtime.ps1",
+    "target_symbol": "",
+    "check_items": "明确合法 opaque ID、legacy numeric ID 和拒绝集合；保留 exact TaskId attribution",
+    "step_status": "in_progress",
+    "task_title": "P0-J-D：受控运行时刷新 Task ID 兼容与部署归属修复",
+    "role_contract": {
+      "contract_id": "RC-T-1787402257549-67ba81e6-executor-0",
+      "task_id": "T-1787402257549-67ba81e6",
+      "role": "executor",
+      "skill_id": "none",
+      "skill_version": "deploy-governance-task-id-v1",
+      "prompt_template_id": "cw.deploy-governance.executor.v1",
+      "prompt_hash": "deploy-governance-executor-v1",
+      "allowed_paths": "[\"scripts/refresh_shared_runtime.ps1\",\"tests/test_refresh_shared_runtime_task_id.py\",\"deliverables/software-company/deploy_governance_*\"]",
+      "forbidden_paths": "[\"direct SQLite mutation\",\"manual runtime/current replacement\",\"manual cw-daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply\",\"task.close\",\"P0-J role worker source paths\",\"CLI-02/CLI-03/MCP-001 governance mutations\"]",
+      "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"PowerShell targeted task-id validation test\"]",
+      "acceptance_checks": "[\"actual opaque CW task IDs such as T-P0J-ROLE-WORKER-IDENTITY are accepted by the refresh gate\",\"legacy numeric task IDs remain accepted\",\"malformed values, path separators, whitespace, shell metacharacters and option-like task IDs remain rejected\",\"deployment attribution uses the exact accepted TaskId without substitution\",\"no runtime file is manually replaced and no direct SQLite write is performed\"]",
+      "required_evidence": "[\"targeted validation test output\",\"diff showing only allowed files\",\"controlled deployment receipt after independent review\"]",
+      "handoff_to": "reviewer",
+      "independence": "{\"mode\":\"legacy_identity_compatible_until_role_worker_v1_deployed\"}",
+      "revision": 1,
+      "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+    }
+  },
+  "role_session_handle": "cw-deploy-governance-67ba81e6"
+}

@@ -1,0 +1,294 @@
+{
+  "parent_id": "T-1787293451688-c14b1e44",
+  "requested": 19,
+  "created": 19,
+  "existing": 0,
+  "failed": [],
+  "receipts": [
+    {
+      "key": "SRV-001",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323460311-ae9d7d30",
+        "status": "open",
+        "title": "SRV-001 [service_projection]：server  mcp common Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396103,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323460311-ae9d7d30-ws-1",
+        "workspace_capture_id": "wc-ws-1-2932104984"
+      }
+    },
+    {
+      "key": "SRV-002",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323460404-b425b074",
+        "status": "open",
+        "title": "SRV-002 [governance_projection]：server audit log Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396104,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323460404-b425b074-ws-1",
+        "workspace_capture_id": "wc-ws-1-3023522784"
+      }
+    },
+    {
+      "key": "SRV-003",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323460500-b9e232bc",
+        "status": "open",
+        "title": "SRV-003 [governance_projection]：server backup restore Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396105,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323460500-b9e232bc-ws-1",
+        "workspace_capture_id": "wc-ws-1-3120009484"
+      }
+    },
+    {
+      "key": "SRV-004",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323460580-bea19180",
+        "status": "open",
+        "title": "SRV-004 [service_projection]：server cli admin Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396106,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323460580-bea19180-ws-1",
+        "workspace_capture_id": "wc-ws-1-3199256284"
+      }
+    },
+    {
+      "key": "SRV-005",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323460652-c2eaada8",
+        "status": "open",
+        "title": "SRV-005 [control_plane]：server daemon autostart Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396107,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323460652-c2eaada8-ws-1",
+        "workspace_capture_id": "wc-ws-1-3271254884"
+      }
+    },
+    {
+      "key": "SRV-006",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323460703-c5f65380",
+        "status": "open",
+        "title": "SRV-006 [control_plane]：server daemon client Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396108,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323460703-c5f65380-ws-1",
+        "workspace_capture_id": "wc-ws-1-3322299384"
+      }
+    },
+    {
+      "key": "SRV-007",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461012-d8597160",
+        "status": "open",
+        "title": "SRV-007 [control_plane]：server daemon protocol Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396109,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461012-d8597160-ws-1",
+        "workspace_capture_id": "wc-ws-1-3630700484"
+      }
+    },
+    {
+      "key": "SRV-008",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461079-dc5ac87c",
+        "status": "open",
+        "title": "SRV-008 [control_plane]：server daemon server Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396110,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461079-dc5ac87c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3697954784"
+      }
+    },
+    {
+      "key": "SRV-009",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461150-e09e1a9c",
+        "status": "open",
+        "title": "SRV-009 [governance_projection]：server durable staging Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396111,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461150-e09e1a9c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3769691984"
+      }
+    },
+    {
+      "key": "SRV-010",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461213-e46199b0",
+        "status": "open",
+        "title": "SRV-010 [runtime_projection]：server health check Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396112,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461213-e46199b0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3832700184"
+      }
+    },
+    {
+      "key": "SRV-011",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461285-e8a7a12c",
+        "status": "open",
+        "title": "SRV-011 [runtime_projection]：server job executor Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396113,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461285-e8a7a12c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3904316784"
+      }
+    },
+    {
+      "key": "SRV-012",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461346-ec4e03e8",
+        "status": "open",
+        "title": "SRV-012 [runtime_projection]：server metrics Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396114,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461346-ec4e03e8-ws-1",
+        "workspace_capture_id": "wc-ws-1-3965573284"
+      }
+    },
+    {
+      "key": "SRV-013",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461404-efba3d30",
+        "status": "open",
+        "title": "SRV-013 [runtime_projection]：server query budget Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396115,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461404-efba3d30-ws-1",
+        "workspace_capture_id": "wc-ws-1-4023135384"
+      }
+    },
+    {
+      "key": "SRV-014",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461464-f351e600",
+        "status": "open",
+        "title": "SRV-014 [governance_projection]：server replicator Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396116,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461464-f351e600-ws-1",
+        "workspace_capture_id": "wc-ws-1-4083409984"
+      }
+    },
+    {
+      "key": "SRV-015",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461541-f7e6ec24",
+        "status": "open",
+        "title": "SRV-015 [governance_projection]：server schema migrator Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396117,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461541-f7e6ec24-ws-1",
+        "workspace_capture_id": "wc-ws-1-4160231084"
+      }
+    },
+    {
+      "key": "SRV-016",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461623-fcc66abc",
+        "status": "open",
+        "title": "SRV-016 [governance_projection]：server snapshot gc Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396118,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461623-fcc66abc-ws-1",
+        "workspace_capture_id": "wc-ws-1-4241948484"
+      }
+    },
+    {
+      "key": "SRV-017",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461683-0059e5a0",
+        "status": "open",
+        "title": "SRV-017 [service_projection]：server stage toggle migration Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396119,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461683-0059e5a0-ws-1",
+        "workspace_capture_id": "wc-ws-1-7031188"
+      }
+    },
+    {
+      "key": "SRV-018",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461742-03e6a000",
+        "status": "open",
+        "title": "SRV-018 [governance_projection]：server staging log Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396120,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461742-03e6a000-ws-1",
+        "workspace_capture_id": "wc-ws-1-66982988"
+      }
+    },
+    {
+      "key": "SRV-019",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787323461802-077bee78",
+        "status": "open",
+        "title": "SRV-019 [control_plane]：server Python authority zero-residue final gate Python authority → Rust daemon",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396121,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787323461802-077bee78-ws-1",
+        "workspace_capture_id": "wc-ws-1-126848288"
+      }
+    }
+  ]
+}

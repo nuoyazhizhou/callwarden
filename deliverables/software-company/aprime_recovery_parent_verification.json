@@ -1,0 +1,75 @@
+{
+  "checks": {
+    "parent_ok": true,
+    "open_ok": true,
+    "has_steps": true,
+    "binding_workspace_ok": true,
+    "binding_instance_ok": true,
+    "contracts_ok": true,
+    "no_child_before_cli01": true
+  },
+  "detail": {
+    "task": {
+      "id": "T-1787293451688-c14b1e44",
+      "title": "A′ 逐链路 Rust daemon 迁移恢复（MCP/CLI 渐进切换）",
+      "status": "open",
+      "parent_id": "T-1787203926824-9f873bfc",
+      "creator": "S-1-5-21-1583625257-826939952-3615027596-1001"
+    },
+    "steps": [
+      {
+        "step_index": 0,
+        "action": "govern",
+        "target_file": "deliverables/software-company/aprime_recovery_parent_task_contract.md",
+        "target_symbol": "A′ rolling pipeline governance",
+        "status": "pending"
+      },
+      {
+        "step_index": 1,
+        "action": "verify",
+        "target_file": "deliverables/software-company/aprime_role_contracts/",
+        "target_symbol": "startup templates v1",
+        "status": "pending"
+      }
+    ],
+    "binding": {
+      "task_id": "T-1787293451688-c14b1e44",
+      "workspace_id": 1,
+      "workspace_binding_id": "tb-T-1787293451688-c14b1e44-ws-1",
+      "workspace_capture_id": "wc-ws-1-3243431736",
+      "workspace_instance_id": "ws-1",
+      "capture_revision": 6,
+      "registry_identity_hash": "sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1"
+    },
+    "role_contracts": [
+      {
+        "role": "adjudicator",
+        "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+        "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+        "handoff_to": "complete",
+        "independence": "required",
+        "revision": 1,
+        "is_current": 1
+      },
+      {
+        "role": "executor",
+        "prompt_template_id": "cw.aprime.executor.startup.v1",
+        "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+        "handoff_to": "reviewer",
+        "independence": "required",
+        "revision": 1,
+        "is_current": 1
+      },
+      {
+        "role": "reviewer",
+        "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+        "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+        "handoff_to": "adjudicator",
+        "independence": "required",
+        "revision": 1,
+        "is_current": 1
+      }
+    ],
+    "children": []
+  }
+}

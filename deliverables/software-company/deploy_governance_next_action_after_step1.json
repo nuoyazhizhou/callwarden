@@ -1,0 +1,44 @@
+{
+  "task_id": "T-1787402257549-67ba81e6",
+  "decision": "BLOCKED",
+  "action": "NONE",
+  "required_role": null,
+  "step_id": null,
+  "task_contract": null,
+  "role_contract": null,
+  "authorization": {
+    "acting_role": null,
+    "lease_role": null,
+    "lease_required": false,
+    "fencing_required": false,
+    "different_agent_instance_from": [],
+    "different_session_from": []
+  },
+  "allowed_paths": [],
+  "forbidden_paths": [],
+  "eligibility": {
+    "verdict": "not_evaluated",
+    "evidence_gate": "not_evaluated",
+    "snapshot": "not_evaluated",
+    "mutation_recheck_required": true
+  },
+  "blocking_conditions": [
+    "Task Contract 缺失、多版本冲突或 revision 链不连续（无法验证 hash）"
+  ],
+  "revision_hint": null,
+  "routing": {
+    "origin_kind": "system_evaluator",
+    "next_role": null,
+    "next_action": "none",
+    "reason": [
+      "Task Contract 缺失、多版本冲突或 revision 链不连续（无法验证 hash）"
+    ]
+  },
+  "next_session": null,
+  "source": {
+    "task_status": "in_progress",
+    "task_contract_hash": "",
+    "role_contract_hash": "",
+    "evaluated_at": "1787402536.132425"
+  }
+}

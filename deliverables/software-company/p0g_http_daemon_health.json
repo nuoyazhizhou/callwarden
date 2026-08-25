@@ -1,0 +1,1 @@
+{"security_profile":"dev_loopback_unauthenticated","endpoint":"http://127.0.0.1:14012","pid":14400,"git_commit":"42520edffc2d645d1c8034eef2aff4e101bc91b0","schema_version":58,"worker_status":"healthy","capability_registry_revision":"http-mvp-cap-registry-v1"}

@@ -1,0 +1,15 @@
+{
+  "task_id": "T-1787322794470-a75de064",
+  "files": [
+    "cli/daemon_commands.py",
+    "tests/test_cli_004_http_rpc.py"
+  ],
+  "test_result": "22 passed",
+  "steps": [
+    "port_or_verify_rust",
+    "thin_cli_client",
+    "fixture_negative_matrix",
+    "evidence_and_dependency_verify"
+  ],
+  "commit": "392d01e"
+}

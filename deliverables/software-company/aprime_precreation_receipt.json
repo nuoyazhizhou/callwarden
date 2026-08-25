@@ -1,0 +1,1088 @@
+{
+  "parent_id": "T-1787293451688-c14b1e44",
+  "requested": 72,
+  "created": 72,
+  "existing": 0,
+  "receipts": [
+    {
+      "key": "CLI-02",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321708568-d292ab3c",
+        "status": "open",
+        "title": "CLI-02 [control_plane]：cw search daemon-only 读取链路",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395937,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321708568-d292ab3c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3533610952"
+      }
+    },
+    {
+      "key": "CLI-03",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321708639-d6d362f4",
+        "status": "open",
+        "title": "CLI-03 [control_plane]：cw task show/list/status-tree 只读 authority 诊断",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395938,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321708639-d6d362f4-ws-1",
+        "workspace_capture_id": "wc-ws-1-3604932852"
+      }
+    },
+    {
+      "key": "MCP-001",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321708699-da5d8224",
+        "status": "open",
+        "title": "MCP-001 [Gate/task_projection]：get_role_view → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395939,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321708699-da5d8224-ws-1",
+        "workspace_capture_id": "wc-ws-1-3664236952"
+      }
+    },
+    {
+      "key": "MCP-002",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321708760-de068a9c",
+        "status": "open",
+        "title": "MCP-002 [task_projection]：find_evidence → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395940,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321708760-de068a9c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3725676552"
+      }
+    },
+    {
+      "key": "MCP-003",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321708856-e3c10624",
+        "status": "open",
+        "title": "MCP-003 [task_projection]：get_freshness_status → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395941,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321708856-e3c10624-ws-1",
+        "workspace_capture_id": "wc-ws-1-3821558552"
+      }
+    },
+    {
+      "key": "MCP-004",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321708926-e7ebfac4",
+        "status": "open",
+        "title": "MCP-004 [task_projection]：get_gate_decision → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395942,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321708926-e7ebfac4-ws-1",
+        "workspace_capture_id": "wc-ws-1-3891634952"
+      }
+    },
+    {
+      "key": "MCP-005",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709017-ed4e79b0",
+        "status": "open",
+        "title": "MCP-005 [Gate/graph_snapshot]：get_artifact_freshness → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395943,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709017-ed4e79b0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3981933152"
+      }
+    },
+    {
+      "key": "MCP-006",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709098-f2236ea0",
+        "status": "open",
+        "title": "MCP-006 [graph_snapshot]：get_interface_providers → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395944,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709098-f2236ea0-ws-1",
+        "workspace_capture_id": "wc-ws-1-4062920652"
+      }
+    },
+    {
+      "key": "MCP-007",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709179-f6fdf5bc",
+        "status": "open",
+        "title": "MCP-007 [graph_snapshot]：detect_cycle → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395945,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709179-f6fdf5bc-ws-1",
+        "workspace_capture_id": "wc-ws-1-4144356052"
+      }
+    },
+    {
+      "key": "MCP-008",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709249-fb256530",
+        "status": "open",
+        "title": "MCP-008 [graph_snapshot]：validate_revision_dependencies → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395946,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709249-fb256530-ws-1",
+        "workspace_capture_id": "wc-ws-1-4214141052"
+      }
+    },
+    {
+      "key": "MCP-009",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709365-021050a8",
+        "status": "open",
+        "title": "MCP-009 [graph_snapshot]：get_dependency_edges → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395947,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709365-021050a8-ws-1",
+        "workspace_capture_id": "wc-ws-1-35248356"
+      }
+    },
+    {
+      "key": "MCP-010",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709432-060d1128",
+        "status": "open",
+        "title": "MCP-010 [Gate/identity_attestation]：get_action_identity → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395948,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709432-060d1128-ws-1",
+        "workspace_capture_id": "wc-ws-1-102164056"
+      }
+    },
+    {
+      "key": "MCP-011",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709518-0b31a484",
+        "status": "open",
+        "title": "MCP-011 [identity_attestation]：check_action_identity → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395949,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709518-0b31a484-ws-1",
+        "workspace_capture_id": "wc-ws-1-188445256"
+      }
+    },
+    {
+      "key": "MCP-012",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709584-0f2573f4",
+        "status": "open",
+        "title": "MCP-012 [identity_attestation]：check_session_separation → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395950,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709584-0f2573f4-ws-1",
+        "workspace_capture_id": "wc-ws-1-254793856"
+      }
+    },
+    {
+      "key": "MCP-013",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709651-131e1880",
+        "status": "open",
+        "title": "MCP-013 [identity_attestation]：get_attestation_validity → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395951,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709651-131e1880-ws-1",
+        "workspace_capture_id": "wc-ws-1-321379756"
+      }
+    },
+    {
+      "key": "MCP-014",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709710-169c2da8",
+        "status": "open",
+        "title": "MCP-014 [identity_attestation]：list_attestation_revocations → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395952,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709710-169c2da8-ws-1",
+        "workspace_capture_id": "wc-ws-1-380000356"
+      }
+    },
+    {
+      "key": "MCP-015",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709770-1a3de640",
+        "status": "open",
+        "title": "MCP-015 [Gate/assignment_projection]：assignment_show → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395953,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709770-1a3de640-ws-1",
+        "workspace_capture_id": "wc-ws-1-440906256"
+      }
+    },
+    {
+      "key": "MCP-016",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709835-1e194764",
+        "status": "open",
+        "title": "MCP-016 [Gate/graph_snapshot]：get_symbol_history → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395954,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709835-1e194764-ws-1",
+        "workspace_capture_id": "wc-ws-1-505475756"
+      }
+    },
+    {
+      "key": "MCP-017",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709894-21a00d8c",
+        "status": "open",
+        "title": "MCP-017 [graph_snapshot]：get_recent_changes → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395955,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709894-21a00d8c-ws-1",
+        "workspace_capture_id": "wc-ws-1-564739156"
+      }
+    },
+    {
+      "key": "MCP-018",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321709955-2537b8b4",
+        "status": "open",
+        "title": "MCP-018 [graph_snapshot]：get_impact → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395956,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321709955-2537b8b4-ws-1",
+        "workspace_capture_id": "wc-ws-1-624938456"
+      }
+    },
+    {
+      "key": "MCP-019",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710012-289c54c4",
+        "status": "open",
+        "title": "MCP-019 [graph_snapshot]：get_comment_from_version → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395957,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710012-289c54c4-ws-1",
+        "workspace_capture_id": "wc-ws-1-681915956"
+      }
+    },
+    {
+      "key": "MCP-020",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710069-2c03f5e0",
+        "status": "open",
+        "title": "MCP-020 [graph_snapshot]：get_issue_summary → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395958,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710069-2c03f5e0-ws-1",
+        "workspace_capture_id": "wc-ws-1-739292156"
+      }
+    },
+    {
+      "key": "MCP-021",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710140-3047f444",
+        "status": "open",
+        "title": "MCP-021 [graph_snapshot]：find_issues → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395959,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710140-3047f444-ws-1",
+        "workspace_capture_id": "wc-ws-1-810794656"
+      }
+    },
+    {
+      "key": "MCP-022",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710300-39d0baf0",
+        "status": "open",
+        "title": "MCP-022 [graph_snapshot]：get_test_coverage → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395960,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710300-39d0baf0-ws-1",
+        "workspace_capture_id": "wc-ws-1-970623156"
+      }
+    },
+    {
+      "key": "MCP-023",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710397-3f9a9028",
+        "status": "open",
+        "title": "MCP-023 [graph_snapshot]：export_module_graph → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395961,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710397-3f9a9028-ws-1",
+        "workspace_capture_id": "wc-ws-1-1067917156"
+      }
+    },
+    {
+      "key": "MCP-024",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710484-44c1c940",
+        "status": "open",
+        "title": "MCP-024 [Gate/semantic_projection]：semantic_search → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395962,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710484-44c1c940-ws-1",
+        "workspace_capture_id": "wc-ws-1-1154032556"
+      }
+    },
+    {
+      "key": "MCP-025",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710544-485efa78",
+        "status": "open",
+        "title": "MCP-025 [semantic_projection]：find_similar_functions → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395963,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710544-485efa78-ws-1",
+        "workspace_capture_id": "wc-ws-1-1214634756"
+      }
+    },
+    {
+      "key": "MCP-026",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710602-4bcbb50c",
+        "status": "open",
+        "title": "MCP-026 [semantic_projection]：get_symbol_commit_history → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395964,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710602-4bcbb50c-ws-1",
+        "workspace_capture_id": "wc-ws-1-1272361256"
+      }
+    },
+    {
+      "key": "MCP-027",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710659-4f3acb88",
+        "status": "open",
+        "title": "MCP-027 [semantic_projection]：parse_codeowners → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395965,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710659-4f3acb88-ws-1",
+        "workspace_capture_id": "wc-ws-1-1329899856"
+      }
+    },
+    {
+      "key": "MCP-028",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710720-52daa72c",
+        "status": "open",
+        "title": "MCP-028 [semantic_projection]：get_project_dependencies → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395966,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710720-52daa72c-ws-1",
+        "workspace_capture_id": "wc-ws-1-1390934656"
+      }
+    },
+    {
+      "key": "MCP-029",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710784-56a998b8",
+        "status": "open",
+        "title": "MCP-029 [Gate/summary_projection]：get_summary → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395967,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710784-56a998b8-ws-1",
+        "workspace_capture_id": "wc-ws-1-1454657256"
+      }
+    },
+    {
+      "key": "MCP-030",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710849-5a85f634",
+        "status": "open",
+        "title": "MCP-030 [summary_projection]：project_brief → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395968,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710849-5a85f634-ws-1",
+        "workspace_capture_id": "wc-ws-1-1519271856"
+      }
+    },
+    {
+      "key": "MCP-031",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710913-5e5558a4",
+        "status": "open",
+        "title": "MCP-031 [summary_projection]：repo_map → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395969,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710913-5e5558a4-ws-1",
+        "workspace_capture_id": "wc-ws-1-1583275256"
+      }
+    },
+    {
+      "key": "MCP-032",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321710977-62266414",
+        "status": "open",
+        "title": "MCP-032 [summary_projection]：test_impact_selection → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395970,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321710977-62266414-ws-1",
+        "workspace_capture_id": "wc-ws-1-1647322956"
+      }
+    },
+    {
+      "key": "MCP-033",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711035-659d600c",
+        "status": "open",
+        "title": "MCP-033 [summary_projection]：who_to_ask → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395971,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711035-659d600c-ws-1",
+        "workspace_capture_id": "wc-ws-1-1705516156"
+      }
+    },
+    {
+      "key": "MCP-034",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711142-6c00c7b8",
+        "status": "open",
+        "title": "MCP-034 [summary_projection]：get_ownership_map → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395972,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711142-6c00c7b8-ws-1",
+        "workspace_capture_id": "wc-ws-1-1812454456"
+      }
+    },
+    {
+      "key": "MCP-035",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711218-707e9d24",
+        "status": "open",
+        "title": "MCP-035 [summary_projection]：guardrail_scan → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395973,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711218-707e9d24-ws-1",
+        "workspace_capture_id": "wc-ws-1-1887999056"
+      }
+    },
+    {
+      "key": "MCP-036",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711292-74eefc14",
+        "status": "open",
+        "title": "MCP-036 [summary_projection]：guardrail_check_edit → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395974,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711292-74eefc14-ws-1",
+        "workspace_capture_id": "wc-ws-1-1962279956"
+      }
+    },
+    {
+      "key": "MCP-037",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711354-78a01118",
+        "status": "open",
+        "title": "MCP-037 [summary_projection]：guardrail_list_rules → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395975,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711354-78a01118-ws-1",
+        "workspace_capture_id": "wc-ws-1-2024303056"
+      }
+    },
+    {
+      "key": "MCP-038",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711419-7c795b78",
+        "status": "open",
+        "title": "MCP-038 [summary_projection]：blast_radius → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395976,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711419-7c795b78-ws-1",
+        "workspace_capture_id": "wc-ws-1-2089060056"
+      }
+    },
+    {
+      "key": "MCP-039",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711485-80694f68",
+        "status": "open",
+        "title": "MCP-039 [summary_projection]：ask_codebase → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395977,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711485-80694f68-ws-1",
+        "workspace_capture_id": "wc-ws-1-2155210256"
+      }
+    },
+    {
+      "key": "MCP-040",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711567-854fb8b4",
+        "status": "open",
+        "title": "MCP-040 [summary_projection]：get_token_savings_report → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395978,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711567-854fb8b4-ws-1",
+        "workspace_capture_id": "wc-ws-1-2237088856"
+      }
+    },
+    {
+      "key": "MCP-041",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711671-8b84382c",
+        "status": "open",
+        "title": "MCP-041 [summary_projection]：get_vulnerability_blast_radius → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395979,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711671-8b84382c-ws-1",
+        "workspace_capture_id": "wc-ws-1-2341180356"
+      }
+    },
+    {
+      "key": "MCP-042",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711747-900bc900",
+        "status": "open",
+        "title": "MCP-042 [summary_projection]：get_clone_aware_impact → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395980,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711747-900bc900-ws-1",
+        "workspace_capture_id": "wc-ws-1-2417298556"
+      }
+    },
+    {
+      "key": "MCP-043",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711827-94d36268",
+        "status": "open",
+        "title": "MCP-043 [summary_projection]：review_readiness → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395981,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711827-94d36268-ws-1",
+        "workspace_capture_id": "wc-ws-1-2497439456"
+      }
+    },
+    {
+      "key": "MCP-044",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711882-9812b654",
+        "status": "open",
+        "title": "MCP-044 [summary_projection]：cross_layer_impact → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395982,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711882-9812b654-ws-1",
+        "workspace_capture_id": "wc-ws-1-2551903656"
+      }
+    },
+    {
+      "key": "MCP-045",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321711941-9b9a78d4",
+        "status": "open",
+        "title": "MCP-045 [summary_projection]：evolution_frequency → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395983,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321711941-9b9a78d4-ws-1",
+        "workspace_capture_id": "wc-ws-1-2611223856"
+      }
+    },
+    {
+      "key": "MCP-046",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712002-9f3f403c",
+        "status": "open",
+        "title": "MCP-046 [summary_projection]：hotspot_evolution → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395984,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712002-9f3f403c-ws-1",
+        "workspace_capture_id": "wc-ws-1-2672394656"
+      }
+    },
+    {
+      "key": "MCP-047",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712071-a3580d34",
+        "status": "open",
+        "title": "MCP-047 [summary_projection]：defect_learn → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395985,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712071-a3580d34-ws-1",
+        "workspace_capture_id": "wc-ws-1-2740973656"
+      }
+    },
+    {
+      "key": "MCP-048",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712131-a6f798c4",
+        "status": "open",
+        "title": "MCP-048 [Gate/repository_security]：list_branches → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395986,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712131-a6f798c4-ws-1",
+        "workspace_capture_id": "wc-ws-1-2801856556"
+      }
+    },
+    {
+      "key": "MCP-049",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712197-aae29150",
+        "status": "open",
+        "title": "MCP-049 [repository_security]：merge_preview → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395987,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712197-aae29150-ws-1",
+        "workspace_capture_id": "wc-ws-1-2867481956"
+      }
+    },
+    {
+      "key": "MCP-050",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712254-ae4cba14",
+        "status": "open",
+        "title": "MCP-050 [repository_security]：get_edit_history → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395988,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712254-ae4cba14-ws-1",
+        "workspace_capture_id": "wc-ws-1-2924770356"
+      }
+    },
+    {
+      "key": "MCP-051",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712317-b20200ec",
+        "status": "open",
+        "title": "MCP-051 [repository_security]：find_shared_symbols → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395989,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712317-b20200ec-ws-1",
+        "workspace_capture_id": "wc-ws-1-2987011456"
+      }
+    },
+    {
+      "key": "MCP-052",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712383-b5f00e24",
+        "status": "open",
+        "title": "MCP-052 [repository_security]：cross_repo_impact → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395990,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712383-b5f00e24-ws-1",
+        "workspace_capture_id": "wc-ws-1-3052894956"
+      }
+    },
+    {
+      "key": "MCP-053",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712440-b95892fc",
+        "status": "open",
+        "title": "MCP-053 [repository_security]：cross_repo_summary → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395991,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712440-b95892fc-ws-1",
+        "workspace_capture_id": "wc-ws-1-3110144956"
+      }
+    },
+    {
+      "key": "MCP-054",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712498-bcc9ba60",
+        "status": "open",
+        "title": "MCP-054 [Gate/lsp_session]：lsp_hover → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395992,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712498-bcc9ba60-ws-1",
+        "workspace_capture_id": "wc-ws-1-3167957956"
+      }
+    },
+    {
+      "key": "MCP-055",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712571-c126ad70",
+        "status": "open",
+        "title": "MCP-055 [lsp_session]：lsp_definition → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395993,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712571-c126ad70-ws-1",
+        "workspace_capture_id": "wc-ws-1-3241259856"
+      }
+    },
+    {
+      "key": "MCP-056",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712641-c5517dbc",
+        "status": "open",
+        "title": "MCP-056 [lsp_session]：lsp_references → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395994,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712641-c5517dbc-ws-1",
+        "workspace_capture_id": "wc-ws-1-3311044356"
+      }
+    },
+    {
+      "key": "MCP-057",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712696-c896d134",
+        "status": "open",
+        "title": "MCP-057 [lsp_session]：lsp_diagnostics → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395995,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712696-c896d134-ws-1",
+        "workspace_capture_id": "wc-ws-1-3365809356"
+      }
+    },
+    {
+      "key": "MCP-058",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712758-cc574178",
+        "status": "open",
+        "title": "MCP-058 [lsp_session]：lsp_completion → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395996,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712758-cc574178-ws-1",
+        "workspace_capture_id": "wc-ws-1-3428999356"
+      }
+    },
+    {
+      "key": "MCP-059",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712826-d05f6f5c",
+        "status": "open",
+        "title": "MCP-059 [lsp_session]：lsp_check_available → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395997,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712826-d05f6f5c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3496502156"
+      }
+    },
+    {
+      "key": "MCP-060",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712895-d47d25c0",
+        "status": "open",
+        "title": "MCP-060 [repository_security]：rule_candidate_list → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395998,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712895-d47d25c0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3565495056"
+      }
+    },
+    {
+      "key": "MCP-061",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321712961-d86f42d0",
+        "status": "open",
+        "title": "MCP-061 [repository_security]：rule_list → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265395999,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321712961-d86f42d0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3631799556"
+      }
+    },
+    {
+      "key": "MCP-062",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713038-dd021610",
+        "status": "open",
+        "title": "MCP-062 [repository_security]：get_applicable_rules → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396000,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713038-dd021610-ws-1",
+        "workspace_capture_id": "wc-ws-1-3708543056"
+      }
+    },
+    {
+      "key": "MCP-063",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713116-e1a76170",
+        "status": "open",
+        "title": "MCP-063 [Gate/task_projection]：get_symbol_change_tasks → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396001,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713116-e1a76170-ws-1",
+        "workspace_capture_id": "wc-ws-1-3786392856"
+      }
+    },
+    {
+      "key": "MCP-064",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713179-e565d9cc",
+        "status": "open",
+        "title": "MCP-064 [task_projection]：audit_verify_chain → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396002,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713179-e565d9cc-ws-1",
+        "workspace_capture_id": "wc-ws-1-3849404956"
+      }
+    },
+    {
+      "key": "MCP-065",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713237-e8e1f1f8",
+        "status": "open",
+        "title": "MCP-065 [task_projection]：list_audit_signing_keys → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396003,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713237-e8e1f1f8-ws-1",
+        "workspace_capture_id": "wc-ws-1-3907662856"
+      }
+    },
+    {
+      "key": "MCP-066",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713303-ecc6ada4",
+        "status": "open",
+        "title": "MCP-066 [task_projection]：bootstrap_status → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396004,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713303-ecc6ada4-ws-1",
+        "workspace_capture_id": "wc-ws-1-3973084256"
+      }
+    },
+    {
+      "key": "MCP-067",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713365-f084e3fc",
+        "status": "open",
+        "title": "MCP-067 [task_projection]：list_clones → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396005,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713365-f084e3fc-ws-1",
+        "workspace_capture_id": "wc-ws-1-4035993456"
+      }
+    },
+    {
+      "key": "MCP-068",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713424-f4071e14",
+        "status": "open",
+        "title": "MCP-068 [task_projection]：list_clone_groups → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396006,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713424-f4071e14-ws-1",
+        "workspace_capture_id": "wc-ws-1-4094670156"
+      }
+    },
+    {
+      "key": "MCP-069",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713485-f7a90848",
+        "status": "open",
+        "title": "MCP-069 [task_projection]：get_clone_group_detail → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396007,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713485-f7a90848-ws-1",
+        "workspace_capture_id": "wc-ws-1-4155809956"
+      }
+    },
+    {
+      "key": "MCP-070",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787321713551-fb94f87c",
+        "status": "open",
+        "title": "MCP-070 [task_projection]：task_plan_template → Rust daemon native",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396008,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787321713551-fb94f87c-ws-1",
+        "workspace_capture_id": "wc-ws-1-4221517056"
+      }
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "manifest": "http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+  "pid": 50216,
+  "schema_version": 58,
+  "task_status": "review",
+  "steps": [],
+  "next_action": {
+    "task_id": "T-1787407700109-f5562c60",
+    "decision": "READY",
+    "action": "REVIEW",
+    "required_role": "reviewer",
+    "step_id": null,
+    "task_contract": {
+      "id": "TC-T-1787407700109-f5562c60",
+      "revision": 1,
+      "hash": "sha256:0cf3e35f0595524289799445c343bc1958cf0692e9559126f7cb42393a0d48fd"
+    },
+    "role_contract": {
+      "id": "rcl-T-1787407700109-f5562c60-reviewer",
+      "revision_id": "rcr-T-1787407700109-f5562c60-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:ba0cc709f196917085146bd1d23319191728143148fcd42b5b591af7de31e138",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+      "skill_id": "none",
+      "skill_version": "role-worker-governance-mutation-v1",
+      "prompt_template_id": "cw.p0k.reviewer.role-worker-governance.v1",
+      "handoff_to": "adjudicator"
+    },
+    "authorization": {
+      "acting_role": "reviewer",
+      "lease_role": "reviewer",
+      "lease_required": true,
+      "fencing_required": true,
+      "different_agent_instance_from": [],
+      "different_session_from": []
+    },
+    "allowed_paths": [
+      "deliverables/software-company/p0k_*",
+      "rust_ext/src/daemon/*test*.rs",
+      "rust_ext/src/daemon/dispatch.rs",
+      "rust_ext/src/daemon/task_collab.rs",
+      "rust_ext/src/daemon/task_loop/*apply*.rs",
+      "rust_ext/src/daemon/task_loop/role_worker.rs",
+      "rust_ext/src/daemon/task_loop/verdict*.rs",
+      "rust_ext/src/daemon/task_supersede.rs",
+      "rust_ext/src/sqlite_query.rs",
+      "scripts/refresh_shared_runtime.ps1",
+      "server/daemon_client.py",
+      "tests/test_role_worker_governance_mutation*.py"
+    ],
+    "forbidden_paths": [
+      "CLI-02/CLI-03/MCP-001 contract bootstrap before P0-K review",
+      "direct SQLite mutation outside daemon migrations",
+      "manual daemon stop/start outside scripts/refresh_shared_runtime.ps1",
+      "manual replacement of runtime/current",
+      "modifying P0-J-D historical deployment/remediation events",
+      "provider account token storage in task DB/evidence/logs",
+      "task.apply or task.close by executor"
+    ],
+    "eligibility": {
+      "verdict": "pending_review",
+      "evidence_gate": "not_evaluated",
+      "snapshot": "not_evaluated",
+      "mutation_recheck_required": true
+    },
+    "blocking_conditions": [],
+    "revision_hint": null,
+    "routing": {
+      "origin_kind": "system_evaluator",
+      "next_role": "reviewer",
+      "next_action": "review_current_step",
+      "reason": [
+        "任务在 review 且尚无有效持久化 verdict"
+      ]
+    },
+    "next_session": {
+      "role": "reviewer",
+      "task_id": "T-1787407700109-f5562c60",
+      "step_id": null,
+      "must_be_new_session": true
+    },
+    "source": {
+      "task_status": "review",
+      "task_contract_hash": "sha256:0cf3e35f0595524289799445c343bc1958cf0692e9559126f7cb42393a0d48fd",
+      "role_contract_hash": "sha256:ba0cc709f196917085146bd1d23319191728143148fcd42b5b591af7de31e138",
+      "evaluated_at": "1787414677.388119"
+    }
+  }
+}

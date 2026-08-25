@@ -1,0 +1,33 @@
+{
+  "manifest_endpoint": "http://127.0.0.1:5932",
+  "manifest_binary_sha256": "8fad70f00a40ea0eee04cacc5f64b493a90e329c3213ea73be746880501d793d",
+  "task_status": {
+    "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+    "title": "P0-J：CW 本地 Role Worker 授权与可变运行时 Provenance 分层",
+    "description": "# P0-J：本地 Role Worker 身份锚定\n\n将 CW 治理授权从供应商 Agent/模型/账号/运行时 session 中剥离。`role_worker_id` 与本地签发凭证承担 Executor/Reviewer/Adjudicator 授权和同任务独立性；agent_id、agent_instance_id、session_id、model_id、provider/account alias 仅以 append-only runtime provenance 记录。\n\n不得把切换模型或账号视为角色变更；不得允许 Executor 仅修改 role 字符串冒充 Reviewer。必须保留现有审计历史，新增迁移与兼容读取，不直接改生产 SQLite。\n\n本任务是 CLI-02/03/MCP-001 Task Contract bootstrap 的身份前置：完成并独立审核后，已登记 `cw-reviewer-*` 与 `cw-adjudicator-*` worker 才可继续受保护治理写入。",
+    "parent_id": "T-1787367417246-34190890",
+    "status": "in_progress",
+    "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+    "claimed_by": "sess-cw-executor-p0j-20260822",
+    "created_at": 1787397018.842623,
+    "updated_at": 1787397378.4781768
+  },
+  "executor_lease_status": {
+    "status": "active",
+    "lease_id": "L-08e7715d9e88846d",
+    "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+    "role": "executor",
+    "agent_id": "cw-executor-p0j-local",
+    "session_id": "sess-cw-executor-p0j-20260822",
+    "model_id": "unattributed-host-runtime",
+    "token_hash": "e613d3ae421cc6edeb9b1e9ffc69ab79418b4071814599e51cea8faec71846fc",
+    "fencing_counter": 1,
+    "acquired_at": 1787397378.0,
+    "expires_at": 1787400978.0
+  },
+  "role_worker_status_capability": {
+    "available": false,
+    "error_type": "DaemonRemoteError",
+    "message": "method_not_found: 未知方法: role_worker.status"
+  }
+}

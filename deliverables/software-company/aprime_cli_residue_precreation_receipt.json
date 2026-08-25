@@ -1,0 +1,1404 @@
+{
+  "parent_id": "T-1787293451688-c14b1e44",
+  "requested": 93,
+  "created": 93,
+  "existing": 0,
+  "failed": [],
+  "receipts": [
+    {
+      "key": "CLI-004",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794470-a75de064",
+        "status": "open",
+        "title": "CLI-004 [control_plane]：cw daemon（metrics/ping/workspace/publish/query） → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396009,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794470-a75de064-ws-1",
+        "workspace_capture_id": "wc-ws-1-2808591364"
+      }
+    },
+    {
+      "key": "CLI-005",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794529-aae5f8d4",
+        "status": "open",
+        "title": "CLI-005 [control_plane]：cw-agent start → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396010,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794529-aae5f8d4-ws-1",
+        "workspace_capture_id": "wc-ws-1-2867759464"
+      }
+    },
+    {
+      "key": "CLI-006",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794614-affbd0b4",
+        "status": "open",
+        "title": "CLI-006 [control_plane]：cw-agent status → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396011,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794614-affbd0b4-ws-1",
+        "workspace_capture_id": "wc-ws-1-2953241764"
+      }
+    },
+    {
+      "key": "CLI-007",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794681-b3f8e33c",
+        "status": "open",
+        "title": "CLI-007 [graph_snapshot]：cw dependency cycle → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396012,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794681-b3f8e33c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3019942164"
+      }
+    },
+    {
+      "key": "CLI-008",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794745-b7c1ed10",
+        "status": "open",
+        "title": "CLI-008 [graph_snapshot]：cw dependency explain → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396013,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794745-b7c1ed10-ws-1",
+        "workspace_capture_id": "wc-ws-1-3083460364"
+      }
+    },
+    {
+      "key": "CLI-009",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794809-bb8f0658",
+        "status": "open",
+        "title": "CLI-009 [graph_snapshot]：cw dependency list → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396014,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794809-bb8f0658-ws-1",
+        "workspace_capture_id": "wc-ws-1-3147408564"
+      }
+    },
+    {
+      "key": "CLI-010",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794865-beea9d08",
+        "status": "open",
+        "title": "CLI-010 [graph_snapshot]：cw dependency provider-select → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396015,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794865-beea9d08-ws-1",
+        "workspace_capture_id": "wc-ws-1-3203563964"
+      }
+    },
+    {
+      "key": "CLI-011",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794927-c29e6894",
+        "status": "open",
+        "title": "CLI-011 [assignment_projection]：cw assignment → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396016,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794927-c29e6894-ws-1",
+        "workspace_capture_id": "wc-ws-1-3265643464"
+      }
+    },
+    {
+      "key": "CLI-012",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322794986-c6229cec",
+        "status": "open",
+        "title": "CLI-012 [task_projection]：cw audit → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396017,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322794986-c6229cec-ws-1",
+        "workspace_capture_id": "wc-ws-1-3324834164"
+      }
+    },
+    {
+      "key": "CLI-013",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795054-ca2e2694",
+        "status": "open",
+        "title": "CLI-013 [cli_command_projection]：cw bootstrap → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396018,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795054-ca2e2694-ws-1",
+        "workspace_capture_id": "wc-ws-1-3392716564"
+      }
+    },
+    {
+      "key": "CLI-014",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795108-cd691968",
+        "status": "open",
+        "title": "CLI-014 [cli_command_projection]：cw brief → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396019,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795108-cd691968-ws-1",
+        "workspace_capture_id": "wc-ws-1-3446736964"
+      }
+    },
+    {
+      "key": "CLI-015",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795173-d141864c",
+        "status": "open",
+        "title": "CLI-015 [graph_snapshot]：cw build-context → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396020,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795173-d141864c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3511536764"
+      }
+    },
+    {
+      "key": "CLI-016",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795245-d58f1cf0",
+        "status": "open",
+        "title": "CLI-016 [graph_snapshot]：cw call-chain → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396021,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795245-d58f1cf0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3583593664"
+      }
+    },
+    {
+      "key": "CLI-017",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795307-d949b968",
+        "status": "open",
+        "title": "CLI-017 [cli_command_projection]：cw callees → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396022,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795307-d949b968-ws-1",
+        "workspace_capture_id": "wc-ws-1-3646195664"
+      }
+    },
+    {
+      "key": "CLI-018",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795374-dd442bac",
+        "status": "open",
+        "title": "CLI-018 [cli_command_projection]：cw callers → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396023,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795374-dd442bac-ws-1",
+        "workspace_capture_id": "wc-ws-1-3713003564"
+      }
+    },
+    {
+      "key": "CLI-019",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795431-e0a47a2c",
+        "status": "open",
+        "title": "CLI-019 [cli_command_projection]：cw check-gate → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396024,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795431-e0a47a2c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3769394764"
+      }
+    },
+    {
+      "key": "CLI-020",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795483-e3c04150",
+        "status": "open",
+        "title": "CLI-020 [cli_command_projection]：cw churn → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396025,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795483-e3c04150-ws-1",
+        "workspace_capture_id": "wc-ws-1-3821549364"
+      }
+    },
+    {
+      "key": "CLI-021",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795588-e9fdfecc",
+        "status": "open",
+        "title": "CLI-021 [cli_command_projection]：cw clone → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396026,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795588-e9fdfecc-ws-1",
+        "workspace_capture_id": "wc-ws-1-3926432064"
+      }
+    },
+    {
+      "key": "CLI-022",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795664-ee8f9090",
+        "status": "open",
+        "title": "CLI-022 [cli_command_projection]：cw comment-coverage → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396027,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795664-ee8f9090-ws-1",
+        "workspace_capture_id": "wc-ws-1-4002930464"
+      }
+    },
+    {
+      "key": "CLI-023",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795725-f22932d8",
+        "status": "open",
+        "title": "CLI-023 [cli_command_projection]：cw complexity → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396028,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795725-f22932d8-ws-1",
+        "workspace_capture_id": "wc-ws-1-4063320664"
+      }
+    },
+    {
+      "key": "CLI-024",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795775-f52e96bc",
+        "status": "open",
+        "title": "CLI-024 [cli_command_projection]：cw coupled-fns → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396029,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795775-f52e96bc-ws-1",
+        "workspace_capture_id": "wc-ws-1-4114077964"
+      }
+    },
+    {
+      "key": "CLI-025",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795829-f85a6d98",
+        "status": "open",
+        "title": "CLI-025 [cli_command_projection]：cw coupling → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396030,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795829-f85a6d98-ws-1",
+        "workspace_capture_id": "wc-ws-1-4167384764"
+      }
+    },
+    {
+      "key": "CLI-026",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795894-fc39c6c0",
+        "status": "open",
+        "title": "CLI-026 [cli_command_projection]：cw coverage → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396031,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795894-fc39c6c0-ws-1",
+        "workspace_capture_id": "wc-ws-1-4232160164"
+      }
+    },
+    {
+      "key": "CLI-027",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322795956-fff62664",
+        "status": "open",
+        "title": "CLI-027 [cli_command_projection]：cw dashboard → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396032,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322795956-fff62664-ws-1",
+        "workspace_capture_id": "wc-ws-1-199068"
+      }
+    },
+    {
+      "key": "CLI-028",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796027-04260ab0",
+        "status": "open",
+        "title": "CLI-028 [cli_command_projection]：cw defect → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396033,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796027-04260ab0-ws-1",
+        "workspace_capture_id": "wc-ws-1-70320268"
+      }
+    },
+    {
+      "key": "CLI-029",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796090-07e97aec",
+        "status": "open",
+        "title": "CLI-029 [graph_snapshot]：cw dependency → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396034,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796090-07e97aec-ws-1",
+        "workspace_capture_id": "wc-ws-1-133253068"
+      }
+    },
+    {
+      "key": "CLI-030",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796155-0bc98e68",
+        "status": "open",
+        "title": "CLI-030 [cli_command_projection]：cw evolution → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396035,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796155-0bc98e68-ws-1",
+        "workspace_capture_id": "wc-ws-1-198405268"
+      }
+    },
+    {
+      "key": "CLI-031",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796219-0f9d3760",
+        "status": "open",
+        "title": "CLI-031 [cli_command_projection]：cw file → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396036,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796219-0f9d3760-ws-1",
+        "workspace_capture_id": "wc-ws-1-262516968"
+      }
+    },
+    {
+      "key": "CLI-032",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796275-12f3c370",
+        "status": "open",
+        "title": "CLI-032 [cli_command_projection]：cw fn-metrics → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396037,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796275-12f3c370-ws-1",
+        "workspace_capture_id": "wc-ws-1-318488768"
+      }
+    },
+    {
+      "key": "CLI-033",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796365-1852e1e8",
+        "status": "open",
+        "title": "CLI-033 [cli_command_projection]：cw fts → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396038,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796365-1852e1e8-ws-1",
+        "workspace_capture_id": "wc-ws-1-408921368"
+      }
+    },
+    {
+      "key": "CLI-034",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796421-1ba86fac",
+        "status": "open",
+        "title": "CLI-034 [cli_command_projection]：cw function-issues → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396039,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796421-1ba86fac-ws-1",
+        "workspace_capture_id": "wc-ws-1-464555668"
+      }
+    },
+    {
+      "key": "CLI-035",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796483-1f5d4730",
+        "status": "open",
+        "title": "CLI-035 [cli_command_projection]：cw gc → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396040,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796483-1f5d4730-ws-1",
+        "workspace_capture_id": "wc-ws-1-526932268"
+      }
+    },
+    {
+      "key": "CLI-036",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796578-2508cfc4",
+        "status": "open",
+        "title": "CLI-036 [cli_command_projection]：cw git → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396041,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796578-2508cfc4-ws-1",
+        "workspace_capture_id": "wc-ws-1-622049668"
+      }
+    },
+    {
+      "key": "CLI-037",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796634-285466c0",
+        "status": "open",
+        "title": "CLI-037 [cli_command_projection]：cw grep → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396042,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796634-285466c0-ws-1",
+        "workspace_capture_id": "wc-ws-1-677138468"
+      }
+    },
+    {
+      "key": "CLI-038",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796701-2c5e2698",
+        "status": "open",
+        "title": "CLI-038 [cli_command_projection]：cw guardrail → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396043,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796701-2c5e2698-ws-1",
+        "workspace_capture_id": "wc-ws-1-744854568"
+      }
+    },
+    {
+      "key": "CLI-039",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796764-3014c724",
+        "status": "open",
+        "title": "CLI-039 [cli_command_projection]：cw health-report → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396044,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796764-3014c724-ws-1",
+        "workspace_capture_id": "wc-ws-1-807161468"
+      }
+    },
+    {
+      "key": "CLI-040",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796833-3431cb68",
+        "status": "open",
+        "title": "CLI-040 [cli_command_projection]：cw hotspot → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396045,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796833-3431cb68-ws-1",
+        "workspace_capture_id": "wc-ws-1-876481968"
+      }
+    },
+    {
+      "key": "CLI-041",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796916-3926ce34",
+        "status": "open",
+        "title": "CLI-041 [cli_command_projection]：cw impact → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396046,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796916-3926ce34-ws-1",
+        "workspace_capture_id": "wc-ws-1-959593468"
+      }
+    },
+    {
+      "key": "CLI-042",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322796984-3d3e2df0",
+        "status": "open",
+        "title": "CLI-042 [cli_command_projection]：cw issues → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396047,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322796984-3d3e2df0-ws-1",
+        "workspace_capture_id": "wc-ws-1-1028041068"
+      }
+    },
+    {
+      "key": "CLI-043",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797056-4189cf68",
+        "status": "open",
+        "title": "CLI-043 [cli_command_projection]：cw largest-fns → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396048,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797056-4189cf68-ws-1",
+        "workspace_capture_id": "wc-ws-1-1100092068"
+      }
+    },
+    {
+      "key": "CLI-044",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797118-45326058",
+        "status": "open",
+        "title": "CLI-044 [assignment_projection]：cw lease → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396049,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797118-45326058-ws-1",
+        "workspace_capture_id": "wc-ws-1-1161457268"
+      }
+    },
+    {
+      "key": "CLI-045",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797185-49338448",
+        "status": "open",
+        "title": "CLI-045 [cli_command_projection]：cw map → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396050,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797185-49338448-ws-1",
+        "workspace_capture_id": "wc-ws-1-1228724068"
+      }
+    },
+    {
+      "key": "CLI-046",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797263-4dd9dd94",
+        "status": "open",
+        "title": "CLI-046 [cli_command_projection]：cw metrics → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396051,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797263-4dd9dd94-ws-1",
+        "workspace_capture_id": "wc-ws-1-1306655768"
+      }
+    },
+    {
+      "key": "CLI-047",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797327-51aada2c",
+        "status": "open",
+        "title": "CLI-047 [cli_command_projection]：cw ownership-map → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396052,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797327-51aada2c-ws-1",
+        "workspace_capture_id": "wc-ws-1-1370643068"
+      }
+    },
+    {
+      "key": "CLI-048",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797385-5518ba1c",
+        "status": "open",
+        "title": "CLI-048 [cli_command_projection]：cw query → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396053,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797385-5518ba1c-ws-1",
+        "workspace_capture_id": "wc-ws-1-1428376568"
+      }
+    },
+    {
+      "key": "CLI-049",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797455-594a8390",
+        "status": "open",
+        "title": "CLI-049 [cli_command_projection]：cw refresh → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396054,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797455-594a8390-ws-1",
+        "workspace_capture_id": "wc-ws-1-1498867668"
+      }
+    },
+    {
+      "key": "CLI-050",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797511-5c99e860",
+        "status": "open",
+        "title": "CLI-050 [cli_command_projection]：cw review → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396055,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797511-5c99e860-ws-1",
+        "workspace_capture_id": "wc-ws-1-1554085368"
+      }
+    },
+    {
+      "key": "CLI-051",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797571-6031e2d4",
+        "status": "open",
+        "title": "CLI-051 [task_projection]：cw rollback → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396056,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797571-6031e2d4-ws-1",
+        "workspace_capture_id": "wc-ws-1-1614486968"
+      }
+    },
+    {
+      "key": "CLI-052",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797641-645edd08",
+        "status": "open",
+        "title": "CLI-052 [cli_command_projection]：cw rule-applicable → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396057,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797641-645edd08-ws-1",
+        "workspace_capture_id": "wc-ws-1-1684920968"
+      }
+    },
+    {
+      "key": "CLI-053",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797727-697cd6f0",
+        "status": "open",
+        "title": "CLI-053 [cli_command_projection]：cw rule-candidate → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396058,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797727-697cd6f0-ws-1",
+        "workspace_capture_id": "wc-ws-1-1770362068"
+      }
+    },
+    {
+      "key": "CLI-054",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797796-6da4f0b4",
+        "status": "open",
+        "title": "CLI-054 [cli_command_projection]：cw rule-cleanup-sync-log → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396059,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797796-6da4f0b4-ws-1",
+        "workspace_capture_id": "wc-ws-1-1840206268"
+      }
+    },
+    {
+      "key": "CLI-055",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797861-717ae658",
+        "status": "open",
+        "title": "CLI-055 [cli_command_projection]：cw rule-extract → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396060,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797861-717ae658-ws-1",
+        "workspace_capture_id": "wc-ws-1-1904400168"
+      }
+    },
+    {
+      "key": "CLI-056",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797930-7595285c",
+        "status": "open",
+        "title": "CLI-056 [cli_command_projection]：cw rule-insert-block → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396061,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797930-7595285c-ws-1",
+        "workspace_capture_id": "wc-ws-1-1973240568"
+      }
+    },
+    {
+      "key": "CLI-057",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322797980-7895fb80",
+        "status": "open",
+        "title": "CLI-057 [cli_command_projection]：cw rule-list → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396062,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322797980-7895fb80-ws-1",
+        "workspace_capture_id": "wc-ws-1-2023581768"
+      }
+    },
+    {
+      "key": "CLI-058",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798105-800faaa0",
+        "status": "open",
+        "title": "CLI-058 [cli_command_projection]：cw rule-seed-bootstrap → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396063,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798105-800faaa0-ws-1",
+        "workspace_capture_id": "wc-ws-1-2149000568"
+      }
+    },
+    {
+      "key": "CLI-059",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798172-840ee260",
+        "status": "open",
+        "title": "CLI-059 [cli_command_projection]：cw rule-sync → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396064,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798172-840ee260-ws-1",
+        "workspace_capture_id": "wc-ws-1-2216093568"
+      }
+    },
+    {
+      "key": "CLI-060",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798237-87e3fc18",
+        "status": "open",
+        "title": "CLI-060 [cli_command_projection]：cw search → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396065,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798237-87e3fc18-ws-1",
+        "workspace_capture_id": "wc-ws-1-2280355868"
+      }
+    },
+    {
+      "key": "CLI-061",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798303-8bd1779c",
+        "status": "open",
+        "title": "CLI-061 [cli_command_projection]：cw semgrep → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396066,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798303-8bd1779c-ws-1",
+        "workspace_capture_id": "wc-ws-1-2346428668"
+      }
+    },
+    {
+      "key": "CLI-062",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798366-8f9cbfa8",
+        "status": "open",
+        "title": "CLI-062 [cli_command_projection]：cw stats → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396067,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798366-8f9cbfa8-ws-1",
+        "workspace_capture_id": "wc-ws-1-2409922168"
+      }
+    },
+    {
+      "key": "CLI-063",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798433-939358c4",
+        "status": "open",
+        "title": "CLI-063 [cli_command_projection]：cw status → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396068,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798433-939358c4-ws-1",
+        "workspace_capture_id": "wc-ws-1-2476433868"
+      }
+    },
+    {
+      "key": "CLI-064",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798497-9762fae0",
+        "status": "open",
+        "title": "CLI-064 [cli_command_projection]：cw symbol → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396069,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798497-9762fae0-ws-1",
+        "workspace_capture_id": "wc-ws-1-2540427268"
+      }
+    },
+    {
+      "key": "CLI-065",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798591-9d0507b8",
+        "status": "open",
+        "title": "CLI-065 [cli_command_projection]：cw symbol-history → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396070,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798591-9d0507b8-ws-1",
+        "workspace_capture_id": "wc-ws-1-2634857168"
+      }
+    },
+    {
+      "key": "CLI-066",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798663-a14caa24",
+        "status": "open",
+        "title": "CLI-066 [cli_command_projection]：cw test-impact → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396071,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798663-a14caa24-ws-1",
+        "workspace_capture_id": "wc-ws-1-2706674768"
+      }
+    },
+    {
+      "key": "CLI-067",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798722-a4d2c340",
+        "status": "open",
+        "title": "CLI-067 [cli_command_projection]：cw tests → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396072,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798722-a4d2c340-ws-1",
+        "workspace_capture_id": "wc-ws-1-2765981668"
+      }
+    },
+    {
+      "key": "CLI-068",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798801-a98790f0",
+        "status": "open",
+        "title": "CLI-068 [cli_command_projection]：cw topo → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396073,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798801-a98790f0-ws-1",
+        "workspace_capture_id": "wc-ws-1-2844995468"
+      }
+    },
+    {
+      "key": "CLI-069",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798858-ace77210",
+        "status": "open",
+        "title": "CLI-069 [cli_command_projection]：cw uncommented → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396074,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798858-ace77210-ws-1",
+        "workspace_capture_id": "wc-ws-1-2901371668"
+      }
+    },
+    {
+      "key": "CLI-070",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798916-b06209dc",
+        "status": "open",
+        "title": "CLI-070 [cli_command_projection]：cw vuln-blast → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396075,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798916-b06209dc-ws-1",
+        "workspace_capture_id": "wc-ws-1-2959813968"
+      }
+    },
+    {
+      "key": "CLI-071",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322798971-b3a9f30c",
+        "status": "open",
+        "title": "CLI-071 [cli_command_projection]：cw who → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396076,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322798971-b3a9f30c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3014922868"
+      }
+    },
+    {
+      "key": "CLI-072",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799021-b69c2990",
+        "status": "open",
+        "title": "CLI-072 [cli_command_projection]：cw workspace → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396077,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799021-b69c2990-ws-1",
+        "workspace_capture_id": "wc-ws-1-3064175668"
+      }
+    },
+    {
+      "key": "CLI-073",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799077-b9fe69b8",
+        "status": "open",
+        "title": "CLI-073 [cli_command_projection]：cw identity-revoke → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396078,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799077-b9fe69b8-ws-1",
+        "workspace_capture_id": "wc-ws-1-3120984868"
+      }
+    },
+    {
+      "key": "CLI-074",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799131-bd2db3c8",
+        "status": "open",
+        "title": "CLI-074 [cli_command_projection]：cw local → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396079,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799131-bd2db3c8-ws-1",
+        "workspace_capture_id": "wc-ws-1-3174504468"
+      }
+    },
+    {
+      "key": "CLI-075",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799188-c09db9b8",
+        "status": "open",
+        "title": "CLI-075 [cli_command_projection]：cw local-apply → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396080,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799188-c09db9b8-ws-1",
+        "workspace_capture_id": "wc-ws-1-3232094768"
+      }
+    },
+    {
+      "key": "CLI-076",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799244-c3f2f9c0",
+        "status": "open",
+        "title": "CLI-076 [cli_command_projection]：cw local-capture-auto → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396081,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799244-c3f2f9c0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3287989768"
+      }
+    },
+    {
+      "key": "CLI-077",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799302-c75c1d94",
+        "status": "open",
+        "title": "CLI-077 [cli_command_projection]：cw local-capture-manual → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396082,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799302-c75c1d94-ws-1",
+        "workspace_capture_id": "wc-ws-1-3345555668"
+      }
+    },
+    {
+      "key": "CLI-078",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799364-cb120c64",
+        "status": "open",
+        "title": "CLI-078 [cli_command_projection]：cw local-changes → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396083,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799364-cb120c64-ws-1",
+        "workspace_capture_id": "wc-ws-1-3407505668"
+      }
+    },
+    {
+      "key": "CLI-079",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799418-ce4698f0",
+        "status": "open",
+        "title": "CLI-079 [cli_command_projection]：cw local-close → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396084,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799418-ce4698f0-ws-1",
+        "workspace_capture_id": "wc-ws-1-3461321468"
+      }
+    },
+    {
+      "key": "CLI-080",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799482-d215a638",
+        "status": "open",
+        "title": "CLI-080 [cli_command_projection]：cw local-commits → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396085,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799482-d215a638-ws-1",
+        "workspace_capture_id": "wc-ws-1-3525393268"
+      }
+    },
+    {
+      "key": "CLI-081",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799532-d51d9d18",
+        "status": "open",
+        "title": "CLI-081 [cli_command_projection]：cw local-completion-review → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396086,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799532-d51d9d18-ws-1",
+        "workspace_capture_id": "wc-ws-1-3576229568"
+      }
+    },
+    {
+      "key": "CLI-082",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799580-d7f9eeec",
+        "status": "open",
+        "title": "CLI-082 [cli_command_projection]：cw local-create → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396087,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799580-d7f9eeec-ws-1",
+        "workspace_capture_id": "wc-ws-1-3624287268"
+      }
+    },
+    {
+      "key": "CLI-083",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799648-dc001930",
+        "status": "open",
+        "title": "CLI-083 [cli_command_projection]：cw local-findings → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396088,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799648-dc001930-ws-1",
+        "workspace_capture_id": "wc-ws-1-3691850068"
+      }
+    },
+    {
+      "key": "CLI-084",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799711-dfc17ba4",
+        "status": "open",
+        "title": "CLI-084 [cli_command_projection]：cw local-next → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396089,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799711-dfc17ba4-ws-1",
+        "workspace_capture_id": "wc-ws-1-3754713568"
+      }
+    },
+    {
+      "key": "CLI-085",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799770-e34ac71c",
+        "status": "open",
+        "title": "CLI-085 [cli_command_projection]：cw local-reopen → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396090,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799770-e34ac71c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3814117368"
+      }
+    },
+    {
+      "key": "CLI-086",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799850-e804f55c",
+        "status": "open",
+        "title": "CLI-086 [cli_command_projection]：cw local-report → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396091,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799850-e804f55c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3893483968"
+      }
+    },
+    {
+      "key": "CLI-087",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799910-eb9a737c",
+        "status": "open",
+        "title": "CLI-087 [cli_command_projection]：cw local-resolve-finding → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396092,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799910-eb9a737c-ws-1",
+        "workspace_capture_id": "wc-ws-1-3953280168"
+      }
+    },
+    {
+      "key": "CLI-088",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322799980-efcb2090",
+        "status": "open",
+        "title": "CLI-088 [task_projection]：cw local-rollback → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396093,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322799980-efcb2090-ws-1",
+        "workspace_capture_id": "wc-ws-1-4023627668"
+      }
+    },
+    {
+      "key": "CLI-089",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800040-f35e9b74",
+        "status": "open",
+        "title": "CLI-089 [cli_command_projection]：cw local-split → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396094,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800040-f35e9b74-ws-1",
+        "workspace_capture_id": "wc-ws-1-4083686068"
+      }
+    },
+    {
+      "key": "CLI-090",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800112-f7a9dc0c",
+        "status": "open",
+        "title": "CLI-090 [cli_command_projection]：cw local-status → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396095,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800112-f7a9dc0c-ws-1",
+        "workspace_capture_id": "wc-ws-1-4155673368"
+      }
+    },
+    {
+      "key": "CLI-091",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800171-fb277560",
+        "status": "open",
+        "title": "CLI-091 [task_projection]：cw local-task-exists → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396096,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800171-fb277560-ws-1",
+        "workspace_capture_id": "wc-ws-1-4214455168"
+      }
+    },
+    {
+      "key": "CLI-092",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800239-ff34cf18",
+        "status": "open",
+        "title": "CLI-092 [task_projection]：cw local-task-list → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396097,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800239-ff34cf18-ws-1",
+        "workspace_capture_id": "wc-ws-1-4282159068"
+      }
+    },
+    {
+      "key": "CLI-093",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800298-02bb7c40",
+        "status": "open",
+        "title": "CLI-093 [cli_command_projection]：cw local-tree → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396098,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800298-02bb7c40-ws-1",
+        "workspace_capture_id": "wc-ws-1-46677072"
+      }
+    },
+    {
+      "key": "CLI-094",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800362-068ff314",
+        "status": "open",
+        "title": "CLI-094 [assignment_projection]：cw internal lease-write → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396099,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800362-068ff314-ws-1",
+        "workspace_capture_id": "wc-ws-1-110873672"
+      }
+    },
+    {
+      "key": "CLI-095",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800435-0aebf778",
+        "status": "open",
+        "title": "CLI-095 [cli_command_projection]：cw run-subcommand-mode → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396100,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800435-0aebf778-ws-1",
+        "workspace_capture_id": "wc-ws-1-183977672"
+      }
+    },
+    {
+      "key": "CLI-096",
+      "result": "created",
+      "response": {
+        "task_id": "T-1787322800492-0e4a5838",
+        "status": "open",
+        "title": "CLI-096 [cli_command_projection]：cw main → Rust daemon HTTP thin client",
+        "step_count": 4,
+        "contract_count": 3,
+        "monotonic_seq": 1786265396101,
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787322800492-0e4a5838-ws-1",
+        "workspace_capture_id": "wc-ws-1-240332972"
+      }
+    }
+  ]
+}

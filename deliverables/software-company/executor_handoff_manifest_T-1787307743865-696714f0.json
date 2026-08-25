@@ -1,0 +1,53 @@
+{
+  "manifest_version": "p0-executor-handoff/v1",
+  "task_id": "T-1787307743865-696714f0",
+  "task_name": "P0-E adjudicator/reviewer lease delegation",
+  "executor_identity": {
+    "agent_id": "executor-manus-governance-v1",
+    "session_id": "manus-governance-reconciliation-20260821",
+    "model_id": "manus-agent",
+    "role": "executor"
+  },
+  "created_at": "2026-08-21T11:02:02.872463+00:00",
+  "summary": "Introduced a governance-only reviewer-lease validator: a registered adjudicator can finalize only with an active registered reviewer holder that is distinct by agent, instance and session; ordinary same-holder mutation checks remain unchanged.",
+  "step_results": {
+    "implement": "Cross-role governance validator implemented in task_collab.",
+    "wire": "Only supersede, legacy authority attestation and contract bootstrap use the delegation validator.",
+    "test": "Cross-role separation and lease rejection matrix passed.",
+    "release_verify": "P0-E release runtime refresh completed; current daemon ping is captured below."
+  },
+  "test_results": [
+    "P0-E targeted Rust test: 1 passed, 0 failed",
+    "Distinct reviewer/adjudicator path passes; same agent, instance, session, token and fencing failures are rejected"
+  ],
+  "runtime_ping_after_latest_release": {
+    "status": "ok",
+    "peer_uid": 4294967295,
+    "pid": 28008,
+    "authority_id": "unknown-host/windows/S-1-5-21-1583625257-826939952-3615027596-1001/ef281e4cf0f084c261a2aef0200fac6576da336cafd65fdd0fb006f0b04252d4",
+    "transport": "http",
+    "task_db_fingerprint": "ef281e4cf0f084c261a2aef0200fac6576da336cafd65fdd0fb006f0b04252d4",
+    "protocol_version": 1,
+    "timestamp": 1787310122.87211
+  },
+  "artifact_hashes": {
+    "rust_ext/src/daemon/task_collab.rs": {
+      "sha256": "df380b84cb0f0d3182a72b0f4206583a890596f0277ab8e7f7492d273fb617c9",
+      "bytes": 471476
+    },
+    "rust_ext/src/daemon/task_supersede.rs": {
+      "sha256": "d5bca924281bc2bda05238ac37b1d255b7a3f6c2e04714cb347f139fb5c50285",
+      "bytes": 76405
+    },
+    "deliverables/software-company/p0e_lease_delegation_test.log": {
+      "sha256": "36b902d89c0be4d0cf0beb2e693f6bc605696a8cc4c08f30b9bda5c232f3c43d",
+      "bytes": 31040
+    },
+    "deliverables/software-company/p0e_adjudicator_reviewer_lease_delegation_contract.md": {
+      "sha256": "99a1cd31108daa0da3e693dcbadbfad74f8400371190f91009366e1ab046fca7",
+      "bytes": 3050
+    }
+  },
+  "missing_artifacts": [],
+  "reviewer_scope": "Read-only independent verification of source diffs, test logs, runtime probe/ping, release baseline and append-only/no-direct-SQL claims."
+}

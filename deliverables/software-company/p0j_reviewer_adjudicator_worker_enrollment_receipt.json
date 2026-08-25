@@ -1,0 +1,27 @@
+{
+  "endpoint": "http://127.0.0.1:7129",
+  "workers": [
+    {
+      "worker": {
+        "ok": true,
+        "role_worker_id": "cw-reviewer-p0j-v1",
+        "role_instance_id": "inst-cw-reviewer-p0j-v1-20260822",
+        "role": "reviewer",
+        "credential_delivery": "response_once",
+        "recorded_at": 1787404675.5740006
+      },
+      "role_session_handle": "cw-reviewer-p0j-v1"
+    },
+    {
+      "worker": {
+        "ok": true,
+        "role_worker_id": "cw-adjudicator-p0j-v1",
+        "role_instance_id": "inst-cw-adjudicator-p0j-v1-20260822",
+        "role": "adjudicator",
+        "credential_delivery": "response_once",
+        "recorded_at": 1787404675.6178393
+      },
+      "role_session_handle": "cw-adjudicator-p0j-v1"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "task_id": "T-1787402257549-67ba81e6",
+  "implemented_step": {
+    "task_id": "T-1787402257549-67ba81e6",
+    "status": "in_progress",
+    "step_id": "S-1787402257708-21705598",
+    "change_ids": []
+  },
+  "governance_gap_step": {
+    "task_id": "T-1787402257549-67ba81e6",
+    "status": "in_progress",
+    "step_id": "S-1787402257708-2170b8d0",
+    "change_ids": []
+  },
+  "remediation_required": true
+}

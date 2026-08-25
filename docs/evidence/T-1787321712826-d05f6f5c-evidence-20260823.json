@@ -1,0 +1,44 @@
+{
+  "card": "T-1787321712826-d05f6f5c",
+  "commit_hash": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+  "committed_head_file_hashes": {
+    "rust_ext/src/daemon/dispatch.rs": "c2112f971bfb8e18c4bdbc2d4b9a3ce7b43cb0d1db0ba6756cc0627fa0dfa376",
+    "rust_ext/src/daemon/http_server.rs": "b05973a4ee27a8dc8a04fd2087b6c9e58da50a9c49d38311726eb40aeac0c733",
+    "rust_ext/src/daemon/task_collab.rs": "8b1468b9d73486aa99f5a2b06582ee22b75e7a99ee6d5b0d6f4c5f498e8664c1"
+  },
+  "evidence_type": "diagnostic_run",
+  "live_diagnostics": {
+    "capabilities_summary": {
+      "git_commit": null,
+      "pid": null,
+      "schema_version": null,
+      "security_profile": null,
+      "worker_status": null
+    },
+    "health": {
+      "capability_registry_revision": "http-mvp-cap-registry-v1",
+      "endpoint": "http://127.0.0.1:7548",
+      "git_commit": "ab7e39559f343c13867740f99591f34b730dbd5c",
+      "pid": 38252,
+      "schema_version": 58,
+      "security_profile": "dev_loopback_unauthenticated",
+      "worker_status": "healthy"
+    }
+  },
+  "manifest_version": "1",
+  "method": "lsp_check_available",
+  "notes": "Rust native lsp_check_available handler verified present in committed HEAD (commit 676fd3d9a18a2dc121c1040d97dfcbd2d97a624c). NOTE: accompanying test file tests/test_mcp_lsp_check_available_http_rpc.py and tool_migration_matrix.json entry are present in working tree but NOT committed (traceability gap; recommend commit).",
+  "produced_at": "2026-08-23T09:07:55.108066Z",
+  "symbol_verification": {
+    "handle_in_task_collab": true,
+    "method": "lsp_check_available",
+    "method_in_dispatch": true,
+    "method_in_http_server": true
+  },
+  "task_id": "T-1787321712826-d05f6f5c",
+  "verifier": {
+    "config_hash": "sha256:a857b2b0448035ad262731b24a846b95de7f6612a46fa551cf8569ccad848245",
+    "name": "mcp-migration-verify",
+    "version": "1"
+  }
+}

@@ -1,0 +1,258 @@
+{
+  "endpoint": "http://127.0.0.1:3912",
+  "manifest": "C:\\Users\\wanpi\\.callwarden\\http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+  "tasks": [
+    {
+      "task_id": "T-1787321708568-d292ab3c",
+      "task.status": {
+        "task_id": "T-1787321708568-d292ab3c",
+        "title": "CLI-02 [control_plane]：cw search daemon-only 读取链路",
+        "description": "# CLI-02：单 CLI→HTTP Rust daemon 链路迁移\n\n**父任务：** `T-1787293451688-c14b1e44`  \n**port_type：** `control_plane`  \n**gate：** `false`  \n**execution_dependency：** `CLI-01` 必须由 Adjudicator `apply`；任务已预建仅用于完整任务树，不授权 Executor 领取、实现或 report。\n\n## 唯一范围\n\n- **Python public entry：** `cli/main.py::search 子命令与结果格式化（仅该 command）`。\n- **Rust target：** `query_handlers.rs::search response compatibility 或现有 query.search RPC response`。\n- **dispatch/capability：** 只改本 command 所需 HTTP RPC route/capability response；Python 保持 thin client，不得 local SQLite fallback。\n- **fixture：** 专属 CLI process + HTTP round-trip fixture，覆盖 success、非法/空输入、authority failure、daemon unavailable、restart。\n- **矩阵：** 仅在独立 review 和 runtime evidence 后更新该 command route/matrix 输入；不把本卡当作 `cli/main.py` 旧 S1 全量清理。\n\n## 验收与禁止\n\n修复 `cw search <query>` daemon-only 读取链路的 `has_comment` 兼容字段与输出格式。不得把 get_db() 回填 CLI；success、空结果、无 has_comment、daemon unavailable 均须稳定。\n\n禁止修改 `db/schema.py`、任务/lease/verdict/gate mutation，禁止扩展到其他 CLI 命令、MCP 工具或 S1 的 296 处引用清理。\n\n## Handoff\n\n```text\nHandoff:\n  from_role: executor\n  outcome: executor_ready_for_review\n  next_role: reviewer\n  next_action: 独立复现本 CLI command 的 HTTP success、authority/参数/daemon-unavailable/restart 负向矩阵，核验 Python 无业务逻辑与无 SQLite fallback。\n  reason: CLI-02 是 A′ control_plane 的单命令链路卡，必须独立证明 Rust daemon 为 authority。\n  independence_requirement: required\n```\n",
+        "parent_id": "T-1787293451688-c14b1e44",
+        "status": "review",
+        "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+        "claimed_by": "sess-workbuddy-cw-20260822-0320",
+        "created_at": 1787321708.5685606,
+        "updated_at": 1787340779.023974
+      },
+      "task.contract_get": {
+        "task_id": "T-1787321708568-d292ab3c",
+        "contracts": [
+          {
+            "role": "adjudicator",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+            "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+            "allowed_paths": "[\"cli/main.py\", \"server/compat_registry.py\", \"server/compat_worker.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/query_handlers.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"tests/test_mcp_cli_02_http_rpc.py\", \"deliverables/software-company/tool_migration_matrix.json\", \"deliverables/mcp-tools-implementation-map.md\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust handler tests\", \"Python 3.14 HTTP RPC fixture\", \"daemon restart parity fixture\", \"daemon unavailable fail-closed fixture\", \"migration matrix generator refresh\"]",
+            "acceptance_checks": "[\"public MCP name/parameters/result shape stable\", \"Rust handler owns business logic\", \"Python wrapper only routes HTTP RPC\", \"single compat registration retired\", \"negative paths fail-closed\", \"matrix updates only after tests and independent review evidence\"]",
+            "required_evidence": "[\"Rust test output\", \"HTTP fixture output\", \"compat golden parity\", \"restart output\", \"daemon-unavailable output\", \"capability registry row\", \"matrix generator output\"]",
+            "handoff_to": "complete",
+            "independence": "required",
+            "revision": 1,
+            "contract_id": "RC-T-1787321708568-d292ab3c-adjudicator-2",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          },
+          {
+            "role": "executor",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.executor.startup.v1",
+            "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+            "allowed_paths": "[\"cli/main.py\", \"rust_ext/src/daemon/snapshot_state.rs\", \"rust_ext/src/daemon/query_handlers.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"tests/test_cli02_search_daemon_only.py\", \"deliverables/software-company/tool_migration_matrix.json\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust tests\", \"Python 3.14 HTTP round-trip fixture\", \"daemon unavailable/restart negative test\"]",
+            "acceptance_checks": "[\"cw search <QUERY> daemon-only \\u8bfb\\u53d6\\u94fe\\u8def\\u6210\\u529f\\uff08Rust daemon \\u6743\\u5a01\\uff09\", \"has_comment/signature/file_path \\u517c\\u5bb9\\u5b57\\u6bb5\\u7a33\\u5b9a\\uff08\\u7f3a\\u7701\\u4e0d KeyError\\uff09\", \"success / \\u7a7a\\u7ed3\\u679c / authority failure / daemon unavailable / restart \\u5747\\u7a33\\u5b9a\", \"Python \\u65e0\\u672c\\u5730 SQLite fallback\\uff08thin client\\uff09\"]",
+            "required_evidence": "[\"tests/test_cli02_search_daemon_only.py 7 passed\", \"CLI \\u5192\\u70df cw search alpha / no-such-symbol (exit 0)\", \"matrix cli_diagnostic_migration CLI-02 entry\", \"daemon \\u7aef query.search normalize \\u54cd\\u5e94\\u8bc1\\u636e\"]",
+            "handoff_to": "reviewer",
+            "independence": "required",
+            "revision": 2,
+            "contract_id": "RC-T-1787321708568-d292ab3c-executor-r2",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          },
+          {
+            "role": "reviewer",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+            "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+            "allowed_paths": "[\"cli/main.py\", \"server/compat_registry.py\", \"server/compat_worker.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/query_handlers.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"tests/test_mcp_cli_02_http_rpc.py\", \"deliverables/software-company/tool_migration_matrix.json\", \"deliverables/mcp-tools-implementation-map.md\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust handler tests\", \"Python 3.14 HTTP RPC fixture\", \"daemon restart parity fixture\", \"daemon unavailable fail-closed fixture\", \"migration matrix generator refresh\"]",
+            "acceptance_checks": "[\"public MCP name/parameters/result shape stable\", \"Rust handler owns business logic\", \"Python wrapper only routes HTTP RPC\", \"single compat registration retired\", \"negative paths fail-closed\", \"matrix updates only after tests and independent review evidence\"]",
+            "required_evidence": "[\"Rust test output\", \"HTTP fixture output\", \"compat golden parity\", \"restart output\", \"daemon-unavailable output\", \"capability registry row\", \"matrix generator output\"]",
+            "handoff_to": "adjudicator",
+            "independence": "required",
+            "revision": 1,
+            "contract_id": "RC-T-1787321708568-d292ab3c-reviewer-1",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          }
+        ]
+      },
+      "lease.status": {
+        "status": "released",
+        "lease_id": "L-e3576d80e37732cd",
+        "task_id": "T-1787321708568-d292ab3c",
+        "role": "reviewer",
+        "agent_id": "reviewer-wb-186loop",
+        "session_id": "sess-reviewer-wb-186loop-2",
+        "model_id": "deepseek-v4-flash",
+        "token_hash": "ddb4f183872156ce0ab7771613e9339064a8ae495625270e7635f3c738cd8374",
+        "fencing_counter": 1,
+        "acquired_at": 1787362113.0,
+        "expires_at": 1787365713.0,
+        "released_at": 1787363122.0
+      }
+    },
+    {
+      "task_id": "T-1787321708639-d6d362f4",
+      "task.status": {
+        "task_id": "T-1787321708639-d6d362f4",
+        "title": "CLI-03 [control_plane]：cw task show/list/status-tree 只读 authority 诊断",
+        "description": "# CLI-03：单 CLI→HTTP Rust daemon 链路迁移\n\n**父任务：** `T-1787293451688-c14b1e44`  \n**port_type：** `control_plane`  \n**gate：** `false`  \n**execution_dependency：** `CLI-01` 必须由 Adjudicator `apply`；任务已预建仅用于完整任务树，不授权 Executor 领取、实现或 report。\n\n## 唯一范围\n\n- **Python public entry：** `cli/main.py::task show/list/status-tree；server/daemon_client.py::route_task_read`。\n- **Rust target：** `task_collab.rs readonly projection 或 dedicated readonly task query handler`。\n- **dispatch/capability：** 只改本 command 所需 HTTP RPC route/capability response；Python 保持 thin client，不得 local SQLite fallback。\n- **fixture：** 专属 CLI process + HTTP round-trip fixture，覆盖 success、非法/空输入、authority failure、daemon unavailable、restart。\n- **矩阵：** 仅在独立 review 和 runtime evidence 后更新该 command route/matrix 输入；不把本卡当作 `cli/main.py` 旧 S1 全量清理。\n\n## 验收与禁止\n\n迁移 task show/list/status-tree 的只读 authority 诊断；区分 target、父树、未绑定/错误 authority 与 stale manifest，且不得写 active workspace 或改 task state。\n\n禁止修改 `db/schema.py`、任务/lease/verdict/gate mutation，禁止扩展到其他 CLI 命令、MCP 工具或 S1 的 296 处引用清理。\n\n## Handoff\n\n```text\nHandoff:\n  from_role: executor\n  outcome: executor_ready_for_review\n  next_role: reviewer\n  next_action: 独立复现本 CLI command 的 HTTP success、authority/参数/daemon-unavailable/restart 负向矩阵，核验 Python 无业务逻辑与无 SQLite fallback。\n  reason: CLI-03 是 A′ control_plane 的单命令链路卡，必须独立证明 Rust daemon 为 authority。\n  independence_requirement: required\n```\n",
+        "parent_id": "T-1787293451688-c14b1e44",
+        "status": "review",
+        "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+        "claimed_by": "sess-workbuddy-cw-20260822-0320",
+        "created_at": 1787321708.6399083,
+        "updated_at": 1787360227.4238691
+      },
+      "task.contract_get": {
+        "task_id": "T-1787321708639-d6d362f4",
+        "contracts": [
+          {
+            "role": "adjudicator",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+            "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+            "allowed_paths": "[\"cli/main.py\", \"server/compat_registry.py\", \"server/compat_worker.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/task_collab.rs readonly projection \\u6216 dedicated readonly task query handler\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"tests/test_mcp_cli_03_http_rpc.py\", \"deliverables/software-company/tool_migration_matrix.json\", \"deliverables/mcp-tools-implementation-map.md\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust handler tests\", \"Python 3.14 HTTP RPC fixture\", \"daemon restart parity fixture\", \"daemon unavailable fail-closed fixture\", \"migration matrix generator refresh\"]",
+            "acceptance_checks": "[\"public MCP name/parameters/result shape stable\", \"Rust handler owns business logic\", \"Python wrapper only routes HTTP RPC\", \"single compat registration retired\", \"negative paths fail-closed\", \"matrix updates only after tests and independent review evidence\"]",
+            "required_evidence": "[\"Rust test output\", \"HTTP fixture output\", \"compat golden parity\", \"restart output\", \"daemon-unavailable output\", \"capability registry row\", \"matrix generator output\"]",
+            "handoff_to": "complete",
+            "independence": "required",
+            "revision": 1,
+            "contract_id": "RC-T-1787321708639-d6d362f4-adjudicator-2",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          },
+          {
+            "role": "executor",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.executor.startup.v1",
+            "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+            "allowed_paths": "[\"cli/main.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/task_collab.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"tests/test_cli03_task_read_authority.py\", \"deliverables/software-company/tool_migration_matrix.json\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task/lease/verdict/gate mutation\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"Python 3.14 HTTP round-trip fixture\", \"daemon unavailable/restart negative test\"]",
+            "acceptance_checks": "[\"cw task show/list/status-tree \\u53ea\\u8bfb authority \\u8bca\\u65ad\\u6210\\u529f\\uff08Rust daemon \\u6743\\u5a01\\uff09\", \"\\u533a\\u5206 target / \\u7236\\u6811\\uff08status_tree subtasks\\uff09/ \\u672a\\u7ed1\\u5b9a authority / stale manifest\", \"\\u53ea\\u8bfb\\u4e0d\\u5199 active workspace\\u3001\\u4e0d\\u6539 task state\", \"success / \\u975e\\u6cd5\\u8f93\\u5165 / authority failure / daemon unavailable / restart \\u5747\\u7a33\\u5b9a\", \"Python \\u65e0\\u672c\\u5730 SQLite fallback\\uff08thin client\\uff09\"]",
+            "required_evidence": "[\"tests/test_cli03_task_read_authority.py 9 passed\", \"CLI \\u5192\\u70df cw task list / show / status-tree (exit 0)\", \"matrix cli_diagnostic_migration CLI-03 entry\", \"no_state_mutation \\u65ad\\u8a00\"]",
+            "handoff_to": "reviewer",
+            "independence": "required",
+            "revision": 2,
+            "contract_id": "RC-T-1787321708639-d6d362f4-executor-r2",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          },
+          {
+            "role": "reviewer",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+            "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+            "allowed_paths": "[\"cli/main.py\", \"server/compat_registry.py\", \"server/compat_worker.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/task_collab.rs readonly projection \\u6216 dedicated readonly task query handler\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"tests/test_mcp_cli_03_http_rpc.py\", \"deliverables/software-company/tool_migration_matrix.json\", \"deliverables/mcp-tools-implementation-map.md\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust handler tests\", \"Python 3.14 HTTP RPC fixture\", \"daemon restart parity fixture\", \"daemon unavailable fail-closed fixture\", \"migration matrix generator refresh\"]",
+            "acceptance_checks": "[\"public MCP name/parameters/result shape stable\", \"Rust handler owns business logic\", \"Python wrapper only routes HTTP RPC\", \"single compat registration retired\", \"negative paths fail-closed\", \"matrix updates only after tests and independent review evidence\"]",
+            "required_evidence": "[\"Rust test output\", \"HTTP fixture output\", \"compat golden parity\", \"restart output\", \"daemon-unavailable output\", \"capability registry row\", \"matrix generator output\"]",
+            "handoff_to": "adjudicator",
+            "independence": "required",
+            "revision": 1,
+            "contract_id": "RC-T-1787321708639-d6d362f4-reviewer-1",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          }
+        ]
+      },
+      "lease.status": {
+        "status": "released",
+        "lease_id": "L-93428dba6dcda618",
+        "task_id": "T-1787321708639-d6d362f4",
+        "role": "reviewer",
+        "agent_id": "reviewer-wb-186loop",
+        "session_id": "sess-reviewer-wb-186loop-2",
+        "model_id": "deepseek-v4-flash",
+        "token_hash": "4753f13460160d94988e7e6be094a4d9224bbe9b2b48364c1f5255de34bef3f7",
+        "fencing_counter": 1,
+        "acquired_at": 1787362114.0,
+        "expires_at": 1787365714.0,
+        "released_at": 1787363123.0
+      }
+    },
+    {
+      "task_id": "T-1787321708699-da5d8224",
+      "task.status": {
+        "task_id": "T-1787321708699-da5d8224",
+        "title": "MCP-001 [Gate/task_projection]：get_role_view → Rust daemon native",
+        "description": "# MCP-001：get_role_view 单 MCP→Rust daemon 原生链路迁移\n\n**父任务：** `T-1787293451688-c14b1e44`  \n**port_type：** `task_projection`  \n**port_key：** `collab_query_handlers`  \n**gate：** `true`  \n**successor_rule：** MCP-001 为 task_projection Gate；Adjudicator apply 前不得创建同 port_type 后继\n\n## 预建但不可执行的 Gate 约束\n\n本卡已入库以形成完整 A′ 工作分解结构；在 `CLI-01` 及本卡 `port_type` 的首卡被 Adjudicator `apply` 前，不得对本卡 bootstrap governance projection、claim、report 或 handoff。预建不是派发。\n\n## 唯一交付链路\n\n```text\nMCP `get_role_view`\n  → Python thin wrapper\n  → HTTP JSON-RPC `get_role_view / get_role_view`\n  → dispatch.rs route\n  → Rust `collab_query_handlers.rs::handle_get_role_view`\n  → authoritative read-only service/connection\n```\n\n## 精确范围\n\n| 类别 | 唯一目标 |\n|---|---|\n| Python public entry | `server/tools/tools_collab.py::get_role_view L115；_h_get_role_view L442`；保留 MCP 名称、参数、默认值、返回 JSON shape 和 stable error code，仅改为 `route_rpc()`/HTTP thin shell。 |\n| Python compat retirement | 删除本工具 `_h_get_role_view` 与 `*_READ_ONLY_METHODS`/`register_compat_routes` 中的**单项**；不得删同模块任何其他 handler。 |\n| Rust business handler | `collab_query_handlers.rs::handle_get_role_view`；如本卡是端口首卡才创建该领域 module 与 `mod.rs` declaration；SQL/workspace/filter/limit 必须在 Rust authority 中。 |\n| Dispatch/capability | 仅新增本工具 RPC branch 与 `http_server.rs` capability row；从 `python_compat` 变为 `rust_native`。 |\n| Fixture | `tests/test_mcp_get_role_view_http_rpc.py` 或同族专属 fixture：success、非法参数、unknown/unauthorized workspace、daemon unavailable、daemon restart；确定性 Python compat golden parity。 |\n| Matrix | 只有在 fixture、Reviewer 证据与 capability row 齐全后，生成器才可把 `get_role_view` 更新为 `target_backend=rust_native`、`status=migrated`、`batch=MCP-001`。 |\n\n## 禁止范围\n\n禁止修改 `db/schema.py`、治理 mutation、lease/assignment/verdict/gate 语义、其他 MCP 工具 handler，禁止客户端 SQL、direct `get_db()` fallback、隐藏 compat worker fallback 或同模块批量迁移。\n\n## Handoff\n\n```text\nHandoff:\n  from_role: executor\n  outcome: executor_ready_for_review\n  next_role: reviewer\n  next_action: 独立复现 `get_role_view` 的 HTTP success、参数/authority/daemon-unavailable/restart 负向矩阵；核验 Python 已是 thin client、Rust handler 是唯一业务实现，compat registry 只移除了此单项。\n  reason: MCP-001 是 `task_projection` 的单链路迁移任务，必须以可复现 evidence 证明 Python 不再承载业务逻辑。\n  independence_requirement: required\n```\n",
+        "parent_id": "T-1787293451688-c14b1e44",
+        "status": "review",
+        "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+        "claimed_by": "sess-workbuddy-cw-20260822-0320",
+        "created_at": 1787321708.6992915,
+        "updated_at": 1787360752.3078656
+      },
+      "task.contract_get": {
+        "task_id": "T-1787321708699-da5d8224",
+        "contracts": [
+          {
+            "role": "adjudicator",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+            "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+            "allowed_paths": "[\"server/tools/tools_collab.py\", \"server/compat_registry.py\", \"server/compat_worker.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/collab_query_handlers.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"tests/test_mcp_get_role_view_http_rpc.py\", \"deliverables/software-company/tool_migration_matrix.json\", \"deliverables/mcp-tools-implementation-map.md\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust handler tests\", \"Python 3.14 HTTP RPC fixture\", \"daemon restart parity fixture\", \"daemon unavailable fail-closed fixture\", \"migration matrix generator refresh\"]",
+            "acceptance_checks": "[\"public MCP name/parameters/result shape stable\", \"Rust handler owns business logic\", \"Python wrapper only routes HTTP RPC\", \"single compat registration retired\", \"negative paths fail-closed\", \"matrix updates only after tests and independent review evidence\"]",
+            "required_evidence": "[\"Rust test output\", \"HTTP fixture output\", \"compat golden parity\", \"restart output\", \"daemon-unavailable output\", \"capability registry row\", \"matrix generator output\"]",
+            "handoff_to": "complete",
+            "independence": "required",
+            "revision": 1,
+            "contract_id": "RC-T-1787321708699-da5d8224-adjudicator-2",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          },
+          {
+            "role": "executor",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.executor.startup.v1",
+            "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+            "allowed_paths": "[\"rust_ext/src/daemon/task_collab.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/route_matrix.rs\", \"server/tools/tools_collab.py\", \"server/compat_registry.py\", \"tests/test_mcp01_get_role_view_http_rpc.py\", \"tests/test_http_daemon_capability_matrix.py\", \".trae-cn/evidence/http-daemon-capability-matrix.json\", \"deliverables/software-company/tool_migration_matrix.json\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust tests\", \"Python 3.14 HTTP round-trip fixture\", \"daemon unavailable/restart negative test\", \"golden parity\\uff08Python db_task_reviews \\u5bf9\\u7167\\uff09\"]",
+            "acceptance_checks": "[\"get_role_view \\u7531 Rust daemon native \\u627f\\u62c5\\uff08role_view.get \\u8bed\\u4e49\\u590d\\u523b\\uff09\", \"MCP \\u540d\\u79f0/\\u53c2\\u6570/\\u8fd4\\u56de JSON shape/stable error code \\u4e0d\\u53d8\", \"\\u56db\\u7c7b hash\\uff08allowlist/contract/content/view_manifest\\uff09\\u4e0e Python golden \\u4e00\\u81f4\", \"Python compat _h_get_role_view \\u9000\\u5f79\\uff08\\u5355\\u9879\\u5220\\u9664\\uff0c\\u4e0d\\u78b0\\u5176\\u4ed6 handler\\uff09\", \"success / \\u975e\\u6cd5\\u53c2\\u6570 / unknown task / daemon unavailable / restart \\u5747\\u7a33\\u5b9a\"]",
+            "required_evidence": "[\"tests/test_mcp01_get_role_view_http_rpc.py 7 passed\\uff08\\u542b golden parity\\uff09\", \"capability matrix \\u56de\\u5f52\\u901a\\u8fc7\\uff08RUST_NATIVE_EXPECTED + \\u8ba1\\u6570\\u66f4\\u65b0\\uff09\", \"matrix cli_diagnostic_migration MCP-001 entry + tools \\u884c rust_native\", \"live round-trip view_manifest_hash=e3b8e276...\"]",
+            "handoff_to": "reviewer",
+            "independence": "required",
+            "revision": 2,
+            "contract_id": "RC-T-1787321708699-da5d8224-executor-r2",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          },
+          {
+            "role": "reviewer",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+            "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+            "allowed_paths": "[\"server/tools/tools_collab.py\", \"server/compat_registry.py\", \"server/compat_worker.py\", \"server/daemon_client.py\", \"rust_ext/src/daemon/collab_query_handlers.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"rust_ext/src/daemon/http_server.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"tests/test_mcp_get_role_view_http_rpc.py\", \"deliverables/software-company/tool_migration_matrix.json\", \"deliverables/mcp-tools-implementation-map.md\"]",
+            "forbidden_paths": "[\"db/schema.py\", \"direct SQLite or get_db fallback\", \"task_collab.rs governance mutations\", \"lease/assignment/verdict/gate semantics\", \"other MCP tool handlers\", \"task.apply\", \"task.close\"]",
+            "commands": "[\"targeted Rust handler tests\", \"Python 3.14 HTTP RPC fixture\", \"daemon restart parity fixture\", \"daemon unavailable fail-closed fixture\", \"migration matrix generator refresh\"]",
+            "acceptance_checks": "[\"public MCP name/parameters/result shape stable\", \"Rust handler owns business logic\", \"Python wrapper only routes HTTP RPC\", \"single compat registration retired\", \"negative paths fail-closed\", \"matrix updates only after tests and independent review evidence\"]",
+            "required_evidence": "[\"Rust test output\", \"HTTP fixture output\", \"compat golden parity\", \"restart output\", \"daemon-unavailable output\", \"capability registry row\", \"matrix generator output\"]",
+            "handoff_to": "adjudicator",
+            "independence": "required",
+            "revision": 1,
+            "contract_id": "RC-T-1787321708699-da5d8224-reviewer-1",
+            "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+          }
+        ]
+      },
+      "lease.status": {
+        "status": "released",
+        "lease_id": "L-eba85d6cd328bdef",
+        "task_id": "T-1787321708699-da5d8224",
+        "role": "reviewer",
+        "agent_id": "reviewer-wb-186loop",
+        "session_id": "sess-reviewer-wb-186loop-2",
+        "model_id": "deepseek-v4-flash",
+        "token_hash": "2d9b793bda91a6dc8eea78707469dd78f9561d25400aceae04e18992d1ca5ffb",
+        "fencing_counter": 1,
+        "acquired_at": 1787362115.0,
+        "expires_at": 1787365715.0,
+        "released_at": 1787363125.0
+      }
+    }
+  ]
+}

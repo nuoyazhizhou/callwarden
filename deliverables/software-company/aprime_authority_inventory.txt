@@ -1,0 +1,18 @@
+DB=C:\Users\wanpi\.callwarden\callwarden.db
+TASK_AUTHORITY
+{'task': {'id': 'T-1787203926824-9f873bfc', 'title': 'CW 业务逻辑全量下沉 Rust daemon（三阶段收尾）', 'status': 'open', 'parent_id': '', 'creator': 'S-1-5-21-1583625257-826939952-3615027596-1001'}, 'binding': None}
+{'task': {'id': 'T-1787203937201-0a156564', 'title': 'S2 compat 79 工具 M2 迁 Rust handler', 'status': 'open', 'parent_id': 'T-1787203926824-9f873bfc', 'creator': 'S-1-5-21-1583625257-826939952-3615027596-1001'}, 'binding': None}
+{'task': {'id': 'T-1787209948470-a59bcf9c', 'title': 'S2 compat 79 工具 M2 迁 Rust handler（重建·authority 绑定）', 'status': 'open', 'parent_id': 'T-1787203926824-9f873bfc', 'creator': 'S-1-5-21-1583625257-826939952-3615027596-1001'}, 'binding': {'task_id': 'T-1787209948470-a59bcf9c', 'workspace_id': 1, 'workspace_binding_id': 'tb-T-1787209948470-a59bcf9c-ws-1', 'workspace_capture_id': 'wc-ws-1-4230255108', 'created_by': 'S-1-5-21-1583625257-826939952-3615027596-1001', 'authoritative_created_at': '1787209948.4705472', 'workspace_instance_id': 'ws-1', 'registry_identity_hash': 'sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1', 'workspace_manifest_hash': '165e7709c831c70aad8a4c3c9d8c653cb7afe0a8b15a7344220729f0300e0cf3', 'capture_revision': 5}}
+{'task': {'id': 'T-1787277487109-758e56d0', 'title': 'P0-H：task.supersede governance hardening / promotion', 'status': 'closed', 'parent_id': 'T-1787203926824-9f873bfc', 'creator': 'executor-planner'}, 'binding': {'task_id': 'T-1787277487109-758e56d0', 'workspace_id': 1, 'workspace_binding_id': 'tb-T-1787277487109-758e56d0-ws-1', 'workspace_capture_id': 'wc-ws-1-4230255108', 'created_by': 'S-1-5-21-1583625257-826939952-3615027596-1001', 'authoritative_created_at': '1787290457.305235', 'workspace_instance_id': 'ws-1', 'registry_identity_hash': 'sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1', 'workspace_manifest_hash': '165e7709c831c70aad8a4c3c9d8c653cb7afe0a8b15a7344220729f0300e0cf3', 'capture_revision': 5}}
+WORKSPACES
+{'id': 1, 'name': 'callwarden', 'root_path': 'c:/git_work/callwarden', 'is_active': 1, 'active_task_id': 'T-1786271097643-bbe3fc69'}
+{'id': 2, 'name': 'test-h9-ws', 'root_path': 'c:/Users/wanpi/AppData/Local/Temp/tmpfgyl18cm', 'is_active': 0, 'active_task_id': ''}
+{'id': 3, 'name': 'C:\\Users\\wanpi\\AppData\\Local\\Temp\\tmprxo1zf_y', 'root_path': 'c:/git_work/callwarden/test_stream', 'is_active': 0, 'active_task_id': ''}
+{'id': 5, 'name': 'c:\\git_work\\callwarden', 'root_path': 'c:/git_work/callwarden/callwarden', 'is_active': 0, 'active_task_id': ''}
+{'id': 6, 'name': 'c:/git_work/callwarden', 'root_path': 'c:/git_work/callwarden/cw-self', 'is_active': 0, 'active_task_id': ''}
+{'id': 7, 'name': 'callwarden-d3-capture-341bb2e', 'root_path': 'c:/git_work/callwarden-d3-capture-341bb2e', 'is_active': 0, 'active_task_id': ''}
+{'id': 8, 'name': 'cw_verify_base', 'root_path': 'c:/git_work/cw_verify_base', 'is_active': 0, 'active_task_id': ''}
+{'id': 9, 'name': 'DeepProbe', 'root_path': 'c:/git_work/DeepProbe', 'is_active': 0, 'active_task_id': ''}
+{'id': 10, 'name': 'TokenSlim', 'root_path': 'c:/git_work/TokenSlim', 'is_active': 0, 'active_task_id': ''}
+{'id': 11, 'name': 'callwarden_wt_m24', 'root_path': 'c:/git_work/callwarden_wt_m24', 'is_active': 0, 'active_task_id': ''}
+{'id': 17, 'name': 'cw-design-repair-1786984798905', 'root_path': 'c:/Users/wanpi/.codex/worktrees/cw-design-repair-1786984798905', 'is_active': 0, 'active_task_id': ''}

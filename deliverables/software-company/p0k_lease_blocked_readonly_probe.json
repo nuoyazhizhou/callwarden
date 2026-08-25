@@ -1,0 +1,104 @@
+{
+  "endpoint": "http://127.0.0.1:1219",
+  "task_id": "T-1787407700109-f5562c60",
+  "role_contracts": {
+    "task_id": "T-1787407700109-f5562c60",
+    "contracts": [
+      {
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "role-worker-governance-mutation-v1",
+        "prompt_template_id": "cw.p0k.adjudicator.role-worker-governance.v1",
+        "prompt_hash": "p0k-adjudicator-role-worker-governance-v1",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/role_worker.rs\",\"rust_ext/src/daemon/task_loop/verdict*.rs\",\"rust_ext/src/daemon/task_loop/*apply*.rs\",\"rust_ext/src/daemon/task_collab.rs\",\"rust_ext/src/daemon/task_supersede.rs\",\"rust_ext/src/daemon/dispatch.rs\",\"rust_ext/src/sqlite_query.rs\",\"server/daemon_client.py\",\"scripts/refresh_shared_runtime.ps1\",\"tests/test_role_worker_governance_mutation*.py\",\"rust_ext/src/daemon/*test*.rs\",\"deliverables/software-company/p0k_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation outside daemon migrations\",\"provider account token storage in task DB/evidence/logs\",\"manual replacement of runtime/current\",\"manual daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply or task.close by executor\",\"modifying P0-J-D historical deployment/remediation events\",\"CLI-02/CLI-03/MCP-001 contract bootstrap before P0-K review\"]",
+        "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"targeted Rust negative authorization tests\",\"read-only HTTP manifest/runtime convergence probe\"]",
+        "acceptance_checks": "[\"role_worker_v1 tasks authorize verdict.submit/task.apply/task.close through stable worker credential and expected worker role\",\"same role worker cannot traverse conflicting governance roles for one task\",\"provider/account/model/session changes are recorded as provenance and do not invalidate the local worker\",\"legacy_identity_v1 tasks retain their legacy path without implicit role_worker downgrade\",\"invalid/revoked/wrong-role credential rejects before governance mutation\",\"no role-worker capability is considered deployed until live manifest binary equals controlled runtime/current binary and health/schema prove the intended version\",\"P0-J-D pre-review deployment remediation remains append-only and unresolved until independent disposition\"]",
+        "required_evidence": "[\"source-to-RPC mutation auth matrix\",\"Rust positive and negative tests\",\"live authority/runtime hash convergence probe\",\"independent review report\"]",
+        "handoff_to": "complete",
+        "independence": "{\"mode\":\"role_worker_separation_required\"}",
+        "revision": 1,
+        "contract_id": "RC-T-1787407700109-f5562c60-adjudicator-2",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "executor",
+        "skill_id": "none",
+        "skill_version": "role-worker-governance-mutation-v1",
+        "prompt_template_id": "cw.p0k.executor.role-worker-governance.v1",
+        "prompt_hash": "p0k-executor-role-worker-governance-v1",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/role_worker.rs\",\"rust_ext/src/daemon/task_loop/verdict*.rs\",\"rust_ext/src/daemon/task_loop/*apply*.rs\",\"rust_ext/src/daemon/task_collab.rs\",\"rust_ext/src/daemon/task_supersede.rs\",\"rust_ext/src/daemon/dispatch.rs\",\"rust_ext/src/sqlite_query.rs\",\"server/daemon_client.py\",\"scripts/refresh_shared_runtime.ps1\",\"tests/test_role_worker_governance_mutation*.py\",\"rust_ext/src/daemon/*test*.rs\",\"deliverables/software-company/p0k_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation outside daemon migrations\",\"provider account token storage in task DB/evidence/logs\",\"manual replacement of runtime/current\",\"manual daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply or task.close by executor\",\"modifying P0-J-D historical deployment/remediation events\",\"CLI-02/CLI-03/MCP-001 contract bootstrap before P0-K review\"]",
+        "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"targeted Rust negative authorization tests\",\"read-only HTTP manifest/runtime convergence probe\"]",
+        "acceptance_checks": "[\"role_worker_v1 tasks authorize verdict.submit/task.apply/task.close through stable worker credential and expected worker role\",\"same role worker cannot traverse conflicting governance roles for one task\",\"provider/account/model/session changes are recorded as provenance and do not invalidate the local worker\",\"legacy_identity_v1 tasks retain their legacy path without implicit role_worker downgrade\",\"invalid/revoked/wrong-role credential rejects before governance mutation\",\"no role-worker capability is considered deployed until live manifest binary equals controlled runtime/current binary and health/schema prove the intended version\",\"P0-J-D pre-review deployment remediation remains append-only and unresolved until independent disposition\"]",
+        "required_evidence": "[\"source-to-RPC mutation auth matrix\",\"Rust positive and negative tests\",\"live authority/runtime hash convergence probe\",\"independent review report\"]",
+        "handoff_to": "reviewer",
+        "independence": "{\"mode\":\"role_worker_separation_required\"}",
+        "revision": 1,
+        "contract_id": "RC-T-1787407700109-f5562c60-executor-0",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "role-worker-governance-mutation-v1",
+        "prompt_template_id": "cw.p0k.reviewer.role-worker-governance.v1",
+        "prompt_hash": "p0k-reviewer-role-worker-governance-v1",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/role_worker.rs\",\"rust_ext/src/daemon/task_loop/verdict*.rs\",\"rust_ext/src/daemon/task_loop/*apply*.rs\",\"rust_ext/src/daemon/task_collab.rs\",\"rust_ext/src/daemon/task_supersede.rs\",\"rust_ext/src/daemon/dispatch.rs\",\"rust_ext/src/sqlite_query.rs\",\"server/daemon_client.py\",\"scripts/refresh_shared_runtime.ps1\",\"tests/test_role_worker_governance_mutation*.py\",\"rust_ext/src/daemon/*test*.rs\",\"deliverables/software-company/p0k_*\"]",
+        "forbidden_paths": "[\"direct SQLite mutation outside daemon migrations\",\"provider account token storage in task DB/evidence/logs\",\"manual replacement of runtime/current\",\"manual daemon stop/start outside scripts/refresh_shared_runtime.ps1\",\"task.apply or task.close by executor\",\"modifying P0-J-D historical deployment/remediation events\",\"CLI-02/CLI-03/MCP-001 contract bootstrap before P0-K review\"]",
+        "commands": "[\"tokenslim workspace --format llm\",\"tokenslim run cargo check --manifest-path rust_ext/Cargo.toml -p callwarden-core --bin cw-daemon --no-default-features\",\"targeted Rust negative authorization tests\",\"read-only HTTP manifest/runtime convergence probe\"]",
+        "acceptance_checks": "[\"role_worker_v1 tasks authorize verdict.submit/task.apply/task.close through stable worker credential and expected worker role\",\"same role worker cannot traverse conflicting governance roles for one task\",\"provider/account/model/session changes are recorded as provenance and do not invalidate the local worker\",\"legacy_identity_v1 tasks retain their legacy path without implicit role_worker downgrade\",\"invalid/revoked/wrong-role credential rejects before governance mutation\",\"no role-worker capability is considered deployed until live manifest binary equals controlled runtime/current binary and health/schema prove the intended version\",\"P0-J-D pre-review deployment remediation remains append-only and unresolved until independent disposition\"]",
+        "required_evidence": "[\"source-to-RPC mutation auth matrix\",\"Rust positive and negative tests\",\"live authority/runtime hash convergence probe\",\"independent review report\"]",
+        "handoff_to": "adjudicator",
+        "independence": "{\"mode\":\"role_worker_separation_required\"}",
+        "revision": 1,
+        "contract_id": "RC-T-1787407700109-f5562c60-reviewer-1",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      }
+    ]
+  },
+  "next_action": {
+    "task_id": "T-1787407700109-f5562c60",
+    "decision": "WAITING",
+    "action": "WAIT",
+    "required_role": "reviewer",
+    "step_id": "S-1787407700239-518d7c7c",
+    "task_contract": null,
+    "role_contract": null,
+    "authorization": {
+      "acting_role": "reviewer",
+      "lease_role": "reviewer",
+      "lease_required": false,
+      "fencing_required": false,
+      "different_agent_instance_from": [],
+      "different_session_from": []
+    },
+    "allowed_paths": [],
+    "forbidden_paths": [],
+    "eligibility": {
+      "verdict": "not_evaluated",
+      "evidence_gate": "not_evaluated",
+      "snapshot": "not_evaluated",
+      "mutation_recheck_required": true
+    },
+    "blocking_conditions": [
+      "task 存在 active 未过期 lease（持有角色 reviewer），等待其释放"
+    ],
+    "revision_hint": null,
+    "routing": {
+      "origin_kind": "system_evaluator",
+      "next_role": null,
+      "next_action": "wait_for_current_lease",
+      "reason": [
+        "当前 lease 未过期，持有角色 reviewer（不泄露 token）"
+      ]
+    },
+    "next_session": null,
+    "source": {
+      "task_status": "open",
+      "task_contract_hash": "",
+      "role_contract_hash": "",
+      "evaluated_at": "1787407923.550295"
+    }
+  }
+}

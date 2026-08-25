@@ -1,0 +1,513 @@
+{
+  "manifest_type": "cw.aprime.supersede-baseline.v1",
+  "scope": "A′ recovery successor evidence; no state transition performed",
+  "authority": {
+    "expected_workspace_id": 1,
+    "expected_workspace_instance_id": "ws-1",
+    "successor_task_id": "T-1787293451688-c14b1e44"
+  },
+  "matrix": {
+    "path": "deliverables/software-company/tool_migration_matrix.json",
+    "sha256": "sha256:10a305d2e3dbdb1ce186955a58dfa0e13095480bbe3c0cd897db3e29454b2d9f",
+    "schema_version": "1.0",
+    "generated_at": "2026-08-20T06:46:14",
+    "total_tools": 239,
+    "target_backend_counts": {
+      "python_compat": 70,
+      "rust_native": 129,
+      "task_rpc": 40
+    },
+    "status_counts": {
+      "migrated": 88,
+      "stable": 81,
+      "transition": 70
+    },
+    "python_compat_scope_count": 70,
+    "python_compat_scope": [
+      {
+        "name": "find_evidence",
+        "module": "tools_collab",
+        "rpc_method": "find_evidence",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_freshness_status",
+        "module": "tools_collab",
+        "rpc_method": "get_freshness_status",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_gate_decision",
+        "module": "tools_collab",
+        "rpc_method": "get_gate_decision",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_role_view",
+        "module": "tools_collab",
+        "rpc_method": "get_role_view",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "detect_cycle",
+        "module": "tools_p2_graph",
+        "rpc_method": "detect_cycle",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_artifact_freshness",
+        "module": "tools_p2_graph",
+        "rpc_method": "get_artifact_freshness",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_dependency_edges",
+        "module": "tools_p2_graph",
+        "rpc_method": "get_dependency_edges",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_interface_providers",
+        "module": "tools_p2_graph",
+        "rpc_method": "get_interface_providers",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "validate_revision_dependencies",
+        "module": "tools_p2_graph",
+        "rpc_method": "validate_revision_dependencies",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "check_action_identity",
+        "module": "tools_p3_identity",
+        "rpc_method": "check_action_identity",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "check_session_separation",
+        "module": "tools_p3_identity",
+        "rpc_method": "check_session_separation",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_action_identity",
+        "module": "tools_p3_identity",
+        "rpc_method": "get_action_identity",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_attestation_validity",
+        "module": "tools_p3_identity",
+        "rpc_method": "get_attestation_validity",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "list_attestation_revocations",
+        "module": "tools_p3_identity",
+        "rpc_method": "list_attestation_revocations",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "assignment_show",
+        "module": "tools_p4_lease",
+        "rpc_method": "assignment_show",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "export_module_graph",
+        "module": "tools_query",
+        "rpc_method": "export_module_graph",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "find_issues",
+        "module": "tools_query",
+        "rpc_method": "find_issues",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_comment_from_version",
+        "module": "tools_query",
+        "rpc_method": "get_comment_from_version",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_impact",
+        "module": "tools_query",
+        "rpc_method": "get_impact",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_issue_summary",
+        "module": "tools_query",
+        "rpc_method": "get_issue_summary",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_recent_changes",
+        "module": "tools_query",
+        "rpc_method": "get_recent_changes",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_symbol_history",
+        "module": "tools_query",
+        "rpc_method": "get_symbol_history",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_test_coverage",
+        "module": "tools_query",
+        "rpc_method": "get_test_coverage",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "cross_repo_impact",
+        "module": "tools_security",
+        "rpc_method": "cross_repo_impact",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "cross_repo_summary",
+        "module": "tools_security",
+        "rpc_method": "cross_repo_summary",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "find_shared_symbols",
+        "module": "tools_security",
+        "rpc_method": "find_shared_symbols",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_applicable_rules",
+        "module": "tools_security",
+        "rpc_method": "get_applicable_rules",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_edit_history",
+        "module": "tools_security",
+        "rpc_method": "get_edit_history",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "list_branches",
+        "module": "tools_security",
+        "rpc_method": "list_branches",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "lsp_check_available",
+        "module": "tools_security",
+        "rpc_method": "lsp_check_available",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "lsp_completion",
+        "module": "tools_security",
+        "rpc_method": "lsp_completion",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "lsp_definition",
+        "module": "tools_security",
+        "rpc_method": "lsp_definition",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "lsp_diagnostics",
+        "module": "tools_security",
+        "rpc_method": "lsp_diagnostics",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "lsp_hover",
+        "module": "tools_security",
+        "rpc_method": "lsp_hover",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "lsp_references",
+        "module": "tools_security",
+        "rpc_method": "lsp_references",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "merge_preview",
+        "module": "tools_security",
+        "rpc_method": "merge_preview",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "rule_candidate_list",
+        "module": "tools_security",
+        "rpc_method": "rule_candidate_list",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "rule_list",
+        "module": "tools_security",
+        "rpc_method": "rule_list",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "find_similar_functions",
+        "module": "tools_semantic",
+        "rpc_method": "find_similar_functions",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_project_dependencies",
+        "module": "tools_semantic",
+        "rpc_method": "get_project_dependencies",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_symbol_commit_history",
+        "module": "tools_semantic",
+        "rpc_method": "get_symbol_commit_history",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "parse_codeowners",
+        "module": "tools_semantic",
+        "rpc_method": "parse_codeowners",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "semantic_search",
+        "module": "tools_semantic",
+        "rpc_method": "semantic_search",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "ask_codebase",
+        "module": "tools_summary",
+        "rpc_method": "ask_codebase",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "blast_radius",
+        "module": "tools_summary",
+        "rpc_method": "blast_radius",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "cross_layer_impact",
+        "module": "tools_summary",
+        "rpc_method": "cross_layer_impact",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "defect_learn",
+        "module": "tools_summary",
+        "rpc_method": "defect_learn",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "evolution_frequency",
+        "module": "tools_summary",
+        "rpc_method": "evolution_frequency",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_clone_aware_impact",
+        "module": "tools_summary",
+        "rpc_method": "get_clone_aware_impact",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_ownership_map",
+        "module": "tools_summary",
+        "rpc_method": "get_ownership_map",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_summary",
+        "module": "tools_summary",
+        "rpc_method": "get_summary",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_token_savings_report",
+        "module": "tools_summary",
+        "rpc_method": "get_token_savings_report",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_vulnerability_blast_radius",
+        "module": "tools_summary",
+        "rpc_method": "get_vulnerability_blast_radius",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "guardrail_check_edit",
+        "module": "tools_summary",
+        "rpc_method": "guardrail_check_edit",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "guardrail_list_rules",
+        "module": "tools_summary",
+        "rpc_method": "guardrail_list_rules",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "guardrail_scan",
+        "module": "tools_summary",
+        "rpc_method": "guardrail_scan",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "hotspot_evolution",
+        "module": "tools_summary",
+        "rpc_method": "hotspot_evolution",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "project_brief",
+        "module": "tools_summary",
+        "rpc_method": "project_brief",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "repo_map",
+        "module": "tools_summary",
+        "rpc_method": "repo_map",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "review_readiness",
+        "module": "tools_summary",
+        "rpc_method": "review_readiness",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "test_impact_selection",
+        "module": "tools_summary",
+        "rpc_method": "test_impact_selection",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "who_to_ask",
+        "module": "tools_summary",
+        "rpc_method": "who_to_ask",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "audit_verify_chain",
+        "module": "tools_task",
+        "rpc_method": "audit_verify_chain",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "bootstrap_status",
+        "module": "tools_task",
+        "rpc_method": "bootstrap_status",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_clone_group_detail",
+        "module": "tools_task",
+        "rpc_method": "get_clone_group_detail",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "get_symbol_change_tasks",
+        "module": "tools_task",
+        "rpc_method": "get_symbol_change_tasks",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "list_audit_signing_keys",
+        "module": "tools_task",
+        "rpc_method": "list_audit_signing_keys",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "list_clone_groups",
+        "module": "tools_task",
+        "rpc_method": "list_clone_groups",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "list_clones",
+        "module": "tools_task",
+        "rpc_method": "list_clones",
+        "op_class": "READ_ONLY"
+      },
+      {
+        "name": "task_plan_template",
+        "module": "tools_task",
+        "rpc_method": "task_plan_template",
+        "op_class": "READ_ONLY"
+      }
+    ]
+  },
+  "tasks": {
+    "old_s2_original": {
+      "task": {
+        "id": "T-1787203937201-0a156564",
+        "title": "S2 compat 79 工具 M2 迁 Rust handler",
+        "status": "open",
+        "parent_id": "T-1787203926824-9f873bfc"
+      },
+      "binding": null
+    },
+    "old_s2_rebuilt": {
+      "task": {
+        "id": "T-1787209948470-a59bcf9c",
+        "title": "S2 compat 79 工具 M2 迁 Rust handler（重建·authority 绑定）",
+        "status": "open",
+        "parent_id": "T-1787203926824-9f873bfc"
+      },
+      "binding": {
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787209948470-a59bcf9c-ws-1",
+        "workspace_capture_id": "wc-ws-1-4230255108",
+        "workspace_instance_id": "ws-1",
+        "registry_identity_hash": "sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1",
+        "workspace_manifest_hash": "165e7709c831c70aad8a4c3c9d8c653cb7afe0a8b15a7344220729f0300e0cf3",
+        "capture_revision": 5
+      }
+    },
+    "a_prime_successor": {
+      "task": {
+        "id": "T-1787293451688-c14b1e44",
+        "title": "A′ 逐链路 Rust daemon 迁移恢复（MCP/CLI 渐进切换）",
+        "status": "open",
+        "parent_id": "T-1787203926824-9f873bfc"
+      },
+      "binding": {
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787293451688-c14b1e44-ws-1",
+        "workspace_capture_id": "wc-ws-1-3243431736",
+        "workspace_instance_id": "ws-1",
+        "registry_identity_hash": "sha256:2541713a18e7ce15b2a9c137cb70f27aefce841c24f383876f48f66f272fa1d1",
+        "workspace_manifest_hash": "165e7709c831c70aad8a4c3c9d8c653cb7afe0a8b15a7344220729f0300e0cf3",
+        "capture_revision": 6
+      }
+    }
+  },
+  "preflight": {
+    "successor_exists": true,
+    "successor_bound": true,
+    "successor_workspace_id": 1,
+    "old_s2_original_exists": true,
+    "old_s2_original_bound": false,
+    "old_s2_rebuilt_exists": true,
+    "old_s2_rebuilt_bound": true,
+    "same_workspace_original_successor": false,
+    "same_workspace_rebuilt_successor": true
+  },
+  "required_for_formal_supersede": [
+    "adjudicator identity registered for the target workspace",
+    "active reviewer lease and current fencing counter",
+    "evidence_path and evidence_hash derived from this manifest",
+    "both predecessor and successor bound to the same workspace authority",
+    "separate daemon task.supersede calls for each predecessor"
+  ],
+  "planner_result": "prepared evidence only; no task.supersede call performed"
+}

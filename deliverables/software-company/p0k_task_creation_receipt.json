@@ -1,0 +1,16 @@
+{
+  "transport": "http-daemon",
+  "endpoint": "http://127.0.0.1:1219",
+  "requested_task_id": "T-1787407700109-f5562c60",
+  "result": {
+    "task_id": "T-1787407700109-f5562c60",
+    "status": "open",
+    "title": "P0-K：Role Worker 治理写路径授权与 live authority 对齐 remediation",
+    "step_count": 4,
+    "contract_count": 3,
+    "monotonic_seq": 1786265396479,
+    "workspace_id": 1,
+    "workspace_binding_id": "tb-T-1787407700109-f5562c60-ws-1",
+    "workspace_capture_id": "wc-ws-1-1367819440"
+  }
+}

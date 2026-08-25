@@ -1,0 +1,11 @@
+{
+  "task_id": "T-1787402257549-67ba81e6",
+  "title": "P0-J-D：受控运行时刷新 Task ID 兼容与部署归属修复",
+  "description": "# P0-J-D：deployment-governance Task ID compatibility\n\n修复 `scripts/refresh_shared_runtime.ps1` 对真实 CW opaque task ID 的过窄格式校验，使其能在不替换、不伪造、不降级归属的前提下接受 `T-P0J-ROLE-WORKER-IDENTITY` 等合法任务 ID。\n\n范围仅限受控运行时刷新入口的 task-ID grammar、最小化定向测试及证据。禁止手工替换 runtime、直接 SQLite 写入、修改 P0-J Role Worker 源码或处理 CLI-02/CLI-03/MCP-001。完成后必须由独立 Reviewer 复核，再由 Adjudicator 决定是否允许以 P0-J 实际 ID 刷新运行时。",
+  "parent_id": "T-P0J-ROLE-WORKER-IDENTITY",
+  "status": "in_progress",
+  "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+  "claimed_by": "sess-cw-executor-p0j-20260822",
+  "created_at": 1787402257.7068534,
+  "updated_at": 1787402316.8616774
+}

@@ -1,0 +1,17 @@
+diff --git a/rust_ext/src/daemon/dispatch.rs b/rust_ext/src/daemon/dispatch.rs
+--- a/rust_ext/src/daemon/dispatch.rs
++++ b/rust_ext/src/daemon/dispatch.rs
+@@ -1103,2 +1103,13 @@ pub trait DaemonState {
+     }
++    fn handle_task_contract_revise(
++        &mut self,
++        peer: PeerCredential,
++        params: &Value,
++    ) -> Result<Value, DaemonRpcError> {
++        if let Some(ref store) = self.daemon_state().task_collab_store {
++            store.handle_task_contract_revise(peer, params)
++        } else {
++            Err(DaemonRpcError::method_not_found("task.contract_revise"))
++        }
++    }
+     fn handle_task_contract_get(

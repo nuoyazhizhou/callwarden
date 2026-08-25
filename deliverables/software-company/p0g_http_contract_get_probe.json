@@ -1,0 +1,59 @@
+{
+  "ok": true,
+  "response": {
+    "task_id": "T-1787367417246-34190890",
+    "contracts": [
+      {
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+        "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/task_contract_revise.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"rust_ext/src/daemon/task_collab.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"server/daemon_client.py\", \"cli/main.py\", \"cli/task_commands.py\", \"rust_ext/src/daemon/task_loop/*test*.rs\", \"rust_ext/src/daemon/*test*.rs\", \"tests/\", \"deliverables/software-company/\", \"runtime/current\"]",
+        "forbidden_paths": "[\"direct SQLite governance writes\", \"DELETE/UPDATE task_contract_revisions or lineage history\", \"bulk automatic revision-2 repair\", \"A′ MCP/CLI/SRV business migration\", \"task.apply\", \"task.close\"]",
+        "commands": "[\"targeted Rust task-loop tests\", \"Python 3.14 HTTP thin-client fixtures\", \"daemon unavailable and stale-manifest probes\", \"read-only contract/lease audit\"]",
+        "acceptance_checks": "[\"append-only revision continuity\", \"required full agent/instance/session/model identity\", \"reviewer/adjudicator triple separation\", \"lease fencing/release and multi-active rejection\", \"task.create full projection atomicity\", \"no local SQLite fallback\"]",
+        "required_evidence": "[\"Rust test output\", \"HTTP round-trip output\", \"negative matrix\", \"migration audit\", \"runtime fingerprint\"]",
+        "handoff_to": "complete",
+        "independence": "required",
+        "revision": 1,
+        "contract_id": "RC-T-1787367417246-34190890-adjudicator-2",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "executor",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.executor.startup.v1",
+        "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/task_contract_revise.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"rust_ext/src/daemon/task_collab.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"server/daemon_client.py\", \"cli/main.py\", \"cli/task_commands.py\", \"rust_ext/src/daemon/task_loop/*test*.rs\", \"rust_ext/src/daemon/*test*.rs\", \"tests/\", \"deliverables/software-company/\", \"runtime/current\"]",
+        "forbidden_paths": "[\"direct SQLite governance writes\", \"DELETE/UPDATE task_contract_revisions or lineage history\", \"bulk automatic revision-2 repair\", \"A′ MCP/CLI/SRV business migration\", \"task.apply\", \"task.close\"]",
+        "commands": "[\"targeted Rust task-loop tests\", \"Python 3.14 HTTP thin-client fixtures\", \"daemon unavailable and stale-manifest probes\", \"read-only contract/lease audit\"]",
+        "acceptance_checks": "[\"append-only revision continuity\", \"required full agent/instance/session/model identity\", \"reviewer/adjudicator triple separation\", \"lease fencing/release and multi-active rejection\", \"task.create full projection atomicity\", \"no local SQLite fallback\"]",
+        "required_evidence": "[\"Rust test output\", \"HTTP round-trip output\", \"negative matrix\", \"migration audit\", \"runtime fingerprint\"]",
+        "handoff_to": "reviewer",
+        "independence": "required",
+        "revision": 1,
+        "contract_id": "RC-T-1787367417246-34190890-executor-0",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+        "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+        "allowed_paths": "[\"rust_ext/src/daemon/task_loop/task_contract_revise.rs\", \"rust_ext/src/daemon/task_loop/mod.rs\", \"rust_ext/src/daemon/task_collab.rs\", \"rust_ext/src/daemon/dispatch.rs\", \"server/daemon_client.py\", \"cli/main.py\", \"cli/task_commands.py\", \"rust_ext/src/daemon/task_loop/*test*.rs\", \"rust_ext/src/daemon/*test*.rs\", \"tests/\", \"deliverables/software-company/\", \"runtime/current\"]",
+        "forbidden_paths": "[\"direct SQLite governance writes\", \"DELETE/UPDATE task_contract_revisions or lineage history\", \"bulk automatic revision-2 repair\", \"A′ MCP/CLI/SRV business migration\", \"task.apply\", \"task.close\"]",
+        "commands": "[\"targeted Rust task-loop tests\", \"Python 3.14 HTTP thin-client fixtures\", \"daemon unavailable and stale-manifest probes\", \"read-only contract/lease audit\"]",
+        "acceptance_checks": "[\"append-only revision continuity\", \"required full agent/instance/session/model identity\", \"reviewer/adjudicator triple separation\", \"lease fencing/release and multi-active rejection\", \"task.create full projection atomicity\", \"no local SQLite fallback\"]",
+        "required_evidence": "[\"Rust test output\", \"HTTP round-trip output\", \"negative matrix\", \"migration audit\", \"runtime fingerprint\"]",
+        "handoff_to": "adjudicator",
+        "independence": "required",
+        "revision": 1,
+        "contract_id": "RC-T-1787367417246-34190890-reviewer-1",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      }
+    ]
+  }
+}

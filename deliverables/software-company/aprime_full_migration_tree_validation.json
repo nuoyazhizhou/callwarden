@@ -1,0 +1,21 @@
+{
+  "parent_id": "T-1787293451688-c14b1e44",
+  "expected_direct_children": 186,
+  "actual_direct_children": 186,
+  "mcp_card_count": 70,
+  "initial_cli_card_count": 3,
+  "cli_residue_card_count": 93,
+  "missing_titles": [],
+  "unexpected_titles": [],
+  "duplicate_titles": [],
+  "bad_steps": [],
+  "bad_status": [],
+  "cli_residue_created": 93,
+  "cli_residue_failures": [],
+  "internal_compat_task_id": "T-1787322971676-e9aae4d4",
+  "internal_compat_contract_count": 3,
+  "server_authority_card_count": 19,
+  "server_authority_created": 19,
+  "server_authority_failures": [],
+  "valid": true
+}

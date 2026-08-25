@@ -1,0 +1,50 @@
+{
+  "transport": "http-daemon",
+  "endpoint": "http://127.0.0.1:2268",
+  "result": {
+    "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+    "status": "open",
+    "title": "P0-J：CW 本地 Role Worker 授权与可变运行时 Provenance 分层",
+    "step_count": 4,
+    "contract_count": 3,
+    "monotonic_seq": 1786265396434,
+    "workspace_id": 1,
+    "workspace_binding_id": "tb-T-P0J-ROLE-WORKER-IDENTITY-ws-1",
+    "workspace_capture_id": "wc-ws-1-1556824392",
+    "task_contract_revision": 1,
+    "governance_projection": {
+      "ok": true,
+      "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+      "workspace_id": 1,
+      "contract_id": "TC-T-P0J-ROLE-WORKER-IDENTITY",
+      "contract_revision": 1,
+      "contract_hash": "sha256:08545690429cf8632b5b25f34af5bc9d7909ee9804cf003fe636c948074ed6c7",
+      "role_contracts": [
+        {
+          "role": "executor",
+          "lineage_id": "rcl-T-P0J-ROLE-WORKER-IDENTITY-executor",
+          "revision_id": "rcr-T-P0J-ROLE-WORKER-IDENTITY-executor-r1",
+          "hash": "sha256:bb98f73667b39ebb6926647abb55bc59d8010f5f1ab289c6f309994eb64b6e67"
+        },
+        {
+          "role": "reviewer",
+          "lineage_id": "rcl-T-P0J-ROLE-WORKER-IDENTITY-reviewer",
+          "revision_id": "rcr-T-P0J-ROLE-WORKER-IDENTITY-reviewer-r1",
+          "hash": "sha256:62ef89809db627d87d7fb783ca06450a372a6ba2a0506ce0a15371cb43964036"
+        },
+        {
+          "role": "adjudicator",
+          "lineage_id": "rcl-T-P0J-ROLE-WORKER-IDENTITY-adjudicator",
+          "revision_id": "rcr-T-P0J-ROLE-WORKER-IDENTITY-adjudicator-r1",
+          "hash": "sha256:1eac622cda1e6422e429eeb6cd01cc76ef56f7cbf1f6aa5f8a461d110ebecc80"
+        }
+      ],
+      "step_binding_ids": [
+        "sb-T-P0J-ROLE-WORKER-IDENTITY-S-1787397018844-5cd046d4-r1",
+        "sb-T-P0J-ROLE-WORKER-IDENTITY-S-1787397018844-5cd22170-r1",
+        "sb-T-P0J-ROLE-WORKER-IDENTITY-S-1787397018844-5cd29b50-r1",
+        "sb-T-P0J-ROLE-WORKER-IDENTITY-S-1787397018844-5cd2ed58-r1"
+      ]
+    }
+  }
+}

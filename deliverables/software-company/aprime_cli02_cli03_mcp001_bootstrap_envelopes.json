@@ -1,0 +1,71 @@
+{
+  "authority_preflight": {
+    "endpoint_from_manifest": "http://127.0.0.1:3912",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "source_evidence": [
+      "review_outcome_T-1787293451688.md",
+      "deliverables/software-company/review_blocker_authority_snapshot.json"
+    ],
+    "write_boundary": "Each envelope is for one task.contract_bootstrap mutation only. Use a fresh valid reviewer lease and a fully independent adjudicator identity. Do not send raw tokens to files or task evidence."
+  },
+  "bootstrap_requests": [
+    {
+      "task_id": "T-1787321708568-d292ab3c",
+      "request_id_template": "bootstrap-cli02-contract-r1-<unique-id>",
+      "evidence_path": "deliverables/software-company/review_outcome_T-1787293451688.md",
+      "evidence_hash_requirement": "sha256 of the submitted evidence file",
+      "envelope": {
+        "contract_id": "TC-T-1787321708568-d292ab3c",
+        "revision": 1,
+        "profile": "code_change",
+        "objective": "Govern the already-completed CLI-02 cw search daemon-only read migration so that its independently verified reviewer verdict can bind to an immutable Task Contract rather than legacy role contracts alone.",
+        "source_provenance": "Task description for CLI-02 plus review_outcome_T-1787293451688.md §§1-4; reviewer independently verified implementation and audit chain before E_TASK_CONTRACT_BINDING_INVALID.",
+        "interfaces": ["cli/main.py search command", "server/daemon_client.py HTTP read route", "rust_ext/src/daemon/query_handlers.rs query.search", "daemon HTTP capability response"],
+        "allowed_edit_scope": ["cli/main.py search subcommand and formatting only", "server/daemon_client.py", "server/compat_registry.py", "server/compat_worker.py", "rust_ext/src/daemon/query_handlers.rs", "rust_ext/src/daemon/dispatch.rs", "rust_ext/src/daemon/http_server.rs", "rust_ext/src/daemon/task_loop/mod.rs", "tests/test_cli02_search_daemon_only.py", "tests/test_mcp_cli_02_http_rpc.py", "deliverables/software-company/tool_migration_matrix.json", "deliverables/mcp-tools-implementation-map.md"],
+        "acceptance_clauses": ["cw search reads through Rust daemon authority", "has_comment/signature/file_path compatibility remains stable", "success, empty result, missing has_comment, authority failure, daemon unavailable and restart are deterministic", "Python path has no direct SQLite/get_db fallback", "matrix changes occur only after independent review and runtime evidence"],
+        "risks": ["CLI result formatting may regress when optional compatibility fields are absent", "control-plane successor work must not start before CLI-01 is adjudicator-applied", "a contract bootstrap must not alter prior implementation evidence"],
+        "rollback": ["Do not modify history; correct any contract semantic defect only through an append-only later revision", "Code rollback uses a scoped Git revert and reruns the command-specific HTTP regression fixture"],
+        "dependencies": ["CLI-01 reviewer evidence exists but CLI-01 apply gate remains respected", "current legacy executor/reviewer/adjudicator Role Contracts", "valid reviewer lease with fencing counter", "independent adjudicator identity", "HTTP daemon authority"]
+      }
+    },
+    {
+      "task_id": "T-1787321708639-d6d362f4",
+      "request_id_template": "bootstrap-cli03-contract-r1-<unique-id>",
+      "evidence_path": "deliverables/software-company/review_outcome_T-1787293451688.md",
+      "evidence_hash_requirement": "sha256 of the submitted evidence file",
+      "envelope": {
+        "contract_id": "TC-T-1787321708639-d6d362f4",
+        "revision": 1,
+        "profile": "code_change",
+        "objective": "Govern the already-completed CLI-03 task show/list/status-tree daemon-authority migration so the independently verified reviewer verdict can bind to an immutable Task Contract.",
+        "source_provenance": "Task description for CLI-03 plus review_outcome_T-1787293451688.md §§1-4; reviewer independently verified implementation and audit chain before E_TASK_CONTRACT_BINDING_INVALID.",
+        "interfaces": ["cli/main.py task show/list/status-tree", "server/daemon_client.py route_task_read", "rust_ext/src/daemon/task_collab.rs readonly task projection", "daemon HTTP authority manifest"],
+        "allowed_edit_scope": ["cli/main.py task show/list/status-tree only", "server/daemon_client.py route_task_read", "server/compat_registry.py", "server/compat_worker.py", "rust_ext/src/daemon/task_collab.rs readonly projection only", "rust_ext/src/daemon/dispatch.rs", "rust_ext/src/daemon/http_server.rs", "rust_ext/src/daemon/task_loop/mod.rs", "tests/test_cli03_task_read_authority.py", "tests/test_mcp_cli_03_http_rpc.py", "deliverables/software-company/tool_migration_matrix.json", "deliverables/mcp-tools-implementation-map.md"],
+        "acceptance_clauses": ["task show/list/status-tree are Rust daemon authority reads", "target, parent tree, unbound authority and stale manifest conditions are distinct", "read operations do not write active workspace or task state", "success, invalid input, authority failure, daemon unavailable and restart are deterministic", "Python path has no direct SQLite/get_db fallback"],
+        "risks": ["read-only task projection can accidentally mutate workspace or task state", "stale manifest and unbound authority can be conflated", "S1 cli/main.py reference cleanup must remain outside this scope"],
+        "rollback": ["Do not modify history; correct any contract semantic defect only through an append-only later revision", "Code rollback uses a scoped Git revert and reruns the CLI-03 authority read fixture"],
+        "dependencies": ["CLI-01 control-plane gate restrictions", "current legacy executor/reviewer/adjudicator Role Contracts", "valid reviewer lease with fencing counter", "independent adjudicator identity", "HTTP daemon authority"]
+      }
+    },
+    {
+      "task_id": "T-1787321708699-da5d8224",
+      "request_id_template": "bootstrap-mcp001-contract-r1-<unique-id>",
+      "evidence_path": "deliverables/software-company/review_outcome_T-1787293451688.md",
+      "evidence_hash_requirement": "sha256 of the submitted evidence file",
+      "envelope": {
+        "contract_id": "TC-T-1787321708699-da5d8224",
+        "revision": 1,
+        "profile": "code_change",
+        "objective": "Govern the already-completed MCP-001 get_role_view Rust daemon native migration so the independently verified Gate verdict can bind to an immutable Task Contract without changing its prebuilt gate semantics.",
+        "source_provenance": "Task description for MCP-001 plus review_outcome_T-1787293451688.md §§1-4; reviewer independently verified implementation and audit chain before E_TASK_CONTRACT_BINDING_INVALID.",
+        "interfaces": ["server/tools/tools_collab.py get_role_view", "HTTP JSON-RPC get_role_view", "rust_ext/src/daemon/collab_query_handlers.rs handle_get_role_view", "daemon capability registry"],
+        "allowed_edit_scope": ["server/tools/tools_collab.py get_role_view only", "server/compat_registry.py", "server/compat_worker.py", "server/daemon_client.py", "rust_ext/src/daemon/collab_query_handlers.rs", "rust_ext/src/daemon/dispatch.rs", "rust_ext/src/daemon/http_server.rs", "rust_ext/src/daemon/task_loop/mod.rs", "tests/test_mcp_get_role_view_http_rpc.py", "tests/test_mcp01_get_role_view_http_rpc.py", "tests/test_http_daemon_capability_matrix.py", "deliverables/software-company/tool_migration_matrix.json", "deliverables/mcp-tools-implementation-map.md"],
+        "acceptance_clauses": ["get_role_view business logic is Rust daemon native", "public MCP name, parameters, defaults, result JSON and stable errors remain compatible", "Python compatibility handler is retired only for get_role_view", "success, invalid input, unknown authority, daemon unavailable and restart are deterministic", "matrix updates occur only after independent review and capability evidence"],
+        "risks": ["MCP-001 is a task_projection Gate and must not enable same-port successors before adjudicator apply", "compat worker retirement can accidentally remove other collab handlers", "contract bootstrap must not claim or dispatch a prebuilt gate task"],
+        "rollback": ["Do not modify history; correct any contract semantic defect only through an append-only later revision", "Code rollback uses a scoped Git revert and restores only the single compat registration if runtime proof fails"],
+        "dependencies": ["CLI-01 control-plane gate restrictions", "current legacy executor/reviewer/adjudicator Role Contracts", "valid reviewer lease with fencing counter", "independent adjudicator identity", "HTTP daemon authority"]
+      }
+    }
+  ]
+}

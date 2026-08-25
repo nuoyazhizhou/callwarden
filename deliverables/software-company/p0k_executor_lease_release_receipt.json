@@ -1,0 +1,8 @@
+{
+  "task_id": "T-1787407700109-f5562c60",
+  "release_status": "released",
+  "lease_id": "L-e60c5e53d64dd775",
+  "fencing_counter": 2,
+  "post_release_status": "released",
+  "authority_schema_version": 58
+}

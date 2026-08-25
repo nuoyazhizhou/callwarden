@@ -1,0 +1,369 @@
+{
+  "T-1787293818274-1b87b6c4": {
+    "task": [
+      {
+        "id": "T-1787293818274-1b87b6c4",
+        "title": "P0-B：历史任务 workspace authority attestation / binding（supersede 前置）",
+        "status": "open",
+        "created_at": 1787293818.274955,
+        "updated_at": 1787293818.274955,
+        "parent_id": "T-1787203926824-9f873bfc"
+      }
+    ],
+    "steps": [
+      {
+        "id": "S-1787293818275-1b902688",
+        "step_index": 0,
+        "action": "implement",
+        "target_file": "rust_ext/src/daemon/task_supersede.rs",
+        "target_symbol": "handle_task_attest_legacy_workspace_binding",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787293818.274955,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787293818275-1b9131b8",
+        "step_index": 1,
+        "action": "wire",
+        "target_file": "rust_ext/src/daemon/dispatch.rs",
+        "target_symbol": "task.attest_legacy_workspace_binding route",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787293818.274955,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787293818275-1b915f08",
+        "step_index": 2,
+        "action": "adapt_client_cli",
+        "target_file": "server/daemon_client.py; cli/main.py",
+        "target_symbol": "task_attest_legacy_workspace_binding",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787293818.274955,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787293818275-1b917bf0",
+        "step_index": 3,
+        "action": "test",
+        "target_file": "rust_ext/src/daemon/*test*.rs; tests/",
+        "target_symbol": "P0-B positive/idempotent/negative matrix",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787293818.274955,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787293818275-1b919bf8",
+        "step_index": 4,
+        "action": "release_verify",
+        "target_file": "runtime/current",
+        "target_symbol": "release daemon P0-B round-trip",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787293818.274955,
+        "completed_at": null
+      }
+    ],
+    "events": [
+      {
+        "query_error": "no such column: event_type"
+      }
+    ],
+    "reports": [
+      {
+        "query_error": "no such table: task_reports"
+      }
+    ],
+    "handoffs": [
+      {
+        "query_error": "no such table: task_handoffs"
+      }
+    ],
+    "role_lineages": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "role_revisions": [
+      {
+        "query_error": "no such column: task_id"
+      }
+    ],
+    "step_bindings": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "task_contracts": []
+  },
+  "T-1787305175972-8712da28": {
+    "task": [
+      {
+        "id": "T-1787305175972-8712da28",
+        "title": "P0-C：Task Contract bootstrap / publication（A′ 调度前置）",
+        "status": "open",
+        "created_at": 1787305175.9727707,
+        "updated_at": 1787305175.9727707,
+        "parent_id": "T-1787203926824-9f873bfc"
+      }
+    ],
+    "steps": [
+      {
+        "id": "S-1787305175973-87200928",
+        "step_index": 0,
+        "action": "implement",
+        "target_file": "rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs",
+        "target_symbol": "bootstrap_task_contract",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305175.9727707,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787305175973-87219540",
+        "step_index": 1,
+        "action": "wire",
+        "target_file": "rust_ext/src/daemon/task_collab.rs; rust_ext/src/daemon/dispatch.rs",
+        "target_symbol": "task.contract_bootstrap",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305175.9727707,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787305175973-87228964",
+        "step_index": 2,
+        "action": "adapt_client_cli",
+        "target_file": "server/daemon_client.py; cli/main.py",
+        "target_symbol": "task_contract_bootstrap",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305175.9727707,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787305175973-87231b18",
+        "step_index": 3,
+        "action": "test",
+        "target_file": "rust_ext/src/daemon/task_loop/*test*.rs; tests/",
+        "target_symbol": "P0-C positive/idempotent/negative matrix",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305175.9727707,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787305175973-8723a2a4",
+        "step_index": 4,
+        "action": "release_verify",
+        "target_file": "runtime/current",
+        "target_symbol": "P0-C daemon round-trip",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305175.9727707,
+        "completed_at": null
+      }
+    ],
+    "events": [
+      {
+        "query_error": "no such column: event_type"
+      }
+    ],
+    "reports": [
+      {
+        "query_error": "no such table: task_reports"
+      }
+    ],
+    "handoffs": [
+      {
+        "query_error": "no such table: task_handoffs"
+      }
+    ],
+    "role_lineages": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "role_revisions": [
+      {
+        "query_error": "no such column: task_id"
+      }
+    ],
+    "step_bindings": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "task_contracts": []
+  },
+  "T-1787305268313-06fcef5c": {
+    "task": [
+      {
+        "id": "T-1787305268313-06fcef5c",
+        "title": "P0-D：Immutable Binding 与 Workspace Capture Freshness 一致性修复",
+        "status": "open",
+        "created_at": 1787305268.3131287,
+        "updated_at": 1787305268.3131287,
+        "parent_id": "T-1787203926824-9f873bfc"
+      }
+    ],
+    "steps": [
+      {
+        "id": "S-1787305268313-070730c0",
+        "step_index": 0,
+        "action": "implement",
+        "target_file": "rust_ext/src/daemon/task_loop/next_action.rs",
+        "target_symbol": "verify_capture",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305268.3131287,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787305268313-0707d340",
+        "step_index": 1,
+        "action": "test",
+        "target_file": "rust_ext/src/daemon/task_loop/next_action_test.rs",
+        "target_symbol": "capture freshness tests",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305268.3131287,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787305268313-07082fd4",
+        "step_index": 2,
+        "action": "release_verify",
+        "target_file": "runtime/current",
+        "target_symbol": "task.next_action authority proof",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787305268.3131287,
+        "completed_at": null
+      }
+    ],
+    "events": [
+      {
+        "query_error": "no such column: event_type"
+      }
+    ],
+    "reports": [
+      {
+        "query_error": "no such table: task_reports"
+      }
+    ],
+    "handoffs": [
+      {
+        "query_error": "no such table: task_handoffs"
+      }
+    ],
+    "role_lineages": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "role_revisions": [
+      {
+        "query_error": "no such column: task_id"
+      }
+    ],
+    "step_bindings": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "task_contracts": []
+  },
+  "T-1787307743865-696714f0": {
+    "task": [
+      {
+        "id": "T-1787307743865-696714f0",
+        "title": "P0-E：Adjudicator / Reviewer lease delegation（A′ 治理收尾前置）",
+        "status": "open",
+        "created_at": 1787307743.8654165,
+        "updated_at": 1787307743.8654165,
+        "parent_id": "T-1787203926824-9f873bfc"
+      }
+    ],
+    "steps": [
+      {
+        "id": "S-1787307743865-696e98c4",
+        "step_index": 0,
+        "action": "implement",
+        "target_file": "rust_ext/src/daemon/task_collab.rs",
+        "target_symbol": "validate_reviewer_lease_for_adjudication",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787307743.8654165,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787307743865-696fa00c",
+        "step_index": 1,
+        "action": "wire",
+        "target_file": "rust_ext/src/daemon/task_supersede.rs; rust_ext/src/daemon/task_collab.rs",
+        "target_symbol": "governance reviewer lease call sites",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787307743.8654165,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787307743865-696fe6c0",
+        "step_index": 2,
+        "action": "test",
+        "target_file": "rust_ext/src/daemon/*test*.rs; tests/",
+        "target_symbol": "P0-E cross-role lease matrix",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787307743.8654165,
+        "completed_at": null
+      },
+      {
+        "id": "S-1787307743865-697009e8",
+        "step_index": 3,
+        "action": "release_verify",
+        "target_file": "runtime/current",
+        "target_symbol": "P0-E daemon round-trip",
+        "status": "pending",
+        "result": "",
+        "created_at": 1787307743.8654165,
+        "completed_at": null
+      }
+    ],
+    "events": [
+      {
+        "query_error": "no such column: event_type"
+      }
+    ],
+    "reports": [
+      {
+        "query_error": "no such table: task_reports"
+      }
+    ],
+    "handoffs": [
+      {
+        "query_error": "no such table: task_handoffs"
+      }
+    ],
+    "role_lineages": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "role_revisions": [
+      {
+        "query_error": "no such column: task_id"
+      }
+    ],
+    "step_bindings": [
+      {
+        "query_error": "no such column: id"
+      }
+    ],
+    "task_contracts": []
+  }
+}
