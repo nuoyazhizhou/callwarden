@@ -58,24 +58,37 @@ def test_cli079_close_missing_lease_fails_closed(monkeypatch):
     assert "fencing_counter" not in captured["params"]
 
 
-def test_cli079_close_local_fallback_uses_db(monkeypatch):
-    """local 模式 legacy fallback：fallback_func 调 db.task_close。"""
-    called = {}
+def test_cli079_close_local_fallback_fails_closed(monkeypatch):
+    """local 模式无 daemon：禁止 legacy db 兜底，fail-closed（thin-client 冻结合同）。
+
+    CLI-079 冻结合同要求 Python handler 无 direct db/local 业务路径；
+    task.close 必须经 daemon 权威写点。fallback 抛 SharedTaskWriterRequiredError。
+    """
+    from callwarden.server.daemon_client import SharedTaskWriterRequiredError
+    called = {"used": False, "raised": None}
 
     def _fake_route_write(method, params, fallback):
         called["used"] = True
-        return fallback()
+        try:
+            fallback()
+        except SharedTaskWriterRequiredError as e:
+            called["raised"] = str(e)
+            return {"error": str(e)}
+        raise AssertionError("fallback 不应执行 legacy db 路径")
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
 
     def _local_close():
-        return proxy.task_close("T-1", reviewer="rv-1")
+        # 与 cli/main.py 的 _local_close 行为一致：thin-client 冻结合同禁止 db 直写
+        raise SharedTaskWriterRequiredError(
+            "cw local-close 必须经 daemon 权威写点（thin-client 冻结合同）；"
+            "local 模式需连接本地 daemon，禁止直接 db.task_close"
+        )
 
-    monkeypatch.setattr(proxy, "task_close",
-                        lambda tid, reviewer="", identity=None, lease_token="",
-                               fencing_counter=None:
-                        {"task_id": tid, "status": "closed"})
     result = _fake_route_write("task.close", {"task_id": "T-1"}, _local_close)
     assert called.get("used") is True
-    assert result["status"] == "closed"
+    assert called.get("raised") is not None
+    assert "daemon 权威写点" in result.get("error", "")
+    assert "task_close" in called.get("raised", "") or "db.task_close" in called.get("raised", "")
+

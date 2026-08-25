@@ -4803,7 +4803,13 @@ def _handle_task(args, db):
         close_kwargs.update(lease_kwargs)
 
         def _local_close():
-            return db.task_close(opts.task_id, **close_kwargs)
+            # CLI-079 冻结合同（RC-T-1787322799418-ce4698f0-executor-0 acceptance #1）：
+            # Python handler 不得有 direct db/local 业务路径 —— task.close 必须经
+            # daemon 权威写点。local 模式无 daemon 时 fail-closed，禁止 db.task_close 直写。
+            raise SharedTaskWriterRequiredError(
+                "cw local-close 必须经 daemon 权威写点（thin-client 冻结合同）；"
+                "local 模式需连接本地 daemon，禁止直接 db.task_close"
+            )
 
         # 缺陷修复：daemon RPC payload 必须原样携带 P4 lease 凭证
         # （lease_token/fencing_counter），daemon 端 fail-closed；同 apply。
