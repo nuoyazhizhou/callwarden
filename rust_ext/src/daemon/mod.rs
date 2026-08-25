@@ -169,6 +169,11 @@ pub mod audit_log_handlers;
 /// S2: 查询面 compat → Rust native handler（get_top_callers / get_orphan_symbols 等
 /// P0-compat 批次 1 的 6 个纯 SQL 只读工具）。
 pub mod query_compat_handlers;
+/// 3.22: backup/restore 面 handler（SRV-003：server backup restore Python authority → Rust daemon）
+/// 对应 `server/backup_restore.py` 的 `_backup_file` / `_is_rust_backup_rolled_back` Rust 下沉
+///（`mcp.backup_restore.backup_file` / `mcp.backup_restore.is_rust_backup_rolled_back`）。
+/// 注：handler 已实现并通过单测，RPC 路由接线为后续独立动作（不在本次冒险改动 v60 构建）。
+pub mod backup_restore_handlers;
 
 /// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
 /// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。

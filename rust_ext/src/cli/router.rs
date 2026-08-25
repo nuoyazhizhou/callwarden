@@ -11,6 +11,10 @@
 
 use std::path::{Path, PathBuf};
 
+// `encode_wide` 是 Windows 专属扩展 trait，仅 Windows 目标需要。
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+
 // ============================================================
 // 常量
 // ============================================================
