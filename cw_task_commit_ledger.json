@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-26T02:06:29",
+  "updated_at": "2026-08-26T02:33:58",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1362,5 +1362,67 @@
       "tip_commit": "642efcd",
       "backup": "worktree_recovery_20260826/cli-088"
     }
-  ]
+  ],
+  "recovery_20260826": {
+    "summary": "回收站找回 364 个松散 git 对象 → 5 个 pilot commit + tree 全部 materialize；内容经与 master 比对，pilot 工作基本已合入 master，仅少数证据/文件为真缺口并已恢复",
+    "source": {
+      "recycle_bin": "C://$Recycle.Bin//S-1-5-21-1583625257-826939952-3615027596-1001// 中 364 个 .git/objects 松散对象（删除时间 2026-08-25 15:17-15:19，即 prune 窗口）",
+      "recovery_store": "C:/Users/wanpi/.callwarden/objects_recovery/objects/ (364 对象, 15MB, 已并入主仓库 .git/objects)",
+      "backup_20260825": "git_backup_20260825/.git 8513 对象(pack) — pilot 对象不在其中，但提供合并上下文",
+      "conclusion": "git 对象恢复路径可行（用户判断正确）；工作树磁盘 5.8G 备份 + DB 函数文本仍保留为二级恢复源"
+    },
+    "protected_refs": {
+      "refs/recovery/pilot-srv-002": "4914ac2",
+      "refs/recovery/pilot-cli-087": "7c58745",
+      "refs/recovery/pilot-cli-088": "642efcd",
+      "refs/recovery/pilot-srv-003": "0b5d60e",
+      "refs/recovery/pilot-srv-001": "b6cb3d1"
+    },
+    "per_pilot_gap": [
+      {
+        "pilot": "srv-002 (4914ac2)",
+        "unique_change": "db/db_base.py _init_workspace 4行修复(WHERE name=? OR root_path=?)",
+        "in_master": true,
+        "note": "master L4225 已含同款修复(fail-closed 演化版)"
+      },
+      {
+        "pilot": "srv-003 (0b5d60e)",
+        "unique_change": "SRV-003_evidence.md(134行) + backup_restore_handlers.rs + test_srv_003.py",
+        "in_master": false,
+        "note": "证据文件已恢复落盘；两个代码文件已在 901cc3c 抢救提交"
+      },
+      {
+        "pilot": "cli-087 (7c58745)",
+        "unique_change": "tests/test_wsl_authority_routing.py(492) + test_wsl_local_daemon_e2e.py(369)",
+        "in_master": true,
+        "note": "两测试文件均在 master"
+      },
+      {
+        "pilot": "cli-088 (642efcd)",
+        "unique_change": "同上两测试文件",
+        "in_master": true,
+        "note": "均在 master"
+      },
+      {
+        "pilot": "srv-001 (b6cb3d1)",
+        "unique_change": "无 master 缺失的独有源码(Only-in-worktree=0)",
+        "in_master": true,
+        "note": "git diff 因缺 tree 34091a30 失败，但磁盘比对确认无独有源码文件"
+      }
+    ],
+    "remaining_git_noise": "fsck 仍有 46 条 broken link（中间悬空 commit b811663d 等引用缺失对象），用户选择暂不 gc；不影响 5 个 pilot 与 master 正常操作"
+  },
+  "gap_analysis_20260826": {
+    "conclusion": "零真实代码缺口：44 个 prune commit 的 7300 个唯一函数逐函数比对后，全部在 master（同名或重构等价）；无需要整批重做的任务",
+    "method": "回收站 364 对象恢复(5 pilot+wip+merge) + file_versions 分类(113=69+44) + 函数核心名 token 比对 + 43 候选逐一 grep 核实",
+    "files": "378 文件 = 338 在 master + 40 临时/实验文件(无生产价值)",
+    "functions": "7300 唯一函数，核心名缺失 43 -> 人工核实全部排除(误报/重构/临时脚本)",
+    "verified_false_positives": {
+      "cw_client_13": "分词误排 bin/ 目录；master cw_client.rs 实际含全部(QueryType 22处/run_ping 4处等)",
+      "h_helpers_10": "master 重构为新 _h_* 集(_h_get_symbol_history 等16个)；MCP 工具等价物全在(top_callers 5/orphan_symbols 4/comment_coverage 4/call_heatmap 4/uncovered_functions 3)",
+      "audit_log_3": "master 各 2 处；LazyDBProxy 1 处；test_cw_client_rpc_proxy.py 存在含 19 处 run_client_mode",
+      "tmp_12": "临时脚本无价值"
+    },
+    "report": "cw_203_gap_report.md"
+  }
 }
