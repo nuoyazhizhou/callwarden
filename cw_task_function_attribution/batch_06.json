@@ -1,0 +1,676 @@
+{
+  "batch": 6,
+  "tasks": [
+    {
+      "task_id": "T-1787322799021-b69c2990",
+      "status": "review",
+      "title": "CLI-072 [cli_command_projection]：cw workspace → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799077-b9fe69b8",
+      "status": "review",
+      "title": "CLI-073 [cli_command_projection]：cw identity-revoke → Rust daemon HTTP thin clie",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799131-bd2db3c8",
+      "status": "review",
+      "title": "CLI-074 [cli_command_projection]：cw local → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799188-c09db9b8",
+      "status": "review",
+      "title": "CLI-075 [cli_command_projection]：cw local-apply → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799244-c3f2f9c0",
+      "status": "review",
+      "title": "CLI-076 [cli_command_projection]：cw local-capture-auto → Rust daemon HTTP thin c",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799302-c75c1d94",
+      "status": "review",
+      "title": "CLI-077 [cli_command_projection]：cw local-capture-manual → Rust daemon HTTP thin",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799364-cb120c64",
+      "status": "review",
+      "title": "CLI-078 [cli_command_projection]：cw local-changes → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799482-d215a638",
+      "status": "review",
+      "title": "CLI-080 [cli_command_projection]：cw local-commits → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799532-d51d9d18",
+      "status": "review",
+      "title": "CLI-081 [cli_command_projection]：cw local-completion-review → Rust daemon HTTP t",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799580-d7f9eeec",
+      "status": "review",
+      "title": "CLI-082 [cli_command_projection]：cw local-create → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799711-dfc17ba4",
+      "status": "closed",
+      "title": "CLI-084 [cli_command_projection]：cw local-next → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799770-e34ac71c",
+      "status": "closed",
+      "title": "CLI-085 [cli_command_projection]：cw local-reopen → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799850-e804f55c",
+      "status": "closed",
+      "title": "CLI-086 [cli_command_projection]：cw local-report → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322799910-eb9a737c",
+      "status": "review",
+      "title": "CLI-087 [cli_command_projection]：cw local-resolve-finding → Rust daemon HTTP thi",
+      "commits": [
+        {
+          "commit_id": "7c587455a2b21e73037ba2e5db1cae3aec3f1132",
+          "source": "refs/recovery (recycle bin)",
+          "parent": "677f6ba3e674f8fcadcfe6a1e3ea6eafa8c3ffa1"
+        }
+      ],
+      "files": [
+        {
+          "rel_path": ".github/copilot-instructions.md",
+          "functions": []
+        },
+        {
+          "rel_path": ".github/workflows/e2e-verify-linux-x86_64.yml",
+          "functions": []
+        },
+        {
+          "rel_path": ".gitignore",
+          "functions": []
+        },
+        {
+          "rel_path": ".tokenslim-context.md",
+          "functions": []
+        },
+        {
+          "rel_path": ".tokenslim.toml",
+          "functions": []
+        },
+        {
+          "rel_path": "AGENTS.md",
+          "functions": []
+        },
+        {
+          "rel_path": "CLAUDE.md",
+          "functions": []
+        },
+        {
+          "rel_path": "CODEX.md",
+          "functions": []
+        },
+        {
+          "rel_path": "TOOLS.md",
+          "functions": []
+        },
+        {
+          "rel_path": "cicd/pr_check.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cli/daemon_commands.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cli/dispatcher.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cli/main.py",
+          "functions": []
+        },
+        {
+          "rel_path": "config.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cw.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_base.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_bootstrap.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_check_gate.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_guardrail.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_query.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_task_evidence.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_task_identity.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_tasks.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_vector.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/schema.py",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/mcp-tools-implementation-map.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/product-strategy/competitive-analysis-callwarden-2026-08-19.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-084_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-085_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-086_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-087_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/class-diagram.mermaid",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/cw-rust-client-convergence-PRD.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/cw-rust-client-convergence-design.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/cw-rust-client-convergence-test-report.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/sequence-diagram.mermaid",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/tool_migration_matrix.json",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/architecture.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/authority-runtime-recovery.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/cli_reference.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/agent-role-prompts-v1.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/agent-task-contract-design.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/agent-task-contract-task-plan.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/artifact-inspector-scope-contract.json",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/c3-global-local-cas-complete-contract.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/c4-manifest-refresh-commit-contract.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/c5-replicator-snapshot-disaster-recovery-contract.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/cw-agent-orchestrator.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/cw-role-handoff-task-loop.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/cw-rust-client-convergence-migration-guide.md",
+          "functions": []
+        }
+      ],
+      "attribution": "recovered_pilot"
+    },
+    {
+      "task_id": "T-1787322799980-efcb2090",
+      "status": "review",
+      "title": "CLI-088 [task_projection]：cw local-rollback → Rust daemon HTTP thin client",
+      "commits": [
+        {
+          "commit_id": "642efcdaa68176ba4d8ee72373c2080548043929",
+          "source": "refs/recovery (recycle bin)",
+          "parent": "677f6ba3e674f8fcadcfe6a1e3ea6eafa8c3ffa1"
+        }
+      ],
+      "files": [
+        {
+          "rel_path": ".github/copilot-instructions.md",
+          "functions": []
+        },
+        {
+          "rel_path": ".github/workflows/e2e-verify-linux-x86_64.yml",
+          "functions": []
+        },
+        {
+          "rel_path": ".gitignore",
+          "functions": []
+        },
+        {
+          "rel_path": ".tokenslim-context.md",
+          "functions": []
+        },
+        {
+          "rel_path": ".tokenslim.toml",
+          "functions": []
+        },
+        {
+          "rel_path": "AGENTS.md",
+          "functions": []
+        },
+        {
+          "rel_path": "CLAUDE.md",
+          "functions": []
+        },
+        {
+          "rel_path": "CODEX.md",
+          "functions": []
+        },
+        {
+          "rel_path": "TOOLS.md",
+          "functions": []
+        },
+        {
+          "rel_path": "cicd/pr_check.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cli/daemon_commands.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cli/dispatcher.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cli/main.py",
+          "functions": []
+        },
+        {
+          "rel_path": "config.py",
+          "functions": []
+        },
+        {
+          "rel_path": "cw.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_base.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_bootstrap.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_check_gate.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_guardrail.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_query.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_task_evidence.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_task_identity.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_tasks.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/db_vector.py",
+          "functions": []
+        },
+        {
+          "rel_path": "db/schema.py",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/mcp-tools-implementation-map.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/product-strategy/competitive-analysis-callwarden-2026-08-19.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-084_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-085_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-086_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-087_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/CLI-088_evidence.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/class-diagram.mermaid",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/cw-rust-client-convergence-PRD.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/cw-rust-client-convergence-design.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/cw-rust-client-convergence-test-report.md",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/sequence-diagram.mermaid",
+          "functions": []
+        },
+        {
+          "rel_path": "deliverables/software-company/tool_migration_matrix.json",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/architecture.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/authority-runtime-recovery.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/cli_reference.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/agent-role-prompts-v1.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/agent-task-contract-design.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/agent-task-contract-task-plan.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/artifact-inspector-scope-contract.json",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/c3-global-local-cas-complete-contract.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/c4-manifest-refresh-commit-contract.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/c5-replicator-snapshot-disaster-recovery-contract.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/cw-agent-orchestrator.md",
+          "functions": []
+        },
+        {
+          "rel_path": "docs/design/cw-role-handoff-task-loop.md",
+          "functions": []
+        }
+      ],
+      "attribution": "recovered_pilot"
+    },
+    {
+      "task_id": "T-1787322800040-f35e9b74",
+      "status": "review",
+      "title": "CLI-089 [cli_command_projection]：cw local-split → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800112-f7a9dc0c",
+      "status": "review",
+      "title": "CLI-090 [cli_command_projection]：cw local-status → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800171-fb277560",
+      "status": "review",
+      "title": "CLI-091 [task_projection]：cw local-task-exists → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800239-ff34cf18",
+      "status": "review",
+      "title": "CLI-092 [task_projection]：cw local-task-list → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800298-02bb7c40",
+      "status": "review",
+      "title": "CLI-093 [cli_command_projection]：cw local-tree → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800362-068ff314",
+      "status": "review",
+      "title": "CLI-094 [assignment_projection]：cw internal lease-write → Rust daemon HTTP thin ",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800435-0aebf778",
+      "status": "review",
+      "title": "CLI-095 [cli_command_projection]：cw run-subcommand-mode → Rust daemon HTTP thin ",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322800492-0e4a5838",
+      "status": "review",
+      "title": "CLI-096 [cli_command_projection]：cw main → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322971676-e9aae4d4",
+      "status": "review",
+      "title": "INT-001 [graph_snapshot]：internal stats_top_files → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787323460311-ae9d7d30",
+      "status": "review",
+      "title": "SRV-001 [service_projection]：server  mcp common Python authority → Rust daemon",
+      "commits": [
+        {
+          "commit_id": "b6cb3d1b8f55987b4e22964d40c29fd307bf0804",
+          "source": "refs/recovery (recycle bin)",
+          "parent": "677f6ba3e674f8fcadcfe6a1e3ea6eafa8c3ffa1"
+        }
+      ],
+      "files": [],
+      "attribution": "recovered_pilot"
+    },
+    {
+      "task_id": "T-1787323460404-b425b074",
+      "status": "review",
+      "title": "SRV-002 [governance_projection]：server audit log Python authority → Rust daemon",
+      "commits": [
+        {
+          "commit_id": "4914ac2c2880eea7ac3669f9eb5e9e2df8923a21",
+          "source": "refs/recovery (recycle bin)",
+          "parent": "f239bb38a2d617b626a23247421b973be57f8704"
+        }
+      ],
+      "files": [
+        {
+          "rel_path": "db/db_base.py",
+          "functions": []
+        }
+      ],
+      "attribution": "recovered_pilot"
+    },
+    {
+      "task_id": "T-1787367417246-34190890",
+      "status": "closed",
+      "title": "P0-G：A′ 批量任务合同 revision-2、lease 恢复与原子治理建卡修复",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+      "status": "closed",
+      "title": "P0-J：CW 本地 Role Worker 授权与可变运行时 Provenance 分层",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787402257549-67ba81e6",
+      "status": "closed",
+      "title": "P0-J-D：受控运行时刷新 Task ID 兼容与部署归属修复",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787407700109-f5562c60",
+      "status": "closed",
+      "title": "P0-K：Role Worker 治理写路径授权与 live authority 对齐 remediation",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    }
+  ]
+}
