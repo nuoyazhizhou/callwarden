@@ -1,0 +1,320 @@
+{
+  "batch": 1,
+  "tasks": [
+    {
+      "task_id": "T-1787203926824-9f873bfc-sub-1",
+      "status": "closed",
+      "title": "实现正式 task.supersede 治理机制（RPC/CLI + 关系表 + append-only event）",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787203937193-0993d120",
+      "status": "review",
+      "title": "S1 T04-followup：cli/main.py 迁移 daemon RPC",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787209886781-48b4cb0c",
+      "status": "closed",
+      "title": "S1 T04-followup：cli/main.py 迁移 daemon RPC（重建·authority 绑定）",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787277487109-758e56d0",
+      "status": "closed",
+      "title": "P0-H：task.supersede governance hardening / promotion",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787293818274-1b87b6c4",
+      "status": "review",
+      "title": "P0-B：历史任务 workspace authority attestation / binding（supersede 前置）",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787305175972-8712da28",
+      "status": "review",
+      "title": "P0-C：Task Contract bootstrap / publication（A′ 调度前置）",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787305268313-06fcef5c",
+      "status": "review",
+      "title": "P0-D：Immutable Binding 与 Workspace Capture Freshness 一致性修复",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787307743865-696714f0",
+      "status": "review",
+      "title": "P0-E：Adjudicator / Reviewer lease delegation（A′ 治理收尾前置）",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787310376068-44eb5f20",
+      "status": "review",
+      "title": "P0-F：Bootstrap evidence / review bridge（A′ 冷启动治理死锁修复）",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321020926-b7ed7500",
+      "status": "closed",
+      "title": "CLI-01 [Gate/control_plane]：cw daemon health / manifest / capability 诊断链路",
+      "commits": [
+        {
+          "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321708568-d292ab3c",
+      "status": "review",
+      "title": "CLI-02 [control_plane]：cw search daemon-only 读取链路",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321708639-d6d362f4",
+      "status": "review",
+      "title": "CLI-03 [control_plane]：cw task show/list/status-tree 只读 authority 诊断",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321708699-da5d8224",
+      "status": "review",
+      "title": "MCP-001 [Gate/task_projection]：get_role_view → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321708760-de068a9c",
+      "status": "review",
+      "title": "MCP-002 [task_projection]：find_evidence → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321708856-e3c10624",
+      "status": "review",
+      "title": "MCP-003 [task_projection]：get_freshness_status → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321708926-e7ebfac4",
+      "status": "closed",
+      "title": "MCP-004 [task_projection]：get_gate_decision → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709017-ed4e79b0",
+      "status": "closed",
+      "title": "MCP-005 [Gate/graph_snapshot]：get_artifact_freshness → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709098-f2236ea0",
+      "status": "closed",
+      "title": "MCP-006 [graph_snapshot]：get_interface_providers → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709179-f6fdf5bc",
+      "status": "closed",
+      "title": "MCP-007 [graph_snapshot]：detect_cycle → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709249-fb256530",
+      "status": "closed",
+      "title": "MCP-008 [graph_snapshot]：validate_revision_dependencies → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709365-021050a8",
+      "status": "closed",
+      "title": "MCP-009 [graph_snapshot]：get_dependency_edges → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709432-060d1128",
+      "status": "closed",
+      "title": "MCP-010 [Gate/identity_attestation]：get_action_identity → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709518-0b31a484",
+      "status": "closed",
+      "title": "MCP-011 [identity_attestation]：check_action_identity → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709584-0f2573f4",
+      "status": "closed",
+      "title": "MCP-012 [identity_attestation]：check_session_separation → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709651-131e1880",
+      "status": "closed",
+      "title": "MCP-013 [identity_attestation]：get_attestation_validity → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709710-169c2da8",
+      "status": "closed",
+      "title": "MCP-014 [identity_attestation]：list_attestation_revocations → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709770-1a3de640",
+      "status": "closed",
+      "title": "MCP-015 [Gate/assignment_projection]：assignment_show → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709835-1e194764",
+      "status": "closed",
+      "title": "MCP-016 [Gate/graph_snapshot]：get_symbol_history → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709894-21a00d8c",
+      "status": "review",
+      "title": "MCP-017 [graph_snapshot]：get_recent_changes → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321709955-2537b8b4",
+      "status": "review",
+      "title": "MCP-018 [graph_snapshot]：get_impact → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    }
+  ]
+}
