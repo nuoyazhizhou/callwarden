@@ -71,7 +71,7 @@
 //! - validate_owned_path 的 canonicalize 在路径不存在时返回 path_not_found，需区分不存在与越界
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1083,6 +1083,13 @@ pub struct WorkspaceDaemonState {
     /// 空字符串表示不启用 snapshot publish（保持 R5 行为，db_path 传空）。
     /// 模板来源：`DaemonConfig.codegraph_db_path_template`，daemon 启动时传入。
     pub codegraph_db_path_template: String,
+    /// SRV-002：审计日志 DB 路径（daemon 权威写库）。
+    ///
+    /// 与 Python daemon 的 audit.db（由 schema_migrator 迁移、建 audit_log 表）
+    /// 指向同一文件：`/var/log/callwarden/audit.log`（以 SQLite 打开）。
+    /// 空表示未配置（fail-closed 由 `audit_log_handlers` 兜底）。
+    /// 来源：`DaemonConfig.audit_db_path`，daemon 启动时经 `with_audit_db_path` 传入。
+    pub audit_db_path: PathBuf,
     /// 分块全仓 refresh 的短生命周期规划状态。
     refresh_plans: HashMap<String, RefreshPlanAccumulator>,
 }
@@ -1122,6 +1129,7 @@ impl WorkspaceDaemonState {
             global_cas_store: None,
             snapshot_publisher: None,
             codegraph_db_path_template: String::new(),
+            audit_db_path: PathBuf::new(),
             refresh_plans: HashMap::new(),
         }
     }
@@ -1136,6 +1144,7 @@ impl WorkspaceDaemonState {
             global_cas_store: None,
             snapshot_publisher: None,
             codegraph_db_path_template: String::new(),
+            audit_db_path: PathBuf::new(),
             refresh_plans: HashMap::new(),
         }
     }
@@ -1161,6 +1170,14 @@ impl WorkspaceDaemonState {
     /// 空字符串表示不启用 snapshot publish（保持 R5 行为）。
     pub fn with_codegraph_db_path_template(mut self, template: String) -> Self {
         self.codegraph_db_path_template = template;
+        self
+    }
+
+    /// SRV-002：设置审计日志 DB 路径（daemon 权威写库）。
+    ///
+    /// 空表示未配置（fail-closed 由 `audit_log_handlers` 兜底）。
+    pub fn with_audit_db_path(mut self, path: PathBuf) -> Self {
+        self.audit_db_path = path;
         self
     }
 

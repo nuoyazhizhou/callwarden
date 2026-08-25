@@ -1782,6 +1782,16 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "query.most_coupled_functions",
     "query.status",
     "query.symbol_content_by_hash",
+    // MCP common 面（SRV-001：server mcp common Python authority → Rust daemon）
+    "mcp.common.get_db_path_for_daemon",
+    // audit log 面（SRV-002：server audit log Python authority → Rust daemon）
+    "mcp.audit_log.get_conn",
+    "mcp.audit_log.init_db",
+    "mcp.audit_log.append",
+    "mcp.audit_log.query",
+    "mcp.audit_log.count",
+    "mcp.audit_log.clear",
+    "mcp.audit_log.get_stats",
     // diff 读面（T02-edit 内 2 个只读）
     "query.diff_callees",
     "query.diff_callers",

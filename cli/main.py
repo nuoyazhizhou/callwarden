@@ -4179,10 +4179,15 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "rollback":
+        # 回滚变更（enterprise/auto 走 daemon RPC task.rollback，
+        # Rust daemon 是唯一 authority）。本 command 只作 HTTP request 参数组装与
+        # 输出格式化：local 模式 fallback 上抛（forbidden），禁止
+        # db.task_rollback / db.task_rollback_step 本地业务路径。
         def _local_rollback():
-            if hasattr(db, "task_rollback_step"):
-                return db.task_rollback_step(opts.task_id, opts.step_id)
-            return db.task_rollback(opts.task_id, opts.step_id)
+            raise DaemonUnavailableError(
+                "task.rollback 仅由 daemon 提供；local 模式禁止本地 "
+                "task_rollback / task_rollback_step 业务路径，请使用 daemon 模式"
+            )
 
         result = route_task_write("task.rollback", {
             "task_id": opts.task_id, "step_id": opts.step_id,
@@ -4616,10 +4621,15 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "resolve-finding":
-        # 解决或豁免质量门禁发现（enterprise/auto 走 daemon RPC task.resolve_quality_finding）
+        # 解决或豁免质量门禁发现（enterprise/auto 走 daemon RPC task.resolve_quality_finding，
+        # Rust daemon 是唯一 authority）。本 command 只作 HTTP request 参数组装与
+        # 输出格式化：local 模式 fallback 上抛（forbidden），禁止
+        # db.resolve_task_quality_finding 本地业务路径。
         def _local_resolve_finding():
-            return db.resolve_task_quality_finding(
-                opts.finding_id, resolution=opts.resolution, resolved_by=opts.by)
+            raise DaemonUnavailableError(
+                "task.resolve_quality_finding 仅由 daemon 提供；local 模式禁止本地 "
+                "resolve_task_quality_finding 业务路径，请使用 daemon 模式"
+            )
 
         result = route_task_write("task.resolve_quality_finding", {
             "finding_id": opts.finding_id,

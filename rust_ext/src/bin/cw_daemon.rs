@@ -271,6 +271,7 @@ mod unix {
         let cache_capacity = config.snapshot_cache_capacity;
         let data_root = config.data_root.clone();
         let codegraph_db_path_template = config.codegraph_db_path_template.clone();
+        let audit_db_path = config.audit_db_path.clone();
         // 共享 SnapshotCache：所有 worker 复用同一个 cache 实例
         let shared_snapshot_cache = Arc::new(SnapshotCache::new(cache_capacity));
         // 共享 SnapshotCachePublisher（基于共享 cache）
@@ -342,6 +343,7 @@ mod unix {
             )
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
+            .with_audit_db_path(audit_db_path.clone())
             .with_task_collab_store(Arc::clone(&shared_collab_store))
             .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation);
             Ok(state)
@@ -2241,6 +2243,7 @@ mod windows {
         let cache_capacity = config.snapshot_cache_capacity;
         let data_root = config.data_root.clone();
         let codegraph_db_path_template = config.codegraph_db_path_template.clone();
+        let audit_db_path = config.audit_db_path.clone();
         // 共享 SnapshotCache：所有 worker 复用同一个 cache 实例
         let shared_snapshot_cache = Arc::new(SnapshotCache::new(cache_capacity));
         // 共享 SnapshotCachePublisher（基于共享 cache）
@@ -2307,6 +2310,7 @@ mod windows {
             )
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
+            .with_audit_db_path(audit_db_path.clone())
             .with_task_collab_store(Arc::clone(&shared_collab_store))
             .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation);
             Ok(state)

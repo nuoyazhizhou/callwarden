@@ -79,6 +79,13 @@ pub struct DaemonConfig {
     /// `~/.callwarden/daemon/callwarden.db`，与 Python 权威库分裂，已废弃）。
     #[serde(default = "default_authority_task_db_path")]
     pub task_db_path: PathBuf,
+    /// SRV-002：审计日志 DB 路径（daemon 权威写库）
+    ///
+    /// 与 Python daemon 的 `audit.db`（由 `schema_migrator` 迁移、建 `audit_log` 表）
+    /// 指向同一文件：`/var/log/callwarden/audit.log`（以 SQLite 打开）。
+    /// 为空时由 `handle_init_db`/`handle_get_conn` 做 fail-closed 兜底。
+    #[serde(default = "default_audit_db_path")]
+    pub audit_db_path: PathBuf,
 }
 
 /// 默认 Stage_Toggle 配置存储路径（<data_root>/stage_toggle.db）
@@ -99,6 +106,15 @@ pub fn default_authority_task_db_path() -> PathBuf {
         return PathBuf::new();
     }
     PathBuf::from(home).join(".callwarden").join("callwarden.db")
+}
+
+/// 默认审计日志 DB 路径（对齐 Python `daemon_config.py:audit_log_path`）
+///
+/// 与 Python daemon 的 `audit.db`（由 `schema_migrator` 迁移、建 `audit_log` 表）
+/// 指向同一文件：`/var/log/callwarden/audit.log`（以 SQLite 打开）。
+/// 为空时由 `handle_init_db`/`handle_get_conn` 做 fail-closed 兜底。
+pub fn default_audit_db_path() -> PathBuf {
+    PathBuf::from("/var/log/callwarden/audit.log")
 }
 
 impl Default for DaemonConfig {
@@ -122,6 +138,8 @@ impl Default for DaemonConfig {
             stage_toggle_db_path: default_stage_toggle_db_path(),
             // P0 修复：默认即 Python 权威任务库 ~/.callwarden/callwarden.db
             task_db_path: default_authority_task_db_path(),
+            // SRV-002：默认审计日志 DB 路径 /var/log/callwarden/audit.log
+            audit_db_path: default_audit_db_path(),
         }
     }
 }
@@ -220,6 +238,12 @@ impl DaemonConfig {
         if let Ok(v) = std::env::var("CW_DAEMON_TASK_DB") {
             if !v.is_empty() {
                 self.task_db_path = PathBuf::from(v);
+            }
+        }
+        // SRV-002：审计日志 DB 路径（daemon 权威写库，对齐 Python audit_log_path）
+        if let Ok(v) = std::env::var("CW_DAEMON_AUDIT_DB") {
+            if !v.is_empty() {
+                self.audit_db_path = PathBuf::from(v);
             }
         }
         Ok(())
@@ -478,6 +502,7 @@ mod tests {
             socket_group: String::from("callwarden-clients"),
             stage_toggle_db_path: PathBuf::from("/tmp/stage_toggle.db"),
             task_db_path: PathBuf::from("/tmp/tasks.db"),
+            audit_db_path: PathBuf::from("/tmp/audit.log"),
         };
         let json = serde_json::to_string_pretty(&original).unwrap();
         std::fs::write(&cfg_path, json).unwrap();
@@ -675,6 +700,7 @@ mod tests {
             socket_group: String::new(),
             stage_toggle_db_path: root.join("stage_toggle.db"),
             task_db_path: root.join("tasks.db"),
+            audit_db_path: root.join("audit.log"),
         }
     }
 

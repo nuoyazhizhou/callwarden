@@ -3988,8 +3988,8 @@ class CodeGraphBase:
         workspace_name = get_default_workspace_name(self.workspace_root)
 
         cur = self.conn.execute(
-            "SELECT * FROM workspaces WHERE root_path = ?",
-            (self.workspace_root,),
+            "SELECT * FROM workspaces WHERE name = ? OR root_path = ?",
+            (workspace_name, norm_path(self.workspace_root)),
         )
         row = cur.fetchone()
 

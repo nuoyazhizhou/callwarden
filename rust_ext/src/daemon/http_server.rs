@@ -1578,6 +1578,17 @@ fn build_capability_registry() -> Result<Value, String> {
     add("snapshot.publish", "snapshot.publish", "snapshot-publish", "rust_native", "available", "index_write", "snapshot", false, "/v1/rpc", "fixture-sp-ok", "fixture-sp-err", "T-1786590214634-9e740cdc-sub-2#H1", "");
     add("gc.snapshots", "gc.snapshots", "gc-snapshots", "rust_native", "available", "index_write", "snapshot", false, "/v1/rpc", "fixture-gc-ok", "fixture-gc-err", "T-1786590214634-9e740cdc-sub-2#H1", "");
 
+    // MCP common 面（SRV-001：server mcp common Python authority → Rust daemon）
+    add("mcp.common.get_db_path_for_daemon", "mcp.common.get_db_path_for_daemon", "mcp-common-get-db-path-for-daemon", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-common-get-db-path-ok", "fixture-mcp-common-get-db-path-err", "T-1787323460311-ae9d7d30#SRV-001", "");
+    // audit log 面（SRV-002：server audit log Python authority → Rust daemon）
+    add("mcp.audit_log.get_conn", "mcp.audit_log.get_conn", "mcp-audit-log-get-conn", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-get-conn-ok", "fixture-mcp-audit-log-get-conn-err", "T-1787323460404-b425b074#SRV-002", "");
+    add("mcp.audit_log.init_db", "mcp.audit_log.init_db", "mcp-audit-log-init-db", "rust_native", "available", "write", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-init-db-ok", "fixture-mcp-audit-log-init-db-err", "T-1787323460404-b425b074#SRV-002", "");
+    add("mcp.audit_log.append", "mcp.audit_log.append", "mcp-audit-log-append", "rust_native", "available", "write", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-append-ok", "fixture-mcp-audit-log-append-err", "T-1787323460404-b425b074#SRV-002", "");
+    add("mcp.audit_log.query", "mcp.audit_log.query", "mcp-audit-log-query", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-query-ok", "fixture-mcp-audit-log-query-err", "T-1787323460404-b425b074#SRV-002", "");
+    add("mcp.audit_log.count", "mcp.audit_log.count", "mcp-audit-log-count", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-count-ok", "fixture-mcp-audit-log-count-err", "T-1787323460404-b425b074#SRV-002", "");
+    add("mcp.audit_log.clear", "mcp.audit_log.clear", "mcp-audit-log-clear", "rust_native", "available", "write", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-clear-ok", "fixture-mcp-audit-log-clear-err", "T-1787323460404-b425b074#SRV-002", "");
+    add("mcp.audit_log.get_stats", "mcp.audit_log.get_stats", "mcp-audit-log-get-stats", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-get-stats-ok", "fixture-mcp-audit-log-get-stats-err", "T-1787323460404-b425b074#SRV-002", "");
+
     // python_compat 方法由 H3 compat worker 提供服务（backend=python_compat + available）
     // W2-1（T-1786840097330-dec66710）：get_uncommented_symbols / get_module_call_stats /
     // get_semgrep_stats 已迁移 rust_native（走 snapshot query_db_path，native handler 在

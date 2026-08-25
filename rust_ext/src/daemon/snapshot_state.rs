@@ -130,6 +130,14 @@ impl SnapshotDaemonState {
         self
     }
 
+    /// SRV-002：设置审计日志 DB 路径，透传到 base `WorkspaceDaemonState`。
+    ///
+    /// 空表示未配置（fail-closed 由 `audit_log_handlers` 兜底）。
+    pub fn with_audit_db_path(mut self, path: std::path::PathBuf) -> Self {
+        self.base = self.base.with_audit_db_path(path);
+        self
+    }
+
     /// 注入 TaskCollabStore 协同存储（用于 task.create / task.claim 等协同 RPC）
     pub fn with_task_collab_store(
         mut self,
@@ -2291,6 +2299,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         use super::fs_handlers as fs;
         use super::job_runner as job;
         use super::metrics_handlers as metrics;
+        use super::_mcp_common_handlers as mcp;
+        use super::audit_log_handlers as audit;
 
         // 解析 workspace codegraph DB 路径（daemon 权威写库，来自模板）。
         let codegraph_db = |state: &Self, ws: &str| -> Result<Option<std::path::PathBuf>, DaemonRpcError> {
@@ -2315,6 +2325,25 @@ impl DaemonStateExt for SnapshotDaemonState {
             })?;
             Connection::open(db).map_err(|e| {
                 DaemonRpcError::internal_error(format!("打开 codegraph DB 失败: {e}"))
+            })
+        };
+
+        // 打开 daemon 权威 audit.db 写连接（audit_handlers 用）。
+        let open_audit = |state: &Self| -> Result<Connection, DaemonRpcError> {
+            if state.base.audit_db_path.as_os_str().is_empty() {
+                return Err(DaemonRpcError::new(
+                    "audit_db_unconfigured",
+                    "daemon 未配置 audit_db_path（fail-closed）",
+                ));
+            }
+            // 确保父目录存在（对齐 Python AuditLogger._init_db 的 os.makedirs）。
+            if let Some(parent) = state.base.audit_db_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            Connection::open(&state.base.audit_db_path).map_err(|e| {
+                DaemonRpcError::internal_error(format!("打开 audit DB 失败: {e}"))
             })
         };
 
@@ -2349,6 +2378,40 @@ impl DaemonStateExt for SnapshotDaemonState {
                 fs::handle_refresh_file(&self.base.registry, &peer, params, db.as_deref())
             }
             "workspace.file.health" => fs::handle_file_health(&self.base.registry, &peer, params),
+
+            // ---- MCP common 面（SRV-001：Python authority → Rust daemon）----
+            "mcp.common.get_db_path_for_daemon" => {
+                mcp::handle_get_db_path_for_daemon(params)
+            }
+
+            // ---- audit log 面（SRV-002：server audit log Python authority → Rust daemon）----
+            "mcp.audit_log.get_conn" => {
+                audit::handle_get_conn(&self.base.audit_db_path)
+            }
+            "mcp.audit_log.init_db" => {
+                let conn = open_audit(self)?;
+                audit::handle_init_db(&conn)
+            }
+            "mcp.audit_log.append" => {
+                let conn = open_audit(self)?;
+                audit::handle_append(&conn, params)
+            }
+            "mcp.audit_log.query" => {
+                let conn = open_audit(self)?;
+                audit::handle_query(&conn, params)
+            }
+            "mcp.audit_log.count" => {
+                let conn = open_audit(self)?;
+                audit::handle_count(&conn, params)
+            }
+            "mcp.audit_log.clear" => {
+                let conn = open_audit(self)?;
+                audit::handle_clear(&conn)
+            }
+            "mcp.audit_log.get_stats" => {
+                let conn = open_audit(self)?;
+                audit::handle_get_stats(&conn)
+            }
 
             // ---- 度量/状态面（metrics_handlers，经 open_query_connection 只读）----
             "query.status" | "query.metrics_summary" | "query.complexity_hotspots"

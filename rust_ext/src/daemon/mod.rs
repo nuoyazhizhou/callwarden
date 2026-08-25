@@ -154,6 +154,16 @@ pub mod fs_handlers;
 /// 对应 18 个纯本地 SQL 工具中的度量面 9 个（T02-metrics 批次）。
 pub mod metrics_handlers;
 
+/// 3.20: MCP common 面 handler（SRV-001：server mcp common Python authority → Rust daemon）
+/// 对应 `server/_mcp_common.py::_get_db_path_for_daemon` 的 Rust 下沉
+///（`mcp.common.get_db_path_for_daemon` 返回 daemon 权威任务库路径）。
+pub mod _mcp_common_handlers;
+
+/// 3.21: audit log 面 handler（SRV-002：server audit log Python authority → Rust daemon）
+/// 对应 `server/audit_log.py::AuditLogger` 的 SQLite 权威下沉
+///（`mcp.audit_log.{get_conn,init_db,append,query,count,clear,get_stats}`）。
+pub mod audit_log_handlers;
+
 /// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
 /// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。
 pub mod job_runner;

@@ -9,7 +9,6 @@ T03（cw-rust-client-convergence）：Python 层收敛为纯 client 薄壳。
 import os
 from typing import Any, Dict, Optional
 
-from ..config import get_project_db_path
 from ..db import CodeGraphDB
 
 
@@ -46,9 +45,18 @@ def _call_daemon_rpc(method: str, params: Optional[Dict[str, Any]] = None) -> An
 
 
 def _get_db_path_for_daemon() -> str:
-    """获取当前 workspace 的 db_path（用于 daemon 自动发布 snapshot）。"""
-    db = get_db()
-    return get_project_db_path(db.workspace_root)
+    """经 daemon RPC 获取权威任务库路径（SRV-001：Python authority → Rust daemon）。
+
+    收敛架构下 Python 不再本地计算 SQLite 路径；改经 daemon RPC
+    `mcp.common.get_db_path_for_daemon` 取 daemon 权威任务库路径（fail-closed）。
+
+    任何模式下 daemon 不可用都抛 DaemonUnavailableError，绝不回退本地
+    SQLite/CodeGraphDB（设计 §8.3 fail-closed 语义）。
+    """
+    result = _call_daemon_rpc("mcp.common.get_db_path_for_daemon", {})
+    if isinstance(result, dict):
+        return result.get("db_path", "")
+    return result or ""
 
 
 def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
