@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-26T02:33:58",
+  "updated_at": "2026-08-26T02:40:50",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1424,5 +1424,46 @@
       "tmp_12": "临时脚本无价值"
     },
     "report": "cw_203_gap_report.md"
+  },
+  "batch_attribution_20260826": {
+    "scope": "T-1787203926824-9f873bfc 子树 203 任务中的 180 个 review/closed（review 143 + closed 37）",
+    "attribution": {
+      "evidence_28": "task_evidence_events commit→file_versions→symbols",
+      "recovered_pilot_4": "CLI-087/088、SRV-001/002（refs/recovery 恢复 commit）",
+      "unknown_148": "无 evidence commit 亦无 pilot 匹配，如实标注"
+    },
+    "batches": [
+      {
+        "batch": 1,
+        "commit": "eb4e652",
+        "file": "cw_task_function_attribution/batch_01.json"
+      },
+      {
+        "batch": 2,
+        "commit": "e82dc0b",
+        "file": "cw_task_function_attribution/batch_02.json"
+      },
+      {
+        "batch": 3,
+        "commit": "a11c8c4",
+        "file": "cw_task_function_attribution/batch_03.json"
+      },
+      {
+        "batch": 4,
+        "commit": "7baf01e",
+        "file": "cw_task_function_attribution/batch_04.json"
+      },
+      {
+        "batch": 5,
+        "commit": "bd3faa8",
+        "file": "cw_task_function_attribution/batch_05.json"
+      },
+      {
+        "batch": 6,
+        "commit": "132ee6e",
+        "file": "cw_task_function_attribution/batch_06.json"
+      }
+    ],
+    "convention": "禁用 git worktree（2026-08-26 用户纪律）：并行/独立工作用独立 clone 或 master 白名单 capture"
   }
 }
