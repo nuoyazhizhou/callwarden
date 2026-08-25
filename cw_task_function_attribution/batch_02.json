@@ -1,0 +1,245 @@
+{
+  "batch": 2,
+  "tasks": [
+    {
+      "task_id": "T-1787321710012-289c54c4",
+      "status": "review",
+      "title": "MCP-019 [graph_snapshot]：get_comment_from_version → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710069-2c03f5e0",
+      "status": "review",
+      "title": "MCP-020 [graph_snapshot]：get_issue_summary → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710140-3047f444",
+      "status": "review",
+      "title": "MCP-021 [graph_snapshot]：find_issues → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710300-39d0baf0",
+      "status": "review",
+      "title": "MCP-022 [graph_snapshot]：get_test_coverage → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710397-3f9a9028",
+      "status": "review",
+      "title": "MCP-023 [graph_snapshot]：export_module_graph → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710484-44c1c940",
+      "status": "review",
+      "title": "MCP-024 [Gate/semantic_projection]：semantic_search → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710544-485efa78",
+      "status": "review",
+      "title": "MCP-025 [semantic_projection]：find_similar_functions → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710602-4bcbb50c",
+      "status": "review",
+      "title": "MCP-026 [semantic_projection]：get_symbol_commit_history → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710659-4f3acb88",
+      "status": "review",
+      "title": "MCP-027 [semantic_projection]：parse_codeowners → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710720-52daa72c",
+      "status": "review",
+      "title": "MCP-028 [semantic_projection]：get_project_dependencies → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710784-56a998b8",
+      "status": "review",
+      "title": "MCP-029 [Gate/summary_projection]：get_summary → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710849-5a85f634",
+      "status": "review",
+      "title": "MCP-030 [summary_projection]：project_brief → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710913-5e5558a4",
+      "status": "review",
+      "title": "MCP-031 [summary_projection]：repo_map → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321710977-62266414",
+      "status": "review",
+      "title": "MCP-032 [summary_projection]：test_impact_selection → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711035-659d600c",
+      "status": "review",
+      "title": "MCP-033 [summary_projection]：who_to_ask → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711142-6c00c7b8",
+      "status": "review",
+      "title": "MCP-034 [summary_projection]：get_ownership_map → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711218-707e9d24",
+      "status": "review",
+      "title": "MCP-035 [summary_projection]：guardrail_scan → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711292-74eefc14",
+      "status": "review",
+      "title": "MCP-036 [summary_projection]：guardrail_check_edit → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711354-78a01118",
+      "status": "review",
+      "title": "MCP-037 [summary_projection]：guardrail_list_rules → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711419-7c795b78",
+      "status": "review",
+      "title": "MCP-038 [summary_projection]：blast_radius → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711485-80694f68",
+      "status": "review",
+      "title": "MCP-039 [summary_projection]：ask_codebase → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711567-854fb8b4",
+      "status": "review",
+      "title": "MCP-040 [summary_projection]：get_token_savings_report → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711671-8b84382c",
+      "status": "review",
+      "title": "MCP-041 [summary_projection]：get_vulnerability_blast_radius → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711747-900bc900",
+      "status": "review",
+      "title": "MCP-042 [summary_projection]：get_clone_aware_impact → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711827-94d36268",
+      "status": "review",
+      "title": "MCP-043 [summary_projection]：review_readiness → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711882-9812b654",
+      "status": "review",
+      "title": "MCP-044 [summary_projection]：cross_layer_impact → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321711941-9b9a78d4",
+      "status": "review",
+      "title": "MCP-045 [summary_projection]：evolution_frequency → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712002-9f3f403c",
+      "status": "review",
+      "title": "MCP-046 [summary_projection]：hotspot_evolution → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712071-a3580d34",
+      "status": "review",
+      "title": "MCP-047 [summary_projection]：defect_learn → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712131-a6f798c4",
+      "status": "review",
+      "title": "MCP-048 [Gate/repository_security]：list_branches → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    }
+  ]
+}
