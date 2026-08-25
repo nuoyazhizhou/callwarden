@@ -1,0 +1,310 @@
+{
+  "batch": 3,
+  "tasks": [
+    {
+      "task_id": "T-1787321712197-aae29150",
+      "status": "review",
+      "title": "MCP-049 [repository_security]：merge_preview → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712254-ae4cba14",
+      "status": "review",
+      "title": "MCP-050 [repository_security]：get_edit_history → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712317-b20200ec",
+      "status": "review",
+      "title": "MCP-051 [repository_security]：find_shared_symbols → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712383-b5f00e24",
+      "status": "review",
+      "title": "MCP-052 [repository_security]：cross_repo_impact → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712440-b95892fc",
+      "status": "review",
+      "title": "MCP-053 [repository_security]：cross_repo_summary → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321712498-bcc9ba60",
+      "status": "closed",
+      "title": "MCP-054 [Gate/lsp_session]：lsp_hover → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712571-c126ad70",
+      "status": "closed",
+      "title": "MCP-055 [lsp_session]：lsp_definition → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712641-c5517dbc",
+      "status": "closed",
+      "title": "MCP-056 [lsp_session]：lsp_references → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712696-c896d134",
+      "status": "closed",
+      "title": "MCP-057 [lsp_session]：lsp_diagnostics → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712758-cc574178",
+      "status": "closed",
+      "title": "MCP-058 [lsp_session]：lsp_completion → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712826-d05f6f5c",
+      "status": "closed",
+      "title": "MCP-059 [lsp_session]：lsp_check_available → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712895-d47d25c0",
+      "status": "closed",
+      "title": "MCP-060 [repository_security]：rule_candidate_list → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321712961-d86f42d0",
+      "status": "closed",
+      "title": "MCP-061 [repository_security]：rule_list → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321713038-dd021610",
+      "status": "closed",
+      "title": "MCP-062 [repository_security]：get_applicable_rules → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321713116-e1a76170",
+      "status": "closed",
+      "title": "MCP-063 [Gate/task_projection]：get_symbol_change_tasks → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321713179-e565d9cc",
+      "status": "closed",
+      "title": "MCP-064 [task_projection]：audit_verify_chain → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321713237-e8e1f1f8",
+      "status": "closed",
+      "title": "MCP-065 [task_projection]：list_audit_signing_keys → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321713303-ecc6ada4",
+      "status": "closed",
+      "title": "MCP-066 [task_projection]：bootstrap_status → Rust daemon native",
+      "commits": [
+        {
+          "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+          "source": "task_evidence_events"
+        }
+      ],
+      "files": [],
+      "attribution": "evidence"
+    },
+    {
+      "task_id": "T-1787321713365-f084e3fc",
+      "status": "review",
+      "title": "MCP-067 [task_projection]：list_clones → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321713424-f4071e14",
+      "status": "review",
+      "title": "MCP-068 [task_projection]：list_clone_groups → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321713485-f7a90848",
+      "status": "review",
+      "title": "MCP-069 [task_projection]：get_clone_group_detail → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787321713551-fb94f87c",
+      "status": "review",
+      "title": "MCP-070 [task_projection]：task_plan_template → Rust daemon native",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794470-a75de064",
+      "status": "review",
+      "title": "CLI-004 [control_plane]：cw daemon（metrics/ping/workspace/publish/query） → Rust d",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794529-aae5f8d4",
+      "status": "review",
+      "title": "CLI-005 [control_plane]：cw-agent start → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794614-affbd0b4",
+      "status": "review",
+      "title": "CLI-006 [control_plane]：cw-agent status → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794681-b3f8e33c",
+      "status": "review",
+      "title": "CLI-007 [graph_snapshot]：cw dependency cycle → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794745-b7c1ed10",
+      "status": "review",
+      "title": "CLI-008 [graph_snapshot]：cw dependency explain → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794809-bb8f0658",
+      "status": "review",
+      "title": "CLI-009 [graph_snapshot]：cw dependency list → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794865-beea9d08",
+      "status": "review",
+      "title": "CLI-010 [graph_snapshot]：cw dependency provider-select → Rust daemon HTTP thin c",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322794927-c29e6894",
+      "status": "review",
+      "title": "CLI-011 [assignment_projection]：cw assignment → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    }
+  ]
+}
