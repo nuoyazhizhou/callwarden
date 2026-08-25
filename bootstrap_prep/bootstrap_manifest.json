@@ -1,0 +1,46 @@
+{
+  "prepared_by": "executor-workbuddy-v1",
+  "parent_task": "T-1787293451688-c14b1e44",
+  "items": [
+    {
+      "task_id": "T-1787321708568-d292ab3c",
+      "short": "CLI-02",
+      "envelope_path": "C:/git_work/callwarden/bootstrap_prep\\envelope_CLI-02_T-1787321708568-d292ab3c.json",
+      "evidence_path": "C:/git_work/callwarden/bootstrap_prep\\evidence_CLI-02_T-1787321708568-d292ab3c.json",
+      "evidence_hash": "sha256:bd67b19f520bab5848a13208c4df810a8af66bb3f26a21a8687f2d80d0825e33",
+      "workspace_instance_id": "ws-1"
+    },
+    {
+      "task_id": "T-1787321708639-d6d362f4",
+      "short": "CLI-03",
+      "envelope_path": "C:/git_work/callwarden/bootstrap_prep\\envelope_CLI-03_T-1787321708639-d6d362f4.json",
+      "evidence_path": "C:/git_work/callwarden/bootstrap_prep\\evidence_CLI-03_T-1787321708639-d6d362f4.json",
+      "evidence_hash": "sha256:41007d3365a0d1b1d7ad6190e54f4805354fd8b3db33905bdb919a96aa6c0d48",
+      "workspace_instance_id": "ws-1"
+    },
+    {
+      "task_id": "T-1787321708699-da5d8224",
+      "short": "MCP-001",
+      "envelope_path": "C:/git_work/callwarden/bootstrap_prep\\envelope_MCP-001_T-1787321708699-da5d8224.json",
+      "evidence_path": "C:/git_work/callwarden/bootstrap_prep\\evidence_MCP-001_T-1787321708699-da5d8224.json",
+      "evidence_hash": "sha256:f17a901be0b0b6e3eaa9b8d48f49ad03f34a64b32a49e647ce14d061456b0820",
+      "workspace_instance_id": "ws-1"
+    },
+    {
+      "task_id": "T-1787321708760-de068a9c",
+      "short": "MCP-002",
+      "envelope_path": "C:\\git_work\\callwarden\\bootstrap_prep\\envelope_MCP-002_T-1787321708760-de068a9c.json",
+      "evidence_path": "C:\\git_work\\callwarden\\bootstrap_prep\\evidence_MCP-002_T-1787321708760-de068a9c.json",
+      "evidence_hash": "sha256:38cbc42261c95f7e1038ce08953c45529eca567f2f6f615c6364a4c688824ea8",
+      "workspace_instance_id": "ws-1"
+    },
+    {
+      "task_id": "T-1787321708856-e3c10624",
+      "short": "MCP-003",
+      "envelope_path": "C:\\git_work\\callwarden\\bootstrap_prep\\envelope_MCP-003_T-1787321708856-e3c10624.json",
+      "evidence_path": "C:\\git_work\\callwarden\\bootstrap_prep\\evidence_MCP-003_T-1787321708856-e3c10624.json",
+      "evidence_hash": "sha256:b3173782b089415d7eea73f695bfdf49e57590fd02c652bb675f5385a567be4b",
+      "workspace_instance_id": "ws-1"
+    }
+  ]
+}

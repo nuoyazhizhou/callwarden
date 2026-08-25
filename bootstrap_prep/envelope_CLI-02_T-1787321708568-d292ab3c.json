@@ -1,0 +1,60 @@
+{
+  "contract_id": "C-T-1787321708568-d292ab3c",
+  "revision": 1,
+  "profile": "code_change",
+  "identity_policy": "legacy_identity_v1",
+  "objective": {
+    "goal": "CLI-02 [control_plane]：cw search daemon-only 读取链路",
+    "task_id": "T-1787321708568-d292ab3c"
+  },
+  "interfaces": {
+    "inputs": [
+      "cli command / MCP call"
+    ],
+    "outputs": [
+      "Rust daemon native response"
+    ]
+  },
+  "allowed_edit_scope": {
+    "files": [
+      "cli/main.py",
+      "rust_ext/src/daemon/snapshot_state.rs",
+      "rust_ext/src/daemon/query_handlers.rs",
+      "rust_ext/src/daemon/dispatch.rs",
+      "rust_ext/src/daemon/http_server.rs",
+      "tests/test_cli02_search_daemon_only.py",
+      "deliverables/software-company/tool_migration_matrix.json"
+    ]
+  },
+  "acceptance_clauses": [
+    {
+      "clause_id": "C1",
+      "kind": "declarative",
+      "severity": "block",
+      "statement": "链路 Rust daemon 原生化，Python 侧仅做 thin client 路由，未越界治理 mutation / local SQLite fallback"
+    }
+  ],
+  "risks": [
+    {
+      "risk": "本机 daemon 环境与 schema 版本差异"
+    },
+    {
+      "risk": "MCP/CLI 薄壳参数透传类型不一致"
+    }
+  ],
+  "rollback": {},
+  "dependencies": {
+    "execution_dependency": "CLI-01 (T-1787321020926-b7ed7500) 已由 Adjudicator apply"
+  },
+  "forbidden_scope": {
+    "files": [
+      "db/schema.py",
+      "direct SQLite or get_db fallback",
+      "task_collab.rs governance mutations",
+      "lease/assignment/verdict/gate semantics",
+      "other MCP tool handlers",
+      "task.apply",
+      "task.close"
+    ]
+  }
+}

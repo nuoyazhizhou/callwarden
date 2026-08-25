@@ -1,0 +1,13 @@
+{
+  "task_id": "T-1787321708699-da5d8224",
+  "reviewer_identity": "reviewer-wb-186loop",
+  "completion_review": "pass",
+  "audit_chain": {
+    "verified": 1000,
+    "broken": 0
+  },
+  "governance_gap": "task_contract_revisions / role_contract_lineages / task_step_role_contract_bindings 缺失",
+  "workspace_capture_id": "wc-ws-1-3664236952",
+  "workspace_instance_id": "ws-1",
+  "legacy_role_contracts_present": 4
+}
