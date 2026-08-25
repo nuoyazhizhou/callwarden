@@ -345,7 +345,8 @@ mod unix {
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
             .with_audit_db_path(audit_db_path.clone())
             .with_task_collab_store(Arc::clone(&shared_collab_store))
-            .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation);
+            .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation)
+            .with_task_db_path(callwarden_db_path.clone());
             Ok(state)
         };
 
@@ -2312,7 +2313,8 @@ mod windows {
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
             .with_audit_db_path(audit_db_path.clone())
             .with_task_collab_store(Arc::clone(&shared_collab_store))
-            .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation);
+            .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation)
+            .with_task_db_path(callwarden_db_path.clone());
             Ok(state)
         };
 

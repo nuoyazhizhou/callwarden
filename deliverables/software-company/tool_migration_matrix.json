@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-20T06:46:14",
+  "generated_at": "2026-08-22T17:08:01",
   "total_tools": 239,
   "backends": [
     "rust_native",
@@ -28,41 +28,41 @@
       "name": "find_evidence",
       "module": "tools_collab",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "find_evidence",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-002",
+      "status": "migrated"
     },
     {
       "name": "get_freshness_status",
       "module": "tools_collab",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_freshness_status",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-003",
+      "status": "migrated"
     },
     {
       "name": "get_gate_decision",
       "module": "tools_collab",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_gate_decision",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-004",
+      "status": "migrated"
     },
     {
       "name": "get_role_view",
       "module": "tools_collab",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
-      "rpc_method": "get_role_view",
+      "target_backend": "rust_native",
+      "rpc_method": "role_view.get",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-001",
+      "status": "migrated"
     },
     {
       "name": "submit_verdict",
@@ -109,41 +109,41 @@
       "name": "detect_cycle",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "detect_cycle",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-007",
+      "status": "migrated"
     },
     {
       "name": "get_artifact_freshness",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_artifact_freshness",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-005",
+      "status": "migrated"
     },
     {
       "name": "get_dependency_edges",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_dependency_edges",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-009",
+      "status": "migrated"
     },
     {
       "name": "get_interface_providers",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_interface_providers",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-006",
+      "status": "migrated"
     },
     {
       "name": "import_envelope_dependencies",
@@ -190,41 +190,41 @@
       "name": "validate_revision_dependencies",
       "module": "tools_p2_graph",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "validate_revision_dependencies",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-008",
+      "status": "migrated"
     },
     {
       "name": "check_action_identity",
       "module": "tools_p3_identity",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "check_action_identity",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-011",
+      "status": "migrated"
     },
     {
       "name": "check_session_separation",
       "module": "tools_p3_identity",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "check_session_separation",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-012",
+      "status": "migrated"
     },
     {
       "name": "get_action_identity",
       "module": "tools_p3_identity",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_action_identity",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "MCP-010",
+      "status": "migrated"
     },
     {
       "name": "get_attestation_validity",
@@ -390,11 +390,11 @@
       "name": "get_call_heatmap",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_call_heatmap",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-query-compat-batch1",
+      "status": "migrated"
     },
     {
       "name": "get_callees",
@@ -420,11 +420,11 @@
       "name": "get_comment_coverage",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_comment_coverage",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-query-compat-batch1",
+      "status": "migrated"
     },
     {
       "name": "get_comment_from_version",
@@ -440,11 +440,11 @@
       "name": "get_deepest_functions",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_deepest_functions",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-query-compat-batch1",
+      "status": "migrated"
     },
     {
       "name": "get_file_history",
@@ -500,11 +500,11 @@
       "name": "get_orphan_symbols",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_orphan_symbols",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-query-compat-batch1",
+      "status": "migrated"
     },
     {
       "name": "get_recent_changes",
@@ -590,11 +590,11 @@
       "name": "get_top_callers",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_top_callers",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-query-compat-batch1",
+      "status": "migrated"
     },
     {
       "name": "get_topological_order",
@@ -722,21 +722,21 @@
       "name": "get_toolchain",
       "module": "tools_rules",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_toolchain",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-toolchain-compat-batch2",
+      "status": "migrated"
     },
     {
       "name": "get_workspace_toolchains",
       "module": "tools_rules",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_workspace_toolchains",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-toolchain-compat-batch2",
+      "status": "migrated"
     },
     {
       "name": "list_build_contexts",
@@ -752,11 +752,11 @@
       "name": "list_toolchains",
       "module": "tools_rules",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "list_toolchains",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-toolchain-compat-batch2",
+      "status": "migrated"
     },
     {
       "name": "compare_snapshots",
@@ -1429,11 +1429,11 @@
       "name": "find_uncovered_functions",
       "module": "tools_summary",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "find_uncovered_functions",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "S2-query-compat-batch1",
+      "status": "migrated"
     },
     {
       "name": "generate_summary",
@@ -2421,5 +2421,134 @@
       "batch": "existing-native",
       "status": "stable"
     }
-  ]
+  ],
+  "cli_diagnostic_migration": {
+    "schema": "A' cli_diagnostic_migration: one entry per control_plane CLI task",
+    "tasks": [
+      {
+        "task_id": "T-1787321020926-b7ed7500",
+        "owner": "executor-workbuddy-v1",
+        "updated_at": "2026-08-21",
+        "note": "CLI-01 (A' 恢复): cw daemon health/manifest/capability 诊断链路 Rust daemon 化。Python 仅作 HTTP thin shell + 格式化，Rust daemon 为 health/capability 权威。",
+        "commands": [
+          {
+            "cli": "cw daemon health",
+            "transport": "http",
+            "endpoint": "GET /health",
+            "authority": "rust_daemon",
+            "python_role": "http_thin_shell",
+            "status": "migrated_http_thin_shell",
+            "evidence": "tests/test_cli01_health_manifest_capability.py :: test_health_success_live_daemon (8 passed)"
+          },
+          {
+            "cli": "cw daemon manifest",
+            "transport": "http",
+            "endpoint": "authority-scoped manifest (resolve_http_endpoint_and_manifest)",
+            "authority": "rust_daemon + manifest",
+            "python_role": "http_thin_shell",
+            "status": "migrated_http_thin_shell",
+            "evidence": "tests/test_cli01_health_manifest_capability.py :: test_manifest_success_live"
+          },
+          {
+            "cli": "cw daemon capability",
+            "transport": "http",
+            "endpoint": "GET /capabilities (capability_registry)",
+            "authority": "rust_daemon",
+            "python_role": "http_thin_shell",
+            "status": "migrated_http_thin_shell",
+            "evidence": "tests/test_cli01_health_manifest_capability.py :: test_capability_success_live_daemon"
+          }
+        ]
+      },
+      {
+        "task_id": "T-1787321708568-d292ab3c",
+        "owner": "executor-workbuddy-v1",
+        "updated_at": "2026-08-22",
+        "note": "CLI-02 (A' control_plane): cw search <query> daemon-only 读取链路 Rust daemon 化。Python 仅作 HTTP thin client + 格式化（.get 兼容缺省，不 KeyError）；Rust daemon query.search 为权威，响应经 normalize_search_results 输出 file_path/signature/has_comment 兼容字段（与 Rust CLI compat 层一致）。",
+        "commands": [
+          {
+            "cli": "cw search <QUERY>",
+            "transport": "http",
+            "rpc": "query.search",
+            "authority": "rust_daemon",
+            "python_role": "http_thin_client",
+            "status": "migrated_http_thin_client",
+            "compat_fields": [
+              "file_path (file_rel_path 推导)",
+              "signature (缺省 '')",
+              "has_comment (缺省 false)"
+            ],
+            "fail_closed": [
+              "snapshot_not_ready (workspace 未发布 snapshot)",
+              "workspace_not_found / workspace_not_owned (伪造 workspace_instance_id)",
+              "invalid_params (缺 query)",
+              "E_HTTP_DAEMON_UNAVAILABLE (daemon 不可达)"
+            ],
+            "evidence": "tests/test_cli02_search_daemon_only.py (7 passed) + tests/test_cli_02_http_rpc.py (3 passed) + CLI 冒烟 cw search alpha (exit 0)",
+            "no_local_sqlite_fallback": true
+          }
+        ]
+      },
+      {
+        "task_id": "T-1787321708639-d6d362f4",
+        "owner": "executor-workbuddy-v1",
+        "updated_at": "2026-08-22",
+        "note": "CLI-03 (A' control_plane): cw task show/list/status-tree 只读 authority 诊断。Python route_task_read 仅作 HTTP thin client；Rust daemon task_collab.rs handle_task_status/handle_task_list/handle_task_status_tree 为权威。已具备：显式 workspace_id fail-closed（E_TASK_WORKSPACE_UNBOUND 拒绝补齐）、task.list 按 binding 过滤（伪造 workspace → 空列表，不跨 workspace 泄漏）、status_tree 递归 subtasks。",
+        "commands": [
+          {
+            "cli": "cw task list",
+            "transport": "http",
+            "rpc": "task.list",
+            "authority": "rust_daemon",
+            "python_role": "http_thin_client (route_task_read)",
+            "status": "verified_daemon_authority",
+            "workspace_scope": "explicit workspace_id required (E_TASK_WORKSPACE_UNBOUND fail-closed)",
+            "evidence": "tests/test_cli03_task_read_authority.py (9 passed) + tests/test_cli_03_http_rpc.py (5 passed) + CLI 冒烟 cw task list/show/status-tree (exit 0)"
+          },
+          {
+            "cli": "cw task show",
+            "transport": "http",
+            "rpc": "task.status",
+            "authority": "rust_daemon",
+            "python_role": "http_thin_client (route_task_read)",
+            "status": "verified_daemon_authority",
+            "fail_closed": [
+              "task_not_found (伪造 id)",
+              "invalid_params (缺 task_id)"
+            ],
+            "evidence": "tests/test_cli03_task_read_authority.py :: test_task_status_roundtrip / test_task_show_bogus_id_structured_error"
+          },
+          {
+            "cli": "cw task status-tree",
+            "transport": "http",
+            "rpc": "task.status_tree",
+            "authority": "rust_daemon",
+            "python_role": "http_thin_client (route_task_read)",
+            "status": "verified_daemon_authority",
+            "evidence": "tests/test_cli03_task_read_authority.py :: test_task_status_tree_roundtrip (166+ subtasks)"
+          }
+        ],
+        "no_state_mutation": true
+      },
+      {
+        "task_id": "T-1787321708699-da5d8224",
+        "owner": "executor-workbuddy-v1",
+        "updated_at": "2026-08-21",
+        "port_type": "task_projection",
+        "note": "MCP-001 (A' task_projection Gate): get_role_view → Rust daemon native。Rust task_collab.rs::handle_get_role_view 为权威：task_contract_revisions 最新 envelope → (role,'1.0','blind') allowlist 过滤 → 规范 JSON SHA-256 计算 allowlist/contract/content/view_manifest 四类 hash（与 Python db_task_reviews golden 完全一致，含 CLI-02 确定性 parity）。dispatch get_role_view|role_view.get 双名路由；capability row python_compat→rust_native；COMPAT_ROUTE_WHITELIST 移除；Python _h_get_role_view/_COLLAB_READ_ONLY_METHODS/compat_registry 单项退役。",
+        "changes": [
+          "rust_ext/src/daemon/task_collab.rs: handle_get_role_view + canonical_json_sha256",
+          "rust_ext/src/daemon/dispatch.rs: get_role_view|role_view.get → handle_collab_rpc",
+          "rust_ext/src/daemon/http_server.rs: capability row rust_native + whitelist 移除",
+          "rust_ext/src/daemon/route_matrix.rs: get_role_view → RustNative/MCP-001/migrated",
+          "server/tools/tools_collab.py: _h_get_role_view 删除 + _COLLAB_READ_ONLY_METHODS 减 1",
+          "server/compat_registry.py: get_role_view 移除",
+          ".trae-cn/evidence/http-daemon-capability-matrix.json: backend=rust_native + metadata",
+          "tests/test_http_daemon_capability_matrix.py: RUST_NATIVE_EXPECTED + 计数 57→58/180→179"
+        ],
+        "evidence": "tests/test_mcp_get_role_view_http_rpc.py (7 passed: golden parity / default role / reviewer allowlist / missing task_id / unknown task / daemon unavailable / restart) + capability matrix 回归通过 + live round-trip view_manifest_hash=e3b8e276...",
+        "no_local_sqlite_fallback": true
+      }
+    ]
+  }
 }

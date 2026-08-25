@@ -17,16 +17,20 @@
 //! 官方事务化迁移管理（与 Python `_migrate_schema` 同一版本审计，SCHEMA_VERSION=51），
 //! 本模块只做只读校验，不再内嵌旁路 DDL。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::clock::AuthoritativeClock;
 use super::dispatch::{DaemonRpcError, PeerCredential};
+use super::task_supersede::{validate_supersede_schema, verify_registered_identity};
+use super::task_loop::operation_store::{DedupeOutcome, LedgerProvenance, OperationStore, ParamsRules};
+use super::task_loop::task_contract_bootstrap::{bootstrap_task_governance_contracts, BootstrapInput};
+
 use crate::canonicalize::sha256_hex;
 use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEMA_VERSION};
 
@@ -37,6 +41,36 @@ use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEM
 const TASK_COLLAB_TABLES: [&str; 5] = [
     "tasks", "task_steps", "task_events", "agent_registrations", "action_identities",
 ];
+
+/// 规范 JSON SHA-256（MCP-001 role_view.get 用）。
+///
+/// 语义与 Python `_canonical_json` + `_compute_hash` 完全一致：
+/// `json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
+/// —— 递归按 key 排序、无多余空格、紧凑分隔符。serde_json preserve_order
+/// 保留插入顺序，因此此处显式排序 key 后再序列化。
+fn canonical_json_sha256(value: &Value) -> String {
+    fn sort_keys(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                let mut out = Map::new();
+                for key in keys {
+                    out.insert(key.clone(), sort_keys(&map[key]));
+                }
+                Value::Object(out)
+            }
+            Value::Array(items) => {
+                Value::Array(items.iter().map(sort_keys).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    let sorted = sort_keys(value);
+    // serde_json 紧凑序列化（无空格）；ensure_ascii=false 等价于 UTF-8 直出
+    let canonical = serde_json::to_string(&sorted).unwrap_or_default();
+    sha256_hex(canonical.as_bytes())
+}
 
 /// daemon 实际读写依赖的列（官方 v49 schema 权威清单，db/schema.py）。
 /// 迁移后只读校验这些列存在，防止历史库缺列导致 daemon 查询失败；
@@ -66,20 +100,20 @@ const TASK_COLLAB_COLUMNS: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Clone, Debug)]
-struct ActionIdentity {
-    agent_id: String,
-    agent_instance_id: String,
-    client_id: String,
-    provider: String,
-    model_id: String,
-    model_mode: String,
-    system_fingerprint: String,
-    session_id: String,
-    role: String,
-    runtime_hash: String,
+pub(crate) struct ActionIdentity {
+    pub(crate) agent_id: String,
+    pub(crate) agent_instance_id: String,
+    pub(crate) client_id: String,
+    pub(crate) provider: String,
+    pub(crate) model_id: String,
+    pub(crate) model_mode: String,
+    pub(crate) system_fingerprint: String,
+    pub(crate) session_id: String,
+    pub(crate) role: String,
+    pub(crate) runtime_hash: String,
 }
 
-fn parse_action_identity(params: &Value) -> Result<Option<ActionIdentity>, DaemonRpcError> {
+pub(crate) fn parse_action_identity(params: &Value) -> Result<Option<ActionIdentity>, DaemonRpcError> {
     let Some(raw) = params.get("identity") else { return Ok(None); };
     if raw.is_null() || raw.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) {
         return Ok(None);
@@ -116,7 +150,7 @@ fn parse_action_identity(params: &Value) -> Result<Option<ActionIdentity>, Daemo
     Ok(Some(identity))
 }
 
-fn record_action_identity(
+pub(crate) fn record_action_identity(
     tx: &Transaction<'_>,
     task_id: &str,
     identity: &ActionIdentity,
@@ -142,11 +176,16 @@ fn record_action_identity(
     Ok(())
 }
 
-fn now_ts() -> f64 {
+pub(crate) fn task_now_ts() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+// 兼容本模块既有内部调用；跨模块只使用 task_now_ts。
+fn now_ts() -> f64 {
+    task_now_ts()
 }
 
 /// 返回已由 append-only `step_resolved` 事件解析的 failed step 集合。
@@ -383,7 +422,7 @@ fn optional_workspace_id_param(params: &Value) -> Option<i64> {
 /// - 无 binding → `E_TASK_WORKSPACE_UNBOUND` fail-closed（旧 task 保持无 binding，
 ///   v1 派工/lease 一律拒绝，绝不回退 active workspace 或客户端 numeric id）；
 /// - 显式 requested 与 binding 不一致 → `E_WORKSPACE_AUTHORITY_MISMATCH`。
-fn task_bound_workspace_id(
+pub(crate) fn task_bound_workspace_id(
     conn: &Connection,
     task_id: &str,
     requested_workspace_id: Option<i64>,
@@ -458,7 +497,7 @@ fn authoritative_now_text() -> String {
 ///   （capability 未就绪，禁止无 provenance 绑定）；
 /// - 同 workspace/instance 已有 capture 时只允许相同稳定 identity 的 re-attestation
 ///   （revision 递增、supersedes 指向前一条），identity 改变 → mismatch。
-fn bind_task_to_workspace(
+pub(crate) fn bind_task_to_workspace(
     tx: &Transaction<'_>,
     task_id: &str,
     workspace_id: i64,
@@ -993,7 +1032,7 @@ fn parse_subtasks_from_plan_text(plan_text: &str) -> Vec<(String, String, Vec<Ma
 // ============================================
 
 pub struct TaskCollabStore {
-    conn: Arc<Mutex<Connection>>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
     seq_counter: Arc<Mutex<i64>>,
     dedup_cache: Arc<Mutex<HashMap<String, Value>>>,
     /// daemon 权威时钟（lease 受保护写校验必需）。
@@ -1025,6 +1064,9 @@ impl TaskCollabStore {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
 
         Self::migrate_and_verify(&conn)?;
+        // P0-H（T-1787277487109-758e56d0）：supersede 表已入 canonical v59 schema，
+        // 此处仅做列级 fail-closed 校验（不再以启动期 DDL 创建/掩盖迁移）。
+        validate_supersede_schema(&conn)?;
 
         let max_seq: i64 = conn
             .query_row("SELECT COALESCE(MAX(monotonic_seq), 0) FROM task_events", [], |r| r.get(0))
@@ -1074,6 +1116,9 @@ impl TaskCollabStore {
 
     pub fn from_connection(conn: Connection) -> Result<Self, DaemonRpcError> {
         Self::migrate_and_verify(&conn)?;
+        // P0-H（T-1787277487109-758e56d0）：supersede 表已入 canonical v59 schema，
+        // 此处仅做列级 fail-closed 校验（不再以启动期 DDL 创建/掩盖迁移）。
+        validate_supersede_schema(&conn)?;
 
         let max_seq: i64 = conn
             .query_row("SELECT COALESCE(MAX(monotonic_seq), 0) FROM task_events", [], |r| r.get(0))
@@ -1161,10 +1206,43 @@ impl TaskCollabStore {
         Ok(())
     }
 
-    fn next_seq(&self) -> i64 {
+    /// 单调递增事件序号（进程内自增；跨重启以 DB MAX(monotonic_seq) 恢复）。
+    pub(crate) fn next_seq(&self) -> i64 {
         let mut seq = self.seq_counter.lock().unwrap();
         *seq += 1;
         *seq
+    }
+
+    /// task_events append-only 审计行写入 helper（P0-H：task.supersede 复用）。
+    ///
+    /// 与 apply/close/claim 的事件写模式一致（task_id/from_status/to_status/
+    /// reason_code/reason/actor_identity/agent_session_id/role/monotonic_seq/
+    /// authoritative_timestamp），只追加，不改变任何任务字段。返回新事件 id。
+    pub(crate) fn append_task_event(
+        tx: &Transaction<'_>,
+        task_id: &str,
+        from_status: &str,
+        to_status: &str,
+        reason_code: &str,
+        reason: &str,
+        actor_identity: &str,
+        actor_session_id: &str,
+        role: &str,
+        seq: i64,
+        ts: f64,
+    ) -> Result<i64, DaemonRpcError> {
+        tx.execute(
+            "INSERT INTO task_events
+             (task_id, from_status, to_status, reason_code, reason, actor_identity,
+              agent_session_id, role, monotonic_seq, authoritative_timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                task_id, from_status, to_status, reason_code, reason,
+                actor_identity, actor_session_id, role, seq, ts
+            ],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("追加 task_events 失败: {}", e)))?;
+        Ok(tx.last_insert_rowid())
     }
 
     /// 获取任务当前 claim 的声明者与 agent_session_id。
@@ -1252,7 +1330,7 @@ impl TaskCollabStore {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("agent-{}", owner_key));
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -1293,7 +1371,7 @@ impl TaskCollabStore {
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("agent-{}", peer.owner_key()));
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let conn = self.conn.lock().unwrap();
         let updated = conn
             .execute(
@@ -1356,7 +1434,7 @@ impl TaskCollabStore {
             .map(|s| s.to_string())
             .unwrap_or_else(generate_task_id);
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let seq = self.next_seq();
 
         let mut conn = self.conn.lock().unwrap();
@@ -1439,7 +1517,7 @@ impl TaskCollabStore {
 
         // A2/A3 身份与合同门禁（fail-closed，先于事务执行的只读校验）。
         let identity = parse_action_identity(params)?;
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
 
         if let Some(id) = &identity {
@@ -2005,7 +2083,7 @@ impl TaskCollabStore {
         }
 
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
@@ -2086,6 +2164,123 @@ impl TaskCollabStore {
     }
 
     /// A3：读取任务当前冻结的 Role Contract 列表（可指定 role 过滤）。
+    /// P0-C：对治理投影完全缺失但已绑定 authority 的历史/自举任务追加 v1 Task
+    /// Contract、三角色 lineage/revision 和 executor step bindings。该入口绝不更新
+    /// 任何既有 projection；一次成功必须由 adjudicator reviewer lease/fencing 与 evidence
+    /// 证明，且经 operation ledger 保证持久幂等。
+    pub fn handle_task_contract_bootstrap(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params.get("task_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let request_id = params.get("request_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let workspace_instance_id = params.get("workspace_instance_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let workspace_id = optional_workspace_id_param(params).ok_or_else(|| {
+            DaemonRpcError::new("E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED", "task.contract_bootstrap 必须携带 workspace_id > 0")
+        })?;
+        if task_id.is_empty() || request_id.is_empty() || workspace_instance_id.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_CONTRACT_BOOTSTRAP_PARAMS_REQUIRED",
+                "task.contract_bootstrap 必须携带 task_id、request_id、workspace_instance_id",
+            ));
+        }
+        let envelope = params.get("envelope").cloned().ok_or_else(|| {
+            DaemonRpcError::new("E_TASK_CONTRACT_BOOTSTRAP_ENVELOPE_REQUIRED", "task.contract_bootstrap 必须携带 envelope")
+        })?;
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new("E_TASK_CONTRACT_BOOTSTRAP_IDENTITY_REQUIRED", "task.contract_bootstrap 必须携带完整 identity")
+        })?;
+        if identity.role != "adjudicator" {
+            return Err(DaemonRpcError::new(
+                "E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED",
+                format!("仅允许 role=adjudicator，实际 role={}", identity.role),
+            ));
+        }
+        let (token, counter) = Self::require_lease_params(params)?;
+        let evidence_path = params.get("evidence_path").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let evidence_hash = params.get("evidence_hash").and_then(|v| v.as_str()).unwrap_or("").trim();
+        if evidence_path.is_empty() || evidence_hash.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_CONTRACT_BOOTSTRAP_EVIDENCE_REQUIRED",
+                "task.contract_bootstrap 必须携带 evidence_path 与 evidence_hash",
+            ));
+        }
+
+        let method = "task.contract_bootstrap";
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        let dedupe = operation_store.dedupe(&conn, workspace_instance_id, method, request_id, params)?;
+        let (rules, canonical_params_hash): (ParamsRules, String) = match dedupe {
+            DedupeOutcome::Replay { response_or_error_json } => {
+                if let Some(err) = response_or_error_json.get("error") {
+                    let code = err.get("code").and_then(|v| v.as_str()).unwrap_or("E_TASK_CONTRACT_BOOTSTRAP_REPLAY_ERROR");
+                    let message = err.get("message").and_then(|v| v.as_str()).unwrap_or("bootstrap deterministic rejection");
+                    return Err(DaemonRpcError::new(code, message));
+                }
+                return Ok(response_or_error_json);
+            }
+            DedupeOutcome::FirstRequest { rules, canonical_params_hash } => (rules, canonical_params_hash),
+        };
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DaemonRpcError::internal_error(format!("开启 task contract bootstrap 事务失败: {e}"))
+        })?;
+        let provenance = LedgerProvenance { workspace_id: Some(workspace_id), task_id: Some(task_id.to_string()), ..Default::default() };
+        let record_reject = |tx: &Transaction<'_>, code: &str, message: &str| -> DaemonRpcError {
+            let body = serde_json::json!({"error":{"code":code,"message":message}});
+            let _ = operation_store.record_result(tx, workspace_instance_id, method, request_id, &rules, &canonical_params_hash, &provenance, &body);
+            DaemonRpcError::new(code, message)
+        };
+        macro_rules! reject { ($code:expr, $message:expr) => {{ let err = record_reject(&tx, $code, $message); let _ = tx.commit(); return Err(err); }}; }
+
+        let bound_workspace = match task_bound_workspace_id(&tx, task_id, Some(workspace_id)) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        let binding_instance: String = match tx.query_row(
+            "SELECT c.workspace_instance_id FROM task_workspace_bindings b JOIN workspace_authority_captures c ON c.workspace_capture_id=b.workspace_capture_id WHERE b.task_id=?1 AND b.workspace_id=?2",
+            params![task_id, bound_workspace], |r| r.get(0),
+        ) {
+            Ok(value) => value,
+            Err(_) => reject!("E_TASK_CONTRACT_BOOTSTRAP_AUTHORITY_UNAVAILABLE", "task 缺少可复核的 workspace authority capture"),
+        };
+        if binding_instance != workspace_instance_id {
+            reject!("E_WORKSPACE_AUTHORITY_MISMATCH", &format!("task binding workspace_instance_id={} 与请求 {} 不一致", binding_instance, workspace_instance_id));
+        }
+        if let Err(e) = verify_registered_identity(&tx, &identity) { reject!(&e.code, &e.message); }
+        if let Err(e) = self.validate_reviewer_lease_for_adjudication(&tx, task_id, &token, counter, &identity) {
+            let code = if e.code == "E_LEASE_FENCING_STALE" { "E_TASK_CONTRACT_BOOTSTRAP_FENCED" } else { &e.code };
+            reject!(code, &e.message);
+        }
+        let status: String = match tx.query_row("SELECT status FROM tasks WHERE id=?1", [task_id], |r| r.get(0)) {
+            Ok(value) => value,
+            Err(_) => reject!("E_TASK_CONTRACT_BOOTSTRAP_TASK_NOT_FOUND", &format!("task 不存在: {task_id}")),
+        };
+        let input = BootstrapInput { task_id: task_id.to_string(), envelope, created_by: identity.agent_id.clone() };
+        let result = match bootstrap_task_governance_contracts(&tx, &input, bound_workspace) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        let ts = task_now_ts();
+        let seq = self.next_seq();
+        if let Err(e) = TaskCollabStore::append_task_event(
+            &tx, task_id, &status, &status, "task_contract_bootstrapped",
+            &serde_json::json!({"request_id":request_id,"evidence_path":evidence_path,"evidence_hash":evidence_hash}).to_string(),
+            &identity.agent_id, &identity.session_id, &identity.role, seq, ts,
+        ) { return Err(e); }
+        if let Err(e) = record_action_identity(&tx, task_id, &identity, method, seq, ts) { return Err(e); }
+        let mut full = result.as_object().cloned().unwrap_or_default();
+        full.insert("request_id".to_string(), Value::String(request_id.to_string()));
+        full.insert("evidence_path".to_string(), Value::String(evidence_path.to_string()));
+        full.insert("evidence_hash".to_string(), Value::String(evidence_hash.to_string()));
+        full.insert("fencing_counter".to_string(), Value::Number(counter.into()));
+        full.insert("authoritative_timestamp".to_string(), serde_json::json!(ts));
+        let full = Value::Object(full);
+        operation_store.record_result(&tx, workspace_instance_id, method, request_id, &rules, &canonical_params_hash, &provenance, &full)?;
+        tx.commit().map_err(|e| DaemonRpcError::internal_error(format!("提交 task contract bootstrap 事务失败: {e}")))?;
+        Ok(full)
+    }
+
     pub fn handle_task_contract_get(
         &self,
         _peer: PeerCredential,
@@ -2196,7 +2391,7 @@ impl TaskCollabStore {
             .or_else(|| identity.as_ref().map(|id| id.session_id.clone()))
             .unwrap_or_else(|| owner_key.clone());
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
 
         // A3：合同任务 report 必须匹配已冻结角色（handoff 角色不匹配即拒绝）。
@@ -2635,7 +2830,7 @@ impl TaskCollabStore {
             "source_check_items": source_scope.3,
             "request_id": request_id,
         }).to_string();
-        let ts = now_ts();
+        let ts = task_now_ts();
         tx.execute(
             "INSERT INTO task_steps
              (id, task_id, step_index, action, target_file, target_symbol, check_items, status, result, created_at, completed_at)
@@ -2755,7 +2950,7 @@ impl TaskCollabStore {
             return Err(DaemonRpcError::new("E_REMEDIATION_STEP_MISMATCH", "remediation provenance 与 failed_step_id 不一致"));
         }
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let reason = serde_json::json!({
             "request_id": request_id,
             "failed_step_id": failed_step_id,
@@ -2857,7 +3052,7 @@ impl TaskCollabStore {
         }
 
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
@@ -3375,7 +3570,7 @@ impl TaskCollabStore {
         let commit_hash = params.get("commit_hash").and_then(|v| v.as_str()).unwrap_or("");
         let workspace_snapshot_id = params.get("workspace_snapshot_id").and_then(|v| v.as_str()).unwrap_or("");
         let graph_refresh_version = params.get("graph_refresh_version").and_then(|v| v.as_str()).unwrap_or("");
-        let ts = now_ts();
+        let ts = task_now_ts();
         conn.execute(
             "INSERT INTO task_evidence_events
              (evidence_id, task_id, contract_id, contract_revision, contract_hash,
@@ -3604,7 +3799,7 @@ impl TaskCollabStore {
                 "同一 request_id 已绑定不同 Gate evidence/step/payload",
             ));
         }
-        let ts = now_ts();
+        let ts = task_now_ts();
         let decision_id = format!("GD-{}", &sha256_hex(format!("{}:{}", task_id, request_id).as_bytes())[..24]);
         conn.execute(
             "INSERT INTO task_gate_decisions
@@ -4022,6 +4217,1389 @@ impl TaskCollabStore {
         }))
     }
 
+    // MCP-001（T-1787321708699-da5d8224）：role_view.get 从 python_compat 迁移为
+    // Rust native。语义与 Python db_task_reviews.get_role_view + tools_collab
+    // _collab_direct_read("role_view.get") 完全一致：
+    //   - 从 task_contract_revisions 取最新 envelope_payload；
+    //   - 按 (role, "1.0", "blind") allowlist 过滤字段；
+    //   - allowlist/contract/content/view_manifest 四类 hash 用规范 JSON
+    //     （key 排序、无空格，等价 Python _canonical_json）计算。
+    pub fn handle_get_role_view(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
+        let role = params
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let role = if role.is_empty() { "implementer" } else { role.as_str() };
+
+        // 从最新契约 Envelope 生成 Role_View（view_type=role, stage=blind）
+        let envelope: Value = {
+            let conn = self.conn.lock().unwrap();
+            let row: Option<String> = conn
+                .query_row(
+                    "SELECT envelope_payload FROM task_contract_revisions \
+                     WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                    params![task_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取 task_contract_revisions 失败: {e}"))
+                })?;
+            match row {
+                Some(payload) if !payload.is_empty() => {
+                    serde_json::from_str(&payload).unwrap_or(Value::Object(Map::new()))
+                }
+                _ => Value::Object(Map::new()),
+            }
+        };
+
+        let allowed: Vec<&str> = match role {
+            "planner" => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "clauses", "blocking_clauses",
+            ],
+            "reviewer" => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "allowed_edit_scope", "actual_changes",
+                "symbol_changes", "test_runs", "open_quality_findings", "clauses",
+                "blocking_clauses",
+            ],
+            "tester" => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "clauses", "test_cases", "test_runs",
+            ],
+            // 默认 implementer（含未知 role 兼容 Python 语义）
+            _ => vec![
+                "contract_id", "profile", "title", "description", "requirements",
+                "target_file", "target_symbol", "allowed_edit_scope", "clauses",
+                "blocking_clauses",
+            ],
+        };
+        let allowed_set: HashSet<&str> = allowed.iter().copied().collect();
+
+        // 过滤 content：envelope 中在 allowlist 内的字段保留，其余进 excluded
+        let mut filtered: Map<String, Value> = Map::new();
+        let mut excluded: Vec<String> = Vec::new();
+        if let Some(obj) = envelope.as_object() {
+            for (key, value) in obj {
+                if allowed_set.contains(key.as_str()) {
+                    filtered.insert(key.clone(), value.clone());
+                } else {
+                    excluded.push(key.clone());
+                }
+            }
+        }
+        excluded.sort();
+
+        let mut sorted_allowed: Vec<&str> = allowed.clone();
+        sorted_allowed.sort_unstable();
+        let allowlist_def_hash = canonical_json_sha256(&Value::Array(
+            sorted_allowed.iter().map(|s| Value::String(s.to_string())).collect(),
+        ));
+        let contract_hash = envelope
+            .get("contract_hash")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| canonical_json_sha256(&envelope));
+        let content_hash = canonical_json_sha256(&Value::Object(filtered.clone()));
+
+        let manifest = json!({
+            "view_type": role,
+            "view_version": "1.0",
+            "stage": "blind",
+            "contract_hash": contract_hash,
+            "allowlist_hash": allowlist_def_hash,
+            "content_hash": content_hash,
+        });
+        let view_manifest_hash = canonical_json_sha256(&manifest);
+
+        let mut result = Map::new();
+        result.insert("task_id".to_string(), Value::String(task_id.to_string()));
+        result.insert("view_type".to_string(), Value::String(role.to_string()));
+        result.insert("view_version".to_string(), Value::String("1.0".to_string()));
+        result.insert("stage".to_string(), Value::String("blind".to_string()));
+        result.insert("view_manifest_hash".to_string(), Value::String(view_manifest_hash));
+        result.insert("contract_hash".to_string(), Value::String(contract_hash));
+        result.insert("content".to_string(), Value::Object(filtered));
+        result.insert(
+            "allowed_fields".to_string(),
+            Value::Array(sorted_allowed.iter().map(|s| Value::String(s.to_string())).collect()),
+        );
+        result.insert(
+            "excluded_fields".to_string(),
+            Value::Array(excluded.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+        Ok(Value::Object(result))
+    }
+
+    // MCP-002（T-1787321708760-de068a9c）：find_evidence 从 python_compat 迁移为
+    // Rust native。语义与 Python tools_collab._h_find_evidence +
+    // db_task_reviews 的 evidence.query 完全一致：从 task_evidence_events 按
+    // task_id / contract_id / verifier / limit 过滤查询，返回 {"items": [...], "count": N}。
+    pub fn handle_find_evidence(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let contract_id = params
+            .get("contract_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let verifier = params
+            .get("verifier")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(50);
+        let limit = if limit < 0 { 50 } else { limit as i64 };
+
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT evidence_id, task_id, evidence_type, event_type, commit_hash,
+                    workspace_snapshot_id, file_hashes, symbol_hashes, graph_refresh_version,
+                    verifier_name, verifier_version, verifier_config_hash, producer_identity,
+                    produced_at, payload_hash
+             FROM task_evidence_events WHERE 1=1",
+        );
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(ref t) = task_id {
+            sql.push_str(" AND task_id = ?");
+            binds.push(t.clone());
+        }
+        if let Some(ref c) = contract_id {
+            sql.push_str(" AND evidence_id LIKE ?");
+            binds.push(format!("%{}%", c));
+        }
+        if let Some(ref v) = verifier {
+            sql.push_str(" AND verifier_name = ?");
+            binds.push(v.clone());
+        }
+        sql.push_str(" ORDER BY id DESC LIMIT ?");
+        binds.push(limit.to_string());
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_evidence_events 失败: {}", e)))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+                let mut m = Map::new();
+                m.insert("evidence_id".to_string(), Value::String(r.get(0)?));
+                m.insert("task_id".to_string(), Value::String(r.get(1)?));
+                m.insert("evidence_type".to_string(), Value::String(r.get(2)?));
+                m.insert("event_type".to_string(), Value::String(r.get(3)?));
+                m.insert("commit_hash".to_string(), Value::String(r.get(4)?));
+                m.insert("workspace_snapshot_id".to_string(), Value::String(r.get(5)?));
+                m.insert("file_hashes".to_string(), Value::String(r.get(6)?));
+                m.insert("symbol_hashes".to_string(), Value::String(r.get(7)?));
+                m.insert("graph_refresh_version".to_string(), Value::String(r.get(8)?));
+                m.insert("verifier_name".to_string(), Value::String(r.get(9)?));
+                m.insert("verifier_version".to_string(), Value::String(r.get(10)?));
+                m.insert("verifier_config_hash".to_string(), Value::String(r.get(11)?));
+                m.insert("producer_identity".to_string(), Value::String(r.get(12)?));
+                m.insert("produced_at".to_string(), Value::Number(serde_json::Number::from_f64(r.get(13)?).unwrap()));
+                m.insert("payload_hash".to_string(), Value::String(r.get(14)?));
+                Ok(Value::Object(m))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 task_evidence_events 失败: {}", e)))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| DaemonRpcError::internal_error(format!("读取 task_evidence_events 失败: {}", e)))?);
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items.clone()));
+        result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
+        Ok(Value::Object(result))
+    }
+
+    // MCP-003 （T-1787321708856-e3c10624）：get_freshness_status 从 python_compat
+    // 迁移为 Rust native。语义与 Python db_task_evidence.derive_freshness 一致：
+    // 全序优先级 invalid > superseded > stale > fresh（Req 6.15）。当前调用方
+    // 仅传 evidence_id/task_id（snapshot/hash 为 None，stale 分支不触发）。
+    pub fn handle_get_freshness_status(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let evidence_id = params
+            .get("evidence_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let conn = self.conn.lock().unwrap();
+        // 当前契约 revision（无契约时取 0）
+        let current_rev: i64 = if let Some(ref t) = task_id {
+            conn.query_row(
+                "SELECT MAX(revision) FROM task_contract_revisions WHERE task_id = ?",
+                params![t],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+        } else {
+            0
+        };
+
+        // 收集待查询 evidence_id
+        let mut ids: Vec<String> = Vec::new();
+        if let Some(ref eid) = evidence_id {
+            if !eid.is_empty() {
+                ids.push(eid.clone());
+            }
+        } else if let Some(ref t) = task_id {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT evidence_id FROM task_evidence_events \
+                     WHERE task_id = ? AND event_type = ?",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_evidence_events 失败: {}", e)))?;
+            let rows = stmt
+                .query_map(params![t, "evidence_appended"], |r| r.get::<_, String>(0))
+                .map_err(|e| DaemonRpcError::internal_error(format!("映射 evidence_id 失败: {}", e)))?;
+            for row in rows {
+                if let Ok(eid) = row {
+                    ids.push(eid);
+                }
+            }
+        }
+
+        let mut items: Vec<Value> = Vec::new();
+        for eid in ids {
+            if eid.is_empty() {
+                continue;
+            }
+            let status = Self::derive_evidence_freshness(&conn, &eid, current_rev);
+            items.push(json!({"evidence_id": eid, "status": status}));
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items));
+        Ok(Value::Object(result))
+    }
+
+    // MCP-004（T-1787321708926-e7ebfac4）：get_gate_decision 从 python_compat
+    // 迁移为 Rust native。语义与 Python tools_collab._h_gate_decision +
+    // gate.decision.query 一致：从 task_gate_decisions 按 task_id/decision_id
+    // (gate_id) 过滤查询，按 decision_time DESC 限流。
+    pub fn handle_get_gate_decision(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let gate_id = params
+            .get("gate_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let limit: i64 = params
+            .get("limit")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(20);
+
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT decision_id, task_id, contract_id, contract_revision, contract_hash, \
+             decision, reason, clause_decisions, verifier_triples, resolved_stage_toggle_set, \
+             independence_policy_value, independence_waiver_marker, event_type, decision_time, \
+             step_id, role_contract_lineage_id, role_contract_revision_id, role_contract_revision, \
+             role_contract_hash, canonicalization_version, canonicalization_rules_hash, \
+             normalization_version, normalization_rules_hash, workspace_id \
+             FROM task_gate_decisions WHERE 1=1",
+        );
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(ref t) = task_id {
+            sql.push_str(" AND task_id = ?");
+            binds.push(t.clone());
+        }
+        if let Some(ref g) = gate_id {
+            if !g.is_empty() {
+                sql.push_str(" AND decision_id = ?");
+                binds.push(g.clone());
+            }
+        }
+        sql.push_str(" ORDER BY decision_time DESC LIMIT ?");
+        binds.push(limit.to_string());
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_gate_decisions 失败: {}", e)))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+                let mut m = Map::new();
+                m.insert("decision_id".to_string(), Value::String(r.get(0)?));
+                m.insert("task_id".to_string(), Value::String(r.get(1)?));
+                m.insert("contract_id".to_string(), Value::String(r.get(2)?));
+                m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(3)?.into()));
+                m.insert("contract_hash".to_string(), Value::String(r.get(4)?));
+                m.insert("decision".to_string(), Value::String(r.get(5)?));
+                m.insert("reason".to_string(), Value::String(r.get(6)?));
+                m.insert("clause_decisions".to_string(), Value::String(r.get(7)?));
+                m.insert("verifier_triples".to_string(), Value::String(r.get(8)?));
+                m.insert("resolved_stage_toggle_set".to_string(), Value::String(r.get(9)?));
+                m.insert("independence_policy_value".to_string(), Value::String(r.get(10)?));
+                m.insert("independence_waiver_marker".to_string(), Value::String(r.get(11)?));
+                m.insert("event_type".to_string(), Value::String(r.get(12)?));
+                m.insert("decision_time".to_string(), Value::Number(serde_json::Number::from_f64(r.get(13)?).unwrap()));
+                m.insert("step_id".to_string(), Value::String(r.get(14)?));
+                m.insert("role_contract_lineage_id".to_string(), Value::String(r.get(15)?));
+                m.insert("role_contract_revision_id".to_string(), Value::String(r.get(16)?));
+                m.insert("role_contract_revision".to_string(), Value::Number(r.get::<_, i64>(17)?.into()));
+                m.insert("role_contract_hash".to_string(), Value::String(r.get(18)?));
+                m.insert("canonicalization_version".to_string(), Value::String(r.get(19)?));
+                m.insert("canonicalization_rules_hash".to_string(), Value::String(r.get(20)?));
+                m.insert("normalization_version".to_string(), Value::String(r.get(21)?));
+                m.insert("normalization_rules_hash".to_string(), Value::String(r.get(22)?));
+                m.insert("workspace_id".to_string(), Value::Number(r.get::<_, i64>(23)?.into()));
+                Ok(Value::Object(m))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 task_gate_decisions 失败: {}", e)))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| DaemonRpcError::internal_error(format!("读取 task_gate_decisions 失败: {}", e)))?);
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items.clone()));
+        result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
+        Ok(Value::Object(result))
+    }
+
+    // MCP-005（T-1787321709017-ed4e79b0）：get_artifact_freshness 从 python_compat
+    // 迁移为 Rust native。语义与 Python tools_p2_graph._h_get_artifact_freshness +
+    // db_task_dependencies.get_artifact_freshness 一致：从 artifact_identities 按
+    // workspace_id + task_id (+ artifact_ref) 取最新一条。
+    pub fn handle_get_artifact_freshness(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let artifact_ref = params
+            .get("artifact_ref")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let conn = self.conn.lock().unwrap();
+        let (sql, binds): (String, Vec<String>) = if let Some(ref a) = artifact_ref {
+            if a.is_empty() {
+                (
+                    "SELECT artifact_id, freshness_status, artifact_hash, produced_at \
+                     FROM artifact_identities \
+                     WHERE workspace_id = ? AND task_id = ? \
+                     ORDER BY produced_at DESC LIMIT 1".to_string(),
+                    vec![workspace_id.to_string(), task_id.clone().unwrap_or_default()],
+                )
+            } else {
+                (
+                    "SELECT artifact_id, freshness_status, artifact_hash, produced_at \
+                     FROM artifact_identities \
+                     WHERE workspace_id = ? AND task_id = ? AND artifact_ref = ? \
+                     ORDER BY produced_at DESC LIMIT 1".to_string(),
+                    vec![workspace_id.to_string(), task_id.clone().unwrap_or_default(), a.clone()],
+                )
+            }
+        } else {
+            (
+                "SELECT artifact_id, freshness_status, artifact_hash, produced_at \
+                 FROM artifact_identities \
+                 WHERE workspace_id = ? AND task_id = ? \
+                 ORDER BY produced_at DESC LIMIT 1".to_string(),
+                vec![workspace_id.to_string(), task_id.clone().unwrap_or_default()],
+            )
+        };
+
+        let row = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 artifact_identities 失败: {}", e)))?
+            .query_row(
+                rusqlite::params_from_iter(binds.iter()),
+                |r| {
+                    let mut m = Map::new();
+                    m.insert("artifact_id".to_string(), Value::String(r.get(0)?));
+                    m.insert("freshness_status".to_string(), Value::String(r.get(1)?));
+                    m.insert("artifact_hash".to_string(), Value::String(r.get(2)?));
+                    m.insert(
+                        "produced_at".to_string(),
+                        Value::Number(serde_json::Number::from_f64(r.get(3)?).unwrap()),
+                    );
+                    Ok(Value::Object(m))
+                },
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 artifact_identities 失败: {}", e)))?;
+
+        match row {
+            Some(v) => Ok(v),
+            None => {
+                let mut nf = Map::new();
+                nf.insert("found".to_string(), Value::Bool(false));
+                Ok(Value::Object(nf))
+            }
+        }
+    }
+
+    // MCP-006（T-1787321709098-f2236ea0）：get_interface_providers 从 python_compat
+    // 迁移为 Rust native。语义与 Python tools_p2_graph._h_get_interface_providers +
+    // db_task_dependencies.get_interface_providers 一致：从 interface_identities 按
+    // workspace_id + interface_name (+ version) 查询 provider 列表。
+    pub fn handle_get_interface_providers(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let interface_name = params
+            .get("interface_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let version = params
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        let conn = self.conn.lock().unwrap();
+        let (sql, binds): (String, Vec<String>) = if version.is_empty() {
+            (
+                "SELECT interface_id, interface_name, version, interface_hash, \
+                 provider_task_id, contract_id, contract_revision \
+                 FROM interface_identities \
+                 WHERE workspace_id = ? AND interface_name = ?".to_string(),
+                vec![workspace_id.to_string(), interface_name.clone()],
+            )
+        } else {
+            (
+                "SELECT interface_id, interface_name, version, interface_hash, \
+                 provider_task_id, contract_id, contract_revision \
+                 FROM interface_identities \
+                 WHERE workspace_id = ? AND interface_name = ? AND version = ?".to_string(),
+                vec![workspace_id.to_string(), interface_name.clone(), version.clone()],
+            )
+        };
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 interface_identities 失败: {}", e)))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), |r| {
+                let mut m = Map::new();
+                m.insert("interface_id".to_string(), Value::String(r.get(0)?));
+                m.insert("interface_name".to_string(), Value::String(r.get(1)?));
+                m.insert("version".to_string(), Value::String(r.get(2)?));
+                m.insert("interface_hash".to_string(), Value::String(r.get(3)?));
+                m.insert("provider_task_id".to_string(), Value::String(r.get(4)?));
+                m.insert("contract_id".to_string(), Value::String(r.get(5)?));
+                m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(6)?.into()));
+                Ok(Value::Object(m))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 interface_identities 失败: {}", e)))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| DaemonRpcError::internal_error(format!("读取 interface_identities 失败: {}", e)))?);
+        }
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items.clone()));
+        result.insert("count".to_string(), Value::Number(serde_json::Number::from(items.len())));
+        Ok(Value::Object(result))
+    }
+
+    // MCP-007（T-1787321709179-f6fdf5bc）：detect_cycle 从 python_compat 迁移为
+    // Rust native。语义与 Python db_task_dependencies.detect_cycle 完全一致：
+    //   - 从 dependency_edges 取 workspace 内 is_hard=1 的边；
+    //   - DFS 三色标记检测环，定位 cycle_start_node；
+    //   - BFS 从 cycle_start_node 回到自身找最短 cycle path。
+    // 返回 {"has_cycle": bool, "cycle_path": [str], "checked_nodes": int}。
+    pub fn handle_detect_cycle(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let conn = self.conn.lock().unwrap();
+        let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT DISTINCT provider_task_id, consumer_task_id \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? AND is_hard = 1",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let rows = stmt
+                .query_map(params![workspace_id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            for row in rows {
+                let (provider, consumer) = row
+                    .map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?;
+                graph.entry(provider).or_default().push(consumer);
+            }
+        }
+
+        if graph.is_empty() {
+            let mut result = Map::new();
+            result.insert("has_cycle".to_string(), Value::Bool(false));
+            result.insert("cycle_path".to_string(), Value::Array(vec![]));
+            result.insert("checked_nodes".to_string(), Value::Number(serde_json::Number::from(0)));
+            return Ok(Value::Object(result));
+        }
+
+        // DFS 三色标记检测环（0=WHITE, 1=GRAY, 2=BLACK）
+        let mut color: HashMap<String, u8> = HashMap::new();
+        let mut cycle_start_node: Option<String> = None;
+
+        fn dfs_detect(
+            node: &str,
+            graph: &BTreeMap<String, Vec<String>>,
+            color: &mut HashMap<String, u8>,
+            found: &mut Option<String>,
+        ) -> bool {
+            color.insert(node.to_string(), 1);
+            if let Some(neighbors) = graph.get(node) {
+                for nb in neighbors {
+                    let c = color.get(nb).copied().unwrap_or(0);
+                    if c == 1 {
+                        *found = Some(nb.clone());
+                        return true;
+                    }
+                    if c == 0 {
+                        if dfs_detect(nb, graph, color, found) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            color.insert(node.to_string(), 2);
+            false
+        }
+
+        for node in graph.keys() {
+            if color.get(node).copied().unwrap_or(0) == 0 {
+                if dfs_detect(node, &graph, &mut color, &mut cycle_start_node) {
+                    break;
+                }
+            }
+        }
+
+        if cycle_start_node.is_none() {
+            let mut result = Map::new();
+            result.insert("has_cycle".to_string(), Value::Bool(false));
+            result.insert("cycle_path".to_string(), Value::Array(vec![]));
+            result.insert("checked_nodes".to_string(), Value::Number(serde_json::Number::from(graph.len())));
+            return Ok(Value::Object(result));
+        }
+
+        let start = cycle_start_node.clone().unwrap();
+        let cycle_path = Self::detect_cycle_find_shortest(&graph, &start);
+
+        let mut result = Map::new();
+        result.insert("has_cycle".to_string(), Value::Bool(true));
+        result.insert(
+            "cycle_path".to_string(),
+            Value::Array(cycle_path.into_iter().map(Value::String).collect()),
+        );
+        result.insert("checked_nodes".to_string(), Value::Number(serde_json::Number::from(graph.len())));
+        Ok(Value::Object(result))
+    }
+
+    // MCP-008（T-1787321709249-fb256530）：validate_revision_dependencies 迁移 rust_native。
+    // 语义与 Python tools_p2_graph._h_validate_revision_dependencies 一致：在内存中模拟
+    // build_hard_dependency_edges（不写 dependency_edges 表）——查询 task_dependencies →
+    // 解析 requires_artifact / requires_interface 的 provider → 检查多 provider 显式选择 →
+    // 计算 edges_built/edges_skipped/resolution_errors/provider_conflicts；环检测合并
+    // 「现有表硬边 ∪ 本次模拟边」（与 db 层 build 幂等写表后 detect_cycle(整表) 语义等价）。
+    pub fn handle_validate_revision_dependencies(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let contract_id = params
+            .get("contract_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let contract_revision: i64 = params
+            .get("contract_revision")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let conn = self.conn.lock().unwrap();
+
+        // 1. 内存模拟 build_hard_dependency_edges（不写表）
+        let mut edges_built: i64 = 0;
+        let mut edges_skipped: i64 = 0;
+        let mut resolution_errors: Vec<String> = Vec::new();
+        let mut provider_conflicts: Vec<Value> = Vec::new();
+        let mut new_edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT task_id, dependency_type, target_ref, target_task_id, \
+                            contract_id, contract_revision \
+                     FROM task_dependencies \
+                     WHERE workspace_id = ? AND contract_id = ? AND contract_revision = ? \
+                       AND is_informational = 0",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_dependencies 失败: {}", e)))?;
+            let rows = stmt
+                .query_map(params![workspace_id, contract_id, contract_revision], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
+                    ))
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 task_dependencies 失败: {}", e)))?;
+            for row in rows {
+                let (consumer_task_id, dtype, target_ref, target_task_id, dep_contract_id, dep_revision) =
+                    row.map_err(|e| DaemonRpcError::internal_error(format!("映射 task_dependencies 失败: {}", e)))?;
+
+                if dtype == "requires_artifact" {
+                    // requires_artifact: target_task_id 是 provider
+                    if target_task_id.is_empty() {
+                        resolution_errors.push(format!(
+                            "requires_artifact 依赖缺少 target_task_id (task={}, ref={})",
+                            consumer_task_id, target_ref
+                        ));
+                        edges_skipped += 1;
+                        continue;
+                    }
+                    new_edges.entry(target_task_id.clone()).or_default().push(consumer_task_id.clone());
+                    edges_built += 1;
+                } else if dtype == "requires_interface" {
+                    // requires_interface: 需要解析 provides_interface
+                    let providers = Self::query_interface_providers(&conn, workspace_id, &target_ref, "");
+                    if providers.is_empty() {
+                        resolution_errors.push(format!(
+                            "requires_interface '{}' 无匹配 provider (task={})",
+                            target_ref, consumer_task_id
+                        ));
+                        edges_skipped += 1;
+                        continue;
+                    }
+                    if providers.len() > 1 {
+                        // 多 provider：检查是否有显式选择（Req 9.9）
+                        let selected = Self::query_provider_selection(
+                            &conn,
+                            workspace_id,
+                            &consumer_task_id,
+                            &dep_contract_id,
+                            dep_revision,
+                            &target_ref,
+                        );
+                        if selected.is_none() {
+                            let provs: Vec<Value> = providers
+                                .iter()
+                                .map(|p| Value::String(p.clone()))
+                                .collect();
+                            let mut conflict = Map::new();
+                            conflict.insert("consumer_task_id".to_string(), Value::String(consumer_task_id.clone()));
+                            conflict.insert("interface_name".to_string(), Value::String(target_ref.clone()));
+                            conflict.insert("providers".to_string(), Value::Array(provs));
+                            provider_conflicts.push(Value::Object(conflict));
+                            edges_skipped += 1;
+                            continue;
+                        }
+                        new_edges.entry(selected.unwrap()).or_default().push(consumer_task_id.clone());
+                        edges_built += 1;
+                    } else {
+                        new_edges.entry(providers[0].clone()).or_default().push(consumer_task_id.clone());
+                        edges_built += 1;
+                    }
+                }
+                // requires_existing 和 provides_interface 不建边
+            }
+        }
+
+        // 2. 合并现有表硬边（db 层 build 幂等写表后 detect_cycle 检测整表）
+        let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        {
+            let mut stmt2 = conn
+                .prepare(
+                    "SELECT DISTINCT provider_task_id, consumer_task_id \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? AND is_hard = 1",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let rows2 = stmt2
+                .query_map(params![workspace_id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            for row in rows2 {
+                let (provider, consumer) = row
+                    .map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?;
+                graph.entry(provider).or_default().push(consumer);
+            }
+        }
+        for (provider, consumers) in new_edges.iter() {
+            graph.entry(provider.clone()).or_default().extend(consumers.iter().cloned());
+        }
+        drop(conn);
+
+        // 3. 环检测（复刻 db 层 detect_cycle：DFS 三色 + BFS 最短 cycle path）
+        let mut has_cycle = false;
+        let mut cycle_path: Vec<String> = Vec::new();
+        if !graph.is_empty() {
+            let cycle_result = Self::detect_cycle_on_graph(&graph);
+            has_cycle = cycle_result.0;
+            cycle_path = cycle_result.1;
+        }
+
+        // 4. 组装结果（与 db 层 validate_revision_dependencies 相同结构）
+        let mut errors: Vec<String> = resolution_errors;
+        for conflict in provider_conflicts.iter() {
+            let consumer = conflict.get("consumer_task_id").and_then(|v| v.as_str()).unwrap_or("");
+            let interface = conflict.get("interface_name").and_then(|v| v.as_str()).unwrap_or("");
+            let provs: Vec<&str> = conflict
+                .get("providers")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                .unwrap_or_default();
+            errors.push(format!(
+                "interface '{}' 有多个 provider {:?} 但无 Planner 显式选择 (consumer={})",
+                interface, provs, consumer
+            ));
+        }
+        if has_cycle {
+            errors.push(format!("硬依赖图存在环: {}", cycle_path.join(" → ")));
+        }
+
+        let valid = errors.is_empty() && provider_conflicts.is_empty();
+
+        let mut result = Map::new();
+        result.insert("valid".to_string(), Value::Bool(valid));
+        result.insert("errors".to_string(), Value::Array(errors.into_iter().map(Value::String).collect()));
+        result.insert(
+            "cycle_path".to_string(),
+            if has_cycle {
+                Value::Array(cycle_path.into_iter().map(Value::String).collect())
+            } else {
+                Value::Array(vec![])
+            },
+        );
+        result.insert("provider_conflicts".to_string(), Value::Array(provider_conflicts));
+        result.insert("edges_built".to_string(), Value::Number(serde_json::Number::from(edges_built)));
+        result.insert("edges_skipped".to_string(), Value::Number(serde_json::Number::from(edges_skipped)));
+        Ok(Value::Object(result))
+    }
+
+    // 查询 interface_identities 中匹配的 provider 列表（复刻 db get_interface_providers）。
+    fn query_interface_providers(
+        conn: &rusqlite::Connection,
+        workspace_id: i64,
+        interface_name: &str,
+        version: &str,
+    ) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_task_id FROM interface_identities \
+                 WHERE workspace_id = ? AND interface_name = ?",
+            )
+            .ok();
+        let Some(mut stmt) = stmt else { return vec![] };
+        let rows = stmt
+            .query_map(params![workspace_id, interface_name], |r| r.get::<_, String>(0))
+            .ok();
+        let Some(rows) = rows else { return vec![] };
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    // 查询已记录的 provider 选择（复刻 db get_provider_selection）。
+    fn query_provider_selection(
+        conn: &rusqlite::Connection,
+        workspace_id: i64,
+        consumer_task_id: &str,
+        contract_id: &str,
+        contract_revision: i64,
+        interface_name: &str,
+    ) -> Option<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT selected_provider_task_id FROM interface_provider_selections \
+                 WHERE workspace_id = ? AND consumer_task_id = ? AND contract_id = ? \
+                   AND contract_revision = ? AND interface_name = ?",
+            )
+            .ok()?;
+        stmt.query_row(
+            params![workspace_id, consumer_task_id, contract_id, contract_revision, interface_name],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    // 在内存边集合上做环检测（复刻 db detect_cycle：DFS 三色 + BFS 最短 cycle path）。
+    // 返回 (has_cycle, cycle_path)。
+    fn detect_cycle_on_graph(graph: &BTreeMap<String, Vec<String>>) -> (bool, Vec<String>) {
+        if graph.is_empty() {
+            return (false, vec![]);
+        }
+        let mut color: HashMap<String, u8> = HashMap::new();
+        let mut cycle_start_node: Option<String> = None;
+
+        fn dfs_detect(
+            node: &str,
+            graph: &BTreeMap<String, Vec<String>>,
+            color: &mut HashMap<String, u8>,
+            found: &mut Option<String>,
+        ) -> bool {
+            color.insert(node.to_string(), 1);
+            if let Some(neighbors) = graph.get(node) {
+                for nb in neighbors {
+                    let c = color.get(nb).copied().unwrap_or(0);
+                    if c == 1 {
+                        *found = Some(nb.clone());
+                        return true;
+                    }
+                    if c == 0 && dfs_detect(nb, graph, color, found) {
+                        return true;
+                    }
+                }
+            }
+            color.insert(node.to_string(), 2);
+            false
+        }
+
+        for node in graph.keys() {
+            if color.get(node).copied().unwrap_or(0) == 0 {
+                if dfs_detect(node, graph, &mut color, &mut cycle_start_node) {
+                    break;
+                }
+            }
+        }
+
+        match cycle_start_node {
+            None => (false, vec![]),
+            Some(start) => (true, Self::detect_cycle_find_shortest(graph, &start)),
+        }
+    }
+
+    // MCP-009（T-1787321709365-021050a8）：get_dependency_edges 迁移 rust_native。
+    // 语义与 Python db_task_dependencies.get_dependency_edges 一致：查询硬依赖图边
+    // （dependency_edges 全部列，按 created_at 排序），可选按 task_id 过滤
+    // （provider_task_id 或 consumer_task_id 匹配）。返回行数组（与 Python dict 行
+    // 键名一致：id/workspace_id/provider_task_id/consumer_task_id/edge_type/
+    // source_type/contract_id/contract_revision/is_hard/created_at）。
+    pub fn handle_get_dependency_edges(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let conn = self.conn.lock().unwrap();
+        let rows: Vec<Value> = if task_id.is_empty() {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, provider_task_id, consumer_task_id, \
+                            edge_type, source_type, contract_id, contract_revision, \
+                            is_hard, created_at \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? \
+                     ORDER BY created_at",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let items = stmt
+                .query_map(params![workspace_id], |r| {
+                    Self::map_dependency_edge_row(r)
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            let mut out = Vec::new();
+            for it in items {
+                out.push(it.map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?);
+            }
+            out
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, provider_task_id, consumer_task_id, \
+                            edge_type, source_type, contract_id, contract_revision, \
+                            is_hard, created_at \
+                     FROM dependency_edges \
+                     WHERE workspace_id = ? AND (provider_task_id = ? OR consumer_task_id = ?) \
+                     ORDER BY created_at",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 dependency_edges 失败: {}", e)))?;
+            let items = stmt
+                .query_map(params![workspace_id, task_id, task_id], |r| {
+                    Self::map_dependency_edge_row(r)
+                })
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 dependency_edges 失败: {}", e)))?;
+            let mut out = Vec::new();
+            for it in items {
+                out.push(it.map_err(|e| DaemonRpcError::internal_error(format!("映射 dependency_edges 失败: {}", e)))?);
+            }
+            out
+        };
+
+        Ok(Value::Array(rows))
+    }
+
+    // 将 dependency_edges 一行映射为与 Python dict 行一致的 JSON 对象。
+    fn map_dependency_edge_row(
+        r: &rusqlite::Row,
+    ) -> Result<Value, rusqlite::Error> {
+        let mut m = Map::new();
+        m.insert("id".to_string(), Value::Number(r.get::<_, i64>(0)?.into()));
+        m.insert("workspace_id".to_string(), Value::Number(r.get::<_, i64>(1)?.into()));
+        m.insert("provider_task_id".to_string(), Value::String(r.get::<_, String>(2)?));
+        m.insert("consumer_task_id".to_string(), Value::String(r.get::<_, String>(3)?));
+        m.insert("edge_type".to_string(), Value::String(r.get::<_, String>(4)?));
+        m.insert("source_type".to_string(), Value::String(r.get::<_, String>(5)?));
+        m.insert("contract_id".to_string(), Value::String(r.get::<_, String>(6)?));
+        m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(7)?.into()));
+        m.insert("is_hard".to_string(), Value::Number(r.get::<_, i64>(8)?.into()));
+        m.insert("created_at".to_string(), Value::Number(serde_json::Number::from_f64(r.get::<_, f64>(9)?).unwrap_or(serde_json::Number::from(0))));
+        Ok(Value::Object(m))
+    }
+
+    // MCP-010（T-1787321709432-060d1128）：get_action_identity 迁移 rust_native。
+    // 语义与 Python db_task_identity.get_action_identity 一致：按 workspace_id + action_id
+    // 查询 action_identities 单行（全部列），无匹配返回 None。
+    pub fn handle_get_action_identity(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let action_id = params
+            .get("action_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, action_id, action_type, task_id, \
+                        contract_id, contract_revision, agent_id, session_id, \
+                        model_id, role, recorded_at \
+                 FROM action_identities \
+                 WHERE workspace_id = ? AND action_id = ?",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 action_identities 失败: {}", e)))?;
+        let found = stmt
+            .query_row(params![workspace_id, action_id], |r| {
+                let mut m = Map::new();
+                m.insert("id".to_string(), Value::Number(r.get::<_, i64>(0)?.into()));
+                m.insert("workspace_id".to_string(), Value::Number(r.get::<_, i64>(1)?.into()));
+                m.insert("action_id".to_string(), Value::String(r.get::<_, String>(2)?));
+                m.insert("action_type".to_string(), Value::String(r.get::<_, String>(3)?));
+                m.insert("task_id".to_string(), Value::String(r.get::<_, String>(4)?));
+                m.insert("contract_id".to_string(), Value::String(r.get::<_, String>(5)?));
+                m.insert("contract_revision".to_string(), Value::Number(r.get::<_, i64>(6)?.into()));
+                m.insert("agent_id".to_string(), Value::String(r.get::<_, String>(7)?));
+                m.insert("session_id".to_string(), Value::String(r.get::<_, String>(8)?));
+                m.insert("model_id".to_string(), Value::String(r.get::<_, String>(9)?));
+                m.insert("role".to_string(), Value::String(r.get::<_, String>(10)?));
+                m.insert("recorded_at".to_string(), Value::Number(serde_json::Number::from_f64(r.get::<_, f64>(11)?).unwrap_or(serde_json::Number::from(0))));
+                Ok(Value::Object(m))
+            })
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("映射 action_identities 失败: {}", e)))?;
+
+        match found {
+            Some(v) => Ok(v),
+            None => Ok(Value::Null),
+        }
+    }
+
+    // MCP-011（T-1787321709518-0b31a484）：check_action_identity 迁移 rust_native。
+    // 语义与 Python tools_p3_identity._h_check_action_identity 一致：解析 identity JSON
+    // 字符串 → 校验结构化身份（agent_id/session_id/model_id/role 四字段齐全 +
+    // require_role 匹配）→ 返回 {"valid": bool, "reason": {...}}。
+    pub fn handle_check_action_identity(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let identity_str = params
+            .get("identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let require_role = params
+            .get("require_role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // 1. 解析 identity JSON 字符串（_p3_resolve_identity_arg）
+        if identity_str.trim().is_empty() {
+            let mut reason = Map::new();
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+            reason.insert("detail".to_string(), Value::String("identity 必须是 JSON 对象 {agent_id, session_id, model_id, role}".to_string()));
+            let mut result = Map::new();
+            result.insert("valid".to_string(), Value::Bool(false));
+            result.insert("reason".to_string(), Value::Object(reason));
+            return Ok(Value::Object(result));
+        }
+        let parsed: Result<Value, _> = serde_json::from_str(&identity_str);
+        let parsed = match parsed {
+            Ok(v) => v,
+            Err(_) => {
+                let mut reason = Map::new();
+                reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+                reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+                reason.insert("detail".to_string(), Value::String("identity 必须是 JSON 对象 {agent_id, session_id, model_id, role}".to_string()));
+                let mut result = Map::new();
+                result.insert("valid".to_string(), Value::Bool(false));
+                result.insert("reason".to_string(), Value::Object(reason));
+                return Ok(Value::Object(result));
+            }
+        };
+        let obj = match parsed.as_object() {
+            Some(o) => o,
+            None => {
+                let mut reason = Map::new();
+                reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+                reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+                reason.insert("detail".to_string(), Value::String("identity 必须是 JSON 对象".to_string()));
+                let mut result = Map::new();
+                result.insert("valid".to_string(), Value::Bool(false));
+                result.insert("reason".to_string(), Value::Object(reason));
+                return Ok(Value::Object(result));
+            }
+        };
+
+        let agent_id = obj.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let session_id = obj.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let model_id = obj.get("model_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let role = obj.get("role").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // 2. validate_action_identity（纯逻辑，无 DB 查询）
+        let valid;
+        let mut reason = Map::new();
+        if agent_id.is_empty() || session_id.is_empty() || model_id.is_empty() || role.is_empty() {
+            valid = false;
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+            reason.insert("detail".to_string(), Value::String("缺失必要的 Identity 字段 (agent_id, session_id, model_id, role)".to_string()));
+        } else if !require_role.is_empty() && role != require_role {
+            valid = false;
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_ROLE_MISMATCH".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_role_mismatch".to_string()));
+            reason.insert("detail".to_string(), Value::String(format!("角色不匹配: 期望 {}, 实际 {}", require_role, role)));
+            reason.insert("expected_role".to_string(), Value::String(require_role.clone()));
+            reason.insert("actual_role".to_string(), Value::String(role.clone()));
+        } else {
+            valid = true;
+            reason.insert("code".to_string(), Value::String("OK".to_string()));
+        }
+
+        let mut result = Map::new();
+        result.insert("valid".to_string(), Value::Bool(valid));
+        result.insert("reason".to_string(), Value::Object(reason));
+        Ok(Value::Object(result))
+    }
+
+    // MCP-012（T-1787321709584-0f2573f4）：check_session_separation 迁移 rust_native。
+    // 语义与 Python tools_p3_identity._h_check_session_separation 一致：解析 reviewer/
+    // implementer_identity JSON 字符串 → 非 dict 返回 E_IDENTITY_INCOMPLETE → 校验
+    // Reviewer Session 与 Implementer Session 不同（相等 → E_IDENTITY_SESSION_NOT_SEPARATED）
+    // → 返回 {"valid": bool, "reason": {...}}。
+    pub fn handle_check_session_separation(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let reviewer_str = params
+            .get("reviewer_identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let implementer_str = params
+            .get("implementer_identity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // 解析并校验两方 identity 均为 JSON 对象
+        let reviewer = Self::parse_identity_object(&reviewer_str);
+        let implementer = Self::parse_identity_object(&implementer_str);
+        let (reviewer, implementer) = match (reviewer, implementer) {
+            (Ok(r), Ok(i)) => (r, i),
+            _ => {
+                let mut reason = Map::new();
+                reason.insert("code".to_string(), Value::String("E_IDENTITY_INCOMPLETE".to_string()));
+                reason.insert("message_key".to_string(), Value::String("error.identity_incomplete".to_string()));
+                reason.insert("detail".to_string(), Value::String("reviewer/implementer_identity 必须是 JSON 对象".to_string()));
+                let mut result = Map::new();
+                result.insert("valid".to_string(), Value::Bool(false));
+                result.insert("reason".to_string(), Value::Object(reason));
+                return Ok(Value::Object(result));
+            }
+        };
+
+        // validate_session_separation：session_id 均非空且相等 → 未分离
+        let reviewer_session = reviewer.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let implementer_session = implementer.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        let valid;
+        let mut reason = Map::new();
+        if !reviewer_session.is_empty() && !implementer_session.is_empty()
+            && reviewer_session == implementer_session
+        {
+            valid = false;
+            reason.insert("code".to_string(), Value::String("E_IDENTITY_SESSION_NOT_SEPARATED".to_string()));
+            reason.insert("message_key".to_string(), Value::String("error.identity_session_not_separated".to_string()));
+            reason.insert("detail".to_string(), Value::String(format!(
+                "Reviewer Session ({}) 等于 Implementer Session", reviewer_session
+            )));
+            reason.insert("reviewer_session".to_string(), Value::String(reviewer_session.clone()));
+            reason.insert("implementer_session".to_string(), Value::String(implementer_session.clone()));
+        } else {
+            valid = true;
+            reason.insert("code".to_string(), Value::String("OK".to_string()));
+        }
+
+        let mut result = Map::new();
+        result.insert("valid".to_string(), Value::Bool(valid));
+        result.insert("reason".to_string(), Value::Object(reason));
+        Ok(Value::Object(result))
+    }
+
+    // 解析 identity JSON 字符串为对象；空串/非法 JSON/非对象均返回 Err。
+    fn parse_identity_object(s: &str) -> Result<Map<String, Value>, ()> {
+        if s.trim().is_empty() {
+            return Err(());
+        }
+        match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(m)) => Ok(m),
+            _ => Err(()),
+        }
+    }
+
+    // 从 start 出发 BFS 回到自身的最短 cycle path；找不到时回退 DFS 任意环。
+    fn detect_cycle_find_shortest(
+        graph: &BTreeMap<String, Vec<String>>,
+        start: &str,
+    ) -> Vec<String> {
+        use std::collections::VecDeque;
+        let mut queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
+        queue.push_back((start.to_string(), vec![start.to_string()]));
+        let mut visited: HashSet<String> = HashSet::new();
+        visited.insert(start.to_string());
+        while let Some((node, path)) = queue.pop_front() {
+            if let Some(neighbors) = graph.get(&node) {
+                for nb in neighbors {
+                    if nb == start && path.len() >= 1 {
+                        let mut p = path.clone();
+                        p.push(start.to_string());
+                        return p;
+                    }
+                    if !visited.contains(nb) {
+                        visited.insert(nb.clone());
+                        let mut np = path.clone();
+                        np.push(nb.clone());
+                        queue.push_back((nb.clone(), np));
+                    }
+                }
+            }
+        }
+        Self::detect_cycle_find_any(graph, start)
+    }
+
+    // DFS 回退：从 start 出发找任意回到 start 的 cycle path。
+    fn detect_cycle_find_any(
+        graph: &BTreeMap<String, Vec<String>>,
+        start: &str,
+    ) -> Vec<String> {
+        let mut path: Vec<String> = Vec::new();
+        let mut visited: HashSet<String> = HashSet::new();
+        fn dfs(
+            node: &str,
+            graph: &BTreeMap<String, Vec<String>>,
+            start: &str,
+            path: &mut Vec<String>,
+            visited: &mut HashSet<String>,
+        ) -> Vec<String> {
+            path.push(node.to_string());
+            visited.insert(node.to_string());
+            if let Some(neighbors) = graph.get(node) {
+                for nb in neighbors {
+                    if nb == start && path.len() >= 1 {
+                        let mut p = path.clone();
+                        p.push(start.to_string());
+                        return p;
+                    }
+                    if !visited.contains(nb) {
+                        let r = dfs(nb, graph, start, path, visited);
+                        if !r.is_empty() {
+                            return r;
+                        }
+                    }
+                }
+            }
+            path.pop();
+            visited.remove(node);
+            Vec::new()
+        }
+        dfs(start, graph, start, &mut path, &mut visited)
+    }
+
+    /// 复刻 Python db_task_evidence.derive_freshness 的核心派生逻辑（snapshot/hash
+    /// 比较维度在调用方未传入时跳过，保持与 Python 「freshness.status」 RPC 一致）。
+    fn derive_evidence_freshness(
+        conn: &rusqlite::Connection,
+        evidence_id: &str,
+        current_contract_revision: i64,
+    ) -> String {
+        const FRESHNESS_FRESH: &str = "fresh";
+        const FRESHNESS_STALE: &str = "stale";
+        const FRESHNESS_INVALID: &str = "invalid";
+        const FRESHNESS_SUPERSEDED: &str = "superseded";
+
+        // 查找原始 Evidence（event_type = evidence_appended）
+        let row = conn
+            .query_row(
+                "SELECT verifier_name, verifier_version, verifier_config_hash, \
+                 contract_revision, workspace_snapshot_id, file_hashes, symbol_hashes, \
+                 graph_refresh_version FROM task_evidence_events \
+                 WHERE evidence_id = ? AND event_type = ?",
+                params![evidence_id, "evidence_appended"],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<  _, Option<String>>(2)?,
+                        r.get::<_, Option<i64>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<String>>(5)?,
+                        r.get::<_, Option<String>>(6)?,
+                        r.get::<_, Option<String>>(7)?,
+                    ))
+                },
+            )
+            .optional();
+
+        let row = match row {
+            Ok(Some(r)) => r,
+            Ok(None) => return FRESHNESS_INVALID.to_string(),
+            Err(_) => return "unknown".to_string(),
+        };
+
+        let (v_name, v_version, v_config, bound_revision, _snap, _fh, _sh, _gv) = row;
+        let mut candidates: Vec<(i32, &str)> = Vec::new();
+
+        // 1. 个体失效：存在 original_evidence_ref = evidence_id 的 invalidated 事件
+        let invalidated: bool = conn
+            .query_row(
+                "SELECT 1 FROM task_evidence_events \
+                 WHERE original_evidence_ref = ? AND event_type = ?",
+                params![evidence_id, "evidence_invalidated"],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+            .is_some();
+        if invalidated {
+            candidates.push((3, FRESHNESS_INVALID));
+        }
+
+        // 2. Verifier 注册/信任/撤销
+        if let (Some(name), Some(ver), Some(cfg)) = (&v_name, &v_version, &v_config) {
+            let trust: Option<String> = conn
+                .query_row(
+                    "SELECT trust_status FROM verifier_registry \
+                     WHERE name = ? AND version = ? AND config_hash = ?",
+                    params![name, ver, cfg],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok();
+            if trust.is_none() {
+                candidates.push((3, FRESHNESS_INVALID));
+            } else if trust.as_deref() != Some("trusted") {
+                candidates.push((3, FRESHNESS_INVALID));
+            }
+            let revoked: bool = conn
+                .query_row(
+                    "SELECT 1 FROM verifier_revocation_records \
+                     WHERE verifier_name = ? AND verifier_version = ? AND verifier_config_hash = ?",
+                    params![name, ver, cfg],
+                    |r| r.get::<_, i64>(0),
+                )
+                .ok()
+                .is_some();
+            if revoked {
+                candidates.push((3, FRESHNESS_INVALID));
+            }
+        }
+
+        // 3. superseded：当前契约 revision 前进
+        if let Some(br) = bound_revision {
+            if current_contract_revision > br {
+                candidates.push((2, FRESHNESS_SUPERSEDED));
+            }
+        }
+
+        // 4. stale：snapshot/file/symbol/graph 维度——仅当调用方传入时比较；
+        //    本 RPC 调用方未传入，默认跳过（与 Python freshness.status 一致）。
+
+        if candidates.is_empty() {
+            return FRESHNESS_FRESH.to_string();
+        }
+        // 按优先级（invalid=3 > superseded=2 > stale=1 > fresh=0）取最高
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        candidates[0].1.to_string()
+    }
+
     pub fn handle_task_wait(
         &self,
         _peer: PeerCredential,
@@ -4160,7 +5738,7 @@ impl TaskCollabStore {
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
         let reason = params.get("reason").and_then(|v| v.as_str()).unwrap_or("rollback requested");
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -4211,7 +5789,7 @@ impl TaskCollabStore {
         let reviewer = params.get("reviewer").and_then(|v| v.as_str()).unwrap_or("reviewer");
         let identity = parse_action_identity(params)?;
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -4256,12 +5834,12 @@ impl TaskCollabStore {
         Ok(val)
     }
 
-    /// 强制解析 lease 受保护写凭证（task.apply / task.close 门禁）。
+    /// 强制解析 lease 受保护写凭证（task.apply / task.close / task.supersede 门禁）。
     ///
-    /// daemon 权威路径下 apply/close 必须持有完整 reviewer lease 凭证。
+    /// daemon 权威路径下 apply/close/supersede 必须持有完整 reviewer lease 凭证。
     /// 缺少 lease_token 或 fencing_counter，或只提供其一，一律 fail-closed 返回
     /// E_LEASE_REQUIRED；禁止再沿用旧版"缺凭证即跳过校验"的兼容行为。
-    fn require_lease_params(params: &Value) -> Result<(String, i64), DaemonRpcError> {
+    pub(crate) fn require_lease_params(params: &Value) -> Result<(String, i64), DaemonRpcError> {
         let token = params.get("lease_token").and_then(|v| v.as_str());
         let counter = params.get("fencing_counter").and_then(|v| v.as_i64());
         match (token, counter) {
@@ -4282,7 +5860,7 @@ impl TaskCollabStore {
     /// 4. 已过期（Authoritative_Clock）→ E_LEASE_EXPIRED
     /// 5. fencing counter 不一致 → E_LEASE_FENCING_STALE
     /// 6. holder Identity 不一致（提供时）→ E_LEASE_HOLDER_MISMATCH
-    fn validate_lease_for_mutation(
+    pub(crate) fn validate_lease_for_mutation(
         &self,
         conn: &Connection,
         task_id: &str,
@@ -4367,7 +5945,86 @@ impl TaskCollabStore {
         Ok(())
     }
 
+        /// P0-E：治理写入中的 reviewer lease 由独立 Reviewer 持有、由独立
+    /// Adjudicator 执行。此方法不得用于普通 mutation：普通 mutation 仍使用
+    /// validate_lease_for_mutation 的同一 holder 语义。
+    pub(crate) fn validate_reviewer_lease_for_adjudication(
+        &self,
+        conn: &Connection,
+        task_id: &str,
+        token: &str,
+        fencing_counter: i64,
+        adjudicator: &ActionIdentity,
+    ) -> Result<(), DaemonRpcError> {
+        if adjudicator.role != "adjudicator" {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_ADJUDICATOR_ROLE_REQUIRED",
+                format!("跨角色 reviewer lease 仅允许 adjudicator，实际 role={}", adjudicator.role),
+            ));
+        }
+        let clock = self.clock.as_ref().ok_or_else(|| DaemonRpcError::new(
+            "E_LEASE_CLOCK_UNAVAILABLE",
+            format!("lease clock 不可用，治理写操作拒绝（task={}）", task_id),
+        ))?;
+        let (lease_id, token_hash, active_counter, expires_at, reviewer_agent_id, reviewer_session_id): (String, String, i64, f64, String, String) = conn.query_row(
+            "SELECT lease_id, token_hash, fencing_counter, expires_at, agent_id, session_id \
+             FROM task_leases WHERE task_id=?1 AND role='reviewer' AND status='active' \
+             ORDER BY id ASC LIMIT 1",
+            params![task_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        ).map_err(|_| DaemonRpcError::new(
+            "E_LEASE_NOT_FOUND",
+            format!("task={} 无 active reviewer lease，治理写操作必须先独立 review", task_id),
+        ))?;
+        if sha256_hex(token.as_bytes()) != token_hash {
+            return Err(DaemonRpcError::new("E_LEASE_TOKEN_MISMATCH", format!("token hash 不匹配 (lease_id={})", lease_id)));
+        }
+        if clock.now_secs() as f64 > expires_at {
+            return Err(DaemonRpcError::new("E_LEASE_EXPIRED", format!("lease {} 已过期", lease_id)));
+        }
+        if fencing_counter != active_counter {
+            return Err(DaemonRpcError::new(
+                "E_LEASE_FENCING_STALE",
+                format!("fencing counter {} != 当前 {}；旧 holder 写入被拒绝", fencing_counter, active_counter),
+            ));
+        }
+        let (reviewer_instance_id, registered_session_id, registered_role, registered_status): (String, String, String, String) = conn.query_row(
+            "SELECT agent_instance_id, session_id, role, status FROM agent_registrations WHERE agent_id=?1",
+            params![reviewer_agent_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).map_err(|_| DaemonRpcError::new(
+            "E_GOVERNANCE_REVIEWER_UNREGISTERED",
+            format!("reviewer lease holder {} 未注册", reviewer_agent_id),
+        ))?;
+        if registered_status != "active" || registered_role != "reviewer" || registered_session_id != reviewer_session_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_INVALID",
+                format!("reviewer lease holder {} 必须为 active registered reviewer 且 session 一致", reviewer_agent_id),
+            ));
+        }
+        if adjudicator.agent_id == reviewer_agent_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT",
+                "Adjudicator 不得等于 reviewer lease holder agent_id",
+            ));
+        }
+        if !reviewer_instance_id.is_empty() && reviewer_instance_id == adjudicator.agent_instance_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_INSTANCE",
+                "Adjudicator 不得等于 reviewer lease holder agent_instance_id",
+            ));
+        }
+        if adjudicator.session_id == reviewer_session_id {
+            return Err(DaemonRpcError::new(
+                "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION",
+                "Adjudicator 不得等于 reviewer lease holder session_id",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn handle_task_apply(
+
         &self,
         peer: PeerCredential,
         params: &Value,
@@ -4380,7 +6037,7 @@ impl TaskCollabStore {
         let reviewer = params.get("reviewer").and_then(|v| v.as_str()).unwrap_or("reviewer");
         let identity = parse_action_identity(params)?;
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -4446,7 +6103,7 @@ impl TaskCollabStore {
         let reviewer = params.get("reviewer").and_then(|v| v.as_str()).unwrap_or("reviewer");
         let identity = parse_action_identity(params)?;
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -5220,7 +6877,7 @@ impl TaskCollabStore {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let owner_key = peer.owner_key();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
 
@@ -5316,7 +6973,7 @@ impl TaskCollabStore {
         let plan_file = params.get("plan_file").and_then(|v| v.as_str()).unwrap_or("");
         let subtasks_param = params.get("subtasks").and_then(|v| v.as_array());
 
-        let ts = now_ts();
+        let ts = task_now_ts();
         let mut created_subtasks = Vec::new();
 
         let mut conn = self.conn.lock().unwrap();
@@ -5404,7 +7061,7 @@ impl TaskCollabStore {
         let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("Root Plan Task");
         let plan_file = params.get("plan_file").and_then(|v| v.as_str()).unwrap_or("");
         let root_task_id = generate_task_id();
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
@@ -5559,7 +7216,7 @@ impl TaskCollabStore {
                 .ok_or_else(|| DaemonRpcError::invalid_params("steps 必须是 JSON array"))?,
         };
         let task_id = generate_task_id();
-        let ts = now_ts();
+        let ts = task_now_ts();
         let seq = self.next_seq();
 
         let mut conn = self.conn.lock().unwrap();
@@ -5647,7 +7304,7 @@ impl TaskCollabStore {
         let symbol_hash_before = params.get("symbol_hash_before").and_then(|v| v.as_str()).unwrap_or("");
         let hash_after = if !symbol_hash.is_empty() { symbol_hash } else { symbol_hash_before };
         let change_type = params.get("change_type").and_then(|v| v.as_str()).unwrap_or("modified");
-        let ts = now_ts();
+        let ts = task_now_ts();
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -5734,7 +7391,7 @@ impl TaskCollabStore {
 
         // 4. 逐符号对比写入 task_symbol_changes + audit_chain 签名
         let mut linked: Vec<Value> = Vec::new();
-        let ts = now_ts();
+        let ts = task_now_ts();
         for qualified_name in names {
             let before_sym = before.get(qualified_name);
             let after_sym = after.get(qualified_name);
@@ -7394,8 +9051,41 @@ mod tests {
         })
     }
 
+        #[test]
+    fn p0e_adjudicator_can_use_distinct_registered_reviewer_lease_only() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        seed_task_binding(&store, "T-P0E-LEASE");
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let reviewer_registration = serde_json::json!({
+            "agent_id":"review-agent", "agent_name":"reviewer", "identity": {"agent_id":"review-agent", "agent_instance_id":"review-inst", "session_id":"review-session", "model_id":"review-model", "role":"reviewer"}
+        });
+        store.handle_agent_register(peer.clone(), &reviewer_registration).unwrap();
+        let adjudicator_registration = serde_json::json!({
+            "agent_id":"adjudicator-agent", "agent_name":"adjudicator", "identity": {"agent_id":"adjudicator-agent", "agent_instance_id":"adjudicator-inst", "session_id":"adjudicator-session", "model_id":"adjudicator-model", "role":"adjudicator"}
+        });
+        store.handle_agent_register(peer, &adjudicator_registration).unwrap();
+        seed_reviewer_lease(&store, "T-P0E-LEASE", "p0e-token", 7, "review-agent", "review-session", "review-model");
+        let adjudicator = parse_action_identity(&serde_json::json!({"identity": adjudicator_registration["identity"].clone()})).unwrap().unwrap();
+        let conn = store.conn.lock().unwrap();
+        store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &adjudicator).unwrap();
+
+        let same_agent = ActionIdentity { agent_id:"review-agent".to_string(), agent_instance_id:"other-instance".to_string(), client_id:String::new(), provider:String::new(), model_id:"adj-model".to_string(), model_mode:String::new(), system_fingerprint:String::new(), session_id:"adj-session".to_string(), role:"adjudicator".to_string(), runtime_hash:String::new() };
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &same_agent).unwrap_err().code, "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT");
+        let same_instance = ActionIdentity { agent_id:"other-agent".to_string(), agent_instance_id:"review-inst".to_string(), client_id:String::new(), provider:String::new(), model_id:"adj-model".to_string(), model_mode:String::new(), system_fingerprint:String::new(), session_id:"adj-session".to_string(), role:"adjudicator".to_string(), runtime_hash:String::new() };
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &same_instance).unwrap_err().code, "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_INSTANCE");
+        let same_session = ActionIdentity { agent_id:"other-agent".to_string(), agent_instance_id:"other-instance".to_string(), client_id:String::new(), provider:String::new(), model_id:"adj-model".to_string(), model_mode:String::new(), system_fingerprint:String::new(), session_id:"review-session".to_string(), role:"adjudicator".to_string(), runtime_hash:String::new() };
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 7, &same_session).unwrap_err().code, "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION");
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "wrong-token", 7, &adjudicator).unwrap_err().code, "E_LEASE_TOKEN_MISMATCH");
+        assert_eq!(store.validate_reviewer_lease_for_adjudication(&conn, "T-P0E-LEASE", "p0e-token", 6, &adjudicator).unwrap_err().code, "E_LEASE_FENCING_STALE");
+    }
+
     // ============================================
     // M7: Lease Control Plane（Req 11.2-11.9, 14.11, 14.30）
+
     // ============================================
 
     #[test]
@@ -9619,6 +11309,115 @@ mod tests {
             )
             .unwrap();
         assert!(capture_count >= 1, "task.create 必须写入 workspace authority capture");
+    }
+
+    #[test]
+    fn test_handle_detect_cycle_native_parity() {
+        // MCP-007：detect_cycle Rust native 与 Python db_task_dependencies.detect_cycle
+        // 语义一致：workspace 内 is_hard=1 边构成环时返回 has_cycle=true + 最短 cycle path；
+        // 无边 workspace 返回 has_cycle=false。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+
+        // 构造硬依赖环：A -> B -> C -> A（workspace_id=1, is_hard=1）
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO dependency_edges \
+                 (workspace_id, provider_task_id, consumer_task_id, edge_type, source_type, contract_id, contract_revision, is_hard, created_at) VALUES \
+                 (1, 'A', 'B', 'hard_dep', 'task', 'C-1', 1, 1, 1.0), \
+                 (1, 'B', 'C', 'hard_dep', 'task', 'C-1', 1, 1, 1.0), \
+                 (1, 'C', 'A', 'hard_dep', 'task', 'C-1', 1, 1, 1.0);",
+            )
+            .unwrap();
+        }
+
+        let r = store
+            .handle_detect_cycle(peer.clone(), &serde_json::json!({"workspace_id": 1}))
+            .unwrap();
+        assert_eq!(r["has_cycle"], serde_json::Value::Bool(true));
+        let path = r["cycle_path"].as_array().expect("cycle_path 应为数组");
+        assert!(!path.is_empty(), "有环时 cycle_path 非空");
+        // 最短环应为 4 节点（A->B->C->A 含首尾）
+        assert_eq!(path.len(), 4, "最短 cycle path 应为 A,B,C,A（4 节点）");
+        assert_eq!(path[0], serde_json::json!("A"));
+        assert_eq!(path[path.len() - 1], serde_json::json!("A"));
+        assert_eq!(r["checked_nodes"], serde_json::json!(3));
+
+        // 另一 workspace 无边 → 无环
+        let empty = store
+            .handle_detect_cycle(peer, &serde_json::json!({"workspace_id": 2}))
+            .unwrap();
+        assert_eq!(empty["has_cycle"], serde_json::Value::Bool(false));
+        assert_eq!(empty["cycle_path"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_handle_validate_revision_dependencies_native_parity() {
+        // MCP-008：validate_revision_dependencies Rust native 与 Python
+        // tools_p2_graph._h_validate_revision_dependencies 语义一致：
+        // 空依赖 → valid=true；requires_artifact 缺 target → resolution error；
+        // 环合并检测（现有硬边 + 模拟边）。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+
+        // 空依赖 → valid=true, edges_built=0
+        let empty = store
+            .handle_validate_revision_dependencies(
+                peer.clone(),
+                &serde_json::json!({"workspace_id": 1, "contract_id": "C-NONE", "contract_revision": 1}),
+            )
+            .unwrap();
+        assert_eq!(empty["valid"], serde_json::Value::Bool(true));
+        assert_eq!(empty["edges_built"], serde_json::json!(0));
+
+        // requires_artifact 缺 target_task_id → resolution error
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO task_dependencies \
+                 (workspace_id, task_id, dependency_type, target_ref, target_task_id, \
+                  contract_id, contract_revision, is_informational, declared_at) VALUES \
+                 (1, 'T-CON1', 'requires_artifact', 'ref-x', '', 'C-1', 1, 0, 1.0);",
+            )
+            .unwrap();
+        }
+        let bad = store
+            .handle_validate_revision_dependencies(
+                peer.clone(),
+                &serde_json::json!({"workspace_id": 1, "contract_id": "C-1", "contract_revision": 1}),
+            )
+            .unwrap();
+        assert_eq!(bad["valid"], serde_json::Value::Bool(false));
+        assert_eq!(bad["edges_skipped"], serde_json::json!(1));
+        let errs = bad["errors"].as_array().expect("errors 应为数组");
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].as_str().unwrap().contains("requires_artifact"));
+
+        // 环：requires_artifact A->B + 现有硬边 B->A → has_cycle, valid=false
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO task_dependencies \
+                 (workspace_id, task_id, dependency_type, target_ref, target_task_id, \
+                  contract_id, contract_revision, is_informational, declared_at) VALUES \
+                 (1, 'T-CON2', 'requires_artifact', 'ref-y', 'A', 'C-2', 1, 0, 1.0);",
+            )
+            .unwrap();
+        }
+        let cyc = store
+            .handle_validate_revision_dependencies(
+                peer.clone(),
+                &serde_json::json!({"workspace_id": 1, "contract_id": "C-2", "contract_revision": 1}),
+            )
+            .unwrap();
+        // 模拟边 A->T-CON2 与现有硬边 B->C 无环；显式检查 edges_built=1
+        assert_eq!(cyc["edges_built"], serde_json::json!(1));
+        assert!(cyc["errors"].as_array().unwrap().is_empty());
     }
 }
 

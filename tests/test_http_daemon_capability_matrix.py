@@ -81,6 +81,8 @@ RUST_NATIVE_EXPECTED = {
     "defect_suggest_fix": "query.defect_suggest_fix",
     "get_defect_correlation": "query.get_defect_correlation",
     "diff_branches": "query.diff_branches",
+    # MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native
+    "get_role_view": "role_view.get",
 }
 
 
@@ -180,8 +182,9 @@ def test_backend_distribution_matches_source_truth():
     """
     data = _load_evidence()
     dist = data["metadata"]["aggregation"]["backend_distribution"]
-    assert dist["rust_native"] == len(RUST_NATIVE_EXPECTED) == 57
-    assert dist["python_compat"] == 180
+    # MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native
+    assert dist["rust_native"] == len(RUST_NATIVE_EXPECTED) == 58
+    assert dist["python_compat"] == 179
     # legacy_local 分类已废止：所有工具按源码真实归类（真实 RPC -> rust_native，其余 -> python_compat）
     assert dist["legacy_local"] == 0
     # 与 tools 行聚合一致（防 metadata 与矩阵行脱节）；Counter 归一化忽略 0 计数键

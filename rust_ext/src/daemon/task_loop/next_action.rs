@@ -18,6 +18,7 @@
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
+use crate::canonicalize::sha256_hex;
 use crate::daemon::dispatch::DaemonRpcError;
 use super::claim::read_current_binding;
 use super::create::registry_identity_hash;
@@ -138,26 +139,36 @@ fn verify_capture(
         ));
     }
     // capture 链连续性：该 workspace 的 capture 行必须连续（COUNT == MAX，非空）。
+    // 按 (workspace_id, workspace_instance_id) 限定：整机单库迁移后同一 workspace_id 可能并存
+    // 多个实例链（旧单库模型的实例 id 与规范 `ws-{id}`），capture_revision 在实例内单调；
+    // 按 workspace_id 全局统计会把多实例并存的连续链误判为断链（count > max）。
     let (count, max): (i64, i64) = conn
         .query_row(
             "SELECT COUNT(*), COALESCE(MAX(capture_revision), 0) \
-             FROM workspace_authority_captures WHERE workspace_id = ?1",
-            [cap_workspace_id],
+             FROM workspace_authority_captures \
+             WHERE workspace_id = ?1 AND workspace_instance_id = ?2",
+            rusqlite::params![cap_workspace_id, cap_instance],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| infra_error(&format!("workspace capture 链读取失败: {e}")))?;
     if count != max || max == 0 {
         return Err(DaemonRpcError::new(
             ERR_WORKSPACE_AUTHORITY_MISMATCH,
-            format!("workspace {cap_workspace_id} capture 链断链（count={count} max={max}）"),
+            format!(
+                "workspace {cap_workspace_id} instance {cap_instance} capture 链断链（count={count} max={max}）"
+            ),
         ));
     }
-    // 请求的 workspace_instance_id 必须与 capture 一致（跨 workspace 拒绝）。
-    if cap_instance != workspace_instance_id {
+    // 调用方 workspace_instance_id 解析到 workspace_id 后与 task binding 比较（scheme 无关）。
+    // 整机单库迁移后同一 workspace 的 instance 标识并存多种方案（旧实例 id / 规范 ws-{id} /
+    // CLI 按 root 路径哈希推导），严格字符串相等会把同 workspace 的合法调用误判为跨 workspace。
+    let resolved_ws = resolve_workspace_id_by_instance(conn, workspace_instance_id)?;
+    if resolved_ws != Some(binding_workspace_id) {
         return Err(DaemonRpcError::new(
             ERR_WORKSPACE_AUTHORITY_MISMATCH,
             format!(
-                "请求 workspace_instance_id={workspace_instance_id:?} 与 capture 的 {cap_instance:?} 不一致"
+                "调用方 workspace_instance_id={workspace_instance_id:?} 解析为 workspace_id={resolved_ws:?}，\
+                 与 task binding workspace_id={binding_workspace_id} 不一致（拒绝跨 workspace）"
             ),
         ));
     }
@@ -170,25 +181,97 @@ fn verify_capture(
             format!("capture {workspace_capture_id} 的 registry_identity_hash 无法复核（重算不一致）"),
         ));
     }
-    // task binding 引用的 capture 必须是该 workspace 的当前 authority capture。
-    let current_capture: String = conn
+    // task binding 引用的是创建时的不可变 provenance snapshot，不能因为同一稳定
+    // identity 的后续 re-attestation 推进 capture revision 就失效。读取 current capture
+    // 只为验证 authority identity 未发生真实变化；不得 UPDATE binding 指针。
+    let current: (String, String, String, String, String) = conn
         .query_row(
-            "SELECT workspace_capture_id FROM workspace_authority_captures \
-             WHERE workspace_id = ?1 ORDER BY capture_revision DESC LIMIT 1",
-            [cap_workspace_id],
-            |row| row.get(0),
+            "SELECT workspace_capture_id, client_view_root_hash, host_real_root_hash, \
+                    workspace_manifest_hash, registry_identity_hash \
+             FROM workspace_authority_captures \
+             WHERE workspace_id = ?1 AND workspace_instance_id = ?2 \
+             ORDER BY capture_revision DESC LIMIT 1",
+            rusqlite::params![cap_workspace_id, cap_instance],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|e| infra_error(&format!("workspace 当前 capture 读取失败: {e}")))?;
-    if current_capture != workspace_capture_id {
+    let (current_capture_id, current_view_hash, current_host_hash, current_manifest_hash, current_identity_hash) = current;
+    let current_recomputed = registry_identity_hash(
+        &cap_instance,
+        &current_view_hash,
+        &current_host_hash,
+        &current_manifest_hash,
+    );
+    if current_recomputed != current_identity_hash {
+        return Err(DaemonRpcError::new(
+            ERR_WORKSPACE_AUTHORITY_MISMATCH,
+            format!("当前 capture {current_capture_id} 的 registry_identity_hash 无法复核（重算不一致）"),
+        ));
+    }
+    if current_identity_hash != identity_hash {
         return Err(DaemonRpcError::new(
             ERR_WORKSPACE_AUTHORITY_MISMATCH,
             format!(
-                "task binding 引用的 capture {workspace_capture_id} 不是 workspace {cap_workspace_id} \
-                 的当前 authority capture {current_capture}"
+                "task binding capture {workspace_capture_id} 的稳定 identity 与当前 capture \
+                 {current_capture_id} 不一致；不可变 binding 必须保持 UNVERIFIED"
             ),
         ));
     }
     Ok(())
+}
+
+/// 把调用方 workspace_instance_id 解析为 workspace_id（scheme 无关，兼容并存的多实例方案）：
+///
+/// 1. 精确匹配既有 capture 的 `workspace_instance_id`（覆盖旧实例 id / 已登记实例）；
+/// 2. 规范约定 `ws-{id}`（daemon 默认实例标识）；
+/// 3. 按 `workspaces.root_path` 重算 CLI 的推导（`sha256(norm(root))[:16]`，对齐
+///    `daemon_client.derive_workspace_instance_id`），覆盖 CLI 侧 root 哈希方案。
+///
+/// 解析不到 → `Ok(None)`（调用方 instance 不可解析，由调用方按 fail-closed 拒绝）。
+fn resolve_workspace_id_by_instance(
+    conn: &Connection,
+    caller_instance: &str,
+) -> Result<Option<i64>, DaemonRpcError> {
+    let caller_instance = caller_instance.trim();
+    if caller_instance.is_empty() {
+        return Ok(None);
+    }
+    // 1) 既有 capture 精确 instance 匹配。
+    if let Some(ws_id) = conn
+        .query_row(
+            "SELECT workspace_id FROM workspace_authority_captures \
+             WHERE workspace_instance_id = ?1 LIMIT 1",
+            [caller_instance],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| infra_error(&format!("instance→workspace 解析失败: {e}")))?
+    {
+        return Ok(Some(ws_id));
+    }
+    // 2) 规范约定 ws-{id}。
+    if let Some(rest) = caller_instance.strip_prefix("ws-") {
+        if let Ok(ws_id) = rest.parse::<i64>() {
+            return Ok(Some(ws_id));
+        }
+    }
+    // 3) 按 root 路径重算 CLI 推导（sha256(norm(root))[:16]）。
+    let mut stmt = conn
+        .prepare("SELECT id, root_path FROM workspaces")
+        .map_err(|e| infra_error(&format!("workspaces 读取失败: {e}")))?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| infra_error(&format!("workspaces 遍历失败: {e}")))?;
+    for row in rows {
+        let (ws_id, root_path) =
+            row.map_err(|e| infra_error(&format!("workspaces 行读取失败: {e}")))?;
+        let norm = root_path.replace('\\', "/");
+        let hash = sha256_hex(norm.as_bytes());
+        if hash.starts_with(caller_instance) {
+            return Ok(Some(ws_id));
+        }
+    }
+    Ok(None)
 }
 
 /// fail-closed：解析 task 的当前 Task Contract 三元组（§3.2 规则 4）。

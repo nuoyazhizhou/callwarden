@@ -439,42 +439,25 @@ def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
     return db
 
 
-def _h_get_role_view(ctx: CompatCallContext) -> Any:
-    """worker handler：获取任务角色视图（只读，复刻 _collab_direct_read role_view.get）"""
-    return _collab_direct_read(_bind_readonly_db(ctx), "role_view.get", ctx.params)
-
-
-def _h_find_evidence(ctx: CompatCallContext) -> Any:
-    """worker handler：查询 Evidence 记录（只读，复刻 evidence.query）"""
-    return _collab_direct_read(_bind_readonly_db(ctx), "evidence.query", ctx.params)
-
-
-def _h_get_freshness_status(ctx: CompatCallContext) -> Any:
-    """worker handler：查询 Evidence Freshness_Status（只读，复刻 freshness.status）"""
-    return _collab_direct_read(_bind_readonly_db(ctx), "freshness.status", ctx.params)
-
-
+# MCP-004：get_gate_decision 已迁移 rust_native（task_collab.rs::handle_get_gate_decision），
+# 此 compat handler 退役不再注册（见上方 _COLLAB_READ_ONLY_METHODS 空表）。
 def _h_gate_decision(ctx: CompatCallContext) -> Any:
-    """worker handler：查询 gate decision 历史（只读，复刻 gate.decision.query）"""
+    """退役：get_gate_decision 已由 Rust daemon 原生处理，combat 注册已移除。"""
     return _collab_direct_read(_bind_readonly_db(ctx), "gate.decision.query", ctx.params)
 
 
-# collab 组只读白名单（4 个）：get_role_view / find_evidence /
-# get_freshness_status / get_gate_decision。写语义工具（submit_verdict /
-# append_evidence，governance_write）不接入，fail-closed。
-_COLLAB_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_role_view": _h_get_role_view,
-    "find_evidence": _h_find_evidence,
-    "get_freshness_status": _h_get_freshness_status,
-    "get_gate_decision": _h_gate_decision,
-}
+# collab 组只读白名单：get_role_view 已 MCP-001、find_evidence 已 MCP-002、
+# get_freshness_status 已 MCP-003、get_gate_decision 已 MCP-004 迁移 rust_native，
+# 均移除 compat 注册。写语义工具（submit_verdict / append_evidence，governance_write）
+# 不接入，fail-closed。本组 compat 注册清空。
+_COLLAB_READ_ONLY_METHODS: Dict[str, Any] = {}
 
-# 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
+# 模块级注册：worker 装配 import 本 .module 时执行，注册到 compat_registry 单例并
+# 同步 RUST_COMPAT_ROUTE（R * 侧 http_server.rs 白名单在步骤#2 同步）。
 register_compat_routes(
     _COLLAB_READ_ONLY_METHODS,
     workspace_scope=_COLLAB_COMPAT_SCOPE,
-    description="H4C-2 第三批 collab 组只读工具（4 个，T-1786747295227-b876fddf 步骤#0）",
+    description="H4C-2 第三批 collab 组只读工具（已全部迁移 rust_native：get_role_view/find_evidence/get_freshness_status/get_gate_decision）",
 )
 
 

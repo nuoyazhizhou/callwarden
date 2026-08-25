@@ -517,33 +517,6 @@ def _h_get_impact(ctx: CompatCallContext) -> Any:
     )
 
 
-def _h_get_top_callers(ctx: CompatCallContext) -> Any:
-    """worker handler：被调用最多函数排行（只读）"""
-    return _bind_readonly_db(ctx).get_top_callers(
-        limit=ctx.params.get("limit", 20),
-        kind=ctx.params.get("kind", "fn"),
-        module_filter=ctx.params.get("module_filter", ""),
-    )
-
-
-def _h_get_orphan_symbols(ctx: CompatCallContext) -> Any:
-    """worker handler：孤立符号（只读）"""
-    return _bind_readonly_db(ctx).get_orphan_symbols(
-        kind=ctx.params.get("kind", "fn"),
-        module_filter=ctx.params.get("module_filter", ""),
-        limit=ctx.params.get("limit", 100),
-    )
-
-
-def _h_get_deepest_functions(ctx: CompatCallContext) -> Any:
-    """worker handler：调用深度最深函数排行（只读）"""
-    return _bind_readonly_db(ctx).get_deepest_functions(
-        limit=ctx.params.get("limit", 20),
-        module_filter=ctx.params.get("module_filter", ""),
-        kind=ctx.params.get("kind", "fn"),
-    )
-
-
 def _h_get_comment_from_version(ctx: CompatCallContext) -> Any:
     """worker handler：从历史版本获取注释（只读）"""
     return _bind_readonly_db(ctx).get_comment_from_version(
@@ -564,21 +537,6 @@ def _h_find_issues(ctx: CompatCallContext) -> Any:
     )
 
 
-def _h_get_comment_coverage(ctx: CompatCallContext) -> Any:
-    """worker handler：注释覆盖率统计（只读）"""
-    return _bind_readonly_db(ctx).get_comment_coverage(
-        group_by=ctx.params.get("group_by", "module")
-    )
-
-
-def _h_get_call_heatmap(ctx: CompatCallContext) -> Any:
-    """worker handler：调用频率热力图（只读）"""
-    return _bind_readonly_db(ctx).get_call_heatmap(
-        group_by=ctx.params.get("group_by", "module"),
-        top_n=ctx.params.get("top_n", 20),
-    )
-
-
 def _h_get_test_coverage(ctx: CompatCallContext) -> Any:
     """worker handler：测试覆盖率统计（只读）"""
     return _bind_readonly_db(ctx).get_test_coverage()
@@ -591,24 +549,22 @@ def _h_export_module_graph(ctx: CompatCallContext) -> Any:
     )
 
 
-# 符号组只读白名单（13 个）：跳过 run_semgrep_scan / scan_semgrep_incremental
+# 符号组只读白名单（8 个）：跳过 run_semgrep_scan / scan_semgrep_incremental
 # （写语义，fail-closed）；get_uncommented_symbols / get_module_call_stats /
 # get_semgrep_stats 已 W2-1 迁移 rust_native（T-1786840097330-dec66710）、
 # get_semgrep_findings 已 W3-3 迁移 rust_native（T-1786861820151-deb64c48）、
 # get_file_history 已 W4-1 迁移 rust_native（T-1786886251769-22b94ee8-sub-1），
-# 工具层函数体在 HTTP 模式直连 HttpDaemonRpcClient 便捷方法，见各定义处。
+# get_top_callers / get_orphan_symbols / get_deepest_functions /
+# get_comment_coverage / get_call_heatmap 已 S2 迁移 rust_native
+# （T-1787209948470-a59bcf9c#S2-query-compat-batch1），工具层函数体在 HTTP
+# 模式直连 daemon RPC（route_rpc），见各定义处。
 _SYMBOL_READ_ONLY_METHODS: Dict[str, Any] = {
     "get_symbol_history": _h_get_symbol_history,
     "get_recent_changes": _h_get_recent_changes,
     "get_impact": _h_get_impact,
-    "get_top_callers": _h_get_top_callers,
-    "get_orphan_symbols": _h_get_orphan_symbols,
-    "get_deepest_functions": _h_get_deepest_functions,
     "get_comment_from_version": _h_get_comment_from_version,
     "get_issue_summary": _h_get_issue_summary,
     "find_issues": _h_find_issues,
-    "get_comment_coverage": _h_get_comment_coverage,
-    "get_call_heatmap": _h_get_call_heatmap,
     "get_test_coverage": _h_get_test_coverage,
     "export_module_graph": _h_export_module_graph,
 }
@@ -620,5 +576,7 @@ register_compat_routes(
     workspace_scope=_SYMBOL_COMPAT_SCOPE,
     description="H4C-2 符号组只读工具（13 个，T-1786716190783-ba187c88 步骤#0；"
                 "3 个 stats 已 W2-1 迁移 rust_native，get_semgrep_findings "
-                "已 W3-3 迁移 rust_native，get_file_history 已 W4-1 迁移 rust_native）",
+                "已 W3-3 迁移 rust_native，get_file_history 已 W4-1 迁移 rust_native，"
+                "get_top_callers/get_orphan_symbols/get_deepest_functions/"
+                "get_comment_coverage/get_call_heatmap 已 S2 迁移 rust_native）",
 )

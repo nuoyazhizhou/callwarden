@@ -47,6 +47,7 @@ from callwarden.config import (
     HTTP_MAX_BODY_BYTES,
     HTTP_PROTOCOL_VERSION,
     E_HTTP_DAEMON_UNAVAILABLE,
+    E_HTTP_MANIFEST_MISSING,
     E_HTTP_MANIFEST_STALE,
     E_HTTP_MVP_LOOPBACK_ONLY,
     E_HTTP_REQUEST_TIMEOUT,
@@ -103,6 +104,35 @@ def _is_task_write(rpc_method: str) -> bool:
     return rpc_method.startswith("task.")
 
 
+# P0-H（T-1787277487109-758e56d0）：task.supersede 治理路由策略（显式声明，供
+# route_task_write / route_task_read 与测试断言）。task.supersede 是 daemon-native
+# governance mutation：非 local 模式下 daemon 不可用一律 fail-closed，绝不回退本地
+# SQLite；task.superseded_by 只读投影同样仅由 daemon 提供（无 local fallback）。
+TASK_SUPERSEDE_ROUTE_POLICY = {
+    "task.supersede": {"class": "governance_write", "fallback": "forbidden"},
+    "task.superseded_by": {"class": "read_only", "fallback": "forbidden"},
+}
+
+
+def get_supersede_route_policy(method: str) -> dict:
+    """P0-H：返回 task.supersede / task.superseded_by 的显式路由策略（缺省 fail-closed）。"""
+    return TASK_SUPERSEDE_ROUTE_POLICY.get(
+        method, {"class": "unknown", "fallback": "forbidden"}
+    )
+
+
+def assert_supersede_no_local_fallback(method: str, mode: str):
+    """P0-H：非 local 模式下禁止回退本地 SQLite（fail-closed，供测试断言）。
+
+    local 模式由调用方 fallback_func 决定（task.supersede 的 fallback 本身即
+    raise DaemonUnavailableError，见 cli/main.py _local_supersede_forbidden）。
+    """
+    if mode != "local":
+        raise DaemonUnavailableError(
+            f"{method} 仅由 daemon 权威提供；daemon 不可用时禁止回退本地 SQLite（fail-closed）"
+        )
+
+
 def _is_bridge_rpc_transport() -> bool:
     """当前是否使用 windows-bridge transport（经 TCP 转发，不能传 FD）。"""
     from callwarden.config import is_bridge_transport
@@ -155,6 +185,69 @@ class UnixDaemonRpcClient:
         if role_contracts:
             params["role_contracts"] = role_contracts
         return self.call("task.create", params)
+
+    def task_attest_legacy_workspace_binding(
+        self,
+        legacy_task_id: str,
+        anchor_task_id: str,
+        workspace_id: int,
+        workspace_instance_id: str,
+        request_id: str,
+        evidence_path: str,
+        evidence_hash: str,
+        lease_token: str,
+        fencing_counter: int,
+        identity: Any,
+    ) -> dict:
+        """P0-B：daemon-native 历史 task authority attestation/binding。
+
+        该方法只转发给 daemon；daemon 不可用或返回错误时由统一 transport
+        路径 fail-closed，绝不回退到本地 SQLite。
+        """
+        return self.call("task.attest_legacy_workspace_binding", {
+            "legacy_task_id": legacy_task_id,
+            "anchor_task_id": anchor_task_id,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
+            "request_id": request_id,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "lease_token": lease_token,
+            "fencing_counter": fencing_counter,
+            "identity": identity,
+        })
+
+    def task_contract_bootstrap(
+        self,
+        task_id: str,
+        envelope: dict,
+        workspace_id: int,
+        workspace_instance_id: str,
+        request_id: str,
+        evidence_path: str,
+        evidence_hash: str,
+        lease_token: str,
+        fencing_counter: int,
+        identity: Any,
+    ) -> dict:
+        """P0-C：daemon-native Task/Role/step governance projection bootstrap。
+
+        该方法只转发受保护 RPC；绝不调用旧 task.contract_set 或本地 SQLite
+        作为兼容回退。daemon 的 adjudicator、reviewer lease/fencing、authority、
+        evidence 与 operation ledger 门禁为唯一权威。
+        """
+        return self.call("task.contract_bootstrap", {
+            "task_id": task_id,
+            "envelope": envelope,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
+            "request_id": request_id,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "lease_token": lease_token,
+            "fencing_counter": fencing_counter,
+            "identity": identity,
+        })
 
     def agent_register(self, agent_id: str = "", agent_name: str = "cw-agent", capabilities: list = None, identity: Any = None, **identity_fields: Any) -> dict:
         """A2：注册 Agent 身份（含 agent_instance_id/provider/model_id/session_id/role/runtime_hash 等）。
@@ -3168,6 +3261,30 @@ def _inject_workspace_id(params: dict) -> dict:
     return out
 
 
+# 连接/发现级错误码：这些不是 daemon 的业务结论，而是 daemon 不可达或
+# endpoint/manifest 发现校验失败。它们虽以 DaemonRemoteError 抛出，但语义
+# 等同连接故障——路由层必须走 fail-closed（或允许的回退）路径，而不是当作
+# 业务错误透传给客户端（否则 CLI 会看到 "E_HTTP_MANIFEST_STALE: manifest PID
+# 14400 已不存活" 这类环境噪音，无法区分业务冲突与 daemon 不可用）。
+_CONNECT_LEVEL_DAEMON_ERROR_CODES = frozenset({
+    E_HTTP_MANIFEST_MISSING,
+    E_HTTP_MANIFEST_STALE,
+    E_HTTP_DAEMON_UNAVAILABLE,
+})
+
+
+def _is_connect_level_daemon_error(exc: BaseException) -> bool:
+    """判断异常是否为 daemon 连接/发现级故障（而非远端业务结论）。
+
+    - DaemonRemoteError：仅当其 code 命中 manifest/连接级错误码时为连接故障；
+      其余（task_not_found / permission_denied / task_conflict 等）是业务结论。
+    - 非 DaemonRemoteError 的异常（超时/拒绝连接/OSError 等）一律视为连接故障。
+    """
+    if isinstance(exc, DaemonRemoteError):
+        return getattr(exc, "code", "") in _CONNECT_LEVEL_DAEMON_ERROR_CODES
+    return True
+
+
 def route_task_write(rpc_method: str, params: dict, fallback_func):
     """统一任务写操作路由规则：
     1. local 模式 -> 直接执行 fallback_func（本地 SQLite）
@@ -3199,14 +3316,21 @@ def route_task_write(rpc_method: str, params: dict, fallback_func):
             else rpc_client.call
         )
         return call(rpc_method, rpc_params)
-    except DaemonRemoteError:
-        # 远端结构化业务错误（task_conflict / permission_denied / task_not_found 等）
-        # 原样透传，不得伪装成 "daemon 连接失败"，否则客户端无法区分业务冲突与连接故障
-        raise
+    except DaemonRemoteError as dre:
+        if not _is_connect_level_daemon_error(dre):
+            # 远端结构化业务错误（task_conflict / permission_denied / task_not_found 等）
+            # 原样透传，不得伪装成 "daemon 连接失败"，否则客户端无法区分业务冲突与连接故障
+            raise
+        exc: BaseException = dre  # 连接/发现级（stale/missing manifest、daemon 不可达）
     except Exception as exc:
-        if is_daemon_required() or mode == "auto":
-            raise DaemonUnavailableError(f"enterprise/auto 模式下任务写操作 daemon 连接失败: {exc}") from exc
-        raise
+        pass
+    # 连接级故障统一处理（enterprise/auto fail-closed，绝无本地 SQLite 回退）
+    if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY:
+        # P0-H：governance mutation 无任何本地回退（即使非 enterprise/auto）
+        assert_supersede_no_local_fallback(rpc_method, mode)
+    if is_daemon_required() or mode == "auto":
+        raise DaemonUnavailableError(f"enterprise/auto 模式下任务写操作 daemon 连接失败: {exc}") from exc
+    raise
 
 
 def route_task_read(rpc_method: str, params: dict, fallback_func):
@@ -3229,20 +3353,28 @@ def route_task_read(rpc_method: str, params: dict, fallback_func):
     rpc_params = _inject_workspace_id(params)
     try:
         return rpc_client.call(rpc_method, rpc_params)
-    except DaemonRemoteError:
-        # 业务错误（task_not_found / permission_denied 等）原样透传：
-        # auto 模式下不得把"远端明确返回的业务结论"降级为本地读（数据可能不一致）
-        raise
+    except DaemonRemoteError as dre:
+        if not _is_connect_level_daemon_error(dre):
+            # 业务错误（task_not_found / permission_denied 等）原样透传：
+            # auto 模式下不得把"远端明确返回的业务结论"降级为本地读（数据可能不一致）
+            raise
+        exc: BaseException = dre  # 连接/发现级（stale/missing manifest、daemon 不可达）
     except Exception as exc:
-        if is_daemon_required():
-            raise DaemonUnavailableError(f"enterprise 模式下任务读操作 daemon 连接失败: {exc}") from exc
-        # auto 模式：workspace 隔离敏感方法禁止本地回退（本地任务层无 workspace 过滤）
-        if rpc_method.startswith(("task.", "lease.")):
-            raise DaemonUnavailableError(
-                f"auto 模式下 {rpc_method} 为 workspace 隔离敏感读操作，"
-                f"daemon 不可达时 fail-closed，不回退本地 SQLite: {exc}"
-            ) from exc
-        return fallback_func()
+        pass
+    # 连接级故障统一处理
+    if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY:
+        # P0-H：task.superseded_by 只读投影仅由 daemon 提供，任何模式下
+        # daemon 不可用一律 fail-closed（不回退本地 SQLite）
+        assert_supersede_no_local_fallback(rpc_method, mode)
+    if is_daemon_required():
+        raise DaemonUnavailableError(f"enterprise 模式下任务读操作 daemon 连接失败: {exc}") from exc
+    # auto 模式：workspace 隔离敏感方法禁止本地回退（本地任务层无 workspace 过滤）
+    if rpc_method.startswith(("task.", "lease.")):
+        raise DaemonUnavailableError(
+            f"auto 模式下 {rpc_method} 为 workspace 隔离敏感读操作，"
+            f"daemon 不可达时 fail-closed，不回退本地 SQLite: {exc}"
+        ) from exc
+    return fallback_func()
 
 
 def route_worker_call(rpc_method: str, params: dict, fallback_func):

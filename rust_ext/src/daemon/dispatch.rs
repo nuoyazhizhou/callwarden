@@ -968,6 +968,41 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.create"))
         }
     }
+    fn handle_task_supersede(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_supersede(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.supersede"))
+        }
+    }
+    fn handle_task_superseded_by(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_superseded_by(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.superseded_by"))
+        }
+    }
+    fn handle_task_attest_legacy_workspace_binding(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_attest_legacy_workspace_binding(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.attest_legacy_workspace_binding",
+            ))
+        }
+    }
     fn handle_task_claim(
         &mut self,
         peer: PeerCredential,
@@ -1054,6 +1089,17 @@ pub trait DaemonStateExt {
             store.handle_task_contract_set(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.contract_set"))
+        }
+    }
+    fn handle_task_contract_bootstrap(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_contract_bootstrap(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.contract_bootstrap"))
         }
     }
     fn handle_task_contract_get(
@@ -1441,6 +1487,55 @@ pub trait DaemonStateExt {
                 "verdict.submit" => store.handle_verdict_submit(peer, params),
                 "evidence.append" => store.handle_evidence_append(peer, params),
                 "evidence.query" => store.handle_evidence_query(peer, params),
+                // MCP-001（T-1787321708699-da5d8224）：role_view.get 迁移 rust_native。
+                // HTTP RPC 方法名与 capability row 一致为 get_role_view；compat worker
+                // 内部曾用 role_view.get 别名，这里两者都接同一 handler（向后兼容）。
+                "get_role_view" | "role_view.get" => store.handle_get_role_view(peer, params),
+                // MCP-002（T-1787321708760-de068a9c）：find_evidence 迁移 rust_native。
+                // 语义与 Python tools_collab._h_find_evidence + evidence.query 一致：
+                // 从 task_evidence_events 按 task_id/contract_id/verifier/limit 过滤查询。
+                "find_evidence" => store.handle_find_evidence(peer, params),
+                // MCP-003（T-1787321708856-e3c10624）：get_freshness_status 迁移 rust_native。
+                // 语义与 Python db_task_evidence.derive_freshness 一致：
+                // 全序 invalid > superseded > stale > fresh，派生 Evidence 新鲜度。
+                "get_freshness_status" => store.handle_get_freshness_status(  peer,  params),
+                // MCP-004（T-1787321708926-e7ebfac4）：get_gate_decision 迁移 rust_native。
+                // 语义与 Python tools_collab._h_gate_decision + gate.decision.query 一致：
+                // 从 task_gate_decisions 按 task_id/decision_id(gate_id) 过滤查询。
+                "get_gate_decision" => store.handle_get_gate_decision(peer, params),
+                // MCP-005（T-1787321709017-ed4e79b0）：get_artifact_freshness 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_get_artifact_freshness + db_task_dependencies
+                // .get_artifact_freshness 一致：从 artifact_identities 查询最新 artifact 新鲜度。
+                "get_artifact_freshness" => store.handle_get_artifact_freshness(peer, params),
+                // MCP-006（T-1787321709098-f2236ea0）：get_interface_providers 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_get_interface_providers + db_task_dependencies
+                // .get_interface_providers 一致：从 interface_identities 查询 provider 列表。
+                "get_interface_providers" => store.handle_get_interface_providers(peer, params),
+                // MCP-007（T-1787321709179-f6fdf5bc）：detect_cycle 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_detect_cycle + db_task_dependencies
+                // .detect_cycle 一致：从 dependency_edges 取 workspace 内 is_hard=1 边，
+                // DFS 三色 + BFS 最短 path 检测环。
+                "detect_cycle" => store.handle_detect_cycle(peer, params),
+                // MCP-008（T-1787321709249-fb256530）：validate_revision_dependencies 迁移 rust_native。
+                // 语义与 Python tools_p2_graph._h_validate_revision_dependencies 一致：内存模拟
+                // build_hard_dependency_edges（不写表），合并现有硬边做环检测，返回 valid/errors。
+                "validate_revision_dependencies" => store.handle_validate_revision_dependencies(peer, params),
+                // MCP-009（T-1787321709365-021050a8）：get_dependency_edges 迁移 rust_native。
+                // 语义与 Python db_task_dependencies.get_dependency_edges 一致：查询
+                // dependency_edges 全部列按 created_at 排序，可选按 task_id 过滤。
+                "get_dependency_edges" => store.handle_get_dependency_edges(peer, params),
+                // MCP-010（T-1787321709432-060d1128）：get_action_identity 迁移 rust_native。
+                // 语义与 Python db_task_identity.get_action_identity 一致：按 workspace_id +
+                // action_id 查询 action_identities 单行（全部列），无匹配返回 None。
+                "get_action_identity" => store.handle_get_action_identity(peer, params),
+                // MCP-011（T-1787321709518-0b31a484）：check_action_identity 迁移 rust_native。
+                // 语义与 Python tools_p3_identity._h_check_action_identity 一致：解析 identity
+                // JSON 字符串 → 校验四字段 + require_role → 返回 valid/reason。
+                "check_action_identity" => store.handle_check_action_identity(peer, params),
+                // MCP-012（T-1787321709584-0f2573f4）：check_session_separation 迁移 rust_native。
+                // 语义与 Python tools_p3_identity._h_check_session_separation 一致：解析
+                // reviewer/implementer_identity JSON → 校验 session 分离 → 返回 valid/reason。
+                "check_session_separation" => store.handle_check_session_separation(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -1670,14 +1765,22 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.remediation.create",
     "task.step.resolve",
     "task.handoff",
+    // 任务替代（supersede）治理写：独立关系表 + append-only 事件。
+    // P0-H（T-1787277487109-758e56d0）：经 serial writer 串行化点应用；
+    // 全部 mutation 参数由 handle_task_supersede 做 authority/lease/fencing/
+    // ledger 门禁（同 route_task_write，daemon 不可用 fail-closed）。
+    "task.supersede",
     "task.rollback",
     "task.reopen",
     "task.apply",
     "task.close",
     "task.contract_set",
+    "task.contract_bootstrap",
     "task.capture_diff",
     "task.split",
     "task.create_from_plan",
+    // P0-B：历史无 binding task 的 append-only authority attestation。
+    "task.attest_legacy_workspace_binding",
     "task.resolve_quality_finding",
     "task.create_subtask",
     "task.record_symbol_change",
@@ -1762,6 +1865,17 @@ pub fn is_protected_mutation(method: &str) -> bool {
 /// `handle_convergence_rpc` 分发到 fs_handlers / metrics_handlers /
 /// job_runner / admin_handlers / edit_handlers。
 pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
+    // S2（P0-compat 批次 1）：查询面 compat 迁 native（6）
+    "get_top_callers",
+    "get_orphan_symbols",
+    "get_deepest_functions",
+    "get_comment_coverage",
+    "get_call_heatmap",
+    "find_uncovered_functions",
+    // S2（P0-compat 批次 2）：toolchain 组（3，读权威 task DB）
+    "list_toolchains",
+    "get_toolchain",
+    "get_workspace_toolchains",
     // 文件/构建面（T02-fs，9）
     "workspace.build_graph",
     "workspace.build_directory",
@@ -2275,9 +2389,16 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.apply" => state.handle_task_apply(peer, params),
         "task.close" => state.handle_task_close(peer, params),
         "task.contract_set" => state.handle_task_contract_set(peer, params),
+        "task.contract_bootstrap" => state.handle_task_contract_bootstrap(peer, params),
         "task.contract_get" => state.handle_task_contract_get(peer, params),
         "task.capture_diff" => state.handle_task_capture_diff(peer, params),
         "task.split" => state.handle_task_split(peer, params),
+        // supersede 治理：声明/查询任务替代关系（独立关系表 + append-only 事件，不改被替代任务行）
+        "task.supersede" => state.handle_task_supersede(peer, params),
+        "task.superseded_by" => state.handle_task_superseded_by(peer, params),
+        "task.attest_legacy_workspace_binding" => {
+            state.handle_task_attest_legacy_workspace_binding(peer, params)
+        },
         "task.create_from_plan" => state.handle_task_create_from_plan(peer, params),
         "task.completion_review" => state.handle_task_completion_review(peer, params),
         "task.resolve_quality_finding" => state.handle_task_resolve_quality_finding(peer, params),
@@ -2302,7 +2423,19 @@ fn dispatch_inner<S: DaemonStateExt>(
         "verdict.submit"
         | "reveal.submit"
         | "gate.decide"
+        | "get_role_view"
         | "role_view.get"
+        | "find_evidence"
+        | "get_freshness_status"
+        | "get_gate_decision"
+        | "get_artifact_freshness"
+        | "get_interface_providers"
+        | "detect_cycle"
+        | "validate_revision_dependencies"
+        | "get_dependency_edges"
+        | "get_action_identity"
+        | "check_action_identity"
+        | "check_session_separation"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"

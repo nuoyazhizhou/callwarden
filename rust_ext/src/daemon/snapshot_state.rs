@@ -41,6 +41,7 @@ use crate::cli::issues_tests::{
     query_local_issues, query_local_test_cases, query_local_test_stability,
     query_local_tested_functions,
 };
+use crate::cli::search::normalize_search_results;
 use crate::graph::GraphStore;
 use crate::snapshot::SnapshotCache;
 use crate::symbol_query::query_symbol_detail;
@@ -67,6 +68,10 @@ pub struct SnapshotDaemonState {
     snapshot_cache: Arc<SnapshotCache>,
     /// G1 Layer 2: Toolchain DB（独立 toolchain.db，跨 workspace 共享）
     toolchain_store: Option<Arc<super::toolchain::ToolchainStore>>,
+    /// S2（P0-compat 批次 2）：权威 task DB 路径（用户级 callwarden.db）。
+    /// compat 工具（toolchain/rules 等）的 Rust handler 用它打开只读连接，
+    /// 与 Python compat worker 的 ctx.conn 同源。
+    task_db_path: Option<std::path::PathBuf>,
 }
 
 impl SnapshotDaemonState {
@@ -76,6 +81,7 @@ impl SnapshotDaemonState {
             base,
             snapshot_cache,
             toolchain_store: None,
+            task_db_path: None,
         }
     }
 
@@ -103,6 +109,28 @@ impl SnapshotDaemonState {
     ) -> Self {
         self.toolchain_store = Some(toolchain_store);
         self
+    }
+
+    /// S2（P0-compat 批次 2）：注入权威 task DB 路径（用户级 callwarden.db）。
+    /// compat 工具 Rust handler 用其打开只读连接（与 Python ctx.conn 同源）。
+    pub fn with_task_db_path(mut self, task_db_path: std::path::PathBuf) -> Self {
+        self.task_db_path = Some(task_db_path);
+        self
+    }
+
+    /// 打开 task DB 只读连接（compat 工具 handler 用；未配置时 fail-closed）。
+    pub fn open_task_db_readonly(&self) -> Result<Connection, DaemonRpcError> {
+        let path = self.task_db_path.as_ref().ok_or_else(|| {
+            DaemonRpcError::new(
+                "task_db_unconfigured",
+                "daemon 未配置 task_db_path（fail-closed）",
+            )
+        })?;
+        Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("打开 task DB 失败: {e}")))
     }
 
     /// G11：注入 SnapshotCachePublisher，透传到 base `WorkspaceDaemonState`
@@ -205,10 +233,14 @@ impl SnapshotDaemonState {
         workspace_instance_id: &str,
     ) -> Result<(i64, Connection), DaemonRpcError> {
         let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-        let workspace_id = workspace
+        let registry_rowid = workspace
             .get("workspace_id")
             .and_then(Value::as_i64)
             .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 字段缺失或非数值"))?;
+        let client_view_root = workspace
+            .get("client_view_root")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let db_path = self
             .get_snapshot_manager(workspace_instance_id)
             .and_then(|manager| manager.current_query_db_path())
@@ -219,12 +251,23 @@ impl SnapshotDaemonState {
                 )
             })?;
         let conn = Connection::open_with_flags(
-            db_path,
+            db_path.as_str(),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(|error| {
             DaemonRpcError::internal_error(format!("打开 snapshot SQLite: {error}"))
         })?;
+        // W1-4-FIX（S2 id 对齐）：与 snapshot.publish 同源解析真实 workspace id。
+        //
+        // daemon_workspaces.workspace_id 是 INTEGER PRIMARY KEY AUTOINCREMENT，
+        // register_workspace 用 INSERT OR REPLACE（delete+insert）导致重复 register
+        // ROWID 轮转递增，与 Python 侧 file_instances.workspace_id
+        // （= workspaces.id，root_path 唯一匹配）不一致。publish 已用
+        // resolve_true_workspace_id 解析真实 id 过滤 GraphStore；query 路径此前
+        // 直接用 registry ROWID，导致快照数据命中 0 行（S2 批次 1 空结果根因）。
+        // 此处统一走 resolve_true_workspace_id（db_path 的 workspaces 表按
+        // client_view_root↔root_path 匹配），与 publish 保持一致。
+        let workspace_id = resolve_true_workspace_id(&db_path, client_view_root, registry_rowid);
         Ok((workspace_id, conn))
     }
 
@@ -1242,7 +1285,13 @@ impl DaemonStateExt for SnapshotDaemonState {
                 results.push(self.symbol_to_json(&store, sym));
             }
         }
-        Ok(Value::Array(results))
+        // CLI-02（T-1787321708568-d292ab3c）：Rust daemon 为 query.search 权威响应，
+        // 输出与 Rust CLI compat 层（cli/search.rs normalize_search_results）一致的
+        // 兼容字段：file_path（由 file_rel_path 推导）、signature 缺省 ""、
+        // has_comment 缺省 false。Python 侧仅作 HTTP thin client 格式化，不再回填。
+        let normalized = normalize_search_results(Value::Array(results))
+            .map_err(|e| DaemonRpcError::internal_error(format!("normalize search: {e}")))?;
+        Ok(normalized)
     }
 
     fn handle_query_callers(
@@ -2301,6 +2350,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         use super::metrics_handlers as metrics;
         use super::_mcp_common_handlers as mcp;
         use super::audit_log_handlers as audit;
+        use super::query_compat_handlers as query_compat;
 
         // 解析 workspace codegraph DB 路径（daemon 权威写库，来自模板）。
         let codegraph_db = |state: &Self, ws: &str| -> Result<Option<std::path::PathBuf>, DaemonRpcError> {
@@ -2440,6 +2490,42 @@ impl DaemonStateExt for SnapshotDaemonState {
                 match method {
                     "query.diff_callees" => edit::handle_diff_callees(&conn, workspace_id, params),
                     _ => edit::handle_diff_callers(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- S2（P0-compat 批次 1）：查询面 compat 迁 native（6）----
+            "get_top_callers" | "get_orphan_symbols" | "get_deepest_functions"
+            | "get_comment_coverage" | "get_call_heatmap"
+            | "find_uncovered_functions" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "get_top_callers" => {
+                        query_compat::handle_get_top_callers(&conn, workspace_id, params)
+                    }
+                    "get_orphan_symbols" => {
+                        query_compat::handle_get_orphan_symbols(&conn, workspace_id, params)
+                    }
+                    "get_deepest_functions" => {
+                        query_compat::handle_get_deepest_functions(&conn, workspace_id, params)
+                    }
+                    "get_comment_coverage" => {
+                        query_compat::handle_get_comment_coverage(&conn, workspace_id, params)
+                    }
+                    "get_call_heatmap" => {
+                        query_compat::handle_get_call_heatmap(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_find_uncovered_functions(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- S2（P0-compat 批次 2）：toolchain 组（3，读权威 task DB）----
+            "list_toolchains" | "get_toolchain" | "get_workspace_toolchains" => {
+                let conn = self.open_task_db_readonly()?;
+                match method {
+                    "list_toolchains" => query_compat::handle_list_toolchains(&conn, params),
+                    "get_toolchain" => query_compat::handle_get_toolchain(&conn, params),
+                    _ => query_compat::handle_get_workspace_toolchains(&conn, params),
                 }
             }
 

@@ -89,7 +89,8 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     ToolRoute { name: "find_evidence", module: "tools_collab", target_backend: Backend::PythonCompat, rpc_method: "find_evidence", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
     ToolRoute { name: "get_freshness_status", module: "tools_collab", target_backend: Backend::PythonCompat, rpc_method: "get_freshness_status", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
     ToolRoute { name: "get_gate_decision", module: "tools_collab", target_backend: Backend::PythonCompat, rpc_method: "get_gate_decision", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
-    ToolRoute { name: "get_role_view", module: "tools_collab", target_backend: Backend::PythonCompat, rpc_method: "get_role_view", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
+    // MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native
+    ToolRoute { name: "get_role_view", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "role_view.get", op_class: OpClass::ReadOnly, batch: "MCP-001", status: "migrated" },
     ToolRoute { name: "submit_verdict", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "verdict.submit", op_class: OpClass::GovernanceWrite, batch: "existing-native", status: "stable" },
     ToolRoute { name: "task_remediation_create", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "task.remediation.create", op_class: OpClass::ProtectedMutation, batch: "existing-native", status: "stable" },
     ToolRoute { name: "task_step_resolve", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "task.step.resolve", op_class: OpClass::ProtectedMutation, batch: "existing-native", status: "stable" },

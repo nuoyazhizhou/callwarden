@@ -3054,6 +3054,185 @@ def _migrate_v51_to_v52(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v58_to_v59(conn: sqlite3.Connection):
+    """v58 -> v59: task.supersede 治理权威 schema（T-1787277487109-758e56d0，P0-H）
+
+    将 task_supersede_relations / task_supersede_events 纳入 checksummed canonical
+    schema 并补齐 authority/durability/provenance 列：
+
+    既有库（基础任务 T-1787203926824-9f873bfc-sub-1 已由 Rust ensure_supersede_schema
+    建出 5 列基础表，且权威库已有 OLD→NEW/OLD→C 验收行）：
+      - 表已存在 → PRAGMA table_info 探测缺失列，ALTER TABLE ADD COLUMN 逐个无损
+        补齐（默认值写死，不动历史行）；绝不以 runtime DDL 掩盖迁移。
+      - 表不存在 → CREATE TABLE IF NOT EXISTS 幂等建全量 v59 表（SCHEMA_SQL 同构）。
+    随后 CREATE INDEX IF NOT EXISTS 补 workspace/supersedence 索引，并做列级
+    校验（fail-closed：缺列或缺索引直接抛错，由迁移框架回滚）。
+
+    幂等：全部 CREATE IF NOT EXISTS / 探测后 ALTER，可重复执行。
+    """
+    _SUPERSEDE_RELATION_COLUMNS = [
+        # (name, ddl) —— 既有 5 列（superseded_task_id/superseding_task_id/reason/
+        # actor/created_at）由基础任务 DDL 保证，这里只补 v59 新增列。
+        ("workspace_id", "INTEGER NOT NULL DEFAULT 0"),
+        ("supersedence_id", "TEXT NOT NULL DEFAULT ''"),
+        ("reason_code", "TEXT NOT NULL DEFAULT 'governance_supersede'"),
+        ("actor_agent_id", "TEXT NOT NULL DEFAULT ''"),
+        ("actor_session_id", "TEXT NOT NULL DEFAULT ''"),
+        ("actor_model_id", "TEXT NOT NULL DEFAULT ''"),
+        ("actor_role", "TEXT NOT NULL DEFAULT ''"),
+        ("request_id", "TEXT NOT NULL DEFAULT ''"),
+        ("lease_id", "TEXT NOT NULL DEFAULT ''"),
+        ("fencing_counter", "INTEGER NOT NULL DEFAULT -1"),
+        ("evidence_path", "TEXT NOT NULL DEFAULT ''"),
+        ("evidence_hash", "TEXT NOT NULL DEFAULT ''"),
+        ("authoritative_timestamp", "REAL NOT NULL DEFAULT 0"),
+    ]
+    _SUPERSEDE_EVENT_COLUMNS = _SUPERSEDE_RELATION_COLUMNS  # events 表同构新增列
+
+    def _table_exists(name: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        return row is not None
+
+    def _existing_columns(name: str):
+        return {r[1] for r in conn.execute(f"PRAGMA table_info({name})").fetchall()}
+
+    def _ensure_table(name: str, create_sql: str, extra_columns):
+        if not _table_exists(name):
+            conn.execute(create_sql)
+            return
+        have = _existing_columns(name)
+        for col, ddl in extra_columns:
+            if col not in have:
+                conn.execute(f"ALTER TABLE {name} ADD COLUMN {col} {ddl}")
+
+    _ensure_table(
+        "task_supersede_relations",
+        """
+        CREATE TABLE IF NOT EXISTS task_supersede_relations (
+            superseded_task_id TEXT NOT NULL,
+            superseding_task_id TEXT NOT NULL,
+            reason TEXT DEFAULT '',
+            actor TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            workspace_id INTEGER NOT NULL DEFAULT 0,
+            supersedence_id TEXT NOT NULL DEFAULT '',
+            reason_code TEXT NOT NULL DEFAULT 'governance_supersede',
+            actor_agent_id TEXT NOT NULL DEFAULT '',
+            actor_session_id TEXT NOT NULL DEFAULT '',
+            actor_model_id TEXT NOT NULL DEFAULT '',
+            actor_role TEXT NOT NULL DEFAULT '',
+            request_id TEXT NOT NULL DEFAULT '',
+            lease_id TEXT NOT NULL DEFAULT '',
+            fencing_counter INTEGER NOT NULL DEFAULT -1,
+            evidence_path TEXT NOT NULL DEFAULT '',
+            evidence_hash TEXT NOT NULL DEFAULT '',
+            authoritative_timestamp REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (superseded_task_id, superseding_task_id)
+        )
+        """,
+        _SUPERSEDE_RELATION_COLUMNS,
+    )
+    _ensure_table(
+        "task_supersede_events",
+        """
+        CREATE TABLE IF NOT EXISTS task_supersede_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            superseded_task_id TEXT NOT NULL,
+            superseding_task_id TEXT NOT NULL,
+            reason TEXT DEFAULT '',
+            actor TEXT NOT NULL,
+            monotonic_seq INTEGER NOT NULL,
+            authoritative_timestamp REAL NOT NULL,
+            workspace_id INTEGER NOT NULL DEFAULT 0,
+            supersedence_id TEXT NOT NULL DEFAULT '',
+            reason_code TEXT NOT NULL DEFAULT 'governance_supersede',
+            actor_agent_id TEXT NOT NULL DEFAULT '',
+            actor_session_id TEXT NOT NULL DEFAULT '',
+            actor_model_id TEXT NOT NULL DEFAULT '',
+            actor_role TEXT NOT NULL DEFAULT '',
+            request_id TEXT NOT NULL DEFAULT '',
+            lease_id TEXT NOT NULL DEFAULT '',
+            fencing_counter INTEGER NOT NULL DEFAULT -1,
+            evidence_path TEXT NOT NULL DEFAULT '',
+            evidence_hash TEXT NOT NULL DEFAULT ''
+        )
+        """,
+        _SUPERSEDE_EVENT_COLUMNS,
+    )
+
+    # 索引（幂等）
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_supersede_relations_superseding "
+        "ON task_supersede_relations(superseding_task_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_supersede_relations_workspace "
+        "ON task_supersede_relations(workspace_id, superseded_task_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_supersede_relations_supersedence "
+        "ON task_supersede_relations(supersedence_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_supersede_events_superseded "
+        "ON task_supersede_events(superseded_task_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_supersede_events_superseding "
+        "ON task_supersede_events(superseding_task_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_supersede_events_workspace "
+        "ON task_supersede_events(workspace_id, superseded_task_id)"
+    )
+
+    # 列/索引校验（fail-closed：缺列或缺索引抛错，迁移框架回滚）
+    _verify_supersede_v59_schema(conn)
+
+
+def _verify_supersede_v59_schema(conn: sqlite3.Connection):
+    """task_supersede v59 必备列/索引校验（fail-closed，供迁移与测试复用）。
+
+    任一必备列或索引缺失即抛 RuntimeError（由迁移框架回滚）；绝不以 runtime
+    DDL 掩盖迁移。
+    """
+    required_relations = {"superseded_task_id", "superseding_task_id", "reason", "actor",
+                          "created_at", "workspace_id", "supersedence_id", "reason_code",
+                          "actor_agent_id", "actor_session_id", "actor_model_id",
+                          "actor_role", "request_id", "lease_id", "fencing_counter",
+                          "evidence_path", "evidence_hash", "authoritative_timestamp"}
+    # events 表无 created_at（基础列：event_id/superseded/superseding/reason/actor/
+    # monotonic_seq/authoritative_timestamp + v59 新增列）
+    required_events = {"event_id", "superseded_task_id", "superseding_task_id", "reason",
+                       "actor", "monotonic_seq", "authoritative_timestamp",
+                       "workspace_id", "supersedence_id", "reason_code",
+                       "actor_agent_id", "actor_session_id", "actor_model_id",
+                       "actor_role", "request_id", "lease_id", "fencing_counter",
+                       "evidence_path", "evidence_hash"}
+
+    def _existing_columns(name: str):
+        return {r[1] for r in conn.execute(f"PRAGMA table_info({name})").fetchall()}
+
+    missing_r = required_relations - _existing_columns("task_supersede_relations")
+    missing_e = required_events - _existing_columns("task_supersede_events")
+    if missing_r or missing_e:
+        raise RuntimeError(
+            "task_supersede v59 迁移后缺列 fail-closed: relations={} events={}".format(
+                sorted(missing_r), sorted(missing_e)
+            )
+        )
+    for idx in ("idx_task_supersede_relations_workspace",
+                "idx_task_supersede_relations_supersedence",
+                "idx_task_supersede_events_workspace"):
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (idx,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"task_supersede v59 索引缺失 fail-closed: {idx}")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -3589,6 +3768,57 @@ class CodeGraphBase:
                 "ON workspaces(runtime_policy)"
             )
 
+        # v57（1E，T-1787203926824-9f873bfc）：commit 030fd8c 在 v57 发布后补入
+        # task_contract_revisions / task_verdict_events / task_gate_decisions 的
+        # provenance 与 normalization 绑定列但未 bump 版本号。Rust storage 迁移
+        # 已负责补列；此处为 Python 兜底（幂等），防止陈旧 .pyd 把缺列库打标为
+        # 当前版本时静默放行。放在 guardrail_findings 早退之前，保证即使极简库
+        # 没有 guardrail_findings 也能补齐任务协同列。
+        task_contract_compat = {
+            "task_contract_revisions": [
+                ("normalization_version", "TEXT DEFAULT ''"),
+                ("normalization_rules_hash", "TEXT DEFAULT ''"),
+            ],
+            "task_verdict_events": [
+                ("step_id", "TEXT DEFAULT ''"),
+                ("role_contract_lineage_id", "TEXT DEFAULT ''"),
+                ("role_contract_revision_id", "TEXT DEFAULT ''"),
+                ("role_contract_revision", "INTEGER DEFAULT 0"),
+                ("role_contract_hash", "TEXT DEFAULT ''"),
+                ("canonicalization_version", "TEXT DEFAULT ''"),
+                ("canonicalization_rules_hash", "TEXT DEFAULT ''"),
+                ("normalization_version", "TEXT DEFAULT ''"),
+                ("normalization_rules_hash", "TEXT DEFAULT ''"),
+            ],
+            "task_gate_decisions": [
+                ("step_id", "TEXT DEFAULT ''"),
+                ("role_contract_lineage_id", "TEXT DEFAULT ''"),
+                ("role_contract_revision_id", "TEXT DEFAULT ''"),
+                ("role_contract_revision", "INTEGER DEFAULT 0"),
+                ("role_contract_hash", "TEXT DEFAULT ''"),
+                ("canonicalization_version", "TEXT DEFAULT ''"),
+                ("canonicalization_rules_hash", "TEXT DEFAULT ''"),
+                ("normalization_version", "TEXT DEFAULT ''"),
+                ("normalization_rules_hash", "TEXT DEFAULT ''"),
+            ],
+        }
+        for table, columns in task_contract_compat.items():
+            exists = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()
+            if not exists:
+                continue
+            existing = {
+                row[1]
+                for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for column, definition in columns:
+                if column not in existing:
+                    self.conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                    )
+
         cur = self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='guardrail_findings'"
         )
@@ -3943,6 +4173,10 @@ class CodeGraphBase:
             52: {
                 "description": t("cli.messages.migration_v52", default="Task-domain operation store: canonicalization_rule_sets/revocations registry + task_operation_ledger authority ledger + operation-params-c14n/v1 seed row (idempotent)"),
                 "func": _migrate_v51_to_v52,
+            },
+            59: {
+                "description": t("cli.messages.migration_v59", default="task.supersede governance schema: supersede relations/events canonical + workspace/provenance/request/lease/fencing/evidence columns + indexes (idempotent, lossless ALTER ADD COLUMN for existing base tables)"),
+                "func": _migrate_v58_to_v59,
             },
         }
 

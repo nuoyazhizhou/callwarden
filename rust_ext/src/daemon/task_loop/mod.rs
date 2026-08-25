@@ -36,6 +36,7 @@ pub mod promotion;
 pub mod report_handoff;
 pub mod verdict_evidence_gate;
 pub mod next_action;
+pub mod task_contract_bootstrap;
 
 #[cfg(test)]
 mod capability_control_test;
@@ -57,3 +58,5 @@ mod verdict_evidence_gate_test;
 mod lifecycle_lease_test;
 #[cfg(test)]
 mod next_action_test;
+#[cfg(test)]
+mod task_contract_bootstrap_test;

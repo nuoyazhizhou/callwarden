@@ -1,13 +1,14 @@
 """H6: cw-client RPC proxy 测试
 
 验证 cw-client 角色化入口：
-1. 平台门禁：非 Linux 直接 return 2（与 cw-daemon / cw-agent 一致）
+1. 平台门禁：linux/win32/darwin 允许（client 角色跨平台），其余平台 return 2
+   （与 cw-daemon / cw-agent 一致；T04-followup S1 后平台门禁放宽至 win32/darwin）
 2. 无参数打印简介
 3. serve 子命令被拒绝（纯 client 角色不能启动 daemon）
 4. 其他子命令委托 run_daemon_command(include_serve=False)
 5. _parser(include_serve=False) 不注册 serve subparser
 
-测试通过 mock sys.platform 模拟 Linux 环境，避免在 Windows 上跳过测试。
+测试通过 mock sys.platform 模拟 Linux / 不受支持平台，避免在 Windows 上跳过测试。
 """
 import argparse
 import os
@@ -71,28 +72,55 @@ def test_run_daemon_command_serve_rejected_when_include_serve_false():
 
 
 # ----------------------------------------------------------------------
-# run_client_mode 平台门禁
+# run_client_mode 平台门禁（linux/win32/darwin 允许，其余平台 return 2）
 # ----------------------------------------------------------------------
 
-def test_run_client_mode_non_linux_returns_2(capsys):
-    """非 Linux 平台 run_client_mode 直接 return 2。"""
-    # 当前测试环境（Windows）天然满足"非 Linux"条件
-    if sys.platform == "linux":
-        pytest.skip("此测试验证非 Linux 行为，当前是 Linux")
-    rc = run_client_mode(["ping"])
-    assert rc == 2, "非 Linux 应返回 2"
+_UNSUPPORTED_PLATFORM = "freebsd"  # 不在 ("linux","win32","darwin") 白名单内
+
+
+def test_run_client_mode_unsupported_platform_returns_2(capsys):
+    """不受支持平台 run_client_mode 直接 return 2。"""
+    with mock.patch("sys.platform", _UNSUPPORTED_PLATFORM):
+        rc = run_client_mode(["ping"])
+    assert rc == 2, "不受支持平台应返回 2"
     captured = capsys.readouterr()
-    assert "only supported on Linux" in captured.err, "应打印 Linux-only 错误"
+    assert "only supported on Linux/Windows/macOS" in captured.err, \
+        "应打印 Linux/Windows/macOS-only 错误"
 
 
-def test_run_client_mode_non_linux_ignores_argv(capsys):
-    """非 Linux 平台无论 argv 是什么都返回 2（不委托 daemon_command）。"""
-    if sys.platform == "linux":
-        pytest.skip("此测试验证非 Linux 行为")
+def test_run_client_mode_unsupported_platform_ignores_argv(capsys):
+    """不受支持平台无论 argv 是什么都返回 2（不委托 daemon_command）。"""
     # 传入各种 argv 都应直接返回 2
     for argv in ([], ["ping"], ["serve"], ["--help"], ["toolchain", "list"]):
-        rc = run_client_mode(argv)
+        with mock.patch("sys.platform", _UNSUPPORTED_PLATFORM):
+            rc = run_client_mode(argv)
         assert rc == 2, f"argv={argv} 应返回 2"
+
+
+def test_run_client_mode_win32_delegates_to_daemon_command():
+    """win32（Windows）上运行 client 模式委托 run_daemon_command(include_serve=False)。
+
+    T04-followup S1 后平台门禁放宽：win32/darwin 与 linux 同等支持纯 client
+    角色（UDS/NamedPipe RPC 转发），不再 return 2。
+    """
+    captured_calls = []
+
+    def fake_run_daemon_command(argv, include_serve=True):
+        captured_calls.append({"argv": list(argv), "include_serve": include_serve})
+        return 0
+
+    with mock.patch("sys.platform", "win32"), \
+         mock.patch(
+             "callwarden.cli.daemon_commands.run_daemon_command",
+             fake_run_daemon_command,
+         ):
+        rc = run_client_mode(["ping"])
+
+    assert rc == 0
+    assert len(captured_calls) == 1, "win32 应调用一次 run_daemon_command"
+    assert captured_calls[0]["argv"] == ["ping"], "应原样透传 argv"
+    assert captured_calls[0]["include_serve"] is False, \
+        "cw-client 必须以 include_serve=False 调用"
 
 
 # ----------------------------------------------------------------------
@@ -133,25 +161,23 @@ def test_run_client_mode_delegates_to_daemon_command_on_linux():
         "cw-client 必须以 include_serve=False 调用"
 
 
-def test_run_client_mode_does_not_call_daemon_command_on_non_linux():
-    """非 Linux 平台不应调用 run_daemon_command。"""
-    if sys.platform == "linux":
-        pytest.skip("此测试验证非 Linux 行为")
-
+def test_run_client_mode_unsupported_platform_does_not_call_daemon_command():
+    """不受支持平台不应调用 run_daemon_command。"""
     call_count = {"count": 0}
 
     def fake_run_daemon_command(argv, include_serve=True):
         call_count["count"] += 1
         return 0
 
-    with mock.patch(
-        "callwarden.cli.daemon_commands.run_daemon_command",
-        fake_run_daemon_command,
-    ):
+    with mock.patch("sys.platform", _UNSUPPORTED_PLATFORM), \
+         mock.patch(
+             "callwarden.cli.daemon_commands.run_daemon_command",
+             fake_run_daemon_command,
+         ):
         rc = run_client_mode(["ping"])
 
-    assert rc == 2, "非 Linux 应返回 2"
-    assert call_count["count"] == 0, "非 Linux 不应委托 run_daemon_command"
+    assert rc == 2, "不受支持平台应返回 2"
+    assert call_count["count"] == 0, "不受支持平台不应委托 run_daemon_command"
 
 
 # ----------------------------------------------------------------------

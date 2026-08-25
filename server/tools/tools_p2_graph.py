@@ -412,16 +412,13 @@ def _h_get_dependency_edges(ctx: CompatCallContext) -> Any:
     )
 
 
-# p2 只读白名单（5 个）：写语义工具（import_envelope_dependencies /
-# record_artifact_identity / publish_interface / select_interface_provider /
-# build_hard_dependency_edges，governance_write）不接入，fail-closed。
-_P2_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_artifact_freshness": _h_get_artifact_freshness,
-    "get_interface_providers": _h_get_interface_providers,
-    "detect_cycle": _h_detect_cycle,
-    "validate_revision_dependencies": _h_validate_revision_dependencies,
-    "get_dependency_edges": _h_get_dependency_edges,
-}
+# p2 只读白名单已清空（get_artifact_freshness 已 MCP-005、get_interface_providers
+# 已 MCP-006、detect_cycle 已 MCP-007、validate_revision_dependencies 已 MCP-008、
+# get_dependency_edges 已 MCP-009 迁移 rust_native，移除 compat 注册）：写语义工具
+# （import_envelope_dependencies / record_artifact_identity / publish_interface /
+# select_interface_provider / build_hard_dependency_edges，governance_write）不接入，
+# fail-closed。
+_P2_READ_ONLY_METHODS: Dict[str, Any] = {}
 
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
 # 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。

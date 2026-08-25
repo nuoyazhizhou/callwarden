@@ -15,7 +15,13 @@ from callwarden.config import (
     is_daemon_available,
     is_daemon_required,
 )
-from callwarden.server.daemon_client import UnixDaemonRpcClient
+from callwarden.server.daemon_client import (
+    UnixDaemonRpcClient,
+    HttpDaemonRpcClient,
+    DaemonUnavailableError,
+)
+from callwarden.server.daemon_protocol import DaemonRemoteError
+from callwarden.server.daemon_autostart import resolve_http_endpoint_and_manifest
 from callwarden.server.daemon_server import (
     EnterpriseDaemonServer,
     EnterpriseDaemonService,
@@ -92,7 +98,10 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     mode.add_argument("--set", choices=["auto", "enterprise", "local"])
 
     # 运维命令（runbook 使用，不需要 workspace_id）
-    sub.add_parser("health", help="检查 daemon 健康状态")
+    sub.add_parser("health", help="检查 daemon 健康状态（HTTP /health，Rust 权威）")
+    # CLI-01 (A′ 恢复)：manifest / capability 诊断链路 Rust daemon 化
+    sub.add_parser("manifest", help="显示 daemon HTTP manifest（authority/endpoint/registry revision）")
+    sub.add_parser("capability", help="查询 daemon capability registry（MCP/RPC 工具矩阵）")
     sub.add_parser("schema-version", help="查询 registry DB schema 版本")
 
     # 共存契约：Windows bridge 健康检查（bridge transport + 端口/token 配置）
@@ -383,6 +392,33 @@ def _dispatch_toolchain_cli(client, args) -> dict:
     raise AssertionError(action)
 
 
+def _run_daemon_diag_http(args) -> int:
+    """CLI-01 (A′ 恢复)：health / manifest / capability 经 HTTP thin client 查询 Rust daemon。
+
+    Python 仅作 HTTP client + 输出格式化，不持有任何业务判定或 SQLite；
+    manifest 发现与校验（missing/stale/wrong-authority/daemon-unavailable）
+    由 Rust daemon + authority-scoped manifest 完成，失败 fail-closed 返回
+    稳定且可区分的结构化错误，绝不静默降级到本地 SQLite 或 get_db()。
+    """
+    try:
+        if args.action == "health":
+            result = HttpDaemonRpcClient().health()
+        elif args.action == "capability":
+            result = HttpDaemonRpcClient().capabilities()
+        else:  # manifest
+            _endpoint, manifest = resolve_http_endpoint_and_manifest()
+            result = manifest
+    except DaemonUnavailableError as e:
+        _print_json({"ok": False, "error": "E_DAEMON_UNAVAILABLE", "detail": str(e)})
+        return 1
+    except DaemonRemoteError as e:
+        _print_json({"ok": False, "error": getattr(e, "code", "E_DAEMON_REMOTE"),
+                     "detail": str(e)})
+        return 1
+    _print_json(result)
+    return 0
+
+
 def run_daemon_command(argv: Optional[Sequence[str]] = None,
                        include_serve: bool = True) -> int:
     """daemon/client 共用的命令分发入口。
@@ -569,6 +605,12 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
             server.shutdown()
         return 0
 
+    # CLI-01 (A′ 恢复)：health / manifest / capability 诊断链路 Rust daemon 化。
+    # Python 仅作 HTTP thin shell + 格式化；Rust daemon 为 health/capability 权威；
+    # 失败 fail-closed 返回稳定可区分错误，绝不降级到本地 SQLite。
+    if args.action in ("health", "manifest", "capability"):
+        return _run_daemon_diag_http(args)
+
     client = UnixDaemonRpcClient(args.socket)
     if args.action == "ping":
         result = client.call("ping")
@@ -632,8 +674,6 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         elif args.query_type == "detect_cycles":
             params.update(max_depth=args.max_depth)
         result = client.call(method, params)
-    elif args.action == "health":
-        result = client.call("health", {})
     elif args.action == "bridge":
         # 共存契约 §7.1：bridge health 检查（WSL 侧可执行）
         from callwarden.config import (

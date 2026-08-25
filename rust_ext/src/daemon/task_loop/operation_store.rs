@@ -34,11 +34,19 @@ pub const ERR_LEDGER_CONFLICT: &str = "E_OPERATION_LEDGER_CONFLICT";
 const TASK_DB_LEDGER_METHODS: &[&str] = &[
     "task.create",
     "task.contract_set",
+    // P0-C：Task/Role/step governance projection bootstrap 与其审计写入必须同样 durable。
+    "task.contract_bootstrap",
     "task.claim",
     "task.report",
     "task.handoff",
     "task.apply",
     "task.close",
+    // P0-H（T-1787277487109-758e56d0）：task.supersede 治理 mutation 纳入
+    // TASK_DB_LEDGER scope，与 relation/event/task_events 同一事务经
+    // OperationStore::dedupe + record_result 持久化（同 request_id 幂等重放）。
+    "task.supersede",
+    // P0-B：历史无 binding task 的 authority attestation 同样需要持久化重放。
+    "task.attest_legacy_workspace_binding",
     "lease.acquire",
     "lease.renew",
     "lease.release",
@@ -478,6 +486,7 @@ mod tests {
             "task.handoff",
             "task.apply",
             "task.close",
+            "task.supersede",
             "lease.acquire",
             "lease.renew",
             "lease.release",

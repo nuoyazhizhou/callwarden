@@ -10,6 +10,9 @@ pub mod dispatch;
 /// Task 协同 RPC 模块（multi-llm-contract-collaboration D0/P1）
 pub mod task_collab;
 
+/// Task 替代（supersede）治理 RPC 模块（T-1787203926824-9f873bfc-sub-1）
+pub mod task_supersede;
+
 /// task_loop_public 能力 foundation（1D0：模块声明 / foundation 私有类型 /
 /// fail-closed stubs / 禁用 shim，cutover 前能力禁用）
 pub mod task_loop;
@@ -163,6 +166,9 @@ pub mod _mcp_common_handlers;
 /// 对应 `server/audit_log.py::AuditLogger` 的 SQLite 权威下沉
 ///（`mcp.audit_log.{get_conn,init_db,append,query,count,clear,get_stats}`）。
 pub mod audit_log_handlers;
+/// S2: 查询面 compat → Rust native handler（get_top_callers / get_orphan_symbols 等
+/// P0-compat 批次 1 的 6 个纯 SQL 只读工具）。
+pub mod query_compat_handlers;
 
 /// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
 /// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。

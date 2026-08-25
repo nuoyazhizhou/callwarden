@@ -22,7 +22,10 @@ use super::claim::{claim_step, ClaimStepInput, LedgerKey as ClaimLedgerKey};
 use super::contract_set::{
     set_task_contract, ContractPayload, LedgerKey as ContractLedgerKey, SetContractInput,
 };
-use super::create::{create_task, CreateTaskInput, LedgerKey as CreateLedgerKey, WorkspaceCaptureInput};
+use super::create::{
+    create_task, registry_identity_hash, CreateTaskInput, LedgerKey as CreateLedgerKey,
+    WorkspaceCaptureInput,
+};
 use super::next_action::{
     evaluate_next_action, NextActionInput, ERR_TASK_NOT_FOUND_OR_UNAUTHORIZED,
     ERR_WORKSPACE_AUTHORITY_MISMATCH, ERR_WORKSPACE_AUTHORITY_UNAVAILABLE,
@@ -592,6 +595,111 @@ fn workspace_instance_mismatch_authority_mismatch() {
     let mut conn = fresh_db();
     setup_task(&mut conn, "t-1");
     let err = evaluate_next_action(&conn, "ws-inst-OTHER", "t-1").expect_err("instance 不匹配必须拒绝");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
+
+#[test]
+fn two_instances_same_workspace_chain_continuity_per_instance() {
+    // 回归（整机单库迁移遗留）：同一 workspace_id 可并存多个实例链（旧单库模型的实例 id 与
+    // 规范 ws-{id}），capture_revision 在实例内单调。旧实现按 workspace_id 全局 COUNT==MAX，
+    // 会把双实例并存的连续链误判为断链（count>max）；新实现按 (workspace_id, instance) 限定。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // instance=ws-inst-1，capture rev1
+    let ws_legacy = WorkspaceCaptureInput {
+        workspace_id: 1,
+        daemon_workspace_id: 42,
+        workspace_instance_id: "legacy-inst".to_string(),
+        client_view_root_hash: "client-view-hash".to_string(),
+        host_real_root_hash: "host-root-hash".to_string(),
+        workspace_manifest_payload_json: "{\"kind\":\"a\"}".to_string(),
+        workspace_manifest_hash: "manifest-a".to_string(),
+        created_by: "test-creator".to_string(),
+    };
+    let input = CreateTaskInput {
+        task_id: "t-b".to_string(),
+        title: "task-t-b".to_string(),
+        description: "desc".to_string(),
+        creator: "test-creator".to_string(),
+    };
+    create_task(
+        &mut conn,
+        &frozen(),
+        &CreateLedgerKey {
+            workspace_instance_id: "legacy-inst".to_string(),
+            method: "task.create".to_string(),
+            request_id: "create-t-b".to_string(),
+        },
+        &input,
+        &ws_legacy,
+    )
+    .expect("legacy 实例 create_task 应成功");
+
+    // 旧实现：workspace 1 全局 count=2 max=1 → Err(断链 MISMATCH)；
+    // 新实现：按实例各 count=1 max=1 → workspace 门禁通过（后续合同缺失 → Ok(BLOCKED)）。
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect("双实例并存时 t-a 不应被判断链");
+    assert!(resp.is_object(), "workspace 门禁通过后返回评估结果对象");
+}
+
+#[test]
+fn historical_binding_capture_same_identity_is_accepted() {
+    // binding 是创建时不可变 provenance snapshot。相同 stable identity 的后续
+    // re-attestation 产生 rev2 后，rev1 binding 仍应通过 authority 门禁；后续只会
+    // 因 task contract 缺失返回 BLOCKED，而不是 authority mismatch。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // ws-inst-1 capture rev1
+    setup_task(&mut conn, "t-b"); // ws-inst-1 capture rev2（same identity）
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect("same-identity historical binding capture 应通过 authority 门禁");
+    assert!(resp.is_object());
+    assert_eq!(resp["decision"], serde_json::json!("BLOCKED"));
+    assert!(resp["blocking_conditions"][0]
+        .as_str()
+        .unwrap_or("")
+        .contains("Task Contract"));
+}
+
+#[test]
+fn historical_binding_capture_identity_change_is_rejected() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // binding points to manifest-a / rev1
+    setup_task(&mut conn, "t-b"); // rev2 is current
+    let changed_identity = registry_identity_hash(
+        "ws-inst-1",
+        "client-view-hash",
+        "host-root-hash",
+        "manifest-b",
+    );
+    conn.execute(
+        "UPDATE workspace_authority_captures \
+         SET workspace_manifest_hash = 'manifest-b', registry_identity_hash = ?1 \
+         WHERE workspace_id = 1 AND workspace_instance_id = 'ws-inst-1' AND capture_revision = 2",
+        [changed_identity],
+    )
+    .unwrap();
+    let err = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect_err("current capture 的稳定 identity 变化必须使旧 binding fail-closed");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
+
+#[test]
+fn caller_root_hash_instance_resolves_to_binding_workspace() {
+    // CLI 按 root 路径推导 instance（sha256(norm(root))[:16]），与 binding capture 的规范
+    // instance（ws-inst-1）字符串不同；解析到 workspace_id 后应通过（scheme 无关）。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1"); // binding instance=ws-inst-1, workspace_id=1, root=/tmp/ws-1
+    let caller_instance = sha256_hex("/tmp/ws-1".as_bytes())[..16].to_string();
+    let resp = evaluate_next_action(&conn, &caller_instance, "t-1")
+        .expect("root 哈希推导的 instance 应解析到同一 workspace");
+    assert!(resp.is_object(), "workspace 门禁通过后返回评估结果对象");
+}
+
+#[test]
+fn unresolvable_caller_instance_rejected() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let err = evaluate_next_action(&conn, "no-such-instance-xyz", "t-1")
+        .expect_err("不可解析的 instance 必须 fail-closed 拒绝");
     assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
 }
 
