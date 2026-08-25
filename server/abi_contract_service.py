@@ -36,7 +36,7 @@ EXTRACTION_CONFIG_VERSION = "v1"
 
 # Schema 版本（真相源在 db/schema.py，此处为镜像常量）
 # 变更时必须同步更新 db/schema.py 和 abi-error-code-contract.md
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 60
 
 # CAS 状态常量
 CAS_STATE_BUILDING = "building"

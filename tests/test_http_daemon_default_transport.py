@@ -74,7 +74,7 @@ _RUNTIME_ROOT = os.path.join(os.path.expanduser("~"), ".callwarden", "runtime")
 _CURRENT_DAEMON = os.path.join(_RUNTIME_ROOT, "current", "cw-daemon.exe")
 
 # 预期 schema_version（与 release acceptance 一致）
-_SCHEMA_VERSION = 50
+_SCHEMA_VERSION = 60
 
 
 def _sha256(path: str) -> str:

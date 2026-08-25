@@ -140,11 +140,45 @@ pub fn is_daemon_required() -> bool {
 /// - `socket_path`: daemon socket 路径
 /// - `platform`: 平台名（`std::env::consts::OS` 或测试指定值）
 pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
-    // Windows/macOS 永远不可用（UDS 是 Linux 特有）
-    if platform != "linux" {
-        return false;
+    match platform {
+        // Linux：UDS socket 文件存在即认为 daemon 可用
+        "linux" => socket_path.exists(),
+        // macOS：UDS 不可用，且未实现 Named Pipe，返回 false
+        "macos" => false,
+        // Windows：探测 daemon 命名管道 \\.\pipe\callwarden-<user-sid>
+        "windows" => windows_named_pipe_available(),
+        // 未知平台 fail-closed
+        _ => false,
     }
-    socket_path.exists()
+}
+
+/// Windows 下探测 daemon 命名管道是否可用。
+///
+/// 管道名与 daemon 绑定一致：`\\.\pipe\callwarden-<user-sid>`
+/// （见 `daemon/transport_windows.rs:get_current_user_sid` + 管道名派生）。
+///
+/// 通过 `WaitNamedPipeW` 探测：返回非 0 表示存在可用实例（daemon 已启动）；
+/// 返回 0 表示管道不存在（daemon 未启动）。
+#[cfg(windows)]
+fn windows_named_pipe_available() -> bool {
+    let sid = match crate::daemon::transport_windows::get_current_user_sid() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let pipe_name = format!(r"\\.\pipe\callwarden-{}", sid);
+    let wide: Vec<u16> = std::path::Path::new(&pipe_name)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // WaitNamedPipeW 返回非 0 ⇒ 存在可用管道实例（daemon 已就绪）。
+    // timeout=0：立即返回不阻塞；daemon 未启动（管道不存在）时返回 0。
+    unsafe { windows_sys::Win32::System::Pipes::WaitNamedPipeW(wide.as_ptr(), 0) != 0 }
+}
+
+#[cfg(not(windows))]
+fn windows_named_pipe_available() -> bool {
+    false
 }
 
 // ============================================================
@@ -319,9 +353,14 @@ mod tests {
     }
 
     #[test]
-    fn test_d3_3_windows_always_false() {
+    fn test_d3_3_windows_probes_named_pipe() {
         let path = Path::new("C:\\callwarden\\socket.sock");
-        assert!(!is_daemon_available(path, "windows"));
+        // Windows 分支必须委托给命名管道探测，而非 UDS socket_path.exists()；
+        // 与 windows_named_pipe_available() 保持一致，且不依赖 daemon 运行时状态。
+        assert_eq!(
+            is_daemon_available(path, "windows"),
+            windows_named_pipe_available()
+        );
     }
 
     #[test]

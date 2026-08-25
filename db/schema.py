@@ -2018,7 +2018,7 @@ CREATE TABLE IF NOT EXISTS verdict_normalization_rule_revocations (
 #      revision id/revision/hash、canonicalization version/hash）与所用
 #      normalization version/hash；历史 verdict/gate/contract 无绑定只读显示
 #      UNVERIFIED，不回填改写。
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 60
 
 
 # ============================================

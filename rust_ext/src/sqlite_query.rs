@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-pub const RUST_SCHEMA_VERSION: i64 = 57;
+pub const RUST_SCHEMA_VERSION: i64 = 60;
 
 const EMBEDDED_SCHEMA_SOURCE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../db/schema.py"));
