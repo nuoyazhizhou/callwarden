@@ -1,0 +1,245 @@
+{
+  "batch": 4,
+  "tasks": [
+    {
+      "task_id": "T-1787322794986-c6229cec",
+      "status": "review",
+      "title": "CLI-012 [task_projection]：cw audit → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795054-ca2e2694",
+      "status": "review",
+      "title": "CLI-013 [cli_command_projection]：cw bootstrap → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795108-cd691968",
+      "status": "review",
+      "title": "CLI-014 [cli_command_projection]：cw brief → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795173-d141864c",
+      "status": "review",
+      "title": "CLI-015 [graph_snapshot]：cw build-context → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795245-d58f1cf0",
+      "status": "review",
+      "title": "CLI-016 [graph_snapshot]：cw call-chain → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795307-d949b968",
+      "status": "review",
+      "title": "CLI-017 [cli_command_projection]：cw callees → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795374-dd442bac",
+      "status": "review",
+      "title": "CLI-018 [cli_command_projection]：cw callers → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795431-e0a47a2c",
+      "status": "review",
+      "title": "CLI-019 [cli_command_projection]：cw check-gate → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795483-e3c04150",
+      "status": "review",
+      "title": "CLI-020 [cli_command_projection]：cw churn → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795588-e9fdfecc",
+      "status": "review",
+      "title": "CLI-021 [cli_command_projection]：cw clone → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795664-ee8f9090",
+      "status": "review",
+      "title": "CLI-022 [cli_command_projection]：cw comment-coverage → Rust daemon HTTP thin cli",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795725-f22932d8",
+      "status": "review",
+      "title": "CLI-023 [cli_command_projection]：cw complexity → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795775-f52e96bc",
+      "status": "review",
+      "title": "CLI-024 [cli_command_projection]：cw coupled-fns → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795829-f85a6d98",
+      "status": "review",
+      "title": "CLI-025 [cli_command_projection]：cw coupling → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795894-fc39c6c0",
+      "status": "review",
+      "title": "CLI-026 [cli_command_projection]：cw coverage → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322795956-fff62664",
+      "status": "review",
+      "title": "CLI-027 [cli_command_projection]：cw dashboard → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796027-04260ab0",
+      "status": "review",
+      "title": "CLI-028 [cli_command_projection]：cw defect → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796090-07e97aec",
+      "status": "review",
+      "title": "CLI-029 [graph_snapshot]：cw dependency → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796155-0bc98e68",
+      "status": "review",
+      "title": "CLI-030 [cli_command_projection]：cw evolution → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796219-0f9d3760",
+      "status": "review",
+      "title": "CLI-031 [cli_command_projection]：cw file → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796275-12f3c370",
+      "status": "review",
+      "title": "CLI-032 [cli_command_projection]：cw fn-metrics → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796365-1852e1e8",
+      "status": "review",
+      "title": "CLI-033 [cli_command_projection]：cw fts → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796421-1ba86fac",
+      "status": "review",
+      "title": "CLI-034 [cli_command_projection]：cw function-issues → Rust daemon HTTP thin clie",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796483-1f5d4730",
+      "status": "review",
+      "title": "CLI-035 [cli_command_projection]：cw gc → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796578-2508cfc4",
+      "status": "review",
+      "title": "CLI-036 [cli_command_projection]：cw git → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796634-285466c0",
+      "status": "review",
+      "title": "CLI-037 [cli_command_projection]：cw grep → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796701-2c5e2698",
+      "status": "review",
+      "title": "CLI-038 [cli_command_projection]：cw guardrail → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796764-3014c724",
+      "status": "review",
+      "title": "CLI-039 [cli_command_projection]：cw health-report → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796833-3431cb68",
+      "status": "review",
+      "title": "CLI-040 [cli_command_projection]：cw hotspot → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    },
+    {
+      "task_id": "T-1787322796916-3926ce34",
+      "status": "review",
+      "title": "CLI-041 [cli_command_projection]：cw impact → Rust daemon HTTP thin client",
+      "commits": [],
+      "files": [],
+      "attribution": "unknown"
+    }
+  ]
+}
