@@ -175,6 +175,11 @@ pub mod query_compat_handlers;
 /// 注：handler 已实现并通过单测，RPC 路由接线为后续独立动作（不在本次冒险改动 v60 构建）。
 pub mod backup_restore_handlers;
 
+/// 3.23: CLI admin 面 handler（SRV-004：server cli admin Python authority → Rust daemon）
+/// 对应 `server/cli_admin.py` 五个只读 SQLite 权威函数的 Rust 下沉
+///（`mcp.cli_admin.{connection_test,open_readonly_conn,read_pragmas,read_task_dependencies,scan_hash_databases}`）。
+pub mod cli_admin_handlers;
+
 /// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
 /// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。
 pub mod job_runner;

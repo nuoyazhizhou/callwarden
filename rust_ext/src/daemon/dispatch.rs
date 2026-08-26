@@ -2477,6 +2477,25 @@ fn dispatch_inner<S: DaemonStateExt>(
             super::backup_restore_handlers::handle_is_rust_backup_rolled_back(&registry_path)
         }
 
+        // ---- SRV-004：mcp.cli_admin 五方法（T-1787323460580-bea19180）----
+        // 全部只读（mode=ro），不进 ADMIN_ONLY / PROTECTED_MUTATION 清单；
+        // 错误语义与 Python 对齐：参数缺失 invalid_params，库不可打开/查询失败返回稳定空值。
+        "mcp.cli_admin.connection_test" => {
+            super::cli_admin_handlers::handle_connection_test(params)
+        }
+        "mcp.cli_admin.open_readonly_conn" => {
+            super::cli_admin_handlers::handle_open_readonly_conn(params)
+        }
+        "mcp.cli_admin.read_pragmas" => {
+            super::cli_admin_handlers::handle_read_pragmas(params)
+        }
+        "mcp.cli_admin.read_task_dependencies" => {
+            super::cli_admin_handlers::handle_read_task_dependencies(params)
+        }
+        "mcp.cli_admin.scan_hash_databases" => {
+            super::cli_admin_handlers::handle_scan_hash_databases(params)
+        }
+
         // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
         // 全部新 method 统一进入 handle_convergence_rpc（SnapshotDaemonState 重写）。
         m if is_convergence_rpc(m) => state.handle_convergence_rpc(peer, m, params),
