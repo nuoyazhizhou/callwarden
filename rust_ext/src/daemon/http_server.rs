@@ -1583,6 +1583,9 @@ fn build_capability_registry() -> Result<Value, String> {
     add("mcp.audit_log.count", "mcp.audit_log.count", "mcp-audit-log-count", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-count-ok", "fixture-mcp-audit-log-count-err", "T-1787323460404-b425b074#SRV-002", "");
     add("mcp.audit_log.clear", "mcp.audit_log.clear", "mcp-audit-log-clear", "rust_native", "available", "write", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-clear-ok", "fixture-mcp-audit-log-clear-err", "T-1787323460404-b425b074#SRV-002", "");
     add("mcp.audit_log.get_stats", "mcp.audit_log.get_stats", "mcp-audit-log-get-stats", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-audit-log-get-stats-ok", "fixture-mcp-audit-log-get-stats-err", "T-1787323460404-b425b074#SRV-002", "");
+    // backup/restore 面（SRV-003：server backup_restore Python authority → Rust daemon）
+    add("mcp.backup_restore.backup_file", "mcp.backup_restore.backup_file", "mcp-backup-restore-backup-file", "rust_native", "available", "write", "authority", false, "/v1/rpc", "fixture-mcp-backup-restore-backup-file-ok", "fixture-mcp-backup-restore-backup-file-err", "T-1787323460500-b9e232bc#SRV-003", "");
+    add("mcp.backup_restore.is_rust_backup_rolled_back", "mcp.backup_restore.is_rust_backup_rolled_back", "mcp-backup-restore-is-rust-backup-rolled-back", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-backup-restore-rolled-back-ok", "fixture-mcp-backup-restore-rolled-back-err", "T-1787323460500-b9e232bc#SRV-003", "");
 
     // python_compat 方法由 H3 compat worker 提供服务（backend=python_compat + available）
     // W2-1（T-1786840097330-dec66710）：get_uncommented_symbols / get_module_call_stats /

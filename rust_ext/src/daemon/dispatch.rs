@@ -1741,6 +1741,9 @@ pub const ADMIN_ONLY_METHODS: &[&str] = &[
     "toolchain.register",
     "toolchain.delete",
     "toolchain.bind",
+    // SRV-003（T-1787323460500-b9e232bc）：文件级备份写操作，
+    // 与 backup/restore 同级，仅 root/daemon uid 可调用。
+    "mcp.backup_restore.backup_file",
 ];
 
 /// Protected_Mutation 方法列表（Req 14.6）。
@@ -1762,6 +1765,8 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     // 数据库备份/还原（改变持久化状态）
     "backup",
     "restore",
+    // SRV-003：文件级备份（VACUUM INTO / fs::copy，写备份产物）
+    "mcp.backup_restore.backup_file",
     // Task 协同写操作（multi-llm-contract-collaboration）
     "agent.register",
     "task.create",
@@ -2456,6 +2461,22 @@ fn dispatch_inner<S: DaemonStateExt>(
         // fail-closed E_CAPABILITY_DISABLED。
         "task_loop.public_promote" => state.handle_task_loop_public_promote(peer, params),
 
+        // ---- SRV-003：mcp.backup_restore 双方法（T-1787323460500-b9e232bc）----
+        // backup_file 为 admin-only Protected_Mutation（上方授权门禁 + 串行化点自动生效）；
+        // is_rust_backup_rolled_back 为只读查询，registry 路径取
+        // CW_DAEMON_REGISTRY_DB（fallback 默认路径），fail-closed 语义由 handler 保证。
+        "mcp.backup_restore.backup_file" => {
+            super::backup_restore_handlers::handle_backup_file(params)
+        }
+        "mcp.backup_restore.is_rust_backup_rolled_back" => {
+            let registry_path = std::env::var("CW_DAEMON_REGISTRY_DB")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(super::config::default_registry_db_path);
+            super::backup_restore_handlers::handle_is_rust_backup_rolled_back(&registry_path)
+        }
+
         // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
         // 全部新 method 统一进入 handle_convergence_rpc（SnapshotDaemonState 重写）。
         m if is_convergence_rpc(m) => state.handle_convergence_rpc(peer, m, params),
@@ -2861,6 +2882,7 @@ mod tests {
             "toolchain.register",
             "toolchain.delete",
             "toolchain.bind",
+            "mcp.backup_restore.backup_file",
         ] {
             let response = dispatch(&mut state, make_peer(), method, &params, &[]);
             assert_eq!(
@@ -3155,6 +3177,9 @@ mod tests {
         assert!(is_protected_mutation("workspace.recover"));
         assert!(is_protected_mutation("backup"));
         assert!(is_protected_mutation("restore"));
+        // SRV-003：backup_file 是 Protected_Mutation；rolled_back 只读不是
+        assert!(is_protected_mutation("mcp.backup_restore.backup_file"));
+        assert!(!is_protected_mutation("mcp.backup_restore.is_rust_backup_rolled_back"));
         assert!(is_protected_mutation("verdict.submit"));
         assert!(is_protected_mutation("task.apply"));
         assert!(is_protected_mutation("lease.acquire"));
