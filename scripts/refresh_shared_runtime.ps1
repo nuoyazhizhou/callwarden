@@ -55,6 +55,52 @@ function Digest([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+# Set-MsvcBuildEnv — 等价 scripts/msvc-env.sh：在干净 PowerShell 会话下注入 MSVC 工具集
+# + Windows SDK 的 LIB/INCLUDE/PATH，避免 cargo 链接期报 LNK1181: cannot open kernel32.lib。
+# 此前 13:30 部署成功是继承了宿主 LIB；15:39 由干净会话发起时缺少 → cargo build 失败
+# (T-1787203926824-9f873bfc)。自动探测 VS/SDK，不写死版本号；仅设置脚本进程内环境。
+function Set-MsvcBuildEnv {
+    $vsRoot = $null
+    foreach ($base in @("C:\Program Files\Microsoft Visual Studio", "C:\Program Files (x86)\Microsoft Visual Studio")) {
+        if (Test-Path -LiteralPath $base) { $vsRoot = $base; break }
+    }
+    if ($null -eq $vsRoot) { throw "未找到 Visual Studio 安装目录，无法注入 LIB" }
+    $vsEd = $null
+    foreach ($verDir in Get-ChildItem -LiteralPath $vsRoot -Directory -ErrorAction SilentlyContinue) {
+        if ($verDir.Name -notmatch '^20\d\d$') { continue }
+        foreach ($ed in Get-ChildItem -LiteralPath $verDir.FullName -Directory -ErrorAction SilentlyContinue) {
+            if (Test-Path -LiteralPath (Join-Path $ed.FullName "VC\Auxiliary\Build")) { $vsEd = $ed.FullName; break }
+        }
+        if ($null -ne $vsEd) { break }
+    }
+    if ($null -eq $vsEd) { throw "未找到含 VC 工具集的 VS 版本目录" }
+    $msvcVer = $null
+    foreach ($d in Get-ChildItem -LiteralPath (Join-Path $vsEd "VC\Tools\MSVC") -Directory -ErrorAction SilentlyContinue) { $msvcVer = $d.Name }
+    if ([string]::IsNullOrWhiteSpace($msvcVer)) { throw "未找到 VC/Tools/MSVC/<ver>" }
+    $msvcTools = Join-Path $vsEd "VC\Tools\MSVC\$msvcVer"
+    $msvcBin = Join-Path $msvcTools "bin\Hostx64\x64"
+    $msvcLib = Join-Path $msvcTools "lib\x64"
+
+    $sdkRoot = $null
+    foreach ($base in @("C:\Program Files (x86)\Windows Kits\10\Lib", "C:\Program Files\Windows Kits\10\Lib")) {
+        if (Test-Path -LiteralPath $base) { $sdkRoot = $base; break }
+    }
+    if ($null -eq $sdkRoot) { throw "未找到 Windows Kits/10/Lib" }
+    $sdkVer = $null
+    foreach ($d in Get-ChildItem -LiteralPath $sdkRoot -Directory -ErrorAction SilentlyContinue) { $sdkVer = $d.Name }
+    if ([string]::IsNullOrWhiteSpace($sdkVer)) { throw "未找到 SDK 版本目录" }
+    $sdkLib = Join-Path $sdkRoot $sdkVer
+
+    $umLib = Join-Path $sdkLib "um\x64"
+    $ucrtLib = Join-Path $sdkLib "ucrt\x64"
+    $env:LIB = "$msvcLib;$umLib;$ucrtLib"
+    $env:INCLUDE = "$(Join-Path $msvcTools 'include');$(Join-Path $sdkLib 'um');$(Join-Path $sdkLib 'ucrt');$(Join-Path $sdkLib 'shared')"
+    if (-not ($env:PATH -split ';' -contains $msvcBin)) {
+        $env:PATH = "$msvcBin;$($env:PATH)"
+    }
+    Info "MSVC build env injected: MSVC=$msvcTools SDK=$sdkLib"
+}
+
 # Replace-FileWithRetry — [IO.File]::Replace 的幂等封装（T-1787203926824-9f873bfc）。
 #
 # Windows 下目标文件被正在运行的进程（cw.py server MCP / compat_worker / daemon）
@@ -504,6 +550,7 @@ try {
         $oldDaemonPath = [string]$oldDaemonItems[0].executable
     }
     Info "先构建新 runtime，不停止现有 MCP/daemon"
+    Set-MsvcBuildEnv
     $cargoArgs = @("build", "--manifest-path", $RustManifest, "--target-dir", $TargetDir,
         "--lib", "--bin", "cw-daemon", "--bin", "cw", "--bin", "cw-client", "--bin", "cw-agent", "--bin", "cw-bridge")
     if ($Configuration -eq "release") { $cargoArgs += "--release" }
