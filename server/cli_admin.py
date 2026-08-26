@@ -1,21 +1,28 @@
-"""cli_admin.py —— CLI 本地维护命令的 daemon 侧数据库辅助（T04-followup S1）。
+"""cli_admin.py —— CLI 本地维护命令的 daemon RPC 薄适配层（SRV-004）。
 
-设计契约（cw-rust-client-convergence-design.md §1.3.2 / Q2 例外清单）：
-- `cli/` 与 `server/tools/` 只实现 client 薄壳；本模块位于 `server/`（daemon
-  宿主侧，非 MCP 薄壳层，不在 check_client_purity 扫描范围），承载 doctor /
-  gc db-cleanup / db-migrate-single / dependency inspect 等本地维护命令所需的
-  数据库直查逻辑——这些命令在 Q2 例外清单（doctor/config/install 等 daemon
-  管理/自举命令保持本地），不进入 daemon RPC 写路径；
-- CLI 侧禁止 `import sqlite3` / `db.conn` / `CodeGraphDB(`（硬门禁），因此
-  本模块集中提供只读连接与 PRAGMA 读取，CLI 只调用纯函数接口；
-- 本模块只读不写（gc 删除、db 迁移等写操作仍由 CLI 在拿到扫描结果后决定，
-  或由 `db_migrate` 权威模块执行），不持有写锁、不触发 workspace 激活。
+SRV-004（T-1787323460580-bea19180）：原模块中五个直接 open SQLite 的 Python
+authority 函数已全部下沉为 Rust daemon handler
+（`rust_ext/src/daemon/cli_admin_handlers.rs`，方法族 `mcp.cli_admin.*`）。
+本模块不再 `import sqlite3`、不再 open 本地 DB、不再执行业务 SQL，
+仅保留：daemon RPC 调用、JSON 结果整形、默认路径计算等非业务适配职责。
+
+fail-closed：daemon 不可用时由 `_call_daemon_rpc` 抛错上抛，
+绝不回退 Python SQLite 充当业务存储。
+
+函数与 RPC 方法对应关系：
+- `connection_test`       → `mcp.cli_admin.connection_test`
+- `open_readonly_conn`    → `mcp.cli_admin.open_readonly_conn`（探测语义，见下）
+- `read_pragmas`          → `mcp.cli_admin.read_pragmas`
+- `read_task_dependencies`→ `mcp.cli_admin.read_task_dependencies`
+- `scan_hash_databases`   → `mcp.cli_admin.scan_hash_databases`
+
+`get_default_db_path` / `migrate_single_db` 不属于 SQLite authority：
+前者为纯路径计算（进程启动配置读取职责），后者委托 `db_migrate` 权威模块。
 """
 
 from __future__ import annotations
 
 import os
-import sqlite3
 from typing import Any, Dict, List, Tuple
 
 from callwarden.config import DB_PATH, CALLWARDEN_DIR
@@ -26,32 +33,35 @@ def get_default_db_path() -> str:
     return os.environ.get("CALLWARDEN_DB") or DB_PATH
 
 
-def open_readonly_conn(db_path: str = ""):
-    """打开只读 sqlite3 连接（供 CLI 侧只读分析引擎复用）。
+def open_readonly_conn(db_path: str = "") -> Dict[str, Any]:
+    """只读连接可用性探测（SRV-004：RPC 无法传递连接对象，下沉为探测语义）。
 
-    调用方负责 close()；连接为 mode=ro（不持有写锁、不触发 WAL 写入）。
-    仅用于 daemon RPC 无法覆盖的只读本地分析（如 resolved_edges 计算），
-    不用于业务写路径。
+    经 daemon `mcp.cli_admin.open_readonly_conn` 在 daemon 进程内以 mode=ro
+    打开连接并执行 `SELECT 1` 后立即关闭；不返回连接对象。
+
+    Args:
+        db_path: SQLite 库路径（空 → daemon 默认用户级单库路径）。
+
+    Returns:
+        {"db_path": str, "readonly": True, "openable": bool, "error": str|None}
+
+    Raises:
+        daemon 不可用时由 `_call_daemon_rpc` 抛错（fail-closed）。
     """
-    target = db_path or get_default_db_path()
-    conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=3)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-# PRAGMA 检查：SQLite 不支持绑定参数，用静态 SQL 分派避免字符串拼接
-# （semgrep: sqlalchemy-execute-raw-query / formatted-sql-query）。
-_PRAGMA_QUERIES: Dict[str, str] = {
-    "journal_mode": "PRAGMA journal_mode",
-    "synchronous": "PRAGMA synchronous",
-    "busy_timeout": "PRAGMA busy_timeout",
-    "cache_size": "PRAGMA cache_size",
-    "mmap_size": "PRAGMA mmap_size",
-}
+    result = _call_daemon_rpc(
+        "mcp.cli_admin.open_readonly_conn", {"db_path": db_path}
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"open_readonly_conn: daemon 返回非对象结果: {result!r}"
+        )
+    return result
 
 
 def read_pragmas(db_path: str, keys: List[str]) -> Dict[str, str]:
-    """只读连接读取一组 PRAGMA 的实际值（失败键返回空串）。
+    """只读读取一组 PRAGMA 的实际值（失败键/未知键返回空串）。
+
+    经 daemon `mcp.cli_admin.read_pragmas`（静态 PRAGMA 白名单分派）。
 
     Args:
         db_path: SQLite 库路径。
@@ -60,30 +70,18 @@ def read_pragmas(db_path: str, keys: List[str]) -> Dict[str, str]:
     Returns:
         {pragma_key: actual_value_str}；库不可打开时全部为空串。
     """
-    result: Dict[str, str] = {}
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=3)
-        try:
-            for key in keys:
-                query = _PRAGMA_QUERIES.get(key)
-                if not query:
-                    result[key] = ""
-                    continue
-                try:
-                    row = conn.execute(query).fetchone()
-                    result[key] = str(row[0]) if row else ""
-                except sqlite3.Error:
-                    result[key] = ""
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        for key in keys:
-            result.setdefault(key, "")
-    return result
+    result = _call_daemon_rpc(
+        "mcp.cli_admin.read_pragmas", {"db_path": db_path, "keys": list(keys)}
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("pragmas"), dict):
+        raise RuntimeError(f"read_pragmas: daemon 返回非预期结果: {result!r}")
+    return {str(k): str(v) for k, v in result["pragmas"].items()}
 
 
 def connection_test(db_path: str, rounds: int = 5) -> Tuple[int, int]:
-    """快速连接测试：连续打开只读连接执行 SELECT 1。
+    """快速连接测试：daemon 内连续打开只读连接执行 SELECT 1。
+
+    经 daemon `mcp.cli_admin.connection_test`。
 
     Args:
         db_path: SQLite 库路径。
@@ -92,26 +90,19 @@ def connection_test(db_path: str, rounds: int = 5) -> Tuple[int, int]:
     Returns:
         (success_count, fail_count)。
     """
-    success = 0
-    fail = 0
-    for _ in range(rounds):
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=3)
-            try:
-                conn.execute("SELECT 1").fetchone()
-            finally:
-                conn.close()
-            success += 1
-        except sqlite3.Error:
-            fail += 1
-    return success, fail
+    result = _call_daemon_rpc(
+        "mcp.cli_admin.connection_test", {"db_path": db_path, "rounds": rounds}
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(f"connection_test: daemon 返回非对象结果: {result!r}")
+    return int(result.get("success", 0)), int(result.get("fail", 0))
 
 
 def scan_hash_databases(callwarden_dir: str = CALLWARDEN_DIR) -> List[Dict[str, Any]]:
     """扫描旧版 16 位 hex hash 数据库目录，读取每个库的 workspaces 表。
 
-    供 `cw gc db-cleanup` 使用：CLI 侧只做孤儿判定与删除决策，SQL 读取集中
-    在本模块（只读连接 mode=ro）。
+    经 daemon `mcp.cli_admin.scan_hash_databases`（daemon 进程内只读扫描）。
+    供 `cw gc db-cleanup` 使用：CLI 侧只做孤儿判定与删除决策。
 
     Args:
         callwarden_dir: ~/.callwarden 目录。
@@ -126,44 +117,14 @@ def scan_hash_databases(callwarden_dir: str = CALLWARDEN_DIR) -> List[Dict[str, 
             "error": 读取失败原因（None 表示成功）,
         }
     """
-    results: List[Dict[str, Any]] = []
-    if not os.path.isdir(callwarden_dir):
-        return results
-    for name in sorted(os.listdir(callwarden_dir)):
-        if len(name) != 16 or not all(c in "0123456789abcdef" for c in name):
-            continue
-        dir_path = os.path.join(callwarden_dir, name)
-        db_file = os.path.join(dir_path, "callwarden.db")
-        if not os.path.isfile(db_file):
-            continue
-        entry: Dict[str, Any] = {
-            "hash": name,
-            "dir": dir_path,
-            "db_file": db_file,
-            "workspaces": [],
-            "error": None,
-        }
-        try:
-            conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=3)
-            conn.row_factory = sqlite3.Row
-            try:
-                rows = conn.execute(
-                    "SELECT id, name, root_path FROM workspaces ORDER BY id"
-                ).fetchall()
-                entry["workspaces"] = [
-                    {
-                        "id": row["id"],
-                        "name": row["name"] or "",
-                        "root_path": row["root_path"] or "",
-                    }
-                    for row in rows
-                ]
-            finally:
-                conn.close()
-        except sqlite3.Error as exc:
-            entry["error"] = f"read_error: {exc}"
-        results.append(entry)
-    return results
+    result = _call_daemon_rpc(
+        "mcp.cli_admin.scan_hash_databases", {"callwarden_dir": callwarden_dir}
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("databases"), list):
+        raise RuntimeError(
+            f"scan_hash_databases: daemon 返回非预期结果: {result!r}"
+        )
+    return list(result["databases"])
 
 
 def migrate_single_db(dry_run: bool = True, backup: bool = True) -> Dict[str, Any]:
@@ -190,71 +151,42 @@ def read_task_dependencies(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """只读查询任务/契约的依赖声明、产物与接口（供 `cw dependency inspect`）。
 
+    经 daemon `mcp.cli_admin.read_task_dependencies`；任一查询失败该列表为 []，
+    db 不可打开全部为空列表（与下沉前语义一致）。
+
     Args:
         workspace_id: 数值 workspace id。
         task_id: 任务 id（与 contract_id 二选一）。
         contract_id: 契约 id（与 task_id 二选一）。
         revision: 契约版本（>0 时精确匹配版本）。
-        db_path: 用户级单库路径（默认 config.DB_PATH）。
+        db_path: 用户级单库路径（空 → daemon 默认路径）。
 
     Returns:
-        {"dependencies": [...], "artifacts": [...], "interfaces": [...]}；
-        任一查询失败时该列表为 []。
+        {"dependencies": [...], "artifacts": [...], "interfaces": [...]}。
     """
-    result: Dict[str, List[Dict[str, Any]]] = {
-        "dependencies": [],
-        "artifacts": [],
-        "interfaces": [],
+    result = _call_daemon_rpc(
+        "mcp.cli_admin.read_task_dependencies",
+        {
+            "workspace_id": workspace_id,
+            "task_id": task_id,
+            "contract_id": contract_id,
+            "revision": revision,
+            "db_path": db_path,
+        },
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"read_task_dependencies: daemon 返回非对象结果: {result!r}"
+        )
+    return {
+        "dependencies": list(result.get("dependencies") or []),
+        "artifacts": list(result.get("artifacts") or []),
+        "interfaces": list(result.get("interfaces") or []),
     }
-    target = db_path or get_default_db_path()
-    try:
-        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=3)
-        conn.row_factory = sqlite3.Row
-        try:
-            if task_id:
-                deps = conn.execute(
-                    "SELECT dependency_type, target_ref, target_task_id, "
-                    "is_informational, contract_id, contract_revision, declared_at "
-                    "FROM task_dependencies WHERE workspace_id = ? AND task_id = ?",
-                    (workspace_id, task_id),
-                ).fetchall()
-                result["dependencies"] = [dict(r) for r in deps]
 
-                arts = conn.execute(
-                    "SELECT artifact_id, artifact_type, artifact_ref, artifact_hash, "
-                    "freshness_status, produced_at "
-                    "FROM artifact_identities WHERE workspace_id = ? AND task_id = ?",
-                    (workspace_id, task_id),
-                ).fetchall()
-                result["artifacts"] = [dict(r) for r in arts]
 
-                ifaces = conn.execute(
-                    "SELECT interface_id, interface_name, version, interface_hash "
-                    "FROM interface_identities WHERE workspace_id = ? "
-                    "AND provider_task_id = ?",
-                    (workspace_id, task_id),
-                ).fetchall()
-                result["interfaces"] = [dict(r) for r in ifaces]
-            elif contract_id:
-                if revision > 0:
-                    deps = conn.execute(
-                        "SELECT dependency_type, target_ref, target_task_id, "
-                        "is_informational, task_id, declared_at FROM task_dependencies "
-                        "WHERE workspace_id = ? AND contract_id = ? "
-                        "AND contract_revision = ?",
-                        (workspace_id, contract_id, revision),
-                    ).fetchall()
-                else:
-                    deps = conn.execute(
-                        "SELECT dependency_type, target_ref, target_task_id, "
-                        "is_informational, task_id, contract_revision, declared_at "
-                        "FROM task_dependencies "
-                        "WHERE workspace_id = ? AND contract_id = ?",
-                        (workspace_id, contract_id),
-                    ).fetchall()
-                result["dependencies"] = [dict(r) for r in deps]
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        pass
-    return result
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经 daemon 统一 fail-closed 客户端发起 RPC（不回退本地 SQLite）。"""
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
