@@ -3901,6 +3901,13 @@ def _handle_task(args, db):
             "--role", default="", metavar="ROLE",
             help=t("cli_task_arg_role",
                    default="Role (planner/implementer/reviewer/tester)"))
+        # v3 修复：agent_instance_id 透传（daemon parse_action_identity 支持该字段；
+        # 注册 instance 非空的 agent 必须携带一致值，否则 claim/supersede 报
+        # E_IDENTITY_INSTANCE_MISMATCH）。instance 可选——空则省略。
+        _identity_parser.add_argument(
+            "--agent-instance-id", default="", metavar="ID",
+            help=t("cli_task_arg_agent_instance_id",
+                   default="Agent instance ID (P3 Identity, optional; must match registration if non-empty)"))
 
     # P4：task report/apply/close/reopen 支持受保护写 Lease 凭证（Req 11.8-11.9）。
     # 提供 --lease-token 时启用受保护写路径：过期/token 不匹配/旧 counter 在写入前拒绝。
@@ -4146,6 +4153,8 @@ def _handle_task(args, db):
                                  help="Registered adjudicator model ID")
     attest_legacy_p.add_argument("--role", required=True, choices=["adjudicator"],
                                  help="Governance role; only adjudicator is accepted")
+    attest_legacy_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                                 help="Registered adjudicator agent instance ID (optional; must match registration if non-empty)")
 
     # P0-C：对治理投影完全缺失但已绑定 authority 的任务一次性追加 v1 Task/Role/step contracts。
     contract_bootstrap_p = sub.add_parser(
@@ -4177,6 +4186,8 @@ def _handle_task(args, db):
                                       help="Registered adjudicator model ID")
     contract_bootstrap_p.add_argument("--role", required=True, choices=["adjudicator"],
                                       help="Governance role; only adjudicator is accepted")
+    contract_bootstrap_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                                      help="Registered adjudicator agent instance ID (optional; must match registration if non-empty)")
 
     # superseded：只读查询某任务的替代者（task.superseded_by）
     superseded_p = sub.add_parser(
@@ -15658,9 +15669,14 @@ def _resolve_action_session(identity):
 def _collect_identity(opts):
     """从 CLI 选项收集结构化身份（Req 10.1）。
 
+    v3：新增可选第 5 字段 agent_instance_id（daemon parse_action_identity 支持；
+    注册 instance 非空的 agent 必须携带一致值，否则 claim/supersede 报
+    E_IDENTITY_INSTANCE_MISMATCH）。核心四字段（agent_id/session_id/model_id/role）
+    仍为必填，instance 可选。
+
     Returns:
-        (identity_dict, None)：四个字段齐备时的结构化身份；
-        (None, reason_dict)：任一字段出现但四者不全时的 Structured_Reason；
+        (identity_dict, None)：核心四字段齐备时的结构化身份（含可选 agent_instance_id）；
+        (None, reason_dict)：核心四字段任一缺失时的 Structured_Reason；
         (None, None)：未提供任何身份字段（沿用既有行为）。
     """
     parts = {
@@ -15668,15 +15684,16 @@ def _collect_identity(opts):
         "session_id": getattr(opts, "session_id", ""),
         "model_id": getattr(opts, "model_id", ""),
         "role": getattr(opts, "role", ""),
+        "agent_instance_id": getattr(opts, "agent_instance_id", ""),
     }
-    provided = {k: v for k, v in parts.items() if v}
-    if not provided:
+    core = {k: v for k, v in parts.items() if k != "agent_instance_id" and v}
+    if not core and not parts.get("agent_instance_id"):
         return None, None
-    if len(provided) != 4:
+    if len(core) != 4:
         return None, {
             "code": "E_IDENTITY_INCOMPLETE",
             "message_key": "daemon_errors.error.identity_incomplete",
-            "detail": "必须同时提供 agent_id/session_id/model_id/role 四个字段",
+            "detail": "必须同时提供 agent_id/session_id/model_id/role 四个核心字段（agent_instance_id 可选）",
         }
     return parts, None
 
@@ -16018,7 +16035,8 @@ def _identity_revoke(db, opts, use_json):
 # ============================================================
 
 def _collect_lease_identity(opts):
-    """收集 Lease 命令的 holder Identity（agent_id/session_id/model_id 必填）
+    """收集 Lease 命令的 holder Identity（agent_id/session_id/model_id 必填；
+    agent_instance_id/role 可选，由调用方按需并入）
 
     Returns:
         (identity_dict, reason)：齐备时 identity_dict 非空、reason 为 None；
@@ -16033,11 +16051,15 @@ def _collect_lease_identity(opts):
             "message_key": "daemon_errors.error.identity_incomplete",
             "detail": "Lease/Assignment 需要同时提供 --agent-id/--session-id/--model-id（Req 11.2）",
         }
-    return {
+    identity = {
         "agent_id": agent_id,
         "session_id": session_id,
         "model_id": model_id,
-    }, None
+    }
+    instance_id = getattr(opts, "agent_instance_id", "")
+    if instance_id:
+        identity["agent_instance_id"] = instance_id
+    return identity, None
 
 
 def _collect_lease_creds(opts):
@@ -16165,6 +16187,9 @@ def _handle_lease(args, db):
                            help=t("cli_task_arg_session_id", default="Session ID"))
     acquire_p.add_argument("--model-id", default="", metavar="ID",
                            help=t("cli_task_arg_model_id", default="Model ID"))
+    acquire_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                           help=t("cli_task_arg_agent_instance_id",
+                                  default="Agent instance ID (optional)"))
     acquire_p.add_argument("--ttl", type=float, default=3600.0,
                            help=t("cli_lease_arg_ttl",
                                   default="TTL seconds (default 3600)"))
@@ -16186,6 +16211,9 @@ def _handle_lease(args, db):
                          help=t("cli_task_arg_session_id", default="Session ID"))
     renew_p.add_argument("--model-id", default="", metavar="ID",
                          help=t("cli_task_arg_model_id", default="Model ID"))
+    renew_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                         help=t("cli_task_arg_agent_instance_id",
+                                default="Agent instance ID (optional)"))
     renew_p.add_argument("--ttl", type=float, default=3600.0,
                          help=t("cli_lease_arg_ttl", default="TTL seconds"))
     renew_p.add_argument("--json", action="store_true",
@@ -16206,6 +16234,9 @@ def _handle_lease(args, db):
                            help=t("cli_task_arg_session_id", default="Session ID"))
     release_p.add_argument("--model-id", default="", metavar="ID",
                            help=t("cli_task_arg_model_id", default="Model ID"))
+    release_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                           help=t("cli_task_arg_agent_instance_id",
+                                  default="Agent instance ID (optional)"))
     release_p.add_argument("--json", action="store_true",
                            help=t("cli_identity_arg_json", default="JSON output"))
 

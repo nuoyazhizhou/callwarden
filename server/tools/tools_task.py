@@ -65,7 +65,7 @@ def register(mcp: FastMCP) -> None:
         return _route('task.create', {"title": title, "description": description, "steps": steps, "creator": creator}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_next_step(task_id: str, agent_session_id: str = "", identity: dict = None, contract_claim: dict = None) -> Optional[dict]:
+    def task_next_step(task_id: str, agent_session_id: str = "", identity: dict = None, contract_claim: dict = None, agent_instance_id: str = "") -> Optional[dict]:
         """领取任务的下一个待执行步骤
 
         Agent 必须通过此工具领取步骤，不能自由决定下一步操作。
@@ -80,6 +80,8 @@ def register(mcp: FastMCP) -> None:
         A2/A3 合同领取（agent-task-contract-design.md §4.1/4.2）：
         - identity: Agent 身份 JSON（agent_id/agent_instance_id/session_id/model_id/role 等）。
           冻结 Role Contract 的任务必须携带 identity（fail-closed），未注册身份禁止领取。
+        - agent_instance_id: 独立参数；提供时并入 identity（identity 已含该字段则以其为准）。
+          注册 instance 非空的 agent 必须携带一致值，否则 daemon 报 E_IDENTITY_INSTANCE_MISMATCH。
         - contract_claim: 声明本次领取使用的 skill_id/skill_version/prompt_hash；
           与任务冻结合同不符时拒绝领取（E_CONTRACT_*_MISMATCH）。
         - 领取成功时返回 role_contract（Task Envelope）供 Agent 遵守。
@@ -90,10 +92,13 @@ def register(mcp: FastMCP) -> None:
                 并发认领同一任务时用于区分不同逻辑 Agent；缺省时 daemon 以连接身份为准。
             identity: Agent 身份 JSON（可选；合同任务必填）
             contract_claim: 合同声明 JSON（可选）
+            agent_instance_id: Agent 实例 ID（可选；identity 未含该字段时并入）
 
         Returns:
             步骤详情，如果没有待执行步骤则返回 None
         """
+        if identity and agent_instance_id and not identity.get("agent_instance_id"):
+            identity = {**identity, "agent_instance_id": agent_instance_id}
         return _route('task.claim', {"task_id": task_id, "agent_session_id": agent_session_id, "identity": identity, "contract_claim": contract_claim}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
@@ -124,7 +129,7 @@ def register(mcp: FastMCP) -> None:
         return _route('task.reopen', {"task_id": task_id, "step_id": step_id, "resolution": resolution}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None, identity: dict = None) -> Optional[dict]:
+    def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None, identity: dict = None, agent_instance_id: str = "") -> Optional[dict]:
         """回报步骤执行结果
 
         如果失败，系统会自动插入"修复缺陷"步骤，Agent 无法跳过。
@@ -136,12 +141,15 @@ def register(mcp: FastMCP) -> None:
             result: 执行结果描述
             success: 是否成功
             changes: 变更记录列表
-            identity: P3 结构化身份 JSON（{agent_id, session_id, model_id, role}，
+            identity: P3 结构化身份 JSON（{agent_id, agent_instance_id, session_id, model_id, role}，
                       可选；提供后由包装层校验并透传给 db 层，不得伪造缺省身份）
+            agent_instance_id: Agent 实例 ID（可选；identity 未含该字段时并入）
 
         Returns:
             下一步步骤信息（如果有）
         """
+        if identity and agent_instance_id and not identity.get("agent_instance_id"):
+            identity = {**identity, "agent_instance_id": agent_instance_id}
         return _route('task.report', {"task_id": task_id, "step_id": step_id, "result": result, "success": success, "changes": changes, "identity": identity}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
@@ -204,6 +212,9 @@ def register(mcp: FastMCP) -> None:
         enterprise/auto（daemon 权威路径）：必须携带完整 reviewer lease 凭证
         （lease_token + fencing_counter，来自 lease_acquire 返回值），
         否则 daemon 返回 E_LEASE_REQUIRED fail-closed。
+        identity: P3 结构化身份 JSON 字符串或对象（{agent_id, agent_instance_id,
+                  session_id, model_id, role}）；注册 instance 非空的 agent 必须携带
+                  一致 agent_instance_id，否则 E_IDENTITY_INSTANCE_MISMATCH。
         local（本地开发兼容路径）：提供凭证时执行受保护写校验，缺省时跳过校验。
         """
         return _route('task.apply', {"task_id": task_id, "reviewer": reviewer, "identity": identity, "lease_token": lease_token, "fencing_counter": fencing_counter}, 'PROTECTED_MUTATION')
@@ -220,6 +231,9 @@ def register(mcp: FastMCP) -> None:
 
         enterprise/auto（daemon 权威路径）：必须携带完整 reviewer lease 凭证
         （lease_token + fencing_counter），否则 daemon 返回 E_LEASE_REQUIRED fail-closed。
+        identity: P3 结构化身份 JSON 字符串或对象（{agent_id, agent_instance_id,
+                  session_id, model_id, role}）；注册 instance 非空的 agent 必须携带
+                  一致 agent_instance_id，否则 E_IDENTITY_INSTANCE_MISMATCH。
         local（本地开发兼容路径）：提供凭证时执行受保护写校验，缺省时跳过校验。
         """
         return _route('task.close', {"task_id": task_id, "reviewer": reviewer, "identity": identity, "lease_token": lease_token, "fencing_counter": fencing_counter}, 'PROTECTED_MUTATION')
