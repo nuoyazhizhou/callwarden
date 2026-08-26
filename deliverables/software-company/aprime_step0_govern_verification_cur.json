@@ -1,0 +1,224 @@
+{
+  "task_id": "T-1787293451688-c14b1e44",
+  "step_id": "S-1787293451689-c155c72c",
+  "checks": {
+    "parent_workspace_bound": true,
+    "three_role_contracts_frozen": true,
+    "cli01_is_initial_child": true,
+    "old_s2_supersede_deferred": true
+  },
+  "evidence": {
+    "workspace_bindings": [
+      {
+        "task_id": "T-1787293451688-c14b1e44",
+        "workspace_id": 1,
+        "workspace_binding_id": "tb-T-1787293451688-c14b1e44-ws-1",
+        "workspace_capture_id": "wc-ws-1-3243431736",
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001",
+        "authoritative_created_at": "1787293451.6893272"
+      }
+    ],
+    "binding_columns": [
+      "task_id",
+      "workspace_id",
+      "workspace_binding_id",
+      "workspace_capture_id",
+      "created_by",
+      "authoritative_created_at"
+    ],
+    "role_contract_tables": [
+      "role_contracts",
+      "role_contract_lineages",
+      "role_contract_revisions",
+      "task_step_role_contract_bindings"
+    ],
+    "template_file_sha256": {
+      "executor": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+      "reviewer": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+      "adjudicator": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E"
+    },
+    "template_expected_sha256": {
+      "executor": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+      "reviewer": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+      "adjudicator": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E"
+    },
+    "role_contracts": [
+      {
+        "contract_id": "RC-T-1787293451688-c14b1e44-adjudicator-2",
+        "task_id": "T-1787293451688-c14b1e44",
+        "step_id": "",
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+        "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+        "allowed_paths": "final review and protected task finalization within daemon authority",
+        "forbidden_paths": "production edits; local SQLite fallback; status forgery",
+        "commands": "task.next_action; task.apply; task.close; task.handoff; task.supersede when separately authorized",
+        "acceptance_checks": "ACCEPT requires valid reviewer lease/fencing then apply, close and next_action=COMPLETE",
+        "required_evidence": "final review; lease/fencing provenance; apply/close/COMPLETE verification",
+        "handoff_to": "complete",
+        "independence": "required",
+        "revision": 1,
+        "is_current": 1,
+        "created_at": 1787293451.6888146,
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "contract_id": "RC-T-1787293451688-c14b1e44-executor-0",
+        "task_id": "T-1787293451688-c14b1e44",
+        "step_id": "",
+        "role": "executor",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.executor.startup.v1",
+        "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+        "allowed_paths": "task-card scoped paths only",
+        "forbidden_paths": "task.apply; task.close; task.supersede; out-of-scope production/schema changes",
+        "commands": "task.next_action; task.claim; task.report; task.handoff",
+        "acceptance_checks": "one tool/CLI link; tests; evidence manifest/hash; executor_ready_for_review",
+        "required_evidence": "implementation plan; test output; negative test; daemon round-trip evidence",
+        "handoff_to": "reviewer",
+        "independence": "required",
+        "revision": 1,
+        "is_current": 1,
+        "created_at": 1787293451.6888146,
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      },
+      {
+        "contract_id": "RC-T-1787293451688-c14b1e44-reviewer-1",
+        "task_id": "T-1787293451688-c14b1e44",
+        "step_id": "",
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+        "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+        "allowed_paths": "read-only review evidence and structured review handoff",
+        "forbidden_paths": "production edits; task.apply; task.close; task.supersede",
+        "commands": "task.next_action; task.contract.get; task.handoff",
+        "acceptance_checks": "independent verification of scope, diff, tests, evidence, gate and matrix condition",
+        "required_evidence": "review record; findings or reviewer_pass evidence manifest/hash",
+        "handoff_to": "adjudicator",
+        "independence": "required",
+        "revision": 1,
+        "is_current": 1,
+        "created_at": 1787293451.6888146,
+        "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+      }
+    ],
+    "role_contract_lineages": [
+      {
+        "role_contract_lineage_id": "rcl-T-1787293451688-c14b1e44-adjudicator",
+        "task_id": "T-1787293451688-c14b1e44",
+        "workspace_id": 1,
+        "role": "adjudicator",
+        "created_by": "adjudicator-workbuddy-v1",
+        "authoritative_created_at": "1787364627.96841"
+      },
+      {
+        "role_contract_lineage_id": "rcl-T-1787293451688-c14b1e44-executor",
+        "task_id": "T-1787293451688-c14b1e44",
+        "workspace_id": 1,
+        "role": "executor",
+        "created_by": "adjudicator-workbuddy-v1",
+        "authoritative_created_at": "1787364627.96715"
+      },
+      {
+        "role_contract_lineage_id": "rcl-T-1787293451688-c14b1e44-reviewer",
+        "task_id": "T-1787293451688-c14b1e44",
+        "workspace_id": 1,
+        "role": "reviewer",
+        "created_by": "adjudicator-workbuddy-v1",
+        "authoritative_created_at": "1787364627.96794"
+      }
+    ],
+    "task_step_role_contract_bindings": [
+      {
+        "binding_id": "sb-T-1787293451688-c14b1e44-S-1787293451689-c155c72c-r1",
+        "workspace_id": 1,
+        "task_id": "T-1787293451688-c14b1e44",
+        "step_id": "S-1787293451689-c155c72c",
+        "role_contract_lineage_id": "rcl-T-1787293451688-c14b1e44-executor",
+        "role_contract_revision_id": "rcr-T-1787293451688-c14b1e44-executor-r1",
+        "role_contract_revision": 1,
+        "role_contract_hash": "sha256:2ea2a4c431caacf14557b3fff0e391320ce1275324bacf08ba4a4eb4012f12ac",
+        "canonicalization_version": "role-contract-c14n/v1",
+        "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+        "binding_revision": 1,
+        "supersedes_binding_id": null,
+        "created_by": "adjudicator-workbuddy-v1",
+        "authoritative_created_at": "1787364627.96882"
+      },
+      {
+        "binding_id": "sb-T-1787293451688-c14b1e44-S-1787293451689-c157beb0-r1",
+        "workspace_id": 1,
+        "task_id": "T-1787293451688-c14b1e44",
+        "step_id": "S-1787293451689-c157beb0",
+        "role_contract_lineage_id": "rcl-T-1787293451688-c14b1e44-executor",
+        "role_contract_revision_id": "rcr-T-1787293451688-c14b1e44-executor-r1",
+        "role_contract_revision": 1,
+        "role_contract_hash": "sha256:2ea2a4c431caacf14557b3fff0e391320ce1275324bacf08ba4a4eb4012f12ac",
+        "canonicalization_version": "role-contract-c14n/v1",
+        "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+        "binding_revision": 1,
+        "supersedes_binding_id": null,
+        "created_by": "adjudicator-workbuddy-v1",
+        "authoritative_created_at": "1787364627.96896"
+      }
+    ],
+    "db_contract_roles": [
+      "adjudicator",
+      "executor",
+      "reviewer"
+    ],
+    "children_total": 187,
+    "first_child": {
+      "id": "T-1787321020926-b7ed7500",
+      "title": "CLI-01 [Gate/control_plane]：cw daemon health / manifest / capability 诊断链路",
+      "status": "closed",
+      "parent_id": "T-1787293451688-c14b1e44",
+      "created_at": 1787321020.926755
+    },
+    "supersede_event_columns": [
+      "event_id",
+      "superseded_task_id",
+      "superseding_task_id",
+      "reason",
+      "actor",
+      "monotonic_seq",
+      "authoritative_timestamp",
+      "workspace_id",
+      "supersedence_id",
+      "reason_code",
+      "actor_agent_id",
+      "actor_session_id",
+      "actor_model_id",
+      "actor_role",
+      "request_id",
+      "lease_id",
+      "fencing_counter",
+      "evidence_path",
+      "evidence_hash"
+    ],
+    "old_s2_supersede_events": [],
+    "old_s2_status": [
+      {
+        "id": "T-1787203937201-0a156564",
+        "status": "open"
+      },
+      {
+        "id": "T-1787209948470-a59bcf9c",
+        "status": "open"
+      }
+    ],
+    "cli01_gate_status": [
+      {
+        "id": "T-1787321020926-b7ed7500",
+        "status": "closed"
+      }
+    ],
+    "old_s2_supersede_events_note": "按 superseded_task_id/superseding_task_id 精确查询旧 S2 两任务，结果为 0 条事件；此前字段为列名不匹配的 fallback 采样，已修正"
+  },
+  "checks_summary": true
+}
