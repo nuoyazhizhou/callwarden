@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-26T09:40:06",
+  "updated_at": "2026-08-26T09:45:35",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1537,6 +1537,16 @@
       "Callwarden 无人值守循环启动模板：Executor _ Planner v3.md",
       "Callwarden 无人值守循环启动模板：Reviewer v3.md"
     ],
-    "tests": "py_compile OK；_collect_identity 五字段单测 6 例通过；test_cli_079 3 passed"
+    "tests": "py_compile OK；_collect_identity 五字段单测 6 例通过；test_cli_079 3 passed",
+    "commits": {
+      "code_fix": "e04c0e2 (cli/main.py + server/tools/tools_task.py)",
+      "templates_ledger": "847d6ae (三份 v3 模板 + 台账)"
+    },
+    "verification": {
+      "editable_install": "callwarden 0.2.0 editable -> C:/git_work/callwarden，改动即时生效",
+      "cli_runtime": "cw task next --help 已显示 --agent-instance-id",
+      "unit": "_collect_identity 五字段 6 例通过；test_cli_079 3 passed",
+      "daemon_end_to_end": "daemon 当前未运行（8/24 版已停），未擅自启动；instance 门禁已由代码核对（L1552 注册 instance 非空则必须相等）+ 修复后参数透传保证"
+    }
   }
 }
