@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-26T09:45:35",
+  "updated_at": "2026-08-26T05:24:05Z",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1210,6 +1210,15 @@
       "produced_at": 1787476090.3127494,
       "note": "commit 已 prune 或需核验是否在 master",
       "recorded_at": "2026-08-26T02:06:29"
+    },
+    {
+      "task_id": "T-1787293451688-c14b1e44",
+      "commit_id": "5d92f1266bbc455ea99b57403d5cde8fff3daaf4",
+      "status": "new_in_master",
+      "scope": "deliverables/software-company/aprime_step0_govern_verification_cur.json, deliverables/software-company/aprime_step1_verify_verification_cur.json",
+      "source": "executor-workbuddy-v1-cur loop",
+      "note": "message 内嵌 task_id；A-prime 父任务 step0 govern + step1 verify 新鲜只读核验证据（含 rolling window 历史偏差 caveat）",
+      "recorded_at": "2026-08-26T05:24:05Z"
     }
   ],
   "known_commits": {
