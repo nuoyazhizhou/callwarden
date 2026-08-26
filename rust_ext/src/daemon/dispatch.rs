@@ -2496,6 +2496,21 @@ fn dispatch_inner<S: DaemonStateExt>(
             super::cli_admin_handlers::handle_scan_hash_databases(params)
         }
 
+        // ---- SRV-005：mcp.daemon_autostart 三方法（T-1787323460652-c2eaada8）----
+        // 网络连通探测（mode=ro，无 DB），不进 ADMIN_ONLY / PROTECTED_MUTATION 清单；
+        // RPC 无法传 socket，下沉为「connect + 立即关闭」探测语义；
+        // 错误语义与 Python 对齐：endpoint 缺失 invalid_params，格式非法/不可达 fail-soft
+        // 返回 connectable=false（对齐 Python 返回 None/False 不抛异常）。
+        "mcp.daemon_autostart.try_connect_tcp" => {
+            super::daemon_autostart_handlers::handle_try_connect_tcp(params)
+        }
+        "mcp.daemon_autostart.try_connect_unix" => {
+            super::daemon_autostart_handlers::handle_try_connect_unix(params)
+        }
+        "mcp.daemon_autostart.try_http_connect" => {
+            super::daemon_autostart_handlers::handle_try_http_connect(params)
+        }
+
         // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
         // 全部新 method 统一进入 handle_convergence_rpc（SnapshotDaemonState 重写）。
         m if is_convergence_rpc(m) => state.handle_convergence_rpc(peer, m, params),

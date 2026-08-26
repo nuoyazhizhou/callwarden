@@ -1592,13 +1592,22 @@ fn build_capability_registry() -> Result<Value, String> {
     add("mcp.cli_admin.read_pragmas", "mcp.cli_admin.read_pragmas", "mcp-cli-admin-read-pragmas", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-cli-admin-read-pragmas-ok", "fixture-mcp-cli-admin-read-pragmas-err", "T-1787323460580-bea19180#SRV-004", "");
     add("mcp.cli_admin.read_task_dependencies", "mcp.cli_admin.read_task_dependencies", "mcp-cli-admin-read-task-dependencies", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-cli-admin-read-task-dependencies-ok", "fixture-mcp-cli-admin-read-task-dependencies-err", "T-1787323460580-bea19180#SRV-004", "");
     add("mcp.cli_admin.scan_hash_databases", "mcp.cli_admin.scan_hash_databases", "mcp-cli-admin-scan-hash-databases", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-cli-admin-scan-hash-databases-ok", "fixture-mcp-cli-admin-scan-hash-databases-err", "T-1787323460580-bea19180#SRV-004", "");
+    // daemon autostart 面（SRV-005：server daemon autostart Python authority → Rust daemon，
+    // 网络连通探测 mode=ro，探测语义：connect + 立即关闭，返回 connectable）
+    add("mcp.daemon_autostart.try_connect_tcp", "mcp.daemon_autostart.try_connect_tcp", "mcp-daemon-autostart-try-connect-tcp", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-daemon-autostart-try-connect-tcp-ok", "fixture-mcp-daemon-autostart-try-connect-tcp-err", "T-1787323460652-c2eaada8#SRV-005", "");
+    add("mcp.daemon_autostart.try_connect_unix", "mcp.daemon_autostart.try_connect_unix", "mcp-daemon-autostart-try-connect-unix", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-daemon-autostart-try-connect-unix-ok", "fixture-mcp-daemon-autostart-try-connect-unix-err", "T-1787323460652-c2eaada8#SRV-005", "");
+    add("mcp.daemon_autostart.try_http_connect", "mcp.daemon_autostart.try_http_connect", "mcp-daemon-autostart-try-http-connect", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-mcp-daemon-autostart-try-http-connect-ok", "fixture-mcp-daemon-autostart-try-http-connect-err", "T-1787323460652-c2eaada8#SRV-005", "");
 
     // python_compat 方法由 H3 compat worker 提供服务（backend=python_compat + available）
     // W2-1（T-1786840097330-dec66710）：get_uncommented_symbols / get_module_call_stats /
     // get_semgrep_stats 已迁移 rust_native（走 snapshot query_db_path，native handler 在
     // snapshot_state.rs），对应 COMPAT_ROUTE_WHITELIST 条目已移除。
     add("get_uncommented_symbols", "get_uncommented_symbols", "get-uncommented-symbols", "rust_native", "available", "read_only", "snapshot", false, "/v1/rpc", "fixture-get-uncommented-symbols-ok", "fixture-get-uncommented-symbols-err", "T-1786840097330-dec66710#W2-1", "");
-    add("stats_top_files", "stats_top_files", "stats-top-files", "python_compat", "available", "read_only", "authority", false, "/v1/rpc", "fixture-stats-top-files-ok", "fixture-stats-top-files-err", "T-1786590214634-9e740cdc-sub-4#H3", "legacy-python");
+    // INT-001（T-1787322971676-e9aae4d4）：stats_top_files 从 python_compat 迁移
+    // rust_native（backend 切换，native handler 在 snapshot_state.rs，走 snapshot
+    // query_db_path）；对应 Python compat_registry._stats_top_files 已移除、
+    // RUST_COMPAT_ROUTE 条目已移除。
+    add("stats_top_files", "stats_top_files", "stats-top-files", "rust_native", "available", "read_only", "authority", false, "/v1/rpc", "fixture-stats-top-files-ok", "fixture-stats-top-files-err", "T-1787322971676-e9aae4d4#INT-001", "");
     // H4C-2 符号组只读工具（15 项，workspace scope，T-1786716190783-ba187c88#H4C-2；
     // get_uncommented_symbols / get_module_call_stats / get_semgrep_stats 3 项
     // 已 W2-1 迁移 rust_native（T-1786840097330-dec66710），17->15）

@@ -180,6 +180,11 @@ pub mod backup_restore_handlers;
 ///（`mcp.cli_admin.{connection_test,open_readonly_conn,read_pragmas,read_task_dependencies,scan_hash_databases}`）。
 pub mod cli_admin_handlers;
 
+/// 3.24: daemon autostart 面 handler（SRV-005：server daemon autostart Python authority → Rust daemon）
+/// 对应 `server/daemon_autostart.py` 三个 socket connect 权威探测函数的 Rust 下沉
+///（`mcp.daemon_autostart.{try_connect_tcp,try_connect_unix,try_http_connect}`，探测语义）。
+pub mod daemon_autostart_handlers;
+
 /// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
 /// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。
 pub mod job_runner;
