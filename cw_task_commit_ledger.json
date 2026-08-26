@@ -1564,7 +1564,7 @@
     "code_fix_commit": "5e53440",
     "code_fix_scope": "cli/main.py _local_close 去 db 直连改 fail-closed + tests/test_cli_079_http_rpc.py 测试改 fail-closed 断言",
     "closure_evidence": "deliverables/software-company/CLI079_fixdefect_closure_evidence.md",
-    "closure_commit": null,
+    "closure_commit": "7ef8e33",
     "caveat": "fix_defect binding 为直写补齐（先例 T-1787402257549-67ba81e6），详见 closure manifest §0"
   }
 }
