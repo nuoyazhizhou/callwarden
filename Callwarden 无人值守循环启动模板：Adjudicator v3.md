@@ -193,6 +193,10 @@ CLI-01 等 `control_plane` Gate 在最终闭环前不会放行后继 port_type �
   （10 字段）对齐；身份落定 `adjudicator-workbuddy-v1`（instance 空，当前可用）。
 - **session 独立规则**：三角色 session 互异（`check_role_independence` L741），禁 SID，推荐
   `CW_AGENT_SESSION_ID` 固定。
+- **共享 VCS/入库纪律（一致性）**：实现代码的 git 提交纪律——`git commit` message 必须内嵌 task_id，提交后把
+  commitid↔taskid 追加写入 `cw_task_commit_ledger.json`（即「cw 刷新入库」，损失隔离到单任务）——**由
+  Executor 角色执行**，详见 Executor/Planner v3 §2.5（2026-08-26 worktree-prune 搞坏 git 仓库的教训）。
+  本角色不提交实现代码，亦不得手改该台账；本角色只保证 apply/close 状态机正确收尾。
 - 沿用 v2：next_action 单任务 ID 派工发现（防 `E_WORKSPACE_AUTHORITY_UNAVAILABLE` 误报）、双锁语义
   （acting role=adjudicator，apply/close 持 reviewer lease）、单 active adjudicator lease、
   `BLOCKED_FINALIZATION` 非完成语义。

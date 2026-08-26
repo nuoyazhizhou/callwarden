@@ -172,5 +172,9 @@ daemon 不可用、lease/authority 身份不完整、证据不可访问、哈希
   污染 next_action（36 条残留事故教训）。
 - **session 独立规则**：三角色 session 互异（`check_role_independence` L741），禁 SID，推荐
   `CW_AGENT_SESSION_ID` 固定。
+- **共享 VCS/入库纪律（一致性）**：实现代码的 git 提交纪律——`git commit` message 必须内嵌 task_id，提交后把
+  commitid↔taskid 追加写入 `cw_task_commit_ledger.json`（即「cw 刷新入库」，损失隔离到单任务）——**由
+  Executor 角色执行**，详见 Executor/Planner v3 §2.5（2026-08-26 worktree-prune 搞坏 git 仓库的教训）。
+  本角色不提交实现代码，亦不得手改该台账；本角色只出具独立 verdict，绝不 apply/close。
 - 沿用 v2：next_action 单任务 ID 派工发现、单 active reviewer lease、reviewer 不创建 fix_defect step
   （daemon 同事务追加）。
