@@ -45,7 +45,6 @@ import json
 import shutil
 import hashlib
 import secrets
-import sqlite3
 from pathlib import PureWindowsPath
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -92,27 +91,21 @@ _BACKUP_ROLLBACK_CACHE_TTL = 60.0
 def _is_rust_backup_rolled_back() -> bool:
     """检查 rust_daemon_backup_compute feature 是否已回滚（60s 缓存）。
 
-    backup/restore 是冷路径（仅在 daemon admin RPC 触发时调用），
-    但 60s 缓存仍可避免频繁 DB 查询，且与 metrics/health/audit 保持一致模式。
+    SRV-003 收敛（server backup restore Python authority → Rust daemon）：
+    rollback_config 的 SQLite 权威已下沉到 daemon，本函数为纯薄客户端，
+    经 `mcp.backup_restore.is_rust_backup_rolled_back` 查询。只读 authority 读：
+    daemon 不可用时 fail-soft 视为未回滚（返回 False，与 metrics/health/audit
+    的 rollback 探测一致），绝不回退本地 SQLite。
+    60s 缓存保留，避免热路径频繁 RPC。
     """
     now = time.time()
     if now - _BACKUP_ROLLBACK_CACHE["ts"] < _BACKUP_ROLLBACK_CACHE_TTL:
         return _BACKUP_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_daemon_backup_compute",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc("mcp.backup_restore.is_rust_backup_rolled_back", {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
+        # fail-soft：只读探测，daemon 不可用时视为未回滚（不回退本地 SQLite）
         value = False
     _BACKUP_ROLLBACK_CACHE["ts"] = now
     _BACKUP_ROLLBACK_CACHE["value"] = value
@@ -456,15 +449,12 @@ class BackupManager:
         return final_dir, temp_dir
 
     def _backup_file(self, src_path: str, dest_dir: str, dest_name: str) -> Optional[Dict[str, Any]]:
-        """备份单个文件。
+        """备份单个文件（SRV-003：daemon RPC 薄客户端）。
 
-        对于 SQLite DB 文件，使用 `sqlite3.Connection.backup` API 创建一致性
-        备份（在线备份，自动覆盖 WAL 内容），失败时降级为文件复制。
-
-        C8/B5：Python 回退路径的备份机制与 Rust 默认路径（VACUUM INTO，
-        先 passive checkpoint）是有意保留的差异——sqlite3 backup API 对
-        在线 DB 更稳健（无需写源库、自动处理 WAL），且回退路径仅在 Rust
-        不可用时触发，语义均为「一致性快照」，详见契约 §2.3 B5 记录。
+        文件备份权威已下沉到 daemon（`backup_restore_handlers.rs::handle_backup_file`，
+        `.db` 走 wal_checkpoint + VACUUM INTO，失败降级 daemon 侧 fs::copy）。
+        本方法不再打开本地 SQLite、不保留本地 business fallback；
+        daemon 不可用时抛 DaemonUnavailableError（fail-closed）。
 
         Args:
             src_path: 源文件路径
@@ -474,36 +464,16 @@ class BackupManager:
         Returns:
             文件信息字典，如果源文件不存在返回 None
         """
-        if not os.path.isfile(src_path):
+        result = _call_daemon_rpc("mcp.backup_restore.backup_file", {
+            "src_path": src_path,
+            "dest_dir": dest_dir,
+            "dest_name": dest_name,
+        })
+        if result is None:
             return None
-
-        dest_path = os.path.join(dest_dir, dest_name)
-
-        # 对于 .db 文件，使用 SQLite 的 backup API
-        if dest_name.endswith(".db"):
-            try:
-                src_conn = sqlite3.connect(src_path, timeout=5)
-                dest_conn = sqlite3.connect(dest_path, timeout=5)
-                src_conn.backup(dest_conn)
-                dest_conn.close()
-                src_conn.close()
-            except sqlite3.Error:
-                # 降级为文件复制
-                shutil.copy2(src_path, dest_path)
-        else:
-            shutil.copy2(src_path, dest_path)
-
-        # 计算文件信息
-        size = os.path.getsize(dest_path)
-        sha256 = self._compute_file_sha256(dest_path)
-
-        return {
-            "name": dest_name,
-            "type": "file",
-            "size": size,
-            "sha256": sha256,
-            "source_path": src_path,
-        }
+        if not isinstance(result, dict):
+            raise RuntimeError("daemon backup_file 返回非 object 结果")
+        return result
 
     def _compute_file_sha256(self, file_path: str) -> str:
         """计算文件的 SHA-256。
@@ -860,3 +830,15 @@ class RestoreManager:
         meta_copy = {k: v for k, v in meta.items() if k != "checksum"}
         content = json.dumps(meta_copy, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+# ============================================================
+# daemon RPC 薄客户端接入（SRV-003）
+# ============================================================
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经 daemon 统一 fail-closed 客户端发起 RPC（不回退本地 SQLite）。"""
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
