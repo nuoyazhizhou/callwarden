@@ -4,7 +4,8 @@
 1. daemon 路径：route_task_write 调 task.close，task_id/reviewer/identity 透传，
    P4 lease 凭证（lease_token/fencing_counter）原样携带。
 2. lease 凭证缺失：CLI 不静默补默认（daemon E_LEASE_REQUIRED fail-closed）。
-3. local 模式 legacy fallback：fallback_func 调 db.task_close。
+3. local 模式无 daemon：fallback fail-closed，抛 SharedTaskWriterRequiredError，
+   禁止 legacy db.task_close 兜底（thin-client 冻结合同）。
 """
 
 import sys

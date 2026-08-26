@@ -1557,5 +1557,14 @@
       "unit": "_collect_identity 五字段 6 例通过；test_cli_079 3 passed",
       "daemon_end_to_end": "daemon 当前未运行（8/24 版已停），未擅自启动；instance 门禁已由代码核对（L1552 注册 instance 非空则必须相等）+ 修复后参数透传保证"
     }
+  },
+  "cli079_fixdefect_20260826": {
+    "task_id": "T-1787322799418-ce4698f0",
+    "step": "T-1787700302263-09407b70 (fix_defect, remediation_of S-1787322799419-ce53fa54)",
+    "code_fix_commit": "5e53440",
+    "code_fix_scope": "cli/main.py _local_close 去 db 直连改 fail-closed + tests/test_cli_079_http_rpc.py 测试改 fail-closed 断言",
+    "closure_evidence": "deliverables/software-company/CLI079_fixdefect_closure_evidence.md",
+    "closure_commit": null,
+    "caveat": "fix_defect binding 为直写补齐（先例 T-1787402257549-67ba81e6），详见 closure manifest §0"
   }
 }
