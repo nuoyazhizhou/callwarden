@@ -1871,13 +1871,59 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
 
     let enterprise_fn = || -> Result<String, String> {
         let (rpc_method, rpc_params) = match action.clone() {
-            TaskAction::Create { title, desc, steps } => {
+            TaskAction::Create { title,  desc, steps } => {
                 let steps_val = if steps.is_empty() {
                     serde_json::json!([])
                 } else {
                     serde_json::from_str::<Value>(&steps).unwrap_or(serde_json::json!([]))
                 };
-                ("task.create", serde_json::json!({"title": title, "description": desc, "steps": steps_val}))
+                // A' 标准三角色 legacy contract 模板；与 Python cli/main.py 的
+                // _build_role_contracts 默认模板保持一致，保证新建任务可被 bootstrap 派生。
+                let role_contracts = serde_json::json!([
+                    {
+                        "role": "executor",
+                        "skill_id": "none",
+                        "skill_version": "",
+                        "prompt_template_id": "cw.aprime.executor.startup.v1",
+                        "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+                        "allowed_paths": "task-card scoped paths only",
+                        "forbidden_paths": "task.apply; task.close; task.supersede; out-of-scope production/schema changes",
+                        "commands": "task.next_action; task.claim; task.report; task.handoff",
+                        "acceptance_checks": "one tool/CLI link; tests; evidence manifest/hash; executor_ready_for_review",
+                        "required_evidence": "implementation plan; test output; negative test; daemon round-trip evidence",
+                        "handoff_to": "reviewer",
+                        "independence": "required"
+                    },
+                    {
+                        "role": "reviewer",
+                        "skill_id": "none",
+                        "skill_version": "",
+                        "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+                        "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+                        "allowed_paths": "read-only review evidence and structured review handoff",
+                        "forbidden_paths": "production edits; task.apply; task.close; task.supersede",
+                        "commands": "task.next_action; task.contract.get; task.handoff",
+                        "acceptance_checks": "independent verification of scope, diff, tests, evidence, gate and matrix condition",
+                        "required_evidence": "review record; findings or reviewer_pass evidence manifest/hash",
+                        "handoff_to": "adjudicator",
+                        "independence": "required"
+                    },
+                    {
+                        "role": "adjudicator",
+                        "skill_id": "none",
+                        "skill_version": "",
+                        "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+                        "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+                        "allowed_paths": "final review and protected task finalization within daemon authority",
+                        "forbidden_paths": "production edits; local SQLite fallback; status forgery",
+                        "commands": "task.next_action; task.apply; task.close; task.handoff; task.supersede when separately authorized",
+                        "acceptance_checks": "ACCEPT requires valid reviewer lease/fencing then apply,  close and next_action=COMPLETE",
+                        "required_evidence": "final review; lease/fencing provenance; apply/close/COMPLETE verification",
+                        "handoff_to": "complete",
+                        "independence": "required"
+                    }
+                ]);
+                ("task.create", serde_json::json!({"title": title, "description": desc, "steps": steps_val, "role_contracts": role_contracts}))
             }
             TaskAction::Next { task_id } => {
                 ("task.claim", serde_json::json!({"task_id": task_id}))

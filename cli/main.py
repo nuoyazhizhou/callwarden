@@ -3750,6 +3750,14 @@ def _handle_task(args, db):
         "--desc", default="", help=t("cli_task_arg_desc", default="Task description"))
     create_p.add_argument("--steps", default="",
                           help=t("cli_task_arg_steps", default='Step JSON array, for example [{"action":"annotate","target_file":"a.py"}]'))
+    create_p.add_argument(
+        "--role-contracts", default="",
+        help=t("cli_task_arg_role_contracts",
+               default='JSON array of role contract objects (keys: role, skill_id, skill_version, '
+                       'prompt_template_id, prompt_hash, allowed_paths, forbidden_paths, commands, '
+                       'acceptance_checks, required_evidence, handoff_to, independence). '
+                       'If omitted, the A\' standard three-role (executor/reviewer/adjudicator) '
+                       'legacy contract template is used. Tasks are never created without contracts.'))
 
     # next：领取下一个待执行步骤
     next_p = sub.add_parser("next", help=t(
@@ -4236,11 +4244,20 @@ def _handle_task(args, db):
                     "yellow",
                 )
 
+        # 角色合同：缺省使用 A' 标准三角色 legacy 模板；显式传入则按传入值（fail closed 校验）。
+        # 不允许静默创建无合同任务（否则未来无法 claim/bootstrap）。
+        role_contracts = _build_role_contracts(opts.role_contracts)
+        if isinstance(role_contracts, str):
+            cprint(  # 错误信息字符串
+                role_contracts, "red")
+            return True
+
         def _local_create():
             return db.task_create(opts.title, opts.desc, steps, creator="agent")
 
         create_res = route_task_write("task.create", {
-            "title": opts.title, "description": opts.desc, "steps": steps, "creator": "agent",
+            "title": opts.title, "description": opts.desc, "steps": steps,
+            "creator": "agent", "role_contracts": role_contracts,
         }, _local_create)
         task_id = create_res["task_id"] if isinstance(create_res, dict) and "task_id" in create_res else create_res
 
@@ -15727,6 +15744,81 @@ def _t_structured(message_key: str, default: str) -> str:
     except Exception:
         pass
     return default
+
+
+def _build_role_contracts(override_json):
+    """构造 task.create 的 role_contracts 参数。
+
+    规则（与冻结合同 A' 启动模板一致）：
+    - 若 ``override_json`` 非空字符串，按 JSON 解析并校验（每项必须含 ``role``）；
+      解析失败或缺 ``role`` 返回错误信息字符串（fail closed）。
+    - 否则返回 A' 标准三角色（executor / reviewer / adjudicator）legacy contract 模板，
+      确保新建任务始终可被 ``task.contract_bootstrap`` 派生 v1 治理投影。
+
+    Returns:
+        list[dict]：角色合同数组；或 str：fail closed 错误信息。
+    """
+    VALID_ROLES = ("executor", "reviewer", "adjudicator")
+    if override_json and override_json.strip():
+        try:
+            parsed = json.loads(override_json)
+        except json.JSONDecodeError as e:
+            return ("⚠️ --role-contracts 不是合法 JSON：%s" % e)
+        if not isinstance(parsed, list):
+            return "⚠️ --role-contracts 必须是 JSON 数组"
+        for i, item in enumerate(parsed):
+            if not isinstance(item, dict) or not item.get("role"):
+                return ("⚠️ --role-contracts 第 %d 项缺少 role 字段，无法创建合同" % i)
+            if item.get("role") not in VALID_ROLES:
+                return ("⚠️ --role-contracts 含非法 role：%s（仅支持 executor/reviewer/adjudicator）"
+                        % item.get("role"))
+        return parsed
+
+    # A' 标准三角色 legacy template（与冻结启动模板保持一致；hash 为对应 prompt 模板的稳定占位）。
+    return [
+        {
+            "role": "executor",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.executor.startup.v1",
+            "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+            "allowed_paths": "task-card scoped paths only",
+            "forbidden_paths": "task.apply; task.close; task.supersede; out-of-scope production/schema changes",
+            "commands": "task.next_action; task.claim; task.report; task.handoff",
+            "acceptance_checks": "one tool/CLI link; tests; evidence manifest/hash; executor_ready_for_review",
+            "required_evidence": "implementation plan; test output; negative test; daemon round-trip evidence",
+            "handoff_to": "reviewer",
+            "independence": "required",
+        },
+        {
+            "role": "reviewer",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+            "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+            "allowed_paths": "read-only review evidence and structured review handoff",
+            "forbidden_paths": "production edits; task.apply; task.close; task.supersede",
+            "commands": "task.next_action; task.contract.get; task.handoff",
+            "acceptance_checks": "independent verification of scope, diff, tests, evidence, gate and matrix condition",
+            "required_evidence": "review record; findings or reviewer_pass evidence manifest/hash",
+            "handoff_to": "adjudicator",
+            "independence": "required",
+        },
+        {
+            "role": "adjudicator",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+            "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+            "allowed_paths": "final review and protected task finalization within daemon authority",
+            "forbidden_paths": "production edits; local SQLite fallback; status forgery",
+            "commands": "task.next_action; task.apply; task.close; task.handoff; task.supersede when separately authorized",
+            "acceptance_checks": "ACCEPT requires valid reviewer lease/fencing then apply, close and next_action=COMPLETE",
+            "required_evidence": "final review; lease/fencing provenance; apply/close/COMPLETE verification",
+            "handoff_to": "complete",
+            "independence": "required",
+        },
+    ]
 
 
 def _resolve_action_session(identity):
