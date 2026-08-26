@@ -722,6 +722,31 @@ fn apply_task_contract_v57_compat(tx: &Transaction<'_>) -> Result<(), rusqlite::
     Ok(())
 }
 
+/// v60（A′ quality-gate hardening）：为既有库补齐 `task_quality_findings.severity` 列。
+///
+/// 背景：severity 列早已存在于 canonical SCHEMA_SQL 的 `task_quality_findings` 定义
+/// （storage.rs DDL），但陈旧二进制（内嵌 `SCHEMA_VERSION` < 60，例如 v58 部署态）
+/// 打开已迁到 v60 的 `callwarden.db` 时会因 `current_version(60) > expected_version`
+/// 触发 `SCHEMA_TOO_NEW`，进而回退到用其内嵌旧 DDL 建/开的缺列表，导致
+/// `SELECT ... severity ... FROM task_quality_findings` 报 `no such column: severity`
+/// （即 2026-08-26 CLI-083 复审阻断的根因之一）。CREATE TABLE IF NOT EXISTS 不会给
+/// 已存在表加列，必须显式 ALTER TABLE 补齐；本函数在 canonical SCHEMA_SQL 执行前调用
+/// （与 v48/v50/v57 compat 同一模式），幂等，列已存在则跳过，绝不动已有数据行。
+/// 全新库时表由 SCHEMA_SQL 建齐（已含 severity），本函数探测到列已存在会跳过，无副作用。
+/// 注：受控迁移，禁止手工改库或恢复 Python fallback（reviewer 交接约束）。
+fn apply_task_quality_findings_severity_compat(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    if !table_exists_tx(tx, "task_quality_findings")? {
+        return Ok(()); // 极简库没有此表，跳过
+    }
+    if !has_column_tx(tx, "task_quality_findings", "severity")? {
+        tx.execute(
+            "ALTER TABLE task_quality_findings ADD COLUMN severity TEXT NOT NULL DEFAULT 'WARN'",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate_legacy_v1_v3_tx(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
     // 旧版表通过 *_old_v2 保留到所有映射完成后再删除。整个过程在同一个
     // BEGIN IMMEDIATE 中执行，任意一步失败都会回滚，不能留下半套 schema。
@@ -1396,6 +1421,15 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
     // 只加列不动数据，全新库时表尚不存在会跳过，无副作用。
     apply_task_contract_v57_compat(&tx).map_err(|e| {
         format!("MIGRATION_FAILED: Failed to apply task contract v57 compat: {}", e)
+    })?;
+    // v60（A′ quality-gate hardening）：severity 列幂等补齐（详见函数注释）。
+    // 必须先补列，再执行 canonical SCHEMA_SQL——否则既有库（陈旧二进制打标的缺列表）
+    // 在 SELECT severity 时仍会报 no such column。全新库时列已由 SCHEMA_SQL 建齐，跳过。
+    apply_task_quality_findings_severity_compat(&tx).map_err(|e| {
+        format!(
+            "MIGRATION_FAILED: Failed to apply task_quality_findings severity compat: {}",
+            e
+        )
     })?;
     tx.execute_batch(&canonical_schema_sql()?)
         .map_err(|e| format!("SCHEMA_CREATE_FAILED: Failed to execute SCHEMA_SQL: {}", e))?;

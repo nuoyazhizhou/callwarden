@@ -450,15 +450,10 @@ def _h_gate_decision(ctx: CompatCallContext) -> Any:
 # get_freshness_status 已 MCP-003、get_gate_decision 已 MCP-004 迁移 rust_native，
 # 均移除 compat 注册。写语义工具（submit_verdict / append_evidence，governance_write）
 # 不接入，fail-closed。本组 compat 注册清空。
-_COLLAB_READ_ONLY_METHODS: Dict[str, Any] = {}
-
-# 模块级注册：worker 装配 import 本 .module 时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（R * 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _COLLAB_READ_ONLY_METHODS,
-    workspace_scope=_COLLAB_COMPAT_SCOPE,
-    description="H4C-2 第三批 collab 组只读工具（已全部迁移 rust_native：get_role_view/find_evidence/get_freshness_status/get_gate_decision）",
-)
+# 注：本组只读方法（get_role_view/find_evidence/get_freshness_status/get_gate_decision）
+# 已全部迁移 rust_native（MCP-001~004），compat 注册已清空，故不再调用 register_compat_routes，
+# 避免对空表调用触发 register_read_only_batch 的 "methods 不能为空" 模块级崩溃
+# （H4C-2 第三批清理残留，2026-08-26 修复）。
 
 
 def _collab_direct_read(db: Any, method: str, params: Dict[str, Any]) -> dict:

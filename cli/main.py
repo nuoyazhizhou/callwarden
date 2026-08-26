@@ -15217,19 +15217,67 @@ def _handle_collab(args, db):
     pub_p.add_argument("--envelope", metavar="FILE",
                        help="Envelope JSON 文件路径（可选，缺省由 daemon 生成）")
 
-    # --- verdict: 提交 Verdict ---
+    # --- verdict: 提交 Reviewer Verdict（verdict.submit，携带完整 provenance）---
+    # 注：daemon handle_verdict_submit 要求 task/step/双 contract 绑定/snapshot/
+    # request_id/phase/overall/attestation + 结构化 findings + 完整 Reviewer identity
+    # + reviewer lease/fencing；旧版仅传 verdict_id/decision/reason/seal（daemon 不认），
+    # 导致 reviewer 的结构化 block/pass verdict 无法通过正式命令面落库（2026-08-26 修复）。
     ver_p = sub.add_parser("verdict", parents=[common],
-                           help="提交 Verdict 并封存（verdict.submit）")
-    ver_p.add_argument("--verdict-id", metavar="ID", required=True,
-                       help="Verdict 记录 ID")
-    ver_p.add_argument("--decision", choices=["approve", "reject", "abstain"],
-                       required=True, help="判定结论")
-    ver_p.add_argument("--reason", metavar="TEXT", default="",
-                       help="判定理由（可选）")
-    ver_p.add_argument("--seal", action="store_true", default=True,
-                       help="提交后封存（默认开启）")
-    ver_p.add_argument("--no-seal", action="store_true",
-                       help="提交但不封存")
+                           help="提交 Reviewer Verdict（verdict.submit，携带 task/step/contract/findings/identity/lease）")
+    ver_p.add_argument("--task-id", metavar="ID", required=True,
+                       help="关联任务 ID")
+    ver_p.add_argument("--step-id", metavar="ID", required=True,
+                       help="关联步骤 ID")
+    ver_p.add_argument("--contract-id", metavar="ID", required=True,
+                       help="Task Contract ID")
+    ver_p.add_argument("--contract-hash", metavar="HASH", required=True,
+                       help="Task Contract canonical hash")
+    ver_p.add_argument("--contract-revision", type=int, required=True, metavar="N",
+                       help="Task Contract revision（正整数）")
+    ver_p.add_argument("--role-contract-id", metavar="ID", required=True,
+                       help="Reviewer Role Contract ID")
+    ver_p.add_argument("--role-contract-hash", metavar="HASH", required=True,
+                       help="Reviewer Role Contract canonical hash")
+    ver_p.add_argument("--role-contract-revision", type=int, required=True, metavar="N",
+                       help="Role Contract revision（正整数）")
+    ver_p.add_argument("--snapshot-id", metavar="ID", required=True,
+                       help="Snapshot ID")
+    ver_p.add_argument("--request-id", metavar="ID", required=True,
+                       help="幂等 request_id（同任务内唯一）")
+    ver_p.add_argument("--phase", choices=["blind_first_pass", "post_reveal_amendment"],
+                       required=True, help="判定阶段（首次盲审/揭示后修订）")
+    ver_p.add_argument("--overall", choices=["pass", "block"], required=True,
+                       help="总体结论 pass/block")
+    ver_p.add_argument("--attestation", metavar="TEXT", required=True,
+                       help="Reviewer attestation 声明")
+    ver_p.add_argument("--amendment-ref", metavar="ID", default="",
+                       help="post_reveal_amendment 时引用的 sealed verdict_id")
+    ver_p.add_argument("--clause-results", metavar="JSON", default="[]",
+                       help="条款结果 JSON 数组（可选）")
+    ver_p.add_argument("--findings", metavar="JSON", default="[]",
+                       help="结构化 findings JSON 数组（可选）")
+    ver_p.add_argument("--view-manifest-hash", metavar="HASH", default="",
+                       help="View manifest hash（可选）")
+    ver_p.add_argument("--verdict-id", metavar="ID", default="",
+                       help="可选 verdict_id（缺省由 daemon 生成，用于幂等覆盖）")
+    # 身份（P3，5 字段；role 限定 reviewer/independent_reviewer）
+    ver_p.add_argument("--agent-id", default="", metavar="ID",
+                       help=t("cli_task_arg_agent_id", default="Agent ID (P3 Identity)"))
+    ver_p.add_argument("--session-id", default="", metavar="ID",
+                       help=t("cli_task_arg_session_id", default="Session ID (P3 Identity)"))
+    ver_p.add_argument("--model-id", default="", metavar="ID",
+                       help=t("cli_task_arg_model_id", default="Model ID (P3 Identity)"))
+    ver_p.add_argument("--agent-instance-id", required=True, metavar="ID",
+                       help=t("cli_task_arg_agent_instance_id",
+                              default="Agent instance ID (P3 Identity)"))
+    ver_p.add_argument("--role", choices=["reviewer", "independent_reviewer"],
+                       required=True, metavar="ROLE",
+                       help="必须为 reviewer 或 independent_reviewer")
+    # P4 受保护写 Lease 凭证
+    ver_p.add_argument("--lease-token", default="", metavar="TOKEN",
+                       help=t("cli_task_arg_lease_token", default="Lease raw token (P4)"))
+    ver_p.add_argument("--fencing-counter", type=int, default=-1, metavar="N",
+                       help=t("cli_task_arg_fencing_counter", default="Fencing counter (P4)"))
 
     # --- reveal: 提交 Reveal_Event ---
     rev_p = sub.add_parser("reveal", parents=[common],
@@ -15272,10 +15320,45 @@ def _handle_collab(args, db):
 
     elif opts.action == "verdict":
         method = "verdict.submit"
-        params["verdict_id"] = opts.verdict_id
-        params["decision"] = opts.decision
-        params["reason"] = opts.reason
-        params["seal"] = not opts.no_seal
+        identity, ireason = _collect_identity(opts)
+        if not identity:
+            _identity_reason_output(ireason or {
+                "code": "E_IDENTITY_REQUIRED",
+                "message_key": "daemon_errors.error.identity_required",
+                "detail": "verdict.submit 必须携带完整 Reviewer identity（agent_id/session_id/model_id/role + 可选 agent_instance_id）",
+            }, use_json)
+            return True
+        try:
+            clause_results = json.loads(opts.clause_results)
+            findings = json.loads(opts.findings)
+        except json.JSONDecodeError as e:
+            _collab_error("E_INVALID_JSON", "cli.collab.invalid_json",
+                          f"clause_results/findings 非合法 JSON: {e}", use_json)
+            return True
+        params = {
+            "task_id": opts.task_id,
+            "step_id": opts.step_id,
+            "contract_id": opts.contract_id,
+            "contract_hash": opts.contract_hash,
+            "contract_revision": opts.contract_revision,
+            "role_contract_id": opts.role_contract_id,
+            "role_contract_hash": opts.role_contract_hash,
+            "role_contract_revision": opts.role_contract_revision,
+            "snapshot_id": opts.snapshot_id,
+            "request_id": opts.request_id,
+            "phase": opts.phase,
+            "overall": opts.overall,
+            "attestation": opts.attestation,
+            "amendment_ref": opts.amendment_ref,
+            "clause_results": clause_results,
+            "findings": findings,
+            "view_manifest_hash": opts.view_manifest_hash,
+            "identity": identity,
+            "lease_token": opts.lease_token,
+            "fencing_counter": opts.fencing_counter,
+        }
+        if opts.verdict_id:
+            params["verdict_id"] = opts.verdict_id
 
     elif opts.action == "reveal":
         method = "reveal.submit"
