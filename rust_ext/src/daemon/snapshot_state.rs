@@ -702,6 +702,32 @@ impl DaemonStateExt for SnapshotDaemonState {
         query_local_semgrep_stats(&conn, workspace_id).map_err(DaemonRpcError::internal_error)
     }
 
+    // INT-001（T-1787322971676-e9aae4d4）：stats_top_files 从 python_compat
+    // （compat worker）迁移为 rust_native。数据源经 snapshot query_db_path
+    // （主库只读连接，open_query_connection 同构 W2-1 query.uncommented_symbols）
+    // 访问主库全表；snapshot_not_ready 保护 + owned_workspace ACL 与既有
+    // query.* 完全一致。语义逐条复刻 Python server/compat_registry.py::
+    // _stats_top_files（symbols JOIN file_instances GROUP BY fi.id ORDER BY
+    // symbol_count DESC LIMIT），但按 Rust 原生快照 schema 实现（file_symbol_versions
+    // JOIN symbol_contents(has_comment) JOIN file_versions(is_current) JOIN
+    // file_instances(workspace_id, status)），使 Rust 成为该能力的唯一 authority。
+    fn handle_query_stats_top_files(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // limit 语义对齐 Python 工具层 `[:limit]`：limit=0 返回空数组；
+        // 负数视为越界参数 fail-closed（invalid_params）。
+        let limit = get_int_param_or(params, "limit", 10);
+        if limit < 0 {
+            return Err(DaemonRpcError::invalid_params("limit 不能为负数"));
+        }
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        query_local_stats_top_files(&conn, workspace_id, limit as usize)
+            .map_err(DaemonRpcError::internal_error)
+    }
+
     // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 从 python_compat
     // （compat worker）迁移为 rust_native。数据源（semgrep_findings JOIN
     // file_instances）在主库，经 snapshot query_db_path（主库只读连接，
@@ -2906,6 +2932,63 @@ fn query_local_uncommented_symbols(
         symbols.push(row.map_err(|error| format!("cannot read uncommented symbol row: {error}"))?);
     }
     Ok(Value::Array(symbols))
+}
+
+/// 查询当前 workspace 符号数 Top N 文件及注释覆盖（复刻 Python `stats_top_files`）。
+///
+/// 数据源：file_symbol_versions JOIN symbol_contents(has_comment) JOIN
+/// file_versions(is_current) JOIN file_instances(workspace_id, status)。语义逐条
+/// 复刻 server/compat_registry.py::_stats_top_files（symbols JOIN file_instances
+/// GROUP BY fi.id ORDER BY symbol_count DESC LIMIT ?），但按 Rust 原生快照 schema
+/// 实现，使 Rust 成为该能力的唯一 authority。返回
+/// {count, files:[{rel_path, symbol_count, commented_count, comment_coverage}]}，
+/// comment_coverage = round(commented_count / symbol_count, 4)（symbol_count=0 → 0.0）。
+fn query_local_stats_top_files(
+    conn: &Connection,
+    workspace_id: i64,
+    limit: usize,
+) -> Result<Value, String> {
+    let sql = "
+        SELECT fi.rel_path,
+               COUNT(fsv.id) AS symbol_count,
+               COALESCE(SUM(CASE WHEN sc.has_comment THEN 1 ELSE 0 END), 0) AS commented_count
+        FROM file_symbol_versions fsv
+        JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
+        JOIN file_versions fv ON fsv.file_version_id = fv.id
+        JOIN file_instances fi ON fv.file_instance_id = fi.id
+        WHERE fi.workspace_id = ?1
+          AND fv.is_current = 1
+          AND (fsv.is_deleted = 0 OR fsv.is_deleted IS NULL)
+          AND fi.status != 'archived'
+        GROUP BY fi.id, fi.rel_path
+        ORDER BY symbol_count DESC
+        LIMIT ?2
+    ";
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|error| format!("cannot prepare stats_top_files query: {error}"))?;
+    let rows = stmt
+        .query_map(params_from_iter([workspace_id, limit as i64]), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+        })
+        .map_err(|error| format!("cannot query stats_top_files rows: {error}"))?;
+    let mut files = Vec::new();
+    for row in rows {
+        let (rel_path, symbol_count, commented_count) = row
+            .map_err(|error| format!("cannot read stats_top_files row: {error}"))?;
+        let comment_coverage = if symbol_count > 0 {
+            (commented_count as f64 / symbol_count as f64 * 10000.0).round() / 10000.0
+        } else {
+            0.0
+        };
+        files.push(json!({
+            "rel_path": rel_path,
+            "symbol_count": symbol_count,
+            "commented_count": commented_count,
+            "comment_coverage": comment_coverage,
+        }));
+    }
+    Ok(json!({ "count": files.len(), "files": files }))
 }
 
 /// 查询当前 workspace 模块间调用统计（复刻 Python `get_module_call_stats`）。

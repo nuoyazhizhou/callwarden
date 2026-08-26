@@ -437,6 +437,17 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("query.semgrep_stats"))
     }
 
+    // INT-001（T-1787322971676-e9aae4d4）：stats_top_files 从 python_compat 迁移为
+    // rust_native。默认 method_not_found，SnapshotDaemonState 重写（Rust 唯一 authority）。
+    fn handle_query_stats_top_files(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.stats_top_files"))
+    }
+
     // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings HTTP native 迁移
     // 新增 handler（query.semgrep_findings），默认 method_not_found，
     // SnapshotDaemonState 重写。
@@ -2222,6 +2233,9 @@ fn dispatch_inner<S: DaemonStateExt>(
         "query.uncommented_symbols" => state.handle_query_uncommented_symbols(peer, params),
         "query.module_call_stats" => state.handle_query_module_call_stats(peer, params),
         "query.semgrep_stats" => state.handle_query_semgrep_stats(peer, params),
+        // INT-001（T-1787322971676-e9aae4d4）：stats_top_files 从 python_compat
+        // 迁移为 rust_native，注册对应 native handler。
+        "query.stats_top_files" => state.handle_query_stats_top_files(peer, params),
         // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 从
         // python_compat 迁移为 rust_native，注册对应 native handler。
         "query.semgrep_findings" => state.handle_query_semgrep_findings(peer, params),

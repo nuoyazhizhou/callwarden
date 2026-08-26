@@ -166,42 +166,6 @@ def _coerce_limit(value: Any) -> int:
     return n
 
 
-def _stats_top_files(ctx: CompatCallContext) -> Dict[str, Any]:
-    """返回符号数 Top N 文件及注释覆盖（authority 范围：按注入 workspace_id 过滤）。"""
-    if ctx.conn is None:
-        raise RuntimeError("read_only 方法缺少只读连接")
-    if ctx.workspace_id is None:
-        raise ValueError("缺少 workspace_id")
-    limit = _coerce_limit(ctx.params.get("limit", 10))
-    rows = ctx.conn.execute(
-        """
-        SELECT fi.rel_path,
-               COUNT(s.id) AS symbol_count,
-               COALESCE(SUM(s.has_comment), 0) AS commented_count
-        FROM symbols s
-        JOIN file_instances fi ON fi.id = s.file_instance_id
-        WHERE fi.workspace_id = ?1 AND fi.status != 'archived'
-        GROUP BY fi.id, fi.rel_path
-        ORDER BY symbol_count DESC
-        LIMIT ?2
-        """,
-        (ctx.workspace_id, limit),
-    ).fetchall()
-    files = []
-    for r in rows:
-        symbol_count = r[1]
-        commented_count = r[2]
-        files.append(
-            {
-                "rel_path": r[0],
-                "symbol_count": symbol_count,
-                "commented_count": commented_count,
-                "comment_coverage": round(commented_count / symbol_count, 4) if symbol_count else 0.0,
-            }
-        )
-    return {"count": len(files), "files": files}
-
-
 # ---------------------------------------------------------------
 # 默认 registry（恢复 H3 误删的注册器；与 Rust `compat_route` 保持一致）
 # ---------------------------------------------------------------
@@ -210,19 +174,12 @@ def _stats_top_files(ctx: CompatCallContext) -> Dict[str, Any]:
 def _build_default_registry() -> CompatRegistry:
     """构造默认兼容 registry（与 daemon capability registry 的 python_compat 行保持一致）。
 
-    当前注册的 1 个方法即 Rust 侧 http_server.rs `compat_route` 声明的 H4C-1
-    python_compat 路由（stats_top_files，read_only；get_uncommented_symbols 已
-    W2-1 迁移 rust_native，T-1786840097330-dec66710）。
+    INT-001（T-1787322971676-e9aae4d4）：stats_top_files 已迁移 rust_native
+    （daemon snapshot_state.rs 的 query.stats_top_files），不再由 Python compat
+    worker 提供服务；故默认 registry 当前为空。H4C-1 的 python_compat 路由已全部
+    迁移（get_uncommented_symbols 等 W2-1；stats_top_files INT-001）。
     """
-    reg = CompatRegistry()
-    reg.register(
-        "stats_top_files",
-        READ_ONLY,
-        SCOPE_AUTHORITY,
-        "返回符号数 Top N 文件及注释覆盖统计",
-        _stats_top_files,
-    )
-    return reg
+    return CompatRegistry()
 
 
 _DEFAULT_REGISTRY: Optional[CompatRegistry] = None
@@ -248,7 +205,7 @@ def get_compat_registry() -> CompatRegistry:
 # 方法（幂等），两端对齐门 validate_against_rust_route 覆盖全部 79 项。
 RUST_COMPAT_ROUTE: Dict[str, str] = {
     # 内部 worker 方法（非 MCP 工具，不在 239 矩阵内；H4C-1 默认注册）
-    "stats_top_files": READ_ONLY,
+    # INT-001（T-1787322971676-e9aae4d4）：stats_top_files 已迁移 rust_native，移除。
     "ask_codebase": READ_ONLY,
     "assignment_show": READ_ONLY,
     "audit_verify_chain": READ_ONLY,

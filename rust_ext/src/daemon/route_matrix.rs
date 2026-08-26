@@ -146,6 +146,10 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     ToolRoute { name: "get_top_callers", module: "tools_query", target_backend: Backend::PythonCompat, rpc_method: "get_top_callers", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
     ToolRoute { name: "get_topological_order", module: "tools_query", target_backend: Backend::RustNative, rpc_method: "query.topological_order", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
     ToolRoute { name: "get_uncommented_symbols", module: "tools_query", target_backend: Backend::RustNative, rpc_method: "query.uncommented_symbols", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
+    // INT-001（T-1787322971676-e9aae4d4）：stats_top_files 从 python_compat 迁移
+    // rust_native（backend 切换，rpc_method query.stats_top_files，native handler
+    // 在 snapshot_state.rs）。对应 Python compat_registry._stats_top_files 已移除。
+    ToolRoute { name: "stats_top_files", module: "tools_query", target_backend: Backend::RustNative, rpc_method: "query.stats_top_files", op_class: OpClass::ReadOnly, batch: "existing-native", status: "stable" },
     ToolRoute { name: "restore_all_comments", module: "tools_query", target_backend: Backend::RustNative, rpc_method: "edit.restore_all_comments", op_class: OpClass::ProtectedMutation, batch: "T02-edit", status: "migrated" },
     ToolRoute { name: "restore_comment", module: "tools_query", target_backend: Backend::RustNative, rpc_method: "edit.restore_comment", op_class: OpClass::ProtectedMutation, batch: "T02-edit", status: "migrated" },
     ToolRoute { name: "run_semgrep_scan", module: "tools_query", target_backend: Backend::TaskRpc, rpc_method: "task.job_submit", op_class: OpClass::ProtectedMutation, batch: "T02-job", status: "migrated" },
