@@ -24,7 +24,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +193,10 @@ def try_connect(endpoint: str) -> Optional[socket.socket]:
     """
     # TCP endpoint 优先于平台判断：即使 Windows 平台也走 TCP（bridge health 用）。
     if _is_tcp_endpoint(endpoint):
-        return _try_connect_tcp(endpoint)
+        return _transport_connect_tcp(endpoint)
     if sys.platform == "win32":
         return _try_connect_windows(endpoint)
-    return _try_connect_unix(endpoint)
+    return _transport_connect_unix(endpoint)
 
 
 def _is_tcp_endpoint(endpoint: str) -> bool:
@@ -211,8 +211,32 @@ def _is_tcp_endpoint(endpoint: str) -> bool:
     return False
 
 
-def _try_connect_tcp(endpoint: str) -> Optional[socket.socket]:
-    """TCP bridge 连接尝试（WSL 访问 Windows cw-bridge）。"""
+def _try_connect_tcp(endpoint: str) -> Dict[str, Any]:
+    """TCP bridge 连通探测（SRV-005：authority 已下沉 Rust daemon）。
+
+    原实现为本地 socket connect 并返回 socket；下沉后经 daemon RPC
+    `mcp.daemon_autostart.try_connect_tcp` 以探测语义（connect + 立即关闭）
+    返回结果 dict（`{"connectable": bool, "host": ..., "port": ..., "error": ...}`）。
+    需要活连接的 transport 通信见 `_transport_connect_tcp`（RPC 无法传递 socket）。
+    fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地探测）。
+    """
+    result = _call_daemon_rpc(
+        "mcp.daemon_autostart.try_connect_tcp",
+        {"endpoint": endpoint, "timeout": CONNECT_TIMEOUT},
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(f"_try_connect_tcp: daemon 返回非对象结果: {result!r}")
+    return result
+
+
+def _transport_connect_tcp(endpoint: str) -> Optional[socket.socket]:
+    """Transport bootstrap：客户端连接自身 daemon 的 TCP 活连接。
+
+    SRV-005：探测 authority 已下沉 Rust daemon（见 `_try_connect_tcp`）；
+    但 transport 通信所需的活连接无法经 RPC 传递（RPC 本身依赖此连接，
+    先有鸡先有蛋约束），故保留最小本地 transport 连接——transport 适配
+    职责，非 DB/业务 authority（不 open SQLite、不执行业务 SQL）。
+    """
     host_port = endpoint.removeprefix("tcp://")
     host, _, port = host_port.rpartition(":")
     if not host or not port.isdigit():
@@ -235,8 +259,28 @@ def _try_connect_tcp(endpoint: str) -> Optional[socket.socket]:
 # ---------------------------------------------------------------------------
 
 
-def _try_connect_unix(endpoint: str) -> Optional[socket.socket]:
-    """Unix UDS 连接尝试。"""
+def _try_connect_unix(endpoint: str) -> Dict[str, Any]:
+    """Unix UDS 连通探测（SRV-005：authority 已下沉 Rust daemon）。
+
+    下沉后经 daemon RPC `mcp.daemon_autostart.try_connect_unix` 以探测语义
+    返回结果 dict；需要活连接的 transport 通信见 `_transport_connect_unix`。
+    fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地探测）。
+    """
+    result = _call_daemon_rpc(
+        "mcp.daemon_autostart.try_connect_unix",
+        {"endpoint": endpoint, "timeout": CONNECT_TIMEOUT},
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(f"_try_connect_unix: daemon 返回非对象结果: {result!r}")
+    return result
+
+
+def _transport_connect_unix(endpoint: str) -> Optional[socket.socket]:
+    """Transport bootstrap：客户端连接自身 daemon 的 UDS 活连接。
+
+    SRV-005：同 `_transport_connect_tcp` 的鸡生蛋约束说明——transport
+    适配职责，非 DB/业务 authority。
+    """
     if not hasattr(socket, "AF_UNIX"):
         return None
     try:
@@ -977,20 +1021,20 @@ def resolve_http_endpoint_and_manifest(
 
 
 def try_http_connect(endpoint: str, timeout: float = 2.0) -> bool:
-    """对 HTTP endpoint 做一次短超时连通性探针（仅 TCP connect + 读取首字节）。"""
-    from urllib.parse import urlparse
+    """对 HTTP endpoint 做一次短超时连通性探针（SRV-005：authority 已下沉 Rust daemon）。
 
-    parsed = urlparse(endpoint)
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 80
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect((host, port))
-        sock.close()
-        return True
-    except OSError:
-        return False
+    原实现为本地 socket connect；下沉后经 daemon RPC
+    `mcp.daemon_autostart.try_http_connect` 以探测语义（TCP connect + 立即关闭）
+    返回 bool，与原签名一致（ensure_http_daemon 等调用方兼容）。
+    fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地探测）。
+    """
+    result = _call_daemon_rpc(
+        "mcp.daemon_autostart.try_http_connect",
+        {"endpoint": endpoint, "timeout": timeout},
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(f"try_http_connect: daemon 返回非对象结果: {result!r}")
+    return bool(result.get("connectable"))
 
 
 def ensure_http_daemon(
@@ -1038,3 +1082,19 @@ def ensure_http_daemon(
         time.sleep(sleep_time)
         backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
     return None
+
+
+# ---------------------------------------------------------------------------
+# daemon RPC 委托（SRV-005：探测 authority 下沉后的 fail-closed 客户端）
+# ---------------------------------------------------------------------------
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经 daemon 统一 fail-closed 客户端发起 RPC（不回退本地探测/SQLite）。
+
+    函数体内延迟导入，避免 daemon_autostart → _mcp_common → daemon_client
+    → daemon_autostart 的模块级循环依赖（transport bootstrap 先于 RPC 存在）。
+    """
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
