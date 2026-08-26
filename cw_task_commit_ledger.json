@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-26T02:40:50",
+  "updated_at": "2026-08-26T09:40:06",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1465,5 +1465,78 @@
       }
     ],
     "convention": "禁用 git worktree（2026-08-26 用户纪律）：并行/独立工作用独立 clone 或 master 白名单 capture"
+  },
+  "untracked_batch_commit_20260826": {
+    "background": "发现已跟踪 mod.rs 引用但从未入库的 15 个 Rust 源文件（fresh clone 无法编译）→ 证明 git 历史不完整",
+    "batches": [
+      {
+        "n": 1,
+        "commit": "bdfe012",
+        "desc": "15 个未跟踪 Rust daemon 源文件（_mcp_common_handlers/audit_log_handlers/task_supersede/task_read/semgrep/cli_handle_*/task_loop 9 个）",
+        "files": 15
+      },
+      {
+        "n": 2,
+        "commit": "30241a2",
+        "desc": "CLI HTTP RPC 测试 93 个（test_cli_0xx_http_rpc.py）",
+        "files": 93
+      },
+      {
+        "n": 3,
+        "commit": "99afd44",
+        "desc": "证据文件 docs/evidence 28 + deliverables/software-company 182",
+        "files": 213
+      },
+      {
+        "n": 4,
+        "commit": "6e8e8a9",
+        "desc": "启动模板 v1/v2、迁移计划、P0-C 交接包、scripts、bootstrap_prep、outputs、cw_203_gap_list",
+        "files": 39
+      },
+      {
+        "n": 5,
+        "commit": "41c8ce7",
+        "desc": "MCP/SRV/INT HTTP RPC 测试 59 个",
+        "files": 59
+      },
+      {
+        "n": 6,
+        "commit": "6dce276",
+        "desc": "server/cli_admin.py + test_srv_001/002 + task_supersede 测试",
+        "files": 7
+      }
+    ],
+    "total_files": 426,
+    "kept_untracked": [
+      "_daemon_restore2.pid(运行时pid)",
+      "_h_http_head.rs(临时探针)",
+      ".tmp_adjudicator/",
+      "archive/(327旧归档)",
+      "recovered-scratch/",
+      "p0*_rollback_backup_20260824.sql(6个DB回滚备份)",
+      "package-lock.json(游离)",
+      "rust_ext/_s2_*.txt(6个编译日志)"
+    ],
+    "note": "junk 类未入库保留原状，绝不删除"
+  },
+  "instance_passthrough_20260826": {
+    "summary": "CLI + MCP 全链路补 agent_instance_id 透传；三份启动模板升级 v3",
+    "cli": {
+      "task_parsers_7": "next/report/handoff/step_resolve/apply/close/reopen 循环加 --agent-instance-id",
+      "attest_bootstrap_2": "attest-legacy/contract-bootstrap parser 加 --agent-instance-id",
+      "lease_3": "lease acquire/renew/release parser 加 --agent-instance-id（_collect_lease_identity 并入）",
+      "_collect_identity": "第5字段 agent_instance_id；核心4字段必填 + instance 可选（10 个调用点全覆盖：claim/report/handoff/resolve/apply/close/reopen/supersede/attest/bootstrap）"
+    },
+    "mcp": {
+      "task_next_step": "显式 agent_instance_id 参数并入 identity",
+      "task_report_step": "显式 agent_instance_id 参数并入 identity",
+      "task_apply/task_close": "docstring 注明 identity 可含 agent_instance_id（JSON 字符串透传，daemon 校验）"
+    },
+    "templates_v3": [
+      "Callwarden 无人值守循环启动模板：Adjudicator v3.md",
+      "Callwarden 无人值守循环启动模板：Executor _ Planner v3.md",
+      "Callwarden 无人值守循环启动模板：Reviewer v3.md"
+    ],
+    "tests": "py_compile OK；_collect_identity 五字段单测 6 例通过；test_cli_079 3 passed"
   }
 }
