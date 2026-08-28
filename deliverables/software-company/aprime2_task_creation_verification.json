@@ -1,0 +1,393 @@
+{
+  "read_only": true,
+  "authority": {
+    "manifest_path": "C:\\Users\\wanpi\\.callwarden\\http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+    "endpoint": "http://127.0.0.1:1067",
+    "pid": 36312,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "root_status": "in_progress",
+    "p0k_status": "closed"
+  },
+  "receipt": "C:\\git_work\\callwarden\\deliverables\\software-company\\aprime2_task_creation_resume_receipt.json",
+  "task_ids": {
+    "parent": "T-1787800241076-0a1c1824",
+    "g0": "T-1787800241077-e7fd7231"
+  },
+  "verification": {
+    "parent": {
+      "status": {
+        "result": {
+          "task_id": "T-1787800241076-0a1c1824",
+          "title": "A″：PyO3 数据库 / daemon transport 调用面收敛（Python HTTP thin-client 化）",
+          "description": "# A″：PyO3 数据库 / daemon transport 调用面收敛（Python HTTP thin-client 化）\n\n**任务类型：** 总迁移父任务下的独立路线图 Epic；与 A′ 并列，不修改 A′。  \n**可见性状态：** 已创建不等于可执行。A″ 仅允许其唯一 A″-G0 静态清单 Gate 进入后续独立 contract bootstrap；不预建任何 implementation microtask。  \n**identity policy：** 本任务 generic creation projection 不是 role_worker_v1 authorization proof。任何 claim/report/verdict/apply/close 前，须由独立 Reviewer/Adjudicator 通过 append-only `task.contract_bootstrap` 追加并验证 `identity_policy=role_worker_v1` revision。\n\n## 目标\n\n在 A′ 已完成 MCP/CLI business migration 后，逐项收敛 Python 中仍承担 daemon client、legacy IPC framing、authority/DB-adjacent PyO3 调用的外部调用面，使 Python 保持 HTTP API/MCP/CLI thin-client 职责。A″ 不将 parser、watcher、tree-sitter、graph/vector/clone/CAS/backup 等 Rust local core 机械改造成 HTTP。\n\n## 当前 release boundary\n\n本任务创建仅为路线图可见性。A″-G0 未完成独立 role_worker_v1 bootstrap、review、adjudication 与 `applied` 前，A″-01…A″-37 不得创建或领取。即使 G0 applied，implementation release 仍需重新证明：A′/其必要 descendants 已完整 closed、migration matrix `python_compat=0`、legacy S3 获独立 append-only disposition、live authority 与 controlled runtime/current 收敛、artifact/FD scope 另有 A″-G1 Gate。\n\n## 禁止范围\n\n不修改 A′、P0-K 或旧 S3 历史；不修改 production Rust/Python、db/schema、task governance；不直接 SQLite/CAS；不读取/记录 provider token 或 raw worker credential；不 deploy/refresh/restart daemon；不把 provider/account/model/agent/session 当授权锚点。\n\n## 初始 child\n\n仅 A″-G0：建立 162 个 PyO3 exports 的 `pyo3_surface_manifest_v1`、HTTP successor/retain/blocked disposition、import/ABI audit 和 future microtask release map。G0 本身不是生产迁移授权。",
+          "parent_id": "T-1787203926824-9f873bfc",
+          "status": "open",
+          "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+          "claimed_by": "",
+          "created_at": 1787800317.6535742,
+          "updated_at": 1787800317.6535742
+        }
+      },
+      "tree": {
+        "result": {
+          "task_id": "T-1787800241076-0a1c1824",
+          "title": "A″：PyO3 数据库 / daemon transport 调用面收敛（Python HTTP thin-client 化）",
+          "description": "# A″：PyO3 数据库 / daemon transport 调用面收敛（Python HTTP thin-client 化）\n\n**任务类型：** 总迁移父任务下的独立路线图 Epic；与 A′ 并列，不修改 A′。  \n**可见性状态：** 已创建不等于可执行。A″ 仅允许其唯一 A″-G0 静态清单 Gate 进入后续独立 contract bootstrap；不预建任何 implementation microtask。  \n**identity policy：** 本任务 generic creation projection 不是 role_worker_v1 authorization proof。任何 claim/report/verdict/apply/close 前，须由独立 Reviewer/Adjudicator 通过 append-only `task.contract_bootstrap` 追加并验证 `identity_policy=role_worker_v1` revision。\n\n## 目标\n\n在 A′ 已完成 MCP/CLI business migration 后，逐项收敛 Python 中仍承担 daemon client、legacy IPC framing、authority/DB-adjacent PyO3 调用的外部调用面，使 Python 保持 HTTP API/MCP/CLI thin-client 职责。A″ 不将 parser、watcher、tree-sitter、graph/vector/clone/CAS/backup 等 Rust local core 机械改造成 HTTP。\n\n## 当前 release boundary\n\n本任务创建仅为路线图可见性。A″-G0 未完成独立 role_worker_v1 bootstrap、review、adjudication 与 `applied` 前，A″-01…A″-37 不得创建或领取。即使 G0 applied，implementation release 仍需重新证明：A′/其必要 descendants 已完整 closed、migration matrix `python_compat=0`、legacy S3 获独立 append-only disposition、live authority 与 controlled runtime/current 收敛、artifact/FD scope 另有 A″-G1 Gate。\n\n## 禁止范围\n\n不修改 A′、P0-K 或旧 S3 历史；不修改 production Rust/Python、db/schema、task governance；不直接 SQLite/CAS；不读取/记录 provider token 或 raw worker credential；不 deploy/refresh/restart daemon；不把 provider/account/model/agent/session 当授权锚点。\n\n## 初始 child\n\n仅 A″-G0：建立 162 个 PyO3 exports 的 `pyo3_surface_manifest_v1`、HTTP successor/retain/blocked disposition、import/ABI audit 和 future microtask release map。G0 本身不是生产迁移授权。",
+          "status": "open",
+          "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+          "claimed_by": "",
+          "depth": 0,
+          "sort_order": 0,
+          "created_at": 1787800317.6535742,
+          "updated_at": 1787800317.6535742,
+          "closed_at": 0.0,
+          "progress": {
+            "total": 5,
+            "done": 0,
+            "progress": 0.0
+          },
+          "steps": [
+            {
+              "step_id": "S-1787800317654-af22fb0c",
+              "step_index": 0,
+              "action": "govern_visibility_and_release_boundary",
+              "target_file": "deliverables/software-company/aprime2_pyo3_daemon_transport_convergence_task_draft_20260827.md",
+              "target_symbol": "",
+              "check_items": "记录 A″ parent visibility-only boundary、role_worker_v1 bootstrap claim barrier 与 A′/matrix/runtime/S3 implementation release gates；不创建 implementation microtask，不改 production/runtime",
+              "status": "pending",
+              "result": "",
+              "created_at": 1787800317.6535742,
+              "completed_at": null
+            }
+          ],
+          "subtasks": [
+            {
+              "task_id": "T-1787800241077-e7fd7231",
+              "title": "A″-G0 [Gate/client_boundary]：PyO3 daemon/authority surface manifest、HTTP successor 与 retireability 冻结",
+              "description": "# A″-G0：PyO3 client-boundary 静态清单 Gate\n\n本卡只产出 `pyo3_surface_manifest_v1`，不做 production migration。它须对 162 个 PyO3 `wrap_pyfunction!` exports 逐项记录 category、source definition、registration、all import/call site、ABI consumers、current semantic、DB/authority effect、HTTP successor、disposition、required gate 和 retirement condition。\n\n**claim barrier：** `task.create` 的 generic revision-1 contract 不含 identity policy；在 claim/report/review/verdict/apply/close 前，必须由独立 reviewer/adjudicator role workers append-only bootstrap 一个 current Task Contract revision，显式 `identity_policy=role_worker_v1`。没有此 receipt 一律 fail-closed。\n\n**release barrier：** G0 即使独立 PASS/applied，也不自动授权任何 A″ implementation card。A″-01 及后续微任务只能在 A′ fully closed、matrix `python_compat=0`、live/runtime convergence 独立通过、legacy S3 independent disposition、以及各自 dependency/G1 artifact gate 满足后，一张一张被合法创建。\n\n**禁止：** production source/route/schema/DB mutation、matrix status 更新、runtime refresh/deploy、direct SQLite/CAS、credentials、Role Worker policy implementation、A′/P0-K/S3 history manipulation、预建或领取 A″-01…37。\n",
+              "status": "open",
+              "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+              "claimed_by": "",
+              "depth": 0,
+              "sort_order": 0,
+              "created_at": 1787800317.6977222,
+              "updated_at": 1787800317.6977222,
+              "closed_at": 0.0,
+              "progress": {
+                "total": 4,
+                "done": 0,
+                "progress": 0.0
+              },
+              "steps": [
+                {
+                  "step_id": "S-1787800317700-b1de35c8",
+                  "step_index": 0,
+                  "action": "inventory_all_pyo3_exports",
+                  "target_file": "deliverables/software-company/aprime2/pyo3_surface_manifest_v1.json",
+                  "target_symbol": "",
+                  "check_items": "对 rust_ext/src/lib.rs 中 162 个 wrap_pyfunction exports 做一项一行、唯一 disposition 的静态 inventory；不修改 production source",
+                  "status": "pending",
+                  "result": "",
+                  "created_at": 1787800317.6977222,
+                  "completed_at": null
+                },
+                {
+                  "step_id": "S-1787800317700-b1df1790",
+                  "step_index": 1,
+                  "action": "audit_imports_and_abi_consumers",
+                  "target_file": "deliverables/software-company/aprime2/pyo3_import_use_audit.md",
+                  "target_symbol": "",
+                  "check_items": "使用 AST/import graph、dynamic import search 与 external ABI search 记录所有已知 consumer；unknown 必须 fail-closed",
+                  "status": "pending",
+                  "result": "",
+                  "created_at": 1787800317.6977222,
+                  "completed_at": null
+                },
+                {
+                  "step_id": "S-1787800317700-b1df7bf4",
+                  "step_index": 2,
+                  "action": "freeze_http_successor_and_release_map",
+                  "target_file": "deliverables/software-company/aprime2/pyo3_successor_release_map.md",
+                  "target_symbol": "",
+                  "check_items": "为每个 candidate 指定 HTTP successor、retain/blocked reason、required gate、单-export microtask slot；FD/memfd 项只能标 artifact-gated",
+                  "status": "pending",
+                  "result": "",
+                  "created_at": 1787800317.6977222,
+                  "completed_at": null
+                },
+                {
+                  "step_id": "S-1787800317700-b1dfcdfc",
+                  "step_index": 3,
+                  "action": "prepare_independent_review",
+                  "target_file": "deliverables/software-company/aprime2/g0_independent_reviewer_handoff.md",
+                  "target_symbol": "",
+                  "check_items": "记录 A′/matrix/runtime/S3 实施 release blockers；准备无秘密 evidence list；不创建 implementation microtask 或部署",
+                  "status": "pending",
+                  "result": "",
+                  "created_at": 1787800317.6977222,
+                  "completed_at": null
+                }
+              ],
+              "subtasks": []
+            }
+          ]
+        }
+      },
+      "next_action": {
+        "result": {
+          "task_id": "T-1787800241076-0a1c1824",
+          "decision": "READY",
+          "action": "CLAIM",
+          "required_role": "executor",
+          "step_id": "S-1787800317654-af22fb0c",
+          "task_contract": {
+            "id": "TC-T-1787800241076-0a1c1824",
+            "revision": 1,
+            "hash": "sha256:245996d05c02fb71caf9c23fccd66adf638f6d1f1b8543949f27ea0babfa6e77"
+          },
+          "role_contract": {
+            "id": "rcl-T-1787800241076-0a1c1824-executor",
+            "revision_id": "rcr-T-1787800241076-0a1c1824-executor-r1",
+            "revision": 1,
+            "hash": "sha256:98d07e485f6165ccff2a19e7076b0cc9345f3c5a39226b891dab11d0fa6a49d5",
+            "canonicalization_version": "role-contract-c14n/v1",
+            "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+            "skill_id": "none",
+            "skill_version": "aprime2-client-boundary-g0-v1",
+            "prompt_template_id": "cw.aprime2.g0.executor.v1",
+            "handoff_to": "reviewer"
+          },
+          "authorization": {
+            "acting_role": "executor",
+            "lease_role": "executor",
+            "lease_required": true,
+            "fencing_required": true,
+            "different_agent_instance_from": [],
+            "different_session_from": []
+          },
+          "allowed_paths": [
+            "deliverables/software-company/aprime2_*",
+            "deliverables/software-company/aprime2_role_contracts/*",
+            "deliverables/software-company/pyo3_authority_surface_inventory_*.json"
+          ],
+          "forbidden_paths": [
+            "creating or claiming A\"-01 through A\"-37",
+            "direct SQLite/CAS access or Python local fallback",
+            "modifying A′, P0-K, or legacy S3 task history",
+            "production source changes before role_worker_v1 bootstrap",
+            "runtime/current replacement or daemon refresh/deployment",
+            "task contract bootstrap by executor/planner",
+            "task.apply or task.close by executor/reviewer",
+            "using provider tokens or raw role worker credentials in evidence/logs"
+          ],
+          "eligibility": {
+            "verdict": "not_required_for_claim",
+            "evidence_gate": "not_evaluated",
+            "snapshot": "not_evaluated",
+            "mutation_recheck_required": true
+          },
+          "blocking_conditions": [],
+          "revision_hint": null,
+          "routing": {
+            "origin_kind": "system_evaluator",
+            "next_role": "executor",
+            "next_action": "claim_current_step",
+            "reason": [
+              "当前步骤 S-1787800317654-af22fb0c 可领取（唯一 verified Role Contract binding）"
+            ]
+          },
+          "next_session": {
+            "role": "executor",
+            "task_id": "T-1787800241076-0a1c1824",
+            "step_id": "S-1787800317654-af22fb0c",
+            "must_be_new_session": false
+          },
+          "source": {
+            "task_status": "open",
+            "task_contract_hash": "sha256:245996d05c02fb71caf9c23fccd66adf638f6d1f1b8543949f27ea0babfa6e77",
+            "role_contract_hash": "sha256:98d07e485f6165ccff2a19e7076b0cc9345f3c5a39226b891dab11d0fa6a49d5",
+            "evaluated_at": "1787800372.062268"
+          }
+        }
+      }
+    },
+    "g0": {
+      "status": {
+        "result": {
+          "task_id": "T-1787800241077-e7fd7231",
+          "title": "A″-G0 [Gate/client_boundary]：PyO3 daemon/authority surface manifest、HTTP successor 与 retireability 冻结",
+          "description": "# A″-G0：PyO3 client-boundary 静态清单 Gate\n\n本卡只产出 `pyo3_surface_manifest_v1`，不做 production migration。它须对 162 个 PyO3 `wrap_pyfunction!` exports 逐项记录 category、source definition、registration、all import/call site、ABI consumers、current semantic、DB/authority effect、HTTP successor、disposition、required gate 和 retirement condition。\n\n**claim barrier：** `task.create` 的 generic revision-1 contract 不含 identity policy；在 claim/report/review/verdict/apply/close 前，必须由独立 reviewer/adjudicator role workers append-only bootstrap 一个 current Task Contract revision，显式 `identity_policy=role_worker_v1`。没有此 receipt 一律 fail-closed。\n\n**release barrier：** G0 即使独立 PASS/applied，也不自动授权任何 A″ implementation card。A″-01 及后续微任务只能在 A′ fully closed、matrix `python_compat=0`、live/runtime convergence 独立通过、legacy S3 independent disposition、以及各自 dependency/G1 artifact gate 满足后，一张一张被合法创建。\n\n**禁止：** production source/route/schema/DB mutation、matrix status 更新、runtime refresh/deploy、direct SQLite/CAS、credentials、Role Worker policy implementation、A′/P0-K/S3 history manipulation、预建或领取 A″-01…37。\n",
+          "parent_id": "T-1787800241076-0a1c1824",
+          "status": "open",
+          "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+          "claimed_by": "",
+          "created_at": 1787800317.6977222,
+          "updated_at": 1787800317.6977222
+        }
+      },
+      "tree": {
+        "result": {
+          "task_id": "T-1787800241077-e7fd7231",
+          "title": "A″-G0 [Gate/client_boundary]：PyO3 daemon/authority surface manifest、HTTP successor 与 retireability 冻结",
+          "description": "# A″-G0：PyO3 client-boundary 静态清单 Gate\n\n本卡只产出 `pyo3_surface_manifest_v1`，不做 production migration。它须对 162 个 PyO3 `wrap_pyfunction!` exports 逐项记录 category、source definition、registration、all import/call site、ABI consumers、current semantic、DB/authority effect、HTTP successor、disposition、required gate 和 retirement condition。\n\n**claim barrier：** `task.create` 的 generic revision-1 contract 不含 identity policy；在 claim/report/review/verdict/apply/close 前，必须由独立 reviewer/adjudicator role workers append-only bootstrap 一个 current Task Contract revision，显式 `identity_policy=role_worker_v1`。没有此 receipt 一律 fail-closed。\n\n**release barrier：** G0 即使独立 PASS/applied，也不自动授权任何 A″ implementation card。A″-01 及后续微任务只能在 A′ fully closed、matrix `python_compat=0`、live/runtime convergence 独立通过、legacy S3 independent disposition、以及各自 dependency/G1 artifact gate 满足后，一张一张被合法创建。\n\n**禁止：** production source/route/schema/DB mutation、matrix status 更新、runtime refresh/deploy、direct SQLite/CAS、credentials、Role Worker policy implementation、A′/P0-K/S3 history manipulation、预建或领取 A″-01…37。\n",
+          "status": "open",
+          "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+          "claimed_by": "",
+          "depth": 0,
+          "sort_order": 0,
+          "created_at": 1787800317.6977222,
+          "updated_at": 1787800317.6977222,
+          "closed_at": 0.0,
+          "progress": {
+            "total": 4,
+            "done": 0,
+            "progress": 0.0
+          },
+          "steps": [
+            {
+              "step_id": "S-1787800317700-b1de35c8",
+              "step_index": 0,
+              "action": "inventory_all_pyo3_exports",
+              "target_file": "deliverables/software-company/aprime2/pyo3_surface_manifest_v1.json",
+              "target_symbol": "",
+              "check_items": "对 rust_ext/src/lib.rs 中 162 个 wrap_pyfunction exports 做一项一行、唯一 disposition 的静态 inventory；不修改 production source",
+              "status": "pending",
+              "result": "",
+              "created_at": 1787800317.6977222,
+              "completed_at": null
+            },
+            {
+              "step_id": "S-1787800317700-b1df1790",
+              "step_index": 1,
+              "action": "audit_imports_and_abi_consumers",
+              "target_file": "deliverables/software-company/aprime2/pyo3_import_use_audit.md",
+              "target_symbol": "",
+              "check_items": "使用 AST/import graph、dynamic import search 与 external ABI search 记录所有已知 consumer；unknown 必须 fail-closed",
+              "status": "pending",
+              "result": "",
+              "created_at": 1787800317.6977222,
+              "completed_at": null
+            },
+            {
+              "step_id": "S-1787800317700-b1df7bf4",
+              "step_index": 2,
+              "action": "freeze_http_successor_and_release_map",
+              "target_file": "deliverables/software-company/aprime2/pyo3_successor_release_map.md",
+              "target_symbol": "",
+              "check_items": "为每个 candidate 指定 HTTP successor、retain/blocked reason、required gate、单-export microtask slot；FD/memfd 项只能标 artifact-gated",
+              "status": "pending",
+              "result": "",
+              "created_at": 1787800317.6977222,
+              "completed_at": null
+            },
+            {
+              "step_id": "S-1787800317700-b1dfcdfc",
+              "step_index": 3,
+              "action": "prepare_independent_review",
+              "target_file": "deliverables/software-company/aprime2/g0_independent_reviewer_handoff.md",
+              "target_symbol": "",
+              "check_items": "记录 A′/matrix/runtime/S3 实施 release blockers；准备无秘密 evidence list；不创建 implementation microtask 或部署",
+              "status": "pending",
+              "result": "",
+              "created_at": 1787800317.6977222,
+              "completed_at": null
+            }
+          ],
+          "subtasks": []
+        }
+      },
+      "next_action": {
+        "result": {
+          "task_id": "T-1787800241077-e7fd7231",
+          "decision": "READY",
+          "action": "CLAIM",
+          "required_role": "executor",
+          "step_id": "S-1787800317700-b1de35c8",
+          "task_contract": {
+            "id": "TC-T-1787800241077-e7fd7231",
+            "revision": 1,
+            "hash": "sha256:16745cd80d1d53cda9963600cb35cf4c031b8f811e137e0a95e081aded1b1840"
+          },
+          "role_contract": {
+            "id": "rcl-T-1787800241077-e7fd7231-executor",
+            "revision_id": "rcr-T-1787800241077-e7fd7231-executor-r1",
+            "revision": 1,
+            "hash": "sha256:0058abd36b57d5e2830b5810f0167d6c466001bf26d611bcba5d1fe0cb388f91",
+            "canonicalization_version": "role-contract-c14n/v1",
+            "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+            "skill_id": "none",
+            "skill_version": "aprime2-client-boundary-g0-v1",
+            "prompt_template_id": "cw.aprime2.g0.executor.v1",
+            "handoff_to": "reviewer"
+          },
+          "authorization": {
+            "acting_role": "executor",
+            "lease_role": "executor",
+            "lease_required": true,
+            "fencing_required": true,
+            "different_agent_instance_from": [],
+            "different_session_from": []
+          },
+          "allowed_paths": [
+            "cli/ [read-only]",
+            "deliverables/software-company/aprime2/*",
+            "deliverables/software-company/aprime2_pyo3_daemon_transport_*_draft_*.md",
+            "deliverables/software-company/aprime2_role_contracts/*",
+            "deliverables/software-company/pyo3_authority_surface_inventory_*.json",
+            "rust_ext/src/daemon/client.rs [read-only]",
+            "rust_ext/src/daemon_query.rs [read-only]",
+            "rust_ext/src/lib.rs [read-only]",
+            "server/daemon_client.py [read-only]",
+            "server/daemon_protocol.py [read-only]",
+            "server/ipc_transport.py [read-only]"
+          ],
+          "forbidden_paths": [
+            "creating or claiming A\"-01 through A\"-37",
+            "direct SQLite/CAS access or Python local fallback",
+            "modifying A′, P0-K, or legacy S3 task history",
+            "production source changes before role_worker_v1 bootstrap",
+            "runtime/current replacement or daemon refresh/deployment",
+            "task contract bootstrap by executor/planner",
+            "task.apply or task.close by executor/reviewer",
+            "using provider tokens or raw role worker credentials in evidence/logs"
+          ],
+          "eligibility": {
+            "verdict": "not_required_for_claim",
+            "evidence_gate": "not_evaluated",
+            "snapshot": "not_evaluated",
+            "mutation_recheck_required": true
+          },
+          "blocking_conditions": [],
+          "revision_hint": null,
+          "routing": {
+            "origin_kind": "system_evaluator",
+            "next_role": "executor",
+            "next_action": "claim_current_step",
+            "reason": [
+              "当前步骤 S-1787800317700-b1de35c8 可领取（唯一 verified Role Contract binding）"
+            ]
+          },
+          "next_session": {
+            "role": "executor",
+            "task_id": "T-1787800241077-e7fd7231",
+            "step_id": "S-1787800317700-b1de35c8",
+            "must_be_new_session": false
+          },
+          "source": {
+            "task_status": "open",
+            "task_contract_hash": "sha256:16745cd80d1d53cda9963600cb35cf4c031b8f811e137e0a95e081aded1b1840",
+            "role_contract_hash": "sha256:0058abd36b57d5e2830b5810f0167d6c466001bf26d611bcba5d1fe0cb388f91",
+            "evaluated_at": "1787800372.109270"
+          }
+        }
+      }
+    }
+  },
+  "assertions": {
+    "parent_created": true,
+    "g0_created": true,
+    "g0_parent_matches": true,
+    "no_implementation_microtasks_created": true
+  }
+}

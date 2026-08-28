@@ -1,0 +1,38 @@
+{
+  "read_only": true,
+  "task_ids": {
+    "parent": "T-1787800241076-0a1c1824",
+    "g0": "T-1787800241077-e7fd7231"
+  },
+  "creation_assertions": {
+    "parent_created": true,
+    "g0_created": true,
+    "g0_parent_matches": true,
+    "no_implementation_microtasks_created": true
+  },
+  "parent_next_action": {
+    "task_id": "T-1787800241076-0a1c1824",
+    "status": null,
+    "next_role": null,
+    "next_action": null,
+    "step_id": "S-1787800317654-af22fb0c",
+    "blocking_conditions": [],
+    "task_contract_id": "TC-T-1787800241076-0a1c1824",
+    "task_contract_revision": 1,
+    "task_contract_hash": "sha256:245996d05c02fb71caf9c23fccd66adf638f6d1f1b8543949f27ea0babfa6e77",
+    "identity_policy_present_in_returned_contract": false
+  },
+  "g0_next_action": {
+    "task_id": "T-1787800241077-e7fd7231",
+    "status": null,
+    "next_role": null,
+    "next_action": null,
+    "step_id": "S-1787800317700-b1de35c8",
+    "blocking_conditions": [],
+    "task_contract_id": "TC-T-1787800241077-e7fd7231",
+    "task_contract_revision": 1,
+    "task_contract_hash": "sha256:16745cd80d1d53cda9963600cb35cf4c031b8f811e137e0a95e081aded1b1840",
+    "identity_policy_present_in_returned_contract": false
+  },
+  "interpretation": "A generic task.create projection is visible to next_action; no claim was performed. Explicit role_worker_v1 policy must be independently bootstraped before a claim is authorized."
+}

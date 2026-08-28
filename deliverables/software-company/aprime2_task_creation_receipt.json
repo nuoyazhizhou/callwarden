@@ -1,0 +1,26 @@
+{
+  "status": "failed_or_partial",
+  "created_via": "HTTP daemon task.create",
+  "read_or_used_credentials": false,
+  "authority": {
+    "manifest_path": "C:\\Users\\wanpi\\.callwarden\\http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+    "endpoint": "http://127.0.0.1:1067",
+    "pid": 36312,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "root_status": "in_progress",
+    "p0k_status": "closed"
+  },
+  "requested": {
+    "parent_task_id": "T-1787800241076-0a1c1824",
+    "g0_task_id": "T-1787800241077-e7fd7231",
+    "root_parent_id": "T-1787203926824-9f873bfc"
+  },
+  "tasks": {},
+  "notes": [
+    "visibility-only parent and static G0 were requested by user",
+    "no A'' implementation microtasks were created",
+    "generic task.create contract requires independent role_worker_v1 contract bootstrap before any claim"
+  ],
+  "error": "task.create failed: {\"code\": -32000, \"message\": \"task 没有 pending/in_progress step，不能 bootstrap executor binding\", \"data\": {\"code\": \"E_TASK_CONTRACT_BOOTSTRAP_INVALID\", \"message_key\": \"e_task_contract_bootstrap_invalid\", \"retryable\": false, \"recovery\": null, \"request_id\": \"aprime2-parent-create-T-1787800241076-0a1c1824\"}}"
+}
