@@ -116,6 +116,8 @@ Executor 必须在独立 worktree、冻结基线或逐路径 whitelist 中 captu
 
 ### Req 15 三角色治理实施任务树（父任务 `T-1786983366974-8811ccec`）
 
+
+> **状态：已冻结的 v1（三角色）历史基线，非现行模型。** 父任务 `T-1786983366974-8811ccec`（标题「三角色治理实施」）已于 08-20 `closed`，27 个直接子任务全部 `closed`，是 `docs/design/cw-role-handoff-task-loop.md`（v1，blob `34668462…`）的 freeze_design 锚点。本任务树只承载 v1 三角色实施路线图，**不描述四角色模型**。四角色（新增 Planner 为第四治理角色）的现行权威在 `docs/design/cw-role-handoff-task-loop-v2-amendment.md`（修订任务 `T-1787888909289-881595e0`，当前 `review` 中）与四角色共享协议 `.agents/skills/cw-task-loop/references/role-protocol.md`；客户端不得把本树当作四角色现行依据。
 需求基线 `docs/design/requirements.md#Requirement 15`，设计基线
 `docs/design/cw-role-handoff-task-loop.md` 已冻结为实施基线（freeze_design）。以下子任务树是
 非重叠实施路线图，按设计文档 §7 分期交付组织：每项任务都是独立任务，各有 Role Contract、非重叠
@@ -144,7 +146,9 @@ Executor 必须在独立 worktree、冻结基线或逐路径 whitelist 中 captu
 
 实施前先核对该任务清单是否覆盖需求，避免重叠创建；发现 ownership 相交时拆分或串行，不得因"不同
 agent"默认安全。本父任务只负责实施编排，关闭前须所有直接子任务独立 review PASS、证据/Evidence Gate 通过，
-并由 Coordinator（非治理角色）机械 apply/close。
+并由 Adjudicator（四角色模型下的 apply/close 权威，接受后以真实 lease 执行；Coordinator 仅为非治理的机械
+调度/控制面，不裁决完成）机械 apply/close。注：本句描述的是 v1 三角色时期的历史闭环方式；现行四角色模型
+以 Adjudicator 为 apply/close 权威（见 role-protocol.md §1 与 v2-amendment）。
 
 ## 默认工作规则（强制遵守）
 

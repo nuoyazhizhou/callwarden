@@ -2,7 +2,8 @@
 
 > 正式运行时由 Task/Role Contract 冻结并由 `task.claim` 返回。本文件仅为 fallback 文本。
 > 当前 daemon 的 `planner`、`implementer`、`tester`、`evidence`、`independent_reviewer`
-> 是兼容 RuntimeRole，不改变本文件的三角色治理模型。
+> 是兼容 RuntimeRole；本文件为 v1 冻结 fallback 文本，仅覆盖 executor/reviewer/adjudicator 三者的原始提示词。
+> 现行四角色模型（Planner 为新增目标治理角色，capability `planner_governance_v1` 声明前为 design-only，runtime 映射为 executor 兼容值）以 `.agents/skills/cw-task-loop/references/role-protocol.md` 为单源，本 fallback 不单列 Planner 段落。
 
 ## 通用首条声明
 
