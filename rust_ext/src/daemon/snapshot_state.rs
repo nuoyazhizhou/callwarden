@@ -2574,6 +2574,8 @@ impl DaemonStateExt for SnapshotDaemonState {
 
             // ---- GC/审计/运维（admin_handlers）----
             "admin.metrics_get" => admin::handle_metrics_get(params),
+            "metrics.snapshot" => admin::handle_metrics_snapshot(params),
+            "metrics.prometheus" => admin::handle_metrics_prometheus(params),
             "admin.gc_archive_import" | "admin.gc_archive_inspect" | "admin.gc_archive_list"
             | "admin.gc_audit_get" | "admin.gc_audit_list" | "admin.gc_policy_get"
             | "admin.gc_policy_set" | "admin.gc_retention" | "admin.audit_rotate_key"

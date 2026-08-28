@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import time
+import sys
 from typing import Any, Dict, Optional, Sequence
 
 from callwarden.config import (
@@ -147,15 +148,9 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
                              help="输出格式（默认 json；prometheus 输出 Prometheus 文本格式）")
     metrics_cmd.add_argument("--name",
                              help="仅显示指定指标名（缺省显示全部）")
-    metrics_cmd.add_argument("--reset", action="store_true",
-                             help="重置所有计数器/仪表/直方图（谨慎使用，仅测试或重启后场景；"
-                                  "仅 --local 模式有效）")
-    metrics_cmd.add_argument("--local", action="store_true",
-                             help="本进程直读（不走 daemon RPC），用于离线调试；"
-                                  "默认走 RPC 拉 daemon 进程指标")
     metrics_cmd.add_argument("--from-file", default=None,
-                             help="从 daemon dump 的快照文件读取（默认 ~/.callwarden/metrics_snapshot.json）；"
-                                  "daemon 不可达时自动降级到此模式")
+                             help="显式离线读取 daemon 周期性 dump 的快照文件（JSON，不含本地 DB）；"
+                                  "默认走 daemon RPC（Rust daemon 为唯一 authority），RPC 失败即 fail-closed")
 
     # ---- Mount Mapping 管理命令（G4）----
     mount = sub.add_parser("mount", help="容器挂载映射管理")
@@ -443,103 +438,22 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         })
         return 0
 
-    # G13（2026-07-20）：metrics 默认走 RPC 拉 daemon 进程指标；
-    # --local 走本进程直读（离线调试）；--reset 仅 --local 模式支持。
-    # G13（2026-07-20 批次6）：--from-file 读取 daemon dump 的快照；
-    #       daemon RPC 失败时自动降级到 --from-file（默认路径）。
+        # CLI-004 整改（reviewer_blocked F1）：metrics 仅经 daemon RPC 获取，
+    # Rust daemon 为唯一 authority；移除 --local in-process SQLite 与 RPC 失败时
+    # 的隐藏本地降级（snapshot/local fallback）。--from-file 仅作显式离线快照检视
+    # （读取 daemon 产出的 JSON，不涉及本地 DB），不作自动降级。
     if args.action == "metrics":
-        from callwarden.server.metrics import get_metrics_collector, MetricsCollector
-
-        if args.reset:
-            if not args.local:
-                print("ERROR: --reset 仅支持 --local 模式（不能重置远端 daemon 指标）",
-                      file=__import__("sys").stderr)
-                return 2
-            collector = get_metrics_collector()
-            collector.reset()
-            _print_json({"status": "reset", "timestamp": time.time()})
-            return 0
-
-        # G13 批次6：默认快照文件路径（与 DAEMON_REGISTRY_DB 同目录）
         if args.from_file:
-            snapshot_path = args.from_file
-        else:
-            # 默认 ~/.callwarden/metrics_snapshot.json
-            home_dir = os.path.expanduser("~")
-            snapshot_path = os.path.join(home_dir, ".callwarden", "metrics_snapshot.json")
-
-        # 默认走 RPC；连不上 daemon 时降级 --from-file（如快照存在），
-        # 否则降级 --local（保留旧行为：CLI 单元测试 / 离线调试场景）。
-        if not args.local and not args.from_file:
-            client = UnixDaemonRpcClient(args.socket)
-            rpc_method = ("metrics.prometheus" if args.format == "prometheus"
-                          else "metrics.snapshot")
-            try:
-                rpc_result = client.call(rpc_method)
-                if args.format == "prometheus":
-                    # Prometheus 文本直接打印
-                    print(rpc_result)
-                elif args.name:
-                    # 按 name 过滤 RPC 返回的 JSON
-                    filtered: Dict[str, Any] = {
-                        "timestamp": rpc_result.get("timestamp"),
-                        "uptime": rpc_result.get("uptime"),
-                        "name_filter": args.name,
-                    }
-                    found = False
-                    for category in ("counters", "gauges", "histograms"):
-                        cat_data = rpc_result.get(category, {})
-                        if args.name in cat_data:
-                            filtered[category] = {args.name: cat_data[args.name]}
-                            found = True
-                        else:
-                            filtered[category] = {}
-                    filtered["found"] = found
-                    _print_json(filtered)
-                else:
-                    _print_json(rpc_result)
-                return 0
-            except Exception as e:
-                # daemon 未启动 / RPC 失败
-                # G13 批次6：先尝试读快照文件，若快照不存在则降级 --local
-                snapshot = MetricsCollector.load_from_file(snapshot_path)
-                if snapshot is not None:
-                    print(f"WARNING: daemon RPC 失败 ({e})，降级读快照 {snapshot_path}",
-                          file=__import__("sys").stderr)
-                    args.from_file = snapshot_path  # 触发下方文件分支
-                else:
-                    # 快照不存在（如本机未运行过 daemon），降级本进程直读
-                    print(f"WARNING: daemon RPC 失败 ({e}) 且无快照文件，降级本进程直读",
-                          file=__import__("sys").stderr)
-                    args.local = True  # 触发下方本地分支
-
-        # G13 批次6：--from-file 模式：从 daemon dump 的快照读取
-        if args.from_file:
+            # 显式离线快照检视：读取 daemon dump 的 JSON 快照，无本地 DB 操作
+            from callwarden.server.metrics import MetricsCollector
             data = MetricsCollector.load_from_file(args.from_file)
             if data is None:
                 print(f"ERROR: 快照文件不存在或损坏：{args.from_file}",
-                      file=__import__("sys").stderr)
-                print("提示：daemon 启动后约 10 秒会生成首次快照；"
-                      "或使用 --local 走本进程直读",
-                      file=__import__("sys").stderr)
+                      file=sys.stderr)
                 return 2
-            # 加上来源标识
-            data["source"] = "snapshot_file"
-            data["snapshot_path"] = args.from_file
-            # 计算 snapshot 年龄
-            dumped_at = data.get("dumped_at")
-            if dumped_at:
-                age_sec = time.time() - dumped_at
-                data["snapshot_age_seconds"] = round(age_sec, 1)
-                if age_sec > 120:
-                    print(f"WARNING: 快照已过期 {age_sec:.0f}s（>120s），"
-                          f"daemon 可能已停止或挂起",
-                          file=__import__("sys").stderr)
-            # Prometheus 格式不支持从 JSON 反向生成，强制 json 输出
             if args.format == "prometheus":
-                print("ERROR: --from-file 不支持 prometheus 格式"
-                      "（仅支持 json）",
-                      file=__import__("sys").stderr)
+                print("ERROR: --from-file 不支持 prometheus 格式（仅支持 json）",
+                      file=sys.stderr)
                 return 2
             if args.name:
                 filtered = {
@@ -565,29 +479,36 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
                 _print_json(data)
             return 0
 
-        if args.local:
-            collector = get_metrics_collector()
-            if args.format == "prometheus":
-                text = collector.to_prometheus()
-                print(text)
-            else:
-                data = collector.to_json()
-                if args.name:
-                    filtered = {"timestamp": data["timestamp"],
-                                "uptime": data["uptime"],
-                                "name_filter": args.name}
-                    found = False
-                    for category in ("counters", "gauges", "histograms"):
-                        if args.name in data[category]:
-                            filtered[category] = {args.name: data[category][args.name]}
-                            found = True
-                        else:
-                            filtered[category] = {}
-                    filtered["found"] = found
-                    _print_json(filtered)
+        # 默认路径：经 daemon RPC（Rust daemon 为唯一 authority），fail-closed
+        client = UnixDaemonRpcClient(args.socket)
+        rpc_method = ("metrics.prometheus" if args.format == "prometheus"
+                      else "metrics.snapshot")
+        try:
+            rpc_result = client.call(rpc_method)
+        except Exception as e:
+            print(f"ERROR: daemon RPC 失败（{e}）；metrics 仅经 daemon 获取，"
+                  f"无本地 SQLite 降级", file=sys.stderr)
+            return 2
+        if args.format == "prometheus":
+            print(rpc_result)
+        elif args.name:
+            filtered: Dict[str, Any] = {
+                "timestamp": rpc_result.get("timestamp"),
+                "uptime": rpc_result.get("uptime"),
+                "name_filter": args.name,
+            }
+            found = False
+            for category in ("counters", "gauges", "histograms"):
+                cat_data = rpc_result.get(category, {})
+                if args.name in cat_data:
+                    filtered[category] = {args.name: cat_data[args.name]}
+                    found = True
                 else:
-                    _print_json(data)
-            return 0
+                    filtered[category] = {}
+            filtered["found"] = found
+            _print_json(filtered)
+        else:
+            _print_json(rpc_result)
         return 0
 
     if args.action == "serve":

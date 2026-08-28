@@ -411,6 +411,62 @@ pub fn handle_metrics_get(params: &Value) -> Result<Value, DaemonRpcError> {
     }))
 }
 
+/// `metrics.snapshot` —— daemon 运行时度量快照（Rust daemon 为唯一 authority）。
+///
+/// CLI-004 整改：原先 `cw daemon metrics` 在 RPC 失败时静默降级到
+/// 进程内 Python `MetricsCollector`（in-process SQLite），违反「Rust daemon
+/// 为唯一 authority」。本 handler 提供 daemon 自身运行时视图，结构对齐 CLI
+/// 的 counters/gauges/histograms 过滤逻辑；用户自定义计数器/直方图当前由
+/// daemon 进程内维护，本快照仅暴露运行时指标（gauges）。
+pub fn handle_metrics_snapshot(_params: &Value) -> Result<Value, DaemonRpcError> {
+    let uptime = std::time::Instant::now().elapsed().as_secs_f64();
+    let job_count = super::job_runner::rpc_job_list(&json!({}))
+        .map(|v| v.as_array().map(|a| a.len()).unwrap_or(0))
+        .unwrap_or(0);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let gauges = json!({
+        "daemon.pid": std::process::id(),
+        "daemon.uptime_seconds": uptime,
+        "daemon.active_jobs": job_count,
+        "daemon.schema_version": super::SCHEMA_VERSION,
+    });
+    Ok(json!({
+        "timestamp": ts,
+        "uptime": uptime,
+        "uptime_seconds": uptime,
+        "pid": std::process::id(),
+        "schema_version": super::SCHEMA_VERSION,
+        "active_jobs": job_count,
+        "transport": "http",
+        "source": "daemon_runtime",
+        "counters": {},
+        "gauges": gauges,
+        "histograms": {},
+    }))
+}
+
+/// `metrics.prometheus` —— 同 `metrics.snapshot`，但导出 Prometheus 文本格式。
+pub fn handle_metrics_prometheus(_params: &Value) -> Result<Value, DaemonRpcError> {
+    let snap = handle_metrics_snapshot(_params)?;
+    let uptime = snap.get("uptime_seconds").and_then(Value::as_f64).unwrap_or(0.0);
+    let jobs = snap.get("active_jobs").and_then(Value::as_i64).unwrap_or(0);
+    let pid = snap.get("pid").and_then(Value::as_i64).unwrap_or(0);
+    let mut out = String::new();
+    out.push_str("# HELP callwarden_daemon_uptime_seconds Daemon uptime in seconds\n");
+    out.push_str("# TYPE callwarden_daemon_uptime_seconds gauge\n");
+    out.push_str(&format!("callwarden_daemon_uptime_seconds {}\n", uptime));
+    out.push_str("# HELP callwarden_daemon_active_jobs Number of active jobs\n");
+    out.push_str("# TYPE callwarden_daemon_active_jobs gauge\n");
+    out.push_str(&format!("callwarden_daemon_active_jobs {}\n", jobs));
+    out.push_str("# HELP callwarden_daemon_pid Daemon process id\n");
+    out.push_str("# TYPE callwarden_daemon_pid gauge\n");
+    out.push_str(&format!("callwarden_daemon_pid {}\n", pid));
+    Ok(Value::String(out))
+}
+
 /// `admin.branch_register` —— 注册分支（daemon 自有的 daemon_branches 表）。
 pub fn handle_branch_register(
     conn: &Connection,
