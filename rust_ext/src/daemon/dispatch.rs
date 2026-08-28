@@ -2182,6 +2182,9 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "query.most_coupled_functions",
     "query.status",
     "query.symbol_content_by_hash",
+    // daemon 运行时度量（CLI-004：cw daemon metrics 走 Rust native，无本地 SQLite 降级）
+    "metrics.snapshot",
+    "metrics.prometheus",
     // MCP common 面（SRV-001：server mcp common Python authority → Rust daemon）
     "mcp.common.get_db_path_for_daemon",
     // audit log 面（SRV-002：server audit log Python authority → Rust daemon）
