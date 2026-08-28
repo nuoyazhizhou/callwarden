@@ -246,7 +246,7 @@ cw guardrail list      # 列出规则
 # Daemon
 cw daemon serve        # 启动 daemon
 cw daemon ping         # 测试 daemon 连通性
-cw daemon status       # daemon 状态
+cw daemon status <workspace_id|workspace_instance_id>  # workspace 状态
 
 # 其他
 cw test <module>       # 运行测试

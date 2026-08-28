@@ -1,28 +1,18 @@
 {
+  "scope": "server-python",
   "scanned_files": 52,
-  "finding_count": 97,
-  "files_with_findings": 26,
+  "finding_count": 108,
+  "files_with_findings": 14,
+  "passed": false,
   "by_file": {
-    "server/_mcp_common.py": 1,
-    "server/audit_log.py": 2,
-    "server/backup_restore.py": 3,
-    "server/cli_admin.py": 5,
-    "server/compat_registry.py": 4,
-    "server/compat_worker.py": 2,
-    "server/daemon_autostart.py": 3,
-    "server/daemon_client.py": 13,
-    "server/daemon_protocol.py": 1,
-    "server/daemon_server.py": 7,
-    "server/durable_staging.py": 1,
-    "server/health_check.py": 4,
-    "server/job_executor.py": 1,
-    "server/metrics.py": 1,
-    "server/query_budget.py": 1,
-    "server/replicator.py": 3,
-    "server/schema_migrator.py": 4,
-    "server/snapshot_gc.py": 9,
-    "server/stage_toggle_migration.py": 1,
-    "server/staging_log.py": 1,
+    "server/compat_registry.py": 5,
+    "server/compat_worker.py": 3,
+    "server/daemon_config.py": 7,
+    "server/daemon_server.py": 11,
+    "server/durable_staging.py": 22,
+    "server/health_check.py": 14,
+    "server/job_executor.py": 12,
+    "server/replicator.py": 4,
     "server/tools/tools_collab.py": 9,
     "server/tools/tools_p2_graph.py": 4,
     "server/tools/tools_p3_identity.py": 6,
@@ -32,586 +22,760 @@
   },
   "findings": [
     {
-      "file": "server/audit_log.py",
-      "handler": "_init_db",
-      "line": 239,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/audit_log.py",
-      "handler": "_get_conn",
-      "line": 246,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/backup_restore.py",
-      "handler": "_is_rust_backup_rolled_back",
-      "line": 104,
-      "call": "_sqlite3.connect"
-    },
-    {
-      "file": "server/backup_restore.py",
-      "handler": "_backup_file",
-      "line": 485,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/backup_restore.py",
-      "handler": "_backup_file",
-      "line": 486,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/cli_admin.py",
-      "handler": "open_readonly_conn",
-      "line": 37,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/cli_admin.py",
-      "handler": "read_pragmas",
-      "line": 65,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/cli_admin.py",
-      "handler": "connection_test",
-      "line": 99,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/cli_admin.py",
-      "handler": "scan_hash_databases",
-      "line": 147,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/cli_admin.py",
-      "handler": "read_task_dependencies",
-      "line": 211,
-      "call": "sqlite3.connect"
+      "file": "server/compat_registry.py",
+      "handler": "<module>",
+      "line": 27,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/compat_registry.py",
       "handler": "compat_route",
-      "line": 331,
-      "call": "get_compat_registry"
+      "line": 288,
+      "kind": "db_helper",
+      "detail": "get_compat_registry"
     },
     {
       "file": "server/compat_registry.py",
       "handler": "register_compat_route",
-      "line": 353,
-      "call": "get_compat_registry"
+      "line": 310,
+      "kind": "db_helper",
+      "detail": "get_compat_registry"
     },
     {
       "file": "server/compat_registry.py",
       "handler": "register_compat_routes",
-      "line": 379,
-      "call": "get_compat_registry"
+      "line": 336,
+      "kind": "db_helper",
+      "detail": "get_compat_registry"
     },
     {
       "file": "server/compat_registry.py",
       "handler": "validate_against_rust_route",
-      "line": 395,
-      "call": "get_compat_registry"
+      "line": 352,
+      "kind": "db_helper",
+      "detail": "get_compat_registry"
+    },
+    {
+      "file": "server/compat_worker.py",
+      "handler": "<module>",
+      "line": 23,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/compat_worker.py",
       "handler": "handle_frame",
       "line": 223,
-      "call": "get_compat_registry"
+      "kind": "db_helper",
+      "detail": "get_compat_registry"
     },
     {
       "file": "server/compat_worker.py",
       "handler": "_open_readonly_conn",
       "line": 277,
-      "call": "sqlite3.connect"
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
     },
     {
-      "file": "server/daemon_autostart.py",
-      "handler": "_try_connect_tcp",
-      "line": 223,
-      "call": "sock.connect"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 334,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/daemon_autostart.py",
-      "handler": "_try_connect_unix",
-      "line": 245,
-      "call": "sock.connect"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 335,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/daemon_autostart.py",
-      "handler": "try_http_connect",
-      "line": 989,
-      "call": "sock.connect"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 337,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/daemon_client.py",
-      "handler": "call_with_fd",
-      "line": 805,
-      "call": "conn.connect"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 339,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/daemon_client.py",
-      "handler": "publish_snapshot",
-      "line": 839,
-      "call": "sqlite3.connect"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 342,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/daemon_client.py",
-      "handler": "_get_db",
-      "line": 1735,
-      "call": "get_db"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 344,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_get_callers",
-      "line": 1739,
-      "call": "db.get_callers"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_get_callees",
-      "line": 1743,
-      "call": "db.get_callees"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_search_symbols",
-      "line": 1747,
-      "call": "db.search_symbols"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_get_symbol",
-      "line": 1751,
-      "call": "db.get_symbol"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_get_stats",
-      "line": 1755,
-      "call": "db.get_stats"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_get_topological_order",
-      "line": 1759,
-      "call": "db.get_topological_order"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_get_call_chain_down",
-      "line": 1763,
-      "call": "db.get_call_chain_down"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_sql_fallback_detect_cycles",
-      "line": 1771,
-      "call": "db.detect_cycles"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_inject_workspace_id",
-      "line": 3256,
-      "call": "get_db"
-    },
-    {
-      "file": "server/daemon_client.py",
-      "handler": "_inject_workspace_id",
-      "line": 3257,
-      "call": "db._get_active_workspace_id"
-    },
-    {
-      "file": "server/daemon_protocol.py",
-      "handler": "_is_rust_protocol_rolled_back",
-      "line": 61,
-      "call": "_sqlite3.connect"
+      "file": "server/daemon_config.py",
+      "handler": "apply_daemon_rw_pragmas",
+      "line": 346,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
       "file": "server/daemon_server.py",
-      "handler": "_is_rust_acl_rolled_back",
-      "line": 109,
-      "call": "_sqlite3.connect"
-    },
-    {
-      "file": "server/daemon_server.py",
-      "handler": "_is_rust_health_rolled_back",
-      "line": 160,
-      "call": "_sqlite3.connect"
-    },
-    {
-      "file": "server/daemon_server.py",
-      "handler": "get_registry_conn",
-      "line": 300,
-      "call": "sqlite3.connect"
+      "handler": "<module>",
+      "line": 14,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/daemon_server.py",
       "handler": "_get_workspace_resources",
-      "line": 612,
-      "call": "sqlite3.connect"
+      "line": 629,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
     },
     {
       "file": "server/daemon_server.py",
       "handler": "_get_workspace_resources",
-      "line": 622,
-      "call": "sqlite3.connect"
+      "line": 639,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
     },
     {
       "file": "server/daemon_server.py",
       "handler": "_registry_conn",
-      "line": 677,
-      "call": "sqlite3.connect"
+      "line": 694,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/daemon_server.py",
+      "handler": "_owned_workspace_by_id",
+      "line": 742,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
       "file": "server/daemon_server.py",
       "handler": "dispatch",
-      "line": 1398,
-      "call": "sqlite3.connect"
+      "line": 947,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_server.py",
+      "handler": "dispatch",
+      "line": 964,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_server.py",
+      "handler": "dispatch",
+      "line": 978,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_server.py",
+      "handler": "dispatch",
+      "line": 1415,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/daemon_server.py",
+      "handler": "dispatch",
+      "line": 1416,
+      "kind": "sql_execute",
+      "detail": "db_conn.execute"
+    },
+    {
+      "file": "server/daemon_server.py",
+      "handler": "dispatch",
+      "line": 1417,
+      "kind": "sql_execute",
+      "detail": "db_conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "<module>",
+      "line": 27,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/durable_staging.py",
       "handler": "__init__",
-      "line": 92,
-      "call": "sqlite3.connect"
+      "line": 107,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 111,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 112,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 113,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 114,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 115,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 116,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "__init__",
+      "line": 117,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "_init_schema",
+      "line": 122,
+      "kind": "sql_execute",
+      "detail": "self._conn.executescript"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "append",
+      "line": 144,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "transition",
+      "line": 171,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "transition",
+      "line": 185,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "transition",
+      "line": 191,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "transition",
+      "line": 197,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "read_pending",
+      "line": 207,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "read_pending",
+      "line": 214,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "read_all",
+      "line": 239,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "compact_applied",
+      "line": 250,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "compact_applied",
+      "line": 258,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "stats",
+      "line": 282,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/durable_staging.py",
+      "handler": "stats",
+      "line": 288,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "<module>",
+      "line": 62,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/health_check.py",
       "handler": "_check_db_registry",
-      "line": 238,
-      "call": "sqlite3.connect"
+      "line": 258,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_check_db_registry",
+      "line": 259,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_check_db_registry",
+      "line": 261,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
       "file": "server/health_check.py",
       "handler": "_recover_workspace_registry",
-      "line": 437,
-      "call": "sqlite3.connect"
+      "line": 463,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_workspace_registry",
+      "line": 467,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_workspace_registry",
+      "line": 481,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_workspace_registry",
+      "line": 487,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
       "file": "server/health_check.py",
       "handler": "_recover_cas_db",
-      "line": 494,
-      "call": "sqlite3.connect"
+      "line": 520,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_cas_db",
+      "line": 521,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
       "file": "server/health_check.py",
       "handler": "_recover_stale_jobs",
-      "line": 528,
-      "call": "sqlite3.connect"
+      "line": 554,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_stale_jobs",
+      "line": 558,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_stale_jobs",
+      "line": 570,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/health_check.py",
+      "handler": "_recover_stale_jobs",
+      "line": 577,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "<module>",
+      "line": 36,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/job_executor.py",
       "handler": "start",
-      "line": 193,
-      "call": "sqlite3.connect"
+      "line": 214,
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
     },
     {
-      "file": "server/metrics.py",
-      "handler": "_is_rust_metrics_rolled_back",
-      "line": 71,
-      "call": "_sqlite3.connect"
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 224,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
     },
     {
-      "file": "server/query_budget.py",
-      "handler": "_is_rust_budget_rolled_back",
-      "line": 79,
-      "call": "_sqlite3.connect"
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 225,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 226,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 227,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 228,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 229,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "start",
+      "line": 230,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "list_pending",
+      "line": 327,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "_lookup_active_workspace",
+      "line": 341,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
+    },
+    {
+      "file": "server/job_executor.py",
+      "handler": "_mark_cancelled",
+      "line": 458,
+      "kind": "sql_execute",
+      "detail": "self._conn.execute"
     },
     {
       "file": "server/replicator.py",
-      "handler": "_is_rust_cas_write_rolled_back",
-      "line": 81,
-      "call": "sqlite3.connect"
+      "handler": "<module>",
+      "line": 16,
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
     },
     {
       "file": "server/replicator.py",
-      "handler": "_is_rust_replicator_query_rolled_back",
-      "line": 111,
-      "call": "_sqlite3.connect"
+      "handler": "init_session_schema",
+      "line": 160,
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
     },
     {
       "file": "server/replicator.py",
-      "handler": "daemon_handle_refresh",
-      "line": 675,
-      "call": "sqlite3.connect"
+      "handler": "init_session_schema",
+      "line": 161,
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
     },
     {
-      "file": "server/schema_migrator.py",
-      "handler": "get_current_version",
-      "line": 169,
-      "call": "sqlite3.connect"
+      "file": "server/replicator.py",
+      "handler": "_sqlite_main_db_path",
+      "line": 402,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
     },
     {
-      "file": "server/schema_migrator.py",
-      "handler": "get_migration_history",
-      "line": 196,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/schema_migrator.py",
-      "handler": "apply_migrations",
-      "line": 235,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/schema_migrator.py",
-      "handler": "validate_schema",
-      "line": 302,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_scan_expired_backup_history",
-      "line": 218,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_scan_expired_migrations_log",
-      "line": 272,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_scan_expired_audit_logs",
-      "line": 326,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_scan_orphaned_workspaces",
-      "line": 365,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_get_registered_snapshot_ids",
-      "line": 401,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_delete_backup_history_record",
+      "file": "server/tools/tools_collab.py",
+      "handler": "_collab_direct_read",
       "line": 477,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_delete_migration_log_record",
-      "line": 487,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_delete_expired_audit_logs",
-      "line": 499,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/snapshot_gc.py",
-      "handler": "_vacuum_databases",
-      "line": 515,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/stage_toggle_migration.py",
-      "handler": "migrate_p0_toggles",
-      "line": 122,
-      "call": "sqlite3.connect"
-    },
-    {
-      "file": "server/staging_log.py",
-      "handler": "_is_rust_staging_log_rolled_back",
-      "line": 53,
-      "call": "_sqlite3.connect"
-    },
-    {
-      "file": "server/_mcp_common.py",
-      "handler": "_get_db_path_for_daemon",
-      "line": 50,
-      "call": "get_db"
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 499,
-      "call": "db.conn.execute"
+      "line": 489,
+      "kind": "db_helper",
+      "detail": "db.get_role_view"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 511,
-      "call": "db.get_role_view"
+      "line": 505,
+      "kind": "db_helper",
+      "detail": "db.list_evidence_for_task"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 527,
-      "call": "db.list_evidence_for_task"
+      "line": 507,
+      "kind": "db_helper",
+      "detail": "db.list_evidence_for_contract"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 529,
-      "call": "db.list_evidence_for_contract"
+      "line": 522,
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 544,
-      "call": "db.conn.execute"
+      "line": 537,
+      "kind": "db_helper",
+      "detail": "db.list_evidence_for_task"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 559,
-      "call": "db.list_evidence_for_task"
+      "line": 545,
+      "kind": "db_helper",
+      "detail": "db.derive_freshness"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 567,
-      "call": "db.derive_freshness"
+      "line": 549,
+      "kind": "db_helper",
+      "detail": "db.get_evidence"
     },
     {
       "file": "server/tools/tools_collab.py",
       "handler": "_collab_direct_read",
-      "line": 571,
-      "call": "db.get_evidence"
-    },
-    {
-      "file": "server/tools/tools_collab.py",
-      "handler": "_collab_direct_read",
-      "line": 598,
-      "call": "db.conn.execute"
+      "line": 576,
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
     },
     {
       "file": "server/tools/tools_p2_graph.py",
       "handler": "_h_validate_revision_dependencies",
       "line": 289,
-      "call": "db.conn.execute"
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
     },
     {
       "file": "server/tools/tools_p2_graph.py",
       "handler": "_h_validate_revision_dependencies",
       "line": 330,
-      "call": "db.get_interface_providers"
+      "kind": "db_helper",
+      "detail": "db.get_interface_providers"
     },
     {
       "file": "server/tools/tools_p2_graph.py",
       "handler": "_h_validate_revision_dependencies",
       "line": 340,
-      "call": "db.get_provider_selection"
+      "kind": "db_helper",
+      "detail": "db.get_provider_selection"
     },
     {
       "file": "server/tools/tools_p2_graph.py",
       "handler": "_h_validate_revision_dependencies",
       "line": 363,
-      "call": "db.conn.execute"
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
     },
     {
       "file": "server/tools/tools_p3_identity.py",
       "handler": "_h_get_action_identity",
       "line": 239,
-      "call": "db.get_action_identity"
+      "kind": "db_helper",
+      "detail": "db.get_action_identity"
     },
     {
       "file": "server/tools/tools_p3_identity.py",
       "handler": "_h_check_action_identity",
       "line": 259,
-      "call": "db.validate_action_identity"
+      "kind": "db_helper",
+      "detail": "db.validate_action_identity"
     },
     {
       "file": "server/tools/tools_p3_identity.py",
       "handler": "_h_check_session_separation",
       "line": 283,
-      "call": "db.validate_session_separation"
+      "kind": "db_helper",
+      "detail": "db.validate_session_separation"
     },
     {
       "file": "server/tools/tools_p3_identity.py",
       "handler": "_h_get_attestation_validity",
       "line": 297,
-      "call": "db.derive_attestation_validity"
+      "kind": "db_helper",
+      "detail": "db.derive_attestation_validity"
     },
     {
       "file": "server/tools/tools_p3_identity.py",
       "handler": "_h_list_attestation_revocations",
       "line": 316,
-      "call": "db.list_attestation_revocations"
+      "kind": "db_helper",
+      "detail": "db.list_attestation_revocations"
     },
     {
       "file": "server/tools/tools_p3_identity.py",
       "handler": "_p3_resolve_identity_arg",
-      "line": 372,
-      "call": "db.validate_action_identity"
+      "line": 371,
+      "kind": "db_helper",
+      "detail": "db.validate_action_identity"
     },
     {
       "file": "server/tools/tools_p4_lease.py",
       "handler": "_h_assignment_show",
       "line": 275,
-      "call": "db.get_assignment"
+      "kind": "db_helper",
+      "detail": "db.get_assignment"
     },
     {
       "file": "server/tools/tools_security.py",
       "handler": "_h_merge_preview",
       "line": 849,
-      "call": "db.diff_branches"
+      "kind": "db_helper",
+      "detail": "db.diff_branches"
     },
     {
       "file": "server/tools/tools_security.py",
       "handler": "_h_merge_preview",
       "line": 877,
-      "call": "db.blast_radius"
+      "kind": "db_helper",
+      "detail": "db.blast_radius"
     },
     {
       "file": "server/tools/tools_security.py",
       "handler": "_h_rule_candidate_list",
       "line": 998,
-      "call": "db.rule_candidate_list"
+      "kind": "db_helper",
+      "detail": "db.rule_candidate_list"
     },
     {
       "file": "server/tools/tools_security.py",
       "handler": "_h_rule_list",
       "line": 1008,
-      "call": "db.rule_list"
+      "kind": "db_helper",
+      "detail": "db.rule_list"
     },
     {
       "file": "server/tools/tools_security.py",
       "handler": "_h_get_applicable_rules",
       "line": 1018,
-      "call": "db.get_applicable_rules"
+      "kind": "db_helper",
+      "detail": "db.get_applicable_rules"
     },
     {
       "file": "server/tools/tools_task.py",
       "handler": "_h_audit_verify_chain",
-      "line": 1023,
-      "call": "db.verify_audit_chain"
+      "line": 1037,
+      "kind": "db_helper",
+      "detail": "db.verify_audit_chain"
     },
     {
       "file": "server/tools/tools_task.py",
       "handler": "_h_list_audit_signing_keys",
-      "line": 1035,
-      "call": "db.list_signing_keys"
+      "line": 1049,
+      "kind": "db_helper",
+      "detail": "db.list_signing_keys"
     },
     {
       "file": "server/tools/tools_task.py",
       "handler": "_h_list_clones",
-      "line": 1049,
-      "call": "db.list_clones"
+      "line": 1063,
+      "kind": "db_helper",
+      "detail": "db.list_clones"
     },
     {
       "file": "server/tools/tools_task.py",
       "handler": "_h_list_clone_groups",
-      "line": 1063,
-      "call": "db.list_clone_groups"
+      "line": 1077,
+      "kind": "db_helper",
+      "detail": "db.list_clone_groups"
     },
     {
       "file": "server/tools/tools_task.py",
       "handler": "_h_get_clone_group_detail",
-      "line": 1077,
-      "call": "db.get_clone_group_detail"
+      "line": 1091,
+      "kind": "db_helper",
+      "detail": "db.get_clone_group_detail"
     }
   ]
 }

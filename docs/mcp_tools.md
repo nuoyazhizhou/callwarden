@@ -212,7 +212,7 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 
 #### [5] Task Orchestration（30 个）
 
-`task_create`、`task_create_subtask`、`task_split`、`task_create_from_plan`、`task_plan_template`、`task_next_step`、`work_next_job`、`task_resolve_block`、`task_report_step`、`task_rollback`、`task_apply`、`task_close`、`task_capture_diff`、`task_list`、`task_status`、`task_status_tree`、`task_completion_review`、`task_quality_findings`、`task_resolve_quality_finding`、`record_task_symbol_change`、`link_edit_audit_symbols`、`get_task_symbol_changes`、`get_symbol_change_tasks`、`cancel_job`、`list_jobs`、`get_job_stats`、`wait_for_job`、`get_job_status`、`get_task_commits`、`get_commit_tasks`
+`task_create`、`task_create_subtask`、`task_split`、`task_create_from_plan`、`task_plan_template`、`task_next_step`、`work_next_job`、`task_resolve_block`、`task_report_step`、`task_rollback`、`task_apply`、`task_close`、`task_capture_diff`、`task_list`、`task_status`、`task_governance_projection`、`task_status_tree`、`task_completion_review`、`task_quality_findings`、`task_resolve_quality_finding`、`record_task_symbol_change`、`link_edit_audit_symbols`、`get_task_symbol_changes`、`get_symbol_change_tasks`、`cancel_job`、`list_jobs`、`get_job_stats`、`wait_for_job`、`get_job_status`、`get_task_commits`、`get_commit_tasks`
 
 #### [6] Agent Rule Memory（11 个）
 
@@ -613,12 +613,28 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 ### `task_list`
 列出任务。
 - **参数**：`status_filter: str = None`, `limit: int = 20`
-- **返回**：`list`
+- **返回**：`list`（兼容本地模式）或 daemon `{tasks: [...]}`；每条任务包含
+  `lifecycle_status`、`workflow_status`、`review`、`blocking_reasons` 和
+  `governance` 投影。
 
 ### `task_status`
 获取任务详情和所有步骤。
 - **参数**：`task_id: str`
-- **返回**：`dict | None`
+- **返回**：`dict | None`，包含 `steps` 和统一的 `progress`（legacy
+  `progress`/`ratio` 为 0..1，`percent` 为 0..100，保留两位），以及
+  daemon 派生的生命周期/治理状态字段。
+
+### `task_governance_projection`
+获取 daemon 的任务治理进度投影。它把 raw 生命周期与 Reviewer/Adjudicator 的治理
+进度分开，避免把 `review` 误解为“没有发生动作”。
+
+- **参数**：`task_id: str`
+- **返回**：包含 `task_id`、`lifecycle_status`、`workflow_status`、`current_role`、
+  `next_role`、`next_action`、`review`、`blocking_reasons`、Task Contract、当前步骤和
+  最近 verdict 的对象；不返回 lease raw token。
+- **权威性**：状态派生只由 Rust daemon 完成，MCP 仅转发；Reviewer PASS 只表示
+  `adjudication_pending`，Reviewer BLOCKED 表示 `remediation_pending`，不会直接改变
+  `applied`/`closed` 生命周期。
 
 ### `task_completion_review`
 运行任务完成质量审查，触发任务质量门禁。
@@ -800,7 +816,10 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 - **返回**：`list` — 新建子任务的 ID 列表
 
 ### `task_status_tree`
-获取任务树详情（含子任务树和进度）。返回完整的任务树结构，包括每层的进度百分比、子任务列表、自身步骤状态。
+  获取任务树详情（含子任务树、生命周期/治理状态和进度）。返回完整的任务树结构，
+  包括每层的 `lifecycle_status`、daemon 派生的 `workflow_status`、`governance` 投影、
+  子任务列表和自身步骤状态。`progress.progress` 是历史兼容的 0..1 ratio；请使用
+  `progress.ratio` 或 `progress.percent`（0..100，保留两位）表达进度。
 - **参数**：`task_id: str` — 根任务 ID
 - **返回**：`dict | None` — 含 progress、steps、subtasks 递归结构
 

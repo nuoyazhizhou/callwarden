@@ -699,6 +699,50 @@ Agent 每次编辑文件都记录完整审计：
 
 任务状态机 `open → in_progress → review → applied → closed` 实现级联 close 机制：
 
+### 任务生命周期与治理进度投影
+
+`tasks.status` 是机器门禁用的生命周期字段，不能单独表达“当前由谁处理、Reviewer
+是否已经作出结论、下一步该做什么”。因此对外状态分为两层：
+
+- `lifecycle_status`：直接对应 `tasks.status`，只允许 daemon 的状态机改变，继续作为
+  `apply`/`close` 的权限门禁。
+- `workflow_status`：daemon 根据生命周期、active lease、有效 Verdict Ledger 和
+  `task.next_action` 只读派生，供 CLI、MCP 和人阅读。客户端不得自行重算。
+
+标准 `workflow_status`：
+
+| workflow_status | 含义 | 下一责任方 |
+|---|---|---|
+| `queued` | 已创建但尚未开始执行 | Executor |
+| `execution_in_progress` | Executor 正在执行或持有 active lease | Executor |
+| `remediation_in_progress` | 正在处理 Reviewer/Adjudicator 退回的缺陷 | Executor |
+| `review_pending` | 已交付，等待 Reviewer | Reviewer |
+| `adjudication_pending` | Reviewer 已 PASS，等待 Adjudicator | Adjudicator |
+| `remediation_pending` | Reviewer 已 BLOCKED，等待 Executor 修复 | Executor |
+| `applied_pending_close` | Adjudicator 已 apply，等待最终 close | Adjudicator |
+| `completed` | 已 closed | — |
+| `reverted` | 已回退 | — |
+| `governance_blocked` | 缺少可验证的 workspace binding、Task Contract 或其他治理事实；不伪造历史状态 | Executor/用户补齐治理事实 |
+
+统一投影至少包含 `task_id`、`lifecycle_status`、`workflow_status`、`current_role`、
+`next_role`、`next_action`、`review.state`、可用时的 `review.verdict_id` /
+`review.findings_count`，以及 `blocking_reasons`。旧的 `blocking_conditions` 保留
+作为兼容字段。Reviewer 的 PASS/BLOCKED 是 Verdict Ledger 事件，不应被错误理解为
+raw `tasks.status` 已经自动变成 `applied`；只有 Adjudicator 的受保护 apply 才推进
+生命周期。Reviewer BLOCKED 会进入 `remediation_pending`，领取修复后进入
+`remediation_in_progress`，历史 verdict 保持不可变。
+
+`task.next_action` 是该投影的最小实时入口；`task.status`、`task.status_tree` 和
+`task.governance_projection.get` 应复用同一 daemon 派生模型，CLI/MCP 只负责展示。
+
+`task.status_tree` 的 `status` 保留为兼容的 raw lifecycle 状态，并同时返回
+`lifecycle_status`、`workflow_status` 和 `governance` 投影。历史任务如果缺少不可变
+binding/capture 或合同，返回 `workflow_status=governance_blocked` 及
+`blocking_reasons`，只读查询不得静默回填、伪造或批量修改历史记录。
+
+任务进度对象中的 `progress` 是历史兼容字段，语义为 0..1 ratio；新客户端应使用
+明确带单位的 `ratio` 与 `percent`，其中 `percent` 为 0..100 且四舍五入到两位。
+
 **父任务状态自动推进**：
 - `open → in_progress`：第一个子任务被 `task_next_step` 领取时，遍历父任务链推进
 - `in_progress → review`：所有子任务都是 review/applied/closed 时，由 `_update_parent_status` 递归推进

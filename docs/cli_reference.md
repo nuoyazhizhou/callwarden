@@ -911,6 +911,21 @@ cw task next-action <task_id> --json
 `action`（`CLAIM`/`REVIEW`/`ADJUDICATE`/`REVISE`/`WAIT`/`NONE`）、`required_role`、
 `step_id`、`routing`（下一棒角色/动作与理由）与 `blocking_conditions`。
 
+同时返回统一治理进度投影：
+
+- `lifecycle_status`：raw `tasks.status`，用于 apply/close 门禁；
+- `workflow_status`：`queued`、`execution_in_progress`、`remediation_in_progress`、
+  `review_pending`、`adjudication_pending`、`remediation_pending`、
+  `applied_pending_close`、`completed` 或 `reverted`；
+- `current_role` / `next_role` / `next_action`：当前责任角色与下一条合法动作；
+- `review.state`：`not_in_review`、`pending`、`blocked` 或 `passed`，有效 verdict 存在
+  时还包含 `verdict_id` 与 `findings_count`；
+- `blocking_reasons`：面向用户的阻断原因（`blocking_conditions` 保留兼容）。
+
+因此 Reviewer PASS 仍显示 `lifecycle_status=review`、`workflow_status=adjudication_pending`，
+而 BLOCKED 显示 `remediation_pending`；这两个结论都不会伪造 `applied`。CLI 的
+`task show` 和 `task governance-projection` 展示 daemon 返回的投影，客户端不自行推导。
+
 - **只读**：不领取步骤、不写任务状态。
 - **权威在 daemon**：evaluator 只在 Rust daemon 中实现；daemon 未启动时返回
   `E_DAEMON_UNAVAILABLE`，local 模式无 evaluator（fail-closed），不会本地推算。
@@ -1202,11 +1217,19 @@ cw task show <task_id> --flat
 
 默认调用 `db.task_status_tree()`，递归展示：
 - 任务详情：ID / 标题 / 状态 / 描述 / 创建者 / 创建时间
-- 进度：`done/total (pct%)`
+- 进度：`done/total (pct%)`，`pct` 固定显示两位小数；接口中的 `progress` 是 0..1
+  ratio，`percent` 才是 0..100 的百分比
+- 状态：同时显示 raw `status`/`lifecycle_status` 与 daemon 派生的 `workflow_status`；
+  缺少历史治理事实时显示 `governance_blocked` 和阻断原因
 - 自身步骤列表（仅根任务显示步骤明细）
 - 子任务树（按 depth 缩进，带 `↳` 前缀）
 
-`--flat` 模式调用 `db.task_status()`，仅显示主任务详情和自身步骤。
+`--flat` 模式调用 daemon `task.status`，显示主任务详情、自身步骤和统一治理状态；
+daemon 不可用时按兼容模式规则 fail-closed，不用本地 raw status 伪造治理结论。
+
+`task create` 的默认三角色合同同时声明 `identity_policy=legacy_identity_v1`，
+保证新建任务的 Contract revision 可被后续 Executor claim；历史缺少该字段的任务
+仍需由受权治理流程追加新 revision，不能由客户端直接补写。
 
 ### `task capture-diff`：捕获外部 Agent 文件改动到审计闭环
 
@@ -2588,7 +2611,7 @@ cw-client health
 # Workspace 管理
 cw-client register /path/to/project --git-remote <url> --git-head <sha>
 cw-client list
-cw-client status <workspace_id>
+cw-client status <workspace_id|workspace_instance_id>
 cw-client publish <workspace_id> <db_path> --build-context <hash>
 
 # 查询共享 snapshot
@@ -2626,6 +2649,10 @@ cw-client toolchain resolved-edges store <workspace_id> <hash> --edges-json <jso
 cw-client mode                # 查看当前模式
 cw-client mode --set auto     # 提示如何修改（不会真正设置）
 ```
+
+`status` 同时接受数字主键 `workspace_id` 和 daemon 注册返回的
+`workspace_instance_id`。例如：`cw-client status 730` 或
+`cw-client status 4baea3ff12c2ea5c`。
 
 ### 与 `cw daemon` 的差异
 

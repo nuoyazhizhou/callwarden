@@ -79,7 +79,8 @@ mcp.task_report_step(task_id, step["step_id"], result="...", success=True)
 
 # 5. 随时查看任务树进度
 tree = mcp.task_status_tree(task_id)
-# → 每层显示 progress: {total, done, progress百分比}
+# → 每层显示 progress: {total, done, ratio, percent}
+#    ratio 为 0..1，percent 为 0..100（展示保留两位小数）
 ```
 
 ### 场景二：Agent 通过 MCP 读取代码（不依赖 IDE 内置工具）
