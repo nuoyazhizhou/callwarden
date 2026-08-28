@@ -38,30 +38,28 @@ _ROLLBACK_CACHE: Dict[str, float] = {"ts": 0.0, "value": False}
 _ROLLBACK_CACHE_TTL = 60.0
 
 
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """通过统一 HTTP client 调用 daemon，不打开本地 rollback authority。"""
+    from callwarden.server._mcp_common import _call_daemon_rpc as rpc
+
+    return rpc(method, params)
+
+
 def _is_rust_staging_log_rolled_back() -> bool:
     """检查 rust_staging_log feature 是否已回滚（60s 缓存）
 
     StagingLog 是独立类（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
-    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
+    通过 daemon RPC 查询 rollback_config，结果缓存 60s 避免频繁请求。
     """
     now = time.time()
     if now - _ROLLBACK_CACHE["ts"] < _ROLLBACK_CACHE_TTL:
         return _ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_staging_log",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc(
+            "mcp.staging_log.is_rust_staging_log_rolled_back", {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
+        # 只读 rollback 探测 fail-soft；不得回退本地 SQLite authority。
         value = False
     _ROLLBACK_CACHE["ts"] = now
     _ROLLBACK_CACHE["value"] = value

@@ -58,32 +58,32 @@ _METRICS_ROLLBACK_CACHE_TTL = 60.0
 
 
 def _is_rust_metrics_rolled_back() -> bool:
-    """检查 rust_daemon_metrics_compute feature 是否已回滚（60s 缓存）。
+    """检查 metrics Rust feature 的回滚状态（60s daemon RPC 缓存）。
 
-    metrics 可能被频繁调用（直方图统计、Prometheus 导出），不能每次都打开 DB。
+    rollback_config 的数据库权威由 Rust daemon 持有；Python 只负责缓存
+    结果并在 daemon 不可用时按旧 fail-soft 语义视为未回滚。
     """
     now = time.time()
     if now - _METRICS_ROLLBACK_CACHE["ts"] < _METRICS_ROLLBACK_CACHE_TTL:
         return _METRICS_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_daemon_metrics_compute",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc(
+            "mcp.metrics.is_rust_metrics_rolled_back", {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
+        # fail-soft：只读 authority 读，daemon 不可用时视为未回滚；
+        # 绝不回退到 Python SQLite。
         value = False
     _METRICS_ROLLBACK_CACHE["ts"] = now
     _METRICS_ROLLBACK_CACHE["value"] = value
     return value
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经 daemon 统一客户端发起 RPC，避免 metrics ↔ daemon_client 循环依赖。"""
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
 
 
 def _rust_metrics_available() -> bool:

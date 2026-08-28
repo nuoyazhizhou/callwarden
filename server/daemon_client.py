@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import socket
-import sqlite3
 import sys
 import time
 import urllib.error
@@ -249,6 +248,49 @@ class UnixDaemonRpcClient:
             "identity": identity,
         })
 
+    def task_contract_revise(
+        self,
+        task_id: str,
+        envelope: dict,
+        expected_previous_hash: str,
+        workspace_id: int,
+        workspace_instance_id: str,
+        request_id: str,
+        evidence_path: str,
+        evidence_hash: str,
+        lease_token: str,
+        fencing_counter: int,
+        identity: Any,
+    ) -> dict:
+        """P0-G：append-only Task Contract revision n+1（task.contract_revise）。
+
+        只转发受保护 RPC；绝无 SQL fallback。daemon 端强制：adjudicator identity
+        （agent_id/agent_instance_id/session_id/model_id/role 全非空）、独立
+        Reviewer lease/fencing、workspace authority、expected_previous_hash 连续性，
+        且只追加 revision n+1，禁 UPDATE/DELETE 历史 revision。
+        """
+        return self.call("task.contract_revise", {
+            "task_id": task_id,
+            "envelope": envelope,
+            "expected_previous_hash": expected_previous_hash,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
+            "request_id": request_id,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "lease_token": lease_token,
+            "fencing_counter": fencing_counter,
+            "identity": identity,
+        })
+
+    def task_governance_projection_get(self, task_id: str) -> dict:
+        """P0-G G3：只读 governance projection（Reviewer 权威投影）。
+
+        返回 Task Contract / current step / Reviewer lineage / 审阅输入 / 规则状态 /
+        诊断；绝不返回 lease raw token。只转发 daemon，无 SQL fallback。
+        """
+        return self.call("task.governance_projection.get", {"task_id": task_id})
+
     def agent_register(self, agent_id: str = "", agent_name: str = "cw-agent", capabilities: list = None, identity: Any = None, **identity_fields: Any) -> dict:
         """A2：注册 Agent 身份（含 agent_instance_id/provider/model_id/session_id/role/runtime_hash 等）。
 
@@ -277,8 +319,68 @@ class UnixDaemonRpcClient:
             params["contract_claim"] = contract_claim
         return self.call("task.claim", params)
 
+    def task_claim_recover(
+        self,
+        task_id: str,
+        reason: str,
+        request_id: str,
+        lease_token: str,
+        fencing_counter: Any,
+        identity: Any,
+    ) -> dict:
+        """P0-G：受保护 orphan claim recovery（task.claim.recover）。
+
+        只转发 daemon 权威写点；daemon 不可用或返回错误时由统一 transport
+        路径 fail-closed（E_DAEMON_UNAVAILABLE），绝不回退本地 SQLite。
+        调用方必须以 adjudicator 身份携带完整 identity，并持有独立 Reviewer
+        的 lease_token/fencing_counter（跨角色 lease 校验在 daemon 端执行）。
+        同 request_id 重放返回第一次确定性结果（dedup）。
+        """
+        return self.call("task.claim.recover", {
+            "task_id": task_id,
+            "reason": reason,
+            "request_id": request_id,
+            "lease_token": lease_token,
+            "fencing_counter": fencing_counter,
+            "identity": identity,
+        })
+
     def task_work_next(self, task_id: str) -> dict:
         return self.call("task.work_next", {"task_id": task_id})
+
+    def task_assignment_status(
+        self, task_id: str, step_id: str = "", role: str = ""
+    ) -> dict:
+        """读取 daemon 权威的 durable assignment 工作队列投影。"""
+        params = {"task_id": task_id}
+        if step_id:
+            params["step_id"] = step_id
+        if role:
+            params["role"] = role
+        return self.call("task.assignment.status", params)
+
+    def task_assignment_heartbeat(
+        self,
+        task_id: str,
+        assignment_id: str,
+        agent_session_id: str = "",
+        identity: Any = None,
+        request_id: str = "",
+        fencing_counter: Any = None,
+    ) -> dict:
+        """续租当前 assignment；状态和 holder 校验完全由 daemon 执行。"""
+        params = {
+            "task_id": task_id,
+            "assignment_id": assignment_id,
+            "agent_session_id": agent_session_id,
+        }
+        if identity:
+            params["identity"] = identity
+        if request_id:
+            params["request_id"] = request_id
+        if fencing_counter is not None:
+            params["fencing_counter"] = fencing_counter
+        return self.call("task.assignment.heartbeat", params)
 
     def task_next_action(self, task_id: str, workspace_instance_id: str = "") -> dict:
         # 5B：task.next_action 只读派工查询（薄壳转发 daemon evaluator）。
@@ -796,7 +898,25 @@ class UnixDaemonRpcClient:
             conn.close()
 
     def call_with_fd(self, method: str, params: Dict[str, Any], fd: int) -> Any:
-        """发送一个带只读 FD 的请求。"""
+        """FD 传递能力探测（SRV-006：authority 已下沉 Rust daemon）。
+
+        原实现为直接打开 UDS 连接并发送 FD（SCM_RIGHTS）；下沉后改走 daemon
+        RPC `mcp.daemon_client.call_with_fd`，返回能力元数据
+        `{"supported": bool, "transport": ...}`。物理 FD 发送属 transport
+        bootstrap（客户端必须持有自己的 socket），见 `_transport_call_with_fd`。
+        fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地判定）。
+        """
+        result = self.call("mcp.daemon_client.call_with_fd", {"method": method})
+        if not isinstance(result, dict):
+            raise RuntimeError(f"call_with_fd: daemon 返回非对象结果 {result!r}")
+        return result
+
+    def _transport_call_with_fd(self, method: str, params: Dict[str, Any], fd: int) -> Any:
+        """Transport bootstrap：发送一个带只读 FD 的请求（SCM_RIGHTS 物理传递）。
+
+        SRV-006：FD 能力判定 authority 已下沉 Rust daemon（见 `call_with_fd`）；
+        物理 FD 发送无法委托 daemon（客户端持有 fd 与 socket），保留原实现。
+        """
         if sys.platform == "win32" or not hasattr(socket, "AF_UNIX"):
             raise DaemonUnavailableError("当前平台不支持 SCM_RIGHTS FD 传递")
         request_id = next(self._ids)
@@ -820,40 +940,32 @@ class UnixDaemonRpcClient:
 
     def publish_snapshot(self, workspace_instance_id: str, db_path: str,
                          build_context_hash: str = "") -> Any:
-        """checkpoint 本地 DB，并以只读 FD 或 db_path 发布给 daemon。
+        """发布快照给 daemon（SRV-006：checkpoint authority 已下沉 Rust daemon）。
 
-        checkpoint 策略与 Rust 侧对齐（C4/S8）：统一使用 PASSIVE 双保险——
-        先设 busy_timeout 等待，再执行 PASSIVE checkpoint，busy 时不 fail-fast、
-        不抛异常，剩余 WAL 页由 daemon/内核后续 PASSIVE checkpoint 兜底。
+        原实现为本地 sqlite3 connect + PASSIVE checkpoint（C4/S8 双保险）；
+        下沉后改走 daemon RPC `mcp.daemon_client.publish_snapshot`：由 daemon
+        权威执行 busy_timeout 等待 + PASSIVE checkpoint，并返回归一化 payload
+        `{"checkpointed", "db_path", "workspace_instance_id",
+        "build_context_hash", "transport"}`。
 
-        传输选择（共存契约 §3.2）：
-        - Windows 本地：Named Pipe，传 db_path（无 FD）
-        - Unix UDS 直连：SCM_RIGHTS FD 传递
-        - windows-bridge（WSL → TCP bridge）：bridge 只转发 JSON-RPC，无法传 FD，
-          回退 db_path 形式（bridge/daemon 按配置解析路径）
+        传输选择采用 daemon 权威结论：统一 db_path 形式（Windows Named Pipe /
+        windows-bridge / UDS 直连均支持）；FD 物理传递保留在
+        `_transport_call_with_fd`（transport bootstrap，见 finding）。
+        fail-closed：daemon 不可用抛 DaemonUnavailableError（不回退本地 checkpoint）。
         """
-        # 判定是否经 bridge（WSL 访问 Windows authority）——bridge 不能传 FD
-        effective_bridge = (
-            self.transport_override == "windows-bridge"
-            or _is_bridge_rpc_transport()
-        )
-        with sqlite3.connect(db_path, timeout=30.0) as conn:
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        if sys.platform == "win32" or effective_bridge:
-            return self.call("snapshot.publish", {
-                "workspace_instance_id": workspace_instance_id,
-                "build_context_hash": build_context_hash,
-                "db_path": os.path.abspath(db_path),
-            })
-        fd = os.open(db_path, os.O_RDONLY)
-        try:
-            return self.call_with_fd("snapshot.publish", {
-                "workspace_instance_id": workspace_instance_id,
-                "build_context_hash": build_context_hash,
-            }, fd)
-        finally:
-            os.close(fd)
+        payload = self.call("mcp.daemon_client.publish_snapshot", {
+            "workspace_instance_id": workspace_instance_id,
+            "db_path": os.path.abspath(db_path),
+            "build_context_hash": build_context_hash,
+        })
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"publish_snapshot: daemon 返回非对象结果 {payload!r}")
+        effective_db_path = payload.get("db_path") or os.path.abspath(db_path)
+        return self.call("snapshot.publish", {
+            "workspace_instance_id": workspace_instance_id,
+            "build_context_hash": build_context_hash,
+            "db_path": effective_db_path,
+        })
 
 
 DaemonRpcClient = UnixDaemonRpcClient
@@ -1291,18 +1403,15 @@ class DaemonClient:
         禁止静默回退本地 SQLite（统一验收标准第 5 项）。仅 local 模式
         （显式配置无 daemon）允许走本地 SQL。
         """
-        mode = get_daemon_mode()
         remote = self._remote_query("query.symbol_location", {
             "name": name,
             "file_path": file_path,
         }, db_path)
         if remote is not _NO_REMOTE:
             return remote
-        if mode == "local":
-            self._sql_fallbacks += 1
-            return self._get_db().get_symbol_location(name, file_path=file_path or None)
         raise DaemonUnavailableError(
-            "daemon 不可用（非 local 模式），query.symbol_location 不静默回退本地 SQLite"
+            "daemon 不可用，query.symbol_location 不静默回退本地 SQLite"
+            "（SRV-006：local 模式本地 SQL 路径已随 _get_db 退役，fail-closed）"
         )
 
     def get_file_symbols(
@@ -1316,15 +1425,12 @@ class DaemonClient:
         禁止静默回退本地 SQLite（统一验收标准第 5 项）。仅 local 模式
         （显式配置无 daemon）允许走本地 SQL。
         """
-        mode = get_daemon_mode()
         remote = self._remote_query("query.file", {"file_path": file_path}, db_path)
         if remote is not _NO_REMOTE:
             return remote
-        if mode == "local":
-            self._sql_fallbacks += 1
-            return self._get_db().get_file_symbols(file_path)
         raise DaemonUnavailableError(
-            "daemon 不可用（非 local 模式），query.file 不静默回退本地 SQLite"
+            "daemon 不可用，query.file 不静默回退本地 SQLite"
+            "（SRV-006：local 模式本地 SQL 路径已随 _get_db 退役，fail-closed）"
         )
 
     def query_grep(
@@ -1405,18 +1511,15 @@ class DaemonClient:
         fallback）。CLI `cw issues` 直接走 db 层 CodeGraphDB.get_symbol_issues
         （cli/main.py L7864），不依赖本方法的 SQL 回退，无依赖链影响。
         """
-        mode = get_daemon_mode()
         remote = self._remote_query("query.issues", {
             "qualified_name": qualified_name,
             "include_info": include_info,
         }, db_path)
         if remote is not _NO_REMOTE:
             return remote
-        if mode == "local":
-            self._sql_fallbacks += 1
-            return self._get_db().get_symbol_issues(qualified_name, include_info=include_info)
         raise DaemonUnavailableError(
-            "daemon 不可用（非 local 模式），query.issues 不静默回退本地 SQLite"
+            "daemon 不可用，query.issues 不静默回退本地 SQLite"
+            "（SRV-006：local 模式本地 SQL 路径已随 _get_db 退役，fail-closed）"
         )
 
     def query_tests(
@@ -1727,49 +1830,66 @@ class DaemonClient:
         return job.job_id
 
     # ------------------------------------------------------------------
-    # SQL 回退（兼容 local 模式，daemon 不可用时走 Python SQL）
+    # SQL 回退（SRV-006：authority 已下沉 Rust daemon，薄 RPC 客户端）
+    # 原实现经 _get_db() 直调 CodeGraphDB 业务 SQL；下沉后改走 daemon RPC
+    # `mcp.daemon_client.sql_fallback_*`（Rust 权威实现，语义逐一对齐），
+    # fail-closed：daemon 不可用直接抛 DaemonUnavailableError，禁止本地业务回退。
     # ------------------------------------------------------------------
 
-    def _get_db(self):
-        """获取 CodeGraphDB 实例（延迟导入避免循环依赖）。"""
-        from callwarden.server.mcp_server import get_db
-        return get_db()
-
     def _sql_fallback_get_callers(self, callee_name, qualified_name=None):
-        db = self._get_db()
-        return db.get_callers(callee_name, qualified_name)
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_get_callers", {
+            "callee_name": callee_name,
+            "qualified_name": qualified_name,
+        })
+        return result.get("callers", []) if isinstance(result, dict) else []
 
     def _sql_fallback_get_callees(self, caller_name, qualified_name=None):
-        db = self._get_db()
-        return db.get_callees(caller_name, qualified_name)
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_get_callees", {
+            "caller_name": caller_name,
+            "qualified_name": qualified_name,
+        })
+        return result.get("callees", []) if isinstance(result, dict) else []
 
     def _sql_fallback_search_symbols(self, query, kind=None, limit=20):
-        db = self._get_db()
-        return db.search_symbols(query, kind=kind, limit=limit)
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_search_symbols", {
+            "query": query,
+            "kind": kind,
+            "limit": limit,
+        })
+        return result.get("symbols", []) if isinstance(result, dict) else []
 
     def _sql_fallback_get_symbol(self, qualified_name):
-        db = self._get_db()
-        return db.get_symbol(qualified_name)
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_get_symbol", {
+            "qualified_name": qualified_name,
+        })
+        # daemon 对不存在符号返回 {"symbol": null}，保持原 Optional 语义
+        return result.get("symbol") if isinstance(result, dict) else None
 
     def _sql_fallback_get_stats(self):
-        db = self._get_db()
-        return db.get_stats()
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_get_stats", {})
+        return result.get("stats") if isinstance(result, dict) else None
 
     def _sql_fallback_get_topological_order(self, limit=50):
-        db = self._get_db()
-        return db.get_topological_order(limit=limit)
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_get_topological_order", {
+            "limit": limit,
+        })
+        return result.get("order", []) if isinstance(result, dict) else []
 
     def _sql_fallback_get_call_chain_down(self, qualified_name, max_depth=10):
-        db = self._get_db()
-        result = db.get_call_chain_down(qualified_name, max_depth=max_depth)
-        # Python 侧返回 dict，统一为 list
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_get_call_chain_down", {
+            "qualified_name": qualified_name,
+            "max_depth": max_depth,
+        })
+        # Rust 权威实现返回 {"start","edges","levels",...}；保留 dict→list 归一化
         if isinstance(result, dict):
             return result.get("chain", result.get("edges", []))
-        return result
+        return result if isinstance(result, list) else []
 
     def _sql_fallback_detect_cycles(self, max_depth=10):
-        db = self._get_db()
-        return db.detect_cycles(max_depth=max_depth)
+        result = self._rpc.call("mcp.daemon_client.sql_fallback_detect_cycles", {
+            "max_depth": max_depth,
+        })
+        return result.get("cycles", []) if isinstance(result, dict) else []
 
     # ------------------------------------------------------------------
     # 路由统计
@@ -3244,21 +3364,21 @@ def _get_rpc_client_for_route():
 
 
 def _inject_workspace_id(params: dict) -> dict:
-    """为 daemon RPC 注入显式 `workspace_id`（fail-closed）。
+    """为 daemon RPC 注入显式 `workspace_id`（fail-closed，SRV-006 薄客户端化）。
 
-    abi-error-code-contract.md：生产路径必须显式传入 `workspace_id > 0`，禁止
-    daemon 侧用 active workspace / cwd 补齐。这里从当前 MCP 进程绑定的
-    active workspace 注入；无 active workspace 时 `_get_active_workspace_id`
-    抛错（fail-closed），绝不静默回退到 workspace 1。
+    abi-error-code-contract.md：生产路径必须显式传入 `workspace_id > 0`。
+    authority 下沉 Rust daemon 后，注入由 daemon RPC
+    `mcp.daemon_client.inject_workspace_id` 完成：daemon 基于权威库状态解析
+    active workspace（无 active workspace 时返回 internal_error，fail-closed），
+    本函数不再读取本地 CodeGraphDB（无 get_db、无本地 workspace 推导）。
     """
     if params.get("workspace_id"):
         return params
-    from ._mcp_common import get_db
-    db = get_db()
-    ws_id = db._get_active_workspace_id()
-    out = dict(params)
-    out["workspace_id"] = ws_id
-    return out
+    client = _get_rpc_client_for_route()
+    result = client.call("mcp.daemon_client.inject_workspace_id", {"params": dict(params)})
+    if not isinstance(result, dict) or not isinstance(result.get("params"), dict):
+        raise RuntimeError(f"_inject_workspace_id: daemon 返回非对象结果 {result!r}")
+    return result["params"]
 
 
 # 连接/发现级错误码：这些不是 daemon 的业务结论，而是 daemon 不可达或

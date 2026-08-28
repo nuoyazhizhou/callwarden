@@ -19,6 +19,15 @@ Phase 7.0: 后台任务执行器
 
 注意：每个 JobExecutor 实例持有自己的 SQLite 连接（独立于 MCP server），
 避免与 MCP server 的长连接撞锁。executor 的连接在 handler 执行期间独占。
+
+权威归属（SRV-011，T-1787323461285-e8a7a12c）：
+- `JobExecutor.start` 的 jobs DB 权威初始化形态（连接 + 批次10 PRAGMA 集
+  + JOBS_SCHEMA_DDL）已下沉 Rust daemon `mcp.job_executor.start`
+  （rust_ext/src/daemon/job_executor_handlers.rs::handle_start）。
+- 生产链重任务执行权威由 Rust `job_runner.rs`（task_rpc：task.job_submit +
+  task.wait_for_job）承担，不依赖本模块。
+- 本文件保留的 sqlite3.connect 仅供存量 phase7 测试与进程内 executor
+  生命周期使用，不再承担生产权威。
 """
 
 from __future__ import annotations
@@ -113,7 +122,8 @@ class JobContext:
             return
         try:
             with self._conn_lock:
-                update_job_progress(self._conn, self._job.job_id, progress, message)
+                update_job_progress(
+                    self._conn, self._job.job_id, progress, message)
         except Exception:
             # 进度更新失败不应中断任务
             pass
@@ -141,6 +151,11 @@ class JobExecutor:
     资源预算：
     - max_concurrent_jobs：最大并发任务数（默认 2）
     - max_duration_seconds：单任务最大执行时长（默认 1800 秒）
+
+    权威归属（SRV-011）：jobs DB 权威初始化形态已下沉 Rust daemon
+    `mcp.job_executor.start`（job_executor_handlers.rs::handle_start）；
+    生产重任务执行权威为 Rust job_runner.rs。本类保留进程内线程池调度
+    与存量测试兼容接口。
     """
 
     def __init__(
@@ -183,6 +198,13 @@ class JobExecutor:
 
         创建线程池和共享 SQLite 连接。
         可重复调用（已启动时无操作）。
+
+        权威归属（SRV-011）：本函数内 sqlite3.connect + 批次10 PRAGMA 集
+        + init_jobs_schema 的 jobs DB 权威初始化形态已下沉 Rust daemon
+        RPC `mcp.job_executor.start`（rust_ext/src/daemon/
+        job_executor_handlers.rs::handle_start，JOBS_SCHEMA_DDL 逐字对齐
+        db/db_jobs.py）。函数体因存量 phase7 测试（test_start_inits_schema /
+        test_start_idempotent 等）锁定保留，仅承载进程内 executor 生命周期。
         """
         if self._started:
             return
@@ -268,7 +290,8 @@ class JobExecutor:
         handler = self._handlers.get(job_type)
         if handler is None:
             with self._conn_lock:
-                fail_job(self._conn, job.job_id, f"No handler registered for job_type: {job_type}")
+                fail_job(self._conn, job.job_id,
+                         f"No handler registered for job_type: {job_type}")
             return job
 
         # 提交到线程池

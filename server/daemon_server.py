@@ -89,34 +89,33 @@ try:
 except ImportError:
     _callwarden_core = None
 
-# rollback_config 查询缓存（60s TTL，避免每次 ACL 调用都打开 DB）
+# rollback_config 查询权威已下沉 Rust daemon（SRV-008）：
+# 60s 缓存仍由本模块维持，查询改经 mcp.daemon_server.* RPC，
+# daemon 不可用时 fail-soft 视为未回滚（绝不回退本地 SQLite）。
 _ACL_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
 _ACL_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """SRV-008：向 Rust daemon 发起 RPC（延迟导入避免循环依赖）。"""
+    from ._mcp_common import _call_daemon_rpc as _rpc
+    return _rpc(method, params)
 
 
 def _is_rust_acl_rolled_back() -> bool:
     """检查 rust_daemon_acl_path_budget feature 是否已回滚（60s 缓存）
 
-    daemon_server 是独立模块（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
-    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
+    SRV-008：rollback_config 查询权威已下沉 Rust daemon，原实现的本地
+    sqlite3 短连接查询退役，改经 RPC `mcp.daemon_server.is_rust_acl_rolled_back`。
+    fail-soft：daemon 不可用/响应畸形时视为未回滚（对齐原 except→False），
+    绝不回退本地 SQLite。
     """
     now = time.time()
     if now - _ACL_ROLLBACK_CACHE["ts"] < _ACL_ROLLBACK_CACHE_TTL:
         return _ACL_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_daemon_acl_path_budget",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc("mcp.daemon_server.is_rust_acl_rolled_back", {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
         value = False
     _ACL_ROLLBACK_CACHE["ts"] = now
@@ -150,24 +149,17 @@ _HEALTH_ROLLBACK_CACHE_TTL = 60.0
 
 
 def _is_rust_health_rolled_back() -> bool:
-    """检查 rust_daemon_health_check feature 是否已回滚（60s 缓存）。"""
+    """检查 rust_daemon_health_check feature 是否已回滚（60s 缓存）。
+
+    SRV-008：同 _is_rust_acl_rolled_back，本地 sqlite3 查询退役，改经 RPC
+    `mcp.daemon_server.is_rust_health_rolled_back`，fail-soft 视为未回滚。
+    """
     now = time.time()
     if now - _HEALTH_ROLLBACK_CACHE["ts"] < _HEALTH_ROLLBACK_CACHE_TTL:
         return _HEALTH_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_daemon_health_check",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc("mcp.daemon_server.is_rust_health_rolled_back", {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
         value = False
     _HEALTH_ROLLBACK_CACHE["ts"] = now
@@ -295,12 +287,30 @@ def get_peer_credentials(conn: socket.socket) -> Dict[str, int]:
     return {"pid": os.getpid(), "uid": _current_uid(), "gid": 0}
 
 
-def get_registry_conn() -> sqlite3.Connection:
-    """获取 workspace registry DB 连接。"""
-    conn = sqlite3.connect(DAEMON_REGISTRY_DB)
-    conn.row_factory = sqlite3.Row
-    init_daemon_schema(conn)
-    return conn
+def get_registry_conn() -> Dict[str, Any]:
+    """获取 workspace registry DB 权威元信息（SRV-008：authority 已下沉 Rust daemon）。
+
+    原实现返回 sqlite3.Connection（connect DAEMON_REGISTRY_DB + init_daemon_schema）；
+    RPC 无法传递连接对象，下沉后改经 daemon RPC `mcp.daemon_server.get_registry_conn`，
+    由 Rust 权威执行 schema 探测，返回归一化元信息
+    `{"registry_db", "exists", "schema_ready", "source"}`（对齐 SRV-006 `_get_db`
+    下沉先例）。
+    fail-soft：daemon 不可用/响应畸形时返回带 reason 的元信息 dict，
+    绝不回退本地 SQLite 连接。
+    """
+    try:
+        result = _call_daemon_rpc("mcp.daemon_server.get_registry_conn", {})
+    except Exception:
+        result = None
+    if not isinstance(result, dict):
+        return {
+            "registry_db": DAEMON_REGISTRY_DB,
+            "exists": False,
+            "schema_ready": False,
+            "source": "module",
+            "reason": "daemon_unavailable",
+        }
+    return result
 
 
 def api_register_workspace(owner_uid: int,
@@ -309,42 +319,49 @@ def api_register_workspace(owner_uid: int,
                            git_remote_url: str = "",
                            git_head_commit_sha: str = "",
                            toolchain_fingerprint: str = "") -> Dict[str, Any]:
-    """API: 注册 workspace。"""
-    conn = get_registry_conn()
-    try:
-        return register_workspace(
-            conn, owner_uid, client_view_root, host_real_root,
-            git_remote_url, git_head_commit_sha, toolchain_fingerprint
-        )
-    finally:
-        conn.close()
+    """API: 注册 workspace（SRV-008 已退役，fail-closed）。
+
+    原实现经 get_registry_conn() 本地开 registry 连接直写；authority 下沉后
+    get_registry_conn 已为 RPC 元信息探测，无法提供可写连接，注册权威归
+    daemon RPC `workspace.register`（dispatch）。直接调用本函数 fail-closed。
+    """
+    raise DaemonRpcError(
+        "method_migrated",
+        "api_register_workspace 已退役（SRV-008）：注册权威归 daemon RPC workspace.register",
+    )
 
 
 def api_list_workspaces(owner_uid: Optional[int] = None) -> List[Dict[str, Any]]:
-    """API: 列出 workspace。"""
-    conn = get_registry_conn()
-    try:
-        return list_workspaces(conn, owner_uid)
-    finally:
-        conn.close()
+    """API: 列出 workspace（SRV-008 已退役，fail-closed）。
+
+    列举权威归 daemon RPC `workspace.list`（dispatch）。
+    """
+    raise DaemonRpcError(
+        "method_migrated",
+        "api_list_workspaces 已退役（SRV-008）：列举权威归 daemon RPC workspace.list",
+    )
 
 
 def api_get_workspace_status(workspace_instance_id: str) -> Optional[Dict[str, Any]]:
-    """API: 获取 workspace 状态。"""
-    conn = get_registry_conn()
-    try:
-        return get_workspace_status(conn, workspace_instance_id)
-    finally:
-        conn.close()
+    """API: 获取 workspace 状态（SRV-008 已退役，fail-closed）。
+
+    状态查询权威归 daemon RPC `workspace.status`（dispatch）。
+    """
+    raise DaemonRpcError(
+        "method_migrated",
+        "api_get_workspace_status 已退役（SRV-008）：状态权威归 daemon RPC workspace.status",
+    )
 
 
 def api_update_workspace_status(workspace_instance_id: str, status: str):
-    """API: 更新 workspace 状态。"""
-    conn = get_registry_conn()
-    try:
-        update_workspace_status(conn, workspace_instance_id, status)
-    finally:
-        conn.close()
+    """API: 更新 workspace 状态（SRV-008 已退役，fail-closed）。
+
+    状态写权威归 daemon RPC（dispatch 管理面）。
+    """
+    raise DaemonRpcError(
+        "method_migrated",
+        "api_update_workspace_status 已退役（SRV-008）：状态写权威归 daemon RPC",
+    )
 
 
 class EnterpriseDaemonService:

@@ -112,6 +112,47 @@ def register(mcp: FastMCP) -> None:
         return _route('task.work_next', {"task_id": task_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
+    def task_assignment_status(
+        task_id: str, step_id: str = "", role: str = ""
+    ) -> dict:
+        """读取任务的 daemon durable assignment 队列投影。
+
+        返回当前及历史 assignment 事件投影；不会在查询时创建、释放或接管任务。
+        """
+        params = {"task_id": task_id}
+        if step_id:
+            params["step_id"] = step_id
+        if role:
+            params["role"] = role
+        return _route('task.assignment.status', params, 'READ_ONLY')
+
+    @mcp.tool()
+    def task_assignment_heartbeat(
+        task_id: str,
+        assignment_id: str,
+        agent_session_id: str = "",
+        identity: dict = None,
+        request_id: str = "",
+        fencing_counter: int = None,
+    ) -> dict:
+        """向 daemon 发送当前 assignment 的心跳。
+
+        daemon 会校验 task、assignment、holder/session 和 fencing；MCP 不维护队列状态。
+        """
+        return _route(
+            'task.assignment.heartbeat',
+            {
+                "task_id": task_id,
+                "assignment_id": assignment_id,
+                "agent_session_id": agent_session_id,
+                "identity": identity,
+                "request_id": request_id,
+                "fencing_counter": fencing_counter,
+            },
+            'PROTECTED_MUTATION',
+        )
+
+    @mcp.tool()
     def task_resolve_block(task_id: str, step_id: str, resolution: str = "ack") -> Optional[dict]:
         """处理 blocked 步骤的护栏告警，恢复为 pending 以便重新领取
 
@@ -942,7 +983,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def task_status_tree(task_id: str) -> Optional[dict]:
-        """获取任务树详情（含子任务树和进度）"""
+        """获取任务树详情（含生命周期/治理状态、子任务树和进度）。
+
+        ``progress.progress`` 仍是 0..1 的历史兼容 ratio；新调用方应使用
+        ``progress.ratio`` 或带单位且已四舍五入到两位的 ``progress.percent``。
+        每个节点还包含 daemon 派生的 ``lifecycle_status``、``workflow_status``
+        和 ``governance`` 投影；历史任务缺少 binding/合同时会明确返回
+        ``governance_blocked``，不会伪造状态。
+        """
         return _route('task.status_tree', {"task_id": task_id}, 'READ_ONLY')
 
     @mcp.tool()
@@ -964,6 +1012,11 @@ def register(mcp: FastMCP) -> None:
     def task_status(task_id: str) -> Optional[dict]:
         """获取任务详情和所有步骤"""
         return _route('task.status', {"task_id": task_id}, 'READ_ONLY')
+
+    @mcp.tool()
+    def task_governance_projection(task_id: str) -> Optional[dict]:
+        """获取任务治理进度投影（生命周期、Reviewer verdict、下一角色与下一动作）"""
+        return _route('task.governance_projection.get', {"task_id": task_id}, 'READ_ONLY')
 
     @mcp.tool()
     def task_completion_review(task_id: str, step_id: str = "") -> dict:

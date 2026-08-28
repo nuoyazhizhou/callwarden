@@ -102,7 +102,8 @@ def _is_rust_backup_rolled_back() -> bool:
     if now - _BACKUP_ROLLBACK_CACHE["ts"] < _BACKUP_ROLLBACK_CACHE_TTL:
         return _BACKUP_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        result = _call_daemon_rpc("mcp.backup_restore.is_rust_backup_rolled_back", {})
+        result = _call_daemon_rpc(
+            "mcp.backup_restore.is_rust_backup_rolled_back", {})
         value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
         # fail-soft：只读探测，daemon 不可用时视为未回滚（不回退本地 SQLite）
@@ -177,7 +178,8 @@ class BackupManager:
             backup_root: 备份根目录（为空时使用 data_root/backups）
         """
         self._config = config
-        self._backup_root = backup_root or os.path.join(config.data_root, "backups")
+        self._backup_root = backup_root or os.path.join(
+            config.data_root, "backups")
 
     def backup_full(self, backup_id: Optional[str] = None) -> Dict[str, Any]:
         """执行全量备份。
@@ -339,16 +341,19 @@ class BackupManager:
     def list_backups(self) -> List[Dict[str, Any]]:
         """列出所有备份。"""
         if _rust_backup_manager_available():
-            result = json.loads(_callwarden_core.list_backups(self._backup_root))
+            result = json.loads(
+                _callwarden_core.list_backups(self._backup_root))
             if not isinstance(result, list):
-                raise RuntimeError("Rust backup list API returned a non-list result")
+                raise RuntimeError(
+                    "Rust backup list API returned a non-list result")
             return result
         if not os.path.isdir(self._backup_root):
             return []
 
         backups = []
         for entry in os.listdir(self._backup_root):
-            meta_path = os.path.join(self._backup_root, entry, "backup_meta.json")
+            meta_path = os.path.join(
+                self._backup_root, entry, "backup_meta.json")
             if os.path.isfile(meta_path):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as f:
@@ -376,7 +381,8 @@ class BackupManager:
             return None
         # C8/P1：fallback 直读前校验 backup_id，防止路径穿越
         _validate_backup_id(backup_id)
-        meta_path = os.path.join(self._backup_root, backup_id, "backup_meta.json")
+        meta_path = os.path.join(
+            self._backup_root, backup_id, "backup_meta.json")
         if not os.path.isfile(meta_path):
             return None
         try:
@@ -546,7 +552,8 @@ class RestoreManager:
 
     def __init__(self, config, backup_root: str = ""):
         self._config = config
-        self._backup_root = backup_root or os.path.join(config.data_root, "backups")
+        self._backup_root = backup_root or os.path.join(
+            config.data_root, "backups")
 
     def restore(self, backup_id: str) -> Dict[str, Any]:
         """从备份恢复数据。
@@ -616,7 +623,8 @@ class RestoreManager:
             # 跳过目录（snapshots/ 单独处理）
             if file_info.get("type") == "directory":
                 src_dir = os.path.join(backup_dir, file_name.rstrip("/"))
-                dest_dir = os.path.join(self._config.data_root, file_name.rstrip("/"))
+                dest_dir = os.path.join(
+                    self._config.data_root, file_name.rstrip("/"))
                 if os.path.isdir(src_dir):
                     if os.path.exists(dest_dir):
                         shutil.rmtree(dest_dir)

@@ -41,39 +41,54 @@ try:
 except ImportError:
     _callwarden_core = None
 
-# rollback_config 查询缓存（60s TTL，避免每次方法调用都打开 DB）
-_ROLLBACK_CACHE: Dict[str, float] = {"ts": 0.0, "value": False}
+# rollback_config 查询缓存（60s TTL，避免每次帧收发都发起 RPC）
+_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
 _ROLLBACK_CACHE_TTL = 60.0
+# SRV-007 重入守卫：回滚查询本身经本模块帧收发（UnixDaemonRpcClient）传输，
+# 缓存过期瞬间存在 _is_rust_protocol_rolled_back → RPC → send_message →
+# _is_rust_protocol_rolled_back 的自依赖环；in-flight 时直接视为未回滚。
+_ROLLBACK_QUERY_STATE: Dict[str, Any] = {"in_flight": False}
 
 
 def _is_rust_protocol_rolled_back() -> bool:
     """检查 rust_daemon_protocol feature 是否已回滚（60s 缓存）
 
-    daemon_protocol 是独立模块（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
-    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
+    SRV-007 收敛（daemon protocol rollback Python authority → Rust daemon）：
+    rollback_config 的 SQLite 权威已下沉到 daemon，本函数为纯薄客户端，
+    经 `mcp.daemon_protocol.is_rust_protocol_rolled_back` 查询。只读 authority 读：
+    daemon 不可用时 fail-soft 视为未回滚（返回 False，与 SRV-003
+    is_rust_backup_rolled_back 的 rollback 探测语义一致），绝不回退本地 SQLite。
+    60s 缓存保留，避免热路径（帧收发）频繁 RPC；重入守卫防自依赖递归。
     """
     now = time.time()
     if now - _ROLLBACK_CACHE["ts"] < _ROLLBACK_CACHE_TTL:
         return _ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    if _ROLLBACK_QUERY_STATE["in_flight"]:
+        # 重入：查询正在经本模块帧收发传输，视为未回滚（fail-soft），不写缓存
+        return False
+    _ROLLBACK_QUERY_STATE["in_flight"] = True
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_daemon_protocol",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc(
+            "mcp.daemon_protocol.is_rust_protocol_rolled_back", {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
+        # fail-soft：只读探测，daemon 不可用时视为未回滚（不回退本地 SQLite）
         value = False
+    finally:
+        _ROLLBACK_QUERY_STATE["in_flight"] = False
     _ROLLBACK_CACHE["ts"] = now
     _ROLLBACK_CACHE["value"] = value
     return value
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经 daemon 统一 fail-closed 客户端发起 RPC（SRV-007，不回退本地 SQLite）。
+
+    函数体内延迟导入，避免 daemon_protocol ↔ daemon_client 循环依赖。
+    """
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
 
 
 def _rust_encode_payload(message: Dict[str, Any]) -> bytes:

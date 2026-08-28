@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # 有界等待窗口默认值（秒），可通过环境变量覆盖 [Req 14.22]
-DEFAULT_WAIT_WINDOW: float = float(os.environ.get("CW_DAEMON_AUTOSTART_WINDOW", "10.0"))
+DEFAULT_WAIT_WINDOW: float = float(
+    os.environ.get("CW_DAEMON_AUTOSTART_WINDOW", "10.0"))
 
 # 指数退避参数
 BACKOFF_BASE: float = 0.1       # 首次退避间隔（秒）
@@ -571,7 +572,8 @@ def _find_daemon_binary() -> Optional[str]:
     3. 项目 rust_ext/target/release/ 或 debug/ 下的构建产物
     """
     # 环境变量优先
-    env_bin = os.environ.get("CW_DAEMON_BIN") or os.environ.get("CW_DAEMON_BINARY")
+    env_bin = os.environ.get(
+        "CW_DAEMON_BIN") or os.environ.get("CW_DAEMON_BINARY")
     if env_bin and os.path.isfile(env_bin):
         return env_bin
 
@@ -666,10 +668,12 @@ def _get_windows_user_sid() -> str:
         # 获取 token 中的用户 SID
         TOKEN_USER = 1
         size = ctypes.c_ulong(0)
-        advapi32.GetTokenInformation(token, TOKEN_USER, None, 0, ctypes.byref(size))
+        advapi32.GetTokenInformation(
+            token, TOKEN_USER, None, 0, ctypes.byref(size))
 
         buf = ctypes.create_string_buffer(size.value)
-        ok = advapi32.GetTokenInformation(token, TOKEN_USER, buf, size.value, ctypes.byref(size))
+        ok = advapi32.GetTokenInformation(
+            token, TOKEN_USER, buf, size.value, ctypes.byref(size))
         kernel32.CloseHandle(token)
 
         if not ok:
@@ -729,14 +733,16 @@ def _win_pid_alive(pid: int) -> bool:
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         kernel32.GetExitCodeProcess.restype = wintypes.BOOL
         kernel32.GetExitCodeProcess.argtypes = [
             wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)
         ]
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
             return False
         try:
@@ -771,13 +777,16 @@ def _win_pid_executable(pid: int) -> str:
         buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
         size = wintypes.DWORD(wintypes.MAX_PATH)
         kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
         kernel32.QueryFullProcessImageNameW.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, ctypes.c_wchar_p, ctypes.POINTER(wintypes.DWORD)
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_wchar_p, ctypes.POINTER(
+                wintypes.DWORD)
         ]
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not handle:
             return ""
         try:
@@ -814,7 +823,8 @@ def read_http_manifest(path: str) -> Dict[str, Any]:
             E_HTTP_MANIFEST_STALE, f"HTTP manifest 读取/解析失败: {exc}"
         )
     if not isinstance(data, dict):
-        raise DaemonRemoteError(E_HTTP_MANIFEST_STALE, "HTTP manifest 不是 JSON 对象")
+        raise DaemonRemoteError(E_HTTP_MANIFEST_STALE,
+                                "HTTP manifest 不是 JSON 对象")
     return data
 
 

@@ -16,10 +16,19 @@
 
 import json
 import os
-import sqlite3
 import sys
 import time
 from pathlib import Path
+
+
+MIGRATE_METHOD = "mcp.stage_toggle_migration.migrate_p0_toggles"
+
+
+def _call_daemon_rpc(method: str, params: dict) -> object:
+    """通过统一 HTTP client 调用 daemon，不打开本地 authority 数据库。"""
+    from callwarden.server._mcp_common import _call_daemon_rpc as rpc
+
+    return rpc(method, params)
 
 
 def find_experiment_batch_configs(workspace_root: str) -> Path | None:
@@ -75,32 +84,6 @@ def load_p0_toggles_from_config(config_path: Path) -> list[dict]:
     return toggles
 
 
-def ensure_stage_toggle_schema(conn: sqlite3.Connection) -> None:
-    """确保 daemon 配置存储有 stage_toggles 表。"""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS stage_toggles (
-            stage       TEXT NOT NULL,
-            scope_key   TEXT NOT NULL,
-            enabled     INTEGER NOT NULL DEFAULT 0,
-            actor       TEXT NOT NULL DEFAULT '',
-            changed_at  INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (stage, scope_key)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS toggle_audit_log (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            stage       TEXT NOT NULL,
-            scope_key   TEXT NOT NULL,
-            old_value   INTEGER,
-            new_value   INTEGER NOT NULL,
-            actor       TEXT NOT NULL,
-            changed_at  INTEGER NOT NULL
-        )
-    """)
-    conn.commit()
-
-
 def migrate_p0_toggles(
     db_path: str,
     toggles: list[dict],
@@ -114,46 +97,19 @@ def migrate_p0_toggles(
     if not toggles:
         return 0
 
+    result = _call_daemon_rpc(MIGRATE_METHOD, {
+        "db_path": db_path,
+        "toggles": toggles,
+        "migration_actor": migration_actor,
+        "dry_run": dry_run,
+    })
+    if not isinstance(result, dict) or "migrated_count" not in result:
+        raise RuntimeError(f"Stage_Toggle migration RPC returned invalid result: {result!r}")
+    count = int(result["migrated_count"])
     if dry_run:
-        for t in toggles:
-            print(f"  [dry-run] P0 scope={t['scope_key']} enabled={t['enabled']}")
-        return len(toggles)
-
-    conn = sqlite3.connect(db_path)
-    try:
-        ensure_stage_toggle_schema(conn)
-        now_ms = int(time.time() * 1000)
-        count = 0
-
-        for t in toggles:
-            # 检查是否已存在（幂等）
-            existing = conn.execute(
-                "SELECT enabled FROM stage_toggles WHERE stage = 'P0' AND scope_key = ?",
-                (t["scope_key"],),
-            ).fetchone()
-
-            if existing is not None:
-                # 已存在，跳过（幂等）
-                continue
-
-            conn.execute(
-                """INSERT INTO stage_toggles (stage, scope_key, enabled, actor, changed_at)
-                   VALUES ('P0', ?, ?, ?, ?)""",
-                (t["scope_key"], int(t["enabled"]), migration_actor, now_ms),
-            )
-
-            # 审计日志
-            conn.execute(
-                """INSERT INTO toggle_audit_log (stage, scope_key, old_value, new_value, actor, changed_at)
-                   VALUES ('P0', ?, NULL, ?, ?, ?)""",
-                (t["scope_key"], int(t["enabled"]), migration_actor, now_ms),
-            )
-            count += 1
-
-        conn.commit()
-        return count
-    finally:
-        conn.close()
+        for toggle in toggles:
+            print(f"  [dry-run] P0 scope={toggle['scope_key']} enabled={toggle['enabled']}")
+    return count
 
 
 def main():

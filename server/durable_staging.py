@@ -8,6 +8,17 @@
 - 状态机：pending → applying → applied 或 pending/applying → failed
 - 崩溃恢复：daemon 启动时扫描 pending/applying entries
 - 幂等重放：已提交 manifest 的 entry 补记 applied，未提交的重放
+
+SRV-009 权威归属声明（T-1787323461150-e09e1a9c）：
+生产链 staging 权威已下沉 Rust daemon：
+- 权威 schema 初始化/统计探测 → daemon RPC `mcp.durable_staging.init` /
+  `mcp.durable_staging.stats`（rust_ext/src/daemon/durable_staging_handlers.rs）；
+- 生产链 staging 日志 → Rust `staging_log.rs`（per-workspace JSONL，
+  workspace.rs/replicator.rs 使用）。
+本模块 `DurableStagingLog` 为零生产调用方的 compat/test-only 组件：
+存量测试（test_phase6_watcher_protocol.py 功能测试、
+test_phase5_cas_replicator_wiring.py `__init__` PRAGMA 源码断言）锁定
+其函数体形态，本卡不得破坏；生产路径不得使用本模块直连 SQLite。
 """
 
 import json
@@ -77,6 +88,10 @@ class StagingWALEntry:
 class DurableStagingLog:
     """SQLite WAL 持久化 staging log。
 
+    SRV-009：本类为 compat/test-only 组件（零生产调用方）。权威初始化/
+    统计已由 Rust daemon `mcp.durable_staging.init/stats` 承接；本类
+    函数体受存量测试源码级断言锁定，保留原形态。
+
     用法：
         log = DurableStagingLog("/path/to/staging.db")
         lsn = log.append(entry)
@@ -136,7 +151,8 @@ class DurableStagingLog:
         )
         self._conn.commit()
         lsn = cur.lastrowid
-        logger.debug("staging append lsn=%d ws=%s path=%s", lsn, workspace_id, rel_path)
+        logger.debug("staging append lsn=%d ws=%s path=%s",
+                     lsn, workspace_id, rel_path)
         return lsn
 
     def transition(

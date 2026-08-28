@@ -39,6 +39,20 @@
         "unhealthy": 0
     }
 }
+
+SRV-010 权威归属声明（T-1787323461213-e46199b0）：
+生产链健康检查权威在 Rust 侧：
+- HealthChecker/RecoveryHandler 生产实现为 Rust `health.rs`（G14），经
+  `callwarden_core.health_check_all`（PyO3）短路 daemon_server 生产路径；
+- 本模块 4 个 Python direct authority（sqlite3.connect）函数已下沉为
+  daemon RPC：`mcp.health_check.check_db_registry` /
+  `mcp.health_check.recover_workspace_registry` /
+  `mcp.health_check.recover_cas_db` / `mcp.health_check.recover_stale_jobs`
+  （rust_ext/src/daemon/health_check_handlers.rs，逐字对齐本模块语义）。
+本模块类/函数为 compat/test-only 形态：存量测试
+（test_phase8_health_check.py 功能构造测试、
+test_phase4_3_health_check_diff.py 差分真相源）锁定其函数体，
+本卡不得破坏；生产路径不得使用本模块直连 SQLite。
 """
 
 from __future__ import annotations
@@ -114,6 +128,12 @@ class HealthCheck:
 
 class HealthChecker:
     """Daemon 健康检查器。
+
+    SRV-010：生产链健康检查权威为 Rust `health.rs`（经
+    `callwarden_core.health_check_all` 短路 daemon_server 生产路径）；
+    本类 `_check_db_registry` 的 daemon RPC 形态已下沉至
+    `mcp.health_check.check_db_registry`。函数体受存量测试源码级断言
+    锁定，保留原形态（compat/test-only）。
 
     用法：
         checker = HealthChecker(config)
@@ -270,7 +290,8 @@ class HealthChecker:
         data_root = self._config.data_root
 
         try:
-            usage = shutil.disk_usage(data_root if os.path.exists(data_root) else "/")
+            usage = shutil.disk_usage(
+                data_root if os.path.exists(data_root) else "/")
             total = usage.total
             used = usage.used
             free = usage.free
@@ -368,6 +389,12 @@ class HealthChecker:
 
 class RecoveryHandler:
     """Daemon restart 后的自动恢复处理器。
+
+    SRV-010：恢复权威生产形态为 Rust `health.rs` RecoveryHandler；
+    本类 `_recover_workspace_registry` / `_recover_cas_db` /
+    `_recover_stale_jobs` 三个 direct authority 函数已下沉为 daemon RPC
+    `mcp.health_check.*`（health_check_handlers.rs）。本类零生产调用方，
+    函数体受 test_phase8 存量测试锁定，保留原形态（compat/test-only）。
 
     职责：
     1. 恢复 workspace registry（验证已注册 workspace 仍然存在）
@@ -632,7 +659,8 @@ def _parse_size_to_bytes(s: str) -> int:
         return 0
     num_part = s[:-1]
     unit_part = s[-1].upper()
-    multipliers = {"K": 1024, "M": 1024*1024, "G": 1024*1024*1024, "T": 1024*1024*1024*1024}
+    multipliers = {"K": 1024, "M": 1024*1024,
+                   "G": 1024*1024*1024, "T": 1024*1024*1024*1024}
     if unit_part not in multipliers:
         return 0
     try:

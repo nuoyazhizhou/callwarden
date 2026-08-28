@@ -45,6 +45,12 @@ _REPLICATOR_ROLLBACK_CACHE_TTL = 60.0
 _CAS_WRITE_ROLLBACK_CACHE: Dict[str, float] = {"ts": 0.0, "value": False}
 _CAS_WRITE_ROLLBACK_CACHE_TTL = 60.0
 
+_REPLICATOR_CAS_ROLLBACK_METHOD = "mcp.replicator.is_rust_cas_write_rolled_back"
+_REPLICATOR_QUERY_ROLLBACK_METHOD = (
+    "mcp.replicator.is_rust_replicator_query_rolled_back"
+)
+_REPLICATOR_REFRESH_METHOD = "mcp.replicator.daemon_handle_refresh"
+
 # C6（S2）：失败 generation 保护——镜像 Rust snapshot_guard.rs 的状态分类
 # （rust_ext/src/daemon/snapshot_guard.rs）。语义：非 ready 状态（parse 失败 /
 # unsupported / partial / stale / dirty overlay）不得推进 latest_committed_generation、
@@ -72,23 +78,15 @@ _SNAPSHOT_GUARD_PARTIAL_STATES = frozenset({"partial_published"})
 
 
 def _is_rust_cas_write_rolled_back() -> bool:
-    """检查 Rust CAS 写路径是否被显式回滚。"""
+    """检查 Rust CAS 写路径是否被显式回滚（daemon authority）。"""
     now = time.time()
     if now - _CAS_WRITE_ROLLBACK_CACHE["ts"] < _CAS_WRITE_ROLLBACK_CACHE_TTL:
         return bool(_CAS_WRITE_ROLLBACK_CACHE["value"])
     try:
-        from callwarden.config import DB_PATH
-        conn = sqlite3.connect(DB_PATH)
-        try:
-            row = conn.execute(
-                "SELECT rollback_flag FROM rollback_config "
-                "WHERE feature_name = ? ORDER BY updated_at DESC LIMIT 1",
-                ("rust_cas_write",),
-            ).fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc(_REPLICATOR_CAS_ROLLBACK_METHOD, {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
+        # fail-soft：authority daemon 不可用时保持旧的未回滚语义。
         value = False
     _CAS_WRITE_ROLLBACK_CACHE["ts"] = now
     _CAS_WRITE_ROLLBACK_CACHE["value"] = value
@@ -96,34 +94,29 @@ def _is_rust_cas_write_rolled_back() -> bool:
 
 
 def _is_rust_replicator_query_rolled_back() -> bool:
-    """检查 rust_replicator_snapshot_query feature 是否已回滚（60s 缓存）
+    """检查 replicator query Rust feature 是否已回滚（60s daemon RPC 缓存）。
 
-    Replicator 是独立类（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
-    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
-    与 staging_log.py:_is_rust_staging_log_rolled_back 模式一致。
+    权威 rollback_config 由 Rust daemon 持有，Python 只负责缓存和 fail-soft。
     """
     now = time.time()
     if now - _REPLICATOR_ROLLBACK_CACHE["ts"] < _REPLICATOR_ROLLBACK_CACHE_TTL:
         return _REPLICATOR_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
     try:
-        import sqlite3 as _sqlite3
-        from callwarden.config import DB_PATH as _DB_PATH
-        conn = _sqlite3.connect(_DB_PATH)
-        try:
-            cur = conn.execute(
-                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
-                "ORDER BY updated_at DESC LIMIT 1",
-                ("rust_replicator_snapshot_query",),
-            )
-            row = cur.fetchone()
-            value = bool(row and row[0] == 1)
-        finally:
-            conn.close()
+        result = _call_daemon_rpc(_REPLICATOR_QUERY_ROLLBACK_METHOD, {})
+        value = bool(isinstance(result, dict) and result.get("rolled_back"))
     except Exception:
+        # fail-soft：只读 authority 读失败时视为未回滚。
         value = False
     _REPLICATOR_ROLLBACK_CACHE["ts"] = now
     _REPLICATOR_ROLLBACK_CACHE["value"] = value
     return value
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经 daemon 统一客户端发起 RPC，避免 replicator 与 client 循环依赖。"""
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
 
 # file_generations DDL 从 db_cas.py 导入（K6 去重，避免两处不一致）
 # 延迟导入避免触发 db 包的完整初始化链
@@ -377,435 +370,18 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
                           workspace_root_path: str = "",
                           ws_db_path: str = "",
                           cas_db_path: str = "") -> dict:
-    """处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS + P0-1 save-to-query merge。
+    """经 Rust daemon RPC 执行 refresh 主链，Python 只做参数序列化。
 
-    规范：watcher-generation-state-machine.md §4.3
-    规范：daemon-ipc-security.md §3.2（daemon 不信任 agent 提供的 hash）
-    规范：parse-input-abi.md §2（canonicalize_source 是唯一输入入口）
-    修复 T-1783751525743-7c76
-    修复 T-1783952125417-7a09（消除 TOCTOU + 禁止读客户端 abs_path）
-    修复 T-1784644413771-8f1a2d37（P0-1 save-to-query 数据链闭合 2026-07-21）
-
-    完整管道：
-    1. session epoch 校验（拒绝 stale session）
-    2. CAS 第一阶段（seen）——原子更新 latest_seen_generation
-    3. daemon 侧 canonical bytes 解析（或 re-canonicalize + re-hash + Rust parse + CAS publish）
-    4. CAS 第二阶段（committed）——条件更新 latest_committed_generation
-    5. **P0-1 整改**：CAS committed 后，把 CAS 中的解析结果 merge 到主 CodeGraph DB
-       （file_instances / symbols / calls），并 upsert workspace_manifests。
-       任一步失败不得 mark staging applied——抛异常让上层 staging entry 不追加。
-
-    Args:
-        peer_uid: agent 的 peer UID
-        workspace_id: workspace ID（数字主键，与 daemon_workspaces.workspace_id 对应）
-        msg: agent 消息，需包含 rel_path/agent_session_id/monotonic_seq/session_epoch
-        ws_conn: workspace 数据库连接（含 workspace_active_session / file_generations /
-                 workspace_manifests 表）
-        cas_conn: CAS 数据库连接（若为 None 则跳过 CAS publish，仅做 generation CAS）
-        canonical_bytes: 来自 UDS bytes frame 或 FD 的规范化文件内容（优先使用）；
-                         为 None 时降级为从 abs_path 读取（仅用于兼容旧路径）
-        workspace_root: workspace 根路径（仅在 canonical_bytes 为 None 时使用）
-        codegraph_db_path: 主 CodeGraph DB 路径（如 ~/.callwarden/callwarden.db）；
-                          非空时触发 P0-1 merge 步骤（断点 B 修复）
-        workspace_root_path: workspace 根路径（用于 workspaces.root_path 字段）
-
-    Returns:
-        {"status": "committed"/"stale_seq_dropped", "generation": str, ...}
+    旧签名参数保留为兼容形状，但不再被读取；Rust daemon 负责 workspace ACL、
+    session epoch、CAS 两阶段、canonical bytes 校验、CodeGraph merge、manifest
+    和 replicate。canonical bytes 使用 hex 传输，避免把 bytes 对象交给 JSON 序列化器。
     """
-    rel_path = msg["rel_path"]
-    incoming_session = msg["agent_session_id"]
-    incoming_seq = msg["monotonic_seq"]
-    incoming_epoch = msg["session_epoch"]
-
-    # 1. 校验 session epoch——只能匹配当前 active epoch
-    active = ws_conn.execute(
-        "SELECT active_session_id, active_session_epoch "
-        "FROM workspace_active_session WHERE workspace_id = ?",
-        (workspace_id,)
-    ).fetchone()
-    if active is None:
-        raise ProtocolError(
-            f"no active session for workspace {workspace_id}",
-            code="session_not_active",
-        )
-    if (incoming_session != active["active_session_id"]
-            or incoming_epoch != active["active_session_epoch"]):
-        raise ProtocolError(
-            f"stale session rejected: incoming={incoming_session}:{incoming_epoch} "
-            f"active={active['active_session_id']}:{active['active_session_epoch']}",
-            code="stale_session",
-        )
-
-    incoming_gen = f"{incoming_epoch}:{incoming_seq}"
-
-    # 2. CAS 第一阶段（seen）——原子更新 latest_seen_generation
-    # C3：优先 Rust CasStore facade（BEGIN IMMEDIATE 单事务 + stale 拦截）；
-    # 不可用时回退 Python SQL。
-    if ws_db_path and _RUST_FILE_GEN_AVAILABLE:
-        try:
-            seen_ok = _callwarden_core.cas_file_generation_seen(
-                ws_db_path, workspace_id, rel_path, incoming_session,
-                incoming_epoch, incoming_seq)
-        except Exception as e:
-            raise ProtocolError(
-                f"cas_file_generation_seen failed: {e}",
-                code="cas_seen_failed",
-            )
-        if not seen_ok:
-            return {"status": "stale_seq_dropped"}
-    else:
-        # fallback
-        ws_conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = ws_conn.execute(
-                "SELECT latest_session_epoch, latest_seq, latest_seen_generation, "
-                "latest_committed_generation FROM file_generations "
-                "WHERE workspace_id = ? AND rel_path = ?",
-                (workspace_id, rel_path)
-            ).fetchone()
-
-            if row is None:
-                # 首次见到此文件——插入新行
-                ws_conn.execute(
-                    "INSERT INTO file_generations "
-                    "(workspace_id, rel_path, latest_session_id, latest_session_epoch, "
-                    "latest_seq, latest_seen_generation, latest_committed_generation) "
-                    "VALUES (?, ?, ?, ?, ?, ?, '')",
-                    (workspace_id, rel_path, incoming_session, incoming_epoch,
-                     incoming_seq, incoming_gen)
-                )
-            elif incoming_seq < row["latest_seq"]:
-                # 严格小于——stale seq 直接丢弃，不报错
-                ws_conn.execute("ROLLBACK")
-                return {"status": "stale_seq_dropped"}
-            elif (incoming_seq == row["latest_seq"]
-                  and row["latest_committed_generation"] == incoming_gen):
-                # 同 seq 且已 committed——幂等返回，避免重复 merge
-                ws_conn.execute("ROLLBACK")
-                return {"status": "stale_seq_dropped"}
-            else:
-                # P0-2 整改（2026-07-22）：同 seq 但 latest_committed_generation 为空
-                # （上次 seen 后 step 5 merge 失败）→ 允许重新处理。
-                # 旧逻辑 `incoming_seq <= row["latest_seq"]` 会把这种重试判 stale 丢弃，
-                # 导致事件永久无法恢复。新逻辑只在已 committed 时才幂等丢弃。
-                ws_conn.execute(
-                    "UPDATE file_generations SET latest_session_id = ?, "
-                    "latest_session_epoch = ?, latest_seq = ?, latest_seen_generation = ? "
-                    "WHERE workspace_id = ? AND rel_path = ?",
-                    (incoming_session, incoming_epoch, incoming_seq, incoming_gen,
-                     workspace_id, rel_path)
-                )
-            ws_conn.execute("COMMIT")
-        except Exception:
-            try:
-                ws_conn.execute("ROLLBACK")
-            except Exception:
-                pass
-            raise
-
-    # 3. daemon 侧解析 + CAS publish
-    # 规范：daemon-ipc-security.md §3.2 —— daemon 不信任 agent 提供的 hash，必须重新计算
-    # 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
-    cas_result = _daemon_parse_and_publish(
-        rel_path=rel_path,
-        canonical_bytes=canonical_bytes,
-        abs_path=msg.get("abs_path") or _join_path(workspace_root, rel_path),
-        cas_conn=cas_conn,
-        workspace_id=workspace_id,
-    )
-
-    # C6（S2）：失败 generation 保护——镜像 Rust workspace.rs P0-4 R3 保护块
-    # （snapshot_guard.rs::evaluate_generation_protection）。非 ready 状态
-    # （parse_failed / publish_failed / unsupported_language / dirty overlay /
-    # partial_published 等）不得推进 latest_committed_generation、不得追加
-    # staging、不得 replicate——保护上一代好 snapshot（S2 验收点 5/7）。
-    # 仅当真实 CAS 主链存在（cas_conn 非 None）时启用——镜像 Rust
-    # cas_store=None → cas_result=None → cas_state="" → 不保护 的语义，
-    # 保留 cas_conn=None 协议测试（committed）不变。
-    if cas_conn is not None and cas_result:
-        guard_abs_path = msg.get("abs_path") or _join_path(workspace_root, rel_path)
-        protection = _evaluate_generation_protection(
-            cas_result.get("cas_state", ""), guard_abs_path, rel_path)
-        if protection["blocked"]:
-            result = {"status": "blocked", "generation": incoming_gen}
-            result.update(cas_result)
-            result["protection"] = protection
-            logger.warning(
-                "C6 generation protection blocked (ws=%d, rel_path=%s, cas_state=%s, "
-                "parse_status=%s, allows_retry=%s, reason=%s)",
-                workspace_id, rel_path, protection["cas_state"],
-                protection["parse_status"], protection["allows_retry"],
-                protection["reason"],
-            )
-            return result
-
-    # 5. P0-1 整改（2026-07-21）：CAS → CodeGraph DB merge + workspace_manifests 接入
-    # 复审报告 §3 P0-1 / §8.1 第 1 条：建立真实 save-to-query 数据链。
-    # 断点 B 修复：把 CAS 中的 cas_symbols / cas_raw_calls merge 到主 CodeGraph DB
-    # 的 file_instances / symbols / calls 表，让 publish_snapshot 加载到新数据。
-    # 断点 A 修复：upsert workspace_manifests，让 daemon 能回答"当前 workspace 有哪些文件"。
-    # 失败语义：任一步失败抛异常，上层 daemon_server.py 不会追加 staging entry，
-    # 不标 applied（满足 §8.1 "任一步失败不得 mark staging applied"）。
-    merge_result = None
-    if cas_result and cas_result.get("cas_state") in ("ready_published", "ready_cache_hit"):
-        cas_key = cas_result.get("cas_key", "")
-        content_hash_for_merge = cas_result.get("content_hash", "")
-
-        # 5a. merge 到 CodeGraph DB（Rust 生产写路径优先短路）
-        # C5 C2：区分"Rust 模块不可用"（fail-closed，C4 契约）与"Rust 可用但
-        # merge 数据失败"（对齐 Rust workspace.rs merge_ok 门控：失败不阻断，
-        # staging 由上层 append 为 pending、不 committed generation、不 replicate，
-        # 同 seq 重试可恢复）。
-        if codegraph_db_path and cas_key:
-            merged_via_rust = False
-            rust_merge_available = False
-            merge_error = None
-            # C5 C2 (P1-3 修复)：Rust facade 返回的 merge_status 原样透传
-            # （merged/no_symbols=成功；cas_miss/error/open_failed=merge 失败门控）。
-            # 修复前 Python 只看 success 字段，cas_miss（success=true）会被误判为
-            # merge 成功并推进 committed，与 Rust workspace.rs merge_ok 门控不一致。
-            rust_merge_status = ""
-            # 语言探测：函数内 import（与兼容回滚路径的局部 import 一致，
-            # 避免 UnboundLocalError——该名字在函数内被视为局部变量）
-            from config import detect_language_from_path
-            language_for_merge = detect_language_from_path(rel_path) or ""
-            try:
-                from callwarden_core import cas_merge_to_codegraph
-                rust_merge_available = True
-                rust_res = cas_merge_to_codegraph(
-                    cas_db_path=cas_db_path or (_sqlite_main_db_path(cas_conn) or ""),
-                    codegraph_db_path=codegraph_db_path,
-                    cas_key=cas_key,
-                    workspace_id=workspace_id,
-                    rel_path=rel_path,
-                    abs_path=msg.get("abs_path") or _join_path(workspace_root, rel_path),
-                    content_hash=content_hash_for_merge,
-                    language=language_for_merge,
-                    workspace_root_path=workspace_root_path,
-                )
-                if rust_res and rust_res.get("success"):
-                    # P1-3：success=true 不代表 merge_ok——Rust 的 cas_miss 走
-                    # success=true + merge_status=cas_miss（Result Ok 分支）。
-                    rust_merge_status = rust_res.get("merge_status", "merged") or "merged"
-                    if rust_merge_status in ("cas_miss", "error", "open_failed"):
-                        # C5 C2：对齐 Rust merge_ok 门控，按 merge 数据失败处理
-                        merge_error = (
-                            f"cas_merge_to_codegraph merge_status={rust_merge_status}"
-                        )
-                    else:
-                        merged_via_rust = True
-                        # C4：Rust 成功时同样构造 merge_result（结构对齐 Python fallback），
-                        # 保证调用方 result["merge"] 契约不因短路路径丢失。
-                        merge_result = {
-                            "cas_key": cas_key,
-                            "workspace_id": workspace_id,
-                            "file_instance_id": rust_res.get("file_instance_id", 0),
-                            "symbols_inserted": rust_res.get("symbols_inserted", 0),
-                            "calls_inserted": rust_res.get("calls_inserted", 0),
-                            "merge_status": rust_merge_status,
-                        }
-                        logger.info(
-                            "P0-1 Rust merge done: cas_key=%s ws=%d symbols=%d calls=%d status=%s",
-                            cas_key, workspace_id,
-                            rust_res.get("symbols_inserted", 0),
-                            rust_res.get("calls_inserted", 0),
-                            rust_merge_status,
-                        )
-                else:
-                    # C5 C2：Rust 返回 success=false（SQL 异常等）→ merge 数据失败门控
-                    merge_error = f"cas_merge_to_codegraph success=false: {rust_res}"
-            except ImportError as ie:
-                logger.debug("Rust cas_merge_to_codegraph unavailable: %s", ie)
-            except Exception as re:
-                # C5 C2：Rust 可用但 merge 数据失败 → 不阻断（对齐 Rust merge_ok
-                # 门控），记录 error，后续由上层 append staging（pending）、
-                # 不 committed、不 replicate
-                merge_error = str(re)
-                logger.warning(
-                    "P0-1 Rust cas_merge_to_codegraph failed (cas_key=%s, ws=%d): %s",
-                    cas_key, workspace_id, re,
-                )
-
-            if not merged_via_rust:
-                if not rust_merge_available:
-                    # Rust 模块不可用 → fail-closed（C4 契约：未显式回滚时禁止
-                    # 打开 Python DB 写事务）
-                    if not _is_rust_cas_write_rolled_back():
-                        raise ProtocolError(
-                            "Rust CAS merge unavailable or failed; "
-                            "set rollback_config.rust_cas_write=1 for an explicit compatibility rollback",
-                            code="rust_cas_merge_unavailable",
-                        )
-                elif merge_error is not None and not _is_rust_cas_write_rolled_back():
-                    # C5 C2：Rust 可用但 merge 数据失败 → 对齐 Rust merge_ok 门控：
-                    # 不抛异常；构造 error/cas_miss/open_failed merge_result；跳过
-                    # upsert_manifest 与 committed（latest_committed_generation 不
-                    # 推进），返回 CAS 层 committed 状态（与 Rust RefreshResult.status
-                    # 一致），上层据此 append staging（pending）但不 replicate。
-                    # P1-3：merge_status 透传 Rust 原值（cas_miss/error/open_failed），
-                    # 不再统一折叠为 error，消除 daemon_server 层死代码判断。
-                    merge_status_out = rust_merge_status or "error"
-                    merge_result = {
-                        "cas_key": cas_key,
-                        "workspace_id": workspace_id,
-                        "file_instance_id": 0,
-                        "symbols_inserted": 0,
-                        "calls_inserted": 0,
-                        "merge_status": merge_status_out,
-                        "error": merge_error,
-                    }
-                    logger.error(
-                        "C5 C2 merge failed (cas_key=%s, ws=%d, status=%s): %s — "
-                        "staging 由上层 append 为 pending，不 committed/不 replicate，同 seq 可重试",
-                        cas_key, workspace_id, merge_status_out, merge_error,
-                    )
-                    result = {"status": "committed", "generation": incoming_gen}
-                    if cas_result:
-                        result.update(cas_result)
-                    result["merge"] = merge_result
-                    return result
-
-                # 兼容回滚路径：只有 rollback_config 明确允许时才打开 Python DB 写事务。
-                cg_conn = None
-                try:
-                    from callwarden.db.db_cas_merge import merge_cas_to_codegraph
-
-                    # 打开 CodeGraph DB 连接（用户级单库，schema 假设已初始化）
-                    # WAL 模式下与 CLI/MCP 并发安全（AGENTS.md 规则 2）
-                    cg_conn = sqlite3.connect(codegraph_db_path, timeout=10.0)
-                    cg_conn.row_factory = sqlite3.Row
-                    schema_row = cg_conn.execute(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='file_instances'"
-                    ).fetchone()
-                    if schema_row is None:
-                        raise RuntimeError(
-                            f"CodeGraph DB schema 未初始化：缺少 file_instances 表，db={codegraph_db_path}"
-                        )
-
-                    abs_path_for_merge = msg.get("abs_path") or _join_path(
-                        workspace_root, rel_path
-                    )
-                    language_for_merge = ""
-                    try:
-                        from config import detect_language_from_path
-                        language_for_merge = detect_language_from_path(rel_path) or ""
-                    except ImportError:
-                        pass
-
-                    merge_result = merge_cas_to_codegraph(
-                        cas_conn=cas_conn,
-                        codegraph_conn=cg_conn,
-                        cas_key=cas_key,
-                        workspace_id=workspace_id,
-                        rel_path=rel_path,
-                        abs_path=abs_path_for_merge,
-                        content_hash=content_hash_for_merge,
-                        language=language_for_merge,
-                        workspace_root_path=workspace_root_path,
-                    )
-                    logger.warning(
-                        "P0-1 Python compatibility merge used after explicit rollback: "
-                        "cas_key=%s ws=%d symbols=%d calls=%d status=%s",
-                        cas_key, workspace_id,
-                        merge_result.get("symbols_inserted", 0),
-                        merge_result.get("calls_inserted", 0),
-                        merge_result.get("merge_status", ""),
-                    )
-                except Exception as e:
-                    logger.error(
-                        "P0-1 compatibility merge failed (cas_key=%s, ws=%d): %s",
-                        cas_key, workspace_id, e,
-                    )
-                    raise ProtocolError(
-                        f"CAS merge to CodeGraph DB failed: {e}",
-                        code="cas_merge_failed",
-                    )
-                finally:
-                    if cg_conn is not None:
-                        cg_conn.close()
-
-        # 5b. upsert workspace_manifests（断点 A 修复）
-        # ws_conn 已含 workspace_manifests 表（init_session_schema 已初始化）
-        try:
-            from callwarden.db.db_workspace_manifest import upsert_manifest
-            # 检测表是否存在（首次使用可能未初始化）
-            manifest_check = ws_conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
-            ).fetchone()
-            if manifest_check is None:
-                # 延迟初始化 manifest schema
-                from callwarden.db.db_workspace_manifest import init_manifest_schema
-                init_manifest_schema(ws_conn)
-
-            upsert_manifest(
-                conn=ws_conn,
-                workspace_id=workspace_id,
-                rel_path=rel_path,
-                content_hash=content_hash_for_merge,
-                cas_key=cas_key,
-                file_size=len(canonical_bytes) if canonical_bytes else 0,
-                is_dirty=True,
-            )
-        except Exception as e:
-            # manifest 失败——抛异常让上层不追加 staging entry
-            logger.error(
-                "P0-1 upsert_manifest failed (ws=%d, rel_path=%s): %s",
-                workspace_id, rel_path, e,
-            )
-            raise ProtocolError(
-                f"upsert_manifest failed: {e}",
-                code="manifest_upsert_failed",
-            )
-
-    # 4. CAS 第二阶段（committed）——条件更新 latest_committed_generation
-    # P0-2 整改（2026-07-22）：移到 merge/manifest 之后，避免后半段失败后
-    # latest_committed_generation 已提交但 merge 未完成，同一 seq 重试被判 stale 丢弃
-    # C3：优先 Rust CasStore facade（条件 UPDATE 单事务）；不可用时回退 Python SQL。
-    if ws_db_path and _RUST_FILE_GEN_AVAILABLE:
-        try:
-            committed_ok = _callwarden_core.cas_file_generation_committed(
-                ws_db_path, workspace_id, rel_path, incoming_epoch, incoming_seq)
-        except Exception as e:
-            raise ProtocolError(
-                f"cas_file_generation_committed failed: {e}",
-                code="cas_committed_failed",
-            )
-        if not committed_ok:
-            raise ProtocolError(
-                f"stale manifest commit for {rel_path}",
-                code="stale_manifest_commit",
-            )
-    else:
-        # fallback
-        ws_conn.execute("BEGIN IMMEDIATE")
-        try:
-            gen_cur = ws_conn.execute(
-                "UPDATE file_generations SET latest_committed_generation = ? "
-                "WHERE workspace_id = ? AND rel_path = ? "
-                "AND latest_seen_generation = ?",
-                (incoming_gen, workspace_id, rel_path, incoming_gen)
-            )
-            if gen_cur.rowcount != 1:
-                ws_conn.execute("ROLLBACK")
-                raise ProtocolError(
-                    f"stale manifest commit for {rel_path}",
-                    code="stale_manifest_commit",
-                )
-            ws_conn.execute("COMMIT")
-        except Exception:
-            try:
-                ws_conn.execute("ROLLBACK")
-            except Exception:
-                pass
-            raise
-
-    result = {"status": "committed", "generation": incoming_gen}
-    if cas_result:
-        result.update(cas_result)
-    if merge_result:
-        result["merge"] = merge_result
-    return result
+    del peer_uid, workspace_id, ws_conn, cas_conn, workspace_root
+    del codegraph_db_path, workspace_root_path, ws_db_path, cas_db_path
+    params = dict(msg)
+    if canonical_bytes is not None:
+        params["canonical_bytes_hex"] = canonical_bytes.hex()
+    return _call_daemon_rpc(_REPLICATOR_REFRESH_METHOD, params)
 
 
 def _join_path(workspace_root: str, rel_path: str) -> str:

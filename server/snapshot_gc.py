@@ -28,11 +28,47 @@ from __future__ import annotations
 
 import os
 import time
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 
 from .daemon_config import DaemonConfig
+
+
+_GC_METHODS = {
+    "delete_backup_history": "mcp.snapshot_gc.delete_backup_history_record",
+    "delete_audit": "mcp.snapshot_gc.delete_expired_audit_logs",
+    "delete_migration": "mcp.snapshot_gc.delete_migration_log_record",
+    "registered_snapshots": "mcp.snapshot_gc.get_registered_snapshot_ids",
+    "scan_audit": "mcp.snapshot_gc.scan_expired_audit_logs",
+    "scan_backup": "mcp.snapshot_gc.scan_expired_backup_history",
+    "scan_migration": "mcp.snapshot_gc.scan_expired_migrations_log",
+    "scan_workspaces": "mcp.snapshot_gc.scan_orphaned_workspaces",
+    "vacuum": "mcp.snapshot_gc.vacuum_databases",
+}
+
+
+def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
+    """经统一 HTTP client 调用 daemon；不打开本地数据库。"""
+    from ._mcp_common import _call_daemon_rpc as _rpc
+
+    return _rpc(method, params)
+
+
+def _rpc_items(method: str, params: Dict[str, Any]) -> List["GarbageItem"]:
+    result = _call_daemon_rpc(method, params)
+    if not isinstance(result, list):
+        raise RuntimeError(f"snapshot GC RPC returned invalid items: {result!r}")
+    return [
+        GarbageItem(
+            item_type=str(item.get("item_type", "")),
+            key=str(item.get("key", "")),
+            size_bytes=int(item.get("size_bytes", 0)),
+            reason=str(item.get("reason", "")),
+            metadata=dict(item.get("metadata", {})),
+        )
+        for item in result
+        if isinstance(item, dict)
+    ]
 
 
 @dataclass
@@ -207,107 +243,20 @@ class SnapshotGC:
 
     def _scan_expired_backup_history(self) -> List[GarbageItem]:
         """扫描 registry.db 中已标记删除或过期的 backup_history 记录。"""
-        registry_path = self.cfg.registry_db_path
-        if not os.path.isfile(registry_path):
-            return []
-
-        items: List[GarbageItem] = []
-        now = time.time()
-        cutoff = now - self.policy.max_age_seconds
-
-        conn = sqlite3.connect(registry_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            # 检查表是否存在
-            try:
-                conn.execute("SELECT 1 FROM backup_history LIMIT 1")
-            except sqlite3.OperationalError:
-                return []
-
-            # 已标记删除的记录
-            rows = conn.execute(
-                "SELECT backup_id, created_at, deleted_at, total_size_bytes "
-                "FROM backup_history WHERE deleted_at > 0"
-            ).fetchall()
-            for row in rows:
-                items.append(GarbageItem(
-                    item_type="backup_history",
-                    key=row["backup_id"],
-                    size_bytes=row["total_size_bytes"] or 0,
-                    reason="deleted",
-                    metadata={"created_at": row["created_at"], "deleted_at": row["deleted_at"]},
-                ))
-
-            # 过期但未删除的记录
-            rows = conn.execute(
-                "SELECT backup_id, created_at, total_size_bytes "
-                "FROM backup_history WHERE deleted_at = 0 AND created_at < ?",
-                (cutoff,)
-            ).fetchall()
-            for row in rows:
-                items.append(GarbageItem(
-                    item_type="backup_history",
-                    key=row["backup_id"],
-                    size_bytes=row["total_size_bytes"] or 0,
-                    reason="expired",
-                    metadata={"created_at": row["created_at"], "age_seconds": now - row["created_at"]},
-                ))
-        finally:
-            conn.close()
-
-        return items
+        return _rpc_items(_GC_METHODS["scan_backup"], {
+            "registry_db_path": self.cfg.registry_db_path,
+            "max_age_seconds": self.policy.max_age_seconds,
+        })
 
     def _scan_expired_migrations_log(self) -> List[GarbageItem]:
         """扫描 schema_migrations_log 表中的过期记录。
 
         保留最近 ``retention_count * 10`` 条记录（每个 DB 通常有少量迁移）。
         """
-        registry_path = self.cfg.registry_db_path
-        if not os.path.isfile(registry_path):
-            return []
-
-        items: List[GarbageItem] = []
-        keep_count = max(self.policy.retention_count * 10, 50)
-
-        conn = sqlite3.connect(registry_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            try:
-                conn.execute("SELECT 1 FROM schema_migrations_log LIMIT 1")
-            except sqlite3.OperationalError:
-                return []
-
-            # 获取总记录数
-            total = conn.execute(
-                "SELECT COUNT(*) AS c FROM schema_migrations_log"
-            ).fetchone()["c"]
-
-            if total <= keep_count:
-                return []
-
-            # 获取要删除的记录（最旧的）
-            rows = conn.execute(
-                "SELECT id, db_name, from_version, to_version, applied_at "
-                "FROM schema_migrations_log ORDER BY applied_at ASC "
-                "LIMIT ?",
-                (total - keep_count,)
-            ).fetchall()
-            for row in rows:
-                items.append(GarbageItem(
-                    item_type="migration_log",
-                    key=str(row["id"]),
-                    reason="old_log",
-                    metadata={
-                        "db_name": row["db_name"],
-                        "from_version": row["from_version"],
-                        "to_version": row["to_version"],
-                        "applied_at": row["applied_at"],
-                    },
-                ))
-        finally:
-            conn.close()
-
-        return items
+        return _rpc_items(_GC_METHODS["scan_migration"], {
+            "registry_db_path": self.cfg.registry_db_path,
+            "retention_count": self.policy.retention_count,
+        })
 
     def _scan_expired_audit_logs(self) -> List[GarbageItem]:
         """扫描 audit.db 中过期的审计日志。
@@ -315,41 +264,12 @@ class SnapshotGC:
         注意：审计日志通常需要长期保留（合规要求），此方法仅在
         enable_audit_gc=True 时调用。
         """
-        audit_path = self.cfg.audit_log_path
-        if not audit_path or not os.path.isfile(audit_path):
+        if not self.cfg.audit_log_path or not os.path.isfile(self.cfg.audit_log_path):
             return []
-
-        items: List[GarbageItem] = []
-        now = time.time()
-        cutoff = now - self.policy.max_age_seconds
-
-        conn = sqlite3.connect(audit_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            try:
-                conn.execute("SELECT 1 FROM audit_log LIMIT 1")
-            except sqlite3.OperationalError:
-                return []
-
-            # 统计过期记录数
-            row = conn.execute(
-                "SELECT COUNT(*) AS c FROM audit_log WHERE timestamp < ?",
-                (cutoff,)
-            ).fetchone()
-            count = row["c"] if row else 0
-
-            if count > 0:
-                items.append(GarbageItem(
-                    item_type="audit_log",
-                    key="expired_batch",
-                    size_bytes=0,  # 难以精确计算，设为 0
-                    reason="expired",
-                    metadata={"count": count, "cutoff": cutoff},
-                ))
-        finally:
-            conn.close()
-
-        return items
+        return _rpc_items(_GC_METHODS["scan_audit"], {
+            "audit_db_path": self.cfg.audit_log_path,
+            "max_age_seconds": self.policy.max_age_seconds,
+        })
 
     def _scan_orphaned_workspaces(self) -> List[GarbageItem]:
         """扫描 registry.db 中状态为 archived 的 workspace，标记为可回收。
@@ -357,59 +277,19 @@ class SnapshotGC:
         这些 workspace 的 SnapshotCache 条目应被驱逐。
         不删除 registry.db 中的记录（保留审计轨迹），只驱逐内存缓存。
         """
-        registry_path = self.cfg.registry_db_path
-        if not os.path.isfile(registry_path):
-            return []
-
-        items: List[GarbageItem] = []
-        conn = sqlite3.connect(registry_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            try:
-                rows = conn.execute(
-                    "SELECT workspace_instance_id, owner_uid, status, last_active_at "
-                    "FROM daemon_workspaces WHERE status = 'archived'"
-                ).fetchall()
-            except sqlite3.OperationalError:
-                return []
-
-            now = time.time()
-            for row in rows:
-                # archived 超过 max_age_seconds 才回收
-                if row["last_active_at"] > now - self.policy.max_age_seconds:
-                    continue
-                items.append(GarbageItem(
-                    item_type="workspace_cache",
-                    key=row["workspace_instance_id"],
-                    reason="unregistered",
-                    metadata={
-                        "owner_uid": row["owner_uid"],
-                        "last_active_at": row["last_active_at"],
-                    },
-                ))
-        finally:
-            conn.close()
-
-        return items
+        return _rpc_items(_GC_METHODS["scan_workspaces"], {
+            "registry_db_path": self.cfg.registry_db_path,
+            "max_age_seconds": self.policy.max_age_seconds,
+        })
 
     def _get_registered_snapshot_ids(self) -> set:
         """获取 registry.db 中所有已注册的 snapshot_id。"""
-        registry_path = self.cfg.registry_db_path
-        if not os.path.isfile(registry_path):
-            return set()
-
-        conn = sqlite3.connect(registry_path)
-        try:
-            try:
-                rows = conn.execute(
-                    "SELECT DISTINCT snapshot_id FROM daemon_workspaces "
-                    "WHERE snapshot_id IS NOT NULL AND snapshot_id != ''"
-                ).fetchall()
-                return {r[0] for r in rows}
-            except sqlite3.OperationalError:
-                return set()
-        finally:
-            conn.close()
+        result = _call_daemon_rpc(_GC_METHODS["registered_snapshots"], {
+            "registry_db_path": self.cfg.registry_db_path,
+        })
+        if not isinstance(result, list):
+            raise RuntimeError(f"snapshot GC RPC returned invalid snapshot IDs: {result!r}")
+        return {str(value) for value in result}
 
     # ------------------------------------------------------------------
     # sweep 阶段（执行删除）
@@ -473,52 +353,35 @@ class SnapshotGC:
 
     def _delete_backup_history_record(self, backup_id: str) -> None:
         """从 backup_history 表删除记录。"""
-        registry_path = self.cfg.registry_db_path
-        conn = sqlite3.connect(registry_path)
-        try:
-            conn.execute("DELETE FROM backup_history WHERE backup_id = ?", (backup_id,))
-            conn.commit()
-        finally:
-            conn.close()
+        _call_daemon_rpc(_GC_METHODS["delete_backup_history"], {
+            "registry_db_path": self.cfg.registry_db_path,
+            "backup_id": backup_id,
+        })
 
     def _delete_migration_log_record(self, log_id: str) -> None:
         """从 schema_migrations_log 表删除记录。"""
-        registry_path = self.cfg.registry_db_path
-        conn = sqlite3.connect(registry_path)
-        try:
-            conn.execute("DELETE FROM schema_migrations_log WHERE id = ?", (int(log_id),))
-            conn.commit()
-        finally:
-            conn.close()
+        _call_daemon_rpc(_GC_METHODS["delete_migration"], {
+            "registry_db_path": self.cfg.registry_db_path,
+            "log_id": int(log_id),
+        })
 
     def _delete_expired_audit_logs(self, cutoff: float) -> None:
         """删除过期的审计日志。"""
         audit_path = self.cfg.audit_log_path
         if not audit_path or not os.path.isfile(audit_path):
             return
-        conn = sqlite3.connect(audit_path)
-        try:
-            conn.execute("DELETE FROM audit_log WHERE timestamp < ?", (cutoff,))
-            conn.commit()
-        finally:
-            conn.close()
+        _call_daemon_rpc(_GC_METHODS["delete_audit"], {
+            "audit_db_path": audit_path,
+            "cutoff": cutoff,
+        })
 
     def _vacuum_databases(self) -> None:
         """VACUUM 所有 daemon 管理的数据库。"""
-        db_paths = [self.cfg.registry_db_path]
         audit_path = self.cfg.audit_log_path
+        params: Dict[str, Any] = {"registry_db_path": self.cfg.registry_db_path}
         if audit_path and os.path.isfile(audit_path):
-            db_paths.append(audit_path)
-
-        for db_path in db_paths:
-            try:
-                conn = sqlite3.connect(db_path)
-                try:
-                    conn.execute("VACUUM")
-                finally:
-                    conn.close()
-            except sqlite3.OperationalError:
-                pass  # VACUUM 失败不影响 GC 结果
+            params["audit_db_path"] = audit_path
+        _call_daemon_rpc(_GC_METHODS["vacuum"], params)
 
     # ------------------------------------------------------------------
     # 便捷方法
