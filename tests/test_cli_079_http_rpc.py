@@ -91,5 +91,5 @@ def test_cli079_close_local_fallback_fails_closed(monkeypatch):
     assert called.get("used") is True
     assert called.get("raised") is not None
     assert "daemon 权威写点" in result.get("error", "")
-    assert "task_close" in called.get("raised", "") or "db.task_close" in called.get("raised", "")
-
+    assert "task_close" in called.get(
+        "raised", "") or "db.task_close" in called.get("raised", "")

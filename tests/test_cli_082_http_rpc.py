@@ -53,6 +53,7 @@ def test_cli082_routes_to_daemon(monkeypatch, capsys):
     assert captured["params"].get("description") == "d"
     assert captured["params"].get("steps") == []
     assert captured["params"].get("creator") == "agent"
+    assert captured["params"].get("identity_policy") == "legacy_identity_v1"
     out = capsys.readouterr().out
     assert "T-1" in out
     assert "t" in out

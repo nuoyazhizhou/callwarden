@@ -70,3 +70,24 @@ def test_cli093_tree_daemon_unavailable(monkeypatch, capsys):
     assert rc is True
     out = capsys.readouterr().out
     assert "daemon 不可用" in out
+
+
+def test_cli093_tree_formats_ratio_as_percent(monkeypatch, capsys):
+    """daemon 返回 ratio/percent 后，CLI 不得把 0..1 直接当百分比打印。"""
+    def _fake_read(method, params, fallback_fn):
+        assert method == "task.status_tree"
+        return {
+            "task_id": "T-1",
+            "title": "根任务",
+            "status": "review",
+            "workflow_status": "review_pending",
+            "progress": {"total": 764, "done": 758, "progress": 758 / 764,
+                          "ratio": 758 / 764, "percent": 99.21},
+            "subtasks": [],
+        }
+
+    monkeypatch.setattr(main_mod, "route_task_read", _fake_read)
+    assert main_mod._print_task_show(None, "T-1", flat=False) is True
+    out = capsys.readouterr().out
+    assert "758/764 (99.21%)" in out
+    assert "0.9921465968586387%" not in out

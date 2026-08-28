@@ -159,8 +159,10 @@ ERROR_CODE_SITES = {
 }
 
 # fail-closed client 方法（auto/enterprise 模式 daemon 不可用必须抛错，不得静默回退）
-FAIL_CLOSED_METHODS = ["get_symbol", "get_file_symbols", "query_grep", "query_issues", "query_tests"]
-# local 模式语义：get_symbol/get_file_symbols 走 SQL 回退；grep/issues/tests 返回 None
+FAIL_CLOSED_METHODS = ["get_symbol", "get_file_symbols",
+                       "query_grep", "query_issues", "query_tests"]
+# local 模式语义（SRV-006 后）：get_symbol/get_file_symbols 本地 SQL 已退役，
+# daemon 不可用时 fail-closed；grep/issues/tests 仍返回 None
 LOCAL_MODE_SQL_FALLBACK = {"get_symbol", "get_file_symbols"}
 LOCAL_MODE_NONE = {"query_grep", "query_issues", "query_tests"}
 
@@ -314,24 +316,24 @@ class TestClientFailClosed:
 
     @pytest.mark.parametrize("method", sorted(LOCAL_MODE_SQL_FALLBACK))
     def test_local_mode_sql_fallback(self, method):
-        """local 模式（显式配置无 daemon）：允许回退本地 SQL，fallback 计数 +1。
-
-        get_symbol 的回退入口是 _sql_fallback_get_symbol；get_file_symbols
-        的回退入口是 _get_db().get_file_symbols（两者实现不同，分别 stub）。
+        """SRV-006：local 模式本地 SQL 回退已退役——get_symbol 的回退入口
+        `_sql_fallback_get_symbol` 已薄客户端化为 daemon RPC
+        （mcp.daemon_client.sql_fallback_get_symbol），daemon 不可用时抛
+        DaemonUnavailableError；get_file_symbols 的 `_get_db()` 直连路径已移除，
+        直接 fail-closed。local 模式不再允许本地业务 SQL（check_items：
+        no SQLite / no get_db / no business fallback）。
         """
-        sentinel = {"__mode__": "sql"}
         client = self._make_client("local")
-        if method == "get_symbol":
-            client._sql_fallback_get_symbol = lambda qn: sentinel
-            result = client.get_symbol("crate::foo")
-        else:  # get_file_symbols
-            class _FakeDb:
-                def get_file_symbols(self, file_path):
-                    return sentinel
-            client._get_db = lambda: _FakeDb()
-            result = client.get_file_symbols("a.py")
-        assert result is sentinel, f"{method} local 模式应返回 SQL fallback 结果"
-        assert client._sql_fallbacks == 1
+
+        def _unavailable(qn):
+            raise DaemonUnavailableError("daemon 不可用（SRV-006：local SQL 已退役）")
+
+        client._sql_fallback_get_symbol = _unavailable
+        with pytest.raises(DaemonUnavailableError):
+            if method == "get_symbol":
+                client.get_symbol("crate::foo")
+            else:  # get_file_symbols：本地 SQL 路径已退役，直接 fail-closed
+                client.get_file_symbols("a.py")
 
     @pytest.mark.parametrize("method", sorted(LOCAL_MODE_NONE))
     def test_local_mode_returns_none(self, method):

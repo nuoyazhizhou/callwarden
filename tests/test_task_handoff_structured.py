@@ -3,6 +3,7 @@
 import pytest
 
 from callwarden.db.db_tasks import normalize_structured_handoff
+from callwarden.cli.main import normalize_structured_handoff as normalize_cli_handoff
 
 
 def _payload(**overrides):
@@ -35,6 +36,31 @@ def test_normalize_structured_handoff_accepts_runtime_executor_role():
     assert normalized["outcome"] == "executor_ready_for_review"
 
 
+def test_cli_normalize_accepts_task_level_reviewer_blocked_null_step():
+    payload = _payload(
+        from_role="reviewer",
+        outcome="reviewer_blocked",
+        next_role="executor",
+        next_action="修复 task-level finding",
+        reason="结构化 finding",
+        independence_requirement="not_required",
+        step_id=None,
+        identity={
+            "agent_id": "reviewer-test",
+            "session_id": "reviewer-session",
+            "model_id": "reviewer-model",
+            "role": "reviewer",
+        },
+    )
+    normalized = normalize_cli_handoff(payload)
+    assert normalized["step_id"] is None
+
+
+def test_cli_normalize_rejects_null_step_for_executor_handoff():
+    with pytest.raises(ValueError, match="E_HANDOFF_STEP_REQUIRED"):
+        normalize_cli_handoff(_payload(step_id=None))
+
+
 @pytest.mark.parametrize(
     "overrides,code",
     [
@@ -53,4 +79,3 @@ def test_normalize_structured_handoff_rejects_invalid_or_legacy_payload(override
         normalize_structured_handoff(payload)
     if code:
         assert str(excinfo.value).startswith(code)
-

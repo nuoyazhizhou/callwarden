@@ -497,19 +497,17 @@ class TestClientFailClosed:
             client.get_symbol_location("alpha", "a.py")
         assert client._sql_fallbacks == 0
 
-    def test_get_symbol_location_allows_sql_only_in_local_mode(self, monkeypatch):
+    def test_get_symbol_location_fail_closed_even_in_local_mode(self, monkeypatch):
+        """SRV-006：local 模式本地 SQL 已退役——_get_db() 直连路径随
+        daemon_client 12 符号薄客户端化移除，local 模式 daemon 不可用同样
+        fail-closed（对齐 check_items：no get_db / no business fallback）。"""
         from callwarden.server import daemon_client as dc_module
+        from callwarden.server.daemon_client import DaemonUnavailableError
         monkeypatch.setattr(dc_module, "get_daemon_mode", lambda: "local")
         client, _sentinel = self._stub_client()
-
-        class FakeDB:
-            def get_symbol_location(self, name, file_path=None):
-                return {"name": name, "file_path": file_path, "from": "sql"}
-
-        client._get_db = lambda: FakeDB()
-        result = client.get_symbol_location("alpha", "a.py")
-        assert result == {"name": "alpha", "file_path": "a.py", "from": "sql"}
-        assert client._sql_fallbacks == 1
+        with pytest.raises(DaemonUnavailableError):
+            client.get_symbol_location("alpha", "a.py")
+        assert client._sql_fallbacks == 0
 
 
 # ----------------------------------------------------------------------

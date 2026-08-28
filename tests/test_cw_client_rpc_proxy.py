@@ -71,6 +71,47 @@ def test_run_daemon_command_serve_rejected_when_include_serve_false():
     assert exc_info.value.code == 2
 
 
+def test_daemon_status_sends_numeric_workspace_id_as_numeric_key(monkeypatch, capsys):
+    """daemon status 的数字参数不能被误发成 workspace_instance_id。"""
+    calls = []
+
+    class FakeClient:
+        def __init__(self, socket):
+            self.socket = socket
+
+        def call(self, method, params):
+            calls.append((method, params))
+            return {"workspace_id": 730, "workspace_instance_id": "ws-730"}
+
+    monkeypatch.setattr(
+        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", FakeClient
+    )
+    assert run_daemon_command(["status", "730"]) == 0
+    assert calls == [("workspace.status", {"workspace_id": 730})]
+    assert '"workspace_id": 730' in capsys.readouterr().out
+
+
+def test_daemon_status_preserves_workspace_instance_id(monkeypatch):
+    """daemon status 的稳定 instance id 仍使用 instance 参数。"""
+    calls = []
+
+    class FakeClient:
+        def __init__(self, socket):
+            self.socket = socket
+
+        def call(self, method, params):
+            calls.append((method, params))
+            return {"workspace_id": 730, "workspace_instance_id": "4baea3ff12c2ea5c"}
+
+    monkeypatch.setattr(
+        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", FakeClient
+    )
+    assert run_daemon_command(["status", "4baea3ff12c2ea5c"]) == 0
+    assert calls == [
+        ("workspace.status", {"workspace_instance_id": "4baea3ff12c2ea5c"})
+    ]
+
+
 # ----------------------------------------------------------------------
 # run_client_mode 平台门禁（linux/win32/darwin 允许，其余平台 return 2）
 # ----------------------------------------------------------------------
