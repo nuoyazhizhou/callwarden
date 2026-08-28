@@ -222,3 +222,6 @@ package-lock.json
 
 # reviewer_blocked 批量修正 tracker 运行时状态（可重算，T-1787804376688）
 scripts/.rb_progress.json
+
+# QA 临时探测目录（handoff_retry/reconcile_probe 等，物理保留不入库）
+_qa_s1_tmp/
