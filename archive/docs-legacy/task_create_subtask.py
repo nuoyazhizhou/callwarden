@@ -1,14 +1,16 @@
-"""挂载子任务到父任务的标准脚本模板
+"""[已归档 2026-08-28] 挂载子任务到父任务的 legacy 脚本模板
 
-CLI `cw task create` 当前不支持 --parent 参数，需要通过 Python API 挂载子任务。
-本脚本提供标准模板，直接运行会创建示例子任务；复制后修改 tasks_to_mount 列表即可。
+⚠️ 本脚本仅作 local 模式历史参考，daemon 模式（enterprise/auto）下禁止使用：
+- Python 直连 CodeGraphDB 绕过 daemon authority（无 workspace binding/Role Contract/
+  identity policy，违反 AGENTS.md 规则 3/34）；
+- 内含 UPDATE tasks SET status='closed' 直改状态，违反规则 7（任务关闭必须基于实际核实）
+  与规则 34（Windows daemon 是权威任务库的唯一写入口）。
 
-用法：
-    python docs/task_create_subtask.py              # 创建示例子任务
-    python docs/task_create_subtask.py --dry-run   # 仅打印，不实际创建
-
-检查已存在同名子任务（避免重复创建），支持 closed 状态直接写入（无 steps 的任务）。
+现行挂载子任务路径见 AGENTS.md §3「子任务挂载方式」：
+首选 `cw task split --plan plan.md <parent_task_id>`（daemon 路径）。
+原位置：docs/task_create_subtask.py（2026-07-13 起未更新）。
 """
+
 import sys
 import os
 import time
