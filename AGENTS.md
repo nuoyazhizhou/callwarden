@@ -580,6 +580,14 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     - 文件不相交的并行组可同时开工；跨组依赖单独声明（如"verify 依赖某组完成"）。
 41. **修复批次开工前，并行 agent 必须对共享在途文件 checkpoint**：共享文件（如 `server/tools/*`、`db/db_task_leases.py`）被其他 agent 在途编辑时，先要求其提交/停手并确认文件 mtime 稳定，再领取对应任务执行；发现双写冲突立即停下报告，不得自行覆盖对方改动。
 
+48. **共享 git 对象库保护（多 agent 并行的硬性纪律，2026-08-28 事故后立规）**：本仓库由多个 agent 并行开发、共享同一个 `.git`。**严禁执行 `git gc --prune=now` / `git prune` / `git filter-repo` / `git gc --aggressive` / `git repack -ad`**——它们会删除仓库中"当前无引用"的对象，而并行 agent 的暂存、worktree refs、checkpoint refs 正引用这些对象，一旦被删会导致整个仓库 `git status`/`git add`/`git commit`/`git write-tree` 报 `unable to read tree`、`git log --all` 报 `Failed to traverse parents`、`git fsck` 报大量 `missing blob/tree/commit`，所有 agent 都无法提交（2026-08-28 实发：回收站恢复约 440 个对象才救回仓库）。
+
+    - **唯一允许的清理**：`git gc --prune=2.weeks.ago`（保守保留期），且执行前必须先把 `.git/objects`、`.git/index`、`.git/refs` 备份到 `~/.callwarden/git_recovery_<date>/`；
+    - **任何 `git gc` 前先确认没有其他 agent 正在操作**（`tasklist | grep git`，或确认 `refs/codex/turn-diffs/*`、worktree refs 不再增长）；
+    - **commit 前检查 index**：若 index 含其他 agent 的暂存内容（`git status --short` 出现大量不属于本任务的 `M`/`D`/`??`），`git commit` 会**一次提交整个 index**。必须先 `git reset` 清空暂存区（工作树不变），只 `git add` 本任务白名单路径，再 `git commit`；严禁 `git add .` / `git commit -a` 吸收并行改动；
+    - **事故恢复路径**（已沉淀，见 `deliverables/software-company/git_recovery_record_20260828.md`）：被 prune 的 loose objects 会进 Windows 回收站，可恢复——解析 `$Recycle.Bin\<SID>\$I*`（offset 28 起 UTF-16LE 原始路径）筛 `.git\objects\`，对 `$R*` 内容做 `zlib 解压 + sha1(header+content)==对象名` 指纹匹配，迭代 `git fsck --full` 写回 `.git/objects/xx/yyy`；
+    - **失败留痕**：任何 `git gc`/`prune`/commit 事故必须在当日 memory 日志与任务 report 中记录，禁止静默跳过。
+
 ## 文档索引
 
 | 文档                                                       | 说明                                     |
