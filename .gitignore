@@ -201,3 +201,24 @@ g0-batch/
 .agents/
 rust_ext/target_cwcheck/
 rust_ext/target/
+
+# === 2026-08-28 triage: 归档临时/草稿/诊断/生成物（物理保留，不进 git 主历史）===
+# 临时导出
+.tmp_epic_show.txt
+.tmp_epic_tasks.json
+# 部署日志
+_deploy_status*.txt
+# worktree 恢复资产（务必物理保留，仅排除出 git）
+recovered-scratch/
+# archive 下的诊断/回滚产物（已在 archive/ 内，不进主历史）
+archive/recovered-throwaway/
+archive/rollback_backups_20260824/
+archive/worktree-diagnostics-20260827/
+# 候选任务树生成快照（可重算，体积过大）
+candidate_task_tree_readonly_20260827.json
+candidate_task_tree_summary_20260827.json
+# 疑似瞬时生成的 npm 锁文件（项目主栈为 Python/Rust，4KB 过小；若确认有效请移除此行）
+package-lock.json
+
+# reviewer_blocked 批量修正 tracker 运行时状态（可重算，T-1787804376688）
+scripts/.rb_progress.json
