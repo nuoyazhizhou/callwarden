@@ -377,12 +377,90 @@ impl TaskCollabStore {
             },
         })
         .to_string();
+
+        // §4.2 verdict normalization：从 Task Contract 最新修订读取 normalization
+        // binding，并校验规则可用（缺失/规则 row 缺失/哈希不匹配/已撤销 → fail-closed，
+        // 与 verdict_evidence_gate::validate_normalization_binding 同语义）。binding
+        // 随 verdict 行持久化，供 read_effective_verdicts 复算 normalized_overall。
+        let (norm_version, norm_rules_hash): (String, String) = tx
+            .query_row(
+                "SELECT normalization_version, normalization_rules_hash \
+                 FROM task_contract_revisions WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                params![task_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!(
+                    "读取 Task Contract normalization binding 失败: {}",
+                    e
+                ))
+            })?
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_VERDICT_NORMALIZATION_UNAVAILABLE",
+                    "Task Contract 未绑定 normalization 规则（verdict.submit 拒绝，§4.2）",
+                )
+            })?;
+        if norm_version.is_empty() || norm_rules_hash.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_VERDICT_NORMALIZATION_UNAVAILABLE",
+                "Task Contract normalization binding 为空（verdict.submit 拒绝，§4.2）",
+            ));
+        }
+        let norm_row: Option<(String, String, i64)> = tx
+            .query_row(
+                "SELECT verdict_rule_set_id, rules_hash, \
+                    (SELECT COUNT(*) FROM verdict_normalization_rule_revocations v \
+                     WHERE v.verdict_rule_set_id = verdict_normalization_rules.verdict_rule_set_id) \
+                 FROM verdict_normalization_rules WHERE normalization_version = ?1",
+                params![norm_version],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!(
+                    "读取 verdict_normalization_rules 失败: {}",
+                    e
+                ))
+            })?;
+        let (rule_set_id, rules_hash, revoked_count) = norm_row.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_VERDICT_NORMALIZATION_UNAVAILABLE",
+                format!(
+                    "normalization_version={} 无对应规则 row（→ UNVERIFIED）",
+                    norm_version
+                ),
+            )
+        })?;
+        if rules_hash != norm_rules_hash {
+            return Err(DaemonRpcError::new(
+                "E_VERDICT_NORMALIZATION_UNAVAILABLE",
+                format!(
+                    "normalization binding hash 不匹配 bound={} row={}（→ UNVERIFIED）",
+                    norm_rules_hash, rules_hash
+                ),
+            ));
+        }
+        if revoked_count > 0 {
+            return Err(DaemonRpcError::new(
+                "E_VERDICT_NORMALIZATION_UNAVAILABLE",
+                format!(
+                    "normalization rule_set {} 已撤销（→ UNVERIFIED）",
+                    rule_set_id
+                ),
+            ));
+        }
+
         tx.execute(
             "INSERT INTO task_verdict_events
              (verdict_id, task_id, contract_id, contract_revision, contract_hash,
               phase, view_manifest_hash, snapshot_id, reviewer_identity, clause_results,
-              findings, overall, attestation, amendment_ref, submitted_at, workspace_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+              findings, overall, attestation, amendment_ref, submitted_at, workspace_id,
+              canonicalization_version, canonicalization_rules_hash,
+              normalization_version, normalization_rules_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20)",
             params![
                 verdict_id,
                 task_id,
@@ -400,6 +478,10 @@ impl TaskCollabStore {
                 amendment_ref,
                 submitted_at,
                 task_contract_workspace,
+                "role-contract-c14n/v1",
+                role_contract_hash,
+                norm_version,
+                norm_rules_hash,
             ],
         )
         .map_err(|e| {
