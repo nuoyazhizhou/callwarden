@@ -1,0 +1,252 @@
+{
+  "completion_status": "COMPLETE_CONFIRMED",
+  "verdict_scope": "terminal-state verification of decision=COMPLETE projections (Epic T-1787203926824-9f873bfc subtree)",
+  "identity": {
+    "agent_id": "adjudicator-workbuddy-v1",
+    "agent_instance_id": "",
+    "session_id": null,
+    "model_id": "workbuddy",
+    "role": "adjudicator"
+  },
+  "verified_at_utc": "2026-08-26T02:45:46.127115",
+  "tasks": [
+    {
+      "task_id": "T-1787321020926-b7ed7500",
+      "status": "closed",
+      "closed_at": 1787475156.9824154,
+      "applied_at": 1787475156.403911,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321708926-e7ebfac4",
+      "status": "closed",
+      "closed_at": 1787475638.8104417,
+      "applied_at": 1787475638.747661,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709017-ed4e79b0",
+      "status": "closed",
+      "closed_at": 1787475766.2126832,
+      "applied_at": 1787475766.1625364,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709098-f2236ea0",
+      "status": "closed",
+      "closed_at": 1787475953.426907,
+      "applied_at": 1787475953.3590631,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709179-f6fdf5bc",
+      "status": "closed",
+      "closed_at": 1787475956.109764,
+      "applied_at": 1787475954.673029,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709249-fb256530",
+      "status": "closed",
+      "closed_at": 1787475962.494575,
+      "applied_at": 1787475962.4325762,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709365-021050a8",
+      "status": "closed",
+      "closed_at": 1787475964.537347,
+      "applied_at": 1787475964.3438263,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709432-060d1128",
+      "status": "closed",
+      "closed_at": 1787475977.1730466,
+      "applied_at": 1787475977.0019,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709518-0b31a484",
+      "status": "closed",
+      "closed_at": 1787475983.866657,
+      "applied_at": 1787475983.2932725,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709584-0f2573f4",
+      "status": "closed",
+      "closed_at": 1787475984.6845565,
+      "applied_at": 1787475984.6349752,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709651-131e1880",
+      "status": "closed",
+      "closed_at": 1787475985.981484,
+      "applied_at": 1787475985.9323907,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709710-169c2da8",
+      "status": "closed",
+      "closed_at": 1787475986.8529713,
+      "applied_at": 1787475986.806936,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709770-1a3de640",
+      "status": "closed",
+      "closed_at": 1787475988.0506542,
+      "applied_at": 1787475988.0012116,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321709835-1e194764",
+      "status": "closed",
+      "closed_at": 1787475989.1105573,
+      "applied_at": 1787475989.066716,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712498-bcc9ba60",
+      "status": "closed",
+      "closed_at": 1787476065.6681535,
+      "applied_at": 1787476065.5547338,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712571-c126ad70",
+      "status": "closed",
+      "closed_at": 1787476068.534993,
+      "applied_at": 1787476068.4753664,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712641-c5517dbc",
+      "status": "closed",
+      "closed_at": 1787476070.6147065,
+      "applied_at": 1787476070.5341656,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712696-c896d134",
+      "status": "closed",
+      "closed_at": 1787476072.564008,
+      "applied_at": 1787476072.4881268,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712758-cc574178",
+      "status": "closed",
+      "closed_at": 1787476074.151531,
+      "applied_at": 1787476074.0531373,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712826-d05f6f5c",
+      "status": "closed",
+      "closed_at": 1787476076.4072633,
+      "applied_at": 1787476076.3161428,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712895-d47d25c0",
+      "status": "closed",
+      "closed_at": 1787476079.3285136,
+      "applied_at": 1787476079.2441998,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321712961-d86f42d0",
+      "status": "closed",
+      "closed_at": 1787476081.5459337,
+      "applied_at": 1787476081.4693391,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321713038-dd021610",
+      "status": "closed",
+      "closed_at": 1787476083.7927487,
+      "applied_at": 1787476083.7362344,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321713116-e1a76170",
+      "status": "closed",
+      "closed_at": 1787476085.9101994,
+      "applied_at": 1787476085.8345914,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321713179-e565d9cc",
+      "status": "closed",
+      "closed_at": 1787476087.6322541,
+      "applied_at": 1787476087.5601077,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321713237-e8e1f1f8",
+      "status": "closed",
+      "closed_at": 1787476089.6430674,
+      "applied_at": 1787476089.5693097,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787321713303-ecc6ada4",
+      "status": "closed",
+      "closed_at": 1787476090.971933,
+      "applied_at": 1787476090.9166663,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787322799711-dfc17ba4",
+      "status": "closed",
+      "closed_at": 1787616075.7798128,
+      "applied_at": 1787616075.589462,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787322799770-e34ac71c",
+      "status": "closed",
+      "closed_at": 1787616033.9780176,
+      "applied_at": 1787616033.8158162,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787322799850-e804f55c",
+      "status": "closed",
+      "closed_at": 1787616035.351097,
+      "applied_at": 1787616035.2019107,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787367417246-34190890",
+      "status": "closed",
+      "closed_at": 1787590330.9233277,
+      "applied_at": 1787564909.994529,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-P0J-ROLE-WORKER-IDENTITY",
+      "status": "closed",
+      "closed_at": 1787588637.5081682,
+      "applied_at": null,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787402257549-67ba81e6",
+      "status": "closed",
+      "closed_at": 1787583147.0971198,
+      "applied_at": null,
+      "closed_verified": true
+    },
+    {
+      "task_id": "T-1787407700109-f5562c60",
+      "status": "closed",
+      "closed_at": 1787583420.7278366,
+      "applied_at": null,
+      "closed_verified": true
+    }
+  ]
+}
