@@ -1,1570 +1,1929 @@
 {
-  "schema_version": 1,
-  "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-26T05:24:05Z",
-  "discipline": {
-    "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
-    "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
+ "schema_version": 1,
+ "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
+ "updated_at": "2026-08-28T22:30:00+08:00",
+ "discipline": {
+  "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
+  "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
+ },
+ "sources": {
+  "cw_db": "C:/Users/wanpi/.callwarden/callwarden.db (WAL 只读查询；函数文本在 symbol_contents 19784 行)",
+  "worktree_backup": "C:/Users/wanpi/.callwarden/worktree_recovery_20260826/ (5 个 worktree 整文件 5.8G, robocopy 2026-08-26)",
+  "git_backup_20260825": "C:/Users/wanpi/.callwarden/git_backup_20260825/.git — 已核实不含被 prune 的 pilot commit",
+  "git_bak_20260820": "C:/git_work/.git_bak_20260820 — 已核实不含 pilot commit",
+  "note": "git 对象恢复路径不可行（4/5 pilot commit 对象已删、0 悬空 commit 存活）；恢复源 = worktree 磁盘整文件 + cw DB 函数文本"
+ },
+ "commit_classification": {
+  "total_distinct": 113,
+  "in_master": 69,
+  "pruned": 44,
+  "pruned_files": 378,
+  "pruned_functions": 7879,
+  "note": "pruned 的 378 文件/7879 函数文本仍在 symbol_contents；逐函数与 master 比对后可重建"
+ },
+ "task_commit_entries": [
+  {
+   "task_id": "T-1787323460500-b9e232bc",
+   "commit_id": "901cc3c6dde898a41eca5670df1797af6eec0de0",
+   "status": "new_in_master",
+   "source": "recovery_commit_20260826",
+   "scope": "SRV-003 backup_restore_handlers.rs + test_srv_003.py + mod.rs 声明 + router.rs OsStrExt",
+   "note": "抢救自 srv-003 worktree 磁盘；编译验证通过（全新 target 构建）；message 内嵌 task_id",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "sources": {
-    "cw_db": "C:/Users/wanpi/.callwarden/callwarden.db (WAL 只读查询；函数文本在 symbol_contents 19784 行)",
-    "worktree_backup": "C:/Users/wanpi/.callwarden/worktree_recovery_20260826/ (5 个 worktree 整文件 5.8G, robocopy 2026-08-26)",
-    "git_backup_20260825": "C:/Users/wanpi/.callwarden/git_backup_20260825/.git — 已核实不含被 prune 的 pilot commit",
-    "git_bak_20260820": "C:/git_work/.git_bak_20260820 — 已核实不含 pilot commit",
-    "note": "git 对象恢复路径不可行（4/5 pilot commit 对象已删、0 悬空 commit 存活）；恢复源 = worktree 磁盘整文件 + cw DB 函数文本"
+  {
+   "task_id": "T-1785767529976-1760c608",
+   "commit_id": "1dbb2be",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "workspace_snapshot",
+   "produced_at": 1785770931.0591114,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "commit_classification": {
-    "total_distinct": 113,
-    "in_master": 69,
-    "pruned": 44,
-    "pruned_files": 378,
-    "pruned_functions": 7879,
-    "note": "pruned 的 378 文件/7879 函数文本仍在 symbol_contents；逐函数与 master 比对后可重建"
+  {
+   "task_id": "T-1787036952794-f3d19a10",
+   "commit_id": "6bf7353bef984ecd7065b6820948421b00c0cd4e",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "test_run",
+   "produced_at": 1787038511.1154723,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "task_commit_entries": [
-    {
-      "task_id": "T-1787323460500-b9e232bc",
-      "commit_id": "901cc3c6dde898a41eca5670df1797af6eec0de0",
-      "status": "new_in_master",
-      "source": "recovery_commit_20260826",
-      "scope": "SRV-003 backup_restore_handlers.rs + test_srv_003.py + mod.rs 声明 + router.rs OsStrExt",
-      "note": "抢救自 srv-003 worktree 磁盘；编译验证通过（全新 target 构建）；message 内嵌 task_id",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1785767529976-1760c608",
-      "commit_id": "1dbb2be",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "workspace_snapshot",
-      "produced_at": 1785770931.0591114,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787036952794-f3d19a10",
-      "commit_id": "6bf7353bef984ecd7065b6820948421b00c0cd4e",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "test_run",
-      "produced_at": 1787038511.1154723,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471204.8656402,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471204.9686797,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471205.0979743,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471205.2395222,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471798.7768393,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471798.8416557,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471798.9387221,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321020926-b7ed7500",
-      "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787471799.02166,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321708926-e7ebfac4",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475638.308176,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321708926-e7ebfac4",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475638.3750775,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321708926-e7ebfac4",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475638.450946,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321708926-e7ebfac4",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475638.5222547,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709017-ed4e79b0",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475765.5954502,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709017-ed4e79b0",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475765.647994,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709017-ed4e79b0",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475765.7109842,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709017-ed4e79b0",
-      "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475765.7716808,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709098-f2236ea0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475952.4430609,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709098-f2236ea0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475952.5052722,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709098-f2236ea0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475952.5862677,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709098-f2236ea0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475952.6466587,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709179-f6fdf5bc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475953.6622753,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709179-f6fdf5bc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475953.7365744,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709179-f6fdf5bc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475953.814737,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709179-f6fdf5bc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475953.9102821,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709249-fb256530",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475959.8441908,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709249-fb256530",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475960.6807902,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709249-fb256530",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475960.8995817,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709249-fb256530",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475961.0537872,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709365-021050a8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475963.1598575,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709365-021050a8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475963.2205558,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709365-021050a8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475963.3015442,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709365-021050a8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475963.3843205,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709432-060d1128",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475964.9910502,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709432-060d1128",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475965.0541232,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709432-060d1128",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475965.1281984,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709432-060d1128",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475965.1973143,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709518-0b31a484",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475977.4454281,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709518-0b31a484",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475977.8665838,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709518-0b31a484",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475978.2309568,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709518-0b31a484",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475978.7831976,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709584-0f2573f4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475984.0399306,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709584-0f2573f4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475984.0791955,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709584-0f2573f4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475984.1396582,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709584-0f2573f4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475984.1793256,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709651-131e1880",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475985.0978117,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709651-131e1880",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475985.17039,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709651-131e1880",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475985.3170652,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709651-131e1880",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475985.3699381,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709710-169c2da8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475986.175476,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709710-169c2da8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475986.221388,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709710-169c2da8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475986.2631018,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709710-169c2da8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475986.3361106,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709770-1a3de640",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475987.1964922,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709770-1a3de640",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475987.3712814,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709770-1a3de640",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475987.4878445,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709770-1a3de640",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475987.5744948,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709835-1e194764",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475988.470913,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709835-1e194764",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475988.54262,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709835-1e194764",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475988.5968616,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709835-1e194764",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475988.641299,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709894-21a00d8c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475989.3341587,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709894-21a00d8c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475989.3807151,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709894-21a00d8c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475989.4282672,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321709894-21a00d8c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787475989.476361,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712498-bcc9ba60",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476064.4466257,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712498-bcc9ba60",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476064.5210993,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712498-bcc9ba60",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476064.591447,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712498-bcc9ba60",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476064.660539,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712571-c126ad70",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476066.5267491,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712571-c126ad70",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476066.6381314,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712571-c126ad70",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476066.7662458,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712571-c126ad70",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476066.9515555,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712641-c5517dbc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476069.3715937,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712641-c5517dbc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476069.4363108,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712641-c5517dbc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476069.5094833,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712641-c5517dbc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476069.6028395,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712696-c896d134",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476071.2786374,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712696-c896d134",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476071.378513,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712696-c896d134",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476071.4563468,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712696-c896d134",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476071.5574052,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712758-cc574178",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476073.0637743,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712758-cc574178",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476073.1340399,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712758-cc574178",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476073.2210195,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712758-cc574178",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476073.2825143,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712826-d05f6f5c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476075.1945364,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712826-d05f6f5c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476075.27371,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712826-d05f6f5c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476075.3697653,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712826-d05f6f5c",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476075.4707842,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712895-d47d25c0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476077.1512988,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712895-d47d25c0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476077.2278285,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712895-d47d25c0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476077.5564363,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712895-d47d25c0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476077.6502526,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712961-d86f42d0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476080.1453507,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712961-d86f42d0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476080.2257657,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712961-d86f42d0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476080.3356624,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321712961-d86f42d0",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476080.518294,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713038-dd021610",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476082.404761,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713038-dd021610",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476082.5045266,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713038-dd021610",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476082.6115232,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713038-dd021610",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476082.6955364,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713116-e1a76170",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476084.7683485,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713116-e1a76170",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476084.8504193,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713116-e1a76170",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476084.9269435,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713116-e1a76170",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476084.9904046,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713179-e565d9cc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476086.5167952,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713179-e565d9cc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476086.602941,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713179-e565d9cc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476086.6969986,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713179-e565d9cc",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476086.7815158,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713237-e8e1f1f8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476088.1029797,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713237-e8e1f1f8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476088.1731207,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713237-e8e1f1f8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476088.3088346,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713237-e8e1f1f8",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476088.408835,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713303-ecc6ada4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476090.1331658,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713303-ecc6ada4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476090.1870928,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713303-ecc6ada4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476090.2537603,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787321713303-ecc6ada4",
-      "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
-      "status": "pruned",
-      "source": "task_evidence_events",
-      "evidence_type": "diagnostic_run",
-      "produced_at": 1787476090.3127494,
-      "note": "commit 已 prune 或需核验是否在 master",
-      "recorded_at": "2026-08-26T02:06:29"
-    },
-    {
-      "task_id": "T-1787293451688-c14b1e44",
-      "commit_id": "5d92f1266bbc455ea99b57403d5cde8fff3daaf4",
-      "status": "new_in_master",
-      "scope": "deliverables/software-company/aprime_step0_govern_verification_cur.json, deliverables/software-company/aprime_step1_verify_verification_cur.json",
-      "source": "executor-workbuddy-v1-cur loop",
-      "note": "message 内嵌 task_id；A-prime 父任务 step0 govern + step1 verify 新鲜只读核验证据（含 rolling window 历史偏差 caveat）",
-      "recorded_at": "2026-08-26T05:24:05Z"
-    }
-  ],
-  "known_commits": {
-    "in_master": [
-      "03e92e56098962d60cf639fb11c38f574162c933",
-      "062d8af5efd77f3d122954e95e6cbdea2057b083",
-      "0a603bf19e428424f66581e14715cd59167ec53d",
-      "0b7af529f38f1a88a1b22e7049f0e114d0e69f28",
-      "13df28ee9c5ca4de3bb3b52051767ea3303410c9",
-      "15229a82e05391bdf8ee9c6b4871afdcd2fc69c1",
-      "19d1e3f01af014eb85d2ea9298a54284e75f58ee",
-      "1b9a399543e45c778db3ab99d647e7e88494d839",
-      "21e964db0714976f36d3872e5a30f4736411d136",
-      "26211c1619fadb0ca958bae3dd1e49d80412e461",
-      "2f845f2683d364ee21b9a843965427fe70ccf0bc",
-      "341bb2e1efe2ffd0a397da0c50cec2f547f2f770",
-      "3d289e236664b719cb8de4b604fd16e0861cde16",
-      "40b1daac3e06e6d6400c7bfa67ba8c4efe4aa829",
-      "4358b547bd624fb217f5d69d8228aab21e3ab02a",
-      "4b834e5243fc3283e285826fbea84884739e92a2",
-      "4bbe299ef96e7c21159a5ab6a0178b13a1549e4d",
-      "4bc63f1a3fbcd1bd666fd78d4dff76deed58c85b",
-      "4e277d6a6259337899e4e976563d67b6de632853",
-      "4f7488789a80fd37b98e5d791db9d7875cd602a3",
-      "4f98954ff0ef8177c6285329b704443033389f69",
-      "50897ab43b3cabc6db58571b3831aec6fdd64987",
-      "50bed6292fa18156eed84ce2218f90abe420dea5",
-      "52f70dd80fcf1f9fb3d46c74de22bb0a0ef3254d",
-      "572200ea04af7f830cf87e62f0cfeb65009aeb59",
-      "5b5947fdb8d2d6c3a8c5853de777e62287fef384",
-      "5d5c5203b6ddb0e5ea9063ddd76fee0568190237",
-      "5e1fc2112b2cd201f5a08fb97e4a72377735de8b",
-      "61bb44818e3cb5fd917b3a05b71bc7bad955b840",
-      "62e610527bb25dcff011384be4aa5692a4b6857f",
-      "6417423d54e303f2b4a4749dfbd2cbd54eed9c90",
-      "721dab5e232f1323e2ee2c564a295e8246f870e6",
-      "7248ba60e662045b98597f6916e7cb31d057da75",
-      "74750c6ae7523ccac7d162dddd759641bb07d4b8",
-      "877ee605f363bb5f4f34e434bc42aed21e191622",
-      "87b6ecd0dacc8f1039e43503a0be4a05f1a1deec",
-      "9409ede8fdfb1daa491db28a797bb0da94519118",
-      "94b6412d64ffd9eaa2bab4a589c88434d98f7cb3",
-      "9924a5188cbe419a8c82ee70ed224dbd64df7e68",
-      "9df18e725d3c2e0c30822c8fc0d59543acb122bd",
-      "9eefc7c25b18e86adc53c1b2656e5c52211f8c3a",
-      "a43b2b146ed420cd20ffd33ddb980512c7e6ba55",
-      "a4add11319b22b13632ce82d55a094fafd9c7bdc",
-      "a8580e957759bf34f50387b47be044a14ac9364f",
-      "a98f9ccd70a99dcac75ad2ff39fdd078318e7a19",
-      "a9ee55db559b61b736d5cc4cbb67d70785eb1111",
-      "ac1228008308e6bab01cb75e74f0c9893a74cfc7",
-      "af12bc85481690c22370817a3fc22913ecd5a571",
-      "b5b606a37c85d53ccc3bd6ee81caa382e207a37c",
-      "b9ee30058594982ecb4ce8b2cde6760c76a4c436",
-      "bda424746ff6d945a1cf6485c548ef83c1b1f7e8",
-      "c0f78ffb07e639608457f6af645989bf8b985a1e",
-      "c5e5c4ad1740983fbfe15466230808bc44d3c702",
-      "c5fded7db4ea88b60b9643fa9ae84b91cd528f3c",
-      "cb8cf46c22c9adb4422ff8f525c4f301fb55734d",
-      "cb9b56c436da12f271e12840012867bcd4d6559f",
-      "d2b7a0fa1f88bf05463076e52b2a6a89b50ef20f",
-      "d7f286856c877fec47815805e6bc0ee319bd8298",
-      "dd0be091b75d54b800ca61b20775e654f3085731",
-      "e07ca48289916ad143cd380c8288ace963003b28",
-      "e3b0b366a5add2c3c06bb3b26ce53564496239ff",
-      "e65a41501332b18519aa7152e829399a758076fa",
-      "e66f3dd52bfdd8f2913bd60d1f2b54f3f014050f",
-      "ec54bc2d5be51517316f055fca3652ea42cc716d",
-      "ed65df43420444ddc56c9232bba86f48b509aeb7",
-      "f25b2d5eccb368e8a06fd8d7c75b5ded7eb9b69c",
-      "f5ea5b6e71df5c6e3b05adb9298dc1c77f0ae949",
-      "f9544aa06e890e8054cf0266aa7bfbc49223493f",
-      "ffcd61fbe6f071d8d74b680cc988da89325fb423"
-    ],
-    "pruned": [
-      "0275a4a25009bbe8d2037a92be2b9f6c7eed74ad",
-      "0349efd7f2be4f071c8e6a5c30f3cb6b161eef79",
-      "05190ff673c881ee673e520a5f1270000d82041a",
-      "08bfcc79f6b648ea5b5a7ee35871cdf6f082a8ba",
-      "0994c9de06aa2ead7ff4c0793826247405a45f20",
-      "0c515424d7450ea6c793f0ad3790086584dab764",
-      "0ddfad397012882c3222e9e6483ae59fdd6b9162",
-      "11ec90be4924fe9b6d7f4bfc6108ba0bfe6f2758",
-      "17656423ebfe33b987bf7d0e43c46abd2e8c9437",
-      "23f937bcacdf2c3daa36f3c1e44aef8a7f3e5f49",
-      "281c2575251849dfe6a8f306867f54d4b43d2453",
-      "295d32752c8f0b882fecc5a97d942b6b665dda9e",
-      "33471dbe770898d122bfdac6967dd27914acd42d",
-      "35389583c2f9496fddb12d7afaf3eb9881ef59e5",
-      "3b8403e26e58ad5b637e35d86433ff6298fdf164",
-      "3ea95174b3a292936455606320c9eae7be0dbe97",
-      "4af5f8a380d3df9018a9f2dcdbac6787f8ce9033",
-      "4d890b994304b91210fc2f63f4a7fca2660814d2",
-      "4e9e8e0ba238e2ab93663478b20bbd4e6b9844a7",
-      "4f54cf63c65d5a01b111e565a712289cd7f9a517",
-      "53248481fa41a20174e720d859205d78073cf02e",
-      "561a53ac476c45237a2157c0d85e4c502d98641b",
-      "5bb217c2cece27d119798939ee3f2c28820056e4",
-      "628aa3a570510576019744c09dc5a1468b8db2e4",
-      "67fdbdc51390399a2c07672aa2f392f2fd692938",
-      "6f786d990ab94c08ad6947c349eda8e6846d48ed",
-      "72b75d9e07ec5535043c016bc285c41c670f9282",
-      "7363385921f3244562f9073e90a7104dd48b5eb3",
-      "8242ec022fe5e6be0126f6be3174d467105fd974",
-      "8aede2b5f1651c278542d9edb3a85e6449438e86",
-      "9f79222c7dc94b0a984ed6f79927d2a1b67d8850",
-      "a80f5ce1522f6936828ddfd97f3d5c4ba8e98bac",
-      "b268b7716accba4de8b05f5f842f270e645859a9",
-      "b28ae94c7a61a0d5ace3ab2d1a7a526ae5bc502c",
-      "b5e0d49a3ad7ccba4e427ef4660c85884ac554bc",
-      "b6c4291ec27375f111bc462db86ca956e6e9902f",
-      "b72e1567141386dcd2fcf708b8a27e688acd4f30",
-      "ccca314d769e7bf01391bc894e7d9a28bf34c70b",
-      "d2123ebec9903aabfebd079d346f50e0c8637a4e",
-      "d302fe56883cd8f729bfafa0cdca1d281498fc2b",
-      "d928ba6ddf046f8e967ceff082347867dd7f43b7",
-      "da72a3c92ec4450edc16b2864055938086352ad2",
-      "fe3bccacf7072be524b46e724febe0d961604cf6",
-      "fea3a6a4013ba1af1571a195cdf2380f4858f44d"
-    ]
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471204.8656402,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "worktree_recovery_hints": [
-    {
-      "task_hint": "SRV-001",
-      "worktree": "srv-001",
-      "tip_commit": "b6cb3d1",
-      "backup": "worktree_recovery_20260826/srv-001"
-    },
-    {
-      "task_hint": "SRV-002",
-      "worktree": "callwarden",
-      "tip_commit": "4914ac2",
-      "backup": "worktree_recovery_20260826/callwarden"
-    },
-    {
-      "task_hint": "SRV-003",
-      "worktree": "srv-003",
-      "tip_commit": "0b5d60e",
-      "backup": "worktree_recovery_20260826/srv-003"
-    },
-    {
-      "task_hint": "CLI-087",
-      "worktree": "cli-087",
-      "tip_commit": "7c58745",
-      "backup": "worktree_recovery_20260826/cli-087"
-    },
-    {
-      "task_hint": "CLI-088",
-      "worktree": "cli-088",
-      "tip_commit": "642efcd",
-      "backup": "worktree_recovery_20260826/cli-088"
-    }
-  ],
-  "recovery_20260826": {
-    "summary": "回收站找回 364 个松散 git 对象 → 5 个 pilot commit + tree 全部 materialize；内容经与 master 比对，pilot 工作基本已合入 master，仅少数证据/文件为真缺口并已恢复",
-    "source": {
-      "recycle_bin": "C://$Recycle.Bin//S-1-5-21-1583625257-826939952-3615027596-1001// 中 364 个 .git/objects 松散对象（删除时间 2026-08-25 15:17-15:19，即 prune 窗口）",
-      "recovery_store": "C:/Users/wanpi/.callwarden/objects_recovery/objects/ (364 对象, 15MB, 已并入主仓库 .git/objects)",
-      "backup_20260825": "git_backup_20260825/.git 8513 对象(pack) — pilot 对象不在其中，但提供合并上下文",
-      "conclusion": "git 对象恢复路径可行（用户判断正确）；工作树磁盘 5.8G 备份 + DB 函数文本仍保留为二级恢复源"
-    },
-    "protected_refs": {
-      "refs/recovery/pilot-srv-002": "4914ac2",
-      "refs/recovery/pilot-cli-087": "7c58745",
-      "refs/recovery/pilot-cli-088": "642efcd",
-      "refs/recovery/pilot-srv-003": "0b5d60e",
-      "refs/recovery/pilot-srv-001": "b6cb3d1"
-    },
-    "per_pilot_gap": [
-      {
-        "pilot": "srv-002 (4914ac2)",
-        "unique_change": "db/db_base.py _init_workspace 4行修复(WHERE name=? OR root_path=?)",
-        "in_master": true,
-        "note": "master L4225 已含同款修复(fail-closed 演化版)"
-      },
-      {
-        "pilot": "srv-003 (0b5d60e)",
-        "unique_change": "SRV-003_evidence.md(134行) + backup_restore_handlers.rs + test_srv_003.py",
-        "in_master": false,
-        "note": "证据文件已恢复落盘；两个代码文件已在 901cc3c 抢救提交"
-      },
-      {
-        "pilot": "cli-087 (7c58745)",
-        "unique_change": "tests/test_wsl_authority_routing.py(492) + test_wsl_local_daemon_e2e.py(369)",
-        "in_master": true,
-        "note": "两测试文件均在 master"
-      },
-      {
-        "pilot": "cli-088 (642efcd)",
-        "unique_change": "同上两测试文件",
-        "in_master": true,
-        "note": "均在 master"
-      },
-      {
-        "pilot": "srv-001 (b6cb3d1)",
-        "unique_change": "无 master 缺失的独有源码(Only-in-worktree=0)",
-        "in_master": true,
-        "note": "git diff 因缺 tree 34091a30 失败，但磁盘比对确认无独有源码文件"
-      }
-    ],
-    "remaining_git_noise": "fsck 仍有 46 条 broken link（中间悬空 commit b811663d 等引用缺失对象），用户选择暂不 gc；不影响 5 个 pilot 与 master 正常操作"
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471204.9686797,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "gap_analysis_20260826": {
-    "conclusion": "零真实代码缺口：44 个 prune commit 的 7300 个唯一函数逐函数比对后，全部在 master（同名或重构等价）；无需要整批重做的任务",
-    "method": "回收站 364 对象恢复(5 pilot+wip+merge) + file_versions 分类(113=69+44) + 函数核心名 token 比对 + 43 候选逐一 grep 核实",
-    "files": "378 文件 = 338 在 master + 40 临时/实验文件(无生产价值)",
-    "functions": "7300 唯一函数，核心名缺失 43 -> 人工核实全部排除(误报/重构/临时脚本)",
-    "verified_false_positives": {
-      "cw_client_13": "分词误排 bin/ 目录；master cw_client.rs 实际含全部(QueryType 22处/run_ping 4处等)",
-      "h_helpers_10": "master 重构为新 _h_* 集(_h_get_symbol_history 等16个)；MCP 工具等价物全在(top_callers 5/orphan_symbols 4/comment_coverage 4/call_heatmap 4/uncovered_functions 3)",
-      "audit_log_3": "master 各 2 处；LazyDBProxy 1 处；test_cw_client_rpc_proxy.py 存在含 19 处 run_client_mode",
-      "tmp_12": "临时脚本无价值"
-    },
-    "report": "cw_203_gap_report.md"
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471205.0979743,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "batch_attribution_20260826": {
-    "scope": "T-1787203926824-9f873bfc 子树 203 任务中的 180 个 review/closed（review 143 + closed 37）",
-    "attribution": {
-      "evidence_28": "task_evidence_events commit→file_versions→symbols",
-      "recovered_pilot_4": "CLI-087/088、SRV-001/002（refs/recovery 恢复 commit）",
-      "unknown_148": "无 evidence commit 亦无 pilot 匹配，如实标注"
-    },
-    "batches": [
-      {
-        "batch": 1,
-        "commit": "eb4e652",
-        "file": "cw_task_function_attribution/batch_01.json"
-      },
-      {
-        "batch": 2,
-        "commit": "e82dc0b",
-        "file": "cw_task_function_attribution/batch_02.json"
-      },
-      {
-        "batch": 3,
-        "commit": "a11c8c4",
-        "file": "cw_task_function_attribution/batch_03.json"
-      },
-      {
-        "batch": 4,
-        "commit": "7baf01e",
-        "file": "cw_task_function_attribution/batch_04.json"
-      },
-      {
-        "batch": 5,
-        "commit": "bd3faa8",
-        "file": "cw_task_function_attribution/batch_05.json"
-      },
-      {
-        "batch": 6,
-        "commit": "132ee6e",
-        "file": "cw_task_function_attribution/batch_06.json"
-      }
-    ],
-    "convention": "禁用 git worktree（2026-08-26 用户纪律）：并行/独立工作用独立 clone 或 master 白名单 capture"
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471205.2395222,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "untracked_batch_commit_20260826": {
-    "background": "发现已跟踪 mod.rs 引用但从未入库的 15 个 Rust 源文件（fresh clone 无法编译）→ 证明 git 历史不完整",
-    "batches": [
-      {
-        "n": 1,
-        "commit": "bdfe012",
-        "desc": "15 个未跟踪 Rust daemon 源文件（_mcp_common_handlers/audit_log_handlers/task_supersede/task_read/semgrep/cli_handle_*/task_loop 9 个）",
-        "files": 15
-      },
-      {
-        "n": 2,
-        "commit": "30241a2",
-        "desc": "CLI HTTP RPC 测试 93 个（test_cli_0xx_http_rpc.py）",
-        "files": 93
-      },
-      {
-        "n": 3,
-        "commit": "99afd44",
-        "desc": "证据文件 docs/evidence 28 + deliverables/software-company 182",
-        "files": 213
-      },
-      {
-        "n": 4,
-        "commit": "6e8e8a9",
-        "desc": "启动模板 v1/v2、迁移计划、P0-C 交接包、scripts、bootstrap_prep、outputs、cw_203_gap_list",
-        "files": 39
-      },
-      {
-        "n": 5,
-        "commit": "41c8ce7",
-        "desc": "MCP/SRV/INT HTTP RPC 测试 59 个",
-        "files": 59
-      },
-      {
-        "n": 6,
-        "commit": "6dce276",
-        "desc": "server/cli_admin.py + test_srv_001/002 + task_supersede 测试",
-        "files": 7
-      }
-    ],
-    "total_files": 426,
-    "kept_untracked": [
-      "_daemon_restore2.pid(运行时pid)",
-      "_h_http_head.rs(临时探针)",
-      ".tmp_adjudicator/",
-      "archive/(327旧归档)",
-      "recovered-scratch/",
-      "p0*_rollback_backup_20260824.sql(6个DB回滚备份)",
-      "package-lock.json(游离)",
-      "rust_ext/_s2_*.txt(6个编译日志)"
-    ],
-    "note": "junk 类未入库保留原状，绝不删除"
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471798.7768393,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "instance_passthrough_20260826": {
-    "summary": "CLI + MCP 全链路补 agent_instance_id 透传；三份启动模板升级 v3",
-    "cli": {
-      "task_parsers_7": "next/report/handoff/step_resolve/apply/close/reopen 循环加 --agent-instance-id",
-      "attest_bootstrap_2": "attest-legacy/contract-bootstrap parser 加 --agent-instance-id",
-      "lease_3": "lease acquire/renew/release parser 加 --agent-instance-id（_collect_lease_identity 并入）",
-      "_collect_identity": "第5字段 agent_instance_id；核心4字段必填 + instance 可选（10 个调用点全覆盖：claim/report/handoff/resolve/apply/close/reopen/supersede/attest/bootstrap）"
-    },
-    "mcp": {
-      "task_next_step": "显式 agent_instance_id 参数并入 identity",
-      "task_report_step": "显式 agent_instance_id 参数并入 identity",
-      "task_apply/task_close": "docstring 注明 identity 可含 agent_instance_id（JSON 字符串透传，daemon 校验）"
-    },
-    "templates_v3": [
-      "Callwarden 无人值守循环启动模板：Adjudicator v3.md",
-      "Callwarden 无人值守循环启动模板：Executor _ Planner v3.md",
-      "Callwarden 无人值守循环启动模板：Reviewer v3.md"
-    ],
-    "tests": "py_compile OK；_collect_identity 五字段单测 6 例通过；test_cli_079 3 passed",
-    "commits": {
-      "code_fix": "e04c0e2 (cli/main.py + server/tools/tools_task.py)",
-      "templates_ledger": "847d6ae (三份 v3 模板 + 台账)"
-    },
-    "verification": {
-      "editable_install": "callwarden 0.2.0 editable -> C:/git_work/callwarden，改动即时生效",
-      "cli_runtime": "cw task next --help 已显示 --agent-instance-id",
-      "unit": "_collect_identity 五字段 6 例通过；test_cli_079 3 passed",
-      "daemon_end_to_end": "daemon 当前未运行（8/24 版已停），未擅自启动；instance 门禁已由代码核对（L1552 注册 instance 非空则必须相等）+ 修复后参数透传保证"
-    }
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471798.8416557,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
   },
-  "cli079_fixdefect_20260826": {
-    "task_id": "T-1787322799418-ce4698f0",
-    "step": "T-1787700302263-09407b70 (fix_defect, remediation_of S-1787322799419-ce53fa54)",
-    "code_fix_commit": "5e53440",
-    "code_fix_scope": "cli/main.py _local_close 去 db 直连改 fail-closed + tests/test_cli_079_http_rpc.py 测试改 fail-closed 断言",
-    "closure_evidence": "deliverables/software-company/CLI079_fixdefect_closure_evidence.md",
-    "closure_commit": "7ef8e33",
-    "caveat": "fix_defect binding 为直写补齐（先例 T-1787402257549-67ba81e6），详见 closure manifest §0"
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471798.9387221,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321020926-b7ed7500",
+   "commit_id": "f46b655ac32cb20b3ce83a6ba3836027c20ab238",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787471799.02166,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321708926-e7ebfac4",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475638.308176,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321708926-e7ebfac4",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475638.3750775,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321708926-e7ebfac4",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475638.450946,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321708926-e7ebfac4",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475638.5222547,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709017-ed4e79b0",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475765.5954502,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709017-ed4e79b0",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475765.647994,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709017-ed4e79b0",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475765.7109842,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709017-ed4e79b0",
+   "commit_id": "3b8ec76d67d6ed479d3ee13cdcfac432f530dc74",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475765.7716808,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709098-f2236ea0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475952.4430609,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709098-f2236ea0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475952.5052722,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709098-f2236ea0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475952.5862677,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709098-f2236ea0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475952.6466587,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709179-f6fdf5bc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475953.6622753,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709179-f6fdf5bc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475953.7365744,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709179-f6fdf5bc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475953.814737,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709179-f6fdf5bc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475953.9102821,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709249-fb256530",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475959.8441908,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709249-fb256530",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475960.6807902,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709249-fb256530",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475960.8995817,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709249-fb256530",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475961.0537872,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709365-021050a8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475963.1598575,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709365-021050a8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475963.2205558,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709365-021050a8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475963.3015442,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709365-021050a8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475963.3843205,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709432-060d1128",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475964.9910502,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709432-060d1128",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475965.0541232,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709432-060d1128",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475965.1281984,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709432-060d1128",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475965.1973143,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709518-0b31a484",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475977.4454281,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709518-0b31a484",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475977.8665838,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709518-0b31a484",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475978.2309568,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709518-0b31a484",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475978.7831976,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709584-0f2573f4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475984.0399306,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709584-0f2573f4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475984.0791955,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709584-0f2573f4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475984.1396582,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709584-0f2573f4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475984.1793256,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709651-131e1880",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475985.0978117,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709651-131e1880",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475985.17039,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709651-131e1880",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475985.3170652,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709651-131e1880",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475985.3699381,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709710-169c2da8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475986.175476,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709710-169c2da8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475986.221388,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709710-169c2da8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475986.2631018,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709710-169c2da8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475986.3361106,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709770-1a3de640",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475987.1964922,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709770-1a3de640",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475987.3712814,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709770-1a3de640",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475987.4878445,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709770-1a3de640",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475987.5744948,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709835-1e194764",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475988.470913,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709835-1e194764",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475988.54262,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709835-1e194764",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475988.5968616,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709835-1e194764",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475988.641299,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709894-21a00d8c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475989.3341587,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709894-21a00d8c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475989.3807151,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709894-21a00d8c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475989.4282672,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321709894-21a00d8c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787475989.476361,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712498-bcc9ba60",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476064.4466257,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712498-bcc9ba60",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476064.5210993,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712498-bcc9ba60",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476064.591447,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712498-bcc9ba60",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476064.660539,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712571-c126ad70",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476066.5267491,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712571-c126ad70",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476066.6381314,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712571-c126ad70",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476066.7662458,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712571-c126ad70",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476066.9515555,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712641-c5517dbc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476069.3715937,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712641-c5517dbc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476069.4363108,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712641-c5517dbc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476069.5094833,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712641-c5517dbc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476069.6028395,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712696-c896d134",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476071.2786374,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712696-c896d134",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476071.378513,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712696-c896d134",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476071.4563468,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712696-c896d134",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476071.5574052,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712758-cc574178",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476073.0637743,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712758-cc574178",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476073.1340399,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712758-cc574178",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476073.2210195,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712758-cc574178",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476073.2825143,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712826-d05f6f5c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476075.1945364,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712826-d05f6f5c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476075.27371,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712826-d05f6f5c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476075.3697653,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712826-d05f6f5c",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476075.4707842,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712895-d47d25c0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476077.1512988,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712895-d47d25c0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476077.2278285,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712895-d47d25c0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476077.5564363,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712895-d47d25c0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476077.6502526,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712961-d86f42d0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476080.1453507,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712961-d86f42d0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476080.2257657,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712961-d86f42d0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476080.3356624,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321712961-d86f42d0",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476080.518294,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713038-dd021610",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476082.404761,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713038-dd021610",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476082.5045266,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713038-dd021610",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476082.6115232,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713038-dd021610",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476082.6955364,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713116-e1a76170",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476084.7683485,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713116-e1a76170",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476084.8504193,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713116-e1a76170",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476084.9269435,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713116-e1a76170",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476084.9904046,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713179-e565d9cc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476086.5167952,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713179-e565d9cc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476086.602941,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713179-e565d9cc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476086.6969986,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713179-e565d9cc",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476086.7815158,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713237-e8e1f1f8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476088.1029797,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713237-e8e1f1f8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476088.1731207,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713237-e8e1f1f8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476088.3088346,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713237-e8e1f1f8",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476088.408835,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713303-ecc6ada4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476090.1331658,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713303-ecc6ada4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476090.1870928,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713303-ecc6ada4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476090.2537603,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787321713303-ecc6ada4",
+   "commit_id": "676fd3d9a18a2dc121c1040d97dfcbd2d97a624c",
+   "status": "pruned",
+   "source": "task_evidence_events",
+   "evidence_type": "diagnostic_run",
+   "produced_at": 1787476090.3127494,
+   "note": "commit 已 prune 或需核验是否在 master",
+   "recorded_at": "2026-08-26T02:06:29"
+  },
+  {
+   "task_id": "T-1787293451688-c14b1e44",
+   "commit_id": "5d92f1266bbc455ea99b57403d5cde8fff3daaf4",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/aprime_step0_govern_verification_cur.json, deliverables/software-company/aprime_step1_verify_verification_cur.json",
+   "source": "executor-workbuddy-v1-cur loop",
+   "note": "message 内嵌 task_id；A-prime 父任务 step0 govern + step1 verify 新鲜只读核验证据（含 rolling window 历史偏差 caveat）",
+   "recorded_at": "2026-08-26T05:24:05Z"
+  },
+  {
+   "task_id": "T-1787323461285-e8a7a12c",
+   "commit_id": "157cb731cd8e4a38d5dd1b155f98889ae6a0d749",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV011_zero_authority_evidence.md",
+   "note": "message 内嵌 task_id；SRV-011 zero-authority evidence、HTTP runtime fingerprint、AST residual finding 与 Reviewer handoff",
+   "recorded_at": "2026-08-27T00:40:25+08:00"
+  },
+  {
+   "task_id": "T-1787323461346-ec4e03e8",
+   "commit_id": "6ba451cfeeb781d43f3c11e153aefba62fbc3c42",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV012_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/metrics_handlers.rs, server/metrics.py, tests/test_srv_012.py",
+   "note": "message 内嵌 task_id；SRV-012 metrics rollback authority 迁移、定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T01:00:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461404-efba3d30",
+   "commit_id": "9cc7dab62d7a8f774fe896ee5401b2b2e300aa83",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV013_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/query_budget_handlers.rs, server/query_budget.py, tests/test_srv_013.py",
+   "note": "message 内嵌 task_id；SRV-013 query budget authority 迁移、定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T01:20:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461464-f351e600",
+   "commit_id": "e172ae57b9b75083c0fafef801605682f48ad683",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV014_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/replicator_handlers.rs, server/replicator.py, tests/test_srv_014.py",
+   "note": "message 内嵌 task_id；SRV-014 replicator authority via daemon HTTP，定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T01:18:49+08:00"
+  },
+  {
+   "task_id": "T-1787323461541-f7e6ec24",
+   "commit_id": "9d1a3eb41fdc6d25e552cfa112bf81b886f5c201",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV015_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/schema_migrator_handlers.rs, server/schema_migrator.py, tests/test_srv_015.py",
+   "note": "message 内嵌 task_id；SRV-015 schema migrator authority via daemon HTTP，定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T01:22:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461623-fcc66abc",
+   "commit_id": "b3869158201c74913b81db98f3cd954965b2e703",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV016_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/snapshot_gc_handlers.rs, server/snapshot_gc.py, tests/test_srv_016.py",
+   "note": "message 内嵌 task_id；SRV-016 snapshot GC authority via daemon HTTP，定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T01:37:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461683-0059e5a0",
+   "commit_id": "8390899100fe84c3764077908c386e9c29c776ae",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV017_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/stage_toggle_migration_handlers.rs, server/stage_toggle_migration.py, tests/test_srv_017.py",
+   "note": "message 内嵌 task_id；SRV-017 Stage_Toggle P0 migration authority via daemon HTTP，定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T01:50:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461742-03e6a000",
+   "commit_id": "10f52872b08c284a04574b3b8772dfcb494489ae",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV018_zero_authority_evidence.md, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/staging_log_handlers.rs, server/staging_log.py, tests/test_srv_018.py",
+   "note": "message 内嵌 task_id；SRV-018 staging log rollback authority via daemon HTTP，定向测试与 Reviewer handoff",
+   "recorded_at": "2026-08-27T02:05:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461802-077bee78",
+   "commit_id": "c9f8b592d55a80a20cd6b598f2f677b40c180e9a",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV019_zero_authority_evidence.md, deliverables/software-company/audit_server_authority_residue.py, deliverables/software-company/server_authority_residue_audit.json, rust_ext/src/daemon/dispatch.rs, rust_ext/src/daemon/http_server.rs",
+   "note": "message 内嵌 task_id；SRV-019 final zero-authority gate fail-closed implementation and blocked evidence",
+   "recorded_at": "2026-08-27T02:20:00+08:00"
+  },
+  {
+   "task_id": "T-1787323461802-077bee78",
+   "commit_id": "95cbe8572145bd20aa670e997fd3169f60820199",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/SRV019_zero_authority_evidence.md",
+   "note": "message 内嵌 task_id；记录 release runtime 部署与真实 RPC 正负向验证",
+   "recorded_at": "2026-08-27T02:25:00+08:00"
+  },
+  {
+   "task_id": "T-1787801315246-e3e3a08c",
+   "commit_id": "520c5316d2e264347c1af245530e91dbce2b0b8b",
+   "status": "new_in_master",
+   "scope": "deliverables/software-company/p0l_task_contract_policy_state_machine.md",
+   "note": "message 内嵌 task_id；P0-L step0 policy/preclaim gap 状态机映射（含 v61 schema 缺口探针证据）",
+   "recorded_at": "2026-08-27T15:10:00+08:00"
   }
+ ],
+ "known_commits": {
+  "in_master": [
+   "03e92e56098962d60cf639fb11c38f574162c933",
+   "062d8af5efd77f3d122954e95e6cbdea2057b083",
+   "0a603bf19e428424f66581e14715cd59167ec53d",
+   "0b7af529f38f1a88a1b22e7049f0e114d0e69f28",
+   "13df28ee9c5ca4de3bb3b52051767ea3303410c9",
+   "15229a82e05391bdf8ee9c6b4871afdcd2fc69c1",
+   "19d1e3f01af014eb85d2ea9298a54284e75f58ee",
+   "1b9a399543e45c778db3ab99d647e7e88494d839",
+   "21e964db0714976f36d3872e5a30f4736411d136",
+   "26211c1619fadb0ca958bae3dd1e49d80412e461",
+   "2f845f2683d364ee21b9a843965427fe70ccf0bc",
+   "341bb2e1efe2ffd0a397da0c50cec2f547f2f770",
+   "3d289e236664b719cb8de4b604fd16e0861cde16",
+   "40b1daac3e06e6d6400c7bfa67ba8c4efe4aa829",
+   "4358b547bd624fb217f5d69d8228aab21e3ab02a",
+   "4b834e5243fc3283e285826fbea84884739e92a2",
+   "4bbe299ef96e7c21159a5ab6a0178b13a1549e4d",
+   "4bc63f1a3fbcd1bd666fd78d4dff76deed58c85b",
+   "4e277d6a6259337899e4e976563d67b6de632853",
+   "4f7488789a80fd37b98e5d791db9d7875cd602a3",
+   "4f98954ff0ef8177c6285329b704443033389f69",
+   "50897ab43b3cabc6db58571b3831aec6fdd64987",
+   "50bed6292fa18156eed84ce2218f90abe420dea5",
+   "52f70dd80fcf1f9fb3d46c74de22bb0a0ef3254d",
+   "572200ea04af7f830cf87e62f0cfeb65009aeb59",
+   "5b5947fdb8d2d6c3a8c5853de777e62287fef384",
+   "5d5c5203b6ddb0e5ea9063ddd76fee0568190237",
+   "5e1fc2112b2cd201f5a08fb97e4a72377735de8b",
+   "61bb44818e3cb5fd917b3a05b71bc7bad955b840",
+   "62e610527bb25dcff011384be4aa5692a4b6857f",
+   "6417423d54e303f2b4a4749dfbd2cbd54eed9c90",
+   "721dab5e232f1323e2ee2c564a295e8246f870e6",
+   "7248ba60e662045b98597f6916e7cb31d057da75",
+   "74750c6ae7523ccac7d162dddd759641bb07d4b8",
+   "877ee605f363bb5f4f34e434bc42aed21e191622",
+   "87b6ecd0dacc8f1039e43503a0be4a05f1a1deec",
+   "9409ede8fdfb1daa491db28a797bb0da94519118",
+   "94b6412d64ffd9eaa2bab4a589c88434d98f7cb3",
+   "9924a5188cbe419a8c82ee70ed224dbd64df7e68",
+   "9df18e725d3c2e0c30822c8fc0d59543acb122bd",
+   "9eefc7c25b18e86adc53c1b2656e5c52211f8c3a",
+   "a43b2b146ed420cd20ffd33ddb980512c7e6ba55",
+   "a4add11319b22b13632ce82d55a094fafd9c7bdc",
+   "a8580e957759bf34f50387b47be044a14ac9364f",
+   "a98f9ccd70a99dcac75ad2ff39fdd078318e7a19",
+   "a9ee55db559b61b736d5cc4cbb67d70785eb1111",
+   "ac1228008308e6bab01cb75e74f0c9893a74cfc7",
+   "af12bc85481690c22370817a3fc22913ecd5a571",
+   "b5b606a37c85d53ccc3bd6ee81caa382e207a37c",
+   "b9ee30058594982ecb4ce8b2cde6760c76a4c436",
+   "bda424746ff6d945a1cf6485c548ef83c1b1f7e8",
+   "c0f78ffb07e639608457f6af645989bf8b985a1e",
+   "c5e5c4ad1740983fbfe15466230808bc44d3c702",
+   "c5fded7db4ea88b60b9643fa9ae84b91cd528f3c",
+   "cb8cf46c22c9adb4422ff8f525c4f301fb55734d",
+   "cb9b56c436da12f271e12840012867bcd4d6559f",
+   "d2b7a0fa1f88bf05463076e52b2a6a89b50ef20f",
+   "d7f286856c877fec47815805e6bc0ee319bd8298",
+   "dd0be091b75d54b800ca61b20775e654f3085731",
+   "e07ca48289916ad143cd380c8288ace963003b28",
+   "e3b0b366a5add2c3c06bb3b26ce53564496239ff",
+   "e65a41501332b18519aa7152e829399a758076fa",
+   "e66f3dd52bfdd8f2913bd60d1f2b54f3f014050f",
+   "ec54bc2d5be51517316f055fca3652ea42cc716d",
+   "ed65df43420444ddc56c9232bba86f48b509aeb7",
+   "f25b2d5eccb368e8a06fd8d7c75b5ded7eb9b69c",
+   "f5ea5b6e71df5c6e3b05adb9298dc1c77f0ae949",
+   "f9544aa06e890e8054cf0266aa7bfbc49223493f",
+   "ffcd61fbe6f071d8d74b680cc988da89325fb423"
+  ],
+  "pruned": [
+   "0275a4a25009bbe8d2037a92be2b9f6c7eed74ad",
+   "0349efd7f2be4f071c8e6a5c30f3cb6b161eef79",
+   "05190ff673c881ee673e520a5f1270000d82041a",
+   "08bfcc79f6b648ea5b5a7ee35871cdf6f082a8ba",
+   "0994c9de06aa2ead7ff4c0793826247405a45f20",
+   "0c515424d7450ea6c793f0ad3790086584dab764",
+   "0ddfad397012882c3222e9e6483ae59fdd6b9162",
+   "11ec90be4924fe9b6d7f4bfc6108ba0bfe6f2758",
+   "17656423ebfe33b987bf7d0e43c46abd2e8c9437",
+   "23f937bcacdf2c3daa36f3c1e44aef8a7f3e5f49",
+   "281c2575251849dfe6a8f306867f54d4b43d2453",
+   "295d32752c8f0b882fecc5a97d942b6b665dda9e",
+   "33471dbe770898d122bfdac6967dd27914acd42d",
+   "35389583c2f9496fddb12d7afaf3eb9881ef59e5",
+   "3b8403e26e58ad5b637e35d86433ff6298fdf164",
+   "3ea95174b3a292936455606320c9eae7be0dbe97",
+   "4af5f8a380d3df9018a9f2dcdbac6787f8ce9033",
+   "4d890b994304b91210fc2f63f4a7fca2660814d2",
+   "4e9e8e0ba238e2ab93663478b20bbd4e6b9844a7",
+   "4f54cf63c65d5a01b111e565a712289cd7f9a517",
+   "53248481fa41a20174e720d859205d78073cf02e",
+   "561a53ac476c45237a2157c0d85e4c502d98641b",
+   "5bb217c2cece27d119798939ee3f2c28820056e4",
+   "628aa3a570510576019744c09dc5a1468b8db2e4",
+   "67fdbdc51390399a2c07672aa2f392f2fd692938",
+   "6f786d990ab94c08ad6947c349eda8e6846d48ed",
+   "72b75d9e07ec5535043c016bc285c41c670f9282",
+   "7363385921f3244562f9073e90a7104dd48b5eb3",
+   "8242ec022fe5e6be0126f6be3174d467105fd974",
+   "8aede2b5f1651c278542d9edb3a85e6449438e86",
+   "9f79222c7dc94b0a984ed6f79927d2a1b67d8850",
+   "a80f5ce1522f6936828ddfd97f3d5c4ba8e98bac",
+   "b268b7716accba4de8b05f5f842f270e645859a9",
+   "b28ae94c7a61a0d5ace3ab2d1a7a526ae5bc502c",
+   "b5e0d49a3ad7ccba4e427ef4660c85884ac554bc",
+   "b6c4291ec27375f111bc462db86ca956e6e9902f",
+   "b72e1567141386dcd2fcf708b8a27e688acd4f30",
+   "ccca314d769e7bf01391bc894e7d9a28bf34c70b",
+   "d2123ebec9903aabfebd079d346f50e0c8637a4e",
+   "d302fe56883cd8f729bfafa0cdca1d281498fc2b",
+   "d928ba6ddf046f8e967ceff082347867dd7f43b7",
+   "da72a3c92ec4450edc16b2864055938086352ad2",
+   "fe3bccacf7072be524b46e724febe0d961604cf6",
+   "fea3a6a4013ba1af1571a195cdf2380f4858f44d"
+  ]
+ },
+ "worktree_recovery_hints": [
+  {
+   "task_hint": "SRV-001",
+   "worktree": "srv-001",
+   "tip_commit": "b6cb3d1",
+   "backup": "worktree_recovery_20260826/srv-001"
+  },
+  {
+   "task_hint": "SRV-002",
+   "worktree": "callwarden",
+   "tip_commit": "4914ac2",
+   "backup": "worktree_recovery_20260826/callwarden"
+  },
+  {
+   "task_hint": "SRV-003",
+   "worktree": "srv-003",
+   "tip_commit": "0b5d60e",
+   "backup": "worktree_recovery_20260826/srv-003"
+  },
+  {
+   "task_hint": "CLI-087",
+   "worktree": "cli-087",
+   "tip_commit": "7c58745",
+   "backup": "worktree_recovery_20260826/cli-087"
+  },
+  {
+   "task_hint": "CLI-088",
+   "worktree": "cli-088",
+   "tip_commit": "642efcd",
+   "backup": "worktree_recovery_20260826/cli-088"
+  }
+ ],
+ "recovery_20260826": {
+  "summary": "回收站找回 364 个松散 git 对象 → 5 个 pilot commit + tree 全部 materialize；内容经与 master 比对，pilot 工作基本已合入 master，仅少数证据/文件为真缺口并已恢复",
+  "source": {
+   "recycle_bin": "C://$Recycle.Bin//S-1-5-21-1583625257-826939952-3615027596-1001// 中 364 个 .git/objects 松散对象（删除时间 2026-08-25 15:17-15:19，即 prune 窗口）",
+   "recovery_store": "C:/Users/wanpi/.callwarden/objects_recovery/objects/ (364 对象, 15MB, 已并入主仓库 .git/objects)",
+   "backup_20260825": "git_backup_20260825/.git 8513 对象(pack) — pilot 对象不在其中，但提供合并上下文",
+   "conclusion": "git 对象恢复路径可行（用户判断正确）；工作树磁盘 5.8G 备份 + DB 函数文本仍保留为二级恢复源"
+  },
+  "protected_refs": {
+   "refs/recovery/pilot-srv-002": "4914ac2",
+   "refs/recovery/pilot-cli-087": "7c58745",
+   "refs/recovery/pilot-cli-088": "642efcd",
+   "refs/recovery/pilot-srv-003": "0b5d60e",
+   "refs/recovery/pilot-srv-001": "b6cb3d1"
+  },
+  "per_pilot_gap": [
+   {
+    "pilot": "srv-002 (4914ac2)",
+    "unique_change": "db/db_base.py _init_workspace 4行修复(WHERE name=? OR root_path=?)",
+    "in_master": true,
+    "note": "master L4225 已含同款修复(fail-closed 演化版)"
+   },
+   {
+    "pilot": "srv-003 (0b5d60e)",
+    "unique_change": "SRV-003_evidence.md(134行) + backup_restore_handlers.rs + test_srv_003.py",
+    "in_master": false,
+    "note": "证据文件已恢复落盘；两个代码文件已在 901cc3c 抢救提交"
+   },
+   {
+    "pilot": "cli-087 (7c58745)",
+    "unique_change": "tests/test_wsl_authority_routing.py(492) + test_wsl_local_daemon_e2e.py(369)",
+    "in_master": true,
+    "note": "两测试文件均在 master"
+   },
+   {
+    "pilot": "cli-088 (642efcd)",
+    "unique_change": "同上两测试文件",
+    "in_master": true,
+    "note": "均在 master"
+   },
+   {
+    "pilot": "srv-001 (b6cb3d1)",
+    "unique_change": "无 master 缺失的独有源码(Only-in-worktree=0)",
+    "in_master": true,
+    "note": "git diff 因缺 tree 34091a30 失败，但磁盘比对确认无独有源码文件"
+   }
+  ],
+  "remaining_git_noise": "fsck 仍有 46 条 broken link（中间悬空 commit b811663d 等引用缺失对象），用户选择暂不 gc；不影响 5 个 pilot 与 master 正常操作"
+ },
+ "gap_analysis_20260826": {
+  "conclusion": "零真实代码缺口：44 个 prune commit 的 7300 个唯一函数逐函数比对后，全部在 master（同名或重构等价）；无需要整批重做的任务",
+  "method": "回收站 364 对象恢复(5 pilot+wip+merge) + file_versions 分类(113=69+44) + 函数核心名 token 比对 + 43 候选逐一 grep 核实",
+  "files": "378 文件 = 338 在 master + 40 临时/实验文件(无生产价值)",
+  "functions": "7300 唯一函数，核心名缺失 43 -> 人工核实全部排除(误报/重构/临时脚本)",
+  "verified_false_positives": {
+   "cw_client_13": "分词误排 bin/ 目录；master cw_client.rs 实际含全部(QueryType 22处/run_ping 4处等)",
+   "h_helpers_10": "master 重构为新 _h_* 集(_h_get_symbol_history 等16个)；MCP 工具等价物全在(top_callers 5/orphan_symbols 4/comment_coverage 4/call_heatmap 4/uncovered_functions 3)",
+   "audit_log_3": "master 各 2 处；LazyDBProxy 1 处；test_cw_client_rpc_proxy.py 存在含 19 处 run_client_mode",
+   "tmp_12": "临时脚本无价值"
+  },
+  "report": "cw_203_gap_report.md"
+ },
+ "batch_attribution_20260826": {
+  "scope": "T-1787203926824-9f873bfc 子树 203 任务中的 180 个 review/closed（review 143 + closed 37）",
+  "attribution": {
+   "evidence_28": "task_evidence_events commit→file_versions→symbols",
+   "recovered_pilot_4": "CLI-087/088、SRV-001/002（refs/recovery 恢复 commit）",
+   "unknown_148": "无 evidence commit 亦无 pilot 匹配，如实标注"
+  },
+  "batches": [
+   {
+    "batch": 1,
+    "commit": "eb4e652",
+    "file": "cw_task_function_attribution/batch_01.json"
+   },
+   {
+    "batch": 2,
+    "commit": "e82dc0b",
+    "file": "cw_task_function_attribution/batch_02.json"
+   },
+   {
+    "batch": 3,
+    "commit": "a11c8c4",
+    "file": "cw_task_function_attribution/batch_03.json"
+   },
+   {
+    "batch": 4,
+    "commit": "7baf01e",
+    "file": "cw_task_function_attribution/batch_04.json"
+   },
+   {
+    "batch": 5,
+    "commit": "bd3faa8",
+    "file": "cw_task_function_attribution/batch_05.json"
+   },
+   {
+    "batch": 6,
+    "commit": "132ee6e",
+    "file": "cw_task_function_attribution/batch_06.json"
+   }
+  ],
+  "convention": "禁用 git worktree（2026-08-26 用户纪律）：并行/独立工作用独立 clone 或 master 白名单 capture"
+ },
+ "untracked_batch_commit_20260826": {
+  "background": "发现已跟踪 mod.rs 引用但从未入库的 15 个 Rust 源文件（fresh clone 无法编译）→ 证明 git 历史不完整",
+  "batches": [
+   {
+    "n": 1,
+    "commit": "bdfe012",
+    "desc": "15 个未跟踪 Rust daemon 源文件（_mcp_common_handlers/audit_log_handlers/task_supersede/task_read/semgrep/cli_handle_*/task_loop 9 个）",
+    "files": 15
+   },
+   {
+    "n": 2,
+    "commit": "30241a2",
+    "desc": "CLI HTTP RPC 测试 93 个（test_cli_0xx_http_rpc.py）",
+    "files": 93
+   },
+   {
+    "n": 3,
+    "commit": "99afd44",
+    "desc": "证据文件 docs/evidence 28 + deliverables/software-company 182",
+    "files": 213
+   },
+   {
+    "n": 4,
+    "commit": "6e8e8a9",
+    "desc": "启动模板 v1/v2、迁移计划、P0-C 交接包、scripts、bootstrap_prep、outputs、cw_203_gap_list",
+    "files": 39
+   },
+   {
+    "n": 5,
+    "commit": "41c8ce7",
+    "desc": "MCP/SRV/INT HTTP RPC 测试 59 个",
+    "files": 59
+   },
+   {
+    "n": 6,
+    "commit": "6dce276",
+    "desc": "server/cli_admin.py + test_srv_001/002 + task_supersede 测试",
+    "files": 7
+   }
+  ],
+  "total_files": 426,
+  "kept_untracked": [
+   "_daemon_restore2.pid(运行时pid)",
+   "_h_http_head.rs(临时探针)",
+   ".tmp_adjudicator/",
+   "archive/(327旧归档)",
+   "recovered-scratch/",
+   "p0*_rollback_backup_20260824.sql(6个DB回滚备份)",
+   "package-lock.json(游离)",
+   "rust_ext/_s2_*.txt(6个编译日志)"
+  ],
+  "note": "junk 类未入库保留原状，绝不删除"
+ },
+ "instance_passthrough_20260826": {
+  "summary": "CLI + MCP 全链路补 agent_instance_id 透传；三份启动模板升级 v3",
+  "cli": {
+   "task_parsers_7": "next/report/handoff/step_resolve/apply/close/reopen 循环加 --agent-instance-id",
+   "attest_bootstrap_2": "attest-legacy/contract-bootstrap parser 加 --agent-instance-id",
+   "lease_3": "lease acquire/renew/release parser 加 --agent-instance-id（_collect_lease_identity 并入）",
+   "_collect_identity": "第5字段 agent_instance_id；核心4字段必填 + instance 可选（10 个调用点全覆盖：claim/report/handoff/resolve/apply/close/reopen/supersede/attest/bootstrap）"
+  },
+  "mcp": {
+   "task_next_step": "显式 agent_instance_id 参数并入 identity",
+   "task_report_step": "显式 agent_instance_id 参数并入 identity",
+   "task_apply/task_close": "docstring 注明 identity 可含 agent_instance_id（JSON 字符串透传，daemon 校验）"
+  },
+  "templates_v3": [
+   "Callwarden 无人值守循环启动模板：Adjudicator v3.md",
+   "Callwarden 无人值守循环启动模板：Executor _ Planner v3.md",
+   "Callwarden 无人值守循环启动模板：Reviewer v3.md"
+  ],
+  "tests": "py_compile OK；_collect_identity 五字段单测 6 例通过；test_cli_079 3 passed",
+  "commits": {
+   "code_fix": "e04c0e2 (cli/main.py + server/tools/tools_task.py)",
+   "templates_ledger": "847d6ae (三份 v3 模板 + 台账)"
+  },
+  "verification": {
+   "editable_install": "callwarden 0.2.0 editable -> C:/git_work/callwarden，改动即时生效",
+   "cli_runtime": "cw task next --help 已显示 --agent-instance-id",
+   "unit": "_collect_identity 五字段 6 例通过；test_cli_079 3 passed",
+   "daemon_end_to_end": "daemon 当前未运行（8/24 版已停），未擅自启动；instance 门禁已由代码核对（L1552 注册 instance 非空则必须相等）+ 修复后参数透传保证"
+  }
+ },
+ "cli079_fixdefect_20260826": {
+  "task_id": "T-1787322799418-ce4698f0",
+  "step": "T-1787700302263-09407b70 (fix_defect, remediation_of S-1787322799419-ce53fa54)",
+  "code_fix_commit": "5e53440",
+  "code_fix_scope": "cli/main.py _local_close 去 db 直连改 fail-closed + tests/test_cli_079_http_rpc.py 测试改 fail-closed 断言",
+  "closure_evidence": "deliverables/software-company/CLI079_fixdefect_closure_evidence.md",
+  "closure_commit": "7ef8e33",
+  "caveat": "fix_defect binding 为直写补齐（先例 T-1787402257549-67ba81e6），详见 closure manifest §0"
+ },
+ "int001_stats_top_files_20260826": {
+  "task_id": "T-1787322971676-e9aae4d4",
+  "outcome": "unblocked_by_code (Rust native authority 迁移完成，待部署验证)",
+  "code_fix_commit": "ef6582d",
+  "code_fix_scope": "rust_ext snapshot_state.rs/dispatch.rs/http_server.rs/route_matrix.rs + server/compat_registry.py",
+  "deploy_fix_commit": "952e476 (refresh_shared_runtime.ps1 MSVC env 注入，修复 LNK1181 部署失败)",
+  "verification": {
+   "rust_check": "cargo check --bin cw-daemon --release 0 error",
+   "python_import": "stats_top_files 已从 compat_registry 与 RUST_COMPAT_ROUTE 移除",
+   "pending_e2e": "部署后验证 capability backend=rust_native + query.stats_top_files 返回结构"
+  }
+ },
+ "p0g_same_role_stale_claim_takeover_20260827": {
+  "task_id": "T-1787367417246-34190890",
+  "commit_id": "a6afc28f8facea5a18624bcc4247c6b98960abbb",
+  "status": "new_in_master",
+  "scope": "rust daemon same-governance-role stale claim takeover, report whitelist delimiter compatibility, CLI next-action workspace instance forwarding, and task-bound evidence",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787787736395_governance_fix_20260827": {
+  "task_id": "T-1787787736395-61aa7408",
+  "commit_id": "2e48c6db515cc7d0b650bff640bf6ca84176b19b",
+  "status": "new_in_master",
+  "scope": "atomic modern contract projection on task.create, canonical quality findings, report provenance compatibility, and structured executor handoff validation",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787787736395_cli_followup_20260827": {
+  "task_id": "T-1787787736395-61aa7408",
+  "commit_id": "1b7cd8b48c9d04f39466c9e7e7404987fdc4f851",
+  "status": "new_in_master",
+  "scope": "thin CLI unwraps daemon task.quality_findings envelope and v2 handoff evidence",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787796259862_task_id_envelope_20260827": {
+  "task_id": "T-1787796259862-e7dc8c9c",
+  "commit_id": "0c21543",
+  "status": "new_in_master",
+  "scope": "AGENTS.md、三份 v3 角色模板与 cw-task-loop skill 的精确 task_id 交接绑定规则",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787798421878_governance_status_20260827": {
+  "task_id": "T-1787798421878-4a1626e0",
+  "commit_id": "fb22ce88ded9595f386bd442c4e14b73386a8fde",
+  "status": "new_in_master",
+  "scope": "daemon task.next_action lifecycle/governance projection, CLI/MCP presentation adapters, regression tests, and lifecycle documentation",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787800631870_governance_protocol_20260827": {
+  "task_id": "T-1787800631870-d7d6ece0",
+  "commit_id": "4250b4d6079bde4fe9b9aa98c3c114c74d433deb",
+  "status": "new_in_master",
+  "scope": "AGENTS.md、Executor/Reviewer/Adjudicator v3 模板与 cw-task-loop skill 的 lifecycle/workflow 治理协议同步",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787801412374_handoff_provenance_20260827": {
+  "task_id": "T-1787801412374-918aa9a0",
+  "commit_id": "21414b1",
+  "status": "new_in_master",
+  "scope": "AGENTS.md、Executor/Reviewer/Adjudicator v3 模板与 cw-task-loop skill 的完整 Handoff provenance 与当前 task_id 绑定规则",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787802489180_reviewer_blocked_routing_20260827": {
+  "task_id": "T-1787802489180-482cafb4",
+  "commit_id": "f857a58",
+  "status": "new_in_master",
+  "scope": "daemon task-level reviewer_blocked handoff 自动生成 fix_defect、CLI null step 透传与回归测试",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787801315246_p0l_step1_identity_policy_20260827": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "91f557b7725ca2de3ac465e1afbb9a48d3b0b96c",
+  "status": "new_in_master",
+  "scope": "P0-L step1：task.create canonical identity_policy fail-closed（resolve/回读校验/投影回显）+ role worker 三表 schema（schema.py/db_base.py/sqlite_query.rs）+ role_worker 孤儿模块接线（mod.rs）+ getrandom 0.3 依赖 + 4 新增负矩阵 + 8 处存量测试适配 + revise 测试死锁修复",
+  "note": "message 内嵌 task_id；白名单偏离 3 文件（mod.rs 孤儿接线、Cargo.toml/lock 依赖）已在 report 说明",
+  "recorded_at": "2026-08-27T23:30:00+08:00"
+ },
+ "t1787801315246_p0l_step2_bootstrap_revise_branch_20260827": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "1f9feba5606b116c299ae514c9b6d35f3b3afb3f",
+  "status": "new_in_master",
+  "scope": "P0-L step2：contract bootstrap/revise 的 role_worker_v1 分支（expected adjudicator worker credential 门禁 + 独立 reviewer lease 不变 + hash-linked policy 升级 + 显式/隐式降级禁止 + legacy 原路径不变）+ 2 个新负矩阵测试",
+  "note": "message 内嵌 task_id；无白名单偏离（仅 task_collab.rs）",
+  "recorded_at": "2026-08-28T00:20:00+08:00"
+ },
+ "t1787816580852_status_progress_20260827": {
+  "task_id": "T-1787816580852-413f3158",
+  "commit_id": "b0d98d64aed4578242d76f698844ebb46cd96672",
+  "status": "new_in_master",
+  "scope": "daemon status/governance projection, CLI/MCP progress normalization, documentation, and regression tests",
+  "note": "message 内嵌 task_id"
+ },
+ "t1787801315246_p0l_step3_claim_policy_enforcement_20260827": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "5b3e6f51d28a6f69201c03202697cbde1e5c95ad",
+  "status": "new_in_master",
+  "scope": "P0-L step3：next_action 投影注入 identity_policy/identity_policy_status/claim_requirements（只读）+ task.claim 同事务三态 policy 门禁（role_worker_v1 expected-worker 全链 + append-only provenance；未知/未解析 fail-closed；legacy/无合同原路径不变）+ 4 个新测试",
+  "note": "message 内嵌 task_id；共享脏树隔离提交：快照+逐 hunk 归属筛选+detached worktree 复验；提交锚定分支 p0l-s3-tmp（master 为其祖先），主树含并行会话未提交改动，ff 合并待其收尾后受控执行",
+  "recorded_at": "2026-08-27T23:30:00+08:00"
+ },
+ "t1787801315246_p0l_deliverables_batch_20260827": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "8324bb56077ce3f7679504eea3db591431013c4e",
+  "status": "new_in_master",
+  "scope": "P0-L 交付物归档提交：role-worker contract claim 文档×3、任务草案、创建回执/核验、step4 阻塞补充说明（全部为白名单内新增文件，与并行会话脏树零交集）",
+  "note": "message 内嵌 task_id；master 由此越过 b0d98d6，p0l-s3-tmp（5b3e6f5+d528283）后续为真实合并（文件不相交，预期干净）",
+  "recorded_at": "2026-08-28T00:35:00+08:00"
+ },
+ "t1787801315246_p0l_gate_probe_evidence_20260827": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "149b6ae1c7e69ceb8911c944eeac150f4c1844b2",
+  "status": "new_in_master",
+  "scope": "P0-L step4 阻塞的独立只读探测证据（双 instance 均确认 unresolved/blocked）",
+  "note": "message 内嵌 task_id",
+  "recorded_at": "2026-08-28T00:42:00+08:00"
+ },
+ "t1787823611412_reconciliation_20260827": {
+  "task_id": "T-1787823611412-2f503878",
+  "commit_id": "ddf2a874df6ce26bc729e5d2a902f53be1705517",
+  "status": "new_in_master",
+  "scope": "daemon task.reconcile historical lifecycle cleanup, protected idempotent route, regression tests, and runtime evidence",
+  "note": "message 内嵌 task_id；仅暂存本任务新增 hunks，未吸收共享脏树的无关修改；refresh 受现有 codegraph authority 路径阻断并已记录",
+  "recorded_at": "2026-08-27T18:40:00+08:00"
+ },
+ "t1787801315246_p0l_step4_r1r2r3_fix_20260828": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "12aecc192648635cc9da8da0c0ed2dc22cf040f8",
+  "status": "new_in_master",
+  "scope": "P0-L step4 整改：R1 claim/revise worker-first（DB 登记 worker 角色为唯一授权锚点，runtime identity 仅 append-only provenance，legacy 路径不变）+ R2 server-side reviewer proof（拒绝 raw token，reviewer_lease_id+fencing_counter 事务内核验归属/过期/fencing/注册角色/三项分离）+ R3 next_action fail-closed 路由一致性（unresolved/未知 policy 降级 resolve_identity_policy，blocking_reasons/blocking_conditions 一致）+ step4 完整负矩阵测试",
+  "note": "message 内嵌 task_id；白名单隔离提交（仅 4 个目标文件，并行会话脏文件未吸入）；回归 1535 passed，14 项失败均归因并行会话提交（bdfe012/ddf2a87/ca38130）；未部署、未刷新运行中 daemon；p0l-s3-tmp 非 HEAD 祖先，未更新分支锚点",
+  "recorded_at": "2026-08-28T02:10:00+08:00"
+ },
+ "t1787823627134_durable_assignment_20260828": {
+  "task_id": "T-1787823627134-d86d83b8",
+  "commit_id": "33923f406b5f16c8d10a25e9d6ea72ed4f023cfc",
+  "status": "new_in_master",
+  "scope": "daemon durable assignment event projection, task claim/report/handoff routing, heartbeat/status RPC, CLI next-action assignment enrichment, and assignment replay tests",
+  "note": "message 内嵌 task_id；仅提交本任务已暂存白名单文件；Windows daemon 使用隔离 codegraph template 完成 refresh round-trip"
+ },
+ "t1787823627134_adapter_20260828": {
+  "task_id": "T-1787823627134-d86d83b8",
+  "commit_id": "58dd13d166267a0fc38265e8391178964d6ae99a4",
+  "status": "new_in_master",
+  "scope": "CLI/MCP durable assignment status and heartbeat thin adapters, plus task.next-action assignment projection rendering",
+  "note": "message 内嵌 task_id；仅提交本任务 adapter 白名单文件；三文件已由 workspace.file.refresh daemon round-trip 提交并发布 generation 1:1-1:3"
+ },
+ "t1787823627134_assignment_tests_20260828": {
+  "task_id": "T-1787823627134-d86d83b8",
+  "commit_id": "598dbf6818524bf847545b2e6eec297850b0a74a",
+  "status": "new_in_master",
+  "scope": "assignment queue replay, same-role conflict/takeover, and stale heartbeat regression tests",
+  "note": "message 内嵌 task_id；仅提交 rust_ext/src/daemon/assignment_queue.rs；daemon refresh generation 2:1，syntax_error_count=0"
+ },
+ "t1787823627134_assignment_order_20260828": {
+  "task_id": "T-1787823627134-d86d83b8",
+  "commit_id": "710731ec93873611c06fe968a39ac1e9bace8129",
+  "status": "new_in_master",
+  "scope": "current assignment projection ordering by authoritative event sequence and regression coverage",
+  "note": "message 内嵌 task_id；修正 queued reviewer 覆盖 claimed executor 的投影缺陷；daemon refresh generation 3:1，syntax_error_count=0"
+ },
+ "t1787823627134_assignment_status_domain_20260828": {
+  "task_id": "T-1787823627134-d86d83b8",
+  "commit_id": "d21c524621a4cb9130fde379f5bd9769b92b7e92",
+  "status": "new_in_master",
+  "scope": "task.assignment.status handler reuses shared event-order assignment projection domain",
+  "note": "message 内嵌 task_id；消除 handler 自有字典序排序；fresh codegraph daemon refresh generation 2:1/2:2 均 committed 且 snapshot_published=true"
+ },
+ "t1787823627134_roundtrip_evidence_20260828": {
+  "task_id": "T-1787823627134-d86d83b8",
+  "commit_id": "74e9e83e145b9e3ff6727b3cee047db8c5a6e521",
+  "status": "new_in_master",
+  "scope": "multi-role durable assignment status/heartbeat/replay/holder rejection and release runtime evidence",
+  "note": "message 内嵌 task_id；证据文件 hash=sha256:1fbc5a9b1cacb9fa8b4c8ee807ef83fc2e24d8a0d81034f8d4355709058a7200；Markdown refresh 按 daemon 返回 unsupported_language 阻断，未伪造索引成功"
+ },
+ "t1787850432491_remediation_binding_fix_20260828": {
+  "task_id": "T-1787850432491-f42a2b8c",
+  "commit_id": "fcf4652c2e3818385140e4124aaed0dccb5eaba0",
+  "status": "new_in_master",
+  "scope": "自动、显式与 task-level reviewer_blocked remediation 的 Executor Role Contract binding 及 runtime role 兼容校验",
+  "note": "message 内嵌 task_id；代码提交 382b5b5，证据提交 fcf4652；提交前 cw --refresh-all 因 daemon 缺少 build_full_graph 未完成"
+ },
+ "t1787850432491_workspace_status_id_fix_20260828": {
+  "task_id": "T-1787850432491-f42a2b8c",
+  "commit_id": "1c1cc66a4fa9f856d9f306074c53a66d346f2ea2",
+  "status": "new_in_master",
+  "scope": "cw daemon status numeric workspace_id and workspace_instance_id routing",
+  "note": "message 内嵌 task_id；数字参数按 workspace_id 查询，instance 参数保持兼容；提交前 cw --refresh-all 因 daemon 缺少 build_full_graph 未完成"
+ },
+ "t1787850432491_planner_role_skill_update_20260828": {
+  "task_id": "T-1787850432491-f42a2b8c",
+  "commit_id": "5452bdc0ed9d912999d071952c25b086a622b1e8",
+  "status": "new_in_master",
+  "scope": "Planner role, Planner/Executor lifecycle guidance, and repository skills",
+  "note": "message 内嵌 task_id；AGENTS、cw-task-loop、Planner 与 Executor skills 已提交；两个新 skill quick_validate 通过"
+ },
+ "t1787850432491_role_loop_template_v4_20260828": {
+  "task_id": "T-1787850432491-f42a2b8c",
+  "commit_id": "e70b0b7a4355a5a421b8f6fdbde4dbeb74b91c3e",
+  "status": "new_in_master",
+  "scope": "四角色共享协议、Planner/Executor/Reviewer/Adjudicator 新模板、task-loop 用户指南、模板合规校验与旧模板归档",
+  "note": "message 内嵌 task_id；模板合规检查与 git diff --check 通过；证据 hash=sha256:d8e54bb391051c8ecc88ffb927f6e1680cedbde0206cdc0a5e6819cee57b4202；提交前 cw --refresh-all 因 daemon 缺少 build_full_graph 未完成"
+ },
+ "t1787850432491_role_protocol_correction_20260828": {
+  "task_id": "T-1787850432491-f42a2b8c",
+  "commit_id": "7c4edda3c0d1e05fe8aca15f0ba3b68b77fc0f94",
+  "status": "new_in_master",
+  "scope": "集中 workflow_status 枚举、实现状态声明、命令与 lease/VCS 陷阱、统一 finding schema、模板 Handoff 引用和设计基线修订",
+  "note": "message 内嵌 task_id；增强模板合规检查通过；证据 hash=sha256:d8f13cc4a4e300d645a404a79f854366b6ff5a3a272adc4596456c732421e3f6"
+ },
+ "t1787888909289_role_governance_v2_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "commit_id": "847811a687bdf6e11308b243db56cdd58ab26aee",
+  "status": "new_in_master",
+  "scope": "角色治理修订 v2：归档 blob 8ba6501 字节级恢复、设计 v2 amendment（planner_governance_v1 cutover 与双轨整改）、role-protocol 单源去重（AGENTS/SKILL/user-guide/四模板）、校验器结构化重写与 14 用例负向自测、correction evidence v2 追加",
+  "note": "message 内嵌 task_id；结构化合规检查与 self-test 14/14 通过；归档 blob 以 sha1 复核为 8ba6501fb8c1ba30dad66729997584133df62fd0"
+ },
+ "t1787888909289_provenance_correction_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "corrects_commit_ids": [
+   "5452bdc0ed9d912999d071952c25b086a622b1e8",
+   "e70b0b7a4355a5a421b8f6fdbde4dbeb74b91c3e",
+   "7c4edda3c0d1e05fe8aca15f0ba3b68b77fc0f94"
+  ],
+  "status": "correction",
+  "scope": "provenance 更正（append-only，不改写旧条目）：5452bdc、e70b0b7、7c4edda 三个 commit 中的角色治理文档改动（AGENTS/模板/Skill/role-protocol/设计/校验器）实际属于本任务 scope，原绑定 T-1787850432491-f42a2b8c（task_collab.rs 拆分）越界；本轮修订已按合法 scope 在 847811a687bdf6e11308b243db56cdd58ab26aee 提交",
+  "note": "更正证据：deliverables/software-company/T-1787888909289-881595e0-role-protocol-correction-evidence-v2.md；旧证据 T-1787850432491-f42a2b8c-role-protocol-v1-correction-evidence.md 保持原样仅追加更正；commit_id 字段为非法拼接哈希，已按 correction 语义更正为 corrects_commit_ids 数组"
+ },
+ "t1787888909289_review_blocker_fix_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "commit_id": "a686f1854a1cbbf45dd283cf99c35b028f2b3f6c",
+  "status": "new_in_master",
+  "scope": "复审阻断项修复：冻结 v1 恢复原始 blob 34668462（supersede 指针仅存 v2 amendment）、capability 拆分为 planner_governance_v1/decision_request_v1/adjacent_relation_v1 且 reviewer_blocked 自动 fix_defect 更正为当前已实现、execution_ready 降级协议保留值、pre-cutover 桥接如实规定（blocked→Executor 复查 owner_route→升级用户）、三 Skill 同步、校验器固定枚举/outcome 分层/v1 blob 断言（self-test 14→17）、归档 README EOF 修复、provenance correction 数组化",
+  "note": "message 内嵌 task_id；结构化合规检查与 self-test 17/17 通过；v1 blob 复核 34668462a8c135e106d32fea869b66cb8eec8a56；证据 deliverables/software-company/T-1787888909289-881595e0-role-protocol-correction-evidence-v3.md；工作区 rust_ext/server/tests 并行修改属 P0-L 等其他任务，未纳入本提交"
+ },
+ "t1787888909289_review_blocker_fix2_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "commit_id": "9e1188174d5dc5f01381ee62250a583126c8ce21",
+  "status": "new_in_master",
+  "scope": "第二轮复审阻断项修复：adjudicator_returned 自动整改与源码对齐（仅 reviewer_blocked 自动追加 fix_defect，adjudicator_returned 仅固定路由 executor 需显式 task.remediation.create）、review snapshot 陈述更正（daemon 不在 claim 时生成，projection 缺省 no_snapshot）、outcome 权威路由三元组补齐（含 planner_replan_required→planner→executor→required）、校验器精确分层断言 REQUIRED_IMPLEMENTED_STATUSES/E_PROTO_IMPLEMENTED_FIXED/E_PROTO_RESERVED_FIXED + 负向用例 proto_status_layer_fixed（self-test 17→18）、台账 commit_id 补全完整 40 字符 SHA",
+  "note": "message 内嵌 task_id；结构化合规检查与 self-test 18/18 通过；corrects_commit_ids 三个 7 位缩写已补全完整 SHA（5452bdc0e.../e70b0b7a.../7c4edda3...）；证据 deliverables/software-company/T-1787888909289-881595e0-role-protocol-correction-evidence-v4.md；工作区 rust_ext/server/tests 并行修改属 P0-L 等其他任务，未纳入本提交"
+ },
+ "t1787888909289_docs_scope_closure_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "commit_id": "63df015b3e5ee9e8af024bd1351f9bb68a0b553c",
+  "corrects_commit_ids": [
+   "9e1188174d5dc5f01381ee62250a583126c8ce21"
+  ],
+  "status": "new_in_master",
+  "scope": "纯文档 scope 收尾：撤回 adjudicator_returned 可由 Executor 通过当前 task.remediation.create 闭环的错误陈述；明确当前只有固定路由、尚无受支持的 CLI/MCP provenance-bound remediation bridge；同步 AGENTS、共享协议、Adjudicator v4、v2 amendment 与 cw-task-loop Skill 元数据",
+  "note": "message 内嵌 task_id；未修改 daemon/CLI/MCP 生产代码；结构化合规检查通过、self-test 18/18、Skill quick_validate 通过；evidence v5 hash=sha256:35B767E6E8896B5AF224544D9D288A0B55BED5A56E74C06C0F94D1FAF6F42A54；旧 v4 与旧 ledger 条目保持 append-only 原样"
+ },
+ "t1787888909289_review_blocker_fix3_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "commit_id": "65d293a350c59d530c6e8b5c95f5a4e69f051eb6",
+  "status": "new_in_master",
+  "scope": "第三轮复审阻断项修复：F-1 owner_route 与 daemon 3 字段 findings 契约冲突（role-protocol §4 标注客户端约定 + 序列化映射 + owner_route 缺失 fail-closed）、F-2 parked remediation step 无退出路径如实披露（重复派工≠新授权）、F-3 workflow_status 枚举补 unknown（17→18，校验器同步）、F-4 atomic_hotfix 补 design-only 标注、v2 amendment §3.3 追加 findings schema 校验与 parked step 两项",
+  "note": "message 内嵌 task_id；结构化合规检查通过、self-test 18/18、git diff --check 干净；evidence deliverables/software-company/T-1787888909289-881595e0-role-protocol-correction-evidence-v6.md（hash=sha256:104E25AAAFF69A758888FA100F064BEB228646415FBDAF5107986995175A8051，第四轮补记：原条目遗漏 hash，与相邻 v5 条目惯例不一致）；F-5 决策卡结构化承载为 advisory 未实施（独立后续任务）；工作区 rust_ext/server/tests 并行修改属 P0-L 等其他任务，未纳入本提交"
+ },
+ "t1787888909289_review_blocker_fix4_20260828": {
+  "task_id": "T-1787888909289-881595e0",
+  "commit_id": "d689fb20786935e2ba9219322026e1d51cf0532d",
+  "status": "new_in_master",
+  "scope": "第四轮复审整改 + 用户授权 scope 追加（两类已在 commit message 与 evidence v7 中分别标注）。复审整改（本任务 scope 内）：F-6 role-protocol §4 将 owner_route 标为所有 finding 必填，声明省略即上游 Reviewer/Adjudicator 交付缺陷（daemon 不校验 3 字段 findings 契约，故省略此前是默认态），fail-closed 重写为例外分支并要求 Executor 在 reason 中同时记录上游缺陷，使自动整改恢复为常态路径；F-7 role-protocol §7 记录 .gitignore:201 的 .agents/ 陷阱三条纪律（诊断须 --no-index、禁止目录级 -f、新增文件须核对真实入库）。用户授权 scope 追加（非复审 finding）：AGENTS.md 规则 47 .rs/.py 三级行数门禁 800/1500/3000，阈值取自本仓实测分布（1016 文件，排除 archive/recovered-scratch；.rs n=199 median 523 p95 3126 max 7623；.py n=817 median 261 p95 1080 max 17101 cli/main.py），要求按职责边界拆分、测试同标准、豁免须显式记录，并关联规则 40 的并行 ownership 判据；executor/planner 两个 Skill 仅加指针不复制阈值",
+  "note": "message 内嵌 task_id；未修改任何生产代码（纯文档/Skill）；结构化合规检查通过、self-test 18/18（确认 §4 finding schema 表格改动未破坏 REQUIRED_FINDING_FIELDS 与 dup_finding_schema 用例）、git diff --cached --check 干净；5 文件白名单，未混入工作区 P0-L 的 rust_ext/server/tests 并行改动；.agents/ 三文件按本轮新增 §7 纪律以 git add -f <精确文件路径> 暂存（非目录级 -f）并用 git show --stat 核对入库；evidence deliverables/software-company/T-1787888909289-881595e0-role-protocol-correction-evidence-v7.md hash=sha256:B888C03EAB2A7F770B3CE47F4F1E40F4ADB7C6E3B0E564F64EC3C6DDC1690BAD；事实更正：git 历史中从未存在 task_loop.rs（--diff-filter=D 无结果），task_loop/ 一直是目录最大成员 next_action.rs 1477 行，现存对应技术债为 cli/main.py 17101 行；未实施并声明：F-5 决策卡结构化承载（advisory）、F-8 g0-experiment skill 未纳入版本控制（adjacent_defect）、规则 47 无自动化 pre-commit/CI 门禁、45 个存量超线文件未追溯整改；v2~v6 证据保持 append-only 未改写"
+ },
+ "t1787912195064_inbound_handoff_20260828": {
+  "task_id": "T-1787912195064-2c66e0a8",
+  "commit_id": "60f5307",
+  "status": "new_in_master",
+  "scope": "rust_ext/src/daemon/task_loop/inbound_handoff.rs; inbound_handoff_test.rs; mod.rs; next_action.rs; deliverables/software-company/inbound_handoff_work_order_evidence_20260828.md",
+  "note": "message 内嵌 task_id；inbound_handoff + work_order 只读投影；git 对象库 gc/prune 损坏后经回收站恢复对象，commit 前置闭环"
+ }
 }
