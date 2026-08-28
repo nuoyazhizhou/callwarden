@@ -153,9 +153,7 @@ fn pragma_query(key: &str) -> Option<&'static str> {
 pub fn handle_read_pragmas(params: &Value) -> Result<Value, DaemonRpcError> {
     let db_path = get_str_param_or(params, "db_path", "");
     if db_path.is_empty() {
-        return Err(DaemonRpcError::invalid_params(
-            "read_pragmas 需要 db_path",
-        ));
+        return Err(DaemonRpcError::invalid_params("read_pragmas 需要 db_path"));
     }
     let keys: Vec<String> = params
         .get("keys")
@@ -334,7 +332,10 @@ pub fn handle_scan_hash_databases(params: &Value) -> Result<Value, DaemonRpcErro
         .filter_map(Result::ok)
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|name| {
-            name.len() == 16 && name.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
+            name.len() == 16
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
         })
         .collect();
     names.sort();

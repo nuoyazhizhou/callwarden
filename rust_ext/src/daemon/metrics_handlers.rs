@@ -11,10 +11,59 @@
 //! QueryBudget（limit 上限）约束；本模块不接收客户端 SQL 片段（Q4 否决通用
 //! SQL RPC 的工程落地）。
 
+use std::path::PathBuf;
+
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 
-use super::dispatch::{get_int_param_or, get_str_param_or, DaemonRpcError};
+use super::dispatch::{get_int_param_or, get_str_param, get_str_param_or, DaemonRpcError};
+
+/// metrics 纯计算 feature 的 rollback_config 名称（对齐 Python 真相源）。
+const RUST_DAEMON_METRICS_FEATURE: &str = "rust_daemon_metrics_compute";
+
+fn default_callwarden_dir() -> PathBuf {
+    let home = std::env::var("CALLWARDEN_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_default();
+    PathBuf::from(home).join(".callwarden")
+}
+
+fn default_db_path() -> PathBuf {
+    if let Ok(v) = std::env::var("CALLWARDEN_DB") {
+        if !v.is_empty() {
+            return PathBuf::from(v);
+        }
+    }
+    default_callwarden_dir().join("callwarden.db")
+}
+
+/// `mcp.metrics.is_rust_metrics_rolled_back` —— 读取 daemon 权威
+/// `rollback_config`，对齐 Python `_is_rust_metrics_rolled_back` 的 SQL 语义。
+///
+/// 这是只读 fail-soft 探测：库不可打开、表缺失或查询异常统一返回
+/// `rolled_back=false`，绝不把错误降级为 Python 本地数据库访问。
+pub fn handle_is_rust_metrics_rolled_back(params: &Value) -> Result<Value, DaemonRpcError> {
+    let db_path = match get_str_param(params, "db_path") {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => default_db_path(),
+    };
+    let conn = match Connection::open(&db_path) {
+        Ok(conn) => conn,
+        Err(_) => return Ok(json!({"rolled_back": false, "reason": "db_open_failed"})),
+    };
+    let value: i64 = conn
+        .query_row(
+            "SELECT COALESCE((SELECT rollback_flag FROM rollback_config \
+             WHERE feature_name = ?1 ORDER BY updated_at DESC LIMIT 1), 0)",
+            rusqlite::params![RUST_DAEMON_METRICS_FEATURE],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(json!({"rolled_back": value == 1, "source": "rust"}))
+}
 
 /// 查询结果行数上限（QueryBudget 常量，防止 BFS/DFS 指数爆炸）。
 const MAX_RESULT_ROWS: i64 = 500;
@@ -461,10 +510,125 @@ fn scalar_f64(conn: &Connection, sql: &str, workspace_id: i64) -> Result<f64, Da
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn tmp_db(tag: &str) -> (Connection, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "srv012_{}_{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("{tag}.db"));
+        let _ = std::fs::remove_file(&path);
+        let conn = Connection::open(&path).unwrap();
+        (conn, path)
+    }
+
+    fn seed_rollback_config(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE rollback_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feature_name TEXT NOT NULL,
+                rollback_flag INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+    }
 
     #[test]
     fn test_max_result_rows_sane() {
         assert!(MAX_RESULT_ROWS >= 20);
         assert!(MAX_RESULT_ROWS <= 1000);
+    }
+
+    #[test]
+    fn test_metrics_rollback_flag_set() {
+        let (conn, path) = tmp_db("flag_set");
+        seed_rollback_config(&conn);
+        conn.execute(
+            "INSERT INTO rollback_config (feature_name, rollback_flag, updated_at) VALUES (?1, 1, 100.0)",
+            rusqlite::params![RUST_DAEMON_METRICS_FEATURE],
+        )
+        .unwrap();
+        drop(conn);
+        let result = handle_is_rust_metrics_rolled_back(
+            &json!({"db_path": path.to_string_lossy()}),
+        )
+        .unwrap();
+        assert_eq!(result["rolled_back"], true);
+        assert_eq!(result["source"], "rust");
+    }
+
+    #[test]
+    fn test_metrics_rollback_flag_unset_and_other_feature_ignored() {
+        let (conn, path) = tmp_db("flag_unset");
+        seed_rollback_config(&conn);
+        conn.execute(
+            "INSERT INTO rollback_config (feature_name, rollback_flag, updated_at) VALUES ('other_feature', 1, 100.0)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let result = handle_is_rust_metrics_rolled_back(
+            &json!({"db_path": path.to_string_lossy()}),
+        )
+        .unwrap();
+        assert_eq!(result["rolled_back"], false);
+    }
+
+    #[test]
+    fn test_metrics_latest_row_wins() {
+        let (conn, path) = tmp_db("latest_wins");
+        seed_rollback_config(&conn);
+        conn.execute(
+            "INSERT INTO rollback_config (feature_name, rollback_flag, updated_at) VALUES (?1, 1, 100.0)",
+            rusqlite::params![RUST_DAEMON_METRICS_FEATURE],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO rollback_config (feature_name, rollback_flag, updated_at) VALUES (?1, 0, 200.0)",
+            rusqlite::params![RUST_DAEMON_METRICS_FEATURE],
+        )
+        .unwrap();
+        drop(conn);
+        let result = handle_is_rust_metrics_rolled_back(
+            &json!({"db_path": path.to_string_lossy()}),
+        )
+        .unwrap();
+        assert_eq!(result["rolled_back"], false);
+    }
+
+    #[test]
+    fn test_metrics_missing_row_and_table_fail_soft() {
+        let (conn, row_path) = tmp_db("row_missing");
+        seed_rollback_config(&conn);
+        drop(conn);
+        let row_result = handle_is_rust_metrics_rolled_back(
+            &json!({"db_path": row_path.to_string_lossy()}),
+        )
+        .unwrap();
+        assert_eq!(row_result["rolled_back"], false);
+
+        let (_conn, table_path) = tmp_db("table_missing");
+        let table_result = handle_is_rust_metrics_rolled_back(
+            &json!({"db_path": table_path.to_string_lossy()}),
+        )
+        .unwrap();
+        assert_eq!(table_result["rolled_back"], false);
+    }
+
+    #[test]
+    fn test_metrics_directory_path_fail_soft() {
+        let path = std::env::temp_dir()
+            .join(format!("srv012_dir_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&path);
+        let result = handle_is_rust_metrics_rolled_back(
+            &json!({"db_path": path.to_string_lossy()}),
+        )
+        .unwrap();
+        assert_eq!(result["rolled_back"], false);
+        assert_eq!(result["reason"], "db_open_failed");
     }
 }

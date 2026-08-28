@@ -27,6 +27,36 @@ mod query_handlers;
 mod cli_local_findings_handlers;
 use cli_local_findings_handlers::handle_get_task_quality_findings;
 
+/// SRV-013：query budget rollback authority handler，沿用本模块内联子模块
+/// 方式，避免修改不在本任务白名单内的 daemon/mod.rs。
+#[path = "query_budget_handlers.rs"]
+mod query_budget_handlers;
+
+/// SRV-014：replicator authority/refresh handlers，沿用本模块内联子模块，
+/// 避免修改不在本任务白名单内的 daemon/mod.rs。
+#[path = "replicator_handlers.rs"]
+mod replicator_handlers;
+
+/// SRV-015：schema migrator authority handlers，沿用本模块内联子模块，
+/// 避免修改不在本任务白名单内的 daemon/mod.rs。
+#[path = "schema_migrator_handlers.rs"]
+mod schema_migrator_handlers;
+
+/// SRV-016：snapshot GC authority handlers，沿用本模块内联子模块，
+/// 避免修改不在本任务白名单内的 daemon/mod.rs。
+#[path = "snapshot_gc_handlers.rs"]
+mod snapshot_gc_handlers;
+
+/// SRV-017：Stage_Toggle P0 迁移 authority handlers，沿用本模块内联子模块
+/// 方式，避免修改不在本任务白名单内的 daemon/mod.rs。
+#[path = "stage_toggle_migration_handlers.rs"]
+mod stage_toggle_migration_handlers;
+
+/// SRV-018：StagingLog rollback authority handler，沿用本模块内联子模块
+/// 方式，避免修改不在本任务白名单内的 daemon/mod.rs。
+#[path = "staging_log_handlers.rs"]
+mod staging_log_handlers;
+
 /// peer credential（来自 SO_PEERCRED 或 Windows Named Pipe）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerCredential {
@@ -111,7 +141,8 @@ pub struct DaemonState {
     pub task_db_fingerprint: String,
     /// task_loop control-plane 组件（1D3B：gate + Public permit store + daemon generation）。
     /// `None` = 能力未组装，`task_loop.public_promote` 与公共路由一律 fail-closed。
-    pub task_loop_control: Option<std::sync::Arc<crate::daemon::task_loop::promotion::TaskLoopControlPlane>>,
+    pub task_loop_control:
+        Option<std::sync::Arc<crate::daemon::task_loop::promotion::TaskLoopControlPlane>>,
 }
 
 impl Default for DaemonState {
@@ -416,7 +447,9 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found("query.uncommented_symbols"))
+        Err(DaemonRpcError::method_not_found(
+            "query.uncommented_symbols",
+        ))
     }
 
     fn handle_query_module_call_stats(
@@ -523,7 +556,9 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found("query.coverage_for_symbol"))
+        Err(DaemonRpcError::method_not_found(
+            "query.coverage_for_symbol",
+        ))
     }
 
     fn handle_query_diff_to_symbol(
@@ -583,7 +618,9 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found("query.get_defect_correlation"))
+        Err(DaemonRpcError::method_not_found(
+            "query.get_defect_correlation",
+        ))
     }
 
     // W4-4（T-1786886251769-22b94ee8-sub-4）：分支差异读面迁移新增 handler
@@ -1053,6 +1090,45 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.work_next"))
         }
     }
+    fn handle_task_step_bind_role_contract(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_step_bind_role_contract(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.step.bind_role_contract",
+            ))
+        }
+    }
+    fn handle_task_assignment_heartbeat(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_assignment_heartbeat(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.assignment.heartbeat",
+            ))
+        }
+    }
+    fn handle_task_assignment_status(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_assignment_status(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.assignment.status",
+            ))
+        }
+    }
     fn handle_task_report(
         &mut self,
         peer: PeerCredential,
@@ -1084,6 +1160,17 @@ pub trait DaemonStateExt {
             store.handle_task_remediation_create(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.remediation.create"))
+        }
+    }
+    fn handle_p0l_reviewer_block_repair(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_p0l_reviewer_block_repair(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.p0l_reviewer_block_repair"))
         }
     }
     fn handle_task_handoff(
@@ -1119,6 +1206,17 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.contract_bootstrap"))
         }
     }
+    fn handle_task_contract_revise(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_contract_revise(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.contract_revise"))
+        }
+    }
     fn handle_task_contract_get(
         &mut self,
         peer: PeerCredential,
@@ -1128,6 +1226,19 @@ pub trait DaemonStateExt {
             store.handle_task_contract_get(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.contract_get"))
+        }
+    }
+    fn handle_task_governance_projection_get(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_governance_projection_get(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.governance_projection.get",
+            ))
         }
     }
     fn handle_task_status(
@@ -1149,14 +1260,146 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
-            let input = crate::daemon::task_loop::next_action::NextActionInput::from_params(params)?;
-            store.with_conn(|conn| {
-                crate::daemon::task_loop::next_action::evaluate_next_action(
+            let input =
+                crate::daemon::task_loop::next_action::NextActionInput::from_params(params)?;
+            let (mut projection, policy_state, assignment) = store.with_conn(|conn| {
+                let projection = crate::daemon::task_loop::next_action::evaluate_next_action(
                     conn,
                     &input.workspace_instance_id,
                     &input.task_id,
-                )
-            })
+                )?;
+                let policy_state =
+                    crate::daemon::task_collab::get_current_task_contract_policy_state(
+                        conn,
+                        &input.task_id,
+                    )?;
+                let step_id = projection.get("step_id").and_then(Value::as_str);
+                let role = projection.get("required_role").and_then(Value::as_str);
+                let assignment = crate::daemon::assignment_queue::current_assignment(
+                    conn,
+                    &input.task_id,
+                    step_id,
+                    role,
+                )?;
+                Ok((projection, policy_state, assignment))
+            })?;
+            // P0-L step3：向只读派工投影附加 identity policy 状态与结构化 claim 要求（无 mutation）。
+            let required_role = projection
+                .get("required_role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if let Some(object) = projection.as_object_mut() {
+                object.insert(
+                    "assignment".to_string(),
+                    assignment
+                        .as_ref()
+                        .map(crate::daemon::assignment_queue::AssignmentProjection::as_value)
+                        .unwrap_or(Value::Null),
+                );
+                object.insert(
+                    "assignment_status".to_string(),
+                    assignment
+                        .as_ref()
+                        .map(|item| Value::String(item.status.clone()))
+                        .unwrap_or(Value::String("unassigned".to_string())),
+                );
+                use crate::daemon::task_collab::TaskContractPolicyState;
+                use crate::daemon::task_loop::role_worker::{
+                    POLICY_LEGACY_IDENTITY_V1, POLICY_ROLE_WORKER_V1,
+                };
+                let (policy_value, policy_status): (Value, &str) = match &policy_state {
+                    TaskContractPolicyState::NoContractRevision => {
+                        (Value::Null, "no_contract_revision")
+                    }
+                    TaskContractPolicyState::Unresolved => (Value::Null, "unresolved"),
+                    TaskContractPolicyState::Declared(policy) => {
+                        (Value::String(policy.clone()), "declared")
+                    }
+                };
+                object.insert("identity_policy".to_string(), policy_value);
+                object.insert(
+                    "identity_policy_status".to_string(),
+                    Value::String(policy_status.to_string()),
+                );
+                if matches!(&policy_state,
+                    TaskContractPolicyState::Declared(policy) if policy == POLICY_ROLE_WORKER_V1)
+                {
+                    object.insert(
+                        "claim_requirements".to_string(),
+                        serde_json::json!({
+                            "role_worker_auth": {
+                                "required": true,
+                                "expected_role": required_role,
+                                "credential": "one-time, enrolled via role_worker.enroll"
+                            },
+                            "identity": {"required": false, "provenance_only": true},
+                            "workspace_binding": {"required": true},
+                            "separation": {"required": true}
+                        }),
+                    );
+                } else if matches!(policy_state, TaskContractPolicyState::Unresolved) {
+                    object.insert(
+                        "claim_requirements".to_string(),
+                        serde_json::json!({
+                            "blocked": true,
+                            "reason": "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
+                        }),
+                    );
+                }
+                // P0-L R3：fail-closed 路由一致性。policy 未决（unresolved）或声明了未知
+                // policy 时，机器可执行路由不得与 blocked 状态矛盾（禁止输出无条件
+                // claim_current_step）；投影统一降级为诊断动作并把 reason 同时写入
+                // canonical blocking_reasons 与兼容 blocking_conditions。
+                // task.claim 的同一事务门禁保留为权威第二道防线。
+                let blocked_reason: Option<String> = match &policy_state {
+                    TaskContractPolicyState::Unresolved => Some(
+                        "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
+                            .to_string(),
+                    ),
+                    TaskContractPolicyState::Declared(policy)
+                        if policy != POLICY_ROLE_WORKER_V1
+                            && policy != POLICY_LEGACY_IDENTITY_V1 =>
+                    {
+                        Some(format!(
+                            "identity policy {policy} 未知，claim fail-closed（禁止隐式降级）"
+                        ))
+                    }
+                    _ => None,
+                };
+                if let Some(reason) = blocked_reason {
+                    object.insert(
+                        "next_action".to_string(),
+                        Value::String("resolve_identity_policy".to_string()),
+                    );
+                    object.insert("action".to_string(), Value::String("BLOCKED".to_string()));
+                    object.insert("decision".to_string(), Value::String("BLOCKED".to_string()));
+                    object.insert(
+                        "next_role".to_string(),
+                        Value::String("adjudicator".to_string()),
+                    );
+                    for key in ["blocking_reasons", "blocking_conditions"] {
+                        if !matches!(object.get(key), Some(Value::Array(_))) {
+                            object.insert(key.to_string(), Value::Array(Vec::new()));
+                        }
+                        if let Some(Value::Array(items)) = object.get_mut(key) {
+                            if !items
+                                .iter()
+                                .any(|item| item.as_str() == Some(reason.as_str()))
+                            {
+                                items.push(Value::String(reason.clone()));
+                            }
+                        }
+                    }
+                    if object.get("claim_requirements").is_none() {
+                        object.insert(
+                            "claim_requirements".to_string(),
+                            serde_json::json!({"blocked": true, "reason": reason}),
+                        );
+                    }
+                }
+            }
+            Ok(projection)
         } else {
             Err(DaemonRpcError::method_not_found("task.next_action"))
         }
@@ -1170,6 +1413,17 @@ pub trait DaemonStateExt {
             store.handle_task_events(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.events"))
+        }
+    }
+    fn handle_task_reconcile(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_reconcile(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.reconcile"))
         }
     }
     fn handle_task_wait(
@@ -1515,7 +1769,7 @@ pub trait DaemonStateExt {
                 // MCP-003（T-1787321708856-e3c10624）：get_freshness_status 迁移 rust_native。
                 // 语义与 Python db_task_evidence.derive_freshness 一致：
                 // 全序 invalid > superseded > stale > fresh，派生 Evidence 新鲜度。
-                "get_freshness_status" => store.handle_get_freshness_status(  peer,  params),
+                "get_freshness_status" => store.handle_get_freshness_status(peer, params),
                 // MCP-004（T-1787321708926-e7ebfac4）：get_gate_decision 迁移 rust_native。
                 // 语义与 Python tools_collab._h_gate_decision + gate.decision.query 一致：
                 // 从 task_gate_decisions 按 task_id/decision_id(gate_id) 过滤查询。
@@ -1536,7 +1790,9 @@ pub trait DaemonStateExt {
                 // MCP-008（T-1787321709249-fb256530）：validate_revision_dependencies 迁移 rust_native。
                 // 语义与 Python tools_p2_graph._h_validate_revision_dependencies 一致：内存模拟
                 // build_hard_dependency_edges（不写表），合并现有硬边做环检测，返回 valid/errors。
-                "validate_revision_dependencies" => store.handle_validate_revision_dependencies(peer, params),
+                "validate_revision_dependencies" => {
+                    store.handle_validate_revision_dependencies(peer, params)
+                }
                 // MCP-009（T-1787321709365-021050a8）：get_dependency_edges 迁移 rust_native。
                 // 语义与 Python db_task_dependencies.get_dependency_edges 一致：查询
                 // dependency_edges 全部列按 created_at 排序，可选按 task_id 过滤。
@@ -1619,7 +1875,9 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found("build_context.resolved_edges"))
+        Err(DaemonRpcError::method_not_found(
+            "build_context.resolved_edges",
+        ))
     }
 
     fn handle_build_context_count_resolved_edges(
@@ -1782,9 +2040,12 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "agent.register",
     "task.create",
     "task.claim",
+    "task.assignment.heartbeat",
     "task.claim.recover",
     "task.report",
     "task.remediation.create",
+    "task.p0l_reviewer_block_repair",
+    "task.step.bind_role_contract",
     "task.step.resolve",
     "task.handoff",
     // 任务替代（supersede）治理写：独立关系表 + append-only 事件。
@@ -1798,11 +2059,14 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.close",
     "task.contract_set",
     "task.contract_bootstrap",
+    // P0-G：Task Contract revision n+1 追加（append-only，禁 UPDATE/DELETE 历史）。
+    "task.contract_revise",
     "task.capture_diff",
     "task.split",
     "task.create_from_plan",
     // P0-B：历史无 binding task 的 append-only authority attestation。
     "task.attest_legacy_workspace_binding",
+    "task.reconcile",
     "task.resolve_quality_finding",
     "task.create_subtask",
     "task.record_symbol_change",
@@ -2017,6 +2281,55 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
     }
 }
 
+/// SRV-019：最终 Python authority 零残留门禁。
+///
+/// 静态 AST/grep 扫描仍由客户端执行（它需要访问待审计的源码树），但最终的
+/// 通过/拒绝语义必须由 daemon 统一给出。客户端只能提交扫描计数；任何非零
+/// authority finding 都 fail-closed，不能通过本地 fallback 绕过门禁。
+fn handle_final_zero_python_authority_audit(params: &Value) -> Result<Value, DaemonRpcError> {
+    let source = params
+        .get("source")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DaemonRpcError::invalid_params("缺少字段: source"))?;
+    if source != "repository-wide" {
+        return Err(DaemonRpcError::invalid_params(
+            "source 必须为 repository-wide",
+        ));
+    }
+
+    let scanned_files = params
+        .get("scanned_files")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| DaemonRpcError::invalid_params("缺少或非法字段: scanned_files"))?;
+    let finding_count = params
+        .get("finding_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| DaemonRpcError::invalid_params("缺少或非法字段: finding_count"))?;
+    let files_with_findings = params
+        .get("files_with_findings")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| DaemonRpcError::invalid_params("缺少或非法字段: files_with_findings"))?;
+
+    if finding_count != 0 || files_with_findings != 0 {
+        return Err(DaemonRpcError::new(
+            "authority_residue",
+            format!(
+                "Python authority audit failed closed: {} findings in {} files",
+                finding_count, files_with_findings
+            ),
+        ));
+    }
+
+    Ok(serde_json::json!({
+        "status": "passed",
+        "authority": "rust-daemon",
+        "source": source,
+        "scanned_files": scanned_files,
+        "finding_count": finding_count,
+        "files_with_findings": files_with_findings,
+    }))
+}
+
 /// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 与测试 current_uid() 一致）
 ///
 /// P1-1 修复（2026-07-22 完整复审）：Windows 上没有真正的 Unix UID 概念，
@@ -2206,6 +2519,10 @@ fn dispatch_inner<S: DaemonStateExt>(
         "health" => state.handle_health(peer),
         "schema.version" => state.handle_schema_version(peer),
 
+        // ---- SRV-019：repository-wide Python authority zero-residue final gate ----
+        // 扫描发生在客户端，门禁判定在 daemon；非零结果必须结构化拒绝。
+        "mcp.final_zero_python_authority_audit" => handle_final_zero_python_authority_audit(params),
+
         // ---- Workspace 管理（R4 实现）----
         "workspace.register" => state.handle_workspace_register(peer, params),
         "workspace.list" => state.handle_workspace_list(peer, params),
@@ -2289,7 +2606,7 @@ fn dispatch_inner<S: DaemonStateExt>(
             let qualified_name = require_str_param(params, "qualified_name")?;
             let _ = query_handlers::validate_query_symbol_params(qualified_name)?;
             state.handle_query_symbol(peer, params)
-        },
+        }
         "query.search" => state.handle_query_search(peer, params),
         "query.callers" => state.handle_query_callers(peer, params),
         "query.callees" => state.handle_query_callees(peer, params),
@@ -2300,7 +2617,7 @@ fn dispatch_inner<S: DaemonStateExt>(
             let file_path = require_str_param(params, "file_path")?;
             let _rel_path = query_handlers::validate_query_file_path(file_path)?;
             state.handle_query_file(peer, params)
-        },
+        }
         "query.symbol_location" => state.handle_query_symbol_location(peer, params),
         "query.grep" => {
             // M2.3（T-1786529505247-9d083e54）：dispatch 层结构化前置校验。
@@ -2315,14 +2632,12 @@ fn dispatch_inner<S: DaemonStateExt>(
                 .map(|value| {
                     value
                         .as_str()
-                        .ok_or_else(|| {
-                            DaemonRpcError::invalid_params("patterns 必须是字符串数组")
-                        })
+                        .ok_or_else(|| DaemonRpcError::invalid_params("patterns 必须是字符串数组"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             query_handlers::validate_query_grep_params(&pattern_strs)?;
             state.handle_query_grep(peer, params)
-        },
+        }
         "query.issues" => {
             // M2.4（T-1786539379174-90f74174）：dispatch 层结构化前置校验。
             // 空/纯空白/NUL → invalid_params。拒绝后不进入 handler；
@@ -2330,7 +2645,7 @@ fn dispatch_inner<S: DaemonStateExt>(
             let qualified_name = require_str_param(params, "qualified_name")?;
             let _ = query_handlers::validate_query_issues_params(qualified_name)?;
             state.handle_query_issues(peer, params)
-        },
+        }
         "query.tests" => {
             // M2.5（T-1786584287058-7f712ff4）：dispatch 层结构化前置校验。
             // 空/纯空白/NUL → invalid_params。拒绝后不进入 handler；
@@ -2338,7 +2653,7 @@ fn dispatch_inner<S: DaemonStateExt>(
             let qualified_name = require_str_param(params, "qualified_name")?;
             let _ = query_handlers::validate_query_tests_params(qualified_name)?;
             state.handle_query_tests(peer, params)
-        },
+        }
 
         // ---- 高级查询方法（G7-T4 实现）----
         "query.call_chain_down" => state.handle_query_call_chain_down(peer, params),
@@ -2396,15 +2711,20 @@ fn dispatch_inner<S: DaemonStateExt>(
         "agent.heartbeat" => state.handle_agent_heartbeat(peer, params),
         "task.create" => state.handle_task_create(peer, params),
         "task.claim" => state.handle_task_claim(peer, params),
+        "task.assignment.heartbeat" => state.handle_task_assignment_heartbeat(peer, params),
+        "task.assignment.status" => state.handle_task_assignment_status(peer, params),
         "task.claim.recover" => state.handle_task_claim_recover(peer, params),
         "task.work_next" => state.handle_task_work_next(peer, params),
         "task.report" => state.handle_task_report(peer, params),
         "task.remediation.create" => state.handle_task_remediation_create(peer, params),
+        "task.p0l_reviewer_block_repair" => state.handle_p0l_reviewer_block_repair(peer, params),
+        "task.step.bind_role_contract" => state.handle_task_step_bind_role_contract(peer, params),
         "task.step.resolve" => state.handle_task_step_resolve(peer, params),
         // structured handoff 只能进入 daemon handler；handler 负责 envelope、lease/fencing
         // 与 append-only ledger 校验，dispatch 层不提供本地或 legacy fallback。
         "task.handoff" => state.handle_task_handoff(peer, params),
         "task.status" => state.handle_task_status(peer, params),
+        "task.reconcile" => state.handle_task_reconcile(peer, params),
         "task.next_action" => state.handle_task_next_action(peer, params),
         "task.events" => state.handle_task_events(peer, params),
         "task.wait" => state.handle_task_wait(peer, params),
@@ -2415,7 +2735,11 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.close" => state.handle_task_close(peer, params),
         "task.contract_set" => state.handle_task_contract_set(peer, params),
         "task.contract_bootstrap" => state.handle_task_contract_bootstrap(peer, params),
+        "task.contract_revise" => state.handle_task_contract_revise(peer, params),
         "task.contract_get" => state.handle_task_contract_get(peer, params),
+        "task.governance_projection.get" => {
+            state.handle_task_governance_projection_get(peer, params)
+        }
         "task.capture_diff" => state.handle_task_capture_diff(peer, params),
         "task.split" => state.handle_task_split(peer, params),
         // supersede 治理：声明/查询任务替代关系（独立关系表 + append-only 事件，不改被替代任务行）
@@ -2423,7 +2747,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.superseded_by" => state.handle_task_superseded_by(peer, params),
         "task.attest_legacy_workspace_binding" => {
             state.handle_task_attest_legacy_workspace_binding(peer, params)
-        },
+        }
         "task.create_from_plan" => state.handle_task_create_from_plan(peer, params),
         "task.completion_review" => state.handle_task_completion_review(peer, params),
         "task.resolve_quality_finding" => state.handle_task_resolve_quality_finding(peer, params),
@@ -2500,9 +2824,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "mcp.cli_admin.open_readonly_conn" => {
             super::cli_admin_handlers::handle_open_readonly_conn(params)
         }
-        "mcp.cli_admin.read_pragmas" => {
-            super::cli_admin_handlers::handle_read_pragmas(params)
-        }
+        "mcp.cli_admin.read_pragmas" => super::cli_admin_handlers::handle_read_pragmas(params),
         "mcp.cli_admin.read_task_dependencies" => {
             super::cli_admin_handlers::handle_read_task_dependencies(params)
         }
@@ -2524,6 +2846,179 @@ fn dispatch_inner<S: DaemonStateExt>(
         "mcp.daemon_autostart.try_http_connect" => {
             super::daemon_autostart_handlers::handle_try_http_connect(params)
         }
+
+        // ---- SRV-006：mcp.daemon_client 12 方法（T-1787323460703-c5f65380）----
+        // server/daemon_client.py DB authority 下沉：get_db/inject_workspace_id 为
+        // 路径与 workspace 身份控制（fail-closed）；8 个 sql_fallback_* 为只读权威
+        // 查询（workspace_id 显式或 active 解析）；call_with_fd 为 SCM_RIGHTS 平台能力
+        // 探测（RPC 无法传 FD）；publish_snapshot 为 checkpoint PASSIVE + 发布 payload。
+        // 只读方法不进 ADMIN_ONLY / PROTECTED_MUTATION 清单；publish_snapshot 的
+        // checkpoint 为 WAL 只写不变更数据（PRAGMA），同样不进写操作清单。
+        "mcp.daemon_client.get_db" => super::daemon_client_handlers::handle_get_db(params),
+        "mcp.daemon_client.inject_workspace_id" => {
+            super::daemon_client_handlers::handle_inject_workspace_id(params)
+        }
+        "mcp.daemon_client.sql_fallback_get_callers" => {
+            super::daemon_client_handlers::handle_sql_fallback_get_callers(params)
+        }
+        "mcp.daemon_client.sql_fallback_get_callees" => {
+            super::daemon_client_handlers::handle_sql_fallback_get_callees(params)
+        }
+        "mcp.daemon_client.sql_fallback_search_symbols" => {
+            super::daemon_client_handlers::handle_sql_fallback_search_symbols(params)
+        }
+        "mcp.daemon_client.sql_fallback_get_symbol" => {
+            super::daemon_client_handlers::handle_sql_fallback_get_symbol(params)
+        }
+        "mcp.daemon_client.sql_fallback_get_stats" => {
+            super::daemon_client_handlers::handle_sql_fallback_get_stats(params)
+        }
+        "mcp.daemon_client.sql_fallback_get_topological_order" => {
+            super::daemon_client_handlers::handle_sql_fallback_get_topological_order(params)
+        }
+        "mcp.daemon_client.sql_fallback_get_call_chain_down" => {
+            super::daemon_client_handlers::handle_sql_fallback_get_call_chain_down(params)
+        }
+        "mcp.daemon_client.sql_fallback_detect_cycles" => {
+            super::daemon_client_handlers::handle_sql_fallback_detect_cycles(params)
+        }
+        "mcp.daemon_client.call_with_fd" => {
+            super::daemon_client_handlers::handle_call_with_fd(params)
+        }
+        "mcp.daemon_client.publish_snapshot" => {
+            super::daemon_client_handlers::handle_publish_snapshot(params)
+        }
+
+        // ---- SRV-007：mcp.daemon_protocol 单方法（T-1787323461012-d8597160）----
+        // is_rust_protocol_rolled_back 为只读 fail-soft 探测（读权威库 rollback_config，
+        // 库不可打开/表缺失/查询失败 → rolled_back=false，对齐 Python except→False），
+        // 不进 ADMIN_ONLY / PROTECTED_MUTATION 清单。
+        "mcp.daemon_protocol.is_rust_protocol_rolled_back" => {
+            super::daemon_protocol_handlers::handle_is_rust_protocol_rolled_back(params)
+        }
+
+        // ---- SRV-008：mcp.daemon_server 六方法（T-1787323461079-dc5ac87c）----
+        // rollback 双探测为只读 fail-soft（读权威库 rollback_config，对齐 Python
+        // except→False）；registry_conn / get_workspace_resources 为元信息探测
+        //（RPC 无法传递 Connection/进程内对象，对齐 SRV-006 handle_get_db 先例）；
+        // dispatch 为路由权威声明。全部只读，不进 ADMIN_ONLY / PROTECTED_MUTATION 清单。
+        "mcp.daemon_server.is_rust_acl_rolled_back" => {
+            super::daemon_server_handlers::handle_is_rust_acl_rolled_back(params)
+        }
+        "mcp.daemon_server.is_rust_health_rolled_back" => {
+            super::daemon_server_handlers::handle_is_rust_health_rolled_back(params)
+        }
+        "mcp.daemon_server.get_registry_conn" => {
+            super::daemon_server_handlers::handle_get_registry_conn(params)
+        }
+        "mcp.daemon_server.registry_conn" => {
+            super::daemon_server_handlers::handle_registry_conn(params)
+        }
+        "mcp.daemon_server.get_workspace_resources" => {
+            super::daemon_server_handlers::handle_get_workspace_resources(params)
+        }
+        "mcp.daemon_server.dispatch" => super::daemon_server_handlers::handle_dispatch(params),
+
+        // ---- SRV-009：mcp.durable_staging（T-1787323461150-e09e1a9c）----
+        // durable staging 权威 schema 初始化（write，幂等 DDL）+ 只读统计探测
+        "mcp.durable_staging.init" => super::durable_staging_handlers::handle_init(params),
+        "mcp.durable_staging.stats" => super::durable_staging_handlers::handle_stats(params),
+
+        // ---- SRV-010：mcp.health_check（T-1787323461213-e46199b0）----
+        // health check 4 个 Python direct authority 函数的 daemon RPC 下沉：
+        // registry 连通性检查（read_only）+ workspace registry 恢复（write）
+        // + CAS DB 探测（read_only）+ stale jobs 清理（write），全部 fail-soft
+        "mcp.health_check.check_db_registry" => {
+            super::health_check_handlers::handle_check_db_registry(params)
+        }
+        "mcp.health_check.recover_workspace_registry" => {
+            super::health_check_handlers::handle_recover_workspace_registry(params)
+        }
+        "mcp.health_check.recover_cas_db" => {
+            super::health_check_handlers::handle_recover_cas_db(params)
+        }
+        "mcp.health_check.recover_stale_jobs" => {
+            super::health_check_handlers::handle_recover_stale_jobs(params)
+        }
+
+        // ---- SRV-012：mcp.metrics（T-1787323461346-ec4e03e8）----
+        // metrics Rust 纯计算 feature 的 rollback_config 只读探测，fail-soft。
+        "mcp.metrics.is_rust_metrics_rolled_back" => {
+            super::metrics_handlers::handle_is_rust_metrics_rolled_back(params)
+        }
+
+        // ---- SRV-013：mcp.query_budget（T-1787323461404-efba3d30）----
+        // query budget rollback_config 只读探测，权威由 Rust daemon 持有。
+        "mcp.query_budget.is_rust_budget_rolled_back" => {
+            query_budget_handlers::handle_is_rust_budget_rolled_back(params)
+        }
+
+        // ---- SRV-014：mcp.replicator（T-1787323461464-f351e600）----
+        "mcp.replicator.is_rust_cas_write_rolled_back" => {
+            replicator_handlers::handle_is_rust_cas_write_rolled_back(params)
+        }
+        "mcp.replicator.is_rust_replicator_query_rolled_back" => {
+            replicator_handlers::handle_is_rust_replicator_query_rolled_back(params)
+        }
+        "mcp.replicator.daemon_handle_refresh" => {
+            replicator_handlers::handle_daemon_handle_refresh(state, peer, params, received_fds)
+        }
+
+        // ---- SRV-015：mcp.schema_migrator（T-1787323461541-f7e6ec24）----
+        "mcp.schema_migrator.apply_migrations" => {
+            schema_migrator_handlers::handle_apply_migrations(params)
+        }
+        "mcp.schema_migrator.get_current_version" => {
+            schema_migrator_handlers::handle_get_current_version(params)
+        }
+        "mcp.schema_migrator.get_migration_history" => {
+            schema_migrator_handlers::handle_get_migration_history(params)
+        }
+        "mcp.schema_migrator.validate_schema" => {
+            schema_migrator_handlers::handle_validate_schema(params)
+        }
+
+        // ---- SRV-016：mcp.snapshot_gc（T-1787323461623-fcc66abc）----
+        "mcp.snapshot_gc.delete_backup_history_record" => {
+            snapshot_gc_handlers::handle_delete_backup_history_record(params)
+        }
+        "mcp.snapshot_gc.delete_expired_audit_logs" => {
+            snapshot_gc_handlers::handle_delete_expired_audit_logs(params)
+        }
+        "mcp.snapshot_gc.delete_migration_log_record" => {
+            snapshot_gc_handlers::handle_delete_migration_log_record(params)
+        }
+        "mcp.snapshot_gc.get_registered_snapshot_ids" => {
+            snapshot_gc_handlers::handle_get_registered_snapshot_ids(params)
+        }
+        "mcp.snapshot_gc.scan_expired_audit_logs" => {
+            snapshot_gc_handlers::handle_scan_expired_audit_logs(params)
+        }
+        "mcp.snapshot_gc.scan_expired_backup_history" => {
+            snapshot_gc_handlers::handle_scan_expired_backup_history(params)
+        }
+        "mcp.snapshot_gc.scan_expired_migrations_log" => {
+            snapshot_gc_handlers::handle_scan_expired_migrations_log(params)
+        }
+        "mcp.snapshot_gc.scan_orphaned_workspaces" => {
+            snapshot_gc_handlers::handle_scan_orphaned_workspaces(params)
+        }
+        "mcp.snapshot_gc.vacuum_databases" => snapshot_gc_handlers::handle_vacuum_databases(params),
+
+        // ---- SRV-017：mcp.stage_toggle_migration（T-1787323461683-0059e5a0）----
+        "mcp.stage_toggle_migration.migrate_p0_toggles" => {
+            stage_toggle_migration_handlers::handle_migrate_p0_toggles(params)
+        }
+
+        // ---- SRV-018：mcp.staging_log（T-1787323461742-03e6a000）----
+        "mcp.staging_log.is_rust_staging_log_rolled_back" => {
+            staging_log_handlers::handle_is_rust_staging_log_rolled_back(params)
+        }
+
+        // ---- SRV-011：mcp.job_executor（T-1787323461285-e8a7a12c）----
+        // JobExecutor.start 的 daemon RPC 下沉：jobs DB 权威初始化
+        //（批次10 PRAGMA 集 + JOBS_SCHEMA_DDL，幂等 DDL，write），fail-soft
+        "mcp.job_executor.start" => super::job_executor_handlers::handle_start(params),
 
         // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
         // 全部新 method 统一进入 handle_convergence_rpc（SnapshotDaemonState 重写）。
@@ -2648,16 +3143,8 @@ mod tests {
         assert!(ts.is_some(), "ping 响应必须包含 timestamp 字段");
         let ts = ts.unwrap();
         // 秒级 Unix 时间戳：应大于 2024-01-01（1704067200）且小于 2100 年（4102444800）
-        assert!(
-            ts > 1_704_067_200.0,
-            "timestamp 应大于 2024 年: {}",
-            ts
-        );
-        assert!(
-            ts < 4_102_444_800.0,
-            "timestamp 应小于 2100 年: {}",
-            ts
-        );
+        assert!(ts > 1_704_067_200.0, "timestamp 应大于 2024 年: {}", ts);
+        assert!(ts < 4_102_444_800.0, "timestamp 应小于 2100 年: {}", ts);
     }
 
     #[test]
@@ -3227,9 +3714,13 @@ mod tests {
         assert!(is_protected_mutation("restore"));
         // SRV-003：backup_file 是 Protected_Mutation；rolled_back 只读不是
         assert!(is_protected_mutation("mcp.backup_restore.backup_file"));
-        assert!(!is_protected_mutation("mcp.backup_restore.is_rust_backup_rolled_back"));
+        assert!(!is_protected_mutation(
+            "mcp.backup_restore.is_rust_backup_rolled_back"
+        ));
         assert!(is_protected_mutation("verdict.submit"));
+        assert!(is_protected_mutation("task.p0l_reviewer_block_repair"));
         assert!(is_protected_mutation("task.apply"));
+        assert!(is_protected_mutation("task.reconcile"));
         assert!(is_protected_mutation("lease.acquire"));
 
         // 非 Protected_Mutation 方法
@@ -3304,5 +3795,248 @@ mod tests {
         assert_eq!(response["error"]["code"], "request_timeout");
 
         sp.release();
+    }
+
+    // ---- P0-L step3：task.next_action 投影输出 identity policy 与结构化 claim 要求 ----
+
+    /// 构造携带真实 TaskCollabStore 的 DaemonState（临时 db，只 seed workspace）。
+    fn p0l_s3_state_with_store() -> (tempfile::TempDir, DaemonState) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("p0l-s3-next-action.db");
+        let store = crate::daemon::task_collab::TaskCollabStore::new(&db_path).unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at, is_active) \
+                 VALUES (1, 'test-ws', '/tmp/test-ws', 1700000000.0, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let mut state = make_state();
+        state.task_collab_store = Some(std::sync::Arc::new(store));
+        (dir, state)
+    }
+
+    #[test]
+    fn test_task_next_action_projection_carries_policy_and_claim_requirements() {
+        let (_dir, mut state) = p0l_s3_state_with_store();
+        let store = state.task_collab_store.clone().unwrap();
+        let peer = make_peer();
+
+        // role_worker_v1 任务：canonical envelope + 三角色 role_contracts
+        let rw_task = "T-P0L-NXA";
+        store
+            .handle_task_create(
+                peer.clone(),
+                &json!({
+                    "workspace_id": 1,
+                    "task_id": rw_task,
+                    "title": "p0l step3 next_action projection",
+                    "steps": [{"action": "implement", "target_file": "a.rs"}],
+                    "task_contract_envelope": {
+                        "contract_id": format!("TC-{rw_task}"),
+                        "revision": 1,
+                        "profile": "code_change",
+                        "identity_policy": "role_worker_v1",
+                        "objective": {"statement": "nx", "description": "p0l step3", "source": "task.create"},
+                        "interfaces": {"rpc": "task.create", "task_id": rw_task},
+                        "allowed_edit_scope": {"files": ["a.rs"], "symbols": [], "generated_from": "task steps"},
+                        "acceptance_clauses": [],
+                        "risks": [],
+                        "rollback": {"strategy": "append-only"},
+                        "dependencies": [],
+                        "handoff": {"from": "executor", "to": "reviewer", "independence_requirement": "required"},
+                        "source": {"kind": "task.create", "task_id": rw_task}
+                    },
+                    "role_contracts": [
+                        {"role": "executor", "independence": "{}"},
+                        {"role": "reviewer", "independence": "{}"},
+                        {"role": "adjudicator", "independence": "{}"}
+                    ]
+                }),
+            )
+            .unwrap();
+        // 无合同 revision 的任务（历史形态）
+        let bare_task = "T-P0L-NXB";
+        store
+            .handle_task_create(
+                peer.clone(),
+                &json!({
+                    "workspace_id": 1,
+                    "task_id": bare_task,
+                    "title": "no contract revision",
+                    "steps": [{"action": "implement", "target_file": "a.rs"}]
+                }),
+            )
+            .unwrap();
+
+        // 1) role_worker_v1：投影携带 policy 与结构化 claim requirements（只读，无 mutation）
+        let response = dispatch(
+            &mut state,
+            peer.clone(),
+            "task.next_action",
+            &json!({"task_id": rw_task, "workspace_instance_id": "ws-1"}),
+            &[],
+        );
+        assert_eq!(
+            response["ok"], true,
+            "next_action 必须是合法投影: {}",
+            response
+        );
+        let result = &response["result"];
+        assert_eq!(result["identity_policy"], json!("role_worker_v1"));
+        assert_eq!(result["identity_policy_status"], json!("declared"));
+        assert_eq!(
+            result["claim_requirements"]["role_worker_auth"]["required"],
+            json!(true),
+            "role_worker_v1 任务必须声明 role_worker_auth claim 要求"
+        );
+        assert_eq!(
+            result["claim_requirements"]["role_worker_auth"]["expected_role"],
+            result["required_role"],
+            "claim 期望的 worker 角色必须与派工 required_role 一致"
+        );
+
+        // 2) 无合同 revision：policy null + status no_contract_revision，绝不附加 claim_requirements
+        let response = dispatch(
+            &mut state,
+            peer,
+            "task.next_action",
+            &json!({"task_id": bare_task, "workspace_instance_id": "ws-1"}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        let result = &response["result"];
+        assert_eq!(result["identity_policy"], json!(null));
+        assert_eq!(
+            result["identity_policy_status"],
+            json!("no_contract_revision")
+        );
+        assert!(
+            result.get("claim_requirements").is_none(),
+            "legacy/历史任务不得被附加新 claim 要求（原路径不变）"
+        );
+    }
+
+    // ---- P0-L R3：fail-closed 路由一致性（unresolved / 未知 policy 的机器投影）----
+    // 负矩阵：policy 未决或声明了未知 policy 时，next_action 投影不得与 blocked
+    // 状态矛盾——必须统一降级为 resolve_identity_policy（BLOCKED，next_role=adjudicator），
+    // reason 同时写入 blocking_reasons 与 blocking_conditions，并附 claim_requirements.blocked。
+    #[test]
+    fn test_task_next_action_unresolved_or_unknown_policy_projects_machine_blocked() {
+        let (_dir, mut state) = p0l_s3_state_with_store();
+        let store = state.task_collab_store.clone().unwrap();
+        let peer = make_peer();
+
+        // 手工插入合同 revision（绕过 handler），构造两种 fail-closed 场景：
+        //   场景 1：envelope 无 identity_policy → Unresolved
+        //   场景 2：声明了未知 policy → Declared(unknown)
+        fn seed_blocked_revision(
+            store: &crate::daemon::task_collab::TaskCollabStore,
+            peer: &PeerCredential,
+            task_id: &str,
+            envelope_payload: &str,
+        ) {
+            store
+                .handle_task_create(
+                    peer.clone(),
+                    &json!({
+                        "workspace_id": 1,
+                        "task_id": task_id,
+                        "title": "p0l R3 blocked projection",
+                        "steps": [{"action": "implement", "target_file": "a.rs"}]
+                    }),
+                )
+                .unwrap();
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO task_contract_revisions
+                     (contract_id, revision, contract_hash, profile, task_id, workspace_id,
+                      envelope_payload, created_at, created_by)
+                 VALUES (?1, 1, ?2, 'code_change', ?3, 1, ?4, 1.0, 'test')",
+                rusqlite::params![
+                    format!("TC-{task_id}-r3"),
+                    format!("sha256:r3-{task_id}"),
+                    task_id,
+                    envelope_payload
+                ],
+            )
+            .unwrap();
+        }
+
+        let scenarios: [(&str, &str, &str); 2] = [
+            // (task_id, envelope_payload, 场景名)
+            (
+                "T-P0L-NXC",
+                "{}",
+                "unresolved（revision 缺 identity_policy）",
+            ),
+            (
+                "T-P0L-NXD",
+                r#"{"identity_policy": "mystery_policy_v9"}"#,
+                "declared 未知 policy",
+            ),
+        ];
+
+        for (task_id, payload, scenario) in scenarios {
+            seed_blocked_revision(&store, &peer, task_id, payload);
+            let response = dispatch(
+                &mut state,
+                peer.clone(),
+                "task.next_action",
+                &json!({"task_id": task_id, "workspace_instance_id": "ws-1"}),
+                &[],
+            );
+            assert_eq!(
+                response["ok"], true,
+                "[{scenario}] fail-closed 也必须返回合法投影: {response}"
+            );
+            let result = &response["result"];
+            assert_eq!(
+                result["next_action"],
+                json!("resolve_identity_policy"),
+                "[{scenario}] blocked 任务不得输出可执行 claim 动作"
+            );
+            assert_eq!(
+                result["action"],
+                json!("BLOCKED"),
+                "[{scenario}] action 必须为 BLOCKED"
+            );
+            assert_eq!(
+                result["decision"],
+                json!("BLOCKED"),
+                "[{scenario}] decision 必须为 BLOCKED"
+            );
+            assert_eq!(
+                result["next_role"],
+                json!("adjudicator"),
+                "[{scenario}] policy 裁决归 adjudicator"
+            );
+            assert_eq!(
+                result["claim_requirements"]["blocked"],
+                json!(true),
+                "[{scenario}] claim_requirements 必须标记 blocked"
+            );
+            let reason = result["claim_requirements"]["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            assert!(!reason.is_empty(), "[{scenario}] blocked reason 不得为空");
+            // reason 必须同时出现在两个 canonical blocking 数组（去重，各恰一条）
+            for key in ["blocking_reasons", "blocking_conditions"] {
+                let items = result[key]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("[{scenario}] {key} 必须是数组: {response}"));
+                let hits = items
+                    .iter()
+                    .filter(|item| item.as_str() == Some(reason.as_str()))
+                    .count();
+                assert_eq!(
+                    hits, 1,
+                    "[{scenario}] {key} 必须恰含一条 blocked reason（去重）: {items:?}"
+                );
+            }
+        }
     }
 }

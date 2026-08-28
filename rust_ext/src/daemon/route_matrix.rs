@@ -291,6 +291,7 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     ToolRoute { name: "task_create_subtask", module: "tools_task", target_backend: Backend::TaskRpc, rpc_method: "task.create_subtask", op_class: OpClass::ProtectedMutation, batch: "existing-task", status: "stable" },
     ToolRoute { name: "task_list", module: "tools_task", target_backend: Backend::TaskRpc, rpc_method: "task.list", op_class: OpClass::ReadOnly, batch: "existing-task", status: "stable" },
     ToolRoute { name: "task_next_step", module: "tools_task", target_backend: Backend::TaskRpc, rpc_method: "task.claim", op_class: OpClass::ProtectedMutation, batch: "existing-task", status: "stable" },
+    ToolRoute { name: "task_step_bind_role_contract", module: "tools_task", target_backend: Backend::TaskRpc, rpc_method: "task.step.bind_role_contract", op_class: OpClass::ProtectedMutation, batch: "existing-task", status: "stable" },
     ToolRoute { name: "task_plan_template", module: "tools_task", target_backend: Backend::PythonCompat, rpc_method: "task_plan_template", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
     ToolRoute { name: "task_quality_findings", module: "tools_task", target_backend: Backend::TaskRpc, rpc_method: "task.quality_findings", op_class: OpClass::ReadOnly, batch: "existing-task", status: "stable" },
     ToolRoute { name: "task_report_step", module: "tools_task", target_backend: Backend::TaskRpc, rpc_method: "task.report", op_class: OpClass::ProtectedMutation, batch: "existing-task", status: "stable" },
