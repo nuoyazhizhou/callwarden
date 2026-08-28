@@ -47,6 +47,8 @@ const TASK_DB_LEDGER_METHODS: &[&str] = &[
     "task.supersede",
     // P0-B：历史无 binding task 的 authority attestation 同样需要持久化重放。
     "task.attest_legacy_workspace_binding",
+    // 历史任务状态 reconciliation：只允许 daemon 追加可证明的生命周期事件。
+    "task.reconcile",
     "lease.acquire",
     "lease.renew",
     "lease.release",
@@ -897,4 +899,3 @@ mod tests {
         assert!(err.message.contains("rules hash 失配"));
     }
 }
-

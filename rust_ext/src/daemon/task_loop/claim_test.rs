@@ -8,16 +8,18 @@
 
 use rusqlite::Connection;
 
-use crate::sqlite_query::migrate_connection;
 use super::claim::{
-    read_current_binding, claim_step, ClaimStepInput, LedgerKey, ERR_REMEDIATION_STEP_MISMATCH,
+    claim_step, read_current_binding, ClaimStepInput, LedgerKey, ERR_REMEDIATION_STEP_MISMATCH,
     ERR_REMEDIATION_STEP_REQUIRED, ERR_STEP_BINDING_INVALID, ERR_TASK_BINDING_REQUIRED,
 };
 use super::contract_set::{
     set_task_contract, ContractPayload, LedgerKey as ContractLedgerKey, SetContractInput,
 };
-use super::create::{create_task, CreateTaskInput, LedgerKey as CreateLedgerKey, WorkspaceCaptureInput};
+use super::create::{
+    create_task, CreateTaskInput, LedgerKey as CreateLedgerKey, WorkspaceCaptureInput,
+};
 use super::types::FrozenAuthorityInput;
+use crate::sqlite_query::migrate_connection;
 
 /// 开启内存 task-DB 并跑一遍 migration（v56：含 task_step_role_contract_bindings）。
 fn fresh_db() -> Connection {
@@ -144,7 +146,14 @@ fn setup_contract_v2(conn: &mut Connection, task_id: &str, role: &str) -> String
 }
 
 /// 插入一个属于 task 的步骤（id 用整数；claim 的 step_id 以字符串比对，SQLite 亲和转换匹配）。
-fn setup_step(conn: &Connection, task_id: &str, step_id: i64, action: &str, status: &str, result: &str) {
+fn setup_step(
+    conn: &Connection,
+    task_id: &str,
+    step_id: i64,
+    action: &str,
+    status: &str,
+    result: &str,
+) {
     conn.execute(
         "INSERT INTO task_steps \
          (id, task_id, step_index, action, status, result, created_at) \
@@ -173,11 +182,9 @@ fn claim_key(request_id: &str) -> LedgerKey {
 }
 
 fn count(conn: &Connection, table: &str) -> i64 {
-    conn.query_row(
-        &format!("SELECT COUNT(*) FROM {table}"),
-        [],
-        |row| row.get(0),
-    )
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })
     .unwrap()
 }
 
@@ -211,14 +218,22 @@ fn first_claim_writes_binding_revision_1() {
     let r1 = setup_contract(&mut conn, "t-1", "coder");
     setup_step(&conn, "t-1", 1, "inspect", "pending", "");
 
-    let resp = claim_step(&mut conn, &frozen(), &claim_key("req-1"), &claim_input("t-1", 1, &r1))
-        .expect("首次 claim 应成功");
+    let resp = claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-1"),
+        &claim_input("t-1", 1, &r1),
+    )
+    .expect("首次 claim 应成功");
     assert_eq!(resp["ok"].as_bool(), Some(true));
     assert_eq!(resp["binding_id"], "sb-t-1-1-r1");
     assert_eq!(resp["binding_revision"], 1);
     assert_eq!(resp["workspace_id"], 1);
     assert_eq!(resp["role_contract_revision_id"], r1);
-    assert!(resp["supersedes_binding_id"].is_null(), "revision 1 的 supersedes 必须为 NULL");
+    assert!(
+        resp["supersedes_binding_id"].is_null(),
+        "revision 1 的 supersedes 必须为 NULL"
+    );
 
     // 表内只落一条不可变 binding，provenance 与 lineage 一致。
     assert_eq!(count(&conn, "task_step_role_contract_bindings"), 1);
@@ -235,7 +250,9 @@ fn first_claim_writes_binding_revision_1() {
     assert_eq!(lineage_id, "rcl-t-1-coder");
 
     // fail-closed read projection：verified。
-    let proj = read_current_binding(&conn, 1, "t-1", "1").expect("读取失败").expect("应 verified");
+    let proj = read_current_binding(&conn, 1, "t-1", "1")
+        .expect("读取失败")
+        .expect("应 verified");
     assert_eq!(proj.binding_revision, 1);
     assert_eq!(proj.binding_id, "sb-t-1-1-r1");
     assert_eq!(proj.role_contract_revision_id, r1);
@@ -250,10 +267,20 @@ fn second_claim_appends_revision_2_superseding_1() {
     let r2 = setup_contract_v2(&mut conn, "t-1", "coder");
     setup_step(&conn, "t-1", 1, "inspect", "pending", "");
 
-    claim_step(&mut conn, &frozen(), &claim_key("req-1"), &claim_input("t-1", 1, &r1))
-        .expect("首次 claim ok");
-    let resp2 = claim_step(&mut conn, &frozen(), &claim_key("req-2"), &claim_input("t-1", 1, &r2))
-        .expect("重绑追加应成功");
+    claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-1"),
+        &claim_input("t-1", 1, &r1),
+    )
+    .expect("首次 claim ok");
+    let resp2 = claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-2"),
+        &claim_input("t-1", 1, &r2),
+    )
+    .expect("重绑追加应成功");
     assert_eq!(resp2["binding_revision"], 2);
     assert_eq!(resp2["binding_id"], "sb-t-1-1-r2");
     assert_eq!(resp2["supersedes_binding_id"], "sb-t-1-1-r1");
@@ -271,7 +298,9 @@ fn second_claim_appends_revision_2_superseding_1() {
     assert_eq!((revision, supersedes.as_deref()), (2, Some("sb-t-1-1-r1")));
 
     // current binding = r2。
-    let proj = read_current_binding(&conn, 1, "t-1", "1").expect("读取失败").expect("应 verified");
+    let proj = read_current_binding(&conn, 1, "t-1", "1")
+        .expect("读取失败")
+        .expect("应 verified");
     assert_eq!(proj.binding_revision, 2);
     assert_eq!(proj.role_contract_revision_id, r2);
 }
@@ -300,8 +329,13 @@ fn claim_rejects_step_not_owned_by_task() {
     setup_task(&mut conn, "t-other");
     setup_step(&conn, "t-other", 2, "inspect", "pending", "");
 
-    let err = claim_step(&mut conn, &frozen(), &claim_key("req-x"), &claim_input("t-1", 2, &r1))
-        .expect_err("step 不属于 task 必须拒绝");
+    let err = claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-x"),
+        &claim_input("t-1", 2, &r1),
+    )
+    .expect_err("step 不属于 task 必须拒绝");
     assert_eq!(err.code, ERR_STEP_BINDING_INVALID);
     assert_eq!(count(&conn, "task_step_role_contract_bindings"), 0);
 }
@@ -331,8 +365,13 @@ fn claim_rejects_cross_task_lineage() {
     let r2 = setup_contract(&mut conn, "t-2", "coder"); // lineage 归属 t-2
     setup_step(&conn, "t-1", 1, "inspect", "pending", "");
 
-    let err = claim_step(&mut conn, &frozen(), &claim_key("req-x"), &claim_input("t-1", 1, &r2))
-        .expect_err("revision lineage 跨 task 必须拒绝");
+    let err = claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-x"),
+        &claim_input("t-1", 1, &r2),
+    )
+    .expect_err("revision lineage 跨 task 必须拒绝");
     assert_eq!(err.code, ERR_STEP_BINDING_INVALID);
     assert_eq!(count(&conn, "task_step_role_contract_bindings"), 0);
 }
@@ -343,8 +382,13 @@ fn claim_rejects_broken_binding_chain() {
     setup_task(&mut conn, "t-1");
     let r1 = setup_contract(&mut conn, "t-1", "coder");
     setup_step(&conn, "t-1", 1, "inspect", "pending", "");
-    claim_step(&mut conn, &frozen(), &claim_key("req-1"), &claim_input("t-1", 1, &r1))
-        .expect("首次 claim ok");
+    claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-1"),
+        &claim_input("t-1", 1, &r1),
+    )
+    .expect("首次 claim ok");
 
     // 人为制造断链：直接插入 binding_revision=3（链 1,3 → count=2 max=3）。
     conn.execute(
@@ -359,13 +403,24 @@ fn claim_rejects_broken_binding_chain() {
     )
     .unwrap();
 
-    let err = claim_step(&mut conn, &frozen(), &claim_key("req-2"), &claim_input("t-1", 1, &r1))
-        .expect_err("断链必须拒绝追加（UNVERIFIED）");
+    let err = claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-2"),
+        &claim_input("t-1", 1, &r1),
+    )
+    .expect_err("断链必须拒绝追加（UNVERIFIED）");
     assert_eq!(err.code, ERR_STEP_BINDING_INVALID);
-    assert_eq!(count(&conn, "task_step_role_contract_bindings"), 2, "不得追加新 binding");
+    assert_eq!(
+        count(&conn, "task_step_role_contract_bindings"),
+        2,
+        "不得追加新 binding"
+    );
 
     // fail-closed read projection：断链 → None。
-    assert!(read_current_binding(&conn, 1, "t-1", "1").expect("读取失败").is_none());
+    assert!(read_current_binding(&conn, 1, "t-1", "1")
+        .expect("读取失败")
+        .is_none());
 }
 
 #[test]
@@ -376,8 +431,13 @@ fn read_projection_unverified_when_lineage_mismatch() {
     let r1 = setup_contract(&mut conn, "t-1", "coder");
     let r2 = setup_contract(&mut conn, "t-2", "coder");
     setup_step(&conn, "t-1", 1, "inspect", "pending", "");
-    claim_step(&mut conn, &frozen(), &claim_key("req-1"), &claim_input("t-1", 1, &r1))
-        .expect("首次 claim ok");
+    claim_step(
+        &mut conn,
+        &frozen(),
+        &claim_key("req-1"),
+        &claim_input("t-1", 1, &r1),
+    )
+    .expect("首次 claim ok");
 
     // 人为改写 binding 指向 t-2 的 revision/lineage（存在但跨 task）。
     conn.execute(
@@ -389,7 +449,9 @@ fn read_projection_unverified_when_lineage_mismatch() {
     .unwrap();
 
     // revision 存在、链连续，但 lineage task 与 binding task 不一致 → UNVERIFIED。
-    assert!(read_current_binding(&conn, 1, "t-1", "1").expect("读取失败").is_none());
+    assert!(read_current_binding(&conn, 1, "t-1", "1")
+        .expect("读取失败")
+        .is_none());
 }
 
 #[test]
@@ -399,7 +461,14 @@ fn remediation_requires_explicit_step() {
     let r1 = setup_contract(&mut conn, "t-1", "coder");
     // step 1 失败未解析；step 2 是其 fix_defect 整改（pending）。
     setup_step(&conn, "t-1", 1, "inspect", "failed", "");
-    setup_step(&conn, "t-1", 2, "fix_defect", "pending", r#"{"remediation_of_step_id":"1"}"#);
+    setup_step(
+        &conn,
+        "t-1",
+        2,
+        "fix_defect",
+        "pending",
+        r#"{"remediation_of_step_id":"1"}"#,
+    );
 
     let mut input = claim_input("t-1", 2, &r1);
     let err = claim_step(&mut conn, &frozen(), &claim_key("req-1"), &input)
@@ -421,13 +490,115 @@ fn remediation_requires_explicit_step() {
     assert_eq!(err.code, ERR_REMEDIATION_STEP_MISMATCH);
 }
 
+/// task-level remediation（reviewer_blocked 的 null step_id）必须可精确领取。
+///
+/// 回归目标：daemon 在 task-level `reviewer_blocked` 后追加的 fix_defect 其
+/// `remediation_of_step_id` 为 null，旧实现强制要求该字段非空，导致该 step 结构性
+/// 不可领取，任务永久停在 in_progress/claim_current_step 活锁。
+#[test]
+fn task_level_remediation_claim_succeeds() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let r1 = setup_contract(&mut conn, "t-1", "coder");
+    // 无 failed step：全部步骤已 done，仅 task-level fix_defect 待领取。
+    setup_step(&conn, "t-1", 1, "verify", "done", "ok");
+    setup_step(
+        &conn,
+        "t-1",
+        2,
+        "fix_defect",
+        "pending",
+        r#"{"remediation_of_step_id":null,"source_outcome":"reviewer_blocked",
+            "source_verdict_id":"V-1","source_handoff_event_id":4279}"#,
+    );
+
+    let mut input = claim_input("t-1", 2, &r1);
+    input.remediation_step_id = "2".to_string();
+    let resp = claim_step(&mut conn, &frozen(), &claim_key("req-tl-1"), &input)
+        .expect("task-level remediation 应可精确领取");
+    assert_eq!(resp["ok"].as_bool(), Some(true));
+    assert_eq!(resp["step_id"], "2");
+    assert_eq!(count(&conn, "task_step_role_contract_bindings"), 1);
+}
+
+/// task-level remediation 缺少可校验 provenance 时必须仍然拒绝（不得放宽为“无 provenance 也可领取”）。
+#[test]
+fn task_level_remediation_without_provenance_rejected() {
+    // 情况 1：完全没有 provenance 字段。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let r1 = setup_contract(&mut conn, "t-1", "coder");
+    setup_step(&conn, "t-1", 1, "verify", "done", "ok");
+    setup_step(&conn, "t-1", 2, "fix_defect", "pending", "{}");
+    let mut input = claim_input("t-1", 2, &r1);
+    input.remediation_step_id = "2".to_string();
+    // required_remediation_step 不会选中无 source_outcome 的 step，因此此处按
+    // “无待处理 remediation 却提供 remediation_step_id” 拒绝。
+    let err = claim_step(&mut conn, &frozen(), &claim_key("req-tl-2"), &input)
+        .expect_err("无任何 provenance 必须拒绝");
+    assert_eq!(err.code, ERR_REMEDIATION_STEP_MISMATCH);
+    assert_eq!(count(&conn, "task_step_role_contract_bindings"), 0);
+
+    // 情况 2：声明了 reviewer_blocked 但缺 source_verdict_id / source_handoff_event_id。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-2");
+    let r1 = setup_contract(&mut conn, "t-2", "coder");
+    setup_step(&conn, "t-2", 1, "verify", "done", "ok");
+    setup_step(
+        &conn,
+        "t-2",
+        2,
+        "fix_defect",
+        "pending",
+        r#"{"remediation_of_step_id":null,"source_outcome":"reviewer_blocked"}"#,
+    );
+    let mut input = claim_input("t-2", 2, &r1);
+    input.remediation_step_id = "2".to_string();
+    let err = claim_step(&mut conn, &frozen(), &claim_key("req-tl-3"), &input)
+        .expect_err("缺 verdict/handoff provenance 必须拒绝");
+    assert_eq!(err.code, ERR_REMEDIATION_STEP_MISMATCH);
+    assert_eq!(count(&conn, "task_step_role_contract_bindings"), 0);
+}
+
+/// 存在 unresolved failed step 时不得用 task-level provenance 绕过 step-level 绑定。
+#[test]
+fn task_level_provenance_cannot_bypass_failed_step() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let r1 = setup_contract(&mut conn, "t-1", "coder");
+    setup_step(&conn, "t-1", 1, "inspect", "failed", "");
+    setup_step(
+        &conn,
+        "t-1",
+        2,
+        "fix_defect",
+        "pending",
+        r#"{"remediation_of_step_id":null,"source_outcome":"reviewer_blocked",
+            "source_verdict_id":"V-1","source_handoff_event_id":4279}"#,
+    );
+
+    let mut input = claim_input("t-1", 2, &r1);
+    input.remediation_step_id = "2".to_string();
+    let err = claim_step(&mut conn, &frozen(), &claim_key("req-tl-4"), &input)
+        .expect_err("存在 unresolved failed step 时 task-level provenance 不得放行");
+    assert_eq!(err.code, ERR_REMEDIATION_STEP_MISMATCH);
+    assert_eq!(count(&conn, "task_step_role_contract_bindings"), 0);
+}
+
 #[test]
 fn remediation_exact_claim_succeeds() {
     let mut conn = fresh_db();
     setup_task(&mut conn, "t-1");
     let r1 = setup_contract(&mut conn, "t-1", "coder");
     setup_step(&conn, "t-1", 1, "inspect", "failed", "");
-    setup_step(&conn, "t-1", 2, "fix_defect", "pending", r#"{"remediation_of_step_id":"1"}"#);
+    setup_step(
+        &conn,
+        "t-1",
+        2,
+        "fix_defect",
+        "pending",
+        r#"{"remediation_of_step_id":"1"}"#,
+    );
 
     let mut input = claim_input("t-1", 2, &r1);
     input.remediation_step_id = "2".to_string();
@@ -439,8 +610,8 @@ fn remediation_exact_claim_succeeds() {
     assert_eq!(count(&conn, "task_step_role_contract_bindings"), 1);
 
     // 同一 (task, remediation_step, request_id) 幂等：同一 key 重放不重复写入。
-    let replay = claim_step(&mut conn, &frozen(), &claim_key("req-1"), &input)
-        .expect("幂等重放应成功");
+    let replay =
+        claim_step(&mut conn, &frozen(), &claim_key("req-1"), &input).expect("幂等重放应成功");
     assert_eq!(replay, resp);
     assert_eq!(count(&conn, "task_step_role_contract_bindings"), 1);
 }
@@ -468,8 +639,10 @@ fn replay_of_committed_key_does_not_dup() {
     setup_step(&conn, "t-1", 1, "inspect", "pending", "");
 
     let k = claim_key("req-replay");
-    let first = claim_step(&mut conn, &frozen(), &k, &claim_input("t-1", 1, &r1)).expect("first ok");
-    let second = claim_step(&mut conn, &frozen(), &k, &claim_input("t-1", 1, &r1)).expect("replay ok");
+    let first =
+        claim_step(&mut conn, &frozen(), &k, &claim_input("t-1", 1, &r1)).expect("first ok");
+    let second =
+        claim_step(&mut conn, &frozen(), &k, &claim_input("t-1", 1, &r1)).expect("replay ok");
     assert_eq!(first, second, "幂等重放必须原样返回已保存的结果");
     assert_eq!(count(&conn, "task_step_role_contract_bindings"), 1);
 }

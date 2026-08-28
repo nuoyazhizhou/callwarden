@@ -21,6 +21,91 @@ pub const ERR_RUNTIME_SECRET: &str = "E_RUNTIME_PROVENANCE_SECRET_FORBIDDEN";
 pub const ERR_WORKER_NOT_FOUND: &str = "E_ROLE_WORKER_NOT_FOUND";
 pub const ERR_WORKER_REVOKED: &str = "E_ROLE_WORKER_REVOKED";
 
+// ===== P0-L：Task Contract identity policy（typed 解析，fail-closed）=====
+
+/// 唯一合法的 identity policy 枚举；其他取值一律拒绝，绝不静默降级。
+pub const POLICY_LEGACY_IDENTITY_V1: &str = "legacy_identity_v1";
+pub const POLICY_ROLE_WORKER_V1: &str = "role_worker_v1";
+pub const ERR_POLICY_REQUIRED: &str = "E_TASK_IDENTITY_POLICY_REQUIRED";
+pub const ERR_POLICY_MISMATCH: &str = "E_TASK_IDENTITY_POLICY_MISMATCH";
+
+/// 从 canonical Task Contract envelope 解析 `identity_policy`。
+///
+/// fail-closed 语义（P0-L step1 决策）：
+/// - missing / malformed / multiple policy 槽位 → `E_TASK_IDENTITY_POLICY_REQUIRED`；
+/// - unknown 取值 → `E_TASK_IDENTITY_POLICY_MISMATCH`。
+/// policy 是后续 create→bootstrap/revise→next_action→claim 的唯一授权路由锚点，
+/// 绝不把 provider/account/model/agent/session 重新当作授权依据。
+pub fn parse_identity_policy(envelope: &Value) -> Result<String, DaemonRpcError> {
+    let object = envelope.as_object().ok_or_else(|| {
+        DaemonRpcError::new(ERR_POLICY_REQUIRED, "Task Contract envelope 必须是 JSON object")
+    })?;
+    let mut slots: Vec<(&str, &Value)> = Vec::new();
+    for key in ["identity_policy", "identity_policies"] {
+        if let Some(value) = object.get(key) {
+            slots.push((key, value));
+        }
+    }
+    if slots.is_empty() {
+        return Err(DaemonRpcError::new(
+            ERR_POLICY_REQUIRED,
+            "Task Contract envelope 缺少 identity_policy（zero policy fail-closed）",
+        ));
+    }
+    if slots.len() > 1 {
+        return Err(DaemonRpcError::new(
+            ERR_POLICY_REQUIRED,
+            "Task Contract envelope 同时声明多个 identity policy 槽位（multiple policy fail-closed）",
+        ));
+    }
+    // identity_policies 作为唯一槽位时只接受恰好一个元素，保持单 policy 语义。
+    let declared: &Value = match slots[0] {
+        ("identity_policies", Value::Array(items)) => {
+            if items.len() != 1 {
+                return Err(DaemonRpcError::new(
+                    ERR_POLICY_REQUIRED,
+                    format!("identity_policies 必须恰好含 1 个 policy，实际 {} 个（multiple/zero fail-closed）", items.len()),
+                ));
+            }
+            &items[0]
+        }
+        (_, value) => value,
+    };
+    let policy = declared
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DaemonRpcError::new(
+                ERR_POLICY_REQUIRED,
+                "identity_policy 必须是非空字符串（malformed fail-closed）",
+            )
+        })?;
+    match policy {
+        POLICY_LEGACY_IDENTITY_V1 | POLICY_ROLE_WORKER_V1 => Ok(policy.to_string()),
+        other => Err(DaemonRpcError::new(
+            ERR_POLICY_MISMATCH,
+            format!(
+                "identity_policy {other} 未知；仅支持 {POLICY_LEGACY_IDENTITY_V1} / {POLICY_ROLE_WORKER_V1}"
+            ),
+        )),
+    }
+}
+
+/// 从已持久化的 envelope payload JSON 中只读提取 `identity_policy`。
+///
+/// 用于事务内回读校验（caller/persisted exact match）与 current policy 投影；
+/// 缺失/非法 JSON/空值一律返回 None，由调用方按 fail-closed 语义处置。
+pub fn policy_from_envelope_payload(payload_json: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(payload_json).ok()?;
+    value
+        .get("identity_policy")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|policy| !policy.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 #[derive(Clone, Debug)]
 pub struct RoleWorkerAuth {
     pub role_worker_id: String,
@@ -301,6 +386,53 @@ pub fn validate_and_record(
     action_type: &str,
     expected_role: &str,
 ) -> Result<(), DaemonRpcError> {
+    validate_and_record_inner(
+        tx,
+        auth,
+        owner_key,
+        workspace_id,
+        task_id,
+        action_type,
+        Some(expected_role),
+    )
+    .map(|_| ())
+}
+
+/// P0-L R1：worker-first 授权校验。
+///
+/// 与 `validate_and_record` 的唯一区别：调用方不供应 expected_role——稳定
+/// Role Worker 在 authority 库中登记的角色（credential 校验通过后从 DB 读取）
+/// 是唯一角色锚点，直接作为有效角色返回，供下游合同/事件归属使用。
+/// runtime identity 不参与本函数的任何授权判定（P0-L R1：worker-first，
+/// runtime identity 仅 provenance）。
+pub fn validate_and_record_worker_first(
+    tx: &Transaction<'_>,
+    auth: &RoleWorkerAuth,
+    owner_key: &str,
+    workspace_id: i64,
+    task_id: &str,
+    action_type: &str,
+) -> Result<String, DaemonRpcError> {
+    validate_and_record_inner(
+        tx,
+        auth,
+        owner_key,
+        workspace_id,
+        task_id,
+        action_type,
+        None,
+    )
+}
+
+fn validate_and_record_inner(
+    tx: &Transaction<'_>,
+    auth: &RoleWorkerAuth,
+    owner_key: &str,
+    workspace_id: i64,
+    task_id: &str,
+    action_type: &str,
+    expected_role: Option<&str>,
+) -> Result<String, DaemonRpcError> {
     let row: Option<(String, String, String, String)> = tx.query_row(
         "SELECT w.owner_key,w.role,w.credential_hash,w.status FROM role_workers w WHERE w.role_worker_id=?1",
         [&auth.role_worker_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -311,8 +443,10 @@ pub fn validate_and_record(
     if worker_owner != owner_key || status != "active" || credential_hash != sha256_hex(auth.credential.as_bytes()) {
         return Err(DaemonRpcError::new(ERR_CREDENTIAL_INVALID, "role worker credential、owner 或状态无效"));
     }
-    if worker_role != expected_role {
-        return Err(DaemonRpcError::new(ERR_ROLE_MISMATCH, format!("role worker 已绑定 role={}，不可用于 {}", worker_role, expected_role)));
+    if let Some(expected) = expected_role {
+        if worker_role != expected {
+            return Err(DaemonRpcError::new(ERR_ROLE_MISMATCH, format!("role worker 已绑定 role={}，不可用于 {}", worker_role, expected)));
+        }
     }
     let instance: Option<(String, String)> = tx.query_row(
         "SELECT role_worker_id,status FROM role_worker_instances WHERE role_instance_id=?1 AND owner_key=?2",
@@ -325,7 +459,7 @@ pub fn validate_and_record(
     }
     let conflict: Option<String> = tx.query_row(
         "SELECT p.role_worker_id FROM role_runtime_provenance p JOIN role_workers w ON w.role_worker_id=p.role_worker_id WHERE p.task_id=?1 AND w.role<>?2 AND p.role_worker_id=?3 ORDER BY p.recorded_at DESC LIMIT 1",
-        params![task_id, expected_role, auth.role_worker_id], |row| row.get(0),
+        params![task_id, worker_role, auth.role_worker_id], |row| row.get(0),
     ).optional().map_err(|error| DaemonRpcError::internal_error(format!("校验 role worker 分离失败: {error}")))?;
     if conflict.is_some() {
         return Err(DaemonRpcError::new(ERR_SEPARATION, "同一 role worker 已在该任务上承担冲突治理角色"));
@@ -336,7 +470,7 @@ pub fn validate_and_record(
         "INSERT INTO role_runtime_provenance (event_id,workspace_id,task_id,action_type,role_worker_id,role_instance_id,role_session_id,runtime_payload_json,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         params![event_id("RRP", &format!("{action_type}:{task_id}:{}:{}:{ts}", auth.role_worker_id, auth.role_session_id)), workspace_id, task_id, action_type, auth.role_worker_id, auth.role_instance_id, auth.role_session_id, payload, ts],
     ).map_err(|error| DaemonRpcError::internal_error(format!("记录 runtime provenance 失败: {error}")))?;
-    Ok(())
+    Ok(worker_role)
 }
 
 #[cfg(test)]
@@ -456,6 +590,64 @@ mod tests {
         let tx = conn.transaction().unwrap();
         let err = validate_and_record(&tx, &auth("rw-exec", "rwi-exec", "s-after-revoke", credential, json!({})), "owner-A", 1, "T2", "task.claim", "executor").unwrap_err();
         assert_eq!(err.code, ERR_CREDENTIAL_INVALID);
+    }
+
+    // ===== P0-L step1：identity policy 解析 fail-closed 矩阵 =====
+
+    #[test]
+    fn identity_policy_accepts_only_canonical_enum() {
+        assert_eq!(
+            parse_identity_policy(&json!({"identity_policy": "legacy_identity_v1"})).unwrap(),
+            POLICY_LEGACY_IDENTITY_V1
+        );
+        assert_eq!(
+            parse_identity_policy(&json!({"identity_policy": "role_worker_v1"})).unwrap(),
+            POLICY_ROLE_WORKER_V1
+        );
+        // identity_policies 单元素数组等价单 policy。
+        assert_eq!(
+            parse_identity_policy(&json!({"identity_policies": ["role_worker_v1"]})).unwrap(),
+            POLICY_ROLE_WORKER_V1
+        );
+    }
+
+    #[test]
+    fn identity_policy_zero_malformed_multiple_are_required_errors() {
+        // zero：无 policy 槽位。
+        let zero = parse_identity_policy(&json!({"contract_id": "TC-x"})).unwrap_err();
+        assert_eq!(zero.code, ERR_POLICY_REQUIRED);
+        // malformed：非字符串/空字符串。
+        let malformed = parse_identity_policy(&json!({"identity_policy": 42})).unwrap_err();
+        assert_eq!(malformed.code, ERR_POLICY_REQUIRED);
+        let empty = parse_identity_policy(&json!({"identity_policy": "  "})).unwrap_err();
+        assert_eq!(empty.code, ERR_POLICY_REQUIRED);
+        // multiple：双槽位。
+        let multiple = parse_identity_policy(&json!({
+            "identity_policy": "legacy_identity_v1", "identity_policies": ["role_worker_v1"]
+        })).unwrap_err();
+        assert_eq!(multiple.code, ERR_POLICY_REQUIRED);
+        // multiple：数组超过一个元素。
+        let two = parse_identity_policy(&json!({"identity_policies": ["legacy_identity_v1", "role_worker_v1"]})).unwrap_err();
+        assert_eq!(two.code, ERR_POLICY_REQUIRED);
+        // malformed envelope：非 object。
+        let non_object = parse_identity_policy(&json!(["legacy_identity_v1"])).unwrap_err();
+        assert_eq!(non_object.code, ERR_POLICY_REQUIRED);
+    }
+
+    #[test]
+    fn identity_policy_unknown_value_is_mismatch_error() {
+        let err = parse_identity_policy(&json!({"identity_policy": "role_worker_v2"})).unwrap_err();
+        assert_eq!(err.code, ERR_POLICY_MISMATCH);
+    }
+
+    #[test]
+    fn policy_from_envelope_payload_roundtrip_and_absence() {
+        let payload = serde_json::to_string(&json!({"identity_policy": "role_worker_v1", "revision": 1})).unwrap();
+        assert_eq!(policy_from_envelope_payload(&payload).as_deref(), Some(POLICY_ROLE_WORKER_V1));
+        // 无 policy / 非法 JSON / 空值均返回 None，交由调用方 fail-closed。
+        assert!(policy_from_envelope_payload("{}").is_none());
+        assert!(policy_from_envelope_payload("not-json").is_none());
+        assert!(policy_from_envelope_payload(r#"{"identity_policy": ""}"#).is_none());
     }
 }
 

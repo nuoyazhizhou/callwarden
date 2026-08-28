@@ -6,7 +6,7 @@
 //! executor/reviewer/adjudicator 三条 Role Contract lineage/revision 1 和所有
 //! pending/in_progress step 的 executor binding。
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -199,7 +199,6 @@ pub fn bootstrap_task_governance_contracts(
     let steps: Vec<String> = stmt.query_map([&input.task_id], |r| r.get(0))
         .map_err(|e| DaemonRpcError::internal_error(format!("task step 遍历失败: {e}")))?
         .collect::<Result<Vec<_>,_>>().map_err(|e| DaemonRpcError::internal_error(format!("task step 读取失败: {e}")))?;
-    if steps.is_empty() { return Err(deterministic(ERR_BOOTSTRAP_INVALID, "task 没有 pending/in_progress step，不能 bootstrap executor binding")); }
     let mut binding_ids = Vec::new();
     for step_id in steps {
         let binding_id = format!("sb-{}-{}-r1", input.task_id, step_id);
@@ -213,4 +212,160 @@ pub fn bootstrap_task_governance_contracts(
         "contract_id": contract_id, "contract_revision": 1, "contract_hash": contract_hash,
         "role_contracts": role_result, "step_binding_ids": binding_ids,
     }))
+}
+
+/// 为新追加的 remediation step 绑定当前 Executor Role Contract。
+///
+/// remediation 不是普通步骤的旁路类型：它同样必须拥有唯一、可验证的
+/// `task_step_role_contract_bindings`。该函数只接受任务自身不可变 workspace binding
+/// 和任务自己的 executor lineage/revision；任一治理事实缺失或 binding 链异常都拒绝，
+/// 由调用方的外层事务回滚 step、assignment 和状态变更。
+pub fn bind_step_to_executor_role_contract(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    step_id: &str,
+    created_by: &str,
+) -> Result<String, DaemonRpcError> {
+    let workspace_id: i64 = tx
+        .query_row(
+            "SELECT workspace_id FROM task_workspace_bindings WHERE task_id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("task workspace binding 查询失败: {e}")))?
+        .ok_or_else(|| {
+            deterministic(
+                "E_TASK_STEP_ROLE_CONTRACT_BINDING_REQUIRED",
+                format!("task {task_id} 缺少 workspace binding，不能创建 remediation binding"),
+            )
+        })?;
+
+    let step_owned: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM task_steps WHERE id = ?1 AND task_id = ?2",
+            params![step_id, task_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("remediation step 归属查询失败: {e}")))?;
+    if step_owned != 1 {
+        return Err(deterministic(
+            "E_TASK_STEP_ROLE_CONTRACT_BINDING_REQUIRED",
+            format!("step {step_id} 不属于 task {task_id}，不能创建 remediation binding"),
+        ));
+    }
+
+    let (lineage_id, revision_id, revision, role_hash, c14n_version, rules_hash): (
+        String,
+        String,
+        i64,
+        String,
+        String,
+        String,
+    ) = tx
+        .query_row(
+            "SELECT l.role_contract_lineage_id, r.role_contract_revision_id, r.revision,
+                    r.role_contract_hash, r.canonicalization_version,
+                    r.canonicalization_rules_hash
+             FROM role_contract_lineages l
+             JOIN role_contract_revisions r
+               ON r.role_contract_lineage_id = l.role_contract_lineage_id
+             WHERE l.task_id = ?1 AND l.workspace_id = ?2 AND l.role = 'executor'
+             ORDER BY r.revision DESC LIMIT 1",
+            params![task_id, workspace_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("Executor Role Contract 查询失败: {e}")))?
+        .ok_or_else(|| {
+            deterministic(
+                "E_TASK_STEP_ROLE_CONTRACT_BINDING_REQUIRED",
+                format!("task {task_id} 缺少当前 Executor Role Contract，不能创建 remediation binding"),
+            )
+        })?;
+
+    let (revision_count, max_revision): (i64, i64) = tx
+        .query_row(
+            "SELECT COUNT(*), COALESCE(MAX(revision), 0)
+             FROM role_contract_revisions WHERE role_contract_lineage_id = ?1",
+            [&lineage_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("Executor Role Contract revision 链查询失败: {e}")))?;
+    if revision_count != max_revision || revision != max_revision {
+        return Err(deterministic(
+            "E_TASK_STEP_ROLE_CONTRACT_BINDING_REQUIRED",
+            format!("task {task_id} 的 Executor Role Contract revision 链不连续，不能创建 remediation binding"),
+        ));
+    }
+
+    let (binding_count, max_binding): (i64, i64) = tx
+        .query_row(
+            "SELECT COUNT(*), COALESCE(MAX(binding_revision), 0)
+             FROM task_step_role_contract_bindings
+             WHERE workspace_id = ?1 AND task_id = ?2 AND step_id = ?3",
+            params![workspace_id, task_id, step_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("remediation binding 链查询失败: {e}")))?;
+    if binding_count != max_binding {
+        return Err(deterministic(
+            "E_TASK_STEP_ROLE_CONTRACT_BINDING_REQUIRED",
+            format!("step {step_id} 的 Role Contract binding 链不连续，拒绝追加"),
+        ));
+    }
+    if max_binding > 0 {
+        let (binding_id, bound_revision_id, bound_hash): (String, String, String) = tx
+            .query_row(
+                "SELECT binding_id, role_contract_revision_id, role_contract_hash
+                 FROM task_step_role_contract_bindings
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND step_id = ?3
+                 ORDER BY binding_revision DESC LIMIT 1",
+                params![workspace_id, task_id, step_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("current remediation binding 查询失败: {e}")))?;
+        if bound_revision_id == revision_id && bound_hash == role_hash {
+            return Ok(binding_id);
+        }
+        return Err(deterministic(
+            "E_TASK_STEP_ROLE_CONTRACT_BINDING_REQUIRED",
+            format!("step {step_id} 已绑定其他 Executor Role Contract，拒绝覆盖历史 binding"),
+        ));
+    }
+
+    let binding_id = format!("sb-{task_id}-{step_id}-r1");
+    tx.execute(
+        "INSERT INTO task_step_role_contract_bindings
+         (binding_id, workspace_id, task_id, step_id,
+          role_contract_lineage_id, role_contract_revision_id, role_contract_revision,
+          role_contract_hash, canonicalization_version, canonicalization_rules_hash,
+          binding_revision, supersedes_binding_id, created_by, authoritative_created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, NULL, ?11, ?12)",
+        params![
+            binding_id,
+            workspace_id,
+            task_id,
+            step_id,
+            lineage_id,
+            revision_id,
+            revision,
+            role_hash,
+            c14n_version,
+            rules_hash,
+            created_by,
+            crate::daemon::task_collab::task_now_ts(),
+        ],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("写入 remediation Role Contract binding 失败: {e}")))?;
+    Ok(binding_id)
 }

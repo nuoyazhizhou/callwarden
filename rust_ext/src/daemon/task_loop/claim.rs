@@ -26,12 +26,12 @@
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::daemon::dispatch::DaemonRpcError;
 use super::executor::TaskMutationExecutor;
 use super::types::{
-    DomainOutcome, FrozenAuthorityInput, InfrastructureError, InvocationClass,
-    StableDomainError, StrictParsedEnvelope, TaskDomainTx,
+    DomainOutcome, FrozenAuthorityInput, InfrastructureError, InvocationClass, StableDomainError,
+    StrictParsedEnvelope, TaskDomainTx,
 };
+use crate::daemon::dispatch::DaemonRpcError;
 
 /// 确定性拒绝：task 没有不可变 task workspace binding → 无法确定逻辑 workspace 归属。
 pub const ERR_TASK_BINDING_REQUIRED: &str = "E_TASK_BINDING_REQUIRED";
@@ -258,13 +258,11 @@ impl ClaimDomainError {
                     stable_error: StableDomainError::DeterministicReject { code },
                 }
             }
-            ClaimDomainError::Infrastructure(error) => {
-                DomainOutcome::RollbackInfrastructureError {
-                    infrastructure_error: InfrastructureError::Internal {
-                        detail: error.message,
-                    },
-                }
-            }
+            ClaimDomainError::Infrastructure(error) => DomainOutcome::RollbackInfrastructureError {
+                infrastructure_error: InfrastructureError::Internal {
+                    detail: error.message,
+                },
+            },
         }
     }
 }
@@ -308,7 +306,9 @@ fn apply_claim(
     input: &ClaimStepInput,
 ) -> DomainOutcome {
     match write_domain(tx.tx(), input) {
-        Ok(ok) => DomainOutcome::CommitSuccess { response: ok.response },
+        Ok(ok) => DomainOutcome::CommitSuccess {
+            response: ok.response,
+        },
         Err(err) => err.into_outcome(),
     }
 }
@@ -353,13 +353,21 @@ fn write_domain(
     check_remediation(tx, input)?;
 
     // 4. revision 行读取（§8.1.4：binding 以 revision id 外键引用，必须存在且归属一致）。
-    let (lineage_id, revision, hash, version, rules_hash): (String, i64, String, String, String) = tx
-        .query_row(
+    let (lineage_id, revision, hash, version, rules_hash): (String, i64, String, String, String) =
+        tx.query_row(
             "SELECT role_contract_lineage_id, revision, role_contract_hash, \
                     canonicalization_version, canonicalization_rules_hash \
              FROM role_contract_revisions WHERE role_contract_revision_id = ?1",
             [&input.role_contract_revision_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .map_err(|e| {
             if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
@@ -485,6 +493,42 @@ fn write_domain(
     })
 }
 
+/// task-level remediation 的 provenance 判定（cutover 路径副本）。
+///
+/// 语义与 `task_collab_lease.rs::task_level_remediation_provenance_ok` 逐项一致：
+/// 无 unresolved failed step、`source_outcome ∈ {reviewer_blocked, adjudicator_returned}`、
+/// `source_verdict_id` 非空、`source_handoff_event_id` 存在（数字或非空字符串）。
+/// 两条路径按本模块既有双轨约定各自维护副本，任一处修改必须同步另一处。
+fn task_level_remediation_provenance_ok(
+    metadata: &serde_json::Value,
+    unresolved: &[String],
+) -> bool {
+    if !unresolved.is_empty() {
+        return false;
+    }
+    let source_outcome = metadata
+        .get("source_outcome")
+        .and_then(|item| item.as_str())
+        .unwrap_or("");
+    if !matches!(source_outcome, "reviewer_blocked" | "adjudicator_returned") {
+        return false;
+    }
+    let verdict_ok = metadata
+        .get("source_verdict_id")
+        .and_then(|item| item.as_str())
+        .map(|item| !item.trim().is_empty())
+        .unwrap_or(false);
+    let handoff_event_ok = metadata
+        .get("source_handoff_event_id")
+        .map(|item| match item {
+            serde_json::Value::Number(_) => true,
+            serde_json::Value::String(text) => !text.trim().is_empty(),
+            _ => false,
+        })
+        .unwrap_or(false);
+    verdict_ok && handoff_event_ok
+}
+
 /// `task.claim` remediation 精确领取校验（§3.4 第 509-515 行，fail-closed）。
 ///
 /// - 存在 unresolved failed step 且存在其 remediation：请求必须提供且等于该 remediation
@@ -492,6 +536,9 @@ fn write_domain(
 ///   `E_REMEDIATION_STEP_MISMATCH`。
 /// - 存在 unresolved failed step 但无当前 remediation（异常状态）：拒绝领取任何 step。
 /// - 无 unresolved failed step 却提供 `remediation_step_id`：`E_REMEDIATION_STEP_MISMATCH`。
+/// - task-level remediation（`remediation_of_step_id` 为 null）：provenance 由
+///   `source_verdict_id` + `source_handoff_event_id` 承载，见
+///   `task_level_remediation_provenance_ok`。
 fn check_remediation(tx: &Connection, input: &ClaimStepInput) -> Result<(), ClaimDomainError> {
     let unresolved = unresolved_failed_step_ids(tx, &input.task_id)?;
     let required = required_remediation_step(tx, &input.task_id)?;
@@ -510,9 +557,9 @@ fn check_remediation(tx: &Connection, input: &ClaimStepInput) -> Result<(), Clai
             "task {} 存在待处理 remediation {req}，必须显式提供 remediation_step_id",
             input.task_id
         ))),
-        (Some(req), given) if given != req => Err(ClaimDomainError::remediation_mismatch(
-            format!("必须精确领取当前 remediation {req}，不能领取步骤 {given}"),
-        )),
+        (Some(req), given) if given != req => Err(ClaimDomainError::remediation_mismatch(format!(
+            "必须精确领取当前 remediation {req}，不能领取步骤 {given}"
+        ))),
         (Some(_), _) => {
             // given == req：必须精确领取 remediation 步骤本身（§3.4）。
             if input.step_id != input.remediation_step_id {
@@ -530,17 +577,24 @@ fn check_remediation(tx: &Connection, input: &ClaimStepInput) -> Result<(), Clai
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|e| ClaimDomainError::infra_msg(e, "remediation step 状态读取失败"))?;
+            let metadata = serde_json::from_str::<serde_json::Value>(&result)
+                .unwrap_or(serde_json::Value::Null);
+            let linked = metadata
+                .get("remediation_of_step_id")
+                .and_then(|item| item.as_str())
+                .filter(|item| !item.trim().is_empty())
+                .map(|item| item.to_string());
+            let provenance_ok = match linked {
+                // step-level：provenance 必须指向该 task 的 unresolved failed step。
+                Some(linked) => unresolved.contains(&linked),
+                // task-level：reviewer_blocked/adjudicator_returned 的 task 级退回没有
+                // 源步骤（role-protocol §5 允许 null step_id），provenance 由 verdict +
+                // handoff event 承载。
+                None => task_level_remediation_provenance_ok(&metadata, &unresolved),
+            };
             let claimable = action == "fix_defect"
                 && matches!(status.as_str(), "pending" | "in_progress")
-                && serde_json::from_str::<serde_json::Value>(&result)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("remediation_of_step_id")
-                            .and_then(|item| item.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .map(|linked| unresolved.contains(&linked))
-                    .unwrap_or(false);
+                && provenance_ok;
             if !claimable {
                 return Err(ClaimDomainError::remediation_mismatch(format!(
                     "remediation step {} 不是 task {} 当前可领取的 fix_defect 步骤",
@@ -635,7 +689,8 @@ fn required_remediation_step(
     for row in rows {
         let (step_id, raw) =
             row.map_err(|e| ClaimDomainError::infra_msg(e, "remediation step 读取失败"))?;
-        let metadata = serde_json::from_str::<serde_json::Value>(&raw).unwrap_or(serde_json::Value::Null);
+        let metadata =
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap_or(serde_json::Value::Null);
         let linked = metadata
             .get("remediation_of_step_id")
             .and_then(|item| item.as_str())

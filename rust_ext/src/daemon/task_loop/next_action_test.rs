@@ -265,6 +265,9 @@ fn unclaimed_executor_step_ready_claim() {
     assert_eq!(resp["decision"], serde_json::json!("READY"));
     assert_eq!(resp["action"], serde_json::json!("CLAIM"));
     assert_eq!(resp["required_role"], serde_json::json!("executor"));
+    assert_eq!(resp["lifecycle_status"], serde_json::json!("open"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("queued"));
+    assert_eq!(resp["review"]["state"], serde_json::json!("not_in_review"));
     assert_eq!(resp["step_id"], serde_json::json!("1"));
     assert_eq!(resp["routing"]["next_role"], serde_json::json!("executor"));
     assert_eq!(resp["routing"]["next_action"], serde_json::json!("claim_current_step"));
@@ -294,10 +297,32 @@ fn active_lease_yields_waiting_without_token() {
 
     assert_eq!(resp["decision"], serde_json::json!("WAITING"));
     assert_eq!(resp["action"], serde_json::json!("WAIT"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("execution_in_progress"));
     assert_eq!(resp["routing"]["next_role"], serde_json::Value::Null);
     assert_eq!(resp["next_session"], serde_json::Value::Null);
     let body = serde_json::to_string(&resp).unwrap();
     assert!(!body.contains("token-1"), "不得泄露 lease token");
+}
+
+#[test]
+fn review_with_reviewer_lease_yields_review_not_waiting() {
+    // 修复 reviewer_blocked：review 状态下若 active lease 由 reviewer 持有，
+    // recheck 应继续评审（READY/REVIEW），而非弹回 WAITING/wait_for_current_lease。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let rcr = setup_contract(&mut conn, "t-1", "reviewer");
+    setup_task_contract(&conn, "t-1", "tc-t-1");
+    setup_step(&conn, "t-1", 1, "implement", "pending");
+    setup_binding(&mut conn, "t-1", "1", &rcr, "req-c-1");
+    set_task_status(&conn, "t-1", "review");
+    setup_lease(&conn, "L-1", "reviewer", "token-1", 1, "agent-1", "sess-1", "model-1", 1e18);
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["decision"], serde_json::json!("READY"));
+    assert_eq!(resp["action"], serde_json::json!("REVIEW"));
+    assert_eq!(resp["required_role"], serde_json::json!("reviewer"));
+    assert_ne!(resp["decision"], serde_json::json!("WAITING"));
 }
 
 #[test]
@@ -315,6 +340,9 @@ fn review_without_verdict_ready_review() {
 
     assert_eq!(resp["decision"], serde_json::json!("READY"));
     assert_eq!(resp["action"], serde_json::json!("REVIEW"));
+    assert_eq!(resp["lifecycle_status"], serde_json::json!("review"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("review_pending"));
+    assert_eq!(resp["review"]["state"], serde_json::json!("pending"));
     assert_eq!(resp["required_role"], serde_json::json!("reviewer"));
     assert_eq!(resp["routing"]["next_role"], serde_json::json!("reviewer"));
     let ns = &resp["next_session"];
@@ -429,6 +457,10 @@ fn reviewer_blocked_yields_revise_with_readonly_hint() {
     assert_eq!(resp["action"], serde_json::json!("REVISE"));
     assert_eq!(resp["required_role"], serde_json::json!("executor"));
     assert_eq!(resp["routing"]["next_role"], serde_json::json!("executor"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("remediation_pending"));
+    assert_eq!(resp["review"]["state"], serde_json::json!("blocked"));
+    assert_eq!(resp["review"]["verdict_id"], serde_json::json!(verdict_id));
+    assert_eq!(resp["review"]["findings_count"], serde_json::json!(0));
     let ns = &resp["next_session"];
     assert_eq!(ns["role"], serde_json::json!("executor"));
     assert_eq!(ns["must_be_new_session"], serde_json::json!(false));
@@ -449,6 +481,9 @@ fn reviewer_pass_yields_adjudicate_with_reviewer_lease_role() {
     assert_eq!(resp["decision"], serde_json::json!("READY"));
     assert_eq!(resp["action"], serde_json::json!("ADJUDICATE"));
     assert_eq!(resp["required_role"], serde_json::json!("adjudicator"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("adjudication_pending"));
+    assert_eq!(resp["review"]["state"], serde_json::json!("passed"));
+    assert!(resp["review"]["verdict_id"].as_str().is_some());
     // Adjudicator 执行 apply/close 的 acting role=adjudicator，lease role=reviewer（§3.1）。
     assert_eq!(resp["authorization"]["lease_role"], serde_json::json!("reviewer"));
     let ns = &resp["next_session"];
@@ -474,6 +509,8 @@ fn closed_task_complete_none() {
 
     assert_eq!(resp["decision"], serde_json::json!("COMPLETE"));
     assert_eq!(resp["action"], serde_json::json!("NONE"));
+    assert_eq!(resp["lifecycle_status"], serde_json::json!("closed"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("completed"));
     assert_eq!(resp["routing"]["next_role"], serde_json::json!("complete"));
     assert_eq!(resp["next_session"], serde_json::Value::Null);
     assert!(resp.get("from_role").is_none());
