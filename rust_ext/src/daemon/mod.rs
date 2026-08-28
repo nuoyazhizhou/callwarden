@@ -9,6 +9,7 @@ pub mod dispatch;
 
 /// Task 协同 RPC 模块（multi-llm-contract-collaboration D0/P1）
 pub mod task_collab;
+pub mod assignment_queue;
 
 /// Task 替代（supersede）治理 RPC 模块（T-1787203926824-9f873bfc-sub-1）
 pub mod task_supersede;
@@ -16,7 +17,6 @@ pub mod task_supersede;
 /// task_loop_public 能力 foundation（1D0：模块声明 / foundation 私有类型 /
 /// fail-closed stubs / 禁用 shim，cutover 前能力禁用）
 pub mod task_loop;
-
 
 /// 平台无关传输抽象（D0 3.1：TransportListener / TransportConnection trait）
 /// Unix: UDS + SO_PEERCRED；Windows: 命名管道 + ImpersonateNamedPipeClient
@@ -166,14 +166,14 @@ pub mod _mcp_common_handlers;
 /// 对应 `server/audit_log.py::AuditLogger` 的 SQLite 权威下沉
 ///（`mcp.audit_log.{get_conn,init_db,append,query,count,clear,get_stats}`）。
 pub mod audit_log_handlers;
-/// S2: 查询面 compat → Rust native handler（get_top_callers / get_orphan_symbols 等
-/// P0-compat 批次 1 的 6 个纯 SQL 只读工具）。
-pub mod query_compat_handlers;
 /// 3.22: backup/restore 面 handler（SRV-003：server backup restore Python authority → Rust daemon）
 /// 对应 `server/backup_restore.py` 的 `_backup_file` / `_is_rust_backup_rolled_back` Rust 下沉
 ///（`mcp.backup_restore.backup_file` / `mcp.backup_restore.is_rust_backup_rolled_back`）。
 /// 注：handler 已实现并通过单测，RPC 路由接线为后续独立动作（不在本次冒险改动 v60 构建）。
 pub mod backup_restore_handlers;
+/// S2: 查询面 compat → Rust native handler（get_top_callers / get_orphan_symbols 等
+/// P0-compat 批次 1 的 6 个纯 SQL 只读工具）。
+pub mod query_compat_handlers;
 
 /// 3.23: CLI admin 面 handler（SRV-004：server cli admin Python authority → Rust daemon）
 /// 对应 `server/cli_admin.py` 五个只读 SQLite 权威函数的 Rust 下沉
@@ -184,6 +184,39 @@ pub mod cli_admin_handlers;
 /// 对应 `server/daemon_autostart.py` 三个 socket connect 权威探测函数的 Rust 下沉
 ///（`mcp.daemon_autostart.{try_connect_tcp,try_connect_unix,try_http_connect}`，探测语义）。
 pub mod daemon_autostart_handlers;
+
+/// 3.25: daemon client 面 handler（SRV-006：server daemon_client Python authority → Rust daemon）
+/// 对应 `server/daemon_client.py` 12 个 DB authority 符号的 Rust 下沉
+///（`mcp.daemon_client.{get_db,inject_workspace_id,sql_fallback_*,call_with_fd,publish_snapshot}`）。
+pub mod daemon_client_handlers;
+
+/// 3.26: daemon protocol 面 handler（SRV-007：server daemon_protocol Python authority → Rust daemon）
+/// 对应 `server/daemon_protocol.py` rollback_config 权威查询的 Rust 下沉
+///（`mcp.daemon_protocol.is_rust_protocol_rolled_back`，fail-soft 只读探测）。
+pub mod daemon_protocol_handlers;
+
+/// 3.27: daemon server 面 handler（SRV-008：server daemon_server Python authority → Rust daemon）
+/// 对应 `server/daemon_server.py` 六符号的 Rust 下沉：rollback 双探测（fail-soft）
+/// + registry/resources 元信息探测 + dispatch 路由权威声明
+///（`mcp.daemon_server.{is_rust_acl_rolled_back,is_rust_health_rolled_back,get_registry_conn,registry_conn,get_workspace_resources,dispatch}`）。
+pub mod daemon_server_handlers;
+
+/// 3.28: durable staging 面 handler（SRV-009：server durable staging Python authority → Rust daemon）
+/// 对应 `server/durable_staging.py` `DurableStagingLog` 的 Rust 下沉：
+/// 权威 schema 初始化 + 只读统计探测（`mcp.durable_staging.{init,stats}`）。
+pub mod durable_staging_handlers;
+
+/// 3.29: health check 面 handler（SRV-010：server health check Python authority → Rust daemon）
+/// 对应 `server/health_check.py` 4 个 direct authority 函数的 Rust 下沉：
+/// registry 连通性检查 / workspace registry 恢复 / CAS DB 探测 / stale jobs 清理
+///（`mcp.health_check.{check_db_registry,recover_workspace_registry,recover_cas_db,recover_stale_jobs}`）。
+pub mod health_check_handlers;
+
+/// 3.30: job executor 面 handler（SRV-011：server job executor Python authority → Rust daemon）
+/// 对应 `server/job_executor.py::JobExecutor.start` 的 Rust 下沉：
+/// jobs DB 权威初始化（批次10 PRAGMA 集 + JOBS_SCHEMA_DDL，幂等）
+///（`mcp.job_executor.start`）。
+pub mod job_executor_handlers;
 
 /// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
 /// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。
