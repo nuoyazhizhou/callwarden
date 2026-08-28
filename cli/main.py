@@ -76,7 +76,7 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
-_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action", "superseded"}
+_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action", "assignment-status", "superseded"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 # audit verify/keys 只读（只查询 audit_chain/audit_key_rotations 表，不写数据库）
 # audit rotate-key 是写（INSERT/UPDATE audit_key_rotations）
@@ -3681,13 +3681,26 @@ def normalize_structured_handoff(payload: Dict[str, Any]) -> Dict[str, Any]:
         "independence_requirement", "request_id", "step_id", "report_request_id",
         "evidence_path", "evidence_hash",
     )
-    missing = [name for name in required if not str(payload.get(name, "")).strip()]
+    missing = [
+        name
+        for name in required
+        if (
+            (name == "step_id" and name not in payload)
+            or (name == "step_id" and payload.get(name) is not None
+                and not str(payload.get(name, "")).strip())
+            or (name != "step_id" and not str(payload.get(name, "")).strip())
+        )
+    ]
     if missing:
         raise ValueError("E_HANDOFF_STRUCTURED_REQUIRED: missing " + ",".join(missing))
     outcome = str(payload["outcome"]).strip()
     expected = _STRUCTURED_HANDOFF_ROUTES.get(outcome)
     if expected is None:
         raise ValueError("E_HANDOFF_OUTCOME_INVALID: " + outcome)
+    if payload.get("step_id") is None and outcome != "reviewer_blocked":
+        raise ValueError(
+            "E_HANDOFF_STEP_REQUIRED: only reviewer_blocked task-level handoff may use null step_id"
+        )
     actual = (
         str(payload["from_role"]).strip(),
         str(payload["next_role"]).strip(),
@@ -3773,9 +3786,40 @@ def _handle_task(args, db):
     next_action_p.add_argument("task_id", help=t(
         "cli_task_arg_task_id", default="Task ID"))
     next_action_p.add_argument(
+        "--workspace-instance-id", default="",
+        help=t("cli_task_workspace_instance_id",
+               default="Workspace authority capture instance id (daemon binding key)"))
+    next_action_p.add_argument(
         "--json", action="store_true",
         help=t("cli_task_next_action_json",
                default="Output raw daemon JSON (machine-readable)"))
+
+    # assignment-status：读取 daemon durable 工作队列，不在 CLI 侧推导或回收状态。
+    assignment_status_p = sub.add_parser(
+        "assignment-status",
+        help="Show daemon durable assignment queue projection (read-only)",
+    )
+    assignment_status_p.add_argument("task_id", help="Task ID")
+    assignment_status_p.add_argument("--step-id", default="", help="Optional step ID")
+    assignment_status_p.add_argument("--role", default="", help="Optional governance role")
+    assignment_status_p.add_argument("--json", action="store_true", help="Output raw daemon JSON")
+
+    # assignment-heartbeat：仅转发 daemon heartbeat，不能由客户端直接修改队列。
+    assignment_heartbeat_p = sub.add_parser(
+        "assignment-heartbeat",
+        help="Heartbeat a daemon durable assignment",
+    )
+    assignment_heartbeat_p.add_argument("task_id", help="Task ID")
+    assignment_heartbeat_p.add_argument("assignment_id", help="Durable assignment ID")
+    assignment_heartbeat_p.add_argument("--request-id", required=True, help="Stable replay-safe request ID")
+    assignment_heartbeat_p.add_argument("--fencing-counter", type=int, default=-1, help="Current fencing counter")
+    assignment_heartbeat_p.add_argument("--agent-session-id", default="", help="Agent session ID")
+    assignment_heartbeat_p.add_argument("--agent-id", default="", metavar="ID", help="Agent ID")
+    assignment_heartbeat_p.add_argument("--session-id", default="", metavar="ID", help="Identity session ID")
+    assignment_heartbeat_p.add_argument("--model-id", default="", metavar="ID", help="Model ID")
+    assignment_heartbeat_p.add_argument("--role", default="", metavar="ROLE", help="Governance role")
+    assignment_heartbeat_p.add_argument("--agent-instance-id", default="", metavar="ID", help="Agent instance ID")
+    assignment_heartbeat_p.add_argument("--json", action="store_true", help="Output raw daemon JSON")
 
     # report：回报步骤执行结果
     report_p = sub.add_parser("report", help=t(
@@ -3890,12 +3934,32 @@ def _handle_task(args, db):
                default="Reason for reopening (optional)")
     )
 
+    # P0-G：orphan claim recovery（仅 daemon 权威写点，仅 adjudicator 可执行）。
+    # 与普通 reopen 不同：本命令不改变任务状态/步骤/历史，只释放已确认失联的
+    # 旧 Executor claim 并追加 claim_released 审计事件；释放后新 Executor 显式
+    # 调用 `cw task next`（task.claim）。调用方必须以 adjudicator 身份携带完整
+    # identity，并持有目标任务独立 Reviewer 的 lease_token/fencing_counter
+    # （跨角色 lease 校验由 daemon 端 validate_reviewer_lease_for_adjudication 执行）。
+    claim_recover_p = sub.add_parser(
+        "claim-recover",
+        help="Release a stale/orphaned executor claim (daemon-only, adjudicator + "
+             "independent reviewer lease required)",
+    )
+    claim_recover_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
+    claim_recover_p.add_argument(
+        "--reason", default="", required=True,
+        help="Why the old claim is considered orphaned/stale (mandatory)")
+    claim_recover_p.add_argument(
+        "--request-id", default="",
+        help="Stable request id for replay-safe dedup (auto-generated if empty)")
+
     # P3：task next/report/apply/close/reopen 接收结构化身份（Req 10.1-10.7）。
     # --reviewer 自由文本不是身份证明（Req 10.5）；身份证明只能来自结构化
     # Identity 与 daemon 签发的 Attestation（Req 10.8, 14.13）。
     # next 也支持身份，保证 claim 与后续 report 使用同一显式 action identity
     # （同一 session_id/agent_id/...），避免 SID 回退与 report session 不一致。
-    for _identity_parser in (next_p, report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p):
+    for _identity_parser in (next_p, report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p, claim_recover_p):
         _identity_parser.add_argument(
             "--agent-id", default="", metavar="ID",
             help=t("cli_task_arg_agent_id", default="Agent ID (P3 Identity)"))
@@ -3919,7 +3983,7 @@ def _handle_task(args, db):
 
     # P4：task report/apply/close/reopen 支持受保护写 Lease 凭证（Req 11.8-11.9）。
     # 提供 --lease-token 时启用受保护写路径：过期/token 不匹配/旧 counter 在写入前拒绝。
-    for _lease_parser in (report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p):
+    for _lease_parser in (report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p, claim_recover_p):
         _lease_parser.add_argument(
             "--lease-token", default="", metavar="TOKEN",
             help=t("cli_task_arg_lease_token",
@@ -4197,6 +4261,50 @@ def _handle_task(args, db):
     contract_bootstrap_p.add_argument("--agent-instance-id", default="", metavar="ID",
                                       help="Registered adjudicator agent instance ID (optional; must match registration if non-empty)")
 
+    # P0-G：对已有 Task Contract 追加 revision n+1（append-only；禁 UPDATE/DELETE 历史）。
+    contract_revise_p = sub.add_parser(
+        "contract-revise",
+        help="Append Task Contract revision n+1 for an existing bound task (daemon-only, append-only)",
+    )
+    contract_revise_p.add_argument("task_id", help="Bound task ID with an existing Task Contract")
+    contract_revise_p.add_argument("--envelope-path", required=True, metavar="PATH",
+                                   help="Revision envelope JSON file; revision must be current+1, supersedes_revision=current")
+    contract_revise_p.add_argument("--expected-previous-hash", required=True, metavar="HASH",
+                                   help="Current contract hash that this revision supersedes (continuity anchor)")
+    contract_revise_p.add_argument("--workspace-id", required=True, type=int, metavar="ID",
+                                   help="Explicit immutable workspace authority ID")
+    contract_revise_p.add_argument("--workspace-instance-id", required=True, metavar="ID",
+                                   help="Stable workspace instance ID recorded by the task binding")
+    contract_revise_p.add_argument("--request-id", required=True, metavar="ID",
+                                   help="Stable request ID for durable idempotency")
+    contract_revise_p.add_argument("--evidence-path", required=True, metavar="PATH",
+                                   help="Governance evidence manifest path")
+    contract_revise_p.add_argument("--evidence-hash", required=True, metavar="HASH",
+                                   help="Governance evidence manifest SHA-256")
+    contract_revise_p.add_argument("--lease-token", required=True, metavar="TOKEN",
+                                   help="Active reviewer lease token for this task")
+    contract_revise_p.add_argument("--fencing-counter", required=True, type=int, metavar="N",
+                                   help="Current reviewer lease fencing counter for this task")
+    contract_revise_p.add_argument("--agent-id", required=True, metavar="ID",
+                                   help="Registered adjudicator agent ID")
+    contract_revise_p.add_argument("--agent-instance-id", required=True, metavar="ID",
+                                   help="Registered adjudicator agent instance ID (P0-G §3: mandatory non-empty)")
+    contract_revise_p.add_argument("--session-id", required=True, metavar="ID",
+                                   help="Registered adjudicator session ID")
+    contract_revise_p.add_argument("--model-id", required=True, metavar="ID",
+                                   help="Registered adjudicator model ID")
+    contract_revise_p.add_argument("--role", required=True, choices=["adjudicator"],
+                                   help="Governance role; only adjudicator is accepted")
+
+    # P0-G G3：只读 governance projection（Reviewer 权威投影，绝不返回 lease token）。
+    governance_projection_p = sub.add_parser(
+        "governance-projection",
+        help="Read-only governance projection for a task (daemon-authoritative, no lease token)",
+    )
+    governance_projection_p.add_argument("task_id", help="Task ID")
+    governance_projection_p.add_argument("--json", action="store_true",
+                                         help="Output raw daemon JSON (machine-readable)")
+
     # superseded：只读查询某任务的替代者（task.superseded_by）
     superseded_p = sub.add_parser(
         "superseded",
@@ -4258,6 +4366,9 @@ def _handle_task(args, db):
         create_res = route_task_write("task.create", {
             "title": opts.title, "description": opts.desc, "steps": steps,
             "creator": "agent", "role_contracts": role_contracts,
+            # 默认三角色模板走 daemon 的显式 legacy policy 通道，避免新任务
+            # 创建成功后因 Contract revision 缺少 identity_policy 而无法 claim。
+            "identity_policy": "legacy_identity_v1",
         }, _local_create)
         task_id = create_res["task_id"] if isinstance(create_res, dict) and "task_id" in create_res else create_res
 
@@ -4399,12 +4510,15 @@ def _handle_task(args, db):
             )
 
         _na_params = {"task_id": opts.task_id}
-        try:
-            _na_root = detect_project_root(os.getcwd()) or os.getcwd()
-            _na_params["workspace_instance_id"] = derive_workspace_instance_id(_na_root)
-        except Exception:
-            # 推导失败时不阻塞请求：daemon 侧按 binding 权威校验 fail-closed
-            pass
+        if getattr(opts, "workspace_instance_id", ""):
+            _na_params["workspace_instance_id"] = opts.workspace_instance_id
+        else:
+            try:
+                _na_root = detect_project_root(os.getcwd()) or os.getcwd()
+                _na_params["workspace_instance_id"] = derive_workspace_instance_id(_na_root)
+            except Exception:
+                # 推导失败时不阻塞请求：daemon 侧按 binding 权威校验 fail-closed
+                pass
 
         try:
             result = route_task_read(
@@ -4443,6 +4557,15 @@ def _handle_task(args, db):
                     role=result["required_role"]))
         if result.get("step_id"):
             print(t("cli.messages.task_step_id", id=result["step_id"]))
+        _assignment = result.get("assignment")
+        if isinstance(_assignment, dict):
+            print("  assignment_id: {}".format(_assignment.get("assignment_id", "")))
+            print("  assignment_status: {}".format(_assignment.get("status", "")))
+            print("  assignment_role: {}".format(
+                _assignment.get("role") or _assignment.get("required_role", "")))
+            if _assignment.get("holder_session_id"):
+                print("  assignment_holder_session: {}".format(
+                    _assignment["holder_session_id"]))
         _routing = result.get("routing") or {}
         if _routing.get("next_role"):
             print(t("cli.messages.task_next_action_routing",
@@ -4467,6 +4590,78 @@ def _handle_task(args, db):
             for _b in _blocking:
                 print(t("cli.messages.task_next_action_blocked_item", cond=_b))
         print()
+        return True
+
+    elif opts.action == "assignment-status":
+        _assignment_status_params = {"task_id": opts.task_id}
+        if opts.step_id:
+            _assignment_status_params["step_id"] = opts.step_id
+        if opts.role:
+            _assignment_status_params["role"] = opts.role
+        try:
+            result = route_task_read(
+                "task.assignment.status",
+                _assignment_status_params,
+                lambda: (_ for _ in ()).throw(DaemonUnavailableError(
+                    "task.assignment.status 仅由 daemon 提供；local 模式禁止本地队列推导"
+                )),
+            )
+        except (DaemonRemoteError, DaemonUnavailableError) as exc:
+            if opts.json:
+                code = getattr(exc, "code", "E_DAEMON_UNAVAILABLE")
+                print(json.dumps({"ok": False, "code": code, "message": str(exc)}, ensure_ascii=False, indent=2))
+            else:
+                cprint("[assignment-status] {}".format(exc), "red")
+            return True
+        if opts.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            current = result.get("current_assignment") if isinstance(result, dict) else None
+            print("Assignment queue: {}".format(
+                "current" if isinstance(current, dict) else "empty"))
+            if isinstance(current, dict):
+                for key in ("assignment_id", "task_id", "step_id", "role", "status", "holder_session_id", "last_heartbeat_at"):
+                    print("  {}: {}".format(key, current.get(key)))
+            assignments = result.get("assignments", []) if isinstance(result, dict) else []
+            print("  history_count: {}".format(len(assignments)))
+        return True
+
+    elif opts.action == "assignment-heartbeat":
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, opts.json)
+            return True
+        params = {
+            "task_id": opts.task_id,
+            "assignment_id": opts.assignment_id,
+            "request_id": opts.request_id,
+            "agent_session_id": opts.agent_session_id or _resolve_action_session(identity),
+        }
+        if identity:
+            params["identity"] = identity
+        if opts.fencing_counter >= 0:
+            params["fencing_counter"] = opts.fencing_counter
+        try:
+            result = route_task_write(
+                "task.assignment.heartbeat", params,
+                lambda: (_ for _ in ()).throw(DaemonUnavailableError(
+                    "task.assignment.heartbeat 必须由 daemon 执行；禁止本地队列写入"
+                )),
+            )
+        except (DaemonRemoteError, DaemonUnavailableError) as exc:
+            if opts.json:
+                code = getattr(exc, "code", "E_DAEMON_UNAVAILABLE")
+                print(json.dumps({"ok": False, "code": code, "message": str(exc)}, ensure_ascii=False, indent=2))
+            else:
+                cprint("[assignment-heartbeat] {}".format(exc), "red")
+            return True
+        if opts.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print("Assignment heartbeat accepted")
+            print("  assignment_id: {}".format(result.get("assignment_id", opts.assignment_id)))
+            print("  status: {}".format(result.get("status", "")))
+            print("  last_heartbeat_at: {}".format(result.get("last_heartbeat_at", "")))
         return True
 
     elif opts.action == "report":
@@ -4549,6 +4744,10 @@ def _handle_task(args, db):
         print(t("cli.messages.task_report_result", result=result_str))
         if opts.result:
             print(t("cli.messages.task_result_desc", desc=opts.result))
+        if isinstance(result, dict) and result.get("request_id"):
+            # report_request_id 是后续结构化 handoff 的权威引用，必须向 Executor
+            # 回显 daemon 已持久化的值，禁止依赖 CLI/聊天侧自行猜测。
+            print(f"report_request_id: {result['request_id']}")
         runtime_gate = result.get("runtime_gate") if isinstance(result, dict) else None
         if runtime_gate and runtime_gate.get("required") and not runtime_gate.get("passed"):
             cprint(
@@ -4594,7 +4793,9 @@ def _handle_task(args, db):
             "reason": opts.reason,
             "independence_requirement": opts.independence_requirement,
             "request_id": opts.request_id,
-            "step_id": opts.step_id,
+            # task-level reviewer_blocked 用显式字符串 null 透传 JSON null；
+            # daemon 才是该语义的最终校验者。
+            "step_id": None if str(opts.step_id).strip().lower() == "null" else opts.step_id,
             "report_request_id": opts.report_request_id,
             "evidence_path": opts.evidence_path,
             "evidence_hash": opts.evidence_hash,
@@ -4922,6 +5123,89 @@ def _handle_task(args, db):
         print()
         return True
 
+    elif opts.action == "claim-recover":
+        # P0-G：orphan claim recovery（仅 daemon 权威写点，无 local fallback）。
+        # 只释放已确认失联的旧 Executor claim 并追加 claim_released 审计事件；
+        # 不改变任务状态/步骤/历史。必须携带完整 adjudicator identity 与独立
+        # Reviewer 的 lease 凭证（daemon 端跨角色校验 fail-closed）。
+        identity, ireason = _collect_identity(opts)
+        if identity is None:
+            reason = ireason or {
+                "code": "E_IDENTITY_REQUIRED",
+                "message_key": "daemon_errors.error.identity_not_wired",
+                "detail": "claim-recover 必须以 adjudicator 身份携带完整结构化身份"
+                          "（agent_id/session_id/model_id/role，agent_instance_id 可选）",
+            }
+            _identity_reason_output(reason, getattr(opts, "json", False))
+            return True
+        if identity.get("role") != "adjudicator":
+            _identity_reason_output({
+                "code": "E_RECOVERY_ROLE_REQUIRED",
+                "message_key": "daemon_errors.error.identity_not_wired",
+                "detail": "claim-recover 只能由 adjudicator 身份执行（--role adjudicator）",
+            }, getattr(opts, "json", False))
+            return True
+        # P4：受保护写 Lease 凭证（claim-recover 必须持有独立 Reviewer lease，
+        # 凭证不完整时 fail closed；不提供 lease 凭证同样拒绝）。
+        lease_kwargs = _collect_lease_creds(opts)
+        if "error" in lease_kwargs:
+            _lease_reason_output(lease_kwargs["error"], getattr(opts, "json", False))
+            return True
+        if not lease_kwargs:
+            _lease_reason_output({
+                "code": "E_LEASE_REQUIRED",
+                "message_key": "daemon_errors.error.identity_not_wired",
+                "detail": "claim-recover 必须提供 --lease-token 与 --fencing-counter"
+                          "（独立 Reviewer 对目标任务的 active lease；缺失时 fail-closed）",
+            }, getattr(opts, "json", False))
+            return True
+        import uuid
+        request_id = opts.request_id or f"claim-recover-{uuid.uuid4().hex[:12]}"
+
+        def _local_claim_recover():
+            # 治理 mutation 无本地回退：local 模式无 daemon 时 fail-closed，
+            # 禁止 db.task_claim_recover 或任何 SQLite 直写（thin-client 冻结合同）。
+            raise SharedTaskWriterRequiredError(
+                "cw local-claim-recover 必须经 daemon 权威写点（thin-client 冻结合同）；"
+                "local 模式需连接本地 daemon，禁止直接 SQLite 治理写入"
+            )
+
+        result = route_task_write("task.claim.recover", {
+            "task_id": opts.task_id,
+            "reason": opts.reason,
+            "request_id": request_id,
+            "identity": identity,
+            **lease_kwargs,
+        }, _local_claim_recover)
+
+        if "error" in result:
+            cprint(t("cli.messages.task_claim_recover_failed",
+                     default="claim recovery 失败：{error}",
+                     error=result["error"]), "red")
+            print()
+            return True
+        cprint(t("cli.messages.task_claim_recover_success",
+                 default="claim 已释放：{id}",
+                 id=result.get("task_id", opts.task_id)), "green", bold=True)
+        print(t("cli.messages.task_status_label", status=result.get("status", "")))
+        print(t("cli.messages.task_claim_released_label",
+                default="claim_status: {claim_status}",
+                claim_status=result.get("claim_status", "")))
+        if result.get("recovery_event_id") is not None:
+            print(t("cli.messages.task_recovery_event_label",
+                    default="recovery_event_id: {recovery_event_id}",
+                    recovery_event_id=result["recovery_event_id"]))
+        if result.get("old_session_id"):
+            print(t("cli.messages.task_old_session_label",
+                    default="old_session_id: {old_session_id}",
+                    old_session_id=result["old_session_id"]))
+        if result.get("next_action"):
+            print(t("cli.messages.task_claim_recover_next_action",
+                    default="next: {next_action}",
+                    next_action=result["next_action"]))
+        print()
+        return True
+
     elif opts.action == "capture-diff":
         # 捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
         # --auto 模式：自动检测 in_progress 任务 + HEAD~1 base + 自动 apply（fail-soft）
@@ -5115,11 +5399,17 @@ def _handle_task(args, db):
                 "get_task_quality_findings 业务路径，请使用 daemon 模式"
             )
 
-        findings = route_task_read("task.quality_findings", {
+        findings_result = route_task_read("task.quality_findings", {
             "task_id": opts.task_id,
             "status": opts.status or "",
             "severity": opts.severity or "",
         }, _local_findings) or []
+        # daemon 返回 {task_id, findings}；兼容旧 local adapter 直接返回 list，
+        # 薄客户端只负责解包，不重新实现 findings 查询业务逻辑。
+        if isinstance(findings_result, dict):
+            findings = findings_result.get("findings") or []
+        else:
+            findings = findings_result
         cprint(t("cli.messages.task_findings_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
         print(t("cli.messages.task_findings_count", count=len(findings)))
@@ -5236,6 +5526,9 @@ def _handle_task(args, db):
             tid = task_node.get("task_id") or task_node.get("id", "")
             title = task_node.get("title", "")
             status = task_node.get("status", "")
+            workflow_status = task_node.get("workflow_status")
+            if workflow_status:
+                status = f"{status} / {workflow_status}"
             # 若 --blocked，跳过无阻塞发现的任务（但仍递归其子任务）
             blocking = _route_has_blocking_findings(db, tid)
             if opts.blocked and not blocking:
@@ -5614,6 +5907,114 @@ def _handle_task(args, db):
         print()
         return True
 
+    elif opts.action == "contract-revise":
+        # P0-G：Task Contract revision n+1 追加是 governance mutation，只有 daemon 权威路径可写。
+        _revise_identity, _revise_reason = _collect_identity(opts)
+        if _revise_reason:
+            _identity_reason_output(_revise_reason, False)
+            return True
+        if not (_revise_identity or {}).get("agent_instance_id"):
+            _identity_reason_output({
+                "code": "E_TASK_CONTRACT_REVISE_IDENTITY_INSTANCE_REQUIRED",
+                "message_key": "daemon_errors.error.identity_not_wired",
+                "detail": "task.contract_revise 必须携带 --agent-instance-id（P0-G §3 identity 全字段门禁）",
+            }, False)
+            return True
+        try:
+            with open(opts.envelope_path, "r", encoding="utf-8") as _revise_file:
+                _revise_envelope = json.load(_revise_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            cprint(f"task.contract_revise envelope 读取失败: {exc}", "red")
+            return True
+        if not isinstance(_revise_envelope, dict):
+            cprint("task.contract_revise envelope 必须是 JSON object", "red")
+            return True
+        _revise_params = {
+            "task_id": opts.task_id,
+            "envelope": _revise_envelope,
+            "expected_previous_hash": opts.expected_previous_hash,
+            "workspace_id": opts.workspace_id,
+            "workspace_instance_id": opts.workspace_instance_id,
+            "request_id": opts.request_id,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "lease_token": opts.lease_token,
+            "fencing_counter": opts.fencing_counter,
+            "identity": _revise_identity,
+            "actor": (_revise_identity or {}).get("agent_id", ""),
+        }
+
+        def _local_contract_revise_forbidden():
+            raise DaemonUnavailableError(
+                "task.contract_revise 仅由 daemon 权威写点处理；"
+                "daemon 不可用时禁止本地 SQLite fallback"
+            )
+
+        result = route_task_write(
+            "task.contract_revise",
+            _revise_params,
+            _local_contract_revise_forbidden,
+        )
+        if result is None:
+            cprint("task.contract_revise failed (no response)", "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(f"task.contract_revise failed: {result['error']}", "red")
+            return True
+        cprint(f"✓ 已追加 Task Contract revision：{result.get('task_id', opts.task_id)}", "green", bold=True)
+        print(f"  contract: {result.get('contract_id', '')} r{result.get('previous_revision', '')}→r{result.get('revision', '')}")
+        print(f"  contract_hash: {result.get('contract_hash', '')}")
+        print(f"  request_id: {result.get('request_id', '')}")
+        print()
+        return True
+
+    elif opts.action == "governance-projection":
+        # P0-G G3：只读 governance projection（Reviewer 权威投影）。
+        def _local_governance_projection_forbidden():
+            raise DaemonUnavailableError(
+                "task.governance_projection.get 仅由 daemon 提供；请使用 daemon 模式 "
+                "(cw daemon start) 后重试"
+            )
+
+        result = route_task_read("task.governance_projection.get", {
+            "task_id": opts.task_id,
+        }, _local_governance_projection_forbidden)
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(f"task.governance_projection.get failed: {result['error']}", "red")
+            return True
+        if opts.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return True
+        print(f"✓ 治理投影：{result.get('task_id', opts.task_id)}")
+        print(f"  lifecycle_status: {result.get('lifecycle_status', result.get('status', '-'))}")
+        print(f"  workflow_status: {result.get('workflow_status', '-')}")
+        print(f"  current_role: {result.get('current_role', '-')}")
+        print(f"  next_role: {result.get('next_role', '-')}")
+        print(f"  next_action: {result.get('next_action', '-')}")
+        review = result.get('review') or {}
+        print(f"  review: {review.get('state', '-')} verdict={review.get('verdict_id', '-')} findings={review.get('findings_count', '-')}")
+        for reason in result.get('blocking_reasons') or []:
+            print(f"  blocking_reason: {reason}")
+        tc = result.get("task_contract") or {}
+        print(f"  Task Contract: {tc.get('contract_id', '-')} r{tc.get('revision', '-')} hash={str(tc.get('hash', '-'))[:16]}...")
+        st = result.get("current_step") or {}
+        print(f"  Current step: {st.get('step_id', '-')} ({st.get('action', '-')})")
+        rc = result.get("reviewer_role_contract") or {}
+        print(f"  Reviewer Role Contract: {rc.get('contract_id', '-')} r{rc.get('revision', '-')}")
+        nr = result.get("normalization_rules") or {}
+        print(f"  Normalization: {nr.get('version', '-')} hash={str(nr.get('rules_hash', '-'))[:16]}... revoked={nr.get('revoked', '-')}")
+        vs = result.get("verdicts") or []
+        print(f"  Verdicts: {len(vs)}")
+        for v in vs[:3]:
+            print(f"    - {v.get('verdict_id', '-')} overall={v.get('overall', '-')} state={v.get('normalized_state', '-')}")
+        print(f"  lease_raw_token_omitted: {result.get('lease_raw_token_omitted', True)}")
+        print()
+        return True
+
     elif opts.action == "superseded":
         # 只读查询某任务的替代者（task.superseded_by）
         def _local_superseded_forbidden():
@@ -5800,6 +6201,7 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
             print(t("cli.messages.task_show_not_found", id=task_id))
             return True
         _print_task_detail_single(detail, indent_depth=0)
+        _print_task_governance_summary(db, task_id)
         _print_task_link_section(db, task_id)
         _print_task_superseded_section(db, task_id)
         return True
@@ -5818,10 +6220,46 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
     cprint(t("cli.messages.task_show_title"), "cyan", bold=True)
     print("-" * 50)
     _print_task_tree_node(tree, depth=0)
+    _print_task_governance_summary(db, task_id)
     print()
     _print_task_link_section(db, task_id)
     _print_task_superseded_section(db, task_id)
     return True
+
+
+def _print_task_governance_summary(db, task_id: str):
+    """显示 daemon 权威治理投影，不在 CLI 重算任务状态。"""
+    def _local_projection_forbidden():
+        raise DaemonUnavailableError(
+            "task.governance_projection.get 仅由 daemon 提供"
+        )
+
+    try:
+        projection = route_task_read(
+            "task.governance_projection.get",
+            {"task_id": task_id},
+            _local_projection_forbidden,
+        )
+    except Exception:
+        return
+    if not isinstance(projection, dict) or projection.get("error"):
+        return
+
+    cprint("── Governance ──", "cyan")
+    print("  lifecycle_status: {}".format(
+        projection.get("lifecycle_status", projection.get("status", "-"))))
+    print("  workflow_status: {}".format(projection.get("workflow_status", "-")))
+    print("  current_role: {}".format(projection.get("current_role", "-")))
+    print("  next_role: {}".format(projection.get("next_role", "-")))
+    print("  next_action: {}".format(projection.get("next_action", "-")))
+    review = projection.get("review") or {}
+    print("  review: {} verdict={} findings={}".format(
+        review.get("state", "-"),
+        review.get("verdict_id", "-"),
+        review.get("findings_count", "-"),
+    ))
+    for reason in projection.get("blocking_reasons") or []:
+        print("  blocking_reason: {}".format(reason))
 
 
 def _print_task_link_section(db, task_id: str):
@@ -5981,9 +6419,13 @@ def _print_task_tree_node(node: dict, depth: int = 0):
         print(t("cli.messages.task_show_created", time=created))
     else:
         # 子任务用缩进格式
+        status = node.get('status', '')
+        workflow_status = node.get('workflow_status')
+        if workflow_status:
+            status = f"{status} / {workflow_status}"
         cprint(
             t("cli.messages.task_show_subtask_item",
-              indent=indent, id=node.get('task_id', ''), status=node.get('status', ''),
+              indent=indent, id=node.get('task_id', ''), status=status,
               title=node.get('title', '')),
             "white"
         )
@@ -5992,7 +6434,16 @@ def _print_task_tree_node(node: dict, depth: int = 0):
     progress = node.get('progress') or {}
     total = progress.get('total', 0)
     done = progress.get('done', 0)
-    pct = progress.get('progress', 0)
+    # daemon 新投影提供带单位的 percent；兼容旧 daemon 时才把 legacy
+    # progress（ratio，0..1）转换为百分比。最终展示固定两位小数。
+    try:
+        pct = progress.get('percent')
+        if pct is None:
+            pct = float(progress.get('ratio', progress.get('progress', 0))) * 100.0
+        pct = max(0.0, min(100.0, float(pct)))
+        pct = f"{pct:.2f}"
+    except (TypeError, ValueError):
+        pct = "0.00"
     if total > 0:
         cprint(
             t("cli.messages.task_show_progress",

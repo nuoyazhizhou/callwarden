@@ -58,7 +58,10 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     sub.add_parser("list", help="列出当前 UID 的 workspace")
 
     status = sub.add_parser("status", help="查询 workspace 和 snapshot 状态")
-    status.add_argument("workspace_id")
+    status.add_argument(
+        "workspace_id",
+        help="数字 workspace_id 或 workspace_instance_id（如 730 或 4baea3ff12c2ea5c）",
+    )
 
     publish = sub.add_parser("publish", help="发布已刷新 DB 为共享 snapshot")
     publish.add_argument("workspace_id")
@@ -624,9 +627,23 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
     elif args.action == "list":
         result = client.call("workspace.list")
     elif args.action == "status":
-        result = client.call("workspace.status", {
-            "workspace_instance_id": args.workspace_id,
-        })
+        raw_workspace_id = args.workspace_id.strip()
+        if raw_workspace_id.isdecimal():
+            numeric_workspace_id = int(raw_workspace_id)
+            if numeric_workspace_id <= 0:
+                raise DaemonRemoteError(
+                    "invalid_params",
+                    "workspace_id 必须是正整数或非空 workspace_instance_id",
+                )
+            status_params = {"workspace_id": numeric_workspace_id}
+        elif raw_workspace_id:
+            status_params = {"workspace_instance_id": raw_workspace_id}
+        else:
+            raise DaemonRemoteError(
+                "invalid_params",
+                "workspace_id 不能为空",
+            )
+        result = client.call("workspace.status", status_params)
     elif args.action == "publish":
         result = client.publish_snapshot(
             args.workspace_id,
