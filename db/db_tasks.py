@@ -3233,7 +3233,13 @@ class TaskMixin:
             task_id: 任务 ID
 
         Returns:
-            {"total": 总步骤数, "done": 已完成数, "progress": 0.0~1.0}
+            {
+                "total": 总步骤数,
+                "done": 已完成数,
+                "progress": 0.0~1.0（历史兼容字段，语义为 ratio）,
+                "ratio": 0.0~1.0,
+                "percent": 0.0~100.0（四舍五入到两位）,
+            }
         """
         total = 0
         done = 0
@@ -3255,8 +3261,16 @@ class TaskMixin:
             total += sub_progress["total"]
             done += sub_progress["done"]
 
-        progress = (done / total) if total > 0 else 0.0
-        return {"total": total, "done": done, "progress": progress}
+        ratio = (done / total) if total > 0 else 0.0
+        # `progress` 已被旧 CLI 当作比例使用，保留它避免破坏既有客户端；
+        # 新客户端必须读取带单位的 ratio/percent，避免再次把 0..1 当成百分比。
+        return {
+            "total": total,
+            "done": done,
+            "progress": ratio,
+            "ratio": ratio,
+            "percent": round(ratio * 100.0, 2),
+        }
 
     def _find_next_pending_step_tree(self, task_id: str) -> Optional[Dict[str, Any]]:
         """深度优先遍历任务树，找到下一个待执行步骤
@@ -3700,7 +3714,8 @@ Format notes:
             任务树 dict，包含：
             - task_id, title, description, status, creator
             - depth, sort_order
-            - progress: {total, done, progress}
+            - lifecycle_status/workflow_status/governance: 状态投影（本地兼容模式）
+            - progress: {total, done, progress, ratio, percent}
             - steps: 自身步骤列表
             - subtasks: 子任务树列表（递归结构）
             任务不存在返回 None
@@ -3751,11 +3766,29 @@ Format notes:
         # 进度
         progress = self._compute_task_progress(task_id)
 
+        lifecycle_status = task_row["status"]
+        # 本地兼容路径没有 daemon 的 lease/verdict/binding 事实，不能按 raw
+        # status 猜测治理阶段；只有 daemon projection 才能给出 workflow_status。
+        # 这样 auto 降级也不会把历史数据伪装成已完成的流水线状态。
+        workflow_status = "governance_blocked"
+
         return {
             "task_id": task_row["id"],
             "title": task_row["title"],
             "description": task_row["description"],
             "status": task_row["status"],
+            "lifecycle_status": lifecycle_status,
+            "workflow_status": workflow_status,
+            "governance": {
+                "task_id": task_row["id"],
+                "lifecycle_status": lifecycle_status,
+                "workflow_status": workflow_status,
+                "current_role": None,
+                "next_role": None,
+                "next_action": "none",
+                "review": {"state": "not_evaluated"},
+                "blocking_reasons": ["本地兼容模式未连接 daemon 治理投影"],
+            },
             "creator": task_row["creator"],
             "depth": task_row["depth"],
             "sort_order": task_row["sort_order"],

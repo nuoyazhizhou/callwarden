@@ -45,6 +45,55 @@ if not hasattr(_config_module, 'PROJECT_ROOT'):
     _config_module.PROJECT_ROOT = PROJECT_ROOT
 
 
+def ensure_role_worker_schema(conn: sqlite3.Connection) -> None:
+    """P0-L：Role Worker 三表幂等补齐（v60 schema compat，不写授权逻辑）。
+
+    与 Rust `sqlite_query::ensure_role_worker_v60_compat` 及 `db/schema.py` SCHEMA_SQL
+    同形；仅做 schema 兼容（CREATE TABLE IF NOT EXISTS），授权/业务判定一律在
+    Rust daemon 权威路径，不在 Python 侧实现。
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS role_workers (
+            role_worker_id TEXT PRIMARY KEY,
+            owner_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('executor','reviewer','adjudicator')),
+            credential_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+            created_at REAL NOT NULL,
+            revoked_at REAL NOT NULL DEFAULT 0,
+            revocation_reason TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_role_workers_owner
+            ON role_workers(owner_key, status);
+        CREATE TABLE IF NOT EXISTS role_worker_instances (
+            role_instance_id TEXT PRIMARY KEY,
+            role_worker_id TEXT NOT NULL REFERENCES role_workers(role_worker_id),
+            owner_key TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at REAL NOT NULL,
+            retired_at REAL NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_role_worker_instances_worker
+            ON role_worker_instances(role_worker_id, status);
+        CREATE TABLE IF NOT EXISTS role_runtime_provenance (
+            event_id TEXT PRIMARY KEY,
+            workspace_id INTEGER NOT NULL,
+            task_id TEXT NOT NULL DEFAULT '',
+            action_type TEXT NOT NULL,
+            role_worker_id TEXT NOT NULL,
+            role_instance_id TEXT NOT NULL,
+            role_session_id TEXT NOT NULL,
+            runtime_payload_json TEXT NOT NULL DEFAULT '{}',
+            recorded_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_role_runtime_provenance_task
+            ON role_runtime_provenance(task_id, recorded_at);
+        """
+    )
+    conn.commit()
+
+
 def _migrate_v1_to_v2(conn: sqlite3.Connection):
     """v1 -> v2: 新增 Semgrep 相关表和索引"""
     conn.execute("""
@@ -3669,6 +3718,8 @@ class CodeGraphBase:
                 init_toolchain_schema(self.conn)
                 init_jobs_schema(self.conn)
                 init_clone_groups_schema(self.conn)
+                # P0-L：Role Worker 三表幂等补齐（与 Rust ensure 同形，只补 schema）。
+                ensure_role_worker_schema(self.conn)
                 return
 
         # 显式 rollback 或 Rust 扩展不存在时才进入兼容迁移路径。
@@ -3713,6 +3764,9 @@ class CodeGraphBase:
         # 无论走哪条路径（Rust 或 Python 迁移），都做一次列级 compat 兜底修复，
         # 防止陈旧二进制把缺列库打标为当前版本号后静默放行（复审 P0-1/P0-2）。
         self._ensure_compat_columns()
+        # P0-L：Python 兼容路径同样幂等补齐 Role Worker 三表（只补 schema，
+        # 授权判定不在 Python 侧）。
+        ensure_role_worker_schema(self.conn)
 
         # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
         # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，

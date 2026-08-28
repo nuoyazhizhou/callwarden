@@ -413,6 +413,8 @@ CREATE TABLE IF NOT EXISTS task_events (
     snapshot_id TEXT DEFAULT '',
     monotonic_seq INTEGER NOT NULL,
     authoritative_timestamp REAL NOT NULL,
+    request_id TEXT DEFAULT '',
+    step_id TEXT DEFAULT '',
     evidence_path TEXT DEFAULT '',
     evidence_hash TEXT DEFAULT ''
 );
@@ -471,6 +473,50 @@ CREATE TABLE IF NOT EXISTS role_contracts (
 );
 CREATE INDEX IF NOT EXISTS idx_role_contracts_task
     ON role_contracts(task_id, role, is_current);
+
+-- ============================================
+-- P0-L: Role Worker 稳定凭据域（v60 compat 补表）
+-- ============================================
+-- Role Worker 是治理动作的稳定授权锚点：credential 由 daemon CSPRNG 一次性签发，
+-- 数据库仅存 SHA-256 hash；provider/account/model/session 只是无秘密 append-only
+-- provenance，绝不参与授权比较。三表在短路/存量库路径由
+-- Rust sqlite_query::ensure_role_worker_v60_compat 与 db_base.ensure_role_worker_schema
+-- 幂等补齐（CREATE IF NOT EXISTS，不改历史行，不动 schema_version）。
+CREATE TABLE IF NOT EXISTS role_workers (
+    role_worker_id TEXT PRIMARY KEY,
+    owner_key TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('executor','reviewer','adjudicator')),
+    credential_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+    created_at REAL NOT NULL,
+    revoked_at REAL NOT NULL DEFAULT 0,
+    revocation_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_role_workers_owner
+    ON role_workers(owner_key, status);
+CREATE TABLE IF NOT EXISTS role_worker_instances (
+    role_instance_id TEXT PRIMARY KEY,
+    role_worker_id TEXT NOT NULL REFERENCES role_workers(role_worker_id),
+    owner_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at REAL NOT NULL,
+    retired_at REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_role_worker_instances_worker
+    ON role_worker_instances(role_worker_id, status);
+CREATE TABLE IF NOT EXISTS role_runtime_provenance (
+    event_id TEXT PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    task_id TEXT NOT NULL DEFAULT '',
+    action_type TEXT NOT NULL,
+    role_worker_id TEXT NOT NULL,
+    role_instance_id TEXT NOT NULL,
+    role_session_id TEXT NOT NULL,
+    runtime_payload_json TEXT NOT NULL DEFAULT '{}',
+    recorded_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_role_runtime_provenance_task
+    ON role_runtime_provenance(task_id, recorded_at);
 
 -- ============================================
 -- v8: 文件所有权表
