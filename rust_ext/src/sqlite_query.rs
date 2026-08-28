@@ -811,6 +811,57 @@ fn ensure_supersede_v59_compat(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// P0-L：Role Worker 稳定凭据域三表幂等补齐（v60 compat，不动 schema_version）。
+///
+/// 背景：P0-K 的 `task_loop/role_worker.rs` 域逻辑先行，但 `role_workers` /
+/// `role_worker_instances` / `role_runtime_provenance` 三表长期不在任何 canonical
+/// schema 源（step0 勘察实证：全新库迁移到 v60 后三表 MISSING）。本函数在迁移/
+/// 短路路径都无条件执行 `CREATE TABLE IF NOT EXISTS`，与 `db/schema.py` SCHEMA_SQL
+/// 中的同形 DDL 保持一致（全新库由 schema_sql_block 建齐，本函数对其为 no-op）。
+/// 不 bump 版本号：存量库已打标 v60，bump 会触及白名单外的多处版本镜像；
+/// 补表不改历史行、不回填数据，属无损 schema compat。
+fn ensure_role_worker_v60_compat(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS role_workers (
+            role_worker_id TEXT PRIMARY KEY,
+            owner_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('executor','reviewer','adjudicator')),
+            credential_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+            created_at REAL NOT NULL,
+            revoked_at REAL NOT NULL DEFAULT 0,
+            revocation_reason TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_role_workers_owner
+            ON role_workers(owner_key, status);
+        CREATE TABLE IF NOT EXISTS role_worker_instances (
+            role_instance_id TEXT PRIMARY KEY,
+            role_worker_id TEXT NOT NULL REFERENCES role_workers(role_worker_id),
+            owner_key TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at REAL NOT NULL,
+            retired_at REAL NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_role_worker_instances_worker
+            ON role_worker_instances(role_worker_id, status);
+        CREATE TABLE IF NOT EXISTS role_runtime_provenance (
+            event_id TEXT PRIMARY KEY,
+            workspace_id INTEGER NOT NULL,
+            task_id TEXT NOT NULL DEFAULT '',
+            action_type TEXT NOT NULL,
+            role_worker_id TEXT NOT NULL,
+            role_instance_id TEXT NOT NULL,
+            role_session_id TEXT NOT NULL,
+            runtime_payload_json TEXT NOT NULL DEFAULT '{}',
+            recorded_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_role_runtime_provenance_task
+            ON role_runtime_provenance(task_id, recorded_at);",
+    )
+    .map_err(|error| format!("role worker v60 compat tables failed: {error}"))
+}
+
+
 /// 事务化官方 schema 迁移（与 Python `_migrate_schema` 等价，幂等）。
 ///
 /// pub(crate)：供 daemon TaskCollabStore 等组件在打开权威库后调用，
@@ -839,6 +890,11 @@ pub(crate) fn migrate_connection(conn: &Connection) -> Result<i64, String> {
     // fail-closed 拒绝服务（v49 同类教训：短路路径必须做列级校验/补齐）。
     // 无损 ALTER ADD COLUMN，不动历史行；与 Python `_migrate_v58_to_v59` 一致。
     ensure_supersede_v59_compat(conn).map_err(|error| format!("supersede v59 compat failed: {error}"))?;
+
+    // P0-L：Role Worker 三表同样在短路前无条件幂等补齐（存量 v60 库不会进入
+    // schema_sql_block 路径，否则 role_worker 域永远无表可用）。
+    ensure_role_worker_v60_compat(conn)
+        .map_err(|error| format!("role worker v60 compat failed: {error}"))?;
 
     if current >= RUST_SCHEMA_VERSION {
         return Ok(current);

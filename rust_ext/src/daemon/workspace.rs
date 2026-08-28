@@ -81,7 +81,7 @@ use sha2::{Digest, Sha256};
 
 use super::cas::{CasService, CasServiceFacade, CasStore};
 use super::dispatch::{
-    get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
+    get_int_param, get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
     DaemonStateExt, PeerCredential,
 };
 use super::parse_retry_log::{replay_pending, ParseRetryLog, ReplayConfig};
@@ -1425,9 +1425,30 @@ impl DaemonStateExt for WorkspaceDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
-        // ACL 检查（owner_uid 匹配 + 非 archived）
-        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+        let has_instance_id = params.get("workspace_instance_id").is_some();
+        let has_numeric_id = params.get("workspace_id").is_some();
+        if has_instance_id == has_numeric_id {
+            return Err(DaemonRpcError::invalid_params(
+                "workspace.status 必须且只能提供 workspace_instance_id 或 workspace_id",
+            ));
+        }
+        // CLI 与旧 client 公开使用 workspace_id；daemon 原生 API 同时接受
+        // 稳定 instance id。两种输入在这里统一做 owner/archived ACL 校验，
+        // 避免 client 把数字主键误当成 instance id 查询。
+        let workspace = if has_numeric_id {
+            let workspace_id = get_int_param(params, "workspace_id").ok_or_else(|| {
+                DaemonRpcError::invalid_params("workspace_id 必须是整数")
+            })?;
+            if workspace_id <= 0 {
+                return Err(DaemonRpcError::invalid_params(
+                    "workspace_id 必须是正整数",
+                ));
+            }
+            owned_workspace_by_id(&self.registry, peer.uid, workspace_id)?
+        } else {
+            let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+            owned_workspace(&self.registry, peer.uid, workspace_instance_id)?
+        };
         Ok(workspace)
     }
 
@@ -3931,6 +3952,22 @@ mod tests {
         let response = dispatch(&mut state, peer, "workspace.status", &status_params, &[]);
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["workspace_instance_id"], instance_id);
+
+        // CLI 公开参数使用数字 workspace_id；daemon status 必须接受该形式，
+        // 不能把数字主键当作 workspace_instance_id 查询。
+        let numeric_id = reg_response["result"]["workspace_id"]
+            .as_i64()
+            .unwrap();
+        let numeric_params = json!({"workspace_id": numeric_id});
+        let numeric_response = dispatch(
+            &mut state,
+            peer,
+            "workspace.status",
+            &numeric_params,
+            &[],
+        );
+        assert_eq!(numeric_response["ok"], true);
+        assert_eq!(numeric_response["result"]["workspace_id"], numeric_id);
     }
 
     #[test]

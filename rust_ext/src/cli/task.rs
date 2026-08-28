@@ -2681,12 +2681,11 @@ fn format_task_node(
     if !flat {
         let (done, total) = task_progress(node);
         if total > 0 {
-            let pct = done as f64 / total as f64;
-            let pct = format!("{pct:?}");
+            let pct = done as f64 / total as f64 * 100.0;
             lines.push(if zh_cn {
-                format!("{indent}  进度: {done}/{total} ({pct}%)")
+                format!("{indent}  进度: {done}/{total} ({pct:.2}%)")
             } else {
-                format!("{indent}  Progress: {done}/{total} ({pct}%)")
+                format!("{indent}  Progress: {done}/{total} ({pct:.2}%)")
             });
         }
     }
@@ -3941,7 +3940,7 @@ mod tests {
         let conn = fixture();
         let tree = query_task_detail(&conn, "root", true).unwrap().unwrap();
         let output = format_task_show("root", Some(&tree), &TaskLinks::default(), false, false);
-        assert!(output.contains("Progress: 1/2 (0.5%)"));
+        assert!(output.contains("Progress: 1/2 (50.00%)"));
         assert!(output.contains("Subtasks (1):"));
 
         let findings = query_task_findings(&conn, "child", "open", "block").unwrap();

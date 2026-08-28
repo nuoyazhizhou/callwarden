@@ -570,6 +570,10 @@ fn missing_compat_columns(conn: &Connection) -> Result<Vec<(String, String, &'st
         ("task_gate_decisions", "canonicalization_rules_hash", "TEXT DEFAULT ''"),
         ("task_gate_decisions", "normalization_version", "TEXT DEFAULT ''"),
         ("task_gate_decisions", "normalization_rules_hash", "TEXT DEFAULT ''"),
+        // report provenance 列也必须触发当前版本的兼容迁移；否则 v60 数据库
+        // 可能因 checksum 命中而提前返回，task.report 无法持久化 request_id/step_id。
+        ("task_events", "request_id", "TEXT DEFAULT ''"),
+        ("task_events", "step_id", "TEXT DEFAULT ''"),
     ];
     let mut missing = Vec::new();
     for (table, column, definition) in COMPAT_COLUMNS {
@@ -743,6 +747,29 @@ fn apply_task_quality_findings_severity_compat(tx: &Transaction<'_>) -> Result<(
             "ALTER TABLE task_quality_findings ADD COLUMN severity TEXT NOT NULL DEFAULT 'WARN'",
             [],
         )?;
+    }
+    Ok(())
+}
+
+/// 为既有库补齐 task_events 的 report provenance 列。
+///
+/// `task.report` 的 request_id、step_id 必须能被后续结构化 handoff 精确引用；
+/// 旧库没有这两列时只追加兼容列，不修改历史事件内容。新库由 db/schema.py
+/// canonical DDL 直接创建，函数保持幂等。
+fn apply_task_event_report_provenance_compat(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    if !table_exists_tx(tx, "task_events")? {
+        return Ok(());
+    }
+    for (column, definition) in [
+        ("request_id", "TEXT DEFAULT ''"),
+        ("step_id", "TEXT DEFAULT ''"),
+    ] {
+        if !has_column_tx(tx, "task_events", column)? {
+            tx.execute(
+                &format!("ALTER TABLE task_events ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+        }
     }
     Ok(())
 }
@@ -1428,6 +1455,12 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
     apply_task_quality_findings_severity_compat(&tx).map_err(|e| {
         format!(
             "MIGRATION_FAILED: Failed to apply task_quality_findings severity compat: {}",
+            e
+        )
+    })?;
+    apply_task_event_report_provenance_compat(&tx).map_err(|e| {
+        format!(
+            "MIGRATION_FAILED: Failed to apply task_events report provenance compat: {}",
             e
         )
     })?;
