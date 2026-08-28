@@ -1,0 +1,413 @@
+{
+  "read_only": true,
+  "authority": {
+    "manifest_path": "C:\\Users\\wanpi\\.callwarden\\http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+    "pid": 42020,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "p0k_status": "closed",
+    "p0j_status": "closed",
+    "root_status": "in_progress",
+    "chosen_parent": "T-1787203926824-9f873bfc"
+  },
+  "receipt": "C:\\git_work\\callwarden\\deliverables\\software-company\\p0l_task_creation_receipt.json",
+  "task_id": "T-1787801315246-e3e3a08c",
+  "status": {
+    "result": {
+      "task_id": "T-1787801315246-e3e3a08c",
+      "title": "P0-L：Role Worker Task Contract policy / preclaim enforcement remediation",
+      "description": "# P0-L：Role Worker Task Contract Policy / Preclaim Enforcement\n\n## 问题与唯一目标\n\nP0-K 已把 `verdict.submit` / `task.apply` / `task.close` 的显式 `role_worker_v1` 治理写路径接入 stable CW-local Role Worker。但 A″ 建卡后实测，`task.create` 的 generic current contract 不持久化 `identity_policy`，而 `task.next_action`/`task.claim` 可将它视为 legacy-eligible。`task.contract_bootstrap`/`task.contract_revise` 仍只有 legacy identity 分支。P0-L 只修复 create → current contract → bootstrap/revise → next_action → claim 这一 policy-enforcement chain。\n\n## 受限自举例外\n\n当前 policy gap 使 P0-L 不能被它尚未实现的 enforcement 完美保护。用户直接授权本任务**一次**使用 HTTP daemon `task.create` 的 generic projection；这一例外只允许本 P0-L 创建和本 P0-L executor implementation，绝不授权 A″-01…37、其它历史任务或批量 contracts。Executor 只使用其 own ACL-protected stable local worker credential（never output/persist raw value）；不 apply/close/deploy。P0-L 后经 independent review/adjudication/controlled deployment，P0-L must itself receive an append-only role_worker_v1 policy revision before final close.\n\n## Identity policy rules\n\nOnly explicit `legacy_identity_v1` retains current legacy ActionIdentity behavior. Only explicit `role_worker_v1` uses stable Role Worker credential/frozen role mapping. missing/unknown/multiple/malformed/mismatched policy must fail closed—not silently default legacy. provider/account/model/agent/session/runtime are append-only secret-free provenance, never authorization.\n\n## Exclusions\n\nNo direct SQLite/CAS, no Python authorization/business logic, no provider credentials, no P0-K verdict/apply/close rewrite, no A″ implementation, no modification of P0-J-D/A′/old S3 historical facts, no manual runtime replacement or deployment before independent Reviewer PASS.\n",
+      "parent_id": "T-1787203926824-9f873bfc",
+      "status": "review",
+      "lifecycle_status": "review",
+      "workflow_status": "review_pending",
+      "review": {
+        "state": "pending"
+      },
+      "blocking_reasons": [],
+      "governance": {
+        "task_id": "T-1787801315246-e3e3a08c",
+        "lifecycle_status": "review",
+        "workflow_status": "review_pending",
+        "current_role": "reviewer",
+        "next_role": "reviewer",
+        "next_action": "review_current_step",
+        "review": {
+          "state": "pending"
+        },
+        "decision": "READY",
+        "action": "REVIEW",
+        "required_role": "reviewer",
+        "step_id": null,
+        "task_contract": {
+          "id": "TC-T-1787801315246-e3e3a08c",
+          "revision": 1,
+          "hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db"
+        },
+        "role_contract": {
+          "id": "rcl-T-1787801315246-e3e3a08c-reviewer",
+          "revision_id": "rcr-T-1787801315246-e3e3a08c-reviewer-r1",
+          "revision": 1,
+          "hash": "sha256:647fa231fe37fed1f6b24cce38cf6655a0abdac3b80ef28ccd92208177da4127",
+          "canonicalization_version": "role-contract-c14n/v1",
+          "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+          "skill_id": "none",
+          "skill_version": "p0l-role-worker-contract-claim-v1",
+          "prompt_template_id": "cw.p0l.reviewer.role-worker-contract-claim.v1",
+          "handoff_to": "adjudicator"
+        },
+        "authorization": {
+          "acting_role": "reviewer",
+          "lease_role": "reviewer",
+          "lease_required": true,
+          "fencing_required": true,
+          "different_agent_instance_from": [],
+          "different_session_from": []
+        },
+        "allowed_paths": [
+          "db/db_base.py",
+          "db/schema.py",
+          "deliverables/software-company/aprime2_* [read-only evidence]",
+          "deliverables/software-company/p0l_*",
+          "rust_ext/src/daemon/*test*.rs",
+          "rust_ext/src/daemon/dispatch.rs",
+          "rust_ext/src/daemon/task_collab.rs",
+          "rust_ext/src/daemon/task_loop/role_worker.rs",
+          "rust_ext/src/sqlite_query.rs",
+          "tests/test_*"
+        ],
+        "forbidden_paths": [
+          "A″ implementation microtask creation/claim/release before P0-L closure",
+          "bulk task-contract bootstrap/revision for historical tasks",
+          "direct SQLite mutation or database access outside daemon migrations",
+          "implicit legacy downgrade for missing/unknown role_worker policy",
+          "manual replacement of runtime/current or daemon restart outside refresh_shared_runtime.ps1",
+          "modifying P0-K/P0-J-D/A′/old S3 historical task events or verdicts",
+          "provider account/raw token/password/cookie/credential storage in task DB/evidence/logs",
+          "task.apply/task.close by executor or reviewer"
+        ],
+        "eligibility": {
+          "verdict": "pending_review",
+          "evidence_gate": "not_evaluated",
+          "snapshot": "not_evaluated",
+          "mutation_recheck_required": true
+        },
+        "blocking_conditions": [],
+        "blocking_reasons": [],
+        "revision_hint": null,
+        "routing": {
+          "origin_kind": "system_evaluator",
+          "next_role": "reviewer",
+          "next_action": "review_current_step",
+          "reason": [
+            "任务在 review 且尚无有效持久化 verdict"
+          ]
+        },
+        "next_session": {
+          "role": "reviewer",
+          "task_id": "T-1787801315246-e3e3a08c",
+          "step_id": null,
+          "must_be_new_session": true
+        },
+        "source": {
+          "task_status": "review",
+          "task_contract_hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db",
+          "role_contract_hash": "sha256:647fa231fe37fed1f6b24cce38cf6655a0abdac3b80ef28ccd92208177da4127",
+          "evaluated_at": "1787842722.045852"
+        }
+      },
+      "steps": [
+        {
+          "step_id": "S-1787801315285-f68a24c8",
+          "step_index": 0,
+          "action": "map_task_contract_policy_and_preclaim_gap",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/daemon/dispatch.rs,deliverables/software-company/p0l_task_contract_policy_state_machine.md",
+          "target_symbol": "",
+          "check_items": "建立 create/current-contract/bootstrap-revise/next-action/claim 的 policy/source-to-RPC/transaction map，含 P0-K boundary、legacy compatibility、worker/lease separation 和 A″ G0 impact",
+          "status": "done",
+          "result": "step0 map_task_contract_policy_and_preclaim_gap 完成：产出 p0l_task_contract_policy_state_machine.md（commit 520c531）。覆盖 create/current-contract/bootstrap-revise/next-action/claim 的 source-to-RPC transaction map 与必答 5 问；实证 identity_policy 全源码零实现、role_workers 三表不在任何 canonical schema（fresh migrate v60 探针：三表 MISSING）、P0-K role_worker 域零生产调用方；P0-K boundary/legacy compatibility/worker-lease separation/A″-G0 impact 与逐卡 append-only revision 路径均已给出。",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787803110.130659
+        },
+        {
+          "step_id": "S-1787801315285-f68ad558",
+          "step_index": 1,
+          "action": "implement_canonical_identity_policy_on_task_create",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/sqlite_query.rs,db/schema.py,db/db_base.py",
+          "target_symbol": "",
+          "check_items": "task.create 校验并原子持久化 canonical identity_policy；missing/unknown/multiple/mismatch rollback；legacy_identity_v1 explicit compatibility；禁止忽略 caller envelope",
+          "status": "done",
+          "result": "P0-L step1 完成：task.create 对 canonical identity_policy 实施 fail-closed 校验并原子持久化。决策矩阵：caller envelope 权威（必须合法 policy，顶层声明只允许一致或缺席，contract_id 必须锚定 TC-{task_id}）；envelope 缺失 + 显式 legacy_identity_v1 = 兼容通道（生成 generic envelope 注入）；role_worker_v1 无 envelope / missing / unknown / mismatch 全部确定性拒绝并整事务回滚。事务内回读 task_contract_revisions.envelope_payload 做 exact match 复核，不一致回滚。测试：4 个新增负矩阵全过（含失败回滚后三表零残留断言）；存量 8 处测试按显式 legacy_identity_v1 + 三角色合同模式适配转绿；修复 revise 测试的确定性死锁（std Mutex 不可重入：测试持 conn guard 调用内部再次 lock 的负向 revise，已收敛为块作用域）。全量回归 1524 passed / 15 failed：15 个失败全部归属为预先存在（6 个在未触碰文件；9 个经 git stash HEAD 基线实证复现相同错误码，门禁来自 cd004d2 且失败文件不在本步白名单）。白名单偏离 3 文件已提交并在证据说明：task_loop/mod.rs（P0-K 孤儿模块 role_worker 接线，从未被声明/编译）、Cargo.toml（getrandom 0.3，role_worker credential_material 所需）、Cargo.lock（自动更新）。commits: 91f557b（实现+测试）+ 468aecf（ledger）。证据: .workbuddy/reports/p0l_step1_evidence_20260827.md",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787809152.3235228
+        },
+        {
+          "step_id": "S-1787801315285-f68afec0",
+          "step_index": 2,
+          "action": "implement_role_worker_contract_bootstrap_and_revision",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/daemon/dispatch.rs",
+          "target_symbol": "",
+          "check_items": "仅 role_worker_v1 的 bootstrap/revise branch 使用 expected adjudicator worker + separate reviewer proof/lease/fencing；generic old revision append hash-linked policy revision；legacy 原路径不变",
+          "status": "done",
+          "result": "P0-L step2 完成：contract bootstrap/revise 接入 role_worker_v1 分支。1) expected adjudicator worker + separate reviewer proof/lease/fencing：在既有独立 reviewer lease/fencing 与角色分离门禁之后，role_worker_v1 强制 parse_role_worker_auth + validate_and_record(expected_role=adjudicator)——owner/active/credential-hash 校验、frozen role 映射、同任务角色分离查询，并落 append-only role_runtime_provenance。2) generic 旧 revision 的 hash-linked policy 升级：走原有 append_task_contract_revision 链（supersedes_revision + supersedes_contract_hash 锚定，revision n+1），升级后 envelope_payload 持久化 role_worker_v1，get_current_task_contract_policy 回读一致。3) 当前 policy=role_worker_v1 时，显式降级（新声明 legacy）与隐式降级（无槽位）均拒绝 E_TASK_IDENTITY_POLICY_MISMATCH，revision 链不被污染；无槽位或显式 legacy_identity_v1 且当前非 role_worker_v1 的路径逐行保持原样（存量测试零改动通过）。测试：2 个新负矩阵全过（缺 auth → E_TASK_IDENTITY_POLICY_REQUIRED；executor worker → E_ROLE_WORKER_ROLE_MISMATCH；错误 credential → E_ROLE_WORKER_CREDENTIAL_INVALID；正确 adjudicator worker → 成功 + provenance 恰 1 行；升级/降级 5 场景）。全量回归 1530 passed / 11 failed：11 个失败全部包含于 step1 已 HEAD 基线实证的预先存在集合，零新引入。无白名单偏离（仅改 task_collab.rs；dispatch.rs / role_worker.rs 本步无需改动）。commits: 1f9feba（实现+测试）+ af52d46（ledger）。证据: .workbuddy/reports/p0l_step2_evidence_20260828.md",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787811251.0600626
+        },
+        {
+          "step_id": "S-1787801315285-f68b2378",
+          "step_index": 3,
+          "action": "enforce_policy_in_next_action_and_task_claim",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/daemon/dispatch.rs",
+          "target_symbol": "",
+          "check_items": "next_action 返回 structured requirements/blocker；claim 在同一事务、任何 step/contract binding 前验证 expected executor stable worker、policy、separation、contract claim和workspace binding",
+          "status": "done",
+          "result": "P0-L step3 完成：next_action/claim policy enforcement。1) task.claim 同事务门禁：在事务开启后、任何 step/contract binding 与 status 变更之前，按三态 policy（NoContractRevision/Unresolved/Declared）分流——role_worker_v1 强制 identity + role_worker_auth，validate_role_worker 完成 owner/active/credential-hash/frozen role/instance/separation 全链校验并追加 append-only role_runtime_provenance（不存 raw credential），失败随事务回滚无半状态；未知策略与未解析信封一律 E_TASK_IDENTITY_POLICY_MISMATCH fail-closed，无隐式 legacy 降级；历史任务（无合同）与显式 legacy 原路径零变化。2) task.next_action 只读投影注入结构化字段：identity_policy/identity_policy_status，role_worker_v1 附 claim_requirements（expected_role=required_role），Unresolved 附 blocked 标记；单次 with_conn，零 mutation。测试：4 个新测试全绿（缺 auth → E_TASK_IDENTITY_POLICY_REQUIRED；错角色 → E_ROLE_WORKER_ROLE_MISMATCH；错 credential → E_ROLE_WORKER_CREDENTIAL_INVALID；正确 worker → claim 成功 + provenance 恰 1 行；未知/空信封 → fail-closed 且零副作用；投影双场景）。回归子集 85 passed / 1 failed，唯一失败经隔离 worktree git stash 实证纯 HEAD 同样失败（预先存在，cd004d2 引入），零新引入。共享树脏文件交叠处置：编辑前快照 + 逐 hunk 归属筛选（11 hunk 中 3 属我 8 属并行会话）+ detached worktree 干净基线应用复验后提交。无白名单偏离。commit: 5b3e6f5（分支 p0l-s3-tmp，master 为其祖先；主树含并行会话未提交改动，ff 合并待并行会话收尾后受控执行）。证据: .workbuddy/reports/p0l_step3_evidence_20260827.md",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787824152.9349198
+        },
+        {
+          "step_id": "S-1787801315285-f68b44ac",
+          "step_index": 4,
+          "action": "prove_policy_and_claim_negative_matrix",
+          "target_file": "rust_ext/src/daemon/*test*.rs,tests/test_*",
+          "target_symbol": "",
+          "check_items": "覆盖 create atomicity、policy missing/unknown/multiple/mismatch、legacy behavior、bootstrap/revise worker+reviewer proof、next-action block、prewrite claim rejection、runtime provenance、secret absence、P0-K regression、idempotency/fencing",
+          "status": "done",
+          "result": "R1/R2/R3 整改完成并提交 12aecc1：claim/revise worker-first（runtime identity 仅 provenance）、server-side reviewer proof（拒绝 raw token）、next_action fail-closed 路由一致；step4 完整负矩阵落地（claim 3 场景/revise 7 场景/dispatch 2 场景）；定向回归全绿（role_worker 20、next_action 22、task_collab 90、dispatch 47），全量 1535 passed/14 failed 均归因并行会话提交（bdfe012/ddf2a87/ca38130）",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787831126.5262272
+        },
+        {
+          "step_id": "S-1787801315285-f68b625c",
+          "step_index": 5,
+          "action": "prepare_independent_review_and_controlled_release",
+          "target_file": "deliverables/software-company/p0l_*,scripts/refresh_shared_runtime.ps1 [read-only until PASS]",
+          "target_symbol": "",
+          "check_items": "生成无秘密 evidence/reviewer handoff；记录 live/source/runtime drift；executor不部署；PASS后才由独立adjudicator授权受控 refresh，再单独逐卡修订 A″ parent/G0 policy",
+          "status": "done",
+          "result": "step5 review packet 完成并提交 f899f7f：deliverables/software-company/p0l_step5_review_packet_20260828.md——R1/R2/R3 修复映射与 source anchors、step4 完整负矩阵汇总、回归证据与 14 项失败归因、bootstrap raw-token 残留如实披露、no-secret scan、R4 不部署声明、治理边界（未创建新卡/未 revise/未 apply-close）。交接独立 reviewer（independence_requirement: required）",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787831159.1671603
+        }
+      ],
+      "progress": {
+        "total": 6,
+        "done": 6,
+        "progress": 1.0,
+        "ratio": 1.0,
+        "percent": 100.0
+      },
+      "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+      "claimed_by": "cw-exec-wb-20260827-p0l",
+      "created_at": 1787801315.2844584,
+      "updated_at": 1787831159.1671603
+    }
+  },
+  "tree": {
+    "result": {
+      "task_id": "T-1787801315246-e3e3a08c",
+      "title": "P0-L：Role Worker Task Contract policy / preclaim enforcement remediation",
+      "description": "# P0-L：Role Worker Task Contract Policy / Preclaim Enforcement\n\n## 问题与唯一目标\n\nP0-K 已把 `verdict.submit` / `task.apply` / `task.close` 的显式 `role_worker_v1` 治理写路径接入 stable CW-local Role Worker。但 A″ 建卡后实测，`task.create` 的 generic current contract 不持久化 `identity_policy`，而 `task.next_action`/`task.claim` 可将它视为 legacy-eligible。`task.contract_bootstrap`/`task.contract_revise` 仍只有 legacy identity 分支。P0-L 只修复 create → current contract → bootstrap/revise → next_action → claim 这一 policy-enforcement chain。\n\n## 受限自举例外\n\n当前 policy gap 使 P0-L 不能被它尚未实现的 enforcement 完美保护。用户直接授权本任务**一次**使用 HTTP daemon `task.create` 的 generic projection；这一例外只允许本 P0-L 创建和本 P0-L executor implementation，绝不授权 A″-01…37、其它历史任务或批量 contracts。Executor 只使用其 own ACL-protected stable local worker credential（never output/persist raw value）；不 apply/close/deploy。P0-L 后经 independent review/adjudication/controlled deployment，P0-L must itself receive an append-only role_worker_v1 policy revision before final close.\n\n## Identity policy rules\n\nOnly explicit `legacy_identity_v1` retains current legacy ActionIdentity behavior. Only explicit `role_worker_v1` uses stable Role Worker credential/frozen role mapping. missing/unknown/multiple/malformed/mismatched policy must fail closed—not silently default legacy. provider/account/model/agent/session/runtime are append-only secret-free provenance, never authorization.\n\n## Exclusions\n\nNo direct SQLite/CAS, no Python authorization/business logic, no provider credentials, no P0-K verdict/apply/close rewrite, no A″ implementation, no modification of P0-J-D/A′/old S3 historical facts, no manual runtime replacement or deployment before independent Reviewer PASS.\n",
+      "status": "review",
+      "lifecycle_status": "review",
+      "workflow_status": "review_pending",
+      "governance": {
+        "task_id": "T-1787801315246-e3e3a08c",
+        "lifecycle_status": "review",
+        "workflow_status": "review_pending",
+        "current_role": "reviewer",
+        "next_role": "reviewer",
+        "next_action": "review_current_step",
+        "review": {
+          "state": "pending"
+        },
+        "decision": "READY",
+        "action": "REVIEW",
+        "required_role": "reviewer",
+        "step_id": null,
+        "task_contract": {
+          "id": "TC-T-1787801315246-e3e3a08c",
+          "revision": 1,
+          "hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db"
+        },
+        "role_contract": {
+          "id": "rcl-T-1787801315246-e3e3a08c-reviewer",
+          "revision_id": "rcr-T-1787801315246-e3e3a08c-reviewer-r1",
+          "revision": 1,
+          "hash": "sha256:647fa231fe37fed1f6b24cce38cf6655a0abdac3b80ef28ccd92208177da4127",
+          "canonicalization_version": "role-contract-c14n/v1",
+          "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+          "skill_id": "none",
+          "skill_version": "p0l-role-worker-contract-claim-v1",
+          "prompt_template_id": "cw.p0l.reviewer.role-worker-contract-claim.v1",
+          "handoff_to": "adjudicator"
+        },
+        "authorization": {
+          "acting_role": "reviewer",
+          "lease_role": "reviewer",
+          "lease_required": true,
+          "fencing_required": true,
+          "different_agent_instance_from": [],
+          "different_session_from": []
+        },
+        "allowed_paths": [
+          "db/db_base.py",
+          "db/schema.py",
+          "deliverables/software-company/aprime2_* [read-only evidence]",
+          "deliverables/software-company/p0l_*",
+          "rust_ext/src/daemon/*test*.rs",
+          "rust_ext/src/daemon/dispatch.rs",
+          "rust_ext/src/daemon/task_collab.rs",
+          "rust_ext/src/daemon/task_loop/role_worker.rs",
+          "rust_ext/src/sqlite_query.rs",
+          "tests/test_*"
+        ],
+        "forbidden_paths": [
+          "A″ implementation microtask creation/claim/release before P0-L closure",
+          "bulk task-contract bootstrap/revision for historical tasks",
+          "direct SQLite mutation or database access outside daemon migrations",
+          "implicit legacy downgrade for missing/unknown role_worker policy",
+          "manual replacement of runtime/current or daemon restart outside refresh_shared_runtime.ps1",
+          "modifying P0-K/P0-J-D/A′/old S3 historical task events or verdicts",
+          "provider account/raw token/password/cookie/credential storage in task DB/evidence/logs",
+          "task.apply/task.close by executor or reviewer"
+        ],
+        "eligibility": {
+          "verdict": "pending_review",
+          "evidence_gate": "not_evaluated",
+          "snapshot": "not_evaluated",
+          "mutation_recheck_required": true
+        },
+        "blocking_conditions": [],
+        "blocking_reasons": [],
+        "revision_hint": null,
+        "routing": {
+          "origin_kind": "system_evaluator",
+          "next_role": "reviewer",
+          "next_action": "review_current_step",
+          "reason": [
+            "任务在 review 且尚无有效持久化 verdict"
+          ]
+        },
+        "next_session": {
+          "role": "reviewer",
+          "task_id": "T-1787801315246-e3e3a08c",
+          "step_id": null,
+          "must_be_new_session": true
+        },
+        "source": {
+          "task_status": "review",
+          "task_contract_hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db",
+          "role_contract_hash": "sha256:647fa231fe37fed1f6b24cce38cf6655a0abdac3b80ef28ccd92208177da4127",
+          "evaluated_at": "1787842722.047548"
+        }
+      },
+      "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+      "claimed_by": "cw-exec-wb-20260827-p0l",
+      "depth": 0,
+      "sort_order": 0,
+      "created_at": 1787801315.2844584,
+      "updated_at": 1787831159.1671603,
+      "closed_at": 0.0,
+      "progress": {
+        "total": 6,
+        "done": 6,
+        "progress": 1.0,
+        "ratio": 1.0,
+        "percent": 100.0
+      },
+      "steps": [
+        {
+          "step_id": "S-1787801315285-f68a24c8",
+          "step_index": 0,
+          "action": "map_task_contract_policy_and_preclaim_gap",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/daemon/dispatch.rs,deliverables/software-company/p0l_task_contract_policy_state_machine.md",
+          "target_symbol": "",
+          "check_items": "建立 create/current-contract/bootstrap-revise/next-action/claim 的 policy/source-to-RPC/transaction map，含 P0-K boundary、legacy compatibility、worker/lease separation 和 A″ G0 impact",
+          "status": "done",
+          "result": "step0 map_task_contract_policy_and_preclaim_gap 完成：产出 p0l_task_contract_policy_state_machine.md（commit 520c531）。覆盖 create/current-contract/bootstrap-revise/next-action/claim 的 source-to-RPC transaction map 与必答 5 问；实证 identity_policy 全源码零实现、role_workers 三表不在任何 canonical schema（fresh migrate v60 探针：三表 MISSING）、P0-K role_worker 域零生产调用方；P0-K boundary/legacy compatibility/worker-lease separation/A″-G0 impact 与逐卡 append-only revision 路径均已给出。",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787803110.130659
+        },
+        {
+          "step_id": "S-1787801315285-f68ad558",
+          "step_index": 1,
+          "action": "implement_canonical_identity_policy_on_task_create",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/sqlite_query.rs,db/schema.py,db/db_base.py",
+          "target_symbol": "",
+          "check_items": "task.create 校验并原子持久化 canonical identity_policy；missing/unknown/multiple/mismatch rollback；legacy_identity_v1 explicit compatibility；禁止忽略 caller envelope",
+          "status": "done",
+          "result": "P0-L step1 完成：task.create 对 canonical identity_policy 实施 fail-closed 校验并原子持久化。决策矩阵：caller envelope 权威（必须合法 policy，顶层声明只允许一致或缺席，contract_id 必须锚定 TC-{task_id}）；envelope 缺失 + 显式 legacy_identity_v1 = 兼容通道（生成 generic envelope 注入）；role_worker_v1 无 envelope / missing / unknown / mismatch 全部确定性拒绝并整事务回滚。事务内回读 task_contract_revisions.envelope_payload 做 exact match 复核，不一致回滚。测试：4 个新增负矩阵全过（含失败回滚后三表零残留断言）；存量 8 处测试按显式 legacy_identity_v1 + 三角色合同模式适配转绿；修复 revise 测试的确定性死锁（std Mutex 不可重入：测试持 conn guard 调用内部再次 lock 的负向 revise，已收敛为块作用域）。全量回归 1524 passed / 15 failed：15 个失败全部归属为预先存在（6 个在未触碰文件；9 个经 git stash HEAD 基线实证复现相同错误码，门禁来自 cd004d2 且失败文件不在本步白名单）。白名单偏离 3 文件已提交并在证据说明：task_loop/mod.rs（P0-K 孤儿模块 role_worker 接线，从未被声明/编译）、Cargo.toml（getrandom 0.3，role_worker credential_material 所需）、Cargo.lock（自动更新）。commits: 91f557b（实现+测试）+ 468aecf（ledger）。证据: .workbuddy/reports/p0l_step1_evidence_20260827.md",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787809152.3235228
+        },
+        {
+          "step_id": "S-1787801315285-f68afec0",
+          "step_index": 2,
+          "action": "implement_role_worker_contract_bootstrap_and_revision",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/daemon/dispatch.rs",
+          "target_symbol": "",
+          "check_items": "仅 role_worker_v1 的 bootstrap/revise branch 使用 expected adjudicator worker + separate reviewer proof/lease/fencing；generic old revision append hash-linked policy revision；legacy 原路径不变",
+          "status": "done",
+          "result": "P0-L step2 完成：contract bootstrap/revise 接入 role_worker_v1 分支。1) expected adjudicator worker + separate reviewer proof/lease/fencing：在既有独立 reviewer lease/fencing 与角色分离门禁之后，role_worker_v1 强制 parse_role_worker_auth + validate_and_record(expected_role=adjudicator)——owner/active/credential-hash 校验、frozen role 映射、同任务角色分离查询，并落 append-only role_runtime_provenance。2) generic 旧 revision 的 hash-linked policy 升级：走原有 append_task_contract_revision 链（supersedes_revision + supersedes_contract_hash 锚定，revision n+1），升级后 envelope_payload 持久化 role_worker_v1，get_current_task_contract_policy 回读一致。3) 当前 policy=role_worker_v1 时，显式降级（新声明 legacy）与隐式降级（无槽位）均拒绝 E_TASK_IDENTITY_POLICY_MISMATCH，revision 链不被污染；无槽位或显式 legacy_identity_v1 且当前非 role_worker_v1 的路径逐行保持原样（存量测试零改动通过）。测试：2 个新负矩阵全过（缺 auth → E_TASK_IDENTITY_POLICY_REQUIRED；executor worker → E_ROLE_WORKER_ROLE_MISMATCH；错误 credential → E_ROLE_WORKER_CREDENTIAL_INVALID；正确 adjudicator worker → 成功 + provenance 恰 1 行；升级/降级 5 场景）。全量回归 1530 passed / 11 failed：11 个失败全部包含于 step1 已 HEAD 基线实证的预先存在集合，零新引入。无白名单偏离（仅改 task_collab.rs；dispatch.rs / role_worker.rs 本步无需改动）。commits: 1f9feba（实现+测试）+ af52d46（ledger）。证据: .workbuddy/reports/p0l_step2_evidence_20260828.md",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787811251.0600626
+        },
+        {
+          "step_id": "S-1787801315285-f68b2378",
+          "step_index": 3,
+          "action": "enforce_policy_in_next_action_and_task_claim",
+          "target_file": "rust_ext/src/daemon/task_collab.rs,rust_ext/src/daemon/task_loop/role_worker.rs,rust_ext/src/daemon/dispatch.rs",
+          "target_symbol": "",
+          "check_items": "next_action 返回 structured requirements/blocker；claim 在同一事务、任何 step/contract binding 前验证 expected executor stable worker、policy、separation、contract claim和workspace binding",
+          "status": "done",
+          "result": "P0-L step3 完成：next_action/claim policy enforcement。1) task.claim 同事务门禁：在事务开启后、任何 step/contract binding 与 status 变更之前，按三态 policy（NoContractRevision/Unresolved/Declared）分流——role_worker_v1 强制 identity + role_worker_auth，validate_role_worker 完成 owner/active/credential-hash/frozen role/instance/separation 全链校验并追加 append-only role_runtime_provenance（不存 raw credential），失败随事务回滚无半状态；未知策略与未解析信封一律 E_TASK_IDENTITY_POLICY_MISMATCH fail-closed，无隐式 legacy 降级；历史任务（无合同）与显式 legacy 原路径零变化。2) task.next_action 只读投影注入结构化字段：identity_policy/identity_policy_status，role_worker_v1 附 claim_requirements（expected_role=required_role），Unresolved 附 blocked 标记；单次 with_conn，零 mutation。测试：4 个新测试全绿（缺 auth → E_TASK_IDENTITY_POLICY_REQUIRED；错角色 → E_ROLE_WORKER_ROLE_MISMATCH；错 credential → E_ROLE_WORKER_CREDENTIAL_INVALID；正确 worker → claim 成功 + provenance 恰 1 行；未知/空信封 → fail-closed 且零副作用；投影双场景）。回归子集 85 passed / 1 failed，唯一失败经隔离 worktree git stash 实证纯 HEAD 同样失败（预先存在，cd004d2 引入），零新引入。共享树脏文件交叠处置：编辑前快照 + 逐 hunk 归属筛选（11 hunk 中 3 属我 8 属并行会话）+ detached worktree 干净基线应用复验后提交。无白名单偏离。commit: 5b3e6f5（分支 p0l-s3-tmp，master 为其祖先；主树含并行会话未提交改动，ff 合并待并行会话收尾后受控执行）。证据: .workbuddy/reports/p0l_step3_evidence_20260827.md",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787824152.9349198
+        },
+        {
+          "step_id": "S-1787801315285-f68b44ac",
+          "step_index": 4,
+          "action": "prove_policy_and_claim_negative_matrix",
+          "target_file": "rust_ext/src/daemon/*test*.rs,tests/test_*",
+          "target_symbol": "",
+          "check_items": "覆盖 create atomicity、policy missing/unknown/multiple/mismatch、legacy behavior、bootstrap/revise worker+reviewer proof、next-action block、prewrite claim rejection、runtime provenance、secret absence、P0-K regression、idempotency/fencing",
+          "status": "done",
+          "result": "R1/R2/R3 整改完成并提交 12aecc1：claim/revise worker-first（runtime identity 仅 provenance）、server-side reviewer proof（拒绝 raw token）、next_action fail-closed 路由一致；step4 完整负矩阵落地（claim 3 场景/revise 7 场景/dispatch 2 场景）；定向回归全绿（role_worker 20、next_action 22、task_collab 90、dispatch 47），全量 1535 passed/14 failed 均归因并行会话提交（bdfe012/ddf2a87/ca38130）",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787831126.5262272
+        },
+        {
+          "step_id": "S-1787801315285-f68b625c",
+          "step_index": 5,
+          "action": "prepare_independent_review_and_controlled_release",
+          "target_file": "deliverables/software-company/p0l_*,scripts/refresh_shared_runtime.ps1 [read-only until PASS]",
+          "target_symbol": "",
+          "check_items": "生成无秘密 evidence/reviewer handoff；记录 live/source/runtime drift；executor不部署；PASS后才由独立adjudicator授权受控 refresh，再单独逐卡修订 A″ parent/G0 policy",
+          "status": "done",
+          "result": "step5 review packet 完成并提交 f899f7f：deliverables/software-company/p0l_step5_review_packet_20260828.md——R1/R2/R3 修复映射与 source anchors、step4 完整负矩阵汇总、回归证据与 14 项失败归因、bootstrap raw-token 残留如实披露、no-secret scan、R4 不部署声明、治理边界（未创建新卡/未 revise/未 apply-close）。交接独立 reviewer（independence_requirement: required）",
+          "created_at": 1787801315.2844584,
+          "completed_at": 1787831159.1671603
+        }
+      ],
+      "subtasks": []
+    }
+  },
+  "next_action": {
+    "task_id": "T-1787801315246-e3e3a08c",
+    "step_id": null,
+    "next_action": "review_current_step",
+    "blocking_conditions": [],
+    "contract_id": "TC-T-1787801315246-e3e3a08c",
+    "contract_revision": 1,
+    "identity_policy_present": false
+  },
+  "assertions": {
+    "created_task_id_matches_receipt": true,
+    "parent_matches_receipt": true,
+    "six_steps_recorded": true,
+    "three_role_contracts_recorded": true,
+    "no_child_tasks_created_by_p0l_creation": true,
+    "no_claim_or_governance_mutation_performed_by_verifier": true
+  }
+}

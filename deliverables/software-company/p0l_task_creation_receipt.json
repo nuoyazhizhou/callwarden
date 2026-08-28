@@ -1,0 +1,66 @@
+{
+  "status": "created",
+  "created_via": "HTTP daemon task.create",
+  "user_authorized_single_bootstrap": true,
+  "read_or_used_credentials": false,
+  "authority": {
+    "manifest_path": "C:\\Users\\wanpi\\.callwarden\\http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+    "pid": 36312,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "p0k_status": "closed",
+    "p0j_status": "closed",
+    "root_status": "in_progress",
+    "chosen_parent": "T-1787203926824-9f873bfc"
+  },
+  "requested_task_id": "T-1787801315246-e3e3a08c",
+  "parent_id": "T-1787203926824-9f873bfc",
+  "scope_limit": "P0-L only; no A'' microtasks; no task execution or deployment",
+  "task": {
+    "task_id": "T-1787801315246-e3e3a08c",
+    "title": "P0-L：Role Worker Task Contract policy / preclaim enforcement remediation",
+    "status": "open",
+    "step_count": 6,
+    "contract_count": 3,
+    "workspace_id": 1,
+    "workspace_binding_id": "tb-T-1787801315246-e3e3a08c-ws-1",
+    "workspace_capture_id": "wc-ws-1-4136100120",
+    "monotonic_seq": 1786265397697,
+    "governance_projection": {
+      "ok": true,
+      "task_id": "T-1787801315246-e3e3a08c",
+      "workspace_id": 1,
+      "contract_id": "TC-T-1787801315246-e3e3a08c",
+      "contract_revision": 1,
+      "contract_hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db",
+      "role_contracts": [
+        {
+          "role": "executor",
+          "lineage_id": "rcl-T-1787801315246-e3e3a08c-executor",
+          "revision_id": "rcr-T-1787801315246-e3e3a08c-executor-r1",
+          "hash": "sha256:3f318d05e8f4aaff5e8e4e4341032a80eb6bdc1c481c1508f518dbf0328990c2"
+        },
+        {
+          "role": "reviewer",
+          "lineage_id": "rcl-T-1787801315246-e3e3a08c-reviewer",
+          "revision_id": "rcr-T-1787801315246-e3e3a08c-reviewer-r1",
+          "hash": "sha256:647fa231fe37fed1f6b24cce38cf6655a0abdac3b80ef28ccd92208177da4127"
+        },
+        {
+          "role": "adjudicator",
+          "lineage_id": "rcl-T-1787801315246-e3e3a08c-adjudicator",
+          "revision_id": "rcr-T-1787801315246-e3e3a08c-adjudicator-r1",
+          "hash": "sha256:6cd23386c000ce618801b91c86c429de2be1129361334882c6c9307e9c09b83b"
+        }
+      ],
+      "step_binding_ids": [
+        "sb-T-1787801315246-e3e3a08c-S-1787801315285-f68a24c8-r1",
+        "sb-T-1787801315246-e3e3a08c-S-1787801315285-f68ad558-r1",
+        "sb-T-1787801315246-e3e3a08c-S-1787801315285-f68afec0-r1",
+        "sb-T-1787801315246-e3e3a08c-S-1787801315285-f68b2378-r1",
+        "sb-T-1787801315246-e3e3a08c-S-1787801315285-f68b44ac-r1",
+        "sb-T-1787801315246-e3e3a08c-S-1787801315285-f68b625c-r1"
+      ]
+    }
+  }
+}

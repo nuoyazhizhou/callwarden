@@ -1,0 +1,64 @@
+{
+  "read_only": true,
+  "authority": {
+    "manifest_path": "C:\\Users\\wanpi\\.callwarden\\http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+    "pid": 54252,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "p0k_status": "closed",
+    "p0j_status": "closed",
+    "root_status": "in_progress",
+    "chosen_parent": "T-1787203926824-9f873bfc"
+  },
+  "task_id": "T-1787801315246-e3e3a08c",
+  "instances": {
+    "ws-1": {
+      "task_id": "T-1787801315246-e3e3a08c",
+      "step_id": "S-1787801315285-f68b44ac",
+      "next_action": "claim_current_step",
+      "identity_policy": null,
+      "identity_policy_status": "unresolved",
+      "claim_requirements": {
+        "blocked": true,
+        "reason": "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
+      },
+      "blocking_conditions": [],
+      "blocking_reasons": [],
+      "task_contract": {
+        "id": "TC-T-1787801315246-e3e3a08c",
+        "revision": 1,
+        "hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db"
+      },
+      "source": {
+        "task_status": "in_progress",
+        "task_contract_hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db",
+        "role_contract_hash": "sha256:3f318d05e8f4aaff5e8e4e4341032a80eb6bdc1c481c1508f518dbf0328990c2",
+        "evaluated_at": "1787825482.323604"
+      }
+    },
+    "4baea3ff12c2ea5c": {
+      "task_id": "T-1787801315246-e3e3a08c",
+      "step_id": "S-1787801315285-f68b44ac",
+      "next_action": "claim_current_step",
+      "identity_policy": null,
+      "identity_policy_status": "unresolved",
+      "claim_requirements": {
+        "blocked": true,
+        "reason": "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
+      },
+      "blocking_conditions": [],
+      "blocking_reasons": [],
+      "task_contract": {
+        "id": "TC-T-1787801315246-e3e3a08c",
+        "revision": 1,
+        "hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db"
+      },
+      "source": {
+        "task_status": "in_progress",
+        "task_contract_hash": "sha256:aad8924e367a05a21b95c76e4b77a693d650aac3bc798521543cfa57cadfb3db",
+        "role_contract_hash": "sha256:3f318d05e8f4aaff5e8e4e4341032a80eb6bdc1c481c1508f518dbf0328990c2",
+        "evaluated_at": "1787825482.338194"
+      }
+    }
+  }
+}

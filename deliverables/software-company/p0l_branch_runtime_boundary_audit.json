@@ -1,0 +1,36 @@
+{
+  "read_only": true,
+  "authority": {
+    "manifest_file": "http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json",
+    "manifest_pid": 54252,
+    "health_pid": 54252,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "pid_matches": true
+  },
+  "binary": {
+    "manifest_executable_present": false,
+    "live_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "live_sha256": "b9dd28840a6324f49821b77a308aea886f033030db192c96cc3f000ec05b336e",
+    "runtime_current_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "runtime_current_sha256": "b9dd28840a6324f49821b77a308aea886f033030db192c96cc3f000ec05b336e",
+    "live_equals_runtime_current": true
+  },
+  "git": {
+    "master_head": "8324bb56077ce3f7679504eea3db591431013c4e",
+    "p0l_s3_tmp_head": "d528283f69616e5fedca2b30ecb4c2f07e312372",
+    "step3_commit": "5b3e6f51d28a6f69201c03202697cbde1e5c95ad",
+    "step3_in_master": false,
+    "step3_in_p0l_s3_tmp": true,
+    "master_ancestor_of_p0l_s3_tmp": false,
+    "working_tree_changed_p0l_files": [
+      "rust_ext/src/daemon/dispatch.rs",
+      "rust_ext/src/daemon/task_collab.rs"
+    ]
+  },
+  "source_signals": {
+    "task_collab_has_policy_state": true,
+    "dispatch_has_claim_requirements": true
+  },
+  "interpretation": "This audit can prove process/manifest health, git ancestry and file-level source presence. It cannot prove that the live binary was built from an unmerged commit; that requires a controlled build provenance manifest after independent review."
+}
