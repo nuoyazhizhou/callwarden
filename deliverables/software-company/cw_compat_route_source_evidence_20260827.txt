@@ -1,0 +1,285 @@
+FILE=tools_collab.py LINE=10 :: `_collab_direct_read(get_db())` 构造 CodeGraphDB——违反 fail-closed 契约，
+  已改为 HTTP 模式直接 _http_unsupported() 结构化 unsupported
+  （不构造 CodeGraphDB，无 SQLite fallback）。
+FILE=tools_collab.py LINE=21 :: dispatch.handle_collab_rpc 路由），不再 get_db() 本地写；
+  - legacy→v1 冻结枚举迁移（PRE_VERDICT→blind_first_pass 等），非 v1 值 fail-closed；
+  - daemon 不可达/降级返回 E_*_DAEMON_UNAVAILABLE，不回退本地 SQLite（
+FILE=tools_collab.py LINE=57 :: # 后逐字段透传，所有业务校验/落库全在 Rust daemon，绝不 get_db() 本地写
+  # （degraded_mode.GOVERNANCE_WRITE_OPS = fail-closed）。
+  #
+FILE=tools_collab.py LINE=417 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_collab.py LINE=446 :: return _collab_direct_read(_bind_readonly_db(ctx), "gate.decision.query", ctx.params)
+  
+  
+FILE=tools_p2_graph.py LINE=11 :: 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  """
+  
+FILE=tools_p2_graph.py LINE=222 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_p2_graph.py LINE=249 :: return _bind_readonly_db(ctx).get_artifact_freshness(
+  ctx.params.get("workspace_id"),
+  ctx.params.get("task_id", ""),
+FILE=tools_p2_graph.py LINE=258 :: return _bind_readonly_db(ctx).get_interface_providers(
+  ctx.params.get("workspace_id"),
+  ctx.params.get("interface_name", ""),
+FILE=tools_p2_graph.py LINE=267 :: return _bind_readonly_db(ctx).detect_cycle(
+  ctx.params.get("workspace_id"),
+  )
+FILE=tools_p2_graph.py LINE=283 :: db = _bind_readonly_db(ctx)
+  workspace_id = ctx.params.get("workspace_id")
+  contract_id = ctx.params.get("contract_id", "")
+FILE=tools_p2_graph.py LINE=409 :: return _bind_readonly_db(ctx).get_dependency_edges(
+  ctx.params.get("workspace_id"),
+  ctx.params.get("task_id", ""),
+FILE=tools_p2_graph.py LINE=425 :: register_compat_routes(
+  _P2_READ_ONLY_METHODS,
+  workspace_scope=_P2_COMPAT_SCOPE,
+FILE=tools_p3_identity.py LINE=11 :: 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  """
+  
+FILE=tools_p3_identity.py LINE=210 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_p3_identity.py LINE=237 :: db = _bind_readonly_db(ctx)
+  try:
+  return db.get_action_identity(
+FILE=tools_p3_identity.py LINE=253 :: db = _bind_readonly_db(ctx)
+  try:
+  identity_dict, id_reason = _p3_resolve_identity_arg(
+FILE=tools_p3_identity.py LINE=272 :: db = _bind_readonly_db(ctx)
+  try:
+  import json as _json
+FILE=tools_p3_identity.py LINE=295 :: db = _bind_readonly_db(ctx)
+  try:
+  validity = db.derive_attestation_validity(
+FILE=tools_p3_identity.py LINE=314 :: db = _bind_readonly_db(ctx)
+  try:
+  items = db.list_attestation_revocations(
+FILE=tools_p3_identity.py LINE=341 :: register_compat_routes(
+  _P3_READ_ONLY_METHODS,
+  workspace_scope=_P3_COMPAT_SCOPE,
+FILE=tools_p4_lease.py LINE=14 :: - 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  """
+  
+FILE=tools_p4_lease.py LINE=246 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_p4_lease.py LINE=273 :: db = _bind_readonly_db(ctx)
+  try:
+  result = db.get_assignment(
+FILE=tools_p4_lease.py LINE=298 :: register_compat_routes(
+  _P4_READ_ONLY_METHODS,
+  workspace_scope=_P4_COMPAT_SCOPE,
+FILE=tools_query.py LINE=474 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_query.py LINE=502 :: return _bind_readonly_db(ctx).get_symbol_history(ctx.params.get("qualified_name", ""))
+  
+  
+FILE=tools_query.py LINE=507 :: return _bind_readonly_db(ctx).get_recent_changes(
+  since=ctx.params.get("since", "1d")
+  )
+FILE=tools_query.py LINE=514 :: return _bind_readonly_db(ctx).get_call_chain_up(
+  ctx.params.get("qualified_name", ""),
+  max_depth=ctx.params.get("max_depth", 10),
+FILE=tools_query.py LINE=522 :: return _bind_readonly_db(ctx).get_comment_from_version(
+  ctx.params.get("spec", "")
+  )
+FILE=tools_query.py LINE=529 :: return _bind_readonly_db(ctx).get_issue_summary()
+  
+  
+FILE=tools_query.py LINE=534 :: return _bind_readonly_db(ctx).get_function_issues(
+  issue_filter=ctx.params.get("issue_type", "") or None,
+  limit=ctx.params.get("limit", 30),
+FILE=tools_query.py LINE=542 :: return _bind_readonly_db(ctx).get_test_coverage()
+  
+  
+FILE=tools_query.py LINE=547 :: return _bind_readonly_db(ctx).export_module_graph(
+  format=ctx.params.get("format", "mermaid")
+  )
+FILE=tools_query.py LINE=574 :: register_compat_routes(
+  _SYMBOL_READ_ONLY_METHODS,
+  workspace_scope=_SYMBOL_COMPAT_SCOPE,
+FILE=tools_rules.py LINE=12 :: 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  - compat_route 扩展（把 python_compat 方法注册到 H3 compat worker）由
+  h4b-registry-docs（...h4b-registry-docs）承接；本任务不触碰 Rust/compat_registry。
+FILE=tools_security.py LINE=13 :: 非 HTTP（legacy）模式保持本地 get_db() / DaemonClient 执行，公开方法语义不变。
+  - compat_route 扩展（把 python_compat 方法注册到 H3 compat worker）由
+  h4b-registry-docs（...h4b-registry-docs）承接；本任务不触碰 Rust/compat_registry。
+FILE=tools_security.py LINE=808 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_security.py LINE=835 :: return _bind_readonly_db(ctx).list_branch_workspaces()
+  
+  
+FILE=tools_security.py LINE=848 :: db = _bind_readonly_db(ctx)
+  diff = db.diff_branches(
+  ctx.params.get("source_branch", ""),
+FILE=tools_security.py LINE=913 :: return _bind_readonly_db(ctx).get_edit_history(
+  ctx.params.get("file_path", ""),
+  ctx.params.get("limit", 20),
+FILE=tools_security.py LINE=921 :: return _bind_readonly_db(ctx).find_shared_symbols(
+  ctx.params.get("workspace_a", ""),
+  ctx.params.get("workspace_b", ""),
+FILE=tools_security.py LINE=933 :: return _bind_readonly_db(ctx).cross_repo_impact(
+  ctx.params.get("symbol_hash", ""),
+  ctx.params.get("depth", 2),
+FILE=tools_security.py LINE=941 :: return _bind_readonly_db(ctx).cross_repo_summary()
+  
+  
+FILE=tools_security.py LINE=946 :: return _bind_readonly_db(ctx).lsp_hover(
+  ctx.params.get("file_path", ""),
+  ctx.params.get("line", 0),
+FILE=tools_security.py LINE=955 :: return _bind_readonly_db(ctx).lsp_definition(
+  ctx.params.get("file_path", ""),
+  ctx.params.get("line", 0),
+FILE=tools_security.py LINE=964 :: return _bind_readonly_db(ctx).lsp_references(
+  ctx.params.get("file_path", ""),
+  ctx.params.get("line", 0),
+FILE=tools_security.py LINE=974 :: return _bind_readonly_db(ctx).lsp_diagnostics(
+  ctx.params.get("file_path", ""),
+  )
+FILE=tools_security.py LINE=981 :: return _bind_readonly_db(ctx).lsp_completion(
+  ctx.params.get("file_path", ""),
+  ctx.params.get("line", 0),
+FILE=tools_security.py LINE=990 :: return _bind_readonly_db(ctx).lsp_check_available(
+  ctx.params.get("language", ""),
+  )
+FILE=tools_security.py LINE=997 :: db = _bind_readonly_db(ctx)
+  rows = db.rule_candidate_list(
+  status=ctx.params.get("status", "pending"),
+FILE=tools_security.py LINE=1007 :: db = _bind_readonly_db(ctx)
+  rules = db.rule_list(
+  status=ctx.params.get("status", "active"),
+FILE=tools_security.py LINE=1017 :: db = _bind_readonly_db(ctx)
+  rules = db.get_applicable_rules(
+  context=ctx.params.get("context", {}),
+FILE=tools_security.py LINE=1056 :: register_compat_routes(
+  _SECURITY_READ_ONLY_METHODS,
+  workspace_scope=_SECURITY_COMPAT_SCOPE,
+FILE=tools_semantic.py LINE=13 :: 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  - compat_route 扩展（把 python_compat 方法注册到 H3 compat worker）由
+  h4b-registry-docs（...h4b-registry-docs）承接；本任务不触碰 Rust/compat_registry。
+FILE=tools_semantic.py LINE=288 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_semantic.py LINE=315 :: return _bind_readonly_db(ctx).semantic_search(
+  query=ctx.params.get("query", ""),
+  top_k=ctx.params.get("top_k", 5),
+FILE=tools_semantic.py LINE=323 :: return _bind_readonly_db(ctx).find_similar_functions(
+  qualified_name=ctx.params.get("qualified_name", ""),
+  threshold=ctx.params.get("threshold", 0.8),
+FILE=tools_semantic.py LINE=332 :: return _bind_readonly_db(ctx).get_symbol_commit_history(
+  ctx.params.get("symbol_hash", ""),
+  ctx.params.get("limit", 20),
+FILE=tools_semantic.py LINE=340 :: return _bind_readonly_db(ctx).parse_codeowners(
+  ctx.params.get("file_path") or None
+  )
+FILE=tools_semantic.py LINE=347 :: return _bind_readonly_db(ctx).get_project_dependencies(
+  languages=ctx.params.get("languages")
+  )
+FILE=tools_semantic.py LINE=365 :: register_compat_routes(
+  _SEMANTIC_READ_ONLY_METHODS,
+  workspace_scope=_SEMANTIC_COMPAT_SCOPE,
+FILE=tools_summary.py LINE=13 :: 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  - compat_route 扩展（把 python_compat 方法注册到 H3 compat worker）由
+  h4b-registry-docs（...h4b-registry-docs）承接；本任务不触碰 Rust/compat_registry。
+FILE=tools_summary.py LINE=528 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
+  
+FILE=tools_summary.py LINE=555 :: return _bind_readonly_db(ctx).get_summary(ctx.params.get("qualified_name", ""))
+  
+  
+FILE=tools_summary.py LINE=560 :: return _bind_readonly_db(ctx).project_brief()
+  
+  
+FILE=tools_summary.py LINE=565 :: return _bind_readonly_db(ctx).repo_map(format=ctx.params.get("format", "text"))
+  
+  
+FILE=tools_summary.py LINE=570 :: return _bind_readonly_db(ctx).get_coverage_for_symbol(ctx.params.get("qualified_name", ""))
+  
+  
+FILE=tools_summary.py LINE=575 :: return _bind_readonly_db(ctx).test_impact_selection(ctx.params.get("qualified_name", ""))
+  
+  
+FILE=tools_summary.py LINE=580 :: return _bind_readonly_db(ctx).who_to_ask(file_path=ctx.params.get("file_path", ""))
+  
+  
+FILE=tools_summary.py LINE=585 :: return _bind_readonly_db(ctx).get_ownership_map(
+  module_filter=ctx.params.get("module_filter", "")
+  )
+FILE=tools_summary.py LINE=592 :: return _bind_readonly_db(ctx).scan_guardrails(ctx.params.get("file_filter", ""))
+  
+  
+FILE=tools_summary.py LINE=597 :: return _bind_readonly_db(ctx).check_before_edit(
+  ctx.params.get("file_path", ""),
+  ctx.params.get("proposed_change", ""),
+FILE=tools_summary.py LINE=605 :: return _bind_readonly_db(ctx).guardrail_list_rules(ctx.params.get("category_filter", ""))
+  
+  
+FILE=tools_summary.py LINE=610 :: return _bind_readonly_db(ctx).blast_radius(
+  ctx.params.get("symbol_hash", ""),
+  ctx.params.get("depth", 3),
+FILE=tools_summary.py LINE=618 :: return _bind_readonly_db(ctx).ask_codebase(
+  ctx.params.get("question", ""),
+  ctx.params.get("top_k", 5),
+FILE=tools_summary.py LINE=629 :: return _bind_readonly_db(ctx).get_token_savings_report(ctx.params.get("time_window", "30d"))
+  
+  
+FILE=tools_summary.py LINE=634 :: return _bind_readonly_db(ctx).get_vulnerability_blast_radius(
+  ctx.params.get("finding_id", 0),
+  ctx.params.get("severity_filter", ""),
+FILE=tools_summary.py LINE=643 :: return _bind_readonly_db(ctx).get_clone_aware_impact(
+  ctx.params.get("qualified_name", ""),
+  ctx.params.get("depth", 3),
+FILE=tools_summary.py LINE=651 :: return _bind_readonly_db(ctx).review_readiness_report(ctx.params.get("symbol_hash", ""))
+  
+  
+FILE=tools_summary.py LINE=656 :: return _bind_readonly_db(ctx).cross_layer_impact(ctx.params.get("symbol_hash", ""))
+  
+  
+FILE=tools_summary.py LINE=661 :: return _bind_readonly_db(ctx).function_change_frequency(
+  ctx.params.get("qualified_name", ""),
+  ctx.params.get("time_window", ""),
+FILE=tools_summary.py LINE=669 :: return _bind_readonly_db(ctx).hotspot_evolution(ctx.params.get("module_filter", ""))
+  
+  
+FILE=tools_summary.py LINE=674 :: return _bind_readonly_db(ctx).learn_defect_from_fix(ctx.params.get("fix_commit_hash", ""))
+  
+  
+FILE=tools_summary.py LINE=715 :: register_compat_routes(
+  _SUMMARY_READ_ONLY_METHODS,
+  workspace_scope=_SUMMARY_COMPAT_SCOPE,
+FILE=tools_task.py LINE=1002 :: def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+  """轻量只读绑定（任务组副本）：绕过 CodeGraphDB.__init__，注入 worker 只读连接。
+  
+FILE=tools_task.py LINE=1026 :: return _bind_readonly_db(ctx).get_symbol_change_tasks(
+  symbol_hash=ctx.params.get("symbol_hash", ""),
+  qualified_name=ctx.params.get("qualified_name", ""),
+FILE=tools_task.py LINE=1035 :: db = _bind_readonly_db(ctx)
+  try:
+  return db.verify_audit_chain(
+FILE=tools_task.py LINE=1047 :: db = _bind_readonly_db(ctx)
+  try:
+  return db.list_signing_keys()
+FILE=tools_task.py LINE=1056 :: return _bind_readonly_db(ctx).bootstrap_status()
+  
+  
+FILE=tools_task.py LINE=1061 :: db = _bind_readonly_db(ctx)
+  try:
+  return db.list_clones(
+FILE=tools_task.py LINE=1075 :: db = _bind_readonly_db(ctx)
+  try:
+  groups = db.list_clone_groups(
+FILE=tools_task.py LINE=1089 :: db = _bind_readonly_db(ctx)
+  try:
+  detail = db.get_clone_group_detail(
+FILE=tools_task.py LINE=1107 :: return _bind_readonly_db(ctx).task_plan_template()
+  
+  
+FILE=tools_task.py LINE=1134 :: register_compat_routes(
+  _TASK_READ_ONLY_METHODS,
+  workspace_scope=_TASK_COMPAT_SCOPE,

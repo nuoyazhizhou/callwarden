@@ -1,0 +1,322 @@
+[
+  {
+    "name": "build_hard_dependency_edges",
+    "module": "tools_p2_graph",
+    "rpc_method": "task.job_submit",
+    "job_type": "hard_dep_edges",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "import_envelope_dependencies",
+    "module": "tools_p2_graph",
+    "rpc_method": "task.job_submit",
+    "job_type": "envelope_deps",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "run_semgrep_scan",
+    "module": "tools_query",
+    "rpc_method": "task.job_submit",
+    "job_type": "semgrep_scan",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "scan_semgrep_incremental",
+    "module": "tools_query",
+    "rpc_method": "task.job_submit",
+    "job_type": "semgrep_incremental",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "detect_cross_repo_deps",
+    "module": "tools_security",
+    "rpc_method": "task.job_submit",
+    "job_type": "cross_repo_deps",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "embed_single_symbol",
+    "module": "tools_semantic",
+    "rpc_method": "task.job_submit",
+    "job_type": "embed_single",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "embed_symbols",
+    "module": "tools_semantic",
+    "rpc_method": "task.job_submit",
+    "job_type": "embed",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "import_codeowners",
+    "module": "tools_semantic",
+    "rpc_method": "task.job_submit",
+    "job_type": "codeowners",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "import_git_blame",
+    "module": "tools_semantic",
+    "rpc_method": "task.job_submit",
+    "job_type": "git_blame",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "import_project_dependencies",
+    "module": "tools_semantic",
+    "rpc_method": "task.job_submit",
+    "job_type": "project_deps",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "prune_external_symbols",
+    "module": "tools_semantic",
+    "rpc_method": "task.job_submit",
+    "job_type": "prune_external",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "import_coverage",
+    "module": "tools_summary",
+    "rpc_method": "task.job_submit",
+    "job_type": "coverage",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "cancel_job",
+    "module": "tools_task",
+    "rpc_method": "task.job_cancel",
+    "job_type": null,
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "detect_clones",
+    "module": "tools_task",
+    "rpc_method": "task.job_submit",
+    "job_type": "clone_detect",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "detect_clones_async",
+    "module": "tools_task",
+    "rpc_method": "task.job_submit",
+    "job_type": "clone_detect",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "embed_symbols_async",
+    "module": "tools_task",
+    "rpc_method": "task.job_submit",
+    "job_type": "embed",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "get_task_commits",
+    "module": "tools_task",
+    "rpc_method": "task.get_commits",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "get_task_symbol_changes",
+    "module": "tools_task",
+    "rpc_method": "task.get_symbol_changes",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "link_edit_audit_symbols",
+    "module": "tools_task",
+    "rpc_method": "task.link_edit_audit_symbols",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "record_task_symbol_change",
+    "module": "tools_task",
+    "rpc_method": "task.record_symbol_change",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "semgrep_scan_async",
+    "module": "tools_task",
+    "rpc_method": "task.job_submit",
+    "job_type": "semgrep_scan",
+    "status": "migrated",
+    "batch": "T02-job"
+  },
+  {
+    "name": "task_apply",
+    "module": "tools_task",
+    "rpc_method": "task.apply",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_capture_diff",
+    "module": "tools_task",
+    "rpc_method": "task.capture_diff",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_close",
+    "module": "tools_task",
+    "rpc_method": "task.close",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_completion_review",
+    "module": "tools_task",
+    "rpc_method": "task.completion_review",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_create",
+    "module": "tools_task",
+    "rpc_method": "task.create",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_create_from_plan",
+    "module": "tools_task",
+    "rpc_method": "task.create_from_plan",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_create_subtask",
+    "module": "tools_task",
+    "rpc_method": "task.create_subtask",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_list",
+    "module": "tools_task",
+    "rpc_method": "task.list",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_next_step",
+    "module": "tools_task",
+    "rpc_method": "task.claim",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_quality_findings",
+    "module": "tools_task",
+    "rpc_method": "task.quality_findings",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_report_step",
+    "module": "tools_task",
+    "rpc_method": "task.report",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_resolve_block",
+    "module": "tools_task",
+    "rpc_method": "task.reopen",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_resolve_quality_finding",
+    "module": "tools_task",
+    "rpc_method": "task.resolve_quality_finding",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_rollback",
+    "module": "tools_task",
+    "rpc_method": "task.rollback",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_split",
+    "module": "tools_task",
+    "rpc_method": "task.split",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_status",
+    "module": "tools_task",
+    "rpc_method": "task.status",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "task_status_tree",
+    "module": "tools_task",
+    "rpc_method": "task.status_tree",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "work_next_job",
+    "module": "tools_task",
+    "rpc_method": "task.work_next",
+    "job_type": null,
+    "status": "stable",
+    "batch": "existing-task"
+  },
+  {
+    "name": "import_git_history",
+    "module": "tools_workspace",
+    "rpc_method": "task.job_submit",
+    "job_type": "git_history",
+    "status": "migrated",
+    "batch": "T02-job"
+  }
+]

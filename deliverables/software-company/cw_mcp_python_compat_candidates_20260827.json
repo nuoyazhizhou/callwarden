@@ -1,0 +1,408 @@
+[
+  {
+    "name": "get_attestation_validity",
+    "module": "tools_p3_identity",
+    "rpc_method": "get_attestation_validity",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "list_attestation_revocations",
+    "module": "tools_p3_identity",
+    "rpc_method": "list_attestation_revocations",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "assignment_show",
+    "module": "tools_p4_lease",
+    "rpc_method": "assignment_show",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "export_module_graph",
+    "module": "tools_query",
+    "rpc_method": "export_module_graph",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "find_issues",
+    "module": "tools_query",
+    "rpc_method": "find_issues",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_comment_from_version",
+    "module": "tools_query",
+    "rpc_method": "get_comment_from_version",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_impact",
+    "module": "tools_query",
+    "rpc_method": "get_impact",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_issue_summary",
+    "module": "tools_query",
+    "rpc_method": "get_issue_summary",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_recent_changes",
+    "module": "tools_query",
+    "rpc_method": "get_recent_changes",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_symbol_history",
+    "module": "tools_query",
+    "rpc_method": "get_symbol_history",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_test_coverage",
+    "module": "tools_query",
+    "rpc_method": "get_test_coverage",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "cross_repo_impact",
+    "module": "tools_security",
+    "rpc_method": "cross_repo_impact",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "cross_repo_summary",
+    "module": "tools_security",
+    "rpc_method": "cross_repo_summary",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "find_shared_symbols",
+    "module": "tools_security",
+    "rpc_method": "find_shared_symbols",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_applicable_rules",
+    "module": "tools_security",
+    "rpc_method": "get_applicable_rules",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_edit_history",
+    "module": "tools_security",
+    "rpc_method": "get_edit_history",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "list_branches",
+    "module": "tools_security",
+    "rpc_method": "list_branches",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "lsp_check_available",
+    "module": "tools_security",
+    "rpc_method": "lsp_check_available",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "lsp_completion",
+    "module": "tools_security",
+    "rpc_method": "lsp_completion",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "lsp_definition",
+    "module": "tools_security",
+    "rpc_method": "lsp_definition",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "lsp_diagnostics",
+    "module": "tools_security",
+    "rpc_method": "lsp_diagnostics",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "lsp_hover",
+    "module": "tools_security",
+    "rpc_method": "lsp_hover",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "lsp_references",
+    "module": "tools_security",
+    "rpc_method": "lsp_references",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "merge_preview",
+    "module": "tools_security",
+    "rpc_method": "merge_preview",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "rule_candidate_list",
+    "module": "tools_security",
+    "rpc_method": "rule_candidate_list",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "rule_list",
+    "module": "tools_security",
+    "rpc_method": "rule_list",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "find_similar_functions",
+    "module": "tools_semantic",
+    "rpc_method": "find_similar_functions",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_project_dependencies",
+    "module": "tools_semantic",
+    "rpc_method": "get_project_dependencies",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_symbol_commit_history",
+    "module": "tools_semantic",
+    "rpc_method": "get_symbol_commit_history",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "parse_codeowners",
+    "module": "tools_semantic",
+    "rpc_method": "parse_codeowners",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "semantic_search",
+    "module": "tools_semantic",
+    "rpc_method": "semantic_search",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "ask_codebase",
+    "module": "tools_summary",
+    "rpc_method": "ask_codebase",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "blast_radius",
+    "module": "tools_summary",
+    "rpc_method": "blast_radius",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "cross_layer_impact",
+    "module": "tools_summary",
+    "rpc_method": "cross_layer_impact",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "defect_learn",
+    "module": "tools_summary",
+    "rpc_method": "defect_learn",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "evolution_frequency",
+    "module": "tools_summary",
+    "rpc_method": "evolution_frequency",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_clone_aware_impact",
+    "module": "tools_summary",
+    "rpc_method": "get_clone_aware_impact",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_ownership_map",
+    "module": "tools_summary",
+    "rpc_method": "get_ownership_map",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_summary",
+    "module": "tools_summary",
+    "rpc_method": "get_summary",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_token_savings_report",
+    "module": "tools_summary",
+    "rpc_method": "get_token_savings_report",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_vulnerability_blast_radius",
+    "module": "tools_summary",
+    "rpc_method": "get_vulnerability_blast_radius",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "guardrail_check_edit",
+    "module": "tools_summary",
+    "rpc_method": "guardrail_check_edit",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "guardrail_list_rules",
+    "module": "tools_summary",
+    "rpc_method": "guardrail_list_rules",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "guardrail_scan",
+    "module": "tools_summary",
+    "rpc_method": "guardrail_scan",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "hotspot_evolution",
+    "module": "tools_summary",
+    "rpc_method": "hotspot_evolution",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "project_brief",
+    "module": "tools_summary",
+    "rpc_method": "project_brief",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "repo_map",
+    "module": "tools_summary",
+    "rpc_method": "repo_map",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "review_readiness",
+    "module": "tools_summary",
+    "rpc_method": "review_readiness",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "test_impact_selection",
+    "module": "tools_summary",
+    "rpc_method": "test_impact_selection",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "who_to_ask",
+    "module": "tools_summary",
+    "rpc_method": "who_to_ask",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "audit_verify_chain",
+    "module": "tools_task",
+    "rpc_method": "audit_verify_chain",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "bootstrap_status",
+    "module": "tools_task",
+    "rpc_method": "bootstrap_status",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_clone_group_detail",
+    "module": "tools_task",
+    "rpc_method": "get_clone_group_detail",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "get_symbol_change_tasks",
+    "module": "tools_task",
+    "rpc_method": "get_symbol_change_tasks",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "list_audit_signing_keys",
+    "module": "tools_task",
+    "rpc_method": "list_audit_signing_keys",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "list_clone_groups",
+    "module": "tools_task",
+    "rpc_method": "list_clone_groups",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "list_clones",
+    "module": "tools_task",
+    "rpc_method": "list_clones",
+    "status": "transition",
+    "batch": "P0-compat"
+  },
+  {
+    "name": "task_plan_template",
+    "module": "tools_task",
+    "rpc_method": "task_plan_template",
+    "status": "transition",
+    "batch": "P0-compat"
+  }
+]

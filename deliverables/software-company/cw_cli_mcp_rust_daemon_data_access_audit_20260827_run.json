@@ -1,0 +1,13 @@
+{
+  "report": "C:\\git_work\\callwarden\\deliverables\\software-company\\cw_cli_mcp_rust_daemon_data_access_audit_20260827.md",
+  "summary": {
+    "mcp_total": 239,
+    "rust_native": 141,
+    "task_rpc": 40,
+    "python_compat": 58,
+    "cli_subcommands": 65,
+    "cli_proxy_methods": 157,
+    "cli_db_syntax_calls": 234,
+    "python_db_signal_functions": 541
+  }
+}

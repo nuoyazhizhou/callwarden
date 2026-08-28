@@ -1,0 +1,44 @@
+{
+  "json": "C:\\git_work\\callwarden\\deliverables\\software-company\\cw_cli_mcp_data_access_static_inventory_20260827.json",
+  "csv": "C:\\git_work\\callwarden\\deliverables\\software-company\\cw_cli_mcp_data_access_static_inventory_20260827.csv",
+  "summary": {
+    "cli_python_files": 9,
+    "cli_module_functions": 258,
+    "cli_declared_parser_entries": 103,
+    "cli_functions_with_direct_db_signal": 0,
+    "cli_functions_with_daemon_rpc_signal": 46,
+    "server_python_files": 52,
+    "server_module_functions": 1226,
+    "mcp_decorated_tools_found_in_source": 239,
+    "mcp_tools_static_python_db_direct": 0,
+    "mcp_tools_static_daemon_client": 239,
+    "mcp_tools_wrapper_or_unresolved": 0,
+    "python_db_layer_files": 54,
+    "python_db_layer_module_functions": 943,
+    "all_scoped_python_files_with_db_import": 39,
+    "all_scoped_python_functions_with_direct_db_signal": 541,
+    "rust_daemon": {
+      "files": 97,
+      "files_with_rusqlite": 68,
+      "rpc_handlers": 207,
+      "transaction_signals": 61
+    }
+  },
+  "matrix_counts": [
+    {
+      "current_backend": "unknown",
+      "status": "migrated",
+      "count": 100
+    },
+    {
+      "current_backend": "unknown",
+      "status": "stable",
+      "count": 81
+    },
+    {
+      "current_backend": "unknown",
+      "status": "transition",
+      "count": 58
+    }
+  ]
+}

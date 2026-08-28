@@ -1,0 +1,1156 @@
+{
+  "read_only": true,
+  "source": "rust_ext/src/lib.rs wrap_pyfunction exports; explicit callwarden_core.<export> references in cli/server/cw.py/config.py",
+  "total_exports": 162,
+  "scanned_python_lines": 48205,
+  "category_counts": {
+    "authority_helper_candidate": 11,
+    "daemon_client_candidate": 9,
+    "local_core_or_nontransport": 128,
+    "protocol_or_peercred_candidate": 14
+  },
+  "categories": {
+    "authority_helper_candidate": [
+      {
+        "symbol": "daemon_query::budget_create",
+        "export": "budget_create",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::budget_preset",
+        "export": "budget_preset",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::budget_tracker_new",
+        "export": "budget_tracker_new",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::budget_tracker_truncate_results",
+        "export": "budget_tracker_truncate_results",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::budget_tracker_visit_node",
+        "export": "budget_tracker_visit_node",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::check_path_within_workspace",
+        "export": "check_path_within_workspace",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::check_workspace_owner",
+        "export": "check_workspace_owner",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::current_daemon_uid_py",
+        "export": "current_daemon_uid_py",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::health_check_all",
+        "export": "health_check_all",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::is_admin_uid",
+        "export": "is_admin_uid",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::validate_owned_path",
+        "export": "validate_owned_path",
+        "category": "authority_helper_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      }
+    ],
+    "daemon_client_candidate": [
+      {
+        "symbol": "daemon::client::build_connect_params_py",
+        "export": "build_connect_params_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::build_publish_params_py",
+        "export": "build_publish_params_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::build_query_request_py",
+        "export": "build_query_request_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::build_refresh_params_py",
+        "export": "build_refresh_params_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::build_request_py",
+        "export": "build_request_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::build_rpc_request_py",
+        "export": "build_rpc_request_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::build_simple_request_py",
+        "export": "build_simple_request_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::daemon_client_call_py",
+        "export": "daemon_client_call_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon::client::parse_rpc_response_py",
+        "export": "parse_rpc_response_py",
+        "category": "daemon_client_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      }
+    ],
+    "local_core_or_nontransport": [
+      {
+        "symbol": "backup_restore::backup_db_only",
+        "export": "backup_db_only",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "backup_restore::backup_full",
+        "export": "backup_full",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "backup_restore::cleanup_backups",
+        "export": "cleanup_backups",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "backup_restore::delete_backup",
+        "export": "delete_backup",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "backup_restore::list_backups",
+        "export": "list_backups",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "backup_restore::restore_backup",
+        "export": "restore_backup",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "backup_restore::verify_backup",
+        "export": "verify_backup",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_build_query::batch_save_symbols",
+        "export": "batch_save_symbols",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_calls_query::batch_resolve_and_save_calls",
+        "export": "batch_resolve_and_save_calls",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_cosine_similarity",
+        "export": "batch_cosine_similarity",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_file_versions_query::batch_save_file_versions",
+        "export": "batch_save_file_versions",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_parse_c_files",
+        "export": "batch_parse_c_files",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_parse_c_files_pool",
+        "export": "batch_parse_c_files_pool",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_parse_c_files_stream",
+        "export": "batch_parse_c_files_stream",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "batch_register_query::batch_register_files",
+        "export": "batch_register_files",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "build_graph_from_c_files",
+        "export": "build_graph_from_c_files",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "canonical_schema_checksum",
+        "export": "canonical_schema_checksum",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "canonicalize_source_py",
+        "export": "canonicalize_source_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_merge_query::cas_merge_init_schema",
+        "export": "cas_merge_init_schema",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_merge_query::cas_merge_to_codegraph",
+        "export": "cas_merge_to_codegraph",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_query::cas_global_count_files",
+        "export": "cas_global_count_files",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_query::cas_global_get_state",
+        "export": "cas_global_get_state",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_query::cas_global_lookup",
+        "export": "cas_global_lookup",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_query::cas_local_get_file_generation",
+        "export": "cas_local_get_file_generation",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_query::compute_cas_key_v1",
+        "export": "compute_cas_key_v1",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_query::compute_symbol_content_hash",
+        "export": "compute_symbol_content_hash",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_file_generation_committed",
+        "export": "cas_file_generation_committed",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_file_generation_reset",
+        "export": "cas_file_generation_reset",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_file_generation_seen",
+        "export": "cas_file_generation_seen",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_file_generation_uncommit",
+        "export": "cas_file_generation_uncommit",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_gc",
+        "export": "cas_gc",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_pin",
+        "export": "cas_pin",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cas_write_query::cas_publish_with_retry",
+        "export": "cas_publish_with_retry",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::config::check_role_supported_py",
+        "export": "check_role_supported_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::config::config_explain_py",
+        "export": "config_explain_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::config::load_config_py",
+        "export": "load_config_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::config::platform_paths_detect",
+        "export": "platform_paths_detect",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::bold_py",
+        "export": "bold_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::colorize_py",
+        "export": "colorize_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::cprint_py",
+        "export": "cprint_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::dim_py",
+        "export": "dim_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::error_py",
+        "export": "error_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::format_duration_py",
+        "export": "format_duration_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::format_size_py",
+        "export": "format_size_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::info_py",
+        "export": "info_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::json_dumps_pretty_py",
+        "export": "json_dumps_pretty_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::should_use_color_auto_py",
+        "export": "should_use_color_auto_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::should_use_color_py",
+        "export": "should_use_color_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::success_py",
+        "export": "success_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::output::warning_py",
+        "export": "warning_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::readonly::is_readonly_args_py",
+        "export": "is_readonly_args_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::readonly::is_readonly_command_py",
+        "export": "is_readonly_command_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::router::daemon_socket_path_py",
+        "export": "daemon_socket_path_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::router::get_daemon_mode_py",
+        "export": "get_daemon_mode_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::router::is_daemon_available_py",
+        "export": "is_daemon_available_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::router::is_daemon_required_py",
+        "export": "is_daemon_required_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::router::route_command_py",
+        "export": "route_command_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "cli::stats::stats_command_run_py",
+        "export": "stats_command_run_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "clone_detection::clone_detection_params",
+        "export": "clone_detection_params",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "clone_detection::py_batch_minhash_signatures",
+        "export": "py_batch_minhash_signatures",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "clone_detection::py_detect_clones_core",
+        "export": "py_detect_clones_core",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "clone_detection::py_lsh_buckets",
+        "export": "py_lsh_buckets",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "clone_detection::py_lsh_candidate_pairs",
+        "export": "py_lsh_candidate_pairs",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "clone_detection::py_minhash_signature",
+        "export": "py_minhash_signature",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "core_version",
+        "export": "core_version",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::audit_canonical_json",
+        "export": "audit_canonical_json",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::audit_compute_signature",
+        "export": "audit_compute_signature",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::backup_compute_file_sha256",
+        "export": "backup_compute_file_sha256",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::backup_compute_meta_checksum",
+        "export": "backup_compute_meta_checksum",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::metrics_format_labels",
+        "export": "metrics_format_labels",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::metrics_percentile",
+        "export": "metrics_percentile",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "frontier::compute_frontier",
+        "export": "compute_frontier",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "frontier::compute_frontier_with_budget",
+        "export": "compute_frontier_with_budget",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "impact::py_cross_layer_impact",
+        "export": "py_cross_layer_impact",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "impact::py_defect_correlation",
+        "export": "py_defect_correlation",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "incremental_build_query::compute_and_apply_symbol_diff",
+        "export": "compute_and_apply_symbol_diff",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "incremental_build_query::load_file_result_from_db",
+        "export": "load_file_result_from_db",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_count",
+        "export": "manifest_count",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_get",
+        "export": "manifest_get",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_init_schema",
+        "export": "manifest_init_schema",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_link_to_snapshot",
+        "export": "manifest_link_to_snapshot",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_list",
+        "export": "manifest_list",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_upsert",
+        "export": "manifest_upsert",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::manifest_verify_raw_hash",
+        "export": "manifest_verify_raw_hash",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "manifest_query::snapshot_get_files",
+        "export": "snapshot_get_files",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "metrics::compute_local_update",
+        "export": "compute_local_update",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::batch_parse_files_lang",
+        "export": "batch_parse_files_lang",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::batch_parse_files_lang_pool",
+        "export": "batch_parse_files_lang_pool",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::parse_canonical_bytes_py",
+        "export": "parse_canonical_bytes_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::parse_diagnostics_from_fields",
+        "export": "parse_diagnostics_from_fields",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::parse_file_lang",
+        "export": "parse_file_lang",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::parse_status_from_fields",
+        "export": "parse_status_from_fields",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "multi_lang::supported_languages",
+        "export": "supported_languages",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_c_file",
+        "export": "parse_c_file",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_append",
+        "export": "parse_retry_log_append",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_compact",
+        "export": "parse_retry_log_compact",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_increment_retry",
+        "export": "parse_retry_log_increment_retry",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_mark_applied",
+        "export": "parse_retry_log_mark_applied",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_mark_exhausted",
+        "export": "parse_retry_log_mark_exhausted",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_next_lsn",
+        "export": "parse_retry_log_next_lsn",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_read",
+        "export": "parse_retry_log_read",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_read_pending",
+        "export": "parse_retry_log_read_pending",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "parse_retry_log_query::parse_retry_log_read_retryable",
+        "export": "parse_retry_log_read_retryable",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "replicator_query::replicator_get_pending_count",
+        "export": "replicator_get_pending_count",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "sqlite_query::sqlite_migrate_schema",
+        "export": "sqlite_migrate_schema",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "sqlite_query::sqlite_query_schema_version",
+        "export": "sqlite_query_schema_version",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_append",
+        "export": "staging_log_append",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_compact_applied",
+        "export": "staging_log_compact_applied",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_mark_applied_batch",
+        "export": "staging_log_mark_applied_batch",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_mark_failed",
+        "export": "staging_log_mark_failed",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_next_lsn",
+        "export": "staging_log_next_lsn",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_read",
+        "export": "staging_log_read",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_read_pending",
+        "export": "staging_log_read_pending",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_stats",
+        "export": "staging_log_stats",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "staging_log_query::staging_log_truncate",
+        "export": "staging_log_truncate",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_backup_before_migration",
+        "export": "storage_backup_before_migration",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_begin",
+        "export": "storage_begin",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_checkpoint_py",
+        "export": "storage_checkpoint_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_commit",
+        "export": "storage_commit",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_initialize_or_migrate",
+        "export": "storage_initialize_or_migrate",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_integrity_check",
+        "export": "storage_integrity_check",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_open",
+        "export": "storage_open",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_rollback",
+        "export": "storage_rollback",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "storage::storage_schema_version",
+        "export": "storage_schema_version",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "toolchain::compute_toolchain_fingerprint_py",
+        "export": "compute_toolchain_fingerprint_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "toolchain::detect_compiler_type_py",
+        "export": "detect_compiler_type_py",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "vector_topk::py_load_embeddings_from_blobs",
+        "export": "py_load_embeddings_from_blobs",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "vector_topk::py_vector_topk",
+        "export": "py_vector_topk",
+        "category": "local_core_or_nontransport",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      }
+    ],
+    "protocol_or_peercred_candidate": [
+      {
+        "symbol": "daemon_query::dispatch_is_admin_method",
+        "export": "dispatch_is_admin_method",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::dispatch_list_error_codes",
+        "export": "dispatch_list_error_codes",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::dispatch_list_methods",
+        "export": "dispatch_list_methods",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::peercred_info",
+        "export": "peercred_info",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::peercred_is_available",
+        "export": "peercred_is_available",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_build_frame",
+        "export": "protocol_build_frame",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_constants",
+        "export": "protocol_constants",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_decode_payload",
+        "export": "protocol_decode_payload",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_encode_payload",
+        "export": "protocol_encode_payload",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_make_error_response",
+        "export": "protocol_make_error_response",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_make_ok_response",
+        "export": "protocol_make_ok_response",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_parse_header",
+        "export": "protocol_parse_header",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_parse_response",
+        "export": "protocol_parse_response",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      },
+      {
+        "symbol": "daemon_query::protocol_validate_message_size",
+        "export": "protocol_validate_message_size",
+        "category": "protocol_or_peercred_candidate",
+        "python_reference_candidates": [],
+        "python_reference_count": 0
+      }
+    ]
+  }
+}
