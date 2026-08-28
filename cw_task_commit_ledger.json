@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
- "updated_at": "2026-08-28T22:30:00+08:00",
+ "updated_at": "2026-08-28T23:10:00+08:00",
  "discipline": {
   "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
   "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1925,5 +1925,12 @@
   "status": "new_in_master",
   "scope": "rust_ext/src/daemon/task_loop/inbound_handoff.rs; inbound_handoff_test.rs; mod.rs; next_action.rs; deliverables/software-company/inbound_handoff_work_order_evidence_20260828.md",
   "note": "message 内嵌 task_id；inbound_handoff + work_order 只读投影；git 对象库 gc/prune 损坏后经回收站恢复对象，commit 前置闭环"
+ },
+ "t1787912195064_ws_triage_20260828": {
+  "task_id": "T-1787912195064-2c66e0a8",
+  "commit_id": "769a1a3",
+  "status": "new_in_master",
+  "scope": "工作树整理批次 2026-08-28：48 commits（SRV evidence/tests/handlers、task_collab 拆分、P0-L/A″/A′ 证据与交付物、模板归档、gitignore、plan 补提交）",
+  "note": "工作树 234 项按任务分门别类 add/commit/归档/删除；AGENTS.md 并行任务改动保留工作树；_qa_s1_tmp 归档至 ~/.callwarden/ws_triage_20260828/"
  }
 }
