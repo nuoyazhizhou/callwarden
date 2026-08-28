@@ -699,5 +699,10 @@ finally {
 
 @(Get-ChildItem -LiteralPath $VersionRoot -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike "*.staging" } | Sort-Object LastWriteTime -Descending |
-    Select-Object -Skip $KeepVersions) | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+    Select-Object -Skip $KeepVersions) | ForEach-Object {
+        # 防御：被清理项可能已被并发/前次回滚删空，避免对不存在目标触发 safe-delete fail-closed。
+        if (Test-Path -LiteralPath $_.FullName) {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force
+        }
+    }
 Write-Host "Runtime refresh completed: $version" -ForegroundColor Green
