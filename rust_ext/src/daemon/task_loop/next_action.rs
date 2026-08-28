@@ -682,6 +682,24 @@ fn latest_block_verdict(
     Ok(Some((verdict_id, findings)))
 }
 
+/// 读取 verdict 的结构化 finding 数量；投影只返回数量，不泄露 finding 原文。
+fn verdict_findings_count(
+    conn: &Connection,
+    task_id: &str,
+    verdict_id: &str,
+) -> Result<usize, DaemonRpcError> {
+    let findings_json: String = conn
+        .query_row(
+            "SELECT findings FROM task_verdict_events WHERE verdict_id = ?1 AND task_id = ?2",
+            rusqlite::params![verdict_id, task_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| infra_error(&format!("verdict findings 读取失败: {e}")))?;
+    Ok(serde_json::from_str::<Vec<Value>>(&findings_json)
+        .map(|findings| findings.len())
+        .unwrap_or(0))
+}
+
 // ---------------------------------------------------------------------------
 // 响应组装（§3.1 形态；`routing.origin_kind` 固定 `system_evaluator`）
 // ---------------------------------------------------------------------------
@@ -700,6 +718,48 @@ struct Rendered {
     next_action: &'static str,
     routing_reason: Vec<String>,
     next_session: Option<Value>,
+    review_verdict_id: Option<String>,
+    review_findings_count: Option<usize>,
+}
+
+/// 用户可读的治理阶段投影；`tasks.status` 仍保留生命周期门禁语义。
+fn workflow_status_for(task_status: &str, action: &str, next_action: &str) -> &'static str {
+    if action == "NONE" && next_action == "none" {
+        return "governance_blocked";
+    }
+    match task_status {
+        "open" if action == "WAIT" => "execution_in_progress",
+        "open" => "queued",
+        "in_progress" => {
+            if next_action == "revise_current_step" {
+                "remediation_in_progress"
+            } else {
+                "execution_in_progress"
+            }
+        }
+        "review" => match action {
+            "REVIEW" => "review_pending",
+            "ADJUDICATE" => "adjudication_pending",
+            "REVISE" => "remediation_pending",
+            _ => "governance_blocked",
+        },
+        "applied" => "applied_pending_close",
+        "closed" => "completed",
+        "reverted" => "reverted",
+        _ => "unknown",
+    }
+}
+
+fn review_state_for(task_status: &str, action: &str) -> &'static str {
+    if task_status != "review" {
+        return "not_in_review";
+    }
+    match action {
+        "REVIEW" => "pending",
+        "ADJUDICATE" => "passed",
+        "REVISE" => "blocked",
+        _ => "unverified",
+    }
 }
 
 fn render(r: &Rendered, task_status: &str) -> Value {
@@ -745,6 +805,30 @@ fn render(r: &Rendered, task_status: &str) -> Value {
     let mut m = Map::new();
     // task_id 由各 outcome 调用方在渲染后回填（next_session 可能为 null，此处不派生）。
     m.insert("task_id".to_string(), Value::String(String::new()));
+    m.insert("lifecycle_status".to_string(), Value::String(task_status.to_string()));
+    m.insert(
+        "workflow_status".to_string(),
+        Value::String(workflow_status_for(task_status, r.action, r.next_action).to_string()),
+    );
+    m.insert(
+        "current_role".to_string(),
+        r.required_role.clone().map(Value::String).unwrap_or(Value::Null),
+    );
+    m.insert(
+        "next_role".to_string(),
+        r.next_role.clone().map(Value::String).unwrap_or(Value::Null),
+    );
+    m.insert("next_action".to_string(), Value::String(r.next_action.to_string()));
+    let mut review = serde_json::json!({
+        "state": review_state_for(task_status, r.action),
+    });
+    if let Some(verdict_id) = &r.review_verdict_id {
+        review["verdict_id"] = Value::String(verdict_id.clone());
+    }
+    if let Some(findings_count) = r.review_findings_count {
+        review["findings_count"] = serde_json::json!(findings_count);
+    }
+    m.insert("review".to_string(), review);
     m.insert("decision".to_string(), Value::String(r.decision.to_string()));
     m.insert("action".to_string(), Value::String(r.action.to_string()));
     m.insert(
@@ -783,6 +867,11 @@ fn render(r: &Rendered, task_status: &str) -> Value {
     );
     m.insert(
         "blocking_conditions".to_string(),
+        serde_json::json!(r.blocking_conditions),
+    );
+    // 对外提供稳定的人类语义名称；保留旧字段兼容已有客户端。
+    m.insert(
+        "blocking_reasons".to_string(),
         serde_json::json!(r.blocking_conditions),
     );
     m.insert(
@@ -836,6 +925,8 @@ fn blocked(
         next_action: "none",
         routing_reason: vec![blocking],
         next_session: None,
+        review_verdict_id: None,
+        review_findings_count: None,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -877,6 +968,8 @@ fn claim_outcome(
             "step_id": step_id,
             "must_be_new_session": false,
         })),
+        review_verdict_id: None,
+        review_findings_count: None,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -905,6 +998,8 @@ fn wait_outcome(
         next_action: "wait_for_current_lease",
         routing_reason: vec![format!("当前 lease 未过期，持有角色 {holder_role}（不泄露 token）")],
         next_session: None,
+        review_verdict_id: None,
+        review_findings_count: None,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -939,6 +1034,8 @@ fn review_outcome(
             "step_id": Value::Null,
             "must_be_new_session": true,
         })),
+        review_verdict_id: None,
+        review_findings_count: None,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -957,6 +1054,16 @@ fn revise_outcome(
     hint: Option<Value>,
     reason: String,
 ) -> Result<Value, DaemonRpcError> {
+    let review_verdict_id = hint
+        .as_ref()
+        .and_then(|value| value.get("source_verdict_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let review_findings_count = hint
+        .as_ref()
+        .and_then(|value| value.get("findings"))
+        .and_then(Value::as_array)
+        .map(Vec::len);
     let r = Rendered {
         decision: "READY",
         action: "REVISE",
@@ -976,6 +1083,8 @@ fn revise_outcome(
             "step_id": step_id.unwrap_or_default(),
             "must_be_new_session": false,
         })),
+        review_verdict_id,
+        review_findings_count,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -991,6 +1100,8 @@ fn adjudicate_outcome(
     tc: (String, i64, String),
     rc: RoleContractProjection,
     reason: String,
+    review_verdict_id: Option<String>,
+    review_findings_count: Option<usize>,
 ) -> Result<Value, DaemonRpcError> {
     let r = Rendered {
         decision: "READY",
@@ -1011,6 +1122,8 @@ fn adjudicate_outcome(
             "step_id": Value::Null,
             "must_be_new_session": true,
         })),
+        review_verdict_id,
+        review_findings_count,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -1034,6 +1147,8 @@ fn complete_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpc
         next_action: "finalize",
         routing_reason: vec!["任务已 closed，所有终态门禁满足".to_string()],
         next_session: None,
+        review_verdict_id: None,
+        review_findings_count: None,
     };
     let mut value = render(&r, task_status);
     if let Value::Object(m) = &mut value {
@@ -1051,7 +1166,7 @@ fn complete_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpc
 /// 调用方保证只读连接（`TaskCollabStore.with_conn`）；本函数不做任何写入。
 /// 任一 workspace authority 不可复核 / task 不存在 → 返回结构化 `DaemonRpcError`；
 /// 其余 fail-closed 状态（合同缺失、binding 非唯一、verdict 无法验证等）→ `Ok(BLOCKED)`。
-pub fn evaluate_next_action(
+fn evaluate_next_action_inner(
     conn: &Connection,
     workspace_instance_id: &str,
     task_id: &str,
@@ -1145,9 +1260,31 @@ pub fn evaluate_next_action(
 
     // 规则 8-11：review 状态由 Verdict Ledger 的 versioned 有效投影驱动。
     if task_status == "review" {
-        // 规则 6 优先于 8-10：当前步骤仍有 active 未过期 lease → WAITING/WAIT。
-        if let Some(wait) = wait_if_active_lease(conn, task_id, &task_status)? {
-            return Ok(wait);
+        // 规则 6 优先于 8-10：存在 active 未过期 lease。
+        // 但若该 lease 由 reviewer 持有（reviewer 已领取本任务的评审 lease），则应允许其继续
+        // 评审，而非弹回 WAITING——修复 reviewer_blocked 反复指出的"派工投影不稳定"：
+        // 取得 reviewer lease 后 recheck 由 REVIEW 翻转为 WAITING/wait_for_current_lease。
+        // 仅当 lease 由非 reviewer 角色持有（如 executor 步骤 lease 残留）时才 WAITING。
+        if let Some(holder) = active_lease_role(conn, task_id)? {
+            if holder == "reviewer" {
+                let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "reviewer")? {
+                    Some(rc) => rc,
+                    None => {
+                        return blocked(
+                            task_id,
+                            &task_status,
+                            "review 状态缺少 reviewer Role Contract lineage（合同缺失）".to_string(),
+                        )
+                    }
+                };
+                return review_outcome(task_id, &task_status, tc, rc);
+            }
+            return Ok(wait_outcome(
+                task_id,
+                &task_status,
+                &first_claimable_step(conn, task_id)?.unwrap_or_default(),
+                &holder,
+            )?);
         }
         let verdicts = read_effective_verdicts(conn, task_id)?;
         let effective = verdicts
@@ -1197,7 +1334,7 @@ pub fn evaluate_next_action(
                     "reviewer 有效 verdict 为 BLOCKED，返回 Executor 整改（READY/REVISE）".to_string(),
                 );
             }
-            Some(_) => {
+            Some(v) => {
                 // 有效 verdict 为 PASS → READY/ADJUDICATE（新独立 instance/session）。
                 let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "adjudicator")? {
                     Some(rc) => rc,
@@ -1215,6 +1352,8 @@ pub fn evaluate_next_action(
                     tc,
                     rc,
                     "reviewer 有效 verdict 为 PASS，交独立 Adjudicator 裁决（不等于 apply/close）".to_string(),
+                    Some(v.verdict_id.clone()),
+                    Some(verdict_findings_count(conn, task_id, &v.verdict_id)?),
                 );
             }
         }
@@ -1242,6 +1381,8 @@ pub fn evaluate_next_action(
             tc,
             rc,
             "adjudicator 已接受，可执行最终 apply/close（READY/ADJUDICATE）".to_string(),
+            None,
+            None,
         );
     }
 
@@ -1333,4 +1474,19 @@ fn now_unix() -> f64 {
 /// 基础设施失败归类（E_TASK_DB_TRANSACTION）。
 fn infra_error(message: &str) -> DaemonRpcError {
     DaemonRpcError::new(ERR_TASK_DB_TRANSACTION, message.to_string())
+}
+
+/// 只读派工 evaluator 的公共入口：计算既有派工投影后附加 `inbound_handoff` +
+/// `work_order` 两个派生只读字段（T-1787912195064；投影逻辑在 `inbound_handoff.rs`）。
+///
+/// 保持与既有 `evaluate_next_action` 完全相同的签名与行为；投影失败 fail-soft
+/// （no_handoff / unparsable_handoff / 空数组），不阻断既有派工。
+pub fn evaluate_next_action(
+    conn: &Connection,
+    workspace_instance_id: &str,
+    task_id: &str,
+) -> Result<Value, DaemonRpcError> {
+    let mut value = evaluate_next_action_inner(conn, workspace_instance_id, task_id)?;
+    super::inbound_handoff::attach_projection(conn, task_id, &mut value)?;
+    Ok(value)
 }

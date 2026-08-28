@@ -36,7 +36,10 @@ pub mod promotion;
 pub mod report_handoff;
 pub mod verdict_evidence_gate;
 pub mod next_action;
+pub mod inbound_handoff;
 pub mod task_contract_bootstrap;
+pub mod task_contract_revise;
+pub mod role_worker;
 
 #[cfg(test)]
 mod capability_control_test;
@@ -59,4 +62,10 @@ mod lifecycle_lease_test;
 #[cfg(test)]
 mod next_action_test;
 #[cfg(test)]
+mod inbound_handoff_test;
+#[cfg(test)]
 mod task_contract_bootstrap_test;
+#[cfg(test)]
+mod task_contract_revise_test;
+#[cfg(test)]
+mod role_worker_test;
