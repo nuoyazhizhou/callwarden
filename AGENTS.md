@@ -186,7 +186,7 @@ agent"默认安全。本父任务只负责实施编排，关闭前须所有直�
 7. **任务关闭必须基于实际核实**（强制）：关闭任务前必须核实实际完成情况，禁止仅凭标题/描述或批量操作关闭任务。核实依据按优先级：
 
    - **步骤状态核实**（首要依据）：查询 `task_steps` 表，所有步骤必须为 `done`/`skipped`；存在 `failed` 或 `pending` 步骤的任务**禁止关闭**（除非步骤 `result` 明确记录该失败为预期且已通过其他方式解决）。
-   - **客观证据核实**：对于无步骤记录的任务，必须基于客观证据关闭——代码实现（对照 `migration-manifest.md` 状态表、测试通过记录、CI 结果、`result` 字段中的提交 hash 等），不得仅凭"看起来完成了"的主观判断。
+   - **客观证据核实**：对于无步骤记录的任务，必须基于客观证据关闭——代码实现（对照 [docs/design/migration-manifest.md](docs/design/migration-manifest.md) 状态表、测试通过记录、CI 结果、`result` 字段中的提交 hash 等），不得仅凭"看起来完成了"的主观判断。
    - **父任务核实**：关闭父任务前必须确认所有子任务均已 `closed`；若仍有 `open`/`in_progress`/`review`/`applied` 状态的子任务，父任务**禁止关闭**。
    - **禁止批量关闭**：禁止通过脚本/SQL 批量 UPDATE 任务状态为 closed 而不逐个核实。批量关闭必须伴随逐个任务的核实证据清单。
 
@@ -268,9 +268,10 @@ callwarden/
 ├── i18n/                    # 国际化（zh_CN / en_US）
 ├── parsers/                 # 多语言解析器（16 种）
 ├── rust_ext/                # PyO3 Rust 扩展（性能加速）
-├── server/                  # MCP Server + 文件监控
-│   ├── mcp_server.py        # MCP 服务器主文件（227 tools）
-│   ├── __main__.py          # MCP 启动入口
+├── server/                  # MCP Server + daemon thin clients + 文件监控
+│   ├── mcp_server.py        # MCP 服务器入口（FastMCP 装配；工具注册在 tools/）
+│   ├── tools/               # MCP 工具注册（tools_*.py 模块；数量以 docs/mcp_tools.md 头部为准）
+│   ├── daemon_*.py          # daemon 客户端/协议/autostart/health 等（Rust daemon thin clients，SRV 迁移后 Python authority 已退役）
 │   └── watcher.py           # 文件监控守护进程
 ├── prompts/                 # TokenSlim 审计样例（独立产品，非本项目指令）
 └── tests/                   # 测试套件
@@ -534,7 +535,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 11. **后台 watcher 用长运行 exec cell 承载**：在桌面工具执行器中，`Start-Process` 启动的后代进程可能被持续跟踪，即使重定向标准输出仍会使父工具调用超时。启动 `cw --watch` 时直接运行长命令并保留返回的 cell id，开发结束后显式终止该 cell；不要用 `Start-Process` 脱离。
 
-12. **`cw task create` 不支持 `--parent` 参数**：CLI 的 `cw task create` 只有 `--title`/`--desc`/`--steps` 三个参数。挂载子任务必须用 Python API `db.task_create(title=..., description=..., parent_id=..., steps=[])`，模板见 [docs/task_create_subtask.py](docs/task_create_subtask.py)。参数清单见 [TOOLS.md](TOOLS.md)，不确定时先 `cw task <subcommand> --help`。
+12. **`cw task create` 不支持 `--parent` 参数**：CLI 的 `cw task create` 只有 `--title`/`--desc`/`--steps` 三个参数。挂载子任务的现行路径统一见第 3 条「子任务挂载方式」：首选 `cw task split --plan plan.md <parent_task_id>`（daemon 路径）。旧的 Python 直连模板 `docs/task_create_subtask.py` 已归档至 `archive/docs-legacy/`（local 模式 legacy 参考；daemon 模式下 Python 直连属禁止路径，见规则 34）。参数清单见 [TOOLS.md](TOOLS.md)，不确定时先 `cw task <subcommand> --help`。
 
 15. **读取测试文件前先确认真实路径**：不要根据功能名连续猜测 `tests/test_xxx.py`。先运行 `rg --files tests | rg "关键词"` 或 `rg -l -g "test_*.py" "符号名" tests`，再对实际返回的路径使用 `Get-Content` / `cw file`。缺失的候选文件不是检索失败，不应让并行读取整组中止。
 
@@ -590,17 +591,36 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 ## 文档索引
 
+### 治理与角色协议（任务系统权威，改动前先读）
+
+| 文档                                                                                     | 说明                                                         |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [.agents/skills/cw-task-loop/references/role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md) | 四角色共享协议（workflow_status 枚举 / Handoff §5 / finding schema §4 / 命令陷阱 §7 的唯一单源） |
+| [Callwarden 无人值守循环启动模板：Executor v4.md](Callwarden%20无人值守循环启动模板：Executor%20v4.md)                 | Executor 启动入口                                             |
+| [Callwarden 无人值守循环启动模板：Reviewer v4.md](Callwarden%20无人值守循环启动模板：Reviewer%20v4.md)                 | Reviewer 启动入口                                            |
+| [Callwarden 无人值守循环启动模板：Adjudicator v4.md](Callwarden%20无人值守循环启动模板：Adjudicator%20v4.md)           | Adjudicator 启动入口                                         |
+| [Callwarden 无人值守循环启动模板：Planner v1.md](Callwarden%20无人值守循环启动模板：Planner%20v1.md)                 | Planner 启动入口（design-only，capability 声明前不可派工）    |
+| [docs/design/requirements.md](docs/design/requirements.md)                               | 需求基线（Req 15 治理三件套之一，冻结）                       |
+| [docs/design/cw-role-handoff-task-loop.md](docs/design/cw-role-handoff-task-loop.md)     | Req 15 角色交接设计基线（冻结，v1 正文不再直接修改）         |
+| [docs/design/cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md) | 四角色模型修订（capability 分层与双轨整改，现行依据）        |
+| [docs/design/tasks.md](docs/design/tasks.md)                                             | 实施任务树基线（冻结）                                       |
+| [docs/design/g0-experiment-protocol-v1.md](docs/design/g0-experiment-protocol-v1.md)     | G0 盲评实验协议（g0-experiment skill 前置阅读）              |
+| [deliverables/software-company/git_recovery_record_20260828.md](deliverables/software-company/git_recovery_record_20260828.md) | git 对象库 gc/prune 事故恢复路径（规则 48 引用）              |
+
+### 使用与开发文档
+
 | 文档                                                       | 说明                                     |
 | ---------------------------------------------------------- | ---------------------------------------- |
 | [TOOLS.md](TOOLS.md)                                       | 工具使用指南（CLI/MCP/场景映射）         |
 | [README.md](README.md)                                     | 项目首页                                 |
 | [docs/quickstart.md](docs/quickstart.md)                   | 快速开始                                 |
 | [docs/cli_reference.md](docs/cli_reference.md)             | CLI 命令参考                             |
-| [docs/mcp_tools.md](docs/mcp_tools.md)                     | MCP 工具参考                             |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                     | MCP 工具参考（工具数量权威口径）         |
 | [docs/architecture.md](docs/architecture.md)               | 架构设计                                 |
 | [docs/deployment.md](docs/deployment.md)                   | 部署指南                                 |
-| [docs/agent-usage-guide.md](docs/agent-usage-guide.md)     | 面向 AI Agent 的使用指南（从本文件抽取） |
-| [docs/task_create_subtask.py](docs/task_create_subtask.py) | 挂载子任务的标准脚本模板                 |
+| [docs/agent-usage-guide.md](docs/agent-usage-guide.md)     | 面向使用者的指南（外部 agent 集成引用，从本文件抽取） |
+| [docs/design/implementation-status.md](docs/design/implementation-status.md) | 实现状态总览（规则 22 同步目标）   |
+| [docs/design/migration-manifest.md](docs/design/migration-manifest.md) | Rust 迁移 manifest 状态表（规则 7 客观证据源） |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                         | 贡献指南                                 |
 | [CHANGELOG.md](CHANGELOG.md)                               | 版本变更                                 |
 

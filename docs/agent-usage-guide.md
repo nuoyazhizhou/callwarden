@@ -10,7 +10,7 @@
 ## Call Warden 是什么
 
 Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，
-提供 206+ MCP 工具和 145+ CLI 命令。
+提供 237 个 MCP 工具和 145+ CLI 命令。
 
 核心特性：
 - 16 种语言解析（Rust/TS/JS/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir）
@@ -22,7 +22,7 @@ Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter 
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 206+ MCP 工具 + 145+ CLI 命令
+- 237 MCP 工具 + 145+ CLI 命令
 
 ## 技术栈
 
