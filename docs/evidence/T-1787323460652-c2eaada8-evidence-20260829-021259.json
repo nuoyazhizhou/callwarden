@@ -1,0 +1,51 @@
+{
+  "task_id": "T-1787323460652-c2eaada8",
+  "remediation_step_id": "S-32a4ba3c9844f02c20571e0f",
+  "generated_at": "2026-08-28T18:12:59.121616+00:00",
+  "producer": {
+    "agent_id": "executor-workbuddy-v1-cur",
+    "session_id": "sess-workbuddy-cw-20260822-0320",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "evidence": {
+    "git_commits": [
+      {
+        "file": "rust_ext/src/daemon/dispatch.rs; rust_ext/src/daemon/http_server.rs; rust_ext/src/daemon/daemon_autostart_handlers.rs",
+        "commits": []
+      },
+      {
+        "file": "server/daemon_autostart.py",
+        "commits": [
+          "40163b2 refactor(server): SRV 系列 server Python authority 退役配套改动（16 文件）",
+          "1886ef7 T-1787323460652-c2eaada8 SRV-005 step1: daemon_autostart 三探测函数退役为 RPC 薄客户端（_try_connect_tcp/_try_connect_unix/try_http_connect 下沉探测语义 fail-closed，try_connect transport bootstrap 保留活连接，AST 扫描零 DB authority）",
+          "1415432 feat(py): server/db/cli 层 workspace authority + HTTP 路由演进"
+        ]
+      },
+      {
+        "file": "tests/test_srv_005.py",
+        "commits": [
+          "9fadd7c T-1787323460652-c2eaada8 SRV-005 step2: 新建 fixture 负矩阵 tests/test_srv_005.py（success/invalid/authority/unavailable/restart + AST 零探测权威门禁，12 passed）"
+        ]
+      },
+      {
+        "file": "deliverables/software-company/",
+        "commits": [
+          "10bad75 docs: SRV 迁移配套文档与 authority residue 审计更新",
+          "1090b8e docs: reviewer handoffs 汇总记录入库（跨任务 reviewer 交接摘要）",
+          "7879163 docs(p0l): P0-L Role Worker Task Contract policy 后续步骤证据入库 (T-1787801315246-e3e3a08c)"
+        ]
+      }
+    ],
+    "test_files": [
+      "tests/test_srv_005.py"
+    ],
+    "impl_steps_done": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "remediation": "reviewer_blocked: task_evidence_events 为空 → executor 补齐权威证据后回审"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "task_id": "T-1787323460311-ae9d7d30",
+  "remediation_step_id": "S-d8a2eeb51c7eaa36807a4c57",
+  "generated_at": "2026-08-28T18:12:56.866580+00:00",
+  "producer": {
+    "agent_id": "executor-workbuddy-v1-cur",
+    "session_id": "sess-workbuddy-cw-20260822-0320",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "evidence": {
+    "git_commits": [
+      {
+        "file": "rust_ext/src/daemon/dispatch.rs; rust_ext/src/daemon/http_server.rs; rust_ext/src/daemon/_mcp_common_handlers.rs",
+        "commits": []
+      },
+      {
+        "file": "server/_mcp_common.py",
+        "commits": [
+          "2e6b269 reconstruct: SRV-002 server audit-log Python->Rust daemon + db_base idempotency",
+          "4b1380a fix(daemon): workspace authority 隔离缺陷——显式 workspace 绑定 + fail-closed 链路",
+          "bca18c1 feat(mcp): MCP 工具拆分到 server/tools/（237 工具）+ P1 collab/evidence 批次相关代码"
+        ]
+      },
+      {
+        "file": "tests/test_srv_001.py",
+        "commits": [
+          "6dce276 feat(server)+test: cli_admin.py + SRV/task_supersede 测试入库"
+        ]
+      },
+      {
+        "file": "deliverables/software-company/",
+        "commits": [
+          "10bad75 docs: SRV 迁移配套文档与 authority residue 审计更新",
+          "1090b8e docs: reviewer handoffs 汇总记录入库（跨任务 reviewer 交接摘要）",
+          "7879163 docs(p0l): P0-L Role Worker Task Contract policy 后续步骤证据入库 (T-1787801315246-e3e3a08c)"
+        ]
+      }
+    ],
+    "test_files": [
+      "tests/test_srv_001.py"
+    ],
+    "impl_steps_done": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "remediation": "reviewer_blocked: task_evidence_events 为空 → executor 补齐权威证据后回审"
+  }
+}

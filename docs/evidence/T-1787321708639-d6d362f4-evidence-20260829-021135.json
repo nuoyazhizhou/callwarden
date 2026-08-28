@@ -1,0 +1,51 @@
+{
+  "task_id": "T-1787321708639-d6d362f4",
+  "remediation_step_id": "S-41f2fcec9ee2cba66d826e44",
+  "generated_at": "2026-08-28T18:11:35.731463+00:00",
+  "producer": {
+    "agent_id": "executor-workbuddy-v1-cur",
+    "session_id": "sess-workbuddy-cw-20260822-0320",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "evidence": {
+    "git_commits": [
+      {
+        "file": "task_collab.rs readonly projection 或 dedicated readonly task query handler",
+        "commits": []
+      },
+      {
+        "file": "cli/main.py",
+        "commits": [
+          "d7520fa feat(cli): main/daemon_commands SRV/A′ 迁移配套",
+          "b9546a3 fix(cli): cw task create 原子写入三角色 legacy role_contracts",
+          "87c79d4 fix(daemon): severity schema migration + compat crash + verdict CLI"
+        ]
+      },
+      {
+        "file": "tests/test_cli_03_http_rpc.py",
+        "commits": [
+          "0374aaa T-1787321708639-d6d362f4 (CLI-03): cw task show/list/status-tree HTTP RPC authority tests + matrix evidence"
+        ]
+      },
+      {
+        "file": "deliverables/software-company/tool_migration_matrix.json",
+        "commits": [
+          "af84208 MCP-012: check_session_separation → Rust daemon native (T-1787321709584-0f2573f4)",
+          "0c8a567 MCP-011: check_action_identity → Rust daemon native (T-1787321709518-0b31a484)",
+          "46c08dd MCP-010: get_action_identity → Rust daemon native (T-1787321709432-060d1128)"
+        ]
+      }
+    ],
+    "test_files": [
+      "tests/test_cli_03_http_rpc.py"
+    ],
+    "impl_steps_done": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "remediation": "reviewer_blocked: task_evidence_events 为空 → executor 补齐权威证据后回审"
+  }
+}
