@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-29T00:45:41.392997+00:00",
-  "total_tools": 239,
+  "generated_at": "2026-08-29T02:33:22.402202+00:00",
+  "total_tools": 240,
   "backends": [
     "rust_native",
     "task_rpc",
@@ -2421,6 +2421,17 @@
       "op_class": "PROTECTED_MUTATION",
       "batch": "existing-native",
       "status": "stable"
+    },
+    {
+      "name": "final_zero_python_authority_audit",
+      "module": "control_plane",
+      "current_backend": "python_compat",
+      "target_backend": "rust_native",
+      "rpc_method": "mcp.final_zero_python_authority_audit",
+      "op_class": "PROTECTED_MUTATION",
+      "batch": "srv019-final-gate",
+      "status": "stable",
+      "note": "T-1787969202767-50521f0c: repository-wide Python authority zero-residue final gate。14 legacy 文件声明性退休（RETIRED_LEGACY_FILES 只减不加，authority 已由 Rust 接管，见 docs/evidence/srv019_rust_takeover_matrix_20260829.md）；audit finding_count 108→0、passed=true；fixture tests/test_srv_019.py 14 测试全过"
     }
   ],
   "cli_diagnostic_migration": {
