@@ -1742,3 +1742,199 @@ use super::support::*;
             .unwrap_err();
         assert_eq!(err.code, "E_P0L_REPAIR_REVIEWER_ROLE_REQUIRED");
     }
+
+    // ============================================================
+    // task.steps.bootstrap_legacy（历史任务步骤补建）
+    // ============================================================
+
+    fn steps_bootstrap_setup(
+        store: &TaskCollabStore,
+        peer: &PeerCredential,
+        task_id: &str,
+    ) -> serde_json::Value {
+        // create 任务（不传 steps → task_steps=0；create 自动建 binding + Task Contract）
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "task_id": task_id,
+                    "title": "legacy steps bootstrap",
+                    "description": "steps bootstrap test",
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": p0l_governance_roles()
+                }),
+            )
+            .unwrap();
+        let reviewer_identity = lease_identity(
+            "agent-steps-bootstrap-reviewer",
+            "session-steps-bootstrap-reviewer",
+            "model-steps-bootstrap",
+            "reviewer",
+        );
+        // validate_reviewer_lease_for_adjudication 要求 reviewer lease holder 已注册
+        register_agent_with_identity(
+            store,
+            peer,
+            "agent-steps-bootstrap-reviewer",
+            "inst-steps-bootstrap-reviewer",
+            "session-steps-bootstrap-reviewer",
+            "reviewer",
+        );
+        let reviewer_lease = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "role": "reviewer",
+                    "ttl_seconds": 3600.0,
+                    "identity": reviewer_identity.clone()
+                }),
+            )
+            .unwrap();
+        let adjudicator = lease_identity(
+            "agent-steps-bootstrap-adjudicator",
+            "session-steps-bootstrap-adj",
+            "model-steps-bootstrap",
+            "adjudicator",
+        );
+        serde_json::json!({
+            "identity": adjudicator,
+            "lease_token": reviewer_lease["token"],
+            "fencing_counter": reviewer_lease["fencing_counter"],
+        })
+    }
+
+    fn steps_bootstrap_call(
+        store: &TaskCollabStore,
+        peer: &PeerCredential,
+        task_id: &str,
+        request_id: &str,
+        steps: &serde_json::Value,
+        auth: &serde_json::Value,
+    ) -> Result<serde_json::Value, DaemonRpcError> {
+        store.handle_task_steps_bootstrap_legacy(
+            peer.clone(),
+            &serde_json::json!({
+                "task_id": task_id,
+                "request_id": request_id,
+                "steps": steps,
+                "identity": auth["identity"],
+                "lease_token": auth["lease_token"],
+                "fencing_counter": auth["fencing_counter"],
+                "workspace_id": 1,
+                "evidence_path": "deliverables/software-company/s1_t04_review_packet.md",
+                "evidence_hash": "sha256:steps-bootstrap-evidence",
+            }),
+        )
+    }
+
+    #[test]
+    fn test_steps_bootstrap_legacy_success_and_replay() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        // allowlist 任务（BOOTSTRAP_ROLE_ALLOWLIST 含 T-1787203937193-0993d120）
+        let task_id = "T-1787203937193-0993d120";
+        let auth = steps_bootstrap_setup(&store, &peer, task_id);
+
+        let steps = serde_json::json!([
+            {"action": "port_rust_authority", "target_file": "cli/main.py", "check_items": "CLI 迁移 daemon RPC 权威路径"},
+            {"action": "thin_cli_client", "target_file": "cli/main.py", "check_items": "CLI 变薄客户端"},
+            {"action": "fixture_matrix", "target_file": "tests/", "check_items": "fixture 矩阵核对"},
+            {"action": "matrix_verify", "target_file": "tests/", "check_items": "矩阵验证通过"}
+        ]);
+        let r1 = steps_bootstrap_call(&store, &peer, task_id, "steps-bs-req-1", &steps, &auth)
+            .expect("steps bootstrap 应成功");
+        assert_eq!(r1["replayed"], false);
+        assert_eq!(r1["step_count"], 4);
+
+        let conn = store.conn.lock().unwrap();
+        let step_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(step_count, 4, "必须补建 4 个步骤");
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1 AND status='pending'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 4, "补建步骤应为 pending");
+        let audit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id=?1 AND reason_code='steps_bootstrapped'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(audit, 1, "steps_bootstrapped 审计必须恰好一条");
+        drop(conn);
+
+        // 同 request_id 重放 → replayed=true，不重复创建
+        let r2 = steps_bootstrap_call(&store, &peer, task_id, "steps-bs-req-1", &steps, &auth)
+            .expect("同 request_id 重放应幂等");
+        assert_eq!(r2["replayed"], true);
+        let conn = store.conn.lock().unwrap();
+        let step_count2: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(step_count2, 4, "重放不得重复创建步骤");
+        drop(conn);
+    }
+
+    #[test]
+    fn test_steps_bootstrap_legacy_rejects_non_allowlisted() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-NOT-ALLOWLISTED-LEGACY";
+        let auth = steps_bootstrap_setup(&store, &peer, task_id);
+        let err = steps_bootstrap_call(
+            &store, &peer, task_id, "steps-bs-req-x",
+            &serde_json::json!([{"action": "port_rust_authority"}]),
+            &auth,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_STEPS_BOOTSTRAP_NOT_ALLOWLISTED");
+    }
+
+    #[test]
+    fn test_steps_bootstrap_legacy_rejects_non_adjudicator() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-1787203937193-0993d120";
+        let mut auth = steps_bootstrap_setup(&store, &peer, task_id);
+        auth["identity"] = lease_identity(
+            "agent-steps-bootstrap-impl",
+            "session-steps-bootstrap-impl",
+            "model-steps-bootstrap",
+            "implementer",
+        );
+        let err = steps_bootstrap_call(
+            &store, &peer, task_id, "steps-bs-req-y",
+            &serde_json::json!([{"action": "port_rust_authority"}]),
+            &auth,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "E_STEPS_BOOTSTRAP_ROLE_REQUIRED");
+    }

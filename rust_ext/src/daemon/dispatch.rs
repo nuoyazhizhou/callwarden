@@ -1206,6 +1206,17 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.contract_bootstrap"))
         }
     }
+    fn handle_task_steps_bootstrap_legacy(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_steps_bootstrap_legacy(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.steps.bootstrap_legacy"))
+        }
+    }
     fn handle_task_contract_revise(
         &mut self,
         peer: PeerCredential,
@@ -2058,6 +2069,7 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.p0l_reviewer_block_repair",
     "task.step.bind_role_contract",
     "task.step.resolve",
+    "task.steps.bootstrap_legacy",
     "task.handoff",
     // 任务替代（supersede）治理写：独立关系表 + append-only 事件。
     // P0-H（T-1787277487109-758e56d0）：经 serial writer 串行化点应用；
@@ -2740,6 +2752,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.handoff" => state.handle_task_handoff(peer, params),
         "task.status" => state.handle_task_status(peer, params),
         "task.reconcile" => state.handle_task_reconcile(peer, params),
+        "task.steps.bootstrap_legacy" => state.handle_task_steps_bootstrap_legacy(peer, params),
         "task.next_action" => state.handle_task_next_action(peer, params),
         "task.events" => state.handle_task_events(peer, params),
         "task.wait" => state.handle_task_wait(peer, params),
@@ -3735,6 +3748,7 @@ mod tests {
         ));
         assert!(is_protected_mutation("verdict.submit"));
         assert!(is_protected_mutation("task.p0l_reviewer_block_repair"));
+        assert!(is_protected_mutation("task.steps.bootstrap_legacy"));
         assert!(is_protected_mutation("task.apply"));
         assert!(is_protected_mutation("task.reconcile"));
         assert!(is_protected_mutation("lease.acquire"));

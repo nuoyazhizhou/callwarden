@@ -94,6 +94,7 @@ pub const TOOL_ROUTES: &[ToolRoute] = &[
     ToolRoute { name: "submit_verdict", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "verdict.submit", op_class: OpClass::GovernanceWrite, batch: "existing-native", status: "stable" },
     ToolRoute { name: "task_remediation_create", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "task.remediation.create", op_class: OpClass::ProtectedMutation, batch: "existing-native", status: "stable" },
     ToolRoute { name: "task_step_resolve", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "task.step.resolve", op_class: OpClass::ProtectedMutation, batch: "existing-native", status: "stable" },
+    ToolRoute { name: "task_steps_bootstrap_legacy", module: "tools_collab", target_backend: Backend::RustNative, rpc_method: "task.steps.bootstrap_legacy", op_class: OpClass::ProtectedMutation, batch: "existing-native", status: "stable" },
     ToolRoute { name: "build_hard_dependency_edges", module: "tools_p2_graph", target_backend: Backend::TaskRpc, rpc_method: "task.job_submit", op_class: OpClass::ProtectedMutation, batch: "T02-job", status: "migrated" },
     ToolRoute { name: "detect_cycle", module: "tools_p2_graph", target_backend: Backend::PythonCompat, rpc_method: "detect_cycle", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
     ToolRoute { name: "get_artifact_freshness", module: "tools_p2_graph", target_backend: Backend::PythonCompat, rpc_method: "get_artifact_freshness", op_class: OpClass::ReadOnly, batch: "P0-compat", status: "transition" },
@@ -402,9 +403,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_coverage_is_241() {
-        assert_eq!(TOOL_ROUTES.len(), 241);
-        assert!(ToolRegistry::validate_coverage(241).is_ok());
+    fn test_coverage_is_242() {
+        assert_eq!(TOOL_ROUTES.len(), 242);
+        assert!(ToolRegistry::validate_coverage(242).is_ok());
     }
 
     #[test]
@@ -441,6 +442,6 @@ mod tests {
     #[test]
     fn test_meta_tools_length() {
         let v = ToolRegistry::meta_tools_value();
-        assert_eq!(v.as_array().map(|a| a.len()), Some(241));
+        assert_eq!(v.as_array().map(|a| a.len()), Some(242));
     }
 }

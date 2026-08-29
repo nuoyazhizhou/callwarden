@@ -1351,4 +1351,257 @@ impl TaskCollabStore {
         res.insert("binding_id".to_string(), Value::String(binding_id));
         Ok(Value::Object(res))
     }
+
+    /// 历史任务步骤补建（legacy steps bootstrap）。
+    ///
+    /// 仅允许 allowlist 受权历史任务（BOOTSTRAP_ROLE_ALLOWLIST）+ adjudicator 持
+    /// 独立 reviewer lease + 任务已有权威 workspace binding 与 Task Contract +
+    /// task_steps 为空（append-only 不重复）时，为任务补建执行步骤。
+    ///
+    /// 步骤内容由调用方按任务实际工作声明（如 S1 迁移 4 步模板），daemon 校验
+    /// 格式并写入 task_steps（pending）+ steps_bootstrapped 审计，随后由 Executor
+    /// 逐步 report 挂证据。不得伪造历史证据；request_id 幂等重放不重复创建。
+    pub fn handle_task_steps_bootstrap_legacy(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let text_field = |name: &str| -> Result<String, DaemonRpcError> {
+            params
+                .get(name)
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "E_STEPS_BOOTSTRAP_PARAM_REQUIRED",
+                        format!("task.steps.bootstrap_legacy 缺少结构化字段 {name}"),
+                    )
+                })
+        };
+        let task_id = text_field("task_id")?;
+        let request_id = text_field("request_id")?;
+        let steps = params.get("steps").and_then(Value::as_array).cloned().ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_STEPS_REQUIRED",
+                "task.steps.bootstrap_legacy 必须携带 steps 数组",
+            )
+        })?;
+        if steps.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_STEPS_REQUIRED",
+                "steps 数组不能为空",
+            ));
+        }
+        // 步骤格式校验：每项 action 非空字符串；target_file/check_items 可选。
+        let mut normalized: Vec<Value> = Vec::with_capacity(steps.len());
+        for (idx, raw) in steps.iter().enumerate() {
+            let obj = raw.as_object().ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_STEPS_BOOTSTRAP_STEP_INVALID",
+                    format!("steps[{idx}] 必须是 object"),
+                )
+            })?;
+            let action = obj
+                .get("action")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "E_STEPS_BOOTSTRAP_STEP_INVALID",
+                        format!("steps[{idx}].action 不能为空"),
+                    )
+                })?;
+            normalized.push(serde_json::json!({
+                "action": action,
+                "target_file": obj.get("target_file").and_then(Value::as_str).unwrap_or(""),
+                "target_symbol": obj.get("target_symbol").and_then(Value::as_str).unwrap_or(""),
+                "check_items": obj.get("check_items").and_then(Value::as_str).unwrap_or(""),
+            }));
+        }
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_IDENTITY_REQUIRED",
+                "task.steps.bootstrap_legacy 必须携带完整 identity",
+            )
+        })?;
+        if identity.role != "adjudicator" {
+            return Err(DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_ROLE_REQUIRED",
+                format!(
+                    "task.steps.bootstrap_legacy 仅允许 role=adjudicator，实际 role={}",
+                    identity.role
+                ),
+            ));
+        }
+        let (token, counter) = Self::require_lease_params(params)?;
+        let evidence_path = params
+            .get("evidence_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let evidence_hash = params
+            .get("evidence_hash")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        let owner_key = peer.owner_key();
+        let ts = task_now_ts();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DaemonRpcError::internal_error(format!("开启 steps bootstrap 事务失败: {e}"))
+        })?;
+
+        // 治理写门禁：adjudicator 持任务 reviewer lease（与 attest/bootstrap 一致）。
+        self.validate_reviewer_lease_for_adjudication(&tx, &task_id, &token, counter, &identity)?;
+
+        // workspace binding 必须已存在（attest 前置）。
+        let bound_workspace = task_bound_workspace_id(&tx, &task_id, None)?;
+        // Task Contract 必须已建立（bootstrap 前置）。
+        let contract_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_contract_revisions WHERE task_id=?1)",
+                params![task_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("Task Contract 存在性查询失败: {e}"))
+            })?;
+        if !contract_exists {
+            return Err(DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_CONTRACT_REQUIRED",
+                "task.steps.bootstrap_legacy 要求任务已建立 Task Contract（contract-bootstrap 前置）",
+            ));
+        }
+        // allowlist 受权：只有明确授权的历史任务可补建步骤。
+        if !crate::daemon::task_loop::task_contract_bootstrap::BOOTSTRAP_ROLE_ALLOWLIST
+            .contains(&task_id.as_str())
+        {
+            return Err(DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_NOT_ALLOWLISTED",
+                "任务不在受权 allowlist，禁止补建步骤（governance_blocked）",
+            ));
+        }
+        // request_id 幂等重放（daemon 重启后同 request_id 不重复创建）。
+        // 注意：必须在 task_steps 非空检查之前——重放时 steps 已存在，若先查
+        // existing_steps 会误报 ALREADY_EXISTS，replay 分支永远到不了。
+        let mut replay_stmt = tx
+            .prepare(
+                "SELECT reason FROM task_events
+                 WHERE task_id=?1 AND reason_code='steps_bootstrapped'
+                 ORDER BY event_id DESC",
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询 steps bootstrap ledger 失败: {e}"))
+            })?;
+        let replay_rows = replay_stmt
+            .query_map(params![task_id], |row| row.get::<_, String>(0))
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("读取 steps bootstrap ledger 失败: {e}"))
+            })?;
+        for row in replay_rows {
+            let raw = row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("读取 steps bootstrap event 失败: {e}"))
+            })?;
+            let value = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+            if value.get("request_id").and_then(Value::as_str) == Some(request_id.as_str()) {
+                let mut replay = serde_json::Map::new();
+                replay.insert("ok".into(), Value::Bool(true));
+                replay.insert("task_id".into(), Value::String(task_id.clone()));
+                replay.insert("replayed".into(), Value::Bool(true));
+                replay.insert(
+                    "step_ids".into(),
+                    value.get("step_ids").cloned().unwrap_or(Value::Null),
+                );
+                return Ok(Value::Object(replay));
+            }
+        }
+        drop(replay_stmt);
+
+        // append-only：task_steps 必须为空，否则拒绝（不重复补建）。
+        // 不同 request_id 的重复补建在此拒绝（幂等由 request_id 重放保证）。
+        let existing_steps: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1",
+                params![task_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("task_steps 查询失败: {e}")))?;
+        if existing_steps != 0 {
+            return Err(DaemonRpcError::new(
+                "E_STEPS_BOOTSTRAP_ALREADY_EXISTS",
+                "task_steps 非空，禁止重复补建（append-only）",
+            ));
+        }
+
+        // 写入步骤（pending）+ steps_bootstrapped 审计 + identity。
+        let mut step_ids: Vec<Value> = Vec::with_capacity(normalized.len());
+        for (idx, step) in normalized.iter().enumerate() {
+            let step_id = format!(
+                "S-{}",
+                &sha256_hex(
+                    format!("{}:legacy-steps:{}:{}", task_id, idx, request_id).as_bytes()
+                )[..24]
+            );
+            tx.execute(
+                "INSERT INTO task_steps
+                 (id, task_id, step_index, action, target_file, target_symbol,
+                  check_items, status, result, created_at, completed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', '', ?8, NULL)",
+                params![
+                    step_id,
+                    task_id,
+                    idx,
+                    step.get("action").and_then(Value::as_str).unwrap_or(""),
+                    step.get("target_file").and_then(Value::as_str).unwrap_or(""),
+                    step.get("target_symbol").and_then(Value::as_str).unwrap_or(""),
+                    step.get("check_items").and_then(Value::as_str).unwrap_or(""),
+                    ts,
+                ],
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("写入 steps bootstrap 步骤失败: {e}"))
+            })?;
+            step_ids.push(Value::String(step_id));
+        }
+        let seq = self.next_seq();
+        let audit = serde_json::json!({
+            "task_id": task_id,
+            "request_id": request_id,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "step_count": step_ids.len(),
+            "step_ids": step_ids,
+            "source": "steps_bootstrap_legacy",
+        })
+        .to_string();
+        tx.execute(
+            "INSERT INTO task_events
+             (task_id, workspace_id, from_status, to_status, reason_code, reason,
+              actor_identity, agent_session_id, role, monotonic_seq, authoritative_timestamp)
+             VALUES (?1, ?2, '', '', 'steps_bootstrapped', ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                task_id, bound_workspace, audit, identity.agent_id,
+                identity.session_id, identity.role, seq, ts
+            ],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("steps_bootstrapped 审计写入失败: {e}")))?;
+        record_action_identity(&tx, &task_id, &identity, "task.steps.bootstrap_legacy", seq, ts)?;
+        tx.commit().map_err(|e| {
+            DaemonRpcError::internal_error(format!("提交 steps bootstrap 事务失败: {e}"))
+        })?;
+
+        let mut res = serde_json::Map::new();
+        res.insert("ok".into(), Value::Bool(true));
+        res.insert("task_id".into(), Value::String(task_id));
+        res.insert("workspace_id".into(), Value::Number(serde_json::Number::from(bound_workspace)));
+        res.insert("step_count".into(), Value::Number(serde_json::Number::from(step_ids.len() as u64)));
+        res.insert("step_ids".into(), Value::Array(step_ids));
+        res.insert("replayed".into(), Value::Bool(false));
+        Ok(Value::Object(res))
+    }
 }
