@@ -1,0 +1,15 @@
+{
+  "task_id": "T-1787293451688-c14b1e44",
+  "closure": {
+    "contract_revise": "rev2 补 identity_policy=legacy_identity_v1（rev1 缺失 → resolve_identity_policy BLOCKED，P0-L 老缺口）",
+    "reviewer_verdict": "V-d9476ac281da25367b6e6f66 (pass，子树 191=190 closed+root)",
+    "adjudicator": "apply + close 受保护通道（adjudicator 持 reviewer lease，fencing 11）",
+    "closed_at": 1787972414.41
+  },
+  "final_state": {
+    "root": "closed",
+    "subtree": "191/191 closed",
+    "active_leases": 0
+  },
+  "correction": "Adjudicator 报告称 root 需单独上级治理——不成立：root 卡 review 根因=identity_policy 缺口，经 contract_revise 修复后走正常 review/adjudication 闭环，无需上级动作"
+}
