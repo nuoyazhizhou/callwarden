@@ -169,6 +169,9 @@ impl TaskCollabStore {
             }
         } else {
             // S2: 叶子任务步骤门禁 —— 必须有步骤且全部 done/skipped 才能关闭。
+            // failed 步骤判定与 next_action 对齐（§3.4）：已由 `step_resolved`
+            // resolution event 覆盖的 failed step 视为已解决，不计入未完成；
+            // 仅 unresolved failed + pending/blocked 阻塞关闭。
             let step_count: i64 = tx
                 .query_row(
                     "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1",
@@ -184,15 +187,22 @@ impl TaskCollabStore {
             }
             let not_done: i64 = tx
                 .query_row(
-                    "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1 AND status IN ('pending', 'failed', 'blocked')",
+                    "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1 AND status IN ('pending', 'blocked')",
                     params![task_id],
                     |r| r.get(0),
                 )
                 .unwrap_or(0);
-            if not_done > 0 {
+            let unresolved_failed =
+                crate::daemon::task_loop::next_action::unresolved_failed_step_ids(&tx, task_id)?
+                    .len() as i64;
+            let total_not_done = not_done + unresolved_failed;
+            if total_not_done > 0 {
                 return Err(DaemonRpcError::new(
                     "E_STEPS_NOT_DONE",
-                    format!("任务 {} 存在 {} 个未完成步骤，禁止关闭", task_id, not_done),
+                    format!(
+                        "任务 {} 存在 {} 个未完成步骤，禁止关闭",
+                        task_id, total_not_done
+                    ),
                 ));
             }
         }

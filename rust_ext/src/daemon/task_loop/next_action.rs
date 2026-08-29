@@ -543,7 +543,9 @@ fn resolved_failed_step_ids(
 }
 
 /// 未解析的 failed step ids（status='failed' 且无 resolution event）（§3.4）。
-fn unresolved_failed_step_ids(
+/// pub(crate)：close 门禁（task_collab_lifecycle_apply.rs）复用同一判定，保证
+/// next_action 与 close 对 failed step 的解释一致（resolution 覆盖即视为已解决）。
+pub(crate) fn unresolved_failed_step_ids(
     conn: &Connection,
     task_id: &str,
 ) -> Result<Vec<String>, DaemonRpcError> {
