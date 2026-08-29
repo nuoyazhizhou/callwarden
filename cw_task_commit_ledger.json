@@ -1960,6 +1960,7 @@
   "commit_id": "50928e3c66679d8b49c6fc6c9267abbeb2413b81",
   "status": "new_in_master",
   "scope": "reviewer_pass handoff 前置 Verdict Ledger provenance 门禁；同 task/step/workspace、snapshot/view manifest、reviewer identity 校验；source verdict/snapshot 写入 handoff envelope/event；缺 verdict 零部分提交回归测试",
-  "note": "message 内嵌 task_id；focused regression 1 passed；未生成/修改 Reviewer verdict，未修改历史 task/evidence，未执行 apply/close"
+  "note": "message 内嵌 task_id；focused regression 1 passed；未生成/修改 Reviewer verdict，未修改历史 task/evidence，未执行 apply/close",
+  "evidence_commit_id": "03b674c6397917fbed953ad78ecbf9aae08ae6a9"
  }
 }
