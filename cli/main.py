@@ -3916,6 +3916,15 @@ def _handle_task(args, db):
         help=t("cli_task_arg_reviewer", default="Reviewer identity")
     )
 
+    # cascade-close：聚合节点级联收尾（子树全 closed → 树干自动 close，递归向上）
+    cascade_p = sub.add_parser(
+        "cascade-close",
+        help=t("cli_task_cascade_close_desc",
+               default="Cascade close aggregate nodes (subtree closed -> trunk closed)"),
+    )
+    cascade_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
+
     # reopen：重新打开任务（review/applied/closed -> in_progress），用于 code review 发现问题或挂新子任务
     reopen_p = sub.add_parser(
         "reopen",
@@ -3959,7 +3968,7 @@ def _handle_task(args, db):
     # Identity 与 daemon 签发的 Attestation（Req 10.8, 14.13）。
     # next 也支持身份，保证 claim 与后续 report 使用同一显式 action identity
     # （同一 session_id/agent_id/...），避免 SID 回退与 report session 不一致。
-    for _identity_parser in (next_p, report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p, claim_recover_p):
+    for _identity_parser in (next_p, report_p, handoff_p, step_resolve_p, apply_p, close_p, cascade_p, reopen_p, claim_recover_p):
         _identity_parser.add_argument(
             "--agent-id", default="", metavar="ID",
             help=t("cli_task_arg_agent_id", default="Agent ID (P3 Identity)"))
@@ -5063,6 +5072,45 @@ def _handle_task(args, db):
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("closed_at"):
             print(t("cli.messages.task_closed_at", ts=result["closed_at"]))
+        if identity:
+            cprint(t("cli.messages.identity_recorded"), "green")
+        print()
+        return True
+
+    elif opts.action == "cascade_close" or opts.action == "cascade-close":
+        # 聚合节点级联收尾：子树全 closed → 树干自动 close（递归向上）。
+        # 系统级聚合操作，经 daemon 权威 `task.cascade_close`（coordinator 身份）；
+        # 无 local fallback——daemon 不可用时 fail-closed。
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+
+        def _local_cascade_close(payload):
+            raise SharedTaskWriterRequiredError(
+                "cw local cascade-close 必须经 daemon 权威写点（thin-client 冻结合同）；"
+                "local 模式需连接本地 daemon，禁止直写"
+            )
+
+        result = route_task_write("task.cascade_close", {
+            "task_id": opts.task_id,
+            "identity": identity,
+        }, _local_cascade_close)
+
+        if "error" in result:
+            cprint(t("cli.messages.task_close_failed",
+                   error=result["error"]), "red")
+            print()
+            return True
+        cprint(t("cli.messages.task_close_success",
+               id=result["task_id"]), "green", bold=True)
+        closed = result.get("closed", [])
+        if closed:
+            print("级联关闭节点:")
+            for n in closed:
+                print(f"  - {n}")
+        else:
+            print("无新增关闭节点（子树未全 closed 或已 closed）")
         if identity:
             cprint(t("cli.messages.identity_recorded"), "green")
         print()
