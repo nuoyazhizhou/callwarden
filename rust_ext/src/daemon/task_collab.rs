@@ -359,7 +359,7 @@ fn check_role_independence(
 }
 
 /// 在调用方已有事务中持久化 Role Contract（A3，task.create 路径）。
-fn insert_role_contracts(
+pub(crate) fn insert_role_contracts(
     tx: &Transaction<'_>,
     task_id: &str,
     contracts: &[Value],
@@ -417,7 +417,7 @@ fn insert_role_contracts(
 /// `bootstrap_task_governance_contracts` 在当前事务内追加 revision/lineage/binding。
 /// 这样新任务不会再出现“legacy role_contracts 已有、next-action 却无合同”的
 /// 半套投影。
-fn task_create_contract_envelope(
+pub(crate) fn task_create_contract_envelope(
     task_id: &str,
     title: &str,
     description: &str,

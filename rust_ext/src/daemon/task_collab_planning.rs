@@ -2,6 +2,63 @@
 //! 保留原有步骤解析、事务和治理投影语义。
 
 use super::*;
+use crate::daemon::task_loop::task_contract_bootstrap::{
+    bootstrap_task_governance_contracts, BootstrapInput,
+};
+
+/// A' 标准三角色 legacy Role Contract 模板（与 CLI `_build_role_contracts(None)`
+/// 冻结模板一致）。task.split 必须为每个子任务原子写入该三元组，否则
+/// `bootstrap_task_governance_contracts` 因缺 legacy role_contracts 而拒绝派生
+/// v1 治理投影（子任务"有任务有步骤但无法 claim/bootstrap"的残缺态）。
+fn default_trio_role_contracts() -> Vec<Value> {
+    serde_json::json!([
+        {
+            "role": "executor",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.executor.startup.v1",
+            "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+            "allowed_paths": "task-card scoped paths only",
+            "forbidden_paths": "task.apply; task.close; task.supersede; out-of-scope production/schema changes",
+            "commands": "task.next_action; task.claim; task.report; task.handoff",
+            "acceptance_checks": "one tool/CLI link; tests; evidence manifest/hash; executor_ready_for_review",
+            "required_evidence": "implementation plan; test output; negative test; daemon round-trip evidence",
+            "handoff_to": "reviewer",
+            "independence": "required",
+        },
+        {
+            "role": "reviewer",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+            "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+            "allowed_paths": "read-only review evidence and structured review handoff",
+            "forbidden_paths": "production edits; task.apply; task.close; task.supersede",
+            "commands": "task.next_action; task.contract.get; task.handoff",
+            "acceptance_checks": "independent verification of scope, diff, tests, evidence, gate and matrix condition",
+            "required_evidence": "review record; findings or reviewer_pass evidence manifest/hash",
+            "handoff_to": "adjudicator",
+            "independence": "required",
+        },
+        {
+            "role": "adjudicator",
+            "skill_id": "none",
+            "skill_version": "",
+            "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+            "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+            "allowed_paths": "final review and protected task finalization within daemon authority",
+            "forbidden_paths": "production edits; local SQLite fallback; status forgery",
+            "commands": "task.next_action; task.apply; task.close; task.handoff; task.supersede when separately authorized",
+            "acceptance_checks": "ACCEPT requires valid reviewer lease/fencing then apply, close and next_action=COMPLETE",
+            "required_evidence": "final review; lease/fencing provenance; apply/close/COMPLETE verification",
+            "handoff_to": "complete",
+            "independence": "required",
+        }
+    ])
+    .as_array()
+    .cloned()
+    .unwrap_or_default()
+}
 
 impl TaskCollabStore {
     pub fn handle_task_split(
@@ -21,39 +78,65 @@ impl TaskCollabStore {
 
         let ts = task_now_ts();
         let mut created_subtasks = Vec::new();
+        let owner = peer.owner_key();
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| DaemonRpcError::internal_error(format!("开启事务失败: {}", e)))?;
 
+        // 父任务不可变 workspace binding 是子任务 workspace 的权威来源（fail-closed）。
+        let workspace_id: i64 = tx
+            .query_row(
+                "SELECT workspace_id FROM task_workspace_bindings WHERE task_id = ?1 LIMIT 1",
+                params![task_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| {
+                DaemonRpcError::new(
+                    "E_TASK_BINDING_REQUIRED",
+                    format!(
+                        "父任务 {} 缺少不可变 workspace binding，拒绝 split（子任务无法继承 workspace）",
+                        task_id
+                    ),
+                )
+            })?;
+
+        // 子任务 identity_policy：显式传入优先，缺省 legacy_identity_v1（与 task.create 兼容）。
+        let identity_policy = params
+            .get("identity_policy")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("legacy_identity_v1")
+            .to_string();
+
+        // A' 标准三角色 legacy 模板（每个子任务一份）。
+        let default_role_contracts = default_trio_role_contracts();
+
+        // 统一子任务定义：(title, description, steps: Vec<Value>)。
+        let mut subtask_defs: Vec<(String, String, Vec<Value>)> = Vec::new();
         if let Some(sub_defs) = subtasks_param {
-            for (idx, sub_def) in sub_defs.iter().enumerate() {
+            for sub_def in sub_defs.iter() {
                 let st_title = sub_def
                     .get("title")
                     .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| "subtask");
+                    .unwrap_or("subtask")
+                    .to_string();
                 let st_desc = sub_def
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let sub_id = format!("{}-sub-{}", task_id, idx + 1);
-
-                tx.execute(
-                    "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
-                     VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?6, ?7)",
-                    params![sub_id, st_title, st_desc, peer.owner_key(), ts, ts, task_id],
-                ).map_err(|e| DaemonRpcError::internal_error(format!("子任务创建失败: {}", e)))?;
-
+                    .unwrap_or("")
+                    .to_string();
                 let steps = match sub_def.get("steps") {
-                    None => &[][..],
-                    Some(value) => value.as_array().ok_or_else(|| {
-                        DaemonRpcError::invalid_params("子任务 steps 必须是 JSON array")
-                    })?,
+                    None => Vec::new(),
+                    Some(value) => value
+                        .as_array()
+                        .ok_or_else(|| {
+                            DaemonRpcError::invalid_params("子任务 steps 必须是 JSON array")
+                        })?
+                        .clone(),
                 };
-                insert_task_steps(&tx, &sub_id, steps, ts)?;
-
-                created_subtasks.push(sub_id);
+                subtask_defs.push((st_title, st_desc, steps));
             }
         } else {
             let plan_text = if !plan_file.is_empty() {
@@ -61,30 +144,72 @@ impl TaskCollabStore {
             } else {
                 String::new()
             };
-
             let parsed = parse_subtasks_from_plan_text(&plan_text);
-            for (idx, (st_title, st_desc, steps)) in parsed.into_iter().enumerate() {
-                let sub_id = format!("{}-sub-{}", task_id, idx + 1);
-                tx.execute(
-                    "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
-                     VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?6, ?7)",
-                    params![sub_id, st_title, st_desc, peer.owner_key(), ts, ts, task_id],
-                ).map_err(|e| DaemonRpcError::internal_error(format!("计划子任务创建失败: {}", e)))?;
-
-                let step_values: Vec<Value> = steps.into_iter().map(Value::Object).collect();
-                insert_task_steps(&tx, &sub_id, &step_values, ts)?;
-
-                created_subtasks.push(sub_id);
+            for (st_title, st_desc, steps) in parsed {
+                subtask_defs.push((
+                    st_title,
+                    st_desc,
+                    steps.into_iter().map(Value::Object).collect(),
+                ));
             }
+        }
+
+        for (idx, (st_title, st_desc, steps)) in subtask_defs.into_iter().enumerate() {
+            let sub_id = format!("{}-sub-{}", task_id, idx + 1);
+
+            tx.execute(
+                "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+                 VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?6, ?7)",
+                params![sub_id, st_title, st_desc, owner, ts, ts, task_id],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("子任务创建失败: {}", e)))?;
+
+            insert_task_steps(&tx, &sub_id, &steps, ts)?;
+
+            // 1) 不可变 workspace binding（继承父任务 workspace；同一事务原子写入）。
+            bind_task_to_workspace(&tx, &sub_id, workspace_id, "", &owner)?;
+
+            // 2) legacy Role Contract（A' 三角色；bootstrap 派生 v1 投影的前置）。
+            insert_role_contracts(&tx, &sub_id, &default_role_contracts, &owner, ts)?;
+
+            // 3) Task Contract envelope + identity_policy + lineage + step binding。
+            //    任一治理事实缺失/冲突 → 整体回滚，绝不留"有任务无合同"的残缺子任务。
+            let mut envelope = task_create_contract_envelope(&sub_id, &st_title, &st_desc, &steps);
+            envelope
+                .as_object_mut()
+                .expect("task_create_contract_envelope 必须返回 object")
+                .insert(
+                    "identity_policy".to_string(),
+                    Value::String(identity_policy.clone()),
+                );
+            bootstrap_task_governance_contracts(
+                &tx,
+                &BootstrapInput {
+                    task_id: sub_id.clone(),
+                    envelope,
+                    created_by: owner.clone(),
+                },
+                workspace_id,
+            )?;
+
+            created_subtasks.push(sub_id);
         }
 
         let seq = self.next_seq();
         tx.execute(
             "INSERT INTO task_events
              (task_id, workspace_id, from_status, to_status, reason_code, reason, actor_identity, monotonic_seq, authoritative_timestamp)
-             VALUES (?1, '', 'in_progress', 'in_progress', 'split', ?2, ?3, ?4, ?5)",
-            params![task_id, plan_file, peer.owner_key(), seq, ts],
-        ).ok();
+             VALUES (?1, ?2, 'in_progress', 'in_progress', 'split', ?3, ?4, ?5, ?6)",
+            params![
+                task_id,
+                workspace_id.to_string(),
+                plan_file,
+                owner,
+                seq,
+                ts
+            ],
+        )
+        .ok();
 
         tx.commit().map_err(|e| {
             DaemonRpcError::internal_error(format!("提交 task_split 事务失败: {}", e))
@@ -94,12 +219,21 @@ impl TaskCollabStore {
         res.insert("task_id".to_string(), Value::String(task_id.to_string()));
         res.insert("status".to_string(), Value::String("split".to_string()));
         res.insert(
+            "workspace_id".to_string(),
+            Value::Number(serde_json::Number::from(workspace_id)),
+        );
+        res.insert(
             "subtask_count".to_string(),
             Value::Number(serde_json::Number::from(created_subtasks.len())),
         );
         res.insert(
             "subtasks".to_string(),
-            Value::Array(created_subtasks.into_iter().map(Value::String).collect()),
+            Value::Array(
+                created_subtasks
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
         );
         let val = Value::Object(res);
         self.save_dedup(params, &val);
