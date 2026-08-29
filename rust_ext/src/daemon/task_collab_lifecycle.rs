@@ -1285,7 +1285,18 @@ impl TaskCollabStore {
                 let verdict_identity = reviewer_value
                     .get("identity")
                     .unwrap_or(&reviewer_value);
-                let identity_matches = ["agent_id", "session_id", "model_id"]
+                if identity.agent_instance_id.trim().is_empty() {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_VERDICT_IDENTITY_MISMATCH",
+                        "reviewer_pass 的当前 handoff identity 必须包含非空 agent_instance_id",
+                    ));
+                }
+                let identity_matches = [
+                    "agent_id",
+                    "agent_instance_id",
+                    "session_id",
+                    "model_id",
+                ]
                     .into_iter()
                     .all(|field| {
                         verdict_identity
@@ -1296,6 +1307,9 @@ impl TaskCollabStore {
                                     && value
                                         == match field {
                                             "agent_id" => identity.agent_id.as_str(),
+                                            "agent_instance_id" => {
+                                                identity.agent_instance_id.as_str()
+                                            }
                                             "session_id" => identity.session_id.as_str(),
                                             "model_id" => identity.model_id.as_str(),
                                             _ => unreachable!(),
@@ -1305,7 +1319,10 @@ impl TaskCollabStore {
                 let verdict_role_ok = verdict_identity
                     .get("role")
                     .and_then(Value::as_str)
-                    .is_none_or(|role| matches!(role, "reviewer" | "independent_reviewer"));
+                    .is_some_and(|role| {
+                        matches!(role, "reviewer" | "independent_reviewer")
+                            && role == identity.role
+                    });
                 if !identity_matches || !verdict_role_ok {
                     return Err(DaemonRpcError::new(
                         "E_HANDOFF_VERDICT_IDENTITY_MISMATCH",

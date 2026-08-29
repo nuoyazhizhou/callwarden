@@ -2219,12 +2219,13 @@ use super::support::*;
             .unwrap();
             step_id
         };
-        let reviewer_identity = lease_identity(
+        let mut reviewer_identity = lease_identity(
             "agent-reviewer-pass-provenance",
             "reviewer-pass-session",
             "reviewer-pass-model",
             "reviewer",
         );
+        reviewer_identity["agent_instance_id"] = serde_json::json!("reviewer-pass-instance");
         let reviewer_lease = store
             .handle_lease_acquire(
                 peer.clone(),
@@ -2290,6 +2291,98 @@ use super::support::*;
             )
             .unwrap();
         }
+        let update_verdict =
+            |identity_value: Value, verdict_step: &str, snapshot: &str, manifest: &str, workspace: i64| {
+                let conn = store.conn.lock().unwrap();
+                conn.execute(
+                    "UPDATE task_verdict_events
+                     SET step_id=?1, snapshot_id=?2, view_manifest_hash=?3,
+                         reviewer_identity=?4, workspace_id=?5
+                     WHERE verdict_id='V-REVIEWER-PASS-1'",
+                    params![
+                        verdict_step,
+                        snapshot,
+                        manifest,
+                        serde_json::json!({"identity": identity_value}).to_string(),
+                        workspace,
+                    ],
+                )
+                .unwrap();
+            };
+        let assert_rejected = |request_id: &str, expected_code: &str| {
+            let mut attempt = handoff.clone();
+            attempt["request_id"] = serde_json::json!(request_id);
+            let rejected = store
+                .handle_task_handoff(peer.clone(), &attempt)
+                .expect_err("invalid reviewer pass provenance must fail closed");
+            assert_eq!(
+                rejected.code, expected_code,
+                "request_id={request_id}"
+            );
+        };
+
+        let mut missing_role = reviewer_identity.clone();
+        missing_role.as_object_mut().unwrap().remove("role");
+        update_verdict(missing_role, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-missing-role", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        let mut wrong_role = reviewer_identity.clone();
+        wrong_role["role"] = serde_json::json!("executor");
+        update_verdict(wrong_role, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-wrong-role", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        let mut missing_instance = reviewer_identity.clone();
+        missing_instance.as_object_mut().unwrap().remove("agent_instance_id");
+        update_verdict(missing_instance, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-missing-instance", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        let mut wrong_instance = reviewer_identity.clone();
+        wrong_instance["agent_instance_id"] = serde_json::json!("other-reviewer-instance");
+        update_verdict(wrong_instance, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-wrong-instance", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        let mut missing_agent = reviewer_identity.clone();
+        missing_agent.as_object_mut().unwrap().remove("agent_id");
+        update_verdict(missing_agent, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-missing-agent", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        let mut wrong_session = reviewer_identity.clone();
+        wrong_session["session_id"] = serde_json::json!("other-reviewer-session");
+        update_verdict(wrong_session, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-wrong-session", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        let mut wrong_model = reviewer_identity.clone();
+        wrong_model["model_id"] = serde_json::json!("other-reviewer-model");
+        update_verdict(wrong_model, &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-wrong-model", "E_HANDOFF_VERDICT_IDENTITY_MISMATCH");
+
+        update_verdict(reviewer_identity.clone(), "other-source-step", "snapshot-pass-1", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-wrong-step", "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH");
+        update_verdict(reviewer_identity.clone(), &source_step_id, "", "manifest-pass-1", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-missing-snapshot", "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH");
+        update_verdict(reviewer_identity.clone(), &source_step_id, "snapshot-pass-1", "", 1);
+        assert_rejected("handoff-reviewer-pass-provenance-missing-manifest", "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH");
+        update_verdict(reviewer_identity.clone(), &source_step_id, "snapshot-pass-1", "manifest-pass-1", 2);
+        assert_rejected("handoff-reviewer-pass-provenance-wrong-workspace", "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH");
+
+        update_verdict(reviewer_identity.clone(), &source_step_id, "snapshot-pass-1", "manifest-pass-1", 1);
+        let mut current_missing_instance = handoff.clone();
+        let mut incomplete_identity = reviewer_identity.clone();
+        incomplete_identity
+            .as_object_mut()
+            .unwrap()
+            .remove("agent_instance_id");
+        current_missing_instance["identity"] = incomplete_identity;
+        current_missing_instance["request_id"] =
+            serde_json::json!("handoff-reviewer-pass-provenance-current-missing-instance");
+        let current_identity_rejected = store
+            .handle_task_handoff(peer.clone(), &current_missing_instance)
+            .expect_err("current reviewer identity without instance must fail closed");
+        assert_eq!(
+            current_identity_rejected.code,
+            "E_HANDOFF_VERDICT_IDENTITY_MISMATCH"
+        );
+
         let accepted = store
             .handle_task_handoff(peer, &handoff)
             .expect("真实同 task pass verdict 应允许 reviewer_pass handoff");
