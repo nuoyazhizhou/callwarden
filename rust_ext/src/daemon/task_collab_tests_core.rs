@@ -680,6 +680,204 @@ use super::support::*;
     }
 
     #[test]
+    fn test_adjudicator_returned_handoff_reopens_executor_remediation_atomically() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-ADJUDICATOR-RETURNED-REMEDIATION";
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "task_id": task_id,
+                    "title": "adjudicator returned remediation",
+                    "steps": [{
+                        "action": "deploy_and_round_trip",
+                        "target_file": "scripts/refresh_shared_runtime.ps1",
+                        "target_symbol": "",
+                        "check_items": "fresh PID and binary hash"
+                    }],
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": p0l_governance_roles()
+                }),
+            )
+            .unwrap();
+
+        let reviewer_identity = lease_identity(
+            "agent-adjudicator-returned-reviewer",
+            "reviewer-returned-session",
+            "reviewer-model",
+            "reviewer",
+        );
+        let adjudicator_identity = lease_identity(
+            "agent-adjudicator-returned-adjudicator",
+            "adjudicator-returned-session",
+            "adjudicator-model",
+            "adjudicator",
+        );
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "agent-adjudicator-returned-adjudicator",
+            "adjudicator-returned-instance",
+            "adjudicator-returned-session",
+            "adjudicator",
+        );
+
+        let source_step_id: String = {
+            let conn = store.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT id FROM task_steps WHERE task_id=?1 ORDER BY step_index LIMIT 1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE tasks SET status='review' WHERE id=?1",
+                params![task_id],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE task_steps SET status='done', result=?2 WHERE id=?1",
+                params![source_step_id, serde_json::json!({"success": true}).to_string()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO task_verdict_events
+                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, reviewer_identity, findings, overall, attestation, submitted_at)
+                 VALUES ('V-ADJ-RETURNED-1', ?1, 'TC-ADJ-RETURNED', 1, 'sha256:adj-returned',
+                         'adjudication', ?2, ?3, 'pass', 'attested', ?4)",
+                params![
+                    task_id,
+                    serde_json::json!({"identity": reviewer_identity}).to_string(),
+                    serde_json::json!([{"finding_id":"F-ADJ-RETURNED-1","fact":"deployment evidence is stale"}]).to_string(),
+                    now_ts(),
+                ],
+            )
+            .unwrap();
+        }
+        // 模拟旧投影中同时残留的 Executor/Reviewer/Adjudicator assignment；正式
+        // handoff 必须原子完成它们，再只排入 remediation Executor。
+        {
+            let mut conn = store.conn.lock().unwrap();
+            let tx = conn.unchecked_transaction().unwrap();
+            assignment_queue::queue_assignment(
+                &tx,
+                task_id,
+                Some(&source_step_id),
+                "reviewer",
+                "stale-reviewer-source",
+                None,
+                "test",
+                "test-reviewer",
+                store.next_seq(),
+                now_ts(),
+            )
+            .unwrap();
+            assignment_queue::queue_assignment(
+                &tx,
+                task_id,
+                None,
+                "reviewer",
+                "stale-reviewer-task",
+                None,
+                "test",
+                "test-reviewer",
+                store.next_seq(),
+                now_ts(),
+            )
+            .unwrap();
+            assignment_queue::queue_assignment(
+                &tx,
+                task_id,
+                Some(&source_step_id),
+                "adjudicator",
+                "stale-adjudicator-source",
+                None,
+                "test",
+                "test-adjudicator",
+                store.next_seq(),
+                now_ts(),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        let adjudicator_lease = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "role": "adjudicator",
+                    "ttl_seconds": 3600.0,
+                    "identity": adjudicator_identity.clone()
+                }),
+            )
+            .unwrap();
+        let handoff = serde_json::json!({
+            "task_id": task_id,
+            "from_role": "adjudicator",
+            "outcome": "adjudicator_returned",
+            "next_role": "executor",
+            "next_action": "claim deployment evidence remediation",
+            "reason": "fresh deployment evidence is required",
+            "independence_requirement": "not_required",
+            "request_id": "handoff-adjudicator-returned-1",
+            "step_id": source_step_id,
+            "report_request_id": "report-adjudicator-returned-1",
+            "evidence_path": "docs/evidence/adjudicator-returned-1.json",
+            "evidence_hash": "sha256:adjudicator-returned-1",
+            "identity": adjudicator_identity,
+            "lease_token": adjudicator_lease["token"],
+            "fencing_counter": adjudicator_lease["fencing_counter"]
+        });
+        let response = store
+            .handle_task_handoff(peer.clone(), &handoff)
+            .expect("adjudicator_returned 应原子创建 Executor remediation");
+        assert_eq!(response["status"], "in_progress");
+        let remediation_step_id = response["remediation_step_id"].as_str().unwrap();
+        assert!(response["assignment_id"].as_str().is_some());
+
+        let replay = store
+            .handle_task_handoff(peer.clone(), &handoff)
+            .expect("相同 request_id 必须幂等重放");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["remediation_step_id"], remediation_step_id);
+
+        let conn = store.conn.lock().unwrap();
+        let (action, status, target_file, result): (String, String, String, String) = conn
+            .query_row(
+                "SELECT action, status, target_file, result FROM task_steps WHERE id=?1",
+                params![remediation_step_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(action, "fix_defect");
+        assert_eq!(status, "pending");
+        assert_eq!(target_file, "scripts/refresh_shared_runtime.ps1");
+        let metadata: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(metadata["source_outcome"], "adjudicator_returned");
+        assert_eq!(metadata["source_verdict_id"], "V-ADJ-RETURNED-1");
+        assert_eq!(metadata["remediation_of_step_id"], source_step_id);
+        let active: Vec<_> = assignment_queue::project_task_assignments(&conn, task_id)
+            .unwrap()
+            .into_iter()
+            .filter(|assignment| assignment.is_active())
+            .collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].role, "executor");
+        assert_eq!(active[0].step_id.as_deref(), Some(remediation_step_id));
+    }
+
+    #[test]
     fn test_reviewer_blocked_reopens_same_task_for_multiple_revision_rounds() {
         let (_dir, db_path) = temp_db();
         let store = TaskCollabStore::new(&db_path)

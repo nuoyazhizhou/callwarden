@@ -602,8 +602,23 @@ fn required_remediation_step(
             .get("source_outcome")
             .and_then(|item| item.as_str())
             .unwrap_or("");
+        let source_verdict_ok = metadata
+            .get("source_verdict_id")
+            .and_then(|item| item.as_str())
+            .map(|item| !item.trim().is_empty())
+            .unwrap_or(false);
+        let source_handoff_ok = metadata
+            .get("source_handoff_event_id")
+            .map(|item| match item {
+                Value::Number(_) => true,
+                Value::String(text) => !text.trim().is_empty(),
+                _ => false,
+            })
+            .unwrap_or(false);
+        let governance_provenance_ok = source_verdict_ok && source_handoff_ok;
         if unresolved.iter().any(|u| u == linked)
-            || matches!(source_outcome, "reviewer_blocked" | "adjudicator_returned")
+            || (matches!(source_outcome, "reviewer_blocked" | "adjudicator_returned")
+                && governance_provenance_ok)
         {
             return Ok(Some(step_id));
         }
@@ -1386,6 +1401,20 @@ fn evaluate_next_action_inner(
             None,
             None,
         );
+    }
+
+    // 治理退回已经把任务重新打开时，fix_defect remediation 仍是唯一可领取目标；
+    // 不能因为没有 unresolved failed step 就落入普通 step 或再次走 PASS 裁决。
+    if let Some(step_id) = required_remediation_step(conn, task_id)? {
+        return match resolve_or_block_step(conn, workspace_id, task_id, &step_id)? {
+            StepResolution::Ready(rc) => {
+                claim_outcome(task_id, &task_status, &step_id, tc, rc, "remediation")
+            }
+            StepResolution::Waiting { holder_role } => {
+                wait_outcome(task_id, &task_status, &step_id, &holder_role)
+            }
+            StepResolution::Blocked { reason } => blocked(task_id, &task_status, reason),
+        };
     }
 
     // 规则 7（普通）：第一个 pending/in_progress step 为唯一可领取目标。

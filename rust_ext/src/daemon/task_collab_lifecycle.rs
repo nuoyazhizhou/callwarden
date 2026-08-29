@@ -1197,12 +1197,15 @@ impl TaskCollabStore {
             }
         }
 
-        // Reviewer BLOCKED 是同一主任务上的新回复：从唯一 Verdict Ledger 读取
-        // source verdict/findings，并在本事务中准备一个 provenance-bound
-        // fix_defect。不得创建 child task，也不得修改被审步骤或历史 verdict。
-        let remediation_plan: Option<(String, String, String, String, Value, String)> = if outcome
-            == "reviewer_blocked"
-        {
+        // Reviewer BLOCKED / Adjudicator RETURNED 都是同一主任务上的治理回复：
+        // 从唯一 Verdict Ledger 读取 source verdict/findings，并在本事务中准备
+        // 一个 provenance-bound fix_defect。不得创建 child task，也不得修改被审
+        // 步骤或历史 verdict。两条路由共享同一事务，避免裁决退回留下旧 Reviewer
+        // 队列而没有可领取的 Executor remediation。
+        let remediation_plan: Option<(String, String, String, String, Value, String)> = if matches!(
+            outcome.as_str(),
+            "reviewer_blocked" | "adjudicator_returned"
+        ) {
             if current_status != "review" {
                 let mut replayable = false;
                 let mut replay_stmt = tx
@@ -1242,7 +1245,10 @@ impl TaskCollabStore {
                 if !replayable {
                     return Err(DaemonRpcError::new(
                         "E_REMEDIATION_REVIEW_STATE_REQUIRED",
-                        "reviewer_blocked 只能从 review 状态追加原地整改",
+                        format!(
+                            "{} 只能从 review 状态追加原地整改",
+                            outcome
+                        ),
                     ));
                 }
             }
@@ -1266,6 +1272,11 @@ impl TaskCollabStore {
                     // 明确，不能从不存在的 step 猜测范围。
                     (String::new(), String::new(), String::new())
                 };
+            let source_overall = if outcome == "reviewer_blocked" {
+                "block"
+            } else {
+                "pass"
+            };
             let (source_verdict_id, source_findings_raw, source_reviewer_raw): (
                 String,
                 String,
@@ -1274,48 +1285,58 @@ impl TaskCollabStore {
                 .query_row(
                     "SELECT verdict_id, findings, reviewer_identity
                          FROM task_verdict_events
-                         WHERE task_id = ?1 AND overall = 'block'
+                         WHERE task_id = ?1 AND overall = ?2
                          ORDER BY id DESC LIMIT 1",
-                    params![task_id],
+                    params![task_id, source_overall],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(|_| {
                     DaemonRpcError::new(
                         "E_REMEDIATION_VERDICT_REQUIRED",
-                        "reviewer_blocked 必须绑定当前任务的权威 block verdict",
+                        format!(
+                            "{} 必须绑定当前任务的权威 {} verdict",
+                            outcome, source_overall
+                        ),
                     )
                 })?;
-            let source_reviewer =
-                serde_json::from_str::<Value>(&source_reviewer_raw).unwrap_or(Value::Null);
-            let verdict_agent = source_reviewer
-                .get("identity")
-                .and_then(|item| item.get("agent_id"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let verdict_session = source_reviewer
-                .get("identity")
-                .and_then(|item| item.get("session_id"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if verdict_agent != identity.agent_id || verdict_session != identity.session_id {
-                return Err(DaemonRpcError::new(
-                    "E_REMEDIATION_VERDICT_IDENTITY_MISMATCH",
-                    "handoff Reviewer 与 source verdict identity 不一致",
-                ));
+            if outcome == "reviewer_blocked" {
+                let source_reviewer =
+                    serde_json::from_str::<Value>(&source_reviewer_raw).unwrap_or(Value::Null);
+                let verdict_agent = source_reviewer
+                    .get("identity")
+                    .and_then(|item| item.get("agent_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let verdict_session = source_reviewer
+                    .get("identity")
+                    .and_then(|item| item.get("session_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if verdict_agent != identity.agent_id || verdict_session != identity.session_id {
+                    return Err(DaemonRpcError::new(
+                        "E_REMEDIATION_VERDICT_IDENTITY_MISMATCH",
+                        "handoff Reviewer 与 source verdict identity 不一致",
+                    ));
+                }
             }
             let source_findings = serde_json::from_str::<Value>(&source_findings_raw)
                 .ok()
                 .filter(Value::is_array)
                 .filter(|value| {
-                    value
-                        .as_array()
-                        .map(|items| !items.is_empty())
-                        .unwrap_or(false)
+                    outcome == "adjudicator_returned"
+                        || value
+                            .as_array()
+                            .map(|items| !items.is_empty())
+                            .unwrap_or(false)
                 })
                 .ok_or_else(|| {
                     DaemonRpcError::new(
                         "E_REMEDIATION_FINDINGS_REQUIRED",
-                        "block verdict 必须携带至少一个结构化 finding",
+                        if outcome == "reviewer_blocked" {
+                            "block verdict 必须携带至少一个结构化 finding"
+                        } else {
+                            "pass verdict 的 findings 必须是结构化数组"
+                        },
                     )
                 })?;
 
@@ -1543,10 +1564,10 @@ impl TaskCollabStore {
                 ],
             )
             .map_err(|e| {
-                DaemonRpcError::internal_error(format!("追加 reviewer remediation 失败: {}", e))
+                DaemonRpcError::internal_error(format!("追加 governance remediation 失败: {}", e))
             })?;
-            // Reviewer BLOCKED 产生的 remediation 也必须绑定当前任务的 Executor
-            // Role Contract；否则步骤虽已进入 assignment queue，却无法通过合同门禁领取。
+            // 治理退回产生的 remediation 也必须绑定当前任务的 Executor Role
+            // Contract；否则步骤虽已进入 assignment queue，却无法通过合同门禁领取。
             bind_step_to_executor_role_contract(&tx, &task_id, remediation_step_id, &owner_key)?;
             tx.execute(
                 "UPDATE tasks SET status = 'in_progress', updated_at = ?1 WHERE id = ?2",
@@ -1557,16 +1578,33 @@ impl TaskCollabStore {
         } else {
             current_status.as_str()
         };
-        let completed_assignment_ids = assignment_queue::complete_assignments(
-            &tx,
-            &task_id,
-            step_id.as_deref(),
-            Some(from_role.as_str()),
-            &owner_key,
-            &identity.session_id,
-            self.next_seq(),
-            ts,
-        )?;
+        let completed_assignment_ids = if remediation_plan.is_some() {
+            // 治理退回会替换 review 前的整条 assignment 投影：可能同时残留
+            // Reviewer、Adjudicator，或已经失效的旧 Executor assignment。全部在
+            // 同一事务中追加 completed 事件，再排入唯一 remediation Executor；
+            // 历史 assignment 事件本身保持不可变。
+            assignment_queue::complete_assignments(
+                &tx,
+                &task_id,
+                None,
+                None,
+                &owner_key,
+                &identity.session_id,
+                self.next_seq(),
+                ts,
+            )?
+        } else {
+            assignment_queue::complete_assignments(
+                &tx,
+                &task_id,
+                step_id.as_deref(),
+                Some(from_role.as_str()),
+                &owner_key,
+                &identity.session_id,
+                self.next_seq(),
+                ts,
+            )?
+        };
         let next_assignment_id = if let Some((remediation_step_id, ..)) = remediation_plan.as_ref() {
             assignment_queue::queue_assignment(
                 &tx,
