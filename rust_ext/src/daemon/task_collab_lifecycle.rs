@@ -1492,6 +1492,11 @@ impl TaskCollabStore {
             ("task_id", Value::String(task_id.clone())),
             ("from_role", Value::String(from_role.clone())),
             ("outcome", Value::String(outcome.clone())),
+            // `target_role` is the canonical handoff envelope field consumed by
+            // the read-only inbound_handoff projection. Keep `next_role` as the
+            // routing-facing compatibility field, but persist both from the
+            // same validated route so the provenance chain is not lossy.
+            ("target_role", Value::String(next_role.clone())),
             ("next_role", Value::String(next_role.clone())),
             ("next_action", Value::String(next_action.clone())),
             ("reason", Value::String(reason.clone())),

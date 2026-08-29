@@ -692,6 +692,20 @@ use super::support::*;
             )
             .unwrap();
         assert_eq!(handoff_count, 1);
+        let handoff_envelope: Value = conn
+            .query_row(
+                "SELECT reason FROM task_events
+                 WHERE task_id=?1 AND reason_code='handoff_structured'
+                 ORDER BY event_id DESC LIMIT 1",
+                params![task_id],
+                |row| {
+                    let reason: String = row.get(0)?;
+                    Ok(serde_json::from_str(&reason).unwrap())
+                },
+            )
+            .unwrap();
+        assert_eq!(handoff_envelope["target_role"], "executor");
+        assert_eq!(handoff_envelope["next_role"], "executor");
     }
 
     #[test]
