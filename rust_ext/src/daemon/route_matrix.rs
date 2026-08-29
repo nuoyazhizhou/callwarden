@@ -402,9 +402,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_coverage_is_239() {
-        assert_eq!(TOOL_ROUTES.len(), 239);
-        assert!(ToolRegistry::validate_coverage(239).is_ok());
+    fn test_coverage_is_241() {
+        assert_eq!(TOOL_ROUTES.len(), 241);
+        assert!(ToolRegistry::validate_coverage(241).is_ok());
     }
 
     #[test]
@@ -441,6 +441,6 @@ mod tests {
     #[test]
     fn test_meta_tools_length() {
         let v = ToolRegistry::meta_tools_value();
-        assert_eq!(v.as_array().map(|a| a.len()), Some(239));
+        assert_eq!(v.as_array().map(|a| a.len()), Some(241));
     }
 }
