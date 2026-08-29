@@ -178,6 +178,35 @@ impl TaskCollabStore {
             .conn
             .lock()
             .map_err(|_| DaemonRpcError::internal_error("task reconcile store 连接锁 poisoned"))?;
+        // 治理写门禁（P0-E 修复）：apply 必须由 adjudicator 持 root anchor 的独立
+        // reviewer lease（token+fencing+holder 校验），与 task.apply/close/attest/
+        // contract-bootstrap 一致。校验在任何写（含 dedupe ledger 占位）之前完成，
+        // 拒绝路径保持无状态变化。dry-run（apply=false）保持只读无凭证要求。
+        if apply {
+            let identity_ref = identity.as_ref().ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_IDENTITY_REQUIRED",
+                    "task.reconcile apply 必须携带完整 identity",
+                )
+            })?;
+            if identity_ref.role != "adjudicator" {
+                return Err(DaemonRpcError::new(
+                    "E_RECONCILE_ADJUDICATOR_ROLE_REQUIRED",
+                    format!(
+                        "task.reconcile apply 仅允许 role=adjudicator，实际 role={}",
+                        identity_ref.role
+                    ),
+                ));
+            }
+            let (token, counter) = Self::require_lease_params(params)?;
+            self.validate_reviewer_lease_for_adjudication(
+                &conn,
+                root_task_id,
+                &token,
+                counter,
+                identity_ref,
+            )?;
+        }
         let task_ids = reconciliation_task_ids(&conn, root_task_id)?;
         if task_ids.is_empty() {
             return Err(DaemonRpcError::new(

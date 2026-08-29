@@ -80,6 +80,7 @@ fn bootstrap(conn: &mut Connection, task_id: &str) -> String {
             task_id: task_id.to_string(),
             envelope: revision_one(task_id),
             created_by: "planner".to_string(),
+            role_contract_source: "legacy".to_string(),
         },
         1,
     )

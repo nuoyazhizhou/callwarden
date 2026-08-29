@@ -1765,6 +1765,7 @@ impl TaskCollabStore {
                     task_id: task_id.clone(),
                     envelope,
                     created_by: peer.owner_key(),
+                    role_contract_source: "legacy".to_string(),
                 },
                 workspace_id,
             )?;

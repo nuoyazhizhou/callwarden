@@ -17,11 +17,24 @@ pub const ERR_BOOTSTRAP_INVALID: &str = "E_TASK_CONTRACT_BOOTSTRAP_INVALID";
 pub const ERR_BOOTSTRAP_NOT_EMPTY: &str = "E_TASK_CONTRACT_BOOTSTRAP_NOT_EMPTY";
 pub const ERR_BOOTSTRAP_ROLE_SOURCE: &str = "E_TASK_CONTRACT_BOOTSTRAP_ROLE_SOURCE";
 
+/// 受权历史任务 allowlist（role_contracts=0 治理清洗）。
+///
+/// 这些任务三层治理数据（workspace binding / Task Contract / Role Contract /
+/// step binding）全部缺失，且无 legacy role_contracts 可派生。allowlist 模式
+/// 允许以默认三角色模板建立 Role Contract（payload 标注
+/// `source_provenance=allowlist_default_template:v1`，空字段=未证明，不伪造）。
+/// 任何非 allowlist 任务保持 governance_blocked（ERR_BOOTSTRAP_ROLE_SOURCE）。
+/// 仅由用户/治理明确授权；不得由客户端参数扩展。
+pub const BOOTSTRAP_ROLE_ALLOWLIST: &[&str] = &["T-1787203937193-0993d120"];
+
 #[derive(Debug)]
 pub struct BootstrapInput {
     pub task_id: String,
     pub envelope: Value,
     pub created_by: String,
+    /// "legacy"（默认，要求任务已有 current legacy role_contracts）或
+    /// "allowlist"（任务必须在 BOOTSTRAP_ROLE_ALLOWLIST 中，用默认模板派生）。
+    pub role_contract_source: String,
 }
 
 fn deterministic(code: &str, message: impl Into<String>) -> DaemonRpcError {
@@ -159,13 +172,25 @@ pub fn bootstrap_task_governance_contracts(
     let rules_hash = role_rules_hash(tx)?;
     let mut executor_revision_id = String::new();
     let mut role_result = Vec::new();
+    let allowlisted = input.role_contract_source == "allowlist"
+        && BOOTSTRAP_ROLE_ALLOWLIST.contains(&input.task_id.as_str());
     for role in ["executor", "reviewer", "adjudicator"] {
         let legacy: Option<(String,String,String,String,String,String,String,String,String,String,String)> = tx.query_row(
             "SELECT skill_id,skill_version,prompt_template_id,prompt_hash,allowed_paths,forbidden_paths,commands,acceptance_checks,required_evidence,handoff_to,independence FROM role_contracts WHERE task_id=?1 AND role=?2 AND is_current=1 ORDER BY revision DESC LIMIT 1",
             params![input.task_id, role], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?)),
         ).optional().map_err(|e| DaemonRpcError::internal_error(format!("legacy role contract 读取失败: {e}")))?;
-        let (skill_id,skill_version,prompt_template_id,prompt_hash,allowed_paths,forbidden_paths,commands,acceptance_checks,required_evidence,handoff_to,independence) = legacy.ok_or_else(|| deterministic(ERR_BOOTSTRAP_ROLE_SOURCE, format!("task 缺少 current legacy role contract: {role}")))?;
-        let payload = serde_json::json!({
+        // allowlist 模式：role_contracts=0 的历史任务用默认三角色模板派生
+        // （空字段=未证明，payload 标注 source_provenance，不伪造历史证据）。
+        let (skill_id,skill_version,prompt_template_id,prompt_hash,allowed_paths,forbidden_paths,commands,acceptance_checks,required_evidence,handoff_to,independence) = match legacy {
+            Some(v) => v,
+            None if allowlisted => (
+                String::new(), String::new(), String::new(), String::new(),
+                String::new(), String::new(), String::new(), String::new(),
+                String::new(), String::new(), String::new(),
+            ),
+            None => return Err(deterministic(ERR_BOOTSTRAP_ROLE_SOURCE, format!("task 缺少 current legacy role contract: {role}"))),
+        };
+        let mut payload = serde_json::json!({
             "role": role, "skill_id": skill_id, "skill_version": skill_version,
             "prompt_template_id": prompt_template_id, "prompt_hash": prompt_hash,
             "allowed_paths": parse_string_list(&allowed_paths, "allowed_paths")?,
@@ -176,6 +201,10 @@ pub fn bootstrap_task_governance_contracts(
             "handoff_to": handoff_to,
             "independence": serde_json::from_str::<Value>(&independence).unwrap_or_else(|_| serde_json::json!({"mode": independence})),
         });
+        if allowlisted {
+            // 可审计来源标注：allowlist 默认模板派生，非历史证据。
+            payload["source_provenance"] = serde_json::json!("allowlist_default_template:v1");
+        }
         let canonical_payload = c14n(&payload);
         let role_hash = hash_value(&canonical_payload)?;
         let lineage_id = format!("rcl-{}-{}", input.task_id, role);

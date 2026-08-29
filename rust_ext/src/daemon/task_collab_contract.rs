@@ -654,6 +654,12 @@ impl TaskCollabStore {
             task_id: task_id.to_string(),
             envelope,
             created_by: identity.agent_id.clone(),
+            role_contract_source: params
+                .get("role_contract_source")
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| s == "legacy" || s == "allowlist")
+                .unwrap_or_else(|| "legacy".to_string()),
         };
         let result = match bootstrap_task_governance_contracts(&tx, &input, bound_workspace) {
             Ok(value) => value,
