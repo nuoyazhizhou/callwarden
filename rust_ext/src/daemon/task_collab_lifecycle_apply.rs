@@ -245,6 +245,229 @@ impl TaskCollabStore {
         Ok(val)
     }
 
+    /// `task.cascade_close` —— 聚合节点级联收尾（树干=纯聚合投影，审计点只在叶子）。
+    ///
+    /// 架构语义（2026-08-29 用户定调）：功能都在叶子/枝条上，树干不应有独立审计点；
+    /// 子树全 closed 即树干 closed。`handle_task_close` 对聚合节点（有子任务）本就不做
+    /// verdict 校验（S1 只查子任务全 closed + reviewer lease）——树干卡 review 的根因是
+    /// 派工层把聚合节点当普通任务路由到独立生命周期（缺 identity_policy 即 BLOCKED）。
+    ///
+    /// 本 RPC 由 coordinator（系统收尾者）调用，对 task_id 向上递归：
+    /// 1. 直接子任务全 closed（递归到根）→ 该节点可聚合收尾；
+    /// 2. 节点 contract 缺 identity_policy → 自动追加 revision 补 `legacy_identity_v1`
+    ///    （复用 `append_task_contract_revision`，不再依赖手工 contract_revise 四步）；
+    /// 3. 写 closed（系统权威，reason_code=cascade_closed，actor=coordinator）；
+    /// 4. 递归向上直到根或遇到未收尾节点。
+    ///
+    /// 幂等：已 closed 节点跳过；返回实际收尾的节点清单。
+    pub fn handle_task_cascade_close(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(cached) = self.check_dedup(params) {
+            return Ok(cached);
+        }
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
+        let identity = parse_action_identity(params)?;
+        let owner_key = peer.owner_key();
+        let ts = task_now_ts();
+        let workspace_id = optional_workspace_id_param(params).unwrap_or(0);
+
+        // 收集祖先链（含自身）：task_id → parent → ... → root
+        let mut chain: Vec<String> = Vec::new();
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut cur = task_id.to_string();
+            loop {
+                chain.push(cur.clone());
+                let parent: Option<String> = conn
+                    .query_row(
+                        "SELECT parent_id FROM tasks WHERE id = ?1",
+                        params![cur],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!("查询父任务失败: {e}"))
+                    })?;
+                match parent {
+                    Some(p) if !p.is_empty() && p != cur => cur = p,
+                    _ => break,
+                }
+            }
+        }
+
+        // 自底向上逐节点聚合判定 + 收尾
+        let mut closed: Vec<String> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| DaemonRpcError::internal_error(format!("开启级联事务失败: {e}")))?;
+
+        for node in chain.iter().rev() {
+            // 已 closed → 跳过（幂等）
+            let node_status: String = tx
+                .query_row("SELECT status FROM tasks WHERE id = ?1", params![node], |r| {
+                    r.get(0)
+                })
+                .map_err(|_| DaemonRpcError::new("task_not_found", format!("任务不存在: {node}")))?;
+            if node_status == "closed" {
+                skipped.push(node.clone());
+                continue;
+            }
+
+            // S1: 直接子任务全 closed（聚合判定核心）
+            let child_total: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE parent_id = ?1",
+                    params![node],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if child_total > 0 {
+                let open_children: i64 = tx
+                    .query_row(
+                        "SELECT COUNT(*) FROM tasks WHERE parent_id = ?1 AND status != 'closed'",
+                        params![node],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if open_children > 0 {
+                    // 子树未全 closed → 停止级联（不跳过，直接 break 保留现场）
+                    break;
+                }
+            } else {
+                // 叶子节点：步骤必须全 done（复用 close S2 语义）
+                let step_count: i64 = tx
+                    .query_row(
+                        "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1",
+                        params![node],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if step_count > 0 {
+                    let not_done: i64 = tx
+                        .query_row(
+                            "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1 AND status IN ('pending', 'blocked')",
+                            params![node],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0);
+                    let unresolved_failed =
+                        crate::daemon::task_loop::next_action::unresolved_failed_step_ids(&tx, node)?
+                            .len() as i64;
+                    if not_done + unresolved_failed > 0 {
+                        break;
+                    }
+                }
+            }
+
+            // 自动补 contract：缺 identity_policy → 追加 revision（legacy 默认）
+            let has_policy: bool = tx
+                .query_row(
+                    "SELECT 1 FROM task_contract_revisions WHERE task_id = ?1 \
+                     AND envelope_payload LIKE '%identity_policy%' ORDER BY revision DESC LIMIT 1",
+                    params![node],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询 contract 失败: {e}")))?
+                .is_some();
+            if !has_policy {
+                // 读最新 revision 构造 rev+1
+                let current: Option<(i64, String, String)> = tx
+                    .query_row(
+                        "SELECT revision, contract_hash, envelope_payload \
+                         FROM task_contract_revisions WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                        params![node],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
+                    .optional()
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!("读取 contract 失败: {e}"))
+                    })?;
+                if let Some((cur_rev, cur_hash, payload)) = current {
+                    let mut env: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+                    if let Some(obj) = env.as_object_mut() {
+                        obj.insert("revision".into(), Value::Number(serde_json::Number::from(cur_rev + 1)));
+                        obj.insert("supersedes_revision".into(), Value::Number(serde_json::Number::from(cur_rev)));
+                        obj.insert("supersedes_contract_hash".into(), Value::String(cur_hash.clone()));
+                        obj.insert("identity_policy".into(), Value::String("legacy_identity_v1".into()));
+                        obj.insert(
+                            "source_provenance".into(),
+                            Value::String(
+                                "task.cascade_close 自动补齐 identity_policy（聚合节点收尾，树干=纯聚合投影）"
+                                    .to_string(),
+                            ),
+                        );
+                        obj.remove("contract_hash");
+                        obj.remove("created_at");
+                        obj.remove("created_by");
+                    }
+                    crate::daemon::task_loop::task_contract_revise::append_task_contract_revision(
+                        &tx,
+                        &crate::daemon::task_loop::task_contract_revise::ContractReviseInput {
+                            task_id: node.clone(),
+                            envelope: env,
+                            expected_previous_hash: cur_hash,
+                            created_by: owner_key.clone(),
+                        },
+                        workspace_id,
+                    )
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!("自动 contract revise 失败: {e}"))
+                    })?;
+                }
+            }
+
+            // 系统权威 close（聚合投影，无独立 verdict）
+            tx.execute(
+                "UPDATE tasks SET status = 'closed', closed_at = ?1, updated_at = ?1 WHERE id = ?2",
+                params![ts, node],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("级联 close 失败: {e}")))?;
+            let seq = self.next_seq();
+            tx.execute(
+                "INSERT INTO task_events
+                 (task_id, from_status, to_status, reason_code, reason, actor_identity, role, monotonic_seq, authoritative_timestamp)
+                 VALUES (?1, ?2, 'closed', 'cascade_closed', 'subtree aggregate closed', ?3, ?4, ?5, ?6)",
+                params![
+                    node,
+                    node_status,
+                    owner_key,
+                    identity.as_ref().map(|id| id.role.as_str()).unwrap_or("coordinator"),
+                    seq,
+                    ts
+                ],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("级联事件写入失败: {e}")))?;
+            closed.push(node.clone());
+        }
+
+        tx.commit().map_err(|e| {
+            DaemonRpcError::internal_error(format!("提交级联事务失败: {e}"))
+        })?;
+
+        let mut res = Map::new();
+        res.insert("task_id".to_string(), Value::String(task_id.to_string()));
+        res.insert(
+            "closed".to_string(),
+            Value::Array(closed.into_iter().map(Value::String).collect()),
+        );
+        res.insert(
+            "skipped".to_string(),
+            Value::Array(skipped.into_iter().map(Value::String).collect()),
+        );
+        let val = Value::Object(res);
+        self.save_dedup(params, &val);
+        Ok(val)
+    }
+
     // ============================================
     // Lease Control Plane（Req 11.2-11.9, 14.11-14.12, 14.30）
     //

@@ -1492,6 +1492,17 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.close"))
         }
     }
+    fn handle_task_cascade_close(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_cascade_close(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.cascade_close"))
+        }
+    }
     fn handle_task_capture_diff(
         &mut self,
         peer: PeerCredential,
@@ -2057,6 +2068,7 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.reopen",
     "task.apply",
     "task.close",
+    "task.cascade_close",
     "task.contract_set",
     "task.contract_bootstrap",
     // P0-G：Task Contract revision n+1 追加（append-only，禁 UPDATE/DELETE 历史）。
@@ -2736,6 +2748,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.reopen" => state.handle_task_reopen(peer, params),
         "task.apply" => state.handle_task_apply(peer, params),
         "task.close" => state.handle_task_close(peer, params),
+        "task.cascade_close" => state.handle_task_cascade_close(peer, params),
         "task.contract_set" => state.handle_task_contract_set(peer, params),
         "task.contract_bootstrap" => state.handle_task_contract_bootstrap(peer, params),
         "task.contract_revise" => state.handle_task_contract_revise(peer, params),
