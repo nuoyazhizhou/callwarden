@@ -1932,5 +1932,12 @@
   "status": "new_in_master",
   "scope": "工作树整理批次 2026-08-28：48 commits（SRV evidence/tests/handlers、task_collab 拆分、P0-L/A″/A′ 证据与交付物、模板归档、gitignore、plan 补提交）",
   "note": "工作树 234 项按任务分门别类 add/commit/归档/删除；AGENTS.md 并行任务改动保留工作树；_qa_s1_tmp 归档至 ~/.callwarden/ws_triage_20260828/"
+ },
+ "t1788011722055_adjudicator_returned_route_20260829": {
+  "task_id": "T-1788011722055-1b59cb4c",
+  "commit_id": "5551a1af2e04454d9b561ece617a703817495f94",
+  "status": "new_in_master",
+  "scope": "adjudicator_returned → provenance-bound Executor fix_defect；原子重开任务、清理旧 assignment、排入唯一 Executor；next_action remediation-first projection；回放与 assignment 回归测试；reviewer evidence",
+  "note": "message 内嵌 task_id；focused route test 1 passed、next_action tests 20 passed；task_collab 批次 97 passed，保留 3 个既有无关 baseline failures；未修改 T-504 历史 verdict/evidence，未处理 P0-L identity policy"
  }
 }
