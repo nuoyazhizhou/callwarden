@@ -4131,6 +4131,11 @@ def _handle_task(args, db):
         "--plan", required=True,
         help=t("cli_task_arg_plan_file", default="Markdown plan file path"),
     )
+    split_p.add_argument(
+        "--identity-policy", default="legacy_identity_v1",
+        help=t("cli_task_arg_identity_policy",
+               default="Subtask identity policy (default legacy_identity_v1)"),
+    )
 
     # status-tree：以树形显示任务状态（C9 新增，task show --tree 的别名）
     st_p = sub.add_parser(
@@ -5690,6 +5695,9 @@ def _handle_task(args, db):
             "task_id": opts.task_id,
             "subtasks": subtasks,
             "plan_file": str(opts.plan),
+            # P0-L/治理硬化：子任务 identity_policy 显式透传（daemon fail-closed），
+            # 确保 split 子任务与 task.create 同等的治理初始化语义。
+            "identity_policy": opts.identity_policy,
         }, _local_split)
         # daemon RPC 返回 {task_id, status, subtask_count, subtasks[]} dict；
         # local fallback（db.task_split）返回子任务 id 列表。统一按结构分派取值。
