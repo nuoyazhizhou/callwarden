@@ -615,7 +615,10 @@ try {
     $result.daemon_start_pid = $daemonStart.pid
 
     $ready = $false; $lastPing = $null
-    for ($i = 0; $i -lt 30; $i++) {
+    # P0-L 部署修复：daemon 启动期 recover_all_workspaces_with_snapshot 对大型
+    # workspace（如 C:\git_work\callwarden 全仓库）执行 durable snapshot 重建，
+    # 15s ping 窗口不足导致误判失败并回滚。放宽到 120s（240×500ms）。
+    for ($i = 0; $i -lt 240; $i++) {
         Start-Sleep -Milliseconds 500; $lastPing = Ping $endpointValue $daemonPath
         if ($lastPing.ok) { $ready = $true; break }
     }

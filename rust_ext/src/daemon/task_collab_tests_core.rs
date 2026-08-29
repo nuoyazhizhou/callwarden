@@ -1430,3 +1430,315 @@ use super::support::*;
             .unwrap_err();
         assert_eq!(err.code, "E_IDENTITY_INCOMPLETE");
     }
+
+    // ============================================================
+    // P0-L reviewer block repair（task.p0l_reviewer_block_repair）
+    // ============================================================
+
+    fn p0l_repair_setup(
+        store: &TaskCollabStore,
+        peer: &PeerCredential,
+        task_id: &str,
+    ) -> serde_json::Value {
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "task_id": task_id,
+                    "title": "P0-L repair target",
+                    "description": "p0l repair test",
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": p0l_governance_roles()
+                }),
+            )
+            .unwrap();
+        let reviewer_identity = lease_identity(
+            "agent-p0l-repair-reviewer",
+            "session-p0l-repair-reviewer",
+            "model-p0l-repair",
+            "reviewer",
+        );
+        let findings = serde_json::json!([
+            {"finding_id": "F-P0L-REPAIR-1", "fact": "P0-L 合同 policy 缺口"}
+        ]);
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE tasks SET status='review' WHERE id=?1",
+                params![task_id],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO task_verdict_events
+                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, reviewer_identity, findings, overall, attestation, submitted_at)
+                 VALUES ('V-P0L-REPAIR-1', ?1, 'TC-P0L-REPAIR', 1, 'sha256:p0l-repair',
+                         'blind_first_pass', ?2, ?3, 'block', 'attested', ?4)",
+                params![
+                    task_id,
+                    serde_json::json!({"identity": reviewer_identity.clone()}).to_string(),
+                    findings.to_string(),
+                    now_ts(),
+                ],
+            )
+            .unwrap();
+        }
+        let reviewer_lease = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "role": "reviewer",
+                    "ttl_seconds": 3600.0,
+                    "identity": reviewer_identity.clone()
+                }),
+            )
+            .unwrap();
+        serde_json::json!({
+            "identity": reviewer_identity,
+            "lease_token": reviewer_lease["token"],
+            "fencing_counter": reviewer_lease["fencing_counter"],
+        })
+    }
+
+    fn p0l_repair_call(
+        store: &TaskCollabStore,
+        peer: &PeerCredential,
+        task_id: &str,
+        request_id: &str,
+        auth: &serde_json::Value,
+    ) -> Result<serde_json::Value, DaemonRpcError> {
+        store.handle_p0l_reviewer_block_repair(
+            peer.clone(),
+            &serde_json::json!({
+                "task_id": task_id,
+                "request_id": request_id,
+                "identity": auth["identity"],
+                "lease_token": auth["lease_token"],
+                "fencing_counter": auth["fencing_counter"],
+                "workspace_id": 1,
+                "evidence_path": "deliverables/software-company/p0l_step5_review_packet_20260828.md",
+                "evidence_hash": "sha256:p0l-repair-evidence",
+            }),
+        )
+    }
+
+    #[test]
+    fn test_p0l_reviewer_block_repair_success() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap().with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-P0L-REPAIR-SUCCESS";
+        let auth = p0l_repair_setup(&store, &peer, task_id);
+
+        let res = p0l_repair_call(&store, &peer, task_id, "p0l-repair-req-1", &auth)
+            .expect("P0-L repair 应成功");
+        assert_eq!(res["replayed"], false);
+        assert_eq!(res["lifecycle_status"], "in_progress");
+        assert_eq!(res["workflow_status"], "remediation_pending");
+        assert_eq!(res["verdict_id"], "V-P0L-REPAIR-1");
+        let step_id = res["remediation_step_id"].as_str().unwrap();
+
+        let conn = store.conn.lock().unwrap();
+        let fix_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1 AND action='fix_defect'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fix_count, 1, "必须恰好一个 P0-L.0 fix_defect");
+        let (action, status, result): (String, String, String) = conn
+            .query_row(
+                "SELECT action, status, result FROM task_steps WHERE id=?1",
+                params![step_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(action, "fix_defect");
+        assert_eq!(status, "pending");
+        let metadata: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(metadata["source_outcome"], "reviewer_blocked");
+        assert_eq!(metadata["source_verdict_id"], "V-P0L-REPAIR-1");
+        assert_eq!(metadata["workspace_id"], 1);
+        assert_eq!(metadata["evidence_hash"], "sha256:p0l-repair-evidence");
+        assert_eq!(
+            metadata["source_findings"][0]["finding_id"], "F-P0L-REPAIR-1",
+            "fix_defect 必须绑定 source findings"
+        );
+        let task_status: String = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE id=?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(task_status, "in_progress");
+        let binding_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_step_role_contract_bindings WHERE task_id=?1 AND step_id=?2",
+                params![task_id, step_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(binding_count, 1, "P0-L.0 必须绑定唯一 Executor Role Contract");
+        let assignment_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id=?1 AND reason_code='assignment_queued'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(assignment_count >= 1, "P0-L.0 的 executor assignment 必须入队");
+        let audit_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id=?1 AND reason_code='p0l_repair_created'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(audit_count, 1, "p0l_repair_created 审计必须恰好一条");
+        drop(conn);
+    }
+
+    #[test]
+    fn test_p0l_reviewer_block_repair_replay() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap().with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-P0L-REPAIR-REPLAY";
+        let auth = p0l_repair_setup(&store, &peer, task_id);
+
+        let r1 = p0l_repair_call(&store, &peer, task_id, "p0l-repair-req-r", &auth)
+            .expect("首次 repair 应成功");
+        assert_eq!(r1["replayed"], false);
+        // 同一 request_id 重放（daemon 重启场景）
+        let r2 = p0l_repair_call(&store, &peer, task_id, "p0l-repair-req-r", &auth)
+            .expect("同 request_id 重放应幂等返回");
+        assert_eq!(r2["replayed"], true);
+        assert_eq!(r2["remediation_step_id"], r1["remediation_step_id"]);
+
+        let conn = store.conn.lock().unwrap();
+        let fix_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1 AND action='fix_defect'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fix_count, 1, "重放不得重复创建 step");
+        drop(conn);
+    }
+
+    #[test]
+    fn test_p0l_reviewer_block_repair_wrong_task() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap().with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-P0L-REPAIR-WRONG-TASK";
+        let auth = p0l_repair_setup(&store, &peer, task_id);
+
+        // 调用不存在的 task_id：lease 校验先行 fail-closed
+        let err = p0l_repair_call(&store, &peer, "T-P0L-NOT-EXIST", "p0l-repair-req-wt", &auth)
+            .unwrap_err();
+        assert!(
+            err.code == "E_LEASE_NOT_FOUND" || err.code == "task_not_found",
+            "错误 task 必须被拒，实际 code={}",
+            err.code
+        );
+    }
+
+    #[test]
+    fn test_p0l_reviewer_block_repair_wrong_workspace() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap().with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-P0L-REPAIR-WRONG-WS";
+        let auth = p0l_repair_setup(&store, &peer, task_id);
+
+        // workspace_id=2 与 binding(1) 不一致 → 拒绝
+        let err = store
+            .handle_p0l_reviewer_block_repair(
+                peer,
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "request_id": "p0l-repair-req-ww",
+                    "identity": auth["identity"],
+                    "lease_token": auth["lease_token"],
+                    "fencing_counter": auth["fencing_counter"],
+                    "workspace_id": 2,
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_WORKSPACE_AUTHORITY_MISMATCH");
+    }
+
+    #[test]
+    fn test_p0l_reviewer_block_repair_verdict_unique() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap().with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-P0L-REPAIR-VERDICT-UNIQUE";
+        let auth = p0l_repair_setup(&store, &peer, task_id);
+
+        let r1 = p0l_repair_call(&store, &peer, task_id, "p0l-repair-req-v1", &auth)
+            .expect("首次 repair 应成功");
+        // 同一 verdict 用不同 request_id 重复（顺序重入：任务已 in_progress 时状态门禁先行；
+        // 并发窗口内则命中 verdict 唯一性）——两者都必须拒绝，且绝不产生第二个 fix_defect。
+        let err = p0l_repair_call(&store, &peer, task_id, "p0l-repair-req-v2", &auth)
+            .unwrap_err();
+        assert!(
+            err.code == "E_P0L_REPAIR_ALREADY_EXISTS"
+                || err.code == "E_P0L_REPAIR_REVIEW_STATE_REQUIRED",
+            "重复创建必须被拒，实际 code={}",
+            err.code
+        );
+        let conn = store.conn.lock().unwrap();
+        let fix_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id=?1 AND action='fix_defect'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fix_count, 1, "同一 verdict 只允许一个 P0-L.0");
+        assert_eq!(r1["remediation_step_id"].as_str().unwrap().len() > 0, true);
+        drop(conn);
+    }
+
+    #[test]
+    fn test_p0l_reviewer_block_repair_requires_reviewer_role() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap().with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        let task_id = "T-P0L-REPAIR-ROLE";
+        let auth = p0l_repair_setup(&store, &peer, task_id);
+
+        // 普通客户端（implementer 身份）不能自行创建 P0-L.0 → role 门禁拒绝
+        let err = store
+            .handle_p0l_reviewer_block_repair(
+                peer,
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "request_id": "p0l-repair-req-rr",
+                    "identity": {
+                        "agent_id": "agent-p0l-repair-implementer",
+                        "session_id": "session-p0l-repair-impl",
+                        "model_id": "model-p0l-repair",
+                        "role": "implementer"
+                    },
+                    "lease_token": auth["lease_token"],
+                    "fencing_counter": auth["fencing_counter"],
+                    "workspace_id": 1,
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_P0L_REPAIR_REVIEWER_ROLE_REQUIRED");
+    }

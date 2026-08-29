@@ -7,18 +7,339 @@ use super::*;
 use crate::daemon::task_loop::task_contract_bootstrap::bind_step_to_executor_role_contract;
 
 impl TaskCollabStore {
-    /// P0-L repair 路由在当前恢复基线中尚未具备完整的 worker-proof 实现；
-    /// 保留显式 fail-closed 入口，避免 dispatch 层出现“可调用但无 handler”
-    /// 的编译/治理不一致。正式 repair 必须由后续受限任务实现。
+    /// P0-L 自举修复：正式 Reviewer 提交 `reviewer_blocked` 后，daemon 在同一
+    /// 主任务内追加唯一 P0-L.0 `fix_defect` step（manifest p0l_v3.1 pre-import
+    /// gate4 的前置能力）。
+    ///
+    /// 语义与 `task.handoff(reviewer_blocked)` 的 remediation 分支一致，但作为
+    /// 独立受限入口，满足 P0-L 自举任务的受权收口：
+    /// - 必须由持有该任务 reviewer lease（token+fencing_counter）的正式 Reviewer
+    ///   调用（普通客户端无法伪造 lease，fail-closed）；
+    /// - 自动从 Verdict Ledger 绑定最新 block verdict 及其 findings，并校验
+    ///   verdict reviewer 与调用者 identity 一致（防冒用）；
+    /// - 同一 verdict 只产生一个 fix_defect（唯一性）；request_id 幂等重放
+    ///   （daemon 重启后重复请求不重复创建 step）；
+    /// - 绑定 task_id / verdict / findings / evidence / workspace binding；
+    /// - 不得创建 child task，不得修改被审步骤或历史 verdict。
     pub fn handle_p0l_reviewer_block_repair(
         &self,
-        _peer: PeerCredential,
-        _params: &Value,
+        peer: PeerCredential,
+        params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        Err(DaemonRpcError::new(
-            "E_P0L_REPAIR_UNAVAILABLE",
-            "P0-L reviewer block repair 尚未在当前 daemon 基线启用",
-        ))
+        let text_field = |name: &str| -> Result<String, DaemonRpcError> {
+            params
+                .get(name)
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "E_P0L_REPAIR_PARAM_REQUIRED",
+                        format!("task.p0l_reviewer_block_repair 缺少结构化字段 {name}"),
+                    )
+                })
+        };
+        let task_id = text_field("task_id")?;
+        let request_id = text_field("request_id")?;
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_P0L_REPAIR_IDENTITY_REQUIRED",
+                "task.p0l_reviewer_block_repair 必须携带完整 identity",
+            )
+        })?;
+        if identity.role != "reviewer" && identity.role != "independent_reviewer" {
+            return Err(DaemonRpcError::new(
+                "E_P0L_REPAIR_REVIEWER_ROLE_REQUIRED",
+                format!(
+                    "仅允许 role=reviewer/independent_reviewer，实际 role={}",
+                    identity.role
+                ),
+            ));
+        }
+        let (token, counter) = Self::require_lease_params(params)?;
+        let evidence_path = params
+            .get("evidence_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let evidence_hash = params
+            .get("evidence_hash")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let requested_workspace = optional_workspace_id_param(params);
+
+        let owner_key = peer.owner_key();
+        let ts = task_now_ts();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DaemonRpcError::internal_error(format!("开启 P0-L repair 事务失败: {e}"))
+        })?;
+
+        // 权限：受保护 mutation——同一事务内重验 reviewer lease 与 fencing。
+        self.validate_lease_for_mutation(
+            &tx,
+            &task_id,
+            identity.role.as_str(),
+            &token,
+            counter,
+            Some(&identity),
+        )?;
+
+        let current_status: String = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![task_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| {
+                DaemonRpcError::new("task_not_found", format!("任务不存在: {task_id}"))
+            })?;
+
+        // workspace binding：任务必须已有权威 binding；若调用方携带 workspace_id
+        // 则必须一致（防止跨 workspace 误修）。
+        let bound_workspace = task_bound_workspace_id(&tx, &task_id, requested_workspace)?;
+
+        // request_id 幂等重放：daemon 重启后重复请求不得重复创建 step。
+        let request_fingerprint = sha256_hex(
+            serde_json::json!({
+                "task_id": task_id,
+                "source_outcome": "reviewer_blocked",
+                "evidence_path": evidence_path,
+                "evidence_hash": evidence_hash,
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        let mut replay_stmt = tx
+            .prepare(
+                "SELECT reason FROM task_events
+                 WHERE task_id = ?1 AND reason_code = 'p0l_repair_created'
+                 ORDER BY event_id DESC",
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询 P0-L repair ledger 失败: {e}"))
+            })?;
+        let replay_rows = replay_stmt
+            .query_map(params![task_id], |row| row.get::<_, String>(0))
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("读取 P0-L repair ledger 失败: {e}"))
+            })?;
+        for row in replay_rows {
+            let raw = row
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 P0-L repair event 失败: {e}")))?;
+            let value = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+            if value.get("request_id").and_then(Value::as_str) == Some(request_id.as_str()) {
+                if value.get("request_fingerprint").and_then(Value::as_str)
+                    != Some(request_fingerprint.as_str())
+                {
+                    return Err(DaemonRpcError::new(
+                        "E_REQUEST_ID_REUSE_MISMATCH",
+                        "P0-L repair request_id 参数冲突",
+                    ));
+                }
+                let mut replay = Map::new();
+                replay.insert("ok".into(), Value::Bool(true));
+                replay.insert("task_id".into(), Value::String(task_id.clone()));
+                replay.insert(
+                    "verdict_id".into(),
+                    value.get("verdict_id").cloned().unwrap_or(Value::Null),
+                );
+                replay.insert(
+                    "remediation_step_id".into(),
+                    value.get("remediation_step_id").cloned().unwrap_or(Value::Null),
+                );
+                replay.insert("lifecycle_status".into(), Value::String("in_progress".into()));
+                replay.insert(
+                    "workflow_status".into(),
+                    Value::String("remediation_pending".into()),
+                );
+                replay.insert("replayed".into(), Value::Bool(true));
+                return Ok(Value::Object(replay));
+            }
+        }
+        drop(replay_stmt);
+
+        // 状态门禁：仅 review 态可进入整改（重放已在上面处理）。
+        if current_status != "review" {
+            return Err(DaemonRpcError::new(
+                "E_P0L_REPAIR_REVIEW_STATE_REQUIRED",
+                "task.p0l_reviewer_block_repair 仅允许从 review 状态追加 P0-L.0 整改",
+            ));
+        }
+
+        // 从 Verdict Ledger 绑定最新 block verdict 及其 findings。
+        let (source_verdict_id, source_findings_raw, source_reviewer_raw): (String, String, String) =
+            tx.query_row(
+                "SELECT verdict_id, findings, reviewer_identity
+                 FROM task_verdict_events
+                 WHERE task_id = ?1 AND overall = 'block'
+                 ORDER BY id DESC LIMIT 1",
+                params![task_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| {
+                DaemonRpcError::new(
+                    "E_P0L_REPAIR_VERDICT_REQUIRED",
+                    "task.p0l_reviewer_block_repair 必须绑定当前任务的权威 block verdict",
+                )
+            })?;
+        let source_reviewer =
+            serde_json::from_str::<Value>(&source_reviewer_raw).unwrap_or(Value::Null);
+        let verdict_agent = source_reviewer
+            .get("identity")
+            .and_then(|item| item.get("agent_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let verdict_session = source_reviewer
+            .get("identity")
+            .and_then(|item| item.get("session_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if verdict_agent != identity.agent_id || verdict_session != identity.session_id {
+            return Err(DaemonRpcError::new(
+                "E_P0L_REPAIR_VERDICT_IDENTITY_MISMATCH",
+                "调用 Reviewer 与 source block verdict identity 不一致",
+            ));
+        }
+        let source_findings = serde_json::from_str::<Value>(&source_findings_raw)
+            .ok()
+            .filter(Value::is_array)
+            .filter(|value| {
+                value
+                    .as_array()
+                    .map(|items| !items.is_empty())
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_P0L_REPAIR_FINDINGS_REQUIRED",
+                    "block verdict 必须携带至少一个结构化 finding",
+                )
+            })?;
+
+        // 唯一性：同一 verdict 只产生一个 fix_defect step。
+        let mut existing_steps = tx
+            .prepare(
+                "SELECT id, result FROM task_steps
+                 WHERE task_id = ?1 AND action = 'fix_defect'
+                 ORDER BY step_index ASC",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 P0-L repair step 失败: {e}")))?;
+        let step_rows = existing_steps
+            .query_map(params![task_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("读取 P0-L repair step 失败: {e}")))?;
+        for row in step_rows {
+            let (_existing_id, raw) = row
+                .map_err(|e| DaemonRpcError::internal_error(format!("读取 P0-L repair step 失败: {e}")))?;
+            let value = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+            if value.get("source_verdict_id").and_then(Value::as_str)
+                == Some(source_verdict_id.as_str())
+            {
+                return Err(DaemonRpcError::new(
+                    "E_P0L_REPAIR_ALREADY_EXISTS",
+                    "该 block verdict 已在当前主任务创建 P0-L.0 整改",
+                ));
+            }
+        }
+        drop(existing_steps);
+
+        // 创建唯一 P0-L.0 fix_defect step（绑定 verdict/findings/evidence/workspace）。
+        let remediation_step_id = format!(
+            "S-{}",
+            &sha256_hex(
+                format!(
+                    "{}:{}:{}:{}",
+                    task_id, source_verdict_id, "task-level", request_id
+                )
+                .as_bytes()
+            )[..24]
+        );
+        let max_idx: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(step_index), -1) FROM task_steps WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 step_index 失败: {e}")))?;
+        let metadata = serde_json::json!({
+            "remediation_of_step_id": Value::Null,
+            "source_outcome": "reviewer_blocked",
+            "source_verdict_id": source_verdict_id,
+            "source_findings": source_findings,
+            "source_handoff_request_id": request_id,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "workspace_id": bound_workspace,
+        })
+        .to_string();
+        tx.execute(
+            "INSERT INTO task_steps
+             (id, task_id, step_index, action, target_file, target_symbol,
+              check_items, status, result, created_at, completed_at)
+             VALUES (?1, ?2, ?3, 'fix_defect', '', '', '', 'pending', ?4, ?5, NULL)",
+            params![remediation_step_id, task_id, max_idx + 1, metadata, ts],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("追加 P0-L.0 fix_defect 失败: {e}")))?;
+        bind_step_to_executor_role_contract(&tx, &task_id, &remediation_step_id, &owner_key)?;
+        tx.execute(
+            "UPDATE tasks SET status = 'in_progress', updated_at = ?1 WHERE id = ?2",
+            params![ts, task_id],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("reopen 主任务失败: {e}")))?;
+
+        // 审计事件（含幂等指纹）。
+        let seq = self.next_seq();
+        let audit = serde_json::json!({
+            "task_id": task_id,
+            "request_id": request_id,
+            "request_fingerprint": request_fingerprint,
+            "source_verdict_id": source_verdict_id,
+            "remediation_step_id": remediation_step_id,
+            "workspace_id": bound_workspace,
+        })
+        .to_string();
+        tx.execute(
+            "INSERT INTO task_events
+             (task_id, from_status, to_status, reason_code, reason, actor_identity,
+              role, monotonic_seq, authoritative_timestamp, workspace_id)
+             VALUES (?1, 'review', 'in_progress', 'p0l_repair_created', ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                task_id, audit, owner_key, identity.role,
+                seq, ts, bound_workspace
+            ],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("P0-L repair 审计写入失败: {e}")))?;
+
+        // 入 assignment queue（executor 领取 P0-L.0）。
+        assignment_queue::queue_assignment(
+            &tx,
+            &task_id,
+            Some(&remediation_step_id),
+            "executor",
+            &request_id,
+            None,
+            &owner_key,
+            &identity.session_id,
+            self.next_seq(),
+            ts,
+        )?;
+
+        tx.commit().map_err(|e| {
+            DaemonRpcError::internal_error(format!("提交 P0-L repair 事务失败: {e}"))
+        })?;
+
+        let mut res = Map::new();
+        res.insert("ok".into(), Value::Bool(true));
+        res.insert("task_id".into(), Value::String(task_id));
+        res.insert("verdict_id".into(), Value::String(source_verdict_id));
+        res.insert("remediation_step_id".into(), Value::String(remediation_step_id));
+        res.insert("lifecycle_status".into(), Value::String("in_progress".into()));
+        res.insert("workflow_status".into(), Value::String("remediation_pending".into()));
+        res.insert("replayed".into(), Value::Bool(false));
+        Ok(Value::Object(res))
     }
 
     /// A3：更新任务某角色的 Role Contract——旧版置 is_current=0，写入新 revision，
