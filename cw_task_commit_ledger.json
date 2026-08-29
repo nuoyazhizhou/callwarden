@@ -1954,5 +1954,12 @@
   "status": "new_in_master",
   "scope": "handoff envelope target_role provenance；target_role/next_role regression；官方 runtime refresh 与 live task.next_action round-trip",
   "note": "live event 6059 投影 handoff_event_id=he-676a594b54831ef74699604b、from_role=executor、target_role=reviewer、step_id=S-1788018321776-b9668c34、matches_current_routing=true；runtime 20260829-234759-b19d607bc2a8-ad3a6934，daemon PID 16292，sha256=7b62bb25e34074d1eb836cd05b34fb6eafce3aa5e84cb12922069d124d77fd94；证据 deliverables/software-company/reviewer_blocked_target_role_runtime_evidence.md hash=sha256:8F886419F4354E45D421936159634565B13292BFAEBC74E2766CA1B3CC3501B；未修改历史 verdict/evidence/handoff、Reviewer 状态或 SQLite"
+ },
+ "t1788019804377_reviewer_pass_verdict_provenance_20260830": {
+  "task_id": "T-1788019804377-eb4595d8",
+  "commit_id": "50928e3c66679d8b49c6fc6c9267abbeb2413b81",
+  "status": "new_in_master",
+  "scope": "reviewer_pass handoff 前置 Verdict Ledger provenance 门禁；同 task/step/workspace、snapshot/view manifest、reviewer identity 校验；source verdict/snapshot 写入 handoff envelope/event；缺 verdict 零部分提交回归测试",
+  "note": "message 内嵌 task_id；focused regression 1 passed；未生成/修改 Reviewer verdict，未修改历史 task/evidence，未执行 apply/close"
  }
 }
