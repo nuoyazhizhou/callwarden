@@ -1946,5 +1946,13 @@
   "status": "new_in_master",
   "scope": "reviewer BLOCKED remediation provenance：同 task verdict/handoff/outcome/source step/workspace/snapshot/manifest/identity 校验；review projection fail-closed；task-level missing snapshot negative regression；evidence",
   "note": "message 内嵌 task_id；next_action 20/20、inbound_handoff 8/8、task-level/adjudicator-returned/multi-revision focused tests 1/1；证据 deliverables/software-company/reviewer_blocked_provenance_remediation_evidence.md hash=sha256:756731D98AAB597133C9682752E3A0E37BC1D261E95439849A97FF693C5F50BD；原任务历史 verdict/evidence 未改写，T-504/P0-L 未纳入"
+ },
+ "t1788018321776_target_role_projection_20260829": {
+  "task_id": "T-1788018321776-b95d69ec",
+  "commit_id": "b19d607bc2a81759b03be81121ac7b4a9ffb44b1",
+  "evidence_commit_id": "ded783f1b79c9ec272d02d2899efa782fa984fb9",
+  "status": "new_in_master",
+  "scope": "handoff envelope target_role provenance；target_role/next_role regression；官方 runtime refresh 与 live task.next_action round-trip",
+  "note": "live event 6059 投影 handoff_event_id=he-676a594b54831ef74699604b、from_role=executor、target_role=reviewer、step_id=S-1788018321776-b9668c34、matches_current_routing=true；runtime 20260829-234759-b19d607bc2a8-ad3a6934，daemon PID 16292，sha256=7b62bb25e34074d1eb836cd05b34fb6eafce3aa5e84cb12922069d124d77fd94；证据 deliverables/software-company/reviewer_blocked_target_role_runtime_evidence.md hash=sha256:8F886419F4354E45D421936159634565B13292BFAEBC74E2766CA1B3CC3501B；未修改历史 verdict/evidence/handoff、Reviewer 状态或 SQLite"
  }
 }
