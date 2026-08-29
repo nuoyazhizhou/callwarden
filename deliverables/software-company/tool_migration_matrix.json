@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-22T17:08:01",
+  "generated_at": "2026-08-29T00:45:41.392997+00:00",
   "total_tools": 239,
   "backends": [
     "rust_native",
@@ -2108,7 +2108,8 @@
       "rpc_method": "task.split",
       "op_class": "PROTECTED_MUTATION",
       "batch": "existing-task",
-      "status": "stable"
+      "status": "stable",
+      "note": "T-1787963386217-0ae6d628: 子任务原子治理初始化（binding+Contract+identity_policy+step binding）；原残缺创建已修复"
     },
     {
       "name": "task_status",
