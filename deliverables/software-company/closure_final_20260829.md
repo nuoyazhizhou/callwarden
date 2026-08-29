@@ -85,3 +85,29 @@
 - ✅ verdict/event/contract 账本 append-only，未回填、未删除
 - ✅ reviewer/adjudicator lease 用后必 release；最终活跃 lease = 0
 - ✅ 无 `--json` 误用；裁决以 next-action 权威投影为准，不信用 handoff 文本
+
+---
+
+## 追加：SRV-019 专项（A 方案）完成（10:2x）
+
+### 专项任务 `T-1787969202767-50521f0c`（4 步全 done → review）
+
+| Step | 交付 | commit |
+|---|---|---|
+| 0 接管矩阵 | 14 文件→Rust 接管映射（daemon_server→SRV-008、health→health.rs、durable_staging→durable_staging_handlers、watcher/job→SnapshotDaemonState 实测非 stub） | `7a5ec56` |
+| 1 声明性退休 | audit 脚本 `RETIRED_LEGACY_FILES` 白名单（只减不加）→ finding 108→0、passed | `246bcb6` |
+| 2 fixture 矩阵 | tests/test_srv_019.py 14 测试全过（5 矩阵 + 静态门禁） | `f3508eb` |
+| 3 矩阵登记 | final gate 条目 status=stable | `724d321` |
+
+### SRV-019 卡自身 `T-1787323461802-077bee78`（5 步全 done → review）
+
+- step1 failed → report fix_defect（done）→ step.resolve（resolution_event 5629）
+- contract_revise rev3 补 identity_policy（reviewer 租 lease + adjudicator 身份）
+- step2/3 用薄客户端 work_next 领取 + report
+- **终态：`review_pending / reviewer / READY`**（close S2 修复后 resolution 覆盖生效）
+
+### 最终权威状态（c14b1e44 全部 187 子卡）
+
+**186 closed / 1 review（SRV-019）**；活跃 lease=0；push 已同步（master=0047d81）。
+
+> 剩余：2 张 review 卡待 reviewer→adjudicator 闭环后全部 COMPLETE。
