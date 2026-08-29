@@ -301,7 +301,9 @@ impl TaskCollabStore {
             }
         }
 
-        // 自底向上逐节点聚合判定 + 收尾
+        // 自底向上逐节点聚合判定 + 收尾（chain=[task,parent,...,root] 原序：
+        // 从调用方 task_id 开始，先关自身（叶子：步骤 done；聚合：子全 closed），
+        // 再逐级向上。切勿 rev()——否则先处理 root 会在自身未满足条件时 break。）
         let mut closed: Vec<String> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut conn = self.conn.lock().unwrap();
@@ -309,7 +311,7 @@ impl TaskCollabStore {
             .unchecked_transaction()
             .map_err(|e| DaemonRpcError::internal_error(format!("开启级联事务失败: {e}")))?;
 
-        for node in chain.iter().rev() {
+        for node in chain.iter() {
             // 已 closed → 跳过（幂等）
             let node_status: String = tx
                 .query_row("SELECT status FROM tasks WHERE id = ?1", params![node], |r| {
@@ -408,6 +410,68 @@ impl TaskCollabStore {
                         obj.remove("contract_hash");
                         obj.remove("created_at");
                         obj.remove("created_by");
+                        // task.create 生成的 envelope 可能不含 objective（历史任务尤其如此）；
+                        // append_task_contract_revision 强校验 objective 非空字符串，
+                        // 缺失时补兜底文案，保证 autofill 构造出的 envelope 合法。
+                        let objective_ok = obj
+                            .get("objective")
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false);
+                        if !objective_ok {
+                            obj.insert(
+                                "objective".into(),
+                                Value::String(
+                                    "cascade_close 聚合收尾（子树全 closed，自动补齐 contract）"
+                                        .to_string(),
+                                ),
+                            );
+                        }
+                        // append_task_contract_revision 强校验：profile 合法枚举 +
+                        // 六类数组字段必须为非空 JSON array（空数组同样拒绝）。
+                        let profile_ok = obj
+                            .get("profile")
+                            .and_then(|v| v.as_str())
+                            .map(|s| {
+                                matches!(
+                                    s.trim(),
+                                    "research" | "design" | "code_change" | "high_risk" | "review"
+                                )
+                            })
+                            .unwrap_or(false);
+                        if !profile_ok {
+                            obj.insert("profile".into(), Value::String("review".into()));
+                        }
+                        for key in [
+                            "interfaces",
+                            "allowed_edit_scope",
+                            "acceptance_clauses",
+                            "risks",
+                            "rollback",
+                            "dependencies",
+                        ] {
+                            let array_ok = obj
+                                .get(key)
+                                .and_then(Value::as_array)
+                                .map(|a| {
+                                    !a.is_empty()
+                                        && a.iter().all(|v| {
+                                            v.as_str()
+                                                .map(str::trim)
+                                                .filter(|s| !s.is_empty())
+                                                .is_some()
+                                        })
+                                })
+                                .unwrap_or(false);
+                            if !array_ok {
+                                obj.insert(
+                                    key.into(),
+                                    Value::Array(vec![Value::String(
+                                        "cascade_close 聚合收尾（自动补齐）".to_string(),
+                                    )]),
+                                );
+                            }
+                        }
                     }
                     crate::daemon::task_loop::task_contract_revise::append_task_contract_revision(
                         &tx,

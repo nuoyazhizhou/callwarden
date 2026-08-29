@@ -12,6 +12,7 @@
   静态门禁（dispatch 路由 / methods 表 / CLI 命令）仍执行。
 """
 
+import json
 import sqlite3
 import uuid
 from pathlib import Path
@@ -37,6 +38,22 @@ def rpc():
     return c
 
 
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_cascade_trees():
+    """模块级清理：测试树（T-CSC-% 合成数据）跑完即删，避免污染权威库。
+
+    此前调试轮次残留的测试树曾使"级联缺口"复现（root 卡 review），
+    故测试必须自清理；清理顺序先子表后主表。
+    """
+    yield
+    conn = sqlite3.connect(str(DB))
+    for t in ("action_identities", "task_events", "task_contract_revisions", "task_steps"):
+        conn.execute(f"DELETE FROM {t} WHERE task_id LIKE 'T-CSC-%'")
+    conn.execute("DELETE FROM tasks WHERE id LIKE 'T-CSC-%'")
+    conn.commit()
+    conn.close()
+
+
 def db_conn():
     conn = sqlite3.connect(str(DB))
     conn.row_factory = sqlite3.Row
@@ -44,11 +61,23 @@ def db_conn():
 
 
 def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
-    """构造 depth+1 层的任务树（root + 子 + 孙...），返回 [leaf, mid, root]。
+    """构造 depth+1 层的任务树，返回 [leaf, mid, root]。
 
-    每层一个任务：叶子带 1 个 done 步骤；聚合节点带 1 个 done 步骤。
-    全部任务先创建为 closed（模拟"叶子已闭环"），聚合节点创建为 review
-    态（模拟"树干卡住"）。返回 [leaf_id, mid_id, root_id]。
+    创建顺序 = 先根后叶（i=0 为根，无 parent；i=depth 为叶子，parent 指向
+    上一层）。直写状态（测试树为合成数据，直写模拟"已闭环/树干卡住"的
+    存量事实，避开 reviewer lease 流程）：
+    - 叶子（i == depth，最后创建）→ steps done + task closed（"已闭环"）
+    - 聚合节点（i < depth）→ task review（"树干卡住"）
+    返回序与创建序相反：list(reversed(ids)) = [leaf, ..., mid, root]。
+
+    fixture 适配说明（2026-08-29 rev 修复后实跑修正）：
+    - v59 治理硬化后 task.create 强制要求 identity_policy（缺则
+      E_TASK_IDENTITY_POLICY_REQUIRED），故全部带 policy 创建；
+      autofill 场景由测试对存量 revision 删字段模拟，不走 with_policy=False。
+    - task.create 默认状态为 open、步骤为 pending；cascade-close 对叶子
+      要求步骤全 done，故叶子闭环必须显式直写，不能靠创建即 closed。
+    - cascade-close 语义 = 从指定节点**向上**聚合收尾（chain=[task,parent,root]），
+      不自上而下处理后代；故测试从 mid（中层）触发，由实现向上关闭 root。
     """
     ids = []
     cur = None
@@ -61,25 +90,30 @@ def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
             "task_id": tid, "title": f"cascade test {i}", "description": "d",
             "steps": steps, "creator": "cascade-test",
             "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
-            "identity_policy": "legacy_identity_v1" if with_policy else None,
+            "identity_policy": "legacy_identity_v1",
             "workspace_id": 1,
             "request_id": f"mk-{uuid.uuid4().hex[:8]}",
         }
         if parent:
             params["parent_id"] = parent
         rpc.call("task.create", params)
-        # 叶子直接 closed（模拟已闭环）；聚合节点保持 review（卡住）
-        if i == 0:
-            rpc.call("task.close", {
-                "task_id": tid,
-                "identity": {"agent_id": "adjudicator-wb-186loop",
-                             "session_id": "sess-adjudicator-wb-186loop",
-                             "model_id": "deepseek-v4-flash", "role": "adjudicator",
-                             "agent_instance_id": "inst-adjudicator-wb-186loop"},
-                "lease_token": "x", "fencing_counter": 0,
-                "request_id": f"cl-{uuid.uuid4().hex[:8]}", "workspace_id": 1,
-            })
-    return list(reversed(ids))  # [root, mid, leaf] 顺序返回时调用方自行处理
+        conn = db_conn()
+        if i == depth:
+            # 叶子（最后创建）：真实闭环需 reviewer lease，DB 直写模拟"已闭环"事实
+            conn.execute(
+                "UPDATE task_steps SET status='done', completed_at=strftime('%s','now') "
+                "WHERE task_id=?", (tid,))
+            conn.execute(
+                "UPDATE tasks SET status='closed', closed_at=strftime('%s','now'), "
+                "updated_at=strftime('%s','now') WHERE id=?", (tid,))
+        else:
+            # 聚合节点（根/中间层）：模拟"树干卡住"
+            conn.execute(
+                "UPDATE tasks SET status='review', updated_at=strftime('%s','now') "
+                "WHERE id=?", (tid,))
+        conn.commit()
+        conn.close()
+    return list(reversed(ids))  # [leaf, mid, root]（创建序先根后叶，返回序反转为叶在前）
 
 
 # ============================================================
@@ -88,21 +122,22 @@ def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
 
 
 def test_success_cascade_closes_ancestors(rpc):
-    """叶子 closed 后 cascade-close(root) → mid + root 自动 closed。"""
+    """叶子 closed 后 cascade-close(mid) → mid + root 自动 closed（自底向上）。"""
     # 构造 3 层：leaf(done, closed) -> mid(review) -> root(review)
     ids = make_tree(rpc, depth=2)
     leaf, mid, root = ids[0], ids[1], ids[2]
 
-    # 先确保 leaf 已 closed（make_tree 里做了），mid/root 处于 review
-    conn = db_conn()
+    # 前置：leaf 已闭环（直写 closed），mid/root 卡在 review
     for tid, expect in ((leaf, "closed"), (mid, "review"), (root, "review")):
+        conn = db_conn()
         st = conn.execute("SELECT status FROM tasks WHERE id=?", (tid,)).fetchone()
         conn.close()
         assert st["status"] == expect, f"{tid} 应为 {expect}，实际 {st['status']}"
 
-    # cascade-close(root)：leaf 已 closed → mid 应聚合 close → root 应聚合 close
+    # cascade-close(mid)：mid 子 leaf 已 closed → mid 聚合 close；
+    # 向上 root 子 mid 已 closed → root 聚合 close（chain=[mid,root]）
     res = rpc.call(CASCADE, {
-        "task_id": root,
+        "task_id": mid,
         "identity": {"agent_id": "coordinator-workbuddy-v1",
                      "session_id": "sess-coord-wb-20260820",
                      "model_id": "workbuddy", "role": "coordinator"},
@@ -127,10 +162,27 @@ def test_success_cascade_closes_ancestors(rpc):
 
 def test_identity_policy_autofill(rpc):
     """聚合节点缺 identity_policy → cascade 自动追加 revision（legacy 默认）。"""
-    ids = make_tree(rpc, depth=1, with_policy=False)
+    # v59 治理硬化后 task.create 强制要求 identity_policy（创建即拒绝缺 policy），
+    # autofill 只对存量历史任务有意义：先带 policy 建树，再从最新 revision
+    # payload 删除 identity_policy 字段模拟存量缺 policy。
+    ids = make_tree(rpc, depth=1)
     leaf, root = ids[0], ids[1]
 
-    # 构造后 root 缺 policy（make_tree 传 None）
+    # 构造前置：删除 root 最新 revision 中的 identity_policy
+    conn = db_conn()
+    row = conn.execute(
+        "SELECT revision, envelope_payload FROM task_contract_revisions WHERE task_id=? "
+        "ORDER BY revision DESC LIMIT 1", (root,)).fetchone()
+    payload = json.loads(row["envelope_payload"])
+    assert "identity_policy" in payload, "前置应有 policy"
+    del payload["identity_policy"]
+    conn.execute(
+        "UPDATE task_contract_revisions SET envelope_payload=? WHERE task_id=? AND revision=?",
+        (json.dumps(payload, ensure_ascii=False), root, row["revision"]))
+    conn.commit()
+    conn.close()
+
+    # 前置校验：当前 revision 已无 policy
     conn = db_conn()
     row = conn.execute(
         "SELECT envelope_payload FROM task_contract_revisions WHERE task_id=? "
@@ -139,7 +191,7 @@ def test_identity_policy_autofill(rpc):
     assert "identity_policy" not in (row["envelope_payload"] or ""), "前置应缺 policy"
 
     res = rpc.call(CASCADE, {
-        "task_id": root,
+        "task_id": leaf,
         "identity": {"agent_id": "coordinator-workbuddy-v1",
                      "session_id": "sess-coord-wb-20260820",
                      "model_id": "workbuddy", "role": "coordinator"},
