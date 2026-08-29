@@ -569,6 +569,75 @@ pub(crate) fn unresolved_failed_step_ids(
     Ok(unresolved)
 }
 
+/// Verdict submit 持久化的是 reviewer identity 摘要；接受摘要或完整 envelope，
+/// 但三项稳定身份字段必须存在，若带 role 则必须仍是 reviewer。
+fn reviewer_identity_provenance_ok(raw: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return false;
+    };
+    let identity = value.get("identity").unwrap_or(&value);
+    ["agent_id", "session_id", "model_id"].into_iter().all(|field| {
+        identity
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) && identity
+        .get("role")
+        .and_then(Value::as_str)
+        .is_none_or(|role| matches!(role, "reviewer" | "independent_reviewer"))
+}
+
+/// Verdict、handoff event、source step 和 task workspace 必须形成同一条
+/// provenance 链，不能以 metadata 中的非空 ID 代替真实引用校验。
+fn governance_remediation_provenance_ok(
+    conn: &Connection,
+    task_id: &str,
+    linked_step_id: &str,
+    source_outcome: &str,
+    metadata: &Value,
+) -> Result<bool, DaemonRpcError> {
+    if !matches!(source_outcome, "reviewer_blocked" | "adjudicator_returned") {
+        return Ok(false);
+    }
+    let Some(verdict_id) = metadata.get("source_verdict_id").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) else { return Ok(false) };
+    let Some(handoff_id) = metadata.get("source_handoff_event_id").and_then(|v| match v { Value::String(s) if !s.trim().is_empty() => Some(s.as_str()), _ => None }) else { return Ok(false) };
+    let Some(request_id) = metadata.get("source_handoff_request_id").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) else { return Ok(false) };
+    let expected = if source_outcome == "reviewer_blocked" { "block" } else { "pass" };
+    let verdict: Option<(String, String, String, String, Option<i64>, String)> = conn.query_row(
+        "SELECT overall, step_id, snapshot_id, view_manifest_hash, workspace_id, reviewer_identity
+         FROM task_verdict_events WHERE task_id=?1 AND verdict_id=?2",
+        rusqlite::params![task_id, verdict_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+    ).optional().map_err(|e| infra_error(&format!("source verdict provenance 读取失败: {e}")))?;
+    let Some((overall, verdict_step, snapshot, manifest, verdict_workspace, reviewer)) = verdict else { return Ok(false) };
+    if overall != expected || snapshot.trim().is_empty() || manifest.trim().is_empty() || !reviewer_identity_provenance_ok(&reviewer) { return Ok(false) }
+    let task_workspace: Option<i64> = conn.query_row(
+        "SELECT workspace_id FROM task_workspace_bindings WHERE task_id=?1", [task_id], |row| row.get(0),
+    ).optional().map_err(|e| infra_error(&format!("task workspace provenance 读取失败: {e}")))?;
+    if task_workspace.is_none() || verdict_workspace != task_workspace { return Ok(false) }
+    if (linked_step_id.is_empty() && (source_outcome != "reviewer_blocked" || !verdict_step.trim().is_empty()))
+        || (!linked_step_id.is_empty() && verdict_step.trim() != linked_step_id) { return Ok(false) }
+    let mut stmt = conn.prepare("SELECT reason FROM task_events WHERE task_id=?1 AND reason_code='handoff_structured'")
+        .map_err(|e| infra_error(&format!("handoff provenance 查询准备失败: {e}")))?;
+    let rows = stmt.query_map([task_id], |row| row.get::<_, String>(0))
+        .map_err(|e| infra_error(&format!("handoff provenance 查询失败: {e}")))?;
+    for row in rows {
+        let raw = row.map_err(|e| infra_error(&format!("handoff provenance 行读取失败: {e}")))?;
+        let Ok(envelope) = serde_json::from_str::<Value>(&raw) else { continue };
+        let step_matches = if linked_step_id.is_empty() {
+            envelope.get("step_id").is_some_and(Value::is_null)
+        } else { envelope.get("step_id").and_then(Value::as_str) == Some(linked_step_id) };
+        if step_matches
+            && envelope.get("handoff_event_id").and_then(Value::as_str) == Some(handoff_id)
+            && envelope.get("task_id").and_then(Value::as_str) == Some(task_id)
+            && envelope.get("outcome").and_then(Value::as_str) == Some(source_outcome)
+            && envelope.get("next_role").and_then(Value::as_str) == Some("executor")
+            && envelope.get("request_id").and_then(Value::as_str) == Some(request_id)
+            && envelope.get("source_verdict_id").and_then(Value::as_str) == Some(verdict_id) { return Ok(true) }
+    }
+    Ok(false)
+}
+
 /// 找出必须显式领取的 remediation step（fix_defect 且指向 unresolved failed 或
 /// reviewer_blocked/adjudicator_returned 来源）；无则 None（§3.4）。
 fn required_remediation_step(
@@ -592,8 +661,7 @@ fn required_remediation_step(
     for row in rows {
         let (step_id, raw) =
             row.map_err(|e| infra_error(&format!("remediation step 读取失败: {e}")))?;
-        let metadata =
-            serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+        let metadata = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
         let linked = metadata
             .get("remediation_of_step_id")
             .and_then(|item| item.as_str())
@@ -602,23 +670,15 @@ fn required_remediation_step(
             .get("source_outcome")
             .and_then(|item| item.as_str())
             .unwrap_or("");
-        let source_verdict_ok = metadata
-            .get("source_verdict_id")
-            .and_then(|item| item.as_str())
-            .map(|item| !item.trim().is_empty())
-            .unwrap_or(false);
-        let source_handoff_ok = metadata
-            .get("source_handoff_event_id")
-            .map(|item| match item {
-                Value::Number(_) => true,
-                Value::String(text) => !text.trim().is_empty(),
-                _ => false,
-            })
-            .unwrap_or(false);
-        let governance_provenance_ok = source_verdict_ok && source_handoff_ok;
         if unresolved.iter().any(|u| u == linked)
             || (matches!(source_outcome, "reviewer_blocked" | "adjudicator_returned")
-                && governance_provenance_ok)
+                && governance_remediation_provenance_ok(
+                    conn,
+                    task_id,
+                    linked,
+                    source_outcome,
+                    &metadata,
+                )?)
         {
             return Ok(Some(step_id));
         }
@@ -1149,6 +1209,54 @@ fn adjudicate_outcome(
     Ok(value)
 }
 
+/// normalized_overall 还不足以驱动裁决；重新核对 snapshot、manifest、workspace、step
+/// 和 reviewer identity，缺任一项都只能回到 REVIEW。
+fn review_verdict_provenance_ok(
+    conn: &Connection,
+    task_id: &str,
+    verdict: &super::verdict_evidence_gate::VerdictProjection,
+) -> Result<bool, DaemonRpcError> {
+    let row: Option<(String, String, String, String, Option<i64>, String)> = conn
+        .query_row(
+            "SELECT overall, step_id, snapshot_id, view_manifest_hash, workspace_id, reviewer_identity
+             FROM task_verdict_events WHERE task_id=?1 AND verdict_id=?2",
+            rusqlite::params![task_id, verdict.verdict_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        )
+        .optional()
+        .map_err(|e| infra_error(&format!("review verdict provenance 读取失败: {e}")))?;
+    let Some((overall, step_id, snapshot, manifest, verdict_workspace, reviewer)) = row else {
+        return Ok(false);
+    };
+    if !matches!(overall.as_str(), "pass" | "block")
+        || verdict.normalized_overall == "UNVERIFIED"
+        || snapshot.trim().is_empty()
+        || manifest.trim().is_empty()
+        || !reviewer_identity_provenance_ok(&reviewer)
+    {
+        return Ok(false);
+    }
+    let task_workspace: Option<i64> = conn
+        .query_row(
+            "SELECT workspace_id FROM task_workspace_bindings WHERE task_id=?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| infra_error(&format!("review task workspace 读取失败: {e}")))?;
+    if task_workspace.is_none() || verdict_workspace != task_workspace {
+        return Ok(false);
+    }
+    let step_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task_steps WHERE id=?1 AND task_id=?2",
+            rusqlite::params![step_id.trim(), task_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| infra_error(&format!("review verdict step 读取失败: {e}")))?;
+    Ok(!step_id.trim().is_empty() && step_exists == 1)
+}
+
 fn complete_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpcError> {
     let r = Rendered {
         decision: "COMPLETE",
@@ -1308,6 +1416,10 @@ fn evaluate_next_action_inner(
             .iter()
             .rev()
             .find(|v| v.normalized_overall == "pass" || v.normalized_overall == "block");
+        let effective = match effective {
+            Some(verdict) if review_verdict_provenance_ok(conn, task_id, verdict)? => Some(verdict),
+            _ => None,
+        };
         match effective {
             None => {
                 if verdicts.is_empty() {

@@ -1277,18 +1277,33 @@ impl TaskCollabStore {
             } else {
                 "pass"
             };
-            let (source_verdict_id, source_findings_raw, source_reviewer_raw): (
-                String,
-                String,
-                String,
-            ) = tx
+            let (
+                source_verdict_id,
+                source_findings_raw,
+                source_reviewer_raw,
+                verdict_step_id,
+                verdict_snapshot_id,
+                verdict_view_manifest_hash,
+                verdict_workspace_id,
+            ): (String, String, String, String, String, String, Option<i64>) = tx
                 .query_row(
-                    "SELECT verdict_id, findings, reviewer_identity
+                    "SELECT verdict_id, findings, reviewer_identity, step_id,
+                            snapshot_id, view_manifest_hash, workspace_id
                          FROM task_verdict_events
                          WHERE task_id = ?1 AND overall = ?2
                          ORDER BY id DESC LIMIT 1",
                     params![task_id, source_overall],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                        ))
+                    },
                 )
                 .map_err(|_| {
                     DaemonRpcError::new(
@@ -1299,17 +1314,83 @@ impl TaskCollabStore {
                         ),
                     )
                 })?;
+            let task_workspace_id: Option<i64> = tx
+                .query_row(
+                    "SELECT workspace_id FROM task_workspace_bindings WHERE task_id = ?1",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!(
+                        "读取 task workspace provenance 失败: {}",
+                        e
+                    ))
+                })?;
+            if verdict_snapshot_id.trim().is_empty() || verdict_view_manifest_hash.trim().is_empty()
+            {
+                return Err(DaemonRpcError::new(
+                    "E_REMEDIATION_REVIEW_PROVENANCE_REQUIRED",
+                    "source verdict 必须绑定非空 snapshot_id/view_manifest_hash",
+                ));
+            }
+            if task_workspace_id.is_none() || verdict_workspace_id != task_workspace_id {
+                return Err(DaemonRpcError::new(
+                    "E_REMEDIATION_REVIEW_PROVENANCE_MISMATCH",
+                    "source verdict workspace_id 与 task workspace binding 不一致",
+                ));
+            }
+            let verdict_step_id = verdict_step_id.trim();
+            match (step_id.as_deref(), verdict_step_id.is_empty()) {
+                (Some(source_step_id), false) if source_step_id == verdict_step_id => {}
+                (Some(_), _) => {
+                    return Err(DaemonRpcError::new(
+                        "E_REMEDIATION_VERDICT_STEP_MISMATCH",
+                        "handoff step_id 与 source verdict step_id 不一致",
+                    ));
+                }
+                (None, true) if outcome == "reviewer_blocked" => {}
+                (None, _) => {
+                    return Err(DaemonRpcError::new(
+                        "E_REMEDIATION_VERDICT_STEP_MISMATCH",
+                        "task-level handoff 不得引用带 source step 的 verdict",
+                    ));
+                }
+            }
+            let source_reviewer = serde_json::from_str::<Value>(&source_reviewer_raw).map_err(|_| {
+                DaemonRpcError::new(
+                    "E_REMEDIATION_REVIEW_PROVENANCE_INVALID",
+                    "source verdict reviewer_identity 不是有效 JSON",
+                )
+            })?;
+            let reviewer_identity = source_reviewer
+                .get("identity")
+                .unwrap_or(&source_reviewer);
+            let verdict_role = reviewer_identity.get("role").and_then(Value::as_str);
+            let identity_complete = ["agent_id", "session_id", "model_id"]
+                .into_iter()
+                .all(|field| {
+                    reviewer_identity
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                });
+            if !identity_complete
+                || verdict_role
+                    .is_some_and(|role| !matches!(role, "reviewer" | "independent_reviewer"))
+            {
+                return Err(DaemonRpcError::new(
+                    "E_REMEDIATION_REVIEW_PROVENANCE_INVALID",
+                    "source verdict reviewer_identity 缺少完整 reviewer identity",
+                ));
+            }
             if outcome == "reviewer_blocked" {
-                let source_reviewer =
-                    serde_json::from_str::<Value>(&source_reviewer_raw).unwrap_or(Value::Null);
-                let verdict_agent = source_reviewer
-                    .get("identity")
-                    .and_then(|item| item.get("agent_id"))
+                let verdict_agent = reviewer_identity
+                    .get("agent_id")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let verdict_session = source_reviewer
-                    .get("identity")
-                    .and_then(|item| item.get("session_id"))
+                let verdict_session = reviewer_identity
+                    .get("session_id")
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if verdict_agent != identity.agent_id || verdict_session != identity.session_id {
@@ -1436,6 +1517,17 @@ impl TaskCollabStore {
         ] {
             envelope.insert(key.to_string(), value);
         }
+        // event_id 是 SQLite 自增实现细节，不能作为后续 remediation 的稳定引用；
+        // 先生成与 task/request 绑定的 envelope ID，再把同一值写入 event 和 metadata。
+        let handoff_event_id = format!(
+            "he-{}",
+            &sha256_hex(format!("{}:{}", task_id, request_id).as_bytes())[..24]
+        );
+        envelope.insert("source_role".to_string(), Value::String(from_role.clone()));
+        envelope.insert(
+            "handoff_event_id".to_string(),
+            Value::String(handoff_event_id.clone()),
+        );
         if let Some((remediation_step_id, _, _, _, source_findings, source_verdict_id)) =
             &remediation_plan
         {
@@ -1543,7 +1635,7 @@ impl TaskCollabStore {
                 "source_outcome": outcome,
                 "source_verdict_id": source_verdict_id,
                 "source_findings": source_findings,
-                "source_handoff_event_id": event_id,
+                "source_handoff_event_id": handoff_event_id,
                 "source_handoff_request_id": request_id,
             })
             .to_string();

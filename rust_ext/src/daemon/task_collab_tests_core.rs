@@ -571,10 +571,12 @@ use super::support::*;
             .unwrap();
             conn.execute(
                 "INSERT INTO task_verdict_events
-                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
-                  phase, reviewer_identity, findings, overall, attestation, submitted_at)
+                (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, step_id, snapshot_id, view_manifest_hash, reviewer_identity,
+                  findings, overall, attestation, submitted_at, workspace_id)
                  VALUES ('V-TASK-LEVEL-1', ?1, 'TC-TASK-LEVEL', 1, 'sha256:task-level',
-                         'blind_first_pass', ?2, ?3, 'block', 'attested', ?4)",
+                         'blind_first_pass', '', '', 'manifest-task-level',
+                         ?2, ?3, 'block', 'attested', ?4, 1)",
                 params![
                     task_id,
                     serde_json::json!({"identity": reviewer_identity.clone()}).to_string(),
@@ -612,6 +614,19 @@ use super::support::*;
             "lease_token": reviewer_lease["token"],
             "fencing_counter": reviewer_lease["fencing_counter"]
         });
+        let missing_snapshot = store
+            .handle_task_handoff(peer.clone(), &handoff)
+            .expect_err("缺失 review snapshot 必须拒绝 remediation");
+        assert_eq!(missing_snapshot.code, "E_REMEDIATION_REVIEW_PROVENANCE_REQUIRED");
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE task_verdict_events SET snapshot_id='snapshot-task-level'
+                 WHERE verdict_id='V-TASK-LEVEL-1' AND task_id=?1",
+                params![task_id],
+            )
+            .unwrap();
+        }
         let response = store
             .handle_task_handoff(peer, &handoff)
             .expect("task-level reviewer_blocked 应原子创建 remediation");
@@ -751,12 +766,15 @@ use super::support::*;
             .unwrap();
             conn.execute(
                 "INSERT INTO task_verdict_events
-                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
-                  phase, reviewer_identity, findings, overall, attestation, submitted_at)
+                (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, step_id, snapshot_id, view_manifest_hash, reviewer_identity,
+                  findings, overall, attestation, submitted_at, workspace_id)
                  VALUES ('V-ADJ-RETURNED-1', ?1, 'TC-ADJ-RETURNED', 1, 'sha256:adj-returned',
-                         'adjudication', ?2, ?3, 'pass', 'attested', ?4)",
+                         'adjudication', ?2, 'snapshot-adj-returned', 'manifest-adj-returned',
+                         ?3, ?4, 'pass', 'attested', ?5, 1)",
                 params![
                     task_id,
+                    source_step_id,
                     serde_json::json!({"identity": reviewer_identity}).to_string(),
                     serde_json::json!([{"finding_id":"F-ADJ-RETURNED-1","fact":"deployment evidence is stale"}]).to_string(),
                     now_ts(),
@@ -935,11 +953,14 @@ use super::support::*;
             .unwrap();
             conn.execute(
                 "INSERT INTO task_verdict_events
-                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
-                  phase, reviewer_identity, findings, overall, attestation, submitted_at)
+                (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, step_id, snapshot_id, view_manifest_hash, reviewer_identity,
+                  findings, overall, attestation, submitted_at, workspace_id)
                  VALUES ('V-THREAD-1', 'T-THREAD-REVISE', 'TC-THREAD', 1, 'sha256:task',
-                         'blind_first_pass', ?1, ?2, 'block', 'attested', ?3)",
+                         'blind_first_pass', ?1, 'snapshot-thread-1', 'manifest-thread-1',
+                         ?2, ?3, 'block', 'attested', ?4, 1)",
                 params![
+                    source_step_id,
                     serde_json::json!({"identity": reviewer_identity.clone()}).to_string(),
                     serde_json::json!([{"finding_id":"F-THREAD-1","fact":"first defect"}])
                         .to_string(),
@@ -999,11 +1020,14 @@ use super::support::*;
             let conn = store.conn.lock().unwrap();
             conn.execute(
                 "INSERT INTO task_verdict_events
-                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
-                  phase, reviewer_identity, findings, overall, attestation, submitted_at)
+                (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, step_id, snapshot_id, view_manifest_hash, reviewer_identity,
+                  findings, overall, attestation, submitted_at, workspace_id)
                  VALUES ('V-THREAD-2', 'T-THREAD-REVISE', 'TC-THREAD', 1, 'sha256:task',
-                         'post_reveal_amendment', ?1, ?2, 'block', 'attested', ?3)",
+                         'post_reveal_amendment', ?1, 'snapshot-thread-2', 'manifest-thread-2',
+                         ?2, ?3, 'block', 'attested', ?4, 1)",
                 params![
+                    remediation_one,
                     serde_json::json!({"identity": reviewer_identity.clone()}).to_string(),
                     serde_json::json!([{"finding_id":"F-THREAD-2","fact":"second defect"}])
                         .to_string(),
