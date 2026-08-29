@@ -1970,5 +1970,13 @@
   "status": "new_in_master",
   "scope": "reviewer_pass 完整 reviewer identity 校验（role、agent_id、agent_instance_id、session_id、model_id）及 provenance 负矩阵测试；提交后官方 runtime/live PID/hash/ping evidence",
   "note": "message 内嵌 task_id；focused regression 1 passed；runtime 20260830-073205-d685f31a99fa-1e3639d2，daemon PID 41868，cw-daemon sha256=262a9f53fcbc3c6d79022de068df2b9acd59779fe280523c112b63fb28859f07，ping/smoke exit_code=0；未生成/修改 Reviewer verdict，未修改源任务历史，未执行 apply/close；证据文件 hash=sha256:9C1075B2CD0467B1DC67FDB389619DDB4755FDF597E1E400FEECF328DC3B14BC"
+ },
+ "t1788046887458_verdict_submit_mcp_identity_20260830": {
+  "task_id": "T-1788046887458-b0ad9b68",
+  "commit_id": "57ab51e4d2b1dedda8c9c5e80b9fefd5a60cd996",
+  "evidence_commit_id": "7acd2b42420e407dd75a94a975a80b281479ac0b",
+  "status": "new_in_master",
+  "scope": "MCP submit_verdict daemon-native wire：组装完整 Reviewer identity（含 agent_instance_id）并将 clause_results/findings JSON 字符串转为数组；focused adapter regression",
+  "note": "message 内嵌 task_id；focused MCP/CLI regression 7 passed；非数组 findings 在 RPC 前 fail-closed；证据 deliverables/software-company/verdict_submit_mcp_identity_evidence.md hash=sha256:B4D82CA5F78E7779685C26793573891BD0A2D5862AFADD5CB56D2BD88D07B79D；未修改 daemon reviewer_pass 门禁、历史 verdict/evidence、源 review 任务或 apply/close"
  }
 }
