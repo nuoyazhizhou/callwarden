@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-08-29T02:33:22.402202+00:00",
-  "total_tools": 240,
+  "generated_at": "2026-08-29T03:32:20.646965+00:00",
+  "total_tools": 241,
   "backends": [
     "rust_native",
     "task_rpc",
@@ -2432,6 +2432,17 @@
       "batch": "srv019-final-gate",
       "status": "stable",
       "note": "T-1787969202767-50521f0c: repository-wide Python authority zero-residue final gate。14 legacy 文件声明性退休（RETIRED_LEGACY_FILES 只减不加，authority 已由 Rust 接管，见 docs/evidence/srv019_rust_takeover_matrix_20260829.md）；audit finding_count 108→0、passed=true；fixture tests/test_srv_019.py 14 测试全过"
+    },
+    {
+      "name": "task_cascade_close",
+      "module": "tools_task",
+      "current_backend": "unknown",
+      "target_backend": "task_rpc",
+      "rpc_method": "task.cascade_close",
+      "op_class": "PROTECTED_MUTATION",
+      "batch": "existing-task",
+      "status": "stable",
+      "note": "T-1787973726845-a85ebacc: 聚合节点级联收尾（树干=纯聚合投影，审计点只在叶子）；子树全 closed → 父自动 close，缺 identity_policy 自动补"
     }
   ],
   "cli_diagnostic_migration": {
