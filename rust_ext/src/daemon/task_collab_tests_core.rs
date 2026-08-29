@@ -2174,3 +2174,151 @@ use super::support::*;
         .unwrap_err();
         assert_eq!(err.code, "E_STEPS_BOOTSTRAP_ROLE_REQUIRED");
     }
+
+    #[test]
+    fn test_reviewer_pass_requires_task_bound_verdict_before_handoff() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let task_id = "T-REVIEWER-PASS-PROVENANCE";
+        seed_workspace(&store);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "task_id": task_id,
+                    "title": "reviewer pass provenance",
+                    "steps": [{"action": "implement", "target_file": "src/pass.rs"}],
+                    "identity_policy": "legacy_identity_v1",
+                    "role_contracts": p0l_governance_roles()
+                }),
+            )
+            .unwrap();
+        let source_step_id: String = {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE tasks SET status='review' WHERE id=?1",
+                params![task_id],
+            )
+            .unwrap();
+            let step_id: String = conn
+                .query_row(
+                    "SELECT id FROM task_steps WHERE task_id=?1",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            conn.execute(
+                "UPDATE task_steps SET status='done', result='executor delivery', completed_at=?1
+                 WHERE id=?2 AND task_id=?3",
+                params![now_ts(), step_id, task_id],
+            )
+            .unwrap();
+            step_id
+        };
+        let reviewer_identity = lease_identity(
+            "agent-reviewer-pass-provenance",
+            "reviewer-pass-session",
+            "reviewer-pass-model",
+            "reviewer",
+        );
+        let reviewer_lease = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "role": "reviewer",
+                    "ttl_seconds": 3600.0,
+                    "identity": reviewer_identity.clone()
+                }),
+            )
+            .unwrap();
+        let handoff = serde_json::json!({
+            "task_id": task_id,
+            "from_role": "reviewer",
+            "outcome": "reviewer_pass",
+            "next_role": "adjudicator",
+            "next_action": "adjudicate current verdict",
+            "reason": "review passed",
+            "independence_requirement": "required",
+            "request_id": "handoff-reviewer-pass-provenance-1",
+            "step_id": source_step_id,
+            "report_request_id": "review-report-1",
+            "evidence_path": "docs/evidence/reviewer-pass.json",
+            "evidence_hash": "sha256:reviewer-pass",
+            "identity": reviewer_identity.clone(),
+            "lease_token": reviewer_lease["token"],
+            "fencing_counter": reviewer_lease["fencing_counter"]
+        });
+
+        let missing_verdict = store
+            .handle_task_handoff(peer.clone(), &handoff)
+            .expect_err("没有 Verdict Ledger 时 reviewer_pass 必须 fail-closed");
+        assert_eq!(missing_verdict.code, "E_HANDOFF_VERDICT_REQUIRED");
+        {
+            let conn = store.conn.lock().unwrap();
+            let handoff_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM task_events
+                     WHERE task_id=?1 AND reason_code='handoff_structured'",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(handoff_count, 0, "拒绝必须不留下部分 handoff");
+        }
+
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO task_verdict_events
+                 (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                  phase, step_id, snapshot_id, view_manifest_hash, reviewer_identity,
+                  findings, overall, attestation, submitted_at, workspace_id)
+                 VALUES ('V-REVIEWER-PASS-1', ?1, 'TC-PASS', 1, 'sha256:task',
+                         'blind_first_pass', ?2, 'snapshot-pass-1', 'manifest-pass-1',
+                         ?3, '[]', 'pass', 'attested', ?4, 1)",
+                params![
+                    task_id,
+                    source_step_id,
+                    serde_json::json!({"identity": reviewer_identity}).to_string(),
+                    now_ts(),
+                ],
+            )
+            .unwrap();
+        }
+        let accepted = store
+            .handle_task_handoff(peer, &handoff)
+            .expect("真实同 task pass verdict 应允许 reviewer_pass handoff");
+        assert_eq!(accepted["status"], "review");
+
+        let conn = store.conn.lock().unwrap();
+        let envelope: Value = conn
+            .query_row(
+                "SELECT reason FROM task_events
+                 WHERE task_id=?1 AND reason_code='handoff_structured'
+                 ORDER BY event_id DESC LIMIT 1",
+                params![task_id],
+                |row| {
+                    let raw: String = row.get(0)?;
+                    Ok(serde_json::from_str(&raw).unwrap())
+                },
+            )
+            .unwrap();
+        assert_eq!(envelope["source_verdict_id"], "V-REVIEWER-PASS-1");
+        assert_eq!(envelope["snapshot_id"], "snapshot-pass-1");
+        assert_eq!(envelope["view_manifest_hash"], "manifest-pass-1");
+        let projected_snapshot: String = conn
+            .query_row(
+                "SELECT snapshot_id FROM task_events
+                 WHERE task_id=?1 AND reason_code='handoff_structured'
+                 ORDER BY event_id DESC LIMIT 1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(projected_snapshot, "snapshot-pass-1");
+    }

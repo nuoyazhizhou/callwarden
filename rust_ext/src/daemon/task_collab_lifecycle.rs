@@ -1197,6 +1197,126 @@ impl TaskCollabStore {
             }
         }
 
+        // Reviewer PASS 不能仅凭 handoff envelope 进入 Adjudicator 阶段：
+        // Verdict Ledger 是 review 结论的唯一权威来源，必须先存在同 task、
+        // 同 source step 的真实 pass verdict，并带完整 review snapshot / view
+        // manifest / workspace / reviewer identity provenance。此校验必须发生在
+        // handoff ledger 写入前，避免留下“PASS handoff + verdicts=[]”的半状态。
+        let reviewer_pass_provenance: Option<(String, String, String)> =
+            if outcome == "reviewer_pass" {
+                if current_status != "review" {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_REVIEW_STATE_REQUIRED",
+                        "reviewer_pass 仅允许从 review 状态提交",
+                    ));
+                }
+                let source_step_id = step_id.as_deref().ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "E_HANDOFF_STEP_REQUIRED",
+                        "reviewer_pass 必须绑定 source step",
+                    )
+                })?;
+                let verdict: Option<(String, String, String, String, Option<i64>, String)> = tx
+                    .query_row(
+                        "SELECT verdict_id, step_id, snapshot_id, view_manifest_hash,
+                                workspace_id, reviewer_identity
+                         FROM task_verdict_events
+                         WHERE task_id = ?1 AND overall = 'pass'
+                         ORDER BY id DESC LIMIT 1",
+                        params![task_id],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!(
+                            "读取 reviewer pass verdict provenance 失败: {}",
+                            e
+                        ))
+                    })?;
+                let Some((verdict_id, verdict_step_id, snapshot_id, manifest_hash, verdict_workspace, reviewer_raw)) = verdict else {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_VERDICT_REQUIRED",
+                        "reviewer_pass 必须先通过 verdict.submit 持久化同 task 的 pass Verdict Ledger",
+                    ));
+                };
+                if verdict_step_id.trim() != source_step_id
+                    || snapshot_id.trim().is_empty()
+                    || manifest_hash.trim().is_empty()
+                {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH",
+                        "reviewer_pass 的 verdict 必须绑定同 source step、非空 snapshot_id 和 view_manifest_hash",
+                    ));
+                }
+                let task_workspace_id: Option<i64> = tx
+                    .query_row(
+                        "SELECT workspace_id FROM task_workspace_bindings WHERE task_id = ?1",
+                        params![task_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!(
+                            "读取 reviewer pass task workspace 失败: {}",
+                            e
+                        ))
+                    })?;
+                if task_workspace_id.is_none() || verdict_workspace != task_workspace_id {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH",
+                        "reviewer_pass 的 verdict workspace_id 与 task workspace binding 不一致",
+                    ));
+                }
+                let reviewer_value = serde_json::from_str::<Value>(&reviewer_raw).map_err(|_| {
+                    DaemonRpcError::new(
+                        "E_HANDOFF_VERDICT_PROVENANCE_INVALID",
+                        "reviewer_pass 的 verdict reviewer_identity 不是有效 JSON",
+                    )
+                })?;
+                let verdict_identity = reviewer_value
+                    .get("identity")
+                    .unwrap_or(&reviewer_value);
+                let identity_matches = ["agent_id", "session_id", "model_id"]
+                    .into_iter()
+                    .all(|field| {
+                        verdict_identity
+                            .get(field)
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| {
+                                !value.trim().is_empty()
+                                    && value
+                                        == match field {
+                                            "agent_id" => identity.agent_id.as_str(),
+                                            "session_id" => identity.session_id.as_str(),
+                                            "model_id" => identity.model_id.as_str(),
+                                            _ => unreachable!(),
+                                        }
+                            })
+                    });
+                let verdict_role_ok = verdict_identity
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .is_none_or(|role| matches!(role, "reviewer" | "independent_reviewer"));
+                if !identity_matches || !verdict_role_ok {
+                    return Err(DaemonRpcError::new(
+                        "E_HANDOFF_VERDICT_IDENTITY_MISMATCH",
+                        "reviewer_pass 的 verdict reviewer identity 与当前 handoff identity 不一致",
+                    ));
+                }
+                Some((verdict_id, snapshot_id, manifest_hash))
+            } else {
+                None
+            };
+
         // Reviewer BLOCKED / Adjudicator RETURNED 都是同一主任务上的治理回复：
         // 从唯一 Verdict Ledger 读取 source verdict/findings，并在本事务中准备
         // 一个 provenance-bound fix_defect。不得创建 child task，也不得修改被审
@@ -1546,6 +1666,20 @@ impl TaskCollabStore {
             );
             envelope.insert("source_findings".to_string(), source_findings.clone());
         }
+        if let Some((verdict_id, snapshot_id, manifest_hash)) = &reviewer_pass_provenance {
+            envelope.insert(
+                "source_verdict_id".to_string(),
+                Value::String(verdict_id.clone()),
+            );
+            envelope.insert(
+                "snapshot_id".to_string(),
+                Value::String(snapshot_id.clone()),
+            );
+            envelope.insert(
+                "view_manifest_hash".to_string(),
+                Value::String(manifest_hash.clone()),
+            );
+        }
         let envelope_value = Value::Object(envelope);
         let envelope_json = serde_json::to_string(&envelope_value)
             .map_err(|e| DaemonRpcError::internal_error(format!("序列化 handoff 失败: {}", e)))?;
@@ -1596,8 +1730,8 @@ impl TaskCollabStore {
             "INSERT INTO task_events
              (task_id, from_status, to_status, reason_code, reason, actor_identity,
               agent_session_id, role, monotonic_seq, authoritative_timestamp,
-              evidence_path, evidence_hash)
-             VALUES (?1, ?2, ?2, 'handoff_structured', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              evidence_path, evidence_hash, snapshot_id)
+             VALUES (?1, ?2, ?2, 'handoff_structured', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 task_id,
                 current_status,
@@ -1608,7 +1742,11 @@ impl TaskCollabStore {
                 seq,
                 ts,
                 evidence_path,
-                evidence_hash
+                evidence_hash,
+                reviewer_pass_provenance
+                    .as_ref()
+                    .map(|(_, snapshot_id, _)| snapshot_id.as_str())
+                    .unwrap_or("")
             ],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("追加 handoff ledger 失败: {}", e)))?;
