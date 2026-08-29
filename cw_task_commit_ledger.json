@@ -1939,5 +1939,12 @@
   "status": "new_in_master",
   "scope": "adjudicator_returned → provenance-bound Executor fix_defect；原子重开任务、清理旧 assignment、排入唯一 Executor；next_action remediation-first projection；回放与 assignment 回归测试；reviewer evidence",
   "note": "message 内嵌 task_id；focused route test 1 passed、next_action tests 20 passed；task_collab 批次 97 passed，保留 3 个既有无关 baseline failures；未修改 T-504 历史 verdict/evidence，未处理 P0-L identity policy"
+ },
+ "t1788016089952_reviewed_provenance_fix_20260829": {
+  "task_id": "T-1788016089952-1647e128",
+  "commit_id": "025f610342f455b1cfd211c458e6479a4a4b47da",
+  "status": "new_in_master",
+  "scope": "reviewer BLOCKED remediation provenance：同 task verdict/handoff/outcome/source step/workspace/snapshot/manifest/identity 校验；review projection fail-closed；task-level missing snapshot negative regression；evidence",
+  "note": "message 内嵌 task_id；next_action 20/20、inbound_handoff 8/8、task-level/adjudicator-returned/multi-revision focused tests 1/1；证据 deliverables/software-company/reviewer_blocked_provenance_remediation_evidence.md hash=sha256:756731D98AAB597133C9682752E3A0E37BC1D261E95439849A97FF693C5F50BD；原任务历史 verdict/evidence 未改写，T-504/P0-L 未纳入"
  }
 }
