@@ -1962,5 +1962,13 @@
   "scope": "reviewer_pass handoff 前置 Verdict Ledger provenance 门禁；同 task/step/workspace、snapshot/view manifest、reviewer identity 校验；source verdict/snapshot 写入 handoff envelope/event；缺 verdict 零部分提交回归测试",
   "note": "message 内嵌 task_id；focused regression 1 passed；未生成/修改 Reviewer verdict，未修改历史 task/evidence，未执行 apply/close",
   "evidence_commit_id": "03b674c6397917fbed953ad78ecbf9aae08ae6a9"
+ },
+ "t1788045499955_reviewer_pass_identity_provenance_20260830": {
+  "task_id": "T-1788045499955-a314fad0",
+  "commit_id": "d685f31a99faa7b80ec2246cfdf35cabe44d1ae1",
+  "evidence_commit_id": "40499880dec3b41f42814e599ae5e723b59628d9",
+  "status": "new_in_master",
+  "scope": "reviewer_pass 完整 reviewer identity 校验（role、agent_id、agent_instance_id、session_id、model_id）及 provenance 负矩阵测试；提交后官方 runtime/live PID/hash/ping evidence",
+  "note": "message 内嵌 task_id；focused regression 1 passed；runtime 20260830-073205-d685f31a99fa-1e3639d2，daemon PID 41868，cw-daemon sha256=262a9f53fcbc3c6d79022de068df2b9acd59779fe280523c112b63fb28859f07，ping/smoke exit_code=0；未生成/修改 Reviewer verdict，未修改源任务历史，未执行 apply/close；证据文件 hash=sha256:9C1075B2CD0467B1DC67FDB389619DDB4755FDF597E1E400FEECF328DC3B14BC"
  }
 }
