@@ -208,6 +208,7 @@ def register(mcp: FastMCP) -> None:
                        fencing_counter: int = 0,
                        identity_role: str = "reviewer",
                        identity_agent_id: str = "",
+                       identity_agent_instance_id: str = "",
                        identity_session_id: str = "",
                        identity_model_id: str = "",
                        request_id: str = "") -> dict:
@@ -242,6 +243,7 @@ def register(mcp: FastMCP) -> None:
             fencing_counter: 当前 fencing counter（受保护写必填）
             identity_role: 授权身份 role（reviewer/independent_reviewer）
             identity_agent_id: 授权身份 agent_id（必填）
+            identity_agent_instance_id: 授权身份 agent_instance_id（独立 Reviewer 必填）
             identity_session_id: 授权身份 session_id（必填）
             identity_model_id: 授权身份 model_id（必填）
             request_id: 幂等 request_id（可选，缺省 daemon client 生成 uuid）
@@ -250,7 +252,29 @@ def register(mcp: FastMCP) -> None:
             {"success": True, "verdict_id": ..., "event_id": ...}
             或 {"success": False, "error": {code, message}}
         """
-        return _route('verdict.submit', {"task_id": task_id, "step_id": step_id, "contract_id": contract_id, "contract_revision": contract_revision, "contract_hash": contract_hash, "role_contract_id": role_contract_id, "role_contract_revision": role_contract_revision, "role_contract_hash": role_contract_hash, "phase": phase, "overall": overall, "clause_results": clause_results, "findings": findings, "reviewer_identity": reviewer_identity, "view_manifest_hash": view_manifest_hash, "snapshot_id": snapshot_id, "attestation": attestation, "amendment_ref": amendment_ref, "verdict_id": verdict_id, "lease_token": lease_token, "fencing_counter": fencing_counter, "identity_role": identity_role, "identity_agent_id": identity_agent_id, "identity_session_id": identity_session_id, "identity_model_id": identity_model_id, "request_id": request_id}, 'GOVERNANCE_WRITE')
+        def _json_array(value: str, field: str) -> list:
+            if value is None or value == "":
+                return []
+            if isinstance(value, list):
+                return value
+            try:
+                parsed = json.loads(value)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError(f"{field} 必须是 JSON array") from exc
+            if not isinstance(parsed, list):
+                raise ValueError(f"{field} 必须是 JSON array")
+            return parsed
+
+        # daemon parse_action_identity 只接受结构化 identity；保留 MCP 的
+        # 扁平参数作为兼容输入，但在 wire 上统一组装完整 provenance。
+        identity = {
+            "agent_id": identity_agent_id,
+            "agent_instance_id": identity_agent_instance_id,
+            "session_id": identity_session_id,
+            "model_id": identity_model_id,
+            "role": identity_role,
+        }
+        return _route('verdict.submit', {"task_id": task_id, "step_id": step_id, "contract_id": contract_id, "contract_revision": contract_revision, "contract_hash": contract_hash, "role_contract_id": role_contract_id, "role_contract_revision": role_contract_revision, "role_contract_hash": role_contract_hash, "phase": phase, "overall": overall, "clause_results": _json_array(clause_results, "clause_results"), "findings": _json_array(findings, "findings"), "reviewer_identity": reviewer_identity, "view_manifest_hash": view_manifest_hash, "snapshot_id": snapshot_id, "attestation": attestation, "amendment_ref": amendment_ref, "verdict_id": verdict_id, "lease_token": lease_token, "fencing_counter": fencing_counter, "identity": identity, "request_id": request_id}, 'GOVERNANCE_WRITE')
 
     @mcp.tool()
     def append_evidence(task_id: str, step_id: str,
