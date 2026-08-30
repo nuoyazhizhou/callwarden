@@ -485,10 +485,34 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let build_context_hash = get_str_param_or(params, "build_context_hash", "");
-        let snapshot_id = get_str_param(params, "snapshot_id").map(|s| s.to_string());
 
         // ACL 检查（workspace 必须属于 peer）
         let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+
+        // snapshot identity is owned by workspace.register.  Callers may repeat
+        // that identity explicitly, but may not publish a different snapshot for
+        // the same registered workspace.  When omitted, inherit the registered
+        // identity so task.report/verdict.submit can bind to a real authority
+        // snapshot without requiring clients to reimplement the hash formula.
+        let requested_snapshot_id = get_str_param(params, "snapshot_id")
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let registered_snapshot_id = workspace
+            .get("snapshot_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let snapshot_id = match (requested_snapshot_id, registered_snapshot_id) {
+            (Some(requested), Some(registered)) if requested != registered => {
+                return Err(DaemonRpcError::invalid_params(format!(
+                    "snapshot_id 与 workspace.register 的权威 snapshot_id 不一致: requested={}, registered={}",
+                    requested, registered
+                )));
+            }
+            (Some(requested), _) => Some(requested.to_string()),
+            (None, Some(registered)) => Some(registered.to_string()),
+            (None, None) => None,
+        };
 
         // W1-4-FIX：registry ROWID 仅作 fallback 主键（真实过滤 id 见下方
         // 真相源解析）。P0-2 整改要求提取数值 workspace_id 传入
@@ -563,7 +587,7 @@ impl DaemonStateExt for SnapshotDaemonState {
                 &db_path,
                 workspace_id_num,
                 &build_context_hash,
-                snapshot_id,
+                snapshot_id.clone(),
             )
         }));
         let (generation, symbol_count, call_count) = match publish_outcome {
@@ -591,6 +615,10 @@ impl DaemonStateExt for SnapshotDaemonState {
         m.insert(
             "workspace_instance_id".into(),
             Value::String(workspace_instance_id.to_string()),
+        );
+        m.insert(
+            "snapshot_id".into(),
+            snapshot_id.map(Value::String).unwrap_or(Value::Null),
         );
         Ok(Value::Object(m))
     }

@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import socket
+import subprocess
 import sys
 import time
 import urllib.error
@@ -940,7 +941,7 @@ class UnixDaemonRpcClient:
         return parse_response(response)
 
     def publish_snapshot(self, workspace_instance_id: str, db_path: str,
-                         build_context_hash: str = "") -> Any:
+                         build_context_hash: str = "", snapshot_id: str = "") -> Any:
         """发布快照给 daemon（SRV-006：checkpoint authority 已下沉 Rust daemon）。
 
         原实现为本地 sqlite3 connect + PASSIVE checkpoint（C4/S8 双保险）；
@@ -958,6 +959,7 @@ class UnixDaemonRpcClient:
             "workspace_instance_id": workspace_instance_id,
             "db_path": os.path.abspath(db_path),
             "build_context_hash": build_context_hash,
+            "snapshot_id": snapshot_id,
         })
         if not isinstance(payload, dict):
             raise RuntimeError(f"publish_snapshot: daemon 返回非对象结果 {payload!r}")
@@ -966,6 +968,7 @@ class UnixDaemonRpcClient:
             "workspace_instance_id": workspace_instance_id,
             "build_context_hash": build_context_hash,
             "db_path": effective_db_path,
+            "snapshot_id": snapshot_id,
         })
 
 
@@ -1004,6 +1007,31 @@ def _norm_root(root_path: str) -> str:
     return normalized
 
 
+def _workspace_snapshot_metadata(project_root: str) -> Dict[str, str]:
+    """读取注册 workspace 所需的稳定 Git provenance。
+
+    daemon 根据 remote/head/toolchain 生成权威 snapshot_id。客户端不能自行
+    生成或猜测该 ID；这里只把当前 checkout 的 Git 元数据传给 authority。
+    Git 不可用时保持空值，让 daemon 返回明确的无 snapshot 身份结果。
+    """
+    if not project_root:
+        return {}
+    try:
+        remote = subprocess.run(
+            ["git", "-C", project_root, "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+        head = subprocess.run(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+    except (OSError, ValueError):
+        return {}
+    if remote and head:
+        return {"git_remote_url": remote, "git_head_commit_sha": head}
+    return {}
+
+
 # ----------------------------------------------------------------------
 # DaemonClient
 # ----------------------------------------------------------------------
@@ -1032,6 +1060,7 @@ class DaemonClient:
         self._rpc = UnixDaemonRpcClient(socket_path or resolve_daemon_endpoint_for_authority())
         self._workspace_instance_id: Optional[str] = None
         self._remote_workspace_id: Optional[str] = None
+        self._remote_snapshot_id: Optional[str] = None
         self._remote_snapshot_ready = False
         self._project_root: Optional[str] = None
         # 路由统计
@@ -1061,6 +1090,7 @@ class DaemonClient:
         self._project_root = project_root
         self._workspace_instance_id = derive_workspace_instance_id(project_root)
         self._remote_workspace_id = None
+        self._remote_snapshot_id = None
         self._remote_snapshot_ready = False
         logger.debug(
             "DaemonClient 配置 workspace: root=%s id=%s",
@@ -1224,12 +1254,24 @@ class DaemonClient:
         try:
             if self._remote_workspace_id is None:
                 root = self._project_root or os.getcwd()
-                workspace = self._rpc.call("workspace.register", {
-                    "client_view_root": root,
-                })
+                register_params = {"client_view_root": root}
+                register_params.update(_workspace_snapshot_metadata(root))
+                workspace = self._rpc.call("workspace.register", register_params)
                 self._remote_workspace_id = workspace["workspace_instance_id"]
+                self._remote_snapshot_id = workspace.get("snapshot_id") or None
             if db_path and not self._remote_snapshot_ready:
-                self._rpc.publish_snapshot(self._remote_workspace_id, db_path)
+                published = self._rpc.publish_snapshot(
+                    self._remote_workspace_id,
+                    db_path,
+                    snapshot_id=self._remote_snapshot_id or "",
+                )
+                published_id = published.get("snapshot_id") if isinstance(published, dict) else None
+                if self._remote_snapshot_id and published_id != self._remote_snapshot_id:
+                    raise DaemonUnavailableError(
+                        "snapshot.publish 未返回与 workspace.register 一致的 snapshot_id",
+                        code="E_SNAPSHOT_ID_MISMATCH",
+                    )
+                self._remote_snapshot_id = published_id or self._remote_snapshot_id
                 self._remote_snapshot_ready = True
             return self._remote_workspace_id if self._remote_snapshot_ready else None
         except Exception:
@@ -1970,6 +2012,7 @@ class HttpDaemonRpcClient:
         """
         self._project_root = project_root
         self._remote_workspace_id = None
+        self._remote_snapshot_id = None
         self._remote_snapshot_ready = False
 
     def _ensure_remote_snapshot(self, db_path: Optional[str]) -> Optional[str]:
@@ -1987,20 +2030,30 @@ class HttpDaemonRpcClient:
             # cwd 作为 workspace authority；显式配置仍优先用于多项目客户端。
             from callwarden.config import PROJECT_ROOT
             root = self._project_root or PROJECT_ROOT
-            workspace = self.call("workspace.register", {
-                "client_view_root": root,
-            })
+            register_params = {"client_view_root": root}
+            if db_path:
+                register_params.update(_workspace_snapshot_metadata(root))
+            workspace = self.call("workspace.register", register_params)
             if not isinstance(workspace, dict) or "workspace_instance_id" not in workspace:
                 raise DaemonUnavailableError(
                     f"workspace.register 响应缺少 workspace_instance_id: {workspace!r}"
                 )
             self._remote_workspace_id = workspace["workspace_instance_id"]
+            self._remote_snapshot_id = workspace.get("snapshot_id") or None
         if db_path and not self._remote_snapshot_ready:
-            self.call("snapshot.publish", {
+            publish_result = self.call("snapshot.publish", {
                 "workspace_instance_id": self._remote_workspace_id,
                 "build_context_hash": "",
                 "db_path": os.path.abspath(db_path),
+                "snapshot_id": self._remote_snapshot_id or "",
             })
+            published_id = publish_result.get("snapshot_id") if isinstance(publish_result, dict) else None
+            if self._remote_snapshot_id and published_id != self._remote_snapshot_id:
+                raise DaemonUnavailableError(
+                    "snapshot.publish 未返回与 workspace.register 一致的 snapshot_id",
+                    code="E_SNAPSHOT_ID_MISMATCH",
+                )
+            self._remote_snapshot_id = published_id or self._remote_snapshot_id
             self._remote_snapshot_ready = True
         return self._remote_workspace_id
 
@@ -3153,7 +3206,9 @@ class HttpDaemonRpcClient:
         Returns:
             daemon 行（workspace_id/workspace_instance_id/.../status=active）
         """
-        workspace = self.call("workspace.register", {"client_view_root": root_path})
+        register_params = {"client_view_root": root_path}
+        register_params.update(_workspace_snapshot_metadata(root_path))
+        workspace = self.call("workspace.register", register_params)
         if not isinstance(workspace, dict) or "workspace_instance_id" not in workspace:
             raise DaemonUnavailableError(
                 f"workspace.register 响应缺少 workspace_instance_id: {workspace!r}"
