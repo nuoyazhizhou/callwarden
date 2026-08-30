@@ -2037,5 +2037,13 @@
     "status": "new_in_master",
     "scope": "独立干净 worktree 归属验证、目标 commit 测试计数校准、隔离基线 runtime PID/hash/health/ping provenance",
     "note": "message 内嵌 task_id；目标 commit 2a6906d 干净 worktree 治理套件 17 tests = 16 passed/1 existing stale-claim baseline failure；临时锁竞争夹具 2 passed；最终 runtime 20260830-134337-2a6906d4883d-94fcc2a1，daemon PID 15460，sha256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过；证据 deliverables/software-company/clean-baseline-provenance-evidence.md hash=sha256:840A7ECDF163225B79D2BAFFB290CCD2F7AB23BB0EF7DC1B57A71ECD2A7AAEB6；未修改历史 verdict/evidence，未执行 apply/close"
+  },
+  "t1788077285594_snapshot_publish_workspace_binding_20260830": {
+    "task_id": "T-1788077285594-4eceeaac",
+    "commit_id": "9b5b6a70f4e1075dd98fce2d6902018b996188a8",
+    "evidence_commit_id": "9b5b6a70f4e1075dd98fce2d6902018b996188a8",
+    "status": "new_in_master",
+    "scope": "collab snapshot.publish 通过 daemon workspace.register 获取权威 workspace_instance_id/snapshot_id，传递 authority db_path，并对缺少权威 identity 的响应 fail-closed",
+    "note": "message 内嵌 task_id；focused CLI/verdict regression 7 passed；真实 daemon snapshot.publish generation=1、workspace_instance_id=2d16bcc4c6931e95、snapshot_id=aebf898bc6614594；证据 deliverables/software-company/snapshot-publish-binding-evidence.md hash=sha256:66A5D17AC0541EC32CAC5706E65D9D0E5A063055F1B8D1412534CF52D5161ACB；未提交 Reviewer verdict、未修改历史 task/evidence、未执行 apply/close"
   }
 }
