@@ -1031,6 +1031,17 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("role_worker.status"))
         }
     }
+    fn handle_role_worker_rotate(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_role_worker_rotate(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("role_worker.rotate"))
+        }
+    }
     fn handle_task_create(
         &mut self,
         peer: PeerCredential,
@@ -1202,6 +1213,19 @@ pub trait DaemonStateExt {
             store.handle_p0l_identity_policy_repair(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.p0l_identity_policy_repair"))
+        }
+    }
+    fn handle_p0l_identity_policy_bootstrap_repair(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_p0l_identity_policy_bootstrap_repair(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.p0l_identity_policy_bootstrap_repair",
+            ))
         }
     }
     fn handle_task_handoff(
@@ -1391,8 +1415,8 @@ pub trait DaemonStateExt {
                 }
                 // P0-L R3：fail-closed 路由一致性。policy 未决（unresolved）或声明了未知
                 // policy 时，机器可执行路由不得与 blocked 状态矛盾（禁止输出无条件
-                // claim_current_step）；投影统一降级为诊断动作并把 reason 同时写入
-                // canonical blocking_reasons 与兼容 blocking_conditions。
+                // claim_current_step）；未决 policy 指向 daemon 自举修复，而不是把用户
+                // 当成 Contract 技术维护者。
                 // task.claim 的同一事务门禁保留为权威第二道防线。
                 let blocked_reason: Option<String> = match &policy_state {
                     TaskContractPolicyState::Unresolved => Some(
@@ -1416,7 +1440,7 @@ pub trait DaemonStateExt {
                     );
                     object.insert(
                         "next_action".to_string(),
-                        Value::String("resolve_identity_policy".to_string()),
+                        Value::String("system_repair_required".to_string()),
                     );
                     object.insert("action".to_string(), Value::String("BLOCKED".to_string()));
                     object.insert("decision".to_string(), Value::String("BLOCKED".to_string()));
@@ -1453,7 +1477,7 @@ pub trait DaemonStateExt {
                         );
                         routing.insert(
                             "next_action".to_string(),
-                            Value::String("resolve_identity_policy".to_string()),
+                            Value::String("system_repair_required".to_string()),
                         );
                         routing.insert(
                             "reason".to_string(),
@@ -2120,6 +2144,8 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.remediation.create",
     "task.p0l_reviewer_block_repair",
     "task.p0l_identity_policy_repair",
+    "task.p0l_identity_policy_bootstrap_repair",
+    "role_worker.rotate",
     "task.step.bind_role_contract",
     "task.step.resolve",
     "task.steps.bootstrap_legacy",
@@ -2790,6 +2816,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "agent.register" => state.handle_agent_register(peer, params),
         "agent.heartbeat" => state.handle_agent_heartbeat(peer, params),
         "role_worker.status" => state.handle_role_worker_status(peer, params),
+        "role_worker.rotate" => state.handle_role_worker_rotate(peer, params),
         "task.create" => state.handle_task_create(peer, params),
         "task.claim" => state.handle_task_claim(peer, params),
         "task.assignment.heartbeat" => state.handle_task_assignment_heartbeat(peer, params),
@@ -2801,6 +2828,9 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.p0l_reviewer_block_repair" => state.handle_p0l_reviewer_block_repair(peer, params),
         "task.p0l_identity_policy_repair" => {
             state.handle_p0l_identity_policy_repair(peer, params)
+        }
+        "task.p0l_identity_policy_bootstrap_repair" => {
+            state.handle_p0l_identity_policy_bootstrap_repair(peer, params)
         }
         "task.step.bind_role_contract" => state.handle_task_step_bind_role_contract(peer, params),
         "task.step.resolve" => state.handle_task_step_resolve(peer, params),
@@ -3845,6 +3875,8 @@ mod tests {
         assert!(is_protected_mutation("verdict.submit"));
         assert!(is_protected_mutation("task.p0l_reviewer_block_repair"));
         assert!(is_protected_mutation("task.p0l_identity_policy_repair"));
+        assert!(is_protected_mutation("task.p0l_identity_policy_bootstrap_repair"));
+        assert!(is_protected_mutation("role_worker.rotate"));
         assert!(is_protected_mutation("task.steps.bootstrap_legacy"));
         assert!(is_protected_mutation("task.apply"));
         assert!(is_protected_mutation("task.reconcile"));
@@ -4048,7 +4080,7 @@ mod tests {
 
     // ---- P0-L R3：fail-closed 路由一致性（unresolved / 未知 policy 的机器投影）----
     // 负矩阵：policy 未决或声明了未知 policy 时，next_action 投影不得与 blocked
-    // 状态矛盾——必须统一降级为 resolve_identity_policy（BLOCKED，next_role=adjudicator），
+    // 状态矛盾——必须统一降级为 system_repair_required（BLOCKED，next_role=adjudicator），
     // reason 同时写入 blocking_reasons 与 blocking_conditions，并附 claim_requirements.blocked。
     #[test]
     fn test_task_next_action_unresolved_or_unknown_policy_projects_machine_blocked() {
@@ -4122,7 +4154,7 @@ mod tests {
             let result = &response["result"];
             assert_eq!(
                 result["next_action"],
-                json!("resolve_identity_policy"),
+                json!("system_repair_required"),
                 "[{scenario}] blocked 任务不得输出可执行 claim 动作"
             );
             assert_eq!(
@@ -4142,7 +4174,7 @@ mod tests {
             );
             assert_eq!(
                 result["routing"]["next_action"],
-                json!("resolve_identity_policy"),
+                json!("system_repair_required"),
                 "[{scenario}] routing.next_action 不得保留过期 claim_current_step"
             );
             assert_eq!(

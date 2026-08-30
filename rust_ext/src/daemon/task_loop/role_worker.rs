@@ -10,7 +10,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 
 use crate::canonicalize::sha256_hex;
-use crate::daemon::dispatch::DaemonRpcError;
+use crate::daemon::dispatch::{DaemonRpcError, PeerCredential};
+use crate::daemon::task_collab::TaskCollabStore;
+use crate::daemon::task_loop::operation_store::{DedupeOutcome, LedgerProvenance, OperationStore};
 
 pub const ERR_AUTH_REQUIRED: &str = "E_ROLE_WORKER_AUTH_REQUIRED";
 pub const ERR_CREDENTIAL_INVALID: &str = "E_ROLE_WORKER_CREDENTIAL_INVALID";
@@ -20,6 +22,19 @@ pub const ERR_SEPARATION: &str = "E_ROLE_WORKER_SEPARATION_VIOLATION";
 pub const ERR_RUNTIME_SECRET: &str = "E_RUNTIME_PROVENANCE_SECRET_FORBIDDEN";
 pub const ERR_WORKER_NOT_FOUND: &str = "E_ROLE_WORKER_NOT_FOUND";
 pub const ERR_WORKER_REVOKED: &str = "E_ROLE_WORKER_REVOKED";
+pub const ERR_ROTATE_PARAM_NOT_ALLOWED: &str = "E_ROLE_WORKER_ROTATE_PARAM_NOT_ALLOWED";
+
+const ROLE_WORKER_ROTATE_ALLOWED_KEYS: &[&str] = &[
+    "request_id",
+    "workspace_instance_id",
+    "workspace_id",
+    "role_worker_id",
+    "new_role_instance_id",
+    "role_session_id",
+    "rotation_mode",
+    "reason_code",
+    "runtime",
+];
 
 // ===== P0-L：Task Contract identity policy（typed 解析，fail-closed）=====
 
@@ -244,6 +259,354 @@ pub fn enroll_role_worker(
         "credential_delivery": "response_once",
         "recorded_at": ts,
     }))
+}
+
+struct RoleWorkerRotateRequest {
+    workspace_instance_id: String,
+    workspace_id: i64,
+    role_worker_id: String,
+    new_role_instance_id: String,
+    role_session_id: String,
+    request_id: String,
+    rotation_mode: String,
+    reason_code: String,
+    runtime: Value,
+}
+
+fn parse_role_worker_rotate_request(
+    params: &Value,
+) -> Result<RoleWorkerRotateRequest, DaemonRpcError> {
+    let object = params.as_object().ok_or_else(|| {
+        DaemonRpcError::invalid_params("role_worker.rotate 参数必须是 JSON object")
+    })?;
+    if let Some(key) = object
+        .keys()
+        .find(|key| !ROLE_WORKER_ROTATE_ALLOWED_KEYS.contains(&key.as_str()))
+    {
+        return Err(DaemonRpcError::new(
+            ERR_ROTATE_PARAM_NOT_ALLOWED,
+            format!("role_worker.rotate 不接受未声明字段 {key}"),
+        ));
+    }
+    let workspace_instance_id = non_empty(object, "workspace_instance_id")?;
+    let workspace_id = object
+        .get("workspace_id")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            DaemonRpcError::invalid_params("role_worker.rotate 必须携带 workspace_id > 0")
+        })?;
+    let role_worker_id = non_empty(object, "role_worker_id")?;
+    let new_role_instance_id = non_empty(object, "new_role_instance_id")?;
+    let role_session_id = non_empty(object, "role_session_id")?;
+    let request_id = non_empty(object, "request_id")?;
+    let rotation_mode = non_empty(object, "rotation_mode")?;
+    if rotation_mode != "owner_recovery" {
+        return Err(DaemonRpcError::new(
+            "E_ROLE_WORKER_ROTATION_MODE_INVALID",
+            "role_worker.rotate 只允许 rotation_mode=owner_recovery",
+        ));
+    }
+    let reason_code = object
+        .get("reason_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("credential_recovery");
+    if reason_code.len() > 80
+        || !reason_code
+            .chars()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '.'))
+    {
+        return Err(DaemonRpcError::new(
+            ERR_RUNTIME_SECRET,
+            "role_worker.rotate reason_code 必须是长度 ≤80 的无秘密 ASCII code",
+        ));
+    }
+    let runtime = object.get("runtime").cloned().unwrap_or_else(|| json!({}));
+    if !runtime.is_object() || runtime_contains_secret(&runtime) {
+        return Err(DaemonRpcError::new(
+            ERR_RUNTIME_SECRET,
+            "rotation runtime 必须为无秘密 JSON object",
+        ));
+    }
+    Ok(RoleWorkerRotateRequest {
+        workspace_instance_id,
+        workspace_id,
+        role_worker_id,
+        new_role_instance_id,
+        role_session_id,
+        request_id,
+        rotation_mode,
+        reason_code: reason_code.to_string(),
+        runtime,
+    })
+}
+
+fn authorize_role_worker_rotate(
+    tx: &Transaction<'_>,
+    owner_key: &str,
+    request: &RoleWorkerRotateRequest,
+) -> Result<String, DaemonRpcError> {
+    let workspace_id = request.workspace_id;
+    let workspace_exists: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE id=?1",
+            [workspace_id],
+            |row| row.get::<_, i64>(0).map(|value| value == 1),
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!("校验 role worker rotate workspace 失败: {error}"))
+        })?;
+    if !workspace_exists {
+        return Err(DaemonRpcError::new(
+            "E_ROLE_WORKER_WORKSPACE_NOT_FOUND",
+            "role_worker.rotate workspace 不存在",
+        ));
+    }
+
+    let worker: Option<(String, String, String)> = tx
+        .query_row(
+            "SELECT owner_key,role,status FROM role_workers WHERE role_worker_id=?1",
+            [&request.role_worker_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!("读取 role worker rotate 状态失败: {error}"))
+        })?;
+    let Some((worker_owner, role, status)) = worker else {
+        return Err(DaemonRpcError::new(ERR_WORKER_NOT_FOUND, "role worker 不存在"));
+    };
+    if worker_owner != owner_key {
+        return Err(DaemonRpcError::new(
+            ERR_CREDENTIAL_INVALID,
+            "role worker 不属于当前 authenticated local owner peer",
+        ));
+    }
+    if status != "active" {
+        return Err(DaemonRpcError::new(
+            ERR_WORKER_REVOKED,
+            "role worker 非 active；撤销 worker 不可通过 recovery 恢复",
+        ));
+    }
+    let active_instances: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM role_worker_instances WHERE role_worker_id=?1 AND owner_key=?2 AND status='active'",
+            params![request.role_worker_id, owner_key],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!("读取 role worker active instance 失败: {error}"))
+        })?;
+    if active_instances == 0 {
+        return Err(DaemonRpcError::new(
+            ERR_INSTANCE_INVALID,
+            "role worker 缺少 active instance；拒绝无锚点 recovery",
+        ));
+    }
+    Ok(role)
+}
+
+fn apply_role_worker_rotation(
+    tx: &Transaction<'_>,
+    owner_key: &str,
+    request: &RoleWorkerRotateRequest,
+    role: &str,
+) -> Result<(Value, Value), DaemonRpcError> {
+    let role_worker_id = &request.role_worker_id;
+    let new_role_instance_id = &request.new_role_instance_id;
+    let workspace_id = request.workspace_id;
+    let instance_exists: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM role_worker_instances WHERE role_instance_id=?1",
+            [&request.new_role_instance_id],
+            |row| row.get::<_, i64>(0).map(|value| value == 1),
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!("检查新 role worker instance 失败: {error}"))
+        })?;
+    if instance_exists {
+        return Err(DaemonRpcError::new(
+            "E_ROLE_WORKER_INSTANCE_EXISTS",
+            "new_role_instance_id 已存在；每次 recovery 必须使用新的 instance",
+        ));
+    }
+    let raw_credential = credential_material()?;
+    let credential_hash = sha256_hex(raw_credential.as_bytes());
+    let ts = now_secs();
+    tx.execute(
+        "UPDATE role_workers SET credential_hash=?1 WHERE role_worker_id=?2 AND owner_key=?3 AND status='active'",
+        params![credential_hash, role_worker_id, owner_key],
+    )
+    .map_err(|error| DaemonRpcError::internal_error(format!("轮换 role worker credential 失败: {error}")))?;
+    tx.execute(
+        "UPDATE role_worker_instances SET status='retired',retired_at=?1 WHERE role_worker_id=?2 AND owner_key=?3 AND status='active'",
+        params![ts, role_worker_id, owner_key],
+    )
+    .map_err(|error| DaemonRpcError::internal_error(format!("退役旧 role worker instances 失败: {error}")))?;
+    tx.execute(
+        "INSERT INTO role_worker_instances (role_instance_id,role_worker_id,owner_key,status,created_at,retired_at) VALUES (?1,?2,?3,'active',?4,0)",
+        params![new_role_instance_id, role_worker_id, owner_key, ts],
+    )
+    .map_err(|error| DaemonRpcError::internal_error(format!("创建新 role worker instance 失败: {error}")))?;
+
+    let provenance = json!({
+        "request_id": request.request_id.clone(),
+        "rotation_mode": request.rotation_mode.clone(),
+        "reason_code": request.reason_code,
+        "runtime": request.runtime.clone(),
+    });
+    tx.execute(
+        "INSERT INTO role_runtime_provenance (event_id,workspace_id,task_id,action_type,role_worker_id,role_instance_id,role_session_id,runtime_payload_json,recorded_at) VALUES (?1,?2,'','role_worker.rotate',?3,?4,?5,?6,?7)",
+        params![
+            event_id(
+                "RRP",
+                &format!("rotate:{owner_key}:{role_worker_id}:{}", request.request_id),
+            ),
+            workspace_id,
+            role_worker_id,
+            new_role_instance_id,
+            request.role_session_id,
+            serde_json::to_string(&provenance).map_err(|error| {
+                DaemonRpcError::internal_error(format!("序列化 role worker rotation provenance 失败: {error}"))
+            })?,
+            ts,
+        ],
+    )
+    .map_err(|error| DaemonRpcError::internal_error(format!("记录 role worker rotation provenance 失败: {error}")))?;
+
+    let public_response = json!({
+        "ok": true,
+        "role_worker_id": role_worker_id,
+        "role_instance_id": new_role_instance_id,
+        "role": role,
+        "status": "active",
+        "rotation_mode": request.rotation_mode,
+        "credential": raw_credential,
+        "credential_delivery": "response_once",
+        "request_id": request.request_id,
+        "recorded_at": ts,
+        "replayed": false,
+    });
+    let durable_response = json!({
+        "ok": true,
+        "role_worker_id": public_response["role_worker_id"],
+        "role_instance_id": public_response["role_instance_id"],
+        "role": public_response["role"],
+        "status": "active",
+        "rotation_mode": public_response["rotation_mode"],
+        "credential_delivery": "response_once",
+        "request_id": public_response["request_id"],
+        "recorded_at": ts,
+        "replayed": false,
+    });
+    Ok((public_response, durable_response))
+}
+
+/// Rotate an active Role Worker credential under the authenticated local owner
+/// peer.  The raw credential is returned to the caller only; the companion
+/// durable response intentionally omits it so the operation ledger can safely
+/// provide idempotent replay.
+pub fn rotate_role_worker(
+    tx: &Transaction<'_>,
+    owner_key: &str,
+    params: &Value,
+    workspace_id: i64,
+) -> Result<(Value, Value), DaemonRpcError> {
+    let request = parse_role_worker_rotate_request(params)?;
+    if request.workspace_id != workspace_id {
+        return Err(DaemonRpcError::invalid_params(
+            "role_worker.rotate workspace_id 参数不一致",
+        ));
+    }
+    let role = authorize_role_worker_rotate(tx, owner_key, &request)?;
+    apply_role_worker_rotation(tx, owner_key, &request, &role)
+}
+
+impl TaskCollabStore {
+    /// Owner-authorized recovery rotation.  The OS-authenticated transport peer
+    /// is the recovery authority; no old raw credential is required or accepted.
+    pub fn handle_role_worker_rotate(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let request = parse_role_worker_rotate_request(params)?;
+        let method = "role_worker.rotate";
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().map_err(|error| {
+            DaemonRpcError::internal_error(format!("开启 role worker rotation 事务失败: {error}"))
+        })?;
+        let role = authorize_role_worker_rotate(&tx, &peer.owner_key(), &request)?;
+        let (rules, canonical_params_hash) = match operation_store.dedupe(
+            &tx,
+            &request.workspace_instance_id,
+            method,
+            &request.request_id,
+            params,
+        )? {
+            DedupeOutcome::Replay {
+                response_or_error_json,
+            } => {
+                if let Some(error) = response_or_error_json.get("error") {
+                    return Err(DaemonRpcError::new(
+                        error.get("code").and_then(Value::as_str).unwrap_or("E_ROLE_WORKER_ROTATION_REPLAY_ERROR"),
+                        error.get("message").and_then(Value::as_str).unwrap_or("role worker rotation replay was rejected"),
+                    ));
+                }
+                let mut replay = response_or_error_json;
+                replay["replayed"] = Value::Bool(true);
+                return Ok(replay);
+            }
+            DedupeOutcome::FirstRequest {
+                rules,
+                canonical_params_hash,
+            } => (rules, canonical_params_hash),
+        };
+        let provenance = LedgerProvenance {
+            workspace_id: Some(request.workspace_id),
+            ..Default::default()
+        };
+        match apply_role_worker_rotation(&tx, &peer.owner_key(), &request, &role) {
+            Ok((public_response, durable_response)) => {
+                operation_store.record_result(
+                    &tx,
+                    &request.workspace_instance_id,
+                    method,
+                    &request.request_id,
+                    &rules,
+                    &canonical_params_hash,
+                    &provenance,
+                    &durable_response,
+                )?;
+                tx.commit().map_err(|error| {
+                    DaemonRpcError::internal_error(format!("提交 role worker rotation 事务失败: {error}"))
+                })?;
+                Ok(public_response)
+            }
+            Err(error) => {
+                let durable_error = json!({
+                    "error": {"code": error.code, "message": error.message}
+                });
+                operation_store.record_result(
+                    &tx,
+                    &request.workspace_instance_id,
+                    method,
+                    &request.request_id,
+                    &rules,
+                    &canonical_params_hash,
+                    &provenance,
+                    &durable_error,
+                )?;
+                tx.commit().map_err(|commit_error| {
+                    DaemonRpcError::internal_error(format!("提交 role worker rotation rejection 事务失败: {commit_error}"))
+                })?;
+                Err(error)
+            }
+        }
+    }
 }
 
 
@@ -650,4 +1013,3 @@ mod tests {
         assert!(policy_from_envelope_payload(r#"{"identity_policy": ""}"#).is_none());
     }
 }
-

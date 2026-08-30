@@ -26,9 +26,9 @@ use rusqlite::{params, Connection, Error as RusqliteError, OptionalExtension, Tr
     TransactionBehavior};
 use serde_json::{json, Map, Value};
 
+use super::assignment_queue::{self, AssignmentProjection};
 use super::clock::AuthoritativeClock;
 use super::dispatch::{DaemonRpcError, PeerCredential};
-use super::assignment_queue::{self, AssignmentProjection};
 use super::task_loop::operation_store::{
     DedupeOutcome, LedgerProvenance, OperationStore, ParamsRules,
 };
@@ -44,6 +44,7 @@ use super::task_loop::task_contract_bootstrap::{
 };
 use super::task_loop::task_contract_revise::{append_task_contract_revision, ContractReviseInput};
 use super::task_supersede::{validate_supersede_schema, verify_registered_identity};
+use task_collab_contract_repair::normalize_p0l_repair_envelope;
 
 use crate::canonicalize::sha256_hex;
 use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEMA_VERSION};
@@ -56,30 +57,30 @@ pub use task_collab_types::TaskCollabStore;
 mod task_collab_contract;
 #[path = "task_collab_contract_repair.rs"]
 mod task_collab_contract_repair;
-#[path = "task_collab_lease.rs"]
-mod task_collab_lease;
-#[path = "task_collab_lifecycle.rs"]
-mod task_collab_lifecycle;
-#[path = "task_collab_query.rs"]
-mod task_collab_query;
 #[path = "task_collab_evidence.rs"]
 mod task_collab_evidence;
-#[path = "task_collab_verdict.rs"]
-mod task_collab_verdict;
 #[path = "task_collab_governance.rs"]
 mod task_collab_governance;
 #[path = "task_collab_identity.rs"]
 mod task_collab_identity;
-#[path = "task_collab_lifecycle_ops.rs"]
-mod task_collab_lifecycle_ops;
+#[path = "task_collab_lease.rs"]
+mod task_collab_lease;
+#[path = "task_collab_lifecycle.rs"]
+mod task_collab_lifecycle;
 #[path = "task_collab_lifecycle_apply.rs"]
 mod task_collab_lifecycle_apply;
+#[path = "task_collab_lifecycle_ops.rs"]
+mod task_collab_lifecycle_ops;
 #[path = "task_collab_planning.rs"]
 mod task_collab_planning;
-#[path = "task_collab_symbol.rs"]
-mod task_collab_symbol;
+#[path = "task_collab_query.rs"]
+mod task_collab_query;
 #[path = "task_collab_shared.rs"]
 mod task_collab_shared;
+#[path = "task_collab_symbol.rs"]
+mod task_collab_symbol;
+#[path = "task_collab_verdict.rs"]
+mod task_collab_verdict;
 pub(crate) use task_collab_shared::*;
 
 // ============================================
@@ -658,6 +659,395 @@ fn enforce_role_worker_governance_write(
         "adjudicator",
     )?;
     Ok(auth)
+}
+
+/// P0-L pre-policy bootstrap authorization.  This is intentionally separate
+/// from normal `role_worker_auth`: a task whose contract has no parseable
+/// `identity_policy` cannot yet use the ordinary credential-gated path.
+///
+/// The transport peer is the owner authority, while the supplied worker,
+/// instance, and session identify the already-enrolled adjudicator that is
+/// allowed to perform this one fixed repair.  No raw credential is accepted,
+/// returned, or persisted by this route.
+fn verify_p0l_bootstrap_adjudicator(
+    tx: &Transaction<'_>,
+    peer: &PeerCredential,
+    role_worker_id: &str,
+    role_instance_id: &str,
+) -> Result<(), DaemonRpcError> {
+    let owner_key = peer.owner_key();
+    let role_status: Option<(String, String)> = tx
+        .query_row(
+            "SELECT role,status FROM role_workers WHERE role_worker_id=?1 AND owner_key=?2",
+            params![role_worker_id, owner_key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "读取 P0-L bootstrap adjudicator worker 失败: {error}"
+            ))
+        })?;
+    let Some((role, status)) = role_status else {
+        return Err(DaemonRpcError::new(
+            "E_P0L_BOOTSTRAP_ADJUDICATOR_REQUIRED",
+            "P0-L pre-policy bootstrap 需要当前 owner 的 registered adjudicator Role Worker",
+        ));
+    };
+    if role != "adjudicator" || status != "active" {
+        return Err(DaemonRpcError::new(
+            "E_P0L_BOOTSTRAP_ADJUDICATOR_REQUIRED",
+            "P0-L pre-policy bootstrap 只允许 active adjudicator Role Worker",
+        ));
+    }
+    let instance_active: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM role_worker_instances \
+             WHERE role_instance_id=?1 AND role_worker_id=?2 AND owner_key=?3 AND status='active'",
+            params![role_instance_id, role_worker_id, owner_key],
+            |row| row.get::<_, i64>(0).map(|value| value == 1),
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "读取 P0-L bootstrap adjudicator instance 失败: {error}"
+            ))
+        })?;
+    if !instance_active {
+        return Err(DaemonRpcError::new(
+            "E_P0L_BOOTSTRAP_ADJUDICATOR_INSTANCE_REQUIRED",
+            "P0-L pre-policy bootstrap 需要 active adjudicator Role Instance",
+        ));
+    }
+    Ok(())
+}
+
+fn p0l_bootstrap_safe_id(
+    params: &Map<String, Value>,
+    name: &str,
+) -> Result<String, DaemonRpcError> {
+    let value = params
+        .get(name)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_P0L_BOOTSTRAP_PARAM_REQUIRED",
+                format!("task.p0l_identity_policy_bootstrap_repair 缺少字段 {name}"),
+            )
+        })?;
+    if value.len() > 160
+        || !value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':'))
+    {
+        return Err(DaemonRpcError::new(
+            "E_P0L_BOOTSTRAP_PARAM_INVALID",
+            format!("task.p0l_identity_policy_bootstrap_repair 字段 {name} 必须是无秘密 opaque id"),
+        ));
+    }
+    Ok(value.to_string())
+}
+
+impl TaskCollabStore {
+    /// P0-L pre-policy bootstrap repair.  This is the narrowly-scoped escape
+    /// hatch that repairs the missing policy without asking the blocked task
+    /// to claim itself first.
+    pub fn handle_p0l_identity_policy_bootstrap_repair(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        const TASK_ID: &str = "T-1787801315246-e3e3a08c";
+        const REPAIR_CODE: &str = "p0l_identity_policy_v1";
+        let object = params.as_object().ok_or_else(|| {
+            DaemonRpcError::invalid_params(
+                "task.p0l_identity_policy_bootstrap_repair 参数必须是 JSON object",
+            )
+        })?;
+        const ALLOWED_KEYS: [&str; 8] = [
+            "task_id",
+            "request_id",
+            "workspace_instance_id",
+            "workspace_id",
+            "repair_code",
+            "role_worker_id",
+            "role_instance_id",
+            "role_session_id",
+        ];
+        if let Some(key) = object
+            .keys()
+            .find(|key| !ALLOWED_KEYS.contains(&key.as_str()))
+        {
+            return Err(DaemonRpcError::new(
+                "E_P0L_BOOTSTRAP_PARAM_NOT_ALLOWED",
+                format!("task.p0l_identity_policy_bootstrap_repair 不接受字段 {key}"),
+            ));
+        }
+        let task_id = p0l_bootstrap_safe_id(object, "task_id")?;
+        if task_id != TASK_ID {
+            return Err(DaemonRpcError::new(
+                "E_P0L_BOOTSTRAP_TASK_NOT_ALLOWED",
+                "P0-L pre-policy bootstrap 仅允许冻结的 P0-L task",
+            ));
+        }
+        let request_id = p0l_bootstrap_safe_id(object, "request_id")?;
+        let workspace_instance_id = p0l_bootstrap_safe_id(object, "workspace_instance_id")?;
+        let repair_code = p0l_bootstrap_safe_id(object, "repair_code")?;
+        if repair_code != REPAIR_CODE {
+            return Err(DaemonRpcError::new(
+                "E_P0L_BOOTSTRAP_CODE_INVALID",
+                "P0-L pre-policy bootstrap repair code 不匹配",
+            ));
+        }
+        let role_worker_id = p0l_bootstrap_safe_id(object, "role_worker_id")?;
+        let role_instance_id = p0l_bootstrap_safe_id(object, "role_instance_id")?;
+        let role_session_id = p0l_bootstrap_safe_id(object, "role_session_id")?;
+        let workspace_id = optional_workspace_id_param(params).ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_P0L_BOOTSTRAP_WORKSPACE_REQUIRED",
+                "P0-L pre-policy bootstrap 必须携带 workspace_id > 0",
+            )
+        })?;
+        let method = "task.p0l_identity_policy_bootstrap_repair";
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        // Authorization must run before any ledger lookup: a replay is not an
+        // authorization oracle for an untrusted owner/worker/instance.
+        let tx = conn.unchecked_transaction().map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "开启 P0-L pre-policy bootstrap 事务失败: {error}"
+            ))
+        })?;
+        let bound_workspace = task_bound_workspace_id(&tx, &task_id, Some(workspace_id))?;
+        let binding_instance: String = tx
+            .query_row(
+                "SELECT c.workspace_instance_id FROM task_workspace_bindings b \
+                 JOIN workspace_authority_captures c ON c.workspace_capture_id=b.workspace_capture_id \
+                 WHERE b.task_id=?1 AND b.workspace_id=?2",
+                params![task_id, bound_workspace],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!(
+                    "读取 P0-L bootstrap workspace authority 失败: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_P0L_BOOTSTRAP_AUTHORITY_UNAVAILABLE",
+                    "P0-L task 缺少可复核的 workspace authority capture",
+                )
+            })?;
+        if binding_instance != workspace_instance_id {
+            return Err(DaemonRpcError::new(
+                "E_WORKSPACE_AUTHORITY_MISMATCH",
+                "P0-L task binding workspace_instance_id 与 bootstrap 请求不一致",
+            ));
+        }
+        verify_p0l_bootstrap_adjudicator(
+            &tx,
+            &peer,
+            &role_worker_id,
+            &role_instance_id,
+        )?;
+        let (rules, canonical_params_hash) = match operation_store.dedupe(
+            &tx,
+            &workspace_instance_id,
+            method,
+            &request_id,
+            params,
+        )? {
+            DedupeOutcome::Replay {
+                response_or_error_json,
+            } => {
+                if let Some(error) = response_or_error_json.get("error") {
+                    return Err(DaemonRpcError::new(
+                        error
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .unwrap_or("E_P0L_BOOTSTRAP_REPLAY_ERROR"),
+                        error
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("P0-L pre-policy bootstrap replay was rejected"),
+                    ));
+                }
+                let mut replay = response_or_error_json;
+                if let Some(object) = replay.as_object_mut() {
+                    object.insert("replayed".to_string(), Value::Bool(true));
+                }
+                return Ok(replay);
+            }
+            DedupeOutcome::FirstRequest {
+                rules,
+                canonical_params_hash,
+            } => (rules, canonical_params_hash),
+        };
+        let provenance = LedgerProvenance {
+            workspace_id: Some(workspace_id),
+            task_id: Some(task_id.clone()),
+            ..Default::default()
+        };
+        macro_rules! reject {
+            ($code:expr, $message:expr) => {{
+                let error = DaemonRpcError::new($code, $message);
+                let body = json!({
+                    "error": {"code": error.code, "message": error.message}
+                });
+                let _ = operation_store.record_result(
+                    &tx,
+                    &workspace_instance_id,
+                    method,
+                    &request_id,
+                    &rules,
+                    &canonical_params_hash,
+                    &provenance,
+                    &body,
+                );
+                let _ = tx.commit();
+                return Err(error);
+            }};
+        }
+
+        let current: (String, i64, String, String) = match tx.query_row(
+            "SELECT contract_id,revision,contract_hash,envelope_payload \
+             FROM task_contract_revisions WHERE task_id=?1 ORDER BY revision DESC LIMIT 1",
+            [&task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ) {
+            Ok(value) => value,
+            Err(_) => reject!(
+                "E_P0L_BOOTSTRAP_CONTRACT_REQUIRED",
+                "P0-L task 缺少可追加的 Task Contract revision"
+            ),
+        };
+        let (contract_id, current_revision, current_hash, payload) = current;
+        if policy_from_envelope_payload(&payload).is_some() {
+            reject!(
+                "E_P0L_BOOTSTRAP_ALREADY_RESOLVED",
+                "P0-L 当前 Task Contract 已声明 identity_policy"
+            );
+        }
+        let prior_repair: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id=?1 AND reason_code='p0l_identity_policy_repaired'",
+                [&task_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!(
+                    "查询 P0-L pre-policy bootstrap ledger 失败: {error}"
+                ))
+            })?;
+        if prior_repair > 0 {
+            reject!(
+                "E_P0L_BOOTSTRAP_ALREADY_USED",
+                "P0-L pre-policy bootstrap repair exception 已经使用"
+            );
+        }
+        let envelope = normalize_p0l_repair_envelope(
+            &payload,
+            &contract_id,
+            current_revision + 1,
+            &current_hash,
+            &task_id,
+        )?;
+        append_task_contract_revision(
+            &tx,
+            &ContractReviseInput {
+                task_id: task_id.clone(),
+                envelope,
+                expected_previous_hash: current_hash.clone(),
+                created_by: role_worker_id.clone(),
+            },
+            bound_workspace,
+        )?;
+        let ts = task_now_ts();
+        let owner_key = peer.owner_key();
+        let audit_payload = json!({
+            "request_id": request_id,
+            "repair_code": REPAIR_CODE,
+            "mode": "pre_policy_bootstrap",
+            "role_worker_id": role_worker_id,
+            "role_instance_id": role_instance_id,
+            "role_session_id": role_session_id,
+        });
+        tx.execute(
+            "INSERT INTO role_runtime_provenance (event_id,workspace_id,task_id,action_type,role_worker_id,role_instance_id,role_session_id,runtime_payload_json,recorded_at) VALUES (?1,?2,?3,'task.p0l_identity_policy_bootstrap_repair',?4,?5,?6,?7,?8)",
+            params![
+                format!("RRP-{}", &sha256_hex(format!("{task_id}:{request_id}").as_bytes())[..24]),
+                bound_workspace,
+                task_id,
+                role_worker_id,
+                role_instance_id,
+                role_session_id,
+                serde_json::to_string(&audit_payload).map_err(|error| {
+                    DaemonRpcError::internal_error(format!(
+                        "序列化 P0-L bootstrap provenance 失败: {error}"
+                    ))
+                })?,
+                ts,
+            ],
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "记录 P0-L bootstrap provenance 失败: {error}"
+            ))
+        })?;
+        let reason = json!({
+            "request_id": request_id,
+            "repair_code": REPAIR_CODE,
+            "mode": "pre_policy_bootstrap",
+            "previous_revision": current_revision,
+            "previous_contract_hash": current_hash,
+            "new_revision": current_revision + 1,
+            "role_worker_id": role_worker_id,
+            "role_instance_id": role_instance_id,
+            "role_session_id": role_session_id,
+        })
+        .to_string();
+        Self::append_task_event(
+            &tx,
+            &task_id,
+            "in_progress",
+            "in_progress",
+            "p0l_identity_policy_repaired",
+            &reason,
+            &owner_key,
+            &role_session_id,
+            "adjudicator",
+            self.next_seq(),
+            ts,
+        )?;
+        let response = json!({
+            "ok": true,
+            "task_id": task_id,
+            "repair_code": REPAIR_CODE,
+            "policy": POLICY_ROLE_WORKER_V1,
+            "revision": current_revision + 1,
+            "request_id": request_id,
+            "mode": "pre_policy_bootstrap",
+            "replayed": false,
+        });
+        operation_store.record_result(
+            &tx,
+            &workspace_instance_id,
+            method,
+            &request_id,
+            &rules,
+            &canonical_params_hash,
+            &provenance,
+            &response,
+        )?;
+        tx.commit().map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "提交 P0-L pre-policy bootstrap 事务失败: {error}"
+            ))
+        })?;
+        Ok(response)
+    }
 }
 
 /// P0-L：读取任务当前（最新）Task Contract 的 identity policy。
@@ -1776,7 +2166,9 @@ impl TaskCollabStore {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|e| DaemonRpcError::internal_error(format!("查询初始 assignment 步骤失败: {e}")))?;
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询初始 assignment 步骤失败: {e}"))
+            })?;
         let initial_assignment_id = assignment_queue::queue_assignment(
             &tx,
             &task_id,
@@ -1888,13 +2280,14 @@ impl TaskCollabStore {
         );
         res.insert(
             "assignment_id".to_string(),
-            initial_assignment_id.map(Value::String).unwrap_or(Value::Null),
+            initial_assignment_id
+                .map(Value::String)
+                .unwrap_or(Value::Null),
         );
         let val = Value::Object(res);
         self.save_dedup(params, &val);
         Ok(val)
     }
-
 }
 #[cfg(test)]
 #[path = "task_collab_tests.rs"]
