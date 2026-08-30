@@ -33,16 +33,16 @@ therefore excluded from this evidence.
 Runtime refresh was executed from the same isolated worktree and target commit:
 
 ```text
-runtime evidence: C:\Users\wanpi\.callwarden\runtime\evidence\20260830-133611-2a6906d4883d-7842712c.json
+runtime evidence: C:\Users\wanpi\.callwarden\runtime\evidence\20260830-134337-2a6906d4883d-94fcc2a1.json
 runtime source HEAD: 2a6906d4883dbc102955179479a1bd7fdb92cff9
-daemon PID: 11432
+daemon PID: 15460
 daemon binary: C:\Users\wanpi\.callwarden\runtime\current\cw-daemon.exe
 daemon SHA-256: 324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2
 expected SHA-256: 324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2
 Python: C:\Python314\python.exe (3.14)
 transport: http
-health/ping: passed; returned PID 11432 and matching task DB fingerprint
+health/ping: passed; returned PID 15460 and matching task DB fingerprint
 ```
 
 The runtime evidence was generated after stopping the prior daemon instance;
-PID 11432 is the live instance verified immediately after refresh.
+PID 15460 is the live instance verified immediately after the final refresh.
