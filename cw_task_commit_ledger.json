@@ -2045,5 +2045,12 @@
     "status": "new_in_master",
     "scope": "collab snapshot.publish 通过 daemon workspace.register 获取权威 workspace_instance_id/snapshot_id，传递 authority db_path，并对缺少权威 identity 的响应 fail-closed",
     "note": "message 内嵌 task_id；focused CLI/verdict regression 7 passed；真实 daemon snapshot.publish generation=1、workspace_instance_id=2d16bcc4c6931e95、snapshot_id=aebf898bc6614594；证据 deliverables/software-company/snapshot-publish-binding-evidence.md hash=sha256:66A5D17AC0541EC32CAC5706E65D9D0E5A063055F1B8D1412534CF52D5161ACB；未提交 Reviewer verdict、未修改历史 task/evidence、未执行 apply/close"
+  },
+  "t1787801315246_role_worker_status_route_20260830": {
+    "task_id": "T-1787801315246-e3e3a08c",
+    "commit_id": "91268cdaef8ac847d8ead284c608047139f50b83",
+    "status": "new_in_master",
+    "scope": "修复 role_worker.status Rust daemon dispatch 路由；Python thin-client 将其标记为无需 snapshot 的 owner-scoped 只读 RPC；补充秘密字段脱敏、路由与 HTTP 参数透传回归测试",
+    "note": "message 内嵌 task_id；Rust focused test 1 passed、Python focused test 1 passed；runtime receipt 20260830-161421-f63a7f7e545e-0dabdf7d status=passed，live daemon PID 4240，binary sha256=90d657cc4198dcf3b76895e17408410916a1ec5695842baa61380334bd4503c4；Reviewer/Adjudicator role_worker.status 真实 HTTP round-trip 均返回 active 且无 credential/hash/runtime；证据 deliverables/software-company/T-1787801315246-e3e3a08c-role-worker-status-route-evidence.md sha256=F6AEA4FC02E3081B31189346D1C3659A51C9BBF39DD799261D9F23E652FCE23A；未读取/输出 raw credential、未直接写 SQLite、未执行 task mutation/apply/close、未导入 12 卡"
   }
 }
