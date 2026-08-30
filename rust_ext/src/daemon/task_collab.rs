@@ -97,8 +97,8 @@ const TASK_COLLAB_TABLES: [&str; 5] = [
 /// SQLite writer lock acquisition is the only retryable boundary for governance
 /// mutations.  Once an immediate transaction has been acquired, the caller
 /// owns the writer slot and must not replay a partially executed handler.
-const SQLITE_BUSY_RETRY_ATTEMPTS: usize = 3;
-const SQLITE_BUSY_RETRY_BACKOFF_MS: [u64; SQLITE_BUSY_RETRY_ATTEMPTS - 1] = [50, 150];
+const SQLITE_BUSY_RETRY_ATTEMPTS: usize = 5;
+const SQLITE_BUSY_RETRY_BACKOFF_MS: [u64; SQLITE_BUSY_RETRY_ATTEMPTS - 1] = [100, 300, 750, 1500];
 
 fn is_sqlite_busy(error: &RusqliteError) -> bool {
     matches!(
@@ -111,7 +111,7 @@ fn is_sqlite_busy(error: &RusqliteError) -> bool {
     )
 }
 
-/// Start a writer transaction with a bounded retry at the lock-acquisition
+/// Start a writer transaction with bounded retries at the lock-acquisition
 /// boundary.  This is deliberately not a generic handler retry: the callback
 /// has not run until `BEGIN IMMEDIATE` succeeds, so a retry cannot duplicate
 /// task events, verdicts, or ledger rows.

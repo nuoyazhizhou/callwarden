@@ -99,7 +99,7 @@ impl TaskCollabStore {
             }
         }
 
-        let tx = begin_immediate_with_retry(&conn, "handoff")?;
+        let tx = begin_immediate_with_retry(&conn, "report")?;
 
         // 校验 claim 所有者 (P1 修复: 只有 claim 对应的 agent 才能 report)
         let (claimed_actor, claimed_session) = self.get_task_claim_info(&tx, task_id);
@@ -1138,9 +1138,7 @@ impl TaskCollabStore {
         let owner_key = peer.owner_key();
         let ts = task_now_ts();
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| DaemonRpcError::internal_error(format!("开启事务失败: {}", e)))?;
+        let tx = begin_immediate_with_retry(&conn, "handoff")?;
         // handoff 是受保护 mutation：必须在同一事务内重新验证 source actor 的
         // active lease 与 fencing，不能仅凭 envelope 中的治理角色放行。
         self.validate_lease_for_mutation(
