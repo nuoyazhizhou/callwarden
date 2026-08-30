@@ -46,6 +46,14 @@ def create_mcp_server():
 
     mcp = FastMCP("callwarden", dependencies=["callwarden"])
 
+    # HTTP daemon 的 workspace identity 不能从 MCP 进程 cwd 推导：宿主会把
+    # MCP 进程放在 runtime 日志目录启动，cwd 因而不是当前项目。启动时把
+    # 包解析出的项目根显式交给 thin client；后续 workspace.register 返回的
+    # workspace_instance_id 才能作为唯一权威绑定键。
+    from .daemon_client import HttpDaemonRpcClient, is_http_transport_enabled
+    if is_http_transport_enabled():
+        HttpDaemonRpcClient.get_instance().configure_workspace(PROJECT_ROOT)
+
     from .tools import register_all
     register_all(mcp)
 

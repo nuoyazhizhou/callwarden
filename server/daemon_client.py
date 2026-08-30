@@ -1982,7 +1982,11 @@ class HttpDaemonRpcClient:
         SQLite checkpoint（那是 Python 本地 DB 的职责），直接透传 db_path。
         """
         if self._remote_workspace_id is None:
-            root = self._project_root or os.getcwd()
+            # MCP/后台宿主的 cwd 可能是 runtime 日志目录，不是用户项目。
+            # 未显式 configure_workspace 时使用包解析出的项目根，禁止以
+            # cwd 作为 workspace authority；显式配置仍优先用于多项目客户端。
+            from callwarden.config import PROJECT_ROOT
+            root = self._project_root or PROJECT_ROOT
             workspace = self.call("workspace.register", {
                 "client_view_root": root,
             })
@@ -3621,7 +3625,29 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
     if rpc_method not in _NO_WORKSPACE_METHODS:
         if http_enabled:
             client = HttpDaemonRpcClient.get_instance()
-            ws_id = client._ensure_remote_snapshot(None)
+            # route_rpc 是 MCP/CLI 的共同入口。确保两者都绑定到代码包解析的
+            # 项目根，而不是短生命周期宿主的 cwd；create_mcp_server 已提前
+            # 配置时保留显式 workspace。
+            if client._project_root is None:
+                from callwarden.config import PROJECT_ROOT
+                client.configure_workspace(PROJECT_ROOT)
+
+            # workspace.status 与原生 query 面需要一个真实 snapshot 才能形成
+            # 可核验的 authority projection。DB 路径由 daemon 返回，随后
+            # _ensure_remote_snapshot 以 workspace.register 的返回值发布，避免
+            # 本地推导 workspace ID 或打开本地 SQLite。
+            snapshot_db_path = None
+            if rpc_method == "workspace.status":
+                # workspace.status 的 authority projection 必须能回答当前
+                # snapshot，而不是只返回一个尚未发布的 registry 行。DB 路径
+                # 仍由 daemon 提供，避免薄客户端读取本地 SQLite。
+                db_result = client.call("mcp.common.get_db_path_for_daemon", {})
+                if not isinstance(db_result, dict) or not db_result.get("db_path"):
+                    raise DaemonUnavailableError(
+                        "daemon 未返回可用于 snapshot.publish 的权威 db_path"
+                    )
+                snapshot_db_path = db_result["db_path"]
+            ws_id = client._ensure_remote_snapshot(snapshot_db_path)
             if ws_id is not None and "workspace_instance_id" not in params:
                 params["workspace_instance_id"] = ws_id
             # HTTP 任务/lease 方法还需数值 workspace_id（task-DB workspaces.id）：
