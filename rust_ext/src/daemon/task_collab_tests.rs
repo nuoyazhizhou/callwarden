@@ -10,5 +10,7 @@ mod core;
 mod lease;
 #[path = "task_collab_tests_governance.rs"]
 mod governance;
+#[path = "task_collab_tests_p0l_repair.rs"]
+mod p0l_repair;
 #[path = "task_collab_tests_projection.rs"]
 mod projection;
