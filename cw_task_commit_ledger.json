@@ -2024,8 +2024,10 @@
     "commit_id": "ce987116c3ae230e71b28582f1f3df073fbc7b98",
     "evidence_commit_id": "826e2cfac1fd3138c87cf289f41a35836fbd6c57",
     "deployment_evidence_commit_id": "e586433bc38abac66367c039786d04e4956c60b4",
+    "projection_commit_id": "79197a6",
+    "projection_evidence_commit_id": "f32c92b",
     "status": "new_in_master",
     "scope": "精确 P0-L identity_policy 自举修复；受保护 task.p0l_identity_policy_repair RPC；append-only revision/hash continuity；workspace capture 校验；request-id 幂等；next-action 嵌套 routing 一致性",
-    "note": "message 内嵌 task_id；P0-L repair 2 passed、next_action policy tests 2 passed、cw-daemon cargo check 通过；证据 deliverables/software-company/T-1787801315246-e3e3a08c-p0l-identity-policy-repair-evidence.md；未直接修改 live SQLite、未伪造 verdict/lease、未执行 apply/close"
+    "note": "message 内嵌 task_id；P0-L repair 2 passed、next_action policy tests 2 passed、cw-daemon cargo check 通过；governance-projection 与 task.next-action live parity 已验证为 governance_blocked/resolve_identity_policy；证据 deliverables/software-company/T-1787801315246-e3e3a08c-p0l-identity-policy-repair-evidence.md hash=sha256:B62534B240152D2A617FD9B5758758BD6CB973BC4F7446FC4A87FE2E69B79F10；未直接修改 live SQLite、未伪造 verdict/lease、未执行 apply/close"
   }
 }
