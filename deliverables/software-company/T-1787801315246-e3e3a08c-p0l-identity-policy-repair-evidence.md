@@ -49,3 +49,34 @@ The daemon build was deployed successfully before review:
 - receipt_sha256: `sha256:3DE7C6E9594A3A8E8C06A4F431EE38DB02E52649BFD1CA560B80B86ECFE9E02C`
 - refresh_status: `passed`
 - route probe: non-allowlisted task returned `E_P0L_POLICY_REPAIR_TASK_NOT_ALLOWED`; no mutation was attempted
+
+## Projection parity after the follow-up fix
+
+The previous release exposed a second governance defect: `task.next-action` rejected
+the missing policy while `governance-projection` still advertised `READY/CLAIM`.
+The follow-up overlay now derives both views from the same daemon policy resolver.
+After the second controlled release, both live endpoints for this exact task returned:
+
+- `lifecycle_status=in_progress`
+- `workflow_status=governance_blocked`
+- `next_role=adjudicator`
+- `next_action=resolve_identity_policy`
+- `decision=BLOCKED`, `action=BLOCKED`
+- `identity_policy=null`, `identity_policy_status=unresolved`
+- blocking reason: contract revision has no parseable `identity_policy`
+
+The live daemon was verified at
+`C:\Users\wanpi\.callwarden\runtime\current\cw-daemon.exe` (PID 9312,
+SHA-256 `605583AE2BCB9CEA8766F373C385919F7CBD93F159617A9D4FCEBBA1EE97795A`).
+The refresh receipt is
+`C:\Users\wanpi\.callwarden\runtime\evidence\20260830-132334-79197a608f4d-1eff7d10.json`,
+with receipt SHA-256
+`sha256:2BCE1882684B0139A74D8C91CD790E9F2FB5392AB7D77AA4F659B221DC13CD8E` and
+`status=passed`.
+
+This proves the deadlock is now explicit and actionable, not silently claimable.
+The live contract remains unchanged (`identity_policy=null`) because no authorized
+adjudicator Role Worker mutation was executed from this worktree. The one-time
+allowlisted repair RPC is the remaining controlled operation; it must be invoked
+with the enrolled local worker credential in memory. No raw credential was read,
+stored, or emitted, and no direct SQLite fallback was used.
