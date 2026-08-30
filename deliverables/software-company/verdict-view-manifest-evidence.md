@@ -16,7 +16,7 @@ Command:
 tokenslim run cargo test --manifest-path rust_ext/Cargo.toml verdict_submit --lib
 ```
 
-Result: `3 passed, 0 failed`.
+Result on clean target worktree `b521a7a8a3ea129337016141dca864a0b2ebb161`: `2 passed, 0 failed`.
 
 Coverage includes:
 
@@ -25,7 +25,25 @@ Coverage includes:
 - rejected requests leave zero Verdict Ledger rows;
 - a non-empty manifest remains accepted and replay-safe;
 - native dispatch still routes `verdict.submit` to the handler;
-- new-schema Role Contract provenance remains accepted.
+
+The clean target worktree contains two matching tests for this filter. Additional
+shared-worktree tests were not counted because they are unrelated uncommitted
+changes and are not part of the target commit.
+
+## Runtime provenance
+
+The patched daemon was built from the clean detached worktree at commit
+`b521a7a8a3ea129337016141dca864a0b2ebb161` and deployed with
+`scripts/refresh_shared_runtime.ps1`.
+
+- refresh evidence: `C:\Users\wanpi\.callwarden\runtime\evidence\20260830-175715-b521a7a8a3ea-296b4f4b.json`
+- runtime version: `20260830-175715-b521a7a8a3ea-296b4f4b`
+- live PID: `16744`
+- executable: `C:\Users\wanpi\.callwarden\runtime\current\cw-daemon.exe`
+- SHA-256: `aa1e479ec002023174fc2ad2e9494176d66d9db503a9902e09b242f6baf228de`
+- named-pipe endpoint: `\\.\pipe\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001`
+- daemon ping: exit code `0`, status `ok`
+- rollback: `false`
 
 ## Governance boundary
 
