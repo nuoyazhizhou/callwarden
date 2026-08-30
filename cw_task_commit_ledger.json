@@ -1981,8 +1981,8 @@
  },
  "t1788047855059_report_snapshot_binding_20260830": {
   "task_id": "T-1788047855059-fa334ee0",
-  "commit_id": "3775901",
-  "evidence_commit_id": "3a5b8b8",
+  "commit_id": "3775901e29c4ef2f1f9552184ed7c8f779055ed6",
+  "evidence_commit_id": "3a5b8b8cd65ed4f49d07c8a57da5e6a734ef024f",
   "status": "new_in_master",
   "scope": "task.report 将调用方提供的 snapshot_id 持久化到 task_events；Python CLI、MCP task_report_step 与 daemon client 透传；governance projection 回归测试",
   "note": "message 内嵌 task_id；Rust projection test 1 passed、Python adapter/MCP tests 4 passed、py_compile/CLI help/git diff check 通过；证据 deliverables/software-company/task_report_snapshot_binding_evidence.md hash=sha256:E5BA022D92489C9B78F3EEA561B1663440381C1EA62CA28A96758530491C53FC；不生成 snapshot、不提交 Reviewer verdict、不修改历史 task/evidence、不执行 apply/close"
