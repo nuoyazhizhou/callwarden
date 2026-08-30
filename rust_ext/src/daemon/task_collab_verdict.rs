@@ -24,6 +24,7 @@ impl TaskCollabStore {
         let role_contract_id = required("role_contract_id")?;
         let role_contract_hash = required("role_contract_hash")?;
         let snapshot_id = required("snapshot_id")?;
+        let view_manifest_hash = required("view_manifest_hash")?;
         let request_id = required("request_id")?;
         if request_id
             .chars()
@@ -294,10 +295,6 @@ impl TaskCollabStore {
                     &sha256_hex(format!("{}:{}", task_id, request_id).as_bytes())[..24]
                 )
             });
-        let view_manifest_hash = params
-            .get("view_manifest_hash")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
         let canonical_params = serde_json::json!({
             "task_id": task_id,
             "step_id": step_id,
