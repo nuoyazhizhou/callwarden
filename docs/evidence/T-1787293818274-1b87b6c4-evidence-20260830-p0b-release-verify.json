@@ -1,0 +1,79 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787293818274-1b87b6c4",
+    "step_id": "S-1787293818275-1b919bf8",
+    "step": "release_verify",
+    "scope": "P0-B: release daemon round-trip fail-closed 探测（task.attest_legacy_workspace_binding）",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "runtime_round_trip": {
+    "daemon_pid": 13424,
+    "daemon_exe": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "daemon_binary_sha256": "94bdbaf7cc08328782959f62ba43af5fe73d543a30c91d3ce8c7e9bac70ecd15",
+    "daemon_endpoint": "127.0.0.1:8149",
+    "transport": "HTTP/JSON-RPC (HttpDaemonRpcClient)",
+    "method_probed": "task.attest_legacy_workspace_binding",
+    "probe_result": {
+      "note": "release daemon 已加载并路由 P0-B handler；缺必需参数时确定性 fail-closed 拒绝且无 mutation。" 
+    },
+    "transcript_path": "_p0b_release_verify_transcript.json",
+    "transcript_sha256": "08eeddac09f47b3c707c95c6f9da8ad235c5358e86397423e22158f2b25993bc",
+    "probe_script_path": "deliverables/software-company/_p0b_release_verify_probe.py",
+    "probe_script_sha256": "09203ec7886c16a62e1884c98b9b087d77c7c11b67d990ee19527e9c39fe68e0"
+  },
+  "denial_matrix_roundtrip": [
+    {
+      "probe": "attest_legacy_missing_request_id",
+      "expected": "rejected_fail_closed",
+      "actual_code": "E_LEGACY_BIND_REQUEST_ID_REQUIRED",
+      "gate": "request_id required",
+      "pass": true
+    },
+    {
+      "probe": "attest_legacy_missing_identity",
+      "expected": "rejected_fail_closed",
+      "actual_code": "E_LEGACY_BIND_IDENTITY_REQUIRED",
+      "gate": "identity required",
+      "pass": true
+    },
+    {
+      "probe": "attest_legacy_missing_evidence",
+      "expected": "rejected_fail_closed",
+      "actual_code": "E_LEGACY_BIND_EVIDENCE_REQUIRED",
+      "gate": "evidence required",
+      "pass": true
+    },
+    {
+      "probe": "attest_legacy_missing_workspace",
+      "expected": "rejected_fail_closed",
+      "actual_code": "E_LEGACY_BIND_WORKSPACE_REQUIRED",
+      "gate": "workspace authority required",
+      "pass": true
+    }
+  ],
+  "deployment_provenance": {
+    "git_head": "9d1bddd6a4fae68f0cd3cf52cac5ea23e331fcc1",
+    "deployed_by": "refresh_shared_runtime.ps1 部署的用户级 runtime（C:\\Users\\wanpi\\.callwarden\\runtime\\current），PID 13424",
+    "schema_version": "migration：P0-B 不触碰 schema（append-only binding/capture/event/ledger，failure 时无 schema 变更）"
+  },
+  "verification": {
+    "note": "release daemon round-trip：4 个缺凭证探测全部返回结构化 error code（E_LEGACY_BIND_*_REQUIRED），证明 P0-B handler 已在 release 运行时生效并 fail-closed；未执行真实 legacy task mutation（符合 Contract §4 禁止项）。独立 request_id 确保幂等去重不被误触发。",
+    "test_scope": "cargo test --lib supersede (14 passed) + tests/test_p0b_legacy_attestation_fail_closed.py (3 passed)"
+  },
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "executor_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立核验 P0-B release_verify runtime probe 证据与 test + evidence + deployment provenance，后方可进入任务级 review",
+    "reason": "P0-B 需经独立 Reviewer 审阅后再由独立 Adjudicator 裁决与收尾（apply/close 由 Adjudicator 对 P0-B 自身执行），Executor 不自行判定 PASS 或关闭",
+    "independence_requirement": "required"
+  }
+}

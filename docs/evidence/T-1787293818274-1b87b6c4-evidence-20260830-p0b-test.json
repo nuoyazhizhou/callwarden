@@ -1,0 +1,60 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787293818274-1b87b6c4",
+    "step_id": "S-1787293818275-1b917bf0",
+    "step": "test",
+    "scope": "P0-B: positive/idempotent/negative matrix + Python/CLI fail-closed",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "rust_tests": {
+    "command": "cargo test --lib --manifest-path rust_ext/Cargo.toml -- supersede",
+    "target_file": "rust_ext/src/daemon/task_supersede.rs",
+    "result": "14 passed; 0 failed",
+    "p0b_dedicated": [
+      "test_legacy_workspace_attestation_appends_binding_without_task_mutation (positive + status unchanged)",
+      "test_legacy_workspace_attestation_replays_without_duplicate_binding_or_audit (idempotent)",
+      "test_legacy_workspace_attestation_rejects_already_bound_wrong_role_and_stale_fencing (negative)",
+      "test_legacy_workspace_attestation_rejects_unbound_anchor_missing_evidence_and_instance_mismatch (negative)"
+    ],
+    "negatives_covered": [
+      "already_bound (ERR_LEGACY_BIND_ALREADY_BOUND)",
+      "wrong_role (ERR_LEGACY_BIND_ROLE_REQUIRED)",
+      "stale_fencing (ERR_LEGACY_BIND_FENCED)",
+      "anchor_unbound (ERR_LEGACY_BIND_ANCHOR_UNBOUND)",
+      "missing_evidence (ERR_LEGACY_BIND_EVIDENCE_REQUIRED)",
+      "workspace_instance_mismatch (E_WORKSPACE_AUTHORITY_MISMATCH)"
+    ],
+    "status_invariant": "legacy task status remains 'open' after attestation"
+  },
+  "python_tests": {
+    "command": "python -m pytest tests/test_p0b_legacy_attestation_fail_closed.py",
+    "target_file": "tests/test_p0b_legacy_attestation_fail_closed.py",
+    "result": "3 passed; 0 failed",
+    "cases": [
+      "test_client_never_falls_back_local_without_daemon (E_HTTP_* fail-closed, no local fallback)",
+      "test_cli_branch_registers_daemon_only_fail_closed (daemon-only, forbidden local SQLite)",
+      "test_client_method_forwards_to_daemon_no_local_sql (only self.call(\"task.attest_legacy_workspace_binding\"))"
+    ]
+  },
+  "regression": {
+    "command": "python -m pytest tests/convergence/test_m4_cli_fail_closed.py tests/test_p0b_legacy_attestation_fail_closed.py",
+    "result": "9 passed; 0 failed"
+  },
+  "verification": {
+    "note": "P0-B 正向/幂等/负向/状态不变矩阵完整(four Rust tests, 6 negatives, replay dedupe); Python/CLI 侧禁止 direct local fallback 通过; M4 fail-closed 回归不破坏。"
+  },
+  "deployment_provenance": {
+    "git_head": "9d1bddd6a4fae68f0cd3cf52cac5ea23e331fcc1",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "test_log": "docs/evidence/T-1787293818274-1b87b6c4-p0b-test-log.txt"
+  }
+}

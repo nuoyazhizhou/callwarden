@@ -1,0 +1,30 @@
+{
+  "type": "p0b_release_verify_probe",
+  "pid": 6952,
+  "started_at": 1788106211.3943021,
+  "probes": [
+    {
+      "name": "attest_legacy_missing_request_id",
+      "error_code": "E_LEGACY_BIND_REQUEST_ID_REQUIRED",
+      "ok": true
+    },
+    {
+      "name": "attest_legacy_missing_identity",
+      "error_code": "E_LEGACY_BIND_IDENTITY_REQUIRED",
+      "ok": true
+    },
+    {
+      "name": "attest_legacy_missing_evidence",
+      "error_code": "E_LEGACY_BIND_EVIDENCE_REQUIRED",
+      "ok": true
+    },
+    {
+      "name": "attest_legacy_missing_workspace",
+      "error_code": "E_LEGACY_BIND_WORKSPACE_REQUIRED",
+      "ok": true
+    }
+  ],
+  "verdict": "pass",
+  "note": "",
+  "elapsed_sec": 0.3
+}

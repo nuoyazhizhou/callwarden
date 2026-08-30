@@ -1,0 +1,47 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787293818274-1b87b6c4",
+    "step_id": "S-1787293818275-1b915f08",
+    "step": "adapt_client_cli",
+    "scope": "P0-B: task.attest_legacy_workspace_binding 客户端与 CLI 适配",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "client_adapt": {
+    "daemon_client_method": "server/daemon_client.py:189-207 task_attest_legacy_workspace_binding",
+    "transport": "self.call(\"task.attest_legacy_workspace_binding\", {...}) 仅转发 daemon；daemon 不可用时统一 transport fail-closed，无本地 SQLite fallback",
+    "fields": [
+      "legacy_task_id", "anchor_task_id", "workspace_id", "workspace_instance_id",
+      "request_id", "evidence_path", "evidence_hash", "lease_token",
+      "fencing_counter", "identity"
+    ],
+    "complete_fields": true
+  },
+  "cli_adapt": {
+    "subcommand": "cli/main.py:4219-4247 cw task attest-legacy-workspace-binding",
+    "positional": ["legacy_task_id", "anchor_task_id"],
+    "flags": [
+      "--workspace-id (required, int)", "--workspace-instance-id (required)",
+      "--request-id (required)", "--evidence-path (required)", "--evidence-hash (required)",
+      "--lease-token (required)", "--fencing-counter (required, int)",
+      "--agent-id/--session-id/--model-id (required)", "--role (required, choices=[adjudicator])"
+    ],
+    "handler": "cli/main.py:5924-5963 组装 identity+全部参数，route_task_write 失败时抛 DaemonUnavailableError 禁止本地 fallback",
+    "fail_closed": "daemon 不可用 -> _local_legacy_attestation_forbidden raise DaemonUnavailableError；无任何本地数据库补写路径"
+  },
+  "verification": {
+    "note": "client 透传 10 个 authority/identity/lease/evidence 字段完整；CLI 子命令参数校验齐全，role 仅允许 adjudicator，且写路径为 daemon-only、无本地 fallback"
+  },
+  "deployment_provenance": {
+    "git_head": "9d1bddd6a4fae68f0cd3cf52cac5ea23e331fcc1",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1"
+  }
+}

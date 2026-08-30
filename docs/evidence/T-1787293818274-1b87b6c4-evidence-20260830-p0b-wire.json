@@ -1,0 +1,33 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787293818274-1b87b6c4",
+    "step_id": "wire",
+    "step": "wire",
+    "scope": "P0-B: task.attest_legacy_workspace_binding dispatch 路由审计确认",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "wiring_audit": {
+    "handler_delegation": "rust_ext/src/daemon/dispatch.rs:1078-1090 -> store.handle_task_attest_legacy_workspace_binding；daemon_state 无 store 时 method_not_found fail-closed",
+    "router_match": "rust_ext/src/daemon/dispatch.rs:2900-2902 精确匹配 \"task.attest_legacy_workspace_binding\"",
+    "allowed_methods_registry": "rust_ext/src/daemon/dispatch.rs:2200 登记",
+    "fail_closed": "未知/未登记方法 -> _ => Err(method_not_found(method))（dispatch.rs:1938/3180）；缺失/不完整参数在 store handler 内确定性拒绝（request_id/workspace/identity/lease/evidence fail-closed）",
+    "no_daemon_bypass": "Python/client 端无本地 SQLite fallback；所有 authority/binding 写入仅由 daemon 在单事务执行",
+    "static_verify": "dispatch 无额外改动（提交基线即含路由），cargo test --lib supersede 编译通过"
+  },
+  "verification": {
+    "note": "路由三节点（delegation/registry/match）均确认，未知方法 fail-closed，无绕过 daemon authority 的路径"
+  },
+  "deployment_provenance": {
+    "git_head": "94fffaed37f9825e9a67c69627cb8bc5f2d2ced1 (dispatch.rs 未改动，wire 为审计确认)",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1"
+  }
+}

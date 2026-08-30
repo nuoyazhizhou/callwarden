@@ -1,0 +1,45 @@
+P0-B T-1787293818274-1b87b6c4 step #3 (test) 测试日志
+日期: 2026-08-30
+执行器身份: executor/implementer (cw-executor-p0e / inst-cw-executor-p0e-20260830)
+工作区: workspace_id=1, workspace_instance_id=ws-1
+Git HEAD: 9d1bddd6a4fae68f0cd3cf52cac5ea23e331fcc1
+
+------------------------------------------------------------
+1. Rust 单测 (cargo test --lib -- supersede)
+   命令: cargo test --lib --manifest-path rust_ext/Cargo.toml -- supersede
+   结果: 14 passed; 0 failed
+   P0-B 专项测试(4 个, task_supersede.rs):
+     - test_legacy_workspace_attestation_appends_binding_without_task_mutation ... ok
+       (正向: legacy binding 追加, task.status 保持 open, audit 1 条, ledger 1 条)
+     - test_legacy_workspace_attestation_replays_without_duplicate_binding_or_audit ... ok
+       (幂等: 重放返回同一 binding_id, 无重复 binding/audit)
+     - test_legacy_workspace_attestation_rejects_already_bound_wrong_role_and_stale_fencing ... ok
+       (负向: 已绑定 ERR_LEGACY_BIND_ALREADY_BOUND / 错误角色 ERR_LEGACY_BIND_ROLE_REQUIRED /
+        stale fencing ERR_LEGACY_BIND_FENCED)
+     - test_legacy_workspace_attestation_rejects_unbound_anchor_missing_evidence_and_instance_mismatch ... ok
+       (负向: anchor 未绑定 ERR_LEGACY_BIND_ANCHOR_UNBOUND / 证据缺失 ERR_LEGACY_BIND_EVIDENCE_REQUIRED /
+        workspace instance 不匹配 E_WORKSPACE_AUTHORITY_MISMATCH)
+
+2. Python CLI/client fail-closed 测试 (tests/test_p0b_legacy_attestation_fail_closed.py)
+   命令: python -m pytest tests/test_p0b_legacy_attestation_fail_closed.py
+   结果: 3 passed
+     - test_client_never_falls_back_local_without_daemon:
+       daemon 不可达(HTTP) -> task.attest_legacy_workspace_binding 抛 E_HTTP_* fail-closed,
+       绝不回退本地 SQLite
+     - test_cli_branch_registers_daemon_only_fail_closed:
+       cli/main.py attest-legacy-workspace-binding 分支含 fail-closed 提示 +
+       禁止本地 SQLite fallback + DaemonUnavailableError 注册
+     - test_client_method_forwards_to_daemon_no_local_sql:
+       server/daemon_client.py 方法仅转发 self.call("task.attest_legacy_workspace_binding")
+
+3. 回归 (tests/convergence/test_m4_cli_fail_closed.py + 上述 P0-B)
+   命令: python -m pytest tests/convergence/test_m4_cli_fail_closed.py tests/test_p0b_legacy_attestation_fail_closed.py
+   结果: 9 passed; 0 failed (P0-B 新增测试未破坏 M4 fail-closed 语义)
+
+Check items 覆盖率:
+  - positive legacy attestation:            Rust test 1 (appends_binding...)
+  - replay and request mismatch:            Rust test 2 (replays...)
+  - all authority/identity/lease/fencing/evidence negatives: Rust tests 3-4 + Python fail-closed
+  - legacy task status remains unchanged:   Rust test 1 (status == "open")
+
+结论: P0-B 正向/幂等/负向/状态不变矩阵完整且通过; Python/CLI 侧禁止 local fallback 验证通过。
