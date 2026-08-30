@@ -1986,5 +1986,13 @@
   "status": "new_in_master",
   "scope": "task.report 将调用方提供的 snapshot_id 持久化到 task_events；Python CLI、MCP task_report_step 与 daemon client 透传；governance projection 回归测试",
   "note": "message 内嵌 task_id；Rust projection test 1 passed、Python adapter/MCP tests 4 passed、py_compile/CLI help/git diff check 通过；证据 deliverables/software-company/task_report_snapshot_binding_evidence.md hash=sha256:E5BA022D92489C9B78F3EEA561B1663440381C1EA62CA28A96758530491C53FC；不生成 snapshot、不提交 Reviewer verdict、不修改历史 task/evidence、不执行 apply/close"
+ },
+ "t1788050221973_workspace_snapshot_roundtrip_20260830": {
+  "task_id": "T-1788050221973-114dab10",
+  "commit_id": "b1fd2d7aa75140b68ee1642c3d3d415905941caf",
+  "evidence_commit_id": "b1fd2d7aa75140b68ee1642c3d3d415905941caf",
+  "status": "new_in_master",
+  "scope": "MCP启动与HTTP route_rpc使用PROJECT_ROOT绑定daemon workspace；workspace.status经权威db_path触发snapshot.publish；新增binding回归与live round-trip证据",
+  "note": "message内嵌task_id；focused regression 2 passed、py_compile/diff check通过；live daemon PID 18900、HTTP authority与task DB fingerprint一致，workspace.status与snapshot.list_workspaces复用workspace_instance_id=4baea3ff12c2ea5c且generation=2；证据 deliverables/software-company/workspace_snapshot_binding_evidence.md hash=sha256:64EE6A46A010F264C3451B52959051D59D416A065C0F7F96AD8AEE2ED81E9B0E；未修改历史task/verdict/evidence、不直接写SQLite、不执行apply/close"
  }
 }
