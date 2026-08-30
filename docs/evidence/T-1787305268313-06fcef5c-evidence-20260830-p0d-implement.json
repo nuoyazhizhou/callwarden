@@ -1,0 +1,85 @@
+{
+  "manifest_name": "T-1787305268313-06fcef5c-evidence-p0d-implement",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305268313-06fcef5c",
+  "step_id": "S-1787305268313-070730c0",
+  "step_action": "implement",
+  "role": "implementer",
+  "scope": "P0-D Immutable Binding 与 Workspace Capture Freshness 一致性修复：verify_capture 语义核对 + 定向测试 + deployment 基线",
+  "outcome": "implemented_audited",
+  "governance_claim": {
+    "this_is_real_daemon_client_capability_verification": true,
+    "no_sql_fallback": true,
+    "no_fabricated_binding_contract_lease_evidence": true
+  },
+  "workspace_authority": {
+    "workspace_id": 1046,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_registered_name": "callwarden",
+    "client_view_root": "c:/git_work/callwarden"
+  },
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "agent_instance_id": "inst-workbuddy-186loop",
+    "session_id": "exec-p0d-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {
+    "lease_id": "L-20c56ffbe3b34276",
+    "role": "executor",
+    "fencing_counter": 1,
+    "acquired_at": 1788095250,
+    "expires_at": 1788098850
+  },
+  "deployment_provenance": {
+    "git_head_commit_sha": "afd746c5763b3206f0a0dd5657d5a20e2066ca8c",
+    "git_head_short": "afd746c",
+    "daemon_pid": 13424,
+    "daemon_binary_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "daemon_binary_sha256": "94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15",
+    "daemon_binary_built_utc": "2026-08-30T12:25:49"
+  },
+  "implementation_audit": {
+    "file_next_action_rs": "rust_ext/src/daemon/task_loop/next_action.rs",
+    "symbol": "verify_capture (next_action.rs:99-221)",
+    "semantic_verified": {
+      "binding_immutable_snapshot_not_updated": true,
+      "no_binding_workspace_capture_id_equality_hardcheck": true,
+      "binding_capture_identity_recompute": true,
+      "current_capture_identity_recompute": true,
+      "binding_vs_current_identity_same_check": true
+    },
+    "acceptance_matrix": {
+      "a1_same_identity_historical_capture_accepted": "覆盖于测试 historical_binding_capture_same_identity_is_accepted",
+      "a2_identity_change_rejected": "覆盖于测试 historical_binding_capture_identity_change_is_rejected",
+      "a3_binding_missing_fail_closed": "E_WORKSPACE_AUTHORITY_UNAVAILABLE（handler 规则1）",
+      "a3_chain_discontinuity_fail_closed": "COUNT==MAX 校验，state 规则",
+      "a3_workspace_instance_mismatch_fail_closed": "resolve_workspace_id_by_instance 校验",
+      "a3_recompute_mismatch_fail_closed": "registry_identity_hash 重算校验"
+    }
+  },
+  "verification": {
+    "cargo_test": {
+      "filter": "next_action",
+      "passed": 22,
+      "failed": 0,
+      "suite_compiles": true,
+      "p0d_related_cases": [
+        "historical_binding_capture_same_identity_is_accepted",
+        "historical_binding_capture_identity_change_is_rejected",
+        "two_instances_same_workspace_chain_continuity_per_instance",
+        "workspace_instance_mismatch_authority_mismatch",
+        "missing_binding_yields_blocked_none",
+        "orphan_task_without_binding_authority_unavailable"
+      ]
+    }
+  },
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "executor_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立复核 P0-D 未更新不可变 binding，仅允许 same-identity capture re-attestation，且不会把真实 workspace identity 变化降级为可派发",
+    "independence_requirement": "required"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "manifest_name": "T-1787305268313-06fcef5c-evidence-p0d-test",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305268313-06fcef5c",
+  "step_id": "S-1787305268313-0707d340",
+  "step_action": "test",
+  "role": "implementer",
+  "scope": "P0-D capture freshness / immutable binding 正向+负向测试全覆盖",
+  "outcome": "tests_passed",
+  "governance_claim": {
+    "this_is_real_daemon_client_capability_verification": true,
+    "no_sql_fallback": true,
+    "no_fabricated_binding_contract_lease_evidence": true
+  },
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "agent_instance_id": "inst-workbuddy-186loop",
+    "session_id": "exec-p0d-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {
+    "lease_id": "L-6e6420a7d658bd67",
+    "role": "executor",
+    "fencing_counter": 2,
+    "acquired_at": 1788095573
+  },
+  "deployment_provenance": {
+    "git_head_commit_sha": "afd746c5763b3206f0a0dd5657d5a20e2066ca8c"
+  },
+  "test_files_changed": [
+    "rust_ext/src/daemon/task_loop/next_action_test.rs"
+  ],
+  "new_test_cases": [
+    "capture_chain_discontinuity_rejected_fail_closed",
+    "binding_capture_recompute_mismatch_rejected_fail_closed"
+  ],
+  "verification": {
+    "cargo_test_filter": "next_action",
+    "total_passed": 24,
+    "total_failed": 0,
+    "acceptance_matrix_coverage": {
+      "a1_same_identity_historical_capture_accepted": "historical_binding_capture_same_identity_is_accepted",
+      "a2_identity_change_rejected": "historical_binding_capture_identity_change_is_rejected",
+      "a3_binding_missing_fail_closed": "missing_binding_yields_blocked_none + orphan_task_without_binding_authority_unavailable",
+      "a3_chain_discontinuity_fail_closed": "capture_chain_discontinuity_rejected_fail_closed (新增)",
+      "a3_workspace_instance_mismatch_fail_closed": "workspace_instance_mismatch_authority_mismatch + unresolvable_caller_instance_rejected",
+      "a3_recompute_mismatch_fail_closed": "binding_capture_recompute_mismatch_rejected_fail_closed (新增)",
+      "a3_instance_scheme_agnostic_resolution": "caller_root_hash_instance_resolves_to_binding_workspace",
+      "read_only_no_mutation": "evaluate_is_strictly_read_only"
+    }
+  },
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "executor_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立复核 P0-D 测试矩阵全绿：same-identity accepted / identity-change rejected / chain-break & recompute mismatch fail-closed",
+    "independence_requirement": "required"
+  }
+}

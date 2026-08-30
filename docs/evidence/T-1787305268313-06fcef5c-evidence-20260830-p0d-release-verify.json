@@ -1,0 +1,68 @@
+{
+  "manifest_name": "T-1787305268313-06fcef5c-evidence-p0d-release-verify",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305268313-06fcef5c",
+  "step_id": "S-1787305268313-07082fd4",
+  "step_action": "release_verify",
+  "role": "implementer",
+  "scope": "P0-D release runtime task.next_action authority round-trip proof",
+  "outcome": "runtime_round_trip_verified",
+  "governance_claim": {
+    "this_is_real_daemon_client_capability_verification": true,
+    "no_sql_fallback": true,
+    "no_fabricated_binding_contract_lease_evidence": true
+  },
+  "workspace_authority": {
+    "workspace_id": 1046,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_registered_name": "callwarden",
+    "client_view_root": "c:/git_work/callwarden"
+  },
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "agent_instance_id": "inst-workbuddy-186loop",
+    "session_id": "exec-p0d-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {
+    "lease_id": "L-410d4dba4f6d2851",
+    "role": "executor",
+    "fencing_counter": 3,
+    "acquired_at": 1788095757
+  },
+  "deployment_provenance": {
+    "git_head_commit_sha": "afd746c5763b3206f0a0dd5657d5a20e2066ca8c",
+    "git_head_short": "afd746c",
+    "daemon_pid": 13424,
+    "daemon_binary_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "daemon_binary_sha256": "94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15",
+    "daemon_binary_built_utc": "2026-08-30T12:25:49",
+    "transport": "http_thin_client"
+  },
+  "runtime_round_trip": {
+    "method": "task.next_action",
+    "target_task_id": "T-1787305268313-06fcef5c",
+    "caller_workspace_instance_id": "4baea3ff12c2ea5c",
+    "observed_result": {
+      "next_action": "wait_for_current_lease",
+      "decision": "WAITING",
+      "action": "WAIT",
+      "blocking_reasons": ["task 存在 active 未过期 lease（持有角色 executor），等待其释放"]
+    },
+    "authority_gate_outcome": "pass_through",
+    "proof": "verify_capture 接受同 workspace instance 的不可变 binding capture（同 stable identity），未返回 E_WORKSPACE_AUTHORITY_MISMATCH；评估推进到 lease-wait 阶段（因 step claim 持棒）。P0-D 验收4：authority freshness 阶段不再将同 identity re-attestation 误判为 mismatch。"
+  },
+  "verification": {
+    "cargo_test_filter": "next_action",
+    "tests_passed": 24,
+    "tests_failed": 0
+  },
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "executor_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立复核 P0-D：不可变 binding 未被 UPDATE；仅 same-identity capture re-attestation 可派发；真实 identity 变化仍 fail-closed；release runtime round-trip 已证实",
+    "independence_requirement": "required"
+  }
+}

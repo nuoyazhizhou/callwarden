@@ -768,3 +768,39 @@ fn evaluate_is_strictly_read_only() {
     );
     assert_eq!(before, after, "evaluate 必须零写入");
 }
+
+#[test]
+fn capture_chain_discontinuity_rejected_fail_closed() {
+    // P0-D §3 验收 3：capture 链不连续（缺口）必须 fail-closed 拒绝，
+    // 不得因为当前 identity 未变就放行一个断链的 authority 投影。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // ws-inst-1 capture rev1（= binding snapshot）
+    setup_task(&mut conn, "t-b"); // ws-inst-1 capture rev2
+    conn.execute(
+        "UPDATE workspace_authority_captures SET capture_revision = 3 \
+         WHERE workspace_instance_id = 'ws-inst-1' AND capture_revision = 2",
+        [],
+    )
+    .unwrap(); // 制造 revision 缺口：COUNT=2, MAX=3 → count != max
+    let err = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect_err("capture 链断链必须 fail-closed");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
+
+#[test]
+fn binding_capture_recompute_mismatch_rejected_fail_closed() {
+    // P0-D §3 验收 3：binding capture 的 registry_identity_hash 重算不一致
+    // 必须 fail-closed 拒绝，任何篡改根/manifest/instance 的 capture 都不可信。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // binding points to rev1（manifest-a，旧 identity_hash）
+    // 仅篡改 manifest hash，保留原 registry_identity_hash → 重算结果 ≠ 存储值。
+    conn.execute(
+        "UPDATE workspace_authority_captures SET workspace_manifest_hash = 'tampered-manifest' \
+         WHERE workspace_instance_id = 'ws-inst-1' AND capture_revision = 1",
+        [],
+    )
+    .unwrap();
+    let err = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect_err("binding capture 重算不一致必须 fail-closed");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
