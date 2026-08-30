@@ -72,3 +72,42 @@ The prior `V-ce9b6fb191d9fc00baa9cf8a` row is immutable and was not repaired in 
 - `rust_ext/src/daemon/task_collab_verdict.rs`
 - `rust_ext/src/daemon/task_collab_tests_governance.rs`
 - `deliverables/software-company/verdict-view-manifest-evidence.md`
+
+## Role Contract binding remediation
+
+The follow-up fix is commit `b012e198b4476bf32540d2ae594786b56b9a23b0` in the
+clean detached worktree `C:\git_work\callwarden-verdict-binding-clean`.
+`verdict.submit` now resolves the authoritative `task.next-action` lineage ID,
+revision ID, and the legacy reviewer alias to one task-bound canonical lineage.
+The submitted revision and hash are checked against that canonical row, and the
+resolved lineage/revision/hash are persisted in the Verdict Ledger. Unknown or
+cross-task identifiers remain rejected before any write.
+
+Focused verification on the clean worktree:
+
+```text
+tokenslim run cargo test --manifest-path rust_ext/Cargo.toml verdict_submit --lib
+3 passed, 0 failed
+```
+
+The three passing tests cover native dispatch, existing replay/hash fail-closed
+behavior, and lineage/revision/legacy alias resolution with canonical lineage
+persistence plus an invalid binding rejection.
+
+Fresh runtime provenance:
+
+- evidence: `C:\Users\wanpi\.callwarden\runtime\evidence\20260830-185913-b012e198b447-45490c8e.json`
+- runtime version: `20260830-185913-b012e198b447-45490c8e`
+- live PID: `37032`
+- daemon SHA-256: `b2ca2716077f02a4b6d273dc4a70d022b771210c7a99bd627fc966ce8bcf43d5`
+- source commit: `b012e198b4476bf32540d2ae594786b56b9a23b0`
+- ping: `status=ok`, exit code `0`
+
+Authority readback after deployment succeeded from `C:\git_work\callwarden`:
+
+- `task.next-action` returned `READY/REVIEW` and the same reviewer lineage ID
+  `rcl-T-1788079398046-26c63824-reviewer`, revision ID
+  `rcr-T-1788079398046-26c63824-reviewer-r1`, revision `1`, and hash
+  `sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b`.
+- The task remains `review_pending` with `verdicts=[]`; no Executor-side verdict,
+  apply, or close was performed.
