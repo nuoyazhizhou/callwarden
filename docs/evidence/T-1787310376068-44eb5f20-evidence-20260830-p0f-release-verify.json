@@ -1,0 +1,83 @@
+{
+  "manifest_name": "T-1787310376068-44eb5f20-evidence-release-verify",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787310376068-44eb5f20",
+  "step_id": "S-1787310376069-44f7508c",
+  "step_action": "release_verify",
+  "role": "implementer",
+  "scope": "P0-F runtime probe：P0-F bridge RPC 注册、权威门禁链路与空投影窄边界验证",
+  "outcome": "release_verified_runtime_roundtrip",
+  "governance_claim": {
+    "this_is_real_daemon_client_capability_verification": true,
+    "no_sql_fallback": true,
+    "no_fabricated_binding_contract_lease_evidence": true
+  },
+  "workspace_authority": {
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "workspace_binding_id": "tb-T-1787310376068-44eb5f20-ws-1",
+    "workspace_capture_id": "wc-ws-1-1156701000",
+    "bound_task_governance_projection_non_empty": true
+  },
+  "deployment_provenance": {
+    "daemon_pid": 13424,
+    "daemon_started_at": "2026-08-30T20:26:01",
+    "runtime_current_exe": "%USERPROFILE%\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "binary_sha256": "94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15",
+    "git_head": "e1f3c085b7e64124a8cf62f9a4c511a0bcfdfba9",
+    "refresh_evidence_hash": "C3FB61E61D44614D47E678C4949D9A35BB671B691730ADC326DDCB3F1EFCFBCE",
+    "refresh_command": "scripts/refresh_shared_runtime.ps1 -TaskId T-1787310376068-44eb5f20 -Configuration release"
+  },
+  "denial_matrix_roundtrip": [
+    {
+      "probe": "bootstrap_executor_evidence_empty_identity",
+      "expected": "rejected_by_gate_non_method_not_found",
+      "actual_code": "E_IDENTITY_INCOMPLETE",
+      "gate": "identity",
+      "pass": true
+    },
+    {
+      "probe": "bootstrap_reviewer_pass_empty_identity",
+      "expected": "rejected_by_gate_non_method_not_found",
+      "actual_code": "E_IDENTITY_INCOMPLETE",
+      "gate": "identity",
+      "pass": true
+    },
+    {
+      "probe": "bootstrap_reviewer_pass_role_guard",
+      "expected": "reject_non_reviewer_role",
+      "actual_code": "E_BRIDGE_REVIEWER_ROLE_REQUIRED",
+      "gate": "bridge reviewer-role restriction",
+      "pass": true
+    },
+    {
+      "probe": "bootstrap_executor_evidence_full_identity_non_empty_projection",
+      "expected": "reject_bridge_when_projection_non_empty",
+      "actual_code": "E_BOOTSTRAP_BRIDGE_NOT_EMPTY",
+      "gate": "empty-bound narrow scope",
+      "pass": true
+    }
+  ],
+  "test_cases": {
+    "cargo_test_filter": "task_loop::bootstrap_review_bridge",
+    "cargo_passed": 6,
+    "cargo_failed": 0,
+    "case_names": [
+      "role_constants_present",
+      "reviewer_pass_rejects_without_executor_evidence",
+      "rejects_when_governance_projection_exists",
+      "executor_evidence_then_reviewer_pass_two_stage_bridge",
+      "reviewer_pass_rejects_same_agent_as_executor",
+      "executor_evidence_rejects_wrong_state"
+    ]
+  },
+  "conclusion": "P0-F bridge RPC 已在 release daemon 中注册；身份/instance/request-id/role/空投影五重门禁链路全部 fail-closed；非零投影任务使用 bridge 被 E_BOOTSTRAP_BRIDGE_NOT_EMPTY 拒绝。仅作为零投影 root bootstrap 修复 P0-F 自身冷启动死锁。",
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "executor_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立核验 P0-F release_verify runtime probe 证据，确认桥仅用于完整治理投影为空的任务且五重门禁 fail-closed；验证 test + evidence + deployment provenance 后方可进入任务级 review",
+    "reason": "P0-F 需经独立 Reviewer 以 bootstrap_reviewer_pass 完成只读审阅，再由独立 Adjudicator 走 P0-C 首次发布标准 Task Contract，不得由 Executor 自行判 PASS 或关闭",
+    "independence_requirement": "required"
+  }
+}

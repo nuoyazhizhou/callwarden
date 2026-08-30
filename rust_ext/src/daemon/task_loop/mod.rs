@@ -40,6 +40,8 @@ pub mod inbound_handoff;
 pub mod task_contract_bootstrap;
 pub mod task_contract_revise;
 pub mod role_worker;
+// P0-F：Bootstrap Evidence / Review Bridge（A′ 冷启动治理死锁修复）。
+pub mod bootstrap_review_bridge;
 
 #[cfg(test)]
 mod capability_control_test;
@@ -69,3 +71,5 @@ mod task_contract_bootstrap_test;
 mod task_contract_revise_test;
 #[cfg(test)]
 mod role_worker_test;
+#[cfg(test)]
+mod bootstrap_review_bridge_test;

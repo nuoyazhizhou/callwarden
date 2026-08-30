@@ -29,6 +29,10 @@ use serde_json::{json, Map, Value};
 use super::assignment_queue::{self, AssignmentProjection};
 use super::clock::AuthoritativeClock;
 use super::dispatch::{DaemonRpcError, PeerCredential};
+use super::task_loop::bootstrap_review_bridge::{
+    bootstrap_executor_evidence, bootstrap_reviewer_pass, ExecutorEvidenceInput,
+    ExecutorEvidenceStep, ReviewerPassInput,
+};
 use super::task_loop::operation_store::{
     DedupeOutcome, LedgerProvenance, OperationStore, ParamsRules,
 };
@@ -2287,6 +2291,418 @@ impl TaskCollabStore {
         let val = Value::Object(res);
         self.save_dedup(params, &val);
         Ok(val)
+    }
+}
+
+// ============================================================================
+// P0-F：Bootstrap Evidence / Review Bridge —— 两个 daemon-only 受保护 handler。
+// 领域逻辑在 `task_loop::bootstrap_review_bridge`；本处仅做参数/身份/workspace
+// authority/operation-ledger 预检后，在同一事务内调用领域函数并落账。
+// 不接受普通任务复用；所有既有 Task/Role/step projection 一律由领域函数 fail-closed。
+// ============================================================================
+impl TaskCollabStore {
+    pub fn handle_task_bootstrap_executor_evidence(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let method = "task.bootstrap_executor_evidence";
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let request_id = params
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let workspace_instance_id = params
+            .get("workspace_instance_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let workspace_id = optional_workspace_id_param(params).ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_BRIDGE_EXECUTOR_WORKSPACE_REQUIRED",
+                "task.bootstrap_executor_evidence 必须携带 workspace_id > 0",
+            )
+        })?;
+        if task_id.is_empty() || request_id.is_empty() || workspace_instance_id.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_BRIDGE_EXECUTOR_PARAMS_REQUIRED",
+                "task.bootstrap_executor_evidence 必须携带 task_id、request_id、workspace_instance_id",
+            ));
+        }
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_BRIDGE_EXECUTOR_IDENTITY_REQUIRED",
+                "task.bootstrap_executor_evidence 必须携带完整 identity",
+            )
+        })?;
+        if identity.role != "executor" {
+            return Err(DaemonRpcError::new(
+                "E_BRIDGE_EXECUTOR_ROLE_REQUIRED",
+                format!("仅允许 role=executor，实际 role={}", identity.role),
+            ));
+        }
+        let steps: Vec<ExecutorEvidenceStep> = {
+            let arr = params.get("steps").and_then(|v| v.as_array()); 
+            let arr = arr.ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_BRIDGE_EXECUTOR_STEPS_REQUIRED",
+                    "task.bootstrap_executor_evidence 必须携带非空 steps 数组",
+                )
+            })?;
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                let step_id = item.get("step_id").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                let evidence_path = item.get("evidence_path").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                let evidence_hash = item.get("evidence_hash").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                if step_id.is_empty() {
+                    return Err(DaemonRpcError::new(
+                        "E_BRIDGE_EXECUTOR_STEP_MISSING",
+                        "steps 每一项必须携带 step_id",
+                    ));
+                }
+                out.push(ExecutorEvidenceStep { step_id, evidence_path, evidence_hash });
+            }
+            if out.is_empty() {
+                return Err(DaemonRpcError::new(
+                    "E_BRIDGE_EXECUTOR_STEPS_EMPTY",
+                    "steps 不能为空",
+                ));
+            }
+            out
+        };
+
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        let dedupe =
+            operation_store.dedupe(&conn, workspace_instance_id, method, request_id, params)?;
+        let (rules, canonical_params_hash): (ParamsRules, String) = match dedupe {
+            DedupeOutcome::Replay {
+                response_or_error_json,
+            } => {
+                if let Some(err) = response_or_error_json.get("error") {
+                    let code = err
+                        .get("code")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("E_BRIDGE_EXECUTOR_REPLAY_ERROR");
+                    let message = err
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("bootstrap executor evidence deterministic rejection");
+                    return Err(DaemonRpcError::new(code, message));
+                }
+                return Ok(response_or_error_json);
+            }
+            DedupeOutcome::FirstRequest {
+                rules,
+                canonical_params_hash,
+            } => (rules, canonical_params_hash),
+        };
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DaemonRpcError::internal_error(format!("开启 bootstrap executor evidence 事务失败: {e}"))
+        })?;
+        let provenance = LedgerProvenance {
+            workspace_id: Some(workspace_id),
+            task_id: Some(task_id.to_string()),
+            ..Default::default()
+        };
+        let record_reject = |tx: &Transaction<'_>, code: &str, message: &str| -> DaemonRpcError {
+            let body = serde_json::json!({"error":{"code":code,"message":message}});
+            let _ = operation_store.record_result(
+                tx,
+                workspace_instance_id,
+                method,
+                request_id,
+                &rules,
+                &canonical_params_hash,
+                &provenance,
+                &body,
+            );
+            DaemonRpcError::new(code, message)
+        };
+        macro_rules! reject {
+            ($code:expr, $message:expr) => {{
+                let err = record_reject(&tx, $code, $message);
+                let _ = tx.commit();
+                return Err(err);
+            }};
+        }
+
+        let bound_workspace = match task_bound_workspace_id(&tx, task_id, Some(workspace_id)) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        let binding_instance: String = match tx.query_row(
+            "SELECT c.workspace_instance_id FROM task_workspace_bindings b JOIN workspace_authority_captures c ON c.workspace_capture_id=b.workspace_capture_id WHERE b.task_id=?1 AND b.workspace_id=?2",
+            params![task_id, bound_workspace], |r| r.get(0),
+        ) {
+            Ok(value) => value,
+            Err(_) => reject!("E_BRIDGE_EXECUTOR_AUTHORITY_UNAVAILABLE", "task 缺少可复核的 workspace authority capture"),
+        };
+        if binding_instance != workspace_instance_id {
+            reject!(
+                "E_WORKSPACE_AUTHORITY_MISMATCH",
+                &format!(
+                    "task binding workspace_instance_id={} 与请求 {} 不一致",
+                    binding_instance, workspace_instance_id
+                )
+            );
+        }
+        if let Err(e) = verify_registered_identity(&tx, &identity) {
+            reject!(&e.code, &e.message);
+        }
+
+        let ts = task_now_ts();
+        let seq = self.next_seq();
+        let input = ExecutorEvidenceInput {
+            task_id: task_id.to_string(),
+            steps,
+            created_by: identity.agent_id.clone(),
+        };
+        let result = match bootstrap_executor_evidence(&tx, &input, seq, ts) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        if let Err(e) = record_action_identity(&tx, task_id, &identity, method, seq, ts) {
+            return Err(e);
+        }
+        let mut full = result.as_object().cloned().unwrap_or_default();
+        full.insert("request_id".to_string(), Value::String(request_id.to_string()));
+        full.insert("evidence_steps".to_string(), serde_json::to_value(&input.steps).unwrap_or(Value::Null));
+        full.insert("authoritative_timestamp".to_string(), serde_json::json!(ts));
+        let full = Value::Object(full);
+        operation_store.record_result(
+            &tx,
+            workspace_instance_id,
+            method,
+            request_id,
+            &rules,
+            &canonical_params_hash,
+            &provenance,
+            &full,
+        )?;
+        tx.commit().map_err(|e| {
+            DaemonRpcError::internal_error(format!("提交 bootstrap executor evidence 事务失败: {e}"))
+        })?;
+        Ok(full)
+    }
+
+    pub fn handle_task_bootstrap_reviewer_pass(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let method = "task.bootstrap_reviewer_pass";
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let request_id = params
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let workspace_instance_id = params
+            .get("workspace_instance_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let workspace_id = optional_workspace_id_param(params).ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_BRIDGE_REVIEWER_WORKSPACE_REQUIRED",
+                "task.bootstrap_reviewer_pass 必须携带 workspace_id > 0",
+            )
+        })?;
+        if task_id.is_empty() || request_id.is_empty() || workspace_instance_id.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_BRIDGE_REVIEWER_PARAMS_REQUIRED",
+                "task.bootstrap_reviewer_pass 必须携带 task_id、request_id、workspace_instance_id",
+            ));
+        }
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_BRIDGE_REVIEWER_IDENTITY_REQUIRED",
+                "task.bootstrap_reviewer_pass 必须携带完整 identity",
+            )
+        })?;
+        if identity.role != "reviewer" {
+            return Err(DaemonRpcError::new(
+                "E_BRIDGE_REVIEWER_ROLE_REQUIRED",
+                format!("仅允许 role=reviewer，实际 role={}", identity.role),
+            ));
+        }
+        let evidence_path = params
+            .get("evidence_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let evidence_hash = params
+            .get("evidence_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if evidence_path.is_empty() || evidence_hash.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_BRIDGE_REVIEWER_EVIDENCE_REQUIRED",
+                "task.bootstrap_reviewer_pass 必须携带 evidence_path 与 evidence_hash",
+            ));
+        }
+
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        let dedupe =
+            operation_store.dedupe(&conn, workspace_instance_id, method, request_id, params)?;
+        let (rules, canonical_params_hash): (ParamsRules, String) = match dedupe {
+            DedupeOutcome::Replay {
+                response_or_error_json,
+            } => {
+                if let Some(err) = response_or_error_json.get("error") {
+                    let code = err
+                        .get("code")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("E_BRIDGE_REVIEWER_REPLAY_ERROR");
+                    let message = err
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("bootstrap reviewer pass deterministic rejection");
+                    return Err(DaemonRpcError::new(code, message));
+                }
+                return Ok(response_or_error_json);
+            }
+            DedupeOutcome::FirstRequest {
+                rules,
+                canonical_params_hash,
+            } => (rules, canonical_params_hash),
+        };
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DaemonRpcError::internal_error(format!("开启 bootstrap reviewer pass 事务失败: {e}"))
+        })?;
+        let provenance = LedgerProvenance {
+            workspace_id: Some(workspace_id),
+            task_id: Some(task_id.to_string()),
+            ..Default::default()
+        };
+        let record_reject = |tx: &Transaction<'_>, code: &str, message: &str| -> DaemonRpcError {
+            let body = serde_json::json!({"error":{"code":code,"message":message}});
+            let _ = operation_store.record_result(
+                tx,
+                workspace_instance_id,
+                method,
+                request_id,
+                &rules,
+                &canonical_params_hash,
+                &provenance,
+                &body,
+            );
+            DaemonRpcError::new(code, message)
+        };
+        macro_rules! reject {
+            ($code:expr, $message:expr) => {{
+                let err = record_reject(&tx, $code, $message);
+                let _ = tx.commit();
+                return Err(err);
+            }};
+        }
+
+        let bound_workspace = match task_bound_workspace_id(&tx, task_id, Some(workspace_id)) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        let binding_instance: String = match tx.query_row(
+            "SELECT c.workspace_instance_id FROM task_workspace_bindings b JOIN workspace_authority_captures c ON c.workspace_capture_id=b.workspace_capture_id WHERE b.task_id=?1 AND b.workspace_id=?2",
+            params![task_id, bound_workspace], |r| r.get(0),
+        ) {
+            Ok(value) => value,
+            Err(_) => reject!("E_BRIDGE_REVIEWER_AUTHORITY_UNAVAILABLE", "task 缺少可复核的 workspace authority capture"),
+        };
+        if binding_instance != workspace_instance_id {
+            reject!(
+                "E_WORKSPACE_AUTHORITY_MISMATCH",
+                &format!(
+                    "task binding workspace_instance_id={} 与请求 {} 不一致",
+                    binding_instance, workspace_instance_id
+                )
+            );
+        }
+        if let Err(e) = verify_registered_identity(&tx, &identity) {
+            reject!(&e.code, &e.message);
+        }
+
+        // 读取 executor 的累计身份（agent_id + session_id），供独立性比对。
+        // action_identities 不持久化 agent_instance_id，故仅 agent_id 与 session_id 参与强校验。
+        let (executor_agent_id, executor_session_id): (String, String) = tx
+            .query_row(
+                "SELECT agent_id, session_id FROM action_identities WHERE task_id=?1 AND action_type=?2 ORDER BY recorded_at DESC LIMIT 1",
+                params![task_id, "task.bootstrap_executor_evidence"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|_| {
+                DaemonRpcError::new(
+                    "E_BRIDGE_REVIEWER_EXECUTOR_KNOWN_REQUIRED",
+                    "无法读取 executor 累计身份，拒绝 reviewer pass",
+                )
+            })?;
+
+        let ts = task_now_ts();
+        let seq = self.next_seq();
+        let lease_expires_at = ts + 3600.0;
+        let lease_token_hash = sha256_hex(format!(
+            "bootstrap-reviewer-{}-{}-{}",
+            task_id, request_id, ts
+        ).as_bytes());
+        let input = ReviewerPassInput {
+            task_id: task_id.to_string(),
+            evidence_path: evidence_path.to_string(),
+            evidence_hash: evidence_hash.to_string(),
+            created_by: identity.agent_id.clone(),
+            reviewer_agent_id: identity.agent_id.clone(),
+            reviewer_agent_instance_id: identity.agent_instance_id.clone(),
+            reviewer_session_id: identity.session_id.clone(),
+        };
+        let result = match bootstrap_reviewer_pass(
+            &tx,
+            &input,
+            &executor_agent_id,
+            "",
+            &executor_session_id,
+            &lease_token_hash,
+            lease_expires_at,
+            seq,
+            ts,
+        ) {
+            Ok(value) => value,
+            Err(e) => reject!(&e.code, &e.message),
+        };
+        if let Err(e) = record_action_identity(&tx, task_id, &identity, method, seq, ts) {
+            return Err(e);
+        }
+        let mut full = result.as_object().cloned().unwrap_or_default();
+        full.insert("request_id".to_string(), Value::String(request_id.to_string()));
+        full.insert("evidence_path".to_string(), Value::String(evidence_path.to_string()));
+        full.insert("evidence_hash".to_string(), Value::String(evidence_hash.to_string()));
+        full.insert("executor_agent_id".to_string(), Value::String(executor_agent_id));
+        full.insert("reviewer_agent_id".to_string(), Value::String(identity.agent_id));
+        full.insert("authoritative_timestamp".to_string(), serde_json::json!(ts));
+        let full = Value::Object(full);
+        operation_store.record_result(
+            &tx,
+            workspace_instance_id,
+            method,
+            request_id,
+            &rules,
+            &canonical_params_hash,
+            &provenance,
+            &full,
+        )?;
+        tx.commit().map_err(|e| {
+            DaemonRpcError::internal_error(format!("提交 bootstrap reviewer pass 事务失败: {e}"))
+        })?;
+        Ok(full)
     }
 }
 #[cfg(test)]

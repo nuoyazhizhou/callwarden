@@ -1,0 +1,63 @@
+{
+  "manifest_name": "T-1787310376068-44eb5f20-evidence",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787310376068-44eb5f20",
+  "step_id": "S-1787310376068-44f52b54",
+  "step_action": "implement",
+  "role": "implementer",
+  "scope": "P0-F Bootstrap Evidence / Review Bridge 实现与 wiring + 定向 denial-matrix 测试",
+  "outcome": "implemented_and_unit_tested",
+  "governance_claim": {
+    "this_is_real_daemon_client_capability_verification": true,
+    "no_sql_fallback": true,
+    "no_fabricated_binding_contract_lease_evidence": true
+  },
+  "workspace_authority": {
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "workspace_binding_id": "tb-T-1787310376068-44eb5f20-ws-1",
+    "workspace_capture_id": "wc-ws-1-1156701000",
+    "bound_task_governance_projection_empty": true
+  },
+  "files_changed": [
+    "rust_ext/src/daemon/task_loop/bootstrap_review_bridge.rs",
+    "rust_ext/src/daemon/task_loop/bootstrap_review_bridge_test.rs",
+    "rust_ext/src/daemon/task_loop/mod.rs",
+    "rust_ext/src/daemon/task_collab.rs",
+    "rust_ext/src/daemon/dispatch.rs",
+    "rust_ext/src/daemon/task_loop/operation_store.rs",
+    "server/daemon_client.py",
+    "cli/main.py"
+  ],
+  "verification": {
+    "cargo_test": {
+      "filter": "task_loop::bootstrap_review_bridge",
+      "passed": 6,
+      "failed": 0,
+      "suite_compiles": true
+    },
+    "test_cases": [
+      "role_constants_present",
+      "reviewer_pass_rejects_without_executor_evidence",
+      "rejects_when_governance_projection_exists",
+      "executor_evidence_rejects_wrong_state",
+      "reviewer_pass_rejects_same_agent_as_executor",
+      "executor_evidence_then_reviewer_pass_two_stage_bridge"
+    ],
+    "cli_parses": {
+      "bootstrap-executor-evidence": true,
+      "bootstrap-reviewer-pass": true
+    },
+    "compile_fixes": [
+      "ExecutorEvidenceStep 增加 serde::Serialize derive",
+      "sha256_hex 入参改为 &[u8]（.as_bytes()）"
+    ]
+  },
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "implementer_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立核验 P0-F bridge 仅用于完整治理投影为空的任务；denial-matrix 全绿后再引导逐步骤 task.report 与自举证据链",
+    "independence_requirement": "required"
+  }
+}

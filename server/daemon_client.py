@@ -284,6 +284,58 @@ class UnixDaemonRpcClient:
             "identity": identity,
         })
 
+    def task_bootstrap_executor_evidence(
+        self,
+        task_id: str,
+        steps: list,
+        workspace_id: int,
+        workspace_instance_id: str,
+        request_id: str,
+        identity: Any,
+    ) -> dict:
+        """P0-F：daemon-only Bootstrap Executor Evidence（A′ 冷启动治理死锁修复）。
+
+        只转发受保护 RPC，绝无 SQL fallback。仅当任务完整治理投影为空（无 Task
+        Contract / Role lineage / step binding）且 status 为 open/in_progress 时才
+        被 daemon 接受；由 executor 角色逐项追加 completed-step evidence 并把任务
+        推到 review。daemon 的 authority/identity/ledger/evidence 门禁为唯一权威。
+        """
+        return self.call("task.bootstrap_executor_evidence", {
+            "task_id": task_id,
+            "steps": steps,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
+            "request_id": request_id,
+            "identity": identity,
+        })
+
+    def task_bootstrap_reviewer_pass(
+        self,
+        task_id: str,
+        workspace_id: int,
+        workspace_instance_id: str,
+        request_id: str,
+        evidence_path: str,
+        evidence_hash: str,
+        identity: Any,
+    ) -> dict:
+        """P0-F：daemon-only Bootstrap Reviewer Pass（A′ 冷启动治理死锁修复）。
+
+        只转发受保护 RPC，绝无 SQL fallback。任务必须处于 review 且存在唯一
+        bootstrap executor evidence event；reviewer 身份须与 executor 三重不同
+        （agent/instance/session）。daemon 同事务签发专用 bootstrap reviewer lease 并
+        追加 verdict-equivalent event，供后续 P0-C 首次发布 Task Contract。
+        """
+        return self.call("task.bootstrap_reviewer_pass", {
+            "task_id": task_id,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
+            "request_id": request_id,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "identity": identity,
+        })
+
     def task_governance_projection_get(self, task_id: str) -> dict:
         """P0-G G3：只读 governance projection（Reviewer 权威投影）。
 

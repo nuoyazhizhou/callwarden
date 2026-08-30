@@ -16,6 +16,7 @@
 //! 所有既有 Task/Role/step projection 一律拒绝（fail-closed），P0-F 不得成为常规捷径。
 
 use rusqlite::{params, Transaction};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::daemon::dispatch::DaemonRpcError;
@@ -32,7 +33,7 @@ pub const ERR_BRIDGE_REVIEWER_EVIDENCE_EXISTS: &str =
     "E_BOOTSTRAP_BRIDGE_REVIEWER_EVIDENCE_EXISTS";
 pub const ERR_BRIDGE_INDEPENDENCE: &str = "E_BOOTSTRAP_BRIDGE_INDEPENDENCE";
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ExecutorEvidenceStep {
     pub step_id: String,
     pub evidence_path: String,

@@ -4315,6 +4315,64 @@ def _handle_task(args, db):
     contract_revise_p.add_argument("--role", required=True, choices=["adjudicator"],
                                    help="Governance role; only adjudicator is accepted")
 
+    # P0-F：Bootstrap Executor Evidence（A′ 冷启动治理死锁修复，daemon-only）。
+    # 仅当任务已 immutable workspace binding 且 Task/Role/step 投影全空时，executor
+    # 角色逐项追加 completed-step evidence 并推 review。fail-closed：禁止本地 fallback。
+    bootstrap_exec_ev_p = sub.add_parser(
+        "bootstrap-executor-evidence",
+        help="Append completed-step bootstrap evidence for an empty-bound task (daemon-only)",
+    )
+    bootstrap_exec_ev_p.add_argument("task_id",
+                                     help="Bound task ID whose governance projection is completely empty")
+    bootstrap_exec_ev_p.add_argument("--steps", required=True, metavar="JSON",
+                                     help="JSON array of {step_id, evidence_path, evidence_hash}")
+    bootstrap_exec_ev_p.add_argument("--workspace-id", required=True, type=int, metavar="ID",
+                                     help="Explicit immutable workspace authority ID")
+    bootstrap_exec_ev_p.add_argument("--workspace-instance-id", required=True, metavar="ID",
+                                     help="Stable workspace instance ID recorded by the task binding")
+    bootstrap_exec_ev_p.add_argument("--request-id", required=True, metavar="ID",
+                                     help="Stable request ID for durable idempotency")
+    bootstrap_exec_ev_p.add_argument("--agent-id", required=True, metavar="ID",
+                                     help="Registered executor agent ID")
+    bootstrap_exec_ev_p.add_argument("--session-id", required=True, metavar="ID",
+                                     help="Registered executor session ID")
+    bootstrap_exec_ev_p.add_argument("--model-id", required=True, metavar="ID",
+                                     help="Registered executor model ID")
+    bootstrap_exec_ev_p.add_argument("--role", required=True, choices=["executor"],
+                                     help="Governance role; only executor is accepted")
+    bootstrap_exec_ev_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                                     help="Registered executor agent instance ID (optional; must match registration if non-empty)")
+
+    # P0-F：Bootstrap Reviewer Pass（A′ 冷启动治理死锁修复，daemon-only）。
+    # 仅当任务处于 review 且存在唯一 bootstrap executor evidence event 时，reviewer 身份
+    # 须与 executor 三重（agent/instance/session）不同；daemon 同事务签发专用 reviewer lease。
+    bootstrap_rev_pass_p = sub.add_parser(
+        "bootstrap-reviewer-pass",
+        help="Reviewer bootstraps pass + dedicated reviewer lease for an empty-bound task (daemon-only)",
+    )
+    bootstrap_rev_pass_p.add_argument("task_id",
+                                      help="Bound task ID in review with a unique bootstrap executor evidence")
+    bootstrap_rev_pass_p.add_argument("--workspace-id", required=True, type=int, metavar="ID",
+                                      help="Explicit immutable workspace authority ID")
+    bootstrap_rev_pass_p.add_argument("--workspace-instance-id", required=True, metavar="ID",
+                                      help="Stable workspace instance ID recorded by the task binding")
+    bootstrap_rev_pass_p.add_argument("--request-id", required=True, metavar="ID",
+                                      help="Stable request ID for durable idempotency")
+    bootstrap_rev_pass_p.add_argument("--evidence-path", required=True, metavar="PATH",
+                                      help="Reviewer evidence manifest path")
+    bootstrap_rev_pass_p.add_argument("--evidence-hash", required=True, metavar="HASH",
+                                      help="Reviewer evidence manifest SHA-256")
+    bootstrap_rev_pass_p.add_argument("--agent-id", required=True, metavar="ID",
+                                      help="Registered reviewer agent ID")
+    bootstrap_rev_pass_p.add_argument("--session-id", required=True, metavar="ID",
+                                      help="Registered reviewer session ID")
+    bootstrap_rev_pass_p.add_argument("--model-id", required=True, metavar="ID",
+                                      help="Registered reviewer model ID")
+    bootstrap_rev_pass_p.add_argument("--role", required=True, choices=["reviewer"],
+                                      help="Governance role; only reviewer is accepted")
+    bootstrap_rev_pass_p.add_argument("--agent-instance-id", default="", metavar="ID",
+                                      help="Registered reviewer agent instance ID (optional; must match registration if non-empty)")
+
     # P0-G G3：只读 governance projection（Reviewer 权威投影，绝不返回 lease token）。
     governance_projection_p = sub.add_parser(
         "governance-projection",
@@ -6029,6 +6087,100 @@ def _handle_task(args, db):
         cprint(f"✓ 已追加 Task Contract revision：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  contract: {result.get('contract_id', '')} r{result.get('previous_revision', '')}→r{result.get('revision', '')}")
         print(f"  contract_hash: {result.get('contract_hash', '')}")
+        print(f"  request_id: {result.get('request_id', '')}")
+        print()
+        return True
+
+    elif opts.action == "bootstrap-executor-evidence":
+        # P0-F：Bootstrap Executor Evidence 是 governance mutation，只有 daemon 权威路径可写。
+        _dexec_identity, _dexec_reason = _collect_identity(opts)
+        if _dexec_reason:
+            _identity_reason_output(_dexec_reason, False)
+            return True
+        try:
+            _dexec_steps = json.loads(opts.steps)
+        except json.JSONDecodeError as exc:
+            cprint(f"task.bootstrap_executor_evidence steps JSON 解析失败: {exc}", "red")
+            return True
+        if not isinstance(_dexec_steps, list) or not _dexec_steps:
+            cprint("task.bootstrap_executor_evidence --steps 必须是非空 JSON array", "red")
+            return True
+        _dexec_params = {
+            "task_id": opts.task_id,
+            "steps": _dexec_steps,
+            "workspace_id": opts.workspace_id,
+            "workspace_instance_id": opts.workspace_instance_id,
+            "request_id": opts.request_id,
+            "identity": _dexec_identity,
+            "actor": (_dexec_identity or {}).get("agent_id", ""),
+        }
+
+        def _local_bootstrap_exec_ev_forbidden():
+            raise DaemonUnavailableError(
+                "task.bootstrap_executor_evidence 仅由 daemon 权威写点处理；"
+                "daemon 不可用时禁止本地 SQLite fallback"
+            )
+
+        result = route_task_write(
+            "task.bootstrap_executor_evidence",
+            _dexec_params,
+            _local_bootstrap_exec_ev_forbidden,
+        )
+        if result is None:
+            cprint("task.bootstrap_executor_evidence failed (no response)", "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(f"task.bootstrap_executor_evidence failed: {result['error']}", "red")
+            return True
+        cprint(f"✓ 已追加 Bootstrap Executor Evidence：{result.get('task_id', opts.task_id)}", "green", bold=True)
+        print(f"  to_status: {result.get('to_status', '-')}")
+        print(f"  evidence_steps: {len(result.get('evidence_steps', []))}")
+        print(f"  request_id: {result.get('request_id', '')}")
+        print()
+        return True
+
+    elif opts.action == "bootstrap-reviewer-pass":
+        # P0-F：Bootstrap Reviewer Pass 是 governance mutation，只有 daemon 权威路径可写。
+        _drev_identity, _drev_reason = _collect_identity(opts)
+        if _drev_reason:
+            _identity_reason_output(_drev_reason, False)
+            return True
+        _drev_params = {
+            "task_id": opts.task_id,
+            "workspace_id": opts.workspace_id,
+            "workspace_instance_id": opts.workspace_instance_id,
+            "request_id": opts.request_id,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "identity": _drev_identity,
+            "actor": (_drev_identity or {}).get("agent_id", ""),
+        }
+
+        def _local_bootstrap_rev_pass_forbidden():
+            raise DaemonUnavailableError(
+                "task.bootstrap_reviewer_pass 仅由 daemon 权威写点处理；"
+                "daemon 不可用时禁止本地 SQLite fallback"
+            )
+
+        result = route_task_write(
+            "task.bootstrap_reviewer_pass",
+            _drev_params,
+            _local_bootstrap_rev_pass_forbidden,
+        )
+        if result is None:
+            cprint("task.bootstrap_reviewer_pass failed (no response)", "red")
+            return True
+        if isinstance(result, str):
+            result = {"error": result}
+        if "error" in result:
+            cprint(f"task.bootstrap_reviewer_pass failed: {result['error']}", "red")
+            return True
+        cprint(f"✓ 已签发 Bootstrap Reviewer Pass：{result.get('task_id', opts.task_id)}", "green", bold=True)
+        print(f"  status: {result.get('status', '-')}")
+        print(f"  bootstrap_reviewer_lease_id: {result.get('bootstrap_reviewer_lease_id', '')}")
+        print(f"  reviewer_agent_id: {result.get('reviewer_agent_id', '')}")
         print(f"  request_id: {result.get('request_id', '')}")
         print()
         return True

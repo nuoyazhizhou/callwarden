@@ -1294,6 +1294,32 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.contract_get"))
         }
     }
+    fn handle_task_bootstrap_executor_evidence(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_bootstrap_executor_evidence(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.bootstrap_executor_evidence",
+            ))
+        }
+    }
+    fn handle_task_bootstrap_reviewer_pass(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_bootstrap_reviewer_pass(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.bootstrap_reviewer_pass",
+            ))
+        }
+    }
     fn handle_task_governance_projection_get(
         &mut self,
         peer: PeerCredential,
@@ -2164,6 +2190,9 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.contract_bootstrap",
     // P0-G：Task Contract revision n+1 追加（append-only，禁 UPDATE/DELETE 历史）。
     "task.contract_revise",
+    // P0-F：Bootstrap Evidence / Review Bridge（A′ 冷启动治理死锁修复，daemon-only）。
+    "task.bootstrap_executor_evidence",
+    "task.bootstrap_reviewer_pass",
     "task.capture_diff",
     "task.split",
     "task.create_from_plan",
@@ -2853,6 +2882,13 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.contract_bootstrap" => state.handle_task_contract_bootstrap(peer, params),
         "task.contract_revise" => state.handle_task_contract_revise(peer, params),
         "task.contract_get" => state.handle_task_contract_get(peer, params),
+        // P0-F：Bootstrap Evidence / Review Bridge（A′ 冷启动治理死锁修复，daemon-only）。
+        "task.bootstrap_executor_evidence" => {
+            state.handle_task_bootstrap_executor_evidence(peer, params)
+        }
+        "task.bootstrap_reviewer_pass" => {
+            state.handle_task_bootstrap_reviewer_pass(peer, params)
+        }
         "task.governance_projection.get" => {
             state.handle_task_governance_projection_get(peer, params)
         }

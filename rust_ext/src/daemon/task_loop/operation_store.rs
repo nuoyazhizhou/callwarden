@@ -36,10 +36,15 @@ const TASK_DB_LEDGER_METHODS: &[&str] = &[
     "task.contract_set",
     // P0-C：Task/Role/step governance projection bootstrap 与其审计写入必须同样 durable。
     "task.contract_bootstrap",
+    // P0-F：Bootstrap Evidence / Review Bridge 的两个 append-only mutation 必须进 ledger。
+    "task.bootstrap_executor_evidence",
+    "task.bootstrap_reviewer_pass",
     "task.claim",
     "task.report",
     "task.handoff",
     "task.p0l_identity_policy_repair",
+    "task.p0l_identity_policy_bootstrap_repair",
+    "role_worker.rotate",
     "task.apply",
     "task.close",
     // P0-H（T-1787277487109-758e56d0）：task.supersede 治理 mutation 纳入
