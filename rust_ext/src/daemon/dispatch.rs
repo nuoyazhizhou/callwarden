@@ -1011,6 +1011,26 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("agent.heartbeat"))
         }
     }
+    /// Credential-free Role Worker status lookup.  Authentication is provided
+    /// by the local transport peer; the handler only exposes the worker state
+    /// owned by that peer and never returns credentials or runtime secrets.
+    fn handle_role_worker_status(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.with_conn(|conn| {
+                crate::daemon::task_loop::role_worker::role_worker_status(
+                    conn,
+                    &peer.owner_key(),
+                    params,
+                )
+            })
+        } else {
+            Err(DaemonRpcError::method_not_found("role_worker.status"))
+        }
+    }
     fn handle_task_create(
         &mut self,
         peer: PeerCredential,
@@ -2769,6 +2789,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         // ---- Agent & Task 协同 RPC ----
         "agent.register" => state.handle_agent_register(peer, params),
         "agent.heartbeat" => state.handle_agent_heartbeat(peer, params),
+        "role_worker.status" => state.handle_role_worker_status(peer, params),
         "task.create" => state.handle_task_create(peer, params),
         "task.claim" => state.handle_task_claim(peer, params),
         "task.assignment.heartbeat" => state.handle_task_assignment_heartbeat(peer, params),
@@ -3192,6 +3213,45 @@ mod tests {
             current_daemon_uid().wrapping_add(1)
         );
         assert_eq!(response["result"]["pid"], state.pid);
+    }
+
+    #[test]
+    fn test_role_worker_status_is_routed_and_redacts_secrets() {
+        let (_dir, mut state) = p0l_s3_state_with_store();
+        let peer = make_peer();
+        let owner_key = peer.owner_key();
+        let store = state.task_collab_store.clone().unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO role_workers
+                 (role_worker_id,owner_key,role,credential_hash,status,created_at,revoked_at,revocation_reason)
+                 VALUES ('rw-status-route',?1,'adjudicator','hash-not-secret','active',1.0,0,'')",
+                rusqlite::params![owner_key],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO role_worker_instances
+                 (role_instance_id,role_worker_id,owner_key,status,created_at,retired_at)
+                 VALUES ('ri-status-route','rw-status-route',?1,'active',1.0,0)",
+                rusqlite::params![owner_key],
+            )
+            .unwrap();
+        }
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "role_worker.status",
+            &json!({"role_worker_id": "rw-status-route"}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["role"], "adjudicator");
+        assert_eq!(response["result"]["status"], "active");
+        assert!(response["result"].get("credential").is_none());
+        assert!(response["result"].get("credential_hash").is_none());
+        assert!(response["result"].get("runtime").is_none());
     }
 
     #[test]

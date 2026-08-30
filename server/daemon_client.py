@@ -3633,6 +3633,11 @@ _NO_WORKSPACE_METHODS = frozenset({
     "health",
     "schema.version",
     "workspace.list",
+    # Role Worker lifecycle status is owner-scoped by the daemon transport
+    # peer and does not inspect a workspace snapshot.  Injecting a workspace
+    # here would make this credential-free read depend on snapshot publication
+    # and could report a transport problem as a workspace problem.
+    "role_worker.status",
 })
 
 
