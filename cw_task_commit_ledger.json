@@ -2067,5 +2067,12 @@
   "status": "review_pending",
   "scope": "P0-F Bootstrap Evidence / Review Bridge wiring + release verify",
   "note": "message 内嵌 task_id；bootstrap_executor_evidence/bootstrap_reviewer_pass 两个 daemon-only 受保护 RPC；空投影窄边界 gate(E_BOOTSTRAP_BRIDGE_NOT_EMPTY)；五重门禁(identity/instance/request-id/role/ledger) fail-closed；release daemon PID 13424 binary sha256=94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15；cargo bootstrap_review_bridge 6/6 passed；runtime round-trip 经 E_BOOTSTRAP_BRIDGE_NOT_EMPTY 拒绝验证；evidence docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-release-verify.json sha256=8988E48A48579165FB0D28BE6E608461B4908C4C3CE0542DD4C3632AEFFF01B4；任务进入 review；未执行 apply/close、未伪造 binding/lease/evidence"
+ },
+ "t1787293818274_p0b_implement_20260830": {
+  "task_id": "T-1787293818274-1b87b6c4",
+  "commit_id": "43134bb",
+  "status": "execution_in_progress",
+  "scope": "P0-B step#0 implement：task.attest_legacy_workspace_binding handler 审计 + 修复 supersede/attestation 测试夹具以独立 registered reviewer 作为 reviewer lease holder（对齐 P0-E 三重分离），supersede 14 passed",
+  "note": "message 内嵌 task_id；cargo test --lib supersede 14 passed/0 failed；evidence docs/evidence/T-1787293818274-1b87b6c4-evidence-20260830-p0b-implement.json sha256=767D01BCA69087167B8C07CF8ADFB605E0F48DDD1CD099FC48619ED31654C08C；未伪造 binding/lease/evidence、未直接 SQL、未执行 apply/close"
  }
 }
