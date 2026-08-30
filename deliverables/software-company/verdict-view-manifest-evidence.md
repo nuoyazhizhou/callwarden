@@ -54,6 +54,15 @@ returned the real manifest hash:
 - `contract_hash`: `9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df`
 - `degraded`: `false`
 
+## Task-bound snapshot
+
+The daemon-native `cw collab publish --workspace=C:\git_work\callwarden`
+round-trip returned the authoritative workspace and snapshot references:
+
+- `workspace_instance_id`: `d547c02fa195fb22`
+- `snapshot_id`: `fe1ee71cb71a548c`
+- `generation`: `1`
+
 ## Governance boundary
 
 The prior `V-ce9b6fb191d9fc00baa9cf8a` row is immutable and was not repaired in place. A Reviewer must submit a new task-bound verdict with a real non-empty `view_manifest_hash` after the patched daemon is deployed, then retry the formal `task.handoff`. No `apply` or `close` was performed by the Executor.
