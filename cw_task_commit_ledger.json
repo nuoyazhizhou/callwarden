@@ -2032,10 +2032,10 @@
   },
   "t1788067569565_clean_baseline_provenance_20260830": {
     "task_id": "T-1788067569565-1e5b45ac",
-    "commit_id": "b75d50833b6c1926967abba950487bb0c24563cb",
-    "evidence_commit_id": "b75d50833b6c1926967abba950487bb0c24563cb",
+    "commit_id": "a571f01bec2dded268791ea17e8a610b08667a44",
+    "evidence_commit_id": "a571f01bec2dded268791ea17e8a610b08667a44",
     "status": "new_in_master",
     "scope": "独立干净 worktree 归属验证、目标 commit 测试计数校准、隔离基线 runtime PID/hash/health/ping provenance",
-    "note": "message 内嵌 task_id；目标 commit 2a6906d 干净 worktree 治理套件 17 tests = 16 passed/1 existing stale-claim baseline failure；临时锁竞争夹具 2 passed；runtime 20260830-133611-2a6906d4883d-7842712c，daemon PID 11432，sha256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过；证据 deliverables/software-company/clean-baseline-provenance-evidence.md hash=sha256:C278F834DCAEAF8FF3F7D73D12ABDDC9FA9BBDDC765C6C57F7F0A85DCAC6124A；未修改历史 verdict/evidence，未执行 apply/close"
+    "note": "message 内嵌 task_id；目标 commit 2a6906d 干净 worktree 治理套件 17 tests = 16 passed/1 existing stale-claim baseline failure；临时锁竞争夹具 2 passed；最终 runtime 20260830-134337-2a6906d4883d-94fcc2a1，daemon PID 15460，sha256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过；证据 deliverables/software-company/clean-baseline-provenance-evidence.md hash=sha256:840A7ECDF163225B79D2BAFFB290CCD2F7AB23BB0EF7DC1B57A71ECD2A7AAEB6；未修改历史 verdict/evidence，未执行 apply/close"
   }
 }
