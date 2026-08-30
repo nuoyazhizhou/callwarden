@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
- "updated_at": "2026-08-28T23:10:00+08:00",
+ "updated_at": "2026-08-30T21:17:54.542824+08:00",
  "discipline": {
   "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
   "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1307,6 +1307,14 @@
    "scope": "deliverables/software-company/p0l_task_contract_policy_state_machine.md",
    "note": "message 内嵌 task_id；P0-L step0 policy/preclaim gap 状态机映射（含 v61 schema 缺口探针证据）",
    "recorded_at": "2026-08-27T15:10:00+08:00"
+  },
+  {
+   "task_id": "T-1787305268313-06fcef5c",
+   "commit_id": "46506a374b952e6a1a97eb4ba425bec285c9504b",
+   "status": "new_in_master",
+   "source": "executor_p0d_20260830",
+   "scope": "P0-D immutable binding / workspace capture freshness: next_action fail-closed tests + evidence",
+   "note": "commit message 内嵌 task_id"
   }
  ],
  "known_commits": {
@@ -2002,62 +2010,62 @@
   "status": "new_in_master",
   "scope": "shared runtime refresh 后的 workspace.status 与 snapshot.list_workspaces fresh provenance",
   "note": "runtime refresh evidence deliverables/software-company/workspace_snapshot_binding_runtime_refresh_evidence.md hash=sha256:18B4D5566C3643E0F58E917C0725EF6AD953C0A837DC345611BCA991950A46E8；live PID 48028，authority/task DB fingerprint=1e3954ffcf2c773ce3afca4dd4194a30a4f435acb0d0a2eaa89c56cba61a6838，workspace_instance_id=4baea3ff12c2ea5c，snapshot generation=1"
-  },
-  "t1788063720353_verdict_write_busy_retry_20260830": {
+ },
+ "t1788063720353_verdict_write_busy_retry_20260830": {
   "task_id": "T-1788063720353-e7768bb0",
   "commit_id": "729a07bb0489b13e419b51a26d53d59a711b62b1",
   "evidence_commit_id": "8a5f5fbc19ccb9aa7546faa0ae8a16910f4554d6",
-   "status": "new_in_master",
-   "scope": "task.handoff/verdict.submit 在 BEGIN IMMEDIATE 锁获取边界进行有界重试，不重放已进入事务的治理 handler；提交 focused contention tests 与 runtime evidence",
+  "status": "new_in_master",
+  "scope": "task.handoff/verdict.submit 在 BEGIN IMMEDIATE 锁获取边界进行有界重试，不重放已进入事务的治理 handler；提交 focused contention tests 与 runtime evidence",
   "note": "message 内嵌 task_id；focused lock contention 2 passed、verdict submit 2 passed；governance suite 16 passed/1 existing baseline failure；证据 deliverables/software-company/verdict-write-busy-remediation-evidence.md hash=sha256:A37255F3CA9A25C254A694857F9C9B093B99C153F026E739A729B56567597F7C；runtime refresh 20260830-123905-2a360dff3a7a-0bb1af11，daemon PID 3884，sha256=071256aa494738aaf5724f832ca536bcf4281f96ddbb7305f71ca57a55718b81，health/ping 通过；未伪造 Verdict Ledger、未使用 SQL、未修改历史 verdict/evidence、未执行 apply/close"
-  },
-  "t1788065933399_formal_governance_write_roundtrip_20260830": {
+ },
+ "t1788065933399_formal_governance_write_roundtrip_20260830": {
   "task_id": "T-1788065933399-2b3cead8",
   "commit_id": "2a6906d4883dbc102955179479a1bd7fdb92cff9",
   "evidence_commit_id": "ff629f0d80caca59515d9ff3a003e5e6a700bfc1",
   "status": "new_in_master",
   "scope": "修复实际 handle_task_handoff 入口遗漏的 writer-lock retry，并将 retry 窗口扩展到覆盖真实 reviewer contention；治理套件计数校准为 19 passed/1 existing baseline failure",
   "note": "message 内嵌 task_id；focused begin_immediate 2 passed；governance module 20 tests = 19 passed/1 existing stale-claim baseline failure；task.handoff 实际入口已改用 shared retry helper；正式 daemon CLI handoff 首次与同 request replay 返回同一 event_id=6223，最新 handoff event_id=6226；证据 hash=sha256:764283989B7770F0278EF4CC9A93672BB9B6C6C4E34EDF3543AE188B432267B0；未伪造 verdict、未使用 SQL、未修改历史状态、未执行 apply/close"
-  },
-  "t1787801315246_p0l_identity_policy_repair_20260830": {
-    "task_id": "T-1787801315246-e3e3a08c",
-    "commit_id": "ce987116c3ae230e71b28582f1f3df073fbc7b98",
-    "evidence_commit_id": "826e2cfac1fd3138c87cf289f41a35836fbd6c57",
-    "deployment_evidence_commit_id": "e586433bc38abac66367c039786d04e4956c60b4",
-    "projection_commit_id": "79197a6",
-    "projection_evidence_commit_id": "f32c92b",
-    "status": "new_in_master",
-    "scope": "精确 P0-L identity_policy 自举修复；受保护 task.p0l_identity_policy_repair RPC；append-only revision/hash continuity；workspace capture 校验；request-id 幂等；next-action 嵌套 routing 一致性",
-    "note": "message 内嵌 task_id；P0-L repair 2 passed、next_action policy tests 2 passed、cw-daemon cargo check 通过；governance-projection 与 task.next-action live parity 已验证为 governance_blocked/resolve_identity_policy；证据 deliverables/software-company/T-1787801315246-e3e3a08c-p0l-identity-policy-repair-evidence.md hash=sha256:B62534B240152D2A617FD9B5758758BD6CB973BC4F7446FC4A87FE2E69B79F10；未直接修改 live SQLite、未伪造 verdict/lease、未执行 apply/close"
-  },
-  "t1788067569565_clean_baseline_provenance_20260830": {
-    "task_id": "T-1788067569565-1e5b45ac",
-    "commit_id": "a571f01bec2dded268791ea17e8a610b08667a44",
-    "evidence_commit_id": "a571f01bec2dded268791ea17e8a610b08667a44",
-    "status": "new_in_master",
-    "scope": "独立干净 worktree 归属验证、目标 commit 测试计数校准、隔离基线 runtime PID/hash/health/ping provenance",
-    "note": "message 内嵌 task_id；目标 commit 2a6906d 干净 worktree 治理套件 17 tests = 16 passed/1 existing stale-claim baseline failure；临时锁竞争夹具 2 passed；最终 runtime 20260830-134337-2a6906d4883d-94fcc2a1，daemon PID 15460，sha256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过；证据 deliverables/software-company/clean-baseline-provenance-evidence.md hash=sha256:840A7ECDF163225B79D2BAFFB290CCD2F7AB23BB0EF7DC1B57A71ECD2A7AAEB6；未修改历史 verdict/evidence，未执行 apply/close"
-  },
-  "t1788077285594_snapshot_publish_workspace_binding_20260830": {
-    "task_id": "T-1788077285594-4eceeaac",
-    "commit_id": "9b5b6a70f4e1075dd98fce2d6902018b996188a8",
-    "evidence_commit_id": "9b5b6a70f4e1075dd98fce2d6902018b996188a8",
-    "status": "new_in_master",
-    "scope": "collab snapshot.publish 通过 daemon workspace.register 获取权威 workspace_instance_id/snapshot_id，传递 authority db_path，并对缺少权威 identity 的响应 fail-closed",
-    "note": "message 内嵌 task_id；focused CLI/verdict regression 7 passed；真实 daemon snapshot.publish generation=1、workspace_instance_id=2d16bcc4c6931e95、snapshot_id=aebf898bc6614594；证据 deliverables/software-company/snapshot-publish-binding-evidence.md hash=sha256:66A5D17AC0541EC32CAC5706E65D9D0E5A063055F1B8D1412534CF52D5161ACB；未提交 Reviewer verdict、未修改历史 task/evidence、未执行 apply/close"
-  },
-  "t1787801315246_role_worker_status_route_20260830": {
-    "task_id": "T-1787801315246-e3e3a08c",
-    "commit_id": "91268cdaef8ac847d8ead284c608047139f50b83",
-    "status": "new_in_master",
-    "scope": "修复 role_worker.status Rust daemon dispatch 路由；Python thin-client 将其标记为无需 snapshot 的 owner-scoped 只读 RPC；补充秘密字段脱敏、路由与 HTTP 参数透传回归测试",
-    "note": "message 内嵌 task_id；Rust focused test 1 passed、Python focused test 1 passed；runtime receipt 20260830-161421-f63a7f7e545e-0dabdf7d status=passed，live daemon PID 4240，binary sha256=90d657cc4198dcf3b76895e17408410916a1ec5695842baa61380334bd4503c4；Reviewer/Adjudicator role_worker.status 真实 HTTP round-trip 均返回 active 且无 credential/hash/runtime；证据 deliverables/software-company/T-1787801315246-e3e3a08c-role-worker-status-route-evidence.md sha256=F6AEA4FC02E3081B31189346D1C3659A51C9BBF39DD799261D9F23E652FCE23A；未读取/输出 raw credential、未直接写 SQLite、未执行 task mutation/apply/close、未导入 12 卡"
-  },
-  "t1787310376068_p0f_bootstrap_bridge_20260830": {
-    "task_id": "T-1787310376068-44eb5f20",
-    "commit_id": "35075a26e79023079f4f45d4b5a62f8c36498a0f",
-    "status": "review_pending",
-    "scope": "P0-F Bootstrap Evidence / Review Bridge wiring + release verify",
-    "note": "message 内嵌 task_id；bootstrap_executor_evidence/bootstrap_reviewer_pass 两个 daemon-only 受保护 RPC；空投影窄边界 gate(E_BOOTSTRAP_BRIDGE_NOT_EMPTY)；五重门禁(identity/instance/request-id/role/ledger) fail-closed；release daemon PID 13424 binary sha256=94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15；cargo bootstrap_review_bridge 6/6 passed；runtime round-trip 经 E_BOOTSTRAP_BRIDGE_NOT_EMPTY 拒绝验证；evidence docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-release-verify.json sha256=8988E48A48579165FB0D28BE6E608461B4908C4C3CE0542DD4C3632AEFFF01B4；任务进入 review；未执行 apply/close、未伪造 binding/lease/evidence"
-  }
+ },
+ "t1787801315246_p0l_identity_policy_repair_20260830": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "ce987116c3ae230e71b28582f1f3df073fbc7b98",
+  "evidence_commit_id": "826e2cfac1fd3138c87cf289f41a35836fbd6c57",
+  "deployment_evidence_commit_id": "e586433bc38abac66367c039786d04e4956c60b4",
+  "projection_commit_id": "79197a6",
+  "projection_evidence_commit_id": "f32c92b",
+  "status": "new_in_master",
+  "scope": "精确 P0-L identity_policy 自举修复；受保护 task.p0l_identity_policy_repair RPC；append-only revision/hash continuity；workspace capture 校验；request-id 幂等；next-action 嵌套 routing 一致性",
+  "note": "message 内嵌 task_id；P0-L repair 2 passed、next_action policy tests 2 passed、cw-daemon cargo check 通过；governance-projection 与 task.next-action live parity 已验证为 governance_blocked/resolve_identity_policy；证据 deliverables/software-company/T-1787801315246-e3e3a08c-p0l-identity-policy-repair-evidence.md hash=sha256:B62534B240152D2A617FD9B5758758BD6CB973BC4F7446FC4A87FE2E69B79F10；未直接修改 live SQLite、未伪造 verdict/lease、未执行 apply/close"
+ },
+ "t1788067569565_clean_baseline_provenance_20260830": {
+  "task_id": "T-1788067569565-1e5b45ac",
+  "commit_id": "a571f01bec2dded268791ea17e8a610b08667a44",
+  "evidence_commit_id": "a571f01bec2dded268791ea17e8a610b08667a44",
+  "status": "new_in_master",
+  "scope": "独立干净 worktree 归属验证、目标 commit 测试计数校准、隔离基线 runtime PID/hash/health/ping provenance",
+  "note": "message 内嵌 task_id；目标 commit 2a6906d 干净 worktree 治理套件 17 tests = 16 passed/1 existing stale-claim baseline failure；临时锁竞争夹具 2 passed；最终 runtime 20260830-134337-2a6906d4883d-94fcc2a1，daemon PID 15460，sha256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过；证据 deliverables/software-company/clean-baseline-provenance-evidence.md hash=sha256:840A7ECDF163225B79D2BAFFB290CCD2F7AB23BB0EF7DC1B57A71ECD2A7AAEB6；未修改历史 verdict/evidence，未执行 apply/close"
+ },
+ "t1788077285594_snapshot_publish_workspace_binding_20260830": {
+  "task_id": "T-1788077285594-4eceeaac",
+  "commit_id": "9b5b6a70f4e1075dd98fce2d6902018b996188a8",
+  "evidence_commit_id": "9b5b6a70f4e1075dd98fce2d6902018b996188a8",
+  "status": "new_in_master",
+  "scope": "collab snapshot.publish 通过 daemon workspace.register 获取权威 workspace_instance_id/snapshot_id，传递 authority db_path，并对缺少权威 identity 的响应 fail-closed",
+  "note": "message 内嵌 task_id；focused CLI/verdict regression 7 passed；真实 daemon snapshot.publish generation=1、workspace_instance_id=2d16bcc4c6931e95、snapshot_id=aebf898bc6614594；证据 deliverables/software-company/snapshot-publish-binding-evidence.md hash=sha256:66A5D17AC0541EC32CAC5706E65D9D0E5A063055F1B8D1412534CF52D5161ACB；未提交 Reviewer verdict、未修改历史 task/evidence、未执行 apply/close"
+ },
+ "t1787801315246_role_worker_status_route_20260830": {
+  "task_id": "T-1787801315246-e3e3a08c",
+  "commit_id": "91268cdaef8ac847d8ead284c608047139f50b83",
+  "status": "new_in_master",
+  "scope": "修复 role_worker.status Rust daemon dispatch 路由；Python thin-client 将其标记为无需 snapshot 的 owner-scoped 只读 RPC；补充秘密字段脱敏、路由与 HTTP 参数透传回归测试",
+  "note": "message 内嵌 task_id；Rust focused test 1 passed、Python focused test 1 passed；runtime receipt 20260830-161421-f63a7f7e545e-0dabdf7d status=passed，live daemon PID 4240，binary sha256=90d657cc4198dcf3b76895e17408410916a1ec5695842baa61380334bd4503c4；Reviewer/Adjudicator role_worker.status 真实 HTTP round-trip 均返回 active 且无 credential/hash/runtime；证据 deliverables/software-company/T-1787801315246-e3e3a08c-role-worker-status-route-evidence.md sha256=F6AEA4FC02E3081B31189346D1C3659A51C9BBF39DD799261D9F23E652FCE23A；未读取/输出 raw credential、未直接写 SQLite、未执行 task mutation/apply/close、未导入 12 卡"
+ },
+ "t1787310376068_p0f_bootstrap_bridge_20260830": {
+  "task_id": "T-1787310376068-44eb5f20",
+  "commit_id": "35075a26e79023079f4f45d4b5a62f8c36498a0f",
+  "status": "review_pending",
+  "scope": "P0-F Bootstrap Evidence / Review Bridge wiring + release verify",
+  "note": "message 内嵌 task_id；bootstrap_executor_evidence/bootstrap_reviewer_pass 两个 daemon-only 受保护 RPC；空投影窄边界 gate(E_BOOTSTRAP_BRIDGE_NOT_EMPTY)；五重门禁(identity/instance/request-id/role/ledger) fail-closed；release daemon PID 13424 binary sha256=94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15；cargo bootstrap_review_bridge 6/6 passed；runtime round-trip 经 E_BOOTSTRAP_BRIDGE_NOT_EMPTY 拒绝验证；evidence docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-release-verify.json sha256=8988E48A48579165FB0D28BE6E608461B4908C4C3CE0542DD4C3632AEFFF01B4；任务进入 review；未执行 apply/close、未伪造 binding/lease/evidence"
+ }
 }
