@@ -45,6 +45,15 @@ The patched daemon was built from the clean detached worktree at commit
 - daemon ping: exit code `0`, status `ok`
 - rollback: `false`
 
+## Reviewer view provenance
+
+The patched daemon's read-only `get_role_view` for this task and role `reviewer`
+returned the real manifest hash:
+
+- `view_manifest_hash`: `5da4de902f28c01c2f9e3016a1ca29acca4904598c169b3be4c76fd057b2f5d9`
+- `contract_hash`: `9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df`
+- `degraded`: `false`
+
 ## Governance boundary
 
 The prior `V-ce9b6fb191d9fc00baa9cf8a` row is immutable and was not repaired in place. A Reviewer must submit a new task-bound verdict with a real non-empty `view_manifest_hash` after the patched daemon is deployed, then retry the formal `task.handoff`. No `apply` or `close` was performed by the Executor.
