@@ -2074,5 +2074,12 @@
   "status": "execution_in_progress",
   "scope": "P0-B step#0 implement：task.attest_legacy_workspace_binding handler 审计 + 修复 supersede/attestation 测试夹具以独立 registered reviewer 作为 reviewer lease holder（对齐 P0-E 三重分离），supersede 14 passed",
   "note": "message 内嵌 task_id；cargo test --lib supersede 14 passed/0 failed；evidence docs/evidence/T-1787293818274-1b87b6c4-evidence-20260830-p0b-implement.json sha256=767D01BCA69087167B8C07CF8ADFB605E0F48DDD1CD099FC48619ED31654C08C；未伪造 binding/lease/evidence、未直接 SQL、未执行 apply/close"
+ },
+ "t1787293818274_p0b_complete_20260830": {
+  "task_id": "T-1787293818274-1b87b6c4",
+  "commit_id": "53fa433",
+  "status": "review_pending",
+  "scope": "P0-B 完整完成（step#1 wire + #2 adapt_client_cli + #3 test + #4 release_verify）：wire 审计确认 dispatch 路由；client/cli 适配 daemon-only fail-closed；新增 tests/test_p0b_legacy_attestation_fail_closed.py(3 passed)；release daemon round-trip 4/4 fail-closed",
+  "note": "message 内嵌 task_id；wire/client-cli/test/release-verify 四份证据 + test-log；cargo supersede 14 passed、P0-B Python fail-closed 3 passed、M4 回归 9 passed；release daemon PID 13424 binary sha256=94bdbaf7cc08328782959f62ba43af5fe73d543a30c91d3ce8c7e9bac70ecd15 已路由 task.attest_legacy_workspace_binding；evidence test sha256=8082b29b37dd37bb6e799743d07d1ae8dabff4522ea5c89685fda66fcd70748b、release-verify sha256=7042085f84c28862d9f9eaa6081a32092da9a98e6a765c222501b5ee6341547c；任务进入 review_pending，next_role=reviewer；未执行 apply/close、未伪造 binding/lease/evidence、未直接 SQL"
  }
 }
