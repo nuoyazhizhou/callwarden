@@ -2010,5 +2010,12 @@
    "status": "new_in_master",
    "scope": "task.handoff/verdict.submit 在 BEGIN IMMEDIATE 锁获取边界进行有界重试，不重放已进入事务的治理 handler；提交 focused contention tests 与 runtime evidence",
   "note": "message 内嵌 task_id；focused lock contention 2 passed、verdict submit 2 passed；governance suite 16 passed/1 existing baseline failure；证据 deliverables/software-company/verdict-write-busy-remediation-evidence.md hash=sha256:A37255F3CA9A25C254A694857F9C9B093B99C153F026E739A729B56567597F7C；runtime refresh 20260830-123905-2a360dff3a7a-0bb1af11，daemon PID 3884，sha256=071256aa494738aaf5724f832ca536bcf4281f96ddbb7305f71ca57a55718b81，health/ping 通过；未伪造 Verdict Ledger、未使用 SQL、未修改历史 verdict/evidence、未执行 apply/close"
+  },
+  "t1787801315246_p0l_identity_policy_repair_20260830": {
+    "task_id": "T-1787801315246-e3e3a08c",
+    "commit_id": "ce987116c3ae230e71b28582f1f3df073fbc7b98",
+    "status": "new_in_master",
+    "scope": "精确 P0-L identity_policy 自举修复；受保护 task.p0l_identity_policy_repair RPC；append-only revision/hash continuity；workspace capture 校验；request-id 幂等；next-action 嵌套 routing 一致性",
+    "note": "message 内嵌 task_id；P0-L repair 2 passed、next_action policy tests 2 passed、cw-daemon cargo check 通过；证据 deliverables/software-company/T-1787801315246-e3e3a08c-p0l-identity-policy-repair-evidence.md；未直接修改 live SQLite、未伪造 verdict/lease、未执行 apply/close"
   }
 }
