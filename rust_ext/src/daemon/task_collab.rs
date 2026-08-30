@@ -54,6 +54,8 @@ pub(crate) use task_collab_types::ActionIdentity;
 pub use task_collab_types::TaskCollabStore;
 #[path = "task_collab_contract.rs"]
 mod task_collab_contract;
+#[path = "task_collab_contract_repair.rs"]
+mod task_collab_contract_repair;
 #[path = "task_collab_lease.rs"]
 mod task_collab_lease;
 #[path = "task_collab_lifecycle.rs"]

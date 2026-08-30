@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::daemon::task_loop::task_contract_bootstrap::bind_step_to_executor_role_contract;
+use super::task_collab_contract_repair::normalize_p0l_repair_envelope;
 
 impl TaskCollabStore {
     /// P0-L 自举修复：正式 Reviewer 提交 `reviewer_blocked` 后，daemon 在同一
@@ -340,6 +341,296 @@ impl TaskCollabStore {
         res.insert("workflow_status".into(), Value::String("remediation_pending".into()));
         res.insert("replayed".into(), Value::Bool(false));
         Ok(Value::Object(res))
+    }
+
+    /// P0-L 自举：为当前 P0-L 任务追加唯一的 `role_worker_v1` policy revision。
+    ///
+    /// 这是一个故意极窄的 repair exception，而不是通用的 Contract 绕过：
+    /// - 只接受冻结的 P0-L task id 和固定 repair code；
+    /// - 只允许把当前缺失 policy 的 revision 追加为 `role_worker_v1`；
+    /// - 授权锚点是 daemon 已登记且仍 active 的 adjudicator Role Worker；
+    /// - workspace capture、revision/hash continuity、operation ledger 和事件在同一事务内完成；
+    /// - 同一个 request_id 可安全重放，但第二个 repair request 永远拒绝。
+    ///
+    /// 该入口解决“P0-L 自己的 Contract 缺 policy，因而无法领取自己的 fix_defect”
+    /// 的自举死锁。它不接受客户端 envelope，避免借 repair exception 修改任意合同字段。
+    pub fn handle_p0l_identity_policy_repair(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        const P0L_TASK_ID: &str = "T-1787801315246-e3e3a08c";
+        const REPAIR_CODE: &str = "p0l_identity_policy_v1";
+        let text_field = |name: &str| -> Result<String, DaemonRpcError> {
+            params
+                .get(name)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| {
+                    DaemonRpcError::new(
+                        "E_P0L_POLICY_REPAIR_PARAM_REQUIRED",
+                        format!("task.p0l_identity_policy_repair 缺少结构化字段 {name}"),
+                    )
+                })
+        };
+        let task_id = text_field("task_id")?;
+        if task_id != P0L_TASK_ID {
+            return Err(DaemonRpcError::new(
+                "E_P0L_POLICY_REPAIR_TASK_NOT_ALLOWED",
+                "identity policy repair 仅允许冻结的 P0-L task",
+            ));
+        }
+        let request_id = text_field("request_id")?;
+        let workspace_instance_id = text_field("workspace_instance_id")?;
+        let repair_code = text_field("repair_code")?;
+        if repair_code != REPAIR_CODE {
+            return Err(DaemonRpcError::new(
+                "E_P0L_POLICY_REPAIR_CODE_INVALID",
+                "P0-L identity policy repair code 不匹配",
+            ));
+        }
+        let workspace_id = optional_workspace_id_param(params).ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_P0L_POLICY_REPAIR_WORKSPACE_REQUIRED",
+                "P0-L identity policy repair 必须携带 workspace_id > 0",
+            )
+        })?;
+        let evidence_path = text_field("evidence_path")?;
+        let evidence_hash = text_field("evidence_hash")?;
+        let owner_key = peer.owner_key();
+        let method = "task.p0l_identity_policy_repair";
+        let operation_store = OperationStore;
+        let mut conn = self.conn.lock().unwrap();
+        let (rules, canonical_params_hash) = match operation_store.dedupe(
+            &conn,
+            &workspace_instance_id,
+            method,
+            &request_id,
+            params,
+        )? {
+            DedupeOutcome::Replay {
+                response_or_error_json,
+            } => {
+                if let Some(error) = response_or_error_json.get("error") {
+                    return Err(DaemonRpcError::new(
+                        error
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .unwrap_or("E_P0L_POLICY_REPAIR_REPLAY_ERROR"),
+                        error
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("P0-L policy repair replay was rejected"),
+                    ));
+                }
+                let mut replay = response_or_error_json;
+                if let Some(object) = replay.as_object_mut() {
+                    object.insert("replayed".to_string(), Value::Bool(true));
+                }
+                return Ok(replay);
+            }
+            DedupeOutcome::FirstRequest {
+                rules,
+                canonical_params_hash,
+            } => (rules, canonical_params_hash),
+        };
+        let tx = conn.unchecked_transaction().map_err(|error| {
+            DaemonRpcError::internal_error(format!("开启 P0-L identity policy repair 事务失败: {error}"))
+        })?;
+        let provenance = LedgerProvenance {
+            workspace_id: Some(workspace_id),
+            task_id: Some(task_id.clone()),
+            ..Default::default()
+        };
+        let record_reject = |code: &str, message: &str| -> DaemonRpcError {
+            let body = serde_json::json!({"error": {"code": code, "message": message}});
+            let _ = operation_store.record_result(
+                &tx,
+                &workspace_instance_id,
+                method,
+                &request_id,
+                &rules,
+                &canonical_params_hash,
+                &provenance,
+                &body,
+            );
+            DaemonRpcError::new(code, message)
+        };
+
+        let auth = match enforce_role_worker_governance_write(
+            &tx,
+            params,
+            &peer,
+            workspace_id,
+            &task_id,
+            method,
+            "P0-L identity policy repair 必须由 registered adjudicator Role Worker 授权",
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let rejected = record_reject(&error.code, &error.message);
+                let _ = tx.commit();
+                return Err(rejected);
+            }
+        };
+        let bound_workspace = match task_bound_workspace_id(&tx, &task_id, Some(workspace_id)) {
+            Ok(value) => value,
+            Err(error) => {
+                let rejected = record_reject(&error.code, &error.message);
+                let _ = tx.commit();
+                return Err(rejected);
+            }
+        };
+        let binding_instance: String = match tx.query_row(
+            "SELECT c.workspace_instance_id FROM task_workspace_bindings b \
+             JOIN workspace_authority_captures c ON c.workspace_capture_id=b.workspace_capture_id \
+             WHERE b.task_id=?1 AND b.workspace_id=?2",
+            params![task_id, bound_workspace],
+            |row| row.get(0),
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                let rejected = record_reject(
+                    "E_P0L_POLICY_REPAIR_AUTHORITY_UNAVAILABLE",
+                    "P0-L task 缺少可复核的 workspace authority capture",
+                );
+                let _ = tx.commit();
+                return Err(rejected);
+            }
+        };
+        if binding_instance != workspace_instance_id {
+            let rejected = record_reject(
+                "E_WORKSPACE_AUTHORITY_MISMATCH",
+                "P0-L task binding workspace_instance_id 与请求不一致",
+            );
+            let _ = tx.commit();
+            return Err(rejected);
+        }
+
+        let current: (String, i64, String, String) = match tx.query_row(
+            "SELECT contract_id, revision, contract_hash, envelope_payload \
+             FROM task_contract_revisions WHERE task_id=?1 ORDER BY revision DESC LIMIT 1",
+            [&task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                let rejected = record_reject(
+                    "E_P0L_POLICY_REPAIR_CONTRACT_REQUIRED",
+                    "P0-L task 缺少可追加的 Task Contract revision",
+                );
+                let _ = tx.commit();
+                return Err(rejected);
+            }
+        };
+        let (contract_id, current_revision, current_hash, payload) = current;
+        if policy_from_envelope_payload(&payload).is_some() {
+            let rejected = record_reject(
+                "E_P0L_POLICY_REPAIR_ALREADY_RESOLVED",
+                "P0-L 当前 Task Contract 已声明 identity_policy",
+            );
+            let _ = tx.commit();
+            return Err(rejected);
+        }
+        let prior_repair: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id=?1 AND reason_code='p0l_identity_policy_repaired'",
+                [&task_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!("查询 P0-L policy repair ledger 失败: {error}"))
+            })?;
+        if prior_repair > 0 {
+            let rejected = record_reject(
+                "E_P0L_POLICY_REPAIR_ALREADY_USED",
+                "P0-L identity policy repair exception 已经使用",
+            );
+            let _ = tx.commit();
+            return Err(rejected);
+        }
+        let envelope = match normalize_p0l_repair_envelope(
+            &payload,
+            &contract_id,
+            current_revision + 1,
+            &current_hash,
+            &task_id,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let rejected = record_reject(&error.code, &error.message);
+                let _ = tx.commit();
+                return Err(rejected);
+            }
+        };
+        let result = match append_task_contract_revision(
+            &tx,
+            &ContractReviseInput {
+                task_id: task_id.clone(),
+                envelope,
+                expected_previous_hash: current_hash.clone(),
+                created_by: auth.role_worker_id.clone(),
+            },
+            bound_workspace,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let rejected = record_reject(&error.code, &error.message);
+                let _ = tx.commit();
+                return Err(rejected);
+            }
+        };
+        let ts = task_now_ts();
+        let reason = serde_json::json!({
+            "request_id": request_id,
+            "repair_code": REPAIR_CODE,
+            "previous_revision": current_revision,
+            "previous_contract_hash": current_hash,
+            "new_revision": current_revision + 1,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "role_worker_id": auth.role_worker_id,
+            "role_instance_id": auth.role_instance_id,
+            "role_session_id": auth.role_session_id,
+        })
+        .to_string();
+        Self::append_task_event(
+            &tx,
+            &task_id,
+            "in_progress",
+            "in_progress",
+            "p0l_identity_policy_repaired",
+            &reason,
+            &owner_key,
+            &auth.role_session_id,
+            "adjudicator",
+            self.next_seq(),
+            ts,
+        )?;
+        let mut response = result.as_object().cloned().unwrap_or_default();
+        response.insert("request_id".into(), Value::String(request_id.clone()));
+        response.insert("repair_code".into(), Value::String(REPAIR_CODE.into()));
+        response.insert("evidence_path".into(), Value::String(evidence_path));
+        response.insert("evidence_hash".into(), Value::String(evidence_hash));
+        response.insert("policy".into(), Value::String(POLICY_ROLE_WORKER_V1.into()));
+        response.insert("replayed".into(), Value::Bool(false));
+        let response = Value::Object(response);
+        operation_store.record_result(
+            &tx,
+            &workspace_instance_id,
+            method,
+            &request_id,
+            &rules,
+            &canonical_params_hash,
+            &provenance,
+            &response,
+        )?;
+        tx.commit().map_err(|error| {
+            DaemonRpcError::internal_error(format!("提交 P0-L identity policy repair 事务失败: {error}"))
+        })?;
+        Ok(response)
     }
 
     /// A3：更新任务某角色的 Role Contract——旧版置 is_current=0，写入新 revision，

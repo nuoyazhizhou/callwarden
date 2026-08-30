@@ -39,6 +39,7 @@ const TASK_DB_LEDGER_METHODS: &[&str] = &[
     "task.claim",
     "task.report",
     "task.handoff",
+    "task.p0l_identity_policy_repair",
     "task.apply",
     "task.close",
     // P0-H（T-1787277487109-758e56d0）：task.supersede 治理 mutation 纳入

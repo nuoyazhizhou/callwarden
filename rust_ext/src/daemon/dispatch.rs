@@ -1173,6 +1173,17 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.p0l_reviewer_block_repair"))
         }
     }
+    fn handle_p0l_identity_policy_repair(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_p0l_identity_policy_repair(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.p0l_identity_policy_repair"))
+        }
+    }
     fn handle_task_handoff(
         &mut self,
         peer: PeerCredential,
@@ -1406,6 +1417,23 @@ pub trait DaemonStateExt {
                         object.insert(
                             "claim_requirements".to_string(),
                             serde_json::json!({"blocked": true, "reason": reason}),
+                        );
+                    }
+                    // `routing` is a machine-consumed duplicate of the top-level
+                    // action fields. Keep both views synchronized when the policy
+                    // guard overrides the evaluator's normal claim route.
+                    if let Some(Value::Object(routing)) = object.get_mut("routing") {
+                        routing.insert(
+                            "next_role".to_string(),
+                            Value::String("adjudicator".to_string()),
+                        );
+                        routing.insert(
+                            "next_action".to_string(),
+                            Value::String("resolve_identity_policy".to_string()),
+                        );
+                        routing.insert(
+                            "reason".to_string(),
+                            Value::Array(vec![Value::String(reason)]),
                         );
                     }
                 }
@@ -2067,6 +2095,7 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.report",
     "task.remediation.create",
     "task.p0l_reviewer_block_repair",
+    "task.p0l_identity_policy_repair",
     "task.step.bind_role_contract",
     "task.step.resolve",
     "task.steps.bootstrap_legacy",
@@ -2745,6 +2774,9 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.report" => state.handle_task_report(peer, params),
         "task.remediation.create" => state.handle_task_remediation_create(peer, params),
         "task.p0l_reviewer_block_repair" => state.handle_p0l_reviewer_block_repair(peer, params),
+        "task.p0l_identity_policy_repair" => {
+            state.handle_p0l_identity_policy_repair(peer, params)
+        }
         "task.step.bind_role_contract" => state.handle_task_step_bind_role_contract(peer, params),
         "task.step.resolve" => state.handle_task_step_resolve(peer, params),
         // structured handoff 只能进入 daemon handler；handler 负责 envelope、lease/fencing
@@ -3748,6 +3780,7 @@ mod tests {
         ));
         assert!(is_protected_mutation("verdict.submit"));
         assert!(is_protected_mutation("task.p0l_reviewer_block_repair"));
+        assert!(is_protected_mutation("task.p0l_identity_policy_repair"));
         assert!(is_protected_mutation("task.steps.bootstrap_legacy"));
         assert!(is_protected_mutation("task.apply"));
         assert!(is_protected_mutation("task.reconcile"));
@@ -4042,6 +4075,16 @@ mod tests {
                 result["next_role"],
                 json!("adjudicator"),
                 "[{scenario}] policy 裁决归 adjudicator"
+            );
+            assert_eq!(
+                result["routing"]["next_action"],
+                json!("resolve_identity_policy"),
+                "[{scenario}] routing.next_action 不得保留过期 claim_current_step"
+            );
+            assert_eq!(
+                result["routing"]["next_role"],
+                json!("adjudicator"),
+                "[{scenario}] routing.next_role 必须与顶层 next_role 一致"
             );
             assert_eq!(
                 result["claim_requirements"]["blocked"],
