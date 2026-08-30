@@ -22,7 +22,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, Error as RusqliteError, OptionalExtension, Transaction,
+    TransactionBehavior};
 use serde_json::{json, Map, Value};
 
 use super::clock::AuthoritativeClock;
@@ -90,6 +91,56 @@ const TASK_COLLAB_TABLES: [&str; 5] = [
     "agent_registrations",
     "action_identities",
 ];
+
+/// SQLite writer lock acquisition is the only retryable boundary for governance
+/// mutations.  Once an immediate transaction has been acquired, the caller
+/// owns the writer slot and must not replay a partially executed handler.
+const SQLITE_BUSY_RETRY_ATTEMPTS: usize = 3;
+const SQLITE_BUSY_RETRY_BACKOFF_MS: [u64; SQLITE_BUSY_RETRY_ATTEMPTS - 1] = [50, 150];
+
+fn is_sqlite_busy(error: &RusqliteError) -> bool {
+    matches!(
+        error,
+        RusqliteError::SqliteFailure(sqlite_error, _)
+            if matches!(
+                sqlite_error.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
+}
+
+/// Start a writer transaction with a bounded retry at the lock-acquisition
+/// boundary.  This is deliberately not a generic handler retry: the callback
+/// has not run until `BEGIN IMMEDIATE` succeeds, so a retry cannot duplicate
+/// task events, verdicts, or ledger rows.
+pub(crate) fn begin_immediate_with_retry<'a>(
+    conn: &'a Connection,
+    operation: &str,
+) -> Result<Transaction<'a>, DaemonRpcError> {
+    fn attempt<'a>(
+        conn: &'a Connection,
+        operation: &str,
+        attempt_no: usize,
+    ) -> Result<Transaction<'a>, DaemonRpcError> {
+        match Transaction::new_unchecked(&*conn, TransactionBehavior::Immediate) {
+            Ok(transaction) => Ok(transaction),
+            Err(error)
+                if is_sqlite_busy(&error) && attempt_no + 1 < SQLITE_BUSY_RETRY_ATTEMPTS =>
+            {
+                std::thread::sleep(Duration::from_millis(
+                    SQLITE_BUSY_RETRY_BACKOFF_MS[attempt_no],
+                ));
+                attempt(conn, operation, attempt_no + 1)
+            }
+            Err(error) => Err(DaemonRpcError::internal_error(format!(
+                "开启 {} 事务失败: {}",
+                operation, error
+            ))),
+        }
+    }
+
+    attempt(conn, operation, 0)
+}
 
 /// 在 `task.create` 同一事务内追加 workspace authority capture + 不可变 binding
 /// （cw-role-handoff-task-loop.md §8.1.1）。

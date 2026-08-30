@@ -111,9 +111,7 @@ impl TaskCollabStore {
         let submitted_at = clock.now_secs() as f64;
 
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| DaemonRpcError::internal_error(format!("开启 verdict 事务失败: {}", e)))?;
+        let tx = begin_immediate_with_retry(&conn, "verdict")?;
         self.validate_lease_for_mutation(
             &tx,
             task_id,

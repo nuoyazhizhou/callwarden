@@ -99,9 +99,7 @@ impl TaskCollabStore {
             }
         }
 
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| DaemonRpcError::internal_error(format!("开启事务失败: {}", e)))?;
+        let tx = begin_immediate_with_retry(&conn, "handoff")?;
 
         // 校验 claim 所有者 (P1 修复: 只有 claim 对应的 agent 才能 report)
         let (claimed_actor, claimed_session) = self.get_task_claim_info(&tx, task_id);
