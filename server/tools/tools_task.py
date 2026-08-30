@@ -170,7 +170,7 @@ def register(mcp: FastMCP) -> None:
         return _route('task.reopen', {"task_id": task_id, "step_id": step_id, "resolution": resolution}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None, identity: dict = None, agent_instance_id: str = "") -> Optional[dict]:
+    def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None, identity: dict = None, agent_instance_id: str = "", snapshot_id: str = "") -> Optional[dict]:
         """回报步骤执行结果
 
         如果失败，系统会自动插入"修复缺陷"步骤，Agent 无法跳过。
@@ -185,13 +185,14 @@ def register(mcp: FastMCP) -> None:
             identity: P3 结构化身份 JSON（{agent_id, agent_instance_id, session_id, model_id, role}，
                       可选；提供后由包装层校验并透传给 db 层，不得伪造缺省身份）
             agent_instance_id: Agent 实例 ID（可选；identity 未含该字段时并入）
+            snapshot_id: 真实 review snapshot reference（可选；缺省时保持 no_snapshot）
 
         Returns:
             下一步步骤信息（如果有）
         """
         if identity and agent_instance_id and not identity.get("agent_instance_id"):
             identity = {**identity, "agent_instance_id": agent_instance_id}
-        return _route('task.report', {"task_id": task_id, "step_id": step_id, "result": result, "success": success, "changes": changes, "identity": identity}, 'PROTECTED_MUTATION')
+        return _route('task.report', {"task_id": task_id, "step_id": step_id, "result": result, "success": success, "changes": changes, "identity": identity, "snapshot_id": snapshot_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def record_task_symbol_change(task_id: str, file_path: str, step_id: str = "",

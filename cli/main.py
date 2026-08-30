@@ -3841,6 +3841,10 @@ def _handle_task(args, db):
         help="SHA-256 of the task-bound evidence manifest",
     )
     report_p.add_argument(
+        "--snapshot-id", default="",
+        help="Authoritative review snapshot reference (must come from snapshot.publish)",
+    )
+    report_p.add_argument(
         "--changes-json", default="",
         help="JSON array of explicit step-whitelisted file changes",
     )
@@ -4740,6 +4744,8 @@ def _handle_task(args, db):
             _report_payload["evidence_path"] = opts.evidence_path
         if opts.evidence_hash:
             _report_payload["evidence_hash"] = opts.evidence_hash
+        if opts.snapshot_id:
+            _report_payload["snapshot_id"] = opts.snapshot_id
         if _report_session:
             _report_payload["agent_session_id"] = _report_session
         # A3 修复：与 claim 对称，合同任务 report 也携带与冻结合同一致的 contract_claim，

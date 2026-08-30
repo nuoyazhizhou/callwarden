@@ -29,6 +29,14 @@ impl TaskCollabStore {
             .get("evidence_hash")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        // review_input_snapshot 的唯一权威来源是 task_events.snapshot_id。
+        // report 只接受调用方提供的真实 snapshot reference；缺省时保持
+        // no_snapshot，禁止 daemon 猜测或生成 snapshot。
+        let snapshot_id = params
+            .get("snapshot_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
         let step_id = params.get("step_id").and_then(|v| v.as_str()).unwrap_or("");
         let success = params
             .get("success")
@@ -335,8 +343,8 @@ impl TaskCollabStore {
             "INSERT INTO task_events
              (task_id, from_status, to_status, reason_code, reason, actor_identity,
               agent_session_id, role, monotonic_seq, authoritative_timestamp,
-              request_id, step_id, evidence_path, evidence_hash)
-             VALUES (?1, ?2, ?3, 'reported', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              request_id, step_id, evidence_path, evidence_hash, snapshot_id)
+             VALUES (?1, ?2, ?3, 'reported', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 task_id,
                 current_status,
@@ -350,7 +358,8 @@ impl TaskCollabStore {
                 report_request_id,
                 step_id,
                 evidence_path,
-                evidence_hash
+                evidence_hash,
+                snapshot_id
             ],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("task_event append 失败: {}", e)))?;
@@ -407,6 +416,12 @@ impl TaskCollabStore {
         res.insert("task_id".to_string(), Value::String(task_id.to_string()));
         res.insert("status".to_string(), Value::String(next_status));
         res.insert("request_id".to_string(), Value::String(report_request_id));
+        if !snapshot_id.is_empty() {
+            res.insert(
+                "snapshot_id".to_string(),
+                Value::String(snapshot_id.to_string()),
+            );
+        }
         if !step_id.is_empty() {
             res.insert("step_id".to_string(), Value::String(step_id.to_string()));
         }

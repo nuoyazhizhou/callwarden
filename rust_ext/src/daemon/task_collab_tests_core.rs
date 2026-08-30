@@ -1667,6 +1667,69 @@ use super::support::*;
         assert_eq!(err.code, "E_IDENTITY_INCOMPLETE");
     }
 
+    #[test]
+    fn test_task_report_persists_snapshot_for_governance_projection() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "task_id": "T-REPORT-SNAPSHOT-001",
+                    "title": "report snapshot binding",
+                    "steps": [{"action": "implement", "target_file": "a.rs"}]
+                }),
+            )
+            .unwrap();
+        let step_id: String = {
+            let conn = store.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT id FROM task_steps WHERE task_id = 'T-REPORT-SNAPSHOT-001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        store
+            .handle_task_claim(
+                peer.clone(),
+                &serde_json::json!({"task_id": "T-REPORT-SNAPSHOT-001"}),
+            )
+            .unwrap();
+        store
+            .handle_task_report(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-REPORT-SNAPSHOT-001",
+                    "step_id": step_id,
+                    "summary": "reported with authoritative snapshot",
+                    "snapshot_id": "snapshot-report-001",
+                    "evidence_path": "deliverables/report.md",
+                    "success": true
+                }),
+            )
+            .unwrap();
+
+        let projection = store
+            .handle_task_governance_projection_get(
+                peer,
+                &serde_json::json!({"task_id": "T-REPORT-SNAPSHOT-001"}),
+            )
+            .unwrap();
+        assert_eq!(
+            projection["review_input_snapshot"]["snapshot_id"],
+            "snapshot-report-001"
+        );
+        assert_eq!(
+            projection["review_input_snapshot"]["evidence_path"],
+            "deliverables/report.md"
+        );
+    }
+
     // ============================================================
     // P0-L reviewer block repair（task.p0l_reviewer_block_repair）
     // ============================================================

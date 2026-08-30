@@ -391,7 +391,7 @@ class UnixDaemonRpcClient:
             params["workspace_instance_id"] = workspace_instance_id
         return self.call("task.next_action", params)
 
-    def task_report(self, task_id: str, summary: str = "", evidence_path: str = "", evidence_hash: str = "", agent_session_id: str = "", step_id: str = "", success: bool = True, identity: Any = None) -> dict:
+    def task_report(self, task_id: str, summary: str = "", evidence_path: str = "", evidence_hash: str = "", agent_session_id: str = "", step_id: str = "", success: bool = True, identity: Any = None, snapshot_id: str = "") -> dict:
         return self.call("task.report", {
             "task_id": task_id,
             "summary": summary,
@@ -401,6 +401,7 @@ class UnixDaemonRpcClient:
             "step_id": step_id,
             "success": success,
             "identity": identity,
+            "snapshot_id": snapshot_id,
         })
 
     def task_step_resolve(self, task_id: str, failed_step_id: str, remediation_step_id: str,
