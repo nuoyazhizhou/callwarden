@@ -4,7 +4,7 @@
 - Source blocked task: `T-1788055266079-7d76f734`
 - Scope: bounded SQLite writer-lock acquisition retry for daemon `task.handoff`
   and `verdict.submit`; no history, verdict, snapshot, or task-state repair.
-- Source revision at runtime refresh: `2353ae7036aa53913edf66142c34a249514bdd4a`
+- Source revision at runtime refresh: `2a360dff3a7a7745c9a53bf6e91a3a4bd1b9774c`
 
 ## Implementation
 
@@ -37,12 +37,12 @@ append, idempotent replay, request conflict, and Role Contract rejection.
 ## Runtime provenance
 
 ```text
-runtime refresh: 20260830-122811-2353ae7036aa-95807976
-daemon PID: 46152
+runtime refresh: 20260830-123905-2a360dff3a7a-0bb1af11
+daemon PID: 3884
 daemon: C:\Users\wanpi\.callwarden\runtime\current\cw-daemon.exe
-daemon SHA-256: 905845ab8e727826fde0670b87d4ec67fefb923b983ce9545bf1811d23b91849
-health: worker_status=healthy, schema_version=60, git_commit=2353ae7036aa53913edf66142c34a249514bdd4a
-ping: status=ok, transport=http, authority_id=LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/ae618ae38a024ae914850dd9894e41e91d94527a15b813b1a331b7f06c29dc06
+daemon SHA-256: 071256aa494738aaf5724f832ca536bcf4281f96ddbb7305f71ca57a55718b81
+health: worker_status=healthy, schema_version=60, git_commit=2a360dff3a7a7745c9a53bf6e91a3a4bd1b9774c
+ping: status=ok, transport=http, authority_id=LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/8ddc6657e1a9cdfedfa4470f6adaae4b865e6f19f5a51f2bd958b8347cfa0302
 ```
 
 The live checks were performed through the daemon CLI after refresh. No SQL
