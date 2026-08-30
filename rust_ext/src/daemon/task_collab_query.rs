@@ -916,7 +916,110 @@ pub(crate) fn tree_governance_projection(conn: &Connection, task_id: &str, task_
     };
 
     match crate::daemon::task_loop::next_action::evaluate_next_action(conn, &instance, task_id) {
-        Ok(projection) => projection,
+        Ok(mut projection) => {
+            // governance-projection and task.next-action must expose the same
+            // fail-closed policy decision. Without this overlay, a task with a
+            // contract but no identity_policy appeared READY/CLAIM here while
+            // task.next-action correctly rejected the claim.
+            let policy_state = match get_current_task_contract_policy_state(conn, task_id) {
+                Ok(value) => value,
+                Err(error) => {
+                    return serde_json::json!({
+                        "task_id": task_id,
+                        "lifecycle_status": task_status,
+                        "workflow_status": "governance_blocked",
+                        "current_role": Value::Null,
+                        "next_role": Value::Null,
+                        "next_action": "none",
+                        "review": {"state": "not_in_review"},
+                        "blocking_reasons": [format!("无法读取 identity policy: {}", error.message)],
+                        "decision": "BLOCKED",
+                        "action": "NONE",
+                    });
+                }
+            };
+            let Some(object) = projection.as_object_mut() else {
+                return projection;
+            };
+            let required_role = object
+                .get("required_role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let (policy_value, policy_status) = match &policy_state {
+                TaskContractPolicyState::NoContractRevision => (Value::Null, "no_contract_revision"),
+                TaskContractPolicyState::Unresolved => (Value::Null, "unresolved"),
+                TaskContractPolicyState::Declared(policy) => {
+                    (Value::String(policy.clone()), "declared")
+                }
+            };
+            object.insert("identity_policy".to_string(), policy_value);
+            object.insert(
+                "identity_policy_status".to_string(),
+                Value::String(policy_status.to_string()),
+            );
+            if matches!(&policy_state, TaskContractPolicyState::Declared(policy) if policy == POLICY_ROLE_WORKER_V1) {
+                object.insert(
+                    "claim_requirements".to_string(),
+                    serde_json::json!({
+                        "role_worker_auth": {
+                            "required": true,
+                            "expected_role": required_role,
+                            "credential": "one-time, enrolled via role_worker.enroll"
+                        },
+                        "identity": {"required": false, "provenance_only": true},
+                        "workspace_binding": {"required": true},
+                        "separation": {"required": true}
+                    }),
+                );
+            }
+            let blocked_reason = match &policy_state {
+                TaskContractPolicyState::Unresolved => Some(
+                    "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
+                        .to_string(),
+                ),
+                TaskContractPolicyState::Declared(policy)
+                    if policy != POLICY_ROLE_WORKER_V1
+                        && policy != POLICY_LEGACY_IDENTITY_V1 =>
+                {
+                    Some(format!(
+                        "identity policy {policy} 未知，claim fail-closed（禁止隐式降级）"
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(reason) = blocked_reason {
+                object.insert(
+                    "workflow_status".to_string(),
+                    Value::String("governance_blocked".to_string()),
+                );
+                object.insert(
+                    "next_role".to_string(),
+                    Value::String("adjudicator".to_string()),
+                );
+                object.insert(
+                    "next_action".to_string(),
+                    Value::String("resolve_identity_policy".to_string()),
+                );
+                object.insert("decision".to_string(), Value::String("BLOCKED".to_string()));
+                object.insert("action".to_string(), Value::String("BLOCKED".to_string()));
+                for key in ["blocking_reasons", "blocking_conditions"] {
+                    object.insert(key.to_string(), Value::Array(vec![Value::String(reason.clone())]));
+                }
+                if let Some(Value::Object(routing)) = object.get_mut("routing") {
+                    routing.insert(
+                        "next_role".to_string(),
+                        Value::String("adjudicator".to_string()),
+                    );
+                    routing.insert(
+                        "next_action".to_string(),
+                        Value::String("resolve_identity_policy".to_string()),
+                    );
+                    routing.insert("reason".to_string(), Value::Array(vec![Value::String(reason)]));
+                }
+            }
+            projection
+        }
         Err(error) => serde_json::json!({
             "task_id": task_id,
             "lifecycle_status": task_status,

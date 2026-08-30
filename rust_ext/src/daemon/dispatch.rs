@@ -1391,6 +1391,10 @@ pub trait DaemonStateExt {
                 };
                 if let Some(reason) = blocked_reason {
                     object.insert(
+                        "workflow_status".to_string(),
+                        Value::String("governance_blocked".to_string()),
+                    );
+                    object.insert(
                         "next_action".to_string(),
                         Value::String("resolve_identity_policy".to_string()),
                     );

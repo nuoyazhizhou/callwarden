@@ -1548,6 +1548,10 @@ impl TaskCollabStore {
             "action",
             "required_role",
             "step_id",
+            "identity_policy",
+            "identity_policy_status",
+            "claim_requirements",
+            "blocking_conditions",
         ] {
             if let Some(value) = governance.get(key) {
                 res.insert(key.to_string(), value.clone());
