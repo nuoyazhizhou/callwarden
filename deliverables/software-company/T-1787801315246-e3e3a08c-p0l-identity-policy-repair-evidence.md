@@ -42,3 +42,10 @@ normalizer was split into `task_collab_contract_repair.rs`.
 The live authority was not mutated from this worktree. The new protected RPC must be
 deployed and invoked by an authorized adjudicator Role Worker; raw credentials were not
 read or copied into this evidence.
+
+The daemon build was deployed successfully before review:
+
+- receipt: `C:\Users\wanpi\.callwarden\runtime\evidence\20260830-130537-d32326a89041-5e91f929.json`
+- receipt_sha256: `sha256:3DE7C6E9594A3A8E8C06A4F431EE38DB02E52649BFD1CA560B80B86ECFE9E02C`
+- refresh_status: `passed`
+- route probe: non-allowlisted task returned `E_P0L_POLICY_REPAIR_TASK_NOT_ALLOWED`; no mutation was attempted
