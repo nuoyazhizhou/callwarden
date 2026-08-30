@@ -1242,6 +1242,33 @@ use super::support::*;
             "lease_token": lease["token"],
             "fencing_counter": lease["fencing_counter"],
         });
+        let mut missing_manifest = verdict_params.clone();
+        missing_manifest
+            .as_object_mut()
+            .unwrap()
+            .remove("view_manifest_hash");
+        let err = store
+            .handle_verdict_submit(peer.clone(), &missing_manifest)
+            .expect_err("缺失 view_manifest_hash 必须在写入前拒绝");
+        assert_eq!(err.code, "invalid_params");
+
+        let mut blank_manifest = verdict_params.clone();
+        blank_manifest["view_manifest_hash"] = Value::String("   ".to_string());
+        let err = store
+            .handle_verdict_submit(peer.clone(), &blank_manifest)
+            .expect_err("空白 view_manifest_hash 必须在写入前拒绝");
+        assert_eq!(err.code, "invalid_params");
+
+        let conn = store.conn.lock().unwrap();
+        let rejected_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_verdict_events WHERE task_id = 'T-VERDICT-NATIVE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rejected_count, 0, "拒绝的 provenance 不得留下 Verdict Ledger");
+        drop(conn);
         let first = store
             .handle_verdict_submit(peer.clone(), &verdict_params)
             .unwrap();
