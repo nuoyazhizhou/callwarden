@@ -36,9 +36,9 @@ The patched daemon was built from the clean detached worktree at commit
 `b521a7a8a3ea129337016141dca864a0b2ebb161` and deployed with
 `scripts/refresh_shared_runtime.ps1`.
 
-- refresh evidence: `C:\Users\wanpi\.callwarden\runtime\evidence\20260830-175715-b521a7a8a3ea-296b4f4b.json`
-- runtime version: `20260830-175715-b521a7a8a3ea-296b4f4b`
-- live PID: `16744`
+- refresh evidence: `C:\Users\wanpi\.callwarden\runtime\evidence\20260830-182053-b521a7a8a3ea-696106e7.json`
+- runtime version: `20260830-182053-b521a7a8a3ea-696106e7`
+- live PID: `7880`
 - executable: `C:\Users\wanpi\.callwarden\runtime\current\cw-daemon.exe`
 - SHA-256: `aa1e479ec002023174fc2ad2e9494176d66d9db503a9902e09b242f6baf228de`
 - named-pipe endpoint: `\\.\pipe\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001`
