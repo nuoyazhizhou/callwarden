@@ -145,6 +145,12 @@ pub(crate) fn project_task_assignments(
         let (event_id, reason_code, raw_reason, event_ts) = row
             .map_err(|e| DaemonRpcError::internal_error(format!("映射 assignment 事件失败: {e}")))?;
         let reason = serde_json::from_str::<Value>(&raw_reason).unwrap_or(Value::Null);
+        // The SQL predicate binds the event row to `task_id`, but the
+        // immutable payload is also part of the assignment provenance.  Do
+        // not project a malformed/cross-task payload as current queue state.
+        if field(&reason, "task_id").trim() != task_id {
+            continue;
+        }
         let id = field(&reason, "assignment_id").trim();
         if id.is_empty() {
             continue;
@@ -253,12 +259,46 @@ pub(crate) fn current_assignment(
         .into_iter()
         .filter(|item| {
             item.is_active()
+                && item.step_id.as_deref().map_or(true, |step| {
+                    assignment_step_belongs_to_task(conn, task_id, step).unwrap_or(false)
+                })
                 && step_id.map_or(true, |expected| item.step_id.as_deref() == Some(expected))
                 && role.map_or(true, |expected| item.role == expected)
         })
         // assignment_id 是稳定标识符，不代表时间顺序；最新 task event 才是
         // daemon 投影中“当前负责者”的权威排序依据。
         .max_by_key(|item| item.last_event_id))
+}
+
+/// Reject an assignment whose step belongs to another task.  The tiny
+/// in-memory assignment tests intentionally omit the authority task schema;
+/// production task stores always contain `tasks` and `task_steps`, so the
+/// compatibility branch is never used by daemon routing.
+fn assignment_step_belongs_to_task(
+    conn: &Connection,
+    task_id: &str,
+    step_id: &str,
+) -> Result<bool, rusqlite::Error> {
+    let has_task_schema: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name IN ('tasks', 'task_steps')
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_task_schema {
+        return Ok(true);
+    }
+    let bound: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM task_steps
+             WHERE id = ?1 AND task_id = ?2
+         )",
+        params![step_id, task_id],
+        |row| row.get(0),
+    )?;
+    Ok(bound)
 }
 
 pub(crate) fn queue_assignment(
@@ -611,5 +651,78 @@ mod tests {
         assert_eq!(current.assignment_id, executor_id);
         assert_eq!(current.role, "executor");
         assert_eq!(current.status, "claimed");
+    }
+
+    #[test]
+    fn projection_ignores_cross_task_assignment_payload() {
+        let conn = conn();
+        let tx = conn.unchecked_transaction().unwrap();
+        append_event(
+            &tx,
+            "T-outer",
+            "assignment_queued",
+            &json!({
+                "assignment_id": "A-cross-task",
+                "task_id": "T-other",
+                "step_id": "S-other",
+                "role": "reviewer",
+                "status": "queued",
+                "source_request_id": "req-cross-task"
+            }),
+            "actor",
+            "session",
+            "reviewer",
+            1,
+            10.0,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        assert!(project_task_assignments(&conn, "T-outer").unwrap().is_empty());
+    }
+
+    #[test]
+    fn current_assignment_rejects_step_bound_to_another_task() {
+        let conn = conn();
+        conn.execute_batch(
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY);
+             CREATE TABLE task_steps (id TEXT PRIMARY KEY, task_id TEXT NOT NULL);
+             INSERT INTO tasks (id) VALUES ('T-bound'), ('T-other');
+             INSERT INTO task_steps (id, task_id) VALUES ('S-good', 'T-bound'), ('S-other', 'T-other');",
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        queue_assignment(
+            &tx,
+            "T-bound",
+            Some("S-other"),
+            "reviewer",
+            "req-other",
+            None,
+            "actor",
+            "session",
+            1,
+            10.0,
+        )
+        .unwrap();
+        queue_assignment(
+            &tx,
+            "T-bound",
+            Some("S-good"),
+            "reviewer",
+            "req-good",
+            None,
+            "actor",
+            "session",
+            2,
+            11.0,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let current = current_assignment(&conn, "T-bound", None, Some("reviewer"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.step_id.as_deref(), Some("S-good"));
     }
 }
