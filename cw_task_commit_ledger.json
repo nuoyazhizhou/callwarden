@@ -2002,5 +2002,13 @@
   "status": "new_in_master",
   "scope": "shared runtime refresh 后的 workspace.status 与 snapshot.list_workspaces fresh provenance",
   "note": "runtime refresh evidence deliverables/software-company/workspace_snapshot_binding_runtime_refresh_evidence.md hash=sha256:18B4D5566C3643E0F58E917C0725EF6AD953C0A837DC345611BCA991950A46E8；live PID 48028，authority/task DB fingerprint=1e3954ffcf2c773ce3afca4dd4194a30a4f435acb0d0a2eaa89c56cba61a6838，workspace_instance_id=4baea3ff12c2ea5c，snapshot generation=1"
- }
+  },
+  "t1788063720353_verdict_write_busy_retry_20260830": {
+   "task_id": "T-1788063720353-e7768bb0",
+   "commit_id": "729a07bb0489b13e419b51a26d53d59a711b62b1",
+   "evidence_commit_id": "729a07bb0489b13e419b51a26d53d59a711b62b1",
+   "status": "new_in_master",
+   "scope": "task.handoff/verdict.submit 在 BEGIN IMMEDIATE 锁获取边界进行有界重试，不重放已进入事务的治理 handler；提交 focused contention tests 与 runtime evidence",
+   "note": "message 内嵌 task_id；focused lock contention 2 passed、verdict submit 2 passed；governance suite 16 passed/1 existing baseline failure；证据 deliverables/software-company/verdict-write-busy-remediation-evidence.md hash=sha256:92276724937A9B7C773384C4BC49468E071A149BAB65F09DD40D9429C501F3E8；未伪造 Verdict Ledger、未使用 SQL、未修改历史 verdict/evidence、未执行 apply/close"
+  }
 }
