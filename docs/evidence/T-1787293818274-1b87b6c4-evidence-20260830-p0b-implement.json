@@ -1,0 +1,57 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787293818274-1b87b6c4",
+    "step_id": "implement",
+    "step": "implement",
+    "scope": "P0-B：task.attest_legacy_workspace_binding handler 审计 + 测试夹具修复",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "handler_audit": {
+    "file": "rust_ext/src/daemon/task_supersede.rs",
+    "symbol": "handle_task_attest_legacy_workspace_binding",
+    "strict_validation": {
+      "legacy_anchor_existence": "两者必须存在；不存在 -> ERR_LEGACY_BIND_TASK_NOT_FOUND",
+      "self_reference": "legacy == anchor -> ERR_LEGACY_BIND_SELF_REFERENCE",
+      "request_id_required": "缺失 -> ERR_LEGACY_BIND_REQUEST_ID_REQUIRED",
+      "workspace_required": "workspace_instance_id/workspace_id>0 缺失 -> ERR_LEGACY_BIND_WORKSPACE_REQUIRED",
+      "identity_required": "完整四字段 identity；role 必须 adjudicator -> ERR_LEGACY_BIND_IDENTITY_REQUIRED / ERR_LEGACY_BIND_ROLE_REQUIRED",
+      "lease_required": "anchor reviewer lease token+fencing -> ERR_LEGACY_BIND_LEASE_REQUIRED",
+      "evidence_required": "evidence_path + evidence_hash 缺失 fail-closed -> ERR_LEGACY_BIND_EVIDENCE_REQUIRED",
+      "already_bound": "legacy 已有 binding -> ERR_LEGACY_BIND_ALREADY_BOUND（append-only，绝不替换）",
+      "anchor_unbound": "anchor 无 binding/capture -> ERR_LEGACY_BIND_ANCHOR_UNBOUND",
+      "workspace_authority_match": "anchor capture instance != 请求 -> E_WORKSPACE_AUTHORITY_MISMATCH",
+      "identity_registered": "verify_registered_identity",
+      "anchor_reviewer_lease": "validate_reviewer_lease_for_adjudication；fencing stale -> ERR_LEGACY_BIND_FENCED"
+    },
+    "operation_ledger_idempotency": "OperationStore.dedupe 先行；同 request_id 重放返回原结果；确定性拒绝写可重放 ledger error",
+    "append_only": "单事务内追加 workspace_authority_capture、唯一 task_workspace_binding、append-only task_events 审计、record_action_identity；legacy task status/description/verdict/close 不改变"
+  },
+  "test_fixture_fix": {
+    "root_cause": "已提交的 supersede/attestation 测试夹具用单一身份 TEST_AGENT 同时充当 adjudicator-actor 与 reviewer-lease-holder，违反 P0-E 已接线的 validate_reviewer_lease_for_adjudication 三重身份分离（agent/instance/session），导致 8 个用例 fail（E_GOVERNANCE_REVIEWER_INVALID）",
+    "fix": {
+      "file": "rust_ext/src/daemon/task_supersede.rs",
+      "register_agent": "注册独立 reviewer（reviewer-workbuddy-v1/inst-reviewer-1/sess-reviewer-1, role=reviewer）",
+      "seed_reviewer_lease": "reviewer lease holder 改为独立 reviewer（agent/instance/session 与 adjudicator 分离）",
+      "unchanged": "handler 逻辑零改动；仅测试夹具对齐 P0-E 分离语义"
+    }
+  },
+  "verification": {
+    "test_command": "cargo test --lib supersede",
+    "result": "14 passed; 0 failed; 1589 filtered out",
+    "test_log_file": "docs/evidence/T-1787293818274-1b87b6c4-p0b-implement-test-log.txt"
+  },
+  "deployment_provenance": {
+    "git_head": "94fffaed37f9825e9a67c69627cb8bc5f2d2ced1",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "note": "step#0 implement 完成：handler 严格校验/幂等/append-only 审计齐备，测试夹具已与 P0-E 跨角色分离语义对齐"
+  }
+}

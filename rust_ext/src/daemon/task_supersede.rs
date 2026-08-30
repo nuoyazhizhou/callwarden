@@ -1124,6 +1124,12 @@ mod tests {
     const TEST_AGENT: &str = "adjudicator-workbuddy-v1";
     const TEST_SESSION: &str = "sess-adjudicator-1";
     const TEST_MODEL: &str = "deepseek-v4";
+    // P0-E/P0-B：supersede/attestation 的 reviewer lease 必须由独立 registered reviewer
+    // 持有（与 adjudicator 三重身份 agent/instance/session 分离），同一身份复用会被
+    // validate_reviewer_lease_for_adjudication fail-closed 拒绝。
+    const TEST_REVIEWER_AGENT: &str = "reviewer-workbuddy-v1";
+    const TEST_REVIEWER_SESSION: &str = "sess-reviewer-1";
+    const TEST_REVIEWER_INSTANCE: &str = "inst-reviewer-1";
     const TEST_LEASE_TOKEN: &str = "tok-reviewer-lease-1";
     const TEST_EVIDENCE: &str = "evidence/verdict-pass.json";
 
@@ -1210,6 +1216,21 @@ mod tests {
             params![TEST_AGENT, ts, TEST_MODEL, TEST_SESSION],
         )
         .unwrap();
+        // P0-E/P0-B：supersede/attestation 的 reviewer lease holder 必须是独立 registered
+        // reviewer（agent/instance/session 与 adjudicator 三重分离），否则被
+        // validate_reviewer_lease_for_adjudication fail-closed 拒绝。
+        conn.execute(
+            "INSERT OR REPLACE INTO agent_registrations
+             (agent_id, agent_name, owner_key, capabilities, registered_at, last_heartbeat, status,
+              agent_instance_id, client_id, provider, model_id, model_mode,
+              system_fingerprint, runtime_hash, session_id, role)
+             VALUES (?1, 'reviewer', 'owner', '{}', ?2, ?2, 'active', ?3, 'cli', 'provider',
+                     ?4, 'default', 'fp', 'rh', ?5, 'reviewer')",
+            params![
+                TEST_REVIEWER_AGENT, ts, TEST_REVIEWER_INSTANCE, TEST_MODEL, TEST_REVIEWER_SESSION
+            ],
+        )
+        .unwrap();
         drop(conn);
     }
 
@@ -1226,8 +1247,8 @@ mod tests {
             params![
                 format!("lease-sup-{}", task_id),
                 task_id,
-                TEST_AGENT,
-                TEST_SESSION,
+                TEST_REVIEWER_AGENT,
+                TEST_REVIEWER_SESSION,
                 TEST_MODEL,
                 sha256_hex(TEST_LEASE_TOKEN.as_bytes()),
                 now,
