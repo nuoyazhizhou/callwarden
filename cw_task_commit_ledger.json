@@ -1994,5 +1994,13 @@
   "status": "new_in_master",
   "scope": "MCP启动与HTTP route_rpc使用PROJECT_ROOT绑定daemon workspace；workspace.status经权威db_path触发snapshot.publish；新增binding回归与live round-trip证据",
   "note": "message内嵌task_id；focused regression 2 passed、py_compile/diff check通过；live daemon PID 18900、HTTP authority与task DB fingerprint一致，workspace.status与snapshot.list_workspaces复用workspace_instance_id=4baea3ff12c2ea5c且generation=2；证据 deliverables/software-company/workspace_snapshot_binding_evidence.md hash=sha256:64EE6A46A010F264C3451B52959051D59D416A065C0F7F96AD8AEE2ED81E9B0E；未修改历史task/verdict/evidence、不直接写SQLite、不执行apply/close"
+ },
+ "t1788050221973_workspace_snapshot_runtime_refresh_20260830": {
+  "task_id": "T-1788050221973-114dab10",
+  "commit_id": "4f280ce2f8b44ced924c6c89cad708486a142e53",
+  "evidence_commit_id": "4f280ce2f8b44ced924c6c89cad708486a142e53",
+  "status": "new_in_master",
+  "scope": "shared runtime refresh 后的 workspace.status 与 snapshot.list_workspaces fresh provenance",
+  "note": "runtime refresh evidence deliverables/software-company/workspace_snapshot_binding_runtime_refresh_evidence.md hash=sha256:18B4D5566C3643E0F58E917C0725EF6AD953C0A837DC345611BCA991950A46E8；live PID 48028，authority/task DB fingerprint=1e3954ffcf2c773ce3afca4dd4194a30a4f435acb0d0a2eaa89c56cba61a6838，workspace_instance_id=4baea3ff12c2ea5c，snapshot generation=1"
  }
 }
