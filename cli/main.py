@@ -20,13 +20,14 @@ import os
 import sys
 import time
 
-from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode
+from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode, get_project_db_path
 from ..server.watcher import FileWatcher
 from ..server.daemon_client import (
     route_task_write,
     route_task_read,
     route_rpc,
     derive_workspace_instance_id,
+    _workspace_snapshot_metadata,
     DaemonRemoteError,
     DaemonUnavailableError,
     SharedTaskWriterRequiredError,
@@ -15839,6 +15840,11 @@ def _handle_collab(args, db):
     if opts.action == "publish":
         method = "snapshot.publish"
         params["workspace_root"] = os.path.abspath(opts.workspace)
+        # The daemon owns workspace identity.  Registration below supplies the
+        # authoritative instance/snapshot IDs; a locally derived hash is not a
+        # valid substitute because the daemon binds identity to owner/path/Git
+        # provenance.
+        params["db_path"] = get_project_db_path(params["workspace_root"])
         if opts.envelope:
             envelope_path = os.path.abspath(opts.envelope)
             if not os.path.isfile(envelope_path):
@@ -15913,6 +15919,23 @@ def _handle_collab(args, db):
     try:
         from ..server.daemon_client import DaemonClient, DaemonUnavailableError
         client = DaemonClient.get_instance()
+        if method == "snapshot.publish":
+            root = params["workspace_root"]
+            register_params = {"client_view_root": root}
+            register_params.update(_workspace_snapshot_metadata(root))
+            registration = client.call_with_autostart(
+                "workspace.register", register_params
+            )
+            workspace = registration.get("result") if isinstance(registration, dict) else None
+            if not isinstance(workspace, dict):
+                raise RuntimeError("workspace.register 未返回有效 workspace")
+            workspace_instance_id = workspace.get("workspace_instance_id")
+            if not isinstance(workspace_instance_id, str) or not workspace_instance_id:
+                raise RuntimeError("workspace.register 未返回权威 workspace_instance_id")
+            params["workspace_instance_id"] = workspace_instance_id
+            snapshot_id = workspace.get("snapshot_id")
+            if isinstance(snapshot_id, str) and snapshot_id:
+                params["snapshot_id"] = snapshot_id
         response = client.call_with_autostart(method, params)
     except DaemonUnavailableError as e:
         # Governance_Write fail closed：输出 Structured_Reason + 平台恢复指引
