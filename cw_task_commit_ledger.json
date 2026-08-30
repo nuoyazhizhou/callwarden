@@ -2029,5 +2029,13 @@
     "status": "new_in_master",
     "scope": "精确 P0-L identity_policy 自举修复；受保护 task.p0l_identity_policy_repair RPC；append-only revision/hash continuity；workspace capture 校验；request-id 幂等；next-action 嵌套 routing 一致性",
     "note": "message 内嵌 task_id；P0-L repair 2 passed、next_action policy tests 2 passed、cw-daemon cargo check 通过；governance-projection 与 task.next-action live parity 已验证为 governance_blocked/resolve_identity_policy；证据 deliverables/software-company/T-1787801315246-e3e3a08c-p0l-identity-policy-repair-evidence.md hash=sha256:B62534B240152D2A617FD9B5758758BD6CB973BC4F7446FC4A87FE2E69B79F10；未直接修改 live SQLite、未伪造 verdict/lease、未执行 apply/close"
+  },
+  "t1788067569565_clean_baseline_provenance_20260830": {
+    "task_id": "T-1788067569565-1e5b45ac",
+    "commit_id": "b75d50833b6c1926967abba950487bb0c24563cb",
+    "evidence_commit_id": "b75d50833b6c1926967abba950487bb0c24563cb",
+    "status": "new_in_master",
+    "scope": "独立干净 worktree 归属验证、目标 commit 测试计数校准、隔离基线 runtime PID/hash/health/ping provenance",
+    "note": "message 内嵌 task_id；目标 commit 2a6906d 干净 worktree 治理套件 17 tests = 16 passed/1 existing stale-claim baseline failure；临时锁竞争夹具 2 passed；runtime 20260830-133611-2a6906d4883d-7842712c，daemon PID 11432，sha256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过；证据 deliverables/software-company/clean-baseline-provenance-evidence.md hash=sha256:C278F834DCAEAF8FF3F7D73D12ABDDC9FA9BBDDC765C6C57F7F0A85DCAC6124A；未修改历史 verdict/evidence，未执行 apply/close"
   }
 }
