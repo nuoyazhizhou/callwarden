@@ -2011,6 +2011,13 @@
    "scope": "task.handoff/verdict.submit 在 BEGIN IMMEDIATE 锁获取边界进行有界重试，不重放已进入事务的治理 handler；提交 focused contention tests 与 runtime evidence",
   "note": "message 内嵌 task_id；focused lock contention 2 passed、verdict submit 2 passed；governance suite 16 passed/1 existing baseline failure；证据 deliverables/software-company/verdict-write-busy-remediation-evidence.md hash=sha256:A37255F3CA9A25C254A694857F9C9B093B99C153F026E739A729B56567597F7C；runtime refresh 20260830-123905-2a360dff3a7a-0bb1af11，daemon PID 3884，sha256=071256aa494738aaf5724f832ca536bcf4281f96ddbb7305f71ca57a55718b81，health/ping 通过；未伪造 Verdict Ledger、未使用 SQL、未修改历史 verdict/evidence、未执行 apply/close"
   },
+  "t1788065933399_formal_governance_write_roundtrip_20260830": {
+   "task_id": "T-1788065933399-2b3cead8",
+   "commit_id": "2a6906d4883dbc102955179479a1bd7fdb92cff9",
+   "status": "new_in_master",
+   "scope": "修复实际 handle_task_handoff 入口遗漏的 writer-lock retry，并将 retry 窗口扩展到覆盖真实 reviewer contention；治理套件计数校准为 19 passed/1 existing baseline failure",
+   "note": "message 内嵌 task_id；focused begin_immediate 2 passed；governance module 20 tests = 19 passed/1 existing stale-claim baseline failure；task.handoff 实际入口已改用 shared retry helper；未伪造 verdict、未使用 SQL、未修改历史状态、未执行 apply/close"
+  },
   "t1787801315246_p0l_identity_policy_repair_20260830": {
     "task_id": "T-1787801315246-e3e3a08c",
     "commit_id": "ce987116c3ae230e71b28582f1f3df073fbc7b98",
