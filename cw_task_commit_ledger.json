@@ -2052,5 +2052,12 @@
     "status": "new_in_master",
     "scope": "修复 role_worker.status Rust daemon dispatch 路由；Python thin-client 将其标记为无需 snapshot 的 owner-scoped 只读 RPC；补充秘密字段脱敏、路由与 HTTP 参数透传回归测试",
     "note": "message 内嵌 task_id；Rust focused test 1 passed、Python focused test 1 passed；runtime receipt 20260830-161421-f63a7f7e545e-0dabdf7d status=passed，live daemon PID 4240，binary sha256=90d657cc4198dcf3b76895e17408410916a1ec5695842baa61380334bd4503c4；Reviewer/Adjudicator role_worker.status 真实 HTTP round-trip 均返回 active 且无 credential/hash/runtime；证据 deliverables/software-company/T-1787801315246-e3e3a08c-role-worker-status-route-evidence.md sha256=F6AEA4FC02E3081B31189346D1C3659A51C9BBF39DD799261D9F23E652FCE23A；未读取/输出 raw credential、未直接写 SQLite、未执行 task mutation/apply/close、未导入 12 卡"
+  },
+  "t1787310376068_p0f_bootstrap_bridge_20260830": {
+    "task_id": "T-1787310376068-44eb5f20",
+    "commit_id": "35075a26e79023079f4f45d4b5a62f8c36498a0f",
+    "status": "review_pending",
+    "scope": "P0-F Bootstrap Evidence / Review Bridge wiring + release verify",
+    "note": "message 内嵌 task_id；bootstrap_executor_evidence/bootstrap_reviewer_pass 两个 daemon-only 受保护 RPC；空投影窄边界 gate(E_BOOTSTRAP_BRIDGE_NOT_EMPTY)；五重门禁(identity/instance/request-id/role/ledger) fail-closed；release daemon PID 13424 binary sha256=94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15；cargo bootstrap_review_bridge 6/6 passed；runtime round-trip 经 E_BOOTSTRAP_BRIDGE_NOT_EMPTY 拒绝验证；evidence docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-release-verify.json sha256=8988E48A48579165FB0D28BE6E608461B4908C4C3CE0542DD4C3632AEFFF01B4；任务进入 review；未执行 apply/close、未伪造 binding/lease/evidence"
   }
 }
