@@ -27,7 +27,7 @@ Command policy:
 每个 Agent 开始工作前，必须先在首条工作记录中声明：
 
 ```text
-Role: <executor|reviewer|adjudicator>
+Role: <planner|executor|reviewer|adjudicator>
 RuntimeRole: <legacy daemon role, if required>
 Task: <task_id>
 Skill: <skill_name 或 none>
@@ -36,90 +36,175 @@ Forbidden: <本轮禁止的动作>
 Handoff: <完成后交给哪个角色>
 ```
 
-不得根据任务标题自行推断更高权限。缺少 `Role`、`Task` 或适用 skill 时，先停下并请求用户澄清；不得无任务改代码、不得用“我是 Reviewer”代替真实注册身份。当前 daemon 仍可能只接受
-`planner`、`implementer`、`tester`、`evidence`、`independent_reviewer` 等 legacy 值；它们只是
-`RuntimeRole`，不增加第四种治理权限。
+不得根据任务标题自行推断更高权限。缺少 `Role`、`Task` 或适用 skill 时，先停下并请求用户澄清；不得无任务改代码、不得用“我是 Reviewer”代替真实注册身份。当前 daemon 可能仍接受
+`implementer`、`tester`、`evidence`、`independent_reviewer` 等 legacy 值；它们只是
+`RuntimeRole`，不增加或替代治理角色。Planner 若尚未完成 daemon 原生注册，只能由兼容层映射，不能因此让 Executor 代行 Planner 职责。
 
 ### 角色职责矩阵
 
-| Role | 主要工作 | 可以做 | 禁止做 | 完成后交给 |
-|---|---|---|---|---|
-| `executor` | 将用户语言落实为需求、设计、代码、测试和证据 | 创建/修订计划、拆分步骤、按 scope 实现、测试、归档并报告 | apply/close、伪造证据、扩大已冻结 scope | Reviewer |
-| `reviewer` | 独立审核执行者产物 | 只读核验，且只输出 `PASS` 或 `BLOCKED` | 修改计划/代码/证据/任务状态、创建整改步骤、apply/close | Adjudicator（PASS）或 Executor（BLOCKED） |
-| `adjudicator` | 对 Reviewer 的 PASS 作独立最终复审 | 核验全部门禁；接受后以真实 lease 执行 apply/close，或退回执行者 | 制定整改计划、修改实现/证据、覆盖历史 verdict | 完成或 Executor |
+| Role          | 主要工作                                               | 可以做                                                                             | 禁止做                                                          | 完成后交给                                                                                                                               |
+| ------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `planner`     | 分析需求、评估复杂度、拆分可执行任务和依赖；对自己创建的任务树治理缺口负责 | 形成/修订计划、创建有完整 Contract 的独立子任务、定义 scope/验收/证据、主动安排治理修复 | 写生产代码、领取 Executor 步骤、review/verdict、apply/close、直连数据库 | Executor（`planner_governance_v1` 未声明时原生派工仍 design-only，但不得把治理缺口转给用户） |
+| `executor`    | 将已规划的原子任务落实为设计、代码、测试和证据         | 执行冻结 scope、发现回归、提交整改或重规划请求、测试、归档并报告                   | apply/close、伪造证据、扩大已冻结 scope、跳过复杂度预检         | Reviewer                                                                                                                                 |
+| `reviewer`    | 独立审核执行者产物和变更影响半径                       | 只读核验，记录 in-scope/adjacent/governance findings，且只输出 `PASS` 或 `BLOCKED` | 修改计划/代码/证据/任务状态、创建整改步骤、apply/close          | Adjudicator（PASS）、Executor（实现缺陷）；计划缺陷交 Planner/内部治理维护路径，post-cutover 才由 Planner 原生承接 |
+| `adjudicator` | 对 Reviewer 的 PASS 作独立最终复审，并核查完整影响半径 | 核验全部门禁；接受后以真实 lease 执行 apply/close，或提交带 finding 的退回         | 制定整改计划、修改实现/证据、覆盖历史 verdict、静默忽略相邻缺陷 | 完成；`adjudicator_returned` 当前固定路由 Executor 但无可执行 remediation bridge；post-cutover 按 finding 路由 Executor/Planner          |
 
-`planner`、`implementer`、`tester`、`evidence` 是 `executor` 的工作模式，不是治理角色；
+`implementer`、`tester`、`evidence` 是 `executor` 的 legacy 工作模式；`planner` 现在是独立治理角色，
+其 runtime 兼容值仍可由 daemon 映射，但不得退化为 Executor 的隐式规划模式；
 `independent_reviewer` 是 `reviewer` 的 legacy runtime 名称。`Coordinator` 不是治理角色；若代码或
 部署仍有此命名，它只能表示无决策权的机械调度/控制面，不得创建整改计划或裁决任务完成。
 
+四角色共享协议、远端/后台控制台交互、结构化 `decision_request` 和 `adjacent_defect` 语义见
+[.agents/skills/cw-task-loop/references/role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md)。
+聊天 Handoff 只是通知；控制台/daemon 的结构化事件、状态投影和精确 task_id 才是 authority。
+
+当前启动入口为：`Callwarden 无人值守循环启动模板：Executor v4.md`、
+`Callwarden 无人值守循环启动模板：Reviewer v4.md`、`Callwarden 无人值守循环启动模板：Adjudicator v4.md`。
+`Callwarden 无人值守循环启动模板：Planner v1.md` 当前为 **design-only**：daemon 声明 capability
+`planner_governance_v1` 前不可作为现行派工入口（daemon 不接受 planner 合同，也不产生 `READY/PLAN` 派工），
+仅作为目标角色模型的设计参考。旧 v1/v2/v3 文件仅在 `archive/role-loop/templates/legacy/` 以字节级原件
+追溯，不得用于新任务。
+
+Planner 是执行前的架构、任务分解和自有任务树治理修复责任人（目标模型）。新任务默认先做复杂度预检；只有完整、可验证且
+已绑定 Contract 的计划后，Executor 才能领取实现步骤。Planner 发现数据、Contract、binding、认证、派工或 daemon/client
+能力缺口时，必须主动形成修复路径；“没有现成 RPC”应转化为最小 daemon/client 实现任务，而不是让用户手工改库或反复重试。
+只有小型、单一 ownership 的 `atomic_hotfix` 可以经过
+复杂度预检直接进入 Executor，但不得用该标记绕过 workspace binding、Role Contract、identity policy 或证据门禁。
+`atomic_hotfix` 为 **design-only（目标模型）**：当前 daemon/CLI/server/db 无任何字段、参数或校验识别该
+标记，仅作计划侧分类语义，不构成新的派工或门禁路径，也不得作为绕过复杂度预检/Contract 绑定的依据。
+Planner 不写生产代码、不替 Reviewer 审查、不执行 apply/close，也不因此获得绕过 daemon 的超级管理员权限；Executor 发现任务复杂度或边界超出计划时，必须
+在改代码前发起重规划请求——pre-cutover 即使 `executor_replan_requested` 无法持久化，也必须把计划缺陷登记为内部
+capability/governance gap，交 Planner/治理维护路径修订，不得把技术修复交给用户；post-cutover 交 Planner 修订原计划或拆出独立子任务，历史计划只追加保留。
+
 ### Skill 选择规则
 
-| 工作类型 | 必选 skill / 入口 |
-|---|---|
-| G0 Recovery、Batch Creator、Independent Reviewer、批次证据和盲审 | `g0-experiment`；先读 `docs/design/g0-experiment-protocol-v1.md` 和 role workflow |
-| 普通代码实现、Rust/Python 迁移、daemon、CLI | 以本文件、三份真相源和对应任务契约为准；没有专用 skill 时使用 `none`，不得套用 G0 流程 |
-| 需求/设计/任务计划文档 | `executor` 的规划工作模式；先创建任务并写明确 scope、禁止路径、验收命令 |
-| 只读代码审查 | `reviewer`；不得因为发现问题而直接修复 |
+| 工作类型                                                         | 必选 skill / 入口                                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| G0 Recovery、Batch Creator、Independent Reviewer、批次证据和盲审 | `g0-experiment`；先读 `docs/design/g0-experiment-protocol-v1.md` 和 role workflow                       |
+| 普通代码实现、Rust/Python 迁移、daemon、CLI                      | 以本文件、冻结需求/设计、共享角色协议和对应任务契约为准；没有专用 skill 时使用 `none`，不得套用 G0 流程 |
+| 需求/设计/任务计划文档、任务拆分和重规划                         | `cw-planner-architect`；先核验任务 binding 和合同，再输出复杂度、依赖、scope、验收和证据计划            |
+| 已完成规划的代码实现、整改和回归修复                             | `cw-executor-senior-engineer`；先做复杂度/Contract 预检，再按冻结 scope 实施                            |
+| 只读代码审查                                                     | `reviewer`；不得因为发现问题而直接修复                                                                  |
 
 skill 只能补充流程，不能覆盖本文件、代码和任务系统的权限规则。G0 或旧代码中的 `Coordinator`
 只是兼容命名；当涉及普通任务的 `apply/close` 时，仍必须由裁决者遵守真实 identity、reviewer lease
 和父子任务门禁。
 
+### 统一任务生命周期与治理进度模型
+
+任务对外同时提供两层状态，所有 CLI、MCP、Skill 和 Agent 必须使用 daemon 返回的投影，禁止在客户端
+按 verdict、lease 或标题自行推算：
+
+- `lifecycle_status`：`tasks.status` 的原始生命周期，仍是写入门禁：
+  `open → in_progress → review → applied → closed`，必要时可 `reverted`。Reviewer 的 PASS/BLOCKED
+  不直接伪造 `applied`/`closed`。
+- `workflow_status`：daemon 根据 lifecycle、active lease、有效 Verdict Ledger 和当前派工只读派生，
+  用于回答“现在到哪里、谁负责、下一步是什么”。唯一枚举和“已实现/规划中”标记见
+  [.agents/skills/cw-task-loop/references/role-protocol.md §2](.agents/skills/cw-task-loop/references/role-protocol.md)。
+
+统一投影字段至少包括：`task_id`、`lifecycle_status`、`workflow_status`、`current_role`、`next_role`、
+`next_action`、`review.state`、可用时的 `review.verdict_id`/`review.findings_count`，以及
+`blocking_reasons`（旧 `blocking_conditions` 仅作兼容字段）。
+
+`workflow_status` 的**唯一枚举、各值含义与“已实现/协议保留”分层标记**只在共享协议维护：
+[role-protocol.md §2](.agents/skills/cw-task-loop/references/role-protocol.md)。本文件与任何模板/Skill
+不再复制状态枚举表；需要解释某个状态时一律引用该节。协议保留值（`execution_ready`、`planning_*`/
+`replanning_*`、`waiting_for_decision`/`waiting_for_input`）在对应 capability（见
+[cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md) §3 分层：
+`planner_governance_v1`/`decision_request_v1`）声明前 daemon 不会 emit，客户端不得自行合成。
+
+`READY/CLAIM`、`READY/REVIEW`、`READY/ADJUDICATE` 只表示“当前动作合法且可领取/执行”，不表示动作已经
+发生；只有 `task next`/lease/report/verdict/apply/close 的 daemon 成功响应才表示对应事件已发生。Reviewer
+PASS 后 raw status 通常仍为 `review`，但治理状态应为 `adjudication_pending`；Reviewer BLOCKED 后按双轨整改
+路由（见下），实现缺陷由 daemon 追加 provenance-bound `fix_defect`，raw status 回到 `in_progress`，治理状态先为
+`remediation_pending`，Executor 领取后为 `remediation_in_progress`。任何 handoff 必须明确携带精确
+`task_id`，不能只写“当前任务”或用 Epic/step/request ID 代替。
+
 ### 状态推进和交接
 
-1. Executor 只能通过 daemon/CLI 写入自己 scope 内的计划、实现、测试和证据结果并推进到 `review`。
-2. Reviewer 只输出 `PASS` 或 `BLOCKED`；PASS 不等于已 `applied` 或 `closed`，BLOCKED 不改变历史证据。
-3. Reviewer `BLOCKED` 直接交回 Executor，并在**同一主任务**追加一条带 source verdict/finding 与
-   `remediation_of_step_id` provenance 的 `fix_defect` step；任务回到 `in_progress`。普通整改不得创建
-   remediation child。只有能证明独立 ownership、独立 scope 且可并行验收的工作才允许创建子任务。
-4. Reviewer `PASS` 后才交给不同 instance/session 的 Adjudicator。Adjudicator 独立复核后只能接受完成，
-   或带具体缺口退回 Executor；不得自己补计划或修改实现。
-5. 只有接受完成的 Adjudicator 才可先用 `cw lease status <task_id> --role reviewer` 查看租约，并以真实
+1. Planner 必须先完成复杂度预检；未通过预检并冻结 Contract 的任务不得派给 Executor（`execution_ready`
+   为协议保留投影，capability `planner_governance_v1` 声明前 daemon 不 emit，`open` 任务投影为
+   `queued`）。Planner 的计划必须
+   按 ownership 拆分，写明依赖、allowed/excluded paths、验收命令、证据和回滚条件，并在 daemon 中原子绑定
+   task、workspace、Role Contract、identity policy 和 steps。
+2. Executor 只能通过 daemon/CLI 写入自己 scope 内的实现、测试和证据结果并推进到 `review`。领取后必须再次
+   验证计划边界；涉及多个独立 domain、schema 与 transport/CLI 混合、超过五个实现步骤或存在多个独立验收
+   目标时，改代码前发起重规划请求。`executor_replan_requested` outcome 依赖 capability
+   `planner_governance_v1`（当前未声明，无法持久化）；pre-cutover 进入内部 Planner/治理修复路径并写明计划缺口；只有业务决策、外部事实、验收或敏感授权才升级用户，不得先写代码。
+3. Reviewer 只输出 `PASS` 或 `BLOCKED`；PASS 不等于已 `applied` 或 `closed`，BLOCKED 不改变历史证据。
+4. Reviewer `BLOCKED` 按缺陷类别双轨路由（见 [cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md) §4）：
+   **实现缺陷**交回 Executor，并在**同一主任务**追加一条带 source verdict/finding 与
+   `remediation_of_step_id` provenance 的 `fix_defect` step，任务回到 `in_progress`；**scope/Contract/
+   架构缺陷**——post-cutover 交 Planner（`replanning_pending`），pre-cutover（当前）走**临时桥接**：
+   Reviewer 仍用 `reviewer_blocked` 提交（daemon 固定路由 Executor 并追加 fix_defect step），finding
+   的 `owner_route` 必须写 `planner`；Executor 领取后复查确认是计划缺陷时不得实施代码、不得完成该
+   step，立即改交内部 Planner/治理维护路径并写明缺口与 finding_id（daemon 尚无
+   reviewer→user 路由，Reviewer 不能冒用 Executor 的 outcome）。普通整改不得创建 remediation child。只有能证明独立 ownership、
+   独立 scope 且可并行验收的工作才允许创建子任务。
+5. Reviewer `PASS` 后才交给不同 instance/session 的 Adjudicator。Adjudicator 独立复核后只能接受完成，
+   或带具体缺口退回 Executor；不得自己补计划或修改实现。Adjudicator 退回用 `adjudicator_returned`：
+   daemon 仅固定路由 Executor（不自动追加整改 step——自动 remediation 仅 `reviewer_blocked` 触发），
+   当前 CLI/MCP 尚无受支持的 provenance-bound remediation bridge。退回后必须重新查询同一 `task_id`；
+   若仍为 `READY/ADJUDICATE`，应记录精确 task/verdict/handoff/source-step 治理缺口，交后续 daemon/CLI/MCP
+   实现任务。不得改用通用 RPC、伪造整改 step 或自行声称 `remediation_pending`。
+6. 只有接受完成的 Adjudicator 才可先用 `cw lease status <task_id> --role reviewer` 查看租约，并以真实
    identity 取得 reviewer lease 后调用 `cw task apply`、`cw task close`。这些命令必须提供真实
    `agent_id`、`session_id`、`model_id`、`role`；正确租约入口是 `cw lease status`。
-6. 关闭父任务前，Adjudicator 必须逐个核验所有子任务已 `closed`；任何 `open`/`in_progress`/`review`/
+7. 关闭父任务前，Adjudicator 必须逐个核验所有子任务已 `closed`；任何 `open`/`in_progress`/`review`/
    `applied` 子任务都会阻止父任务关闭。
 
 ### 强制下一棒交接 envelope
 
-Executor、Reviewer 与 Adjudicator 的每一次面向用户、下游角色、已提交 `task.handoff` 的响应、verdict/
-裁决输出都必须包含；`task.report` 不是交接输出，且这些字段绝不得出现在其请求中：
+Planner、Executor、Reviewer 与 Adjudicator 的每一次面向用户、下游角色、已提交 `task.handoff` 的响应、verdict/
+裁决输出都必须包含完整结构化 Handoff；`task_id` 是交接的首要绑定键，必须来自当前 daemon 任务卡，不能由聊天
+上下文、Epic 父任务或 `request_id` 推断或替代。`task.report` 不是交接输出，且交接字段绝不得出现在其请求中。
 
-```text
-Handoff:
-  from_role: executor|reviewer|adjudicator
-  outcome: executor_ready_for_review|executor_blocked_to_user|reviewer_pass|reviewer_blocked|adjudicator_accepted|adjudicator_returned
-  next_role: executor|reviewer|adjudicator|complete|user
-  next_action: <下一棒可执行的明确动作>
-  reason: <finding、证据或现有合同约束>
-  independence_requirement: <required|not_required|not_applicable>
-```
+**完整 Handoff 结构（字段、固定顺序、outcome 路由三元组与已实现/design-only 分层）的唯一单源是
+[role-protocol.md §5](.agents/skills/cw-task-loop/references/role-protocol.md)。** 本文件与任何模板/Skill
+不再内联字段块，也不复制 outcome 枚举列表；引用时不得改写字段顺序或删减 provenance 字段。pre-cutover
+仅可发送该节标记为已实现的 outcome；design-only outcome 不得伪造持久化，技术缺口应登记为内部 capability/governance gap，
+只有业务决策、外部事实、验收或敏感授权才允许使用 `executor_blocked_to_user` 升级用户。
 
-路由固定：Executor 的可审交付 → Reviewer；Reviewer `PASS` → Adjudicator；Reviewer `BLOCKED` →
-Executor；Adjudicator 接受 → `complete`；Adjudicator 退回 → Executor。`next_role: user` 只在缺少用户
-授权或无法获得必要事实时使用，且 `reason` 必须写明缺口。Executor→Reviewer、Reviewer PASS→Adjudicator
-为 `required`；Reviewer BLOCKED→Executor、Adjudicator return→Executor 为 `not_required`；accept→complete
-及 Executor→user 为 `not_applicable`。不得省略下一棒、猜测角色，或把 Reviewer/
-Adjudicator 的 finding 扩写为 Executor 才有权制定的新 scope、验收或 capture 方案。
+`task_id` 与 `step_id` 必须在交接正文和结构化事件中保持一致；下游 Reviewer/Adjudicator 必须先用该精确
+`task_id` 查询任务、合同、步骤、workspace binding 和前序事件，再开始复核。`request_id`、
+`report_request_id`、`evidence_path`/`evidence_hash` 与完整 `identity` 是 provenance 补充字段，不能替代
+`task_id`。各角色对应模板还要求的这些字段必须一并保留；不得只发送没有任务标识的自然语言“通过”或“已交接”。
 
-### `BLOCKED` 缺陷整改升级（强制）
+路由固定：任务创建 → 规划（用户只提供产品目标/约束，Planner 负责技术规划；post-cutover 由 Planner 原生承接）；Planner 可执行计划 → Executor；Executor 的可审交付 → Reviewer；Reviewer
+`PASS` → Adjudicator；Reviewer `BLOCKED` 按缺陷类别双轨（实现缺陷 → Executor 的 `fix_defect`；
+scope/Contract/架构缺陷 → Planner，pre-cutover 桥接：daemon 先固定路由 Executor，Executor 复查后以
+内部治理路径）；Executor 发现范围问题 → Planner（pre-cutover 记录 capability/governance gap，不把技术问题交用户）；Adjudicator 接受 → `complete`；Adjudicator 退回当前只固定路由
+Executor，bridge 实现前按第 5 条记录治理缺口，post-cutover 才按 finding 归属双轨。`next_role: user` 只在
+缺少产品决策、外部事实、验收或敏感授权时使用，且 `reason` 必须写明缺口；技术、数据、环境、Contract、binding 和 daemon 能力问题不得使用。
+Executor→Reviewer、Reviewer PASS→Adjudicator 为 `required`；Reviewer BLOCKED→Executor、
+Adjudicator return→Executor 为 `not_required`（pre-cutover 固定；post-cutover 计划缺陷类才路由 Planner）；accept→complete 及 Executor→user 为
+`not_applicable`。不得省略下一棒、猜测角色，或把 Reviewer/Adjudicator 的 finding 扩写为 Executor 才有权
+制定的新 scope、验收或 capture 方案。
+
+### `BLOCKED` 缺陷整改升级（强制，双轨）
 
 `BLOCKED` 是对当前证据/实现的真实结论，不得修改旧 verdict、旧证据或历史步骤来“补绿”。Reviewer
-只列出可复核 finding，随后直接 handoff 给 Executor。daemon 在同一主任务内追加 provenance-bound
-`fix_defect`；Executor 为该 step 冻结 allowed/excluded paths、验收命令和隔离 capture/commit 方案。
-Reviewer 与 Adjudicator 都不得创建整改步骤。历史 failed step、evidence、verdict 和 handoff 只追加、
-不得覆盖。共享工作树存在无关 dirty/untracked 文件时，
+只列出可复核 finding（统一 schema 见 [role-protocol.md §4](.agents/skills/cw-task-loop/references/role-protocol.md)，
+含 `owner_route` 归属字段），随后按缺陷类别 handoff：实现缺陷给 Executor；scope/Contract/架构缺陷
+pre-cutover 按协议 §3 临时内部桥接（daemon 固定路由 Executor，Executor 复查 `owner_route=planner` 后交 Planner/治理维护路径，
+不实施未冻结代码），post-cutover 交 Planner。实现缺陷由
+daemon 在同一主任务内追加 provenance-bound `fix_defect`；Executor 为该 step 冻结 allowed/excluded paths、
+验收命令和隔离 capture/commit 方案。
+Reviewer 与 Adjudicator 都不得手工创建整改步骤；daemon 必须在正式 BLOCKED verdict 同事务追加带 provenance 的 `fix_defect`。
+历史 failed step、evidence、verdict 和 handoff 只追加、不得覆盖。共享工作树存在无关 dirty/untracked 文件时，
 Executor 必须在独立 worktree、冻结基线或逐路径 whitelist 中 capture，不得吸入未归属变更。
 
 只有 authority/identity/lease 不可验证、用户尚未授权的外部副作用，或没有足以限定安全路径的事实时，
-才可以保持 `BLOCKED`；Executor 必须说明具体缺口，不能用"没有 pending step"代替计划修订。
+才可以保持 `BLOCKED`；必须说明具体根因、复现证据、影响和下一责任角色，不能用"没有 pending step"代替计划修订。
 
-### Req 15 三角色治理实施任务树（父任务 `T-1786983366974-8811ccec`）
-
+### Req 15（原三角色基线）治理实施任务树（父任务 `T-1786983366974-8811ccec`）
 
 > **状态：已冻结的 v1（三角色）历史基线，非现行模型。** 父任务 `T-1786983366974-8811ccec`（标题「三角色治理实施」）已于 08-20 `closed`，27 个直接子任务全部 `closed`，是 `docs/design/cw-role-handoff-task-loop.md`（v1，blob `34668462…`）的 freeze_design 锚点。本任务树只承载 v1 三角色实施路线图，**不描述四角色模型**。四角色（新增 Planner 为第四治理角色）的现行权威在 `docs/design/cw-role-handoff-task-loop-v2-amendment.md`（修订任务 `T-1787888909289-881595e0`，当前 `review` 中）与四角色共享协议 `.agents/skills/cw-task-loop/references/role-protocol.md`；客户端不得把本树当作四角色现行依据。
+
 需求基线 `docs/design/requirements.md#Requirement 15`，设计基线
-`docs/design/cw-role-handoff-task-loop.md` 已冻结为实施基线（freeze_design）。以下子任务树是
+`docs/design/cw-role-handoff-task-loop.md` 已冻结为实施基线（freeze_design）；其四角色模型修订（含
+`planner_governance_v1` cutover 与双轨整改）以追加的
+`docs/design/cw-role-handoff-task-loop-v2-amendment.md` 为现行依据，v1 正文不再直接修改。以下子任务树是
 非重叠实施路线图，按设计文档 §7 分期交付组织：每项任务都是独立任务，各有 Role Contract、非重叠
 白名单、验收命令和独立 Reviewer handoff；**不得**由同一任务同时实现 Skill、daemon RPC、CLI adapter
 和测试，也**不得**把失败步骤 remediation 吸收进别的任务（失败步骤同归父任务
@@ -152,7 +237,7 @@ agent"默认安全。本父任务只负责实施编排，关闭前须所有直�
 
 ## 默认工作规则（强制遵守）
 
-1. **提交前必须全量刷新数据库**：每次 `git commit` 之前，必须运行 `cw --refresh-all` 或批量刷新所有修改文件，确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。
+1. **提交后必须尝试全量刷新数据库**：`task.report` 成功后按“白名单 add → 含 task_id 的 commit → rev-parse → commit ledger → refresh”顺序执行。刷新失败必须留痕，禁止用 SQL/旧 CLI 伪造成功。
 2. **代码读取工具按场景分工**（避免 SQLite 跨进程锁冲突）：
 
    | 操作类型                                     | 当前（MCP 未激活/开发期）                                                                                        | MCP 激活后                                                                                                               |
@@ -170,13 +255,15 @@ agent"默认安全。本父任务只负责实施编排，关闭前须所有直�
    **背景**：MCP Server 是 stdio 长连接，与 CLI 新进程并发时会触发 SQLite `database is locked`。已通过 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` 缓解，但**写操作仍有 5% 撞锁概率**，故写操作永久走 CLI；只读操作在 MCP 激活后走 MCP（吃狗粮），未激活时走 CLI。
 
    **MCP 激活状态判断**：会话开始时若无法调用 `file_grep` 等 MCP 工具，则视为 MCP 未激活，全部走 CLI。MCP 激活由用户手工配置，不在 AGENTS.md 中自动判断。
-3. **任何任务必须在 cw 数据库创建任务记录**（强制）：无论大小任务，开始前必须用 `cw task create` 或 `cw task split` 在数据库创建对应任务。主任务是 Jira 式工作线程；角色交付、BLOCKED 和整改默认追加 step/event/reply，不创建 child。只有明确独立 ownership/scope 的工作才可挂载子任务（通过 Python API `task_create(parent_id=...)`）。禁止"无任务记录就开始编码"。
+3. **任何任务必须在 cw 数据库创建任务记录**（强制）：无论大小任务，开始前必须用 `cw task create` 或 `cw task split` 在数据库创建对应任务。主任务是 Jira 式工作线程；角色交付、BLOCKED 和整改默认追加 step/event/reply，不创建 child。只有明确独立 ownership/scope 的工作才可挂载子任务。禁止"无任务记录就开始编码"。
 
-   **子任务挂载方式**（重要）：
-   - **CLI `cw task create` 当前不支持 `--parent` 参数**（只有 `--title`/`--desc`/`--steps`）
-   - 需要挂载子任务到父任务时，用 Python 脚本调用 `CodeGraphDB.task_create(title=..., description=..., parent_id=..., steps=[])`
-   - 脚本模板见 [docs/task_create_subtask.py](docs/task_create_subtask.py)
-   - 或用 `cw task split --plan plan.md <parent_task_id>` 从 Markdown 计划拆分子任务
+   **子任务挂载方式**（重要，遵循"Python 薄客户端、数据库操作经 daemon"）：
+   - 首选 `cw task split --plan plan.md <parent_task_id>` 从 Markdown 计划拆分子任务（daemon 路径）；
+   - **CLI `cw task create` 当前不支持 `--parent` 参数**（只有 `--title`/`--desc`/`--steps`）；需要 parent 绑定的
+     创建能力扩展应作为 daemon/CLI 任务实现，不得绕回 Python 直连；
+   - **禁止在 enterprise/auto（daemon 模式）下用 Python 直连 `CodeGraphDB.task_create(parent_id=...)` 挂子任务**：
+     直连 SQLite 与 daemon authority 冲突（无 workspace binding/Role Contract/identity policy，会绕过治理）。
+     旧的 local 模式模板已归档至 `archive/docs-legacy/task_create_subtask.py`，不得用于 daemon 模式任务。
 
 4. **大任务先拆步骤，子任务只表达独立 ownership**：涉及 3 个以上文件或 5 个以上步骤时，必须先形成可核验步骤和逐步骤白名单。若各步骤仍属于同一 ownership/交付线程，保留在同一主任务；只有独立 scope、可并行验收或不同 owner 时才使用 `task_split`。禁止用嵌套 remediation child 代替同一任务内的 `fix_defect` 回复。
 5. **开发阶段开启 watcher**：长时间开发时，使用 `cw --watch` 启动文件监控，修改后自动刷新数据库。
@@ -466,6 +553,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 44. **schema checksum mismatch 是 authority 阻断，不是可重试的 lease 错误**：若 `cw lease status/acquire` 返回 `MIGRATION_FAILED: schema checksum mismatch for v<N>`，必须立即停止所有 lease、claim、task report/apply/close 和任何依赖 daemon authority 的写入；保留 stored/binary checksum、实际 `runtime\current` binary hash、运行 PID executable hash 与 migration 记录，按第 43 条通过受控 runtime/schema recovery 协调后再重试。禁止改写 migration checksum、直写 SQLite 或用本地 CLI fallback 取得/伪造 lease。
 
 45. **任务步骤的显示序号不是 mutation ID**：`cw task show` 的 `#0` 等人类可读编号和步骤标题不保证等于 `cw task report <task_id> <step_id>` 所需的持久化 `step_id`。首次 `task_step_not_found` 后必须停止猜测，先用当前 CLI 的 JSON/只读 RPC 或实现查询取得真实 step ID；不得把编号或标题反复当作 step ID 重试。
+45a. **daemon 未提供 `build_full_graph` 时刷新门禁必须留痕**：`python cw.py --refresh-all` 与推荐的 `python cw.py refresh --all` 可能都经 daemon 路由到不存在的 `build_full_graph` RPC，返回 `method_not_found`。记录该错误并保留未刷新结论；不得改用 SQLite、旧 CLI 或其他旁路伪造刷新成功。文档-only 变更可继续做静态检查，但交付证据必须明确刷新未完成。
 
 46. **Windows 受控进程诊断必须拆分命令**：通过 `functions.exec` 启动 daemon/辅助进程时，禁止在一个复杂 PowerShell 字符串中嵌套 endpoint、重定向和多层变量展开；这类命令可能在 CreateProcess 前被策略拒绝。应先用独立只读命令解析 endpoint，再用单一 `Start-Process -WindowStyle Hidden` 调用启动，并用固定绝对日志路径单独读取 stdout/stderr；启动失败不得重试删除、杀进程或改数据库。
 
@@ -572,6 +660,34 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     **正确示例**：新增 MCP 工具时，同一次 commit 更新 `docs/mcp_tools.md` 头部数字 + 工具列表 + `README.md` 中的数字。
 
 35. **业务测试不得只断言单一自然语言错误文本**：DB 层部分历史错误仍是硬编码中文，`CALLWARDEN_LANG=en_US` 只影响 i18n 层，无法切换这些字符串。测试拒绝路径时应优先断言结构化状态、错误码和数据库不变；确需检查文本时使用中英文语义关键词集合，不得仅靠 `parent`/`manual` 等英文子串判定业务是否正确。
+
+47. **单文件行数上限（`.rs`/`.py` 坏味道门禁）**：巨型单文件会同时破坏 review 可行性、并行 ownership 划分和 AGENTS.md 规则 40 的"所有权文件不相交"判据——两个任务只要都要改这一个文件就无法并行。阈值按本仓实测分布制定（2026-08-28 全量统计，1016 个文件，已排除 `archive/`、`recovered-scratch/`）：
+
+    | 分位   | `.rs`（n=199）              | `.py`（n=817）             |
+    | ------ | --------------------------- | -------------------------- |
+    | median | 523                         | 261                        |
+    | p75    | 902                         | 486                        |
+    | p90    | 1788                        | 762                        |
+    | p95    | 3126                        | 1080                       |
+    | max    | 7623（`snapshot_state.rs`） | **17101（`cli/main.py`）** |
+
+    **三级门禁**（对 `.rs` 与 `.py` 生产代码同时适用；测试文件同标准，理由见下）：
+
+    - **> 800 行 = 软阈值（warn）**：Planner 规划该文件的改动时必须在计划中说明是否顺带拆分；Executor 不得在此文件上新增超过 200 行净增量而不提出拆分建议。约当 `.rs` p75 / `.py` p90，当前 131 个文件（12.9%）落在此线以上。
+    - **> 1500 行 = 硬阈值（必须拆分或显式豁免）**：**禁止新建**超过该行数的文件；**禁止**让既有文件跨越该线。若任务必须改动已超线的文件，Executor 必须在 report 中记录该文件当前行数，并提出可执行拆分方案（按 domain/职责切分，不是机械按行切），由 Planner 决定本任务内拆还是立独立技术债任务。当前 45 个文件（4.4%）超线。
+    - **> 3000 行 = 灾难线（必须立独立技术债任务）**：不得以"本次只改几行"为理由继续累积。当前 17 个文件（1.7%）超线，其中 `cli/main.py`（17101）是本仓最大技术债，任何触碰它的任务都必须在 report 中显式记录未拆分的理由。
+
+    **拆分方式必须按职责，不得机械切行**：参考 `rust_ext/src/daemon/task_collab*.rs`（21 个文件，最大 1847 行）与 `task_loop/`（29 个文件，最大 1477 行）的既有拆法——按 contract / lease / lifecycle / query / verdict / tests 等职责边界切，每个文件保留独立可测边界，`mod.rs` 只做聚合。反面做法是按行数切成 `foo_part1.rs`/`foo_part2.rs`，那样并不改善 review 和 ownership。
+
+    **测试文件同标准**：`tests/test_task_quality_gate.py`（2841）等超线测试文件同样难以 review 和并行修改，按用例分组拆分。
+
+    **豁免条件（必须显式记录，不得默认）**：自动生成文件、i18n/常量表等纯数据文件、单一 `match`/`dict` 分派表可豁免，但必须在任务 report 或文件头注释中写明豁免理由；不得因"改起来麻烦"豁免。
+
+    **自检命令**（提交前核对本次改动文件是否越线）：
+    ```powershell
+    git diff --cached --name-only --diff-filter=ACM | Where-Object { $_ -match '\.(rs|py)$' } |
+      ForEach-Object { "{0,6}  {1}" -f (Get-Content -LiteralPath $_ | Measure-Object).Count, $_ }
+    ```
 
 ### 6.9 审计缺陷修复与并行执行
 

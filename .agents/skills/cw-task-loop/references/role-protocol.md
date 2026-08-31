@@ -21,7 +21,8 @@
 > 角色；`task.handoff` 只接受 §5 的已实现六种 outcome。Planner v1 启动模板在此期间为
 > **design-only**，不得作为现行派工入口；计划/scope/Contract/架构缺陷按 §3 的 pre-cutover
 > 桥接处理，不得由 Reviewer/Adjudicator 直接塞给 Executor 当实现缺陷硬修。客户端不得自行合成
-> 规划中状态；缺少 capability 时必须显示 `governance_blocked`/明确错误，不得假装可领取。
+> 规划中状态；缺少 capability 时必须显示 `governance_blocked`/明确错误，并将其作为内部 capability gap 进入修复计划，
+> 不得假装可领取，也不得把技术修复责任转给用户。
 
 ## 1. 角色边界
 
@@ -61,7 +62,8 @@
 当人工选择会改变方案、成本、数据迁移或权限时，daemon 追加 `decision_request`，投影为
 `waiting_for_decision`；缺少用户事实或授权时投影为 `waiting_for_input`。**两者均为协议保留行为
 （`decision_request_v1` 未声明前 daemon 不落库、不投影）**；pre-cutover 遇到真实多路线决策时，
-由当前持棒角色在 handoff/verdict 文本中写明候选与缺口并升级用户，不得伪造 `waiting_*` 状态。
+由当前持棒角色在 handoff/verdict 文本中写明候选与缺口并升级用户，不得伪造 `waiting_*` 状态。升级内容只能是业务决策、外部事实、
+验收或敏感授权；技术故障、数据错误、环境故障、Contract/binding 缺失和 daemon 能力缺口必须由内部角色继续修复。
 这两种等待都必须展示：`request_id`、问题、候选方案、默认建议、截止/超时策略和不选择的后果。
 没有多路线选择时，角色应直接执行唯一安全路径，不能把普通缺陷推给用户。
 
@@ -74,10 +76,24 @@ Planner 必须回答：目标/非目标、复杂度、ownership、依赖顺序�
 证据与部署门禁、回滚和 successor rule。满足任一条件即默认拆分或重规划：三个以上独立模块；schema+daemon+CLI/MCP/部署跨层；
 超过五个步骤；多个独立验收目标；多个 owner；或单个 Executor 无法在原 scope 内安全修复。
 
+### Planner 对自有任务树的治理缺口负责（强制）
+
+任务树创建者或当前 Planner 发现其任务出现数据丢失/垃圾状态、Contract 或 workspace binding 缺失、认证恢复缺口、派工/交接
+断链或 daemon/CLI/MCP 能力缺失时，必须将其归类为任务树治理缺陷并主动形成闭合路径。Planner 不得仅以“无现成 RPC”“当前
+capability 未声明”或“需要用户手工修复”为终点。
+
+若只有一条安全路径，Planner 应直接修订计划并安排最小的 Executor 实现范围，明确依赖、allowed/excluded paths、幂等键、正负
+验收、证据、部署和回滚；没有现成接口本身就是需要补齐的 daemon/client capability gap。只有路线、成本、数据、权限或外部事实确实
+存在不可合并的选择时，才升级用户，并提供 A/B/C、推荐项和未选择后果。用户只选择或授权敏感动作，不承担内部数据/合同/派工修复。
+
+Planner 不因此获得超级管理员权限：仍不得直连 SQLite、伪造身份/lease、覆盖历史事件、写生产代码或代替 Reviewer/Adjudicator
+裁决。当前 `planner_governance_v1` 未声明时，Planner 的原生派工/交接仍是 design-only；此限制必须如实记录为 capability gap，
+并输出精确可执行的 Executor scope，而不是把治理责任转移给用户。
+
 Executor 开工前必须重复复杂度预检。发现原 scope 过大、Contract 缺失或 ownership 相交时，不得先写代码或
 创建无 Contract 的嵌套任务。post-cutover（`planner_governance_v1` 已声明）提交 `executor_replan_requested`
-进入 `replanning_pending` 交 Planner；**pre-cutover 该 outcome 无法持久化**，必须改交
-`executor_blocked_to_user` 升级用户并写明计划缺口。Planner 修订时保留历史版本，仅追加新 revision；
+进入 `replanning_pending` 交 Planner；**pre-cutover 该 outcome 无法持久化**，不得因此把技术计划缺陷交给用户，
+而应记录为内部 capability/governance gap，并由 Planner/维护任务准备可执行的修订或 Executor 实现路径。Planner 修订时保留历史版本，仅追加新 revision；
 只有多条合法路线才需要决策请求（`decision_request` 为协议保留能力，pre-cutover 按本节
 `waiting_for_decision` 段落的升级方式处理）。
 
@@ -102,22 +118,21 @@ scope/Contract/架构缺陷（计划边界、拆分方式、验收目标、依�
       1. Reviewer 用现有 reviewer_blocked 提交；daemon 原子追加 fix_defect，
          finding.owner_route 必须写 planner，不得伪装成实现缺陷；
       2. Executor 领取该 fix_defect 后按 owner_route 复查：确认计划缺陷时不得实施代码、
-         不得完成该 step，立即改交 executor_blocked_to_user 升级用户
-         （next_role=user，reason 写明计划缺口与 finding_id）；
+         不得完成该 step，也不得把技术问题升级给用户；应将精确计划缺口、finding_id 和所需 capability 交 Planner/内部治理维护路径；
       3. Adjudicator 用 adjudicator_returned 提交后重新查询同一 task；由于当前没有受支持的
          remediation bridge，若仍为 READY/ADJUDICATE，必须记录治理实现缺口并等待后续
          daemon/CLI/MCP 修复，不得假装存在可领取的 Executor step。
-    该桥接是 pre-cutover 唯一合法升级路径——Reviewer/Adjudicator 不能冒用
-    executor_blocked_to_user（from_role 校验拒绝），daemon 也尚未提供 reviewer→user 路由。
+    该桥接是 pre-cutover 的临时内部修复路径——Reviewer/Adjudicator 不能冒用
+    executor_blocked_to_user（from_role 校验拒绝）；`next_role: user` 仅用于真正的业务决策、外部事实、验收或敏感授权。
 ```
 
 **Parked remediation step（pre-cutover 无退出路径，如实披露）**：桥接第 2 步中，Executor 确认计划
-缺陷后不完成该 fix_defect step、改交 `executor_blocked_to_user`，该 step 将**保持未完成，且协议当前
+缺陷后不完成该 fix_defect step，也不得把技术问题改交客户；该 step 将**保持未完成，且协议当前
 不提供退出路径**——`workflow_status_for()` 对 `in_progress` + `revise_current_step` 仍投影
 `remediation_in_progress`（可派工），`waiting_for_input` 是协议保留值（`decision_request_v1` 未声明，
 daemon 不 emit），`step-resolve` 又要求 remediation step 已 done。因此该 step 保持未完成属**预期状态**：
-**重复派工不构成新授权**；Executor 重复领取时应直接引用既有 `executor_blocked_to_user` 升级事件与
-finding_id，不得重做、不得重新升级、不得实施代码。parked step 的 daemon 终止/取消语义列入
+**重复派工不构成新授权**；Executor 重复领取时应直接引用既有计划缺口事件与 finding_id，继续走内部 capability 修复，
+不得重做、不得把技术问题重新升级给用户、不得实施未冻结代码。parked step 的 daemon 终止/取消语义列入
 v2 amendment §3.3 未实施清单。
 
 判定责任在 Reviewer/Adjudicator 的 finding 归属字段（见 §4）。Reviewer BLOCKED 路径由 Executor
@@ -161,15 +176,15 @@ Reviewer 和 Adjudicator 不只看本次 diff。除任务 scope 外，还要检�
 > 缺陷**，不是可接受的默认状态。每条 finding 必须在 `subject` 中携带显式归属标记。
 >
 > **fail-closed 规则（例外分支，不是常态路径）**：若 Executor 收到的 finding 缺失 `owner_route`
-> 或无法从 `subject`/`fact` 解析出 `executor`/`planner` 归属，必须按计划缺陷升级用户
-> （`executor_blocked_to_user`），并在 `reason` 中同时记录"finding 缺失归属字段"这一上游交付缺陷；
+> 或无法从 `subject`/`fact` 解析出 `executor`/`planner` 归属，必须按内部治理缺陷处理并记录上游交付缺陷；不得把协议缺陷升级给客户，
+> 也不得使用 `executor_blocked_to_user` 伪装成客户阻塞。若当前 daemon 无法持久化内部路由，必须登记 capability gap 供后续实现；
 > 不得默认为实现缺陷硬修，也不得自行推断归属。该分支应当罕见——若频繁触发，说明上游角色未遵守
 > 上条必填义务，属需要单独整改的流程缺陷，而非 Executor 的常规升级理由。daemon 侧 findings schema
 > 扩展与校验列入 v2 amendment §3.3。
 
 **归属即路由**（与 §3 双轨一致）：`owner_route=executor` 的 finding 走 `fix_defect` → Executor；
-`owner_route=planner` 的 finding post-cutover 走 `replan` → Planner，pre-cutover 按 §3 临时桥接
-（Reviewer BLOCKED → Executor 复查后升级用户；Adjudicator returned → 记录未闭合 bridge 的治理缺口）。
+`owner_route=planner` 的 finding post-cutover 走 `replan` → Planner，pre-cutover 按 §3 临时内部桥接
+（Reviewer BLOCKED → Executor 复查后进入 Planner/治理维护路径；Adjudicator returned → 记录未闭合 bridge 的治理缺口）。
 
 BLOCKED 不是终点。Reviewer 提交 `reviewer_blocked` 后，daemon 在同一主任务原子追加带
 `source_verdict_id`、`finding_id`、`remediation_of_step_id` 的 `fix_defect` 并投影为

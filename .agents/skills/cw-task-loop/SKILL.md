@@ -81,8 +81,8 @@ step_id、request_id 或聊天文本替代精确 `task_id`。
    对含 `revision_hint` 的 **`READY/REVISE`**：逐字呈现 revision card 并交回 Executor——
    该派工只承载**实现缺陷**的 `fix_defect` 整改；若 finding 标注 `owner_route=planner`
    （scope/Contract/架构缺陷），Executor 复查确认后不得实施代码，按
-   `references/role-protocol.md §3` 的 pre-cutover 临时桥接以 `executor_blocked_to_user`
-   升级用户（post-cutover 由 Planner 处理）。Skill 不得替 Executor 修订计划，也不得让
+    `references/role-protocol.md §3` 的 pre-cutover 临时内部桥接登记 capability/governance gap
+    并交 Planner/治理维护路径（post-cutover 由 Planner 处理）。只有业务决策、外部事实、验收或敏感授权才升级用户。Skill 不得替 Executor 修订计划，也不得让
    Reviewer/Adjudicator 创建整改步骤。
 6. **每次 report 或 verdict 后重新查询**，不轻信 Agent 的最终自然语言。
 
@@ -144,7 +144,7 @@ daemon 不产生；若出现在聊天中，先核对 daemon 投影），必须�
 | `READY/CLAIM` | 渲染角色卡；显示 `queued`/`execution_in_progress`；仅提示 executor 新会话的领取/lease 路径与 identity 要求 |
 | `READY/REVIEW` | 渲染角色卡；显示 `review_pending`；要求独立 Reviewer window/session（`must_be_new_session: true`） |
 | `READY/ADJUDICATE` | 渲染角色卡；显示 `adjudication_pending`；要求独立 Adjudicator window/session；apply/close 前须取真实 reviewer lease |
-| `READY/REVISE` | 渲染角色卡；显示 `remediation_pending` 或 `remediation_in_progress`；逐字呈现 revision card，交回 Executor（仅实现缺陷的 `fix_defect`；`owner_route=planner` 的计划缺陷由 Executor 复查后按 §3 pre-cutover 桥接升级用户，不硬修）；Skill 不修订计划 |
+| `READY/REVISE` | 渲染角色卡；显示 `remediation_pending` 或 `remediation_in_progress`；逐字呈现 revision card，交回 Executor（仅实现缺陷的 `fix_defect`；`owner_route=planner` 的计划缺陷由 Executor 复查后按 §3 pre-cutover 桥接登记内部 capability/governance gap，不硬修、不升级客户）；Skill 不修订计划 |
 | `WAITING/WAIT` | 只解释 lease 持有角色与等待原因；不写操作 |
 | `BLOCKED/NONE` | 只解释 `blocking_conditions`；禁止 claim；不写操作 |
 | `COMPLETE/NONE` | 只解释终态；不写操作 |

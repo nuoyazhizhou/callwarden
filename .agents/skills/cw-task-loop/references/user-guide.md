@@ -67,8 +67,8 @@ Reviewer/Adjudicator。建议聊天窗口标题包含 `task_id + role + session_
 - **READY/REVISE**：skill 逐字呈现 revision card（来源 verdict、finding、proposed
   action、allowed/excluded paths、acceptance、capture_isolation），交回 Executor
   （仅实现缺陷的 `fix_defect` 整改；`owner_route=planner` 的 scope/Contract/架构缺陷按
-  role-protocol §3 双轨：pre-cutover 由 Executor 复查后以 `executor_blocked_to_user`
-  升级用户，不硬修，post-cutover 交 Planner）；Executor 自行修订计划，skill 与
+  role-protocol §3 双轨：pre-cutover 由 Executor 复查后登记内部 capability/governance gap
+  并交 Planner/治理维护路径，不硬修、不升级客户，post-cutover 交 Planner）；Executor 自行修订计划，skill 与
   Reviewer/Adjudicator 不得代劳。
 - **WAITING/WAIT**：有 active 未过期 lease；等待持有角色释放，不写操作。
 - **BLOCKED/NONE**：缺 Role Contract、hash 不匹配或 binding 不可验证等；只读解释

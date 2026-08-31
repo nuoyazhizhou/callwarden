@@ -21,8 +21,8 @@ description: 执行已由 Planner 冻结的 Call Warden 原子任务，主动做
 2. 确认精确 `task_id`/`step_id`、allowed/excluded paths、验收命令、基线 HEAD 和当前工作树归属。
 3. 重新评估复杂度。若发现多个独立 ownership、跨 schema/daemon/CLI/MCP 的复合变更、超过五个实现步骤、多个互斥验收目标，
    在改代码前发起重规划请求——`executor_replan_requested` 为 **design-only**（capability
-   `planner_governance_v1` 声明前无法持久化，daemon 会结构化拒绝）；pre-cutover 一律改交
-   `executor_blocked_to_user` 升级用户并写明计划缺口，post-cutover 进入 `replanning_pending` 交
+   `planner_governance_v1` 声明前无法持久化，daemon 会结构化拒绝）；pre-cutover 不得把技术计划缺陷交给用户，
+   应记录为内部 capability/governance gap 并交 Planner/治理维护路径；post-cutover 进入 `replanning_pending` 交
    Planner，不得硬做或创建无 Contract 的嵌套任务。
 
 ## 实施原则
@@ -35,8 +35,8 @@ description: 执行已由 Planner 冻结的 Call Warden 原子任务，主动做
   关联为协议保留能力 `adjacent_relation_v1`，pre-cutover 在 finding/ledger 中人工记录）。
 - Reviewer 或 Adjudicator 返回 BLOCKED 后，读取完整结构化 finding、根因、复现证据和 remediation relation；
   **先按 `owner_route` 复查**：`executor` 的实现缺陷有唯一安全修复路径时自动领取 `fix_defect` 并闭环，
-  不等待用户再次提醒；`planner` 的计划缺陷不得实施代码、不得完成该 fix_defect step，立即改交
-  `executor_blocked_to_user` 升级用户（写明缺口与 finding_id）。
+  不等待用户再次提醒；`planner` 的计划缺陷不得实施代码、不得完成该 fix_defect step，也不得把技术问题升级给用户；
+  应写明缺口与 finding_id，交 Planner/治理维护路径补齐计划或 capability。
 - 若存在多条会改变架构、数据或成本的合法路径（`decision_request` 为协议保留能力
   `decision_request_v1`，未声明前 daemon 不落库、不投影 `waiting_for_decision`），pre-cutover 在
   handoff 文本中写明候选与缺口并升级用户，不要在聊天中要求用户回复字母，也不得伪造等待状态。

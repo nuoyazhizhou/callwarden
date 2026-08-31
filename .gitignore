@@ -224,3 +224,14 @@ scripts/.rb_progress.json
 
 # QA 临时探测目录（handoff_retry/reconcile_probe 等，物理保留不入库）
 _qa_s1_tmp/
+
+# === 2026-08-31 triage: 运行产物/重复/对话草稿不入库 ===
+# tokenslim 审计数据（可重算的运行产物）
+.tokenslim/
+# 一次性 reviewer 批量执行进度（可重算）
+scripts/.aprime_review_progress.json
+# 顶层对话/草稿记录（不入 git 主历史）
+讨论.md
+# 根目录与 deliverables/software-company 重复的 P0-L 拆分文档（保留 deliverables 版）
+/p0l_v3_sequential_microtask_breakdown.md
+/p0l_v3_sequential_microtask_manifest.json
