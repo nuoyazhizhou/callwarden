@@ -1,0 +1,181 @@
+{
+  "task": {
+    "id": "T-1788161106167-4e4a1f38",
+    "p0f": "T-1787310376068-44eb5f20"
+  },
+  "generated_at": "2026-08-31T07:25:06.258461+00:00",
+  "executor_identity": {
+    "agent_id": "bridge-test-executor",
+    "agent_instance_id": "inst-bridge-exec",
+    "session_id": "sess-executor",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "reviewer_identity": {
+    "agent_id": "bridge-test-reviewer",
+    "agent_instance_id": "inst-bridge-rev",
+    "session_id": "sess-reviewer",
+    "model_id": "deepseek-v4-flash",
+    "role": "reviewer"
+  },
+  "trace": {
+    "create": {
+      "task_id": "T-1788161106167-4e4a1f38",
+      "status": "open",
+      "title": "P0F-R5 positive bridge live probe",
+      "step_count": 1,
+      "contract_count": 0,
+      "monotonic_seq": 1786265400295,
+      "workspace_id": 1,
+      "workspace_binding_id": "tb-T-1788161106167-4e4a1f38-ws-1-bridgelive-6f759e0bb0",
+      "workspace_capture_id": "wc-ws-1-bridgelive-6f759e0bb0-1313804504",
+      "assignment_id": "A-1adbe9e21324594975452b06"
+    },
+    "lease": {
+      "lease_id": "L-638dd0d94a5613ab",
+      "task_id": "T-1788161106167-4e4a1f38",
+      "role": "implementer",
+      "token": "ee3803a67196ff4ad974f496f1805c3341a6b0d39654ceef3859a7111f4ed3a8",
+      "fencing_counter": 1,
+      "acquired_at": 1788161106.0,
+      "expires_at": 1788164706.0
+    },
+    "claim": {
+      "task_id": "T-1788161106167-4e4a1f38",
+      "status": "in_progress",
+      "claimed_by": "sess-executor",
+      "claim_recovered": false,
+      "assignment_id": "A-1adbe9e21324594975452b06",
+      "step_id": "S-1788161106168-4e50fb14",
+      "step_index": 0,
+      "action": "annotate",
+      "target_file": "",
+      "target_symbol": "",
+      "check_items": "mark done then bridge",
+      "step_status": "in_progress",
+      "task_title": "P0F-R5 positive bridge live probe"
+    },
+    "probe_step_done": true,
+    "stage1": {
+      "response": {
+        "ok": true,
+        "task_id": "T-1788161106167-4e4a1f38",
+        "from_status": "in_progress",
+        "to_status": "review",
+        "evidence_steps": [
+          {
+            "step_id": "S-1788161106168-4e50fb14",
+            "evidence_path": "docs/evidence/r5-probe.txt",
+            "evidence_hash": "a30d1ad576b64e148a34716f45ac7a1b"
+          }
+        ],
+        "authoritative_timestamp": 1788161106.214598,
+        "request_id": "bridge-ev-6f759e0bb0-v1"
+      }
+    },
+    "stage1_replay_same": {
+      "ok": true,
+      "task_id": "T-1788161106167-4e4a1f38",
+      "from_status": "in_progress",
+      "to_status": "review",
+      "evidence_steps": [
+        {
+          "step_id": "S-1788161106168-4e50fb14",
+          "evidence_path": "docs/evidence/r5-probe.txt",
+          "evidence_hash": "a30d1ad576b64e148a34716f45ac7a1b"
+        }
+      ],
+      "authoritative_timestamp": 1788161106.214598,
+      "request_id": "bridge-ev-6f759e0bb0-v1"
+    },
+    "stage1_replay_conflict": {
+      "error": {
+        "code": "E_REQUEST_ID_REUSE_MISMATCH",
+        "message": "E_REQUEST_ID_REUSE_MISMATCH: request_id 复用但 canonical 参数不同 (workspace_instance_id=ws-1-bridgelive-6f759e0bb0 method=task.bootstrap_executor_evidence request_id=bridge-ev-6f759e0bb0-v1)"
+      }
+    },
+    "stage2": {
+      "response": {
+        "ok": true,
+        "task_id": "T-1788161106167-4e4a1f38",
+        "status": "review",
+        "bootstrap_reviewer_lease_id": "brtl-T-1788161106167-4e4a1f38-r1",
+        "fencing_counter": 1,
+        "authoritative_timestamp": 1788161106.2295167,
+        "request_id": "bridge-rp-6f759e0bb0-v1",
+        "evidence_path": "docs/evidence/r5-review.txt",
+        "evidence_hash": "031920b28ba540f7952d67978963721f",
+        "executor_agent_id": "bridge-test-executor",
+        "reviewer_agent_id": "bridge-test-reviewer"
+      }
+    },
+    "stage2_replay_same": {
+      "ok": true,
+      "task_id": "T-1788161106167-4e4a1f38",
+      "status": "review",
+      "bootstrap_reviewer_lease_id": "brtl-T-1788161106167-4e4a1f38-r1",
+      "fencing_counter": 1,
+      "authoritative_timestamp": 1788161106.2295167,
+      "request_id": "bridge-rp-6f759e0bb0-v1",
+      "evidence_path": "docs/evidence/r5-review.txt",
+      "evidence_hash": "031920b28ba540f7952d67978963721f",
+      "executor_agent_id": "bridge-test-executor",
+      "reviewer_agent_id": "bridge-test-reviewer"
+    },
+    "stage2_replay_conflict": {
+      "error": {
+        "code": "E_REQUEST_ID_REUSE_MISMATCH",
+        "message": "E_REQUEST_ID_REUSE_MISMATCH: request_id 复用但 canonical 参数不同 (workspace_instance_id=ws-1-bridgelive-6f759e0bb0 method=task.bootstrap_reviewer_pass request_id=bridge-rp-6f759e0bb0-v1)"
+      }
+    },
+    "db_verify": {
+      "task_final_status": "review",
+      "active_reviewer_leases": [
+        {
+          "workspace_id": 1,
+          "role": "reviewer",
+          "status": "active",
+          "fencing_counter": 1,
+          "model_id": "deepseek-v4-flash"
+        }
+      ],
+      "bridge_events": [
+        {
+          "reason_code": "task.bootstrap_executor_evidence",
+          "n": 1
+        },
+        {
+          "reason_code": "task.bootstrap_reviewer_pass",
+          "n": 1
+        }
+      ],
+      "action_identities": [
+        {
+          "reason_code": "task.bootstrap_executor_evidence",
+          "reason": "{\"step_id\":\"S-1788161106168-4e50fb14\",\"kind\":\"completed_step_evidence\",\"executor_agent_instance_id\":\"inst-bridge-exec\"}"
+        },
+        {
+          "reason_code": "task.bootstrap_reviewer_pass",
+          "reason": "{\"bootstrap_reviewer_lease_id\":\"brtl-T-1788161106167-4e4a1f38-r1\",\"kind\":\"reviewer_pass\"}"
+        }
+      ]
+    }
+  },
+  "log": [
+    "workspace_instance_id=ws-1-bridgelive-6f759e0bb0",
+    "create OK task_id=T-1788161106167-4e4a1f38",
+    "step S-1788161106168-4e50fb14 status=pending",
+    "lease OK token=ee3803a67196ff4ad974f496f1805c3341a6b0d39654ceef3859a7111f4ed3a8 fencing=1",
+    "claim OK step_status=in_progress",
+    "probe step marked done: True",
+    "stage1 OK to_status=review",
+    "stage1 replay(identical params) returned to_status=review",
+    "stage1 conflict(参数变更) code=E_REQUEST_ID_REUSE_MISMATCH",
+    "stage2 OK status=review lease=brtl-T-1788161106167-4e4a1f38-r1 fencing=1",
+    "stage2 replay(identical params) returned status=review",
+    "stage2 conflict(参数变更) code=E_REQUEST_ID_REUSE_MISMATCH",
+    "final task status=review",
+    "bridge_event_counts=[{'reason_code': 'task.bootstrap_executor_evidence', 'n': 1}, {'reason_code': 'task.bootstrap_reviewer_pass', 'n': 1}]",
+    "active_reviewer_leases=[{'workspace_id': 1, 'role': 'reviewer', 'status': 'active', 'fencing_counter': 1, 'model_id': 'deepseek-v4-flash'}]"
+  ]
+}
