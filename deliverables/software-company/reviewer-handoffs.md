@@ -1317,3 +1317,601 @@ Handoff:
     role: reviewer
   persistence: reviewer lease released and rechecked as released; daemon handoff was rejected by Database is busy, and the task remains review_pending with no persisted verdict. PASS is not implied.
 ```
+
+## T-1788011722055-1b59cb4c (reviewer blocked, 2026-08-29)
+
+```text
+Handoff:
+  task_id: T-1788011722055-1b59cb4c
+  step_id: null
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 修复 provenance reference validation、review snapshot/verdict provenance、inbound handoff/step binding mismatch 后重新复审
+  reason: |
+    1. 独立复核确认精确任务当前为 lifecycle_status=review、workflow_status=review_pending、required_role=reviewer、next_action=review_current_step；四个任务步骤均为 done。提交 5551a1a 与 ed4fc12 均已在当前 HEAD，证据文件 SHA-256 与 Executor 声明一致；任务声明的 T-504 部署/live runtime、P0-L identity policy、历史 verdict/evidence 变更及 apply/close 均不在本任务范围内。
+    2. 独立测试：adjudicator_returned 原子路由测试 1 passed；task_loop::next_action_test 20 passed；task_collab 批次 97 passed、3 个失败（test_task_collab_full_lifecycle、test_task_collab_migrates_v46_db_to_v50、test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state），与证据所述 baseline failures 一致。测试运行于共享 dirty worktree，不能升级为干净提交级部署证明。
+    3. 实现缺陷（owner_route=executor，severity=block）：next_action.rs 的 required_remediation_step 与 claim.rs 的 task-level remediation provenance 检查只确认 source_verdict_id 与 source_handoff_event_id 非空，没有验证引用的 verdict/event 真实存在、属于同一 task、outcome 正确，或与 source step 相绑定；因此伪造/错绑 provenance 仍可能被提升为 remediation。lifecycle 路径虽查询最新指定 overall 的 verdict，但未完成上述完整绑定校验。正向回归测试还直接插入与任务合同不一致的 PASS contract id/hash，未覆盖不存在或错绑引用。
+    4. 治理阻断：daemon 权威 projection 返回 review_input_snapshot=no_snapshot、verdicts=[]、current step_id=null；inbound_handoff 的 handoff_event_id/from_role/target_role 均为 null，且 matches_current_routing=false。证据文件记录的实现 Step S-1788011722057-1b7d1930 也不匹配当前 daemon 返回的 reviewer assignment step S-1788011722058-1b83253c，故没有可合法绑定的当前 review snapshot/source step，不能伪造 reviewer verdict 或 reviewer_pass。
+    5. 使用精确 task_id、step_id=null、完整 Reviewer identity、lease token/fencing 与证据 path/hash，按 request_id=review-T-1788011722055-1b59cb4c-block-r1 尝试正式 task.handoff reviewer_blocked；两次均返回 Database is busy，未确认 daemon 持久化 verdict/handoff。任务复查仍为 review_pending。
+    6. 独立性核验通过：Reviewer lease L-86c23e8755fdf9c3 的 agent_id/agent_instance_id/session_id/model_id 为 reviewer-wb-186loop/inst-reviewer-wb-186loop/sess-reviewer-wb-186loop/workbuddy，与 Executor codex-executor-route-20260829/codex-local-route-20260829 不同；lease 已释放并复核为 released。
+  independence_requirement: not_required
+  request_id: review-T-1788011722055-1b59cb4c-block-r1
+  report_request_id: unavailable
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\adjudicator_returned_remediation_evidence.md
+  evidence_hash: sha256:4918B9E5586540E3EC1FD5FFDC37440524093B3A9A6243ED704FF424A60415D6
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer lease L-86c23e8755fdf9c3 was released and rechecked as released; both daemon handoff attempts returned Database is busy, no reviewer verdict/handoff was persisted, and the task remains review_pending. PASS is not implied; task was not applied or closed.
+```
+
+## T-1788011722055-1b59cb4c (reviewer blocked, repeat scan 2026-08-29)
+
+```text
+Handoff:
+  task_id: T-1788011722055-1b59cb4c
+  step_id: null
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 先恢复 authority 写入并持久化 reviewer_blocked verdict/handoff，补齐 provenance-bound Executor fix_defect；随后修复 reference validation、review snapshot/verdict provenance 与 inbound handoff/step binding mismatch 后重新复审
+  reason: |
+    1. 本轮 Epic 子树逐任务扫描得到 210 个子任务，0 个返回 required_role=reviewer 且 next_action=review_current_step；精确任务 T-1788011722055-1b59cb4c 单独查询仍返回 READY/REVIEW、review_pending、review_current_step。
+    2. 精确任务权威 projection 未改变：review_input_snapshot=no_snapshot、verdicts=[]、step_id=null；inbound handoff_event_id/from_role/target_role 为空且 matches_current_routing=false。Executor→user 聊天 Handoff 不能替代 daemon 事件，因此不能伪造 reviewer verdict 或 remediation step。
+    3. 上一轮发现的实现缺陷仍未被新证据纠正：required_remediation_step 与 claim provenance 门禁只检查 source_verdict_id/source_handoff_event_id 非空，未验证实际事件存在、同 task、outcome 及 source step 绑定；正向测试使用了与任务合同不一致的 PASS contract，未覆盖错绑/不存在引用。
+    4. 本轮重新取得唯一 reviewer lease L-7f59260d833ac763，Reviewer identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 不同。lease 已释放并复核为 released。
+    5. 复用上一轮 request_id 被 daemon 拒绝为 E_REQUEST_ID_REUSE_MISMATCH；随后用 request_id=review-T-1788011722055-1b59cb4c-block-r2、完整 identity、lease token/fencing、step_id=null 与证据 hash 尝试正式 reviewer_blocked handoff，仍返回 Database is busy，未持久化 verdict/handoff。
+  independence_requirement: not_required
+  request_id: review-T-1788011722055-1b59cb4c-block-r2
+  report_request_id: unavailable
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\adjudicator_returned_remediation_evidence.md
+  evidence_hash: sha256:4918B9E5586540E3EC1FD5FFDC37440524093B3A9A6243ED704FF424A60415D6
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer lease L-7f59260d833ac763 was released and rechecked as released; the r2 daemon handoff returned Database is busy, so no reviewer verdict/handoff or Executor fix_defect was persisted. Task remains review_pending and was not applied or closed.
+```
+
+## T-1788018321776-b95d69ec (reviewer pass, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788018321776-b95d69ec
+  step_id: S-1788018321776-b9668c34
+  from_role: reviewer
+  outcome: reviewer_pass
+  next_role: adjudicator
+  next_action: review_and_adjudicate
+  reason: |
+    1. 独立复核确认本任务四个步骤均为 done，范围仅涉及 handoff envelope 的 target_role provenance、回归测试、官方 runtime refresh 与 live round-trip；未发现超出任务描述的代码或历史数据修改。
+    2. commits b19d607bc2a81759b03be81121ac7b4a9ffb44b1、ded783f1b79c9ec272d02d2899efa782fa984fb9 与 4fac282cee95e3fb1d6431e1bf6854231b20c7c4 均为当前 HEAD 祖先。源码复核确认 target_role 与 next_role 从同一 validated route 写入；回归测试断言两字段均为 executor。
+    3. 独立验证通过：task_level_reviewer_blocked_handoff_creates_fix_defect 为 1 passed；inbound_handoff 测试为 8 passed。运行中的 PID 16292 二进制路径为 C:\Users\wanpi\.callwarden\runtime\current\cw-daemon.exe，SHA-256 为 7B62BB25E34074D1EB836CD05B34FB6EAFCE3AA5E84CB12922069D124D77FD94，与 task-bound evidence 一致。
+    4. live daemon next-action 对精确 task_id 返回 inbound_handoff_event_id=he-676a594b54831ef74699604b、from_role=executor、target_role=reviewer、step_id=S-1788018321776-b9668c34、matches_current_routing=true，与报告和 evidence hash 一致。
+    5. 使用独立 Reviewer identity 与唯一 lease L-484967f4ec3e479c 持久化 reviewer_pass，daemon 返回 event_id=6060，并创建 Adjudicator assignment A-6721328caf0362f0649b761d；Executor assignment 已完成，Reviewer assignment 已完成。复核后 lease 已释放并确认 released。
+    6. 交接后 raw lifecycle_status 仍为 review，且 next-action projection 暂仍显示 review_pending/review_current_step；这不代表 apply/close，也不否定已创建的 Adjudicator assignment，需由 Adjudicator 继续独立裁决。
+  independence_requirement: required
+  request_id: review-T-1788018321776-b95d69ec-pass-r1
+  report_request_id: report-target-role-evidence-20260829
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\reviewer_blocked_target_role_runtime_evidence.md
+  evidence_hash: sha256:8F886419F4354E45D421936159634565B13292BFAEBC74E2766CA1B3CC3501B
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 已由 daemon 持久化为 event_id=6060，Adjudicator assignment 已创建；Reviewer lease L-484967f4ec3e479c 已释放并复核为 released。任务尚未 apply/close。
+```
+
+## T-1788019804377-eb4595d8 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788019804377-eb4595d8
+  step_id: S-1788019804378-eb562740
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 修复完整 reviewer identity（含 role/agent_instance_id）校验与 reviewer_pass provenance 负矩阵测试，补齐当前 runtime/live deployment evidence 后重新复审
+  reason: |
+    1. 独立复核确认精确任务为 READY/REVIEW、review_pending，四个步骤均为 done；inbound handoff_event_id=he-c951648975ff45b5c242067a、from_role=executor、target_role=reviewer、step_id=S-1788019804378-eb562740，matches_current_routing=true。
+    2. 50928e3、738fcf9、03b674c 与 43f59aa 均在当前 HEAD；证据文件存在且 SHA-256 为 D26C409D1E1B7350C2162CEE94D67D6442868FD0762C595734CEB0F5A36A43CE，与 Executor 声明一致。源码确认 reviewer_pass 在 handoff 写入前检查同 task pass verdict、step、非空 snapshot/manifest、workspace binding 和 identity 基础字段。
+    3. 实现缺陷（owner_route=executor，severity=block）：identity 校验仅比较 agent_id、session_id、model_id；verdict role 缺失时被 is_none_or 接受，且未比较 agent_instance_id，不满足任务要求的完整 reviewer identity。新增测试仅覆盖缺失 verdict 与成功路径，未覆盖 snapshot、manifest、workspace、role、agent_instance_id 缺失/错配及零部分提交矩阵。
+    4. 部署证据在生成时记录 PID=52016 且其 refresh ping 成功，但当前该 PID 已不存在；当前 live daemon ping 返回 PID=7080。当前运行二进制 hash 1261751E11BB773EE463DB816878CBD5508627539D4B1FE67DA71831B9DCE216 与 evidence 中二进制 hash 一致，因此代码指纹一致，但 task-bound deployment evidence 的运行实例已发生漂移，需要重新生成当前 PID/live round-trip 证据。
+    5. 独立 Reviewer lease L-7718814982c4af13 的 identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 不同；lease 已释放并复核为 released。
+    6. 使用精确 task_id、step_id、完整 identity、lease token/fencing 与 evidence path/hash 尝试正式 reviewer_blocked handoff 两次，均返回 Database is busy，未持久化 reviewer verdict/handoff 或 fix_defect。
+  independence_requirement: not_required
+  request_id: review-T-1788019804377-eb4595d8-block-r1
+  report_request_id: req-61ea35068191
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\reviewer_pass_verdict_provenance_evidence.md
+  evidence_hash: sha256:D26C409D1E1B7350C2162CEE94D67D6442868FD0762C595734CEB0F5A36A43CE
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer lease L-7718814982c4af13 已释放并复核为 released；两次 task.handoff 均因 Database is busy 拒绝，任务仍为 review_pending，未 apply/close。
+```
+
+## T-1788045499955-a314fad0 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788045499955-a314fad0
+  step_id: S-1788045500125-ad33a624
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 为本整改任务提供可由独立 Reviewer 提交的 Verdict Ledger/verdict.submit 路径后重新复审；保持 reviewer_pass provenance gate fail-closed
+  reason: |
+    1. 独立复核确认精确任务为 READY/REVIEW、review_pending，四个步骤均为 done；inbound handoff_event_id=he-c07c10297adc9b20b0f92b05、from_role=executor、target_role=reviewer、step_id=S-1788045500125-ad33a624，matches_current_routing=true。
+    2. d685f31、4049988、2c80988 均在当前 HEAD；task-bound evidence 文件实际 SHA-256 为 9C1075B2CD0467B1DC67FDB389619DDB4755FDF597E1E400FEECF328DC3B14BC，与声明一致。源码与独立 focused regression 确认 role、agent_id、agent_instance_id、session_id、model_id、step、snapshot、manifest、workspace 的校验及负矩阵实现已存在；测试结果为 1 passed、0 failed。
+    3. 官方 runtime 证据文件 hash 为 7E8D3D9DE1B7350C2162CEE94D67D6442868FD0762C595734CEB0F5A36A43CE；当前 PID 41868 正在运行，二进制 SHA-256 为 262A9F53FCBC3C6D79022DE068DF2B9ACD59779FE280523C112B63FB28859F07，与证据一致；daemon ping 返回 exit code 0。
+    4. 但权威 governance projection 仍为 review_pending、review_input_snapshot=no_snapshot、verdicts=[]。使用真实 Reviewer lease 尝试 reviewer_pass 时，daemon 正确返回 E_HANDOFF_VERDICT_REQUIRED；没有合法的 task-bound pass Verdict Ledger，不能伪造 reviewer verdict。
+    5. 使用完整 Reviewer identity、精确 task_id/step_id、lease token/fencing 与 evidence path/hash 尝试 reviewer_blocked handoff 两次，均返回 Database is busy，未持久化 reviewer verdict/handoff 或 fix_defect。当前 CLI/help 也未提供可用的 verdict.submit 入口。
+    6. 独立性核验通过：Reviewer lease L-073acaff9a763579 的 identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 不同；lease 已释放并复核为 released。
+  independence_requirement: not_required
+  request_id: review-T-1788045499955-a314fad0-block-r1
+  report_request_id: req-358d35863ea0
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\reviewer_pass_identity_provenance_remediation_evidence.md
+  evidence_hash: sha256:9C1075B2CD0467B1DC67FDB389619DDB4755FDF597E1E400FEECF328DC3B14BC
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer lease L-073acaff9a763579 已释放并复核为 released；reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝，reviewer_blocked 两次因 Database is busy 未持久化。任务仍为 review_pending，未 apply/close。
+```
+
+## T-1788046887458-b0ad9b68 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788046887458-b0ad9b68
+  step_id: S-1788046887458-b0bb2ff8
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 恢复可调用的 MCP verdict.submit/daemon 写入路径，提交同 task 的 task-bound Verdict Ledger 后重新复审
+  reason: |
+    1. 独立复核确认精确任务为 READY/REVIEW、review_pending；三个步骤均为 done。inbound_handoff_event_id=he-34791007f81ff1b0f622a3a0，from_role=executor、target_role=reviewer、step_id=S-1788046887458-b0bb2ff8，matches_current_routing=true；assignment=A-eceba630bfd834046a848c3c 为 reviewer queued。
+    2. 任务合同 TC-T-1788046887458-b0ad9b68 revision=1、hash=sha256:e35857a992fb2621166ecb4f36029be2c2a1f52c7dd2dbb225da46bbf35c633c；Reviewer Role Contract rcl-T-1788046887458-b0ad9b68-reviewer revision=1、hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。当前 identity_policy=legacy_identity_v1、declared。
+    3. 独立源码与 diff 复核确认 57ab51e4d2b1dedda8c9c5e80b9fefd5a60cd996 在 MCP 薄壳中将 role、agent_id、agent_instance_id、session_id、model_id 组装为 daemon-native identity，并将 clause_results/findings JSON 字符串解析为数组；非数组在 _route 前抛出 ValueError，未见 SQLite fallback 或 reviewer_pass/apply/close 改动。当前 HEAD=19ea7289c7502535e7f1eafe46cbb40bed8df065，7acd2b4 与 19ea7289 记录了证据/台账。
+    4. 独立运行 tokenslim run pytest -q tests/test_task_verdict_mcp.py tests/test_task_verdict_cli.py，结果为 7 passed、0 failed。证据文件实际 SHA-256 为 B4D82CA5F78E7779685C26793573891BD0A2D5862AFADD5CB56D2BD88D07B79D，与 Executor handoff 一致。
+    5. 权威 projection 仍为 review_pending，review.state=pending，verdicts=[]，review_input_snapshot=no_snapshot；本会话没有可调用的 MCP verdict.submit connector，CLI 也没有可用的 verdict.submit 子命令，因此无法在不伪造 snapshot/verdict 或使用 SQL 的前提下完成正式 task-bound Verdict Ledger round-trip。
+    6. 持真实 Reviewer lease L-488d2d10a2832604、完整 identity、精确 task_id/step_id、lease token/fencing 与证据 path/hash 尝试 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED；随后尝试 reviewer_blocked 两次，均返回 Database is busy，均未持久化 verdict、handoff 或 fix_defect。投影复读仍为 review_pending，未执行 apply/close。
+    7. 独立性核验通过：Reviewer identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 / executor session 不同。Reviewer lease 已释放并复核为 released。
+  independence_requirement: not_required
+  request_id: review-T-1788046887458-b0ad9b68-block-r2
+  report_request_id: req-b51d828d0f37
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict_submit_mcp_identity_evidence.md
+  evidence_hash: sha256:B4D82CA5F78E7779685C26793573891BD0A2D5862AFADD5CB56D2BD88D07B79D
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化，重读确认任务仍 review_pending、verdicts=[]；Reviewer lease L-488d2d10a2832604 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788047855059-fa334ee0 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788047855059-fa334ee0
+  step_id: S-1788047855060-fa47cb04
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 提供可用的 authoritative snapshot/workspace binding 与 Verdict Ledger 提交 round-trip 后重新复审
+  reason: |
+    1. 独立复核确认精确任务为 READY/REVIEW、review_pending；四个步骤均为 done。inbound_handoff_event_id=he-52fe5bc3c71243deacd1ddaa，from_role=executor、target_role=reviewer、step_id=S-1788047855060-fa47cb04，matches_current_routing=true；assignment=A-7bf793c63aa884aa08dd9fd2 为 reviewer queued。
+    2. 任务合同 TC-T-1788047855059-fa334ee0 revision=1、hash=sha256:33370b73b7d21b7cbe7f240c31158b2f38233ddfc1ce13f45641e8d547c114a9；Reviewer Role Contract rcl-T-1788047855059-fa334ee0-reviewer revision=1、hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。
+    3. 独立源码与 diff 复核确认 3775901e29c4ef2f1f9552184ed7c8f779055ed6：Rust task.report 将调用方提供的 snapshot_id 写入 reported task_events，响应回显非空 snapshot；CLI daemon payload、MCP task_report_step、Unix daemon client 均透传，缺省保持空值。未见 snapshot 伪造、SQLite fallback、历史 verdict、apply/close 改动。证据文件实际 SHA-256 为 E5BA022D92489C9B78F3EEA561B1663440381C1EA62CA28A96758530491C53FC。
+    4. 独立验证通过：目标 Rust 测试 1 passed、Python task_report_snapshot 与 task_verdict_mcp 测试 4 passed；py_compile 通过；CLI help 显示 --snapshot-id；scoped diff --check 通过。live daemon PID=18900，daemon ping/health 成功，binary SHA-256=3C1310432B53A34A3E0733C970B3703CCE410DDC2185658442550EF2207E41EB，health git_commit=f1079e8a13caa32529598f66e445845c313e95f8，且 3775901 为该 runtime commit 的祖先。
+    5. 但当前权威 governance projection 仍为 review_pending、review_input_snapshot={diagnosis:no_snapshot}、verdicts=[]；daemon workspace.status 1 返回 workspace_not_found，snapshot-list 返回 []。本会话没有可调用的 MCP verdict.submit connector，CLI 也没有 verdict.submit 子命令，无法在不伪造真实 snapshot/verdict 或使用 SQL 的前提下完成 task-bound Verdict Ledger round-trip。
+    6. 持真实 Reviewer lease L-6b9c696485d82c4e、完整 identity、精确 task_id/step_id、lease token/fencing 与证据 path/hash 尝试 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED；随后尝试 reviewer_blocked 两次，均返回 Database is busy。重读确认没有 verdict/handoff/fix_defect 落盘，任务仍 review_pending，未执行 apply/close。
+    7. 独立性核验通过：Reviewer identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 / executor session 不同。Reviewer lease 已释放并复核为 released。
+  independence_requirement: not_required
+  request_id: review-T-1788047855059-fa334ee0-block-r1
+  report_request_id: req-8a31c9d24834
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\task_report_snapshot_binding_evidence.md
+  evidence_hash: sha256:E5BA022D92489C9B78F3EEA561B1663440381C1EA62CA28A96758530491C53FC
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化。重读确认任务仍 review_pending、review_input_snapshot=no_snapshot、verdicts=[]；Reviewer lease L-6b9c696485d82c4e 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788050221973-114dab10 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788050221973-114dab10
+  step_id: S-1788050221974-11576b8c
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 提供真实 task-bound snapshot_id 与可持久化 Verdict Ledger 提交 round-trip 后重新复审
+  reason: |
+    1. 独立复核确认精确任务为 READY/REVIEW、review_pending；三个步骤均为 done。inbound_handoff_event_id=he-03d659f717728e8eaeefcb4e，from_role=executor、target_role=reviewer、step_id=S-1788050221974-11576b8c，matches_current_routing=true；assignment=A-4e0bab9d965b1b4c6e211147 为 reviewer queued。
+    2. 任务合同 TC-T-1788050221973-114dab10 revision=1、hash=sha256:9695a8519c3b122bb48ff2208f5322a1cd93a08066aebbcda7e993c2e4b00d75；Reviewer Role Contract rcl-T-1788050221973-114dab10-reviewer revision=1、hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。
+    3. 独立源码/diff 复核确认 b1fd2d7aa75140b68ee1642c3d3d415905941caf：HTTP client 未配置 workspace 时使用 PROJECT_ROOT，不再使用 runtime cwd；workspace.status 先取得 daemon authoritative db_path，再以 workspace.register 返回的 workspace_instance_id 发布 snapshot 并发起查询；MCP server 启动时显式配置 PROJECT_ROOT。未见历史 task/verdict/evidence、SQL fallback 或 apply/close 改动。
+    4. 独立验证通过：tokenslim run pytest -q tests/test_workspace_snapshot_binding.py 为 2 passed；py_compile 与 scoped diff --check 通过。当前 live daemon PID=48028，ping/health 成功，binary SHA-256=3C1310432B53A34A3E0733C970B3703CCE410DDC2185658442550EF2207E41EB，health git_commit=984917639653240a8b956e18ce8dc5bf75b06f47，且 b1fd2d7 为该 runtime commit 的祖先。
+    5. 独立真实 round-trip 成功：route_rpc("workspace.status", {}) 返回 client_view_root=C:\\git_work\\callwarden、workspace_instance_id=4baea3ff12c2ea5c；随后 snapshot.list_workspaces 返回同一 workspace_instance_id、generation=2。当前 registry snapshot_id=null，任务 projection 仍为 review_pending、review_input_snapshot=no_snapshot、verdicts=[]；没有可合法用于 Verdict Ledger 的 task-bound snapshot_id。
+    6. 持真实 Reviewer lease L-4dec17b1c79be392、完整 identity、精确 task_id/step_id、lease token/fencing 与证据 path/hash 尝试 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED；随后尝试 reviewer_blocked 两次，均返回 Database is busy。重读确认没有 verdict/handoff/fix_defect 落盘，任务仍 review_pending，未执行 apply/close。
+    7. 独立性核验通过：Reviewer identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 / executor session 不同。Reviewer lease 已释放并复核为 released。
+  independence_requirement: not_required
+  request_id: review-T-1788050221973-114dab10-block-r1
+  report_request_id: req-c664a417d902
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\workspace_snapshot_binding_evidence.md
+  evidence_hash: sha256:64EE6A46A010F264C3451B52959051D59D416A065C0F7F96AD8AEE2ED81E9B0E
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化。任务仍 review_pending、review_input_snapshot=no_snapshot、verdicts=[]；Reviewer lease L-4dec17b1c79be392 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788055266079-7d76f734 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788055266079-7d76f734
+  step_id: S-1788055266080-7d8310dc
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 恢复受支持的 task-bound verdict.submit 路径，提交同 task 的 Verdict Ledger 后重新派工复审
+  reason: |
+    1. 独立复核确认精确任务为 READY/REVIEW、review_pending；三个步骤均为 done。inbound_handoff_event_id=he-ef7a30e903abd73834569350，from_role=executor、target_role=reviewer、step_id=S-1788055266080-7d8310dc，matches_current_routing=true；assignment=A-bf278c2dbc455a6605466e2a 为 reviewer queued。
+    2. 任务合同 TC-T-1788055266079-7d76f734 revision=1、hash=sha256:e95627a050140fafe4b745d2a50c55c6b3d1543b7e9bbda551a47e53494aa128；Reviewer Role Contract rcl-T-1788055266079-7d76f734-reviewer revision=1、hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b；identity_policy=legacy_identity_v1、declared。
+    3. 独立源码/diff 复核确认 commit 9e68220358da0c3aa1fa68a0447e42d05759c7cc：Rust snapshot.publish 继承 workspace.register 的权威 snapshot_id、拒绝 drift 并回传 snapshot_id；Python daemon client 透传 Git remote/HEAD、保存 authority snapshot_id、向 publish 传入同一 identity 并拒绝返回漂移。变更范围符合 Contract，未见历史 task/verdict/evidence、SQL fallback、apply/close 或不相关 transport 改动；git diff --check 通过。
+    4. 独立回归通过：tokenslim run pytest -q tests/test_snapshot_identity_roundtrip.py tests/test_workspace_snapshot_binding.py 为 5 passed；tokenslim run cargo test --manifest-path rust_ext/Cargo.toml snapshot_state::tests --lib 为 51 passed、0 failed。正向 round-trip 与负向 snapshot identity drift 均有测试覆盖。
+    5. 独立 runtime 证据通过：daemon PID=21424，health 返回 worker_status=healthy、schema_version=60、git_commit=9e68220358da0c3aa1fa68a0447e42d05759c7cc，ping 返回 status=ok；运行 binary SHA-256=61d1093cebed50527c339402fd3973422ee5f4db31a7e2fc191b87556351b445，与 task evidence 一致。证据记录的 runtime pair 为 workspace_instance_id=38c6bf0d73637f85、snapshot_id=9d3c921779837672、HEAD=9e68220。
+    6. 释放前的 fresh authority round-trip 亦通过：当前 checkout HEAD=2353ae7036aa53913edf66142c34a249514bdd4a 时，workspace.status 返回 workspace_instance_id=a323bc22bc2772ab、snapshot_id=ff45fbc2e1aa4724；snapshot.list_workspaces 返回同一 instance，generation=2、symbol_count=95771、call_count=125449。该 pair 是文档提交后重新注册产生的新 authority identity，与证据中的旧 runtime pair 分开记录，未混淆或伪造。
+    7. 权威 projection 的 eligibility.verdict=pending_review、evidence_gate=not_evaluated、snapshot=not_evaluated，review.state=pending、verdicts=[]。持真实 Reviewer lease L-d99cb50ceca5e5fb、完整 identity、精确 task_id/step_id、lease token/fencing 与证据 path/hash 尝试 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED（必须先由 verdict.submit 持久化同 task 的 pass Verdict Ledger）；随后以同一 request_id 重试 reviewer_blocked 两次，均返回 Database is busy，未持久化 verdict、handoff 或 fix_defect。重读确认任务仍 review_pending。
+    8. 独立性核验通过：Reviewer identity 为 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy，与 Executor codex-executor-route-20260829 / codex-local-route-20260829 / executor session 不同。Reviewer lease 已释放，释放后 status= released；未执行 apply/close。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788055266079-7d76f734-block-r1
+  report_request_id: req-4456f3a32995
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\snapshot_identity_roundtrip_evidence.md
+  evidence_hash: sha256:519E6A957E59A2BB78E3A98286780F080BF92982556F5509BA0FFB64CF4FDCC3
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化。重读确认任务仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-d99cb50ceca5e5fb 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788063720353-e7768bb0 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788063720353-e7768bb0
+  step_id: S-1788063720355-e78cb070
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 修复或提供可验证的正式 verdict.submit/task.handoff daemon 写入 round-trip，补齐无重复写入证据并更正治理套件计数后重新派工复审
+  reason: |
+    1. 独立性与任务绑定核验通过：daemon 返回 READY/REVIEW、lifecycle_status=review、workflow_status=review_pending；inbound_handoff_event_id=he-f550a657b1558c9f1f8e8292，from_role=executor、target_role=reviewer、step_id=S-1788063720355-e78cb070、matches_current_routing=true；current reviewer assignment=A-c6abe98dbbf93442f8972830 为 queued。review_input_snapshot 已绑定 snapshot_id=ff45fbc2e1aa4724；任务合同 TC-T-1788063720353-e7768bb0 revision=1 hash=sha256:86ea91976b0c9a7e6ab17e1dc7c39ac3df431fdd2924b6645076b6ca564af844；Reviewer Role Contract rcl-T-1788063720353-e7768bb0-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。
+    2. 独立源码/diff 复核确认 commit 729a07bb0489b13e419b51a26d53d59a711b62b1：begin_immediate_with_retry 仅分类 SQLite DatabaseBusy/DatabaseLocked，在 TransactionBehavior::Immediate 成功前进行两次有界 backoff；verdict.submit 与 structured task.handoff 使用该 helper，handler 不在 BEGIN IMMEDIATE 成功前执行。scoped git diff --check 通过，代码 commit 为 runtime evidence commit 2a360dff3a7a7745c9a53bf6e91a3a4bd1b9774c 的祖先；未见历史 verdict/evidence、SQL fallback、apply/close 或不相关 transport 改动。
+    3. 独立 focused regression 通过：begin_immediate_ 为 2 passed、verdict submit 为 2 passed。治理模块独立运行实际为 20 tests、19 passed、1 failed；失败仍为 test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state 的 task_conflict stale-claim baseline，且本提交未修改该测试/恢复路径。但 evidence 声称 complete governance module 为 17 tests、16 passed、1 baseline failure，测试数量与当前可复现实测不一致。
+    4. 独立 runtime provenance 通过：daemon PID=3884，health 返回 worker_status=healthy、schema_version=60、git_commit=2a360dff3a7a7745c9a53bf6e91a3a4bd1b9774c，ping status=ok、transport=http；runtime binary SHA-256=071256aa494738aaf5724f832ca536bcf4281f96ddbb7305f71ca57a55718b81，与 evidence 一致。focused 测试证明 helper 行为，但 evidence 未提供 Contract acceptance 所要求的正式 daemon task.handoff/verdict.submit RPC round-trip 与无重复写入结果。
+    5. 正式交接尝试未闭环：持真实 Reviewer lease L-e69580ccc4372b21、完整 identity、精确 task_id/step_id、token/fencing 与 evidence path/hash 尝试 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED，要求先由 verdict.submit 持久化同 task 的 pass Verdict Ledger；CLI 无 verdict.submit 子命令，本窗口无可调用 MCP verdict.submit connector。随后正确提交 reviewer_blocked 两次，均返回 Database is busy，未持久化 verdict、handoff 或 fix_defect；重读确认 projection 仍 review_pending、review.state=pending、verdicts=[]。这也使本次刷新 runtime 后的正式 daemon 写入路径无法独立证明已修复。
+    6. Reviewer lease 已释放并复核为 released；Executor 的 assignment-status 记录使用 agent_id=S-1-5-21-1583625257-826939952-3615027596-1001、session_id=sess-codex-executor-snapshot-20260830、model_id=gpt-5.6-sol，和本 Reviewer 的 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop / workbuddy 不同。未执行 apply/close，未修改代码、历史证据、任务状态或 assignment。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788063720353-e7768bb0-block-r1
+  report_request_id: req-834eda5bd5e0
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-write-busy-remediation-evidence.md
+  evidence_hash: sha256:A37255F3CA9A25C254A694857F9C9B093B99C153F026E739A729B56567597F7C
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化。任务仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-e69580ccc4372b21 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788065933399-2b3cead8 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788065933399-2b3cead8
+  step_id: S-1788065933403-2b7feeb4
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 提供可验证的正式 verdict.submit/task.handoff Verdict Ledger round-trip，使用干净隔离基线重跑治理测试，并补齐当前 runtime PID/hash 对应证据后重新派工复审
+  reason: |
+    1. 任务绑定与独立性核验通过：daemon 返回 READY/REVIEW、lifecycle_status=review、workflow_status=review_pending；inbound_handoff_event_id=he-dece7435c5c84e8e51870232，from_role=executor、target_role=reviewer、step_id=S-1788065933403-2b7feeb4、matches_current_routing=true；current reviewer assignment=A-a5bd31059a5851230a633ea9 为 queued。review_input_snapshot 已绑定 snapshot_id=ff45fbc2e1aa4724；Task Contract TC-T-1788065933399-2b3cead8 revision=1 hash=sha256:40cca294d83cbd0cd806efa4c4c4e08d06dcb4c1c8fc2336839c04983d0bd3c1；Reviewer Role Contract rcl-T-1788065933399-2b3cead8-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。
+    2. 独立静态复核确认目标 code commit 2a6906d4883dbc102955179479a1bd7fdb92cff9：task.handoff 从 unchecked_transaction 切换到 begin_immediate_with_retry；helper 仅对 DatabaseBusy/DatabaseLocked 在 TransactionBehavior::Immediate 成功前做有界 retry，verdict.submit 复用同一 helper；scoped diff --check 通过，代码 commit 为 runtime source commit 9b895162d77c4d2af8e799cb6ecaee7af3aed812 的祖先。未见目标 commit 修改历史 verdict/evidence、SQL fallback、apply/close 或不相关 transport。
+    3. 独立测试在共享工作树中 focused 2/2 通过；治理过滤实际为 18 tests、17 passed、1 failed，失败为 test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state 的 task_conflict。该结果不能归属于目标 commit：git status 显示并行未提交修改覆盖 task_collab.rs、task_collab_tests_governance.rs、task_collab_verdict.rs 等相关文件；evidence 声称 20 tests、19 passed、1 failure，当前共享树实测数量不一致。未使用 dirty-tree 结果宣称目标 commit 全量通过。
+    4. evidence 文件实际 SHA-256=764283989B7770F0278EF4CC9A93672BB9B6C6C4E34EDF3543AE188B432267B0，记录 runtime PID=9060、binary SHA-256=946e8576db498de86496d82f27fd36534bff2e304e3729e027694c9ae2f6074b、source HEAD=9b895162d77c4d2af8e799cb6ecaee7af3aed812。独立复核时 live daemon 为 PID=19212、health git_commit 同为 9b895162d77c4d2af8e799cb6ecaee7af3aed812，但当前 binary SHA-256=D186B701E4C68BDCACCDE6EE878E42DC5D81255CDDCA46BDF93D0DCC3C79630F；PID/hash 与 immutable evidence 不一致，无法确认现运行 binary 就是 evidence 所证明的实例。
+    5. evidence 的正式 handoff replay 记录写为首次与同 request replay 均 event_id=6223、但 replayed=false；目标源码在同 request、同 envelope 时明确返回 replayed=true。projection 当前仅保留两个不同整改轮次的 prior_handoff，未提供足以独立解释该字段矛盾的原始 RPC 响应，因此无重复事件结论尚不能按 evidence 原样确认。
+    6. 正式 Reviewer 交接未能完成：持真实 Reviewer lease L-5c5e63e3a43fb47e、完整 identity、精确 task_id/step_id、token/fencing 与 evidence path/hash 尝试 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED，要求先由 verdict.submit 持久化同 task 的 pass Verdict Ledger；当前 CLI 无 verdict.submit 子命令，本窗口无可调用 MCP connector。随后正确提交 reviewer_blocked 两次，均返回 Database is busy，未持久化 verdict、handoff 或 fix_defect；重读确认 task 仍 review_pending、review.state=pending、verdicts=[]。`completion-review` 的文本 pass 不是正式 Verdict Ledger，不能替代持久化 verdict。
+    7. Reviewer lease 已释放并复核为 released。Executor 历史 assignment 使用不同的 system agent/session/model；未执行 apply/close，未修改代码、历史证据、任务状态或 assignment。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788065933399-2b3cead8-block-r1
+  report_request_id: req-e120cc7e66ef
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-write-roundtrip-remediation-evidence.md
+  evidence_hash: sha256:764283989B7770F0278EF4CC9A93672BB9B6C6C4E34EDF3543AE188B432267B0
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化。任务仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-5c5e63e3a43fb47e 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788067569565-1e5b45ac (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788067569565-1e5b45ac
+  step_id: S-1788067569566-1e6943b4
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 提供可调用的 verdict.submit 路径，并补充与当前运行实例一致的 runtime provenance 后重新复审
+  reason: |
+    1. 精确任务绑定与独立性核验通过：daemon 返回 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW；inbound handoff_event_id=he-f04a694b7a9277b424fa00d9，from_role=executor、target_role=reviewer、step_id=S-1788067569566-1e6943b4、matches_current_routing=true；Reviewer assignment=A-b95e4a5900ad344598da2881，初始为 queued。Task Contract TC-T-1788067569565-1e5b45ac revision=1 hash=sha256:7456df28add6b72b257021b014714cd97e7182a21f8ffec0fa21b23ae5d85e79；Reviewer Role Contract rcl-T-1788067569565-1e5b45ac-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b；identity policy=legacy_identity_v1 declared。
+    2. 独立 worktree C:\git_work\callwarden_clean_baseline_20260830 的 HEAD 精确为目标 commit 2a6906d4883dbc102955179479a1bd7fdb92cff9。测试后 worktree 仅有 task_collab_tests_governance.rs 的 58 行临时 harness 追加和 target-isolated/、target-runtime/ 构建产物；diff 内容正是两个标记为 ephemeral、未纳入生产提交的锁竞争测试，未见生产代码或历史证据改动。
+    3. 在该固定基线独立重跑治理套件，实际为 17 tests、16 passed、1 failed；唯一失败仍为 test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state，task_conflict（同一既有 stale-claim baseline failure）。独立过滤重跑两个临时锁竞争测试为 2 passed、0 failed。该结果支持交付报告的测试计数与归属，但不应将 baseline failure 伪称为全量通过。
+    4. 证据文件实际 SHA-256=840A7ECDF163225B79D2BAFFB290CCD2F7AB23BB0EF7DC1B57A71ECD2A7AAEB6，与交接声明一致；历史 runtime evidence C:\Users\wanpi\.callwarden\runtime\evidence\20260830-134337-2a6906d4883d-94fcc2a1.json 状态 passed，source HEAD=2a6906d4883dbc102955179479a1bd7fdb92cff9，PID=15460，daemon/expected SHA-256=324c8af97a23051f64ba2e2fbf25ebc46807e53da920113188501da4d7ef76c2，health/ping 通过。
+    5. 但当前 live daemon 已是后续实例：PID=11688，health git_commit=f63a7f7e545ebde9d4d2165e094eff8b6ec0f75e，当前 binary SHA-256=605583AE2BCB9CEA8766F373C385919F7CBD93F159617A9D4FCEBBA1EE97795A。目标 commit 是该 source HEAD 的祖先，但当前活动实例并非 evidence 所证明的 PID/hash，不能把历史 runtime evidence 等同于当前 live provenance；需补充同一运行实例的 fresh evidence，或提供权威等价性证明。
+    6. 持真实 Reviewer lease L-9b1b4b0f62b6cb94、fencing_counter=1、完整独立 identity 尝试正式 reviewer_pass，daemon 返回 E_HANDOFF_VERDICT_REQUIRED，要求先由 verdict.submit 持久化同 task 的 pass Verdict Ledger；当前 CLI 无可用 verdict.submit 子命令。本着 fail-closed，未伪造 verdict、snapshot、request_id 或 handoff。随后以相同精确 task/step、evidence path/hash、identity、lease/fencing 提交 reviewer_blocked 两次，均返回 Database is busy，未持久化 verdict、handoff 或 fix_defect。
+    7. 最终重读 authority projection：task 仍 review_pending、review.state=pending、verdicts=[]、current_role=reviewer、next_action=review_current_step；lease 已释放并复核为 released。未修改代码、任务状态、历史 evidence/verdict、assignment、runtime，未执行 apply/close。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788067569565-1e5b45ac-block-r1
+  report_request_id: req-df64bb3bff06
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\clean-baseline-provenance-evidence.md
+  evidence_hash: sha256:840A7ECDF163225B79D2BAFFB290CCD2F7AB23BB0EF7DC1B57A71ECD2A7AAEB6
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass 被 E_HANDOFF_VERDICT_REQUIRED 拒绝；reviewer_blocked 两次因 Database is busy 未持久化。任务仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-9b1b4b0f62b6cb94 已释放并复核为 released。未修改代码、历史 verdict/evidence、任务状态、assignment、runtime 或 apply/close。
+```
+
+## T-1788077285594-4eceeaac (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788077285594-4eceeaac
+  step_id: S-1788077285599-4f1e48e4
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 修复 task/assignment step binding，提供可用的 verdict.submit 路径并重新提交当前 task 的正式 Reviewer verdict
+  reason: |
+    1. 精确任务 next-action 返回 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW、next_action=review_current_step；Task Contract TC-T-1788077285594-4eceeaac revision=1 hash=sha256:4ee0c45664bddb3e575e69670ce1399626bd18ec87e06ba53723bdc5eece6490；Reviewer Role Contract rcl-T-1788077285594-4eceeaac-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b；assignment=A-7213cbb450bd7e6404a13513，step_id=S-1788077285599-4f1e48e4，初始为 queued。
+    2. 独立 Reviewer lease L-ca381a0993d9e60e、fencing_counter=1 已取得；Executor identity 为 codex-executor-snapshot-20260830 / inst-codex-executor-snapshot-20260830 / sess-reviewer-wb-186loop 不同于本 Reviewer 的 reviewer-wb-186loop / inst-reviewer-wb-186loop / sess-reviewer-wb-186loop，角色隔离满足。任务 Contract 限定 allowed_paths 为 cli/main.py、focused CLI test files、snapshot-publish-binding-evidence.md；forbidden 包含 direct SQLite、generic RPC bypass、verdict submission、历史 evidence、apply/close。
+    3. 独立源码复核确认 commit 9b5b6a70f4e1075dd98fce2d6902018b996188a8：collab publish 先调用 daemon workspace.register，透传 authority db_path、Git metadata，并仅接受 daemon 返回的 workspace_instance_id/snapshot_id；缺少权威 workspace_instance_id 时 fail-closed，不调用 snapshot.publish。限定回归测试独立运行 7 passed；正向/负向测试均通过。
+    4. 通过 CLI 对当前 live daemon 独立执行真实 snapshot.publish round-trip，返回 ok=true、workspace_instance_id=30a0b4d2dc64a9c2、snapshot_id=4c2617fd2bc8dc63、generation=1；daemon ping status=ok，health PID=4240、git_commit=aea155212d2107d90142e1ef7d4bfeaf558f0fc4、schema=60、worker_status=healthy。task projection 绑定的 review_input_snapshot 为 aebf898bc6614594，不能将临时 round-trip snapshot 代替 task-bound snapshot。
+    5. evidence 文件实际 SHA-256=66A5D17AC0541EC32CAC5706E65D9D0E5A063055F1B8D1412534CF52D5161ACB，与交接声明一致；但交付台账 commit aea1552 修改根目录 cw_task_commit_ledger.json，超出当前 Task Contract allowed_paths，构成 scope finding。证据记录的 runtime 为历史 PID=11688/binary SHA-256=605583ae2bcb9cea8766f373c385919f7cbd93f159617a9d4fcebba1ee97795a，当前 live 已为 PID=4240/commit aea1552，fresh round-trip 尚未写入该 immutable evidence。
+    6. 使用 task projection 的 task-bound snapshot_id=aebf898bc6614594、精确 task/step、完整 Reviewer identity、lease token/fencing 提交正式 verdict.submit（overall=block），daemon 返回 E_VERDICT_STEP_MISMATCH: step_id 不属于目标 task。随后以同一精确 step 提交 reviewer_blocked，daemon 返回 E_REMEDIATION_SOURCE_STEP_INVALID: handoff step_id 不属于目标主任务。未猜测、替换或伪造 step_id，也未伪造 verdict、handoff 或 snapshot。
+    7. 释放并复核 Reviewer lease L-ca381a0993d9e60e 为 released；authority projection 仍为 review_pending、review.state=pending、verdicts=[]、next_action=review_current_step。未修改代码、历史 evidence/verdict、任务状态、assignment，未执行 apply/close。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788077285594-4eceeaac-block-r1
+  report_request_id: req-7289af8e4e9c
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\snapshot-publish-binding-evidence.md
+  evidence_hash: sha256:66A5D17AC0541EC32CAC5706E65D9D0E5A063055F1B8D1412534CF52D5161ACB
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: verdict.submit 被 E_VERDICT_STEP_MISMATCH 拒绝；reviewer_blocked 被 E_REMEDIATION_SOURCE_STEP_INVALID 拒绝，未持久化 verdict/handoff/fix_defect。任务仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-ca381a0993d9e60e 已释放并复核为 released。未执行 apply/close。
+```
+
+Addendum 2026-08-30: 上游提供的 Executor identity 中 session_id=`sess-reviewer-wb-186loop` 与本 Reviewer session_id 相同；agent_id 与 agent_instance_id 虽不同，但独立 session 隔离未获 daemon 权威证明，因此该项也保持 fail-closed，未宣称 independence verified。
+
+## T-1788078550140-bb9d6d44 (reviewer pass, handoff blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788078550140-bb9d6d44
+  step_id: S-1788078550142-bbb5f170
+  from_role: reviewer
+  outcome: reviewer_pass
+  next_role: adjudicator
+  next_action: independent adjudication of assignment task/step binding remediation
+  reason: |
+    独立复核确认 assignment projection 的 immutable payload task_id 与请求 task 绑定、foreign/stale step 被排除；focused assignment_queue 测试 8/8 通过；live assignment-status 显示当前 Reviewer assignment A-e0907cd30b6bd277794e5004 的 task_id=T-1788078550140-bb9d6d44、step_id=S-1788078550142-bbb5f170，daemon ping PID=13488 且 binary hash=90D657CC4198DCF3B76895E17408410916A1EC5695842BAA61380334BD4503C4 与证据一致。Contract allowed_paths 未发现实现越界，未执行 apply/close。
+  independence_requirement: required
+  request_id: reviewer-T-1788078550140-bb9d6d44-handoff-adjudicator-r1
+  report_request_id: req-737f31d34b73
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\assignment-step-binding-evidence.md
+  evidence_hash: sha256:C61FD21FD2918FBFF57E25BF37A39F5AB079F0FB306F3E6DFB56CE70DA0A4DA7
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer_pass Verdict Ledger 已持久化，verdict_id=V-ce9b6fb191d9fc00baa9cf8a；但 task.handoff 被 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH 拒绝，因 verdict 缺少非空 view_manifest_hash。authority projection 为 governance_blocked、review.state=unverified、verdicts=[V-ce9b6fb191d9fc00baa9cf8a]、next_role=null、next_action=none；Reviewer lease L-b66ba6dc5468a04e 已释放并确认 released。未伪造 view_manifest_hash，未执行 apply/close。
+```
+
+## T-1788079398046-26c63824 (reviewer blocked, 2026-08-30)
+
+```text
+Handoff:
+  task_id: T-1788079398046-26c63824
+  step_id: S-1788079398047-26cfce70
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 部署包含 62d7f43/b521a7a 的 patched daemon，补齐真实 view_manifest_hash 与当前 runtime provenance，并更正 focused test 计数后重新复审
+  reason: |
+    1. 精确 task next-action 返回 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW、next_action=review_current_step；Task Contract TC-T-1788079398046-26c63824 revision=1 hash=sha256:9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df；Reviewer Role Contract rcl-T-1788079398046-26c63824-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b；assignment=A-1ae8f007a2d815099366d91f，step_id=S-1788079398047-26cfce70，初始为 queued。
+    2. 独立 worktree C:\git_work\review_verdict_manifest_20260830 固定在 b521a7a8a3ea129337016141dca864a0b2ebb161，worktree clean；目标提交仅修改 Contract 白名单内的 verdict handler、governance regression tests 与 evidence。源码检查确认 required("view_manifest_hash") 在 lease/transaction/写入前执行，空值和空白值 fail-closed。
+    3. 该固定基线独立运行 `tokenslim run cargo test --manifest-path rust_ext/Cargo.toml verdict_submit --lib` 实际为 2 tests、2 passed、0 failed：dispatch route 与既有 verdict governance test。交付 evidence 声称 3 passed，与可复现实测计数不一致；新增缺失/空白 manifest 断言嵌入既有 governance test，并未形成第三个匹配 `verdict_submit` 的测试。
+    4. 当前 live daemon health 为 PID=13488、git_commit=8bb912e1b08040d3faf2a57bf9ec9f82f4115313、schema=60、healthy；该 runtime source commit 不是 b521a7a 的后代，且本轮 executor 明确未刷新 patched daemon。故无法用当前 live daemon 证明 62d7f43/b521a7a 的实际部署与 RPC 行为。
+    5. 任务要求 Reviewer 使用真实非空 view_manifest_hash 提交新的 task-bound Verdict。当前 authority projection 的 review_input_snapshot 未提供 view_manifest_hash，evidence 文件也未提供真实 manifest；Reviewer 无受支持的 role_view.get CLI/MCP 路径可取得该值，不能用 task/evidence hash 替代。未伪造 verdict、manifest、runtime evidence 或直接写 SQLite。
+    6. Reviewer lease L-d3deb6bc814dcc97、fencing_counter=1 已取得；Executor identity 与本 Reviewer agent/instance/session/model 不同的权威证明未随本任务 handoff 提供，但本次阻断已由测试计数、部署缺失和 manifest 缺失独立构成。未提交伪造 reviewer verdict 或 handoff。
+    7. 释放并复核 Reviewer lease L-d3deb6bc814dcc97 为 released；authority projection 仍 review_pending、review.state=pending、verdicts=[]、next_role=reviewer、next_action=review_current_step。未修改代码、历史 Verdict、任务状态或 runtime，未执行 apply/close。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788079398046-26c63824-block-r1
+  report_request_id: req-994545312501
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-view-manifest-evidence.md
+  evidence_hash: sha256:46EEBFB9BE8C91B4DCF4C69770F0789D04D37E132B7A062A900CC51DA947644C
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: 未提交 reviewer verdict/handoff（缺少真实 view_manifest_hash，且 patched daemon 未部署）；任务仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-d3deb6bc814dcc97 已释放并复核为 released。未执行 apply/close。
+```
+
+## T-1788079398046-26c63824 (reviewer blocked, 2026-08-30, r2)
+
+```text
+Handoff:
+  task_id: T-1788079398046-26c63824
+  step_id: S-1788079398047-26cfce70
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 重新部署并保持当前 live daemon 与 b521a7a8a3ea129337016141dca864a0b2ebb161 目标基线一致，提供真实 view_manifest_hash 与 fresh runtime provenance 后重新派工复审
+  reason: |
+    1. 精确 task next-action 返回 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW、next_action=review_current_step；Task Contract TC-T-1788079398046-26c63824 revision=1 hash=sha256:9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df；Reviewer Role Contract rcl-T-1788079398046-26c63824-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b；assignment=A-1ae8f007a2d815099366d91f，assignment step_id=S-1788079398047-26cfce70。
+    2. 独立 clean worktree C:\git_work\review_verdict_manifest_20260830 固定在 b521a7a8a3ea129337016141dca864a0b2ebb161；目标源码检查确认 view_manifest_hash 在 lease/transaction/写入前做非空与非空白校验。独立运行 `tokenslim run cargo test --manifest-path rust_ext/Cargo.toml verdict_submit --lib`，实际结果为 2 passed / 0 failed，与当前 evidence hash 对应的修订计数一致。
+    3. 当前证据文件 C:\git_work\callwarden\deliverables\software-company\verdict-view-manifest-evidence.md 的独立 SHA-256 为 sha256:276EB363DC8B026B4B2F0570F5F5BC9DA21E324C3B8D10E813C020D3A67C9183，与本轮提交的 evidence hash 一致；其中记录的历史 runtime receipt 为 PID=16744、binary SHA-256=aa1e479ec002023174fc2ad2e9494176d66d9db503a9902e09b242f6baf228de。
+    4. 复核时的 current live daemon 不是该 receipt：`daemon health` 返回 PID=13032、git_commit=369f84ad3828690d3e44e761f3b80d9f189f8e8e、schema=60、healthy；current runtime/cw-daemon.exe 独立 SHA-256=1980B319760260F8782461C0EBE1A9D82209EA4136064E4DB8FF1215FA726618。daemon ping 为 status=ok，但健康不等于目标补丁已部署；因此不能把历史 PID/hash 作为当前 patched runtime 证明。
+    5. authority governance projection 的 review_input_snapshot 为 no_snapshot，verdicts=[]，未提供真实 view_manifest_hash；证据文件也未给出可用于本次 task-bound Verdict Ledger 的真实 manifest。不能用 task、evidence 或 runtime hash 替代 view_manifest_hash，故未提交伪造 reviewer verdict/handoff mutation。
+    6. Executor identity（agent_id=codex-executor-assignment-20260830、agent_instance_id=inst-codex-executor-assignment-20260830、session_id=sess-executor-assignment-20260830-audit、model_id=workbuddy、role=executor）与本 Reviewer identity 不同，独立性满足。Reviewer lease L-a449fb00d3d39278、fencing_counter=2 已释放并由 authority status 复核为 released。
+    7. 未修改生产代码、历史 evidence/verdict、任务状态或 SQLite，未执行 apply/close/supersede。由于缺少真实 manifest 且 current runtime provenance 漂移，本轮不能合法提交 Verdict Ledger；任务仍为 review_pending，review.state=pending，verdicts=[]。
+  independence_requirement: not_required
+  request_id: 未生成（缺少真实 view_manifest_hash 与 current patched runtime，未提交伪造 mutation）
+  report_request_id: req-f5c802d194ff
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-view-manifest-evidence.md
+  evidence_hash: sha256:276EB363DC8B026B4B2F0570F5F5BC9DA21E324C3B8D10E813C020D3A67C9183
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer verdict/handoff 未持久化；authority projection 复核为 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-a449fb00d3d39278 已 released。未执行 apply/close。
+```
+
+## T-1788079398046-26c63824 (reviewer blocked, 2026-08-30, r3)
+
+```text
+Handoff:
+  task_id: T-1788079398046-26c63824
+  step_id: S-1788079398047-26cfce70
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 为本 task 绑定并发布合法 task-bound snapshot_id，保持 snapshot/authority 与当前 reviewer view manifest 一致后重新派工复审
+  reason: |
+    1. Epic 子树逐任务扫描共 210 个后代，reviewer_candidates=[]，next_action_errors=0；精确 task next-action 返回 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW、required_role=reviewer、next_action=review_current_step。assignment=A-1ae8f007a2d815099366d91f，精确 assignment step_id=S-1788079398047-26cfce70；Task Contract TC-T-1788079398046-26c63824 revision=1 hash=sha256:9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df；Reviewer Role Contract rcl-T-1788079398046-26c63824-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。
+    2. 独立 clean worktree C:\git_work\review_verdict_manifest_20260830 固定在 b521a7a8a3ea129337016141dca864a0b2ebb161；提交包含目标 core fix 62d7f43 与 regression b521a7a。源码确认 view_manifest_hash 在 lease/transaction/写入前做非空、非空白校验；独立 `tokenslim run cargo test --manifest-path C:\git_work\review_verdict_manifest_20260830\rust_ext\Cargo.toml verdict_submit --lib` 实测 2 passed / 0 failed。
+    3. 当前 evidence 文件独立 SHA-256 为 sha256:78B641273D154845337F6FC1F25710D733BC200382491A1E604D5E5CC2D85C13，与 executor handoff 一致。当前 live daemon health 为 PID=7880、git_commit=b521a7a8a3ea129337016141dca864a0b2ebb161、schema=60、healthy；binary SHA-256=aa1e479ec002023174fc2ad2e9494176d66d9db503a9902e09b242f6baf228de，独立 hash 与证据一致；ping status=ok。
+    4. 真实 Reviewer view_manifest_hash=5da4de902f28c01c2f9e3016a1ca29acca4904598c169b3be4c76fd057b2f5d9，长度与格式合法，且证据标记 degraded=false。Executor identity（codex-executor-assignment-20260830 / inst-codex-executor-assignment-20260830 / sess-executor-assignment-20260830-audit / gpt-5.6-sol / executor）与本 Reviewer identity 不同，独立性满足。
+    5. 但 authority governance projection 的 review_input_snapshot 明确为 no_snapshot，verdicts=[]；独立 `cw daemon snapshot-list` 返回空列表。目标 patched handler 明确 required("snapshot_id")，在任何 lease/transaction/写入前拒绝缺失值；当前没有可验证的 task-bound snapshot_id，不能用 view_manifest_hash、evidence hash、daemon fingerprint 或字符串 no_snapshot 冒充 snapshot_id。因此无法合法调用 verdict.submit，也不提交伪造 Verdict Ledger 或 handoff。
+    6. Reviewer lease L-910c2d26f5ee33d2、fencing_counter=3 已释放，并由 authority status 复核为 released。释放后精确 task projection 仍为 review_pending、review.state=pending、verdicts=[]、next_role=reviewer、next_action=review_current_step。
+    7. 未修改生产代码、历史 evidence/verdict、任务状态或 SQLite，未执行 apply/close/supersede；PASS 不成立，任务不能交 Adjudicator。
+  independence_requirement: not_required
+  request_id: 未生成（无合法 task-bound snapshot_id，未提交伪造 mutation）
+  report_request_id: req-79a4ac8880ae
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-view-manifest-evidence.md
+  evidence_hash: sha256:78B641273D154845337F6FC1F25710D733BC200382491A1E604D5E5CC2D85C13
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer verdict/handoff 未持久化；authority projection 仍 review_pending、review.state=pending、verdicts=[]；Reviewer lease L-910c2d26f5ee33d2 已 released。未执行 apply/close。
+```
+
+## T-1788079398046-26c63824 (reviewer blocked, 2026-08-30, r4)
+
+```text
+Handoff:
+  task_id: T-1788079398046-26c63824
+  step_id: S-1788079398047-26cfce70
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 修复并部署 verdict.submit 使用的 Role Contract binding，使其与 task.next-action 返回的权威 Role Contract 标识/哈希一致后重新派工复审
+  reason: |
+    1. Epic 子树逐任务扫描共 210 个后代，reviewer_candidates=[]，next_action_errors=0；精确 task next-action 返回 review_pending/READY/REVIEW/review_current_step，assignment=A-1ae8f007a2d815099366d91f、step_id=S-1788079398047-26cfce70。Task Contract TC-T-1788079398046-26c63824 revision=1 hash=sha256:9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df；projection Role Contract 为 rcl-T-1788079398046-26c63824-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。
+    2. 独立 clean worktree C:\git_work\review_verdict_manifest_20260830 固定在 b521a7a8a3ea129337016141dca864a0b2ebb161；目标 view_manifest_hash gate 源码复核通过。focused Rust test 独立实测 2 passed / 0 failed。当前 evidence SHA-256 为 sha256:F0CEC46A71C63A2A06169DDEBB9150C11FC73F281970076B70F5BAD628D247FC。
+    3. patched live daemon 独立复核通过：PID=7880、git_commit=b521a7a8a3ea129337016141dca864a0b2ebb161、schema=60、healthy；binary SHA-256=aa1e479ec002023174fc2ad2e9494176d66d9db503a9902e09b242f6baf228de；ping status=ok。task-bound snapshot_id=fe1ee71cb71a548c、workspace_instance_id=d547c02fa195fb22 已出现在 governance projection/snapshot-list；真实 Reviewer view_manifest_hash=5da4de902f28c01c2f9e3016a1ca29acca4904598c169b3be4c76fd057b2f5d9，degraded=false。
+    4. 使用上述全部真实 task/snapshot/manifest/identity/lease 字段提交 verdict.submit 时，daemon 第一次以 projection 的 role_contract_id=rcl-T-1788079398046-26c63824-reviewer 拒绝：E_ROLE_CONTRACT_BINDING_INVALID。第二次使用 governance projection 的 reviewer_role_contract.contract_id=RC-T-1788079398046-26c63824-reviewer-1、同一权威 canonical hash 提交，拒绝：E_ROLE_CONTRACT_HASH_MISMATCH。两次均在 Verdict Ledger 写入前失败；没有 verdict_id、没有 Ledger row、没有持久化 reviewer handoff。
+    5. 该结果证明当前 `task.next-action` 的 Role Contract 投影（rcl-/canonical hash）与 `verdict.submit` 查询的 role_contracts binding（RC- 标识/实际 canonical payload）不一致。不能继续猜测第三个 ID 或 hash，也不能用 prompt_hash、Task Contract hash、evidence hash 替代 Role Contract canonical hash；因此本轮不能合法产生 reviewer_pass 或交给 Adjudicator。
+    6. Executor identity（agent_id=codex-executor-assignment-20260830、agent_instance_id=inst-codex-executor-assignment-20260830、session_id=sess-executor-assignment-20260830-audit、model_id=gpt-5.6-sol、role=executor）与本 Reviewer identity 不同，独立性满足。Reviewer lease L-76b59b8a1b1defd2、fencing_counter=4 已释放并由 authority status 复核为 released。
+    7. 未修改生产代码、历史 evidence/verdict、任务状态或 SQLite，未执行 apply/close/supersede；释放后 projection 仍 review_pending、review.state=pending、verdicts=[]、next_role=reviewer、next_action=review_current_step。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788079398046-26c63824-pass-r2（daemon 在写入前拒绝）
+  report_request_id: req-7ce4983851ca
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-view-manifest-evidence.md
+  evidence_hash: sha256:F0CEC46A71C63A2A06169DDEBB9150C11FC73F281970076B70F5BAD628D247FC
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: 两次 verdict.submit 均被 daemon pre-write 校验拒绝；reviewer verdict/handoff 未持久化，verdicts=[]；Reviewer lease L-76b59b8a1b1defd2 已 released。未执行 apply/close。
+```
+
+## T-1788079398046-26c63824 (reviewer blocked, 2026-08-30, r5)
+
+```text
+Handoff:
+  task_id: T-1788079398046-26c63824
+  step_id: S-1788079398047-26cfce70
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 修复并部署 Verdict Ledger 的持久化 provenance/projection，使正式 reviewer_pass handoff 能验证同一 source step、normalization、snapshot、view_manifest 与 workspace binding 后重新派工复审
+  reason: |
+    1. 精确 task next-action 在复核前返回 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW、required_role=reviewer、next_action=review_current_step；assignment=A-1ae8f007a2d815099366d91f、step_id=S-1788079398047-26cfce70。Task Contract TC-T-1788079398046-26c63824 revision=1 hash=sha256:9578790eb26f9f269aa7bac205c6c53c0dfaa925213837eb0c3aad631bd6a8df；Reviewer Role Contract lineage=rcl-T-1788079398046-26c63824-reviewer revision=1 hash=sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b。Executor identity 与本 Reviewer 的 agent/session/instance/model 均不同，独立性满足。
+    2. 独立 clean worktree C:\git_work\callwarden-verdict-binding-clean 固定在 b012e198b4476bf32540d2ae594786b56b9a23b0，工作树干净；独立 `cargo test --manifest-path C:\git_work\callwarden-verdict-binding-clean\rust_ext\Cargo.toml verdict_submit --lib` 实测 3 passed / 0 failed，覆盖 native dispatch、幂等/冲突与 Role Contract lineage/revision/legacy alias 解析。
+    3. 最新 evidence 文件 SHA-256=sha256:EEE33C784937ADF5ED89CE9E2C6DF013D57ACBE4FF5F63720CEF27CC15C01C4B，与本轮 Executor handoff 一致；其 task-bound snapshot_id=fe1ee71cb71a548c、真实 Reviewer view_manifest_hash=5da4de902f28c01c2f9e3016a1ca29acca4904598c169b3be4c76fd057b2f5d9、degraded=false 与 runtime provenance 均已独立核验。live daemon health/ping 通过，PID=37032，git_commit=b012e198b4476bf32540d2ae594786b56b9a23b0，binary SHA-256=b2ca2716077f02a4b6d273dc4a70d022b771210c7a99bd627fc966ce8bcf43d5，schema=60。
+    4. 使用当前 Reviewer identity（agent_id=reviewer-wb-186loop、agent_instance_id=inst-reviewer-wb-186loop、session_id=sess-reviewer-wb-186loop、model_id=workbuddy、role=reviewer）及真实 lease L-ec823e913a4853ad/fencing_counter=5，按上述 task/step/contract/role-contract/snapshot/manifest 提交 verdict.submit 成功：verdict_id=V-0004c3ce380e569a766ce445、event_id=555、request_id=reviewer-T-1788079398046-26c63824-pass-r3、replayed=false。
+    5. 随后正式 Reviewer→Adjudicator task.handoff 使用同一精确 task/step、evidence 和完整 Reviewer identity，但 daemon 在写入前拒绝：E_HANDOFF_VERDICT_PROVENANCE_MISMATCH（reviewer_pass 的 verdict 必须绑定同 source step、非空 snapshot_id 和 view_manifest_hash）。复查 governance-projection 后，authority 明确为 workflow_status=governance_blocked、review.state=unverified、decision=BLOCKED、next_role=null、next_action=none，blocking_reasons=verdict 无法按持久化 normalization 规则验证（UNVERIFIED），保持 fail-closed；verdicts[]虽含 V-0004c3ce380e569a766ce445，但该 pass 不能成为有效治理输入。该 projection/hand-off 不可伪造或绕过。
+    6. 发现的可复现治理缺陷是：正式 verdict.submit 响应为成功且写入 Verdict Ledger，但读投影将该 verdict 判为 UNVERIFIED，导致后续 reviewer_pass handoff 无法合法持久化；当前实现路径还需由 Executor 修复/部署后重新复审，Reviewer 不修改代码、历史 verdict/evidence、SQLite 或任务状态，不创建 remediation step，不执行 apply/close/supersede。
+    7. Reviewer lease L-ec823e913a4853ad 已立即释放，fencing_counter=5；authority lease status 已复核为 released。正式 handoff request_id=reviewer-T-1788079398046-26c63824-handoff-adjudicator-r1 未持久化（daemon 拒绝）；Reviewer Verdict Ledger V-0004c3ce380e569a766ce445 已持久化，但其 projection 为 UNVERIFIED。未执行 apply/close。
+  independence_requirement: not_required
+  request_id: reviewer-T-1788079398046-26c63824-handoff-adjudicator-r1（daemon E_HANDOFF_VERDICT_PROVENANCE_MISMATCH，未持久化）
+  report_request_id: req-7435c4f4fa01
+  evidence_path: C:\git_work\callwarden\deliverables\software-company\verdict-view-manifest-evidence.md
+  evidence_hash: sha256:EEE33C784937ADF5ED89CE9E2C6DF013D57ACBE4FF5F63720CEF27CC15C01C4B
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer Verdict Ledger V-0004c3ce380e569a766ce445/event_id=555 已持久化；Reviewer→Adjudicator handoff 未持久化；释放后的 Reviewer lease L-ec823e913a4853ad 状态为 released；authority projection=governance_blocked/unverified；未执行 apply/close/supersede。
+```
