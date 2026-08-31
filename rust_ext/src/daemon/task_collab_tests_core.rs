@@ -83,7 +83,13 @@ use super::support::*;
             .handle_task_events(peer.clone(), &events_params)
             .unwrap();
         let events = events_res["events"].as_array().unwrap();
-        assert_eq!(events.len(), 3); // created, claimed, reported
+        // assignment_queue 派工子系统随 create/claim/report 写入 assignment_*
+        // 幂等事件；task 生命周期事件只有 created/claimed/reported 三类，其余
+        // 为 assignment 派工投影，过滤后断言任务侧事件数不变。
+        let lifecycle_events = events
+            .iter()
+            .filter(|ev| !ev["reason_code"].as_str().unwrap_or("").starts_with("assignment_"));
+        assert_eq!(lifecycle_events.count(), 3); // created, claimed, reported
     }
 
     #[test]
@@ -1566,7 +1572,14 @@ use super::support::*;
         assert_eq!(create_res["status"], "open");
         let events_params = serde_json::json!({ "task_id": "T-V46-001" });
         let events_res = store.handle_task_events(peer, &events_params).unwrap();
-        assert_eq!(events_res["events"].as_array().unwrap().len(), 1);
+        // 版本迁移后任务可用；assignment_queue 额外写入 assignment_queued 事件，
+        // 过滤后仍是 create 产生的唯一 task 生命周期事件。
+        let lifecycle_events = events_res["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|ev| !ev["reason_code"].as_str().unwrap_or("").starts_with("assignment_"));
+        assert_eq!(lifecycle_events.count(), 1);
     }
 
     #[test]

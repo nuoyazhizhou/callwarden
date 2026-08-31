@@ -857,6 +857,24 @@ impl TaskCollabStore {
         let event_id = tx.last_insert_rowid();
         record_action_identity(&tx, task_id, &identity, "task.claim.recover", seq, now)?;
 
+        // 释放旧 claim owner 的派工 assignment。task claim 释放后 assignment_queue
+        // 记录仍由 old holder 占据，若不在此清除，后续 new Executor 的 task.claim 会
+        // 触发 assignment 强校验 task_conflict（assignment 已属同角色其他 session 持有），
+        // 违背 recover 返回的 next_action="new Executor must call task.claim" 契约。
+        assignment_queue::complete_assignments(
+            &tx,
+            &task_id,
+            None,
+            None,
+            owner_key.as_str(),
+            identity.session_id.as_str(),
+            self.next_seq(),
+            now,
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("释放 recovery 后 assignment 失败: {}", e))
+        })?;
+
         tx.commit().map_err(|e| {
             DaemonRpcError::internal_error(format!("提交 claim recovery 事务失败: {}", e))
         })?;
