@@ -2462,6 +2462,9 @@ impl TaskCollabStore {
             task_id: task_id.to_string(),
             steps,
             created_by: identity.agent_id.clone(),
+            // P0F-R4：持久化 executor 的 agent_instance_id 到 evidence event reason，
+            // 供阶段二 reviewer pass 做三重独立性校验。
+            executor_agent_instance_id: identity.agent_instance_id.clone(),
         };
         let result = match bootstrap_executor_evidence(&tx, &input, seq, ts) {
             Ok(value) => value,
@@ -2633,8 +2636,9 @@ impl TaskCollabStore {
             reject!(&e.code, &e.message);
         }
 
-        // 读取 executor 的累计身份（agent_id + session_id），供独立性比对。
-        // action_identities 不持久化 agent_instance_id，故仅 agent_id 与 session_id 参与强校验。
+        // 读取 executor 的累计身份，供独立性比对。
+        // P0F-R4：agent_id / session_id 仍取 action_identities；agent_instance_id 从
+        // 阶段一 evidence event 的 reason JSON provenance 读取（该列未持久化到 action_identities）。
         let (executor_agent_id, executor_session_id): (String, String) = tx
             .query_row(
                 "SELECT agent_id, session_id FROM action_identities WHERE task_id=?1 AND action_type=?2 ORDER BY recorded_at DESC LIMIT 1",
@@ -2645,6 +2649,29 @@ impl TaskCollabStore {
                 DaemonRpcError::new(
                     "E_BRIDGE_REVIEWER_EXECUTOR_KNOWN_REQUIRED",
                     "无法读取 executor 累计身份，拒绝 reviewer pass",
+                )
+            })?;
+        let (executor_agent_instance_id,): (String,) = tx
+            .query_row(
+                "SELECT reason FROM task_events
+                 WHERE task_id=?1 AND reason_code='task.bootstrap_executor_evidence'
+                 ORDER BY event_id DESC LIMIT 1",
+                params![task_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map(|reason| {
+                let v: Value = serde_json::from_str(&reason).unwrap_or(Value::Null);
+                let inst = v
+                    .get("executor_agent_instance_id")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                (inst,)
+            })
+            .map_err(|_| {
+                DaemonRpcError::new(
+                    "E_BRIDGE_REVIEWER_EXECUTOR_KNOWN_REQUIRED",
+                    "无法读取 executor 的 agent_instance_id 来源，拒绝 reviewer pass",
                 )
             })?;
 
@@ -2668,8 +2695,10 @@ impl TaskCollabStore {
             &tx,
             &input,
             &executor_agent_id,
-            "",
+            &executor_agent_instance_id,
             &executor_session_id,
+            bound_workspace,
+            &identity.model_id,
             &lease_token_hash,
             lease_expires_at,
             seq,

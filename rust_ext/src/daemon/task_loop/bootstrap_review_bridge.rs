@@ -15,7 +15,9 @@
 //!
 //! 所有既有 Task/Role/step projection 一律拒绝（fail-closed），P0-F 不得成为常规捷径。
 
-use rusqlite::{params, Transaction};
+use std::collections::HashSet;
+
+use rusqlite::{params, OptionalExtension, Transaction};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -45,6 +47,10 @@ pub struct ExecutorEvidenceInput {
     pub task_id: String,
     pub steps: Vec<ExecutorEvidenceStep>,
     pub created_by: String,
+    /// Executor 的 agent_instance_id（持久化到 evidence event 的 reason JSON，
+    /// 供阶段二 reviewer pass 做三重独立性校验。action_identities 表无此列，
+    /// 故走事件 provenance，避免 schema 迁移。）
+    pub executor_agent_instance_id: String,
 }
 
 #[derive(Debug)]
@@ -160,21 +166,35 @@ pub fn bootstrap_executor_evidence(
         ));
     }
 
-    // 逐项校验 step 存在且属于本任务，追加 completed-step evidence event。
+    // 逐项校验 step 存在、属于本任务、且 status='done'，追加 completed-step evidence event。
     let mut written_steps = Vec::new();
     for step in &input.steps {
-        let exists: bool = tx
+        // P0F-R2：不仅校验 step 存在，还断言其已标记完成；pending/in_progress 不得被伪报。
+        let step_status: Option<String> = tx
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM task_steps WHERE task_id=?1 AND id=?2)",
+                "SELECT status FROM task_steps WHERE task_id=?1 AND id=?2",
                 params![&input.task_id, &step.step_id],
                 |r| r.get(0),
             )
+            .optional()
             .map_err(|e| DaemonRpcError::internal_error(format!("step 校验失败: {e}")))?;
-        if !exists {
-            return Err(deterministic(
-                ERR_BRIDGE_INVALID,
-                format!("step {} 不属于 task {} 或不存在", step.step_id, input.task_id),
-            ));
+        match step_status.as_deref() {
+            None => {
+                return Err(deterministic(
+                    ERR_BRIDGE_INVALID,
+                    format!("step {} 不属于 task {} 或不存在", step.step_id, input.task_id),
+                ));
+            }
+            Some("done") => {}
+            Some(other) => {
+                return Err(deterministic(
+                    ERR_BRIDGE_STATE,
+                    format!(
+                        "step {} 的 status={other}，bootstrap executor evidence 仅接受已完成步骤",
+                        step.step_id
+                    ),
+                ));
+            }
         }
         if step.evidence_path.is_empty() || step.evidence_hash.is_empty() {
             return Err(deterministic(
@@ -186,12 +206,46 @@ pub fn bootstrap_executor_evidence(
             "INSERT INTO task_events (task_id,from_status,to_status,reason_code,reason,evidence_path,evidence_hash,actor_identity,role,monotonic_seq,authoritative_timestamp) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             params![
                 &input.task_id, &status, &status, "task.bootstrap_executor_evidence",
-                serde_json::json!({"step_id":step.step_id,"kind":"completed_step_evidence"}).to_string(),
+                // P0F-R4：把 executor 的 agent_instance_id 写入 reason provenance，
+                // 阶段二 reviewer pass 据其做三重独立性校验。
+                serde_json::json!({
+                    "step_id": step.step_id,
+                    "kind": "completed_step_evidence",
+                    "executor_agent_instance_id": input.executor_agent_instance_id,
+                }).to_string(),
                 &step.evidence_path, &step.evidence_hash, &input.created_by, "executor", seq, ts
             ],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("bootstrap step evidence event 写入失败: {e}")))?;
         written_steps.push(step.step_id.clone());
+    }
+
+    // P0F-R2：校验输入 steps 覆盖该 task 的**全部** task_steps（部分提交必须拒绝）。
+    let mut db_step_ids: HashSet<String> = HashSet::new();
+    {
+        let mut stmt = tx
+            .prepare("SELECT id FROM task_steps WHERE task_id=?1")
+            .map_err(|e| DaemonRpcError::internal_error(format!("task steps 覆盖查询失败: {e}")))?;
+        let rows = stmt
+            .query_map(params![&input.task_id], |r| r.get::<_, String>(0))
+            .map_err(|e| DaemonRpcError::internal_error(format!("task steps 覆盖读取失败: {e}")))?;
+        for r in rows {
+            db_step_ids.insert(
+                r.map_err(|e| DaemonRpcError::internal_error(format!("task steps 行读取失败: {e}")))?,
+            );
+        }
+    }
+    let input_step_ids: HashSet<String> =
+        input.steps.iter().map(|s| s.step_id.clone()).collect();
+    if input_step_ids != db_step_ids {
+        return Err(deterministic(
+            ERR_BRIDGE_INVALID,
+            format!(
+                "bootstrap executor evidence 必须覆盖 task 全部 {} 个步骤，实际提交 {} 个（缺/多/错配）",
+                db_step_ids.len(),
+                input.steps.len()
+            ),
+        ));
     }
 
     // 追加 ready_for_review event 并将状态推到 review。
@@ -232,11 +286,17 @@ pub fn bootstrap_reviewer_pass(
     executor_agent_id: &str,
     executor_agent_instance_id: &str,
     executor_session_id: &str,
+    bound_workspace: i64,
+    model_id: &str,
     lease_token_hash: &str,
     lease_expires_at: f64,
     seq: i64,
     ts: f64,
 ) -> Result<Value, DaemonRpcError> {
+    // P0F-R1：阶段二同样强制 empty-projection 门禁——已有任意 Task/Role/step 投影的
+    // 任务不得再走 bootstrap reviewer bridge（防其成为普通任务的绕过路径）。
+    no_governance_projection(tx, &input.task_id)?;
+
     let status: String = tx
         .query_row("SELECT status FROM tasks WHERE id=?1", [&input.task_id], |r| r.get(0))
         .map_err(|_| deterministic(ERR_BRIDGE_STATE, format!("task 不存在: {}", input.task_id)))?;
@@ -269,15 +329,16 @@ pub fn bootstrap_reviewer_pass(
     }
 
     // 独立性：reviewer 与 executor 的 agent / instance / session 三重不同。
+    // P0F-R4：不再以「executor_agent_instance_id 为空」短路跳过 instance 校验——
+    // executor 的 instance 现由阶段一 evidence event reason provenance 持久化并提供。
     if !input.reviewer_agent_id.is_empty() && input.reviewer_agent_id == executor_agent_id {
         return Err(deterministic(
             ERR_BRIDGE_INDEPENDENCE,
             "bootstrap reviewer 不得等于 executor agent_id",
         ));
     }
-    if !input.reviewer_agent_instance_id.is_empty()
-        && !executor_agent_instance_id.is_empty()
-        && input.reviewer_agent_instance_id == executor_agent_instance_id
+    if input.reviewer_agent_instance_id == executor_agent_instance_id
+        && !input.reviewer_agent_instance_id.is_empty()
     {
         return Err(deterministic(
             ERR_BRIDGE_INDEPENDENCE,
@@ -299,21 +360,31 @@ pub fn bootstrap_reviewer_pass(
     }
 
     // 同事务签发专用 bootstrap reviewer lease（供后续 P0-C 以 reviewer lease 完成首合同）。
-    // 修复（方案1）：先回收已存在的同 (workspace_id,task_id,role) lease（含历史过期未释放的
-    // reviewer lease），避免 task_leases 唯一约束 (workspace_id,task_id,role) 冲突。bootstrap
-    // 专用 lease 为幂等签发，旧 lease 无论 active/expired 一律回收后重签。
+    // P0F-R3：不再硬编码 workspace_id=1 / model_id='' / fencing_counter=1。
+    // - workspace_id 取调用方解析的权威 bound_workspace；
+    // - model_id 取 reviewer 身份的真实 model_id（handler 传入）；
+    // - fencing_counter 取该 (workspace_id,task_id,role) 历史最大值 +1，保证单调递增。
     let lease_id = format!("brtl-{}-r1", input.task_id);
-    let fencing_counter = 1i64;
+    let max_fencing: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(fencing_counter),0) FROM task_leases WHERE workspace_id=?1 AND task_id=?2 AND role='reviewer'",
+            params![bound_workspace, &input.task_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("bootstrap reviewer fencing 计算失败: {e}")))?;
+    let fencing_counter = max_fencing + 1;
+    // 先回收同 (workspace_id,task_id,role) 的既有 reviewer lease（含历史过期未释放的），
+    // 避免 task_leases 唯一约束冲突。bootstrap 专用 lease 为幂等签发，旧 lease 一律回收后重签。
     tx.execute(
-        "DELETE FROM task_leases WHERE workspace_id=1 AND task_id=?1 AND role='reviewer'",
-        params![&input.task_id],
+        "DELETE FROM task_leases WHERE workspace_id=?1 AND task_id=?2 AND role='reviewer'",
+        params![bound_workspace, &input.task_id],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("bootstrap reviewer lease 回收失败: {e}")))?;
     tx.execute(
-        "INSERT INTO task_leases (workspace_id,lease_id,task_id,role,status,agent_id,session_id,model_id,token_hash,fencing_counter,acquired_at,expires_at) VALUES (1,?1,?2,'reviewer','active',?3,?4,'',?5,?6,?7,?8)",
+        "INSERT INTO task_leases (workspace_id,lease_id,task_id,role,status,agent_id,session_id,model_id,token_hash,fencing_counter,acquired_at,expires_at) VALUES (?1,?2,?3,'reviewer','active',?4,?5,?6,?7,?8,?9,?10)",
         params![
-            lease_id, &input.task_id,
-            &input.reviewer_agent_id, &input.reviewer_session_id, lease_token_hash, fencing_counter, ts, lease_expires_at
+            bound_workspace, lease_id, &input.task_id,
+            &input.reviewer_agent_id, &input.reviewer_session_id, model_id, lease_token_hash, fencing_counter, ts, lease_expires_at
         ],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("bootstrap reviewer lease 写入失败: {e}")))?;
