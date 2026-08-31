@@ -1,0 +1,36 @@
+{
+  "manifest_name": "T-1787305175972-8712da28-evidence-p0c-client-cli",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305175972-8712da28",
+  "step_id": "S-1787305175973-87228964",
+  "step_action": "adapt_client_cli",
+  "target_symbol": "task_contract_bootstrap",
+  "target_files": ["server/daemon_client.py", "cli/main.py"],
+  "role": "implementer",
+  "scope": "P0-C Python thin client + CLI daemon-only wrapper（无 SQLite fallback，显式身份/证据凭证）",
+  "outcome": "client_cli_adapted",
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "session_id": "exec-p0c-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {"lease_id": "L-b4de1882a9488d95", "role": "executor", "fencing_counter": 3},
+  "python_client": {
+    "file": "server/daemon_client.py:220 (task_contract_bootstrap)",
+    "transport": "self.call('task.contract_bootstrap', {...}) HTTP thin-client",
+    "no_sql_fallback": true,
+    "params_forwarded": ["task_id", "envelope", "workspace_id", "workspace_instance_id", "request_id", "evidence_path", "evidence_hash", "lease_token", "fencing_counter", "identity"]
+  },
+  "python_cli": {
+    "file": "cli/main.py:4251 (contract-bootstrap subcommand)",
+    "role_constraint": "adjudicator only (choices=['adjudicator'])",
+    "required_credentials": ["--envelope-path", "--workspace-id", "--workspace-instance-id", "--request-id", "--evidence-path", "--evidence-hash", "--lease-token", "--fencing-counter", "--agent-id", "--session-id", "--model-id", "--role"],
+    "daemon_only": "route_task_write('task.contract_bootstrap', params, _local_contract_bootstrap_forbidden)",
+    "local_fallback_blocked": "_local_contract_bootstrap_forbidden raises DaemonUnavailableError"
+  },
+  "check_items": {
+    "explicit_credentials": true,
+    "no_local_fallback": true
+  }
+}

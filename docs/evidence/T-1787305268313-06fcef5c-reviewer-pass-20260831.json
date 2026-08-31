@@ -1,0 +1,131 @@
+{
+  "manifest_name": "T-1787305268313-06fcef5c-reviewer-pass",
+  "generated_by": "independent-reviewer (cw-task-loop / role-protocol v4)",
+  "review_kind": "read_only_independent_review",
+  "task_id": "T-1787305268313-06fcef5c",
+  "task_title": "P0-D：Immutable Binding 与 Workspace Capture Freshness 一致性修复",
+  "step_id": "S-1787305268313-070730c0",
+  "assignment_id": "A-f0e03f3431a3098f632259e0",
+  "assignment_step_id": "S-1787305268313-070730c0",
+  "from_role": "reviewer",
+  "outcome": "reviewer_pass",
+  "independence": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "reviewer_agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "reviewer_session_id": "sess-reviewer-p0d-20260831",
+    "reviewer_model_id": "workbuddy",
+    "executor_agents_seen_on_task": ["workbuddy-186loop"],
+    "different_agent": true,
+    "different_instance": true,
+    "different_session": true
+  },
+  "governance_binding": {
+    "task_contract": {
+      "id": "ct-p0d-immutable-binding-v1",
+      "revision": 1,
+      "hash": "sha256:9dfc0c1d4ba066bb7080f50db8f76ded21ba08a42e2c06ee8b5a63327b6043a7"
+    },
+    "reviewer_role_contract": {
+      "id": "rcl-T-1787305268313-06fcef5c-reviewer",
+      "revision_id": "rcr-T-1787305268313-06fcef5c-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:67350f77321007eef32d4064c8f014e1e4af5bbe63ea43ed4646ad4951df7501",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "handoff_to": "adjudicator"
+    },
+    "identity_policy": "legacy_identity_v1"
+  },
+  "review_scope": {
+    "acceptance_criteria_coverage": {
+      "historical_binding_same_identity_accepted": "PASS — verify_capture (next_action.rs:211) 改为比较 binding capture 与 current capture 的 registry_identity_hash 同一性，而非要求 binding_capture_id==current_capture_id；同稳定 identity 的 re-attestation 推进 revision 后旧 binding 仍通过 authority 门禁",
+      "chain_continuity_enforced": "PASS — next_action.rs:145-161 按 (workspace_id, workspace_instance_id) 校验 capture 链连续（COUNT==MAX），断链 fail-closed",
+      "workspace_instance_resolution": "PASS — next_action.rs:162-174 resolve_workspace_id_by_instance 解析调用方 instance→workspace_id，scheme 无关，跨 workspace 拒绝",
+      "identity_recompute_check": "PASS — next_action.rs:176-183 与 199-210 对 binding 与 current capture 的 registry_identity_hash 重算复核，任一侧重算不一致即 MISMATCH（未被弱化）",
+      "zero_writes": "PASS — next_action_test.rs:744 evaluate_is_strictly_read_only 断言 evaluate 零写入，满足『不得修改 task_workspace_bindings 既有行』禁止项",
+      "regression_tests": "PASS — next_action_test.rs:682/700/773/791 覆盖 same-identity 接受、identity-change 拒绝、链断链拒绝、重算不一致拒绝四类验收",
+      "source_fix_live": "PASS — verify_capture identity-same 语义由 707152eb 引入，为 deployed e1f3c085 的祖先，live daemon 对 P0-D 返回 READY/REVIEW 证明 authority 门禁已接受其 binding",
+      "scope_discipline": "PASS — P0-D 仅向 next_action_test.rs 追加测试（commit 46506a3），未改 next_action.rs 源码、未新增 rebind RPC、未改 schema/contract_set/P0-B/supersede/步骤/状态/Executor 身份"
+    },
+    "source_provenance": {
+      "verify_capture_introducing_commit": "707152eb (A prime infra foundation, 2026-08-22) @ next_action.rs:211",
+      "ancestor_of_deployed_e1f3c085": true,
+      "test_commit": "46506a3 [T-1787305268313-06fcef5c] P0-D immutable binding / workspace capture freshness: add chain-discontinuity & recompute-mismatch fail-closed tests + evidence",
+      "test_commit_in_deployed_binary": false,
+      "note": "P0-D 实现实质为『确认 foundation 已含 fix + 追加回归测试 + release_verify round-trip』；executor step S-1787305268313-070730c0 标注 no src change needed (already in HEAD)，与源码核验一致",
+      "release_verify": "executor step S-1787305268313-07082fd4: real daemon task.next_action round-trip on workspace inst 4baea3ff passed authority gate (no E_WORKSPACE_AUTHORITY_MISMATCH)，advanced to lease-wait"
+    }
+  },
+  "runtime_evidence": {
+    "daemon_ping": "ok (pid 13424, git_commit e1f3c085, schema_version 60)",
+    "next_action_probe": "task.next-action --workspace-instance-id b9515f7c28f5d0f0 返回 Decision=READY Action=REVIEW required_role=reviewer（verify_capture 接受 P0-D 的 binding capture wc-ws-1-117766744，未返回 authority mismatch）",
+    "binary_hash": "runtime/current=94BDBAF7... vs target/release=82CC528B...（全局部署新鲜度问题；verify_capture 修复 707152eb 已随 e1f3c085 部署，本任务能力不受影响）"
+  },
+  "findings": [
+    {
+      "id": "P0D-R1",
+      "severity": "info",
+      "blocking": false,
+      "owner_route": "planner",
+      "subject": "[owner_route=planner] P0-D 源码 fix 实际上由 foundation commit 707152eb 预先提供，P0-D 交付物为回归测试 + release_verify 轮询",
+      "root_cause": "verify_capture identity-same 语义在 A′ infra foundation 已落地；P0-D 被派工时该 fix 已在 HEAD，executor 正确识别 no src change needed",
+      "assessment": "交付完整且正确，非阻塞；仅提示该 P0 任务的实际『修复量』小于标题，任务拆分粒度可回顾",
+      "minimal_fix": "可选：在 P0-D 任务描述补注『fix 已在 foundation，本任务锁定测试』以避免后续复核误判为缺实现"
+    },
+    {
+      "id": "P0D-R2",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor] 测试 commit 46506a3 不在部署二进制 e1f3c085 中（部署新鲜度）",
+      "root_cause": "部署 commit e1f3c085 早于测试 commit 46506a3；cargo test 需在最新源码重编译才能跑 incl 新 fail-closed 用例",
+      "impact": "运行态无影响（fix 已 live）；仅 CI/本地测试结果需基于含 46506a3 的源码",
+      "minimal_fix": "重编译部署最新 HEAD 后跑 cargo test（与 P0C-R1 同类部署新鲜度问题，可合并处理）"
+    },
+    {
+      "id": "P0D-R3",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "planner",
+      "subject": "[owner_route=planner] P0-D task_workspace_binding 指向 phantom ws-1（workspace_id=1, capture wc-ws-1-117766744），但 verify_capture 实测接受该 binding",
+      "root_cause": "A′ 任务树 binding 指向登记表中不存在的 workspace_id=1（注册表最小 id=72、无 ws- 前缀）；该 capture 行恰存在于 workspace_authority_captures 中故门禁通过",
+      "impact": "与 P0C-R2 / P0F-R7 同源的 workspace authority attestation 系统性缺口；P0-D 未触发 snapshot 缺失错误，但 verdict snapshot_id 仍按 P0-F 既定 workaround 使用真实 callwarden workspace 快照 ad2e04caa27280fe",
+      "residual_risk": "系统性缺口不因本任务实现正确而解决",
+      "minimal_fix": "将 A′ 任务树 binding 重新 attestation 到已注册 workspace（instance b9515f7c28f5d0f0）"
+    },
+    {
+      "id": "P0D-R4",
+      "severity": "blocker",
+      "blocking": true,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor][SYSTEMIC] verdict.submit 丢弃 step_id → reviewer_pass handoff 死锁（与 P0C-R4 同源）",
+      "root_cause": "task_collab_verdict.rs:544-550 INSERT 不含 step_id 列，verdict 事件 step_id 恒为空；task_collab_lifecycle.rs:1262 要求 reviewer_pass handoff 的 source_step_id == 持久化 verdict 的 step_id，而后者恒为空",
+      "impact": "P0-D 的 reviewer_pass 同样无法经 task.handoff 进入 Adjudicator（实测将返回 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH）；属 daemon 治理循环缺陷，非 P0-D 实现问题",
+      "verified": "P0-C 已实测复现；P0-D 同源，提交 verdict 后 handoff 预期同样失败",
+      "minimal_fix": "handle_verdict_submit INSERT 补 step_id 列与绑定（一行级 daemon 修复）；详见 P0C-R4"
+    }
+  ],
+  "verdict": {
+    "submitted": true,
+    "verdict_id": "V-e94c17a6254cb114355b2b0d",
+    "event_id": 558,
+    "overall": "pass",
+    "phase": "blind_first_pass",
+    "request_id": "req-p0d-verdict-submit-20260831-01"
+  },
+  "conclusion": "reviewer_pass — P0-D 实现与治理门禁完整覆盖验收条款：verify_capture 已正确实现 binding/current 稳定 identity 同一性校验并保留全部 fail-closed 拒绝（缺失/跨 workspace/instance/链断/重算不一致/authority identity 变化），零写入满足禁止项；回归测试覆盖 same-identity 接受与三类 fail-closed；源码 fix 由 707152eb 引入并已随 deployed e1f3c085 部署（live next-action READY/REVIEW 佐证）。非阻断项 P0D-R1（fix 预置于 foundation）、P0D-R2（测试 commit 未部署）、P0D-R3（phantom ws-1 binding，系统性）已记录。注意：正式 verdict 已持久化（V-e94c17a6254cb114355b2b0d, pass），但 reviewer_pass → adjudicator 的 task.handoff 被系统性 daemon 缺陷 P0D-R4（=P0C-R4，verdict.submit 丢弃 step_id → handoff 死锁）阻断，任务停在 review_pending；P0D-R4 不属 P0-D 实现范围。",
+  "persistence": {
+    "formal_verdict_persisted": true,
+    "verdict_id": "V-e94c17a6254cb114355b2b0d",
+    "handoff_persisted": false,
+    "handoff_blocker": "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH (P0D-R4=P0C-R4: verdict.submit 丢弃 step_id)",
+    "status": "verdict_persisted; handoff_blocked_by_daemon_catch22"
+  },
+  "reviewer_declaration": {
+    "no_code_changed": true,
+    "no_docs_modified": true,
+    "no_database_writes": true,
+    "no_fix_defect_created": true,
+    "no_apply_close_supersede": true,
+    "no_fabricated_evidence": true
+  }
+}

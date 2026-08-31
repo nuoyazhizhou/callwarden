@@ -1,0 +1,46 @@
+{
+  "manifest_name": "T-1787305175972-8712da28-evidence-p0c-release-verify",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305175972-8712da28",
+  "step_id": "S-1787305175973-8723a2a4",
+  "step_action": "release_verify",
+  "target_file": "runtime/current",
+  "target_symbol": "P0-C daemon round-trip",
+  "role": "implementer",
+  "scope": "P0-C daemon release verify: 构建部署 provenance + live RPC gate round-trip",
+  "outcome": "release_verified",
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "session_id": "exec-p0c-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {"lease_id": "L-5a4b948fabb48a05", "role": "executor", "fencing_counter": 5},
+  "check_items": {
+    "build_deploy_evidence": true,
+    "runtime_rpc_proof": true,
+    "no_direct_database_mutation": true
+  },
+  "deployment_provenance": {
+    "git_head_commit_sha": "afd746c5763b3206f0a0dd5657d5a20e2066ca8c",
+    "git_head_short": "afd746c",
+    "daemon_pid": 13424,
+    "daemon_binary_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "daemon_binary_sha256": "94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15",
+    "daemon_binary_built_utc": "2026-08-30T12:25:49",
+    "client_view_root": "c:/git_work/callwarden",
+    "workspace_id": 1046,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "transport": "http_thin_client"
+  },
+  "runtime_round_trip": {
+    "script": "deliverables/software-company/_p0c_release_verify_probe.py",
+    "all_rpc_known": true,
+    "probes": [
+      {"name": "no_workspace", "code": "E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED", "method_known": true},
+      {"name": "executor_role_guard", "code": "E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED", "method_known": true}
+    ]
+  },
+  "positive_round_trip_note": "全量正向 contract_bootstrap 不在此执行：P0-C Contract §3 要求 reviewer PASS + apply/close/COMPLETE 之后才能对 P0-B/A' 父任务使用；release_verify 以 live daemon 负向门禁确定性 round-trip 证明路由已部署且全部门禁 fail-closed。",
+  "no_direct_database_mutation_note": "仅通过 HTTP thin-client RPC 调用；无 SQLite 直写、无 schema 变更"
+}

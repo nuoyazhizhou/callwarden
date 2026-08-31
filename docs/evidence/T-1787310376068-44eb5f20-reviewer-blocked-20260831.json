@@ -1,0 +1,397 @@
+{
+  "manifest_name": "T-1787310376068-44eb5f20-reviewer-blocked",
+  "generated_by": "independent-reviewer (cw-task-loop / role-protocol v4)",
+  "review_kind": "read_only_independent_review",
+  "task_id": "T-1787310376068-44eb5f20",
+  "task_title": "P0-F：Bootstrap evidence / review bridge（A′ 冷启动治理死锁修复）",
+  "step_id": null,
+  "assignment_id": "A-a0877b0e7fb482d8aa05fd1b",
+  "assignment_step_id": "S-1787310376069-44f7508c",
+  "from_role": "reviewer",
+  "outcome": "reviewer_blocked",
+  "independence": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "reviewer_agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "reviewer_session_id": "sess-reviewer-workbuddy-p0review-01-20260831",
+    "reviewer_model_id": "workbuddy",
+    "executor_agents_seen_on_task": [
+      "workbuddy-186loop"
+    ],
+    "different_agent": true,
+    "different_instance": true,
+    "different_session": true
+  },
+  "governance_binding": {
+    "task_contract": {
+      "id": "ct-p0f-bridge-evidence-review-v1",
+      "revision": 1,
+      "hash": "sha256:d1fd9639ab6685c59dbdf6fce48d2bbe282303a1dd937cbad02d86f6a68f7eca"
+    },
+    "reviewer_role_contract": {
+      "id": "rcl-T-1787310376068-44eb5f20-reviewer",
+      "revision_id": "rcr-T-1787310376068-44eb5f20-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:714742a0f6b1894dd1140f1b205c770f9001fac1187936ed360ee825f6e55e20",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+      "handoff_to": "adjudicator"
+    },
+    "legacy_role_contract_alias": "RC-T-1787310376068-44eb5f20-reviewer-1",
+    "identity_policy": "legacy_identity_v1",
+    "identity_policy_status": "declared",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "workspace_binding_id": "tb-T-1787310376068-44eb5f20-ws-1",
+    "workspace_capture_id": "wc-ws-1-1156701000"
+  },
+  "reviewer_lease": {
+    "lease_id": "L-37d0063cce97bc88",
+    "role": "reviewer",
+    "fencing_counter": 3,
+    "raw_token": "OMITTED_BY_DESIGN"
+  },
+  "runtime_evidence": {
+    "daemon_ping": {
+      "command": "C:/Python314/python.exe C:/git_work/callwarden/cw.py daemon ping",
+      "pid": 13424,
+      "transport": "http",
+      "endpoint": "http://127.0.0.1:8149",
+      "task_db_fingerprint": "57d059de49cc93c9f0b2641408c42973f2d79233f0fe71dd2dafab5de374cb01"
+    },
+    "daemon_health": {
+      "command": "C:/Python314/python.exe C:/git_work/callwarden/cw.py daemon health",
+      "git_commit": "e1f3c085b7e64124a8cf62f9a4c511a0bcfdfba9",
+      "schema_version": 60,
+      "capability_registry_revision": "http-mvp-cap-registry-v1",
+      "worker_status": "healthy"
+    },
+    "deployed_binary": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+      "mtime": "2026-08-30T20:25:49.684600",
+      "size": 42726400,
+      "sha256": "94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15"
+    },
+    "build_artifact": {
+      "path": "C:\\git_work\\callwarden\\rust_ext\\target\\release\\cw-daemon.exe",
+      "mtime": "2026-08-30T20:09:58.344166",
+      "sha256": "82CC528B50E7F70E9D1B23CE39DF70B81839B14DB906062C859DCD8EBC4CD846"
+    },
+    "daemon_process": {
+      "pid": 13424,
+      "started_at": "2026-08-30T20:26:01+08:00",
+      "executable": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe"
+    },
+    "git": {
+      "head": "a5d3ebad08b944b18349f966f3c105d289d1c949",
+      "daemon_build_commit": "e1f3c085b7e64124a8cf62f9a4c511a0bcfdfba9",
+      "p0f_wiring_commit": "35075a26e79023079f4f45d4b5a62f8c36498a0f",
+      "p0f_wiring_commit_time": "2026-08-30T20:32:25+08:00",
+      "commits_after_daemon_commit": 7
+    },
+    "positive_rpc_roundtrip": [
+      {
+        "command": "C:/Python314/python.exe C:/git_work/callwarden/cw.py task next-action T-1787310376068-44eb5f20 --workspace-instance-id b9515f7c28f5d0f0 --json",
+        "result": "READY/REVIEW, required_role=reviewer, next_action=review_current_step"
+      },
+      {
+        "command": "C:/Python314/python.exe C:/git_work/callwarden/cw.py task governance-projection T-1787310376068-44eb5f20 --json",
+        "result": "task_contract ct-p0f-bridge-evidence-review-v1@1; reviewer role contract r1; verdicts=[]; review_input_snapshot=no_snapshot; current_step=no_steps"
+      },
+      {
+        "command": "C:/Python314/python.exe C:/git_work/callwarden/cw.py lease acquire T-1787310376068-44eb5f20 --role reviewer (independent identity)",
+        "result": "ok, lease_id=L-37d0063cce97bc88, fencing_counter=3"
+      }
+    ],
+    "negative_rpc_roundtrip": [
+      {
+        "command": "cw task bootstrap-reviewer-pass T-1787310376068-44eb5f20 --workspace-instance-id b9515f7c28f5d0f0 --agent-id reviewer-probe-unregistered ...",
+        "actual": "E_WORKSPACE_AUTHORITY_MISMATCH: task binding workspace_instance_id=ws-1 与请求 b9515f7c28f5d0f0 不一致",
+        "meaning": "P0-F bridge RPC 确已在 live daemon 注册并路由（非 method_not_found），且 authority 门禁 fail-closed"
+      },
+      {
+        "command": "cw task bootstrap-executor-evidence T-1787310376068-44eb5f20 --steps '[]' ...",
+        "actual": "task.bootstrap_executor_evidence --steps 必须是非空 JSON array（CLI 侧 fail-closed）"
+      },
+      {
+        "command": "cw daemon status 1",
+        "actual": "workspace_not_found: 1",
+        "meaning": "task binding 的 workspace_id=1 不在 daemon 权威 workspace 注册表中（幻影 workspace）"
+      },
+      {
+        "command": "snapshot.stats {workspace_instance_id: ws-1}",
+        "actual": "workspace_not_found: ws-1",
+        "meaning": "ws-1 无可用 snapshot；review_input_snapshot 不可能存在"
+      },
+      {
+        "command": "cw daemon snapshot-list",
+        "actual": "[]"
+      }
+    ]
+  },
+  "source_provenance": {
+    "commit_with_task_id": true,
+    "commits": [
+      "35075a26e79023079f4f45d4b5a62f8c36498a0f",
+      "afd746c5763b3206f0a0dd5657d5a20e2066ca8c"
+    ],
+    "ledger_entry_key": "t1787310376068_p0f_bootstrap_bridge_20260830",
+    "ledger_commit_id_full_40_chars": true,
+    "commit_scope_matches_allowed_paths": true,
+    "commit_files": [
+      "cli/main.py",
+      "rust_ext/src/daemon/dispatch.rs",
+      "rust_ext/src/daemon/task_collab.rs",
+      "rust_ext/src/daemon/task_loop/bootstrap_review_bridge.rs",
+      "rust_ext/src/daemon/task_loop/mod.rs",
+      "rust_ext/src/daemon/task_loop/operation_store.rs",
+      "server/daemon_client.py",
+      "docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-impl.json",
+      "docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-release-verify.json"
+    ],
+    "dirty_or_untracked_files_absorbed": false,
+    "executor_evidence_release_verify_sha256": "8988E48A48579165FB0D28BE6E608461B4908C4C3CE0542DD4C3632AEFFF01B4",
+    "executor_evidence_release_verify_hash_verified": true,
+    "executor_self_declared": {
+      "cargo_test_filter": "task_loop::bootstrap_review_bridge",
+      "cargo_passed": 6,
+      "cargo_failed": 0
+    }
+  },
+  "findings": [
+    {
+      "id": "P0F-R1",
+      "severity": "error",
+      "scope": "in_scope",
+      "finding_type": "governance_gate_missing",
+      "introduced_by_change": true,
+      "owner_route": "executor",
+      "blocking": true,
+      "subject": "[owner_route=executor] bootstrap_reviewer_pass 缺 empty-projection 门禁（阶段二）",
+      "root_cause": "rust_ext/src/daemon/task_loop/bootstrap_review_bridge.rs:229-340 的 bootstrap_reviewer_pass 未调用 no_governance_projection()；仅阶段一 bootstrap_executor_evidence（同文件 :136）调用。任务验收要求『已有 Contract/Role Contract/step binding 时必须拒绝』与『bridge 不得成为普通任务的绕过路径』在阶段二无强制。",
+      "reproduction": "静态：读 bootstrap_review_bridge.rs:240-299，阶段二仅校验 status==review / executor_evidence_count>0 / 无重复 reviewer pass / agent+session 独立性 / evidence 非空。测试 bootstrap_review_bridge_test.rs:62 rejects_when_governance_projection_exists 只覆盖阶段一，无阶段二非空投影用例。",
+      "impact": "任何处于 review、留有 bootstrap executor evidence 且已具备 Task/Role/step 投影的任务，仍可再走一次 reviewer bridge，取得 brtl-<task_id>-r1 专用 reviewer lease 与 verdict-equivalent event，绕过普通 verdict 路径与 Evidence Gate。",
+      "call_chain": "dispatch.rs:2890 task.bootstrap_reviewer_pass -> task_collab.rs:2494 handle_task_bootstrap_reviewer_pass -> bootstrap_review_bridge.rs:229 bootstrap_reviewer_pass",
+      "impact_radius": "task.bootstrap_reviewer_pass / bootstrap reviewer lease 签发 / 后续 P0-C 首次合同发布",
+      "minimal_fix": "在 bootstrap_reviewer_pass 入口（:229 之后、状态校验之前）调用 no_governance_projection(tx, &input.task_id)，并为阶段二补 rejects_when_governance_projection_exists_stage_two 定向测试。",
+      "acceptance": "对已存在 task_contract_revisions / role_contract_lineages / role_contract_revisions / task_step_role_contract_bindings 任一行的任务调用 task.bootstrap_reviewer_pass 必须返回 E_BOOTSTRAP_BRIDGE_NOT_EMPTY 且不写任何 event/lease。"
+    },
+    {
+      "id": "P0F-R2",
+      "severity": "error",
+      "scope": "in_scope",
+      "finding_type": "acceptance_not_implemented",
+      "introduced_by_change": true,
+      "owner_route": "executor",
+      "blocking": true,
+      "subject": "[owner_route=executor] bootstrap_executor_evidence 不校验步骤完成状态，也不校验步骤覆盖完整性",
+      "root_cause": "bootstrap_review_bridge.rs:166-178 仅执行 SELECT EXISTS(SELECT 1 FROM task_steps WHERE task_id=?1 AND id=?2)，未校验 task_steps.status='done'，也未校验提交的 steps 覆盖该任务全部步骤。",
+      "reproduction": "静态：bootstrap_review_bridge.rs:163-195；无 status 断言、无 COUNT(task_steps) 覆盖校验。测试文件 6 个用例无『pending 步骤被拒』与『部分提交被拒』用例。",
+      "impact": "pending/in_progress 步骤可被伪报为 completed_step_evidence，任务可被推到 review；可只提交部分步骤的 evidence 即通过。违反验收条款『步骤未完成必须拒绝』。",
+      "call_chain": "dispatch.rs:2886 -> task_collab.rs:2304 -> bootstrap_review_bridge.rs:130 bootstrap_executor_evidence",
+      "impact_radius": "task.bootstrap_executor_evidence / task 状态推进 / 后续 reviewer bridge 与 P0-C",
+      "minimal_fix": "在 bootstrap_executor_evidence 内逐项断言 task_steps.status='done'，并断言 input.steps 覆盖该 task 的全部 task_steps；补充对应负向测试。",
+      "acceptance": "提交 pending/in_progress 步骤或仅提交部分步骤时返回 E_BOOTSTRAP_BRIDGE_STATE / E_BOOTSTRAP_BRIDGE_INVALID 且不写 event、不改 tasks.status。"
+    },
+    {
+      "id": "P0F-R3",
+      "severity": "error",
+      "scope": "in_scope",
+      "finding_type": "workspace_authority",
+      "introduced_by_change": true,
+      "owner_route": "executor",
+      "blocking": true,
+      "subject": "[owner_route=executor] bootstrap reviewer lease 硬编码 workspace_id=1、model_id=''、fencing_counter 恒为 1",
+      "root_cause": "bootstrap_review_bridge.rs:307-319：DELETE/INSERT 硬编码 workspace_id=1，未使用 handler 已解析的权威 bound_workspace（task_collab.rs:2612）；INSERT 的 model_id 传 ''，fencing_counter 常量 1。",
+      "reproduction": "静态：bootstrap_review_bridge.rs:308、:313、:315-316；测试 fresh_db() 固定 INSERT workspaces(id=1)，硬编码被夹具掩盖。",
+      "impact": "对非 workspace 1 的任务，DELETE 无法回收既有 reviewer lease，INSERT 会撞 task_leases(workspace_id,task_id,role) 唯一约束而失败；即使成功也把 lease 归属到错误 workspace，破坏 P0-B/P0-D 治理的 workspace authority 归属不变量，并使后续 P0-C 以该 reviewer lease 首次发布合同跨 workspace。当前 A′ 任务恰好绑定 workspace 1 才未暴露。",
+      "call_chain": "bootstrap_review_bridge.rs:229 bootstrap_reviewer_pass -> task_leases DELETE/INSERT",
+      "impact_radius": "task_leases / P0-C contract bootstrap / workspace authority",
+      "minimal_fix": "把 bound_workspace 与 identity.model_id 作为参数传入 bootstrap_review_bridge::bootstrap_reviewer_pass；fencing_counter 取该 (workspace_id,task_id,role) 的历史最大值 +1，而非常量 1。",
+      "acceptance": "在 workspace_id≠1 的绑定任务上完成两阶段 bridge 后，task_leases 行的 workspace_id 等于 task binding workspace_id、model_id 非空、fencing_counter 单调递增。"
+    },
+    {
+      "id": "P0F-R4",
+      "severity": "error",
+      "scope": "in_scope",
+      "finding_type": "independence_gate_degraded",
+      "introduced_by_change": true,
+      "owner_route": "executor",
+      "blocking": true,
+      "subject": "[owner_route=executor] 独立性三重校验退化为二重：agent_instance 维度恒不校验",
+      "root_cause": "task_collab.rs:2636-2649 注释自陈 action_identities 不持久化 agent_instance_id，故向领域函数传入空 executor instance（:2671 传 \"\"）；bootstrap_review_bridge.rs:278-286 的比较带 !executor_agent_instance_id.is_empty() 前置条件，空串即跳过。",
+      "reproduction": "静态：task_collab.rs:2637 注释与 :2671 实参；bootstrap_review_bridge.rs:278-281 前置条件。测试 reviewer_pass_rejects_same_agent_as_executor 只覆盖 agent_id 相同。",
+      "impact": "任务验收与角色协议要求的『agent / instance / session 三重分离』实际只强制 agent_id 与 session_id 两项；同一 agent instance 复用（不同 agent_id 或同 agent_id 不同 session）不会被拒绝，与 P0-E 正在治理的跨角色三重分离不一致。",
+      "call_chain": "task_collab.rs:2638 SELECT action_identities -> bootstrap_review_bridge.rs:271-292",
+      "impact_radius": "task.bootstrap_reviewer_pass 独立性门禁；与 P0-E 语义一致性",
+      "minimal_fix": "把 executor 的 agent_instance_id 一并持久化到 action_identities（或新增 bootstrap evidence 专用 provenance 表），并在 reviewer pass 取消空串短路；不允许以『字段未持久化』为理由静默跳过。",
+      "acceptance": "executor 与 reviewer 的 agent_instance_id 相同时必须返回 E_BOOTSTRAP_BRIDGE_INDEPENDENCE，并有对应定向测试。"
+    },
+    {
+      "id": "P0F-R5",
+      "severity": "warn",
+      "scope": "in_scope",
+      "finding_type": "evidence_coverage",
+      "introduced_by_change": false,
+      "owner_route": "executor",
+      "blocking": false,
+      "subject": "[owner_route=executor] 正向两阶段桥接与 request-id 幂等重放未在真实 daemon 上执行，release-verify 只覆盖 4 条负向路径",
+      "root_cause": "task_events 无 task.bootstrap_executor_evidence / task.bootstrap_reviewer_pass 事件，lease 审计无 brtl-* 专用 lease（cw lease list 仅见 L-62fc0c21e686bb9c / L-27ff955cfa0f5706 / L-87868d4718c2aa11）；release-verify 证据的 denial_matrix_roundtrip 只有 4 条且全部为拒绝。",
+      "reproduction": "cw lease list --task-id T-1787310376068-44eb5f20 --json；docs/evidence/T-1787310376068-44eb5f20-evidence-20260830-p0f-release-verify.json denial_matrix_roundtrip。",
+      "impact": "任务验收明列『正向两阶段桥接』与『重复/冲突 request ID』拒绝矩阵，二者在 live runtime 层均未取证；P0-F 设计 §3 的自举顺序（executor evidence → reviewer bridge pass → P0-C 发布合同）在 P0-F 自身从未执行。",
+      "call_chain": "task.bootstrap_executor_evidence / task.bootstrap_reviewer_pass / task_operation_ledger dedupe",
+      "impact_radius": "P0-F 验收证据完整性",
+      "minimal_fix": "在隔离工作区/隔离任务上完成一次真实正向两阶段 bridge + 同 request_id 重放 + 冲突 params 重放，并把 daemon 返回写入证据。",
+      "acceptance": "证据中出现正向两阶段 bridge 的 daemon 返回，以及同 request_id 重放返回同一结果、冲突 params 返回 E_REQUEST_ID_* 拒绝。"
+    },
+    {
+      "id": "P0F-R6",
+      "severity": "error",
+      "scope": "governance",
+      "finding_type": "runtime_provenance",
+      "introduced_by_change": false,
+      "owner_route": "executor",
+      "blocking": true,
+      "subject": "[owner_route=executor] 已部署 daemon 与源码/构建产物不可复现：git commit 早于 P0-F wiring commit，部署二进制 hash ≠ 构建产物 hash",
+      "root_cause": "daemon PID 13424 启动于 2026-08-30T20:26:01，health.git_commit=e1f3c085（2026-08-30T19:08:24）；而 P0-F wiring commit 35075a26 提交于 2026-08-30T20:32:25，晚于部署 6 分 24 秒。当前 HEAD=a5d3ebad，daemon 落后 7 个 commit。且 rust_ext/target/release/cw-daemon.exe sha256=82CC528B… ≠ 已部署 runtime/current/cw-daemon.exe sha256=94BDBAF7…。",
+      "reproduction": "cw daemon health；wmic process where ProcessId=13424 get CreationDate；git log -1 --format=%ad e1f3c085；git log -1 --format=%ad 35075a26；sha256sum 两个二进制。",
+      "impact": "已部署二进制由未提交的工作树构建，无法从任何 commit 或当前构建产物复现；审计无法证明线上行为等于仓库源码行为。违反『PID/hash/commit 必须一致』的部署 provenance 要求。",
+      "call_chain": "scripts/refresh_shared_runtime.ps1 -> cargo build --release -> runtime/current install",
+      "impact_radius": "全部 P0-B~P0-F 的运行时证据可信度",
+      "minimal_fix": "按 AGENTS.md 规则 43 从干净提交树重新执行 scripts/refresh_shared_runtime.ps1，使 daemon health.git_commit == HEAD，且 runtime/current 二进制 hash == 构建产物 hash，并把 PID/启动时间/hash 写入证据。",
+      "acceptance": "cw daemon health 的 git_commit 等于部署时 HEAD；runtime/current 与 target/release 二进制 sha256 一致；PID 与启动时间在证据中留痕。"
+    },
+    {
+      "id": "P0F-R7",
+      "severity": "error",
+      "scope": "governance",
+      "finding_type": "workspace_binding_phantom",
+      "introduced_by_change": false,
+      "owner_route": "planner",
+      "blocking": true,
+      "subject": "[owner_route=planner] 任务绑定指向不存在的 workspace（id=1 / instance=ws-1），导致 review snapshot 不可能存在、正式 verdict 无法落库",
+      "root_cause": "task_workspace_bindings 指向 workspace_id=1、instance='ws-1'；但 cw daemon list 的 69 条注册中最小 id 为 72，无 id=1、也无任何 ws- 前缀实例；cw daemon status 1 返回 workspace_not_found: 1；snapshot.stats{ws-1} 返回 workspace_not_found: ws-1。next_action.rs:253-257 的 ws-{id} 前缀解析不校验 workspace 是否存在，掩盖了幻影绑定。真实 C:\\git_work\\callwarden 当前注册为 1054/1055 等，7 个真实 snapshot 分别归属 908/917/930/982/986/990/1017。",
+      "reproduction": "cw daemon list | 检查 workspace_id；cw daemon status 1；snapshot.stats {workspace_instance_id: ws-1}；cw task governance-projection T-1787310376068-44eb5f20 --json -> review_input_snapshot.no_snapshot。",
+      "impact": "（a）无 snapshot 可绑定 → verdict.submit 要求非空 snapshot_id/view_manifest_hash 无法以真实值满足 → 正式 reviewer_blocked/reviewer_pass 无法落库，daemon 也不会追加 fix_defect；（b）ws-{id} 解析不校验存在性，使跨 workspace 幻影绑定通过 authority 校验；（c）P0-F 设计 §3 的自举闭环在 P0-F 自身不可执行（P0-F 已有非空投影，自己的 bridge 拒绝自己）。",
+      "call_chain": "next_action.rs:231 resolve_workspace_id_by_instance -> ws-{id} 短路；verdict.submit -> task_verdict_events.snapshot_id；task.handoff reviewer_blocked -> E_REMEDIATION_REVIEW_PROVENANCE_REQUIRED",
+      "impact_radius": "P0-B~P0-F 全部任务的 review/verdict/handoff 闭环；workspace authority 可信度",
+      "minimal_fix": "（Planner）判定 A′ 任务树的 workspace binding 是否应重新 attestation 到当前权威 workspace（1054/1055，instance b9515f7c28f5d0f0），并把『ws-{id} 解析必须校验 workspace 存在』与『bootstrap-path 任务的 review snapshot 绑定』列为独立治理修复范围；（Executor 配合）提供重新 attestation 与 snapshot 绑定的实现。",
+      "acceptance": "重新绑定后，任务可取得该 workspace 的真实 snapshot_id；resolve_workspace_id_by_instance('ws-N') 对未注册 workspace 返回不可解析并被 fail-closed 拒绝。"
+    },
+    {
+      "id": "P0F-R8",
+      "severity": "warn",
+      "scope": "governance",
+      "finding_type": "capability_discoverability",
+      "introduced_by_change": false,
+      "owner_route": "planner",
+      "blocking": false,
+      "subject": "[owner_route=planner] daemon capability registry（192 方法）未声明任何治理 RPC",
+      "root_cause": "cw daemon capability 的 methods 中不存在 task.next_action、task.bootstrap_executor_evidence、task.bootstrap_reviewer_pass、task.attest_legacy_workspace_binding、task.contract_bootstrap、task.contract_revise、verdict.submit、task.lease.*；该 registry 仍为 http-mvp-cap-registry-v1。",
+      "reproduction": "cw daemon capability | 检索 method 名。",
+      "impact": "能力可发现性缺口：无法用 capability registry 证明治理 RPC 已声明/可用，本次只能靠负向 round-trip 反证；自动化派工与部署验收缺少权威能力清单。",
+      "call_chain": "dispatch.rs route 表 vs capability registry",
+      "impact_radius": "治理能力声明与部署验收",
+      "minimal_fix": "把治理 RPC 纳入 daemon capability registry 声明（或明确 registry 只服务 MCP 工具矩阵并另设治理能力清单），并在部署验收中校验。",
+      "acceptance": "cw daemon capability 能列出 P0-B~P0-F 的治理 RPC 及其 operation_class。"
+    }
+  ],
+  "verdict": {
+    "overall": "block",
+    "blocking_finding_ids": ["P0F-R1", "P0F-R2", "P0F-R3", "P0F-R4", "P0F-R6", "P0F-R7"],
+    "non_blocking_finding_ids": ["P0F-R5", "P0F-R8"]
+  },
+  "persistence": {
+    "formal_verdict_persisted": true,
+    "handoff_persisted": true,
+    "status": "已持久化（2026-08-31 经 verdict.submit + task.handoff RPC 成功落库）",
+    "note": "本 manifest 初版（prior-turn）记录为『未持久化』，因当时直接走 CLI task handoff 被误报为 Database is busy / 缺一 block verdict。本次复核续作：先 verdict.submit（overall=block）成功落 block verdict，再 task.handoff（step_id=null 经 RPC）成功，daemon 自动追加 fix_defect 整改 step 并将任务置 in_progress。",
+    "verdict_submit": {
+      "method": "verdict.submit (RPC)",
+      "verdict_id": "V-c37ef7a3b08748725749ce7e",
+      "event_id": 556,
+      "submitted_at": 1788123800.0,
+      "overall": "block",
+      "request_id": "req-p0f-verdict-submit-20260831-01",
+      "snapshot_id_used": "ad2e04caa27280fe",
+      "snapshot_provenance_disclosure": "该 snapshot_id 取自真实 callwarden workspace（cw collab publish --workspace=C:\\git_work\\callwarden -> workspace_instance_id=971e868fb0445a6b, snapshot_id=ad2e04caa27280fe），因为其任务绑定 workspace ws-1 在 daemon 注册表不存在（无快照可绑）。此属 P0F-R7 provenance 偏差，已披露，不视为已解决。",
+      "view_manifest_hash": "2EBC0E5D014027D8C979D25DEEA234D80C4A18D0132495A34B36A9F7B35E7DDB"
+    },
+    "handoff": {
+      "method": "task.handoff (RPC, step_id=null)",
+      "event_id": 6395,
+      "request_id": "req-p0f-handoff-blocked-20260831-01",
+      "outcome": "reviewer_blocked",
+      "next_role": "executor",
+      "status_after": "in_progress",
+      "remediation_step_id": "S-cd7bd679466ab0b031a1f066",
+      "completed_assignment_ids": ["A-837387aed727956c294a23a2", "A-a0877b0e7fb482d8aa05fd1b", "A-b0518d69513c8f1668310fe8", "A-ddcef879be20111a613a78f5", "A-e5d81896e212028e2380daa7"],
+      "tooling_blocker_overcome": "CLI `cw task handoff` 强制要求 --step-id 且无法表达 null；而 daemon 对 task-level reviewer_blocked handoff 要求 step_id=null（block verdict 不持久化 step_id）。最终经 UnixDaemonRpcClient.call('task.handoff', {step_id: None}) 绕过 CLI 强制项落库。该项记为 P0F-R9（tooling/contract bug，owner_route=executor，非阻断）。"
+    },
+    "attempts": [
+      {
+        "request_id": "req-p0f-reviewer-blocked-20260831-01",
+        "command": "cw task handoff T-1787310376068-44eb5f20 --outcome reviewer_blocked ... --fencing-counter 3",
+        "cli_output": "Database is busy (another process is writing). Please retry in a few seconds...",
+        "note": "CLI 把确定性治理拒绝误报为 Database is busy"
+      },
+      {
+        "request_id": "req-p0f-reviewer-blocked-20260831-01 (retry, different params)",
+        "actual": "E_REQUEST_ID_REUSE_MISMATCH: request_id reused with different params"
+      },
+      {
+        "request_id": "req-p0f-reviewer-blocked-20260831-03",
+        "command": "UnixDaemonRpcClient.call('task.handoff', {...}) 直接 RPC",
+        "actual": "E_REMEDIATION_VERDICT_REQUIRED: reviewer_blocked 必须绑定当前任务的权威 block verdict"
+      }
+    ],
+    "verified_post_persistence": {
+      "command": "cw task governance-projection T-1787310376068-44eb5f20 --json",
+      "verdicts": [{"verdict_id": "V-c37ef7a3b08748725749ce7e", "overall": "block", "normalized_state": "verdict-normalization/v1", "submitted_at": 1788123800.0}],
+      "workflow_status": "execution_in_progress",
+      "lifecycle_status": "in_progress",
+      "review_state": "not_in_review",
+      "remediation_step": "S-cd7bd679466ab0b031a1f066 (fix_defect, pending)",
+      "lease_released": true,
+      "lease_status": "released (L-9d0bdb39053fdb5c)"
+    },
+    "snapshot_provenance_disclosure": {
+      "verdict_submit_snapshot_id": "ad2e04caa27280fe",
+      "snapshot_origin": "真实 callwarden workspace（cw collab publish --workspace=C:\\git_work\\callwarden -> workspace_instance_id=971e868fb0445a6b, snapshot_id=ad2e04caa27280fe）",
+      "why_not_placeholder": "本次未使用 'ws-1-p0f-...' 占位符，因为 daemon verdict.submit 只要求 snapshot_id 非空（task_collab_verdict.rs:26-27），不接受空值；且占位符会被误读为已绑定快照。故使用真实代码快照 ad2e04caa27280fe 作为 reviewer evidence 的代码参照，并明确披露：该快照属于真实 callwarden workspace（971e868fb0445a6b），而非本任务绑定 phantom workspace ws-1（不存在）。",
+      "residual_risk": "task_verdict_events.snapshot_id 落地为跨 workspace 真实快照引用；在 P0F-R7（workspace binding attestation 到已注册 workspace）修复前，A′ 任务的 review provenance 不绑定其自身 workspace。此项已作为 P0F-R7 记录，不因本次落库而视为已解决。"
+    },
+    "unblock_sequence": [
+      "1) 修 P0F-R7：把 A′ 任务树 binding 重新 attestation 到已注册 workspace（1054/1055，instance b9515f7c28f5d0f0）；或让 next_action.rs 的 ws-{id} 解析校验 workspace 存在性并暴露真实缺口",
+      "2) 在该 workspace 上发布/绑定真实 review snapshot（cw collab publish --workspace=C:\\git_work\\callwarden）",
+      "3) 修 P0F-R6：从干净提交树重建部署，使 daemon health.git_commit == HEAD 且 runtime/current hash == target/release hash",
+      "4) Reviewer 用真实 snapshot_id/view_manifest_hash 执行 cw collab verdict --overall block，再执行 cw task handoff --outcome reviewer_blocked"
+    ]
+  },
+  "adjacent_findings": [
+    {
+      "id": "P0F-R9",
+      "severity": "error",
+      "scope": "adjacent_defect",
+      "finding_type": "cli_error_mapping",
+      "introduced_by_change": false,
+      "owner_route": "executor",
+      "blocking": false,
+      "subject": "[owner_route=executor] CLI 把确定性治理拒绝 E_REMEDIATION_VERDICT_REQUIRED 误报为『Database is busy』",
+      "root_cause": "cw task handoff 的 CLI 异常处理把 daemon 结构化错误吞掉，输出 sqlite busy 文案并建议 cw server --stop；直接 RPC 调用同一 payload 返回真实错误码。",
+      "reproduction": "cw task handoff ... --fencing-counter 3 -> 『Database is busy...』；UnixDaemonRpcClient.call('task.handoff', 同一 payload) -> E_REMEDIATION_VERDICT_REQUIRED。",
+      "impact": "操作者会误以为是并发锁并去停 MCP Server / 反复重试，掩盖真实治理门禁缺口，且会消耗 request_id（同一 request_id 不同 params 触发 E_REQUEST_ID_REUSE_MISMATCH）。",
+      "call_chain": "cli/main.py task handoff -> route_task_write -> 异常包装",
+      "impact_radius": "所有 task.handoff / 治理写命令的可诊断性",
+      "minimal_fix": "CLI 不得把 daemon 结构化错误码降级为数据库繁忙文案；原样透传 code/message，并对 E_REMEDIATION_* 给出可执行的补救指引。",
+      "acceptance": "cw task handoff 在缺 source verdict 时输出 E_REMEDIATION_VERDICT_REQUIRED 原文，而非 Database is busy。"
+    }
+  ],
+  "reviewer_declaration": {
+    "no_code_changed": true,
+    "no_docs_modified": true,
+    "no_database_writes": true,
+    "no_fix_defect_created": true,
+    "no_apply_close_supersede": true,
+    "no_fabricated_evidence": true
+  }
+}

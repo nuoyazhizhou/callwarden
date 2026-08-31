@@ -1,0 +1,107 @@
+{
+  "review_subject": "P0C-R4 daemon catch-22 隔离修复（3 处改动）独立复核",
+  "reviewer_role": "independent_reviewer (CodeReviewExpert 接管复核)",
+  "review_date": "2026-08-31",
+  "review_type": "code_review_of_fix",
+  "scope": "仅复核 P0C-R4 三处隔离改动（verdict.rs / lifecycle.rs / tests_governance.rs）的代码正确性与隔离性；不重新执行 P0-B~P0-F 的 handoff（daemon 尚未部署新二进制）。未 commit / 未部署 / 未改写任何文件。",
+  "fix_author_claim": "verdict 28 / handoff 32 / reviewer_pass / reviewer_blocked(4) 全绿；改动未 commit、未部署、未触发 Adjudicator。",
+  "changes": [
+    {
+      "id": "1",
+      "file": "rust_ext/src/daemon/task_collab_verdict.rs",
+      "lines": "544-580 (INSERT 列清单 + VALUES ?24 + params)",
+      "what": "handle_verdict_submit 的 INSERT 补 step_id 列，VALUES 追加 ?24，params 追加 step_id。step_id 在第 21 行已被 required() 读取/校验/trim。",
+      "verdict": "pass",
+      "rationale": "列(24)/占位符(24)/params(24) 三向对齐，step_id 为第 24 项且为最后一项，无错位。task_verdict_events 表本就存在 step_id 列（旧代码只读不写），属补写而非改 schema。仅影响 verdict.submit 路径。"
+    },
+    {
+      "id": "2",
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "lines": "1500-1501 (remediation 匹配新增分支)",
+      "what": "新增匹配臂 `(None, false) if outcome == \"reviewer_blocked\" => {}`。match 元祖为 (handoff.step_id, persisted_verdict.step_id.is_empty())。",
+      "verdict": "pass",
+      "rationale": "该臂以 `outcome == \"reviewer_blocked\"` 门槛，reviewer_pass 永远带 Some(step_id) 且 outcome≠blocked，故不可达该臂；仅接管‘task-level blocked handoff + 持久化 verdict 现已带非空 step_id’这一由改动①派生的新组合。原 `(None, true)` 臂保留，继续服务改动前提交、step_id 为空的旧 verdict（如 P0-F）。reviewer_pass 主校验块 (L1216-1270) 未被触碰。diff 全文仅 +1 行，隔离干净。"
+    },
+    {
+      "id": "3",
+      "file": "rust_ext/src/daemon/task_collab_tests_governance.rs",
+      "lines": "1373-1386 (test_verdict_submit_appends_replays_and_rejects_conflicts 内新增断言)",
+      "what": "在既有 verdict 测试补 `assert_eq!(persisted_step_id, step_id, \"verdict.submit 必须持久化绑定 step_id\")`，防 P0C-R4 复发。",
+      "verdict": "pass",
+      "rationale": "断言落在单个测试函数内，验证前向（新 verdict 持久化 step_id）路径；不破坏其他用例。已确认该测试在本轮 cargo test 中 ok。"
+    }
+  ],
+  "test_verification": {
+    "method": "cd rust_ext && source ../scripts/msvc-env.sh && cargo test -p callwarden-core task_collab::",
+    "build": "成功（MSVC 工具链注入，callwarden-core 及依赖均已编译）",
+    "exit_code": 101,
+    "summary": "111 passed; 3 failed; 0 ignored; 1489 filtered out",
+    "p0cr4_relevant_passed": [
+      "daemon::task_collab::tests::governance::test_verdict_submit_appends_replays_and_rejects_conflicts (含改动③回归断言)",
+      "daemon::task_collab::tests::core::test_reviewer_pass_requires_task_bound_verdict_before_handoff",
+      "daemon::task_collab::tests::core::test_task_level_reviewer_blocked_handoff_creates_fix_defect",
+      "daemon::task_collab::tests::core::test_reviewer_blocked_remediation_create_reopens_same_task_with_provenance",
+      "daemon::task_collab::tests::core::test_reviewer_blocked_reopens_same_task_for_multiple_revision_rounds"
+    ],
+    "p0cr4_relevant_failed": [],
+    "pre_existing_unrelated_failures": [
+      {
+        "test": "daemon::task_collab::tests::core::test_task_collab_full_lifecycle",
+        "assert": "task_collab_tests_core.rs:86 expect events.len()==3, got 7",
+        "analysis": "测 create/claim/report 事件数。不调用 verdict.submit / reviewer_blocked handoff。task_collab_tests_core.rs 不在工作树改动列表（代码为 HEAD 态），故非改动③所致；事件数增多源于其他未提交 P0-E/F/C 生产代码（如 task_collab_query.rs +4 改变事件查询/lease 事件）。与 P0C-R4 无关。"
+      },
+      {
+        "test": "daemon::task_collab::tests::core::test_task_collab_migrates_v46_db_to_v50",
+        "assert": "task_collab_tests_core.rs:1569 expect events==1, got 2",
+        "analysis": "v46→v50 迁移后建任务事件数。同上，不涉 verdict/handoff；属其他未提交改动引入的额外事件。与 P0C-R4 无关。"
+      },
+      {
+        "test": "daemon::task_collab::tests::governance::test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state",
+        "assert": "task_collab_tests_governance.rs:290 handle_task_claim(...).unwrap() panic (claim 返回 Err)",
+        "analysis": "位于被改测试文件但属不同测试函数（非改动③所在函数）。claim/recover 不触发 verdict.submit / reviewer_blocked handoff。claim 失败源于其他未提交 P0-E/F/C 的身份/claim 校验改动。与 P0C-R4 无关。"
+      }
+    ],
+    "verdict_rs_diff_event_emission_check": "grep '^+.*(fn handle_task_|handle_task_report|emit_event|append_event)' 命中 0 —— 证实改动①未引入事件发射，事件数类失败与 P0C-R4 无关。"
+  },
+  "findings": [
+    {
+      "id": "R1",
+      "severity": "blocker_for_goal",
+      "owner_route": "executor+planner (operational)",
+      "title": "4 张 PASS 卡的既有 verdict 带空 step_id，仅重新 handoff 无法清障",
+      "detail": "P0-C/D/E/B 的 verdict（V-4c82575ca6780ba3f0a7aa7a / V-e94c17a6254cb114355b2b0d / V-6f42eff6f02321f205ac1cfb / V-637c9f7f8c0c4fa03e688ad7）在旧 daemon 上提交，authority DB 中 step_id=''。reviewer_pass handoff 在 task_collab_lifecycle.rs:1262 读取持久化 verdict.step_id 并比对 source_step_id：`'' != 'S-...'` 恒真 → 仍返 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH。改动①只修复‘未来’ verdict（新提交会持久化 step_id），对既有空 step_id 记录无回溯效力（diff 无 UPDATE/backfill）。",
+      "required_action": "部署新 daemon 后，让 4 张卡清 handoff 前必须：(a) 在新 daemon 下以新 verdict_id 重新提交 4 张 reviewer_pass verdict（step_id 现被持久化；handoff 查询 ORDER BY id DESC LIMIT 1 取最新非空 step_id verdict → 通过）；或 (b) 一次性授权 backfill `UPDATE task_verdict_events SET step_id=? WHERE verdict_id=?` 回填 4 行。推荐 (a)：纯 RPC、不改写权威 ledger 历史、审计友好。此为提交/部署计划的前置必办项，非代码缺陷。",
+      "independence_note": "Reviewer 不在本轮重建此 4 verdict（受 Forbidden + 非本轮授权）；由你在部署后以合规身份执行。"
+    },
+    {
+      "id": "R2",
+      "severity": "warn",
+      "owner_route": "planner/executor (triage)",
+      "title": "工作树存在 3 个与 P0C-R4 无关的既有测试失败",
+      "detail": "见 test_verification.pre_existing_unrelated_failures。三者均不调用 verdict.submit / reviewer_blocked handoff，根因是其他未提交 P0-E/F/C 生产代码（task_collab_query.rs +4 等）。P0C-R4 三处改动经代码路径分析确认不触达这些用例。",
+      "required_action": "commit 前请单独 triage：要么修复、要么显式标注为‘其他在途 P0-E/F/C 改动的已知失败’并登记，避免把‘全绿’误判为整树状态。R2 不阻塞 P0C-R4 的 commit，但应被跟踪。"
+    },
+    {
+      "id": "R3",
+      "severity": "info",
+      "owner_route": "none",
+      "title": "改动②语义安全性已确认",
+      "detail": "你独立新增的 `(None, false) if outcome==\"reviewer_blocked\"` 臂，门槛严格为 reviewer_blocked 且 handoff.step_id=None 且持久化 verdict.step_id 非空。reviewer_pass 主路径（L1216-1270）与 step-level blocked 均不受影响；task-level blocked 在旧空 step_id verdict 下仍走原 `(None, true)` 臂。改动②不会退化任务级 reviewer_blocked 语义。",
+      "required_action": "无需动作。"
+    }
+  ],
+  "conclusion": {
+    "code_fix_verdict": "reviewer_pass",
+    "rationale": "P0C-R4 三处改动（①②③）代码正确、最小、隔离；P0C-R4 相关回归测试（含改动③断言）全部 ok；改动②语义安全；3 处失败经代码路径分析确认与本次修复无关。",
+    "mandatory_preconditions_before_unblock": [
+      "R1：部署新 daemon 后，重新持久化/回填 4 张 PASS 卡的 step_id，否则 handoff 仍卡 L1262。",
+      "R2：commit 前 triage 3 个无关既有失败，避免误判整树测试状态。"
+    ],
+    "note_on_user_claim": "你声称‘全绿’对 P0C-R4 相关子集成立，但 task_collab:: 整子树为 111 passed / 3 failed —— 3 个失败与本次修复无关，属其他在途改动，需单独跟踪。"
+  },
+  "identity": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "role": "independent_reviewer",
+    "review_window": "2026-08-31 standalone fix review (not a P0-B~P0-F task handoff)"
+  }
+}

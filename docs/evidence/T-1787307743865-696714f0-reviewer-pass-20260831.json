@@ -1,0 +1,119 @@
+{
+  "manifest_name": "T-1787307743865-696714f0-reviewer-pass",
+  "generated_by": "independent-reviewer (cw-task-loop / role-protocol v4)",
+  "review_kind": "read_only_independent_review",
+  "task_id": "T-1787307743865-696714f0",
+  "task_title": "P0-E：Adjudicator / Reviewer lease delegation（A′ 治理收尾前置）",
+  "step_id": "S-1787307743865-696e98c4",
+  "assignment_id": "A-89be0279ea2e34ae80080fd6",
+  "assignment_step_id": "S-1787307743865-696e98c4",
+  "from_role": "reviewer",
+  "outcome": "reviewer_pass",
+  "independence": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "reviewer_agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "reviewer_session_id": "sess-reviewer-p0e-20260831",
+    "reviewer_model_id": "workbuddy",
+    "executor_agents_seen_on_task": ["workbuddy-186loop"],
+    "different_agent": true,
+    "different_instance": true,
+    "different_session": true
+  },
+  "governance_binding": {
+    "task_contract": {
+      "id": "ct-p0e-lease-delegation-v1",
+      "revision": 1,
+      "hash": "sha256:4c55097e64959c580afbb47a1b53b760ebc15ea075e7bab02602a66c3d382e43"
+    },
+    "reviewer_role_contract": {
+      "id": "rcl-T-1787307743865-696714f0-reviewer",
+      "revision_id": "rcr-T-1787307743865-696714f0-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:a782bcebff6dc4f47f546cfa02a7656fbd2d4b8c4564f58c2bc81ad451013805",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "handoff_to": "adjudicator"
+    },
+    "identity_policy": "legacy_identity_v1"
+  },
+  "review_scope": {
+    "acceptance_criteria_coverage": {
+      "adjudicator_role_gate": "PASS — validate_reviewer_lease_for_adjudication (task_collab_lifecycle_ops.rs:282) 首检 adjudicator.role，否则 E_GOVERNANCE_ADJUDICATOR_ROLE_REQUIRED",
+      "active_reviewer_lease_lookup": "PASS — :297-329 按 task_id+role='reviewer'+status='active' 取 reviewer lease（token_hash/expiry/fencing 逐项校验）",
+      "holder_registration": "PASS — :351-370 校验 holder 为 active registered reviewer 且注册 session 与 lease 一致，否则 E_GOVERNANCE_REVIEWER_INVALID / UNREGISTERED",
+      "triple_separation": "PASS — :371-389 强制 agent_id / agent_instance_id（非空时）/ session_id 三项均不等于 reviewer holder，分别 E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT/INSTANCE/SESSION",
+      "narrow_call_sites": "PASS — task.supersede(:454,:804)、task.contract_bootstrap(:909)、task.attest_legacy_workspace_binding(:1260,:1755) 改用新方法；普通 mutation(apply/close/claim/report/handoff) 仍走 validate_lease_for_mutation（task_collab_lifecycle_ops.rs:174 / lifecycle_lease.rs:309），零越界",
+      "regression_tests": "PASS — task_collab_tests_lease.rs 多用例覆盖 distinct-holder 正向、same agent/instance/session 逐项拒绝、token/fencing reject、holder unregistered/non-reviewer/session-mismatch/inactive reject、adjudicator-role-only 回归",
+      "scope_discipline": "PASS — 仅替换 lease 校验调用，未降 supersede/P0-B/P0-C 对 identity/证据/workspace authority/ledger 要求；未让 adjudicator acquire/release reviewer lease；未覆盖 verdict；未改状态/binding/capture/schema/模板"
+    },
+    "source_provenance": {
+      "introducing_commit": "4fac5a75 refactor(daemon): task_collab.rs 按职责拆分至 20 个子模块（2026-08-28，含 validate_reviewer_lease_for_adjudication @ task_collab_lifecycle_ops.rs:274）",
+      "deployed_commit_date": "e1f3c085 @ 2026-08-30 19:08（晚于引入 commit，函数已在部署二进制祖先链中）",
+      "ancestry_verifiable": "partial — 仓库存在缺失 git 对象（git log --all 报 Could not read/failed to traverse parents），merge-base 不可靠；转由源码+部署日期+运行时探针佐证",
+      "call_sites": "task_supersede.rs:454,804；task_collab_contract.rs:909,1260,1755；task_collab_lease.rs:741；task_collab_query.rs:202",
+      "release_verify": "executor step S-1787307743865-697009e8: release daemon 加载 P0-E 链路，runtime fail-closed probe 确认 contract_bootstrap 缺凭证返回错误且无 mutation"
+    }
+  },
+  "runtime_evidence": {
+    "daemon_ping": "ok (pid 13424, git_commit e1f3c085, schema_version 60)",
+    "live_probe": "独立 RPC 负向探针 task.contract_bootstrap(role=adjudicator, 注册身份缺失) 返回 E_IDENTITY_UNREGISTERED，证明 live daemon 的治理 handler 链（workspace authority → 注册身份 → ... → validate_reviewer_lease_for_adjudication）在部署二进制中按序执行；跨角色 lease 校验为该链下一关",
+    "binary_hash": "runtime/current=94BDBAF7... vs target/release=82CC528B...（全局部署新鲜度问题；P0-E 函数 4fac5a75 已随 e1f3c085 部署，本任务能力不受影响）"
+  },
+  "findings": [
+    {
+      "id": "P0E-R1",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor] 仓库 git 对象缺失，P0-E 提交祖先链无法用 merge-base 干净验证",
+      "root_cause": "工作树存在历史 loose objects 缺失（git log --all 报 Could not read <sha> / Failed to traverse parents of commit <sha>），与 P0C/P0D 同源的对象库损坏",
+      "impact": "纯 Git 考古级溯源受限；本任务正确性已由源码+部署日期(e1f3c085 晚于 4fac5a75)+运行时探针三重佐证，不影响结论",
+      "minimal_fix": "按 working-memory §4 对象库保护流程评估 git 对象恢复（禁止 gc --prune）；非紧急"
+    },
+    {
+      "id": "P0E-R2",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "planner",
+      "subject": "[owner_route=planner] P0-E task_workspace_binding 指向 phantom ws-1（workspace_id=1, capture wc-ws-1-1768713848）",
+      "root_cause": "A′ 任务树 binding 指向登记表中不存在的 workspace_id=1（注册表最小 id=72、无 ws- 前缀）",
+      "impact": "与 P0C-R2 / P0D-R3 同源系统性 workspace authority attestation 缺口；verdict snapshot_id 按 P0-F 既定 workaround 使用真实 callwarden workspace 快照 ad2e04caa27280fe",
+      "residual_risk": "系统性缺口不因本任务实现正确而解决",
+      "minimal_fix": "将 A′ 任务树 binding 重新 attestation 到已注册 workspace（instance b9515f7c28f5d0f0）"
+    },
+    {
+      "id": "P0E-R3",
+      "severity": "blocker",
+      "blocking": true,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor][SYSTEMIC] verdict.submit 丢弃 step_id → reviewer_pass handoff 死锁（与 P0C-R4 同源）",
+      "root_cause": "task_collab_verdict.rs:544-550 INSERT 不含 step_id 列，verdict 事件 step_id 恒为空；task_collab_lifecycle.rs:1262 要求 reviewer_pass handoff 的 source_step_id == 持久化 verdict 的 step_id，而后者恒为空",
+      "impact": "P0-E 的 reviewer_pass 同样无法经 task.handoff 进入 Adjudicator（实测预期 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH）；属 daemon 治理循环缺陷，非 P0-E 实现问题",
+      "verified": "P0-C 实测复现；P0-D 同源失败；P0-E 提交 verdict 后 handoff 预期同样失败",
+      "minimal_fix": "handle_verdict_submit INSERT 补 step_id 列与绑定（一行级 daemon 修复）；详见 P0C-R4"
+    }
+  ],
+  "verdict": {
+    "submitted": true,
+    "verdict_id": "V-6f42eff6f02321f205ac1cfb",
+    "event_id": 559,
+    "overall": "pass",
+    "phase": "blind_first_pass",
+    "request_id": "req-p0e-verdict-submit-20260831-01"
+  },
+  "conclusion": "reviewer_pass — P0-E 实现与治理门禁完整覆盖验收条款：validate_reviewer_lease_for_adjudication 正确实现 adjudicator-role 门禁 + active reviewer lease 校验（token/expiry/fencing/注册）+ agent/instance/session 三重分离，全部 fail-closed；仅 3 个治理方法（supersede/contract_bootstrap/attest_legacy）接线、普通 mutation 路径未改动、窄边界无越界；回归测试覆盖正向与逐项拒绝。实现由 4fac5a75 引入且已随部署二进制 e1f3c085（2026-08-30）部署，live 负向探针佐证治理 handler 链按序执行。非阻断项 P0E-R1（git 对象缺失）、P0E-R2（phantom ws-1 binding，系统性）已记录。注意：正式 verdict 已持久化（V-6f42eff6f02321f205ac1cfb, pass），但 reviewer_pass → adjudicator 的 task.handoff 被系统性 daemon 缺陷 P0E-R3（=P0C-R4，verdict.submit 丢弃 step_id → handoff 死锁）阻断，任务停在 review_pending；P0E-R3 不属 P0-E 实现范围。",
+  "persistence": {
+    "formal_verdict_persisted": true,
+    "verdict_id": "V-6f42eff6f02321f205ac1cfb",
+    "handoff_persisted": false,
+    "handoff_blocker": "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH (P0E-R3=P0C-R4: verdict.submit 丢弃 step_id)",
+    "status": "verdict_persisted; handoff_blocked_by_daemon_catch22"
+  },
+  "reviewer_declaration": {
+    "no_code_changed": true,
+    "no_docs_modified": true,
+    "no_database_writes": true,
+    "no_fix_defect_created": true,
+    "no_apply_close_supersede": true,
+    "no_fabricated_evidence": true
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787307743865-696714f0",
+    "step_id": "test",
+    "step": "test",
+    "scope": "P0-E: 跨角色 lease 矩阵测试",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "test_scope": {
+    "command": "cargo test --lib p0e",
+    "log_file": "docs/evidence/T-1787307743865-696714f0-p0e-test-log.txt",
+    "log_sha256": "644f82f6f6da20f0ebdfd3484bd186a01248b2d5575b2ec6b3b9627ddb4ac8d8",
+    "result": "3 passed; 0 failed; 1600 filtered out"
+  },
+  "new_or_fixed_cases": [
+    {
+      "name": "p0e_adjudicator_can_use_distinct_registered_reviewer_lease_only",
+      "status": "fixed",
+      "fix": "补 #[test] 属性（原函数因缺属性从未被执行）；验证正向 + token/fencing + 同一 agent/instance/session 逐项拒绝"
+    },
+    {
+      "name": "p0e_adjudication_reviewer_lease_negative_holder_and_expiry",
+      "status": "added",
+      "cover": "unregistered holder / role!=reviewer holder / session 不匹配 / inactive holder / 缺 reviewer lease"
+    },
+    {
+      "name": "p0e_validate_reviewer_lease_uses_plain_identity_path",
+      "status": "added",
+      "cover": "跨角色方法仅接受 adjudicator role（reviewer 伪装被拒绝）；普通同一 holder 路径不受影响"
+    }
+  ],
+  "coverage_matrix": {
+    "positive_distinct_reviewer_adjudicator": "covered",
+    "same_agent_rejected": "covered",
+    "same_agent_instance_rejected": "covered",
+    "same_session_rejected": "covered",
+    "holder_non_reviewer_rejected": "covered",
+    "holder_inactive_rejected": "covered",
+    "holder_unregistered_rejected": "covered",
+    "holder_session_mismatch_rejected": "covered",
+    "token_mismatch_rejected": "covered",
+    "fencing_stale_rejected": "covered",
+    "no_reviewer_lease_rejected": "covered",
+    "adjudicator_role_required": "covered"
+  },
+  "file_change": {
+    "file": "rust_ext/src/daemon/task_collab_tests_lease.rs",
+    "diff": "+132 lines",
+    "allowed_path": "rust_ext/src/daemon/*test*.rs",
+    "in_contract_allowed_paths": true
+  },
+  "pre_existing_failures_noted": [
+    "cargo test --lib daemon::task_collab::tests 全量存在 3 个 core/governance 预失败（test_task_collab_full_lifecycle 事件计数 7!=3、migrates_v46 断言、orphan_claim_recovery），经 git stash 验证为 HEAD 基线既有缺陷，与 P0-E 无关（归属 P0-B workspace authority 审计事件计数），不在本 step 范围修复"
+  ]
+}

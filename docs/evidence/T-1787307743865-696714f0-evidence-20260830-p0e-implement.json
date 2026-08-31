@@ -1,0 +1,52 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787307743865-696714f0",
+    "step_id": "S-1787307743865-696e98c4",
+    "step": "implement",
+    "scope": "P0-E: validate_reviewer_lease_for_adjudication 实现审计与验证",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "implementation_audit": {
+    "symbol": "validate_reviewer_lease_for_adjudication",
+    "location": "rust_ext/src/daemon/task_collab_lifecycle_ops.rs:274",
+    "committed_in": "94fffaed37f9825e9a67c69627cb8bc5f2d2ced1",
+    "provenance": "task_collab.rs 按职责拆分提交 4fac5a7 引入（HEAD 已存在）",
+    "behavior_matrix": {
+      "adjudicator_role_required": "E_GOVERNANCE_ADJUDICATOR_ROLE_REQUIRED",
+      "lease_clock_unavailable": "E_LEASE_CLOCK_UNAVAILABLE",
+      "no_active_reviewer_lease": "E_LEASE_NOT_FOUND",
+      "token_hash_mismatch": "E_LEASE_TOKEN_MISMATCH",
+      "lease_expired": "E_LEASE_EXPIRED",
+      "fencing_counter_stale": "E_LEASE_FENCING_STALE",
+      "reviewer_holder_unregistered": "E_GOVERNANCE_REVIEWER_UNREGISTERED",
+      "reviewer_holder_invalid_role_session": "E_GOVERNANCE_REVIEWER_INVALID",
+      "same_agent": "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT",
+      "same_agent_instance": "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_INSTANCE",
+      "same_session": "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION",
+      "success": "Ok(())"
+    },
+    "findings": [
+      "核心实现已存在于 HEAD；本次不重复实现，仅审计语义正确性并补齐缺失的 #[test] 标记（原测试函数缺 #[test] 属性导致未被执行）",
+      "普通 mutation 路径 validate_lease_for_mutation 保持同一 holder 语义，未被改动；P0-E 仅新增跨角色委托路径"
+    ]
+  },
+  "verification": {
+    "test_scope": "cargo test --lib p0e",
+    "tests_passed": 3,
+    "result": "3 passed; 0 failed"
+  },
+  "deployment_provenance": {
+    "git_head": "94fffaed37f9825e9a67c69627cb8bc5f2d2ced1",
+    "dirty_worktree": "task_collab_tests_lease.rs 有未提交改动（本任务新增测试）",
+    "rust_binary": "cargo test 编译产物（debug）"
+  },
+  "note": "step#0 implement 完成：审计确认 P0-E 核心函数语义符合 Contract 验收；实现代码已在 HEAD 提交，本次工作为审计+验证+补测试标记"
+}

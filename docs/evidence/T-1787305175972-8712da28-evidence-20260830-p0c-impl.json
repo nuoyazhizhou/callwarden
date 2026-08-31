@@ -1,0 +1,103 @@
+{
+  "manifest_name": "T-1787305175972-8712da28-evidence-p0c-impl",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305175972-8712da28",
+  "step_id": "S-1787305175973-87200928",
+  "step_action": "implement",
+  "role": "implementer",
+  "scope": "P0-C Task Contract bootstrap / publication 实现核对 + wiring + 定向测试 + 运行时注册验证",
+  "outcome": "implemented_and_runtime_registered",
+  "governance_claim": {
+    "this_is_real_daemon_client_capability_verification": true,
+    "no_sql_fallback": true,
+    "no_fabricated_binding_contract_lease_evidence": true
+  },
+  "workspace_authority": {
+    "workspace_id": 1046,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_registered_at": 1788093800,
+    "client_view_root": "c:/git_work/callwarden",
+    "host_real_root": "\\\\?\\C:\\git_work\\callwarden"
+  },
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "session_id": "exec-p0c-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {
+    "lease_id": "L-d02206e3ef9ddea6",
+    "role": "executor",
+    "fencing_counter": 1,
+    "acquired_at": 1788094566
+  },
+  "deployment_provenance": {
+    "git_head_commit_sha": "afd746c5763b3206f0a0dd5657d5a20e2066ca8c",
+    "git_head_short": "afd746c",
+    "daemon_pid": 13424,
+    "daemon_binary_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "daemon_binary_sha256": "94BDBAF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15",
+    "daemon_binary_built_utc": "2026-08-30T12:25:49",
+    "transport": "http_thin_client"
+  },
+  "implementation_audit": {
+    "rust_domain": [
+      "rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs",
+      "rust_ext/src/daemon/task_loop/mod.rs"
+    ],
+    "rust_adapter_handler": "rust_ext/src/daemon/task_collab_contract.rs::handle_task_contract_bootstrap",
+    "rust_dispatch_routes": ["dispatch.rs:1253", "dispatch.rs:2190", "dispatch.rs:2882"],
+    "python_client": "server/daemon_client.py::task_contract_bootstrap (daemon-only, call task.contract_bootstrap)",
+    "python_cli": "cli/main.py::contract-bootstrap (role=adjudicator only, daemon-only, no local fallback)"
+  },
+  "handler_guard_ordering": [
+    "workspace_id>0 (E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED)",
+    "params required (task_id/request_id/workspace_instance_id)",
+    "envelope / identity required",
+    "role==adjudicator (E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED)",
+    "lease token+fencing required",
+    "evidence path+hash required",
+    "dedupe ledger (replay/request mismatch fail-closed)",
+    "task bound workspace authority capture check",
+    "registered identity",
+    "reviewer lease for adjudication",
+    "empty-projection append-only bootstrap (ERR_BOOTSTRAP_NOT_EMPTY)",
+    "task status unchanged"
+  ],
+  "verification": {
+    "cargo_test_task_contract_bootstrap": {
+      "filter": "task_contract_bootstrap",
+      "passed": 4,
+      "failed": 0,
+      "cases": [
+        "bootstrap_appends_complete_governance_projection_without_task_mutation",
+        "bootstrap_rejects_any_existing_projection_append_only",
+        "bootstrap_allowlist_derives_roles_without_legacy_role_contracts",
+        "bootstrap_allowlist_rejects_non_allowlisted_task"
+      ]
+    },
+    "cargo_test_contract_bootstrap_suite": {
+      "filter": "contract_bootstrap",
+      "passed": 5,
+      "failed": 0,
+      "extra_case": "test_contract_bootstrap_role_worker_v1_requires_expected_adjudicator_worker"
+    },
+    "out_of_scope_pre_existing_failures": {
+      "note": "task_collab::tests core/governance 3 failures (full_lifecycle, v46->v50 migration, orphan_claim_recovery) 来自其它 agent dirty worktree (task_collab_tests_governance.rs / task_collab_verdict.rs 已修改)，不在 P0-C allowed_paths",
+      "allowed_paths_only": true
+    },
+    "runtime_rpc_registered": true,
+    "runtime_probe": {
+      "script": "deliverables/software-company/_p0c_probe_registered.py",
+      "probe_1": {"workspace_id": 0, "result": "E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED", "method_known": true},
+      "probe_2": {"workspace_id": 1046, "role": "executor", "result": "E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED", "method_known": true}
+    }
+  },
+  "handoff": {
+    "from_role": "executor",
+    "outcome": "implementer_ready_for_review",
+    "next_role": "reviewer",
+    "next_action": "独立核验 task.contract_bootstrap 仅初始化空 Task Contract、严格校验收 authority/envelope/identity/lease/evidence/ledger，以及全部 runtime proof",
+    "independence_requirement": "required"
+  }
+}

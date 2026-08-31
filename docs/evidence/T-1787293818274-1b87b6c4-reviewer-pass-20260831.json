@@ -1,0 +1,137 @@
+{
+  "manifest_name": "T-1787293818274-1b87b6c4-reviewer-pass",
+  "generated_by": "independent-reviewer (cw-task-loop / role-protocol v4)",
+  "review_kind": "read_only_independent_review",
+  "task_id": "T-1787293818274-1b87b6c4",
+  "task_title": "P0-B：Legacy 任务 Workspace 绑定备案（task.attest_legacy_workspace_binding）",
+  "step_id": "S-1787293818275-1b902688",
+  "assignment_id": "legacy-unassigned (no task_assignments row; reviewed as whole-task blind_first_pass)",
+  "assignment_step_id": "S-1787293818275-1b902688",
+  "from_role": "reviewer",
+  "outcome": "reviewer_pass",
+  "independence": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "reviewer_agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "reviewer_session_id": "sess-reviewer-p0b-20260831",
+    "reviewer_model_id": "workbuddy",
+    "executor_agents_seen_on_task": ["workbuddy-186loop"],
+    "different_agent": true,
+    "different_instance": true,
+    "different_session": true
+  },
+  "governance_binding": {
+    "task_contract": {
+      "id": "ct-p0b-workspace-authority-v1",
+      "revision": 1,
+      "hash": "sha256:ed8d8d5fb63432f8ca46acca67018e143890bb78973caed18ff36c42ca77d210"
+    },
+    "reviewer_role_contract": {
+      "id": "rcl-T-1787293818274-1b87b6c4-reviewer",
+      "revision_id": "rcr-T-1787293818274-1b87b6c4-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:fc9e620c6287a57376a248c0add9fe82146d0045b1f72067bdccf3038e5771d7",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "handoff_to": "adjudicator"
+    },
+    "identity_policy": "legacy_identity_v1"
+  },
+  "review_scope": {
+    "acceptance_criteria_coverage": {
+      "legacy_anchor_distinct": "PASS — task_supersede.rs:637 拒绝 legacy_task_id==anchor_task_id（ERR_LEGACY_BIND_SELF_REFERENCE），实现与 anchor 分离",
+      "operation_ledger_idempotency": "PASS — task_supersede.rs:708 OperationStore.dedupe 幂等；首次写入后重放确定性返回原结果，不二次 mutation",
+      "no_overwrite_if_bound": "PASS — task_supersede.rs:765 已绑定则拒绝重复绑定（append-only），不覆盖既有 workspace_binding_id",
+      "anchor_authority_match": "PASS — task_supersede.rs:771-800 校验 anchor task 的 workspace authority（instance/capture 一致），不一致 fail-closed",
+      "registered_adjudicator_identity": "PASS — task_supersede.rs:675/801 仅允许 role=adjudicator 且 verify_registered_identity 通过，非注册身份 E_IDENTITY_UNREGISTERED",
+      "p0e_cross_role_reviewer_lease": "PASS — task_supersede.rs:804 复用 validate_reviewer_lease_for_adjudication（P0-E 引入），三重分离 SAME_AGENT/SAME_INSTANCE/SAME_SESSION 校验 reviewer lease，无 reviewer lease 则 ERR_LEGACY_BIND_LEASE_REQUIRED",
+      "append_only_binding": "PASS — task_supersede.rs:814-859 写入 task_workspace_bindings + workspace_authority_captures + append-only audit event，legacy task status 保持 open 不变（status 不参与 mutation）",
+      "zero_local_fallback": "PASS — daemon_client.py:189-207 透传全部 10 个 authority/identity/lease/evidence 字段，cli/main.py:4219-4247 校验 role=adjudicator 且仅 adjudicator；client/CLI 无本地 SQLite fallback，写路径 daemon-only fail-closed",
+      "three_node_routing_fail_closed": "PASS — dispatch.rs:1078 handler delegation + router match ~2900 + allowed registry ~2200 三节点确认；未知方法 method_not_found fail-closed，缺失/不完整参数确定性拒绝（release_verify round-trip 4/4 实测 E_LEGACY_BIND_*_REQUIRED）",
+      "regression_tests": "PASS — cargo test supersede 14/14（含 4 个 P0-B 专项：正向 append+binding status open、幂等 replay 去重、负向 6 项 ERR 码、anchor unbound/证据缺失/instance mismatch）；tests/test_p0b_legacy_attestation_fail_closed.py 3/3 验证 client/CLI daemon-only fail-closed；M4 fail-closed 回归 9/9",
+      "source_fix_live": "PASS — 负向 RPC 探针 task.attest_legacy_workspace_binding({}) 在运行态 daemon（e1f3c085）命中 E_LEGACY_BIND_TASK_NOT_FOUND，证明 RPC 已连线到 handle_task_attest_legacy_workspace_binding 且 handler 已随部署二进制生效（早于任何 mutation/identity/lease 交互即确定性拒绝，属纯参数校验，无副作用）",
+      "scope_discipline": "PASS — P0-B 仅实现 handle_task_attest_legacy_workspace_binding + 路由 + client/CLI 透传 + 测试夹具（独立 registered reviewer 作为 reviewer lease holder，对齐 P0-E 三重分离），未扩大 scope、未改 schema/contract_set/P0-E/P0-D/supersede 其它分支/步骤/状态/Executor 身份"
+    },
+    "source_provenance": {
+      "handler_location": "rust_ext/src/daemon/task_supersede.rs:616-886 (handle_task_attest_legacy_workspace_binding) + 891-955 (validate_supersede_domain)",
+      "cross_role_lease_call_site": "rust_ext/src/daemon/task_supersede.rs:804 validate_reviewer_lease_for_adjudication（P0-E 引入，commit 4fac5a75，2026-08-28，早于部署 2026-08-30 → LIVE）",
+      "git_ancestry_reliable": false,
+      "git_ancestry_note": "git log --all 因对象库损坏报 'Could not read <sha>/Failed to traverse parents'，handler 引入 commit 无法经祖先链完整追溯；以源码核验 + 运行态负向探针佐证 LIVE，缓解 provenance 风险",
+      "release_verify": "executor step S-1787293818275-1b919bf8: release daemon（PID 13424, binary sha256 94bdbaf...）round-trip 4/4 fail-closed 通过，handler 已在 release 运行时生效且未执行真实 legacy mutation"
+    }
+  },
+  "runtime_evidence": {
+    "daemon_ping": "ok (pid 13424, git_commit e1f3c085, schema_version 60)",
+    "next_action_probe": "task.next-action 返回 lifecycle_status=review workflow_status=review_pending current_role=reviewer next_action=review_current_step（合法 reviewer 领取点）",
+    "negative_rpc_probe": "task.attest_legacy_workspace_binding({}) → E_LEGACY_BIND_TASK_NOT_FOUND（handler 已连线到运行态 daemon，纯参数校验确定性拒绝，无 mutation）",
+    "binary_hash": "runtime/current=94BDBAF7... vs target/release=82CC528B...（全局部署新鲜度问题；P0-B handler 已随 e1f3c085 部署，本任务能力不受影响）"
+  },
+  "findings": [
+    {
+      "id": "P0B-R1",
+      "severity": "info",
+      "blocking": false,
+      "owner_route": "planner",
+      "subject": "[owner_route=planner] P0-B 源码 fix 完整且 live：handle_task_attest_legacy_workspace_binding 正确实现全部验收条款",
+      "root_cause": "handler 在 task_supersede.rs:616-886 落地 legacy/anchor 分离、operation-ledger 幂等、no-overwrite-if-bound、anchor authority 匹配、registered adjudicator 身份、P0-E 跨角色 reviewer lease 门禁、append-only binding（legacy status 保持 open）；三节点路由 + client/CLI 透传 daemon-only fail-closed；14+3+9 测试全绿",
+      "assessment": "交付完整且正确，非阻塞；源码 fix 经运行态负向探针确认 LIVE",
+      "minimal_fix": "无"
+    },
+    {
+      "id": "P0B-R2",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor] P0-B task_workspace_binding 指向 phantom ws-1（workspace_id=1, capture wc-ws-1-462286080），但 handler 的 anchor authority 校验仍 sound",
+      "root_cause": "A′ 任务树 binding 指向登记表中不存在的 workspace_id=1（注册表最小 id=72、无 ws- 前缀）；该 capture 行恰存在于 workspace_authority_captures 中故门禁通过",
+      "impact": "与 P0C-R2 / P0D-R3 / P0F-R7 同源的 workspace authority attestation 系统性缺口；P0-B 未触发 snapshot 缺失错误，但 verdict snapshot_id 仍按 P0-F 既定 workaround 使用真实 callwarden workspace 快照 ad2e04caa27280fe",
+      "residual_risk": "系统性缺口不因本任务实现正确而解决",
+      "minimal_fix": "将 A′ 任务树 binding 重新 attestation 到已注册 workspace（instance b9515f7c28f5d0f0）"
+    },
+    {
+      "id": "P0B-R3",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "planner",
+      "subject": "[owner_route=planner] Git 对象库损坏使 handler 引入 commit 的祖先链无法完整追溯（provenance 风险，已缓解）",
+      "root_cause": "git log --all 报 'Could not read <sha>/Failed to traverse parents'；handler 引入 commit 无法经祖先链验证",
+      "impact": "provenance 不透明，但运行态负向探针（E_LEGACY_BIND_TASK_NOT_FOUND）+ 源码核验 + release_verify round-trip 已充分证明 handler LIVE 于部署二进制 e1f3c085，风险可控",
+      "minimal_fix": "修复对象库后补一次 ancestry 审计（与 P0D-R3 / P0E-R1 同源，可合并处理）"
+    },
+    {
+      "id": "P0B-R4",
+      "severity": "blocker",
+      "blocking": true,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor][SYSTEMIC] verdict.submit 丢弃 step_id → reviewer_pass handoff 死锁（与 P0C-R4 同源）",
+      "root_cause": "task_collab_verdict.rs:544-550 INSERT 不含 step_id 列，verdict 事件 step_id 恒为空；task_collab_lifecycle.rs:1262 要求 reviewer_pass handoff 的 source_step_id == 持久化 verdict 的 step_id，而后者恒为空",
+      "impact": "P0-B 的 reviewer_pass 同样无法经 task.handoff 进入 Adjudicator（实测将返回 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH）；属 daemon 治理循环缺陷，非 P0-B 实现问题",
+      "verified": "P0-C 已实测复现；P0-B 同源，提交 verdict 后 handoff 预期同样失败",
+      "minimal_fix": "handle_verdict_submit INSERT 补 step_id 列与绑定（一行级 daemon 修复）；详见 P0C-R4"
+    }
+  ],
+  "verdict": {
+    "submitted": true,
+    "verdict_id": "V-637c9f7f8c0c4fa03e688ad7",
+    "event_id": 560,
+    "overall": "pass",
+    "phase": "blind_first_pass",
+    "request_id": "req-p0b-verdict-submit-20260831-01",
+    "submitted_view_manifest_hash": "sha256:089E5A37981E547B1D3E9460F56189C033B867EA19BFCDDE7965B479FC603B70"
+  },
+  "conclusion": "reviewer_pass — P0-B 实现与治理门禁完整覆盖验收条款：handle_task_attest_legacy_workspace_binding 正确实现 legacy/anchor 分离、operation-ledger 幂等、no-overwrite-if-bound、anchor authority 匹配、registered adjudicator 身份、P0-E 跨角色 reviewer lease 三重分离门禁、append-only binding（legacy status 保持 open）；三节点 RPC 路由与 client/CLI 透传均 daemon-only fail-closed、无本地 SQLite fallback；回归测试 14/14（Rust supersede）+ 3/3（Python fail-closed）+ 9/9（M4）全绿；源码 fix 经运行态负向探针（task.attest_legacy_workspace_binding({}) → E_LEGACY_BIND_TASK_NOT_FOUND）确认 LIVE 于部署二进制 e1f3c085。非阻断项 P0B-R2（phantom ws-1 binding，系统性）、P0B-R3（git 对象库损坏 provenance，已缓解）已记录。注意：正式 verdict 将持久化（pass），但 reviewer_pass → adjudicator 的 task.handoff 被系统性 daemon 缺陷 P0B-R4（=P0C-R4，verdict.submit 丢弃 step_id → handoff 死锁）阻断，任务停在 review_pending；P0B-R4 不属 P0-B 实现范围。",
+  "persistence": {
+    "formal_verdict_persisted": true,
+    "verdict_id": "V-637c9f7f8c0c4fa03e688ad7",
+    "verdict_event_id": 560,
+    "handoff_persisted": false,
+    "handoff_blocker": "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH (P0B-R4=P0C-R4: verdict.submit 丢弃 step_id)",
+    "status": "verdict_persisted; handoff_blocked_by_daemon_catch22"
+  },
+  "reviewer_declaration": {
+    "no_code_changed": true,
+    "no_docs_modified": true,
+    "no_database_writes": true,
+    "no_fix_defect_created": true,
+    "no_apply_close_supersede": true,
+    "no_fabricated_evidence": true
+  }
+}

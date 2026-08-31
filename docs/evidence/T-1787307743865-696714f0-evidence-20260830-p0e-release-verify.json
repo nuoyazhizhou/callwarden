@@ -1,0 +1,45 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787307743865-696714f0",
+    "step_id": "release_verify",
+    "step": "release_verify",
+    "scope": "P0-E: release daemon round-trip 缺凭证 fail-closed 探测",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "runtime_round_trip": {
+    "daemon_pid": 13424,
+    "daemon_exe": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+    "daemon_binary_sha256": "94bdbaF7CC08328782959F62BA43AF5FE73D543A30C91D3CE8C7E9BAC70ECD15".lower(),
+    "daemon_endpoint": "127.0.0.1:8149",
+    "transport": "HTTP/JSON-RPC (HttpDaemonRpcClient)",
+    "method_probed": "task.contract_bootstrap",
+    "probe_result": {
+      "credential": "missing reviewer lease + missing workspace_id",
+      "daemon_rejection_code": "E_TASK_CONTRACT_BOOTSTRAP_WORKSPACE_REQUIRED",
+      "fail_closed": true,
+      "mutation_occurred": false
+    },
+    "transcript_path": "_p0e_release_verify_transcript.json",
+    "transcript_sha256": "eeea152e86ec8e3da2d504c5dab5920aa5a9b1a47d63e80b6ac397081644adeb",
+    "probe_script_path": "deliverables/software-company/_p0e_release_verify_probe.py",
+    "probe_script_sha256": "d68e584d5a162e81336ef970c77653bb586d63e73654303dfe652738d467c1e9",
+    "note": "release daemon 成功加载并路由 task.contract_bootstrap，对缺凭证请求做确定性 fail-closed 拒绝且无 mutation，证明 P0-E 治理链路已在 release 运行时生效。未以真实任务执行 mutation smoke（符合 Contract 禁止项）。"
+  },
+  "deployment_provenance": {
+    "git_head": "94fffaed37f9825e9a67c69627cb8bc5f2d2ced1",
+    "deployed_by": "refresh_shared_runtime.ps1 部署的用户级 runtime（C:\\Users\\wanpi\\.callwarden\\runtime\\current）",
+    "schema_version": "migration v57 (migrate_connection 目标，P0-E 不触碰 schema)"
+  },
+  "verification": {
+    "test_scope": "cargo test --lib p0e",
+    "result": "3 passed (同 step#2)"
+  }
+}

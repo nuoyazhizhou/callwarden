@@ -1,0 +1,131 @@
+{
+  "manifest_name": "T-1787305175972-8712da28-reviewer-pass",
+  "generated_by": "independent-reviewer (cw-task-loop / role-protocol v4)",
+  "review_kind": "read_only_independent_review",
+  "task_id": "T-1787305175972-8712da28",
+  "task_title": "P0-C：Task Contract bootstrap / publication",
+  "step_id": null,
+  "assignment_id": "A-8b2fcf77afed55419b8524f1",
+  "assignment_step_id": "S-1787305175973-8723a2a4",
+  "from_role": "reviewer",
+  "outcome": "reviewer_pass",
+  "independence": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "reviewer_agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "reviewer_session_id": "sess-reviewer-p0c-20260831",
+    "reviewer_model_id": "workbuddy",
+    "executor_agents_seen_on_task": ["workbuddy-186loop"],
+    "different_agent": true,
+    "different_instance": true,
+    "different_session": true
+  },
+  "governance_binding": {
+    "task_contract": {
+      "id": "ct-p0c-adjudication-bridge-v1",
+      "revision": 1,
+      "hash": "sha256:fb0ca5d44e2ddae7ee79f17ae0a2b377fac88be92350dc9e1c6ade860817ff90"
+    },
+    "reviewer_role_contract": {
+      "id": "rcl-T-1787305175972-8712da28-reviewer",
+      "revision_id": "rcr-T-1787305175972-8712da28-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:7ebce00216b4f04f8090c66c56064171890b6ba4adb9e572ead39ee754f38304",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "handoff_to": "adjudicator"
+    },
+    "identity_policy": "legacy_identity_v1"
+  },
+  "review_scope": {
+    "acceptance_criteria_coverage": {
+      "empty_only_init": "PASS — no_governance_projection (task_contract_bootstrap.rs:141-153) 拒绝任何已存在 task_contract_revisions / role_contract_lineages / role_contract_revisions / task_step_role_contract_bindings 的任务 (E_TASK_CONTRACT_BOOTSTRAP_NOT_EMPTY)",
+      "revision_eq_1_and_c14n": "PASS — task_contract_payload (':116-139) 强制 contract_id 非空、revision==1、合法 profile；envelope 去除 contract_hash/created_at/created_by 后 hash_value(c14n) 规范化散列",
+      "workspace_binding_capture_identity_lease_evidence": "PASS — handle_task_contract_bootstrap (task_collab_contract.rs:760-917) 校验 workspace_id>0、envelope、完整 identity、evidence_path/evidence_hash；task_bound_workspace_id + workspace_authority_captures 实例一致性 (E_WORKSPACE_AUTHORITY_MISMATCH)、verify_registered_identity、validate_reviewer_lease_for_adjudication + fencing",
+      "role_contract_lineage_revision_and_executor_step_binding": "PASS — bootstrap_task_governance_contracts (':156-244) 为 executor/reviewer/adjudicator 建立 lineage/revision 1，并为 pending/in_progress step 写 task_step_role_contract_bindings",
+      "negative_paths": "PASS — 已存在 revision(NOT_EMPTY)/缺 binding(AUTHORITY_UNAVAILABLE)/坏 envelope(ENVELOPE_REQUIRED|INVALID)/旧 capture(WORKSPACE_AUTHORITY_MISMATCH) 均在 handler 早期 reject；坏 hash 由服务端权威重算（安全-by-construction，见 P0C-R3）"
+    },
+    "source_provenance": {
+      "impl_file": "rust_ext/src/daemon/task_loop/task_contract_bootstrap.rs (22656 bytes, mtime 2026-08-29 23:19)",
+      "last_commit_touching_impl": "844a54f9470b59eff9baa111ce0c794e276f9155 (2026-08-29 17:24:23)",
+      "ancestor_of_deployed_e1f3c085": true,
+      "conclusion": "P0-C 实现代码已包含在部署的 daemon 二进制中（live RPC 实测可 dispatch）"
+    }
+  },
+  "runtime_evidence": {
+    "daemon_ping": "ok (pid 13424, git_commit e1f3c085, schema_version 60)",
+    "rpc_positive_dispatch": "task.contract_bootstrap 到达 handler，缺 envelope 返回 E_TASK_CONTRACT_BOOTSTRAP_ENVELOPE_REQUIRED（证明方法在 live daemon 中可 dispatch，非 method_not_found）",
+    "rpc_negative_identity": "缺/错 identity 返回 E_TASK_CONTRACT_BOOTSTRAP_IDENTITY_REQUIRED",
+    "rpc_negative_role_gate": "nested identity role=reviewer 返回 E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED: 仅允许 role=adjudicator，实际 role=reviewer",
+    "capability_registry_note": "daemon capability 注册表对 task.contract_bootstrap 报 METHOD_NOT_FOUND，但 dispatch handler 实测可运行 -> registry/dispatch 漂移（见 P0C-R1，非阻断）",
+    "binary_hash": "runtime/current=94BDBAF7... vs target/release=82CC528B...（不一致；全局部署新鲜度问题，但 P0-C 代码已随 e1f3c085 部署，本任务能力不受影响）"
+  },
+  "findings": [
+    {
+      "id": "P0C-R1",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor] capability registry 与 dispatch 漂移：注册表报 task.contract_bootstrap METHOD_NOT_FOUND，但 dispatch handler 实测可运行",
+      "root_cause": "静态能力注册表数组未包含已在 dispatch 中接线的方法（注册表条目 commit 晚于部署 commit e1f3c085，或静态数组未同步）",
+      "impact": "客户端依赖 capability registry 发现方法时会误判方法缺失；治理可观测性受损",
+      "minimal_fix": "在 capability registry 的 methods 列表补 task.contract_bootstrap（及 task.contract_set/publish 等同族方法），使注册表与 dispatch 一致",
+      "acceptance": "cw daemon capability 列出 task.contract_bootstrap 且 status=available"
+    },
+    {
+      "id": "P0C-R2",
+      "severity": "warn",
+      "blocking": false,
+      "owner_route": "planner",
+      "subject": "[owner_route=planner] P0-C 任务 review_input_snapshot=no_snapshot（绑定 phantom workspace ws-1，注册表最小 id=72、无 ws- 前缀）",
+      "root_cause": "A′ 任务树 workspace binding 指向不存在的 workspace，无 authority capture 可绑定",
+      "impact": "reviewer verdict 的 snapshot_id 无法取自本任务自有 workspace；需以真实 callwarden workspace 快照代填（P0-F 已建立 workaround）",
+      "residual_risk": "系统性的 workspace authority attestation 缺口（与 P0F-R7 同源），不因本任务实现正确而解决",
+      "minimal_fix": "将 A′ 任务树 binding 重新 attestation 到已注册 workspace（instance b9515f7c28f5d0f0）"
+    },
+    {
+      "id": "P0C-R3",
+      "severity": "info",
+      "blocking": false,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor] envelope 内 contract_hash 被静默丢弃并由服务端重算（task_contract_payload ':131'）",
+      "root_cause": "服务端对 contract_hash 取权威：去除输入 contract_hash 后重新规范化散列；输入 hash 不被信任也不被校验",
+      "assessment": "安全-by-construction（服务端权威），但『坏 hash』负向路径未被显式拒绝，仅被忽略；建议在文档/受理处注明此语义，避免调用方误以为可携带自签 hash",
+      "minimal_fix": "在 envelope 校验文档或受理日志中明确『contract_hash 由服务端权威重算，输入值忽略』"
+    },
+    {
+      "id": "P0C-R4",
+      "severity": "blocker",
+      "blocking": true,
+      "owner_route": "executor",
+      "subject": "[owner_route=executor][SYSTEMIC] verdict.submit 接受但丢弃 step_id → reviewer_pass handoff 死锁（影响 P0-B~P0-F 全部 PASS 任务）",
+      "root_cause": "task_collab_verdict.rs:544-550 的 INSERT 列清单不含 step_id（仅 required('step_id') 校验入参），verdict 事件 step_id 列恒为空；task_collab_lifecycle.rs:1262 要求 reviewer_pass handoff 的 source_step_id == 持久化 verdict 的 step_id，而后者恒为空 → E_HANDOFF_VERDICT_PROVENANCE_MISMATCH。只读 DB 实测：V-4c82575ca6780ba3f0a7aa7a 的 step_id 列='' 但 reviewer_identity 内 step_id='S-1787305175973-8723a2a4'（入参被收下但未落库）。",
+      "impact": "当前 daemon (git_commit e1f3c085) 上任何 reviewer_pass handoff 都无法成功，PASS 结论无法进入 Adjudicator 阶段；governance loop 的 reviewer→adjudicator 推进整体阻断。reviewer_blocked handoff 不受影响（走 step_id=null 分支）。",
+      "minimal_fix": "在 handle_verdict_submit 的 INSERT 列清单与 VALUES 中补 step_id（绑定入参 step_id），使 verdict 事件 step_id 列与 reviewer_identity 内 step_id 一致；重编译部署后 reviewer_pass handoff 即可匹配。属一行级 daemon 修复。",
+      "acceptance": "对任一已提交 pass verdict 的任务执行 task.handoff reviewer_pass 成功（event 持久化、workflow_status 进入 adjudication_pending），不再返回 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH",
+      "verified": "本任务实测复现：handoff 返回 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH（见 runtime_evidence.handoff_attempt）"
+    }
+  ],
+  "verdict": {
+    "submitted": true,
+    "verdict_id": "V-4c82575ca6780ba3f0a7aa7a",
+    "event_id": 557,
+    "overall": "pass",
+    "phase": "blind_first_pass",
+    "request_id": "req-p0c-verdict-submit-20260831-01"
+  },
+  "conclusion": "reviewer_pass — P0-C 实现与治理门禁完整覆盖验收条款，live daemon 实测可 dispatch 并正确 reject 负向请求（identity/role/envelope）。无实现层阻断 finding。非阻断项 P0C-R1（registry/dispatch 漂移）、P0C-R2（phantom ws-1 snapshot，系统性）、P0C-R3（hash 重算语义）已记录。注意：正式 verdict 已持久化（V-4c82575ca6780ba3f0a7aa7a, pass），但 reviewer_pass → adjudicator 的 task.handoff 被系统性 daemon 缺陷 P0C-R4（verdict.submit 丢弃 step_id → handoff 死锁）阻断，无法落库；任务停在 review_pending。P0C-R4 为 daemon 治理循环缺陷，owner_route=executor，不属 P0-C 实现范围。",
+  "persistence": {
+    "formal_verdict_persisted": true,
+    "verdict_id": "V-4c82575ca6780ba3f0a7aa7a",
+    "handoff_persisted": false,
+    "handoff_blocker": "E_HANDOFF_VERDICT_PROVENANCE_MISMATCH (P0C-R4: verdict.submit 丢弃 step_id)",
+    "status": "verdict_persisted; handoff_blocked_by_daemon_catch22"
+  },
+  "reviewer_declaration": {
+    "no_code_changed": true,
+    "no_docs_modified": true,
+    "no_database_writes": true,
+    "no_fix_defect_created": true,
+    "no_apply_close_supersede": true,
+    "no_fabricated_evidence": true
+  }
+}

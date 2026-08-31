@@ -1,0 +1,60 @@
+{
+  "evidence_manifest": {
+    "task_id": "T-1787307743865-696714f0",
+    "step_id": "wire",
+    "step": "wire",
+    "scope": "P0-E: 治理调用点 wiring 审计确认",
+    "generated_at": "2026-08-30",
+    "generated_by": {
+      "role": "executor",
+      "runtime_role": "implementer",
+      "agent_id": "cw-executor-p0e",
+      "session_id": "exec-p0e-session",
+      "model_id": "executor-model",
+      "identity_policy": "legacy_identity_v1"
+    }
+  },
+  "wiring_audit": {
+    "target_call_sites": [
+      {
+        "method": "task.supersede",
+        "file": "rust_ext/src/daemon/task_supersede.rs:453",
+        "uses_validate_reviewer_lease_for_adjudication": true,
+        "fencing_mapping": "E_LEASE_FENCING_STALE -> ERR_SUPERSEDE_FENCED；其余稳定码传播",
+        "second_site": "task_supersede.rs:804"
+      },
+      {
+        "method": "task.contract_bootstrap",
+        "file": "rust_ext/src/daemon/task_collab_contract.rs:909",
+        "uses_validate_reviewer_lease_for_adjudication": true,
+        "fencing_mapping": "E_LEASE_FENCING_STALE -> E_TASK_CONTRACT_BOOTSTRAP_FENCED",
+        "additional_site": "task_collab_contract.rs:1260, 1755"
+      },
+      {
+        "method": "task.attest_legacy_workspace_binding (task_collab_lease)",
+        "file": "rust_ext/src/daemon/task_collab_lease.rs:741",
+        "uses_validate_reviewer_lease_for_adjudication": true
+      },
+      {
+        "method": "task.reconcile (apply)",
+        "file": "rust_ext/src/daemon/task_collab_query.rs:202",
+        "uses_validate_reviewer_lease_for_adjudication": true
+      }
+    ],
+    "untouched_paths": [
+      "task.apply",
+      "task.close",
+      "普通 claim/report/handoff",
+      "validate_lease_for_mutation（同一 holder 语义保留）"
+    ],
+    "verify": "git 审计确认 P0-E 合同列出的全部治理 mutation 调用点均通过 validate_reviewer_lease_for_adjudication 校验，普通 mutation 路径未被改动"
+  },
+  "verification": {
+    "test_scope": "cargo test --lib p0e",
+    "result": "3 passed"
+  },
+  "deployment_provenance": {
+    "git_head": "94fffaed37f9825e9a67c69627cb8bc5f2d2ced1"
+  },
+  "note": "step#1 wire 完成：三个治理调用点（supersede / contract_bootstrap / attest_legacy）均已接线 P0-E 校验，本次审计确认无遗漏、无越界改动"
+}

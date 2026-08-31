@@ -1,0 +1,33 @@
+{
+  "manifest_name": "T-1787305175972-8712da28-evidence-p0c-wire",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305175972-8712da28",
+  "step_id": "S-1787305175973-87219540",
+  "step_action": "wire",
+  "target_symbol": "task.contract_bootstrap",
+  "target_files": ["rust_ext/src/daemon/task_collab.rs", "rust_ext/src/daemon/dispatch.rs"],
+  "role": "implementer",
+  "scope": "P0-C protected mutation 路由接线核对（dispatch handler shim + method route + 独立于 task.contract_set）",
+  "outcome": "wired_and_verified",
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "session_id": "exec-p0c-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {"lease_id": "L-eb07cbf122e08c47", "role": "executor", "fencing_counter": 2},
+  "dispatch_route_verification": {
+    "shim_handler": "dispatch.rs:1253-1261 (handle_task_contract_bootstrap -> store.handle_task_contract_bootstrap)",
+    "protected_method_table": "dispatch.rs:2190 ('task.contract_bootstrap' registered)",
+    "dispatch_match": "dispatch.rs:2882 'task.contract_bootstrap' => state.handle_task_contract_bootstrap",
+    "adapter_handler": "task_collab_contract.rs:760 handle_task_contract_bootstrap",
+    "store_type": "task_collab_types::TaskCollabStore (pub use in task_collab.rs)"
+  },
+  "check_items": {
+    "protected_mutation": true,
+    "daemon_only_route": true,
+    "no_contract_set_confusion": true
+  },
+  "no_contract_set_confusion_note": "task.contract_bootstrap 独立追加 task_contract_revisions/role lineage/step binding，与 task.contract_set 的 Role Contract 语义互不混用",
+  "runtime_registration": "task.contract_bootstrap 返回 E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED（method known），证明路由在运行 daemon 中生效"
+}

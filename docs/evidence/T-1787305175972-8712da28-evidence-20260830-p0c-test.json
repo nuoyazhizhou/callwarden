@@ -1,0 +1,49 @@
+{
+  "manifest_name": "T-1787305175972-8712da28-evidence-p0c-test",
+  "generated_by": "cw-executor-senior-engineer",
+  "task_id": "T-1787305175972-8712da28",
+  "step_id": "S-1787305175973-87231b18",
+  "step_action": "test",
+  "target_files": ["rust_ext/src/daemon/task_loop/task_contract_bootstrap_test.rs", "rust_ext/src/daemon/task_collab_tests_projection.rs"],
+  "role": "implementer",
+  "scope": "P0-C positive/idempotent/negative matrix 定向测试",
+  "outcome": "test_suite_green",
+  "executor_identity": {
+    "agent_id": "workbuddy-186loop",
+    "session_id": "exec-p0c-20260830",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "lease": {"lease_id": "L-6d2b262bc2294a20", "role": "executor", "fencing_counter": 4},
+  "test_results": {
+    "task_contract_bootstrap_domain": {"filter": "task_contract_bootstrap", "passed": 4, "failed": 0},
+    "contract_bootstrap_suite": {"filter": "contract_bootstrap", "passed": 5, "failed": 0},
+    "projection_module": {"filter": "task_collab::tests::projection", "passed": 24, "failed": 0}
+  },
+  "check_items_coverage": {
+    "empty_contract_success": {
+      "covered": true,
+      "test": "bootstrap_appends_complete_governance_projection_without_task_mutation",
+      "detail": "task_contract_revisions/role_contract_lineages/role_contract_revisions/task_step_role_contract_bindings 各 +1/+3/+3/+1"
+    },
+    "existing_contract_reject": {
+      "covered": true,
+      "test": "bootstrap_rejects_any_existing_projection_append_only (ERR_BOOTSTRAP_NOT_EMPTY)"
+    },
+    "authority_lease_evidence_rejects": {
+      "covered": "handler guard ordering + runtime probe",
+      "handler_order": ["workspace_id>0", "params", "envelope/identity", "role==adjudicator", "lease token+fencing", "evidence path+hash", "bound-workspace authority capture", "registered identity", "reviewer lease for adjudication"],
+      "runtime_probe": "task.contract_bootstrap with executor role -> E_TASK_CONTRACT_BOOTSTRAP_ROLE_REQUIRED（role gate 在 authority/lease/evidence 之前确定性触发）",
+      "handler_policy_tests": "test_contract_bootstrap_role_worker_v1_requires_expected_adjudicator_worker (E_TASK_IDENTITY_POLICY_REQUIRED / E_ROLE_WORKER_ROLE_MISMATCH / E_ROLE_WORKER_CREDENTIAL_INVALID)"
+    },
+    "status_unchanged": {
+      "covered": true,
+      "test": "bootstrap_appends_complete_governance_projection_without_task_mutation (assert status=='open')"
+    }
+  },
+  "note_on_coverage": "domain 正向/幂等/status-unchanged/allowlist 与 handler role_worker/policy 拒绝均有单元测试；authority/lease/evidence 门禁由 handler 守卫顺序强制（role gate 先于它们触发，已 runtime probe 证明）。",
+  "out_of_scope_pre_existing_failures": {
+    "suite": "task_collab::tests core/governance (full_lifecycle, v46->v50 migration, orphan_claim_recovery)",
+    "reason": "另 agent dirty worktree (task_collab_tests_governance.rs / task_collab_verdict.rs)，不在 P0-C allowed test paths"
+  }
+}
