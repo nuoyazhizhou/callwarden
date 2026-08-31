@@ -172,96 +172,180 @@ impl TaskCollabStore {
                 )
             })?;
 
-        let role_row: Option<(
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-        )> = tx
+        // Role Contract 校验双轨：优先新 schema（role_contract_lineages +
+        // role_contract_revisions，A3 task_contract_bootstrap 写入、含 identity_policy
+        // 等完整 payload，role_contract_hash 为 bootstrap 时权威 c14n 散列）；回落
+        // legacy 扁平表 role_contracts（存量任务契约号 RC-...-rN）。
+        // 仅当走新 schema 校验成功时，才把 lineage_id/hash 持久化到 verdict 事件行；
+        // legacy 路径保持既有语义（列留空，读投影派生 UNVERIFIED）。
+        let mut validated_via_new_schema = false;
+        let mut resolved_role_contract_lineage_id = String::new();
+        let mut resolved_role_contract_revision = 0i64;
+        let mut resolved_role_contract_hash = String::new();
+        // `task.next-action` exposes the authoritative lineage id and revision id.
+        // Accept either exact identifier at this compatibility boundary, but always
+        // resolve it to the same task-bound lineage before persisting the verdict.
+        let new_role_row: Option<(String, String, String, String)> = tx
             .query_row(
-                "SELECT role, step_id, skill_id, skill_version, prompt_template_id, prompt_hash,
-                        allowed_paths, forbidden_paths, commands, acceptance_checks,
-                        required_evidence, handoff_to, independence
-                 FROM role_contracts
-                 WHERE contract_id = ?1 AND task_id = ?2 AND revision = ?3 AND is_current = 1",
+                "SELECT l.role_contract_lineage_id, r.role_contract_revision_id,
+                        l.role, r.role_contract_hash
+                 FROM role_contract_lineages l
+                 JOIN role_contract_revisions r ON r.role_contract_lineage_id = l.role_contract_lineage_id
+                 WHERE l.task_id = ?2 AND r.revision = ?3
+                   AND (l.role_contract_lineage_id = ?1 OR r.role_contract_revision_id = ?1)",
                 params![role_contract_id, task_id, role_contract_revision],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                        r.get(7)?,
-                        r.get(8)?,
-                        r.get(9)?,
-                        r.get(10)?,
-                        r.get(11)?,
-                        r.get(12)?,
-                    ))
-                },
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()
             .map_err(|e| {
-                DaemonRpcError::internal_error(format!("校验 Role Contract 失败: {}", e))
+                DaemonRpcError::internal_error(format!("校验新 schema Role Contract 失败: {}", e))
             })?;
-        let role_row = role_row.ok_or_else(|| {
-            DaemonRpcError::new(
-                "E_ROLE_CONTRACT_BINDING_INVALID",
-                "Role Contract id/revision 未精确绑定目标 task 的当前合同",
-            )
-        })?;
-        if !matches!(role_row.0.as_str(), "reviewer" | "independent_reviewer") {
-            return Err(DaemonRpcError::new(
-                "E_ROLE_CONTRACT_BINDING_INVALID",
-                "Role Contract 不是 Reviewer 合同",
-            ));
-        }
-        if !role_row.1.is_empty() && role_row.1 != step_id {
-            return Err(DaemonRpcError::new(
-                "E_ROLE_CONTRACT_STEP_MISMATCH",
-                "Role Contract step_id 与 verdict step_id 不一致",
-            ));
-        }
-        let role_contract_payload = serde_json::json!({
-            "canonicalization_version": "role-contract-c14n/v1",
-            "contract_id": role_contract_id,
-            "revision": role_contract_revision,
-            "task_id": task_id,
-            "role": role_row.0,
-            "step_id": role_row.1,
-            "skill_id": role_row.2,
-            "skill_version": role_row.3,
-            "prompt_template_id": role_row.4,
-            "prompt_hash": role_row.5,
-            "allowed_paths": role_row.6,
-            "forbidden_paths": role_row.7,
-            "commands": role_row.8,
-            "acceptance_checks": role_row.9,
-            "required_evidence": role_row.10,
-            "handoff_to": role_row.11,
-            "independence": role_row.12,
-        });
-        let actual_role_contract_hash = format!(
-            "sha256:{}",
-            sha256_hex(role_contract_payload.to_string().as_bytes())
-        );
-        if actual_role_contract_hash != role_contract_hash {
-            return Err(DaemonRpcError::new(
-                "E_ROLE_CONTRACT_HASH_MISMATCH",
-                "Role Contract canonical hash 不匹配",
-            ));
+
+        if let Some((lineage_id, _revision_id, rc_role, rc_hash)) = new_role_row {
+            validated_via_new_schema = true;
+            resolved_role_contract_lineage_id = lineage_id;
+            resolved_role_contract_revision = role_contract_revision;
+            resolved_role_contract_hash = rc_hash.clone();
+            if !matches!(rc_role.as_str(), "reviewer" | "independent_reviewer") {
+                return Err(DaemonRpcError::new(
+                    "E_ROLE_CONTRACT_BINDING_INVALID",
+                    "Role Contract 不是 Reviewer 合同",
+                ));
+            }
+            if rc_hash != role_contract_hash {
+                return Err(DaemonRpcError::new(
+                    "E_ROLE_CONTRACT_HASH_MISMATCH",
+                    "Role Contract canonical hash 不匹配",
+                ));
+            }
+        } else {
+            let role_row: Option<(
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+            )> = tx
+                .query_row(
+                    "SELECT role, step_id, skill_id, skill_version, prompt_template_id, prompt_hash,
+                            allowed_paths, forbidden_paths, commands, acceptance_checks,
+                            required_evidence, handoff_to, independence
+                     FROM role_contracts
+                     WHERE contract_id = ?1 AND task_id = ?2 AND revision = ?3 AND is_current = 1",
+                    params![role_contract_id, task_id, role_contract_revision],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                            r.get(7)?,
+                            r.get(8)?,
+                            r.get(9)?,
+                            r.get(10)?,
+                            r.get(11)?,
+                            r.get(12)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("校验 Role Contract 失败: {}", e))
+                })?;
+            let role_row = role_row.ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_ROLE_CONTRACT_BINDING_INVALID",
+                    "Role Contract id/revision 未精确绑定目标 task 的当前合同",
+                )
+            })?;
+            if !matches!(role_row.0.as_str(), "reviewer" | "independent_reviewer") {
+                return Err(DaemonRpcError::new(
+                    "E_ROLE_CONTRACT_BINDING_INVALID",
+                    "Role Contract 不是 Reviewer 合同",
+                ));
+            }
+            if !role_row.1.is_empty() && role_row.1 != step_id {
+                return Err(DaemonRpcError::new(
+                    "E_ROLE_CONTRACT_STEP_MISMATCH",
+                    "Role Contract step_id 与 verdict step_id 不一致",
+                ));
+            }
+            // A legacy `RC-...` alias is valid only when it resolves to the
+            // current task-bound governance lineage. Prefer that canonical
+            // row's hash; do not compare a new-schema hash with a legacy
+            // reconstructed payload hash.
+            let authoritative_new_row: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT l.role_contract_lineage_id, r.role_contract_hash
+                     FROM role_contract_lineages l
+                     JOIN role_contract_revisions r
+                       ON r.role_contract_lineage_id = l.role_contract_lineage_id
+                     WHERE l.task_id = ?1 AND l.role = ?2 AND r.revision = ?3",
+                    params![task_id, role_row.0, role_contract_revision],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!(
+                        "校验 legacy Role Contract canonical lineage 失败: {}",
+                        e
+                    ))
+                })?;
+            if let Some((lineage_id, canonical_hash)) = authoritative_new_row {
+                if canonical_hash != role_contract_hash {
+                    return Err(DaemonRpcError::new(
+                        "E_ROLE_CONTRACT_HASH_MISMATCH",
+                        "Role Contract canonical hash 不匹配",
+                    ));
+                }
+                validated_via_new_schema = true;
+                resolved_role_contract_lineage_id = lineage_id;
+                resolved_role_contract_revision = role_contract_revision;
+                resolved_role_contract_hash = canonical_hash;
+                // The canonical row is authoritative; do not derive or accept
+                // the legacy payload hash in this branch.
+            } else {
+                let role_contract_payload = serde_json::json!({
+                "canonicalization_version": "role-contract-c14n/v1",
+                "contract_id": role_contract_id,
+                "revision": role_contract_revision,
+                "task_id": task_id,
+                "role": role_row.0,
+                "step_id": role_row.1,
+                "skill_id": role_row.2,
+                "skill_version": role_row.3,
+                "prompt_template_id": role_row.4,
+                "prompt_hash": role_row.5,
+                "allowed_paths": role_row.6,
+                "forbidden_paths": role_row.7,
+                "commands": role_row.8,
+                "acceptance_checks": role_row.9,
+                "required_evidence": role_row.10,
+                "handoff_to": role_row.11,
+                "independence": role_row.12,
+            });
+                let actual_role_contract_hash = format!(
+                    "sha256:{}",
+                    sha256_hex(role_contract_payload.to_string().as_bytes())
+                );
+                if actual_role_contract_hash != role_contract_hash {
+                    return Err(DaemonRpcError::new(
+                        "E_ROLE_CONTRACT_HASH_MISMATCH",
+                        "Role Contract canonical hash 不匹配",
+                    ));
+                }
+            }
         }
 
         if !amendment_ref.is_empty() {
@@ -447,15 +531,26 @@ impl TaskCollabStore {
             ));
         }
 
+        let (rc_lineage_id, rc_lineage_rev, rc_lineage_hash) = if validated_via_new_schema {
+            (
+                resolved_role_contract_lineage_id,
+                resolved_role_contract_revision,
+                resolved_role_contract_hash,
+            )
+        } else {
+            (String::new(), 0i64, String::new())
+        };
         tx.execute(
             "INSERT INTO task_verdict_events
              (verdict_id, task_id, contract_id, contract_revision, contract_hash,
               phase, view_manifest_hash, snapshot_id, reviewer_identity, clause_results,
               findings, overall, attestation, amendment_ref, submitted_at, workspace_id,
               canonicalization_version, canonicalization_rules_hash,
-              normalization_version, normalization_rules_hash)
+              normalization_version, normalization_rules_hash,
+              role_contract_lineage_id, role_contract_revision, role_contract_hash,
+              step_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20)",
+                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             params![
                 verdict_id,
                 task_id,
@@ -477,6 +572,10 @@ impl TaskCollabStore {
                 role_contract_hash,
                 norm_version,
                 norm_rules_hash,
+                rc_lineage_id,
+                rc_lineage_rev,
+                rc_lineage_hash,
+                step_id,
             ],
         )
         .map_err(|e| {

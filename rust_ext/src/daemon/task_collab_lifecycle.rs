@@ -1498,6 +1498,7 @@ impl TaskCollabStore {
                     ));
                 }
                 (None, true) if outcome == "reviewer_blocked" => {}
+                (None, false) if outcome == "reviewer_blocked" => {}
                 (None, _) => {
                     return Err(DaemonRpcError::new(
                         "E_REMEDIATION_VERDICT_STEP_MISMATCH",
