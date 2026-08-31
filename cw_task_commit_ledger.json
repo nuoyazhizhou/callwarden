@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
- "updated_at": "2026-08-31T11:35:06.000000+08:00",
+ "updated_at": "2026-08-31T12:20:00.000000+08:00",
  "discipline": {
   "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
   "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2088,5 +2088,12 @@
   "status": "new_in_master",
   "scope": "P0C-R4 系统缺陷修复：daemon verdict.submit 持久化落库时丢弃 step_id，导致 reviewer_pass handoff 因 source_step_id==verdict.step_id 恒失败（E_HANDOFF_VERDICT_PROVENANCE_MISMATCH）；verdict.rs 为 INSERT 补齐 step_id 列及参数绑定，lifecycle.rs 补 (None,false)+reviewer_blocked 分支对齐 task 级语义，tests_governance.rs 补回归断言 persisted_step_id==step_id",
   "note": "message 内嵌 P0C-R4；Reviewer 独立复核（docs/evidence/p0c-r4-fix-reviewer-review-20260831.json）判 reviewer_pass：三处改动正确/最小/隔离，P0C-R4 相关回归（verdict 28/handoff 32/reviewer_pass/reviewer_blocked4）全绿；3 个无关既有失败来自其他在途 P0-E/F/C 改动，与本次不触达，R2 需单独跟踪；该修复只修 daemon handoff 机制，不重判任务；部署后需回填 4 张 pass 卡 verdict 的 step_id 才能清 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH；未执行 apply/close、未重判任务"
+ },
+ "t1787305268313_r2_triage_fix_20260831": {
+  "task_id": "R2",
+  "commit_id": "5b7ffd1",
+  "status": "new_in_master",
+  "scope": "R2 triage 修复：三个无关测试失败统一根因=assignment_queue 派工子系统（正式功能）集成后的契约漂移。①handle_task_claim_recover 释放旧 claim 时未同步清除 assignment 派工记录，导致后续 new Executor claim 被残留 assignment 拦截（task_conflict='assignment 已由同角色的其他 session 持有'），违背 recover 返回的 next_action='new Executor must call task.claim' 契约——生产缺陷，补 assignment_queue::complete_assignments(None,None) 释放；②full_lifecycle/migrates_v46 events 断言未过滤 assignment_* 事件，改为按 reason_code 过滤后断言 task 生命周期事件数（3/1）不变",
+  "note": "message 内嵌 R2；非 P0C-R4 引入，未重判任务/未改治理状态；修复验证：task_collab 114/114、assignment_queue 8/8、orphan 2/2 全过；assignment_queue 自测 8/8 证明其系正式功能而非半成品；修改送达 rust_ext/src/daemon/task_collab_lease.rs 与 task_collab_tests_core.rs，最小侵入"
  }
 }
