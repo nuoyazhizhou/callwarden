@@ -1,0 +1,84 @@
+{
+  "manifest_name": "r2-orphan-claim-recovery-fix-independent-reviewer-review",
+  "generated_by": "independent-reviewer (CodeReviewExpert)",
+  "review_kind": "read_only_independent_code_review",
+  "review_target": {
+    "commit": "5b7ffd111e56fea3942b246889504b5512881ce8",
+    "short_sha": "5b7ffd1",
+    "ledger_commit": "95c8348 (cw_task_commit_ledger.json R2 entry)",
+    "daemon_deployed_git_commit": "95c83489ff353a13bf1ae966f1f4476d032e305c (health @ 2026-08-31T14:0x)",
+    "files": [
+      "rust_ext/src/daemon/task_collab_lease.rs (handle_task_claim_recover +24L)",
+      "rust_ext/src/daemon/task_collab_tests_core.rs (2 断言同步)"
+    ],
+    "purpose": "修复 orphan-claim recovery 释放旧 claim 后未清除 old holder 派工 assignment，导致 new Executor 的 task.claim 被 task_conflict 拦截的生产缺陷；并同步 lifecycle/迁移测试的 assignment_* 事件计数"
+  },
+  "independence": {
+    "reviewer_agent_id": "reviewer-workbuddy-p0review-01",
+    "reviewer_session_id": "sess-reviewer-r2-20260831",
+    "different_from_author": true,
+    "did_not_modify_code": true,
+    "did_not_commit": true,
+    "note": "仅读取源码 / 测试 / git provenance / 跑 cargo test 验证，未改动任何文件"
+  },
+  "change_analysis": {
+    "change_1_production_fix": {
+      "location": "rust_ext/src/daemon/task_collab_lease.rs:860-872 (handle_task_claim_recover, INSERT claim_released 事件与 record_action_identity 之后、tx.commit 之前)",
+      "code": "assignment_queue::complete_assignments(&tx, &task_id, None, None, owner_key.as_str(), identity.session_id.as_str(), self.next_seq(), now)",
+      "callee_semantics_verified": {
+        "fn": "assignment_queue::complete_assignments (assignment_queue.rs:400-432)",
+        "scope": "project_task_assignments(tx, task_id) -> 仅本 task_id 的派工；step_id=None/role=None 时不过滤，完成该 task 全部 active assignment",
+        "cross_task_leak": false,
+        "atomicity": "在 recover 同一事务内，error -> map_err(internal_error) -> 事务回滚（fail-closed）",
+        "audit_attribution": "assignment_completed 事件 actor_identity=owner_key, agent_session_id=adjudicator.session_id（恢复行为归属正确）"
+      },
+      "correctness": "旧 executor 的 active assignment 被清除，new Executor 的 task.claim 不再命中 task_conflict，符合 recover 返回的 next_action='new Executor must call task.claim' 契约。缺陷修复成立。",
+      "verdict": "正确、最小、fail-closed"
+    },
+    "change_2_test_sync": {
+      "location": "rust_ext/src/daemon/task_collab_tests_core.rs:83-95 (full_lifecycle), :1566-1579 (migrates_v46)",
+      "change": "events 断言从 assert_eq!(events.len(), N) 改为按 reason_code 过滤 assignment_* 后断言任务侧生命周期事件数（created/claimed/reported = 3；migration create = 1）",
+      "rationale": "assignment_queue 子系统随 create/claim/report 写入 assignment_* 投影事件，使原计数 3->7 / 1->2；过滤后任务侧契约不变。属断言对齐，非掩盖回归。",
+      "verdict": "合理、必要、未削弱契约语义"
+    }
+  },
+  "independent_test_verification": {
+    "command": "cargo test -p callwarden-core task_collab::  (MSVC env, 源码含 5b7ffd1)",
+    "result": "test result: ok. 114 passed; 0 failed; 1489 filtered out",
+    "command2": "cargo test -p callwarden-core assignment_queue::",
+    "result2": "test result: ok. 8 passed; 0 failed",
+    "orphan_tests": [
+      "daemon::task_collab::tests::governance::test_orphan_claim_recovery_rejects_fresh_owner ... ok",
+      "daemon::task_collab::tests::governance::test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state ... ok"
+    ],
+    "note": "114/114 与用户宣称一致（P0C-R4 复核时该子树为 111/3，R2 三处失败现已全清）；orphan 2/2、assignment_queue 8/8 独立复现通过。未盲信『全绿』。"
+  },
+  "findings": [
+    {
+      "id": "R2-R1",
+      "severity": "info",
+      "scope": "in_scope",
+      "blocking": false,
+      "subject": "complete_assignments(step_id=None, role=None) 完成本 task 全部 active assignment，非仅 old executor 的",
+      "detail": "recover 场景下通常只有 stale executor 持有 assignment，故实际只清旧 holder；但若该 task 并发存在其他角色的 active assignment（如 reviewer），恢复会一并完成。因 recover 本质是把任务重置供 new Executor 重新 claim，全清属可接受的强语义，且作用域严格限定 task_id（无跨任务泄漏）。",
+      "hardening_suggestion": "后续可传 role='implementer'（或对应 claim 角色）收窄范围，降低意外完成并发 assignment 的副作用；非阻断。",
+      "owner_route": "executor"
+    }
+  ],
+  "verdict": {
+    "overall": "reviewer_pass",
+    "blocking_finding_ids": [],
+    "non_blocking_finding_ids": ["R2-R1"],
+    "statement": "R2 生产修复（5b7ffd1）经独立源码核验与 cargo test 复现（task_collab 114/114、assignment_queue 8/8、orphan 2/2）确认：orphan-claim recovery 释放旧 claim 后正确清除 old holder 派工 assignment，恢复『new Executor 必须能重新 claim』契约；测试断言同步合理。一行级改动、作用域限定 task_id、事务内 fail-closed。独立 Reviewer 判 reviewer_pass。R2-R1 为 info 级收窄建议，不阻断。"
+  },
+  "related_review_note": {
+    "p0f_re_review_status": "NOT_PERFORMED / DEFERRED",
+    "reason": "P0-F 任务（T-1787310376068-44eb5f20）的整改 fix_defect 步骤 S-cd7bd679466ab0b031a1f066 当前状态仍为 pending（governance-projection: lifecycle_status=in_progress, current_role=executor, next_action=claim_current_step）。且自 blocked verdict 以来的 git 历史与当前工作树（0 未提交文件）均无针对 P0F-R1~R4（bootstrap_review_bridge 门禁/步骤完成校验/ws-1 硬编码/独立性三重）/R6（部署可复现）/R7（phantom ws-1）的代码修复。R2（orphan-claim recovery）与 P0F 整改是两条独立线，不构成 P0F 整改。故 P0-F 尚未具备重新 Review 的条件，独立 Reviewer 不 issuing verdict，防止把未整改任务误判 pass。",
+    "required_before_p0f_re_review": [
+      "Executor 在 fix_defect 步骤完成 P0F-R1~R4 源码修复并补充定向负向测试",
+      "处理 P0F-R7（workspace binding attestation 到已注册 workspace）与 P0F-R6（从干净提交树重建部署，使 daemon health.git_commit==HEAD 且 runtime hash==target hash）",
+      "将任务经正常治理流回到 reviewer/review_current_step",
+      "独立 Reviewer 再按原 blocked verdict 的 acceptance 逐项核验"
+    ]
+  }
+}
