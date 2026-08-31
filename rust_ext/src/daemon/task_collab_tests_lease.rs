@@ -2,6 +2,7 @@
 
 use super::*;
 use super::support::*;
+    #[test]
     fn p0e_adjudicator_can_use_distinct_registered_reviewer_lease_only() {
         let (_dir, db_path) = temp_db();
         let store = TaskCollabStore::new(&db_path)
@@ -148,6 +149,137 @@ use super::support::*;
                 .code,
             "E_LEASE_FENCING_STALE"
         );
+    }
+
+    #[test]
+    fn p0e_adjudication_reviewer_lease_negative_holder_and_expiry() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        seed_task_binding(&store, "T-P0E-NEG");
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        // 注册一个真实 reviewer holder（将被不规范/不活跃变体复用审计）。
+        let reviewer_reg = serde_json::json!({
+            "agent_id":"neg-review", "agent_name":"reviewer",
+            "identity": {"agent_id":"neg-review","agent_instance_id":"neg-review-inst",
+            "session_id":"neg-session","model_id":"neg-model","role":"reviewer"}
+        });
+        store.handle_agent_register(peer.clone(), &reviewer_reg).unwrap();
+        let adjudicator_reg = serde_json::json!({
+            "agent_id":"neg-adj", "agent_name":"adjudicator",
+            "identity": {"agent_id":"neg-adj","agent_instance_id":"neg-adj-inst",
+            "session_id":"neg-adj-session","model_id":"neg-adj-model","role":"adjudicator"}
+        });
+        store.handle_agent_register(peer, &adjudicator_reg).unwrap();
+        let adjudicator = parse_action_identity(
+            &serde_json::json!({"identity": adjudicator_reg["identity"].clone()}),
+        ).unwrap().unwrap();
+
+        // (b) 未注册 holder -> E_GOVERNANCE_REVIEWER_UNREGISTERED
+        seed_reviewer_lease(&store, "T-P0E-NEGB", "tok-b", 1, "unregistered-agent", "sess-b", "m-b");
+        {
+            let conn = store.conn.lock().unwrap();
+            assert_eq!(
+                store.validate_reviewer_lease_for_adjudication(
+                    &conn, "T-P0E-NEGB", "tok-b", 1, &adjudicator,
+                ).unwrap_err().code,
+                "E_GOVERNANCE_REVIEWER_UNREGISTERED"
+            );
+        }
+
+        // (c) holder 已注册但 role != reviewer -> E_GOVERNANCE_REVIEWER_INVALID
+        let non_rev = serde_json::json!({
+            "agent_id":"imp-agent","agent_name":"implementer",
+            "identity":{"agent_id":"imp-agent","agent_instance_id":"imp-inst",
+            "session_id":"sess-c","model_id":"m-c","role":"implementer"}
+        });
+        store.handle_agent_register(PeerCredential::new_unix(1000,1000,200), &non_rev).unwrap();
+        seed_reviewer_lease(&store, "T-P0E-NEGC", "tok-c", 1, "imp-agent", "sess-c", "m-c");
+        {
+            let conn = store.conn.lock().unwrap();
+            assert_eq!(
+                store.validate_reviewer_lease_for_adjudication(
+                    &conn, "T-P0E-NEGC", "tok-c", 1, &adjudicator,
+                ).unwrap_err().code,
+                "E_GOVERNANCE_REVIEWER_INVALID"
+            );
+        }
+
+        // (d) holder session 与注册不匹配 -> E_GOVERNANCE_REVIEWER_INVALID
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO task_leases (workspace_id, lease_id, task_id, role, agent_id, session_id, model_id, token_hash, fencing_counter, acquired_at, expires_at, status)
+                 VALUES (1, 'L-neg-d', 'T-P0E-NEGD', 'reviewer', 'neg-review', 'wrong-session', 'neg-model', ?1, 1, 1700000000.0, 1893456000.0, 'active')",
+                rusqlite::params![sha256_hex("tok-d".as_bytes())],
+            ).unwrap();
+            assert_eq!(
+                store.validate_reviewer_lease_for_adjudication(
+                    &conn, "T-P0E-NEGD", "tok-d", 1, &adjudicator,
+                ).unwrap_err().code,
+                "E_GOVERNANCE_REVIEWER_INVALID"
+            );
+        }
+
+        // (e) holder 不活跃 -> E_GOVERNANCE_REVIEWER_INVALID
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE agent_registrations SET status='inactive' WHERE agent_id='neg-review'",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO task_leases (workspace_id, lease_id, task_id, role, agent_id, session_id, model_id, token_hash, fencing_counter, acquired_at, expires_at, status)
+                 VALUES (1, 'L-neg-e', 'T-P0E-NEGE', 'reviewer', 'neg-review', 'neg-session', 'neg-model', ?1, 1, 1700000000.0, 1893456000.0, 'active')",
+                rusqlite::params![sha256_hex("tok-e".as_bytes())],
+            ).unwrap();
+            assert_eq!(
+                store.validate_reviewer_lease_for_adjudication(
+                    &conn, "T-P0E-NEGE", "tok-e", 1, &adjudicator,
+                ).unwrap_err().code,
+                "E_GOVERNANCE_REVIEWER_INVALID"
+            );
+        }
+
+        // (f) release daemon 时钟当作待续期已完成，校验无泄漏。
+        let _ = store;
+    }
+
+    #[test]
+    fn p0e_validate_reviewer_lease_uses_plain_identity_path() {
+        // 普通同一 role 校验（validate_lease_for_mutation）不受 P0-E 影响，
+        // 回归占位：跨角色方法只接受 adjudicator role。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        seed_task_binding(&store, "T-P0E-ROLE");
+        seed_reviewer_lease(&store, "T-P0E-ROLE", "tok", 1, "some-reviewer", "sess", "m");
+        let impersonator = ActionIdentity {
+            agent_id: "adj".to_string(),
+            agent_instance_id: "adj-inst".to_string(),
+            client_id: String::new(),
+            provider: String::new(),
+            model_id: "m".to_string(),
+            model_mode: String::new(),
+            system_fingerprint: String::new(),
+            session_id: "adj-sess".to_string(),
+            role: "reviewer".to_string(),
+            runtime_hash: String::new(),
+        };
+        {
+            let conn = store.conn.lock().unwrap();
+            assert_eq!(
+                store.validate_reviewer_lease_for_adjudication(
+                    &conn, "T-P0E-ROLE", "tok", 1, &impersonator,
+                ).unwrap_err().code,
+                "E_GOVERNANCE_ADJUDICATOR_ROLE_REQUIRED"
+            );
+        }
     }
 
     // ============================================

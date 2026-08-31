@@ -999,7 +999,7 @@ pub(crate) fn tree_governance_projection(conn: &Connection, task_id: &str, task_
                 );
                 object.insert(
                     "next_action".to_string(),
-                    Value::String("resolve_identity_policy".to_string()),
+                    Value::String("system_repair_required".to_string()),
                 );
                 object.insert("decision".to_string(), Value::String("BLOCKED".to_string()));
                 object.insert("action".to_string(), Value::String("BLOCKED".to_string()));
@@ -1013,7 +1013,7 @@ pub(crate) fn tree_governance_projection(conn: &Connection, task_id: &str, task_
                     );
                     routing.insert(
                         "next_action".to_string(),
-                        Value::String("resolve_identity_policy".to_string()),
+                        Value::String("system_repair_required".to_string()),
                     );
                     routing.insert("reason".to_string(), Value::Array(vec![Value::String(reason)]));
                 }
