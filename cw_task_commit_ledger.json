@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
- "updated_at": "2026-08-30T21:17:54.542824+08:00",
+ "updated_at": "2026-08-31T11:35:06.000000+08:00",
  "discipline": {
   "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
   "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2081,5 +2081,12 @@
   "status": "review_pending",
   "scope": "P0-B 完整完成（step#1 wire + #2 adapt_client_cli + #3 test + #4 release_verify）：wire 审计确认 dispatch 路由；client/cli 适配 daemon-only fail-closed；新增 tests/test_p0b_legacy_attestation_fail_closed.py(3 passed)；release daemon round-trip 4/4 fail-closed",
   "note": "message 内嵌 task_id；wire/client-cli/test/release-verify 四份证据 + test-log；cargo supersede 14 passed、P0-B Python fail-closed 3 passed、M4 回归 9 passed；release daemon PID 13424 binary sha256=94bdbaf7cc08328782959f62ba43af5fe73d543a30c91d3ce8c7e9bac70ecd15 已路由 task.attest_legacy_workspace_binding；evidence test sha256=8082b29b37dd37bb6e799743d07d1ae8dabff4522ea5c89685fda66fcd70748b、release-verify sha256=7042085f84c28862d9f9eaa6081a32092da9a98e6a765c222501b5ee6341547c；任务进入 review_pending，next_role=reviewer；未执行 apply/close、未伪造 binding/lease/evidence、未直接 SQL"
+ },
+ "t1787305175972_p0c_r4_fix_20260831": {
+  "task_id": "P0C-R4",
+  "commit_id": "d2b31a9",
+  "status": "new_in_master",
+  "scope": "P0C-R4 系统缺陷修复：daemon verdict.submit 持久化落库时丢弃 step_id，导致 reviewer_pass handoff 因 source_step_id==verdict.step_id 恒失败（E_HANDOFF_VERDICT_PROVENANCE_MISMATCH）；verdict.rs 为 INSERT 补齐 step_id 列及参数绑定，lifecycle.rs 补 (None,false)+reviewer_blocked 分支对齐 task 级语义，tests_governance.rs 补回归断言 persisted_step_id==step_id",
+  "note": "message 内嵌 P0C-R4；Reviewer 独立复核（docs/evidence/p0c-r4-fix-reviewer-review-20260831.json）判 reviewer_pass：三处改动正确/最小/隔离，P0C-R4 相关回归（verdict 28/handoff 32/reviewer_pass/reviewer_blocked4）全绿；3 个无关既有失败来自其他在途 P0-E/F/C 改动，与本次不触达，R2 需单独跟踪；该修复只修 daemon handoff 机制，不重判任务；部署后需回填 4 张 pass 卡 verdict 的 step_id 才能清 E_HANDOFF_VERDICT_PROVENANCE_MISMATCH；未执行 apply/close、未重判任务"
  }
 }
