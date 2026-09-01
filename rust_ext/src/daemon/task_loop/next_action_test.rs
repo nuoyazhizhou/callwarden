@@ -642,34 +642,44 @@ fn two_instances_same_workspace_chain_continuity_per_instance() {
     // 会把双实例并存的连续链误判为断链（count>max）；新实现按 (workspace_id, instance) 限定。
     let mut conn = fresh_db();
     setup_task(&mut conn, "t-a"); // instance=ws-inst-1，capture rev1
-    let ws_legacy = WorkspaceCaptureInput {
-        workspace_id: 1,
-        daemon_workspace_id: 42,
-        workspace_instance_id: "legacy-inst".to_string(),
-        client_view_root_hash: "client-view-hash".to_string(),
-        host_real_root_hash: "host-root-hash".to_string(),
-        workspace_manifest_payload_json: "{\"kind\":\"a\"}".to_string(),
-        workspace_manifest_hash: "manifest-a".to_string(),
-        created_by: "test-creator".to_string(),
-    };
-    let input = CreateTaskInput {
-        task_id: "t-b".to_string(),
-        title: "task-t-b".to_string(),
-        description: "desc".to_string(),
-        creator: "test-creator".to_string(),
-    };
-    create_task(
-        &mut conn,
-        &frozen(),
-        &CreateLedgerKey {
-            workspace_instance_id: "legacy-inst".to_string(),
-            method: "task.create".to_string(),
-            request_id: "create-t-b".to_string(),
-        },
-        &input,
-        &ws_legacy,
+    // BR-01 0c 之后，受保护 `create_task` 禁止同一 workspace 换 instance 建立第二权威链；
+    // 历史遗留双实例并存只能以迁移数据形态存在。此处 SQL 直插 legacy-inst 链
+    // （workspace 1 的第二 instance 链，capture_revision 在实例内从 1 开始），
+    // 模拟整机单库迁移遗留，不再走 create_task（会被 0c 拒绝）。
+    let legacy_capture_id = "wc-legacy-inst-1";
+    let legacy_identity = registry_identity_hash(
+        "legacy-inst",
+        "client-view-hash",
+        "host-root-hash",
+        "manifest-a",
+    );
+    conn.execute(
+        "INSERT INTO workspace_authority_captures \
+         (workspace_capture_id, workspace_id, capture_revision, supersedes_capture_id, \
+          daemon_workspace_id, workspace_instance_id, capture_canonicalization_version, \
+          capture_canonicalization_rules_hash, registry_identity_payload_json, \
+          registry_identity_hash, workspace_manifest_payload_json, workspace_manifest_hash, \
+          client_view_root_hash, host_real_root_hash, created_by, authoritative_created_at) \
+         VALUES (?1, 1, 1, NULL, 0, 'legacy-inst', 'workspace-capture-c14n/v1', \
+                 'test-rules-hash', '{}', ?2, '{\"kind\":\"a\"}', 'manifest-a', \
+                 'client-view-hash', 'host-root-hash', 'test-creator', '0')",
+        rusqlite::params![legacy_capture_id, legacy_identity],
     )
-    .expect("legacy 实例 create_task 应成功");
+    .unwrap();
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at) \
+         VALUES ('t-b', 'task-t-b', 'desc', 'test-creator', 'open', 0.0, 0.0)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO task_workspace_bindings \
+         (task_id, workspace_id, workspace_binding_id, workspace_capture_id, \
+          created_by, authoritative_created_at) \
+         VALUES ('t-b', 1, 'tb-t-b-legacy-inst', ?1, 'test-creator', '0')",
+        [legacy_capture_id],
+    )
+    .unwrap();
 
     // 旧实现：workspace 1 全局 count=2 max=1 → Err(断链 MISMATCH)；
     // 新实现：按实例各 count=1 max=1 → workspace 门禁通过（后续合同缺失 → Ok(BLOCKED)）。

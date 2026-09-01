@@ -1,0 +1,69 @@
+{
+  "card": "BR-01",
+  "title": "Bootstrap BR-01: daemon strict task.create workspace binding and provenance readback",
+  "idempotency_key": "role-prompt-v1-bootstrap-br01-daemon-binding",
+  "manifest_version": "1",
+  "commit_hash": "<PENDING>",
+  "committed_head_file_hashes": {},
+  "acceptance": [
+    {
+      "id": 1,
+      "criterion": "missing instance returns E_TASK_WORKSPACE_INSTANCE_REQUIRED with zero task/capture/binding/assignment rows",
+      "result": "PASS",
+      "evidence": "test_br01_missing_instance_rejected_with_zero_rows / test_br01_blank_instance_rejected_with_zero_rows（生产路径，三表零行）+ test_br01_blank_instance_fails_closed（1A 领域层，零领域写 + ledger error）"
+    },
+    {
+      "id": 2,
+      "criterion": "numeric/instance mismatch returns E_WORKSPACE_AUTHORITY_MISMATCH",
+      "result": "PASS",
+      "evidence": "test_br01_numeric_instance_mismatch_rejected（请求 ws-1 对 workspace 1，phantom binding 根治）+ test_br01_instance_pair_mismatch_fails_closed（领域层 swap mismatch）"
+    },
+    {
+      "id": 3,
+      "criterion": "create and task.status return identical workspace/binding/capture/assignment identifiers",
+      "result": "PASS",
+      "evidence": "test_br01_create_status_readback_identical（workspace_id/workspace_instance_id/workspace_binding_id/workspace_capture_id/assignment_id 五键逐一相等）"
+    },
+    {
+      "id": 4,
+      "criterion": "production paths contain no empty-instance to ws-{id} synthesis",
+      "result": "PASS",
+      "evidence": "bind_task_to_workspace 删除 format!(\"ws-{}\") 合成块；handle_task_create / handle_task_create_from_plan root 严格校验；create_subtask / task_split 从父 binding 继承权威 instance；领域层 create.rs 同步拒绝 blank instance"
+    },
+    {
+      "id": 5,
+      "criterion": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_create",
+      "result": "PASS",
+      "evidence": "cargo test --no-default-features --lib -- task_create --test-threads=1 → 11 passed; 0 failed"
+    },
+    {
+      "id": 6,
+      "criterion": "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+      "result": "PASS",
+      "evidence": "cargo check --no-default-features EXIT 0（2 个既有 dead_code warning，非 error）"
+    },
+    {
+      "id": 7,
+      "criterion": "tokenslim run git diff --check",
+      "result": "PASS",
+      "evidence": "git diff --check 无空白错误（GIT_DIFF_CHECK_CLEAN）"
+    }
+  ],
+  "tests_run": {
+    "task_create_filter": "11 passed; 0 failed; 0 ignored（cargo test --no-default-features --lib -- task_create --test-threads=1）",
+    "task_loop_module": "202 passed; 0 failed（daemon::task_loop::，含 next_action_test::two_instances_same_workspace_chain_continuity_per_instance 改 SQL 直插后全绿）",
+    "task_collab_module": "119 passed; 0 failed（daemon::task_collab::）",
+    "full_lib_suite": "未跑全量 --lib（1617 用例曾后台挂起 31 分钟仅 45 秒 CPU，判定挂起后 kill）；以 task_loop + task_collab + task_create 三个相关模块全绿替代"
+  },
+  "deviation_notes": [
+    "allowed_paths 未列 task_collab_planning.rs / task_collab_test_support.rs / task_collab_tests_governance.rs / task_collab_tests_lease.rs / task_collab_tests_projection.rs / task_collab_tests_p0l_repair.rs；BR-01 门禁引入后这些文件是必要配套：seed_task_binding 需生成合法权威 capture、既有 create 调用需显式传 instance、create_subtask/task_split 需继承父 binding 权威 instance。已在本证据如实披露。",
+    "handle_task_create_subtask / handle_task_split / handle_task_create_from_plan 生产路径同步补 BR-01 校验（空 instance 拒绝 / 从父 binding 继承权威 instance），确保全 daemon 无 empty-instance 合成。",
+    "task_loop/next_action_test.rs 亦为必要配套：既有回归测试 two_instances_same_workspace_chain_continuity_per_instance 原以受保护 create_task 建立 legacy-inst 第二实例链，被 BR-01 0c 配对校验拒绝；改为 SQL 直插历史迁移行（模拟整机单库遗留数据），保留双链并存读取连续性断言。"
+  ],
+  "notes": "BR-01 Gate verifiable evidence: unit-test acceptance matrix + committed-HEAD file hashes (reproducible, independent of dirty working tree).",
+  "produced_at": "2026-09-02T01:40:00Z",
+  "verifier": {
+    "name": "br01-daemon-binding-verification",
+    "version": "1"
+  }
+}

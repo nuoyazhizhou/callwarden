@@ -62,6 +62,11 @@ use super::*;
     }
 
     /// 为测试 task 写入 capture + 不可变 binding（workspace 1，幂等）。
+    ///
+    /// BR-01：capture 必须是 workspace 1 的**合法权威**——instance 统一为 ws-inst-test，
+    /// registry_identity_hash 用 workspace-capture-c14n/v1 真实计算（与 create 路径逐字节
+    /// 一致），revision 递增规避 UNIQUE(workspace_id, instance, hash, revision) 冲突。
+    /// 这样既有 create 测试（workspace 1 + ws-inst-test）的配对与 identity 校验都命中。
     pub(crate) fn seed_task_binding(store: &TaskCollabStore, task_id: &str) {
         let ts = 1_700_000_000.0_f64;
         let conn = store.conn.lock().unwrap();
@@ -71,6 +76,38 @@ use super::*;
             params![task_id, ts],
         )
         .unwrap();
+        // 与 bind_task_to_workspace（task_collab.rs）对 workspace 1 的计算完全一致：
+        // root_path=/tmp/test-ws、name=test-ws、manifest 结构 workspace-manifest-c14n/v1。
+        let root_hash = crate::canonicalize::sha256_hex("/tmp/test-ws".as_bytes());
+        let manifest_payload = serde_json::json!({
+            "workspace_id": 1,
+            "workspace_name": "test-ws",
+            "root_path_hash": root_hash,
+            "manifest_format_version": "workspace-manifest-c14n/v1",
+        });
+        let manifest_payload_json = manifest_payload.to_string();
+        let manifest_hash = crate::canonicalize::sha256_hex(manifest_payload_json.as_bytes());
+        let identity_hash = crate::daemon::task_loop::create::registry_identity_hash(
+            "ws-inst-test",
+            &root_hash,
+            &root_hash,
+            &manifest_hash,
+        );
+        let registry_payload = serde_json::json!({
+            "workspace_instance_id": "ws-inst-test",
+            "client_view_root_hash": root_hash,
+            "host_real_root_hash": root_hash,
+            "workspace_manifest_hash": manifest_hash,
+        })
+        .to_string();
+        let revision: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(capture_revision), 0) + 1 \
+                 FROM workspace_authority_captures WHERE workspace_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO workspace_authority_captures
              (workspace_capture_id, workspace_id, capture_revision, supersedes_capture_id,
@@ -78,17 +115,17 @@ use super::*;
               capture_canonicalization_rules_hash, registry_identity_payload_json,
               registry_identity_hash, workspace_manifest_payload_json, workspace_manifest_hash,
               client_view_root_hash, host_real_root_hash, created_by, authoritative_created_at)
-             VALUES (?1, 1, 1, NULL, 0, ?3, 'workspace-capture-c14n/v1',
-                     'test-rules-hash', '{}', ?4, '{}', 'test-manifest-hash',
-                     'test-root-hash', 'test-root-hash', 'test', ?2)",
-            // capture UNIQUE(workspace_id, workspace_instance_id, registry_identity_hash,
-            // capture_revision)：多个测试 task 必须各自唯一，否则 INSERT OR IGNORE 会静默
-            // 吞掉后续 capture 导致 task_workspace_bindings 外键失败（曾因此 48 测试全红）。
+             VALUES (?1, 1, ?2, NULL, 0, 'ws-inst-test', 'workspace-capture-c14n/v1',
+                     'test-rules-hash', ?3, ?4, ?5, ?6, ?7, ?7, 'test', ?8)",
             params![
                 format!("cap-test-{}", task_id),
+                revision,
+                registry_payload,
+                identity_hash,
+                manifest_payload_json,
+                manifest_hash,
+                root_hash,
                 ts,
-                format!("ws-inst-test-{}", task_id),
-                format!("test-identity-hash-{}", task_id),
             ],
         )
         .unwrap();

@@ -29,7 +29,7 @@ use super::support::*;
             .handle_task_list(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "parent_id": "",
                     "limit": 100
                 }),
@@ -58,7 +58,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-STATUS-PROJECTION",
                     "title": "status projection",
                     "steps": [{"action": "verify", "target_file": "tests/status.py"}]
@@ -180,7 +180,7 @@ use super::support::*;
             .handle_task_create(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-BIND-001",
                     "title": "bound task",
                 }),
@@ -268,7 +268,7 @@ use super::support::*;
         let empty = store
             .handle_validate_revision_dependencies(
                 peer.clone(),
-                &serde_json::json!({"workspace_id": 1, "contract_id": "C-NONE", "contract_revision": 1}),
+                &serde_json::json!({"workspace_id": 1, "workspace_instance_id": "ws-inst-test", "contract_id": "C-NONE", "contract_revision": 1}),
             )
             .unwrap();
         assert_eq!(empty["valid"], serde_json::Value::Bool(true));
@@ -288,7 +288,7 @@ use super::support::*;
         let bad = store
             .handle_validate_revision_dependencies(
                 peer.clone(),
-                &serde_json::json!({"workspace_id": 1, "contract_id": "C-1", "contract_revision": 1}),
+                &serde_json::json!({"workspace_id": 1, "workspace_instance_id": "ws-inst-test", "contract_id": "C-1", "contract_revision": 1}),
             )
             .unwrap();
         assert_eq!(bad["valid"], serde_json::Value::Bool(false));
@@ -311,7 +311,7 @@ use super::support::*;
         let cyc = store
             .handle_validate_revision_dependencies(
                 peer.clone(),
-                &serde_json::json!({"workspace_id": 1, "contract_id": "C-2", "contract_revision": 1}),
+                &serde_json::json!({"workspace_id": 1, "workspace_instance_id": "ws-inst-test", "contract_id": "C-2", "contract_revision": 1}),
             )
             .unwrap();
         // 模拟边 A->T-CON2 与现有硬边 B->C 无环；显式检查 edges_built=1
@@ -334,8 +334,7 @@ use super::support::*;
             .handle_task_create(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
-                    "workspace_instance_id": "ws-1",
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CREATE-MODERN-PROJECTION",
                     "title": "modern projection",
                     "description": "task create must be claimable",
@@ -461,8 +460,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
-                    "workspace_instance_id": "ws-1",
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-HANDOFF-PROVENANCE",
                     "title": "handoff provenance",
                     "steps": [{"action":"implement", "target_file":"src/main.rs", "check_items":"focused"}],
@@ -565,7 +563,7 @@ use super::support::*;
             .handle_task_create(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-MISSING",
                     "title": "no policy",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -591,7 +589,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-UNKNOWN",
                     "title": "unknown policy",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -606,7 +604,7 @@ use super::support::*;
             .handle_task_create(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-RW-NOENV",
                     "title": "role worker without envelope",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -650,7 +648,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-ENVPOLICY",
                     "title": "envelope without policy",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -665,7 +663,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-TOPMISMATCH",
                     "title": "top level mismatch",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -681,7 +679,7 @@ use super::support::*;
             .handle_task_create(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-FOREIGN",
                     "title": "foreign contract id",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -723,7 +721,7 @@ use super::support::*;
             .handle_task_create(
                 peer,
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-P0L-RW-OK",
                     "title": "role worker ok",
                     "steps": [{"action":"implement", "target_file":"a.rs"}],
@@ -813,7 +811,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "p0l step2 branch",
                     "steps": [{"action": "audit", "target_file": "a.rs"}],
@@ -885,8 +883,7 @@ use super::support::*;
             let mut body = serde_json::json!({
                 "task_id": task_id,
                 "envelope": rw_envelope.clone(),
-                "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "request_id": request_id,
                 "evidence_path": "ev/path", "evidence_hash": "ev-hash",
                 "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"],
@@ -1016,8 +1013,7 @@ use super::support::*;
                 &serde_json::json!({
                     "task_id": task_id,
                     "envelope": v1_envelope,
-                    "workspace_id": 1,
-                    "workspace_instance_id": "ws-1",
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "request_id": "rwr-boot",
                     "evidence_path": "ev/path", "evidence_hash": "ev-hash",
                     "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"],
@@ -1047,8 +1043,7 @@ use super::support::*;
                 "task_id": task_id,
                 "envelope": envelope,
                 "expected_previous_hash": v1_hash,
-                "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "request_id": request_id,
                 "evidence_path": "ev/path2", "evidence_hash": "ev-hash2",
             });
@@ -1246,8 +1241,7 @@ use super::support::*;
                 "task_id": task_id,
                 "envelope": envelope,
                 "expected_previous_hash": v2_hash,
-                "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "request_id": request_id,
                 "evidence_path": "ev/path3", "evidence_hash": "ev-hash3",
                 "reviewer_lease_id": reviewer_lease_id,
@@ -1318,7 +1312,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "p0l step3 claim gate",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1455,7 +1449,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "p0l r1 worker-first anchor",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1544,7 +1538,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "p0l step3 policy fail-closed",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1629,7 +1623,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": legacy_id,
                     "title": "legacy claim path",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1667,7 +1661,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": bare_id,
                     "title": "no contract revision",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],

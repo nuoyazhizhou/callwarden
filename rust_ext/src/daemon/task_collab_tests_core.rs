@@ -21,7 +21,7 @@ use super::support::*;
 
         // 2. Task Create
         let create_params = serde_json::json!({
-            "workspace_id": 1,
+            "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "title": "Fix memory leak in parser",
             "description": "Investigate tree-sitter memory allocation",
             "task_id": "T-TEST-001"
@@ -108,7 +108,7 @@ use super::support::*;
             "executor-session",
             "implementer",
         );
-        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1,
+        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id": "T-REMEDIATION-SCOPE",
             "title": "failed step scope",
             "steps": [{"action":"capture", "target_file":"docs/design/example.md", "target_symbol":"", "check_items":"isolated capture"}],
@@ -185,7 +185,7 @@ use super::support::*;
             "executor-session",
             "implementer",
         );
-        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1,
+        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id":"T-REMEDIATION-EXPLICIT", "title":"explicit remediation", "steps":[
                 {"action":"capture", "target_file":"docs/design/example.md", "check_items":"isolated"}
             ], "identity_policy":"legacy_identity_v1", "role_contracts":p0l_governance_roles()
@@ -323,7 +323,7 @@ use super::support::*;
             "executor-session",
             "implementer",
         );
-        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1,
+        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id":"T-REMEDIATION-RESOLVE", "title":"resolution", "steps":[
                 {"action":"capture", "target_file":"docs/design/example.md", "check_items":"isolated"}
             ], "identity_policy":"legacy_identity_v1", "role_contracts":p0l_governance_roles()
@@ -390,7 +390,7 @@ use super::support::*;
             .with_clock(Arc::new(AuthoritativeClock::new()));
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         seed_workspace(&store);
-        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1,
+        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id":"T-REMEDIATION-REVIEW", "title":"review remediation", "steps":[
                 {"action":"implement", "target_file":"src/review.rs", "check_items":"focused"}
             ], "identity_policy":"legacy_identity_v1", "role_contracts":p0l_governance_roles()
@@ -549,7 +549,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "task-level reviewer block",
                     "description": "a review can reject a task without a source step",
@@ -727,7 +727,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "adjudicator returned remediation",
                     "steps": [{
@@ -938,7 +938,7 @@ use super::support::*;
             "executor-session",
             "executor",
         );
-        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1,
+        store.handle_task_create(peer.clone(), &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id":"T-THREAD-REVISE", "title":"thread revision", "steps":[
                 {"action":"implement", "target_file":"src/thread.rs", "check_items":"focused"}
             ], "identity_policy":"legacy_identity_v1", "role_contracts":p0l_governance_roles()
@@ -1115,7 +1115,7 @@ use super::support::*;
         let store = TaskCollabStore::new(&db_path).unwrap();
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         let create_params = serde_json::json!({
-            "workspace_id": 1,
+            "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id": "T-STEPS-CREATE",
             "title": "task with steps",
             "steps": [
@@ -1180,7 +1180,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-STEPS-SPLIT",
                     "title": "parent",
                 }),
@@ -1244,7 +1244,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-TREE-ROOT",
                     "title": "parent",
                 }),
@@ -1349,7 +1349,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-PLAN-SPLIT",
                     "title": "parent",
                 }),
@@ -1458,7 +1458,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-PLAN-ROLLBACK",
                     "title": "parent",
                 }),
@@ -1561,7 +1561,7 @@ use super::support::*;
         // 5. 完整 task RPC 可用（创建 → 查询）
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
         let create_params = serde_json::json!({
-            "workspace_id": 1,
+            "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "title": "upgrade from v46",
             "task_id": "T-V46-001"
         });
@@ -1588,16 +1588,11 @@ use super::support::*;
         let store = TaskCollabStore::new(&db_path).unwrap();
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
 
-        {
-            let conn = store.conn.lock().unwrap();
-            conn.execute(
-                "INSERT INTO workspaces (name, root_path, created_at, is_active) VALUES ('identity-test', '/tmp/identity-test', 1.0, 1)",
-                [],
-            ).unwrap();
-        }
+        // workspace 1 由 seed_workspace 建立（test-ws // /tmp/test-ws，权威 capture 基于该
+        // root_path 计算）；不得自插同名 id=1 的 workspace，否则 identity c14n 重算 mismatch。
 
         let create = serde_json::json!({
-            "workspace_id": 1,
+            "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
             "task_id": "T-IDENTITY-001",
             "title": "identity writeback",
             "steps": [{"action": "implement"}]
@@ -1691,7 +1686,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-REPORT-SNAPSHOT-001",
                     "title": "report snapshot binding",
                     "steps": [{"action": "implement", "target_file": "a.rs"}]
@@ -1756,7 +1751,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "P0-L repair target",
                     "description": "p0l repair test",
@@ -1829,7 +1824,7 @@ use super::support::*;
                 "identity": auth["identity"],
                 "lease_token": auth["lease_token"],
                 "fencing_counter": auth["fencing_counter"],
-                "workspace_id": 1,
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "evidence_path": "deliverables/software-company/p0l_step5_review_packet_20260828.md",
                 "evidence_hash": "sha256:p0l-repair-evidence",
             }),
@@ -2048,7 +2043,7 @@ use super::support::*;
                     },
                     "lease_token": auth["lease_token"],
                     "fencing_counter": auth["fencing_counter"],
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 }),
             )
             .unwrap_err();
@@ -2069,7 +2064,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "legacy steps bootstrap",
                     "description": "steps bootstrap test",
@@ -2134,7 +2129,7 @@ use super::support::*;
                 "identity": auth["identity"],
                 "lease_token": auth["lease_token"],
                 "fencing_counter": auth["fencing_counter"],
-                "workspace_id": 1,
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "evidence_path": "deliverables/software-company/s1_t04_review_packet.md",
                 "evidence_hash": "sha256:steps-bootstrap-evidence",
             }),
@@ -2264,7 +2259,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": task_id,
                     "title": "reviewer pass provenance",
                     "steps": [{"action": "implement", "target_file": "src/pass.rs"}],
@@ -2490,4 +2485,217 @@ use super::support::*;
             )
             .unwrap();
         assert_eq!(projected_snapshot, "snapshot-pass-1");
+    }
+
+    // ========================================================================
+    // BR-01：daemon strict task.create workspace binding and provenance readback
+    // acceptance（role-prompt-v1-bootstrap-recovery-work-order.json BR-01 卡）
+    // ========================================================================
+
+    fn br01_count(conn: &rusqlite::Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn test_br01_missing_instance_rejected_with_zero_rows() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        let conn = store.conn.lock().unwrap();
+        let tasks_before = br01_count(&conn, "SELECT COUNT(*) FROM tasks");
+        let caps_before = br01_count(&conn, "SELECT COUNT(*) FROM workspace_authority_captures");
+        let binds_before = br01_count(&conn, "SELECT COUNT(*) FROM task_workspace_bindings");
+        drop(conn);
+
+        // missing workspace_instance_id → E_TASK_WORKSPACE_INSTANCE_REQUIRED
+        let err = store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "title": "BR-01 missing instance",
+                    "task_id": "T-BR01-MISSING",
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err.code, "E_TASK_WORKSPACE_INSTANCE_REQUIRED",
+            "missing instance 必须返回 E_TASK_WORKSPACE_INSTANCE_REQUIRED，实际 {}",
+            err.code
+        );
+
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(br01_count(&conn, "SELECT COUNT(*) FROM tasks"), tasks_before, "不得写 task 行");
+        assert_eq!(
+            br01_count(&conn, "SELECT COUNT(*) FROM workspace_authority_captures"),
+            caps_before,
+            "不得写 capture 行"
+        );
+        assert_eq!(
+            br01_count(&conn, "SELECT COUNT(*) FROM task_workspace_bindings"),
+            binds_before,
+            "不得写 binding 行"
+        );
+        drop(conn);
+    }
+
+    #[test]
+    fn test_br01_blank_instance_rejected_with_zero_rows() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        let err = store
+            .handle_task_create(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "workspace_instance_id": "   ",
+                    "title": "BR-01 blank instance",
+                    "task_id": "T-BR01-BLANK",
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_TASK_WORKSPACE_INSTANCE_REQUIRED");
+        let conn = store.conn.lock().unwrap();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE id='T-BR01-BLANK'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0, "blank instance 不得写 task 行");
+        drop(conn);
+    }
+
+    #[test]
+    fn test_br01_numeric_instance_mismatch_rejected() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store); // workspace 1 权威 instance = ws-inst-test（seed_task_binding）
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        // 请求 ws-1（phantom 合成形态）→ 与权威 instance 不匹配
+        let err = store
+            .handle_task_create(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "workspace_instance_id": "ws-1",
+                    "title": "BR-01 phantom ws-1",
+                    "task_id": "T-BR01-PHANTOM",
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err.code, "E_WORKSPACE_AUTHORITY_MISMATCH",
+            "numeric/instance 不匹配必须 E_WORKSPACE_AUTHORITY_MISMATCH，实际 {}",
+            err.code
+        );
+        let conn = store.conn.lock().unwrap();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE id='T-BR01-PHANTOM'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0, "mismatch 不得产生 task 行（phantom binding 根治）");
+        drop(conn);
+    }
+
+    #[test]
+    fn test_br01_create_status_readback_identical() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        let create = store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "workspace_instance_id": "ws-inst-test",
+                    "title": "BR-01 readback",
+                    "task_id": "T-BR01-READBACK",
+                    "steps": [{"action":"verify", "target_file":"x", "target_symbol":"", "check_items":""}],
+                }),
+            )
+            .unwrap();
+        assert_eq!(create["workspace_id"], 1);
+        assert_eq!(create["workspace_instance_id"], "ws-inst-test");
+
+        let status = store.handle_task_status(peer, &serde_json::json!({"task_id": "T-BR01-READBACK"})).unwrap();
+        for key in [
+            "workspace_id",
+            "workspace_instance_id",
+            "workspace_binding_id",
+            "workspace_capture_id",
+            "assignment_id",
+        ] {
+            assert_eq!(
+                status.get(key),
+                create.get(key),
+                "task.status 的 {key} 必须与 task.create 完全一致"
+            );
+        }
+        // 初始 step id 也应出现在 status.steps 中。
+        assert_eq!(status["steps"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_br01_multi_workspace_no_cross_bind() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        // 独立 workspace 2（无既有 capture → 允许确立 instance ws-inst-2）。
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at, is_active) \
+                 VALUES (2, 'ws-2', '/tmp/ws-2', ?1, 1)",
+                params![1_700_000_000.0_f64],
+            )
+            .unwrap();
+        }
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        let c2 = store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 2,
+                    "workspace_instance_id": "ws-inst-2",
+                    "title": "BR-01 ws2",
+                    "task_id": "T-BR01-WS2",
+                }),
+            )
+            .unwrap();
+        assert_eq!(c2["workspace_id"], 2);
+        assert_eq!(c2["workspace_instance_id"], "ws-inst-2");
+        let s2 = store.handle_task_status(peer.clone(), &serde_json::json!({"task_id": "T-BR01-WS2"})).unwrap();
+        assert_eq!(s2["workspace_id"], 2, "task 2 必须绑定 workspace 2");
+        assert_eq!(s2["workspace_instance_id"], "ws-inst-2");
+
+        // 同 session 再建 workspace 1 任务，两者 binding 不串。
+        let c1 = store
+            .handle_task_create(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1,
+                    "workspace_instance_id": "ws-inst-test",
+                    "title": "BR-01 ws1",
+                    "task_id": "T-BR01-WS1",
+                }),
+            )
+            .unwrap();
+        assert_eq!(c1["workspace_id"], 1);
+        let s1 = store.handle_task_status(peer, &serde_json::json!({"task_id": "T-BR01-WS1"})).unwrap();
+        assert_eq!(s1["workspace_id"], 1);
+        assert_ne!(s1["workspace_capture_id"], s2["workspace_capture_id"], "不同 workspace 不得共用 capture");
     }

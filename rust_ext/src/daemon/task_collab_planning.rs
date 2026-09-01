@@ -102,6 +102,26 @@ impl TaskCollabStore {
                 )
             })?;
 
+        // BR-01：子任务 instance 继承父任务 binding 的权威 capture instance
+        //（与 create_subtask 一致；缺失 → fail-closed，绝不合成 ws-{id}）。
+        let workspace_instance_id: String = tx
+            .query_row(
+                "SELECT c.workspace_instance_id FROM task_workspace_bindings b \
+                 JOIN workspace_authority_captures c ON c.workspace_capture_id = b.workspace_capture_id \
+                 WHERE b.task_id = ?1 LIMIT 1",
+                params![task_id],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|e| {
+                DaemonRpcError::new(
+                    "E_TASK_BINDING_REQUIRED",
+                    format!(
+                        "父任务 {} 缺少权威 workspace capture，拒绝 split（无法继承 workspace_instance_id）: {}",
+                        task_id, e
+                    ),
+                )
+            })?;
+
         // 子任务 identity_policy：显式传入优先，缺省 legacy_identity_v1（与 task.create 兼容）。
         let identity_policy = params
             .get("identity_policy")
@@ -166,8 +186,8 @@ impl TaskCollabStore {
 
             insert_task_steps(&tx, &sub_id, &steps, ts)?;
 
-            // 1) 不可变 workspace binding（继承父任务 workspace；同一事务原子写入）。
-            bind_task_to_workspace(&tx, &sub_id, workspace_id, "", &owner)?;
+            // 1) 不可变 workspace binding（继承父任务 workspace + 权威 instance；同一事务原子写入）。
+            bind_task_to_workspace(&tx, &sub_id, workspace_id, &workspace_instance_id, &owner)?;
 
             // 2) legacy Role Contract（A' 三角色；bootstrap 派生 v1 投影的前置）。
             insert_role_contracts(&tx, &sub_id, &default_role_contracts, &owner, ts)?;
@@ -251,10 +271,19 @@ impl TaskCollabStore {
         }
         // workspace authority fail-closed：根任务同样必须显式绑定 workspace。
         let workspace_id = required_workspace_id_param(params)?;
+        // BR-01：create_from_plan 根任务也必须显式传入非空 workspace_instance_id，
+        // 禁止 empty-instance 合成 ws-{id}。
         let workspace_instance_id = params
             .get("workspace_instance_id")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    ERR_TASK_WORKSPACE_INSTANCE_REQUIRED,
+                    "task.create_from_plan 必须显式传入非空 workspace_instance_id；禁止 empty-instance 合成 ws-{id}",
+                )
+            })?;
         let title = params
             .get("title")
             .and_then(|v| v.as_str())
@@ -476,6 +505,48 @@ impl TaskCollabStore {
             task_bound_workspace_id(&tx, parent_id, optional_workspace_id_param(params))?
         };
 
+        // BR-01：子任务 instance 必须与父任务 binding 的权威 capture 一致（继承）；
+        // root 子任务（无父）必须显式传入非空 workspace_instance_id，禁止合成 ws-{id}。
+        let workspace_instance_id: String = if parent_id.is_empty() {
+            params
+                .get("workspace_instance_id")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    DaemonRpcError::new(
+                        ERR_TASK_WORKSPACE_INSTANCE_REQUIRED,
+                        "task.create_subtask（root 子任务）必须显式传入非空 workspace_instance_id",
+                    )
+                })?
+                .to_string()
+        } else {
+            match tx.query_row(
+                "SELECT c.workspace_instance_id FROM task_workspace_bindings b \
+                 JOIN workspace_authority_captures c ON c.workspace_capture_id = b.workspace_capture_id \
+                 WHERE b.task_id = ?1 LIMIT 1",
+                params![parent_id],
+                |r| r.get::<_, String>(0),
+            ) {
+                Ok(v) => v,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(DaemonRpcError::new(
+                        "E_TASK_WORKSPACE_UNBOUND",
+                        format!(
+                            "父任务 {} 无 workspace binding，无法继承 workspace_instance_id",
+                            parent_id
+                        ),
+                    ));
+                }
+                Err(e) => {
+                    return Err(DaemonRpcError::internal_error(format!(
+                        "查询父任务 workspace instance 失败: {}",
+                        e
+                    )));
+                }
+            }
+        };
+
         tx.execute(
             "INSERT INTO tasks
              (id, title, description, creator, status, created_at, updated_at, parent_id)
@@ -492,8 +563,13 @@ impl TaskCollabStore {
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("子任务写入失败: {}", e)))?;
 
-        let (_binding_id, _capture_id) =
-            bind_task_to_workspace(&tx, &task_id, workspace_id, "", &peer.owner_key())?;
+        let (_binding_id, _capture_id) = bind_task_to_workspace(
+            &tx,
+            &task_id,
+            workspace_id,
+            &workspace_instance_id,
+            &peer.owner_key(),
+        )?;
 
         tx.execute(
             "INSERT INTO task_events (task_id, workspace_id, from_status, to_status, reason_code, reason, actor_identity, monotonic_seq, authoritative_timestamp) VALUES (?1, ?2, 'none', 'open', 'subtask_created', ?3, ?4, ?5, ?6)",

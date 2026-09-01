@@ -33,6 +33,8 @@ use super::types::{
 
 /// 任一 registry/capture/local workspace 不一致（§8.1.1 fail-closed）。
 pub const ERR_WORKSPACE_AUTHORITY_MISMATCH: &str = "E_WORKSPACE_AUTHORITY_MISMATCH";
+/// BR-01：workspace_instance_id 缺失/空白在领域写之前拒绝（禁止合成 ws-{id}）。
+pub const ERR_TASK_WORKSPACE_INSTANCE_REQUIRED: &str = "E_TASK_WORKSPACE_INSTANCE_REQUIRED";
 /// 事务/savepoint/ledger 基础设施失败（InfrastructureError 语义，回滚 outer tx）。
 pub const ERR_TASK_DB_TRANSACTION: &str = "E_TASK_DB_TRANSACTION";
 
@@ -272,6 +274,41 @@ fn write_domain(
     input: &CreateTaskInput,
     ws: &WorkspaceCaptureInput,
 ) -> Result<DomainWriteOk, CreateDomainError> {
+    // 0. BR-01：workspace_instance_id 缺失/空白在领域写之前拒绝，绝不合成 ws-{id}。
+    if ws.workspace_instance_id.trim().is_empty() {
+        return Err(CreateDomainError::Deterministic {
+            code: ERR_TASK_WORKSPACE_INSTANCE_REQUIRED.to_string(),
+            message: format!(
+                "task.create 必须显式传入非空 workspace_instance_id（workspace_id={}）；\
+                 禁止 empty-instance 合成 ws-{{id}}",
+                ws.workspace_id
+            ),
+        });
+    }
+
+    // 0c. BR-01：numeric/instance 配对——workspace 已确立权威 instance 时，请求必须一致。
+    // 防止同 workspace 换 instance（曾产生 phantom `ws-1` binding：注册表无该 instance
+    // 却可绑定）；capture 链 append-only，权威以最近一条为准。
+    let authoritative_instance: Option<String> = tx
+        .query_row(
+            "SELECT workspace_instance_id FROM workspace_authority_captures \
+             WHERE workspace_id = ?1 \
+             ORDER BY capture_revision DESC, rowid DESC LIMIT 1",
+            [ws.workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| CreateDomainError::infra_msg(e, "workspace 权威 instance 读取失败"))?;
+    if let Some(auth_instance) = authoritative_instance {
+        if auth_instance != ws.workspace_instance_id {
+            return Err(CreateDomainError::mismatch(format!(
+                "workspace_id={} 权威 workspace_instance_id={}，请求 {} 不一致；\
+                 禁止同一 workspace 换 instance / 合成 ws-{{id}}",
+                ws.workspace_id, auth_instance, ws.workspace_instance_id
+            )));
+        }
+    }
+
     // 0. workspace 必须真实存在（task-DB 侧 `workspaces.id`；不用客户端 numeric id 补齐）。
     let ws_exists: i64 = tx
         .query_row(

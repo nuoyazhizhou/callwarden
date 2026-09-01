@@ -74,7 +74,7 @@ fn test_stale_claim_cannot_be_taken_over_by_different_role() {
         .handle_task_create(
             peer.clone(),
             &serde_json::json!({
-                "workspace_id": 1,
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CLAIM-STALE-CROSS-ROLE",
                 "title": "cross role must conflict",
                 "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -148,7 +148,7 @@ fn test_orphan_claim_recovery_requires_stale_owner_and_preserves_step_state() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CLAIM-RECOVER",
                 "title": "recover",
                 "steps": [
@@ -312,7 +312,7 @@ fn test_orphan_claim_recovery_rejects_fresh_owner() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CLAIM-RECOVER-FRESH",
                 "title": "recover fresh",
                 "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -418,7 +418,7 @@ fn test_governance_projection_returns_diagnosis_without_lease_token() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-G3-PROJ",
                 "title": "g3 projection",
                 "steps": [{"action": "audit", "target_file": "a.rs"}],
@@ -459,7 +459,7 @@ fn test_contract_revise_appends_revision_n_plus_1_via_handler() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-G2-REVISE",
                 "title": "g2 revise",
                 "steps": [{"action": "audit", "target_file": "a.rs"}],
@@ -536,7 +536,7 @@ fn test_contract_revise_appends_revision_n_plus_1_via_handler() {
                 "task_id": "T-G2-REVISE",
                 "envelope": v1_envelope,
                 "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_instance_id": "ws-inst-test",
                 "request_id": "g2-boot-1",
                 "evidence_path": "ev/path", "evidence_hash": "ev-hash",
                 "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"],
@@ -572,7 +572,7 @@ fn test_contract_revise_appends_revision_n_plus_1_via_handler() {
                 "envelope": v2_envelope,
                 "expected_previous_hash": v1_hash,
                 "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_instance_id": "ws-inst-test",
                 "request_id": "g2-revise-1",
                 "evidence_path": "ev/path2", "evidence_hash": "ev-hash2",
                 "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"],
@@ -609,7 +609,7 @@ fn test_contract_revise_appends_revision_n_plus_1_via_handler() {
                 "envelope": v2_envelope,
                 "expected_previous_hash": "sha256:wrong",
                 "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_instance_id": "ws-inst-test",
                 "request_id": "g2-revise-2",
                 "evidence_path": "ev/path2", "evidence_hash": "ev-hash2",
                 "lease_token": lease["token"], "fencing_counter": lease["fencing_counter"],
@@ -684,7 +684,7 @@ fn test_claim_unregistered_identity_fail_closed() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,"task_id": "T-GHOST", "title": "ghost"}),
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-GHOST", "title": "ghost"}),
         )
         .unwrap();
 
@@ -717,7 +717,7 @@ fn test_claim_contract_task_requires_identity() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CONTRACT-NOID",
                 "title": "contract task",
                 "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -757,7 +757,7 @@ fn test_claim_contract_skill_mismatch_rejected() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-CONTRACT-MISMATCH",
                 "title": "contract mismatch",
                 "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -808,7 +808,7 @@ fn test_claim_envelope_returns_role_contract() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-ENVELOPE",
                 "title": "envelope",
                 "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -891,7 +891,7 @@ fn test_role_independence_gate_blocks_shared_instance() {
     store
         .handle_task_create(
             peer_b.clone(),
-            &serde_json::json!({ "workspace_id": 1,"task_id": "T-INDEP", "title": "indep"}),
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-INDEP", "title": "indep"}),
         )
         .unwrap();
 
@@ -924,7 +924,7 @@ fn test_contract_set_bumps_revision_and_audits() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,"task_id": "T-CS", "title": "cs"}),
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-CS", "title": "cs"}),
         )
         .unwrap();
 
@@ -987,7 +987,7 @@ fn test_report_role_not_contracted_rejected() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-ROLE-MISMATCH",
                 "title": "role mismatch",
                 "steps": [{"action": "test", "target_file": "a.rs"}],
@@ -1056,7 +1056,7 @@ fn test_task_bound_evidence_and_gate_are_idempotent() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-EVIDENCE-GATE",
                 "title": "evidence gate",
                 "steps": [{"action": "test", "target_file": "rust_ext/src/daemon/task_collab.rs"}]
@@ -1149,7 +1149,7 @@ fn test_verdict_submit_appends_replays_and_rejects_conflicts() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-VERDICT-NATIVE",
                 "title": "native verdict",
                 "steps": [{"action": "review", "target_file": "a.rs"}],
@@ -1397,7 +1397,7 @@ fn test_verdict_submit_new_schema_role_contract_triple() {
     store
         .handle_task_create(
             peer.clone(),
-            &serde_json::json!({ "workspace_id": 1,
+            &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": "T-VERDICT-NEWSCHEMA",
                 "title": "new schema role contract verdict",
                 "steps": [{"action": "review", "target_file": "a.rs"}],

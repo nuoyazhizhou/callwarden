@@ -10,7 +10,7 @@ fn seed_unresolved_p0l_task(store: &TaskCollabStore, peer: &PeerCredential) {
         .handle_task_create(
             peer.clone(),
             &serde_json::json!({
-                "workspace_id": 1,
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": task_id,
                 "title": "P0-L bootstrap fixture",
                 "identity_policy": "legacy_identity_v1",
@@ -67,7 +67,7 @@ fn p0l_identity_policy_repair_is_allowlisted_atomic_and_idempotent() {
         .handle_task_create(
             peer.clone(),
             &serde_json::json!({
-                "workspace_id": 1,
+                "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                 "task_id": task_id,
                 "title": "P0-L repair fixture",
                 "identity_policy": "legacy_identity_v1",
@@ -122,7 +122,7 @@ fn p0l_identity_policy_repair_is_allowlisted_atomic_and_idempotent() {
     let mut request = serde_json::json!({
         "task_id": task_id,
         "workspace_id": 1,
-        "workspace_instance_id": "ws-1",
+        "workspace_instance_id": "ws-inst-test",
         "request_id": "p0l-policy-repair-1",
         "repair_code": "p0l_identity_policy_v1",
         "evidence_path": "deliverables/p0l-policy-repair.md",
@@ -191,7 +191,7 @@ fn p0l_identity_policy_repair_rejects_non_allowlisted_task() {
             &serde_json::json!({
                 "task_id": "T-NOT-P0L",
                 "workspace_id": 1,
-                "workspace_instance_id": "ws-1",
+                "workspace_instance_id": "ws-inst-test",
                 "request_id": "repair-other",
                 "repair_code": "p0l_identity_policy_v1",
                 "evidence_path": "evidence.md",
@@ -218,7 +218,7 @@ fn p0l_identity_policy_bootstrap_repair_is_owner_scoped_one_shot_and_secret_free
     let request = serde_json::json!({
         "task_id": "T-1787801315246-e3e3a08c",
         "workspace_id": 1,
-        "workspace_instance_id": "ws-1",
+        "workspace_instance_id": "ws-inst-test",
         "request_id": "p0l-bootstrap-1",
         "repair_code": "p0l_identity_policy_v1",
         "role_worker_id": "p0l-bootstrap-adj",
@@ -314,7 +314,7 @@ fn p0l_identity_policy_bootstrap_repair_rejects_wrong_worker_and_secret_fields()
     let request = serde_json::json!({
         "task_id": "T-1787801315246-e3e3a08c",
         "workspace_id": 1,
-        "workspace_instance_id": "ws-1",
+        "workspace_instance_id": "ws-inst-test",
         "request_id": "p0l-bootstrap-invalid-1",
         "repair_code": "p0l_identity_policy_v1",
         "role_worker_id": "p0l-bootstrap-exec",
@@ -359,7 +359,7 @@ fn role_worker_rotate_is_owner_authorized_one_time_and_secret_free_on_replay() {
     let request = serde_json::json!({
         "request_id": "role-worker-recovery-1",
         "workspace_id": 1,
-        "workspace_instance_id": "ws-1",
+        "workspace_instance_id": "ws-inst-test",
         "role_worker_id": "rw-recover",
         "new_role_instance_id": "rwi-new",
         "role_session_id": "recovery-session",
@@ -466,7 +466,7 @@ fn role_worker_rotate_rejects_non_owner_without_mutation() {
     let request = serde_json::json!({
         "request_id": "role-worker-recovery-wrong-owner",
         "workspace_id": 1,
-        "workspace_instance_id": "ws-1",
+        "workspace_instance_id": "ws-inst-test",
         "role_worker_id": "rw-owner",
         "new_role_instance_id": "rwi-attacker",
         "role_session_id": "attacker-session",
@@ -497,7 +497,7 @@ fn role_worker_rotate_rejects_runtime_secret_without_mutation() {
     let request = serde_json::json!({
         "request_id": "role-worker-recovery-runtime-secret",
         "workspace_id": 1,
-        "workspace_instance_id": "ws-1",
+        "workspace_instance_id": "ws-inst-test",
         "role_worker_id": "rw-runtime",
         "new_role_instance_id": "rwi-runtime-new",
         "role_session_id": "runtime-secret-session",

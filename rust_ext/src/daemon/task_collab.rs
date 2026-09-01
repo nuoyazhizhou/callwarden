@@ -149,11 +149,20 @@ pub(crate) fn begin_immediate_with_retry<'a>(
     attempt(conn, operation, 0)
 }
 
+/// BR-01：task.create 必须显式提供非空 `workspace_instance_id`；禁止空实例
+/// 合成 `ws-{id}`（曾掩盖 A′ phantom binding：`ws-1` 在注册表不存在却可绑定）。
+pub(crate) const ERR_TASK_WORKSPACE_INSTANCE_REQUIRED: &str = "E_TASK_WORKSPACE_INSTANCE_REQUIRED";
+
 /// 在 `task.create` 同一事务内追加 workspace authority capture + 不可变 binding
 /// （cw-role-handoff-task-loop.md §8.1.1）。
 ///
 /// - workspace 不存在 → `E_WORKSPACE_AUTHORITY_MISMATCH` fail-closed（不得用客户端
 ///   numeric id 补齐）；
+/// - `workspace_instance_id` 缺失/空白 → `E_TASK_WORKSPACE_INSTANCE_REQUIRED`
+///   （BR-01：生产路径禁止 empty-instance → `ws-{id}` synthesis）；
+/// - workspace 已有 capture 时，请求 instance 必须等于该 workspace 最近 capture 的
+///   instance（numeric/instance 配对，`E_WORKSPACE_AUTHORITY_MISMATCH`），禁止
+///   同一 workspace 换 instance / 制造第二权威；
 /// - workspace_capture rule row 不可读 → `E_WORKSPACE_AUTHORITY_MISMATCH`
 ///   （capability 未就绪，禁止无 provenance 绑定）；
 /// - 同 workspace/instance 已有 capture 时只允许相同稳定 identity 的 re-attestation
@@ -183,6 +192,47 @@ pub(crate) fn bind_task_to_workspace(
         ));
     }
 
+    // 0b. BR-01：blank instance 在领域写之前拒绝，绝不合成 ws-{id}。
+    let instance_id = workspace_instance_id.trim();
+    if instance_id.is_empty() {
+        return Err(DaemonRpcError::new(
+            ERR_TASK_WORKSPACE_INSTANCE_REQUIRED,
+            format!(
+                "task.create 必须显式传入非空 workspace_instance_id（workspace_id={}）；\
+                 禁止 empty-instance 合成 ws-{{id}}",
+                workspace_id
+            ),
+        ));
+    }
+
+    // 0c. BR-01：numeric/instance 配对——workspace 已确立权威 instance 时，请求必须一致。
+    // 防止同 workspace 换 instance（曾产生 phantom `ws-1` binding：注册表无该 instance
+    // 却可绑定）；capture 链 append-only，权威以最近一条为准。
+    let authoritative_instance: Option<String> = tx
+        .query_row(
+            "SELECT workspace_instance_id FROM workspace_authority_captures \
+             WHERE workspace_id = ?1 \
+             ORDER BY capture_revision DESC, rowid DESC LIMIT 1",
+            params![workspace_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("workspace 权威 instance 读取失败: {}", e))
+        })?;
+    if let Some(auth_instance) = authoritative_instance {
+        if auth_instance != instance_id {
+            return Err(DaemonRpcError::new(
+                "E_WORKSPACE_AUTHORITY_MISMATCH",
+                format!(
+                    "workspace_id={} 权威 workspace_instance_id={}，请求 {} 不一致；\
+                     禁止同一 workspace 换 instance / 合成 ws-{{id}}",
+                    workspace_id, auth_instance, instance_id
+                ),
+            ));
+        }
+    }
+
     // 1. capture c14n rule row 必须可读（capability 未就绪 fail-closed）。
     let capture_rules_hash: String = tx
         .query_row(
@@ -206,11 +256,6 @@ pub(crate) fn bind_task_to_workspace(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("读取 workspace 行失败: {}", e)))?;
-    let instance_id = if workspace_instance_id.trim().is_empty() {
-        format!("ws-{}", workspace_id)
-    } else {
-        workspace_instance_id.to_string()
-    };
     let root_hash = sha256_hex(root_path.as_bytes());
     let manifest_payload = serde_json::json!({
         "workspace_id": workspace_id,
@@ -2094,10 +2139,20 @@ impl TaskCollabStore {
         // workspace authority fail-closed：task.create 必须显式传入 workspace_id（>0）
         // 且 workspace 真实存在；禁止用 active workspace / cwd 补齐（§8.1.1）。
         let workspace_id = required_workspace_id_param(params)?;
+        // BR-01：workspace_instance_id 缺失/空白在领域写之前拒绝（E_TASK_WORKSPACE_INSTANCE_REQUIRED），
+        // 禁止 empty-instance → ws-{id} synthesis（曾掩盖 A′ phantom binding）。
         let workspace_instance_id = params
             .get("workspace_instance_id")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    ERR_TASK_WORKSPACE_INSTANCE_REQUIRED,
+                    "task.create 必须显式传入非空 workspace_instance_id；禁止空实例合成 ws-{id}",
+                )
+            })?
+            .to_string();
         let steps = match params.get("steps") {
             None => &[][..],
             Some(value) => value
@@ -2146,7 +2201,7 @@ impl TaskCollabStore {
             &tx,
             &task_id,
             workspace_id,
-            workspace_instance_id,
+            &workspace_instance_id,
             &peer.owner_key(),
         )?;
 
@@ -2273,6 +2328,10 @@ impl TaskCollabStore {
         res.insert(
             "workspace_id".to_string(),
             Value::Number(serde_json::Number::from(workspace_id)),
+        );
+        res.insert(
+            "workspace_instance_id".to_string(),
+            Value::String(workspace_instance_id.clone()),
         );
         res.insert(
             "workspace_binding_id".to_string(),

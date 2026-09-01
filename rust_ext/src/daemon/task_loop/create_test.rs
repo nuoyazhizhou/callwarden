@@ -296,3 +296,65 @@ fn re_attestation_appends_new_capture_and_links_new_binding() {
         .unwrap();
     assert_eq!(bound, newest, "新 task 的 binding 必须指向最新 capture");
 }
+    // ========================================================================
+    // BR-01：1A 领域模块 strict workspace binding（acceptance 与生产路径对齐）
+    // ========================================================================
+
+    #[test]
+    fn test_br01_blank_instance_fails_closed() {
+        let mut conn = fresh_db();
+        let ws = WorkspaceCaptureInput {
+            workspace_instance_id: "  ".to_string(),
+            ..ws_input(1, "a")
+        };
+        let err = create_task(
+            &mut conn,
+            &frozen(),
+            &key("ws-inst-1", "req-blank"),
+            &input("t-blank"),
+            &ws,
+        )
+        .expect_err("blank instance 必须确定性拒绝");
+
+        assert_eq!(
+            err.code, "E_TASK_WORKSPACE_INSTANCE_REQUIRED",
+            "blank instance 必须 E_TASK_WORKSPACE_INSTANCE_REQUIRED，实际 {}",
+            err.code
+        );
+        // 领域写入零行；ledger 落一条可重放 error。
+        assert_eq!(count(&conn, "tasks"), 0, "不得写 task 行");
+        assert_eq!(count(&conn, "workspace_authority_captures"), 0, "不得写 capture 行");
+        assert_eq!(count(&conn, "task_workspace_bindings"), 0, "不得写 binding 行");
+        assert_eq!(count(&conn, "task_operation_ledger"), 1, "拒绝必须落可重放 ledger error");
+    }
+
+    #[test]
+    fn test_br01_instance_pair_mismatch_fails_closed() {
+        let mut conn = fresh_db();
+        let ws1 = ws_input(1, "a"); // instance = ws-inst-1
+        create_task(&mut conn, &frozen(), &key("ws-inst-1", "req-a"), &input("t-a"), &ws1)
+            .expect("首次 create 确立 ws-inst-1 权威");
+
+        // 同一 workspace 换 instance → numeric/instance 配对失败。
+        let ws2 = WorkspaceCaptureInput {
+            workspace_instance_id: "ws-inst-2".to_string(),
+            ..ws_input(1, "a")
+        };
+        let err = create_task(
+            &mut conn,
+            &frozen(),
+            &key("ws-inst-2", "req-b"),
+            &input("t-b"),
+            &ws2,
+        )
+        .expect_err("workspace 换 instance 必须拒绝");
+
+        assert_eq!(
+            err.code, "E_WORKSPACE_AUTHORITY_MISMATCH",
+            "instance 漂移必须 E_WORKSPACE_AUTHORITY_MISMATCH，实际 {}",
+            err.code
+        );
+        assert_eq!(count(&conn, "tasks"), 1, "被拒 task 不得写入");
+        assert_eq!(count(&conn, "workspace_authority_captures"), 1, "不得追加第二 instance capture");
+        assert_eq!(count(&conn, "task_workspace_bindings"), 1);
+    }

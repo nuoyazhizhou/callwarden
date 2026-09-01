@@ -124,6 +124,67 @@ impl TaskCollabStore {
             "updated_at".to_string(),
             Value::Number(serde_json::Number::from_f64(row.7).unwrap()),
         );
+
+        // BR-01 provenance readback：task.status 必须与 task.create 返回一致的
+        // workspace/binding/capture/assignment 标识（acceptance #3）。
+        let binding_row: Option<(i64, String, String)> = conn
+            .query_row(
+                "SELECT workspace_id, workspace_binding_id, workspace_capture_id \
+                 FROM task_workspace_bindings WHERE task_id = ?1",
+                params![task_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("读取 binding 失败: {e}")))?;
+        if let Some((ws_id, ws_binding_id, ws_capture_id)) = binding_row {
+            res.insert(
+                "workspace_id".to_string(),
+                Value::Number(serde_json::Number::from(ws_id)),
+            );
+            res.insert(
+                "workspace_binding_id".to_string(),
+                Value::String(ws_binding_id),
+            );
+            res.insert(
+                "workspace_capture_id".to_string(),
+                Value::String(ws_capture_id.clone()),
+            );
+            if let Some(ws_instance) = conn
+                .query_row(
+                    "SELECT workspace_instance_id FROM workspace_authority_captures \
+                     WHERE workspace_capture_id = ?1",
+                    params![ws_capture_id],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取 capture instance 失败: {e}"))
+                })?
+            {
+                res.insert("workspace_instance_id".to_string(), Value::String(ws_instance));
+            }
+        }
+        // assignment 标识取该任务第一条 assignment_queued 事件（create 排队即写，
+        // 后续 claim/report 复用同一 assignment id，与 create 返回值一致）。
+        let assignment_id: Option<String> = conn
+            .query_row(
+                "SELECT reason FROM task_events \
+                 WHERE task_id = ?1 AND reason_code = 'assignment_queued' \
+                 ORDER BY event_id ASC LIMIT 1",
+                params![task_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("读取 assignment 事件失败: {e}")))?
+            .and_then(|reason| {
+                serde_json::from_str::<Value>(&reason)
+                    .ok()
+                    .and_then(|v| v["assignment_id"].as_str().map(|s| s.to_string()))
+            });
+        if let Some(assignment_id) = assignment_id {
+            res.insert("assignment_id".to_string(), Value::String(assignment_id));
+        }
+
         Ok(Value::Object(res))
     }
 

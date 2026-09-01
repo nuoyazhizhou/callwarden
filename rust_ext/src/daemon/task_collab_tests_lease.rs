@@ -1276,7 +1276,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,"task_id": "T-SUB-PARENT", "title": "parent"}),
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-SUB-PARENT", "title": "parent"}),
             )
             .unwrap();
 
@@ -1371,7 +1371,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,"task_id": "T-SUB-ROLLBACK", "title": "parent"}),
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-SUB-ROLLBACK", "title": "parent"}),
             )
             .unwrap();
 
@@ -1426,7 +1426,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-STEPS",
                     "title": "claim with steps",
                     "steps": [
@@ -1473,7 +1473,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,"task_id": "T-CLAIM-NOSTEPS", "title": "no steps"}),
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test","task_id": "T-CLAIM-NOSTEPS", "title": "no steps"}),
             )
             .unwrap();
 
@@ -1498,7 +1498,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-DEDUP",
                     "title": "dedup",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1527,7 +1527,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-STEPSTATE",
                     "title": "step state",
                     "steps": [
@@ -1573,7 +1573,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-RESUME",
                     "title": "resume",
                     "steps": [{"action": "audit", "target_file": "a.rs"}, {"action": "fix", "target_file": "b.rs"}],
@@ -1612,7 +1612,7 @@ use super::support::*;
         store
             .handle_task_create(
                 peer.clone(),
-                &serde_json::json!({ "workspace_id": 1,
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-CONFLICT",
                     "title": "conflict",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1654,7 +1654,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-STALE-SAME-ROLE",
                     "title": "same role takeover",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -1762,7 +1762,7 @@ use super::support::*;
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1,
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
                     "task_id": "T-CLAIM-FRESH-SAME-ROLE",
                     "title": "fresh same role conflict",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
