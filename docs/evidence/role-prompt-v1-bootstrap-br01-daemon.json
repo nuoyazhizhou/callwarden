@@ -3,8 +3,15 @@
   "title": "Bootstrap BR-01: daemon strict task.create workspace binding and provenance readback",
   "idempotency_key": "role-prompt-v1-bootstrap-br01-daemon-binding",
   "manifest_version": "1",
-  "commit_hash": "<PENDING>",
-  "committed_head_file_hashes": {},
+  "commit_hash": "9e06fcd",
+  "committed_head_file_hashes": {
+    "rust_ext/src/daemon/task_collab.rs": "1bdc9161ec0183700c2d8c94b106556e3cc2195fec84ae0da427f695a27dd2ab",
+    "rust_ext/src/daemon/task_collab_query.rs": "43469ac0d5de96bb85aa2df27c87ed5d70ce9829e2a4a7559dc69e9dddb9c764",
+    "rust_ext/src/daemon/task_loop/create.rs": "ee256c62d652c8c2de9ef3a9798753a2150c63768caccaba42cb21a4b19ac50e",
+    "rust_ext/src/daemon/task_loop/create_test.rs": "dd843da2e9d376b4f604c7d75e7cc94467a030bf5e627791053e856fc45feb5c",
+    "rust_ext/src/daemon/task_collab_tests_core.rs": "7a43898cc0acedbe11b38563679e256ab6ebbee7ec53faf377b9c82e4e50f743",
+    "docs/evidence/role-prompt-v1-bootstrap-br01-daemon.json": "1183595d6e8dcd925b6027d4b0a3b4adae9c20ae3574d4c303ddf127b3a7382c"
+  },
   "acceptance": [
     {
       "id": 1,
