@@ -95,3 +95,19 @@ step 8 的治理收尾（claim → report success → 推进父任务关闭 BR-0
 - **治理状态**：父任务 `T-1787850432491-f42a2b8c` = `review`/`review_pending`，9 step 全 `done`（含原 failed 的 step 6 test、step 8 fix_defect），无 blocking → **BR-01 gate #2 解除**。
 - **漂移 #1 现场验证**：`task_assignments` 物理表已有该任务 `active` 行（`A-33b31a028d036ca2ba996d3b`，executor，session `sess-exec-bc045fae`），证明 claim 事件投影已回写物理表，Python 侧不再 fail-open。
 - **历史遗留（已知，非新问题）**：该 `active` 行由**上会话部署**（未含本次 task_collab_lifecycle.rs report 收敛代码的二进制）claim 产生，其后的 report success（事件 6492/6493）发生在收敛代码合入之前，故未收敛为 `completed`，留下一条孤儿 `active` 行。事件投影（6491 claim / 6493 assignment_completed）为权威真源，物理表仅补偿视图，孤儿行不影响治理判定；当前 daemon（含 4d4796f 全部修复）的后续 claim/report 会正确收敛。清理该孤儿行可走 `task.claim` 重入/接管或治理收尾时顺手 REPLACE，不作本次阻断。
+
+## 8. 独立 Reviewer PASS + Adjudicator 收尾（2026-09-01 23:55，父任务 closed）
+
+在 §7 部署闭环基础上，父任务 `T-1787850432491-f42a2b8c` 走完四角色治理链最后两段：
+
+- **独立核验（reviewer 角色）**：
+  - `task.completion_review` → `decision=pass`、`findings=[]`；
+  - `cw audit verify --limit 3000` → `Total: 3000, Verified: 3000, Broken: 0`（安全级 `hash_only`）。注意 `audit.verify_chain`/`audit_verify_chain` **不是** daemon 可直呼 RPC（`audit_verify_chain` 在 capability registry 中路由到 `python_compat` 后端，裸 RPC 报 `method_not_found`）；MCP 工具本会话未连接。权威入口是 CLI `cw audit verify`。
+- **契约/合同绑定核查（权威 DB）**：`task_contract_revisions` 1 行（`TC-T-1787850432491-f42a2b8c` rev=1，hash `sha256:da848c…`）；`role_contract_lineages` 3 行（executor/reviewer/adjudicator）各 rev=1；**reviewer 权威 hash = `sha256:3e8debc9…`**（取自 `role_contract_revisions.role_contract_hash`）。verdict.submit 的新 schema 校验（`task_collab_verdict.rs` L188-220）要求提交 `role_contract_id`（lineage id `rcl-…-reviewer`）+ 该权威 hash；**不要**用 legacy 17 字段 payload 重算（那只在无 lineage 时生效）。
+- **verdict.submit（blind_first_pass, overall=pass）**：lease.acquire（`reviewer-wb-186loop`，fence=3）→ `verdict.submit` 成功（`V-404d2b7cd6086820cdb5806e`，event 562，`replayed=false`）→ lease.release。`task_verdict_events` 行完整：phase/overall/clause_results（6 条全 pass）/findings（空）/role_contract_lineage_id/hash/normalization 列均已落库。
+- **next-action 推进**：`ADJUDICATE / adjudicate_current_verdict / required_role=adjudicator`（reviewer PASS 生效，进入裁决阶段）。
+- **Adjudicator 收尾（持证 apply/close）**：以 `adjudicator-workbuddy-p0adj-01` 身份 acquire `role=reviewer` lease（fence=4，identity=adjudicator 自身，apply/close 时 role 字段改 `adjudicator`——`validate_lease_for_mutation` 只比 agent/session/model 三项，不比 role）→ `task.apply`（status=applied）→ `task.close`（status=closed，叶子任务 9 step 全 done，无子任务门禁拦截）→ `lease.release`（零残留）。
+- **最终投影（release 之后查询，规避规则 6 活跃 lease 优先路由）**：`status=closed`、`next-action: Decision=COMPLETE / Action=NONE / Routing=complete/finalize`、`ACTIVE_LEASES: NONE`。
+- **BR-01 gate #2 最终解除**：父任务 `closed`，`task_collab.rs` 拆分任务不再占用治理状态，BR-01 本体可正式启动。
+
+> 备注：reviewer 身份 `reviewer-wb-186loop`（role=reviewer，session `sess-reviewer-wb-186loop`）与 adjudicator 身份 `adjudicator-workbuddy-p0adj-01`（role=adjudicator，session `sess-adj-p0batch-20260831`）均为 active 注册；两条治理写路径（verdict 的 holder 一致校验、apply/close 的 adjudicator 持 reviewer lease）身份语义按 §7/§8 实测形态执行。
