@@ -3,8 +3,16 @@
   "title": "Bootstrap BR-02: Python cw task.create daemon binding parity",
   "idempotency_key": "role-prompt-v1-bootstrap-br02-python-client",
   "manifest_version": "1",
-  "commit_hash": "<PENDING>",
-  "committed_head_file_hashes": {},
+  "commit_hash": "ca8c2fb",
+  "committed_head_file_hashes": {
+    "cli/main.py": "09cfb116537fe6b175ecc69707e82ffc77bc7f36008d310357e98902b3e013e9",
+    "server/daemon_client.py": "39835dd6afd90ac6b9d80e998f20ffc2771fda37ce61b77b8361768229903d30",
+    "tests/test_task_create_workspace_binding.py": "7bde3f034e3deb6bc69ede7372e554537d96c4d4c42524ea59f175add589ca8c",
+    "docs/cli_reference.md": "3bedf6c13a66c89667058ee65ca8ae5e2987a50e1744a4590e979b8c92c646f7",
+    "i18n/en_US.json": "71187a10742715d76a6729dd025b8e89166b19356964c446b3c4673977980e45",
+    "i18n/zh_CN.json": "ff865eb418019c1b18a8b36c7b1d42c6b5242ca67d940a62dcf26d4664fc99da",
+    "docs/evidence/role-prompt-v1-bootstrap-br02-python-client.json": "35d427bf69180d795ea1be4c85d31530198c1f5eb16733334a3c266b3f528602"
+  },
   "acceptance": [
     {
       "id": 1,
@@ -33,8 +41,8 @@
     {
       "id": 5,
       "criterion": "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_create_workspace_binding.py -q",
-      "result": "PENDING",
-      "evidence": "14 passed; 0 failed"
+      "result": "PASS",
+      "evidence": "14 passed; 0 failed（.venv_test/Scripts/python.exe -m pytest tests/test_task_create_workspace_binding.py -q）"
     },
     {
       "id": 6,
