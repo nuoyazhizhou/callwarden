@@ -2095,5 +2095,12 @@
   "status": "new_in_master",
   "scope": "R2 triage 修复：三个无关测试失败统一根因=assignment_queue 派工子系统（正式功能）集成后的契约漂移。①handle_task_claim_recover 释放旧 claim 时未同步清除 assignment 派工记录，导致后续 new Executor claim 被残留 assignment 拦截（task_conflict='assignment 已由同角色的其他 session 持有'），违背 recover 返回的 next_action='new Executor must call task.claim' 契约——生产缺陷，补 assignment_queue::complete_assignments(None,None) 释放；②full_lifecycle/migrates_v46 events 断言未过滤 assignment_* 事件，改为按 reason_code 过滤后断言 task 生命周期事件数（3/1）不变",
   "note": "message 内嵌 R2；非 P0C-R4 引入，未重判任务/未改治理状态；修复验证：task_collab 114/114、assignment_queue 8/8、orphan 2/2 全过；assignment_queue 自测 8/8 证明其系正式功能而非半成品；修改送达 rust_ext/src/daemon/task_collab_lease.rs 与 task_collab_tests_core.rs，最小侵入"
+ },
+ "t1787850432491_step8_fixdefect_drifts_20260901": {
+  "task_id": "T-1787850432491-f42a2b8c",
+  "commit_id": "4d4796f",
+  "status": "review_pending",
+  "scope": "step8 fix_defect（修 step6 failed test，target rust_ext/src/daemon/）+ 两处漂移修复 step9/step10：①task.claim 事件投影补偿写回物理表 task_assignments（persist_claimed_assignment，report success 收敛 completed 防孤儿行，新增回归测试）；②next_action rule7 感知 claim 状态返回 WAIT 破 AFK 无限重 claim；③tools_p2_graph 空白名单跳过注册修 compat_worker 级联崩溃",
+  "note": "message 内嵌 T-1787850432491-f42a2b8c；验证 cargo test --lib daemon::task_loop daemon::assignment_queue daemon::task_collab_lease --test-threads=1 = 210 passed/0 failed；父任务 9 step 全 done 进入 review（review_pending），BR-01 gate#2 解除；交付说明 drift_fix_step9_step10_20260901.md；daemon 已部署（PID 9564，git_commit 517f9337）但二进制由未提交工作树构建，本 commit 后需重编译部署闭环（health.git_commit==HEAD + runtime/target sha256 相等）"
  }
 }
