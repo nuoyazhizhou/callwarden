@@ -85,3 +85,13 @@ step 8 的治理收尾（claim → report success → 推进父任务关闭 BR-0
 
 - `task_collab.rs` 拆分目标（≤2000 行）**未达成**：`task_collab.rs` 仍是 2739 行，`task_collab_tests_core.rs` 2493 行。step 8 的 `target_file=rust_ext/src/daemon/` 覆盖了它们，但原始"瘦身"目标本身落空，建议作为独立技术债任务追踪。
 - `cli::router` / `cli::runtime` 的 4 个 Windows socket/路径测试在本沙箱失败，属环境相关、与本次无关，但反映 CLI 在 Linux 下 fail-closed 断言偏硬，可后续放宽。
+
+## 7. 实际执行结果（2026-09-01 23:50，部署闭环完成）
+
+- **代码已 commit + push**：`4d4796f`（step8 fix_defect + 漂移 step9/step10 源码修复 + compat_worker 存活修复）与 `e949ce9`（台账条目），已推送 origin/master（`cfd75c1..e949ce9`）。
+- **测试**：`cargo test --lib -- daemon::task_loop daemon::assignment_queue daemon::task_collab_lease --test-threads=1` = **210 passed / 0 failed**（比此前 208 多 2 个为漂移 #1 新增回归）。
+- **部署闭环三项验证全过**：`scripts/refresh_shared_runtime.ps1 -TaskId T-1787850432491-f42a2b8c -Configuration release -RestartMcp` 构建并切换 runtime；当前 daemon **PID 35156**（Bash 后台任务保活方式启动，见下），health `git_commit=e949ce9b7eb6`（== HEAD）✓、runtime/current 二进制 sha256 `d1be36ca…` == 部署证据记录 ✓、worker=healthy ✓。
+  - **部署坑（重要）**：`refresh_shared_runtime.ps1` 内部用 `Start-Process` 启动 daemon，但脚本自身跑在短生命周期 PowerShell 会话里时，**会话结束后 daemon 子进程被连带终止**（3 次部署 evidence 均"启动成功→随后死亡"）。可靠保活方式 = Bash 后台任务（run_in_background）前台 exec `cw-daemon.exe --socket <endpoint>`，进程由 Bash 会话持有。
+- **治理状态**：父任务 `T-1787850432491-f42a2b8c` = `review`/`review_pending`，9 step 全 `done`（含原 failed 的 step 6 test、step 8 fix_defect），无 blocking → **BR-01 gate #2 解除**。
+- **漂移 #1 现场验证**：`task_assignments` 物理表已有该任务 `active` 行（`A-33b31a028d036ca2ba996d3b`，executor，session `sess-exec-bc045fae`），证明 claim 事件投影已回写物理表，Python 侧不再 fail-open。
+- **历史遗留（已知，非新问题）**：该 `active` 行由**上会话部署**（未含本次 task_collab_lifecycle.rs report 收敛代码的二进制）claim 产生，其后的 report success（事件 6492/6493）发生在收敛代码合入之前，故未收敛为 `completed`，留下一条孤儿 `active` 行。事件投影（6491 claim / 6493 assignment_completed）为权威真源，物理表仅补偿视图，孤儿行不影响治理判定；当前 daemon（含 4d4796f 全部修复）的后续 claim/report 会正确收敛。清理该孤儿行可走 `task.claim` 重入/接管或治理收尾时顺手 REPLACE，不作本次阻断。
