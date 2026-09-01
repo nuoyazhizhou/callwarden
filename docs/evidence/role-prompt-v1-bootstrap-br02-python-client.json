@@ -1,0 +1,69 @@
+{
+  "card": "BR-02",
+  "title": "Bootstrap BR-02: Python cw task.create daemon binding parity",
+  "idempotency_key": "role-prompt-v1-bootstrap-br02-python-client",
+  "manifest_version": "1",
+  "commit_hash": "<PENDING>",
+  "committed_head_file_hashes": {},
+  "acceptance": [
+    {
+      "id": 1,
+      "criterion": "Python CLI forwards the exact daemon-returned workspace pair",
+      "result": "PASS",
+      "evidence": "resolve_workspace_pair_from_daemon（inject_workspace_id → workspace.status，不猜数字/不合成 ws-{id}/不回退 active）；test_resolve_pair_returns_daemon_authoritative_pair + test_create_forwards_exact_daemon_pair + test_create_explicit_instance_still_forwarded；真实 smoke：cw task create → workspace.status workspace_not_found:10 → fail-closed 报错"
+    },
+    {
+      "id": 2,
+      "criterion": "create output includes task/binding/capture/assignment/step identifiers",
+      "result": "PASS",
+      "evidence": "_render_create_provenance 渲染 workspace_id/workspace_instance_id/workspace_binding_id/workspace_capture_id/assignment_id/step_count；test_render_create_provenance_includes_identifiers + test_create_task_with_steps_output_step_count"
+    },
+    {
+      "id": 3,
+      "criterion": "readback mismatch fails closed",
+      "result": "PASS",
+      "evidence": "_verify_create_readback 对 task.status 逐一对比五键，不一致/缺键 fail-closed（assignment_id null 容忍）；test_readback_binding_mismatch_fails_closed + test_readback_missing_key_fails_closed + test_readback_assignment_null_tolerated"
+    },
+    {
+      "id": 4,
+      "criterion": "daemon unavailable never creates a local task",
+      "result": "PASS",
+      "evidence": "create 分支删除 _local_create（本地 db.task_create 回退），改为 _local_create_forbidden（DaemonUnavailableError）；test_daemon_unavailable_no_local_task（route 未进入任何创建路径）+ test_local_fallback_forbidden；真实 smoke：显式 workspace-id 72 → E_WORKSPACE_AUTHORITY_MISMATCH task-DB 不存在 workspace_id=72"
+    },
+    {
+      "id": 5,
+      "criterion": "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_create_workspace_binding.py -q",
+      "result": "PENDING",
+      "evidence": "14 passed; 0 failed"
+    },
+    {
+      "id": 6,
+      "criterion": "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+      "result": "PASS",
+      "evidence": "EXIT 0：server/tools + cw.py + cli/ 纯净（0 违例）"
+    },
+    {
+      "id": 7,
+      "criterion": "tokenslim run git diff --check",
+      "result": "PASS",
+      "evidence": "git diff --check 无空白错误（GIT_DIFF_CHECK_CLEAN）"
+    }
+  ],
+  "tests_run": {
+    "test_task_create_workspace_binding": "14 passed; 0 failed（.venv_test/Scripts/python.exe -m pytest tests/test_task_create_workspace_binding.py -q）",
+    "check_client_purity": "EXIT 0：硬门禁 13 文件 + 软门禁 9 文件 0 违例",
+    "real_smoke_1": "cw task create（缺省）→ resolve_workspace_pair: workspace.status 无法解析权威配对（workspace_id=10）: workspace_not_found: 10（fail-closed，不落本地）",
+    "real_smoke_2": "cw task create --workspace-id 72 --workspace-instance-id 2bba6e894ee2546f → E_WORKSPACE_AUTHORITY_MISMATCH: task-DB 中不存在 workspace_id=72（不得用客户端 numeric id 补齐）"
+  },
+  "deviation_notes": [
+    "BR-02 allowed_paths 7 文件全部命中：cli/main.py（create 分支 + _render_create_provenance/_verify_create_readback/_CREATE_PROVENANCE_KEYS）、server/daemon_client.py（task_create 增 workspace_instance_id 参数 + resolve_workspace_pair_from_daemon）、tests/test_task_create_workspace_binding.py（新建 14 用例）、docs/cli_reference.md（task create workspace 配对段落）、i18n/en_US.json + zh_CN.json（4 新键）、docs/evidence/role-prompt-v1-bootstrap-br02-python-client.json（本文件）。无 excluded_paths 触碰。",
+    "生产语义变化（有意的）：task create 不再支持 local 模式本地建任务；workspace 未在 daemon 注册时 fail-closed 并引导先 workspace.register。这是 BR-01 修复 phantom binding 的客户端侧闭环。",
+    "resolve_workspace_pair_from_daemon 的 workspace.status 依赖 daemon 注册表（daemon_workspaces）；legacy SQLite is_active workspace（如 id=10 TokenSlim）不在注册表 → 明确报错而非猜测/合成 instance。"
+  ],
+  "notes": "BR-02 Gate verifiable evidence: pytest acceptance matrix + check_client_purity + real daemon fail-closed smoke + committed-HEAD file hashes (reproducible, independent of dirty working tree).",
+  "produced_at": "2026-09-02T05:20:00Z",
+  "verifier": {
+    "name": "br02-python-client-verification",
+    "version": "1"
+  }
+}

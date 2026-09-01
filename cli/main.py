@@ -28,6 +28,7 @@ from ..server.daemon_client import (
     route_rpc,
     derive_workspace_instance_id,
     _workspace_snapshot_metadata,
+    resolve_workspace_pair_from_daemon,
     DaemonRemoteError,
     DaemonUnavailableError,
     SharedTaskWriterRequiredError,
@@ -3745,6 +3746,70 @@ def _route_has_blocking_findings(db, task_id: str) -> bool:
     return bool(res)
 
 
+# BR-02 provenance readback 键（daemon task.create / task.status 响应均含）。
+_CREATE_PROVENANCE_KEYS = (
+    "workspace_id",
+    "workspace_instance_id",
+    "workspace_binding_id",
+    "workspace_capture_id",
+    "assignment_id",
+)
+
+
+def _render_create_provenance(create_res: dict) -> None:
+    """BR-02 steps[2] render_create_provenance：渲染 create 返回的 binding/capture/
+    assignment 标识（task/binding/capture/assignment/step identifiers）。
+
+    `create_res` 为 daemon task.create 响应（BR-01 后含 5 键 readback）；缺失键
+    不渲染（不伪造），但 workspace_id/workspace_instance_id 必须存在。
+    """
+    print(t("cli.messages.task_workspace_provenance_title"))
+    for _k in _CREATE_PROVENANCE_KEYS:
+        if _k in create_res and create_res[_k] is not None:
+            print(t("cli.messages.task_provenance_item", k=_k, value=create_res[_k]))
+    step_count = create_res.get("step_count")
+    if step_count is not None:
+        print(t("cli.messages.task_provenance_item", k="step_count", value=step_count))
+
+
+def _verify_create_readback(create_res: dict, workspace_id: int,
+                            workspace_instance_id: str) -> None:
+    """BR-02 steps[3] compare_readback：create 响应与 task.status readback 逐一对比。
+
+    对比键：workspace_id / workspace_instance_id / workspace_binding_id /
+    workspace_capture_id（assignment_id 可能因无 assignment_queued 事件为 null，
+    两者都缺失/为 null 时容忍）。任一不一致 → fail-closed 上抛，不静默。
+    """
+    task_id = create_res.get("task_id")
+    if not task_id:
+        return
+    from ..server.daemon_client import _get_rpc_client_for_route
+    rpc_client = _get_rpc_client_for_route()
+    readback = rpc_client.call("task.status", {"task_id": task_id})
+    if not isinstance(readback, dict):
+        raise RuntimeError(
+            f"task.status readback 非对象响应（task_id={task_id}）: {readback!r}"
+        )
+    for key in ("workspace_id", "workspace_instance_id",
+                "workspace_binding_id", "workspace_capture_id", "assignment_id"):
+        created = create_res.get(key)
+        rb_val = readback.get(key)
+        if created is None:
+            continue  # create 未返回该键（如无 assignment）→ 不参与对比
+        if rb_val is None:
+            # create 返回了但 readback 缺省：assignment_id 可为 null；其余必须一致
+            if key == "assignment_id":
+                continue
+            raise RuntimeError(
+                f"task.status readback 缺少 {key}（create={created}）→ fail-closed"
+            )
+        if str(created) != str(rb_val):
+            raise RuntimeError(
+                f"task.create/task.status provenance 不一致：{key} "
+                f"create={created} vs readback={rb_val}（fail-closed）"
+            )
+
+
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
     parser = argparse.ArgumentParser(
@@ -3772,6 +3837,16 @@ def _handle_task(args, db):
                        'acceptance_checks, required_evidence, handoff_to, independence). '
                        'If omitted, the A\' standard three-role (executor/reviewer/adjudicator) '
                        'legacy contract template is used. Tasks are never created without contracts.'))
+    # BR-02：workspace 配对必须来自 daemon 权威解析（不猜数字 / 不合成 ws-{id} /
+    # 不回退 active workspace）。显式传入时 daemon 仍做 0c 配对校验（不一致 fail-closed）。
+    create_p.add_argument(
+        "--workspace-id", type=int, default=0,
+        help=t("cli_task_arg_workspace_id",
+               default="Explicit daemon workspace id (default: resolved from daemon, fail-closed)"))
+    create_p.add_argument(
+        "--workspace-instance-id", default="",
+        help=t("cli_task_arg_workspace_instance_id",
+               default="Explicit daemon workspace authority capture instance id (default: resolved from daemon via workspace.status)"))
 
     # next：领取下一个待执行步骤
     next_p = sub.add_parser("next", help=t(
@@ -4437,16 +4512,35 @@ def _handle_task(args, db):
                 role_contracts, "red")
             return True
 
-        def _local_create():
-            return db.task_create(opts.title, opts.desc, steps, creator="agent")
+        # BR-02：task.create 必须携带 daemon 解析的 workspace 配对
+        # （workspace_id + workspace_instance_id），daemon 不可用时一律
+        # fail-closed，绝不回退本地 SQLite（prove_no_sql_or_local_fallback）。
+        # 显式传入的 pair 仍由 daemon 0c 配对校验（不一致 → E_WORKSPACE_AUTHORITY_MISMATCH）。
+        workspace_id = int(opts.workspace_id or 0)
+        workspace_instance_id = (opts.workspace_instance_id or "").strip()
+        if not workspace_id or not workspace_instance_id:
+            _pair = resolve_workspace_pair_from_daemon()
+            if not workspace_id:
+                workspace_id = int(_pair["workspace_id"])
+            if not workspace_instance_id:
+                workspace_instance_id = str(_pair["workspace_instance_id"])
+
+        def _local_create_forbidden():
+            # BR-02 acceptance #4：daemon 不可用绝不创建本地任务。
+            raise DaemonUnavailableError(
+                "task.create 需要 daemon 权威 workspace binding；"
+                "daemon 不可用 / local 模式一律 fail-closed，绝不本地建任务（BR-02）"
+            )
 
         create_res = route_task_write("task.create", {
             "title": opts.title, "description": opts.desc, "steps": steps,
             "creator": "agent", "role_contracts": role_contracts,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
             # 默认三角色模板走 daemon 的显式 legacy policy 通道，避免新任务
             # 创建成功后因 Contract revision 缺少 identity_policy 而无法 claim。
             "identity_policy": "legacy_identity_v1",
-        }, _local_create)
+        }, _local_create_forbidden)
         task_id = create_res["task_id"] if isinstance(create_res, dict) and "task_id" in create_res else create_res
 
         cprint(t("cli.messages.task_create_title"), "cyan", bold=True)
@@ -4455,6 +4549,12 @@ def _handle_task(args, db):
         if opts.desc:
             print(t("cli.messages.task_desc_label", desc=opts.desc))
         print(t("cli.messages.task_steps_count", count=len(steps)))
+        # BR-02：渲染 create provenance（task/binding/capture/assignment 标识）并
+        # 与 task.status readback 逐一对比，不一致 fail-closed。
+        if isinstance(create_res, dict):
+            _render_create_provenance(create_res)
+            _verify_create_readback(create_res, workspace_id=workspace_id,
+                                    workspace_instance_id=workspace_instance_id)
         if steps:
             print()
             print(t("cli.messages.task_steps_list_title"))

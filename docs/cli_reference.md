@@ -884,6 +884,29 @@ cw task create \
   --steps '[{"action":"annotate","target_file":"src/payment/mod.rs","target_symbol":"process_payment"}]'
 ```
 
+**workspace 配对（BR-02，role-prompt-v1-bootstrap-br02-python-client）**：
+`task create` 的 workspace 绑定必须来自 daemon 权威解析，客户端一律不猜数字、
+不合成 `ws-{id}`、不回退 active workspace：
+
+- 缺省：先经 `mcp.daemon_client.inject_workspace_id` 解析 `workspace_id`，
+  再经 `workspace.status` 解析该 workspace 的权威 `workspace_instance_id`，
+  二者原样转发给 `task.create`；
+- 显式覆盖：`--workspace-id <id>` / `--workspace-instance-id <inst>` 可显式传入，
+  但 daemon 仍做 0c 配对校验（不一致 → `E_WORKSPACE_AUTHORITY_MISMATCH`）；
+- **fail-closed**：workspace 未在 daemon 注册（如 legacy SQLite `is_active`
+  id 不在注册表）、无 active workspace、或 daemon 不可达时，一律明确报错，
+  **绝不创建本地任务**（`E_TASK_WORKSPACE_INSTANCE_REQUIRED` /
+  `E_WORKSPACE_AUTHORITY_MISMATCH` / `DaemonUnavailableError`）。
+
+创建成功后输出 workspace provenance（`workspace_id` / `workspace_instance_id` /
+`workspace_binding_id` / `workspace_capture_id` / `assignment_id` / `step_count`），
+并自动对 `task.status` readback 做逐一对比，任一标识不一致即 fail-closed 上抛。
+
+```bash
+# 显式指定 daemon 注册的 workspace 配对（须与 daemon 权威一致）
+cw task create --title "t" --workspace-id 72 --workspace-instance-id 2bba6e894ee2546f
+```
+
 ### `task next`：领取下一步骤
 
 ```bash

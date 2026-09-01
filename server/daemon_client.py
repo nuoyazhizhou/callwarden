@@ -172,7 +172,16 @@ class UnixDaemonRpcClient:
     # Task 协同 RPC 便利包装
     # ------------------------------------------------------------------
 
-    def task_create(self, title: str, description: str = "", steps: list = None, creator: str = "agent", parent_id: str = "", workspace_id: str = "", role_contracts: list = None) -> dict:
+    def task_create(self, title: str, description: str = "", steps: list = None, creator: str = "agent", parent_id: str = "", workspace_id: str = "", workspace_instance_id: str = "", role_contracts: list = None) -> dict:
+        """task.create：显式转发 daemon-returned workspace 配对（BR-02）。
+
+        BR-01 后 daemon 强制要求 `workspace_instance_id` 非空（缺失 →
+        E_TASK_WORKSPACE_INSTANCE_REQUIRED），且必须等于该 workspace 最新
+        authority capture 的 instance（不一致 → E_WORKSPACE_AUTHORITY_MISMATCH）。
+        本方法只做薄转发：workspace_id / workspace_instance_id 均由调用方
+        （CLI resolve_workspace_pair_from_daemon）解析后原样透传，绝不本地
+        推导 / 合成 ws-{id}。
+        """
         params = {
             "title": title,
             "description": description,
@@ -180,6 +189,7 @@ class UnixDaemonRpcClient:
             "creator": creator,
             "parent_id": parent_id,
             "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
         }
         # A3：Planner 可在 task.create 一次性冻结 Role Contract（revision=1）
         if role_contracts:
@@ -3491,6 +3501,60 @@ def _inject_workspace_id(params: dict) -> dict:
     if not isinstance(result, dict) or not isinstance(result.get("params"), dict):
         raise RuntimeError(f"_inject_workspace_id: daemon 返回非对象结果 {result!r}")
     return result["params"]
+
+
+def resolve_workspace_pair_from_daemon() -> dict:
+    """BR-02：从 daemon 解析 (workspace_id, workspace_instance_id) 权威配对。
+
+    契约（role-prompt-v1 work order BR-02 steps[0] resolve_workspace_pair_from_
+    daemon_status；workspace_authority 约束）：
+    - `workspace_id`：`mcp.daemon_client.inject_workspace_id`（daemon 权威解析
+      active workspace，fail-closed；**不猜数字** forbid_numeric_guess）；
+    - `workspace_instance_id`：`workspace.status` 返回的 daemon-returned 注册表行
+      （**不合成 ws-{id}** forbid_synthetic_ws_id；**不回退 active workspace**
+      forbid_active_workspace_fallback）；
+    - 任一步失败（无 active workspace / workspace 未注册 / daemon 不可达）→
+      fail-closed 上抛，绝不本地推导或 SQLite 回退。
+
+    Returns:
+        {"workspace_id": int, "workspace_instance_id": str}
+
+    Raises:
+        DaemonUnavailableError: daemon 不可达或未返回权威配对。
+        RuntimeError: daemon 返回结构异常。
+    """
+    client = _get_rpc_client_for_route()
+    call = getattr(client, "call", None)
+    if call is None:
+        raise DaemonUnavailableError("RPC client 缺少 call 方法（transport 未就绪）")
+    injected = call("mcp.daemon_client.inject_workspace_id", {"params": {}})
+    if not isinstance(injected, dict) or not isinstance(injected.get("params"), dict):
+        raise RuntimeError(
+            f"resolve_workspace_pair: inject_workspace_id 返回非对象结果 {injected!r}"
+        )
+    workspace_id = injected["params"].get("workspace_id")
+    if workspace_id is None:
+        raise DaemonUnavailableError(
+            "resolve_workspace_pair: daemon 未解析出 workspace_id（无 active workspace，fail-closed）"
+        )
+    try:
+        ws = call("workspace.status", {"workspace_id": workspace_id})
+    except DaemonRemoteError as exc:
+        # workspace_not_found / workspace_forbidden 等：workspace 未在 daemon
+        # 注册表登记（legacy SQLite is_active id 不在注册表）→ 明确 fail-closed，
+        # 引导先 workspace.register，绝不猜测 instance。
+        raise DaemonUnavailableError(
+            f"resolve_workspace_pair: workspace.status 无法解析权威配对"
+            f"（workspace_id={workspace_id}）: {exc}"
+        ) from exc
+    if not isinstance(ws, dict) or not ws.get("workspace_instance_id"):
+        raise DaemonUnavailableError(
+            f"resolve_workspace_pair: workspace.status 未返回权威 workspace_instance_id: {ws!r}"
+        )
+    return {
+        "workspace_id": workspace_id,
+        "workspace_instance_id": ws["workspace_instance_id"],
+    }
 
 
 # 连接/发现级错误码：这些不是 daemon 的业务结论，而是 daemon 不可达或
