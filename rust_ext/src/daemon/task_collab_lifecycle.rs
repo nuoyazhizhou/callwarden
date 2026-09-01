@@ -265,6 +265,41 @@ impl TaskCollabStore {
                     format!("步骤不存在: {}", step_id),
                 ));
             }
+            // 漂移 #1 修复闭环：step 完成时把 `task_assignments` 补偿行从 `active`
+            // 收敛为 `completed`，避免物理表残留孤儿 active 行（与事件投影的
+            // `completed` 冲突，反而制造新的「误判有 active assignment」漂移）。
+            // 仅在 success 时收敛；失败路径由 remediation 重新 claim 时再回写。
+            if success {
+                let report_role = identity.as_ref().map(|id| id.role.clone()).unwrap_or_default();
+                let report_holder = identity
+                    .as_ref()
+                    .map(|id| id.agent_id.clone())
+                    .unwrap_or_else(|| owner_key.clone());
+                let report_session = identity
+                    .as_ref()
+                    .map(|id| id.session_id.clone())
+                    .unwrap_or_default();
+                let report_model = identity
+                    .as_ref()
+                    .map(|id| id.model_id.clone())
+                    .unwrap_or_default();
+                // 物理表可能尚不存在（极旧库）或该行尚未被 claim 补偿写建立；
+                // `persist_claimed_assignment` 内部用规范 (task,step,role) id 做
+                // INSERT OR REPLACE，保证与 claim 写命中同一行并收敛为 completed。
+                let report_workspace_id = task_bound_workspace_id(&tx, &actual_task_id, None)?;
+                assignment_queue::persist_claimed_assignment(
+                    &tx,
+                    report_workspace_id,
+                    &actual_task_id,
+                    Some(step_id),
+                    &report_role,
+                    &report_holder,
+                    &report_session,
+                    &report_model,
+                    "completed",
+                    ts,
+                )?;
+            }
             if !success {
                 let max_idx: i64 = tx
                     .query_row(

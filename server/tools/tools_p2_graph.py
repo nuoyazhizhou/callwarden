@@ -422,11 +422,15 @@ _P2_READ_ONLY_METHODS: Dict[str, Any] = {}
 
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
 # 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _P2_READ_ONLY_METHODS,
-    workspace_scope=_P2_COMPAT_SCOPE,
-    description="H4C-2 第三批 p2 依赖图/环检测组只读工具（5 个，T-1786747295227-b876fddf 步骤#1）",
-)
+# p2 只读白名单已清空（已迁移 rust_native，见上方注释）：空表直接跳过注册，
+# 保持 fail-closed 语义，避免 register_read_only_batch 抛出
+# "methods 不能为空"（空白名单 = 无 compat 路由，而非遗漏注册）。
+if _P2_READ_ONLY_METHODS:
+    register_compat_routes(
+        _P2_READ_ONLY_METHODS,
+        workspace_scope=_P2_COMPAT_SCOPE,
+        description="H4C-2 第三批 p2 依赖图/环检测组只读工具（5 个，T-1786747295227-b876fddf 步骤#1）",
+    )
 
 
 def _p2_detect_cycle_on_edges(graph: Dict[str, List[str]]) -> Dict[str, Any]:

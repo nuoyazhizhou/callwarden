@@ -72,7 +72,12 @@ fn number_field(reason: &Value, name: &str) -> Option<f64> {
     reason.get(name).and_then(Value::as_f64)
 }
 
-fn assignment_id(task_id: &str, step_id: Option<&str>, role: &str, source_request_id: &str) -> String {
+pub(crate) fn assignment_id_for(
+    task_id: &str,
+    step_id: Option<&str>,
+    role: &str,
+    source_request_id: &str,
+) -> String {
     let raw = format!(
         "{}:{}:{}:{}",
         task_id,
@@ -319,7 +324,7 @@ pub(crate) fn queue_assignment(
     if let Some(existing) = current_assignment(tx, task_id, step_id, Some(role))? {
         return Ok(Some(existing.assignment_id));
     }
-    let id = assignment_id(task_id, step_id, role, source_request_id);
+    let id = assignment_id_for(task_id, step_id, role, source_request_id);
     let reason = json!({
         "assignment_id": id,
         "task_id": task_id,
@@ -352,7 +357,7 @@ pub(crate) fn claim_assignment(
     let id = existing
         .as_ref()
         .map(|item| item.assignment_id.clone())
-        .unwrap_or_else(|| assignment_id(task_id, step_id, role, source_request_id));
+        .unwrap_or_else(|| assignment_id_for(task_id, step_id, role, source_request_id));
     if let Some(previous) = existing {
         if previous.status == "claimed" && previous.holder_session_id == holder_session_id {
             return Ok(id);
@@ -395,6 +400,80 @@ pub(crate) fn claim_assignment(
     });
     append_event(tx, task_id, "assignment_claimed", &claimed, actor_identity, holder_session_id, role, seq, ts)?;
     Ok(id)
+}
+
+/// 漂移 #1 修复（含闭环）：Rust `task.claim` 走事件投影（`task_events`），但 Python
+/// 治理层（`db/db_task_leases.py` 的 `assignment_show` / `has_active_assignment`）读取的是
+/// 物理表 `task_assignments` 来判断「任务是否有 active assignment」。原 claim 路径从不
+/// 写该表，导致它恒为零行 → 任何以该表为权威的网关判定都会 fail-open（误判为「无
+/// active assignment」）。此处把事件投影规范化地回写到 `task_assignments`，使两套
+/// 派工视图保持最终一致。
+///
+/// `status` 必须与事件投影对齐：claim 时传 `"active"`，step 完成（report success）时
+/// 传 `"completed"`。否则物理表会残留 `active` 孤儿行（与事件投影的 `completed` 冲突），
+/// 反而制造新的漂移。因此本函数同时承担「claim 写入」与「完成闭环」两职责。
+///
+/// `INSERT OR REPLACE` 兼容 claim 重入 / takeover；物理表 `assignment_id` 为 TEXT UNIQUE，
+/// 与事件投影的 `A-<sha256>` 同源。
+///
+/// 该函数属于漂移 #1 的「契约自洽」补偿写，不替代事件投影的权威地位——事件投影
+/// 仍是 assignment 状态的唯一真相来源，本写仅用于消除 Python 侧物理表与事件流的漂移。
+/// 物理 `task_assignments` 行的 `assignment_id` 必须是「每个 (task, step, role) 一个」的
+/// 规范 id，与触发本次写入的 `source_request_id` 无关——否则 claim 写（active）与
+/// report 完成写（completed）会派生出两个不同的 `assignment_id`，`INSERT OR REPLACE`
+/// 落成两行，永远无法把孤儿 `active` 行收敛为 `completed`，反而制造新的漂移。
+/// 因此物理行 id 在 `persist_claimed_assignment` 内部用固定 source 派生，调用方传入的
+/// 事件流 id 一律不采用。
+const PHYSICAL_ASSIGNMENT_ROW_SOURCE: &str = "physical-task-assignments-row";
+
+pub(crate) fn persist_claimed_assignment(
+    tx: &Transaction<'_>,
+    workspace_id: i64,
+    task_id: &str,
+    step_id: Option<&str>,
+    role: &str,
+    holder_agent_id: &str,
+    holder_session_id: &str,
+    holder_model_id: &str,
+    status: &str,
+    ts: f64,
+) -> Result<(), DaemonRpcError> {
+    // 物理行 id 规范派生：与事件流 id（source 相关）解耦，保证 claim(active) 与
+    // report(completed) 命中同一行，从而收敛孤儿 active 行。
+    let assignment_id = assignment_id_for(task_id, step_id, role, PHYSICAL_ASSIGNMENT_ROW_SOURCE);
+    // 物理表可能尚未随 schema 迁移建立（极旧库）；补偿写失败不应阻断主流程，
+    // 但必须显式记录而非静默吞掉，便于审计追踪漂移收敛情况。
+    let result = tx.execute(
+        "INSERT OR REPLACE INTO task_assignments
+         (workspace_id, assignment_id, task_id, role, agent_id, session_id, model_id, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            workspace_id,
+            assignment_id,
+            task_id,
+            role,
+            holder_agent_id,
+            holder_session_id,
+            holder_model_id,
+            status,
+            ts
+        ],
+    );
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            // 表不存在属于可接受的旧库状态（Python 侧会自行建表）；其余错误上抛以便
+            // 调用方感知真实的写入失败，避免静默漂移。
+            if msg.contains("no such table") {
+                Ok(())
+            } else {
+                Err(DaemonRpcError::internal_error(format!(
+                    "回写 task_assignments 失败（漂移 #1 补偿写）: {e}"
+                )))
+            }
+        }
+    }
 }
 
 pub(crate) fn complete_assignments(
@@ -602,6 +681,146 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(takeover_count, 1, "接管必须留下不可变审计事件");
+    }
+
+    #[test]
+    fn claim_persists_normalized_row_into_task_assignments() {
+        // 漂移 #1 回归：Rust `task.claim` 走事件投影，但 Python 治理层
+        // （`db/db_task_leases.py`）读物理表 `task_assignments` 判「有无 active
+        // assignment」。修复后 `persist_claimed_assignment` 必须在 claim 同事务内
+        // 把规范化行回写该表，否则会 fail-open。
+        let mut conn = conn();
+        conn.execute_batch(
+            "CREATE TABLE task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                assignment_id TEXT NOT NULL UNIQUE,
+                task_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );",
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        queue_assignment(
+            &tx, "T-persist", Some("S-persist"), "executor", "req-queue", None,
+            "actor", "exec-session", 1, 10.0,
+        )
+        .unwrap();
+        claim_assignment(
+            &tx, "T-persist", Some("S-persist"), "executor", "exec-agent", "exec-session", "exec-model",
+            "req-claim", "actor", false, 2, 11.0,
+        )
+        .unwrap();
+        persist_claimed_assignment(
+            &tx,
+            7,
+            "T-persist",
+            Some("S-persist"),
+            "executor",
+            "exec-agent",
+            "exec-session",
+            "exec-model",
+            "active",
+            11.0,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let expected_physical_id =
+            assignment_id_for("T-persist", Some("S-persist"), "executor", PHYSICAL_ASSIGNMENT_ROW_SOURCE);
+        let row: (String, String, String, String, String) = conn
+            .query_row(
+                "SELECT assignment_id, task_id, role, agent_id, status
+                 FROM task_assignments WHERE task_id = 'T-persist'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, expected_physical_id, "回写的 assignment_id 必须是规范物理行 id");
+        assert_eq!(row.1, "T-persist");
+        assert_eq!(row.2, "executor");
+        assert_eq!(row.3, "exec-agent");
+        assert_eq!(row.4, "active", "回写行必须是 active 状态");
+
+        // 事件投影仍为真源：回写不应改变投影内容。事件流 id 由 queue 时的
+        // source_request_id 派生（claim 复用已排队 id），与物理行规范 id 解耦，
+        // 这里独立校验投影一致。
+        let expected_event_id =
+            assignment_id_for("T-persist", Some("S-persist"), "executor", "req-queue");
+        let projection = project_task_assignments(&conn, "T-persist").unwrap();
+        assert_eq!(projection[0].assignment_id, expected_event_id);
+        assert_eq!(projection[0].status, "claimed");
+    }
+
+    #[test]
+    fn completion_finalizes_task_assignments_row_to_completed() {
+        // 漂移 #1 闭环回归：claim 写入 active 行后，step 完成必须把物理
+        // `task_assignments` 行收敛为 `completed`，否则残留孤儿 active 行会与
+        // 事件投影的 `completed` 冲突，制造新的「误判有 active assignment」漂移。
+        let mut conn = conn();
+        conn.execute_batch(
+            "CREATE TABLE task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                assignment_id TEXT NOT NULL UNIQUE,
+                task_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );",
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        queue_assignment(
+            &tx, "T-finalize", Some("S-finalize"), "executor", "req-queue", None,
+            "actor", "exec-session", 1, 10.0,
+        )
+        .unwrap();
+        claim_assignment(
+            &tx, "T-finalize", Some("S-finalize"), "executor", "exec-agent", "exec-session", "exec-model",
+            "req-claim", "actor", false, 2, 11.0,
+        )
+        .unwrap();
+        persist_claimed_assignment(
+            &tx, 7, "T-finalize", Some("S-finalize"),
+            "executor", "exec-agent", "exec-session", "exec-model", "active", 11.0,
+        )
+        .unwrap();
+
+        // 模拟 step 完成：同一 (task, step, role) 复用规范物理行 id 写 completed，
+        // 必须命中同一行（INSERT OR REPLACE），不得复制出行。
+        persist_claimed_assignment(
+            &tx, 7, "T-finalize", Some("S-finalize"),
+            "executor", "exec-agent", "exec-session", "exec-model", "completed", 12.0,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let (status,): (String,) = conn
+            .query_row(
+                "SELECT status FROM task_assignments WHERE task_id = 'T-finalize'",
+                [],
+                |r| Ok((r.get(0)?,)),
+            )
+            .unwrap();
+        assert_eq!(status, "completed", "完成补偿写必须把行收敛为 completed");
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments WHERE task_id = 'T-finalize'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "active 与 completed 必须是同一行的更新，不得复制");
     }
 
     #[test]

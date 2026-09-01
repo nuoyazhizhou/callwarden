@@ -91,6 +91,11 @@ impl TaskCollabStore {
             .unchecked_transaction()
             .map_err(|e| DaemonRpcError::internal_error(format!("开启事务失败: {}", e)))?;
 
+        // 漂移 #1 修复前置：取得 task 绑定的不可变 workspace，用于把 claim 事件投影
+        // 规范化回写到 Python 治理层读取的物理表 `task_assignments`
+        // （见 `assignment_queue::persist_claimed_assignment`）。
+        let workspace_id = task_bound_workspace_id(&tx, task_id, None)?;
+
         // worker 路径状态：claim 角色归属与接管替换 provenance。
         let mut worker_claim_role: Option<String> = None;
         let mut assignment_holder_agent_id = owner_key.clone();
@@ -102,7 +107,7 @@ impl TaskCollabStore {
             TaskContractPolicyState::Declared(policy) if policy == POLICY_LEGACY_IDENTITY_V1 => {}
             TaskContractPolicyState::Declared(policy) if policy == POLICY_ROLE_WORKER_V1 => {
                 // P0-L R1：worker-first claim 门禁（runtime identity 不参与授权）。
-                let bound_workspace = task_bound_workspace_id(&tx, task_id, None)?;
+                let bound_workspace = workspace_id;
                 let auth = parse_role_worker_auth(params)?.ok_or_else(|| {
                     DaemonRpcError::new(
                         ERR_POLICY_REQUIRED,
@@ -585,6 +590,25 @@ impl TaskCollabStore {
             &owner_key,
             claim_recovered,
             self.next_seq(),
+            ts,
+        )?;
+
+        // 漂移 #1 修复：把 claim 事件投影规范化回写到物理表 `task_assignments`，
+        // 消除 Rust 事件流与 Python 治理层物理表之间的派工视图漂移
+        // （Python `assignment_show` / `has_active_assignment` 以该表为权威）。
+        assignment_queue::persist_claimed_assignment(
+            &tx,
+            workspace_id,
+            task_id,
+            claimed_step_id.as_deref(),
+            claim_role,
+            &assignment_holder_agent_id,
+            &agent_session_id,
+            identity
+                .as_ref()
+                .map(|item| item.model_id.as_str())
+                .unwrap_or(""),
+            "active",
             ts,
         )?;
 

@@ -686,6 +686,30 @@ fn required_remediation_step(
     Ok(None)
 }
 
+/// 由 step 的 `action` 推导领取该 step 时应持有的治理角色（漂移 #2 修复配套）。
+/// `fix_defect`/`implement` 等实现类 → executor；`verify`/`test` → tester；
+/// `review` → reviewer；`adjudicate` → adjudicator。无法映射时返回 None，交由
+/// 后续 Role Contract 解析（fail-closed）。
+fn step_claim_role(conn: &Connection, step_id: &str) -> Result<Option<String>, DaemonRpcError> {
+    let action: Option<String> = conn
+        .query_row(
+            "SELECT action FROM task_steps WHERE id = ?1",
+            rusqlite::params![step_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| infra_error(&format!("step action 读取失败: {e}")))?;
+    Ok(match action.as_deref() {
+        Some("fix_defect") | Some("implement") | Some("build") | Some("refactor") => {
+            Some("executor".to_string())
+        }
+        Some("verify") | Some("test") => Some("tester".to_string()),
+        Some("review") => Some("reviewer".to_string()),
+        Some("adjudicate") => Some("adjudicator".to_string()),
+        _ => None,
+    })
+}
+
 /// 当前 task 的 active 未过期 lease 持有角色（§3.2 规则 6；不泄露 token）。
 fn active_lease_role(conn: &Connection, task_id: &str) -> Result<Option<String>, DaemonRpcError> {
     let now = now_unix();
@@ -1575,6 +1599,26 @@ fn resolve_or_block_step(
     task_id: &str,
     step_id: &str,
 ) -> Result<StepResolution, DaemonRpcError> {
+    // 漂移 #2 修复：next_action 的 rule 7 在 remediation step 已被领取
+    // （status='in_progress'）后，原本只查 `active_lease_role`，而 step 领取只改
+    // step 状态、不必然持有 lease，导致始终返回 `Ready`/`CLAIM`，使 AFK/无人值守
+    // loop 无限重领取同一 remediation step。此处：若目标 step 已处于 in_progress
+    // （已被某角色领取），直接返回 `WAIT`，携带由 step action 推导出的治理角色，
+    // 让 loop 等待该 step 完成/resolve，而非反复 CLAIM。未知 action 映射时回退到
+    // 下方的 Role Contract 解析（fail-closed：映射不出治理角色即 Blocked）。
+    let step_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM task_steps WHERE id = ?1",
+            rusqlite::params![step_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| infra_error(&format!("step 状态读取失败: {e}")))?;
+    if step_status.as_deref() == Some("in_progress") {
+        if let Some(role) = step_claim_role(conn, step_id)? {
+            return Ok(StepResolution::Waiting { holder_role: role });
+        }
+    }
     if let Some(holder) = active_lease_role(conn, task_id)? {
         return Ok(StepResolution::Waiting { holder_role: holder });
     }
