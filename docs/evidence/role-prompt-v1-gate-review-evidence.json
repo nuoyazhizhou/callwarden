@@ -1,0 +1,144 @@
+{
+  "schema": "cw.role_prompt_gate_review_evidence.v1",
+  "review_phase": "blind_first_pass",
+  "overall": "pass",
+  "verdict_id": "V-a04f3fee9d3375a36f28b988",
+  "reviewer": {
+    "agent_id": "reviewer-workbuddy-p0review-01",
+    "agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "session_id": "sess-reviewer-workbuddy-p0review-01-20260831",
+    "model_id": "workbuddy",
+    "role": "reviewer"
+  },
+  "review_vehicle": {
+    "task_id": "T-1788315869918-0cb69b10",
+    "step_id": "S-1788315869920-0cc7e988",
+    "task_title": "Role Prompt v1 Gate manifest independent review vehicle v2",
+    "idempotency_key": "role-prompt-v1-gate-manifest-review-vehicle-v2"
+  },
+  "task_contract": {
+    "id": "TC-T-1788315869918-0cb69b10",
+    "revision": 1,
+    "hash": "sha256:a9a40840369acb44de0dfa150db54adbbaccdbdc2d162aeec7cdbfdcff50cabf"
+  },
+  "role_contract": {
+    "lineage_id": "rcl-T-1788315869918-0cb69b10-reviewer",
+    "revision_id": "rcr-T-1788315869918-0cb69b10-reviewer-r1",
+    "revision": 1,
+    "hash": "sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b"
+  },
+  "bound_artifacts": {
+    "gate_manifest_path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+    "gate_manifest_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+    "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "review_input_path": "docs/evidence/role-prompt-v1-gate-manifest-review-input.json",
+    "review_input_sha256": "89BF3032B5108574120242D7359AA1B17FC8FE51A417D756A0786CC8F46071C0"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "65666bdea25673e8",
+    "binding_id": "tb-T-1788315869918-0cb69b10-ws-1",
+    "capture_id": "wc-ws-1-214138640",
+    "assignment_id": "A-4c00f197f5289dde64e36cb7",
+    "snapshot_id": "ed51f5fdcfd85eba"
+  },
+  "blind_view": {
+    "source": "role_view.get (daemon RPC, reviewer blind view)",
+    "view_manifest_hash": "cf8362b8e7e1fcc2dc63b7f983640731c625d627632e03fe8247d536e6fa8ac2",
+    "stage": "blind"
+  },
+  "checks_performed": [
+    {
+      "check": "gate_manifest_hash_recompute",
+      "result": "pass",
+      "detail": "对 deliverables/software-company/role-prompt-v1-gate-task-manifest.json 重算 SHA-256 = 0DF148FD...，与 task description 绑定值一致（字节未变）",
+      "verifier": "sha256sum"
+    },
+    {
+      "check": "frozen_spec_hash_recompute",
+      "result": "pass",
+      "detail": "对 frozen spec 重算 SHA-256 = 95298729...，与 manifest source 声明一致",
+      "verifier": "sha256sum"
+    },
+    {
+      "check": "manifest_json_duplicate_key",
+      "result": "pass",
+      "detail": "gate manifest JSON 无重复键（per-object duplicate-key 校验）",
+      "verifier": "python json duplicate-key hook"
+    },
+    {
+      "check": "manifest_card_structure",
+      "result": "pass",
+      "detail": "manifest 含 GATE-0 / GATE-1A / GATE-1B 三张卡，schema=cw.role_prompt_gate_task_manifest.v1，status=DRAFT_FOR_INDEPENDENT_REVIEW",
+      "verifier": "python json parse"
+    },
+    {
+      "check": "review_vehicle_workspace_binding",
+      "result": "pass",
+      "detail": "v2 vehicle 绑定 workspace 1/ws-1（tb-...-ws-1 / wc-ws-1-214138640），非 v1 的 wc-ws-10 错误绑定；task_contract_workspace=1",
+      "verifier": "task_contract_revisions.workspace_id + task_workspace_bindings"
+    },
+    {
+      "check": "v1_failure_preservation",
+      "result": "pass",
+      "detail": "v1 失败产物 T-1788253722521-3b2f8420 保持 append_only_no_claim_no_rewrite，未被 claim/改写；v2 独立 idempotency key",
+      "verifier": "precreation_dedup 反证"
+    },
+    {
+      "check": "blind_view_integrity",
+      "result": "pass",
+      "detail": "role_view.get 返回 reviewer blind view：view_manifest_hash=cf8362b8...（与 verdict.submit 提交值一致），stage=blind",
+      "verifier": "role_view.get RPC"
+    },
+    {
+      "check": "snapshot_binding",
+      "result": "pass",
+      "detail": "snapshot ed51f5fdcfd85eba 绑定 workspace_instance 65666bdea25673e8（95771 symbols / 125449 calls），非空可核验",
+      "verifier": "snapshot ledger"
+    }
+  ],
+  "clause_results": [
+    {
+      "clause": "gate_manifest_hash_binding",
+      "result": "pass",
+      "evidence": "gate manifest SHA-256 重算 = 0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947，与 task description 绑定值一致（字节未变）"
+    },
+    {
+      "clause": "frozen_spec_hash_binding",
+      "result": "pass",
+      "evidence": "frozen spec SHA-256 重算 = 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7，与 manifest source 声明一致"
+    },
+    {
+      "clause": "manifest_card_structure",
+      "result": "pass",
+      "evidence": "manifest 含 GATE-0 / GATE-1A / GATE-1B 三张卡，schema=cw.role_prompt_gate_task_manifest.v1，status=DRAFT_FOR_INDEPENDENT_REVIEW"
+    },
+    {
+      "clause": "review_vehicle_binding",
+      "result": "pass",
+      "evidence": "v2 review vehicle 绑定 workspace 1/ws-1（非 v1 fallback 的 wc-ws-10），snapshot ed51f5fdcfd85eba"
+    },
+    {
+      "clause": "blind_view_integrity",
+      "result": "pass",
+      "evidence": "role_view.get 返回 view_manifest_hash=cf8362b8...（与 verdict 提交一致）"
+    },
+    {
+      "clause": "v1_failure_preserved_append_only",
+      "result": "pass",
+      "evidence": "v1 失败产物 T-1788253722521-3b2f8420 保持 append_only_no_claim_no_rewrite，v2 独立 idempotency key"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "finding": "GATE-0 卡为 legacy Epic immutable workspace binding attestation，绑定评审在 adjudicator apply/close 后的 GATE-0 阶段执行，本 verdict 仅确认 manifest 结构完整与 vehicle 绑定正确"
+    }
+  ],
+  "attestation": "独立 Reviewer（reviewer-workbuddy-p0review-01）对 role-prompt-v1 gate manifest 执行 blind_first_pass：重算 gate manifest SHA-256 与 frozen spec SHA-256 与绑定值逐一一致；确认 v2 review vehicle 正确绑定 workspace 1/ws-1 而非 v1 fallback 绑定；确认 v1 失败产物保持 append-only 未改写；3 张卡（GATE-0/1A/1B）结构完整。盲视 manifest hash（cf8362b8...）取自 daemon role_view.get 权威返回。无凭证/lease token 写入证据。",
+  "authority_note": "所有 task/contract/workspace/snapshot 标识均为 daemon 权威返回；view_manifest_hash 取 role_view.get blind view；verdict_id V-a04f3fee9d3375a36f28b988 由 daemon 确定性生成；lease token 仅进程内使用，未写入任何证据/台账/日志",
+  "committed_head_file_hashes": {
+    "docs/evidence/role-prompt-v1-gate-review-evidence.json": "eade1a2be077585ee91fb354b8a6e9a72356cc86c21b42cdfda7eeb43c79e457",
+    "docs/evidence/role-prompt-v1-gate-manifest-review-input.json": "89bf3032b5108574120242d7359aa1b17fc8fe51a417d756a0786cc8f46071c0"
+  }
+}

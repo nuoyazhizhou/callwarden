@@ -1,0 +1,68 @@
+{
+  "schema_version": "cw.role_prompt_gate_review_input.v1",
+  "purpose": "Immutable review input for the Role Prompt v1 Gate manifest independent review vehicle v2 (T-1788315869918-0cb69b10). Frozen by the executor after step claim and before task.report; contains no credential or raw lease token.",
+  "manifest": {
+    "path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+    "sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+    "json_structure_validation": "PASS (UTF-8 parse, no duplicate keys, 1348-line schema cw.role_prompt_gate_task_manifest.v1)"
+  },
+  "frozen_spec": {
+    "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "match_manifest_declaration": true
+  },
+  "review_vehicle": {
+    "task_id": "T-1788315869918-0cb69b10",
+    "step_id": "S-1788315869920-0cc7e988",
+    "step_index": 0,
+    "step_action": "freeze_gate_manifest_review_input",
+    "idempotency_key": "role-prompt-v1-gate-manifest-review-vehicle-v2",
+    "root_task": true,
+    "identity_policy": "legacy_identity_v1"
+  },
+  "task_contract": {
+    "id": "TC-T-1788315869918-0cb69b10",
+    "revision": 1,
+    "hash": "sha256:a9a40840369acb44de0dfa150db54adbbaccdbdc2d162aeec7cdbfdcff50cabf"
+  },
+  "role_contracts": [
+    {
+      "role": "executor",
+      "lineage_id": "rcl-T-1788315869918-0cb69b10-executor",
+      "revision_id": "rcr-T-1788315869918-0cb69b10-executor-r1",
+      "revision": 1,
+      "hash": "sha256:2ea2a4c431caacf14557b3fff0e391320ce1275324bacf08ba4a4eb4012f12ac"
+    },
+    {
+      "role": "reviewer",
+      "lineage_id": "rcl-T-1788315869918-0cb69b10-reviewer",
+      "revision_id": "rcr-T-1788315869918-0cb69b10-reviewer-r1",
+      "revision": 1,
+      "hash": "sha256:3e8debc9adca99d95e5e7cb25b53ff50e41fdf18a89a3f943dd353bcfef34f0b"
+    },
+    {
+      "role": "adjudicator",
+      "lineage_id": "rcl-T-1788315869918-0cb69b10-adjudicator",
+      "revision_id": "rcr-T-1788315869918-0cb69b10-adjudicator-r1",
+      "revision": 1,
+      "hash": "sha256:a82e326ce49a866fe80e77bfd96678df2abb3eb07bf49393fdcaafa2f5e24797"
+    }
+  ],
+  "workspace": {
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "workspace_binding_id": "tb-T-1788315869918-0cb69b10-ws-1",
+    "workspace_capture_id": "wc-ws-1-214138640",
+    "assignment_id": "A-fd1f80a482636bc3c6107537",
+    "source": "task.create daemon-returned; create output and task show identical"
+  },
+  "snapshot": {
+    "snapshot_id": "ed51f5fdcfd85eba",
+    "workspace_instance_id": "65666bdea25673e8",
+    "generation": 1,
+    "symbol_count": 95771,
+    "call_count": 125449,
+    "source": "cw collab publish --workspace C:/git_work/callwarden --json (daemon snapshot.publish)"
+  },
+  "authority_note": "All task/step/contract/role-contract/binding/capture/assignment/snapshot identifiers are daemon-returned values captured from task.create, task show and snapshot.publish responses. No client-derived workspace instance, synthetic ws-{id} or local SQLite value is present. This file contains no credential and no raw lease token."
+}
