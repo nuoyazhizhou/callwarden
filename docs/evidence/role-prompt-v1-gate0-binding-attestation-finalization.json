@@ -64,5 +64,8 @@
       "amendment_ref": "V-a04f3fee9d3375a36f28b988"
     }
   ],
-  "authority_note": "本 finalization receipt 在 amendment、两段 lease 释放、apply/close 全部完成后冻结；引用 input 与 operation receipt 的 sha256 而不修改二者；lease 释放/apply/close 的 receipt hash 均取自 daemon 权威事件行（task_lease_events / task_events，JSON 规范化 sha256：json.dumps(sort_keys=True, ensure_ascii=False, separators=(',',':'))），complete projection hash 取自 cw task next-action --json 的投影子集；所有标识为 daemon 权威返回；无 lease token 写入"
+  "authority_note": "本 finalization receipt 在 amendment、两段 lease 释放、apply/close 全部完成后冻结；引用 input 与 operation receipt 的 sha256 而不修改二者；lease 释放/apply/close 的 receipt hash 均取自 daemon 权威事件行（task_lease_events / task_events，JSON 规范化 sha256：json.dumps(sort_keys=True, ensure_ascii=False, separators=(',',':'))），complete projection hash 取自 cw task next-action --json 的投影子集；所有标识为 daemon 权威返回；无 lease token 写入",
+  "committed_head_file_hashes": {
+    "docs/evidence/role-prompt-v1-gate0-binding-attestation-finalization.json": "87259e3e1be9e3c8ff9451d0ae52507f48351b7fc0418c9158640813e07cba2d"
+  }
 }
