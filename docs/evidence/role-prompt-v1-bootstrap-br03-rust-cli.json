@@ -1,0 +1,84 @@
+{
+  "card": "BR-03",
+  "title": "Bootstrap BR-03: runtime Rust cw task.create daemon binding parity",
+  "idempotency_key": "role-prompt-v1-bootstrap-br03-rust-cli",
+  "manifest_version": "1",
+  "commit_hash": "0dadb0c",
+  "committed_head_file_hashes": {
+    "rust_ext/src/bin/cw_cli.rs": "eb6d1140dd630e0180250db84f0449d51355734dd4f4dd7be2a2d030aebb965a",
+    "rust_ext/src/cli/task_enterprise.rs": "7511eb3c8487340030fd7fd193c8e4ff998b321869e1ac83a8f7dda07cac8f10",
+    "rust_ext/src/cli/mod.rs": "422eaeb50f39d9fd048fdb01fdd78f86db33fad51535c776f8c8dd5f54b3bdea",
+    "docs/cli_reference.md": "c61e3d89c0477630fdf4f462e4e3fb0f6a95c59c000c568c4cc925328d15a3e6",
+    "docs/evidence/role-prompt-v1-bootstrap-br03-rust-cli.json": "c68a1aaf5e921662cf554317d541257d9fd5ff6e9a270202a4c81e155e6c9464"
+  },
+  "acceptance": [
+    {
+      "id": 1,
+      "criterion": "runtime/current cw forwards the exact daemon-returned workspace pair",
+      "result": "PASS",
+      "evidence": "resolve_workspace_pair_from_daemon（mcp.daemon_client.inject_workspace_id → workspace.status，不猜数字/不合成 ws-{id}/不回退 active）逐条对齐 Python server/daemon_client.py BR-02 语义，原样转发 (workspace_id, workspace_instance_id)；单测 resolve_pair_uses_daemon_call_chain / resolve_pair_returns_daemon_authoritative_pair；e2e A：--workspace-id 1 --workspace-instance-id ws-1 原样转发成功；e2e F：缺省路径 daemon 解析出 (10, bb15cf904d3293d6) 忠实转发，daemon 0c 拒绝 E_WORKSPACE_AUTHORITY_MISMATCH 证明零猜测/零本地推导/零回退"
+    },
+    {
+      "id": 2,
+      "criterion": "local numeric active semantics never enter enterprise params",
+      "result": "PASS",
+      "evidence": "cw_cli.rs local_fn Create 分支 fail-closed（Err 明确报错 'task.create 需要 daemon 权威 workspace binding；local 模式/daemon 不可用一律 fail-closed，绝不本地建任务'），本地无任何 db.task_create 回退路径；e2e E：--mode local → 返回 BR-03 fail-closed 错误，task-DB 查询 'BR-03 e2e E local' 计数 0（零落库）；单测 local_create_fails_closed"
+    },
+    {
+      "id": 3,
+      "criterion": "create output and task show expose identical provenance identifiers",
+      "result": "PASS",
+      "evidence": "create 后 verify_create_readback 对 task.show 返回逐一比对五键（workspace_id/workspace_instance_id/workspace_binding_id/workspace_capture_id/assignment_id），不一致/缺键 fail-closed（assignment_id null 容忍）；e2e A2/A3：T-1788313784235-70448f30 的 create 输出五键 (1, ws-1, tb-T-1788313784235-70448f30-ws-1, wc-ws-1-1884110496, A-7238ce64d5b7f6e226999b46) 与 task show 返回逐一比对完全一致；单测 readback_binding_mismatch_fails_closed + readback_missing_key_fails_closed + readback_assignment_null_tolerated"
+    },
+    {
+      "id": 4,
+      "criterion": "Callwarden and TokenSlim task creation do not cross-bind",
+      "result": "PASS",
+      "evidence": "e2e A：ws-1（callwarden）→ task T-1788313776829-b6daac60 绑 wc-ws-1-1884110496；e2e B：ws-10（TokenSlim）→ task T-1788313854785-dd64cebc 绑 wc-ws-10-3714652360（ws-10 capture rev 1 独立链），两 workspace 独立 capture 链零 cross-bind；e2e C：--workspace-id 10 --workspace-instance-id ws-99-x → E_WORKSPACE_AUTHORITY_MISMATCH（权威 ws-10），证明同一 workspace 换 instance / 合成 ws-{id} 被 daemon 0c 拒绝"
+    },
+    {
+      "id": 5,
+      "criterion": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features cw_cli",
+      "result": "PASS",
+      "evidence": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features：--bin cw 26 passed + task_enterprise 19 passed，0 failed（lib target 的 cdylib+pyo3 extension-module+incremental 组合触发 rustc 1.93.1 ICE，以 CARGO_INCREMENTAL=0 与 --no-default-features 关闭 cdylib 规避，测试语义不变）"
+    },
+    {
+      "id": 6,
+      "criterion": "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+      "result": "PASS",
+      "evidence": "cargo check --manifest-path rust_ext/Cargo.toml --no-default-features → EXIT 0（仅 2 条既有 unused warning，非本卡引入）"
+    },
+    {
+      "id": 7,
+      "criterion": "tokenslim run git diff --check",
+      "result": "PASS",
+      "evidence": "git diff --check 无空白错误（GIT_DIFF_CHECK_CLEAN）"
+    }
+  ],
+  "tests_run": {
+    "cargo_test_bin_cw": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw → 26 passed; 0 failed",
+    "cargo_test_task_enterprise": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_enterprise → 19 passed; 0 failed（CARGO_INCREMENTAL=0 规避 rustc 1.93.1 cdylib+pyo3 ICE）",
+    "cargo_check": "cargo check --manifest-path rust_ext/Cargo.toml --no-default-features → EXIT 0（仅 2 既有 unused warning）",
+    "git_diff_check": "git diff --check → 无空白错误（GIT_DIFF_CHECK_CLEAN）",
+    "e2e_A": "named-pipe 真 daemon（release cw.exe + daemon PID 47152 --config daemon_manual.json）：cw task create --workspace-id 1 --workspace-instance-id ws-1 → T-1788313776829-b6daac60 创建成功，provenance 五键 + identity_policy=legacy_identity_v1 + 三角色合同（executor/reviewer/adjudicator lineage 齐全）",
+    "e2e_A2_A3": "T-1788313784235-70448f30 create 后立即 task show → 五键 (1, ws-1, tb-T-1788313784235-70448f30-ws-1, wc-ws-1-1884110496, A-7238ce64d5b7f6e226999b46) 与 create 输出逐一一致",
+    "e2e_B": "cw task create --workspace-id 10 --workspace-instance-id ws-10 → T-1788313854785-dd64cebc 绑 wc-ws-10-3714652360（TokenSlim 独立 capture 链，零 cross-bind）",
+    "e2e_C": "--workspace-id 10 --workspace-instance-id ws-99-x → E_WORKSPACE_AUTHORITY_MISMATCH: workspace_id=10 权威 workspace_instance_id=ws-10（禁止同一 workspace 换 instance / 合成 ws-{id}）",
+    "e2e_D": "--workspace-id 72 --workspace-instance-id ws-72 → E_WORKSPACE_AUTHORITY_MISMATCH: task-DB 中不存在 workspace_id=72（不得用客户端 numeric id 补齐，与 BR-02 smoke 一致）",
+    "e2e_E": "--mode local → BR-03 fail-closed 错误，task-DB 查询 'BR-03 e2e E local' 计数 0（零落库）",
+    "e2e_F": "无 workspace flag → CLI 经 daemon 解析出 workspace 10 + instance bb15cf904d3293d6（registry 漂移值）并忠实转发，daemon 0c 拒绝 E_WORKSPACE_AUTHORITY_MISMATCH（证明 CLI 零猜测、零本地推导、零回退）"
+  },
+  "deviation_notes": [
+    "BR-03 allowed_paths 6 文件命中 5 个：rust_ext/src/bin/cw_cli.rs（enterprise create 分支 identity_policy 补传 + verify_create_readback + local fail-closed）、rust_ext/src/cli/task_enterprise.rs（新建：resolve_workspace_pair_from_daemon/parse_explicit_workspace_id/verify_create_readback/render_create_provenance/compare_provenance_readback + 19 单测）、docs/cli_reference.md（--workspace-id 改为全局 flag + identity_policy parity 段落）、docs/evidence/role-prompt-v1-bootstrap-br03-rust-cli.json（本文件）；rust_ext/src/cli/runtime.rs / task.rs 本轮未改，不列入 committed_head_file_hashes。",
+    "rust_ext/src/cli/mod.rs（+1 行 pub mod task_enterprise;）不在 allowed_paths，但模块注册是编译必需，属最小必要 deviation（镜像既有 CLI 模块注册惯例）。",
+    "identity_policy parity 修复：daemon task_collab.rs resolve_task_create_identity_policy 在 envelope 缺失且无顶层 identity_policy 时强制 E_TASK_IDENTITY_POLICY_REQUIRED（新任务无法 claim）；Python BR-02 已显式传 legacy_identity_v1，Rust 初版漏传 → 本轮补传对齐（e2e A 输出 identity_policy: legacy_identity_v1 验证生效）。",
+    "环境性偏离（无代码影响）：rustc 1.93.1 在 cdylib+pyo3 extension-module+incremental 组合下 ICE → CARGO_INCREMENTAL=0 / --no-default-features 规避；MSYS link.exe shim 需 source scripts/msvc-env.sh 且 unset INCLUDE；daemon 正确启动配置为 ~/.callwarden/daemon_manual.json（registry.db + callwarden.db + data_root），裸启动指向 /var/lib/callwarden/registry.db 为错误基线。",
+    "既有数据漂移（非本卡回归）：task-DB workspace 10 的 registry instance（bb15cf904d3293d6）与 task-DB capture（ws-10）不一致，CLI 忠实转发零猜测，daemon 0c 拒绝（e2e F）；daemon HTTP manifest 陈旧（Python 侧读旧 PID）不影响 named-pipe e2e。"
+  ],
+  "notes": "BR-03 Gate verifiable evidence: cargo test/check + git diff --check + named-pipe real-daemon e2e matrix (A-F) + committed-HEAD file hashes (reproducible, independent of dirty working tree).",
+  "produced_at": "2026-09-02T05:09:49Z",
+  "verifier": {
+    "name": "br03-rust-cli-verification",
+    "version": "1"
+  }
+}
