@@ -1,0 +1,47 @@
+{
+  "schema": "cw.role_prompt_gate0_binding_attestation_input.v1",
+  "card": "GATE-0",
+  "title": "Role Prompt v1 GATE-0: legacy Epic immutable workspace binding attestation input",
+  "operation": {
+    "rpc_method": "task.attest_legacy_workspace_binding",
+    "cli_program": "C:/Python314/python.exe",
+    "cli_argv_rendered": false,
+    "secret_runtime_values": ["REVIEWER_LEASE_TOKEN"]
+  },
+  "manifest_path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+  "manifest_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+  "frozen_spec_path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+  "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+  "legacy_task_id": "T-1787203926824-9f873bfc",
+  "review_vehicle_task_id": "T-1788315869918-0cb69b10",
+  "review_vehicle_step_id": "S-1788315869920-0cc7e988",
+  "initial_review_verdict_id": "V-a04f3fee9d3375a36f28b988",
+  "workspace_id": 1,
+  "workspace_instance_id": "ws-1",
+  "anchor_binding_id": "tb-T-1788315869918-0cb69b10-ws-1",
+  "anchor_capture_id": "wc-ws-1-214138640",
+  "request_id": "role-prompt-v1-gate0-epic-binding-attestation",
+  "reviewer_lease_id": "L-8abfb66aa90f3c8b",
+  "reviewer_fencing_counter": 3,
+  "adjudicator_identity": {
+    "agent_id": "adjudicator-workbuddy-p0adj-01",
+    "agent_instance_id": "inst-adjudicator-workbuddy-p0adj-01",
+    "session_id": "sess-adj-p0batch-20260831",
+    "model_id": "workbuddy",
+    "role": "adjudicator"
+  },
+  "preflight_verified": {
+    "initial_manifest_pass_verdict": "V-a04f3fee9d3375a36f28b988",
+    "review_vehicle_status": "review",
+    "review_vehicle_workflow_status": "adjudication_pending",
+    "anchor_binding_count": 1,
+    "anchor_capture_count": 1,
+    "legacy_task_binding_count": 0,
+    "legacy_task_status": "in_progress",
+    "daemon_workspace_instance_id_authority": "ws-1 (task_workspace_bindings.workspace_capture_id -> workspace_authority_captures.workspace_instance_id, BR-04 create 时 daemon 返回值)"
+  },
+  "authority_note": "所有 task/workspace/binding/capture/verdict 标识均为 daemon 权威返回；reviewer lease raw token 仅进程内使用，本文件不写入任何 token；lease_id 与 fencing_counter 于 lease 获取后、attest 前冻结，此后不再编辑",
+  "committed_head_file_hashes": {
+    "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json": "447508d942528d1b0c415ffe7bed83f7638bc373b8e753dbc58223f027f0bdb8"
+  }
+}

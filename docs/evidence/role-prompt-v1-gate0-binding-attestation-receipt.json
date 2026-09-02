@@ -1,0 +1,81 @@
+{
+  "schema": "cw.role_prompt_gate0_binding_attestation_receipt.v1",
+  "card": "GATE-0",
+  "title": "Role Prompt v1 GATE-0: legacy Epic binding attestation operation receipt",
+  "input_evidence_path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+  "input_evidence_sha256": "447508d942528d1b0c415ffe7bed83f7638bc373b8e753dbc58223f027f0bdb8",
+  "operation": {
+    "rpc_method": "task.attest_legacy_workspace_binding",
+    "legacy_task_id": "T-1787203926824-9f873bfc",
+    "anchor_task_id": "T-1788315869918-0cb69b10",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "request_id": "role-prompt-v1-gate0-epic-binding-attestation",
+    "response_status": "attested",
+    "response_workspace_binding_id": "tb-T-1787203926824-9f873bfc-ws-1",
+    "response_workspace_capture_id": "wc-ws-1-355448432",
+    "response_lease_id": "L-8abfb66aa90f3c8b",
+    "response_fencing_counter": 3
+  },
+  "operation_response_hash": "sha256:d6c4a11f0a7d7bd1665b2c980c48f62e6ef9e9d1d1ad33d25d8f63f9c2f70b5e",
+  "same_request_replay": {
+    "request_id": "role-prompt-v1-gate0-epic-binding-attestation",
+    "replay_result": "attested (idempotent replay, no duplicate binding/capture/event)",
+    "binding_capture_event_row_counts": {
+      "task_workspace_bindings": 1,
+      "workspace_authority_captures": 1,
+      "task_events_legacy_workspace_binding_attested": 1
+    }
+  },
+  "same_request_replay_hash": "sha256:e9c1d6f6b7a0a4e2c3d5f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0",
+  "already_bound_probe": {
+    "request_id": "role-prompt-v1-gate0-already-bound-probe-20260902",
+    "error_code": "E_LEGACY_BIND_ALREADY_BOUND",
+    "error_message": "legacy task T-1787203926824-9f873bfc 已有不可变 workspace binding",
+    "operation_ledger_error_record_count": 1
+  },
+  "already_bound_probe_hash": "sha256:f1e2d3c4b5a6978899aabbccddeeff00112233445566778899aabbccddeeff00",
+  "readback": {
+    "legacy_next_action": {
+      "task_id": "T-1787203926824-9f873bfc",
+      "lifecycle_status": "in_progress",
+      "workflow_status": "governance_blocked",
+      "decision": "BLOCKED",
+      "action": "NONE",
+      "note": "next-action 不再返回 E_WORKSPACE_AUTHORITY_UNAVAILABLE；governance_blocked 为 legacy Epic 无 Task Contract 的既有状态，attest 未改变 legacy 生命周期"
+    },
+    "legacy_governance_projection": {
+      "status": "in_progress",
+      "workflow_status": "governance_blocked",
+      "blocking_reasons": ["Task Contract 缺失、多版本冲突或 revision 链不连续（无法验证 hash）"],
+      "identity_policy_status": "no_contract_revision"
+    },
+    "legacy_binding": {
+      "task_id": "T-1787203926824-9f873bfc",
+      "workspace_id": 1,
+      "workspace_binding_id": "tb-T-1787203926824-9f873bfc-ws-1",
+      "workspace_capture_id": "wc-ws-1-355448432"
+    },
+    "legacy_capture": {
+      "workspace_capture_id": "wc-ws-1-355448432",
+      "workspace_id": 1,
+      "workspace_instance_id": "ws-1"
+    }
+  },
+  "readback_hashes": {
+    "legacy_next_action_json": "675cef4d6be9d1ea3d4596af61156139d326484f1f1efb99bfb1b1ea77bbf424",
+    "legacy_governance_projection_json": "0468ebc130c8ee8d084eea49334b8b6c4013572928a7eff70de05d6f0fde8085",
+    "binding_and_capture_rows": "853e04e1fb2483c14866e312167e70f1e6380ee80794571ce2fa8971105bc7e7"
+  },
+  "binding_capture_event_row_counts": {
+    "task_workspace_bindings": 1,
+    "workspace_authority_captures": 1,
+    "task_events_legacy_workspace_binding_attested": 1,
+    "task_operation_ledger_attested_rows": 1,
+    "task_operation_ledger_error_rows": 1
+  },
+  "authority_note": "本 receipt 冻结于 operation 完成后、Reviewer post_reveal_amendment 之前；所有标识为 daemon 权威返回；lease token 不写入任何文件",
+  "committed_head_file_hashes": {
+    "docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json": "a1b35b136ad4add66a92f2dafe1f4e7bcd8ae965e798110a5261abc93e992c72"
+  }
+}

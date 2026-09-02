@@ -1,0 +1,68 @@
+{
+  "schema": "cw.role_prompt_gate0_binding_attestation_finalization.v1",
+  "card": "GATE-0",
+  "title": "Role Prompt v1 GATE-0: legacy Epic binding attestation finalization receipt",
+  "input_evidence_path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+  "input_evidence_sha256": "447508d942528d1b0c415ffe7bed83f7638bc373b8e753dbc58223f027f0bdb8",
+  "operation_receipt_path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json",
+  "operation_receipt_sha256": "a1b35b136ad4add66a92f2dafe1f4e7bcd8ae965e798110a5261abc93e992c72",
+  "post_reveal_amendment_verdict_id": "V-9c2e52fb5c4ae47f1d7facac",
+  "amendment_ref_initial_verdict_id": "V-a04f3fee9d3375a36f28b988",
+  "reviewer_gate_lease": {
+    "lease_id": "L-8abfb66aa90f3c8b",
+    "holder_agent_id": "reviewer-workbuddy-p0review-01",
+    "fencing_counter": 3,
+    "released_after_amendment": true
+  },
+  "reviewer_gate_lease_release_receipt_hash": "133ff4628421c51c0c85576ea5b1db88002cd1bc1daafac2e7e454070256297e",
+  "adjudicator_finalizer_lease": {
+    "lease_id": "L-15230f79a9c66685",
+    "holder_agent_id": "adjudicator-workbuddy-p0adj-01",
+    "holder_session_id": "sess-adj-p0batch-20260831",
+    "holder_model_id": "workbuddy",
+    "role_on_lease": "reviewer",
+    "role_on_apply_close": "adjudicator",
+    "fencing_counter": 4
+  },
+  "review_vehicle_apply": {
+    "status": "applied",
+    "applied_at": 1788317632.3366036,
+    "identity_role": "adjudicator"
+  },
+  "review_vehicle_apply_receipt_hash": "43e97a537c88b91fea41692e7dd809f3fed933333d59d4c38b6deb6d0aa69b9c",
+  "review_vehicle_close": {
+    "status": "closed",
+    "closed_at": 1788317639.3852534,
+    "identity_role": "adjudicator"
+  },
+  "review_vehicle_close_receipt_hash": "f23e2bb496a1f78392eb139ac0cf2afc673c24298a1fc9aca638b0347f1d7a90",
+  "review_vehicle_complete_projection": {
+    "lifecycle_status": "closed",
+    "workflow_status": "completed",
+    "next_role": "complete",
+    "decision": "COMPLETE"
+  },
+  "review_vehicle_complete_projection_hash": "4b5c4e5330fbe80a2243d8e1f98dfde894627d0b6db625ac5d1165cbf29c2586",
+  "adjudicator_finalizer_lease_release_receipt_hash": "7f9c3a267251191b958baf9018dcbfeaf7a8db07fa7745fb0a3577f0ccea6130",
+  "legacy_epic_state_unchanged": {
+    "task_id": "T-1787203926824-9f873bfc",
+    "status": "in_progress",
+    "binding_count": 1,
+    "attest_event_count": 1,
+    "note": "attest 未改变 legacy Epic 生命周期；binding 为不可变 workspace 1/ws-1"
+  },
+  "verdict_chain": [
+    {
+      "verdict_id": "V-a04f3fee9d3375a36f28b988",
+      "phase": "blind_first_pass",
+      "overall": "pass"
+    },
+    {
+      "verdict_id": "V-9c2e52fb5c4ae47f1d7facac",
+      "phase": "post_reveal_amendment",
+      "overall": "pass",
+      "amendment_ref": "V-a04f3fee9d3375a36f28b988"
+    }
+  ],
+  "authority_note": "本 finalization receipt 在 amendment、两段 lease 释放、apply/close 全部完成后冻结；引用 input 与 operation receipt 的 sha256 而不修改二者；lease 释放/apply/close 的 receipt hash 均取自 daemon 权威事件行（task_lease_events / task_events，JSON 规范化 sha256：json.dumps(sort_keys=True, ensure_ascii=False, separators=(',',':'))），complete projection hash 取自 cw task next-action --json 的投影子集；所有标识为 daemon 权威返回；无 lease token 写入"
+}
