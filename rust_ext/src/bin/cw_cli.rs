@@ -62,13 +62,16 @@ use callwarden_core::cli::status::{combine_enterprise_status, query_local_status
 use callwarden_core::cli::symbol::format_symbol_output;
 use callwarden_core::cli::task::{
     apply_task, capture_task_diff, capture_task_diff_auto, claim_next_task_step, close_task,
-    create_task, format_task_apply, format_task_capture, format_task_claim, format_task_close,
-    format_task_completion_review, format_task_create, format_task_finding_resolution,
+    format_task_apply, format_task_capture, format_task_claim, format_task_close,
+    format_task_completion_review, format_task_finding_resolution,
     format_task_findings, format_task_list, format_task_reopen, format_task_report,
     format_task_rollback, format_task_show, format_task_split, query_task_detail,
     query_task_findings, query_task_links, query_task_list, reopen_task, report_task_step,
     resolve_task_finding, review_task_completion, rollback_task, split_task_from_plan,
-    TaskListOptions, TaskStepInput,
+    TaskListOptions,
+};
+use callwarden_core::cli::task_enterprise::{
+    parse_explicit_workspace_id, resolve_workspace_pair_from_daemon, verify_create_readback,
 };
 use callwarden_core::cli::workspace::{
     activate_local_workspace, format_activate_result, format_register_success,
@@ -728,6 +731,10 @@ enum TaskAction {
         /// JSON 步骤数组
         #[arg(long, default_value = "")]
         steps: String,
+        /// 显式 workspace_instance_id（缺省从 daemon 解析，BR-03）；
+        /// numeric workspace_id 复用全局 --workspace-id（须为整数）
+        #[arg(long, default_value = "")]
+        workspace_instance_id: String,
     },
     /// 原子领取任务树中的下一个步骤
     Next { task_id: String },
@@ -1711,16 +1718,15 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
 
     let local_fn = || -> Result<String, String> {
         match action.clone() {
-            TaskAction::Create { title, desc, steps } => {
-                let steps = if steps.is_empty() {
-                    Vec::new()
-                } else {
-                    serde_json::from_str::<Vec<TaskStepInput>>(&steps)
-                        .map_err(|error| format!("invalid task steps JSON: {error}"))?
-                };
-                let mut conn = runtime.open_local_write_db()?;
-                let result = create_task(&mut conn, &title, &desc, steps, "agent", None)?;
-                Ok(format_task_create(&result, zh_cn))
+            TaskAction::Create { .. } => {
+                // BR-03：task.create 需要 daemon 权威 workspace binding；local 模式
+                // / daemon 不可用一律 fail-closed，绝不本地建任务（对齐 Python
+                // cli/main.py BR-02 `_local_create_forbidden`，workspace_authority:
+                // forbid_active_workspace_fallback）。
+                Err(
+                    "task.create 需要 daemon 权威 workspace binding；local 模式/daemon 不可用一律 fail-closed，绝不本地建任务（BR-03）"
+                        .to_string(),
+                )
             }
             TaskAction::Next { task_id } => {
                 let mut conn = runtime.open_local_write_db()?;
@@ -1871,7 +1877,12 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
 
     let enterprise_fn = || -> Result<String, String> {
         let (rpc_method, rpc_params) = match action.clone() {
-            TaskAction::Create { title,  desc, steps } => {
+            TaskAction::Create {
+                title,
+                desc,
+                steps,
+                workspace_instance_id,
+            } => {
                 let steps_val = if steps.is_empty() {
                     serde_json::json!([])
                 } else {
@@ -1923,7 +1934,44 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                         "independence": "required"
                     }
                 ]);
-                ("task.create", serde_json::json!({"title": title, "description": desc, "steps": steps_val, "role_contracts": role_contracts}))
+                // BR-03 steps[0]/[1]：workspace 配对 —— 显式 flag 优先，缺失项用
+                // daemon 权威解析补全（fail-closed）；本地 numeric active 语义
+                // （resolve_local_workspace_id）绝不进入 enterprise 参数
+                // （workspace_authority: forbid_numeric_guess / forbid_synthetic_ws_id /
+                // forbid_active_workspace_fallback）。pair 原样转发 task.create，
+                // daemon 0c 配对校验兜底（不一致 → E_WORKSPACE_AUTHORITY_MISMATCH）。
+                // numeric workspace_id 复用全局 --workspace-id（须为整数，
+                // parse_explicit_workspace_id 校验；非整数显式值 fail-closed）。
+                let explicit_ws_id =
+                    parse_explicit_workspace_id(runtime.workspace_id.as_deref())?;
+                let mut ws_id = explicit_ws_id.unwrap_or(0);
+                let mut ws_instance = workspace_instance_id.trim().to_string();
+                if ws_id <= 0 || ws_instance.is_empty() {
+                    let (resolved_id, resolved_instance) =
+                        resolve_workspace_pair_from_daemon(runtime)?;
+                    if ws_id <= 0 {
+                        ws_id = resolved_id;
+                    }
+                    if ws_instance.is_empty() {
+                        ws_instance = resolved_instance;
+                    }
+                }
+                (
+                    "task.create",
+                    serde_json::json!({
+                        "title": title,
+                        "description": desc,
+                        "steps": steps_val,
+                        "role_contracts": role_contracts,
+                        // BR-03 parity：对齐 Python cli/main.py BR-02——默认三角色 legacy 模板
+                        // 必须显式声明 legacy_identity_v1，由 daemon 生成 generic envelope，
+                        // 否则 task.create 报 E_TASK_IDENTITY_POLICY_REQUIRED 且新建任务
+                        // 无法 claim（daemon task_collab.rs resolve_task_create_identity_policy）。
+                        "identity_policy": "legacy_identity_v1",
+                        "workspace_id": ws_id,
+                        "workspace_instance_id": ws_instance,
+                    }),
+                )
             }
             TaskAction::Next { task_id } => {
                 ("task.claim", serde_json::json!({"task_id": task_id}))
@@ -1970,6 +2018,11 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
         };
 
         let val = runtime.daemon_call(rpc_method, rpc_params)?;
+        // BR-03 steps[2]：create 后与 task.status readback 逐一对比 provenance，
+        // 任一标识不一致 fail-closed（对齐 Python `_verify_create_readback`）。
+        if matches!(&action, TaskAction::Create { .. }) {
+            verify_create_readback(runtime, &val)?;
+        }
         serde_json::to_string_pretty(&val).map_err(|e| e.to_string())
     };
 
@@ -5430,7 +5483,61 @@ fn command_name(cmd: &Commands) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use tempfile::tempdir;
+
+    #[test]
+    fn task_create_parses_workspace_flags() {
+        // BR-03 steps[1]：numeric workspace_id 复用全局 --workspace-id（String），
+        // workspace_instance_id 为子命令 flag；两者在 task create 下均可解析。
+        let cli = Cli::try_parse_from([
+            "cw",
+            "task",
+            "create",
+            "--title",
+            "t",
+            "--desc",
+            "d",
+            "--workspace-id",
+            "72",
+            "--workspace-instance-id",
+            "2bba6e894ee2546f",
+        ])
+        .unwrap();
+        assert_eq!(cli.enterprise_workspace_id.as_deref(), Some("72"));
+        match cli.command.unwrap() {
+            Commands::Task {
+                action:
+                    TaskAction::Create {
+                        title,
+                        workspace_instance_id,
+                        ..
+                    },
+            } => {
+                assert_eq!(title, "t");
+                assert_eq!(workspace_instance_id, "2bba6e894ee2546f");
+            }
+            _ => panic!("unexpected command: expected task create"),
+        }
+    }
+
+    #[test]
+    fn task_create_defaults_workspace_flags_to_daemon_resolve() {
+        // BR-03：不传 workspace flags 时缺省为空 → enterprise 路径从 daemon 解析。
+        let cli = Cli::try_parse_from([
+            "cw", "task", "create", "--title", "t",
+        ])
+        .unwrap();
+        assert_eq!(cli.enterprise_workspace_id, None);
+        match cli.command.unwrap() {
+            Commands::Task {
+                action: TaskAction::Create { workspace_instance_id, .. },
+            } => {
+                assert_eq!(workspace_instance_id, "");
+            }
+            _ => panic!("unexpected command: expected task create"),
+        }
+    }
 
     #[test]
     fn test_command_count() {

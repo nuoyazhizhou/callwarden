@@ -907,6 +907,35 @@ cw task create \
 cw task create --title "t" --workspace-id 72 --workspace-instance-id 2bba6e894ee2546f
 ```
 
+**Rust `cw` 的 workspace 配对（BR-03，role-prompt-v1-bootstrap-br03-rust-cli）**：
+Rust 发行版 `cw`（`cw_cli.rs`）与 Python CLI 保持同一 daemon binding parity：
+
+- 新增 flag：全局 `--workspace-id <numeric_id>`（daemon 权威 numeric id，整数校验，
+  非整数显式值 fail-closed）与 `task create` 子命令级 `--workspace-instance-id <inst>`；
+  缺省（或只给其一）时，缺失项经
+  `mcp.daemon_client.inject_workspace_id` → `workspace.status` 从 daemon 权威解析，
+  任一步失败 fail-closed；
+- **local numeric active 语义绝不进入 enterprise 参数**：`task create` 的
+  enterprise 路径从不使用 `resolve_local_workspace_id`（本地 SQLite `is_active`），
+  pair 只来自 daemon 解析或显式 flag，原样转发 `task.create`（daemon 0c 配对校验
+  兜底，不一致 → `E_WORKSPACE_AUTHORITY_MISMATCH`）；
+- **local 模式 / daemon 不可用一律 fail-closed**：`task create` 不再走本地 SQLite
+  回退，绝不创建无 workspace binding 的本地任务（对齐 Python `_local_create_forbidden`）；
+- **identity_policy parity**：与 Python BR-02 一致，Rust `task create` 显式转发
+  `identity_policy: "legacy_identity_v1"`（默认三角色 legacy 模板），由 daemon 生成
+  generic envelope；缺失会报 `E_TASK_IDENTITY_POLICY_REQUIRED` 且新任务无法 claim；
+- create 响应 JSON 含 workspace provenance 五键（`workspace_id` /
+  `workspace_instance_id` / `workspace_binding_id` / `workspace_capture_id` /
+  `assignment_id`）+ `step_count`，并自动对 `task.status` readback 逐一对比，
+  任一标识不一致即 fail-closed 上抛（`verify_create_readback`）。
+
+```bash
+# Rust cw：缺省从 daemon 解析权威 pair
+cw task create --title "t" --desc "d" --steps '[{"action":"inspect","target_file":"src/main.rs"}]'
+# Rust cw：显式 pair（daemon 0c 校验）
+cw task create --title "t" --workspace-id 72 --workspace-instance-id 2bba6e894ee2546f
+```
+
 ### `task next`：领取下一步骤
 
 ```bash

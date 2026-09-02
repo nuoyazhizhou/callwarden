@@ -33,4 +33,5 @@ pub mod stats;
 pub mod status;
 pub mod symbol;
 pub mod task;
+pub mod task_enterprise;
 pub mod workspace;
