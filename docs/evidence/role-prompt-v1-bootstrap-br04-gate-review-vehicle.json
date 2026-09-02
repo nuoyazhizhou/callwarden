@@ -1,0 +1,97 @@
+{
+  "card": "BR-04",
+  "title": "Bootstrap BR-04: create correctly bound Role Prompt Gate review vehicle v2",
+  "idempotency_key": "role-prompt-v1-gate-manifest-review-vehicle-v2",
+  "manifest_version": "1",
+  "code_change": false,
+  "commit_hash": "525cc96",
+  "commit_hash_semantics": "BR-04 为纯治理卡（code_change=false），无实现 commit；commit_hash 指向验证执行时仓库 HEAD（BR-03 evidence 提交后的 525cc96），作为 review vehicle 创建动作的可复现锚点。",
+  "manifest_binding": {
+    "manifest_path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+    "manifest_sha256": "0df148fd18c365ee2f84a50f8427973960d969a70dbd5cac17bfd190cba2f947",
+    "frozen_spec_path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "frozen_spec_sha256": "95298729f3357cdbe76d8f8e91f12067b54d2661d6e80abff561a2e2a8c86cb7",
+    "frozen_spec_match": true,
+    "manifest_hash_matches_v1_description": true
+  },
+  "review_vehicle": {
+    "vehicle_id": "GATE-MANIFEST-REVIEW-VEHICLE-V2",
+    "task_id": "T-1788315869918-0cb69b10",
+    "step_id": "S-1788315869920-0cc7e988",
+    "title": "Role Prompt v1 Gate manifest independent review vehicle v2",
+    "root_task": true,
+    "parent_id": "",
+    "identity_policy": "legacy_identity_v1",
+    "step_count": 1,
+    "step_action": "freeze_gate_manifest_review_input",
+    "step_target_file": "docs/evidence/role-prompt-v1-gate-manifest-review-input.json",
+    "role_contract_count": 3,
+    "workspace_binding_count": 1,
+    "workspace_capture_count": 1
+  },
+  "committed_head_file_hashes": {
+    "docs/evidence/role-prompt-v1-bootstrap-br04-gate-review-vehicle.json": "5ffebcb497291ae78f5e55a02d665d9a45d41c38d915e2454d5654bd4ed1c529"
+  },
+  "acceptance": [
+    {
+      "id": 1,
+      "criterion": "correctly bound v2 review vehicle created via governed root task.create; workspace pair is callwarden workspace 1 / ws-1 (not the failed v1 active-workspace fallback ws-10)",
+      "result": "PASS",
+      "evidence": "cw task create --mode enterprise --workspace-id 1 --workspace-instance-id ws-1 → task T-1788315869918-0cb69b10, workspace_id=1, workspace_instance_id=ws-1, workspace_binding_id=tb-T-1788315869918-0cb69b10-ws-1, workspace_capture_id=wc-ws-1-214138640（daemon 0c 配对校验通过；workspace 1 capture 权威 rev 368）"
+    },
+    {
+      "id": 2,
+      "criterion": "required_readback 11 fields all captured from daemon create response",
+      "result": "PASS",
+      "evidence": "task_id=T-1788315869918-0cb69b10; step_id=S-1788315869920-0cc7e988; task_contract_id=TC-T-1788315869918-0cb69b10; task_contract_revision=1; task_contract_hash=sha256:a9a40840369acb44de0dfa150db54adbbaccdbdc2d162aeec7cdbfdcff50cabf; role_contract_ids_and_hashes=3（executor rcl-…-executor/sha256:2ea2a4c4…, reviewer rcl-…-reviewer/sha256:3e8debc9…, adjudicator rcl-…-adjudicator/sha256:a82e326c…）; workspace_id=1; workspace_instance_id=ws-1; workspace_binding_id=tb-…-ws-1; workspace_capture_id=wc-ws-1-214138640; assignment_id=A-fd1f80a482636bc3c6107537"
+    },
+    {
+      "id": 3,
+      "criterion": "create output and task show expose identical provenance identifiers (independent readback)",
+      "result": "PASS",
+      "evidence": "cw task show T-1788315869918-0cb69b10 独立投影：11 字段与 create 输出逐一相等（task_id/step_id/task_contract 三键/workspace 五键/assignment_id 全部一致；task show governance.task_contract=TC-…-r1-sha256:a9a40840… 与 create governance_projection 相等）"
+    },
+    {
+      "id": 4,
+      "criterion": "root task with no parent; identity_policy=legacy_identity_v1 explicitly declared",
+      "result": "PASS",
+      "evidence": "task show parent_id=''（空）、depth=0；create 输出 identity_policy=legacy_identity_v1，task show identity_policy_status=declared"
+    },
+    {
+      "id": 5,
+      "criterion": "contract structure: task contract revision 1, 3 role contracts, 1 step with 1 step binding",
+      "result": "PASS",
+      "evidence": "contract_count=3; step_count=1; step_binding_ids=[sb-T-1788315869918-0cb69b10-S-1788315869920-0cc7e988-r1]; task show steps[0].status=pending（freeze_gate_manifest_review_input → docs/evidence/role-prompt-v1-gate-manifest-review-input.json）"
+    },
+    {
+      "id": 6,
+      "criterion": "precreation dedup: v2 idempotency key has no existing task; failed v1 vehicle preserved append-only without claim/repurpose",
+      "result": "PASS",
+      "evidence": "task-DB 查询：唯一含 'role-prompt-v1-gate-manifest-review-vehicle' 的任务为 v1 T-1788253722521-3b2f8420（description 含 v1 key，无 -v2）；v2 key role-prompt-v1-gate-manifest-review-vehicle-v2 无既有任务 → 创建成功。v1 保持 append_only_no_claim_no_rewrite（work order failed_attempt.preservation），未被 claim/改写"
+    },
+    {
+      "id": 7,
+      "criterion": "manifest and frozen spec hashes bound exactly (no silent substitution)",
+      "result": "PASS",
+      "evidence": "manifest sha256=0df148fd18c365ee2f84a50f8427973960d969a70dbd5cac17bfd190cba2f947（与 v1 description 记录 hash 一致，manifest 字节未变）；frozen spec sha256=95298729f3357cdbe76d8f8e91f12067b54d2661d6e80abff561a2e2a8c86cb7 与 manifest source.frozen_spec_sha256 声明相等"
+    }
+  ],
+  "tests_run": {
+    "task_create_v2_review_vehicle": "cw task create（Rust release cw.exe，enterprise 模式）→ 成功，task T-1788315869918-0cb69b10，workspace 1/ws-1 正确绑定",
+    "task_show_readback": "cw task show T-1788315869918-0cb69b10 → 11 字段独立投影与 create 输出逐一一致",
+    "precreation_dedup_probe": "task-DB 查询 review vehicle 任务：仅 v1 T-1788253722521-3b2f8420（v1 key），v2 key 无冲突",
+    "hash_verification": "manifest sha256 + frozen spec sha256 计算并与 v1 描述/manifest 声明比对一致"
+  },
+  "deviation_notes": [
+    "BR-04 为纯治理卡（code_change=false）：无生产代码变更，唯一新文件为本文档。committed_head_file_hashes 仅含 evidence 自身（两段式自算 hash）；manifest 绑定通过 manifest_binding 字段记录。",
+    "v1 review vehicle T-1788253722521-3b2f8420 是 task.create binding bug 时期的失败产物：错误绑定到 daemon active workspace 10（TokenSlim）而非 callwarden workspace 1，且未正确路由（work order import_state=BLOCKED_BY_TASK_CREATE_BINDING_BUG）。work order failed_attempt.preservation=append_only_no_claim_no_rewrite + forbidden_shortcuts 明确禁止 claim/repurpose v1 → BR-04 创建 v2 并以 workspace 1/ws-1 正确绑定，v1 保持原样。",
+    "precreation_dedup 语义：gate manifest review_vehicle.creation_request.precreation_dedup 检查 idempotency key role-prompt-v1-gate-manifest-review-vehicle（v1 key）；BR-04 使用 v2 key（role-prompt-v1-gate-manifest-review-vehicle-v2）创建 recovery 计划的既定新载体，v1 存在不构成 v2 冲突，v2 key 本身无既有任务。",
+    "workspace 1/ws-1 为 daemon 权威可绑定对：BR-03 e2e A 已证明（workspace 1 在 task-DB 存在、capture ws-1 rev 368、0c 配对校验通过）；v2 create 输出 identity_policy=legacy_identity_v1 由 Rust CLI 显式转发（BR-03 parity）。"
+  ],
+  "notes": "BR-04 Gate verifiable evidence: correctly bound v2 review vehicle created via governed task.create + 11-field required_readback matrix (create ↔ task show identical) + manifest/frozen-spec hash binding + v1 failure preserved append-only.",
+  "produced_at": "2026-09-02T02:25:06Z",
+  "verifier": {
+    "name": "br04-gate-review-vehicle-verification",
+    "version": "1"
+  }
+}
