@@ -1,0 +1,22 @@
+{
+  "manifest_type": "governance_supersede_evidence",
+  "batch": "C-GROUP-bayesian-backlog-successor-cards",
+  "created_at": "2026-09-11T09:55:00+08:00",
+  "author": "adjudicator-wb-186loop",
+  "rationale": "C 组 2 张为 TokenSlim 压缩路由真实 backlog（非清理对象），但原卡为旧通道裸卡（无 Task Contract / 无 binding），长期 governance_blocked 无法派工。处置（用户裁决 2026-09-11）：开 2 张带 A' 三角色 legacy 合同 + identity_policy=legacy_identity_v1 + workspace binding 的承接卡，保留 backlog 意图；原卡 supersede 到承接卡后 cascade_close 收尾，投影终态 completed。",
+  "pairs": [
+    {
+      "old": "T-1788268314722-a8b6a945",
+      "old_title": "贝叶斯语义分类优化压缩路由机制",
+      "new": "T-1789091925759-a1632a68",
+      "new_title": "贝叶斯语义分类优化压缩路由机制（TokenSlim 压缩路由 backlog 承接卡）"
+    },
+    {
+      "old": "T-1788268321485-5315820b",
+      "old_title": "T-A 自研极简多分类朴素贝叶斯分类器",
+      "new": "T-1789091926928-e7138e40",
+      "new_title": "T-A 自研极简多分类朴素贝叶斯分类器（TokenSlim backlog 承接卡）"
+    }
+  ],
+  "new_cards_projection": "both open/queued/READY at creation (workspace_id=1, instance 4baea3ff12c2ea5c)"
+}

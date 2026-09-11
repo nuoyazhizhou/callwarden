@@ -1,0 +1,74 @@
+{
+  "task_id": "T-1789083808963-caacecc4",
+  "card": "T-1789083808963-caacecc4",
+  "title": "GOV-FIX-04: 终态投影短路——closed/reverted 不再依赖合同与 binding（二阶投影缺陷修复）",
+  "generated_at": "2026-09-11T00:00:00+00:00",
+  "producer": {
+    "agent_id": "executor-wb-g4-01",
+    "agent_instance_id": "inst-exec-wb-g4-01",
+    "session_id": "sess-exec-wb-g4-20260910",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "change": {
+    "purpose": "终态投影短路：closed/reverted 在规则 1/3/4 之前短路返回终态（closed→complete_outcome、reverted→terminal_outcome）；RPC policy overlay 对终态不再覆盖 workflow_status/decision，也不广播 claim_requirements。修复 closed 卡被误报 governance_blocked / E_WORKSPACE_AUTHORITY_UNAVAILABLE 的三层投影缺陷。非终态保持 fail-closed（不扩大化）。",
+    "commit": "031355e",
+    "commit_full": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+    "git_stat": "031355e fix(governance): 终态投影短路——closed/reverted 不再依赖合同与 binding（GOV-FIX-04）\n\n rust_ext/src/daemon/dispatch.rs                    | 45 ++++++++++------\n rust_ext/src/daemon/task_collab_query.rs           | 23 ++++++++\n rust_ext/src/daemon/task_collab_tests_projection.rs | 44 ++++++++++++++++\n rust_ext/src/daemon/task_loop/next_action.rs       | 49 +++++++++++++--\n rust_ext/src/daemon/task_loop/next_action_test.rs  | 61 ++++++++++++++++++++++\n 5 files changed, 204 insertions(+), 18 deletions(-)",
+    "files": [
+      {
+        "path": "rust_ext/src/daemon/task_loop/next_action.rs",
+        "sha256_after": "ab743cdb37eb842572d9a5abb8d4d28a5418d6360e6a118c908951fac84072a1"
+      },
+      {
+        "path": "rust_ext/src/daemon/task_collab_query.rs",
+        "sha256_after": "dbcff2cc30501b64729cd2cfd70778e2ffdcffd5f771eb91ba3253370c95c097"
+      },
+      {
+        "path": "rust_ext/src/daemon/dispatch.rs",
+        "sha256_after": "fd35a43a5960fb110403cbe6d35f795d868f4f7d07e08a62f858ecb6e7328d95"
+      },
+      {
+        "path": "rust_ext/src/daemon/task_loop/next_action_test.rs",
+        "sha256_after": "54a29648cb77649891f8ebd37f24f8b3352df6a76325637bbe287cb6599caef8"
+      },
+      {
+        "path": "rust_ext/src/daemon/task_collab_tests_projection.rs",
+        "sha256_after": "08d8b0354d8c767d459bd6f413a4aa4b6ddb9bee181601ff4fc6b9aaafd6d02c"
+      }
+    ]
+  },
+  "repo": {
+    "head": "7dd1190ef9655e0bbe363e66da52ec955446dfa8",
+    "branch": "master",
+    "head_is_fix_commit": false,
+    "fix_commit_in_history": true
+  },
+  "build_and_tests": {
+    "cargo_check_all_targets": { "command": "cargo check --all-targets", "rc": 0, "errors": 0 },
+    "cargo_build_release_bin_cw_daemon": { "command": "cargo build --release --bin cw-daemon", "rc": 0, "note": "增量 7m02s" },
+    "cargo_test": {
+      "command": "cargo test --lib -- closed_without_contract_or_binding reverted_without_contract_or_binding non_terminal_without_binding closed_task_complete_none test_task_status_closed_historical test_task_status_historical_blocked_vs_bound test_task_list_includes_daemon_governance_projection",
+      "passed": 7,
+      "failed": 0
+    }
+  },
+  "deployment": {
+    "binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+    "sha256": "8840a1733f6fc749aa328964fe4f2cc4d0ed11bc0aec794836fefb5b492bcd61",
+    "sha256_short": "8840a1733f6fc749",
+    "backup": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe.bak-20260911-govfix04",
+    "daemon_pid": 33592,
+    "endpoint": "http://127.0.0.1:1615",
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "live_verification": {
+    "closed_sample": "50/50 随机 closed → workflow_status=completed",
+    "non_terminal_sample": "20/20 随机非终态 0 张被误判为终态（18 硬错误 + 1 governance_blocked + 1 review_pending）",
+    "historical_closed_no_binding": "completed（原硬错 E_WORKSPACE_AUTHORITY_UNAVAILABLE）",
+    "p0compat_v2_cards": "6/6 COMPLETE/completed",
+    "overlay_miss_cards": "3/3 COMPLETE/completed（T-1787322795307-d949b968 / T-1787322795374-dd442bac / T-1787322799980-efcb2090）",
+    "projection_path_consistency": "task show --flat 与 task governance-projection 两路径均为 completed"
+  },
+  "evidence_note": "commit 031355e 提交时尚未开卡（无 task_id 前缀）；本卡为事后治理包装，scope 与 commit 一一对应。人读报告见 docs/evidence/GOV-FIX-04-verification-20260911.md。"
+}

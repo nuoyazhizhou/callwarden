@@ -1,0 +1,23 @@
+{
+  "evidence_type": "governance_card_execution",
+  "task_id": "T-1789097000747-3e3feaa0",
+  "title": "GOV-FIX-06: cascade_close 拒绝语义（假成功 RC=0 缺陷修复）",
+  "commit": "53b2958b18c55d94b4ff5e8dc35eb63e9219ad77",
+  "daemon_binary_sha256": "eadfdfec1eb160c5c27f34e0f1098aaa42114102181f3d90b9be1b1d38b7172e",
+  "changes": [
+    {"file": "rust_ext/src/daemon/task_collab_lifecycle_apply.rs", "sha256": "9440c25126ac069e0eb6c4b27b17f7504a47764042d141e7330fdf28f226a9b2", "summary": "handle_task_cascade_close：break 前记录 blocked（children_not_closed 带 open_children / leaf_steps_pending 带 not_done+unresolved_failed）；响应新增 target_closed（含幂等 skipped）与 blocked 字段；docstring 记录拒绝语义"},
+    {"file": "cli/main.py", "sha256": "6084c45d4803b772c7162c1cfe0e4aa5ce6f541db1ba8ec9fb89cd4ab8fc7ef2", "summary": "cascade_close 分支：daemon error → sys.exit(2)；目标卡不在 closed/skipped → 红字拒绝（children_not_closed/leaf_steps_pending 中文映射）+ sys.exit(2)；幂等重提（skipped）明确提示；仅凭 closed/skipped 判定，对旧 daemon 同样正确"},
+    {"file": "rust_ext/src/daemon/task_collab_tests_cascade.rs", "sha256": "d2437a1db56322158d9e12f75cca6e8e8c1a5795d833cc7a42b4155c18882411", "summary": "既有 blocked 用例补 target_closed=false + blocked 断言；新增 test_cascade_close_reports_blocked_for_open_children（open_children=1、status 保持 open）"}
+  ],
+  "tests": {
+    "target": "cargo test --lib daemon::task_collab::tests::cascade → 3 passed / 0 failed",
+    "full_suite": "cargo test --release --lib → 1772 passed / 6 failed；6 failed 经停 daemon 复测 4 个 socket 环境用例全绿（环境态污染，非本改动），history_failure_rolls_back_current_graph_update 为基线缺陷（refresh 域，与本改动无关路径）"
+  },
+  "live_verification": {
+    "reject_path": "cascade-close T-1785627325688-37b0e1cf（批次 2 epic 根卡）→ RC=2、红字'级联收尾被拒绝…子树存在未 closed 的子卡'、status 保持 open",
+    "idempotent_path": "cascade-close T-1789083808963-caacecc4（已 closed）→ RC=0、'目标卡已 closed（幂等重提）'",
+    "daemon": "pid 29028 / port 1615 / git 53b2958"
+  },
+  "incident_note": "执行期间遭遇 git 对象库灾难（pack 丢失），已通过 fetch --refetch origin master + 工作树重建恢复（recovery commit 53b2958），原 5 个治理提交 hash 失效但内容保全",
+  "created_at": "2026-09-11T12:20:00+08:00"
+}

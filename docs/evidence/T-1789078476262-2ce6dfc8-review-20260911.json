@@ -1,0 +1,52 @@
+{
+  "task_id": "T-1789078476262-2ce6dfc8",
+  "reviewer": {
+    "agent_id": "reviewer-wb-186loop",
+    "agent_instance_id": "inst-reviewer-wb-186loop",
+    "session_id": "sess-rev-govfix03-2ce6",
+    "model_id": "deepseek-v4-flash",
+    "role": "reviewer"
+  },
+  "reviewed_at": "2026-09-11T00:25:00+00:00",
+  "scope": "GOV-FIX-03 cascade_close 被替代卡豁免（commit 67b5c8e1708563c1081f9a68355cf37fe3fdb1bc）",
+  "checks": [
+    {
+      "item": "Task Contract 绑定",
+      "result": "pass",
+      "detail": "TC-T-1789078476262-2ce6dfc8 r1 sha256:189aef4aeedad6568e613b5e18f774135cd52502eb85aab70f1d927655ff5e5b；reviewer lineage rcl-...-reviewer r1 sha256:3e8deb…"
+    },
+    {
+      "item": "Executor report 与步骤门禁",
+      "result": "pass",
+      "detail": "3/3 步 done（fix lifecycle_apply / fix 两个测试文件 / verify cascade 测试）；evidence sha256 0eeb1fbb662c6d31116c3a6190fd2479ceca8684d38c4e55169542a775c6f344 与台账登记一致"
+    },
+    {
+      "item": "代码事实独立复核",
+      "result": "pass",
+      "detail": "67b5c8e 是当前 HEAD 7dd1190 祖先；task_collab_lifecycle_apply.rs L336 查 task_supersede_relations 出边、L522 reason=suspereded by <succ> (leaf steps waived)，与卡 scope 一一对应"
+    },
+    {
+      "item": "构建与单测",
+      "result": "pass",
+      "detail": "cargo check --all-targets RC=0/0 err；cargo build --release RC=0；daemon::task_collab::tests::cascade 2 passed/0 failed"
+    },
+    {
+      "item": "live 行为",
+      "result": "pass",
+      "detail": "7/7 被替代卡（1 张 P0-CR + 6 张 P0-COMPAT-v2）经 cascade_close 全部 closed，closed_at 非零、reason 记录后继卡、零残留 lease"
+    },
+    {
+      "item": "后续演化一致性",
+      "result": "pass",
+      "detail": "该豁免随后被 GOV-FIX-04（031355e）终态短路覆盖增强；当前部署二进制 8840a173 包含本修复（67b5c8e 为其祖先）"
+    },
+    {
+      "item": "三角色会话独立性",
+      "result": "pass",
+      "detail": "executor=executor-wb-g4-01/inst-exec-wb-g4-01/sess-exec-wb-g4-20260910；reviewer=reviewer-wb-186loop/inst-reviewer-wb-186loop/sess-rev-govfix03-2ce6；adjudicator=adjudicator-wb-186loop；三项均不同"
+    }
+  ],
+  "completion_review": { "decision": "pass", "findings": [] },
+  "audit_chain": { "total": 3000, "verified": 3000, "broken": 0 },
+  "conclusion": "reviewer_pass"
+}

@@ -1,0 +1,57 @@
+{
+  "task_id": "T-1789083808963-caacecc4",
+  "reviewer": {
+    "agent_id": "reviewer-wb-186loop",
+    "agent_instance_id": "inst-reviewer-wb-186loop",
+    "session_id": "sess-rev-govfix04-caac",
+    "model_id": "deepseek-v4-flash",
+    "role": "reviewer"
+  },
+  "reviewed_at": "2026-09-11T00:05:00+00:00",
+  "scope": "GOV-FIX-04 终态投影短路（commit 031355e5bc10711f78c32cdc92bfddda26c6dfc4 + ledger 386c773）",
+  "checks": [
+    {
+      "item": "Task Contract 绑定",
+      "result": "pass",
+      "detail": "TC-T-1789083808963-caacecc4 r1 sha256:59a9fa288fc6c0aad49f3a158031c0f992f841ec2d0a515bd9c34c4ff2797f9b；executor/reviewer/adjudicator 三角色 lineage r1 齐备，identity_policy=legacy_identity_v1"
+    },
+    {
+      "item": "Executor report 与步骤门禁",
+      "result": "pass",
+      "detail": "3/3 步 done（2 fix + 1 verify），changes 白名单 5 文件逐一精确匹配 target_file，hash_after 与工作区实际 sha256 一致"
+    },
+    {
+      "item": "commit 覆盖一致性",
+      "result": "pass",
+      "detail": "git show --stat 031355e 恰为 5 文件 204+/18-，与步骤白名单一一对应，无越界文件"
+    },
+    {
+      "item": "构建与单测",
+      "result": "pass",
+      "detail": "cargo check --all-targets RC=0/0 err；cargo test --lib 目标 7 passed/0 failed（3 新 next_action 终态短路 + 1 新 projection + 3 既有回归）"
+    },
+    {
+      "item": "部署 provenance",
+      "result": "pass",
+      "detail": "runtime/current/cw-daemon.exe sha256 8840a1733f6fc749aa328964fe4f2cc4d0ed11bc0aec794836fefb5b492bcd61 = rust_ext/target/release 构建产物 = manifest.daemon_binary_sha256；daemon pid 33592 端口 1615 worker_status=healthy"
+    },
+    {
+      "item": "live 行为验证（独立复测）",
+      "result": "pass",
+      "detail": "task next-action 对 GOV-FIX-03 卡 T-1789078476262-2ce6dfc8 返回 review_pending/READY（reviewer 路由正常）；GOV-FIX-04 卡自身 queued→review 推进正常；audit chain 3000/3000 verified 0 broken"
+    },
+    {
+      "item": "不扩大化",
+      "result": "pass",
+      "detail": "非终态保持 fail-closed：completion_review 无 findings；短路仅在 closed/reverted 分支生效，规则 1/3/4 对非终态原样保留"
+    },
+    {
+      "item": "三角色会话独立性",
+      "result": "pass",
+      "detail": "executor=executor-wb-g4-01/inst-exec-wb-g4-01/sess-exec-wb-g4-20260910；reviewer=reviewer-wb-186loop/inst-reviewer-wb-186loop/sess-rev-govfix04-caac；instance/session 与 executor 零交集"
+    }
+  ],
+  "completion_review": { "decision": "pass", "findings": [] },
+  "audit_chain": { "total": 3000, "verified": 3000, "broken": 0 },
+  "conclusion": "reviewer_pass"
+}

@@ -1,0 +1,857 @@
+{
+ "manifest_type": "governance_supersede_evidence",
+ "batch": "GOV-FIX-05-batch1-legacy-cards-cleanup",
+ "created_at": "2026-09-11T10:26:31",
+ "author": "adjudicator-wb-186loop",
+ "superseding_task": "T-1789083808963-caacecc4",
+ "rationale": "批次 1（用户裁决 2026-09-11 路线 B）：Rust 迁移系（daemon 已为 Rust、237 MCP/145 CLI 已上线，工作客观落地）+ 临时验证系（抛弃型）+ 注释系。历史 Python 直写通道创建的无合同卡，统一 supersede 到 GOV-FIX-04 治理卡后 cascade_close。多 LLM/G0/根卡其他 53 张留批次 2 裁决。",
+ "cards": [
+  {
+   "task_id": "T-1785484889189-8a035c08",
+   "title": "P0-CLI-E5：Rust 外部集成与运维命令",
+   "status": "in_progress",
+   "depth": 5,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785431708348-160b0fd1",
+   "title": "P0-CLI-E：Rust cw 编排安全与外部集成",
+   "status": "in_progress",
+   "depth": 4,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785427715161-888e304c",
+   "title": "P0：Rust cw 仍是 skeleton，核心命令全部 not implemented",
+   "status": "in_progress",
+   "depth": 3,
+   "reason": "parent_of_batch1_card"
+  },
+  {
+   "task_id": "T-1785148066852-7246dee4",
+   "title": "Global CAS、Local CAS 与 pending refs",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066852-985bc075",
+   "title": "Rust SQLite 连接、schema migration 与事务边界",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066853-8a8bc897",
+   "title": "批量文件注册、ParseFact 与 symbol 写入",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066853-ccad23fe",
+   "title": "Replicator、SnapshotManager 与 backup/restore",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066853-f5d1a162",
+   "title": "workspace manifest、projection 与 refresh commit",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066854-5a5a6a74",
+   "title": "调用边解析、resolve、CSR/GraphStore",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066854-aa6d7c29",
+   "title": "搜索、callers/callees、call-chain 与拓扑",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066854-ab85ed91",
+   "title": "增量构建、索引、clone 与大规模性能",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066855-3bb68264",
+   "title": "staging/retry durable log 与 crash recovery",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066855-5ffa7cd2",
+   "title": "generation CAS、stale session 与 dirty overlay",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066855-6af3a6da",
+   "title": "跨平台 watcher adapter 与事件接收",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066855-ccc19c26",
+   "title": "事件 debounce、batch merge 与秒级 refresh",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066857-d02f3cfd",
+   "title": "Rust CLI 命令树与配置加载",
+   "status": "in_progress",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785574343876-2b298161",
+   "title": "3.14 实现经 daemon 的 CLI 写命令面",
+   "status": "review",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353129-6d09d2dd",
+   "title": "G01 CLI console formatter",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353129-89d5ee2c",
+   "title": "G03 CLI client",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353129-ee84592f",
+   "title": "G02 CLI agent",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-0feaee63",
+   "title": "G15 Garbage collection and archive",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-14605dab",
+   "title": "G18 Schema migration and backup/restore",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-168f0b22",
+   "title": "G05 CLI agent registry",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-16f1f1c7",
+   "title": "G13 Coverage and test reports",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-362894bb",
+   "title": "G16 LSP queries",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-3834a584",
+   "title": "G17 Daemon client",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-550a500c",
+   "title": "G10 Evolution metrics",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-57c496d2",
+   "title": "G11 Clone orchestration",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-59938e47",
+   "title": "G06 Storage schema and migration",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-68e2411f",
+   "title": "G14 Git history and blame",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-95c12d0e",
+   "title": "G04 CLI daemon control",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-af9c8a0c",
+   "title": "G07 Build residual orchestration",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-b1cf5a11",
+   "title": "G19 Agent watcher and session",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-c34859b5",
+   "title": "G09 Impact residual analysis",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-e9c649a4",
+   "title": "G08 Query residual SQL",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353130-ef4d44d9",
+   "title": "G12 Vector and embedding service",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627353131-e852d8b6",
+   "title": "G20 Audit, MCP, Semgrep, RAG and XML integration",
+   "status": "open",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785919930956-86f28184",
+   "title": "跟踪：Rust daemon 未嵌入 Python，snapshot.publish 能力缺口（决策/落地任务）",
+   "status": "review",
+   "depth": 2,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066852-d8ad3f5a",
+   "title": "Phase 1：Rust service/kernel 与存储真相",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066853-30d30abd",
+   "title": "Phase 2：Rust 图查询与构建管道",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066855-18f93b68",
+   "title": "Phase 3：Rust watcher、generation 与恢复",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785148066857-a972dd1c",
+   "title": "Phase 5：Rust local/client/agent CLI",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785574343867-51dc8c7d",
+   "title": "3. D0：跨平台 daemon 化（P1 的前置阶段，与 P0 相互独立）",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "parent_of_batch1_card"
+  },
+  {
+   "task_id": "T-1785581990191-be736f5f",
+   "title": "R1 E5 外部集成语义修复",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785581990192-ccf01f98",
+   "title": "R3 CAS service trait 与生产闭环",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785581990192-fe8110a7",
+   "title": "R2 Rust SQLite schema migration 与事务",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785581990193-02eccb07",
+   "title": "R4 Manifest projection 与 refresh commit 闭环",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785581990193-db6d7401",
+   "title": "R5 Replicator Snapshot backup/restore",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602455-4f56ef24",
+   "title": "C3 Global Local CAS 完整迁移",
+   "status": "in_progress",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602455-f7593860",
+   "title": "C1 E5 外部集成与运维命令完整闭环",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602456-1eb72269",
+   "title": "C7 Edge CSR GraphStore 完整迁移",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602456-43b6a7e1",
+   "title": "C6 BuildService ParseFact symbol call 完整迁移",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602456-d2b8c66c",
+   "title": "C4 Manifest 与 refresh commit 完整迁移",
+   "status": "applied",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602457-4ac92632",
+   "title": "C10 Watcher 与企业级 E2E 验收",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602457-c8498e1c",
+   "title": "C8 QueryService 完整迁移",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785590602457-f5e09645",
+   "title": "C9 大规模性能与共享收益验收",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785591217240-1389ae20",
+   "title": "E5 独立 review 与 fail-closed 验收",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785591217240-4a05e361",
+   "title": "Manifest Replicator Build Rust 生产写路径",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785591217240-4b48948b",
+   "title": "Enterprise file/symbol/grep/issues/tests daemon RPC",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785591217240-4f537b83",
+   "title": "删除 Rust CLI not implemented fallback",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785591217240-c22f75b0",
+   "title": "补齐任务 4/5/6 并建立证据清单",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785591217241-30abe16e",
+   "title": "全量差分、daemon E2E 与文档复审",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627325688-158a0f74",
+   "title": "目标",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627325688-37b0e1cf",
+   "title": "六个主线闭环",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627325688-cf9e5ba6",
+   "title": "原 Python 生产入口的最终迁移清单",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785627325689-37387412",
+   "title": "执行顺序",
+   "status": "open",
+   "depth": 1,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1785816099402-ee58dac7",
+   "title": "GD 检查点：D0 三平台 daemon 化验收通过后才进入 P1",
+   "status": "review",
+   "depth": 1,
+   "reason": "parent_of_batch1_card"
+  },
+  {
+   "task_id": "T-1785147987425-07c09f75",
+   "title": "Call Warden 全量 Rust 迁移自举计划",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785574343859-117469ed",
+   "title": "多 LLM 契约驱动协同（multi-llm-contract-collaboration）实施计划",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "parent_of_batch1_card"
+  },
+  {
+   "task_id": "T-1785581932822-89ad6ae4",
+   "title": "十项 Rust 迁移未完成项整改",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785590071062-8e8b5f69",
+   "title": "十项 Rust 迁移任务第二轮真实性复核",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785590574515-50033ff3",
+   "title": "十项 Rust 迁移完整闭环与企业级验收",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785591186634-544cd83f",
+   "title": "补齐 Rust 企业迁移缺口并完成独立复审",
+   "status": "review",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785599940797-3c66688d",
+   "title": "修复 R2：Rust StorageService legacy v1-v3 数据迁移与 Rust-owned 写事务",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785599943261-fc15918e",
+   "title": "修复 CLI：完成 Rust cw 未实现子命令迁移并删除统一 fallback",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785599945632-47b3c0d2",
+   "title": "修复 Manifest/Replicator/Build Rust 生产写路径",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785599948029-42c345c8",
+   "title": "修复 generation CAS：禁止 stale re-seen 覆盖 newer uncommitted generation",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785599950520-7f1e8e0d",
+   "title": "修复 UDS dispatch admin method projection",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785599952979-5b045e5d",
+   "title": "补齐 watcher/recovery 进程级企业验收",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1785627247377-7f57ac2d",
+   "title": "Python 兼容入口 Rust 最终迁移与发布闭环",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786418026003-d4505244",
+   "title": "任务A真实CLI验证-临时父任务",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786418026003-d4505244-sub-1",
+   "title": "子任务1: 修改解析器",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786418026003-d4505244-sub-2",
+   "title": "子任务2: 补充测试",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786418191914-755c2138",
+   "title": "RPC原始验证-临时父任务2",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786418191914-755c2138-sub-1",
+   "title": "RPC子任务1",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786418191914-755c2138-sub-2",
+   "title": "RPC子任务2",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786418623324-e7662080",
+   "title": "cw-client交叉验证-临时父任务3",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786418623324-e7662080-sub-1",
+   "title": "cs1",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786420289506-d7927a70",
+   "title": "决定性实验-临时父任务4",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786420289506-d7927a70-sub-1",
+   "title": "cs-decisive-1",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786420368237-2c53fa7c",
+   "title": "steps字段到达性实验-临时父任务5",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786429502267-daf28674",
+   "title": "VERIFY-steps真实落库验收(整改)",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786429557425-b2957508",
+   "title": "VERIFY2-steps真实落库验收",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786429557425-b2957508-sub-1",
+   "title": "子任务甲",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786429557425-b2957508-sub-2",
+   "title": "子任务乙",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786429712825-e1309144",
+   "title": "VERIFY3-CLI-split-output",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786429712825-e1309144-sub-1",
+   "title": "子任务甲",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786429712825-e1309144-sub-2",
+   "title": "子任务乙",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786547429858-031cfde4",
+   "title": "[path_optimizer] 注释 preset_override（methods.rs 叶子）",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786548724314-66af5220",
+   "title": "注释 core/encoding_fallback 模块（自底向上中文注释）",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1786548769821-ff1b3100",
+   "title": "C1 二进制/段切分检测叶子函数",
+   "status": "applied",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548769841-005366c8",
+   "title": "C3 不可见/控制字符清理",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548769856-01310460",
+   "title": "C2 UTF-16/32 直接解码叶子函数",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548769872-0221d0e8",
+   "title": "C4 mojibake 标记计数与判定",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548769890-033c5e80",
+   "title": "C5 编码重新解释链",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548769906-042e16f8",
+   "title": "C7 显示文本修复流程",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548769924-053ba40c",
+   "title": "C6 文本度量与评分",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548770072-0e1505f0",
+   "title": "C8 解码候选构建与选择",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548770105-100b2e48",
+   "title": "C9 混合解码（行/块）",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548770342-1e286770",
+   "title": "C10 内部解码入口与强制提示",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548770381-207e1cb8",
+   "title": "C12 修复置信度评估",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786548770398-2182b600",
+   "title": "C11 区域/代码页探测",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786584793766-798f27b4",
+   "title": "修复符号图谱与查询链路",
+   "status": "open",
+   "depth": 0,
+   "reason": "parent_of_batch1_card"
+  },
+  {
+   "task_id": "T-1786584793766-798f27b4-sub-1",
+   "title": "子任务 1：复现与故障边界",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786584793766-798f27b4-sub-2",
+   "title": "子任务 2：原生图谱发布和符号查询修复",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1786584793766-798f27b4-sub-3",
+   "title": "子任务 3：MCP/客户端回归覆盖",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1787203926824-9f873bfc",
+   "title": "CW 业务逻辑全量下沉 Rust daemon（三阶段收尾）",
+   "status": "in_progress",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1787203937201-0a156564",
+   "title": "S2 compat 79 工具 M2 迁 Rust handler",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1787203937208-0a795c68",
+   "title": "S3 PyO3 直调清理 + db/ 目录下线",
+   "status": "open",
+   "depth": 0,
+   "reason": "child_of_batch1_epic"
+  },
+  {
+   "task_id": "T-1787727295175-d03108f4",
+   "title": "E2E role_contract fix verify",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  },
+  {
+   "task_id": "T-1787727326812-2defc5a0",
+   "title": "E2E role_contract fix verify",
+   "status": "open",
+   "depth": 0,
+   "reason": "root_batch1_keyword"
+  }
+ ]
+}

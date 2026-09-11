@@ -1,0 +1,23 @@
+{
+  "manifest_type": "governance_supersede_evidence",
+  "batch": "B-GROUP-probe-cards-cleanup",
+  "created_at": "2026-09-11T09:45:00+08:00",
+  "author": "adjudicator-wb-186loop",
+  "superseding_task": "T-1789083808963-caacecc4",
+  "superseding_card_note": "GOV-FIX-04 治理清理卡（closed/completed/COMPLETE，verdict V-31af5018ca7de54ebcc97900），承接全部 B 组抛弃型探针卡的收尾。",
+  "rationale": "B 组 7 张为 2026-08 抛弃型探针/诊断卡：叶子步 pending 且无真实后继（ZTEST 链已核验：OLD-ACCEPT 被 NEW/C-ACCEPT 承接，后两者自身即终点）。daemon 无任何写路径可直接关闭（close/cascade_close 被步骤门禁拒，step.resolve 只吃 failed）。经用户裁决（2026-09-11）：supersede 到 GOV-FIX-04 治理卡后借被替代卡豁免 cascade_close 收尾。",
+  "cards": [
+    {"task_id": "T-1786853522730-d006c978", "family": "authority-recovery-diagnosis", "status": "open", "steps": "3 pending（inspect_auth/probe_runtime/report_recovery）", "binding": "none"},
+    {"task_id": "T-1787209408488-ec357cec", "family": "bootstrap-probe", "status": "open", "steps": "1 pending（annotate README.md）", "binding": "governance_blocked"},
+    {"task_id": "T-1787209437399-a76a471c", "family": "bootstrap-probe", "status": "applied", "steps": "1 pending", "binding": "governance_blocked"},
+    {"task_id": "T-1787209465034-169c2ac8", "family": "bootstrap-probe", "status": "applied", "steps": "1 pending", "binding": "governance_blocked"},
+    {"task_id": "T-1787239501902-9772e0e4", "family": "ZTEST-SUPERSEDE-NEW-ACCEPT", "status": "open", "steps": "1 pending（noop f.py）", "binding": "governance_blocked"},
+    {"task_id": "T-1787239520771-fc1efb8c", "family": "ZTEST-SUPERSEDE-C-ACCEPT", "status": "open", "steps": "1 pending（noop f.py）", "binding": "governance_blocked"},
+    {"task_id": "T-1787758490098-f2862990", "family": "DIAG-probe", "status": "open", "steps": "1 pending（diagnose probe.py）", "binding": "governance_blocked"}
+  ],
+  "ztest_chain_verification": {
+    "T-1787239495237-0a293bf8": ["T-1787239501902-9772e0e4", "T-1787239520771-fc1efb8c"],
+    "note": "OLD-ACCEPT 的两条出边指向 NEW/C-ACCEPT；三张均为 authoritative-DB acceptance 抛弃型任务（reason: throwaway tasks / multi-edge acceptance）"
+  },
+  "reference": "docs/evidence/GOV-FIX-04-verification-20260911.md B 组清单；用户裁决 2026-09-11"
+}
