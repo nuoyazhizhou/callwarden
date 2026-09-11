@@ -1,0 +1,97 @@
+{
+  "task_id": "T-1788871227327-45c94bd8",
+  "parent_task_id": "T-1787203926824-9f873bfc",
+  "step_index": 0,
+  "step_id": "S-1788871227330-45ef09f4",
+  "step_action": "triage_stale_failure_buckets",
+  "target_file": "tests/test_http_combined_worker_cutover.py",
+  "generated_at": "2026-09-11T23:00:00+08:00",
+  "commit": {
+    "sha": "9ece8cc36fc4074cda3c7872a13dac356d199128",
+    "message": "[T-1788871227327-45c94bd8] test: cutover 套件对齐 compat 全量退役终态（step0 stale 分桶）",
+    "show_stat": "tests/test_http_combined_worker_cutover.py | 313 +++++++++++++++-------------- (1 file changed, 160 insertions(+), 153 deletions(-))",
+    "head_is_fix_commit": true,
+    "whitelist_respected": "仅 add 该测试文件；rust_ext/.tokenslim.toml 与 rust_ext/target-check-tis/ 未入库"
+  },
+  "files": [
+    {
+      "file_path": "tests/test_http_combined_worker_cutover.py",
+      "sha256": "a35bb3bfe42b56602d90c122aa9a1b99e40e5be86023ae15f33e7a28abfd33e9"
+    }
+  ],
+  "stale_buckets": [
+    "compat registry 已全量退役：RUST_COMPAT_ROUTE 字面量段仅剩墓碑注释，python_compat 层整体下线（58/69/61 -> 0/0/0）；测试中 EXPECTED_* 常量与残留白名单断言对象已不存在",
+    "组注册断言翻转：NATIVE_MIGRATED_RESIDUAL / RUST_WHITELIST_DEAD_ENTRIES 断言逐条删除，7 组测试改为「不应再注册」",
+    "空表恒等：test_total_registered / validate_against_rust_route / rust_whitelist_source_sync_one_way / native_migrated_residuals_are_inert 改为空表恒等断言",
+    "测试夹具缺 daemon 前置：_spawn_with_client 补 os.makedirs(root_path) + workspace.register(client_view_root) + snapshot.publish + workspace_instance_id 传递",
+    "种子 schema 与生产错配：补 symbols.module_path / qualified_name / depth 列，新建 calls 表(caller_id/callee_id/callee_name/call_line/is_cross_file)，file_versions 补列"
+  ],
+  "verification": {
+    "command": "python -m pytest tests/test_http_combined_worker_cutover.py -q --no-header --tb=line",
+    "result": "19 passed (19/19)",
+    "passed": 19,
+    "failed": 0,
+    "python_env": "C:/Users/wanpi/.workbuddy/binaries/python/envs/cw314/Scripts/python.exe (3.14 ABI，匹配仓库根 callwarden_core.pyd)",
+    "env_note": "必须清空沙箱注入代理：env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy NO_PROXY=127.0.0.1,localhost",
+    "git_diff_check": "clean（该文件已提交，无残留 diff）"
+  },
+  "regression_attribution": {
+    "claim": "本次改动未引入任何回归；全量 pytest 红线与 GOV-FIX-06/07/08 无关",
+    "method": "回滚单文件 A/B 对比法",
+    "experiment": {
+      "subject_files": [
+        "tests/test_cli_task_fix.py",
+        "tests/test_cli_task_c9_subcommands.py",
+        "tests/test_cli_task_reopen.py",
+        "tests/test_bootstrap_capture.py",
+        "tests/test_capture_diff_auto.py",
+        "tests/test_coverage_review_rpc_http.py"
+      ],
+      "baseline_cli_main": "git show 9855da6:cli/main.py (GOV-FIX-07/08 之前的 cli/main.py)",
+      "baseline_result": "44 FAILED / 0 ERROR",
+      "current_result": "44 FAILED / 0 ERROR",
+      "failure_set_diff": "空（逐条 identical）",
+      "conclusion": "cli/main.py 的 GOV-FIX-07/08 改动对这些失败贡献为 0"
+    },
+    "diff_audit": {
+      "cedadf0": "cli/main.py +18/-2：新增注释与 error 路径 sys.exit(2) / raise SystemExit(2)",
+      "c981026": "cli/main.py 18 处 return True -> sys.exit(2)（仅 error dict 分支），成功路径语义不变"
+    }
+  },
+  "environment_findings": [
+    "沙箱注入 HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:14438，使 fail-closed 用例探测 127.0.0.1:9 时收到 502 而非 connection refused（环境放大，非代码缺陷）",
+    "存量 stale 测试：patch 已被 RPC cutover 移除的模块属性 callwarden.cli.main.CodeGraphDB；对 mcp_server.py grep 已退役 Python 工具（def rotate_audit_signing_key( / db.rotate_signing_key( / token_hex）",
+    "CLI 已改走 route_task_write/route_task_read daemon authority，而部分测试仍传本地 db 断言本地行为（真存量债，属本卡剩余步骤范围）",
+    "conftest 仅隔离 get_project_db_path，未隔离 http-daemon manifest / registry；本地 live daemon 与测试互相干扰（含 manifest 被测试覆盖）",
+    "沙箱 shell shim 崩坏：dirname/ls/grep 不在 PATH，需前置 export PATH=/c/Users/wanpi/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:/c/Windows/System32:$PATH"
+  ],
+  "deployed_daemon": {
+    "endpoint": "http://127.0.0.1:1615",
+    "pid": 5488,
+    "git_commit": "9e3cf1f2bbc5c796e06a01c90d8014de05b07eed",
+    "binary": "rust_ext/target/release/cw-daemon.exe",
+    "binary_sha256": "eadfdfec1eb160c5c27f34e0f1098aaa42114102181f3d90b9be1b1d38b7172e",
+    "manifest_sha256_match": true,
+    "schema_version": 60
+  },
+  "workspace": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "snapshot_id": "6a327c2059ad3c2e",
+    "client_view_root": "C:\\git_work\\callwarden",
+    "git_head": "9ece8cc36fc4074cda3c7872a13dac356d199128",
+    "binding_id": "tb-T-1788871227327-45c94bd8-4baea3ff12c2ea5c"
+  },
+  "executor_identity": {
+    "agent_id": "executor-pytreg-01",
+    "agent_instance_id": "inst-exec-pytreg-01-6c9613cd",
+    "session_id": "sess-exec-pytreg-01-6c9613cd",
+    "lease_id": "L-6d707adb4550c4c1",
+    "fencing_counter": 2
+  },
+  "boundary_compliance": {
+    "touched_paths": ["tests/test_http_combined_worker_cutover.py"],
+    "production_source_untouched": true,
+    "shared_runtime_republish_triggered": false
+  }
+}
