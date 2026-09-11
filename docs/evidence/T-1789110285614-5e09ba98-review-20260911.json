@@ -1,0 +1,53 @@
+{
+ "review_type": "independent_reviewer_blind_first_pass",
+ "task_id": "T-1789110285614-5e09ba98",
+ "phase": "blind_first_pass",
+ "reviewed_at": "2026-09-11T16:05:00+08:00",
+ "verdict": "pass",
+ "findings": [
+  {
+   "severity": "advisory",
+   "finding_id": "ADV-1",
+   "item": "其他 task 写分支（apply/close/reopen/supersede 等）的 socket 传输 error dict 路径仍为 return True → RC=0",
+   "detail": "HTTP 传输已由本卡 _dispatch_subcommand 层 DaemonRemoteError 分支兜住；socket/named-pipe 传输下这些分支未在 scope 内逐一补 sys.exit(2)。建议后续开一张后续卡统一巡检 cli/main.py 全部 'error' in result 分支。",
+   "in_scope": false
+  }
+ ],
+ "checks": [
+  {
+   "item": "contract/role lineage",
+   "result": "pass",
+   "detail": "TC-T-1789110285614-5e09ba98 r1 + executor/reviewer/adjudicator 三角色 legacy contracts r1 由 daemon 非 governed create 自举，binding tb-T-1789110285614-5e09ba98-4baea3ff12c2ea5c"
+  },
+  {
+   "item": "scope 一致性",
+   "result": "pass",
+   "detail": "commit cedadf0a 仅 3 文件（cli/main.py +18/-2、tests 新增 83 行、evidence 文档 65 行），无越界改动；卡内 allowed_paths 均覆盖"
+  },
+  {
+   "item": "根因链核验",
+   "result": "pass",
+   "detail": "独立核对 daemon_client.py:2374-2380（HTTP error 信封 → DaemonRemoteError）、daemon_client.py:3728-3731（业务错误原样上抛）、cli/main.py 修复前通用 except return True。修复位置正确：dispatch 层一处覆盖全子命令家族，socket 传输 error dict 路径由分支内 sys.exit(2) 对齐"
+  },
+  {
+   "item": "不扩大化",
+   "result": "pass",
+   "detail": "except 顺序 SharedTaskWriterRequiredError → DaemonRemoteError → Exception；本地异常（含 db locked 分支）维持原语义；测试用例 2 明确锁定该行为"
+  },
+  {
+   "item": "live 独立复验",
+   "result": "pass",
+   "detail": "reviewer 独立重跑 attest 拒绝（req-review-independent-1）：E_LEGACY_BIND_TASK_NOT_FOUND + RC=2；独立重跑回归测试 4/4 绿"
+  },
+  {
+   "item": "证据完整性",
+   "result": "pass",
+   "detail": "GOV-FIX-07-live-verification-20260911.md sha256 c2b7804efd7a1b69753d39cdd469f86a7852182a53daf06f69f79926436eeceb；execution evidence govfix07_execution_evidence.json；audit_chain 30 errors 经 HEAD 基线 worktree 复现同数，确认为环境基线问题非本次引入"
+  }
+ ],
+ "reviewer": {
+  "agent_id": "reviewer-wb-186loop",
+  "session_id": "sess-reviewer-wb-186loop",
+  "model_id": "deepseek-v4-flash"
+ }
+}

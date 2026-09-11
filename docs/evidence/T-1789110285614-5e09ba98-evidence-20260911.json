@@ -1,0 +1,37 @@
+{
+ "evidence_type": "governance_card_execution",
+ "task_id": "T-1789110285614-5e09ba98",
+ "title": "GOV-FIX-07: daemon 业务拒绝 CLI 层 RC=0 假成功（DaemonRemoteError 退出码修复）",
+ "executed_at": "2026-09-11T15:55:00+08:00",
+ "changes": [
+  {
+   "file": "cli/main.py",
+   "change": "_dispatch_subcommand 新增 except DaemonRemoteError → 结构化 code+message 红字 + SystemExit(2)（置于 SharedTaskWriterRequiredError 之后、通用 Exception 之前，不扩大化）；attest 分支 result is None 与 error dict 两失败路径补 sys.exit(2)",
+   "sha256": "2821965e5c725e823e6521f8077c55b364c7804fcb12d63e9a686607f19fbccc"
+  },
+  {
+   "file": "tests/test_cli_govfix07_daemon_error_rc.py",
+   "change": "新增 4 用例：dispatch 层 DaemonRemoteError RC=2 / 本地异常不扩大化 / SharedTaskWriterRequiredError 不回归 / attest error dict 路径 RC=2",
+   "sha256": "df3025839ccad215e5a7b48340ee4d46d473eaa9e607a09f7937f682f2673715"
+  },
+  {
+   "file": "docs/evidence/GOV-FIX-07-live-verification-20260911.md",
+   "change": "live 验收记录：复现（修复前 RC=0）→ 修复后拒绝 RC=2 + 成功路径 RC=0 ×3 + 回归矩阵（含基线即坏的 audit_chain 排除说明）",
+   "sha256": "c2b7804efd7a1b69753d39cdd469f86a7852182a53daf06f69f79926436eeceb"
+  }
+ ],
+ "live_verification": {
+  "repro_before": "E_LEGACY_BIND_TASK_NOT_FOUND RC=0 (req-repro-govfix07-2)",
+  "after": {
+   "reject_rc": 2,
+   "reject_request_id": "req-repro-govfix07-3",
+   "success_paths_rc0": ["task show", "task next-action", "task list"]
+  }
+ },
+ "tests": {
+  "new": "tests/test_cli_govfix07_daemon_error_rc.py 4/4 passed",
+  "existing": "test_cli_main_help.py 27 passed; test_phase5_2_slice7_routing.py 1 passed",
+  "baseline_broken_env_only": "test_audit_chain.py 30 errors（HEAD 基线复现同数，环境差异非本次引入）; lease_parity/rust_cli_diff 需要 cargo build fixture（MSVC/Git Bash 已知环境问题，本卡零 Rust 改动）"
+ },
+ "steps_covered": ["S-1789110285618-5e4c6244"]
+}
