@@ -48,17 +48,16 @@ def test_help_no_db_init():
             raise RuntimeError("CodeGraphDB.__init__ should not be called for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                # 应该返回 0 而不抛 RuntimeError
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not be called" in str(e):
-                        pytest.fail(
-                            "CodeGraphDB.__init__ was called during cw task --help, "
-                            "indicating --help path still touches db"
-                        )
-                    raise
+            # 应该返回 0 而不抛 RuntimeError
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not be called" in str(e):
+                    pytest.fail(
+                        "CodeGraphDB.__init__ was called during cw task --help, "
+                        "indicating --help path still touches db"
+                    )
+                raise
         assert db_init_called["count"] == 0, "CodeGraphDB.__init__ was called"
     finally:
         sys.argv = old_argv
@@ -76,13 +75,12 @@ def test_help_subcommand_with_h():
             raise RuntimeError("db should not be initialized for -h")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "db should not" in str(e):
-                        pytest.fail("db initialized during cw task list -h")
-                    raise
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "db should not" in str(e):
+                    pytest.fail("db initialized during cw task list -h")
+                raise
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -101,13 +99,12 @@ def test_help_other_subcommands_no_db():
                 raise RuntimeError("no db for help")
 
             with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-                with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                    try:
-                        cli_main._run_subcommand_mode()
-                    except RuntimeError as e:
-                        if "no db for help" in str(e):
-                            pytest.fail(f"db initialized during {sub_args}")
-                        raise
+                try:
+                    cli_main._run_subcommand_mode()
+                except RuntimeError as e:
+                    if "no db for help" in str(e):
+                        pytest.fail(f"db initialized during {sub_args}")
+                    raise
             assert db_init_called["count"] == 0
         finally:
             sys.argv = old_argv
@@ -118,72 +115,68 @@ def test_help_other_subcommands_no_db():
 # ============================================
 
 
-def test_task_list_uses_db_task_list():
-    """cw task list 必须调用 db.task_list()，而不是裸 SQL"""
+def test_task_list_routes_to_daemon(route_stub):
+    """cw task list 必须经 route_task_read("task.list") 取数，默认 limit=200。
+
+    stale 依据（A3 / daemon authority 化）：CLI 取数已走 daemon RPC
+    （cli/main.py: `_list_res = route_task_read("task.list", {...})`），
+    不再直连本地 db.task_list()；旧断言改为 RPC 契约断言。
+    """
     import tempfile
-    import os as _os
 
-    # 用临时目录 + 临时数据库避免污染真实数据
+    route_stub.reply("task.list", {
+        "tasks": [
+            {"task_id": "T-1", "title": "test-task-A", "status": "open", "parent_id": None},
+            {"task_id": "T-2", "title": "test-task-B", "status": "open", "parent_id": None},
+        ]
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        # 创建两个任务确保有数据
-        db.task_create("test-task-A", "desc A", [])
-        db.task_create("test-task-B", "desc B", [])
-
-        call_log = {"count": 0, "kwargs": None}
-        original_task_list = db.task_list
-
-        def spy_task_list(*args, **kwargs):
-            call_log["count"] += 1
-            call_log["kwargs"] = kwargs
-            return original_task_list(*args, **kwargs)
-
-        with mock.patch.object(db, "task_list", side_effect=spy_task_list):
-            # 模拟 cw task list 调用
-            try:
-                cli_main._handle_task(["list"], db)
-            except SystemExit:
-                pass
-
-        assert call_log["count"] == 1, "db.task_list() 必须被调用一次"
-        # 默认 limit=200
-        assert call_log["kwargs"].get("limit") == 200, (
-            f"task list 默认 limit 应为 200，实际: {call_log['kwargs'].get('limit')}"
-        )
+        try:
+            cli_main._handle_task(["list"], db)
+        except SystemExit:
+            pass
         db.close()
 
+    assert route_stub.count("task.list") == 1, "task list 必须走 task.list RPC"
+    assert route_stub.last_params("task.list").get("limit") == 200, (
+        f"task list 默认 limit 应为 200，实际: {route_stub.last_params('task.list')}"
+    )
 
-def test_task_list_status_filter():
-    """cw task list --status in_progress 应传递 status_filter=in_progress"""
+
+def test_task_list_status_filter(route_stub):
+    """cw task list --status in_progress 应把 status 透传到 task.list RPC。
+
+    stale 依据（A3）：旧断言 spy 本地 db.task_list(status_filter=...)，daemon
+    权威路径下 status 参数经 RPC 透传，本地 db 不参与。
+    """
+    route_stub.reply("task.list", {
+        "tasks": [{"task_id": "T-1", "title": "test-filter",
+                   "status": "in_progress", "parent_id": None}]
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        # 创建一个任务并领取，使其进入 in_progress
-        tid = db.task_create("test-filter", "desc", [])
-        db.task_next_step(tid)  # 触发 in_progress
-
-        call_log = {"kwargs": None}
-        original_task_list = db.task_list
-
-        def spy_task_list(*args, **kwargs):
-            call_log["kwargs"] = kwargs
-            return original_task_list(*args, **kwargs)
-
-        with mock.patch.object(db, "task_list", side_effect=spy_task_list):
-            try:
-                cli_main._handle_task(["list", "--status", "in_progress"], db)
-            except SystemExit:
-                pass
-
-        assert call_log["kwargs"] is not None
-        assert call_log["kwargs"].get("status_filter") == "in_progress"
+        try:
+            cli_main._handle_task(["list", "--status", "in_progress"], db)
+        except SystemExit:
+            pass
         db.close()
 
+    assert route_stub.last_params("task.list").get("status") == "in_progress"
 
-def test_task_list_flag_delegates_to_handle_task():
-    """--task-list 标志必须内部转调 _handle_task(['list'], db)，保持行为一致"""
+
+def test_task_list_flag_delegates_to_handle_task(route_stub):
+    """--task-list 标志必须内部转调 _handle_task(['list'], db)，保持行为一致。
+
+    stale 依据（A3）：转调关系不变，但被转调的 list 路径现走 task.list RPC，
+    故补 route_stub 回包，避免在无 daemon 环境下因路由失败而误判委派逻辑。
+    """
+    route_stub.reply("task.list", {
+        "tasks": [{"task_id": "T-9", "title": "delegate-test",
+                   "status": "open", "parent_id": None}]
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        db.task_create("delegate-test", "desc", [])
 
         delegate_calls = {"args": None, "count": 0}
         original_handle_task = cli_main._handle_task
@@ -216,16 +209,24 @@ def test_task_list_flag_delegates_to_handle_task():
         db.close()
 
 
-def test_task_list_unified_consistent_output():
-    """--task-list 与 task list 输出相同的任务数量和内容"""
+def test_task_list_unified_consistent_output(route_stub):
+    """--task-list 与 task list 输出相同的任务数量和内容。
+
+    stale 依据（A3）：改为断言 daemon 回包的渲染结果（同一 RPC 回包 → 同一输出），
+    不再依赖本地 db 写入 5 条数据。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.list", {
+        "tasks": [
+            {"task_id": f"T-{i}", "title": f"unified-task-{i}",
+             "status": "open", "parent_id": None}
+            for i in range(5)
+        ]
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        # 创建 5 个任务
-        for i in range(5):
-            db.task_create(f"unified-task-{i}", f"desc {i}", [])
 
         # 捕获 cw task list 输出
         buf1 = io.StringIO()
@@ -244,6 +245,7 @@ def test_task_list_unified_consistent_output():
             except SystemExit:
                 pass
         out_flag = buf2.getvalue()
+        db.close()
 
         # 两个输出必须包含相同的任务总数
         # 匹配 "任务总数: N" 或 "Total tasks: N"
@@ -259,7 +261,6 @@ def test_task_list_unified_consistent_output():
         assert out_task_list == out_flag, (
             "--task-list 与 task list 输出不一致，应该完全相同"
         )
-        db.close()
 
 
 # ============================================
@@ -292,17 +293,22 @@ def test_task_list_returns_tree_fields():
         db.close()
 
 
-def test_task_list_default_tree_mode():
-    """cw task list 默认按树形展示（带缩进）"""
+def test_task_list_default_tree_mode(route_stub):
+    """cw task list 默认按树形展示（带缩进）。
+
+    stale 依据（A3）：daemon authority 化后 task list 经 task.list RPC 取数；
+    改为用 route_stub 回放父子回包并断言渲染缩进。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.list", {"tasks": [
+        {"task_id": "T-R", "title": "root-task", "status": "open", "parent_id": None},
+        {"task_id": "T-C1", "title": "child-1", "status": "open", "parent_id": "T-R"},
+        {"task_id": "T-C2", "title": "child-2", "status": "open", "parent_id": "T-R"},
+    ]})
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        # 创建父任务 + 2 个子任务
-        parent_id = db.task_create("root-task", "root", [])
-        db.task_create("child-1", "c1", [], parent_id=parent_id)
-        db.task_create("child-2", "c2", [], parent_id=parent_id)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -311,36 +317,41 @@ def test_task_list_default_tree_mode():
             except SystemExit:
                 pass
         out = buf.getvalue()
-
-        # 默认应显示 "(tree mode" 提示
-        assert "tree mode" in out.lower() or "树形模式" in out, (
-            f"默认应显示树形模式提示，实际: {out!r}"
-        )
-        # 子任务应缩进（前面有更多空格）
-        lines = out.split("\n")
-        # 找到子任务行
-        child_lines = [l for l in lines if "child-1" in l or "child-2" in l]
-        parent_lines = [l for l in lines if "root-task" in l]
-        assert len(child_lines) >= 2, f"应至少有 2 行子任务，实际: {len(child_lines)}"
-        assert len(parent_lines) >= 1, "应有 1 行父任务"
-        # 子任务的缩进应大于父任务
-        parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
-        child_indent = len(child_lines[0]) - len(child_lines[0].lstrip())
-        assert child_indent > parent_indent, (
-            f"子任务缩进 ({child_indent}) 应大于父任务缩进 ({parent_indent})"
-        )
         db.close()
 
+    # 默认应显示 "(tree mode" 提示
+    assert "tree mode" in out.lower() or "树形模式" in out, (
+        f"默认应显示树形模式提示，实际: {out!r}"
+    )
+    # 子任务应缩进（前面有更多空格）
+    lines = out.split("\n")
+    # 找到子任务行
+    child_lines = [l for l in lines if "child-1" in l or "child-2" in l]
+    parent_lines = [l for l in lines if "root-task" in l]
+    assert len(child_lines) >= 2, f"应至少有 2 行子任务，实际: {len(child_lines)}"
+    assert len(parent_lines) >= 1, "应有 1 行父任务"
+    # 子任务的缩进应大于父任务
+    parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
+    child_indent = len(child_lines[0]) - len(child_lines[0].lstrip())
+    assert child_indent > parent_indent, (
+        f"子任务缩进 ({child_indent}) 应大于父任务缩进 ({parent_indent})"
+    )
 
-def test_task_list_flat_mode():
-    """cw task list --flat 切换到扁平展示（无缩进）"""
+
+def test_task_list_flat_mode(route_stub):
+    """cw task list --flat 切换到扁平展示（无缩进）。
+
+    stale 依据（A3）：同 test_task_list_default_tree_mode，改为 route_stub 回放。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.list", {"tasks": [
+        {"task_id": "T-RF", "title": "root-flat", "status": "open", "parent_id": None},
+        {"task_id": "T-CF", "title": "child-flat", "status": "open", "parent_id": "T-RF"},
+    ]})
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        parent_id = db.task_create("root-flat", "root", [])
-        db.task_create("child-flat", "child", [], parent_id=parent_id)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -349,36 +360,40 @@ def test_task_list_flat_mode():
             except SystemExit:
                 pass
         out = buf.getvalue()
-
-        # --flat 模式不应有 tree mode 提示
-        assert "tree mode" not in out.lower(), (
-            f"--flat 模式不应显示 tree mode 提示，实际: {out!r}"
-        )
-        # 父任务和子任务缩进相同（都是顶级）
-        lines = out.split("\n")
-        parent_lines = [l for l in lines if "root-flat" in l]
-        child_lines = [l for l in lines if "child-flat" in l]
-        assert parent_lines and child_lines
-        # 在 flat 模式下，所有任务起始位置相同
-        parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
-        child_indent = len(child_lines[0]) - len(child_lines[0].lstrip())
-        assert parent_indent == child_indent, (
-            f"--flat 模式下父/子任务缩进应相同: parent={parent_indent}, child={child_indent}"
-        )
         db.close()
 
+    # --flat 模式不应有 tree mode 提示
+    assert "tree mode" not in out.lower(), (
+        f"--flat 模式不应显示 tree mode 提示，实际: {out!r}"
+    )
+    # 父任务和子任务缩进相同（都是顶级）
+    lines = out.split("\n")
+    parent_lines = [l for l in lines if "root-flat" in l]
+    child_lines = [l for l in lines if "child-flat" in l]
+    assert parent_lines and child_lines
+    # 在 flat 模式下，所有任务起始位置相同
+    parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
+    child_indent = len(child_lines[0]) - len(child_lines[0].lstrip())
+    assert parent_indent == child_indent, (
+        f"--flat 模式下父/子任务缩进应相同: parent={parent_indent}, child={child_indent}"
+    )
 
-def test_task_list_tree_structure():
-    """完整树形结构测试：父-子-孙三级任务正确缩进"""
+
+def test_task_list_tree_structure(route_stub):
+    """完整树形结构测试：父-子-孙三级任务正确缩进。
+
+    stale 依据（A3）：改为回放 daemon task.list 的三级回包（parent_id 链）。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.list", {"tasks": [
+        {"task_id": "T-ROOT", "title": "ROOT", "status": "open", "parent_id": None},
+        {"task_id": "T-CHILD", "title": "CHILD", "status": "open", "parent_id": "T-ROOT"},
+        {"task_id": "T-GRAND", "title": "GRANDCHILD", "status": "open", "parent_id": "T-CHILD"},
+    ]})
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        # 创建三级任务树
-        root_id = db.task_create("ROOT", "root", [])
-        child_id = db.task_create("CHILD", "child", [], parent_id=root_id)
-        db.task_create("GRANDCHILD", "grandchild", [], parent_id=child_id)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -387,6 +402,7 @@ def test_task_list_tree_structure():
             except SystemExit:
                 pass
         out = buf.getvalue()
+        db.close()
 
         lines = out.split("\n")
         # 找到三行任务行
@@ -406,7 +422,6 @@ def test_task_list_tree_structure():
         assert root_indent < child_indent < grand_indent, (
             f"三级缩进应递增: root={root_indent} < child={child_indent} < grand={grand_indent}"
         )
-        db.close()
 
 
 # ============================================
@@ -414,92 +429,74 @@ def test_task_list_tree_structure():
 # ============================================
 
 
-def test_task_show_uses_task_status_tree():
-    """cw task show TASK_ID 必须调用 db.task_status_tree()，而非 task_status()"""
+def test_task_show_uses_task_status_tree(route_stub):
+    """cw task show TASK_ID 默认走 task.status_tree RPC（而非 task.status）。
+
+    stale 依据（A3）：旧断言 spy 本地 db.task_status_tree / db.task_status；
+    daemon 权威路径下改为断言 RPC method 选择（tree vs flat）。
+    """
+    route_stub.reply("task.status_tree", {
+        "task_id": "T-SHOW", "title": "parent-show", "status": "open",
+        "subtasks": [{"task_id": "T-CHILD", "title": "child-show", "status": "open"}],
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        parent_id = db.task_create("parent-show", "parent", [
-            {"action": "verify", "target_file": "a.py"}
-        ])
-        db.task_create("child-show", "child", [], parent_id=parent_id)
-
-        call_log = {"tree_count": 0, "status_count": 0}
-        original_tree = db.task_status_tree if hasattr(db, "task_status_tree") else None
-        original_status = db.task_status
-
-        def spy_tree(*args, **kwargs):
-            call_log["tree_count"] += 1
-            return original_tree(*args, **kwargs) if original_tree else None
-
-        def spy_status(*args, **kwargs):
-            call_log["status_count"] += 1
-            return original_status(*args, **kwargs)
-
-        # 确保 db 有 task_status_tree 方法
-        assert original_tree is not None, "db.task_status_tree 必须存在"
-
-        with mock.patch.object(db, "task_status_tree", side_effect=spy_tree):
-            with mock.patch.object(db, "task_status", side_effect=spy_status):
-                try:
-                    cli_main._handle_task(["show", parent_id], db)
-                except SystemExit:
-                    pass
-
-        # 默认走 tree 路径（task_status_tree 是递归的，子任务也会调用一次）
-        assert call_log["tree_count"] >= 1, "默认应至少调用 task_status_tree 一次"
-        assert call_log["status_count"] == 0, "默认不应调用 task_status（仅 --flat 才调用）"
+        try:
+            cli_main._handle_task(["show", "T-SHOW"], db)
+        except SystemExit:
+            pass
         db.close()
 
+    assert route_stub.count("task.status_tree") >= 1, "默认应走 task.status_tree RPC"
+    assert route_stub.count("task.status") == 0, "默认不应走 task.status（仅 --flat 才走）"
 
-def test_task_show_flat_uses_task_status():
-    """cw task show TASK_ID --flat 必须调用 db.task_status()，不调用 task_status_tree()"""
+
+def test_task_show_flat_uses_task_status(route_stub):
+    """cw task show TASK_ID --flat 走 task.status RPC，不走 task.status_tree。
+
+    stale 依据（A3）：同 test_task_show_uses_task_status_tree，改为 RPC 层断言。
+    """
+    route_stub.reply("task.status", {
+        "task_id": "T-FLAT", "title": "parent-flat-show", "status": "open",
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        parent_id = db.task_create("parent-flat-show", "p", [])
-        db.task_create("child-flat-show", "c", [], parent_id=parent_id)
-
-        call_log = {"tree_count": 0, "status_count": 0}
-        original_tree = db.task_status_tree
-        original_status = db.task_status
-
-        def spy_tree(*args, **kwargs):
-            call_log["tree_count"] += 1
-            return original_tree(*args, **kwargs)
-
-        def spy_status(*args, **kwargs):
-            call_log["status_count"] += 1
-            return original_status(*args, **kwargs)
-
-        with mock.patch.object(db, "task_status_tree", side_effect=spy_tree):
-            with mock.patch.object(db, "task_status", side_effect=spy_status):
-                try:
-                    cli_main._handle_task(["show", parent_id, "--flat"], db)
-                except SystemExit:
-                    pass
-
-        assert call_log["status_count"] == 1, "--flat 应调用 task_status 一次"
-        assert call_log["tree_count"] == 0, "--flat 不应调用 task_status_tree"
+        try:
+            cli_main._handle_task(["show", "T-FLAT", "--flat"], db)
+        except SystemExit:
+            pass
         db.close()
 
+    assert route_stub.count("task.status") == 1, "--flat 应走 task.status RPC 一次"
+    assert route_stub.count("task.status_tree") == 0, "--flat 不应走 task.status_tree"
 
-def test_task_show_displays_subtasks():
-    """cw task show 默认显示子任务（带缩进）"""
+
+def test_task_show_displays_subtasks(route_stub):
+    """cw task show 默认显示子任务（带缩进）。
+
+    stale 依据（A3）：改为渲染 daemon 的 task.status_tree 回包（含 subtasks）。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.status_tree", {
+        "task_id": "T-ROOT", "title": "ROOT-SHOW", "status": "open",
+        "subtasks": [
+            {"task_id": "T-C1", "title": "CHILD-SHOW-1", "status": "open"},
+            {"task_id": "T-C2", "title": "CHILD-SHOW-2", "status": "open"},
+        ],
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        parent_id = db.task_create("ROOT-SHOW", "root", [])
-        db.task_create("CHILD-SHOW-1", "c1", [], parent_id=parent_id)
-        db.task_create("CHILD-SHOW-2", "c2", [], parent_id=parent_id)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
             try:
-                cli_main._handle_task(["show", parent_id], db)
+                cli_main._handle_task(["show", "T-ROOT"], db)
             except SystemExit:
                 pass
         out = buf.getvalue()
+        db.close()
 
         # 默认应包含子任务标题
         assert "CHILD-SHOW-1" in out, "子任务 1 应在输出中"
@@ -508,26 +505,32 @@ def test_task_show_displays_subtasks():
         assert "subtasks" in out.lower() or "子任务" in out, (
             f"应显示子任务标题，实际: {out!r}"
         )
-        db.close()
 
 
-def test_task_show_flat_no_subtasks():
-    """cw task show --flat 不显示子任务"""
+def test_task_show_flat_no_subtasks(route_stub):
+    """cw task show --flat 不渲染子任务（即便 daemon 回包带 subtasks）。
+
+    stale 依据（A3）：改为向 task.status 回包显式塞入 subtasks，断言扁平模式
+    只渲染主任务——比原先"回包本就没有子任务"的弱断言更强。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.status", {
+        "task_id": "T-ROOT-FLAT", "title": "ROOT-FLAT-SHOW", "status": "open",
+        "subtasks": [{"task_id": "T-CF", "title": "CHILD-FLAT-SHOW", "status": "open"}],
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        parent_id = db.task_create("ROOT-FLAT-SHOW", "root", [])
-        db.task_create("CHILD-FLAT-SHOW", "child", [], parent_id=parent_id)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
             try:
-                cli_main._handle_task(["show", parent_id, "--flat"], db)
+                cli_main._handle_task(["show", "T-ROOT-FLAT", "--flat"], db)
             except SystemExit:
                 pass
         out = buf.getvalue()
+        db.close()
 
         # --flat 不应包含子任务标题
         assert "CHILD-FLAT-SHOW" not in out, (
@@ -535,27 +538,36 @@ def test_task_show_flat_no_subtasks():
         )
         # 但应包含主任务
         assert "ROOT-FLAT-SHOW" in out, "应显示主任务"
-        db.close()
 
 
-def test_task_show_tree_recursive_grandchild():
-    """cw task show 默认递归显示孙任务"""
+def test_task_show_tree_recursive_grandchild(route_stub):
+    """cw task show 默认递归显示孙任务（渲染 daemon 三级树回包）。
+
+    stale 依据（A3）：改为渲染 task.status_tree 的三级回包，断言递归与缩进。
+    """
     import io
     from contextlib import redirect_stdout
 
+    route_stub.reply("task.status_tree", {
+        "task_id": "T-GR", "title": "GRAND-ROOT", "status": "open",
+        "subtasks": [{
+            "task_id": "T-GC", "title": "GRAND-CHILD", "status": "open",
+            "subtasks": [
+                {"task_id": "T-GGC", "title": "GRAND-GRANDCHILD", "status": "open"},
+            ],
+        }],
+    })
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
-        root_id = db.task_create("GRAND-ROOT", "root", [])
-        child_id = db.task_create("GRAND-CHILD", "child", [], parent_id=root_id)
-        db.task_create("GRAND-GRANDCHILD", "grandchild", [], parent_id=child_id)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
             try:
-                cli_main._handle_task(["show", root_id], db)
+                cli_main._handle_task(["show", "T-GR"], db)
             except SystemExit:
                 pass
         out = buf.getvalue()
+        db.close()
 
         # 三级任务都应显示
         assert "GRAND-ROOT" in out, "应显示根任务"
@@ -572,4 +584,3 @@ def test_task_show_tree_recursive_grandchild():
         assert grand_indent > child_indent, (
             f"孙任务缩进 ({grand_indent}) 应大于子任务缩进 ({child_indent})"
         )
-        db.close()

@@ -13,6 +13,7 @@
 10. CLI `cw audit rotate-key` / `cw audit keys` 子命令 dispatch
 11. CLI `--help` 不初始化数据库
 12. MCP 工具 rotate_audit_signing_key / list_audit_signing_keys 已注册
+    （server/tools/tools_task.py + route_matrix.rs），并经 _route 转发 daemon RPC
 13. i18n key（zh_CN / en_US）存在且占位符齐全
 """
 import json
@@ -598,11 +599,10 @@ def test_cli_rotate_key_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except SystemExit as e:
-                    assert e.code == 0
+            try:
+                cli_main._run_subcommand_mode()
+            except SystemExit as e:
+                assert e.code == 0
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -624,11 +624,10 @@ def test_cli_keys_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except SystemExit as e:
-                    assert e.code == 0
+            try:
+                cli_main._run_subcommand_mode()
+            except SystemExit as e:
+                assert e.code == 0
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -658,42 +657,63 @@ def test_is_not_readonly_audit_rotate_key():
 
 # ----------------------------------------------------------------------
 # MCP 层
+#
+# stale 依据（A2 / python_compat 全量退役 + RP-09 工具下沉）：
+# mcp_server.py 在工具下沉后已是薄壳（仅注册 + run），Python 工具实现迁到
+# server/tools/**（经 _route() 转发 daemon RPC），重活落到 Rust daemon
+# （route_matrix.rs 登记 status="migrated"，实现见 daemon/admin_handlers.rs）。
+# 旧断言读 mcp_server.py 源码文本 / 断言其直连本地 db，均已失效。
 # ----------------------------------------------------------------------
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _read_repo_file(*parts):
+    """读取仓库内文件文本（用于源码级注册断言）。"""
+    with open(os.path.join(_REPO_ROOT, *parts), encoding="utf-8") as fh:
+        return fh.read()
+
+
 def test_mcp_tool_rotate_audit_signing_key_registered():
-    """MCP 工具 rotate_audit_signing_key 已注册到 server。"""
-    server_src = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "server", "mcp_server.py",
-    )
-    with open(server_src, encoding="utf-8") as fh:
-        content = fh.read()
-    assert "def rotate_audit_signing_key(" in content
-    assert "def list_audit_signing_keys(" in content
+    """MCP 工具 rotate_audit_signing_key / list_audit_signing_keys 已注册。
+
+    权威落点：server/tools/tools_task.py（@mcp.tool 定义）
+    + rust_ext/src/daemon/route_matrix.rs（路由登记）。
+    """
+    tools_src = _read_repo_file("server", "tools", "tools_task.py")
+    assert "def rotate_audit_signing_key(" in tools_src
+    assert "def list_audit_signing_keys(" in tools_src
+
+    routes_src = _read_repo_file("rust_ext", "src", "daemon", "route_matrix.rs")
+    assert 'name: "rotate_audit_signing_key"' in routes_src
+    assert 'name: "list_audit_signing_keys"' in routes_src
 
 
-def test_mcp_tool_calls_db_methods():
-    """MCP 工具内部调用 db.rotate_signing_key 和 db.list_signing_keys。"""
-    server_src = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "server", "mcp_server.py",
-    )
-    with open(server_src, encoding="utf-8") as fh:
-        content = fh.read()
-    assert "db.rotate_signing_key(" in content
-    assert "db.list_signing_keys()" in content
+def test_mcp_tool_routes_to_daemon_rpc():
+    """MCP 工具经 _route() 转发 daemon RPC，不直连本地 DB 实例。
+
+    stale 依据（A2）：原名 test_mcp_tool_calls_db_methods，断言 mcp_server.py
+    内出现 `db.rotate_signing_key(` / `db.list_signing_keys()`；daemon authority
+    化后 DB 访问属 daemon 内部实现，工具层只做 RPC 转发。
+    """
+    tools_src = _read_repo_file("server", "tools", "tools_task.py")
+    assert "_route('admin.audit_rotate_key'" in tools_src
+    assert "_route('list_audit_signing_keys'" in tools_src
 
 
-def test_mcp_tool_auto_generates_secret_when_empty():
-    """MCP 工具 key_secret 为空时自动生成随机密钥。"""
-    server_src = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "server", "mcp_server.py",
-    )
-    with open(server_src, encoding="utf-8") as fh:
-        content = fh.read()
-    # 确认有自动生成逻辑
-    assert "token_hex" in content
+def test_daemon_auto_generates_secret_when_key_secret_empty():
+    """key_secret 为空时由 daemon `admin.audit_rotate_key` 自动生成密钥。
+
+    stale 依据（A2）：原名 test_mcp_tool_auto_generates_secret_when_empty，
+    断言 mcp_server.py 含 `token_hex`；自动生成逻辑已随 admin.audit_rotate_key
+    下沉 Rust daemon（key_id 由时间戳派生、key_secret 由 sha256_hex 派生）。
+    """
+    admin_src = _read_repo_file("rust_ext", "src", "daemon", "admin_handlers.rs")
+    assert "pub fn handle_audit_rotate_key(" in admin_src
+    start = admin_src.index("pub fn handle_audit_rotate_key(")
+    body = admin_src[start:start + 1600]
+    assert "key_secret" in body
+    assert "sha256_hex" in body
 
 
 # ----------------------------------------------------------------------
