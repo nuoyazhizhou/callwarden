@@ -288,13 +288,12 @@ def test_cli_bootstrap_status_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not" in str(e):
-                        pytest.fail("db initialized during cw bootstrap status --help")
-                    raise
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not" in str(e):
+                    pytest.fail("db initialized during cw bootstrap status --help")
+                raise
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -312,13 +311,12 @@ def test_cli_bootstrap_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not" in str(e):
-                        pytest.fail("db initialized during cw bootstrap --help")
-                    raise
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not" in str(e):
+                    pytest.fail("db initialized during cw bootstrap --help")
+                raise
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
