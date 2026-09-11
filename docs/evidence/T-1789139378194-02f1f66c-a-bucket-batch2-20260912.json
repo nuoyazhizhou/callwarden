@@ -1,0 +1,145 @@
+{
+  "task_id": "T-1789139378194-02f1f66c",
+  "parent_task_id": "T-1788871227327-45c94bd8",
+  "step_action": "fix_stale_assertions_bucket_a_batch2",
+  "target_dir": "tests/",
+  "generated_at": "2026-09-12T00:45:00+08:00",
+  "commit": {
+    "sha": "15de3c8f14fd8bdba2d0691376414f54eedd8b97",
+    "short": "15de3c8",
+    "message": "[T-1789139378194-02f1f66c] test(A桶-2): 断言对齐 daemon authority 落点（21→10 FAILED）",
+    "whitelist_respected": "仅 add 三个测试文件；rust_ext/target-check-tis/ 未入库，生产代码零改动"
+  },
+  "files": [
+    {
+      "file_path": "tests/test_agent_rules.py",
+      "sha256": "43424c30565a098793a11c274a04991b6074980faca2e31b6692ac3430576b28"
+    },
+    {
+      "file_path": "tests/test_bootstrap_capture.py",
+      "sha256": "12554d89e77410cef2f33bbc4f82478fb0bf57bcc678b7922d2c8a576bfd9928"
+    },
+    {
+      "file_path": "tests/test_sync_log_cleanup.py",
+      "sha256": "480849ca1175d961da40c4fb4a405bdf2bf5a41f9c98d5cba1681bf4f8e848e9"
+    }
+  ],
+  "fixed_cases": [
+    {
+      "case": "tests/test_agent_rules.py::test_mcp_rule_candidate_create_returns_candidate_id",
+      "bucket": "A3-MCP",
+      "cause": "rule_* 工具收敛到 server/tools/tools_security.py 后只做 _route('rule.candidate_create') 转发，本地 _db_instance 注入不再生效",
+      "fix": "monkeypatch 模块级 _route，断言 method/params + 回包渲染"
+    },
+    {
+      "case": "tests/test_agent_rules.py::test_mcp_rule_list_returns_rules",
+      "bucket": "A3-MCP",
+      "cause": "同上（RPC method 名 rule_list）",
+      "fix": "_route 替身断言 rule_list 契约"
+    },
+    {
+      "case": "tests/test_agent_rules.py::test_mcp_rule_seed_bootstrap_dry_run",
+      "bucket": "A3-MCP",
+      "cause": "同上（落点 server/tools/tools_task.py，RPC rule.seed_bootstrap）",
+      "fix": "_route 替身断言 dry_run 透传与回包"
+    },
+    {
+      "case": "tests/test_agent_rules.py::test_mcp_rule_seed_bootstrap_apply_writes_5",
+      "bucket": "A3-MCP",
+      "cause": "同上；原断言还校验本地 agent_rules 行数，写入已迁至 daemon 侧",
+      "fix": "断言 apply 参数透传与回包，端到端写入交 daemon 集成测试"
+    },
+    {
+      "case": "tests/test_bootstrap_capture.py::test_cli_task_capture_diff_dry_run_calls_db_method",
+      "bucket": "A3-CLI",
+      "cause": "CLI 改走 route_task_write('task.capture_diff')，测试仍 mock db 方法且无 daemon",
+      "fix": "patch cli_main.route_task_write 记录契约并执行 fallback，同时保留原参数断言"
+    },
+    {
+      "case": "tests/test_bootstrap_capture.py::test_cli_task_capture_diff_apply_passes_dry_run_false",
+      "bucket": "A3-CLI",
+      "cause": "同上",
+      "fix": "同上"
+    },
+    {
+      "case": "tests/test_bootstrap_capture.py::test_mcp_task_capture_diff_registered",
+      "bucket": "A2-源码落点",
+      "cause": "断言 mcp_server.py 源码含 def task_capture_diff(，工具已迁至 server/tools/tools_task.py",
+      "fix": "新增 _tools_task_source() 读取真实落点后断言"
+    },
+    {
+      "case": "tests/test_bootstrap_capture.py::test_mcp_task_capture_diff_signature",
+      "bucket": "A2-源码落点",
+      "cause": "AST 扫描 mcp_server.py 找 task_capture_diff，落点已迁移",
+      "fix": "AST 扫描改指 server/tools/tools_task.py"
+    },
+    {
+      "case": "tests/test_bootstrap_capture.py::test_get_workspace_changes_since_non_git_fallback",
+      "bucket": "A4-装置",
+      "cause": "手工 INSERT file_instances 带 current_content_hash='fakehash0001'，file_contents 无对应行",
+      "fix": "先 INSERT OR IGNORE INTO file_contents 占位"
+    },
+    {
+      "case": "tests/test_bootstrap_capture.py::test_get_workspace_changes_since_non_git_detects_deleted",
+      "bucket": "A4-装置",
+      "cause": "同上（hash1）",
+      "fix": "同上"
+    },
+    {
+      "case": "tests/test_sync_log_cleanup.py::test_mcp_tool_calls_db_method",
+      "bucket": "A2-源码落点",
+      "cause": "断言 db.cleanup_sync_log( 存在，工具已改走 _route('admin.cleanup_rule_sync_log')",
+      "fix": "断言 RPC 方法名与 older_than_days/keep_latest/dry_run 参数透传"
+    }
+  ],
+  "verification": {
+    "command": "python -m pytest tests/test_agent_rules.py tests/test_bootstrap_capture.py tests/test_sync_log_cleanup.py tests/test_audit_chain.py -q --tb=line -p no:cacheprovider",
+    "result": "RC=1；本批 11 个目标用例全绿，剩余 10 FAILED 全部由 D1/D2 两个实现缺陷阻塞",
+    "before": "21 FAILED（A1 批复验基线）",
+    "after": "10 FAILED",
+    "python_env": "C:/Users/wanpi/.workbuddy/binaries/python/envs/cw314/Scripts/python.exe (3.14 ABI)",
+    "env_note": "PYTHONPATH=C:/git_work（仓库根名为 callwarden，需父目录入 path）；清空沙箱代理 HTTP(S)_PROXY；NO_PROXY=127.0.0.1,localhost",
+    "runner_note": "Git Bash 对 MSYS python 的 stdout 重定向会丢输出，改用 run_pytest.py（pytest.main + StringIO 落盘）"
+  },
+  "adjacent_defects": [
+    {
+      "id": "D1",
+      "severity": "P1",
+      "title": "新库首次 refresh_file 触发 FOREIGN KEY constraint failed",
+      "component": "db/db_build.py::_register_file_db",
+      "root_cause": "file_instances.current_content_hash 外键引用 file_contents(content_hash)，_register_file_db 首次注册写入占位 ''；连接默认 PRAGMA foreign_keys=ON（CW_USE_RUST_STORAGE 未关闭）而新库 file_contents 无 '' 行",
+      "why_survives_in_prod": "老库（~/.callwarden/callwarden.db）历史数据里已有 content_hash='' 行（实测 empty_hash_rows=1），所以既有项目 refresh/build 正常；全新库/新项目必失败",
+      "repro": "隔离 HOME 到空目录 → CodeGraphDB(workspace_root=<new>) → refresh_file(任意 .py) → IntegrityError: FOREIGN KEY constraint failed（实测 fk=(1,) empty_hash_rows=(0,) REFRESH_FAIL）",
+      "suggested_fix": "在 INSERT file_instances 前 INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, <now>)；或迁移给既有库补占位行并把 current_content_hash 默认改为 NULL",
+      "blocked_cases": [
+        "tests/test_agent_rules.py::test_get_applicable_rules_for_symbol_returns_matched_rules",
+        "tests/test_agent_rules.py::test_get_applicable_rules_for_symbol_fail_soft_on_missing_table",
+        "tests/test_agent_rules.py::test_get_symbol_injects_applicable_rules_field",
+        "tests/test_agent_rules.py::test_get_symbol_applicable_rules_empty_when_no_active_rules",
+        "tests/test_agent_rules.py::test_get_symbol_fail_soft_on_missing_agent_rules_table",
+        "tests/test_agent_rules.py::test_file_symbol_content_mcp_tool_injects_applicable_rules",
+        "tests/test_agent_rules.py::test_file_symbol_content_mcp_tool_fail_soft_on_missing_table",
+        "tests/test_agent_rules.py::test_seed_bootstrap_injects_into_get_symbol",
+        "tests/test_agent_rules.py::test_seed_bootstrap_injects_into_file_symbol_content_mcp"
+      ],
+      "test_side_option": "把 _setup_db_with_symbol 改为直接 SQL 构造 file_contents/file_instances/file_versions/file_symbol_versions，绕开有缺陷的 parse 写入路径（不掩盖缺陷，D1 另开修复卡）"
+    },
+    {
+      "id": "D2",
+      "severity": "P2",
+      "title": "legacy 旧库升级执行全量 SCHEMA_SQL 时因缺列失败",
+      "component": "Rust/Python schema 初始化（SCHEMA_CREATE_FAILED）",
+      "root_cause": "对 v21 旧库执行含 v30 索引 CREATE INDEX ... ON workspaces(active_task_id) 的 SCHEMA_SQL，而该列由 v29→v30 迁移才添加，索引先于 ALTER 执行",
+      "repro": "构造 v21 库（workspaces 无 active_task_id）→ CodeGraphDB 打开 → SCHEMA_CREATE_FAILED: no such column: active_task_id",
+      "blocked_cases": [
+        "tests/test_audit_chain.py::test_legacy_v21_db_migrates_to_v22_via_init_schema"
+      ],
+      "open_question": "需确认该失败是否只在「手工伪造的不完整 v21 库」上出现；真实 v21 库升级路径亦应先跑版本迁移再建索引，建议按真实升级路径复测后定级"
+    }
+  ],
+  "scope_discipline": {
+    "in_scope": "tests/** 内陈旧断言与测试装置",
+    "out_of_scope": "db/db_build.py、Rust schema 初始化等生产代码（D1/D2 需派生独立修复卡，未在本批改动）",
+    "not_masked": "未使用 PRAGMA foreign_keys=OFF 或 xfail 掩盖 D1；10 个用例保持红色作为缺陷信号"
+  }
+}

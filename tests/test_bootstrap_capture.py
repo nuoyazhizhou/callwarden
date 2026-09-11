@@ -357,6 +357,13 @@ def test_get_workspace_changes_since_non_git_fallback():
         old_mtime = 1.0
         ws_id = db._get_active_workspace_id()
         content_hash = "fakehash0001"
+        # file_instances.current_content_hash 外键引用 file_contents(content_hash)，
+        # 且默认连接开启 PRAGMA foreign_keys=ON，必须先插入占位内容行。
+        db.conn.execute(
+            "INSERT OR IGNORE INTO file_contents "
+            "(content_hash, language, total_lines, first_seen_at) VALUES (?, ?, ?, ?)",
+            (content_hash, "python", 1, 0.0),
+        )
         db.conn.execute(
             "INSERT INTO file_instances "
             "(workspace_id, rel_path, abs_path, current_content_hash, mtime, "
@@ -384,12 +391,18 @@ def test_get_workspace_changes_since_non_git_detects_deleted():
         ws_id = db._get_active_workspace_id()
         deleted_file = os.path.join(root, "deleted.py")
         # 写入 file_instances 但磁盘文件不存在
+        deleted_hash = "hash1"
+        db.conn.execute(
+            "INSERT OR IGNORE INTO file_contents "
+            "(content_hash, language, total_lines, first_seen_at) VALUES (?, ?, ?, ?)",
+            (deleted_hash, "python", 1, 0.0),
+        )
         db.conn.execute(
             "INSERT INTO file_instances "
             "(workspace_id, rel_path, abs_path, current_content_hash, mtime, "
             " total_lines, last_parsed, status, module_path) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (ws_id, "deleted.py", deleted_file, "hash1", 1.0, 1, 0, "parsed", ""),
+            (ws_id, "deleted.py", deleted_file, deleted_hash, 1.0, 1, 0, "parsed", ""),
         )
         db.conn.commit()
 
@@ -836,13 +849,12 @@ def test_cli_task_capture_diff_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not" in str(e):
-                        pytest.fail("db initialized during cw task capture-diff --help")
-                    raise
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not" in str(e):
+                    pytest.fail("db initialized during cw task capture-diff --help")
+                raise
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -866,7 +878,16 @@ def test_cli_task_capture_diff_dry_run_calls_db_method():
                 call_log["kwargs"] = kwargs
                 return original(*args, **kwargs)
 
-            with mock.patch.object(db, "task_capture_diff", side_effect=spy):
+            rpc_calls = {"method": None, "params": None}
+
+            def _fake_route(method, params, fallback=None):
+                """记录 RPC 契约并执行本地回落，模拟 daemon 不可用时的行为。"""
+                rpc_calls["method"] = method
+                rpc_calls["params"] = dict(params or {})
+                return fallback() if fallback else {}
+
+            with mock.patch.object(db, "task_capture_diff", side_effect=spy), \
+                 mock.patch.object(cli_main, "route_task_write", side_effect=_fake_route):
                 old_argv = sys.argv
                 sys.argv = ["cw", "task", "capture-diff", tid, "--dry-run"]
                 try:
@@ -876,6 +897,11 @@ def test_cli_task_capture_diff_dry_run_calls_db_method():
                 finally:
                     sys.argv = old_argv
 
+            # daemon authority：CLI 必须经 route_task_write 走 task.capture_diff
+            assert rpc_calls["method"] == "task.capture_diff", \
+                "CLI 未走 task.capture_diff RPC: %s" % rpc_calls["method"]
+            assert rpc_calls["params"].get("dry_run") is True
+            assert rpc_calls["params"].get("task_id") == tid
             assert call_log["count"] == 1, "db.task_capture_diff 必须被调用一次"
             kw = call_log["kwargs"] or {}
             assert kw.get("dry_run") is True
@@ -912,7 +938,15 @@ def test_cli_task_capture_diff_apply_passes_dry_run_false():
                     "next_action": "review",
                 }
 
-            with mock.patch.object(db, "task_capture_diff", side_effect=spy):
+            rpc_calls = {"method": None, "params": None}
+
+            def _fake_route(method, params, fallback=None):
+                rpc_calls["method"] = method
+                rpc_calls["params"] = dict(params or {})
+                return fallback() if fallback else {}
+
+            with mock.patch.object(db, "task_capture_diff", side_effect=spy), \
+                 mock.patch.object(cli_main, "route_task_write", side_effect=_fake_route):
                 old_argv = sys.argv
                 sys.argv = ["cw", "task", "capture-diff", tid, "--step-id", "S-1"]
                 try:
@@ -922,6 +956,11 @@ def test_cli_task_capture_diff_apply_passes_dry_run_false():
                 finally:
                     sys.argv = old_argv
 
+            assert rpc_calls["method"] == "task.capture_diff", \
+                "CLI 未走 task.capture_diff RPC: %s" % rpc_calls["method"]
+            assert rpc_calls["params"].get("dry_run") is False
+            assert rpc_calls["params"].get("step_id") == "S-1"
+
             kw = call_log["kwargs"] or {}
             assert kw.get("dry_run") is False, "未传 --dry-run 时 dry_run 必须为 False"
             assert kw.get("step_id") == "S-1"
@@ -929,16 +968,23 @@ def test_cli_task_capture_diff_apply_passes_dry_run_false():
             db.close()
 
 
-def test_mcp_task_capture_diff_registered():
-    """MCP server 注册了 task_capture_diff 工具。"""
-    import inspect
-    from callwarden.server import mcp_server
+def _tools_task_source():
+    """读取 server/tools/tools_task.py（MCP 工具收敛后的真实落点）源码。"""
+    src_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "server", "tools", "tools_task.py",
+    )
+    with open(src_path, "r", encoding="utf-8") as f:
+        return f.read()
 
-    # create_mcp_server 内部定义 task_capture_diff，无法直接拿到引用，
-    # 但可以通过源代码字符串验证工具已注册。
-    src = inspect.getsource(mcp_server.create_mcp_server)
-    assert "def task_capture_diff(" in src, "MCP 源码缺少 task_capture_diff 工具定义"
-    assert "@mcp.tool()" in src, "MCP 源码缺少 @mcp.tool() 装饰器"
+
+def test_mcp_task_capture_diff_registered():
+    """MCP 注册了 task_capture_diff 工具（落点：server/tools/tools_task.py）。"""
+    # 工具注册收敛到 server/tools 功能域模块后，mcp_server.py 只剩装配逻辑；
+    # 断言改指真实落点，避免只读装配文件时漏检。
+    src = _tools_task_source()
+    assert "def task_capture_diff(" in src, "server/tools/tools_task.py 缺少 task_capture_diff 工具定义"
+    assert "@mcp.tool()" in src, "server/tools/tools_task.py 缺少 @mcp.tool() 装饰器"
 
 
 def test_mcp_task_capture_diff_signature():
@@ -948,7 +994,7 @@ def test_mcp_task_capture_diff_signature():
 
     src_path = _os.path.join(
         _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-        "server", "mcp_server.py",
+        "server", "tools", "tools_task.py",
     )
     with open(src_path, "r", encoding="utf-8") as f:
         tree = ast.parse(f.read())

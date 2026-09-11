@@ -360,12 +360,11 @@ def test_cli_cleanup_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except SystemExit as e:
-                    # --help 触发 argparse 退出码 0
-                    assert e.code == 0
+            try:
+                cli_main._run_subcommand_mode()
+            except SystemExit as e:
+                # --help 触发 argparse 退出码 0
+                assert e.code == 0
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -431,11 +430,17 @@ def test_mcp_tool_cleanup_agent_rule_sync_log_registered():
 
 
 def test_mcp_tool_calls_db_method():
-    """MCP 工具内部调用 db.cleanup_sync_log 并透传参数。"""
+    """MCP 工具经 daemon RPC admin.cleanup_rule_sync_log 透传参数。
+
+    daemon authority（RP-09）后工具不再本地调用 ``db.cleanup_sync_log``，
+    而是把参数整体透传给 Rust daemon；断言落点随之改为 RPC 契约。
+    """
     content = _combined_mcp_sources()
-    # 确认工具调用 db.cleanup_sync_log 并传 dry_run 参数
-    assert "db.cleanup_sync_log(" in content
-    assert "dry_run=dry_run" in content
+    assert "'admin.cleanup_rule_sync_log'" in content, \
+        "工具未走 admin.cleanup_rule_sync_log RPC"
+    assert '"older_than_days": older_than_days' in content
+    assert '"keep_latest": keep_latest' in content
+    assert '"dry_run": dry_run' in content
 
 
 # ----------------------------------------------------------------------
