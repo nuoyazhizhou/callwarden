@@ -1,0 +1,8 @@
+{
+  "evidence_type": "legacy_cards_batch2_cleanup",
+  "task_id": "GOV-FIX-05-batch2 (110 cards) + batch1 residual roots (7 cards)",
+  "anchor": "T-1789083808963-caacecc4",
+  "decision": "用户裁决批次 2 四组全部走 A 路线（supersede 到 GOV-FIX-04 治理卡后 cascade_close）：ROOT 其他 41 / G0 实验系 17 / 多LLM 8 + GovSuite 9 / W2-D0 8 + Windows-Daemon-Writer 6 + Orchestrator 6 + 六个主线 5 + 零散 10，另含批次 1 遗留 7 张 epic 根卡（出边已建）在子卡闭合后 cascade_close",
+  "basis": "daemon 已是 Rust（230 rs）、237 MCP 工具/145 CLI 上线，G01-G20 等历史工作客观已落地；临时验证/批次评审卡均已结束",
+  "created_at": "2026-09-11T12:45:00+08:00"
+}
