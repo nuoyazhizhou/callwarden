@@ -163,6 +163,35 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     """
     now = time.time()
 
+    def _ensure_empty_hash_row(table: str) -> None:
+        """确保 (content_hash='') 占位行存在（D3）。
+
+        本函数后续回填对「无 current 版本 / 无内容匹配」的行用
+        ``COALESCE(..., '')`` 兜底，而 ``content_hash`` 上有外键指向
+        ``file_contents`` / ``symbol_contents``；连接默认 ``foreign_keys=ON``
+        时缺 '' 行会直接 ``IntegrityError: FOREIGN KEY constraint failed``。
+
+        列集合按目标表自身的 NOT NULL 约束推导（文本给 ''、数值给 0），
+        因此不依赖具体 schema 版本的列定义。表或 content_hash 列不存在时
+        直接返回（等价于修复前行为，不引入新失败）。
+        """
+        info = list(conn.execute("PRAGMA table_info(%s)" % table))
+        if "content_hash" not in [r[1] for r in info]:
+            return
+        cols, vals = ["content_hash"], [""]
+        for r in info:
+            name, decl_type, not_null, dflt = r[1], (r[2] or ""), r[3], r[4]
+            if name == "content_hash" or not not_null or dflt is not None:
+                continue
+            cols.append(name)
+            is_num = decl_type.upper().startswith(("INT", "REAL", "NUM", "FLOA", "DOUB"))
+            vals.append(0 if is_num else "")
+        conn.execute(
+            "INSERT OR IGNORE INTO %s (%s) VALUES (%s)"
+            % (table, ", ".join(cols), ", ".join(["?"] * len(vals))),
+            vals,
+        )
+
     # ---- 1. 创建 workspaces 表 ----
     conn.execute("""
         CREATE TABLE IF NOT EXISTS workspaces (
@@ -199,6 +228,20 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
         FROM file_versions fv
         WHERE fv.content_hash IS NOT NULL AND fv.content_hash != ''
     """)
+
+    # 空 hash 占位行（D3）：本函数后续 file_instances / symbols / comments 回填
+    # 对「无 current 版本」「无内容匹配」的行用 COALESCE(..., '') 兜底，而上面
+    # 填充 file_contents 时已显式排除空串。连接默认 foreign_keys=ON
+    # （CW_USE_RUST_STORAGE 未显式关闭时），缺失 '' 占位行会让回填直接
+    # `IntegrityError: FOREIGN KEY constraint failed`。与 D1
+    # （db_build.py::_register_file_db 新库首文件注册）同类根因。
+    conn.execute(
+        "INSERT OR IGNORE INTO file_contents "
+        "(content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, ?)",
+        (now,),
+    )
+    # symbol_contents 是 v2 既有表（本函数不建），列集按表自身 NOT NULL 约束推导
+    _ensure_empty_hash_row("symbol_contents")
 
     # ---- 3. 创建 file_instances 表（替代 files） ----
     conn.execute("""
@@ -304,8 +347,9 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
         GROUP BY s.id
     """)
 
-    # 删除旧表
-    conn.execute("DROP TABLE symbols_old_v2")
+    # 注意：symbols_old_v2 仍被第 6 步 calls 回填用于
+    # old caller_id → qualified_name 的映射，不能在此删除；
+    # DROP 延迟到 calls 回填完成之后（见第 6 步末尾）。
 
     # ---- 5. 改造 comments 表 ----
     # 检查旧 comments 表是否存在（v2 可能没有）
@@ -388,6 +432,8 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     """)
 
     conn.execute("DROP TABLE calls_old_v2")
+    # calls 回填是 symbols_old_v2 的最后一个消费者，此处才可安全删除
+    conn.execute("DROP TABLE symbols_old_v2")
 
     # ---- 7. 改造 file_versions 表 ----
     conn.execute("ALTER TABLE file_versions RENAME TO file_versions_old_v2")
@@ -426,7 +472,9 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
         )
     """)
 
-    conn.execute("DROP TABLE file_versions_old_v2")
+    # 注意：file_versions_old_v2 仍被第 8 步 file_symbol_versions 回填使用
+    # （old file_version_id → file_id 的映射），不能在此删除；
+    # DROP 延迟到第 8 步回填完成之后。
 
     # ---- 8. 改造 file_symbol_versions 表 ----
     conn.execute(
@@ -471,6 +519,8 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     """)
 
     conn.execute("DROP TABLE file_symbol_versions_old_v2")
+    # file_symbol_versions 回填是 file_versions_old_v2 的最后一个消费者
+    conn.execute("DROP TABLE file_versions_old_v2")
 
     # ---- 9. 改造 semgrep_findings 表 ----
     conn.execute(
@@ -3690,6 +3740,17 @@ class CodeGraphBase:
         rust_storage_rolled_back = self.is_feature_rolled_back("rust_storage_service")
         rust_storage_imported = False
         if self.db_path and rust_storage_requested and not rust_storage_rolled_back:
+            # legacy 升级前置迁移（D2）：Rust storage_initialize_or_migrate 执行的是
+            # 全量 SCHEMA_SQL，其中索引依赖各版本新增列（如 v30 的
+            # workspaces.active_task_id）；旧库尚未补列时直接建索引会
+            # `no such column` 失败，导致升级整体 fail-closed。先按版本链补齐列，
+            # 再交给 Rust 收尾（迁移幂等，Rust 侧会再校验一次版本）。
+            try:
+                legacy_version = self._get_current_version()
+            except Exception:  # noqa: BLE001 - 读版本失败按“非旧库”处理
+                legacy_version = 0
+            if 0 < legacy_version < SCHEMA_VERSION:
+                self._migrate_schema(legacy_version, SCHEMA_VERSION)
             try:
                 from callwarden_core import storage_initialize_or_migrate
                 rust_storage_imported = True
