@@ -87,12 +87,9 @@ def _build_snapshot_db(tmp_path: str, ws_id: int) -> str:
 # =========================================================================
 
 @pytest.fixture()
-def published_workspace(tmp_path):
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行，跳过 HTTP RPC round-trip 用例")
+def published_workspace(w3_live, tmp_path):
+    """W3 隔离 harness：注入隔离 daemon client，注册独立 workspace + 发布 snapshot。"""
+    c = w3_live["client"]
     root = os.path.join(str(tmp_path), "ws1")
     os.makedirs(root, exist_ok=True)
     ws = c.call("workspace.register", {"client_view_root": root})
@@ -111,13 +108,9 @@ def published_workspace(tmp_path):
 # =========================================================================
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行，跳过 HTTP RPC round-trip 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon client。"""
+    return w3_live["client"]
 
 
 # =========================================================================

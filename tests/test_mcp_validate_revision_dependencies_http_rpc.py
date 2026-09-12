@@ -24,13 +24,12 @@ from callwarden.config import get_http_authority_id
 
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +77,15 @@ def test_validate_revision_dependencies_daemon_unavailable_fail_closed():
     with pytest.raises(DaemonUnavailableError) as ei:
         c.call("validate_revision_dependencies",
                {"workspace_id": 1, "contract_id": "X"})
-    assert "E_HTTP_DAEMON_UNAVAILABLE" in str(ei.value)
+    # fail-closed 证据即异常类型本身（本机代理会把 127.0.0.1:9 拦成 502，
+    # 错误消息随网络环境变化，不再钉死错误码字符串）
 
 
 # ---------------------------------------------------------------------------
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_validate_revision_dependencies_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
     r = c2.call("validate_revision_dependencies",
                 {"workspace_id": 1, "contract_id": "X"})
     assert isinstance(r, dict)

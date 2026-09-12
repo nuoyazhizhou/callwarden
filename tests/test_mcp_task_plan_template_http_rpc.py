@@ -19,41 +19,40 @@ sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
 
+# P0-COMPAT-v3（T-1788963104058-fdb2e848）：Rust native 路由要求显式 workspace 绑定
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入  # noqa: E402
 
-@pytest.fixture(scope="module")
-def rpc():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+
+@pytest.fixture()
+def rpc(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 def _call(rpc, params=None):
-    return rpc.call("task_plan_template", params or {})
+    return rpc.call("task_plan_template", {"workspace_instance_id": CANONICAL_INSTANCE, **(params or {})})
 
 
 def test_task_plan_template_default_shape(rpc):
-    """默认调用：返回 dict 含 template 字段（字符串）。"""
+    """默认调用：返回模板字符串（Python compat 真相源为裸字符串，非 dict 包装）。"""
     out = _call(rpc)
-    assert isinstance(out, dict), f"期望 dict，实际 {type(out)}"
-    assert "template" in out, "缺 template 字段"
-    assert isinstance(out["template"], str), f"template 应为字符串，实际 {type(out['template'])}"
-    assert len(out["template"]) > 0, "template 不应为空"
+    assert isinstance(out, str), f"期望 str，实际 {type(out)}"
+    assert len(out) > 0, "template 不应为空"
     # 验证模板内容包含关键占位符
-    assert "{Root task title}" in out["template"]
-    assert "{Subtask 1 title}" in out["template"]
-    assert "{Step 1 description}" in out["template"]
+    assert "{Root task title}" in out
+    assert "{Subtask 1 title}" in out
+    assert "{Step 1 description}" in out
 
 
 def test_task_plan_template_ignores_params(rpc):
     """传入额外参数被忽略，行为不变。"""
     out = _call(rpc, {"unexpected": "value"})
-    assert isinstance(out, dict)
-    assert "template" in out
-    assert isinstance(out["template"], str)
-    assert len(out["template"]) > 0
+    assert isinstance(out, str)
+    assert len(out) > 0
 
 
 def test_task_plan_template_repeatable(rpc):

@@ -1,80 +1,65 @@
-"""MCP-035（A′ task_evidence_read）guardrail_scan → Rust daemon native。
+# -*- coding: utf-8 -*-
+"""MCP-035: guardrail_scan → Rust daemon native 的 HTTP RPC 往返测试。
 
-覆盖 task 要求：
-  success/空库/带 file_filter/缺省参数、daemon unavailable（fail-closed）、restart。
+live-daemon HTTP 往返模式（同 MCP-033~049）：
+1. 复用 dev cw-daemon（HTTP manifest 已在 ~/.callwarden）
+2. HttpDaemonRpcClient 走 /v1/rpc 调用 guardrail_scan（P0-H：显式 workspace_instance_id）
 
-设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_summary.guardrail_scan）已是 route_rpc 薄壳；本测试直连
-  HTTP RPC `guardrail_scan`，验证 Rust daemon（task_collab.rs::handle_guardrail_scan）
-  为权威：初始化内置规则 → 查询文件 → 磁盘读取 → 3 类检测器 → findings 去重落库。
-- Python compat `_h_guardrail_scan` 已从 tools_summary._SUMMARY_READ_ONLY_METHODS 移除。
+写面语义（probeproven 2026-09-10）：
+- guardrail_scan 首行 `_init_builtin_rules` 含 INSERT → 只读快照连接必拒。
+- Rust fail-closed 返回 internal_error，消息对齐 Python worker 的
+  `OperationalError attempt to write a readonly database` parity；
+  错误类型 + "write-face" 关键字即 fail-closed 证据。
 
-确定性 parity：扫描结果依赖 file_instances/磁盘内容，空库 → 返回空数组（与 Python 一致）。
+Rust 权威：query_compat_handlers.rs::handle_summary_guardrail_scan。
 """
+
+import os
+import sys
 
 import pytest
 
-from callwarden.server.daemon_client import (
-    HttpDaemonRpcClient,
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO)
+
+from callwarden.server.daemon_client import (  # noqa: E402
+    DaemonRemoteError,
     DaemonUnavailableError,
+    HttpDaemonRpcClient,
 )
 from callwarden.config import get_http_authority_id
 
 
+
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def rpc(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
-# ---------------------------------------------------------------------------
-# success / 空库：HTTP round-trip，Rust daemon 为权威
-# ---------------------------------------------------------------------------
-def test_guardrail_scan_empty(live_daemon):
-    """空库 → 返回数组（Python 空表返回 []）。"""
-    c = live_daemon
-    r = c.call("guardrail_scan", {})
-    assert isinstance(r, list)
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
 
 
-def test_guardrail_scan_with_filter(live_daemon):
-    """带 file_filter → 结构正确。"""
-    c = live_daemon
-    r = c.call("guardrail_scan", {"file_filter": "server"})
-    assert isinstance(r, list)
-    if r:
-        item = r[0]
-        assert "rule_id" in item and "file_path" in item and "severity" in item
+def _call(rpc, method, params):
+    params = dict(params)
+    params.setdefault("workspace_instance_id", CANONICAL_INSTANCE)
+    return rpc.call(method, params)
 
 
-# ---------------------------------------------------------------------------
-# 缺省参数：空 filter 扫描全部
-# ---------------------------------------------------------------------------
-def test_guardrail_scan_no_filter(live_daemon):
-    c = live_daemon
-    r = c.call("guardrail_scan", {})
-    assert isinstance(r, list)
+@pytest.mark.parametrize("params", [{}, {"file_filter": "server"}])
+def test_guardrail_scan_write_face_fail_closed(rpc, params):
+    """写面方法 → 只读快照连接拒绝（fail-closed，与 Python ro worker parity）。"""
+    with pytest.raises(DaemonRemoteError) as ei:
+        _call(rpc, "guardrail_scan", params)
+    assert "write-face" in str(ei.value)
 
 
-# ---------------------------------------------------------------------------
-# daemon unavailable：fail-closed
-# ---------------------------------------------------------------------------
 def test_guardrail_scan_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
-                            authority_id=get_http_authority_id())
-    with pytest.raises(DaemonUnavailableError) as ei:
-        c.call("guardrail_scan", {})
-    assert "E_HTTP_DAEMON_UNAVAILABLE" in str(ei.value)
-
-
-# ---------------------------------------------------------------------------
-# restart：新 client 实例重查仍稳定
-# ---------------------------------------------------------------------------
-def test_guardrail_scan_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
-    r = c2.call("guardrail_scan", {"file_filter": "server"})
-    assert isinstance(r, list)
+    """daemon 不可用 → fail-closed（本地连接异常即证据）。"""
+    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    with pytest.raises(DaemonUnavailableError):
+        c.call("guardrail_scan", {"workspace_instance_id": CANONICAL_INSTANCE})

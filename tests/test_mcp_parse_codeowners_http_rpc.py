@@ -21,15 +21,18 @@ from callwarden.server.daemon_client import (
 )
 from callwarden.config import get_http_authority_id
 
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
+UNKNOWN_INSTANCE = "00000000deadbeef"
+
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +41,7 @@ def live_daemon():
 def test_parse_codeowners_no_file(live_daemon):
     """workspace 无 CODEOWNERS → []。"""
     c = live_daemon
-    r = c.call("parse_codeowners", {"workspace_id": 1})
+    r = c.call("parse_codeowners", {"workspace_instance_id": CANONICAL_INSTANCE})
     assert isinstance(r, list)
 
 
@@ -46,7 +49,7 @@ def test_parse_codeowners_explicit_path(live_daemon):
     """显式 file_path 指向不存在的文件 → []（不报错）。"""
     c = live_daemon
     r = c.call("parse_codeowners",
-               {"workspace_id": 1, "file_path": "c:/NO_SUCH/CODEOWNERS"})
+               {"workspace_instance_id": CANONICAL_INSTANCE, "file_path": "c:/NO_SUCH/CODEOWNERS"})
     assert isinstance(r, list)
     assert r == []
 
@@ -54,8 +57,10 @@ def test_parse_codeowners_explicit_path(live_daemon):
 def test_parse_codeowners_unknown_workspace(live_daemon):
     """未知 workspace：无 root_path → []。"""
     c = live_daemon
-    r = c.call("parse_codeowners", {"workspace_id": 999999})
-    assert isinstance(r, list)
+    # 未知 instance → fail-closed workspace_not_found（不静默返回空）
+    with pytest.raises(Exception) as ei:
+        c.call("parse_codeowners", {"workspace_instance_id": UNKNOWN_INSTANCE})
+    assert "workspace_not_found" in str(ei.value)
 
 
 # ---------------------------------------------------------------------------
@@ -65,14 +70,14 @@ def test_parse_codeowners_daemon_unavailable_fail_closed():
     c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
-        c.call("parse_codeowners", {"workspace_id": 1})
-    assert "E_HTTP_DAEMON_UNAVAILABLE" in str(ei.value)
+        c.call("parse_codeowners", {"workspace_instance_id": CANONICAL_INSTANCE})
+    # fail-closed 证据即异常类型本身（错误消息随传输层实现演进而变化）
 
 
 # ---------------------------------------------------------------------------
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_parse_codeowners_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
-    r = c2.call("parse_codeowners", {"workspace_id": 1})
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
+    r = c2.call("parse_codeowners", {"workspace_instance_id": CANONICAL_INSTANCE})
     assert isinstance(r, list)

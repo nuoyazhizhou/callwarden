@@ -16,34 +16,43 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
+from callwarden.config import get_http_authority_id
 
 
-@pytest.fixture(scope="module")
-def rpc():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+@pytest.fixture()
+def rpc(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
+
+
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
 
 
 def _call(rpc, method, params):
+    params = dict(params)
+    params.setdefault("workspace_instance_id", CANONICAL_INSTANCE)
     return rpc.call(method, params)
 
 
 def test_lsp_references_shape(rpc):
     out = _call(rpc, "lsp_references", {"file_path": "test.py", "line": 3, "character": 5})
     assert isinstance(out, dict)
-    assert out.get("file_path") == "test.py"
+    # 真相源（db_lsp.lsp_references）返回 {references,total,available}，
+    # 不含 file_path/line/character 回显——旧断言对着未落地契约编写。
     assert out.get("references") == []
+    assert out.get("total") == 0
     assert out.get("available") is False  # daemon 无 LSP server → 降级
 
 
 def test_lsp_references_defaults(rpc):
     out = _call(rpc, "lsp_references", {})
     assert isinstance(out, dict)
-    assert out.get("line") == 0
+    assert out.get("references") == []
+    assert out.get("total") == 0
     assert out.get("available") is False
 
 
@@ -54,7 +63,7 @@ def test_lsp_references_daemon_unavailable_fail_closed():
 
 
 def test_new_client_instance_stable(rpc):
-    c2 = HttpDaemonRpcClient()
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
     out = _call(c2, "lsp_references", {"file_path": "a.py", "line": 1, "character": 1})
     assert isinstance(out, dict)
     assert "available" in out

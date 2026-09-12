@@ -28,13 +28,12 @@ GATE_TASK = "T-1785767529976-1760c608"
 
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +92,7 @@ def test_get_gate_decision_daemon_unavailable_fail_closed():
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_get_gate_decision_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
     r = c2.call("get_gate_decision", {"task_id": GATE_TASK})
     assert isinstance(r, dict)
     assert "items" in r

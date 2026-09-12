@@ -23,19 +23,22 @@ sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
 
+# P0-COMPAT-v3（T-1788963104058-fdb2e848）：Rust native 路由要求显式 workspace 绑定
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入  # noqa: E402
 
-@pytest.fixture(scope="module")
-def rpc():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+
+@pytest.fixture()
+def rpc(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 def _call(rpc, params=None):
-    return rpc.call("get_clone_group_detail", params or {})
+    return rpc.call("get_clone_group_detail", {"workspace_instance_id": CANONICAL_INSTANCE, **(params or {})})
 
 
 def test_get_clone_group_detail_default_shape(rpc):
@@ -104,9 +107,10 @@ def test_get_clone_group_detail_members_limit(rpc):
 
 
 def test_get_clone_group_detail_missing_group_id(rpc):
-    """缺 group_id 参数：应报错（fail-closed）。"""
-    with pytest.raises(Exception):
-        _call(rpc, {})
+    """缺 group_id 参数：默认 0 → {"error": "group not found: 0"}（Python 真相源语义）。"""
+    out = _call(rpc, {})
+    assert isinstance(out, dict)
+    assert "error" in out
 
 
 def test_get_clone_group_detail_repeatable(rpc):

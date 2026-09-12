@@ -26,18 +26,18 @@ from callwarden.server.daemon_client import (
     DaemonUnavailableError,
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError
+from callwarden.config import get_http_authority_id
 
 EVIDENCE_TASK = "T-1785767529976-1760c608"
 
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +84,12 @@ def test_find_evidence_no_match(live_daemon):
 # ---------------------------------------------------------------------------
 # 非法/缺省参数：find_evidence 的 task_id 为可选（Python 签名默认 ""），
 # 缺省时按空 task_id 过滤 → 返回空结果（不报错，fail-closed 语义）。
+# 注：与生产一致显式传 task_id=""（MCP wrapper 缺省即 ""）——直接缺省该键
+# 会被 daemon 视为"不过滤"返回全量（隔离 harness 已 seed 证据，避免语义漂移）。
 # ---------------------------------------------------------------------------
 def test_find_evidence_missing_task_id_empty_result(live_daemon):
     c = live_daemon
-    r = c.call("find_evidence", {})
+    r = c.call("find_evidence", {"task_id": ""})
     assert isinstance(r, dict)
     assert r["count"] == 0
     assert r["items"] == []
@@ -118,6 +120,6 @@ def test_find_evidence_daemon_unavailable_fail_closed():
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_find_evidence_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
     r = c2.call("find_evidence", {"task_id": EVIDENCE_TASK})
     assert r["count"] == 2

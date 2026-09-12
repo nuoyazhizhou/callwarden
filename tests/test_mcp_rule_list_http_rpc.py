@@ -20,23 +20,32 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
+from callwarden.config import get_http_authority_id
 
 _SEVERITY_ORDER = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 
 
-@pytest.fixture(scope="module")
-def rpc():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+@pytest.fixture()
+def rpc(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
+
+
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
 
 
 def _call(rpc, params):
-    return rpc.call("rule_list", params)
+    return rpc.call("rule_list", _wsi(params))
 
+
+def _wsi(params):
+    params = dict(params)
+    params.setdefault("workspace_instance_id", CANONICAL_INSTANCE)
+    return params
 
 def test_rule_list_shape(rpc):
     """默认参数返回 rules/count 契约形状，且 count 与数组长度一致。"""
@@ -102,7 +111,7 @@ def test_rule_list_daemon_unavailable_fail_closed():
 
 def test_new_client_instance_stable(rpc):
     """新建 client 实例重复调用结果稳定（无连接态副作用）。"""
-    c2 = HttpDaemonRpcClient()
-    out = c2.call("rule_list", {})
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
+    out = c2.call("rule_list", _wsi({}))
     assert isinstance(out, dict)
     assert "count" in out

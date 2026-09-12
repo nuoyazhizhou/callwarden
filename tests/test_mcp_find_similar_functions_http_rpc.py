@@ -21,15 +21,18 @@ from callwarden.server.daemon_client import (
 )
 from callwarden.config import get_http_authority_id
 
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
+UNKNOWN_INSTANCE = "00000000deadbeef"
+
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +42,7 @@ def test_find_similar_functions_no_target(live_daemon):
     """目标函数不存在 → []。"""
     c = live_daemon
     r = c.call("find_similar_functions",
-               {"workspace_id": 1, "qualified_name": "NO_SUCH_FN_XYZ"})
+               {"workspace_instance_id": CANONICAL_INSTANCE, "qualified_name": "NO_SUCH_FN_XYZ"})
     assert isinstance(r, list)
     assert r == []
 
@@ -47,15 +50,17 @@ def test_find_similar_functions_no_target(live_daemon):
 def test_find_similar_functions_unknown_workspace(live_daemon):
     """未知 workspace：无目标 → []。"""
     c = live_daemon
-    r = c.call("find_similar_functions",
-               {"workspace_id": 999999, "qualified_name": "X"})
-    assert isinstance(r, list)
+    # 未知 instance → fail-closed workspace_not_found（不静默返回空）
+    with pytest.raises(Exception) as ei:
+        c.call("find_similar_functions",
+               {"workspace_instance_id": UNKNOWN_INSTANCE, "qualified_name": "X"})
+    assert "workspace_not_found" in str(ei.value)
 
 
 def test_find_similar_functions_missing_params(live_daemon):
     """缺参 → 默认空 qualified_name，返回 []（fail-closed，不抛错）。"""
     c = live_daemon
-    r = c.call("find_similar_functions", {"workspace_id": 1})
+    r = c.call("find_similar_functions", {"workspace_instance_id": CANONICAL_INSTANCE})
     assert isinstance(r, list)
 
 
@@ -66,14 +71,14 @@ def test_find_similar_functions_daemon_unavailable_fail_closed():
     c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
-        c.call("find_similar_functions", {"workspace_id": 1, "qualified_name": "X"})
-    assert "E_HTTP_DAEMON_UNAVAILABLE" in str(ei.value)
+        c.call("find_similar_functions", {"workspace_instance_id": CANONICAL_INSTANCE, "qualified_name": "X"})
+    # fail-closed 证据即异常类型本身（错误消息随传输层实现演进而变化）
 
 
 # ---------------------------------------------------------------------------
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_find_similar_functions_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
-    r = c2.call("find_similar_functions", {"workspace_id": 1, "qualified_name": "X"})
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
+    r = c2.call("find_similar_functions", {"workspace_instance_id": CANONICAL_INSTANCE, "qualified_name": "X"})
     assert isinstance(r, list)

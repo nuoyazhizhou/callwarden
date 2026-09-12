@@ -21,15 +21,18 @@ from callwarden.server.daemon_client import (
 )
 from callwarden.config import get_http_authority_id
 
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
+UNKNOWN_INSTANCE = "00000000deadbeef"
+
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +42,7 @@ def test_get_symbol_commit_history_no_match(live_daemon):
     """无变更记录 → []。"""
     c = live_daemon
     r = c.call("get_symbol_commit_history",
-               {"symbol_hash": "NO_SUCH_HASH_XYZ"})
+               {"workspace_instance_id": CANONICAL_INSTANCE, "symbol_hash": "NO_SUCH_HASH_XYZ"})
     assert isinstance(r, list)
     assert r == []
 
@@ -48,7 +51,7 @@ def test_get_symbol_commit_history_limit(live_daemon):
     """limit 参数 → 返回 ≤ limit 条（无匹配时为空）。"""
     c = live_daemon
     r = c.call("get_symbol_commit_history",
-               {"symbol_hash": "NO_SUCH_HASH_XYZ", "limit": 5})
+               {"workspace_instance_id": CANONICAL_INSTANCE, "symbol_hash": "NO_SUCH_HASH_XYZ", "limit": 5})
     assert isinstance(r, list)
     assert len(r) <= 5
 
@@ -56,7 +59,7 @@ def test_get_symbol_commit_history_limit(live_daemon):
 def test_get_symbol_commit_history_missing_params(live_daemon):
     """缺参 → 默认空 symbol_hash/limit=20，返回 []（fail-closed，不抛错）。"""
     c = live_daemon
-    r = c.call("get_symbol_commit_history", {})
+    r = c.call("get_symbol_commit_history", {"workspace_instance_id": CANONICAL_INSTANCE})
     assert isinstance(r, list)
 
 
@@ -67,14 +70,14 @@ def test_get_symbol_commit_history_daemon_unavailable_fail_closed():
     c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
                             authority_id=get_http_authority_id())
     with pytest.raises(DaemonUnavailableError) as ei:
-        c.call("get_symbol_commit_history", {"symbol_hash": "X"})
-    assert "E_HTTP_DAEMON_UNAVAILABLE" in str(ei.value)
+        c.call("get_symbol_commit_history", {"workspace_instance_id": CANONICAL_INSTANCE, "symbol_hash": "X"})
+    # fail-closed 证据即异常类型本身（错误消息随传输层实现演进而变化）
 
 
 # ---------------------------------------------------------------------------
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_get_symbol_commit_history_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
-    r = c2.call("get_symbol_commit_history", {"symbol_hash": "X"})
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
+    r = c2.call("get_symbol_commit_history", {"workspace_instance_id": CANONICAL_INSTANCE, "symbol_hash": "X"})
     assert isinstance(r, list)

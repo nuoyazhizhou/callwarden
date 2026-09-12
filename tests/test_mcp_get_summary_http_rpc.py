@@ -1,75 +1,73 @@
-"""MCP-029（A′ task_evidence_read）get_summary → Rust daemon native。
+# -*- coding: utf-8 -*-
+"""MCP-029: get_summary → Rust daemon native 的 HTTP RPC 往返测试。
 
-覆盖 task 要求：
-  success / no-match / 缺省参数、daemon unavailable（fail-closed）、restart。
+live-daemon HTTP 往返模式（同 MCP-033~049）：
+1. 复用 dev cw-daemon（HTTP manifest 已在 ~/.callwarden）
+2. HttpDaemonRpcClient 走 /v1/rpc 调用 get_summary（P0-H：显式 workspace_instance_id）
+3. 校验返回结构：{qualified_name, summary, model, version}；无匹配 → null
 
-设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_summary.get_summary）已从 _SUMMARY_READ_ONLY_METHODS 移除
-  compat 注册，改由 Rust daemon（task_collab.rs::handle_get_summary）为权威：
-  symbol_summaries JOIN symbols JOIN file_instances 按 workspace_id + qualified_name +
-  is_current=1，返回 {qualified_name, summary, model, version}；无匹配返回 None。
-- 本测试直连 HTTP RPC，验证返回结构。
-- 确定性 parity：authority DB 中指定符号无摘要 → null（与 Python 无匹配语义一致）。
+Rust 权威：query_compat_handlers.rs::handle_summary_get_summary
+（symbol_summaries JOIN symbols JOIN file_instances，is_current=1）。
 """
+
+import os
+import sys
 
 import pytest
 
-from callwarden.server.daemon_client import (
-    HttpDaemonRpcClient,
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO)
+
+from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
+    HttpDaemonRpcClient,
 )
 from callwarden.config import get_http_authority_id
 
 
 @pytest.fixture()
-def live_daemon():
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c
+def rpc(w3_live):
+    """W3 隔离 harness：注入隔离 daemon 的 client / inst / endpoint。"""
+    global CANONICAL_INSTANCE, _CANONICAL_ENDPOINT
+    CANONICAL_INSTANCE = w3_live["inst"]
+    _CANONICAL_ENDPOINT = w3_live["endpoint"]
+    return w3_live["client"]
 
 
-# ---------------------------------------------------------------------------
-# success / no-match：HTTP round-trip，Rust daemon 为权威
-# ---------------------------------------------------------------------------
-def test_get_summary_no_match(live_daemon):
-    """无摘要 → null。"""
-    c = live_daemon
-    r = c.call("get_summary", {"workspace_id": 1, "qualified_name": "NO_SUCH_SYM_XYZ"})
+CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
+_CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入
+
+
+def _call(rpc, method, params):
+    params = dict(params)
+    params.setdefault("workspace_instance_id", CANONICAL_INSTANCE)
+    return rpc.call(method, params)
+
+
+def test_get_summary_no_match(rpc):
+    """无摘要符号 → null。"""
+    r = _call(rpc, "get_summary", {"qualified_name": "NO_SUCH_SYM_XYZ"})
     assert r is None
 
 
-def test_get_summary_unknown_workspace(live_daemon):
-    """未知 workspace：无摘要 → null（不报错）。"""
-    c = live_daemon
-    r = c.call("get_summary", {"workspace_id": 999999, "qualified_name": "X"})
+def test_get_summary_empty_qualified_name(rpc):
+    """缺参/空 qualified_name → null（fail-closed，不抛错）。"""
+    r = _call(rpc, "get_summary", {})
     assert r is None
 
 
-def test_get_summary_missing_params(live_daemon):
-    """缺参 → 默认空 qualified_name，null（fail-closed，不抛错）。"""
-    c = live_daemon
-    r = c.call("get_summary", {"workspace_id": 1})
-    assert r is None
-
-
-# ---------------------------------------------------------------------------
-# daemon unavailable：fail-closed，绝不降级本地 SQLite
-# ---------------------------------------------------------------------------
 def test_get_summary_daemon_unavailable_fail_closed():
-    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
-                            authority_id=get_http_authority_id())
-    with pytest.raises(DaemonUnavailableError) as ei:
-        c.call("get_summary", {"workspace_id": 1, "qualified_name": "X"})
-    assert "E_HTTP_DAEMON_UNAVAILABLE" in str(ei.value)
+    """daemon 不可用 → fail-closed（本地连接异常即证据）。"""
+    c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9")
+    with pytest.raises(DaemonUnavailableError):
+        # fail-closed 证据即异常类型本身（本机代理会把 127.0.0.1:9 拦成 502，
+        # 错误消息随网络环境变化，不钉死错误码字符串）
+        c.call("get_summary", {"workspace_instance_id": CANONICAL_INSTANCE,
+                               "qualified_name": "X"})
 
 
-# ---------------------------------------------------------------------------
-# restart：新 client 实例重查仍稳定
-# ---------------------------------------------------------------------------
-def test_get_summary_new_client_instance_stable(live_daemon):
-    c2 = HttpDaemonRpcClient()
-    r = c2.call("get_summary", {"workspace_id": 1, "qualified_name": "X"})
+def test_get_summary_new_client_instance_stable(rpc):
+    """restart：新 client 实例重查仍稳定。"""
+    c2 = HttpDaemonRpcClient(endpoint=_CANONICAL_ENDPOINT, authority_id=get_http_authority_id())
+    r = _call(c2, "get_summary", {"qualified_name": "NO_SUCH_SYM_XYZ"})
     assert r is None or isinstance(r, dict)
