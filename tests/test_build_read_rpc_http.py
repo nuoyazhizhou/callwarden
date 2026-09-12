@@ -16,10 +16,10 @@ get_active_build_context / get_resolved_edges / count_resolved_edges）的 6 问
    时异常原样传播，不回退本地 SQL。
 ⑤ 跨 workspace 隔离：不同 db_path → 不同 workspace_instance_id 注入，
    同一 db_path 幂等复用。
-⑥ Python fallback 边界：HTTP 模式（默认）5 工具走 client 便捷方法且
-   client 失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入
-   route_worker_call 本地 db 回退。
+⑥ Python fallback 边界：工具层已 `_route` 化（常量表达式），HTTP/local 分流
+   整体下沉到 `route_rpc`；本文件 ⑥ 组（TestToolRouteContract）只锁定工具
+   层「下发哪个 RPC、参数逐字透传（含默认值）、op_class=READ_ONLY、失败
+   fail-closed 且不回落本地 get_db」的契约，不再 patch `_get_daemon_client`。
 """
 
 from unittest.mock import MagicMock, patch
@@ -48,14 +48,7 @@ CONVENIENCE_CASES = [
      {"workspace_id": 101, "build_context_hash": "abc123"}),
 ]
 
-# 工具名 → 业务参数（tools_rules 注册的 MCP 工具签名）
-RULES_TOOL_CASES = [
-    ("list_build_contexts", {"workspace_id": 101}),
-    ("get_build_context", {"workspace_id": 101, "build_context_hash": "abc123"}),
-    ("get_active_build_context", {"workspace_id": 101}),
-    ("get_resolved_edges", {"workspace_id": 101, "build_context_hash": "abc123"}),
-    ("count_resolved_edges", {"workspace_id": 101, "build_context_hash": "abc123"}),
-]
+
 
 
 def _make_client() -> HttpDaemonRpcClient:
@@ -271,155 +264,114 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约（HTTP/local 分流已下沉到 route_rpc）
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。"""
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 `HttpDaemonRpcClient` 便捷方法。
 
-    def _monkeypatch_http_mode(self, monkeypatch, client):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_rules._get_daemon_client",
-            lambda: client,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_rules._get_db_path_for_daemon",
-            lambda: DB_A,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_rules.is_http_transport_enabled",
-            lambda: True,
-        )
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：
+    `server/tools/tools_rules.py:39` 为
+    `from ..daemon_client import route_rpc as _route`，5 个 build 读工具一律
+    `return _route('<rpc method>', {...}, 'READ_ONLY')`（build_context.list /
+    .get / .active / .resolved_edges / .count_resolved_edges，tools_rules.py:81
+    /:91/:100/:121/:137）。旧用例 patch `tools_rules._get_daemon_client` /
+    `_get_db_path_for_daemon` 并断言客户端便捷方法被调用——这些模块属性虽仍在
+    （故 monkeypatch 不报错）但已无调用点，于是断言恒为 `Called 0 times`；且
+    `is_http_transport_enabled()` 已被 `_route` 化后的常量表达式取代。
 
-    def test_http_mode_fail_closed_no_db_fallback(self, monkeypatch):
-        """HTTP 模式（默认）5 工具走 client 便捷方法；client 抛错时 fail-closed
-        传播，不调用 get_db（无 SQL 回退）。"""
-        client = MagicMock()
-        for method, _rpc, _params in CONVENIENCE_CASES:
-            getattr(client, method).side_effect = DaemonRemoteError(
-                "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-            )
-        self._monkeypatch_http_mode(monkeypatch, client)
-        rules_tools = _register_tools(tools_rules)
+    HTTP / local / compat-worker 的分流语义整体下沉到 `route_rpc`，由
+    `route_rpc` 自身的单测覆盖；工具层只需锁定「下发哪个 RPC、参数是否逐字透传
+    （含默认值）、op_class 是否为 READ_ONLY、失败是否 fail-closed 且不回落
+    本地 get_db」。
+    """
+
+    ROUTE_CASES = [
+        ("list_build_contexts", "build_context.list",
+         {"workspace_id": 101},
+         {"workspace_id": 101}),
+        ("get_build_context", "build_context.get",
+         {"workspace_id": 101, "build_context_hash": "abc123"},
+         {"workspace_id": 101, "build_context_hash": "abc123"}),
+        ("get_active_build_context", "build_context.active",
+         {"workspace_id": 101},
+         {"workspace_id": 101}),
+        ("get_resolved_edges", "build_context.resolved_edges",
+         {"workspace_id": 101, "build_context_hash": "abc123"},
+         {"workspace_id": 101, "build_context_hash": "abc123",
+          "caller_symbol_id": None, "limit": 50}),
+        ("count_resolved_edges", "build_context.count_resolved_edges",
+         {"workspace_id": 101, "build_context_hash": "abc123"},
+         {"workspace_id": 101, "build_context_hash": "abc123"}),
+    ]
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_rules_tools_route_read_only_rpc(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs, expect_params
+    ):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_rules, "_route", fake_route)
+        q = _register_tools(tools_rules)
         with patch("callwarden.server.tools.tools_rules.get_db") as mock_db:
-            for tool_name, params in RULES_TOOL_CASES:
-                with pytest.raises(DaemonRemoteError):
-                    rules_tools[tool_name](**params)
+            out = q[tool_name](**call_kwargs)
             mock_db.assert_not_called()
-        client.list_build_contexts.assert_called_once_with(
-            workspace_id=101, db_path=DB_A,
-        )
-        client.get_build_context.assert_called_once_with(
-            workspace_id=101, build_context_hash="abc123", db_path=DB_A,
-        )
-        client.get_active_build_context.assert_called_once_with(
-            workspace_id=101, db_path=DB_A,
-        )
-        client.get_resolved_edges.assert_called_once_with(
-            workspace_id=101, build_context_hash="abc123",
-            caller_symbol_id=None, limit=50, db_path=DB_A,
-        )
-        client.count_resolved_edges.assert_called_once_with(
-            workspace_id=101, build_context_hash="abc123", db_path=DB_A,
-        )
+        assert out == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
 
-    def test_http_mode_client_result_passthrough(self, monkeypatch):
-        """HTTP 模式 5 工具直接返回 client 便捷方法结果（不加工不包装）。"""
-        client = MagicMock()
-        client.list_build_contexts.return_value = [
-            {"build_context_hash": "abc123", "name": "default"}
-        ]
-        client.get_build_context.return_value = {
-            "workspace_id": 101, "build_context_hash": "abc123", "name": "default",
-            "compile_flags": [], "defines": {}, "include_paths": [],
-            "is_active": True, "created_at": 123,
-        }
-        client.get_active_build_context.return_value = None
-        client.get_resolved_edges.return_value = []
-        client.count_resolved_edges.return_value = {"count": 0}
-        self._monkeypatch_http_mode(monkeypatch, client)
-        rules_tools = _register_tools(tools_rules)
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_rules_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs, expect_params
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
 
-        assert rules_tools["list_build_contexts"](workspace_id=101)[0]["name"] == "default"
-        assert rules_tools["get_build_context"](
-            workspace_id=101, build_context_hash="abc123",
-        )["is_active"] is True
-        assert rules_tools["get_active_build_context"](workspace_id=101) is None
-        assert rules_tools["get_resolved_edges"](
-            workspace_id=101, build_context_hash="abc123",
-        ) == []
-        assert rules_tools["count_resolved_edges"](
-            workspace_id=101, build_context_hash="abc123",
-        ) == {"count": 0}
+        monkeypatch.setattr(tools_rules, "_route", fake_route)
+        q = _register_tools(tools_rules)
+        with patch("callwarden.server.tools.tools_rules.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                q[tool_name](**call_kwargs)
+            mock_db.assert_not_called()
 
-    def test_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        """is_http_transport_enabled()=False + local 模式 → 5 工具走
-        route_worker_call 本地 db 回退（get_db 被调用，db_toolchain 查询函数
-        被调用）。"""
+    def test_runtime_role_is_never_client_side_branched(self, monkeypatch):
+        """工具层不做 HTTP/local 分支：无论 transport 如何都走同一 `_route` 契约。
+
+        stale 依据：旧用例 monkeypatch
+        `daemon_client.is_http_transport_enabled` / `get_daemon_mode` 后期待工具
+        改走本地 db；`_route` 化后工具是常量表达式，分流只发生在 `route_rpc`
+        内部（其单测负责），工具层断言不再随 transport 变化。
+        """
+        calls = []
+
+        def fake_route(method, params, op_class):
+            calls.append((method, op_class))
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_rules, "_route", fake_route)
         monkeypatch.setattr(
-            "callwarden.server.tools.tools_rules.is_http_transport_enabled",
-            lambda: False,
+            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
         )
         monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
+            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
         )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode",
-            lambda: "local",
-        )
-        rules_tools = _register_tools(tools_rules)
-
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-
-        def _fake_ctx(**over):
-            ctx = MagicMock()
-            base = {
-                "workspace_id": 101, "build_context_hash": "abc123",
-                "name": "default", "compile_flags": [], "defines": {},
-                "include_paths": [], "is_active": True, "created_at": 123,
-            }
-            base.update(over)
-            ctx.to_dict.return_value = base
-            return ctx
-
-        fake_list = MagicMock(return_value=[_fake_ctx()])
-        fake_get = MagicMock(return_value=_fake_ctx())
-        fake_get_active = MagicMock(return_value=None)
-        fake_get_edges = MagicMock(return_value=[])
-        fake_count = MagicMock(return_value=3)
-
-        with patch("callwarden.server.tools.tools_rules.get_db") as mock_get_db, \
-                patch("callwarden.db.db_toolchain.list_build_contexts", fake_list), \
-                patch("callwarden.db.db_toolchain.get_build_context", fake_get), \
-                patch("callwarden.db.db_toolchain.get_active_build_context", fake_get_active), \
-                patch("callwarden.db.db_toolchain.get_resolved_edges", fake_get_edges), \
-                patch("callwarden.db.db_toolchain.count_resolved_edges", fake_count):
-            mock_get_db.return_value = mock_db
-
-            r1 = rules_tools["list_build_contexts"](workspace_id=101)
-            r2 = rules_tools["get_build_context"](
-                workspace_id=101, build_context_hash="abc123",
-            )
-            r3 = rules_tools["get_active_build_context"](workspace_id=101)
-            r4 = rules_tools["get_resolved_edges"](
-                workspace_id=101, build_context_hash="abc123",
-            )
-            r5 = rules_tools["count_resolved_edges"](
-                workspace_id=101, build_context_hash="abc123",
-            )
-
-            assert r1[0]["build_context_hash"] == "abc123"
-            assert r2["is_active"] is True
-            assert r3 is None
-            assert r4 == []
-            assert r5 == {"count": 3}
-            fake_list.assert_called_once_with(mock_db.conn, 101)
-            fake_get.assert_called_once_with(mock_db.conn, 101, "abc123")
-            fake_get_active.assert_called_once_with(mock_db.conn, 101)
-            fake_get_edges.assert_called_once_with(
-                mock_db.conn, 101, "abc123",
-                caller_symbol_id=None, limit=50,
-            )
-            fake_count.assert_called_once_with(mock_db.conn, 101, "abc123")
+        q = _register_tools(tools_rules)
+        assert q["list_build_contexts"](workspace_id=101) == {"ok": True}
+        assert ("build_context.list", "READ_ONLY") in calls

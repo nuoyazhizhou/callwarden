@@ -46,30 +46,36 @@ def test_cli093_tree_routes_to_daemon(monkeypatch, capsys):
     assert "子任务" in out
 
 
-def test_cli093_tree_task_not_found(monkeypatch, capsys):
-    """task.status_tree 返回 task_not_found -> 输出 not found，不崩溃。"""
+def test_cli093_tree_task_not_found(monkeypatch):
+    """task.status_tree 返回 task_not_found -> DaemonRemoteError 原样上抛。
+
+    stale 依据：GOV-FIX-07（cli/main.py:1774-1783）起 daemon 业务拒绝
+    （DaemonRemoteError）由 `_run_subcommand_mode` 统一转 RC=2；`_print_task_show`
+    不吞错误。旧断言期待返回 True 并打印 not found，属已失效的行为。
+    """
     def _boom(method, params, fallback_fn):
         raise DaemonRemoteError("task_not_found", "no such task")
 
     monkeypatch.setattr(main_mod, "route_task_read", _boom)
 
-    rc = main_mod._print_task_show(None, "T-nope", flat=False)
-    assert rc is True
-    out = capsys.readouterr().out
-    assert "not found" in out.lower()
+    with pytest.raises(DaemonRemoteError) as ei:
+        main_mod._print_task_show(None, "T-nope", flat=False)
+    assert ei.value.code == "task_not_found"
 
 
-def test_cli093_tree_daemon_unavailable(monkeypatch, capsys):
-    """daemon 不可用 -> 输出「daemon 不可用」，fail-closed。"""
+def test_cli093_tree_daemon_unavailable(monkeypatch):
+    """daemon 不可用 -> DaemonUnavailableError 原样上抛（fail-closed，无本地回退）。
+
+    stale 依据：同 test_cli090，GOV-FIX-08 起 `_print_task_show` 不吞
+    DaemonUnavailableError，RC=2 兜底在 `_run_subcommand_mode`。
+    """
     def _boom(method, params, fallback_fn):
         raise DaemonUnavailableError("daemon 连接失败")
 
     monkeypatch.setattr(main_mod, "route_task_read", _boom)
 
-    rc = main_mod._print_task_show(None, "T-1", flat=False)
-    assert rc is True
-    out = capsys.readouterr().out
-    assert "daemon 不可用" in out
+    with pytest.raises(DaemonUnavailableError):
+        main_mod._print_task_show(None, "T-1", flat=False)
 
 
 def test_cli093_tree_formats_ratio_as_percent(monkeypatch, capsys):

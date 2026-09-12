@@ -117,7 +117,13 @@ def test_cli080_commits_restart_consistent(monkeypatch, capsys):
 
 
 def test_cli080_commits_local_fallback_forbidden(monkeypatch):
-    """local fallback 为 forbidden 回调：禁止 db.get_task_commits 本地读。"""
+    """local fallback 必须经 daemon 路由：`RpcDBProxy` 无本地 SQLite 路径。
+
+    stale 依据：`RpcDBProxy.__getattr__` 把未显式实现的方法动态转发到
+    `route_rpc`（cli/main.py:1312），故 fallback 被调时既不会读写本地 db，也
+    不会像旧断言那样抛 `DaemonUnavailableError`。这里锁「转发到 daemon 路由」
+    这一机制本身，避免依赖 daemon 是否存在的环境差异。
+    """
     captured = {}
 
     def _fake_route_read(method, params, fallback):
@@ -129,5 +135,15 @@ def test_cli080_commits_local_fallback_forbidden(monkeypatch):
     monkeypatch.setattr(main_mod, "route_task_read", _fake_route_read)
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     main_mod._print_task_link_section(proxy, "T-1")
-    with pytest.raises(main_mod.DaemonUnavailableError):
-        captured["fb"]()
+
+    seen = {}
+
+    def _fake_route_rpc(method, params, op_class):
+        seen["method"] = method
+        return {"ok": True}
+
+    monkeypatch.setattr(main_mod, "route_rpc", _fake_route_rpc)
+    captured["fb"]()
+    assert seen.get("method") == "task.get_commits", (
+        f"本地回退必须经 daemon 路由（禁止本地 SQLite），实际: {seen}"
+    )
