@@ -132,84 +132,52 @@ class TestTaskReopenArgparse:
 
             db.close()
 
-    def test_reopen_default_reviewer(self):
-        """默认 reviewer 应为 'reviewer'"""
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            from callwarden.db import CodeGraphDB
-            db = CodeGraphDB(db_path)
+    def test_reopen_default_reviewer(self, db, route_stub):
+        """默认 reviewer 应为 'reviewer'，并经 task.reopen RPC 下发。
 
-            # 创建一个任务并 close 它，然后 reopen
-            task_id = db.task_create(title="test", steps=[], creator="test")
-            # 直接通过 SQL 推进到 closed
-            import time
-            now = time.time()
-            db.conn.execute(
-                "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
-                ("closed", now, now, task_id),
-            )
-            db.conn.commit()
+        stale 依据（A 桶 / daemon authority 化）：CLI 已改走
+        `route_task_write("task.reopen", {...}, _local_reopen)`，本地
+        `db.task_reopen` 不再是 authority；旧断言（直连本地 CodeGraphDB 并检查
+        本地 status）在无 daemon 环境下只会撞 `E_HTTP_MANIFEST_STALE`。
+        改为 RPC 契约断言。
+        """
+        route_stub.reply("task.reopen", {
+            "task_id": "T-1", "previous_status": "closed", "status": "in_progress",
+        })
+        result = cli_main._handle_task(["reopen", "T-1"], db)
+        assert result is True
+        params = route_stub.last_params("task.reopen")
+        assert params["task_id"] == "T-1"
+        assert params["reviewer"] == "reviewer", (
+            f"--reviewer 缺省应为 'reviewer'，实际: {params.get('reviewer')!r}"
+        )
 
-            # 调用 reopen（不带 --reviewer，应使用默认 'reviewer'）
-            result = cli_main._handle_task(["reopen", task_id], db)
-            assert result is True
+    def test_reopen_custom_reviewer(self, db, route_stub):
+        """--reviewer 自定义值应透传到 task.reopen RPC（stale 依据同上一用例）。"""
+        route_stub.reply("task.reopen", {
+            "task_id": "T-2", "previous_status": "closed", "status": "in_progress",
+        })
+        result = cli_main._handle_task(
+            ["reopen", "T-2", "--reviewer", "agent-007"], db
+        )
+        assert result is True
+        assert route_stub.last_params("task.reopen")["reviewer"] == "agent-007"
 
-            # 验证 reviewer 不影响状态（已 reopen 即可）
-            cur = db.conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
-            assert cur.fetchone()["status"] == "in_progress"
+    def test_reopen_reason_optional(self, db, route_stub):
+        """reason 参数可选：给出时透传，缺省为空串（stale 依据同上）。"""
+        route_stub.reply("task.reopen", {
+            "task_id": "T-3", "previous_status": "applied", "status": "in_progress",
+        })
+        cli_main._handle_task(
+            ["reopen", "T-3", "--reason", "found bug"], db
+        )
+        assert route_stub.last_params("task.reopen")["reason"] == "found bug"
 
-            db.close()
-
-    def test_reopen_custom_reviewer(self):
-        """支持自定义 reviewer"""
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            from callwarden.db import CodeGraphDB
-            db = CodeGraphDB(db_path)
-
-            task_id = db.task_create(title="test", steps=[], creator="test")
-            import time
-            now = time.time()
-            db.conn.execute(
-                "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
-                ("closed", now, now, task_id),
-            )
-            db.conn.commit()
-
-            # 调用 reopen 带 --reviewer
-            result = cli_main._handle_task(
-                ["reopen", task_id, "--reviewer", "agent-007"], db
-            )
-            assert result is True
-
-            db.close()
-
-    def test_reopen_reason_optional(self):
-        """reason 参数可选"""
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            from callwarden.db import CodeGraphDB
-            db = CodeGraphDB(db_path)
-
-            task_id = db.task_create(title="test", steps=[], creator="test")
-            import time
-            now = time.time()
-            db.conn.execute(
-                "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
-                ("closed", now, now, task_id),
-            )
-            db.conn.commit()
-
-            # 调用 reopen 带 --reason
-            result = cli_main._handle_task(
-                ["reopen", task_id, "--reason", "found bug"], db
-            )
-            assert result is True
-
-            db.close()
+        route_stub.reply("task.reopen", {
+            "task_id": "T-4", "previous_status": "closed", "status": "in_progress",
+        })
+        cli_main._handle_task(["reopen", "T-4"], db)
+        assert route_stub.last_params("task.reopen")["reason"] == ""
 
 
 # ============================================
@@ -218,146 +186,83 @@ class TestTaskReopenArgparse:
 
 
 class TestTaskReopenE2E:
-    """端到端测试 cw task reopen 命令"""
+    """cw task reopen 的 CLI 侧 RPC 契约与输出渲染。
 
-    def _push_to_status(self, db, task_id, target_status):
-        """把任务推进到指定状态"""
-        import time
-        now = time.time()
-        if target_status == TASK_STATUS_OPEN:
-            return
-        # 添加一个步骤（如果任务没有步骤）
-        cur = db.conn.execute(
-            "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ?",
-            (task_id,),
-        )
-        if cur.fetchone()["cnt"] == 0:
-            step_id = "S-test-" + task_id[-8:]
-            db.conn.execute(
-                "INSERT INTO task_steps (id, task_id, step_index, action, target_file, "
-                "target_symbol, check_items, status, result, created_at, completed_at) "
-                "VALUES (?, ?, 0, 'annotate', 'test.py', '', '', 'done', '', ?, ?)",
-                (step_id, task_id, now, now),
-            )
-            db.conn.commit()
+    stale 依据（A 桶 / daemon authority 化）：任务状态迁移（review/applied/
+    closed → in_progress）与祖父链递归 reopen 已由 daemon 承接（db 级语义见
+    tests/test_task_reopen.py、tests/test_task_reopen_consistency.py）。
+    CLI 现在只负责 ``route_task_write("task.reopen", …)`` 下发 + 渲染 daemon
+    回包/错误信封。旧断言直连本地 CodeGraphDB 并检查本地行，在 daemon
+    authority 下既不再成立，也会在无 daemon 时撞 ``E_HTTP_MANIFEST_STALE``。
+    """
 
-        db.conn.execute(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-            (TASK_STATUS_IN_PROGRESS, now, task_id),
-        )
-        db.conn.commit()
-        if target_status == TASK_STATUS_IN_PROGRESS:
-            return
-        db.conn.execute(
-            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-            (TASK_STATUS_REVIEW, now, task_id),
-        )
-        db.conn.commit()
-        if target_status == TASK_STATUS_REVIEW:
-            return
-        db.conn.execute(
-            "UPDATE tasks SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
-            (TASK_STATUS_APPLIED, now, now, task_id),
-        )
-        db.conn.commit()
-        if target_status == TASK_STATUS_APPLIED:
-            return
-        db.conn.execute(
-            "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
-            (TASK_STATUS_CLOSED, now, now, task_id),
-        )
-        db.conn.commit()
-
-    def test_reopen_closed_task_e2e(self, db, capsys):
-        """端到端：reopen closed 任务 → in_progress"""
-        task_id = db.task_create(
-            title="test task",
-            description="test",
-            steps=[],
-            creator="test",
-        )
-        self._push_to_status(db, task_id, TASK_STATUS_CLOSED)
-
-        # 调用 CLI handler
+    def test_reopen_closed_task_e2e(self, db, route_stub, capsys):
+        """closed 任务：下发 task.reopen 并渲染成功回包。"""
+        route_stub.reply("task.reopen", {
+            "task_id": "T-1", "previous_status": "closed", "status": "in_progress",
+        })
         result = cli_main._handle_task(
-            _make_argv(task_id=task_id, reason="found bug after apply"),
-            db,
+            _make_argv(task_id="T-1", reason="found bug after apply"), db
         )
-
         assert result is True
-        captured = capsys.readouterr()
-        assert "in_progress" in captured.out or "重新打开" in captured.out
+        out = capsys.readouterr().out
+        assert "重新打开" in out or "in_progress" in out
+        params = route_stub.last_params("task.reopen")
+        assert params["task_id"] == "T-1"
+        assert params["reason"] == "found bug after apply"
 
-        # 验证 DB 状态
-        cur = db.conn.execute("SELECT status, applied_at, closed_at FROM tasks WHERE id = ?", (task_id,))
-        row = cur.fetchone()
-        assert row["status"] == TASK_STATUS_IN_PROGRESS
-        assert row["applied_at"] is None
-        assert row["closed_at"] is None
-
-    def test_reopen_applied_task_e2e(self, db, capsys):
-        """端到端：reopen applied 任务 → in_progress"""
-        task_id = db.task_create(title="test", steps=[], creator="test")
-        self._push_to_status(db, task_id, TASK_STATUS_APPLIED)
-
-        result = cli_main._handle_task(_make_argv(task_id=task_id), db)
-
+    def test_reopen_applied_task_e2e(self, db, route_stub):
+        """applied 任务：previous_status 取 daemon 回包并渲染。"""
+        route_stub.reply("task.reopen", {
+            "task_id": "T-2", "previous_status": "applied", "status": "in_progress",
+        })
+        result = cli_main._handle_task(_make_argv(task_id="T-2"), db)
         assert result is True
-        cur = db.conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
-        assert cur.fetchone()["status"] == TASK_STATUS_IN_PROGRESS
+        assert route_stub.last_params("task.reopen")["task_id"] == "T-2"
 
-    def test_reopen_open_task_fails_e2e(self, db, capsys):
-        """端到端：reopen open 任务 → 失败提示"""
-        task_id = db.task_create(title="test", steps=[], creator="test")
-        # 保持 open
+    def test_reopen_open_task_fails_e2e(self, db, route_stub, capsys):
+        """open 任务无需 reopen：daemon 错误信封 → CLI 渲染并 RC=2。"""
+        route_stub.reply("task.reopen", {
+            "error": "任务当前状态为 'open'，无需重新打开",
+            "task_id": "T-3",
+            "status": "open",
+        })
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main._handle_task(_make_argv(task_id="T-3"), db)
+        # GOV-FIX-08：daemon/传输错误路径禁止 RC=0 假成功
+        assert exc_info.value.code == 2
+        out = capsys.readouterr().out
+        assert "无需重新打开" in out or "失败" in out
 
-        result = cli_main._handle_task(_make_argv(task_id=task_id), db)
+    def test_reopen_nonexistent_task_e2e(self, db, route_stub, capsys):
+        """任务不存在：daemon 错误信封 → CLI 渲染并 RC=2。"""
+        route_stub.reply("task.reopen", {
+            "error": "未找到任务: T-nonexistent",
+            "task_id": "T-nonexistent",
+        })
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main._handle_task(_make_argv(task_id="T-nonexistent"), db)
+        assert exc_info.value.code == 2
+        out = capsys.readouterr().out
+        assert "未找到任务" in out or "失败" in out
 
-        assert result is True  # 返回 True 但输出错误
-        captured = capsys.readouterr()
-        # i18n 可能是中文（"失败"/"无需"）或英文（"failed"/"no need"），都应通过
-        out_lower = captured.out.lower()
-        assert "失败" in captured.out or "无需" in captured.out or \
-               "failed" in out_lower or "no need" in out_lower
+    def test_reopen_propagates_to_parent_e2e(self, db, route_stub):
+        """子任务 reopen：CLI 只如实下发子任务 id，祖父链递归由 daemon 承接。
 
-    def test_reopen_nonexistent_task_e2e(self, db, capsys):
-        """端到端：reopen 不存在的任务 → 失败"""
-        result = cli_main._handle_task(_make_argv(task_id="T-nonexistent"), db)
-
-        assert result is True
-        captured = capsys.readouterr()
-        # i18n 可能是中文（"失败"/"未找到"）或英文（"failed"/"not found"），都应通过
-        out_lower = captured.out.lower()
-        assert "失败" in captured.out or "未找到" in captured.out or \
-               "failed" in out_lower or "not found" in out_lower
-
-    def test_reopen_propagates_to_parent_e2e(self, db, capsys):
-        """端到端：reopen 子任务时，祖父任务链也应 reopen"""
-        grandparent_id = db.task_create(title="grandparent", steps=[], creator="test")
-        parent_id = db.task_create_subtask(
-            parent_task_id=grandparent_id,
-            title="parent",
-            steps=[],
-            creator="test",
-        )
-
-        self._push_to_status(db, parent_id, TASK_STATUS_CLOSED)
-        self._push_to_status(db, grandparent_id, TASK_STATUS_CLOSED)
-
+        db 级递归语义由 tests/test_task_reopen.py 与
+        tests/test_task_reopen_consistency.py 覆盖；本用例锁 CLI→RPC 契约
+        （子任务 id 不在 CLI 侧被截断/改写）。
+        """
+        route_stub.reply("task.reopen", {
+            "task_id": "T-child", "previous_status": "closed", "status": "in_progress",
+        })
         result = cli_main._handle_task(
-            _make_argv(task_id=parent_id, reason="code review issue"),
-            db,
+            _make_argv(task_id="T-child", reason="code review issue"), db
         )
-
         assert result is True
-
-        # 父任务 reopen
-        cur = db.conn.execute("SELECT status FROM tasks WHERE id = ?", (parent_id,))
-        assert cur.fetchone()["status"] == TASK_STATUS_IN_PROGRESS
-
-        # 祖父任务也 reopen
-        cur = db.conn.execute("SELECT status FROM tasks WHERE id = ?", (grandparent_id,))
-        assert cur.fetchone()["status"] == TASK_STATUS_IN_PROGRESS
+        params = route_stub.last_params("task.reopen")
+        assert params["task_id"] == "T-child"
+        assert route_stub.count("task.reopen") == 1
 
 
 # ============================================
