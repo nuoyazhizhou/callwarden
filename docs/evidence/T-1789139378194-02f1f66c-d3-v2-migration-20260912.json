@@ -1,0 +1,95 @@
+{
+  "task_id": "T-1789139378194-02f1f66c",
+  "parent_task_id": "T-1788871227327-45c94bd8",
+  "step_action": "fix_adjacent_defect_d3_v2_migration_fk",
+  "generated_at": "2026-09-12T09:15:24+08:00",
+  "commits": [
+    {
+      "sha": "b87f545bfb73ca9c9aebdf54d36c22ba12bd6b60",
+      "short": "b87f545",
+      "scope": "production+tests",
+      "files": [
+        "db/db_base.py",
+        "tests/test_db_v2_to_v3_migration_fk.py"
+      ],
+      "message": "fix(db): v2→v3 迁移空 hash 占位 + 修正过早 DROP（D3）"
+    },
+    {
+      "sha": "3e479503972203a63e0a7295fdf45ec0f8115a86",
+      "short": "3e47950",
+      "scope": "tests",
+      "files": [
+        "tests/test_cli_task_reopen.py"
+      ],
+      "message": "test(A桶): task reopen CLI 断言对齐 daemon RPC 契约"
+    }
+  ],
+  "files": [
+    {
+      "file_path": "db/db_base.py",
+      "sha256": "5f077d9d519d43eb23b886b4a68eccecd0c5b48ca14690bd5b7282e4e92048f2"
+    },
+    {
+      "file_path": "tests/test_db_v2_to_v3_migration_fk.py",
+      "sha256": "e6d7935f80bd1fcad02066b03e9a69382b160459aee8641ae61acdad8410d9f2"
+    },
+    {
+      "file_path": "tests/test_cli_task_reopen.py",
+      "sha256": "0c4fa71bfb0d29f4e5db593edc3de2b84b2e45f93627990d274a02fc75f2b568"
+    }
+  ],
+  "D3": {
+    "id": "D3",
+    "severity": "P1",
+    "component": "db/db_base.py::_migrate_v2_to_v3",
+    "origin": "上一卡 D1 residual_risk 登记的遗留观察项，本卡单独立项",
+    "root_cause": "回填 file_instances 时对『无 current 版本』的旧文件用 COALESCE((SELECT fv.content_hash ...), '') 兜底；而同一函数填充 file_contents 时明确排除了空串（WHERE content_hash IS NOT NULL AND content_hash != ''）。连接默认 PRAGMA foreign_keys=ON（CW_USE_RUST_STORAGE 未显式关闭时），缺失 '' 占位行 → IntegrityError: FOREIGN KEY constraint failed。",
+    "same_class_sites": [
+      "db_base.py L233 file_instances.current_content_hash ← COALESCE(..., '') → file_contents",
+      "db_base.py L283 symbols.symbol_hash ← COALESCE(sc.content_hash, '') → symbol_contents",
+      "db_base.py L336 comments.symbol_hash ← COALESCE(sc.content_hash, '') → symbol_contents"
+    ],
+    "fix": "回填前对 file_contents / symbol_contents 各落一行 '' 占位（INSERT OR IGNORE），与 D1（db_build.py::_register_file_db）同形；两行即可覆盖上述全部 COALESCE-to-'' 落点。",
+    "evidence_before": "tests/test_db_v2_to_v3_migration_fk.py（v2 fixture + PRAGMA foreign_keys=ON）→ 4 FAILED：3 例 sqlite3.IntegrityError: FOREIGN KEY constraint failed @ db_base.py:223，1 例 fixture 顺序问题。",
+    "evidence_after": "同口径复测 → RC=0，4 passed。",
+    "reachability": "生产可达：_init_schema 对 0 < legacy_version < SCHEMA_VERSION 的库先跑 Python _migrate_schema（D2 修复引入的路径）→ 链上包含本函数。",
+    "blast_radius": "仅影响 v2（极旧）库的升级路径；v30+ 现网库不受影响。"
+  },
+  "D4": {
+    "id": "D4",
+    "severity": "P1",
+    "component": "db/db_base.py::_migrate_v2_to_v3（DROP 顺序）",
+    "root_cause": "symbols 表在 calls 回填（L400 引用 symbols_old_v2 做 old caller_id→qualified_name 映射）之前就被 DROP（原 L324）。导致 v2→v3 迁移无论有无空 hash 都必然失败：no such table: symbols_old_v2。",
+    "fix": "DROP 延迟到 calls 回填完成之后（calls_old_v2 DROP 之后）。"
+  },
+  "D5": {
+    "id": "D5",
+    "severity": "P1",
+    "component": "db/db_base.py::_migrate_v2_to_v3（DROP 顺序）",
+    "root_cause": "file_versions_old_v2 在 file_symbol_versions 回填（L483 引用其 file_id/version_num）之前就被 DROP（原 L429）→ no such table: file_versions_old_v2。",
+    "fix": "DROP 延迟到 file_symbol_versions 回填（含 file_symbol_versions_old_v2 的 DROP）之后。",
+    "audit": "对该函数内全部 *_old_v2 做删除/使用顺序核查：symbols_old_v2（D4）、file_versions_old_v2（D5）2 处错误；comments / calls / file_symbol_versions / semgrep_findings / semgrep_scans 共 5 张表顺序正确。"
+  },
+  "A_bucket_reopen": {
+    "file": "tests/test_cli_task_reopen.py",
+    "cases": 8,
+    "cause": "CLI reopen 已改走 route_task_write('task.reopen', {...}, _local_reopen)；本地 db.task_reopen 不再是 authority。旧用例直连本地 CodeGraphDB，无 daemon 时先撞 E_HTTP_MANIFEST_STALE；错误路径在 GOV-FIX-08 后为 sys.exit(2)。",
+    "fix": "改用 tests/conftest.py 的共享 route_stub fixture（与 test_cli_task_fix.py 同范式）：断言入参契约 + 成功回包渲染 + 错误信封 → RC=2；祖父链递归归 daemon/db 侧，由 test_task_reopen.py / test_task_reopen_consistency.py 覆盖。",
+    "result": "16/16 passed"
+  },
+  "verification": {
+    "d3_command": "python -m pytest tests/test_db_v2_to_v3_migration_fk.py -q --tb=short -p no:cacheprovider",
+    "d3_result": "RC=0，4 passed",
+    "reopen_command": "python -m pytest tests/test_cli_task_reopen.py -q --tb=short -p no:cacheprovider",
+    "reopen_result": "RC=0，16 passed",
+    "python_env": "C:/Users/wanpi/.workbuddy/binaries/python/envs/cw314/Scripts/python.exe",
+    "notes": [
+      "Git Bash 对 MSYS python 的 stdout 重定向会整体丢输出，统一走 C:/Users/wanpi/AppData/Local/Temp/run_pytest.py（pytest.main + 落盘）。",
+      "去代理 + NO_PROXY=127.0.0.1,localhost；测试需 PyPI 无关的本地导入 PYTHONPATH=C:/git_work。"
+    ]
+  },
+  "environment_facts": {
+    "daemon": "本轮 daemon 处于停止状态，且真实 HOME 残留 stale manifest（http-daemon.S-1-5-21-...manifest.json，pid 5488 已死）；任何走 RPC 且未打 stub 的用例会 E_HTTP_MANIFEST_STALE。",
+    "stale_manifest_path": "C:/Users/wanpi/.callwarden/http-daemon.S-1-5-21-1583625257-826939952-3615027596-1001.manifest.json"
+  }
+}
