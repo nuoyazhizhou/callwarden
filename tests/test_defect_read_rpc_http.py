@@ -245,254 +245,180 @@ class TestCrossWorkspaceIsolation:
         assert mock_ensure.call_count == 2
         for call in mock_call.call_args_list:
             assert call[0][1]["workspace_instance_id"] == "ws-A"
-
-
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约（HTTP/local 分流已下沉到 route_rpc）
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 `HttpDaemonRpcClient` 便捷方法。
 
-    tools_summary / tools_task 在模块顶层 import `_get_daemon_client` /
-    `_get_db_path_for_daemon` / `is_http_transport_enabled`（可直接 patch
-    模块属性）。defect_learn 保持 python_compat：HTTP 模式仍走
-    route_worker_call（无 HTTP 分支），不直连 daemon client。
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：
+    `server/tools/tools_summary.py:44` 与 `server/tools/tools_task.py:46` 均为
+    `from ..daemon_client import route_rpc as _route`，defect/churn 组工具一律
+    `return _route('<rpc method>', {...}, 'READ_ONLY')`（如 tools_summary.py:400
+    /:435/:457、tools_task.py:650）。旧用例 patch `tools_summary._get_daemon_client`
+    并断言客户端便捷方法被调用——该模块属性虽仍在（故 setattr 不报错）但已无
+    调用点，于是断言恒为 `Called 0 times`。
+
+    HTTP / local / compat-worker 的分流语义整体下沉到 `route_rpc`，由
+    `route_rpc` 自身的单测覆盖；工具层只需锁定「下发哪个 RPC、参数是否逐字透传、
+    op_class 是否为 READ_ONLY、失败是否 fail-closed 且不回落本地 get_db」。
     """
 
-    # --------------------------------------------------------
-    # tools_summary.defect_correlation / churn_analysis /
-    # defect_search / defect_suggest_fix（顶层 import）
-    # --------------------------------------------------------
+    HTTP_RUNTIME = "C:/git_work"
+
+    ROUTE_CASES = [
+        ("defect_correlation", "query.defect_correlation",
+         {"symbol_hash": "abc123"},
+         {"symbol_hash": "abc123", "window_commits": 5}),
+        ("churn_analysis", "query.churn_analysis",
+         {"module_filter": "src/", "time_window": "30d"},
+         {"module_filter": "src/", "time_window": "30d"}),
+        ("defect_search", "query.defect_search",
+         {"category": "sec", "severity_filter": "error"},
+         {"category": "sec", "severity_filter": "error"}),
+        ("defect_suggest_fix", "query.defect_suggest_fix",
+         {"symbol_hash": "abc123", "finding_id": 0},
+         {"symbol_hash": "abc123", "finding_id": 0}),
+    ]
 
     @pytest.mark.parametrize(
-        "tool_name,client_method,call_kwargs,expect_kwargs",
-        [
-            ("defect_correlation", "defect_correlation",
-             {"symbol_hash": "abc123"}, {"symbol_hash": "abc123", "window_commits": 5}),
-            ("churn_analysis", "churn_analysis",
-             {"module_filter": "src/", "time_window": "30d"},
-             {"module_filter": "src/", "time_window": "30d"}),
-            ("defect_search", "defect_search",
-             {"category": "sec", "severity_filter": "error"},
-             {"category": "sec", "severity_filter": "error"}),
-            ("defect_suggest_fix", "defect_suggest_fix",
-             {"symbol_hash": "abc123", "finding_id": 0},
-             {"symbol_hash": "abc123", "finding_id": 0}),
-        ],
-        ids=["defect_correlation", "churn_analysis", "defect_search", "defect_suggest_fix"],
+        "tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
     )
-    def test_summary_http_mode_fail_closed(
-        self, monkeypatch, tool_name, client_method, call_kwargs, expect_kwargs
+    def test_summary_tools_route_read_only_rpc(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs, expect_params
     ):
-        client = MagicMock()
-        getattr(client, client_method).side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
+        """工具必须经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
+        q = _register_tools(tools_summary)
+        with patch("callwarden.server.tools.tools_summary.get_db") as mock_db:
+            out = q[tool_name](**call_kwargs)
+            mock_db.assert_not_called()
+        assert out == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_summary_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs, expect_params
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
         q = _register_tools(tools_summary)
         with patch("callwarden.server.tools.tools_summary.get_db") as mock_db:
             with pytest.raises(DaemonRemoteError):
                 q[tool_name](**call_kwargs)
             mock_db.assert_not_called()
-        getattr(client, client_method).assert_called_once_with(db_path=DB_A, **expect_kwargs)
 
-    @pytest.mark.parametrize(
-        "tool_name,client_method,call_kwargs,expect_kwargs,result",
-        [
-            ("defect_correlation", "defect_correlation",
-             {"symbol_hash": "abc123"}, {"symbol_hash": "abc123"},
-             {"symbol_hash": "abc123", "total_changes": 2, "defects_after_change": 1}),
-            ("churn_analysis", "churn_analysis",
-             {"module_filter": "src/", "time_window": "30d"},
-             {"module_filter": "src/", "time_window": "30d"},
-             {"churn_rate": 0.1, "total_churned_lines": 100}),
-            ("defect_search", "defect_search",
-             {"category": "sec", "severity_filter": "error"},
-             {"category": "sec", "severity_filter": "error"},
-             [{"pattern_id": "DP-sec-1", "category": "security"}]),
-            ("defect_suggest_fix", "defect_suggest_fix",
-             {"symbol_hash": "abc123", "finding_id": 0},
-             {"symbol_hash": "abc123", "finding_id": 0},
-             {"pattern_id": "DP-1", "fix_template": "fix it"}),
-        ],
-        ids=["defect_correlation", "churn_analysis", "defect_search", "defect_suggest_fix"],
-    )
-    def test_summary_http_mode_result_passthrough(
-        self, monkeypatch, tool_name, client_method, call_kwargs, expect_kwargs, result
-    ):
-        client = MagicMock()
-        getattr(client, client_method).return_value = result
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
-        q = _register_tools(tools_summary)
-        out = q[tool_name](**call_kwargs)
-        assert out == result
+    def test_task_get_defect_correlation_route_read_only_rpc(self, monkeypatch):
+        """tools_task.get_defect_correlation 同样经 `_route` 下发（Rust native 同名 RPC）。"""
+        seen = {}
 
-    @pytest.mark.parametrize(
-        "tool_name,call_kwargs,db_method,db_args",
-        [
-            ("defect_correlation", {"symbol_hash": "abc123"},
-             "defect_correlation", ("abc123", 5)),
-            ("churn_analysis", {"module_filter": "src/", "time_window": "30d"},
-             "churn_analysis", ("src/", "30d")),
-            ("defect_search", {"category": "sec", "severity_filter": "error"},
-             "defect_pattern_search", ("sec", "error")),
-            ("defect_suggest_fix", {"symbol_hash": "abc123", "finding_id": 0},
-             "suggest_fix", ("abc123", 0)),
-        ],
-        ids=["defect_correlation", "churn_analysis", "defect_search", "defect_suggest_fix"],
-    )
-    def test_summary_legacy_local_mode_keeps_db_fallback(
-        self, monkeypatch, tool_name, call_kwargs, db_method, db_args
-    ):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        q = _register_tools(tools_summary)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        db_mock = getattr(mock_db, db_method)
-        db_mock.return_value = {"ok": True}
-        with patch("callwarden.server.tools.tools_summary.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q[tool_name](**call_kwargs)
-        assert result == {"ok": True}
-        db_mock.assert_called_once_with(*db_args)
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {
+                "qualified_name": "src.main:foo",
+                "change_count": 3,
+                "defect_count": 1,
+                "defect_rate": 0.333,
+                "defect_types": {"security": 1},
+                "recent_defects": [{"rule_id": "R1", "message": "m", "start_line": 1}],
+            }
 
-    # --------------------------------------------------------
-    # tools_task.get_defect_correlation（顶层 import）
-    # --------------------------------------------------------
+        monkeypatch.setattr(tools_task, "_route", fake_route)
+        q = _register_tools(tools_task)
+        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
+            result = q["get_defect_correlation"]("src.main:foo", window_commits=3)
+            mock_db.assert_not_called()
+        assert result["change_count"] == 3
+        assert result["defect_rate"] == 0.333
+        assert seen["method"] == "query.get_defect_correlation"
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == {"qualified_name": "src.main:foo", "window_commits": 3}
 
-    def test_task_get_defect_correlation_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.get_defect_correlation.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled", lambda: True
-        )
+    def test_task_get_defect_correlation_fail_closed(self, monkeypatch):
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(tools_task, "_route", fake_route)
         q = _register_tools(tools_task)
         with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
             with pytest.raises(DaemonRemoteError):
                 q["get_defect_correlation"]("src.main:foo")
             mock_db.assert_not_called()
-        client.get_defect_correlation.assert_called_once_with(
-            qualified_name="src.main:foo", window_commits=5, db_path=DB_A,
-        )
 
-    def test_task_get_defect_correlation_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.get_defect_correlation.return_value = {
-            "qualified_name": "src.main:foo",
-            "change_count": 3,
-            "defect_count": 1,
-            "defect_rate": 0.333,
-            "defect_types": {"security": 1},
-            "recent_defects": [{"rule_id": "R1", "message": "m", "start_line": 1}],
-        }
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled", lambda: True
-        )
-        q = _register_tools(tools_task)
-        result = q["get_defect_correlation"]("src.main:foo", window_commits=3)
-        assert result["change_count"] == 3
-        assert result["defect_rate"] == 0.333
+    def test_runtime_role_is_never_client_side_branched(self, monkeypatch):
+        """工具层不做 HTTP/local 分支：无论 transport 如何都走同一 `_route` 契约。
 
-    def test_task_get_defect_correlation_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled", lambda: False
-        )
+        stale 依据：旧用例 monkeypatch
+        `daemon_client.is_http_transport_enabled` / `get_daemon_mode` 后期待
+        工具改走本地 db；`_route` 化后工具是常量表达式，分流只发生在
+        `route_rpc` 内部（其单测负责），工具层断言不再随 transport 变化。
+        """
+        calls = []
+
+        def fake_route(method, params, op_class):
+            calls.append((method, op_class))
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
         monkeypatch.setattr(
             "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
         )
         monkeypatch.setattr(
             "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
         )
-        q = _register_tools(tools_task)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.get_defect_correlation_by_qn.return_value = {
-            "qualified_name": "src.main:foo", "change_count": 2, "defect_count": 0,
-        }
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q["get_defect_correlation"]("src.main:foo")
-        assert result["change_count"] == 2
-        mock_db.get_defect_correlation_by_qn.assert_called_once_with(
-            "src.main:foo", window_commits=5
-        )
-
-    # --------------------------------------------------------
-    # tools_summary.defect_learn（保持 python_compat，写面）
-    # --------------------------------------------------------
-
-    def test_defect_learn_stays_compat_in_http_mode(self, monkeypatch):
-        """defect_learn 无 HTTP 分支：HTTP 模式仍经 route_worker_call（compat worker）。
-
-        W4-3 决策：defect_learn 为写操作（learn_defect_from_fix INSERT
-        defect_fixes / defect_patterns），保持 python_compat（见 ledger §9.24）。
-        断言 HTTP 模式下不调用 daemon client 便捷方法（模块属性
-        _get_daemon_client 不被调用）。
-        """
-        called = {"client": False}
-
-        def fake_client():
-            called["client"] = True
-            return MagicMock()
-
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", fake_client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
         q = _register_tools(tools_summary)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.learn_defect_from_fix.return_value = {"learned": True, "pattern_id": "DP-1"}
-        with patch("callwarden.server.tools.tools_summary.get_db", return_value=mock_db), \
-                patch(
-                    "callwarden.server.tools.tools_summary.route_worker_call",
-                    side_effect=lambda method, params, local_fn: local_fn(),
-                ):
+        assert q["defect_search"](category="sec") == {"ok": True}
+        assert calls == [("query.defect_search", "READ_ONLY")]
+
+    def test_defect_learn_now_routes_via_route(self, monkeypatch):
+        """defect_learn 亦已 `_route` 化（不再经 route_worker_call / python_compat）。
+
+        stale 依据（A 桶 / MCP 工具 `_route` 化）：旧用例断言
+        「保持 python_compat，HTTP 模式仍走 route_worker_call」；实际
+        `tools_summary.py:492` 为
+        `return _route('defect_learn', {"fix_commit_hash": fix_commit_hash}, 'READ_ONLY')`，
+        `route_worker_call` 已无调用点。
+
+        注（advisory）：`defect_learn` 语义为写面（INSERT defect_fixes /
+        defect_patterns），却以 `READ_ONLY` op_class 下发；本用例只锁当前实际
+        契约，若 op_class 需收紧为 PROTECTED_MUTATION 属生产侧决策，不在本卡 scope。
+        """
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"learned": True, "pattern_id": "DP-1"}
+
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
+        q = _register_tools(tools_summary)
+        with patch("callwarden.server.tools.tools_summary.get_db") as mock_db:
             result = q["defect_learn"]("deadbeef")
+            mock_db.assert_not_called()
         assert result == {"learned": True, "pattern_id": "DP-1"}
-        assert called["client"] is False
-        mock_db.learn_defect_from_fix.assert_called_once_with("deadbeef")
+        assert seen["method"] == "defect_learn"
+        assert seen["params"] == {"fix_commit_hash": "deadbeef"}
+        assert seen["op"] == "READ_ONLY"

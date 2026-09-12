@@ -90,62 +90,65 @@ def test_cli081_invalid_input_graceful(monkeypatch, capsys):
 
 
 def test_cli081_error_dict_printed(monkeypatch, capsys):
-    """daemon 返回 {"error": ...} 结构化错误时格式化输出。"""
+    """daemon 返回 {"error": ...} → 渲染错误并以 RC=2 退出。
+
+    stale 依据：GOV-FIX-08（cli/main.py:5985）起该分支 `cprint(...); sys.exit(2)`，
+    旧断言为 `is True`（RC=0 假成功）。
+    """
     def _fake_route_write(method, params, fallback):
         return {"error": "task not found"}
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    assert _handle_completion_review() is True
-    out = capsys.readouterr().out
-    assert "task not found" in out
+    with pytest.raises(SystemExit) as ei:
+        _handle_completion_review()
+    assert ei.value.code == 2
+    assert "task not found" in capsys.readouterr().out
 
 
-def test_cli081_wrong_authority_remote_error(monkeypatch, capsys):
-    """wrong/unknown authority：DaemonRemoteError（method_not_found）原样格式化。"""
+def test_cli081_wrong_authority_remote_error(monkeypatch):
+    """daemon 业务拒绝（DaemonRemoteError）由 `_handle_task` 原样上抛。
+
+    stale 依据：分层契约——`_handle_task` 不吞 DaemonRemoteError，转 RC=2 的
+    兜底在 `_run_subcommand_mode`（GOV-FIX-07，cli/main.py:1774-1783），由
+    tests/test_cli_govfix07_daemon_error_rc.py 覆盖；旧断言在此层期待 `is True`。
+    """
     def _fake_route_write(method, params, fallback):
         raise main_mod.DaemonRemoteError("method_not_found", "no such method")
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    assert _handle_completion_review() is True
-    out = capsys.readouterr().out
-    assert "method_not_found" in out
-    assert "no such method" in out
+    with pytest.raises(main_mod.DaemonRemoteError) as ei:
+        _handle_completion_review()
+    assert ei.value.code == "method_not_found"
 
 
-def test_cli081_daemon_unavailable_fails_closed(monkeypatch, capsys):
-    """daemon unavailable：DaemonUnavailableError fail-closed 提示，无本地回退。"""
+def test_cli081_daemon_unavailable_fails_closed(monkeypatch):
+    """daemon 不可达：DaemonUnavailableError 上抛，禁止本地回退（fail-closed）。"""
     def _fake_route_write(method, params, fallback):
         raise main_mod.DaemonUnavailableError("daemon down")
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    assert _handle_completion_review() is True
-    out = capsys.readouterr().out
-    assert "daemon down" in out
+    with pytest.raises(main_mod.DaemonUnavailableError):
+        _handle_completion_review()
 
 
-def test_cli081_http_wrapper_unwrapped(monkeypatch, capsys):
-    """HTTP client call_with_autostart 的 {result, degraded:false} 包装被解包。"""
+def test_cli081_route_returns_inner_result_no_envelope(monkeypatch, capsys):
+    """路由返回内层结果（无 {result,degraded} 信封），CLI 直接渲染。
+
+    stale 依据：`_get_rpc_client_for_route()`（server/daemon_client.py:3498）
+    只返回 `HttpDaemonRpcClient` 或 `UnixDaemonRpcClient`；
+    `UnixDaemonRpcClient.call_with_autostart`（:903）为 `return self.call(...)`，
+    不带信封；`HttpDaemonRpcClient` 无该方法故走 `call`。带信封的
+    `DaemonClient.call_with_autostart`（:1217）不在该路由上。旧用例断言
+    「{result, degraded:false} 包装被解包」针对的是路由永不产生的形态。
+    """
     def _fake_route_write(method, params, fallback):
-        return {"result": {"task_id": "T-1", "decision": "pass", "findings": []},
-                "degraded": False}
+        return {"task_id": "T-1", "decision": "pass", "findings": []}
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    _handle_completion_review()
+    assert _handle_completion_review() is True
     out = capsys.readouterr().out
     assert "pass" in out
     assert "unknown" not in out
-
-
-def test_cli081_http_degraded_fails_closed(monkeypatch, capsys):
-    """HTTP degraded 标记（daemon 不可达）fail-closed 提示，禁止本地回退。"""
-    def _fake_route_write(method, params, fallback):
-        return {"result": None, "degraded": True,
-                "mode": "direct_read", "op_class": "read_only"}
-
-    monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    assert _handle_completion_review() is True
-    out = capsys.readouterr().out
-    assert "degraded" in out
 
 
 def test_cli081_restart_consistent(monkeypatch, capsys):
@@ -167,7 +170,13 @@ def test_cli081_restart_consistent(monkeypatch, capsys):
 
 
 def test_cli081_local_fallback_forbidden(monkeypatch):
-    """local fallback 为 forbidden 回调：禁止 db.run_task_completion_review 本地读。"""
+    """local fallback 必须经 daemon 路由：`RpcDBProxy` 无本地 SQLite 路径。
+
+    stale 依据：`RpcDBProxy.__getattr__` 把未显式实现的方法动态转发到
+    `route_rpc`（cli/main.py:1312），故 fallback 被调时既不会读写本地 db，也
+    不会像旧断言那样抛 `DaemonUnavailableError`。这里锁「转发到 daemon 路由」
+    这一机制本身，避免依赖 daemon 是否存在的环境差异。
+    """
     captured = {}
 
     def _fake_route_write(method, params, fallback):
@@ -176,5 +185,15 @@ def test_cli081_local_fallback_forbidden(monkeypatch):
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
     _handle_completion_review()
-    with pytest.raises(main_mod.DaemonUnavailableError):
-        captured["fb"]()
+
+    seen = {}
+
+    def _fake_route_rpc(method, params, op_class):
+        seen["method"] = method
+        return {"ok": True}
+
+    monkeypatch.setattr(main_mod, "route_rpc", _fake_route_rpc)
+    captured["fb"]()
+    assert seen.get("method") == "task.completion_review", (
+        f"本地回退必须经 daemon 路由（禁止本地 SQLite），实际: {seen}"
+    )
