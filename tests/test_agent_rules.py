@@ -1204,93 +1204,101 @@ def test_get_symbol_fail_soft_on_missing_agent_rules_table():
             db.close()
 
 
-def test_file_symbol_content_mcp_tool_injects_applicable_rules():
-    """file_symbol_content MCP 工具应注入 applicable_rules（含 action=read）"""
+def test_file_symbol_content_mcp_tool_injects_applicable_rules(monkeypatch):
+    """MCP file_symbol_content 透传 daemon 回包中的 applicable_rules。
+
+    工具（落点 server/tools/tools_workspace.py）只做
+    ``_route('workspace.file.symbol_content', ...)`` 转发，规则注入在 Rust daemon
+    侧完成；Python 单测用 ``_route`` 替身断言 RPC 契约与回包字段透传，注入逻辑
+    本身由 daemon 集成测试覆盖。
+    """
     import asyncio
     import json as _json
 
-    import callwarden.server.mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.server.tools import tools_workspace as tools_mod
 
-    with tempfile.TemporaryDirectory() as tmp:
-        db, _qn = _setup_db_with_symbol(tmp)
-        try:
-            cid = db.rule_candidate_create(
-                "py-read-rule", "Python 读取规则",
-                scope={"languages": ["python"], "actions": ["read"]},
-                severity="warning",
-            )
-            db.rule_candidate_accept(cid)
-            db.rule_candidate_create("global-rule", "global", scope={})
-            db.rule_candidate_accept(_last_cid(db))
+    calls = {}
 
-            mcp = create_mcp_server()
-            orig_get_db = mcp_mod.get_db
-            mcp_mod.get_db = lambda workspace=None: db
-            try:
-                result = asyncio.run(
-                    mcp.call_tool("file_symbol_content",
-                                  {"file_path": "mod.py", "symbol_name": "hello"})
-                )
-                if isinstance(result, tuple):
-                    result = result[0]
-                payload = _json.loads(result[0].text)
+    def _fake_route(method, params, kind=None):
+        calls["method"] = method
+        calls["params"] = dict(params or {})
+        return {
+            "symbol_name": "hello",
+            "file": "mod.py",
+            "applicable_rules": [
+                {
+                    "id": "AR-1",
+                    "title": "py-read-rule",
+                    "matched_scope": ["language:python", "action:read"],
+                },
+                {"id": "AR-2", "title": "global-rule", "matched_scope": []},
+            ],
+        }
 
-                assert "applicable_rules" in payload
-                titles = [r["title"] for r in payload["applicable_rules"]]
-                assert "py-read-rule" in titles
-                assert "global-rule" in titles
+    monkeypatch.setattr(tools_mod, "_route", _fake_route)
 
-                # action=read 应被注入到上下文
-                py_rule = next(
-                    r for r in payload["applicable_rules"]
-                    if r["title"] == "py-read-rule"
-                )
-                assert "language:python" in py_rule["matched_scope"]
-                assert "action:read" in py_rule["matched_scope"]
-            finally:
-                mcp_mod.get_db = orig_get_db
-        finally:
-            db.close()
+    mcp = create_mcp_server()
+    result = asyncio.run(mcp.call_tool(
+        "file_symbol_content",
+        {"file_path": "mod.py", "symbol_name": "hello"},
+    ))
+    if isinstance(result, tuple):
+        result = result[0]
+    payload = _json.loads(result[0].text)
 
+    assert calls["method"] == "workspace.file.symbol_content", \
+        f"未走 workspace.file.symbol_content RPC: {calls}"
+    assert calls["params"]["file_path"] == "mod.py"
+    assert calls["params"]["symbol_name"] == "hello"
 
-def test_file_symbol_content_mcp_tool_fail_soft_on_missing_table():
-    """fail-soft：DROP agent_rules 表后 file_symbol_content 仍正常返回"""
+    assert "applicable_rules" in payload
+    titles = [r["title"] for r in payload["applicable_rules"]]
+    assert "py-read-rule" in titles
+    assert "global-rule" in titles
+
+    py_rule = next(
+        r for r in payload["applicable_rules"]
+        if r["title"] == "py-read-rule"
+    )
+    assert "language:python" in py_rule["matched_scope"]
+    assert "action:read" in py_rule["matched_scope"]
+def test_file_symbol_content_mcp_tool_fail_soft_on_missing_table(monkeypatch):
+    """file_symbol_content 不再本地读 agent_rules，规则缺失由 daemon 回包决定。
+
+    原用例在 Python 侧 DROP agent_rules 后验证工具 fail-soft；工具收敛为 ``_route``
+    转发后 fail-soft 判定在 Rust daemon 侧。Python 侧验证：工具不触碰本地规则表，
+    且 daemon 回 ``applicable_rules: []`` 时原样透传、不抛异常。
+    """
     import asyncio
     import json as _json
 
-    import callwarden.server.mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.server.tools import tools_workspace as tools_mod
 
-    with tempfile.TemporaryDirectory() as tmp:
-        db, _qn = _setup_db_with_symbol(tmp)
-        try:
-            cid = db.rule_candidate_create("global-rule", "global", scope={})
-            db.rule_candidate_accept(cid)
+    calls = {}
 
-            db.conn.execute("DROP TABLE agent_rules")
-            db.conn.commit()
+    def _fake_route(method, params, kind=None):
+        calls["method"] = method
+        calls["params"] = dict(params or {})
+        # 模拟 daemon 在规则表缺失/无匹配规则时的 fail-soft 回包
+        return {"symbol_name": "hello", "applicable_rules": []}
 
-            mcp = create_mcp_server()
-            orig_get_db = mcp_mod.get_db
-            mcp_mod.get_db = lambda workspace=None: db
-            try:
-                result = asyncio.run(
-                    mcp.call_tool("file_symbol_content",
-                                  {"file_path": "mod.py", "symbol_name": "hello"})
-                )
-                if isinstance(result, tuple):
-                    result = result[0]
-                payload = _json.loads(result[0].text)
-                # fail-soft：applicable_rules 应为空列表，符号查询仍正常
-                assert payload.get("applicable_rules") == []
-                assert payload.get("symbol_name") == "hello"
-            finally:
-                mcp_mod.get_db = orig_get_db
-        finally:
-            db.close()
+    monkeypatch.setattr(tools_mod, "_route", _fake_route)
 
+    mcp = create_mcp_server()
+    result = asyncio.run(mcp.call_tool(
+        "file_symbol_content",
+        {"file_path": "mod.py", "symbol_name": "hello"},
+    ))
+    if isinstance(result, tuple):
+        result = result[0]
+    payload = _json.loads(result[0].text)
 
+    assert calls["method"] == "workspace.file.symbol_content", \
+        f"未走 workspace.file.symbol_content RPC: {calls}"
+    assert payload.get("applicable_rules") == []
+    assert payload.get("symbol_name") == "hello"
 def _last_cid(db):
     """获取最近创建的 candidate id"""
     row = db.conn.execute(
@@ -1849,62 +1857,69 @@ def _parse_mcp_result(result):
     return {}
 
 
-def test_mcp_rule_candidate_create_returns_candidate_id():
-    """MCP rule_candidate_create 应返回 candidate_id"""
+def test_mcp_rule_candidate_create_returns_candidate_id(monkeypatch):
+    """MCP rule_candidate_create 应返回 candidate_id。
+
+    daemon authority 后 rule_* 工具（落点 server/tools/tools_security.py）只做
+    ``_route('rule.candidate_create', ...)`` 转发，落库在 Rust daemon 侧；单测用
+    ``_route`` 替身断言 RPC 契约与回包渲染，不再依赖本地 db 单例。
+    """
     import asyncio
 
-    from callwarden.server import mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
-    from callwarden.db.db import CodeGraphDB
+    from callwarden.server.tools import tools_security as tools_mod
 
-    with tempfile.TemporaryDirectory() as tmp:
-        # 注入临时 db 实例到 mcp_server 单例
-        db = CodeGraphDB(workspace_root=tmp)
-        old_db = mcp_mod._db_instance
-        mcp_mod._db_instance = db
-        try:
-            mcp = create_mcp_server()
+    calls = {}
 
-            # 调用 rule_candidate_create
-            result = asyncio.run(mcp.call_tool(
-                "rule_candidate_create",
-                {"title": "mcp-test", "rule_text": "use i18n", "severity": "warning"},
-            ))
-            structured = _parse_mcp_result(result)
-            assert "candidate_id" in structured, f"返回缺少 candidate_id: {structured}"
-            assert structured["candidate_id"].startswith("ARC-")
-        finally:
-            mcp_mod._db_instance = old_db
-            db.close()
+    def _fake_route(method, params, kind=None):
+        calls["method"] = method
+        calls["params"] = dict(params or {})
+        return {"candidate_id": "ARC-20991231-TEST01"}
 
+    monkeypatch.setattr(tools_mod, "_route", _fake_route)
 
-def test_mcp_rule_list_returns_rules():
-    """MCP rule_list 应返回 rules 列表"""
+    mcp = create_mcp_server()
+    result = asyncio.run(mcp.call_tool(
+        "rule_candidate_create",
+        {"title": "mcp-test", "rule_text": "use i18n", "severity": "warning"},
+    ))
+    structured = _parse_mcp_result(result)
+
+    assert calls["method"] == "rule.candidate_create", \
+        f"未走 rule.candidate_create RPC: {calls}"
+    assert calls["params"]["title"] == "mcp-test"
+    assert calls["params"]["rule_text"] == "use i18n"
+    assert calls["params"]["severity"] == "warning"
+    assert "candidate_id" in structured, f"返回缺少 candidate_id: {structured}"
+    assert structured["candidate_id"].startswith("ARC-")
+def test_mcp_rule_list_returns_rules(monkeypatch):
+    """MCP rule_list 应返回 rules 列表（RPC 契约：rule_list）。
+
+    工具落点 server/tools/tools_security.py，只做 _route 转发，故断言 RPC
+    契约 + 回包渲染；本地 db 单例注入在 daemon authority 后已不再生效。
+    """
     import asyncio
 
-    from callwarden.server import mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
-    from callwarden.db.db import CodeGraphDB
+    from callwarden.server.tools import tools_security as tools_mod
 
-    with tempfile.TemporaryDirectory() as tmp:
-        db = CodeGraphDB(workspace_root=tmp)
-        cid = db.rule_candidate_create("r1", "text1")
-        db.rule_candidate_accept(cid)
+    calls = {}
 
-        old_db = mcp_mod._db_instance
-        mcp_mod._db_instance = db
-        try:
-            mcp = create_mcp_server()
-            # 调用 MCP rule_list
-            result = asyncio.run(mcp.call_tool("rule_list", {"status": "active"}))
-            structured = _parse_mcp_result(result)
-            assert structured["count"] == 1, f"期望 1 条规则，返回: {structured}"
-            assert structured["rules"][0]["title"] == "r1"
-        finally:
-            mcp_mod._db_instance = old_db
-            db.close()
+    def _fake_route(method, params, kind=None):
+        calls["method"] = method
+        calls["params"] = dict(params or {})
+        return {"count": 1, "rules": [{"title": "r1", "status": "active"}]}
 
+    monkeypatch.setattr(tools_mod, "_route", _fake_route)
 
+    mcp = create_mcp_server()
+    result = asyncio.run(mcp.call_tool("rule_list", {"status": "active"}))
+    structured = _parse_mcp_result(result)
+
+    assert calls["method"] == "rule_list", f"未走 rule_list RPC: {calls}"
+    assert calls["params"]["status"] == "active"
+    assert structured["count"] == 1, f"期望 1 条规则，返回: {structured}"
+    assert structured["rules"][0]["title"] == "r1"
 def test_cli_rule_subcommand_registered():
     """cw rule 子命令应在 _SUBCOMMANDS 中注册"""
     from callwarden.cli.main import _SUBCOMMANDS
@@ -2289,15 +2304,14 @@ def test_cli_rule_seed_bootstrap_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not" in str(e):
-                        pytest.fail("db initialized during cw rule seed-bootstrap --help")
-                    raise
-                except SystemExit:
-                    pass  # argparse --help 通常会 SystemExit(0)
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not" in str(e):
+                    pytest.fail("db initialized during cw rule seed-bootstrap --help")
+                raise
+            except SystemExit:
+                pass  # argparse --help 通常会 SystemExit(0)
         assert db_init_called["count"] == 0, "--help 不应触发数据库初始化"
     finally:
         sys.argv = old_argv
@@ -2320,67 +2334,66 @@ def test_mcp_rule_seed_bootstrap_registered():
     assert "rule_seed_bootstrap" in tool_names, "缺少 rule_seed_bootstrap MCP 工具"
 
 
-def test_mcp_rule_seed_bootstrap_dry_run():
-    """MCP rule_seed_bootstrap dry_run=True 应返回 5 条 created 计划"""
+def test_mcp_rule_seed_bootstrap_dry_run(monkeypatch):
+    """MCP rule_seed_bootstrap dry_run=True 只预演不做写入（RPC：rule.seed_bootstrap）。
+
+    工具落点 server/tools/tools_task.py；写入由 Rust daemon 执行，单测验证
+    dry_run 参数透传与回包渲染。
+    """
     import asyncio
 
-    from callwarden.server import mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.server.tools import tools_task as tools_mod
 
-    with tempfile.TemporaryDirectory() as tmp:
-        db = CodeGraphDB(workspace_root=tmp)
-        old_db = mcp_mod._db_instance
-        mcp_mod._db_instance = db
-        try:
-            mcp = create_mcp_server()
-            result = asyncio.run(mcp.call_tool(
-                "rule_seed_bootstrap",
-                {"dry_run": True},
-            ))
-            structured = _parse_mcp_result(result)
-            assert structured["dry_run"] is True
-            assert structured["total"] == 5
-            assert structured["created"] == 5
-            assert structured["skipped"] == 0
-        finally:
-            mcp_mod._db_instance = old_db
-            db.close()
+    calls = {}
 
+    def _fake_route(method, params, kind=None):
+        calls["method"] = method
+        calls["params"] = dict(params or {})
+        return {"dry_run": True, "total": 5, "created": 5, "skipped": 0}
 
-def test_mcp_rule_seed_bootstrap_apply_writes_5():
-    """MCP rule_seed_bootstrap dry_run=False 应实际写入 5 条规则"""
+    monkeypatch.setattr(tools_mod, "_route", _fake_route)
+
+    mcp = create_mcp_server()
+    result = asyncio.run(mcp.call_tool("rule_seed_bootstrap", {"dry_run": True}))
+    structured = _parse_mcp_result(result)
+
+    assert calls["method"] == "rule.seed_bootstrap", \
+        f"未走 rule.seed_bootstrap RPC: {calls}"
+    assert calls["params"]["dry_run"] is True
+    assert structured["dry_run"] is True
+    assert structured["total"] == 5
+    assert structured["created"] == 5
+    assert structured["skipped"] == 0
+def test_mcp_rule_seed_bootstrap_apply_writes_5(monkeypatch):
+    """MCP rule_seed_bootstrap dry_run=False 走 apply 分支（RPC：rule.seed_bootstrap）。
+
+    实际写入在 Rust daemon 侧完成（Python 是纯 client），单测只能验证 apply
+    参数透传与回包；端到端写入由 daemon 集成测试覆盖。
+    """
     import asyncio
 
-    from callwarden.server import mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.server.tools import tools_task as tools_mod
 
-    with tempfile.TemporaryDirectory() as tmp:
-        db = CodeGraphDB(workspace_root=tmp)
-        old_db = mcp_mod._db_instance
-        mcp_mod._db_instance = db
-        try:
-            mcp = create_mcp_server()
-            result = asyncio.run(mcp.call_tool(
-                "rule_seed_bootstrap",
-                {"dry_run": False},
-            ))
-            structured = _parse_mcp_result(result)
-            assert structured["dry_run"] is False
-            assert structured["created"] == 5
+    calls = {}
 
-            # 验证 db 中有 5 条
-            count = db.conn.execute("SELECT COUNT(*) AS c FROM agent_rules").fetchone()["c"]
-            assert count == 5
-        finally:
-            mcp_mod._db_instance = old_db
-            db.close()
+    def _fake_route(method, params, kind=None):
+        calls["method"] = method
+        calls["params"] = dict(params or {})
+        return {"dry_run": False, "total": 5, "created": 5, "skipped": 0}
 
+    monkeypatch.setattr(tools_mod, "_route", _fake_route)
 
-# ============================================
-# 集成测试：seed 后规则可被 get_applicable_rules 查询
-# ============================================
+    mcp = create_mcp_server()
+    result = asyncio.run(mcp.call_tool("rule_seed_bootstrap", {"dry_run": False}))
+    structured = _parse_mcp_result(result)
 
-
+    assert calls["method"] == "rule.seed_bootstrap", \
+        f"未走 rule.seed_bootstrap RPC: {calls}"
+    assert calls["params"]["dry_run"] is False
+    assert structured["dry_run"] is False
+    assert structured["created"] == 5
 def test_seed_bootstrap_rules_visible_to_get_applicable_rules():
     """种子化后 get_applicable_rules 应能返回 bootstrap 规则
 
@@ -2434,39 +2447,60 @@ def test_seed_bootstrap_injects_into_get_symbol():
             db.close()
 
 
-def test_seed_bootstrap_injects_into_file_symbol_content_mcp():
-    """种子化后 MCP file_symbol_content 应在返回值中包含 bootstrap 全局规则"""
+def test_seed_bootstrap_injects_into_file_symbol_content_mcp(monkeypatch):
+    """种子化后 file_symbol_content 回包携带 bootstrap 全局规则（RPC 契约）。
+
+    规则入库由 ``rule.seed_bootstrap``、注入由 ``workspace.file.symbol_content``
+    完成，两者都在 Rust daemon 侧；Python 侧断言两次 RPC 的调用契约与回包
+    rule id 透传。
+    """
     import asyncio
     import json as _json
 
-    import callwarden.server.mcp_server as mcp_mod
     from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.server.tools import tools_task as seed_tools
+    from callwarden.server.tools import tools_workspace as ws_tools
 
-    with tempfile.TemporaryDirectory() as tmp:
-        db, _qn = _setup_db_with_symbol(tmp)
-        # 种子化 bootstrap 规则
-        db.rule_seed_bootstrap(dry_run=False)
+    seed_calls = {}
+    ws_calls = {}
 
-        mcp = create_mcp_server()
-        orig_get_db = mcp_mod.get_db
-        mcp_mod.get_db = lambda workspace=None: db
-        try:
-            result = asyncio.run(
-                mcp.call_tool("file_symbol_content",
-                              {"file_path": "mod.py", "symbol_name": "hello"})
-            )
-            if isinstance(result, tuple):
-                result = result[0]
-            payload = _json.loads(result[0].text)
+    def _fake_seed(method, params, kind=None):
+        seed_calls["method"] = method
+        seed_calls["params"] = dict(params or {})
+        return {"dry_run": False, "total": 5, "created": 5, "skipped": 0}
 
-            assert "applicable_rules" in payload, \
-                f"file_symbol_content 返回应包含 applicable_rules: {payload}"
-            rule_ids = {r.get("id", "") for r in payload["applicable_rules"]}
-            # i18n 规则 scope={} 是 global，应被注入
-            assert "AR-bootstrap-i18n" in rule_ids, \
-                f"i18n 全局规则应被注入到 file_symbol_content，实际: {rule_ids}"
-        finally:
-            mcp_mod.get_db = orig_get_db
-            db.close()
+    def _fake_symbol(method, params, kind=None):
+        ws_calls["method"] = method
+        ws_calls["params"] = dict(params or {})
+        return {
+            "symbol_name": "hello",
+            "file": "mod.py",
+            "applicable_rules": [
+                {"id": "AR-bootstrap-i18n", "title": "i18n 强制"},
+            ],
+        }
 
+    monkeypatch.setattr(seed_tools, "_route", _fake_seed)
+    monkeypatch.setattr(ws_tools, "_route", _fake_symbol)
 
+    mcp = create_mcp_server()
+    asyncio.run(mcp.call_tool("rule_seed_bootstrap", {"dry_run": False}))
+    result = asyncio.run(mcp.call_tool(
+        "file_symbol_content",
+        {"file_path": "mod.py", "symbol_name": "hello"},
+    ))
+    if isinstance(result, tuple):
+        result = result[0]
+    payload = _json.loads(result[0].text)
+
+    assert seed_calls["method"] == "rule.seed_bootstrap", \
+        f"未走 rule.seed_bootstrap RPC: {seed_calls}"
+    assert seed_calls["params"]["dry_run"] is False
+    assert ws_calls["method"] == "workspace.file.symbol_content", \
+        f"未走 workspace.file.symbol_content RPC: {ws_calls}"
+
+    assert "applicable_rules" in payload, \
+        f"file_symbol_content 返回应包含 applicable_rules: {payload}"
+    rule_ids = {r.get("id", "") for r in payload["applicable_rules"]}
+    assert "AR-bootstrap-i18n" in rule_ids, \
+        f"i18n 全局规则应出现在回包中，实际: {rule_ids}"

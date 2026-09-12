@@ -16,11 +16,12 @@
 import os
 import sqlite3
 import tempfile
+import time
 
 import pytest
 
 from callwarden.db.db import CodeGraphDB
-from callwarden.db.schema import SCHEMA_VERSION
+from callwarden.db.schema import SCHEMA_TABLES_SQL, SCHEMA_VERSION
 
 
 def _db_with_workspace():
@@ -174,35 +175,46 @@ def test_schema_version_table_records_v22_on_fresh_db():
         db.close()
 
 
+def _make_legacy_v21_db(root, drop_active_task_id=False):
+    """构造贴近真实的 v21 legacy 库。
+
+    早期版本手工只建 workspaces/tasks 两张裸表来冒充 v21，与真实 v21 库
+    （全量表结构，仅缺后续版本新增的列/表）不符，迁移链会因缺列/缺表失败，
+    测的其实是一个不存在的场景。这里改用当前 SCHEMA_TABLES_SQL 建全量表，
+    再回退到 v21 的真实形态：没有 audit_chain 表（v22 才引入），
+    可选地没有 workspaces.active_task_id 列（v30 才引入）。
+    """
+    db_path = os.path.join(root, "callwarden.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(SCHEMA_TABLES_SQL)
+        # v21 尚未引入 audit_chain：删掉以验证迁移会重建
+        conn.execute("DROP TABLE IF EXISTS audit_chain")
+        if drop_active_task_id:
+            conn.execute("ALTER TABLE workspaces DROP COLUMN active_task_id")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version ("
+            "version INTEGER PRIMARY KEY, applied_at REAL, description TEXT DEFAULT '')"
+        )
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+            (21, time.time(), "v21 for test"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
 def test_legacy_v21_db_migrates_to_v22_via_init_schema():
     """旧 v21 库通过 _init_schema 自动迁移到 v22。
 
-    构造一个 v21 库（schema_version 表标记为 21，不含 audit_chain），
+    构造一个真实形态的 v21 库（全量表结构但无 audit_chain），
     再用 CodeGraphDB 打开，触发 _migrate_schema(21, 22)。
     """
     root = tempfile.mkdtemp()
-    db_path = os.path.join(root, "callwarden.db")
-    import time
-
-    # 手动构造 v21 库（含足够完整的 workspaces 以满足 _init_workspace）
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute(
-        "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT, "
-        "root_path TEXT, is_active INTEGER DEFAULT 0, "
-        "created_at REAL, description TEXT DEFAULT '')"
-    )
-    conn.execute(
-        "INSERT INTO workspaces (name, root_path, created_at, is_active, description) "
-        "VALUES (?, ?, ?, 1, '')",
-        ("test-ws", root, time.time()),
-    )
-    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT)")
-    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at REAL, description TEXT)")
-    conn.execute("INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
-                (21, time.time(), "v21 for test"))
-    conn.commit()
-    conn.close()
+    db_path = _make_legacy_v21_db(root)
 
     # 用 CodeGraphDB 打开，应自动触发迁移
     db = CodeGraphDB(db_path, workspace_root=root)
@@ -219,6 +231,30 @@ def test_legacy_v21_db_migrates_to_v22_via_init_schema():
         db.close()
 
 
+def test_legacy_db_missing_v30_column_migrates_before_schema_sql():
+    """缺 v30 列的 legacy 库：先补列再执行全量 SCHEMA_SQL（D2 回归）。
+
+    Rust storage_initialize_or_migrate 执行的是全量 SCHEMA_SQL，其中
+    ``idx_workspaces_active_task`` 依赖 v30 才添加的
+    ``workspaces.active_task_id`` 列；旧库未补列时建索引会
+    ``no such column`` 失败，升级整体 fail-closed。修复要求：对
+    ``0 < version < SCHEMA_VERSION`` 的库，先按版本链补齐列再交 Rust 收尾。
+    """
+    root = tempfile.mkdtemp()
+    db_path = _make_legacy_v21_db(root, drop_active_task_id=True)
+
+    db = CodeGraphDB(db_path, workspace_root=root)
+    try:
+        cols = set(_table_columns(db.conn, "workspaces"))
+        assert "active_task_id" in cols, "迁移未补齐 workspaces.active_task_id"
+        assert _index_exists(db.conn, "idx_workspaces_active_task")
+        cur = db.conn.execute(
+            "SELECT version FROM schema_version WHERE version = ?",
+            (30,),
+        )
+        assert cur.fetchone() is not None, "v30 not recorded after migration"
+    finally:
+        db.close()
 def test_audit_chain_insert_and_query():
     """插入和查询 audit_chain 记录的端到端流程。"""
     db, _root = _db_with_workspace()
@@ -529,13 +565,12 @@ def test_cli_audit_verify_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not" in str(e):
-                        pytest.fail("db initialized during cw audit verify --help")
-                    raise
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not" in str(e):
+                    pytest.fail("db initialized during cw audit verify --help")
+                raise
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv
@@ -557,13 +592,12 @@ def test_cli_audit_help_no_db():
             raise RuntimeError("db should not be initialized for --help")
 
         with mock.patch.object(CodeGraphDB, "__init__", fake_init):
-            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
-                try:
-                    cli_main._run_subcommand_mode()
-                except RuntimeError as e:
-                    if "should not" in str(e):
-                        pytest.fail("db initialized during cw audit --help")
-                    raise
+            try:
+                cli_main._run_subcommand_mode()
+            except RuntimeError as e:
+                if "should not" in str(e):
+                    pytest.fail("db initialized during cw audit --help")
+                raise
         assert db_init_called["count"] == 0
     finally:
         sys.argv = old_argv

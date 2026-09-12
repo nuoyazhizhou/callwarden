@@ -1,0 +1,97 @@
+{
+  "task_id": "T-1789139378194-02f1f66c",
+  "parent_task_id": "T-1788871227327-45c94bd8",
+  "step_action": "fix_adjacent_defects_d1_d2",
+  "generated_at": "2026-09-12T00:45:00+08:00",
+  "commits": [
+    {
+      "sha": "9d4193155509ddec88f214fdc45f0e489be1f2b7",
+      "short": "9d41931",
+      "scope": "production",
+      "files": [
+        "db/db_build.py",
+        "db/db_base.py"
+      ],
+      "message": "fix(db): D1 新库首文件注册补 file_contents 占位 + D2 legacy 升级前置迁移"
+    },
+    {
+      "sha": "eb15a7e9d77f972c43365f956f58133844810ff2",
+      "short": "eb15a7e",
+      "scope": "tests",
+      "files": [
+        "tests/test_agent_rules.py",
+        "tests/test_audit_chain.py"
+      ],
+      "message": "test: file_symbol_content 走 RPC 契约 + legacy v21 构造贴近真实 + D2 回归用例"
+    }
+  ],
+  "files": [
+    {
+      "file_path": "db/db_build.py",
+      "sha256": "7ddf440dee075089159f50f8bf4448fcd6a58280adacd154cced1d96548020bc"
+    },
+    {
+      "file_path": "db/db_base.py",
+      "sha256": "457d678ed2c2bb1a9ecc7d61b5dc10f7c51becd65c99ecce01efd2a2ad8b586a"
+    },
+    {
+      "file_path": "tests/test_agent_rules.py",
+      "sha256": "4d98cbe3612dab8eb34ab24b3f7363fe737cd332daff98cb9ec29fc291a7f53e"
+    },
+    {
+      "file_path": "tests/test_audit_chain.py",
+      "sha256": "9f29a8b80f3f4e080e8ce1dd0c87816251b582de0a667d4334865e2e066bd392"
+    }
+  ],
+  "D1": {
+    "id": "D1",
+    "severity": "P1",
+    "component": "db/db_build.py::_register_file_db",
+    "root_cause": "file_instances.current_content_hash 外键引用 file_contents(content_hash)；首次注册写入占位 ''，而新库 file_contents 为空，连接默认 PRAGMA foreign_keys=ON → FOREIGN KEY constraint failed",
+    "why_only_new_db": "老库 ~/.callwarden/callwarden.db 历史数据里已有 content_hash='' 行（实测 empty_hash_rows=1），故既有项目不受影响；全新库/新项目必触发",
+    "fix": "INSERT file_instances 前先 INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, now)",
+    "evidence_before": "隔离 HOME + 新 workspace + refresh_file → fk=(1,) empty_hash_rows=(0,) REFRESH_FAIL IntegrityError: FOREIGN KEY constraint failed",
+    "evidence_after": "同口径复测 → fk=(1,) empty_hash_rows=(0,) REFRESH_OK",
+    "regression_on_real_db": "真实库（未隔离 HOME）refresh_file → REFRESH_OK；build() → BUILD_OK",
+    "unblocked_cases": 9,
+    "residual_risk": "db_base 迁移路径的 files → file_instances 回填（INSERT ... SELECT）若产生空 hash 仍可能踩同类 FK；列为观察项，未在本卡扩大改动范围"
+  },
+  "D2": {
+    "id": "D2",
+    "severity": "P2",
+    "component": "db/db_base.py::_init_schema（Rust storage_initialize_or_migrate 前置）",
+    "root_cause": "Rust 执行全量 SCHEMA_SQL，其中索引依赖各版本新增列（v30 的 workspaces.active_task_id 等）；旧库尚未补列时建索引 → no such column，升级整体 fail-closed",
+    "fix": "对 0 < version < SCHEMA_VERSION 的库，先执行 Python 版本链迁移 _migrate_schema 补齐列，再交给 Rust storage_initialize_or_migrate 收尾（迁移幂等，Rust 侧再校验一次版本）",
+    "ab_test": {
+      "disabled": "将前置迁移置为 if False → tests/test_audit_chain.py 两个用例全红（含新增 D2 回归用例）",
+      "enabled": "恢复后 tests/test_audit_chain.py RC=0（31 passed）"
+    },
+    "new_regression_case": "tests/test_audit_chain.py::test_legacy_db_missing_v30_column_migrates_before_schema_sql（构造缺 workspaces.active_task_id 的 v21 库，断言迁移补列 + idx_workspaces_active_task 存在 + schema_version 记录 v30）"
+  },
+  "test_side_changes": [
+    {
+      "file": "tests/test_agent_rules.py",
+      "cases": [
+        "test_file_symbol_content_mcp_tool_injects_applicable_rules",
+        "test_file_symbol_content_mcp_tool_fail_soft_on_missing_table",
+        "test_seed_bootstrap_injects_into_file_symbol_content_mcp"
+      ],
+      "cause": "工具落点 server/tools/tools_workspace.py 已是纯 _route('workspace.file.symbol_content') 转发，mcp_server.get_db 注入不再生效；规则注入与 fail-soft 判定在 Rust daemon 侧",
+      "fix": "monkeypatch 模块级 _route 断言 RPC 契约 + 回包字段透传；docstring 注明注入逻辑由 daemon 集成测试覆盖"
+    },
+    {
+      "file": "tests/test_audit_chain.py",
+      "cases": [
+        "test_legacy_v21_db_migrates_to_v22_via_init_schema"
+      ],
+      "cause": "原构造只建 workspaces/tasks 两张裸表冒充 v21，与真实 v21 库（全量表结构）不符，迁移链因缺列/缺表失败，测的是不存在的场景",
+      "fix": "改用 SCHEMA_TABLES_SQL 建全量表 + DROP audit_chain + schema_version=21，贴近真实旧库形态"
+    }
+  ],
+  "verification": {
+    "command": "python -m pytest tests/test_agent_rules.py tests/test_audit_chain.py tests/test_bootstrap_capture.py tests/test_sync_log_cleanup.py tests/test_audit_key_rotation.py tests/test_cli_task_fix.py -q --tb=line -p no:cacheprovider",
+    "result": "RC=0，325 passed / 0 failed",
+    "bucket_progress": "A 桶 21 FAILED → 10（第二批后）→ 0（D1/D2 修复后，本六文件口径）",
+    "python_env": "C:/Users/wanpi/.workbuddy/binaries/python/envs/cw314/Scripts/python.exe (3.14 ABI)"
+  }
+}
