@@ -4,13 +4,14 @@
 规范：docs/design/feature-matrix-code-audit-2026-07-20.md §P0（运维 RPC 缺少管理员授权）
 
 测试覆盖：
-1. ADMIN_ONLY_METHODS 常量与 Rust 端 dispatch.rs 完全对齐（14 个方法，P0-2 整改后加入 mount.list）
+1. ADMIN_ONLY_METHODS 常量与 Rust 端 dispatch.rs 对齐（15 个方法：P0-2 整改后加入
+   mount.list，SRV-003 后加入 mcp.backup_restore.backup_file）
 2. _is_admin_peer 行为矩阵（uid=0 / uid=os.getuid() / uid in admin_uids / 其他 uid）
 3. dispatch fail-closed admin 校验（admin 通过 / 非 admin 拒绝 / 只读方法不被拦截）
-4. 14 个 admin 方法的授权矩阵（admin 通过 + 非 admin 抛 permission_denied）
+4. 15 个 admin 方法的授权矩阵（admin 通过 + 非 admin 抛 permission_denied）
 
 与 Rust 端对齐：
-- rust_ext/src/daemon/dispatch.rs L545-564 ADMIN_ONLY_METHODS
+- rust_ext/src/daemon/dispatch.rs L2233-2255 ADMIN_ONLY_METHODS
 - rust_ext/src/daemon/dispatch.rs L580-583 is_admin(peer) = peer.uid == 0 || peer.uid == current_daemon_uid()
 - rust_ext/src/daemon/dispatch.rs L593-599 dispatch_inner fail-closed 校验
 """
@@ -105,20 +106,21 @@ def _non_admin_uid() -> int:
 
 
 class TestBatch11AdminOnlyMethodsConstant:
-    """验证 ADMIN_ONLY_METHODS 常量与 Rust 端 dispatch.rs L545-564 完全对齐。"""
+    """验证 ADMIN_ONLY_METHODS 常量与 Rust 端 dispatch.rs L2233-2255 对齐。"""
 
     def test_constant_is_frozenset(self):
         """ADMIN_ONLY_METHODS 必须是 frozenset（不可变，避免运行时被篡改）。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         assert isinstance(ADMIN_ONLY_METHODS, frozenset)
 
-    def test_constant_contains_exactly_14_methods(self):
-        """与 Rust 端对齐：恰好 14 个 admin-only 方法（P0-2 整改后加入 mount.list）。"""
+    def test_constant_contains_exactly_15_methods(self):
+        """与 Rust 端对齐：恰好 15 个 admin-only 方法（P0-2 加入 mount.list，
+        SRV-003 加入 mcp.backup_restore.backup_file）。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
-        assert len(ADMIN_ONLY_METHODS) == 14
+        assert len(ADMIN_ONLY_METHODS) == 15
 
     def test_constant_contains_all_expected_methods(self):
-        """14 个方法必须与 Rust 端 dispatch.rs ADMIN_ONLY_METHODS 完全一致。"""
+        """15 个方法必须与 Rust 端 dispatch.rs ADMIN_ONLY_METHODS 对齐。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         expected = {
             # 数据库备份 / 还原
@@ -131,8 +133,10 @@ class TestBatch11AdminOnlyMethodsConstant:
             "mount.list",
             # Toolchain 配置变更
             "toolchain.register", "toolchain.delete", "toolchain.bind",
-            # Build Context 变更
+            # Build Context 变更（Python 端扩展，Rust 侧为 method_not_found stub）
             "build_context.register", "build_context.set_active", "build_context.delete",
+            # SRV-003：文件级备份写操作（与 Rust dispatch.rs:2254 对齐）
+            "mcp.backup_restore.backup_file",
         }
         assert ADMIN_ONLY_METHODS == expected
 
@@ -348,16 +352,17 @@ class TestBatch11AdminMethodMatrix:
         "build_context.register",
         "build_context.set_active",
         "build_context.delete",
+        "mcp.backup_restore.backup_file",
     ]
 
-    def test_all_14_methods_are_in_admin_only_constant(self):
-        """矩阵中的 14 个方法都在 ADMIN_ONLY_METHODS 中。"""
+    def test_all_15_methods_are_in_admin_only_constant(self):
+        """矩阵中的 15 个方法都在 ADMIN_ONLY_METHODS 中。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         for method in self.ADMIN_METHODS:
             assert method in ADMIN_ONLY_METHODS, f"{method} 不在 ADMIN_ONLY_METHODS 中"
 
-    def test_admin_uid_passes_all_14_methods(self, daemon_service):
-        """admin uid 调用所有 14 个 admin 方法都不应被 permission_denied 拒绝。"""
+    def test_admin_uid_passes_all_15_methods(self, daemon_service):
+        """admin uid 调用所有 15 个 admin 方法都不应被 permission_denied 拒绝。"""
         from callwarden.server.daemon_server import DaemonRpcError
         peer = _make_peer(uid=0)
         for method in self.ADMIN_METHODS:
@@ -376,8 +381,8 @@ class TestBatch11AdminMethodMatrix:
                 # 其他异常（handler 内部错误）可接受，关键是没被 permission_denied 拦截
                 pass
 
-    def test_non_admin_uid_rejected_for_all_14_methods(self, daemon_service):
-        """非 admin uid 调用所有 14 个 admin 方法都抛 permission_denied。"""
+    def test_non_admin_uid_rejected_for_all_15_methods(self, daemon_service):
+        """非 admin uid 调用所有 15 个 admin 方法都抛 permission_denied。"""
         from callwarden.server.daemon_server import DaemonRpcError
         non_admin_uid = _non_admin_uid()
         peer = _make_peer(uid=non_admin_uid)
@@ -629,3 +634,69 @@ class TestP02WorkspaceIdAcl:
             # 不应该收到 permission_denied（可能是空列表返回）
             assert e.code != "permission_denied", \
                 f"admin 调用 mount.list 不应被 permission_denied 拒绝（实际 {e.code}）"
+
+
+# ============================================================
+# 6. C-08 / C-09 契约修复回归（承接卡 T-1789290073113-6808b1ac）
+# ============================================================
+
+
+class TestC08BackupFileAdminOnly:
+    """C-08：mcp.backup_restore.backup_file 必须与 backup/restore 同级 fail-closed。
+
+    finding：Python legacy daemon 的 ADMIN_ONLY_METHODS 漏列该方法，而 Rust
+    dispatch.rs:2254 已含；导致文件级备份写操作在 Python 端未按 admin-only 门禁。
+    """
+
+    def test_backup_file_is_admin_only_in_constant(self):
+        """常量必须包含该方法（与 Rust dispatch.rs:2254 对齐）。"""
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
+        assert "mcp.backup_restore.backup_file" in ADMIN_ONLY_METHODS
+
+    def test_backup_file_rejects_non_admin_peer(self, daemon_service):
+        """未授权 peer 调 backup_file 必须在进入 handler 前抛 permission_denied。"""
+        from callwarden.server.daemon_server import DaemonRpcError
+        non_admin_uid = _non_admin_uid()
+        peer = _make_peer(uid=non_admin_uid)
+        with pytest.raises(DaemonRpcError) as exc_info:
+            daemon_service.dispatch(peer, "mcp.backup_restore.backup_file", {})
+        assert exc_info.value.code == "permission_denied"
+        assert "mcp.backup_restore.backup_file" in exc_info.value.message
+
+    def test_backup_file_passes_admin_peer(self, daemon_service):
+        """admin（root）调用不得被 permission_denied 拦截（handler 内部错误可接受）。"""
+        from callwarden.server.daemon_server import DaemonRpcError
+        peer = _make_peer(uid=0)
+        try:
+            daemon_service.dispatch(peer, "mcp.backup_restore.backup_file", {})
+        except DaemonRpcError as e:
+            assert e.code != "permission_denied", \
+                ("admin 调用 mcp.backup_restore.backup_file 不应被 permission_denied "
+                 f"拒绝（实际 {e.code}）")
+
+
+class TestC09SharedTaskWriterErrorCode:
+    """C-09：SharedTaskWriterRequiredError.code 必须保留自身结构化码。
+
+    finding：子类 __init__ 未向父类回传 code，父类实例属性覆盖了类属性，
+    使 .code 退化为 E_HTTP_DAEMON_UNAVAILABLE。
+    """
+
+    def test_code_not_overridden_by_parent(self):
+        from callwarden.server.daemon_client import (
+            DaemonUnavailableError,
+            SharedTaskWriterRequiredError,
+        )
+        exc = SharedTaskWriterRequiredError("共享任务写入要求 daemon 单写点")
+        assert exc.code == "E_SHARED_TASK_WRITER_REQUIRED"
+        assert "E_SHARED_TASK_WRITER_REQUIRED" in str(exc)
+        # 继承关系不变（CLI/MCP 薄壳仍可 except DaemonUnavailableError）
+        assert isinstance(exc, DaemonUnavailableError)
+
+    def test_parent_default_code_still_intact(self):
+        """修复不得改变父类默认 code 语义。"""
+        from callwarden.server.daemon_client import (
+            DaemonUnavailableError,
+            E_HTTP_DAEMON_UNAVAILABLE,
+        )
+        assert DaemonUnavailableError("daemon 不可用").code == E_HTTP_DAEMON_UNAVAILABLE
