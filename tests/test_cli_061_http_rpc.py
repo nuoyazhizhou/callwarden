@@ -1,9 +1,9 @@
 """CLI-061 (A′ cli_command_projection) `cw semgrep` HTTP thin-client 验证。
 
 覆盖 task step `fixture_matrix`（target_file: tests/test_cli_061_http_rpc.py）：
-  - success：db.run_semgrep / run_semgrep_and_save / scan_semgrep_incremental /
-    get_semgrep_summary 经 RpcDBProxy._rpc_call → route_rpc（对应 RPC，
-    PROTECTED_MUTATION），Python 仅编排输出
+  - success：db.run_semgrep / run_semgrep_and_save / scan_semgrep_incremental 为写面
+    （PROTECTED_MUTATION）；get_semgrep_summary 为只读汇总（READ_ONLY）——
+    均经 RpcDBProxy._rpc_call → route_rpc，Python 仅编排输出
   - 参数契约：target_paths/config/languages/timeout（及 base_branch/head）透传
   - 结构不变量：Rust 侧 semgrep_handlers.rs（CLI-061 新增）为唯一 authority；
     run_semgrep 返回 {success,total_findings,severity_counts,results}，
@@ -71,9 +71,42 @@ def test_cli061_semgrep_summary_routes_to_daemon(monkeypatch, capsys):
     rc = main_mod._handle_semgrep(["scan", "--quick"], proxy)
     assert rc is True
     assert captured.get("method") == "get_semgrep_summary"
-    assert captured.get("op") == "PROTECTED_MUTATION"
+    # stale 依据（A 类=测试侧陈旧期望）：get_semgrep_summary 是只读汇总（不落库），
+    # 未登记进 RpcDBProxy._METHOD_MAP（cli/main.py:1079-1266）→ _rpc_call 走未知方法
+    # 分支固定 op_class="READ_ONLY"（cli/main.py:1293-1298）。旧断言 PROTECTED_MUTATION
+    # 与现状不符（仅 run_semgrep/run_semgrep_and_save/scan_semgrep_incremental 为写面）。
+    assert captured.get("op") == "READ_ONLY"
     out = capsys.readouterr().out
     assert "no-eval" in out
+
+
+def test_cli061_semgrep_quick_target_paths_transmitted(monkeypatch, capsys):
+    """C-07 回归：--quick 的显式路径必须以具名 target_paths 透传，不得降级为 arg0。
+
+    修复前 `get_semgrep_summary` 未登记进 `_METHOD_MAP`，`_rpc_call` 走未知方法兜底
+    把位置参数降级为 `arg0` → Rust 侧只读 `target_paths`（缺省 `["."]`）→ 用户显式
+    路径被静默丢弃、退化为全工作区扫描。
+    """
+    captured = {}
+
+    def _fake_route(method, params, op_class):
+        captured["method"] = method
+        captured["params"] = params
+        captured["op"] = op_class
+        return {"success": True, "total_findings": 0, "by_severity": {},
+                "by_language": {}, "top_rules": [], "errors": []}
+
+    monkeypatch.setattr(main_mod, "route_rpc", _fake_route)
+
+    proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
+    rc = main_mod._handle_semgrep(["scan", "--quick", "cli"], proxy)
+    assert rc is True
+    assert captured.get("method") == "get_semgrep_summary"
+    assert captured.get("op") == "READ_ONLY"
+    assert captured["params"].get("target_paths") == ["cli"], (
+        "显式路径必须经 _METHOD_MAP 具名透传；降级为 arg0 即 C-07 回归"
+    )
+    assert "arg0" not in captured["params"]
 
 
 def test_cli061_semgrep_scan_failure(monkeypatch, capsys):

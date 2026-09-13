@@ -20,17 +20,18 @@ import os
 import sys
 import time
 
-from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode, get_project_db_path
+from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode, get_project_db_path, expand_tilde
 from ..server.watcher import FileWatcher
 from ..server.daemon_client import (
     route_task_write,
     route_task_read,
     route_rpc,
     derive_workspace_instance_id,
-    _workspace_snapshot_metadata,
     resolve_workspace_pair_from_daemon,
     DaemonRemoteError,
     DaemonUnavailableError,
+    HttpDaemonRpcClient,
+    is_http_transport_enabled,
     SharedTaskWriterRequiredError,
 )
 from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
@@ -78,7 +79,7 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
-_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action", "assignment-status", "superseded"}
+_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action", "assignment-status", "superseded", "prompt"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 # audit verify/keys 只读（只查询 audit_chain/audit_key_rotations 表，不写数据库）
 # audit rotate-key 是写（INSERT/UPDATE audit_key_rotations）
@@ -1204,6 +1205,7 @@ class RpcDBProxy:
                                 ("import_file", "ci_run_id", "ci_url")),
         "build_test_relations": ("build_test_relations", "PROTECTED_MUTATION", ("force",)),
         "run_semgrep": ("run_semgrep", "PROTECTED_MUTATION", ("target_paths", "config", "languages", "timeout")),
+        "get_semgrep_summary": ("get_semgrep_summary", "READ_ONLY", ("target_paths",)),
         "run_semgrep_and_save": ("run_semgrep_and_save", "PROTECTED_MUTATION",
                                  ("target_paths", "config", "languages", "timeout")),
         "scan_semgrep_incremental": ("scan_semgrep_incremental", "PROTECTED_MUTATION",
@@ -1261,7 +1263,8 @@ class RpcDBProxy:
         "acquire_lease": ("lease.acquire", "GOVERNANCE_WRITE", ("task_id", "role", "identity", "ttl_seconds")),
         "renew_lease": ("lease.renew", "GOVERNANCE_WRITE", ("task_id", "role", "token", "identity", "ttl_seconds")),
         "release_lease": ("lease.release", "GOVERNANCE_WRITE", ("task_id", "role", "token", "identity")),
-        "create_assignment": ("admin.assignment_create", "GOVERNANCE_WRITE", ("task_id", "role", "identity")),
+        "create_assignment": ("admin.assignment_create", "GOVERNANCE_WRITE",
+                              ("task_id", "role", "agent_id", "session_id", "model_id")),
         "revoke_assignment": ("admin.assignment_revoke", "GOVERNANCE_WRITE", ("assignment_id",)),
     }
 
@@ -1276,6 +1279,16 @@ class RpcDBProxy:
         self.client_workspace_root = workspace_root
         self._is_readonly = is_readonly
         self._args = args
+        # Blocker A 修复：--workspace/--root 必须同步绑定到 HTTP 客户端单例，
+        # 否则 route_rpc 会兜底 configure_workspace(PROJECT_ROOT)（callwarden
+        # 仓库自身），导致跨项目查询报 snapshot_not_ready（2026-09-05 实证）。
+        if workspace_root:
+            try:
+                from callwarden.server.daemon_client import HttpDaemonRpcClient
+                HttpDaemonRpcClient.get_instance().configure_workspace(workspace_root)
+            except Exception:
+                # 非 HTTP transport 下无 HTTP 单例或未就绪：本地路径模式不受影响
+                pass
 
     def _rpc_call(self, method_name: str, args, kwargs) -> Any:
         """按 METHOD_MAP 把 db.<method>(...) 转发为 daemon RPC（fail-closed）。"""
@@ -1761,6 +1774,16 @@ def _dispatch_subcommand(argv, db):
     except SharedTaskWriterRequiredError as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         raise SystemExit(2)
+    except DaemonRemoteError as dre:
+        # GOV-FIX-07：daemon 业务拒绝（结构化 error 信封）必须以非零 RC 退出。
+        # HTTP 传输下 route_task_write/route_task_read 把 daemon error 信封统一
+        # 转成 DaemonRemoteError 上抛；此前落通用 except 打 ✗ 后 return True
+        # （RC=0 假成功），波及全部子命令家族（attest/supersede/cascade_close
+        # error 路径等）。仅 daemon 权威拒绝 fail-closed RC=2；普通本地异常
+        # 维持原语义（不扩大化）。
+        cprint(t("cli.messages.subcommand_fail", cmd=cmd,
+                 error=f"{dre.code}: {dre.message}"), "red")
+        raise SystemExit(2)
     except Exception as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         # CLI 纯 client 化后不再捕获 sqlite3.OperationalError（禁直接 SQLite），
@@ -1961,7 +1984,7 @@ def _write_if_needed(path: str, content: str, force: bool, created: list) -> Non
 
 
 def _global_mcp_path(spec: dict) -> str:
-    """返回 agent 的全局 MCP 配置路径（平台感知，已展开 ~），无则返回空串"""
+    """返回 agent 的全局 MCP 配置路径（平台感知，~ 已展开为绝对路径），无则返回空串"""
     if sys.platform == "win32":
         rel = spec.get("global_mcp_relpath_win") or spec.get(
             "global_mcp_relpath")
@@ -1969,7 +1992,10 @@ def _global_mcp_path(spec: dict) -> str:
         rel = spec.get("global_mcp_relpath")
     if not rel:
         return ""
-    return os.path.expanduser(rel)
+    # 不用裸 os.path.expanduser：Windows 下进程环境缺 USERPROFILE/HOME 等变量时
+    # 会静默原样返回 '~...' 相对路径，导致配置被写进 CWD 下字面 ~ 目录
+    # （曾出现 C:\git_work\callwarden\~ 残留）。expand_tilde 会兜底到真实主目录。
+    return expand_tilde(rel)
 
 
 def _mcp_callwarden_entry_zed(root: str) -> dict:
@@ -2527,7 +2553,10 @@ def _handle_rule_candidate(opts, db):
 
 def _handle_rule_list(opts, db):
     """rule list 子命令"""
-    rules = db.rule_list(status=opts.status, limit=opts.limit)
+    result = db.rule_list(status=opts.status, limit=opts.limit)
+    # C-10：daemon `rule_list` 回包是 MCP-061 信封 {"rules": [...], "count": n}；
+    # 兼容旧裸 list 返回（非 dict 时按 list 直接迭代）。
+    rules = result.get("rules", []) if isinstance(result, dict) else result
     cprint(t("cli.messages.rule_list_title",
              default="=== Active Rules ({count}) ===", count=len(rules)), "cyan", bold=True)
     if not rules:
@@ -3422,9 +3451,9 @@ def _handle_churn(args, db):
     trend = result.get("trend", [])
     print(t("cli.messages.churn_trend_title", count=len(trend)))
     if trend:
-        for t in trend[:20]:
-            date = t.get("date", "")
-            lines = t.get("churned_lines", 0)
+        for item in trend[:20]:
+            date = item.get("date", "")
+            lines = item.get("churned_lines", 0)
             bar_len = min(int(lines / 10), 30)
             bar = "█" * bar_len
             print(t("cli.messages.churn_trend_item",
@@ -3847,12 +3876,28 @@ def _handle_task(args, db):
         "--workspace-instance-id", default="",
         help=t("cli_task_arg_workspace_instance_id",
                default="Explicit daemon workspace authority capture instance id (default: resolved from daemon via workspace.status)"))
+    create_p.add_argument("--parent-id", default=None,
+                          help=t("cli_task_create_parent_id"))
+    create_p.add_argument("--identity-policy", default=None,
+                          help=t("cli_task_create_identity_policy"))
+    create_p.add_argument("--task-contract-envelope", default=None,
+                          help=t("cli_task_create_contract_envelope"))
+    create_p.add_argument("--task-id", default=None,
+                          help=t("cli_task_create_task_id"))
 
     # next：领取下一个待执行步骤
     next_p = sub.add_parser("next", help=t(
         "cli_task_next_desc", default="Claim current pending step"))
     next_p.add_argument("task_id", help=t(
         "cli_task_arg_task_id", default="Task ID"))
+    next_p.add_argument(
+        "--remediation-step-id",
+        default="",
+        help=t(
+            "cli_task_arg_remediation_step_id",
+            default="Explicit daemon-issued fix_defect step ID to claim",
+        ),
+    )
 
     # next-action：查询系统派工（只读，daemon evaluator 权威；5B）
     next_action_p = sub.add_parser(
@@ -3869,6 +3914,18 @@ def _handle_task(args, db):
         "--json", action="store_true",
         help=t("cli_task_next_action_json",
                default="Output raw daemon JSON (machine-readable)"))
+
+    # prompt：Role Prompt Compiler v1 薄客户端（只读，daemon task.prompt.compile
+    # 权威；RP-06-cli，spec §4.3。--format 仅本地展示，不发送给 daemon）。
+    prompt_p = sub.add_parser(
+        "prompt", help="Compile the daemon Role Prompt Bundle (read-only thin client)")
+    prompt_p.add_argument("task_id", help="Task ID")
+    prompt_p.add_argument(
+        "--format", choices=["llm", "card", "json"], default="llm",
+        help="Local display format only (llm|card|json); never sent to daemon")
+    prompt_p.add_argument(
+        "--expected-workspace-instance-id", default="",
+        help="Optional caller authority assertion (spec 4.2); never derived client-side")
 
     # assignment-status：读取 daemon durable 工作队列，不在 CLI 侧推导或回收状态。
     assignment_status_p = sub.add_parser(
@@ -4289,6 +4346,14 @@ def _handle_task(args, db):
         "--role", default="", metavar="ROLE", choices=["adjudicator"],
         help=t("cli_task_arg_role",
                default="Role (P0-H: strictly 'adjudicator' for task.supersede)"))
+    # v3 修复（T-1789046188973-b487116c）：supersede 此前漏暴露 agent_instance_id，
+    # 导致**已注册身份（注册强制非空 instance id）一律 E_IDENTITY_INSTANCE_MISMATCH**，
+    # 使 task.supersede 这条裸卡治理收口路径对正规注册身份完全不可用。
+    # 与 contract-bootstrap / contract-revise / attest-legacy-workspace-binding 对齐。
+    supersede_p.add_argument(
+        "--agent-instance-id", default="", metavar="ID",
+        help=t("cli_task_arg_agent_instance_id",
+               default="Agent instance ID (P3 Identity, optional; must match registration if non-empty)"))
 
     # P0-B：为旧 Python 直写创建且尚无 binding 的历史任务追加可审计 authority attestation。
     attest_legacy_p = sub.add_parser(
@@ -4506,7 +4571,11 @@ def _handle_task(args, db):
 
         # 角色合同：缺省使用 A' 标准三角色 legacy 模板；显式传入则按传入值（fail closed 校验）。
         # 不允许静默创建无合同任务（否则未来无法 claim/bootstrap）。
-        role_contracts = _build_role_contracts(opts.role_contracts)
+        governed_create = any(value is not None for value in (
+            opts.parent_id, opts.identity_policy, opts.task_contract_envelope,
+            opts.task_id))
+        role_contracts = (_build_role_contracts(opts.role_contracts)
+                          if opts.role_contracts or not governed_create else [])
         if isinstance(role_contracts, str):
             cprint(  # 错误信息字符串
                 role_contracts, "red")
@@ -4518,6 +4587,10 @@ def _handle_task(args, db):
         # 显式传入的 pair 仍由 daemon 0c 配对校验（不一致 → E_WORKSPACE_AUTHORITY_MISMATCH）。
         workspace_id = int(opts.workspace_id or 0)
         workspace_instance_id = (opts.workspace_instance_id or "").strip()
+        if governed_create and (not workspace_id or not workspace_instance_id):
+            raise DaemonUnavailableError(
+                "Governed task.create requires explicit --workspace-id and "
+                "--workspace-instance-id from daemon authority")
         if not workspace_id or not workspace_instance_id:
             _pair = resolve_workspace_pair_from_daemon()
             if not workspace_id:
@@ -4532,7 +4605,7 @@ def _handle_task(args, db):
                 "daemon 不可用 / local 模式一律 fail-closed，绝不本地建任务（BR-02）"
             )
 
-        create_res = route_task_write("task.create", {
+        create_params = {
             "title": opts.title, "description": opts.desc, "steps": steps,
             "creator": "agent", "role_contracts": role_contracts,
             "workspace_id": workspace_id,
@@ -4540,7 +4613,29 @@ def _handle_task(args, db):
             # 默认三角色模板走 daemon 的显式 legacy policy 通道，避免新任务
             # 创建成功后因 Contract revision 缺少 identity_policy 而无法 claim。
             "identity_policy": "legacy_identity_v1",
-        }, _local_create_forbidden)
+        }
+        if governed_create:
+            # Parent create rejects creator as an unknown field. Do not invent
+            # contracts/policy for a governed request: the daemon validates them.
+            create_params.pop("creator")
+            create_params.pop("identity_policy")
+            for key in ("parent_id", "identity_policy", "task_contract_envelope", "task_id"):
+                value = getattr(opts, key)
+                if value is not None:
+                    create_params[key] = value
+        # GATE-1B fix_defect（V-155c02fc finding#2）：daemon 拒绝的 governed
+        # create（E_TASK_PARENT_NOT_FOUND 等）此前经顶层兜底 except 打印后
+        # 进程退出码 0，消费者会把被拒的治理创建误读为成功。fail-closed 边界：
+        # governed 请求的 daemon 业务拒绝/权威不可用必须以非零退出码终止；
+        # legacy root create 保持 pre-Gate 行为（本卡不重设计）。
+        if governed_create:
+            try:
+                create_res = route_task_write("task.create", create_params, _local_create_forbidden)
+            except (DaemonRemoteError, DaemonUnavailableError) as exc:
+                cprint(t("cli.messages.subcommand_fail", cmd="task", error=exc), "red")
+                raise SystemExit(2) from exc
+        else:
+            create_res = route_task_write("task.create", create_params, _local_create_forbidden)
         task_id = create_res["task_id"] if isinstance(create_res, dict) and "task_id" in create_res else create_res
 
         cprint(t("cli.messages.task_create_title"), "cyan", bold=True)
@@ -4577,6 +4672,8 @@ def _handle_task(args, db):
             _identity_reason_output(_ireason, False)
             return True
         _claim_params = {"task_id": opts.task_id}
+        if opts.remediation_step_id:
+            _claim_params["remediation_step_id"] = opts.remediation_step_id
         if _claim_identity:
             _claim_params["identity"] = _claim_identity
         # 显式 session 解析规则与 report 完全一致（CW_AGENT_SESSION_ID 优先，
@@ -4588,7 +4685,7 @@ def _handle_task(args, db):
             _claim_params["agent_session_id"] = _claim_session
         # A3 修复：合同任务 claim 必须携带 contract_claim（skill_id/version/prompt_hash）
         # 与冻结合同一致，否则 daemon 报 E_CONTRACT_SKILL_MISMATCH（CLI 此前漏传该字段）。
-        _claim_role = (opts.role or "implementer")
+        _claim_role = (getattr(opts, "role", "") or "implementer")
         _contract_claim = _fetch_contract_claim(opts.task_id, _claim_role)
         if _contract_claim:
             _claim_params["contract_claim"] = _contract_claim
@@ -4677,6 +4774,17 @@ def _handle_task(args, db):
 
         return True
 
+    elif opts.action == "prompt":
+        # RP-06-cli：cw task prompt 薄壳转发（spec §4.3，只读）。
+        # 唯一 authority 是 daemon task.prompt.compile；--format 仅本地展示；
+        # 不推导 workspace、无本地 fallback（fail-closed）。
+        from .task_prompt import run_task_prompt
+        return run_task_prompt(
+            opts.task_id,
+            fmt=getattr(opts, "format", "llm") or "llm",
+            expected_workspace_instance_id=(
+                getattr(opts, "expected_workspace_instance_id", "") or ""),
+        )
     elif opts.action == "next-action":
         # 5B：task.next_action 只读 adapter（薄壳转发 daemon evaluator）。
         # evaluator 只在 Rust daemon 中实现；local 模式无 evaluator，fail-closed。
@@ -4854,6 +4962,11 @@ def _handle_task(args, db):
                 cprint("Invalid --changes-json: expected a JSON array", "red")
                 return True
             report_changes = parsed_changes
+        # 治理前置门禁：governance_blocked 的卡拒绝 report（与 lease acquire 对称）。
+        _gate = _governance_gate(opts.task_id, "task report")
+        if _gate:
+            _identity_reason_output(_gate, False)
+            return True
         # P3：收集并校验结构化身份（可选；提供后必须完整，否则 fail closed）
         identity, ireason = _collect_identity(opts)
         if ireason:
@@ -4909,11 +5022,19 @@ def _handle_task(args, db):
             _report_payload["agent_session_id"] = _report_session
         # A3 修复：与 claim 对称，合同任务 report 也携带与冻结合同一致的 contract_claim，
         # 保持 claim/report 合同信封一致（daemon 当前不校验 report 的 skill，但避免后续升级断裂）。
-        _report_role = (opts.role or "implementer")
-        _report_contract_claim = _fetch_contract_claim(opts.task_id, _report_role)
-        if _report_contract_claim:
-            _report_payload["contract_claim"] = _report_contract_claim
-        result = route_task_write("task.report", _report_payload, _local_report)
+        try:
+            _report_role = (opts.role or "implementer")
+            _report_contract_claim = _fetch_contract_claim(opts.task_id, _report_role)
+            if _report_contract_claim:
+                _report_payload["contract_claim"] = _report_contract_claim
+            result = route_task_write("task.report", _report_payload, _local_report)
+        except (DaemonRemoteError, DaemonUnavailableError) as exc:
+            # `task.report` is a governance write.  A daemon rejection must be
+            # observable to shell automation; letting the outer broad command
+            # dispatcher swallow it produced a false zero exit status.
+            code = getattr(exc, "code", "E_DAEMON_UNAVAILABLE")
+            cprint(f"[task-report] {code}: {exc}", "red")
+            raise SystemExit(2) from exc
 
         cprint(t("cli.messages.task_report_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -5169,7 +5290,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_apply_failed",
                    error=result["error"]), "red")
             print()
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(t("cli.messages.task_apply_success",
                id=result["task_id"]), "green", bold=True)
         print(t("cli.messages.task_status_label", status=result["status"]))
@@ -5231,7 +5353,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_close_failed",
                    error=result["error"]), "red")
             print()
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(t("cli.messages.task_close_success",
                id=result["task_id"]), "green", bold=True)
         print(t("cli.messages.task_status_label", status=result["status"]))
@@ -5266,16 +5389,41 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_close_failed",
                    error=result["error"]), "red")
             print()
-            return True
+            # GOV-FIX-06：daemon 拒绝/失败必须以非零 RC 退出（此前 RC=0 假成功）。
+            sys.exit(2)
+
+        closed = result.get("closed") or []
+        skipped = result.get("skipped") or []
+        # GOV-FIX-06：目标卡真实收尾判定。目标卡既未 closed 也未 skipped（幂等）
+        # 即为门禁拒绝（子树未全闭 / 叶子步骤未完），必须显式报错 + RC=2，
+        # 不得打印 ✓ Task closed。仅凭 closed/skipped 判定，对旧 daemon 同样正确。
+        if opts.task_id not in closed and opts.task_id not in skipped:
+            blocked = result.get("blocked") or {}
+            btask = blocked.get("task_id") or opts.task_id
+            breason = blocked.get("reason") or "gate_rejected"
+            detail = {
+                "children_not_closed": "子树存在未 closed 的子卡",
+                "leaf_steps_pending": "叶子卡存在未完成步骤",
+            }.get(breason, breason)
+            cprint(f"✗ 级联收尾被拒绝：目标卡 {opts.task_id} 未收尾"
+                   f"（阻塞于 {btask}: {detail}）", "red", bold=True)
+            if closed:
+                print("已部分收尾节点:")
+                for n in closed:
+                    print(f"  - {n}")
+            else:
+                print("无任何节点被收尾（status 未变更）")
+            print()
+            sys.exit(2)
+
         cprint(t("cli.messages.task_close_success",
                id=result["task_id"]), "green", bold=True)
-        closed = result.get("closed", [])
         if closed:
             print("级联关闭节点:")
             for n in closed:
                 print(f"  - {n}")
-        else:
-            print("无新增关闭节点（子树未全 closed 或已 closed）")
+        elif opts.task_id in skipped:
+            print("目标卡已 closed（幂等重提，无新增收尾）")
         if identity:
             cprint(t("cli.messages.identity_recorded"), "green")
         print()
@@ -5324,7 +5472,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_reopen_failed",
                    error=result["error"]), "red")
             print()
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(
             t("cli.messages.task_reopen_success",
               id=result["task_id"],
@@ -5401,7 +5550,8 @@ def _handle_task(args, db):
                      default="claim recovery 失败：{error}",
                      error=result["error"]), "red")
             print()
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(t("cli.messages.task_claim_recover_success",
                  default="claim 已释放：{id}",
                  id=result.get("task_id", opts.task_id)), "green", bold=True)
@@ -5838,7 +5988,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_completion_review_failed",
                      error=result["error"]), "red")
             print()
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         decision = result.get("decision", "unknown")
         counts = result.get("counts", {})
         decision_color = {"pass": "green", "warn": "yellow",
@@ -5986,13 +6137,15 @@ def _handle_task(args, db):
         if result is None:
             cprint(t("cli.messages.task_supersede_failed",
                      default="task.supersede failed (no response)"), "red")
-            return True
+            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(t("cli.messages.task_supersede_failed",
                      error=result["error"]), "red")
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(t("cli.messages.task_supersede_success",
                  old=result.get("superseded_task_id", opts.old),
                  new=result.get("superseding_task_id", opts.new),
@@ -6054,12 +6207,16 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.attest_legacy_workspace_binding failed (no response)", "red")
-            return True
+            # GOV-FIX-07：无响应属通信失败，同样禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.attest_legacy_workspace_binding failed: {result['error']}", "red")
-            return True
+            # GOV-FIX-07：daemon 拒绝/失败必须以非零 RC 退出
+            # （socket 传输 error dict 路径；HTTP 传输由 _dispatch_subcommand
+            # 的 DaemonRemoteError 分支统一 RC=2）。
+            sys.exit(2)
         cprint(
             "✓ 已追加历史任务 workspace authority attestation："
             f"{result.get('legacy_task_id', opts.legacy_task_id)} "
@@ -6115,12 +6272,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.contract_bootstrap failed (no response)", "red")
-            return True
+            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.contract_bootstrap failed: {result['error']}", "red")
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(f"✓ 已追加 Task/Role/step governance bootstrap：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  contract: {result.get('contract_id', '')}@{result.get('contract_revision', '')}")
         print(f"  step bindings: {len(result.get('step_binding_ids', []))}")
@@ -6178,12 +6337,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.contract_revise failed (no response)", "red")
-            return True
+            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.contract_revise failed: {result['error']}", "red")
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(f"✓ 已追加 Task Contract revision：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  contract: {result.get('contract_id', '')} r{result.get('previous_revision', '')}→r{result.get('revision', '')}")
         print(f"  contract_hash: {result.get('contract_hash', '')}")
@@ -6228,12 +6389,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.bootstrap_executor_evidence failed (no response)", "red")
-            return True
+            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.bootstrap_executor_evidence failed: {result['error']}", "red")
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(f"✓ 已追加 Bootstrap Executor Evidence：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  to_status: {result.get('to_status', '-')}")
         print(f"  evidence_steps: {len(result.get('evidence_steps', []))}")
@@ -6271,12 +6434,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.bootstrap_reviewer_pass failed (no response)", "red")
-            return True
+            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.bootstrap_reviewer_pass failed: {result['error']}", "red")
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         cprint(f"✓ 已签发 Bootstrap Reviewer Pass：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  status: {result.get('status', '-')}")
         print(f"  bootstrap_reviewer_lease_id: {result.get('bootstrap_reviewer_lease_id', '')}")
@@ -6300,7 +6465,9 @@ def _handle_task(args, db):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.governance_projection.get failed: {result['error']}", "red")
-            return True
+            # GOV-FIX-08：读路径 daemon 拒绝同样 fail-closed（与 dispatch 层
+            # HTTP DaemonRemoteError RC=2 语义对齐）。
+            sys.exit(2)
         if opts.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return True
@@ -6344,13 +6511,15 @@ def _handle_task(args, db):
         if result is None:
             cprint(t("cli.messages.task_superseded_failed",
                      default="task.superseded_by failed (no response)"), "red")
-            return True
+            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
+            sys.exit(2)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(t("cli.messages.task_superseded_failed",
                      error=result["error"]), "red")
-            return True
+            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
+            sys.exit(2)
         if not result.get("found"):
             cprint(t("cli.messages.task_superseded_none",
                      task_id=opts.id,
@@ -7536,11 +7705,11 @@ def _handle_test_impact(args, db):
         return True
 
     print(t("cli.messages.test_impact_tests_title"))
-    for i, t in enumerate(tests, 1):
-        name = t.get("name", "")
-        qn = t.get("qualified_name", "")
-        fp = t.get("file_path", "")
-        line = t.get("start_line", "?")
+    for i, item in enumerate(tests, 1):
+        name = item.get("name", "")
+        qn = item.get("qualified_name", "")
+        fp = item.get("file_path", "")
+        line = item.get("start_line", "?")
         print(t("cli.messages.test_impact_test_item", idx=i, name=name))
         print(t("cli.messages.test_impact_test_qn", qn=qn))
         print(t("cli.messages.test_impact_test_location", file=fp, line=line))
@@ -12302,26 +12471,33 @@ def _handle_build_context(args, db):
             return False
 
     elif opts.action == "import-compile-commands":
-        from ..analyzers.compile_commands import import_compile_commands
+        # G4（T-1789022024819-8cb9f614）：解析下沉 daemon（薄壳只读文件传 content）
         if not os.path.exists(opts.file):
             print(f"File not found: {opts.file}")
             return False
 
-        agg = import_compile_commands(
-            opts.file, opts.workspace_root or os.getcwd())
-        print(f"Imported {agg.file_count} compile entries:")
-        print(f"  compiler: {agg.compiler_path or '(not detected)'}")
-        print(f"  defines: {len(agg.defines)}")
-        print(f"  include_paths: {len(agg.include_paths)}")
-        print(f"  compile_flags: {len(agg.compile_flags)}")
+        with open(opts.file, "r", encoding="utf-8") as f:
+            content = f.read()
+        agg = route_rpc("build_context.import_compile_commands", {
+            "content": content,
+            "workspace_root": opts.workspace_root or os.getcwd(),
+        }, "READ_ONLY")
+        if not isinstance(agg, dict):
+            print("Failed: daemon 未返回聚合结果")
+            return False
+        print(f"Imported {agg.get('file_count', 0)} compile entries:")
+        print(f"  compiler: {agg.get('compiler_path') or '(not detected)'}")
+        print(f"  defines: {len(agg.get('defines') or {})}")
+        print(f"  include_paths: {len(agg.get('include_paths') or [])}")
+        print(f"  compile_flags: {len(agg.get('compile_flags') or [])}")
 
-        # 注册 build context（经 daemon RPC）
+        # 注册 build context（经 daemon RPC，写语义不变）
         ctx = route_rpc("build_context.register", {
             "workspace_id": opts.workspace_id,
             "name": opts.name,
-            "compile_flags": list(agg.compile_flags),
-            "defines": dict(agg.defines or {}),
-            "include_paths": list(agg.include_paths),
+            "compile_flags": list(agg.get("compile_flags") or []),
+            "defines": dict(agg.get("defines") or {}),
+            "include_paths": list(agg.get("include_paths") or []),
             "set_active": opts.activate,
         }, "PROTECTED_MUTATION")
         if not isinstance(ctx, dict):
@@ -12333,14 +12509,16 @@ def _handle_build_context(args, db):
             print(f"  (set as active)")
 
         # 如果检测到编译器，提示注册 toolchain
-        if agg.compiler_path:
-            print(f"\n  Hint: Detected compiler '{agg.compiler_path}'")
+        if agg.get("compiler_path"):
+            print(f"\n  Hint: Detected compiler '{agg.get('compiler_path')}'")
             print(
-                f"  Run: cw toolchain register auto_{int(time.time())} {agg.compiler_path}")
+                f"  Run: cw toolchain register auto_{int(time.time())} {agg.get('compiler_path')}")
 
     elif opts.action == "resolve":
-        from ..analyzers.resolved_edges_engine import compute_resolved_edges
-        from ..server.cli_admin import open_readonly_conn
+        # G4（T-1789022024819-8cb9f614）：compute+store 下沉 daemon
+        # （resolved_edges.rebuild 单事务先清旧再落库；CLI 不直连 SQLite、
+        # 不本地跑 compute_resolved_edges——旧路径 open_readonly_conn 已是
+        # RPC 探测语义（返回 dict），conn.close() 必炸 AttributeError）
         # 验证 build context 存在（经 daemon RPC）
         ctx = route_rpc("build_context.get", {
             "workspace_id": opts.workspace_id,
@@ -12351,28 +12529,22 @@ def _handle_build_context(args, db):
             return False
         # 使用完整 hash（build_context.get 已支持短 hash 前缀匹配，但引擎内部需要完整 hash）
         full_hash = ctx.get("build_context_hash", opts.hash)
-        # 计算（只读连接由 server.cli_admin 提供；CLI 不直接操作 SQLite）
-        conn = open_readonly_conn()
-        try:
-            result = compute_resolved_edges(conn, opts.workspace_id, full_hash)
-        finally:
-            conn.close()
+        result = route_rpc("resolved_edges.rebuild", {
+            "workspace_id": opts.workspace_id,
+            "build_context_hash": full_hash,
+        }, "PROTECTED_MUTATION")
+        if not isinstance(result, dict):
+            print("Failed: daemon 未返回 rebuild 结果")
+            return False
         if result.get("error"):
             print(f"Error: {result['error']}")
             return False
-        # 先清旧再写入（重建）——经 daemon RPC resolved_edges.store
-        edges = result.get("edges") or []
-        route_rpc("resolved_edges.store", {
-            "workspace_id": opts.workspace_id,
-            "build_context_hash": full_hash,
-            "edges": edges,
-        }, "PROTECTED_MUTATION")
         print(f"Resolved edges computed for: {ctx.get('name', '')}")
         print(f"  source: {result.get('source', '')}")
-        print(f"  computed: {result.get('count', len(edges))} edges")
+        print(f"  computed: {result.get('count', 0)} edges")
         if result.get("skipped"):
             print(f"  skipped (caller unmapped): {result['skipped']}")
-        print(f"  stored: {len(edges)}")
+        print(f"  stored: {result.get('inserted', 0)} (cleared {result.get('deleted', 0)})")
 
     elif opts.action == "edges":
         # 先用短 hash 查找完整 hash（经 daemon RPC）
@@ -13335,6 +13507,36 @@ def main():
         elif args.call_chain:
             result = db.get_call_chain_down(
                 args.call_chain, max_depth=args.chain_depth)
+
+            # 迁移兼容（2026-09-05）：Rust daemon 的 query.call_chain_down
+            # 返回扁平边列表 [{depth, callee_qualified, ...}]，legacy Python DB
+            # 返回聚合 dict {start, total_downstream, max_depth_reached, levels}。
+            # 客户端侧聚合为 legacy 结构，避免 Rust 侧重发布。
+            if isinstance(result, list):
+                by_depth: Dict[int, list] = {}
+                for edge in result:
+                    by_depth.setdefault(int(edge.get("depth", 0)), []).append(edge)
+                callees_seen = {
+                    (e.get("callee_qualified") or e.get("callee_name") or "")
+                    for e in result
+                } - {""}
+                result = {
+                    "start": args.call_chain,
+                    "total_downstream": len(callees_seen),
+                    "max_depth_reached": max(by_depth) if by_depth else 0,
+                    "levels": [
+                        {
+                            "depth": depth,
+                            "count": len(edges),
+                            "callees": [
+                                {"callee": e.get("callee_qualified")
+                                 or e.get("callee_name") or ""}
+                                for e in edges
+                            ],
+                        }
+                        for depth, edges in sorted(by_depth.items())
+                    ],
+                }
 
             print(t("cli.messages.call_chain_down_title",
                   name=result['start']))
@@ -14688,12 +14890,13 @@ def _agent_start(argv: list) -> int:
     _logging.info("PID 文件：%s", pid_file)
 
     # 4. 与 daemon 握手（user_agent_connect）
-    from callwarden.server.daemon_client import UnixDaemonRpcClient
+    # C-11：A′ CLI-005 迁移 —— Python 仅作 HTTP thin client + 编排，
+    # Rust daemon 是唯一 authority；不再持有 Unix socket 业务路径。
+    from callwarden.server.daemon_client import HttpDaemonRpcClient
     from callwarden.server.agent_protocol import (
         user_agent_connect, user_agent_ping, AgentProtocolError,
     )
-    from callwarden.config import get_default_daemon_endpoint
-    rpc_client = UnixDaemonRpcClient(socket_path=get_default_daemon_endpoint())
+    rpc_client = HttpDaemonRpcClient()
 
     try:
         ping_resp = user_agent_ping(rpc_client)
@@ -14855,9 +15058,10 @@ def _agent_status(argv: list) -> int:
 
     print("\n=== Daemon 连接 ===")
     try:
-        from callwarden.server.daemon_client import UnixDaemonRpcClient
-        from callwarden.config import get_default_daemon_endpoint
-        rpc = UnixDaemonRpcClient(socket_path=get_default_daemon_endpoint())
+        # C-12：A′ CLI-006 迁移 —— Python 仅作 HTTP thin client，
+        # Rust daemon 是唯一 authority；不再持有 Unix socket 业务路径。
+        from callwarden.server.daemon_client import HttpDaemonRpcClient
+        rpc = HttpDaemonRpcClient()
         resp = rpc.call("ping")
         print(f"daemon 状态: {resp.get('status', 'unknown')}")
         print(f"  peer_uid: {resp.get('peer_uid')}")
@@ -15970,9 +16174,11 @@ def _handle_experiment(args, db):
 def _handle_collab(args, db):
     """处理 collab 子命令（多 LLM 契约协同治理写操作）
 
-    所有治理写操作必须经 Daemon_Endpoint 序列化点，不可绕过 daemon。
-    连接失败时：auto-start（3.25）→ Degraded_Mode（3.27/3.28）→
-    Governance_Write fail closed + 平台相关恢复指引。
+    所有治理写操作经统一权威路由 ``route_rpc(..., 'GOVERNANCE_WRITE')``
+    落到 daemon authority（与 ``cw lease`` / ``cw task`` 写命令面同一真相源），
+    不可绕过。
+    daemon 不可达时：Governance_Write fail closed（Structured_Reason +
+    平台相关恢复指引 + 非零 RC）；不提供本地 SQLite 回退，也不静默降级。
 
     子命令：
         publish       发布 Envelope（snapshot.publish）
@@ -16167,48 +16373,33 @@ def _handle_collab(args, db):
         params["clause"] = opts.clause
         params["value"] = opts.value == "true"
 
-    # 通过 daemon 执行治理写操作（不可绕过）
+    # 通过 daemon authority 执行治理写操作（不可绕过）。
+    # W17：与 cw lease / cw task 写命令面收敛到同一权威路由 route_rpc
+    # （HTTP authority face）。本函数内不得再构造任何本地传输客户端，否则同一
+    # task 的治理写在权威 HTTP 面不可见
+    # （实测：E_TASK_WORKSPACE_UNBOUND / E_LEASE_NOT_FOUND）。
     try:
-        from ..server.daemon_client import DaemonClient, DaemonUnavailableError
-        client = DaemonClient.get_instance()
-        if method == "snapshot.publish":
-            root = params["workspace_root"]
-            register_params = {"client_view_root": root}
-            register_params.update(_workspace_snapshot_metadata(root))
-            registration = client.call_with_autostart(
-                "workspace.register", register_params
+        if method == "snapshot.publish" and is_http_transport_enabled():
+            # --workspace 必须显式绑定到 HTTP 单例：route_rpc 仅在未配置时
+            # 兜底按调用进程 cwd 注册 workspace，跨项目 publish 会落到错误
+            # workspace（同 RpcDBProxy 的 Blocker A 修复）。workspace_instance_id
+            # 由 route_rpc 经 workspace.register 的权威返回值注入，CLI 不派生。
+            HttpDaemonRpcClient.get_instance().configure_workspace(
+                params["workspace_root"]
             )
-            workspace = registration.get("result") if isinstance(registration, dict) else None
-            if not isinstance(workspace, dict):
-                raise RuntimeError("workspace.register 未返回有效 workspace")
-            workspace_instance_id = workspace.get("workspace_instance_id")
-            if not isinstance(workspace_instance_id, str) or not workspace_instance_id:
-                raise RuntimeError("workspace.register 未返回权威 workspace_instance_id")
-            params["workspace_instance_id"] = workspace_instance_id
-            snapshot_id = workspace.get("snapshot_id")
-            if isinstance(snapshot_id, str) and snapshot_id:
-                params["snapshot_id"] = snapshot_id
-        response = client.call_with_autostart(method, params)
+        result = route_rpc(method, params, "GOVERNANCE_WRITE")
     except DaemonUnavailableError as e:
-        # Governance_Write fail closed：输出 Structured_Reason + 平台恢复指引
+        # Governance_Write fail closed：输出 Structured_Reason + 平台恢复指引，
+        # 并以非零 RC 退出（无本地回退、无静默降级）。结构化拒绝已打印，故此处
+        # 不再走 dispatcher 的通用异常分支（那里会把失败表达成 RC=0 假成功）。
         _collab_governance_rejection(method, str(e), use_json)
-        return True
+        raise SystemExit(1)
     except Exception as e:
         _collab_error("E_RPC_FAILED", "cli.collab.rpc_failed",
                       f"RPC 调用失败 ({method}): {e}", use_json)
         return True
 
-    # 处理降级响应（Governance_Write 不应降级，但防御性检查）
-    if response.get("degraded"):
-        reason = response.get("reason")
-        if reason:
-            _collab_output_structured_reason(reason, use_json)
-        else:
-            _collab_governance_rejection(method, "降级模式", use_json)
-        return True
-
-    # 成功路径
-    result = response.get("result")
+    # 成功路径（route_rpc 原样返回 daemon result，无降级信封）
     if use_json:
         print(json.dumps({"ok": True, "method": method, "result": result},
                          ensure_ascii=False, indent=2))
@@ -16774,6 +16965,76 @@ def _method_accepts_identity_routed(db, method_name: str) -> bool:
     return _method_accepts_identity(db, method_name)
 
 
+def _governance_gate(task_id, action_label, role=None):
+    """治理前置门禁：workflow_status=governance_blocked 时拒绝治理写。
+
+    背景：daemon 的 role prompt 权威会正确判 `BLOCKED / valid_for_claim=false`，
+    但 CLI 写通道过去没有任何硬门禁，外部 agent 会试错式推进（lease acquire →
+    report → handoff），在契约缺失的卡上留下空 role 物理行与失配的 assignment。
+    本函数让硬约束与 prompt 权威一致：返回 None 表示放行，返回 reason dict 表示拒绝。
+
+    作用域（2026-09-10 修正）：**只拦「认领工作」的写通道（executor claim / report）**。
+    `role=reviewer` 时必须放行——reviewer lease 是**治理修复路径的前置票**：
+    `task.contract-bootstrap`（P0-L 自举修复，专治 projection 为空的裸卡）、
+    `task.contract-revise`、`task.attest-legacy-workspace-binding` 与
+    `task.supersede` 均要求该卡上的 reviewer lease token + fencing_counter。
+    若在此一并拦截，会把 governance_blocked 的裸卡焊死为**不可修复**（自锁死锁）。
+
+    仅对非 local 模式生效（local 模式保留既有行为，避免破坏离线调试）。
+    """
+    if get_daemon_mode() == "local":
+        return None
+    if str(role or "").strip().lower() in ("reviewer", "independent_reviewer"):
+        # 治理修复通道前置票，放行（见 docstring）。
+        return None
+    from callwarden.server.daemon_client import (
+        DaemonRemoteError,
+        HttpDaemonRpcClient,
+        UnixDaemonRpcClient,
+        is_http_transport_enabled,
+    )
+    try:
+        rpc_client = (
+            HttpDaemonRpcClient.get_instance()
+            if is_http_transport_enabled()
+            else UnixDaemonRpcClient()
+        )
+        call = (
+            rpc_client.call_with_autostart
+            if hasattr(rpc_client, "call_with_autostart")
+            else rpc_client.call
+        )
+        projection = call("task.governance_projection.get", {"task_id": task_id})
+    except DaemonRemoteError as exc:
+        # 投影查询本身的业务错误不阻断（门禁是附加保护，不是新单点）。
+        return None
+    except Exception:
+        # daemon 不可达时由既有写路由抛 DaemonUnavailableError，此处不重复处理。
+        return None
+    if not isinstance(projection, dict):
+        return None
+    workflow_status = str(projection.get("workflow_status") or "")
+    blocking = projection.get("blocking_reason") or projection.get("blocking_reasons")
+    if workflow_status != "governance_blocked":
+        return None
+    return {
+        "code": "E_TASK_GOVERNANCE_BLOCKED",
+        "message": (
+            f"任务 {task_id} 处于 governance_blocked，{action_label} 被拒绝"
+            f"（硬门禁与 daemon prompt 权威一致）"
+        ),
+        "detail": (
+            f"blocking_reason: {blocking}. "
+            "处置：该卡缺少可验证的 Task/Role Contract，标准 claim→report→verdict→close "
+            "链不可完成。请由 Planner/治理能力走 supersede（开带 role_contracts 的新卡收编）"
+            "或 cascade_close，勿在裸卡上继续推进。"
+        ),
+        "workflow_status": workflow_status,
+        "blocking_reason": blocking,
+    }
+
+
+
 def _method_accepts_identity(db, method_name: str) -> bool:
     """检查 db 方法是否接受 identity 关键字参数（8.6 接线后为 True）。
 
@@ -17259,6 +17520,13 @@ def _handle_lease(args, db):
         return True
 
     if opts.action == "acquire":
+        # 治理前置门禁（与 daemon prompt 权威一致）：governance_blocked 的卡
+        # 不允许 executor claim，避免在契约缺失的卡上留下空 role 物理行/失配 assignment。
+        # role=reviewer 放行（治理修复路径的前置票，见 _governance_gate docstring）。
+        _gate = _governance_gate(opts.task_id, "lease acquire", role=getattr(opts, "role", None))
+        if _gate:
+            _lease_reason_output(_gate, use_json)
+            return True
         # 非 local 模式经 daemon RPC（lease.acquire），daemon 权威时钟 + 单写点；
         # identity 需含 role（parse_action_identity 四字段齐备要求）。
         _daemon_identity = {**identity, "role": opts.role} if identity else None
@@ -17273,7 +17541,13 @@ def _handle_lease(args, db):
             _lease_reason_output(result, use_json)
             return True
         if use_json:
-            print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+            # `token` is the historical lease RPC field.  Keep it as a
+            # compatibility alias while exposing the protected-mutation name
+            # consumed by task.report/task.handoff as the canonical field.
+            response = {"ok": True, **result}
+            if response.get("token"):
+                response.setdefault("lease_token", response["token"])
+            print(json.dumps(response, ensure_ascii=False, indent=2))
         else:
             cprint(t("cli.messages.lease_acquired", default="Lease acquired"), "green", bold=True)
             # raw token 仅此一次返回（Req 11.2）
@@ -17334,6 +17608,36 @@ def _handle_lease(args, db):
 
     parser.print_help()
     return True
+
+
+def _unwrap_bool_result(value):
+    """归一 db/RPC 回包为 (ok, result)（C-06）。
+
+    本地 CodeGraphDB 方法返回 2 元组 (success, reason/result)；daemon RPC 回包是
+    结构化 dict（`{"ok": true, ...}`）。CLI 不得对 dict 做 2 元组解包。
+    """
+    if isinstance(value, tuple) and len(value) == 2:
+        return value
+    if isinstance(value, dict):
+        return bool(value.get("ok", True)), value
+    return True, value
+
+
+def _resolve_assignment_workspace_instance_id(db) -> str:
+    """解析 admin.assignment_* 所需的权威 workspace_instance_id（C-06）。
+
+    `route_rpc` 对含 `task_id` 的 task-scoped 请求跳过 workspace 上下文注入
+    （改走 task_workspace_bindings），而 Rust dispatch 对 `admin.assignment_*`
+    要求显式 `workspace_instance_id`。解析失败时不本地推导兜底：留空交由 daemon
+    fail-closed（后续 route_rpc 本身亦为 fail-closed，不存在本地回退路径）。
+    """
+    root = getattr(db, "client_workspace_root", None)
+    try:
+        pair = (resolve_workspace_pair_from_daemon(root) if root
+                else resolve_workspace_pair_from_daemon())
+    except (DaemonUnavailableError, DaemonRemoteError):
+        return ""
+    return str(pair.get("workspace_instance_id", ""))
 
 
 def _handle_assignment(args, db):
@@ -17403,7 +17707,7 @@ def _handle_assignment(args, db):
         return True
 
     if opts.action == "revoke":
-        ok, result = db.revoke_assignment(opts.assignment_id)
+        ok, result = _unwrap_bool_result(db.revoke_assignment(opts.assignment_id))
         if not ok:
             _lease_reason_output(result, use_json)
             return True
@@ -17420,7 +17724,24 @@ def _handle_assignment(args, db):
         _lease_reason_output(ireason, use_json)
         return True
 
-    ok, result = db.create_assignment(opts.task_id, opts.role, identity)
+    # C-06：daemon `admin.assignment_create` 契约要求扁平 holder Identity
+    # （agent_id/session_id/model_id），且 task-scoped 请求不会由 route_rpc 注入
+    # workspace 上下文；本地 db 保持 (task_id, role, identity) 契约。
+    if isinstance(db, RpcDBProxy):
+        params = {
+            "task_id": opts.task_id,
+            "role": opts.role,
+            "agent_id": identity["agent_id"],
+            "session_id": identity["session_id"],
+            "model_id": identity["model_id"],
+        }
+        ws_instance_id = _resolve_assignment_workspace_instance_id(db)
+        if ws_instance_id:
+            params["workspace_instance_id"] = ws_instance_id
+        ok, result = _unwrap_bool_result(db.create_assignment(**params))
+    else:
+        ok, result = _unwrap_bool_result(
+            db.create_assignment(opts.task_id, opts.role, identity))
     if not ok:
         _lease_reason_output(result, use_json)
         return True

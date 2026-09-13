@@ -239,7 +239,9 @@ def _current_uid() -> int:
 
 
 # 批次11（P0 运维 RPC 授权）：需要管理员权限的运维方法集合。
-# 与 Rust 端 rust_ext/src/daemon/dispatch.rs L545-564 ADMIN_ONLY_METHODS 完全对齐。
+# 与 Rust 端 rust_ext/src/daemon/dispatch.rs L2233-2255 ADMIN_ONLY_METHODS 对齐
+# （Rust 端为子集；本集合额外含 build_context.* 三个写方法，见 tests/
+# test_phase8_admin_rpc_authz.py 的 try-diff 断言）。
 #
 # 授权规则（fail-closed）：peer uid 必须满足以下任一条件才允许调用：
 # - uid == 0（root，硬编码，与 Rust 端 peer.uid == 0 对齐）
@@ -273,6 +275,9 @@ ADMIN_ONLY_METHODS: frozenset = frozenset({
     "build_context.register",
     "build_context.set_active",
     "build_context.delete",
+    # SRV-003（T-1787323460500-b9e232bc）：文件级备份写操作，
+    # 与 backup/restore 同级，仅 root/daemon uid 可调用。
+    "mcp.backup_restore.backup_file",
 })
 
 
