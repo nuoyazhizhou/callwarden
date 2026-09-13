@@ -153,8 +153,13 @@ def wsl_authority():
         assert "cfg_ok" in (w_cfg.stdout or ""), w_cfg
 
         # ---- 4. 启动 Linux daemon（nohup 后台，独立于本 wsl 调用会话）----
+        # 共存契约 §7.2 明确 WSL local-daemon 配置 `CW_DAEMON_TRANSPORT=uds`：
+        # 未显式指定时 cw_daemon 走 H6 迁移期默认（自设 transport=http + 启用 loopback
+        # HTTP overlay，见 rust_ext/src/bin/cw_daemon.rs:231-260），hello 会报
+        # transport=http，与本测试的 UDS 隔离口径不符。故显式钉住 uds。
         start_script = (
             f"export HOME=/root; "
+            f"export CW_DAEMON_TRANSPORT=uds; "
             f"cd {tmp}; "
             f"nohup {_WSL_DAEMON_BIN} --config {tmp}/daemon.json "
             f"> {tmp}/daemon.log 2>&1 & "
@@ -194,9 +199,44 @@ def wsl_authority():
             pytest.fail(f"WSL daemon UDS 未就绪: {rp.stdout}{rp.stderr}\ndaemon.log:\n{log.stdout}")
         authority_id = rp.stdout.strip().splitlines()[-1].split(" ", 2)[1]
 
+        # ---- 6. 注册 workspace + 把权威行补齐到 task-DB（任务写面门禁）----
+        # 与 tests/convergence/conftest.py:qa_workspace 同源的两步口径（实测于 WSL daemon）：
+        # (a) `workspace.register` 只写 daemon 注册表（daemon_workspaces），回包给出权威
+        #     `workspace_id`（数字）与 `workspace_instance_id`（稳定字符串）；
+        # (b) `task.create` 的 resolver（workspace_reconciliation.rs:128-143）与
+        #     binding（task_collab.rs:186-202）要求 task-DB `workspaces` 存在该数字 id，
+        #     否则 fail-closed 报 `E_WORKSPACE_AUTHORITY_MISMATCH`；`required_workspace_id_param`
+        #     同时要求显式 `workspace_id > 0`（禁止 active workspace / cwd 补齐）。
+        # 本步为测试夹具的权威前置（隔离临时库，不触碰任何生产库），断言口径不变。
+        reg_script = (
+            "import os, sys, time, sqlite3\n"
+            "os.environ['PYTHONPATH'] = '/mnt/c/git_work'\n"
+            "os.environ['HOME'] = '/root'\n"
+            "sys.path.insert(0, '/mnt/c/git_work')\n"
+            "from callwarden.server.daemon_client import UnixDaemonRpcClient\n"
+            f"c = UnixDaemonRpcClient(socket_path={json.dumps(uds)})\n"
+            f"tmp = {json.dumps(tmp)}\n"
+            "reg = c.call('workspace.register', {'name': 'wsl-e2e-ws', 'client_view_root': tmp})\n"
+            "ws_id = reg['workspace_id']; ws_inst = reg['workspace_instance_id']\n"
+            "conn = sqlite3.connect(" + json.dumps(config["task_db_path"]) + ")\n"
+            "conn.execute('INSERT OR REPLACE INTO workspaces"
+            " (id, name, root_path, created_at, is_active) VALUES (?,?,?,?,1)',\n"
+            "             (ws_id, 'wsl-e2e-ws', tmp, time.time()))\n"
+            "conn.commit(); conn.close()\n"
+            "print('WS_OK', ws_id, ws_inst)\n"
+        )
+        rw = _wsl_py(reg_script, timeout=120)
+        if rw.returncode != 0 or "WS_OK" not in (rw.stdout or ""):
+            pytest.fail(f"WSL workspace 注册/权威行补齐失败: {rw.stdout}{rw.stderr}")
+        ws_line = [ln for ln in rw.stdout.strip().splitlines() if ln.startswith("WS_OK")][-1]
+        workspace_id = int(ws_line.split(" ")[1])
+        workspace_instance_id = ws_line.split(" ")[2]
+
         yield {
             "tmp": tmp,
             "uds": uds,
+            "workspace_id": workspace_id,
+            "workspace_instance_id": workspace_instance_id,
             "task_db": config["task_db_path"],
             "registry_db": config["registry_db_path"],
             "data_root": config["data_root"],
@@ -245,7 +285,9 @@ def test_wsl_daemon_authority_isolated_and_writable(wsl_authority):
     script = _wsl_client_script(uds, body=(
         "import json\n"
         "created = client.call('task.create', {'title': 'wsl-local-task', "
-        "'description': 'WSL 独立 authority', 'creator': 'wsl-agent'})\n"
+        "'description': 'WSL 独立 authority', 'creator': 'wsl-agent', "
+        f"'workspace_id': {ctx['workspace_id']}, "
+        f"'workspace_instance_id': {json.dumps(ctx['workspace_instance_id'])}}})\n"
         "tid = created['task_id']\n"
         "claimed = client.call('task.claim', {'task_id': tid, "
         "'agent_session_id': 'wsl-session-1'})\n"
@@ -292,7 +334,9 @@ def test_wsl_daemon_survives_restart(wsl_authority):
     script = _wsl_client_script(uds, body=(
         "import json\n"
         "created = client.call('task.create', {'title': 'restart-persist', "
-        "'creator': 'wsl-agent'})\n"
+        "'creator': 'wsl-agent', "
+        f"'workspace_id': {ctx['workspace_id']}, "
+        f"'workspace_instance_id': {json.dumps(ctx['workspace_instance_id'])}}})\n"
         "tid = created['task_id']\n"
         "ev1 = client.call('task.events', {'task_id': tid})\n"
         "print(json.dumps({'task_id': tid, 'events1': len(ev1.get('events', []))}))\n"
@@ -322,7 +366,9 @@ def test_wsl_daemon_survives_restart(wsl_authority):
 
     # 重启（同一配置；先清理可能残留的 socket 文件，daemon 自身也会清理）
     restart = _wsl_bash(
-        f"export HOME=/root; cd {tmp}; "
+        f"export HOME=/root; "
+        f"export CW_DAEMON_TRANSPORT=uds; "
+        f"cd {tmp}; "
         f"rm -f {tmp}/callwarden.sock; "
         f"nohup {_WSL_DAEMON_BIN} --config {tmp}/daemon.json "
         f"> {tmp}/daemon.log 2>&1 & echo $! > {tmp}/daemon.pid; "
