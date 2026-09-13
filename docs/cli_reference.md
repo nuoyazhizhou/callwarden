@@ -17,7 +17,7 @@ Call Warden 把 150+ 个 CLI 命令按功能聚合为 13 个主分类，每个�
 | 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引 | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status` | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
 | 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | `callers`、`callees`、`call-chain`、`impact`、`topo` | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap` |
 | 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard` | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented` |
-| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、派工查询、capture-diff、质量审查、拆分 | `task create/next/next-action/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容） |
+| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、派工查询、Role Prompt 编译、capture-diff、质量审查、拆分 | `task create/next/next-action/prompt/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容） |
 | 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log` | — |
 | 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁 | `audit verify/rotate-key/keys`、`bootstrap status` | — |
 | 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | `git import/log/show/stats`、`symbol-history` | `--git-import`、`--git-log`、`--git-show`、`--git-stats` |
@@ -877,6 +877,16 @@ cw --diff a1b2c3d4e5f6... d4e5f6a1b2c3...
 
 ### `task create`：创建任务
 
+父任务创建（GATE-1B）使用 `--parent-id`。显式传入 daemon 返回的
+`--workspace-id` 和 `--workspace-instance-id` 作为父子 workspace 一致性断言，
+并提供 `--role-contracts` 与 `--identity-policy`。需要自定义 Task Contract 时，
+使用 `--task-contract-envelope '<JSON>'`；该字符串原样转发，由 daemon 校验。
+如 envelope 指定 contract_id，可用 `--task-id` 提供与之对应的任务 ID。
+父任务、合同、策略和 workspace 校验均在 daemon 中完成；客户端不补造治理合同，
+不选择 active workspace，不回退本地数据库。未知参数在发送前拒绝，daemon
+返回的父任务不存在、workspace 不匹配、合同或策略缺失错误不重新分类。
+未使用这些新参数的根任务请求保持原有默认三角色合同和 legacy policy 行为。
+
 ```bash
 cw task create \
   --title "为支付函数添加注释" \
@@ -888,9 +898,8 @@ cw task create \
 `task create` 的 workspace 绑定必须来自 daemon 权威解析，客户端一律不猜数字、
 不合成 `ws-{id}`、不回退 active workspace：
 
-- 缺省：先经 `mcp.daemon_client.inject_workspace_id` 解析 `workspace_id`，
-  再经 `workspace.status` 解析该 workspace 的权威 `workspace_instance_id`，
-  二者原样转发给 `task.create`；
+- 根任务缺省：经 daemon `workspace.list` 和 `workspace.status` 查询当前项目根目录
+  唯一一致的 canonical workspace 配对，原样转发给 `task.create`；
 - 显式覆盖：`--workspace-id <id>` / `--workspace-instance-id <inst>` 可显式传入，
   但 daemon 仍做 0c 配对校验（不一致 → `E_WORKSPACE_AUTHORITY_MISMATCH`）；
 - **fail-closed**：workspace 未在 daemon 注册（如 legacy SQLite `is_active`
@@ -982,6 +991,38 @@ cw task next-action <task_id> --json
 - **权威在 daemon**：evaluator 只在 Rust daemon 中实现；daemon 未启动时返回
   `E_DAEMON_UNAVAILABLE`，local 模式无 evaluator（fail-closed），不会本地推算。
 - `--json` 输出原始决策供脚本/客户端解析；`cw-task-loop` Skill 依此逐字渲染角色卡。
+
+### `task prompt`：编译 Role Prompt Bundle（只读薄客户端）
+
+```bash
+cw task prompt <task_id>
+cw task prompt <task_id> --format llm
+cw task prompt <task_id> --format card
+cw task prompt <task_id> --format json
+```
+
+Role Prompt Compiler v1 的 CLI HTTP 薄客户端：唯一 authority 是 daemon RPC
+`task.prompt.compile`，daemon 侧完成路由选择（§6 状态机）、role prompt 渲染、
+canonical 化与 hash，返回可直接供 LLM 使用的 Role Prompt Bundle（§5.1 schema）。
+
+- **三种本地展示格式**（`--format` 只改变本地展示，不发送给 daemon、不进入任何
+  hash；默认 `llm`）：
+  - `llm`：逐字输出 bundle 的 `prompt.text`（供 LLM/Agent 直接使用）；
+  - `card`：结构化角色卡投影（routing / contract / authorization / authority /
+    template / hash 字段），全部逐字复述 daemon 返回值，缺失字段标 `—`；
+  - `json`：daemon 返回的完整 bundle JSON 原样输出（与 MCP 工具
+    `task_get_role_prompt` 字段与 hash 完全一致）。
+- **请求契约**（spec §4.1）：params 恰为 `task_id` + 可选
+  `--expected-workspace-instance-id`（caller assertion，仅用于检测调用方缓存的
+  authority 是否过期；mismatch 返回 `E_TASK_PROMPT_AUTHORITY_MISMATCH`）。
+- **不做 workspace 推导**（spec §4.3）：本命令不复用/扩散 `task next-action` 的
+  legacy `derive_workspace_instance_id` fallback；workspace authority 由 daemon
+  侧 immutable binding 自解析。
+- **fail-closed**：daemon 未启动/不可达时返回 `E_DAEMON_UNAVAILABLE` 结构化错误；
+  daemon 业务错误（如 `E_TASK_PROMPT_AUTHORITY_MISMATCH`）原样透传；无本地模板、
+  无 SQLite、无 fallback 渲染（enterprise/daemon 模式无本地 authority）。
+- **只读**：`task.prompt.compile` 为 READ_ONLY（单 snapshot 8 表零写入），不产生
+  lease、claim 或 lifecycle mutation。
 
 ### `task report`：回报结果
 
@@ -2963,15 +3004,25 @@ cw experiment report <batch_id> [--json]
 
 ## cw collab（多 LLM 契约协同治理写命令）
 
-经 Daemon_Endpoint 序列化点的治理写操作入口（Req 14）。所有操作不可绕过 daemon；
+经统一权威路由 `route_rpc(..., 'GOVERNANCE_WRITE')` 的治理写操作入口（Req 14），落到 daemon
+authority（HTTP authority face，与 `cw lease` / `cw task` 写命令面同一真相源）。所有操作不可绕过 daemon；
 连接失败时 auto-start → Degraded_Mode → Governance_Write fail closed + 平台恢复指引。
 
 ```bash
 # 发布 Envelope（snapshot.publish）
 cw collab publish --workspace PATH [--envelope FILE] [--json]
 
-# 提交 Verdict 并封存（verdict.submit）
-cw collab verdict --verdict-id ID --decision {approve,reject,abstain} [--reason TEXT] [--no-seal] [--json]
+# 提交 Verdict 并封存（verdict.submit，完整 task-bound provenance）
+cw collab verdict \
+  --task-id ID --step-id ID \
+  --contract-id ID --contract-hash HASH --contract-revision N \
+  --role-contract-id ID --role-contract-hash HASH --role-contract-revision N \
+  --snapshot-id ID --view-manifest-hash HASH --request-id ID \
+  --phase {blind_first_pass,post_reveal_amendment} --overall {pass,block} \
+  --attestation TEXT --agent-instance-id ID --role {reviewer,independent_reviewer} \
+  [--agent-id ID] [--session-id ID] [--model-id ID] \
+  [--amendment-ref ID] [--clause-results JSON] [--findings JSON] [--verdict-id ID] \
+  [--lease-token TOKEN] [--fencing-counter N] [--json]
 
 # 提交 Reveal_Event（reveal.submit）
 cw collab reveal --event-id ID --task-id ID [--notes FILE] [--json]
@@ -2979,6 +3030,14 @@ cw collab reveal --event-id ID --task-id ID [--notes FILE] [--json]
 # 触发 Gate 判定（gate.decide）
 cw collab gate-trigger --gate-id ID --clause NAME --value {true,false} [--json]
 ```
+
+`verdict` 的 `--view-manifest-hash` 由 daemon 强制非空（缺失/空白在写入前拒绝），`--request-id`
+为同任务内唯一幂等键；`--findings` / `--clause-results` 为 JSON 数组字符串
+（reviewer lease 的 `--lease-token` / `--fencing-counter` 亦由 daemon 校验）。
+
+> daemon 实现状态：`verdict.submit` 与 `evidence.append/query` 已在 `handle_collab_rpc` 实现；
+> `reveal.submit` / `gate.decide` 当前仍返回 `method_not_found`（待 daemon 侧实现），
+> CLI 已按统一权威路由提交，daemon 补齐后无需再改 CLI。
 
 所有子命令支持 `--json` 输出机器可读 JSON。失败路径输出 Structured_Reason（稳定错误码
 `E_GOVERNANCE_WRITE_DEGRADED` + i18n key `error.governance_write_degraded` + 平台恢复指引），

@@ -466,12 +466,13 @@ CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与
 
 | 命令 | 说明 | 读写 |
 |------|------|------|
-| `collab publish --workspace PATH` | 发布 Envelope（snapshot.publish） | 写（daemon） |
-| `collab verdict --verdict-id ID --decision D` | 提交 Verdict 并封存（verdict.submit） | 写（daemon） |
-| `collab reveal --event-id ID --task-id ID` | 提交 Reveal_Event（reveal.submit） | 写（daemon） |
-| `collab gate-trigger --gate-id ID --clause C --value V` | 触发 Gate 判定（gate.decide） | 写（daemon） |
+| `collab publish --workspace PATH` | 发布 Envelope（snapshot.publish） | 写（daemon HTTP authority） |
+| `collab verdict --task-id ID --step-id ID --contract-id ID --contract-hash H --contract-revision N --role-contract-id ID --role-contract-hash H --role-contract-revision N --snapshot-id ID --view-manifest-hash H --request-id ID --phase {blind_first_pass,post_reveal_amendment} --overall {pass,block} --attestation TEXT --agent-instance-id ID --role {reviewer,independent_reviewer}` | 提交 Verdict 并封存（verdict.submit，完整 provenance + identity + reviewer lease） | 写（daemon HTTP authority） |
+| `collab reveal --event-id ID --task-id ID` | 提交 Reveal_Event（reveal.submit） | 写（daemon HTTP authority） |
+| `collab gate-trigger --gate-id ID --clause C --value V` | 触发 Gate 判定（gate.decide） | 写（daemon HTTP authority） |
 
-所有操作经 Daemon_Endpoint 序列化点，不可绕过。daemon 不可用时 Governance_Write fail closed，
+所有操作经统一权威路由 `route_rpc(..., 'GOVERNANCE_WRITE')`（HTTP authority face，与 `cw lease`
+/ `cw task` 写命令面同一真相源），不可绕过。daemon 不可用时 Governance_Write fail closed，
 输出 Structured_Reason（E_GOVERNANCE_WRITE_DEGRADED + 平台恢复指引），exit code 1。
 
 ## 路由矩阵与收敛架构（T01/T05）
