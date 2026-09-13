@@ -118,11 +118,20 @@ def _ensure_task_db_workspace(data_root: str, ws_id: int, name: str, root: str) 
 
 @pytest.fixture()
 def qa_workspace(isolated_http_daemon, rpc_client):
-    """在隔离 daemon 注册临时 workspace，返回 dict(workspace_id, root, name)。
+    """在隔离 daemon 注册临时 workspace，返回 dict(workspace_id, workspace_instance_id, root, name)。
 
     注册流程：
     1. HTTP `workspace.register` → 拿权威 workspace_id（daemon 注册表）；
     2. 同步 task-DB `workspaces` 行（Rust 任务写面绑定来源）。
+
+    stale 依据（本批新增 workspace_instance_id）：
+    旧断言/用法：仅返回数字 workspace_id，下游 task.create / agent.register / lease.* 只传 workspace_id。
+    现状权威：daemon 路由层已强制要求非空字符串 workspace_instance_id，缺失即 fail-closed
+      - rust_ext/src/daemon/task_loop/create.rs:36-37（ERR_TASK_WORKSPACE_INSTANCE_REQUIRED）
+      - rust_ext/src/daemon/task_loop/create.rs:277-287（空实例 → E_TASK_WORKSPACE_INSTANCE_REQUIRED）
+      - rust_ext/src/daemon/workspace_reconciliation.rs:74-80（禁止空实例合成 ws-{id}）
+    故此处从 `workspace.register` 回包透出 daemon 颁发的权威 instance id，
+    供下游写面显式传入（测试侧对齐新语义，非弱化断言）。
     """
     data_root = isolated_http_daemon["data_root"]
     root = tempfile.mkdtemp(prefix="cw_qa_ws_")
@@ -133,9 +142,13 @@ def qa_workspace(isolated_http_daemon, rpc_client):
         "description": "QA convergence workspace",
     })
     ws_id = reg.get("workspace_id")
+    # daemon 颁发的权威 workspace_instance_id（必填字符串），回包字段名见
+    # server/daemon_client.py:3266 workspace_register 及 daemon 侧 WORKSPACE_CAPTURE。
+    ws_inst = reg.get("workspace_instance_id")
     _ensure_task_db_workspace(data_root, ws_id, name, root)
     yield {
         "workspace_id": ws_id,
+        "workspace_instance_id": ws_inst,
         "root": root,
         "name": name,
     }

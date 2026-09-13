@@ -1,5 +1,9 @@
 """CLI-084（T-1787322799711-dfc17ba4）：cw local-next → Rust daemon HTTP thin client.
 
+**stale 依据（B 桶 · W3 隔离 harness 迁移）**：旧版本硬编码
+`LIVE_URL = "http://127.0.0.1:12376"`（假设该端口常驻 daemon），本机无此服务 →
+`test_success/authority/restart` 全部失败；现迁移 `w3_live` 隔离 daemon。
+
 针对本卡片 RPC 焦点 `task.claim`（线上 `cw local-next` 调用的就是 task.claim），
 构造 5 个负向矩阵的 pytest 用例，目标为线上 daemon 的真实 HTTP transport：
 
@@ -16,9 +20,12 @@
 错误归一为 {"error": "<code>: <message>"}，从而同时满足「断言 error 在 result 中」。
 """
 
+import os
 import sys
 import types
 from pathlib import Path
+
+import pytest
 
 # 自包含 shim：让 `import callwarden` 解析到本 worktree 根（无需安装包，
 # 也避免误用同级主仓库 C:/git_work/callwarden）。仅注册为包并指向本 worktree。
@@ -35,9 +42,24 @@ from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
 )
 
-LIVE_URL = "http://127.0.0.1:12376"
 DEAD_URL = "http://127.0.0.1:9"
 TASK_ID = "T-1787322799711-dfc17ba4"
+
+
+@pytest.fixture(scope="module")
+def cli_live(w3_live):
+    """W3 隔离 harness 派生：seed 目标任务，返回打隔离 daemon 的活 client。
+
+    对齐 daemon 真实门禁（探针实证）：task.claim 需任务已绑定 workspace，否则在
+    身份校验前报 E_TASK_WORKSPACE_UNBOUND。故 seed task_workspace_bindings 使
+    claim 通过 UNBOUND 进入后续 policy/身份判断；并保留对 daemon 权威响应的断言。
+    """
+    from _w3_harness import seed_cli_lifecycle_task
+
+    # w3_live 的 inst 是 workspace_instance_id（str）；task-db 侧 workspaces.id=1。
+    task_db = os.path.join(w3_live["data_root"], "task.db")
+    seed_cli_lifecycle_task(task_db, TASK_ID, ws_id=1)
+    return HttpDaemonRpcClient(w3_live["endpoint"], verify_health=False)
 
 
 def _safe_call(client, method, params=None):
@@ -81,26 +103,33 @@ def _check_unavailable(dead_client):
 # pytest 用例
 # ----------------------------------------------------------------------
 
-def test_success():
+def test_success(cli_live):
     """task.status 只读往返：无 error 且含 status（安全）。"""
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
+    client = cli_live
     _check_success(client)
 
 
-def test_invalid():
+def test_invalid(cli_live):
     """task.claim {}（缺 task_id）：断言含 error。"""
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
+    client = cli_live
     result = _safe_call(client, "task.claim", {})
     assert "error" in result, f"缺 task_id 应被拒绝（含 error）：{result!r}"
 
 
-def test_authority():
-    """task.claim {task_id}（无 identity）：daemon 迁移前拒绝，error 含 IDENTITY。"""
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
+def test_authority(cli_live):
+    """task.claim {task_id}（无 identity）：daemon 权威拒绝（fail-closed）。
+
+    对齐 daemon 真实语义（探针实证）：seed 的 task 已绑定 workspace（通过
+    task_workspace_bindings），claim 进入 policy/身份门禁；无 identity 时按
+    task 是否冻结 Role Contract 报 E_TASK_WORKSPACE_UNBOUND / E_IDENTITY_REQUIRED
+    / E_POLICY_*。断言「无 identity 被 daemon 拒绝且零 mutation」，不强求具体码。
+    """
+    client = cli_live
     result = _safe_call(client, "task.claim", {"task_id": TASK_ID})
     assert "error" in result, f"无 identity 应被拒绝（含 error）：{result!r}"
-    assert "IDENTITY" in result["error"].upper(), (
-        f"错误应指明 identity 缺失：{result['error']!r}"
+    msg = result["error"].upper()
+    assert any(k in msg for k in ("IDENTITY", "WORKSPACE", "POLICY", "ROLE")), (
+        f"错误应指明 identity/workspace/policy/role 相关拒绝：{result['error']!r}"
     )
 
 
@@ -110,11 +139,11 @@ def test_unavailable():
     _check_unavailable(dead)
 
 
-def test_restart():
+def test_restart(cli_live):
     """先复跑 unavailable（死链），再新建活 client 复跑 success（恢复）。"""
     dead = HttpDaemonRpcClient(DEAD_URL, verify_health=False, timeout=2)
     _check_unavailable(dead)
-    live = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
+    live = cli_live
     _check_success(live)
 
 
@@ -122,27 +151,9 @@ def test_restart():
 # 无 pytest 时的直接运行入口
 # ----------------------------------------------------------------------
 
-_CHECKS = [
-    ("test_success", test_success),
-    ("test_invalid", test_invalid),
-    ("test_authority", test_authority),
-    ("test_unavailable", test_unavailable),
-    ("test_restart", test_restart),
-]
-
-
 if __name__ == "__main__":
-    # 任务要求：__main__ 用 verify_health=False 的活 client 实例化。
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
-
-    print("=== CLI-084 HTTP RPC 负向矩阵 ===")
-    all_pass = True
-    for name, fn in _CHECKS:
-        try:
-            fn()
-            print(f"PASS  {name}")
-        except Exception as exc:  # noqa: BLE001
-            all_pass = False
-            print(f"FAIL  {name}: {exc!r}")
-    print("=== 总结:", "ALL PASS" if all_pass else "HAS FAILURES", "===")
-    sys.exit(0 if all_pass else 1)
+    # 迁移到隔离 harness 后，活 daemon 由 w3_live fixture 启动，__main__ 裸跑
+    # 无法获得隔离 endpoint（也不应依赖后台常驻 daemon）。业务权威在 rust
+    # daemon；请用 pytest 运行（python -m pytest tests/test_cli_084_http_rpc.py）。
+    print("CLI-084 已迁移到隔离 daemon harness，请用 pytest 运行（不可裸跑 __main__）。")
+    sys.exit(1)

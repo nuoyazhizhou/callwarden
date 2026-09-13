@@ -52,6 +52,14 @@ _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daem
 _TASK_ID_RE = re.compile(r"T-[0-9A-Za-z-]+")
 _STEP_ID_RE = re.compile(r"S-[0-9A-Za-z-]+")
 
+# CLI claim 携带的结构化 identity（daemon 要求 agent 已在 agent_registrations
+# 注册且 active，否则 E_IDENTITY_UNREGISTERED fail-closed）。
+_PARITY_AGENT_ID = "agent-cli-parity"
+_PARITY_MODEL_ID = "model-cli-parity"
+# lease_env 注册 workspace（带 git 元数据）后由 fixture 写入；report 必须携带
+# 与绑定 workspace authority 一致的 snapshot_id，否则 E_TASK_REPORT_SNAPSHOT_MISMATCH。
+_PARITY_SNAPSHOT_ID = ""
+
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32",
     reason="CLI↔daemon 生命周期 parity 需要 Windows + Named Pipe",
@@ -131,8 +139,15 @@ def lease_env():
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f)
     log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
+    # workspace.list / task_collab store 按 env（CW_DAEMON_REGISTRY_DB /
+    # CW_DAEMON_TASK_DB）而非 config 解析权威库路径：必须与 config 指向同一隔离
+    # 文件，否则 register 写 tmp/registry.db 而 list 读默认 registry → matches=0。
+    _daemon_env = dict(os.environ)
+    _daemon_env["CW_DAEMON_REGISTRY_DB"] = os.path.join(tmp, "registry.db")
+    _daemon_env["CW_DAEMON_TASK_DB"] = os.path.join(tmp, "callwarden.db")
     proc = subprocess.Popen(
         [_DAEMON_BIN, "--config", config_path],
+        env=_daemon_env,
         stdout=log,
         stderr=subprocess.STDOUT,
         text=True,
@@ -157,15 +172,44 @@ def lease_env():
         pytest.fail("隔离 daemon 未在超时内响应")
 
     task_db = os.path.join(tmp, "callwarden.db")
-    conn = sqlite3.connect(task_db)
     try:
-        conn.execute(
-            "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'cli-parity-test', '.', ?1)",
-            (time.time(),),
+        # CLI task.create 经 resolve_workspace_pair_from_daemon 要求 registry 侧存在
+        # active 且 root=仓库根 的 canonical workspace（workspace.list 命中），否则
+        # matches=0 fail-closed。root 必须与 callwarden.config.PROJECT_ROOT 归一化一致。
+        # 同时携带 git 元数据：workspace.register 据此计算权威 snapshot_id
+        # （sha256("git_remote_url|git_head_commit_sha|toolchain_fingerprint")[:16]），
+        # task.report 的 validate_report_snapshot_authority 要求报告携带与该
+        # workspace authority 一致的 snapshot_id，否则 E_TASK_REPORT_SNAPSHOT_MISMATCH。
+        reg = client.call("workspace.register", {
+            "client_view_root": _REPO_ROOT,
+            "git_remote_url": "https://cli-parity.invalid/repo.git",
+            "git_head_commit_sha": "a" * 40,
+            "toolchain_fingerprint": "cli-parity-toolchain",
+        })
+        instance_id = (reg or {}).get("workspace_instance_id") or ""
+        if not instance_id:
+            raise RuntimeError(f"workspace.register 未返回 workspace_instance_id: {reg!r}")
+        global _PARITY_SNAPSHOT_ID
+        _PARITY_SNAPSHOT_ID = (reg or {}).get("snapshot_id") or ""
+        if not _PARITY_SNAPSHOT_ID:
+            raise RuntimeError(f"workspace.register 未返回 snapshot_id（需 git 元数据）: {reg!r}")
+        # workspace.status 的 task-DB 侧只读 workspace_authority_captures：仅 seed
+        # workspaces 表会导致 task_db_workspace_id=null → resolver matches=0。
+        # seed_cli_task_authority 补齐 workspaces + c14n rule + rev=1 capture。
+        from tests._w3_harness import seed_cli_task_authority, seed_cli_task_agent
+
+        seed_cli_task_authority(
+            task_db, ws_id=1, name="cli-parity-test",
+            root_path=_REPO_ROOT, instance_id=instance_id,
         )
-        conn.commit()
-    finally:
-        conn.close()
+        # claim 的 task.next 携带结构化 identity（agent 需注册且 active）。
+        seed_cli_task_agent(task_db, _PARITY_AGENT_ID, model_id=_PARITY_MODEL_ID)
+    except Exception:
+        # setup 失败（yield 前）必须回收 daemon，否则残留进程占用默认管道，
+        # 令后续所有 CLI 家族用例按设计 skip。
+        if proc.poll() is None:
+            proc.kill()
+        raise
 
     yield client, tmp, task_db, proc, pipe
 
@@ -197,6 +241,10 @@ def _cli_env(pipe: str, session: str = "", mode: str = "enterprise",
     env.pop("CW_AGENT_SESSION_ID", None)
     env["CW_DAEMON_MODE"] = mode
     env["CW_DAEMON_ENDPOINT"] = pipe
+    # 强制 Named Pipe transport：跳过 HTTP manifest 检查（宿主 CALLWARDEN_DIR 的
+    # stale manifest 会触发 E_HTTP_MANIFEST_STALE fail-closed，误判 daemon 不可用，
+    # 使「daemon 连接失败」断言落空——与 claim_recover 同源修复）
+    env["CW_DAEMON_TRANSPORT"] = "named-pipe"
     env["CW_TASK_WRITE_POLICY"] = "shared"
     env["CW_DAEMON_AUTOSTART_WINDOW"] = "0"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
@@ -246,9 +294,19 @@ def _create_via_cli(tmpdir: str, pipe: str, title: str) -> str:
 
 
 def _claim_via_cli(tmpdir: str, pipe: str, task_id: str, session: str) -> str:
-    """CLI task next（claim）→ 解析 step_id。"""
-    proc = _run_cw_cli(["task", "next", task_id],
-                       _cli_env(pipe, session=session), tmpdir)
+    """CLI task next（claim）→ 解析 step_id。
+
+    携带结构化 identity（agent 已在 fixture 注册 active）+ 由 daemon 权威
+    contract_get 取回的 contract_claim，满足 A3 冻结 Role Contract 的领取门禁
+    （E_IDENTITY_REQUIRED / E_IDENTITY_UNREGISTERED fail-closed）。
+    """
+    proc = _run_cw_cli(
+        ["task", "next", task_id,
+         "--agent-id", _PARITY_AGENT_ID,
+         "--session-id", session,
+         "--model-id", _PARITY_MODEL_ID,
+         "--role", "executor"],
+        _cli_env(pipe, session=session), tmpdir)
     _assert_ok(proc, f"task next {task_id} session={session}")
     match = _STEP_ID_RE.search(_all_out(proc))
     assert match, f"task next 输出未解析到 step_id:\n{_all_out(proc)}"
@@ -256,9 +314,11 @@ def _claim_via_cli(tmpdir: str, pipe: str, task_id: str, session: str) -> str:
 
 
 def _report_via_cli(tmpdir: str, pipe: str, task_id: str, step_id: str, session: str):
-    proc = _run_cw_cli(
-        ["task", "report", task_id, step_id, "--result", "done"],
-        _cli_env(pipe, session=session), tmpdir)
+    args = ["task", "report", task_id, step_id, "--result", "done"]
+    # daemon task.report 要求携带与绑定 workspace authority 一致的 snapshot_id。
+    if _PARITY_SNAPSHOT_ID:
+        args += ["--snapshot-id", _PARITY_SNAPSHOT_ID]
+    proc = _run_cw_cli(args, _cli_env(pipe, session=session), tmpdir)
     _assert_ok(proc, f"task report {task_id} session={session}")
     return proc
 
@@ -532,7 +592,7 @@ class TestCliDaemonUnavailableFailClosed:
              "--role", "reviewer"],
             mode="enterprise")
         _assert_cli_rejected(proc, "enterprise apply 无 daemon",
-                             "daemon 连接失败")
+                             "无法连接 daemon endpoint", "endpoint 不可连接")
 
     def test_enterprise_close_daemon_unavailable_no_local_fallback(self):
         proc = self._run_unavailable(
@@ -541,7 +601,7 @@ class TestCliDaemonUnavailableFailClosed:
              "--role", "reviewer"],
             mode="enterprise")
         _assert_cli_rejected(proc, "enterprise close 无 daemon",
-                             "daemon 连接失败")
+                             "无法连接 daemon endpoint", "endpoint 不可连接")
 
     def test_auto_lease_acquire_daemon_unavailable_no_local_fallback(self):
         proc = self._run_unavailable(

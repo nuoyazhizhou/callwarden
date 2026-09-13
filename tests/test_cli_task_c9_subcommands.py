@@ -95,8 +95,18 @@ class TestArgparseRegistration:
             cli_main._handle_task(["status-tree"], db)
         assert exc_info.value.code == 2
 
-    def test_completion_review_accepts_step_id(self, db):
-        """completion-review 接受可选 --step-id 参数"""
+    def test_completion_review_accepts_step_id(self, db, route_stub):
+        """completion-review 接受可选 --step-id 参数
+
+        stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
+        `cli/main.py:5975` 的 completion-review 分支经
+        `route_task_write("task.completion_review", {"task_id", "step_id"},
+        _local_completion_review)` 走 daemon RPC（与 MCP 同协议）。本用例验证
+        argparse 解析出的 `--step-id` 被路由透传（回包由 route_stub 提供），
+        不再依赖本地 DB 直连语义。
+        """
+        route_stub.reply("task.completion_review", {
+            "decision": "pass", "findings": [], "counts": {}})
         # 创建一个任务用于触发 handler（不报 argparse 错误即可）
         task_id = db.task_create(title="test", steps=[], creator="test")
         # 带 --step-id 应该正常解析（不抛 SystemExit(2)）
@@ -104,6 +114,7 @@ class TestArgparseRegistration:
             ["completion-review", task_id, "--step-id", "S-123"], db
         )
         assert result is True
+        assert route_stub.last_params("task.completion_review")["step_id"] == "S-123"
 
 
 # ============================================
@@ -114,80 +125,83 @@ class TestArgparseRegistration:
 class TestHandlerDispatch:
     """验证 3 个 handler 分支被正确派发"""
 
-    def test_completion_review_calls_db_method(self, db, monkeypatch):
-        """completion-review handler 应调用 db.run_task_completion_review"""
-        called = {"count": 0, "args": None}
+    def test_completion_review_routes_rpc(self, db, route_stub):
+        """completion-review handler 经 RPC 路由到 task.completion_review
 
-        def fake_review(task_id, step_id=""):
-            called["count"] += 1
-            called["args"] = (task_id, step_id)
-            return {"decision": "pass", "findings": [], "counts": {}}
-
-        # 临时替换 db.run_task_completion_review
-        monkeypatch.setattr(db, "run_task_completion_review", fake_review)
-
+        stale 依据（A 桶：薄客户端 RPC seam）：生产 `cli/main.py:5975` 已改为
+        `route_task_write("task.completion_review", {...}, _local_completion_review)`；
+        enterprise/auto 走 daemon 权威，`_local_completion_review`
+        （`cli/main.py:5969-5973`）仅 local 回落时调用。故断言 RPC 路由契约
+        （method + params），而非本地 `db.run_task_completion_review` 调用。
+        """
+        route_stub.reply("task.completion_review", {
+            "decision": "pass", "findings": [], "counts": {}})
         task_id = db.task_create(title="test", steps=[], creator="test")
         result = cli_main._handle_task(["completion-review", task_id], db)
         assert result is True
-        assert called["count"] == 1
-        assert called["args"][0] == task_id
+        assert route_stub.count("task.completion_review") == 1
+        assert route_stub.last_params("task.completion_review")["task_id"] == task_id
 
-    def test_completion_review_with_step_id(self, db, monkeypatch):
-        """completion-review --step-id 透传到 db 方法"""
-        called = {"step_id": None}
+    def test_completion_review_with_step_id(self, db, route_stub):
+        """completion-review --step-id 经 RPC 透传到 daemon
 
-        def fake_review(task_id, step_id=""):
-            called["step_id"] = step_id
-            return {"decision": "pass", "findings": [], "counts": {}}
-
-        monkeypatch.setattr(db, "run_task_completion_review", fake_review)
-
+        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:5975-5978` 把
+        `opts.step_id` 放入 `route_task_write("task.completion_review", {...})`
+        的 params。断言 RPC params 透传而非本地 db 方法调用。
+        """
+        route_stub.reply("task.completion_review", {
+            "decision": "pass", "findings": [], "counts": {}})
         task_id = db.task_create(title="test", steps=[], creator="test")
         cli_main._handle_task(
             ["completion-review", task_id, "--step-id", "S-abc"], db
         )
-        assert called["step_id"] == "S-abc"
+        assert route_stub.last_params("task.completion_review")["step_id"] == "S-abc"
 
-    def test_completion_review_handles_error(self, db, monkeypatch):
-        """completion-review handler 处理 db 返回的 error"""
-        def fake_review(task_id, step_id=""):
-            return {"error": "task not found"}
+    def test_completion_review_handles_error(self, db, route_stub):
+        """completion-review 对 daemon 回包 error 的处理：fail-closed RC=2
 
-        monkeypatch.setattr(db, "run_task_completion_review", fake_review)
-
+        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:5981-5986` 在
+        `"error" in result` 时打印 task_completion_review_failed 并 `sys.exit(2)`
+        （GOV-FIX-08：socket 传输失败禁止 RC=0 假成功）。旧期望「返回 True」已过期。
+        """
+        route_stub.reply("task.completion_review", {"error": "task not found"})
         task_id = db.task_create(title="test", steps=[], creator="test")
-        # 不应抛异常
-        captured = io.StringIO()
-        with redirect_stdout(captured):
-            result = cli_main._handle_task(["completion-review", task_id], db)
-        assert result is True
+        # daemon 返回 error 属传输/权威失败，禁止 RC=0 假成功
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main._handle_task(["completion-review", task_id], db)
+        assert exc_info.value.code == 2
 
-    def test_completion_review_handles_missing_db_method(self, db, monkeypatch):
-        """completion-review handler 处理 db 无 run_task_completion_review 方法的情况"""
+    def test_completion_review_handles_missing_db_method(
+            self, db, route_stub, monkeypatch):
+        """completion-review 的 local 回落在 db 无方法时 fail-closed RC=2
+
+        stale 依据（A 桶：薄客户端 RPC seam）：生产 local 回落（
+        `route_task_write` → `_local_completion_review`，`cli/main.py:5969-5973`）
+        中 `hasattr(db, "run_task_completion_review")` 为假则返回 `{"error": ...}`，
+        handler 于 `cli/main.py:5981-5986` `sys.exit(2)`。旧期望「打印不可用并
+        返回 True」已过期（GOV-FIX-08 禁止假成功）。
+        """
         # 从 mixin 类上移除方法（影响所有实例的 hasattr 检查）
         from callwarden.db.db_task_quality import TaskQualityMixin
         monkeypatch.delattr(TaskQualityMixin, "run_task_completion_review")
+        # 显式启用 local 回落，模拟 daemon 不可达时的既有本地路径
+        route_stub.use_fallback = True
 
         task_id = db.task_create(title="test", steps=[], creator="test")
-        captured = io.StringIO()
-        with redirect_stdout(captured):
-            result = cli_main._handle_task(["completion-review", task_id], db)
-        assert result is True
-        # 输出应包含错误提示
-        out = captured.getvalue()
-        assert "不可用" in out or "not available" in out.lower()
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main._handle_task(["completion-review", task_id], db)
+        assert exc_info.value.code == 2
 
-    def test_split_calls_db_task_split(self, db, monkeypatch, tmp_path):
-        """split handler 应调用 db.task_split"""
-        called = {"count": 0, "args": None}
+    def test_split_calls_db_task_split(self, db, route_stub, tmp_path):
+        """split handler 经 RPC 路由到 task.split（子任务解析后透传）
 
-        def fake_split(task_id, subtasks):
-            called["count"] += 1
-            called["args"] = (task_id, subtasks)
-            return [f"T-sub-{i}" for i in range(len(subtasks))]
-
-        monkeypatch.setattr(db, "task_split", fake_split)
-
+        stale 依据（A 桶：薄客户端 RPC seam）：生产 `cli/main.py:6019-6075` 的
+        split 分支先 `route_task_read("task.status", {...}, _local_task_exists)`
+        （:6034）校验任务，再 `route_task_write("task.split", {task_id, subtasks,
+        plan_file, identity_policy}, _local_split)`（:6052）走 daemon 权威；
+        `db.task_split` 仅在 local 回落时调用（:6049-6050）。故断言 RPC 路由
+        与本地计划解析结果（2 个子任务）。
+        """
         # 创建父任务
         parent_id = db.task_create(title="parent", steps=[], creator="test")
         # 写一个最小的 plan 文件
@@ -202,14 +216,18 @@ class TestHandlerDispatch:
             "- refactor @ file2.py\n",
             encoding="utf-8",
         )
+        route_stub.reply("task.status", {"task_id": parent_id, "status": "pending"})
+        route_stub.reply("task.split", {
+            "task_id": parent_id, "status": "pending",
+            "subtask_count": 2, "subtasks": ["T-sub-0", "T-sub-1"]})
 
         result = cli_main._handle_task(
             ["split", parent_id, "--plan", str(plan_file)], db
         )
         assert result is True
-        assert called["count"] == 1
-        # 应该解析出 2 个子任务
-        assert len(called["args"][1]) == 2
+        assert route_stub.count("task.split") == 1
+        # 应该解析出 2 个子任务并经 params 透传给 daemon
+        assert len(route_stub.last_params("task.split")["subtasks"]) == 2
 
     def test_split_plan_not_found(self, db):
         """split handler 处理 plan 文件不存在"""
@@ -224,10 +242,17 @@ class TestHandlerDispatch:
         # 应输出文件不存在的错误
         assert "/nonexistent/plan.md" in out or "not found" in out.lower() or "不存在" in out
 
-    def test_split_task_not_found(self, db, tmp_path):
-        """split handler 处理 task_id 不存在"""
+    def test_split_task_not_found(self, db, route_stub, tmp_path):
+        """split handler 处理 task_id 不存在
+
+        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:6034` 先经
+        `route_task_read("task.status", ...)` 校验任务；daemon 回包为空
+        （任务不存在）时 :6037-6041 打印 task_not_found 并返回 True。
+        旧实现直查本地 `db.task_status`，已过期。
+        """
         plan_file = tmp_path / "plan.md"
         plan_file.write_text("## sub\n- edit @ x.py\n", encoding="utf-8")
+        route_stub.reply("task.status", {})  # 任务不存在 → 空回包
 
         captured = io.StringIO()
         with redirect_stdout(captured):
@@ -235,13 +260,20 @@ class TestHandlerDispatch:
                 ["split", "T-nonexistent", "--plan", str(plan_file)], db
             )
         assert result is True
+        assert route_stub.count("task.status") == 1
 
-    def test_split_no_subtasks_in_plan(self, db, tmp_path):
-        """split handler 处理 plan 中无子任务的情况"""
+    def test_split_no_subtasks_in_plan(self, db, route_stub, tmp_path):
+        """split handler 处理 plan 中无子任务的情况
+
+        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:6034` 先经
+        `route_task_read("task.status", ...)` 校验任务存在（须预设非空回包），
+        随后 :6043-6048 解析计划为空则打印 task_split_no_subtasks。
+        """
         parent_id = db.task_create(title="parent", steps=[], creator="test")
         # 空 plan 文件（只有 H1，无 H2 子任务）
         plan_file = tmp_path / "empty.md"
         plan_file.write_text("# 根任务\n只有描述没有子任务\n", encoding="utf-8")
+        route_stub.reply("task.status", {"task_id": parent_id, "status": "pending"})
 
         captured = io.StringIO()
         with redirect_stdout(captured):
@@ -573,37 +605,50 @@ class TestParsePlanToSubtasks:
 class TestEndToEnd:
     """端到端：split 后通过 status-tree 查看"""
 
-    def test_split_then_status_tree(self, db, tmp_path):
-        """split 拆分后 status-tree 能看到子任务"""
+    def test_split_then_status_tree(self, db, route_stub, tmp_path):
+        """split 拆分后 status-tree 可正常渲染
+
+        stale 依据（A 桶：薄客户端 RPC seam）：split 现经
+        `route_task_write("task.split", ...)`（`cli/main.py:6052`）由 daemon
+        权威写入子任务，本地 DB 不再承载拆分结果，故旧的
+        `SELECT COUNT(*) ... WHERE parent_id` 断言已过期；status-tree 走本地
+        `_print_task_show`（`cli/main.py:6079` / 定义于 :6657）。
+        """
         parent_id = db.task_create(title="parent", steps=[], creator="test")
         plan_file = tmp_path / "plan.md"
         plan_file.write_text(
             "## 子任务1\n- edit @ f1.py\n\n## 子任务2\n- edit @ f2.py\n",
             encoding="utf-8",
         )
+        route_stub.reply("task.status", {"task_id": parent_id, "status": "pending"})
+        route_stub.reply("task.split", {
+            "task_id": parent_id, "status": "pending",
+            "subtask_count": 2, "subtasks": ["T-sub-0", "T-sub-1"]})
 
-        # 执行 split
+        # 执行 split：经 daemon RPC 拆分（本地无写入副作用）
         result = cli_main._handle_task(
             ["split", parent_id, "--plan", str(plan_file)], db
         )
         assert result is True
-
-        # 验证子任务已创建
-        cur = db.conn.execute(
-            "SELECT COUNT(*) as cnt FROM tasks WHERE parent_id = ?",
-            (parent_id,),
-        )
-        assert cur.fetchone()["cnt"] == 2
+        assert route_stub.count("task.split") == 1
+        assert len(route_stub.last_params("task.split")["subtasks"]) == 2
 
         # status-tree 应能正常显示（不抛异常）
         result = cli_main._handle_task(["status-tree", parent_id], db)
         assert result is True
 
-    def test_completion_review_on_nonexistent_task(self, db, capsys):
-        """completion-review 对不存在任务的处理"""
-        # 任务不存在，run_task_completion_review 应返回 error 或 decision=pass
-        # handler 不应抛异常
+    def test_completion_review_on_nonexistent_task(self, db, route_stub, capsys):
+        """completion-review 对不存在任务的处理
+
+        stale 依据（A 桶：薄客户端 RPC seam）：`cli/main.py:5975` 经
+        `route_task_write("task.completion_review", ...)` 交由 daemon 权威处置
+        （任务是否存在由 daemon 判定并回包）。以 route_stub 提供回包，断言
+        handler 正常返回 True（无本地直连 DB 语义）。
+        """
+        route_stub.reply("task.completion_review", {
+            "decision": "pass", "findings": [], "counts": {}})
         result = cli_main._handle_task(
             ["completion-review", "T-nonexistent"], db
         )
         assert result is True
+        assert route_stub.count("task.completion_review") == 1

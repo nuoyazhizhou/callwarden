@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 import pytest
 
@@ -39,8 +40,13 @@ class TestExistingNativeToolRuntime:
         assert isinstance(r, list)
 
     def test_task_create_runtime(self, isolated_http_daemon, rpc_client, qa_workspace):
+        # stale 修复：daemon 现强制 task.create 显式传非空 workspace_instance_id，
+        # 否则 E_TASK_WORKSPACE_INSTANCE_REQUIRED。
+        # 权威：rust_ext/src/daemon/task_loop/create.rs:36-37,277-287。
         r = rpc_client.call("task.create", {
-            "title": "QA-REGRESSION-TASK", "workspace_id": qa_workspace["workspace_id"],
+            "title": "QA-REGRESSION-TASK",
+            "workspace_id": qa_workspace["workspace_id"],
+            "workspace_instance_id": qa_workspace["workspace_instance_id"],
         })
         assert r["task_id"] and r["status"] == "open"
 
@@ -72,16 +78,32 @@ class TestMigratedToolRouting:
         assert "task.job_submit" in src
 
     def test_get_impact_compat_matrix_and_dispatch(self):
-        """compat 工具：矩阵 python_compat + 白名单两端（Rust + Python）。"""
+        """get_impact：矩阵仍标 python_compat，但实现已迁 rust_native（两端 compat 白名单清零）。
+
+        stale 修正依据：
+        - 旧断言 `'"get_impact", "read_only"' in http_src`（旧 COMPAT_ROUTE_WHITELIST
+          元组格式）已失效：白名单已清零（rust_ext/src/daemon/http_server.rs:587-588），
+          get_impact 现由 Rust 原生 route_matrix 注册为 rust_native
+          （rust_ext/src/daemon/http_server.rs:2883-2897 的 add(... "rust_native" ...)）。
+        - 旧断言 `'"get_impact"' in comp_src` 已失效：server/compat_registry.py:205-219
+          RUST_COMPAT_ROUTE 现为空 {}，get_impact 在 Rust/Python 两端 compat 表皆缺，
+          属冻结的 KNOWN_DRIFT（tests/convergence/test_m1_route_matrix.py:141-146）。
+        """
         t = _matrix_tool("get_impact")
         assert t["target_backend"] == "python_compat"
         assert t["rpc_method"] == "get_impact"
         http_src = open(os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon",
                                      "http_server.rs"), encoding="utf-8").read()
-        assert '"get_impact", "read_only"' in http_src
+        # get_impact 现注册为 rust_native 原生路由（http_server.rs:2883-2897）。
+        assert re.search(
+            r'add\(\s*"get_impact",\s*"get_impact",\s*"get-impact",\s*"rust_native",',
+            http_src,
+        ), "get_impact 应注册为 rust_native 路由（http_server.rs:2883-2897）"
         comp_src = open(os.path.join(_REPO_ROOT, "server", "compat_registry.py"),
                         encoding="utf-8").read()
-        assert '"get_impact"' in comp_src
+        # RUST_COMPAT_ROUTE 已清零：get_impact 不再登记于 Python compat 表（KNOWN_DRIFT）。
+        assert "get_impact" not in comp_src, \
+            "RUST_COMPAT_ROUTE 已清零，get_impact 不应再登记（compat_registry.py:205-219）"
 
     def test_get_impact_runtime_on_isolated_daemon(self, isolated_http_daemon, rpc_client, qa_workspace):
         """compat 工具经隔离 daemon 实际可达（worker 路径），返回结构化结果。"""

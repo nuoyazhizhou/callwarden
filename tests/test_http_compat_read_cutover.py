@@ -1,48 +1,34 @@
 """H4B-C: Compatibility read HTTP cutover 测试
 
-验证 tools_summary.py / tools_semantic.py（50 个 python_compat 工具）在 HTTP
-daemon 模式下 fail-closed，不建立指向不存在 RPC 的伪路由，且不直连本地 SQLite
-（无 SQLite fallback）。
+验证 tools_summary.py / tools_semantic.py（50 个 python_compat 工具）在 daemon
+authority 化后统一经 `_route` 薄壳路由到 daemon，不建立伪路由、不直连本地 SQLite
+（无 SQLite fallback），无 daemon 时 fail-closed。
 
-归类依据：.trae-cn/evidence/http-daemon-capability-matrix.json（237 tools 矩阵）
-- tools_summary.py 31 个工具：全部 backend=python_compat、daemon_rpc_method=none
-- tools_semantic.py 19 个工具：全部 backend=python_compat、daemon_rpc_method=none
-- dispatch.rs 无任何 summary.* / semantic.* / ownership.* / gc_* RPC 分支，
-  DaemonStateExt 默认返回 method_not_found —— 伪路由在 HTTP 模式必失败。
+stale 修复（daemon authority 化）：旧的 `_http_unsupported()` 结构化 unsupported
+范式已退役，工具体改为单行 `return _route('<rpc method>', {...}, '<OP_CLASS>')`
+（权威来源：server/tools/tools_summary.py:44
+`from ..daemon_client import route_rpc as _route`；tools_semantic.py:39 同款）。
+故「HTTP 模式返回 E_HTTP_COMPAT_UNSUPPORTED」「legacy 模式调 get_db」两类断言陈旧，
+本文件按 `_route` 薄壳范式重写（模板①：patch 模块内 `_route`，断言
+(method, params, op_class) 三元组 + 回包透传 + fail-closed）。
 
-H4B-C 实现策略（tools_*.py 内 fail-closed，不触碰 Rust/compat_registry）：
-- HTTP 模式：_http_unsupported() 返回结构化 E_HTTP_COMPAT_UNSUPPORTED，
-  不构造 CodeGraphDB（无 SQLite fallback）；
-- legacy 模式：保持本地 get_db() 执行，公开方法语义不变。
-
-真实进程门（TestRealDaemonCompatRpcAlignment，参照 H4B-N 的
-TestRealDaemonRpcNameAlignment）：
-- 正向：compat_route 已注册的 get_uncommented_symbols 在生产
-  HttpDaemonRpcClient 调用下不返回 method_not_found（dispatch_arc 错误为
-  E_UNAVAILABLE / E_COMPAT_*，与 RPC 名无关）；
-- 负向：伪路由候选名（summary.repo_map / semantic.gc_audit_list）在真实
-  daemon 上必返回 method_not_found —— 实证 fail-closed 契约（若本任务工具
-  建立伪路由，HTTP 模式必抛 method_not_found）。
+真实进程门（TestRealDaemonCompatRpcAlignment）迁移至 conftest `w3_live` 隔离 daemon
+（模板④：tests/conftest.py:8 `w3_live`，内部 tests/_w3_harness.py::setup_w3_client
+模式 A USERPROFILE 重定向）：
+- 正向：compat_route 已注册的 stats_top_files 在生产 HttpDaemonRpcClient 调用下
+  不返回 method_not_found；
+- 负向：伪路由候选名（summary.repo_map / semantic.gc_audit_list）在真实 daemon
+  上必返回 method_not_found —— 实证 fail-closed 契约。
 """
 
 import inspect
-import json
-import os
-import subprocess
-import sys
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from callwarden.server.daemon_client import HttpDaemonRpcClient
+from callwarden.server.daemon_client import DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.tools import tools_semantic, tools_summary
-from callwarden.config import (  # noqa: E402
-    get_http_manifest_dir,
-    get_http_manifest_path,
-)
-from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 
 
 # ============================================================
@@ -50,6 +36,9 @@ from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 # ============================================================
 
 COMPAT_MODULES = [tools_summary, tools_semantic]
+
+# 工具体 `_route` 的合法 op_class（权威来源：server/daemon_client.py route_rpc）。
+VALID_OP_CLASSES = ("READ_ONLY", "PROTECTED_MUTATION", "GOVERNANCE_WRITE")
 
 
 @pytest.fixture
@@ -111,23 +100,40 @@ def _make_call_args(fn):
 # 1. HTTP 模式结构化 unsupported（50 个 python_compat 工具全量）
 # ============================================================
 
-class TestHttpModeStructuredUnsupported:
-    """所有 python_compat 工具在 HTTP 模式下 fail-closed 返回结构化 unsupported。"""
+class TestToolsRouteViaThinShell:
+    """所有 python_compat 工具经 `_route` 薄壳路由到 daemon，不直连本地 SQLite。
+
+    stale 修复：旧断言 `result["error"] == "E_HTTP_COMPAT_UNSUPPORTED"` +
+    `backend == "python_compat"` + `tool == name` 属已退役的 `_http_unsupported()`
+    范式；现工具体为单行 `return _route('<method>', {...}, '<OP_CLASS>')`
+    （权威来源：server/tools/tools_summary.py:44、tools_semantic.py:39）。
+    """
 
     @pytest.mark.parametrize("module", COMPAT_MODULES, ids=lambda m: m.__name__.split(".")[-1])
-    def test_all_tools_fail_closed_in_http_mode(self, module, mock_http_mode):
+    def test_all_tools_route_to_daemon(self, module, monkeypatch):
         tools = _register_tools(module)
         assert len(tools) > 0
+        calls = []
+
+        def fake_route(method, params, op_class):
+            calls.append((method, params, op_class))
+            return {"routed": method}
+
+        # patch 模块内 `_route`（工具体唯一调用点）
+        monkeypatch.setattr(module, "_route", fake_route)
         with patch(f"{module.__name__}.get_db") as mock_get_db:
             for name, fn in tools.items():
                 args, kwargs = _make_call_args(fn)
-                result = fn(*args, **kwargs)
-                assert isinstance(result, dict), f"{name} HTTP 模式应返回结构化 dict"
-                assert result.get("error") == "E_HTTP_COMPAT_UNSUPPORTED", name
-                assert result.get("backend") == "python_compat", name
-                assert result.get("tool") == name, name
-            # 无 SQLite fallback 证明：HTTP 模式下 get_db 从未被调用
+                # 回包透传：工具体原样返回 `_route` 结果
+                assert fn(*args, **kwargs) == {"routed": calls[-1][0]}, name
+            # 无 SQLite fallback 证明：路由范式下 get_db 从未被调用
             mock_get_db.assert_not_called()
+        # 每个工具恰好一次 `_route`，三元组形状合法
+        assert len(calls) == len(tools)
+        for method, params, op_class in calls:
+            assert isinstance(method, str) and method, "RPC 方法名必须非空"
+            assert isinstance(params, dict), "params 必须是 dict"
+            assert op_class in VALID_OP_CLASSES, f"非法 op_class: {op_class}"
 
 
 # ============================================================
@@ -150,217 +156,119 @@ class TestNoPseudoRoutes:
                     f"{name} 不应有 client 伪路由"
                 )
 
-    def test_every_tool_starts_with_http_unsupported(self):
-        """每个工具均以 _http_unsupported("<工具名>") 开头 fail-closed。"""
+    def test_every_tool_uses_route_thin_shell(self):
+        """每个工具体均经 `_route(...)` 薄壳路由（唯一调用点）。
+
+        stale 修复：旧断言 `_http_unsupported("{name}")` 针对已退役范式；现权威
+        范式为 `_route('<method>', {...}, '<OP_CLASS>')`（tools_summary.py:60 起）。
+        """
         for module in COMPAT_MODULES:
             tools = _register_tools(module)
             for name, fn in tools.items():
                 source = inspect.getsource(fn)
-                assert f'_http_unsupported("{name}")' in source, (
-                    f"{name} 应以 _http_unsupported(\"{name}\") 开头 fail-closed"
+                assert "_route(" in source, (
+                    f"{name} 应经 _route 薄壳路由到 daemon"
+                )
+                assert "_http_unsupported(" not in source, (
+                    f"{name} 不应残留旧 _http_unsupported 范式"
                 )
 
     def test_no_sqlite_fallback_in_module(self):
         """模块级不得直接构造 CodeGraphDB（无 SQLite fallback）。"""
         for module in COMPAT_MODULES:
             source = inspect.getsource(module)
+            # stale 修复：旧断言 `"_http_unsupported" in source` 属退役范式；
+            # HTTP 路由权威入口现为 `from ..daemon_client import route_rpc as _route`
+            # （权威来源：tools_summary.py:44、tools_semantic.py:39）。
+            assert "route_rpc as _route" in source, (
+                f"{module.__name__} 应经 route_rpc 薄壳入口路由"
+            )
             assert "CodeGraphDB(" not in source, (
                 f"{module.__name__} 不得直接构造 CodeGraphDB（无 SQLite fallback）"
             )
-            assert "_http_unsupported" in source
 
 
 # ============================================================
-# 3. legacy 模式保持本地执行（公开方法语义不变）
+# 3. HTTP 模式无 daemon：fail-closed（不回退本地 SQLite）
 # ============================================================
 
-class TestLegacyModeKeepsLocalExec:
-    """非 HTTP 模式保持本地 get_db() 执行（无公开方法语义漂移）。"""
+class TestFailClosedWithoutDaemon:
+    """HTTP 模式无 daemon（无 authority-scoped manifest）时工具体 fail-closed。
+
+    stale 修复：旧断言期望结构化 `E_HTTP_COMPAT_UNSUPPORTED` 回包；现工具体经
+    `_route` → `route_rpc` → manifest 发现失败 → 抛 `E_HTTP_MANIFEST_MISSING`
+    （权威来源：server/daemon_autostart.py:1018-1025）。保留「绝不调用本地
+    get_db」的 fail-closed 证据。
+    """
 
     @pytest.mark.parametrize("module", COMPAT_MODULES, ids=lambda m: m.__name__.split(".")[-1])
-    def test_legacy_mode_calls_get_db(self, module):
+    def test_tool_fails_closed_without_daemon(self, module, mock_http_mode):
         tools = _register_tools(module)
+        name, fn = next(iter(tools.items()))
+        args, kwargs = _make_call_args(fn)
         with patch(f"{module.__name__}.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_get_db.return_value = mock_db
-            for name, fn in tools.items():
-                args, kwargs = _make_call_args(fn)
+            with pytest.raises((DaemonRemoteError, DaemonUnavailableError)) as ei:
                 fn(*args, **kwargs)
-            # 非 HTTP 模式下所有工具均触达本地 DB（get_db 至少被调用一次）
-            assert mock_get_db.called, "legacy 模式应保持本地 get_db() 执行"
+            # 无 SQLite fallback 证明：fail-closed 时本地 DB 从未被触达
+            mock_get_db.assert_not_called()
+        assert "E_HTTP_" in str(ei.value), (
+            f"{name} 应以 HTTP fail-closed 错误码终止，实际: {ei.value}"
+        )
 
 
 # ============================================================
-# 4. 真实进程级 compat 路由对齐门（参照 H4B-N TestRealDaemonRpcNameAlignment）
+# 4. 真实进程级 compat 路由对齐门（迁移至 conftest `w3_live` 隔离 daemon）
 # ============================================================
-
-def _find_daemon_binary():
-    """定位 current-HEAD 构建的 cw-daemon 二进制（与 H2I 集成门同源）。
-
-    优先本地 cargo build 产物，保证与当前源码一致；CW_DAEMON_BIN / runtime
-    部署仅作兜底。二进制不可用时跳过用例。
-    """
-    candidates = [
-        os.path.join("rust_ext", "target", "debug", "cw-daemon.exe"),
-        os.path.join("rust_ext", "target", "debug", "cw-daemon"),
-        os.environ.get("CW_DAEMON_BIN", ""),
-        os.path.join("runtime", "current", "cw-daemon.exe"),
-    ]
-    for c in candidates:
-        if c and os.path.isfile(c):
-            return os.path.abspath(c)
-    return None
-
-
-def _wait_manifest(proc, timeout=10.0):
-    """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配当前进程）。
-
-    H6 修复（9d6ca63，2026-08-15）后 manifest 固定写 `~/.callwarden/`
-    （http_manifest_dir = USERPROFILE/.callwarden），不再写 daemon data_root；
-    本文件隔离 daemon 不重定向 USERPROFILE，故轮询真实 get_http_manifest_dir()。
-    """
-    directory = get_http_manifest_dir()
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            return None
-        if os.path.isdir(directory):
-            for f in os.listdir(directory):
-                if f.startswith("http-daemon.") and f.endswith(".manifest.json"):
-                    p = os.path.join(directory, f)
-                    try:
-                        m = json.loads(open(p, encoding="utf-8").read())
-                    except (OSError, ValueError):
-                        continue
-                    if m.get("pid") == proc.pid:
-                        return m
-        time.sleep(0.2)
-    return None
-
-
-def _backup_http_manifest():
-    """备份当前 authority 的 HTTP manifest（若存在），teardown 时恢复。"""
-    path = get_http_manifest_path()
-    if not os.path.isfile(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return data
-
-
-def _restore_or_clean_http_manifest(pid, backup):
-    """teardown 清理：删除 pid 匹配的隔离 manifest；备份 pid 存活则恢复。"""
-    path = get_http_manifest_path()
-    try:
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                current = json.load(f)
-            if int(current.get("pid", -1)) == pid:
-                os.remove(path)
-    except (OSError, ValueError):
-        pass
-    if backup is not None and _pid_alive(int(backup.get("pid", -1))):
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(backup, f, ensure_ascii=False)
-        except OSError:
-            pass
-
-
-def _spawn_isolated_daemon(bin_path, data_root, http_bind):
-    """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。"""
-    env = os.environ.copy()
-    env["CW_DAEMON_DATA_ROOT"] = data_root
-    env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
-    env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
-    env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
-    env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
-    # compat worker 使用与 daemon 同版本的 Python 解释器
-    env["CW_COMPAT_PYTHON"] = sys.executable
-    proc = subprocess.Popen(
-        [bin_path, "--http-bind=" + http_bind],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    return proc
-
-
-def _terminate(proc):
-    """终止 daemon 进程（terminate 优先，兜底 kill）。"""
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
 
 class TestRealDaemonCompatRpcAlignment:
     """真实进程级 compat 路由对齐门（H4B-C 产物）。
 
-    - 正向：compat_route 已注册方法（stats_top_files，get_uncommented_symbols
-      已 W2-1 迁移 rust_native）在生产 HttpDaemonRpcClient 调用下**绝不**返回
-      method_not_found（compat adapter 错误为 E_UNAVAILABLE / E_COMPAT_*，与
-      RPC 名无关）；
-    - 负向：若本任务工具建立伪路由（如 summary.repo_map / semantic.gc_audit_list），
-      真实 daemon 必返回 method_not_found —— 实证 fail-closed 契约。
+    stale 修复：旧实现自带隔离 daemon 启动但未重定向 USERPROFILE，且
+    `_wait_manifest` 轮询真实 `get_http_manifest_dir()`，manifest 落点错位 →
+    3 例 ERROR「隔离 daemon 未发布 manifest」（E_HTTP_MANIFEST_*，W3/W4 已统一为
+    模式 A）。现改用 conftest `w3_live`（tests/conftest.py:8，内部
+    tests/_w3_harness.py::setup_w3_client 模式 A USERPROFILE 重定向 +
+    workspace.register + snapshot.publish）。
+
+    - 正向：已注册 Rust-native 方法 query.stats_top_files（INT-001
+      T-1787322971676-e9aae4d4 由 compat worker 迁移而来，见
+      rust_ext/src/daemon/dispatch.rs:2883）在真实 daemon 调用下**绝不**返回
+      method_not_found；
+    - 负向：伪路由候选名（summary.repo_map / semantic.gc_audit_list）在真实 daemon
+      必返回 method_not_found —— 实证 fail-closed 契约。
     """
 
-    @pytest.fixture
-    def real_daemon(self, tmp_path):
-        """启动隔离真实 daemon，yield 生产类 HttpDaemonRpcClient。"""
-        bin_path = _find_daemon_binary()
-        if bin_path is None:
-            pytest.skip("cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）")
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        backup = _backup_http_manifest()
-        proc = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
-        try:
-            manifest = _wait_manifest(proc)
-            if manifest is None:
-                pytest.fail("隔离 daemon 未发布 manifest")
-            client = HttpDaemonRpcClient(
-                endpoint=manifest["endpoint"],
-                verify_health=False,
-                timeout=5.0,
-            )
-            yield client
-        finally:
-            _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, backup)
+    def test_compat_registered_method_has_route(self, w3_live):
+        """已注册的 query.stats_top_files：不返回 method_not_found。
 
-    def test_compat_registered_method_has_route(self, real_daemon):
-        """compat_route 已注册的 stats_top_files：不返回 method_not_found。"""
+        stale 修复：旧断言用裸名 `stats_top_files`（旧 compat worker 路由名）；
+        P0-COMPAT-v3 / INT-001 迁移为 rust_native 后权威 RPC 名为
+        `query.stats_top_files`（权威来源：rust_ext/src/daemon/dispatch.rs:2883）。
+        """
         try:
-            result = real_daemon.call(
-                "stats_top_files", {"deadline_ms": 10000}
+            result = w3_live["client"].call(
+                "query.stats_top_files",
+                {"workspace_instance_id": w3_live["inst"], "limit": 10},
             )
         except DaemonRemoteError as exc:
             assert exc.code != "method_not_found", (
-                f"compat 方法不应 method_not_found（应走 compat_route）: {exc}"
+                f"compat 方法不应 method_not_found（应走 rust_native 路由）: {exc}"
             )
         else:
             assert result is not None
 
-    def test_summary_pseudo_route_returns_method_not_found(self, real_daemon):
+    def test_summary_pseudo_route_returns_method_not_found(self, w3_live):
         """伪路由候选名 summary.* 在真实 daemon 上必返回 method_not_found。"""
         with pytest.raises(DaemonRemoteError) as ei:
-            real_daemon.call("summary.repo_map", {})
+            w3_live["client"].call("summary.repo_map", {})
         assert ei.value.code == "method_not_found", (
             "tools_summary 工具若走伪路由 summary.* 在 HTTP 模式必失败（fail-closed）"
         )
 
-    def test_semantic_pseudo_route_returns_method_not_found(self, real_daemon):
+    def test_semantic_pseudo_route_returns_method_not_found(self, w3_live):
         """伪路由候选名 semantic.* 在真实 daemon 上必返回 method_not_found。"""
         with pytest.raises(DaemonRemoteError) as ei:
-            real_daemon.call("semantic.gc_audit_list", {})
+            w3_live["client"].call("semantic.gc_audit_list", {})
         assert ei.value.code == "method_not_found", (
             "tools_semantic 工具若走伪路由 semantic.* 在 HTTP 模式必失败（fail-closed）"
         )

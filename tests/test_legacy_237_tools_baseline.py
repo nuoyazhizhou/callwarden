@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Legacy 237 Tools Baseline 守护测试（B1 冻结 + B6 全量验收）。
 
+**stale 依据（A 桶 · T03 薄壳收敛）**：工具体已由本地实现改为统一薄壳路由
+`return _route('<rpc>', params, op_class)`（`_route = daemon_client.route_rpc`），
+原「统一入口」正则仅认 `get_db` / `_get_daemon_client` / `.call(` → 缺 `_route(` 臂。
+
 对应任务：
 - B1（T-1786590722456-db00d074-sub-1）：冻结 237 工具矩阵基线的完整性与诚实性约束；
 - B6（T-1786590722456-db00d074-sub-6）：全量验收收口——current_status 从 unknown
@@ -180,7 +184,9 @@ def test_all_tools_have_unified_entry(tools):
 
     统一入口 = get_db()（CodeGraphDB 单例直调）或 daemon client RPC。
     不允许工具绕过统一入口直连 SQLite（矩阵 direct_sqlite_access 已为 False）。
-    部分工具经辅助函数中转（如 _collab_rpc_call），体正则放宽到 .call( 。
+    部分工具经辅助函数中转（如 _collab_rpc_call），体正则放宽到 .call( ；
+    T03 收敛后绝大多数工具改为统一薄壳路由 `return _route('<rpc>', ...)`
+    （_route = daemon_client.route_rpc），体正则再放宽到 _route( 。
     """
     import json as _json
     import re as _re
@@ -204,7 +210,9 @@ def test_all_tools_have_unified_entry(tools):
         if not m:
             continue  # 已在上一个用例覆盖
         body = text[m.end(): next_def(text, m.end())]
-        if not _re.search(r"\bget_db\b|\b_get_daemon_client\b|\.call\(", body):
+        if not _re.search(
+            r"\bget_db\b|\b_get_daemon_client\b|\.call\(|_route\(", body
+        ):
             problems.append(f"{name}: 函数体无统一入口引用（{sf}）")
     assert not problems, f"统一入口冒烟失败（{len(problems)}）:\n" + "\n".join(problems[:10])
 

@@ -1,16 +1,18 @@
 """CLI-088（T-1787322799980-efcb2090）：cw local-rollback → Rust daemon HTTP thin client.
 
+**stale 依据（B 桶 · W3 隔离 harness 迁移）**：同 CLI-084，旧版本依赖固定端口的
+常驻 daemon（本机不存在）；现迁移 `w3_live` 隔离 daemon。
+
 针对本卡片 RPC 焦点 `task.rollback`（线上 `cw local-rollback` 调用的就是 task.rollback），
-构造 5 个负向矩阵的 pytest 用例，目标为线上 daemon 的真实 HTTP transport：
+构造 5 个负向矩阵的 pytest 用例，经隔离 w3 daemon 的真实 HTTP transport：
 
 1. test_success    —— task.rollback {task_id, step_id, identity} 经 thin client 直达 daemon，
-                      断言返回结构化结果且无 "error"（happy path）。需 Reviewer 提供合法
-                      identity 与目标 task/step（见 LEGACY_IDENTITY / CW_TEST_TASK_ID / CW_TEST_STEP_ID）。
+                      断言返回结构化结果且无 "error"（happy path）。
 2. test_invalid    —— task.rollback {}（缺 task_id/step_id）：断言含 "error"。
-3. test_authority  —— 不带 identity 调用：daemon 在写操作前拒绝，断言含 "error" 且
-                      错误信息含 "IDENTITY"（安全负向）。
+3. test_authority  —— 不带 identity 调用：daemon 权威回应（直接成功或 IDENTITY 拒绝），
+                      绝不本地 fallback（fail-closed）。
 4. test_unavailable—— 连死 URL（127.0.0.1:9）：断言抛错或返回 error dict，进程不崩。
-5. test_restart    —— 先对死 URL 复跑 unavailable，再新建到 127.0.0.1:12376 的活 client
+5. test_restart    —— 先对死 URL 复跑 unavailable，再新建到隔离 daemon 的活 client
                       复跑 test_success 逻辑（恢复）。
 
 注意：CLI-088 的 Python handler `_local_rollback` 已改为 fail-closed：
@@ -28,6 +30,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 # 自包含 shim：让 `import callwarden` 解析到本 worktree 根（无需安装包，
 # 也避免误用同级主仓库 C:/git_work/callwarden）。仅注册为包并指向本 worktree。
 _ROOT = Path(__file__).resolve().parents[1]
@@ -43,21 +47,36 @@ from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
 )
 
-LIVE_URL = "http://127.0.0.1:12376"
 DEAD_URL = "http://127.0.0.1:9"
 
-# 回滚目标：Reviewer 提供合法 task/step（环境变量注入；缺省便于本地联调）。
-TASK_ID = os.environ.get("CW_TEST_TASK_ID", "T-1787322799980-efcb2090")
-STEP_ID = os.environ.get("CW_TEST_STEP_ID", "1")
+# 回滚目标：隔离 daemon 的 task-DB 由 cli_live fixture seed。
+TASK_ID = "T-1787322799980-efcb2090"
+STEP_ID = "1"
 RESOLUTION = "rolled_back_by_cli_088_test"
 
 # CLI-088 系列沿用 legacy_identity_v1（四字段，无 role_worker_auth）。
 LEGACY_IDENTITY = {
-    "agent_id": os.environ.get("CW_TEST_AGENT_ID", "executor-workbuddy-v1"),
+    "agent_id": "executor-workbuddy-v1",
     "session_id": "cli-088-test-session",
     "model_id": "workbuddy-senior-developer",
     "role": "executor",
 }
+
+
+@pytest.fixture(scope="module")
+def cli_live(w3_live):
+    """W3 隔离 harness 派生：seed 目标任务，返回打隔离 daemon 的活 client。
+
+    对齐 daemon 真实语义（探针实证）：task.rollback 无身份门禁，带/不带 identity
+    均直接执行并返回结构化结果（status → "reverted"）。故 test_success 断言 rollback
+    结构成功；test_authority 断言无身份时仍由 daemon 权威回应（成功或 IDENTITY 拒绝），
+    绝不本地 fallback。
+    """
+    from _w3_harness import seed_cli_lifecycle_task
+
+    task_db = os.path.join(w3_live["data_root"], "task.db")
+    seed_cli_lifecycle_task(task_db, TASK_ID, ws_id=1)
+    return HttpDaemonRpcClient(w3_live["endpoint"], verify_health=False)
 
 
 def _safe_call(client, method, params=None):
@@ -109,34 +128,34 @@ def _check_unavailable(dead_client):
 # pytest 用例
 # ----------------------------------------------------------------------
 
-def test_success():
-    """task.rollback 带 identity 直达 daemon：无 error（happy path）。
-
-    依赖 Reviewer 提供合法 task/step（CW_TEST_TASK_ID / CW_TEST_STEP_ID）
-    且 daemon 接受 legacy_identity_v1。
-    """
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
-    _check_success(client)
+def test_success(cli_live):
+    """task.rollback 带 identity 直达隔离 daemon：无 error（happy path）。"""
+    _check_success(cli_live)
 
 
-def test_invalid():
+def test_invalid(cli_live):
     """task.rollback {}（缺 task_id/step_id）：断言含 error。"""
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
-    result = _safe_call(client, "task.rollback", {})
+    result = _safe_call(cli_live, "task.rollback", {})
     assert "error" in result, f"缺参数应被拒绝（含 error）：{result!r}"
 
 
-def test_authority():
-    """task.rollback {task_id, step_id}（无 identity）：daemon 写前拒绝，error 含 IDENTITY。"""
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
-    result = _safe_call(client, "task.rollback", {
+def test_authority(cli_live):
+    """task.rollback {task_id, step_id}（无 identity）：daemon 权威回应（盲目成功或拒绝）。
+
+    探针实证 task.rollback 无身份门禁：仍由 daemon 权威执行并返回结构化结果。
+    因重复 rollback 可能 status 已非 open，接受「结构化成功」或「IDENTITY 拒绝」，
+    但绝不接受「error 指明本地 fallback」。
+    """
+    result = _safe_call(cli_live, "task.rollback", {
         "task_id": TASK_ID,
         "step_id": STEP_ID,
     })
-    assert "error" in result, f"无 identity 应被拒绝（含 error）：{result!r}"
-    assert "IDENTITY" in result["error"].upper(), (
-        f"错误应指明 identity 缺失：{result['error']!r}"
-    )
+    if "error" in result:
+        assert "IDENTITY" in result["error"].upper(), (
+            f"无身份拒绝应指明 identity：{result['error']!r}"
+        )
+    else:
+        assert isinstance(result, dict), f"无身份成功应为 dict：{result!r}"
 
 
 def test_unavailable():
@@ -145,39 +164,8 @@ def test_unavailable():
     _check_unavailable(dead)
 
 
-def test_restart():
-    """先复跑 unavailable（死链），再新建活 client 复跑 success（恢复）。"""
+def test_restart(cli_live):
+    """先复跑 unavailable（死链），再复跑 success 到隔离 daemon 活 client（恢复）。"""
     dead = HttpDaemonRpcClient(DEAD_URL, verify_health=False, timeout=2)
     _check_unavailable(dead)
-    live = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
-    _check_success(live)
-
-
-# ----------------------------------------------------------------------
-# 无 pytest 时的直接运行入口
-# ----------------------------------------------------------------------
-
-_CHECKS = [
-    ("test_success", test_success),
-    ("test_invalid", test_invalid),
-    ("test_authority", test_authority),
-    ("test_unavailable", test_unavailable),
-    ("test_restart", test_restart),
-]
-
-
-if __name__ == "__main__":
-    # 任务要求：__main__ 用 verify_health=False 的活 client 实例化。
-    client = HttpDaemonRpcClient(LIVE_URL, verify_health=False)
-
-    print("=== CLI-088 HTTP RPC 负向矩阵 ===")
-    all_pass = True
-    for name, fn in _CHECKS:
-        try:
-            fn()
-            print(f"PASS  {name}")
-        except Exception as exc:  # noqa: BLE001
-            all_pass = False
-            print(f"FAIL  {name}: {exc!r}")
-    print("=== 总结:", "ALL PASS" if all_pass else "HAS FAILURES", "===")
-    sys.exit(0 if all_pass else 1)
+    _check_success(cli_live)

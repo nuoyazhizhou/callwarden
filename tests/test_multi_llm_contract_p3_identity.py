@@ -42,6 +42,19 @@ E_ATTESTATION_BINDING_FAILED = "E_ATTESTATION_BINDING_FAILED"
 E_REVOCATION_MODE_REQUIRED = "E_REVOCATION_MODE_REQUIRED"
 
 
+@pytest.fixture(autouse=True)
+def _force_local_daemon_mode(monkeypatch):
+    """stale 修复（PYT 回归卡 step#4 A 桶）：本文件的断言对象是 Attestation
+    撤销/身份语义（Req 10.x），与 daemon CapabilityMutationGate 正交。
+    db/db_task_identity.py:82-103 的 _require_authority_gate 在 auto/enterprise
+    模式下对 authority 写入口 fail-closed（E_TASK_LOOP_CAPABILITY_DISABLED，
+    0B gate-first），使 register_attestation_revocation 无法进入本体逻辑。
+    权威依据：config.py:1478-1494 规定 local 模式仅供 CW_TEST_MODE=1 使用，
+    故此处切到 local 在 DB 层直接验证撤销语义（gate fail-closed 行为由其它
+    专门用例覆盖）。"""
+    monkeypatch.setenv("CW_DAEMON_MODE", "local")
+
+
 def _fresh_db(tmp_path):
     db = CodeGraphDB(str(tmp_path / "p3_identity.db"),
                      workspace_root=str(tmp_path))

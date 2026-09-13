@@ -29,12 +29,31 @@ import pytest
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _collab_src():
-    with open(
-        os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "task_collab.rs"),
-        encoding="utf-8",
-    ) as f:
-        return f.read()
+def _daemon_src():
+    """聚合 rust_ext/src/daemon 下全部非测试 Rust 源码。
+
+    stale 依据：生产已把单文件 task_collab.rs 拆分为多文件（现 task_collab.rs 仅剩薄壳）：
+    - task_collab_lifecycle_apply.rs:96 handle_task_close / :156 parent_id = ?1 AND
+      status != 'closed' / :163 E_CHILD_TASKS_NOT_CLOSED / :184 E_NO_STEPS /
+      :201 E_STEPS_NOT_DONE / :212 closed_at = ?1
+    - task_collab_planning.rs:385 handle_task_completion_review / :415 "blocked" /
+      :418 "E_NO_STEPS" / :411 无法进行完成性评审
+    - task_collab_lifecycle_ops.rs:174 validate_lease_for_mutation / :186
+      E_LEASE_CLOCK_UNAVAILABLE / :188 lease clock 不可用
+    - task_collab.rs:1895 pub fn with_clock
+    - task_loop/lifecycle_lease.rs:859 status IN ('pending', 'failed', 'blocked')
+    只读 task_collab.rs 必然 substring not found / assert in <薄壳>。
+    这里递归聚合所有文件名不含 "test" 的 .rs，排除测试源码以免断言被测试代码自身满足。
+    """
+    root = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon")
+    parts = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in sorted(filenames):
+            if not name.endswith(".rs") or "test" in name:
+                continue
+            with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                parts.append(f.read())
+    return "\n".join(parts)
 
 
 # ------------------------------------------------------------
@@ -43,7 +62,9 @@ def _collab_src():
 
 def test_close_has_child_status_gate():
     """S1：handle_task_close 必须检查非 closed 子任务，存在时拒绝关闭。"""
-    src = _collab_src()
+    src = _daemon_src()
+    # 关键校验点：close_idx / child_gate_idx / write_idx 均落在同一文件
+    # task_collab_lifecycle_apply.rs（96 / 163 / 212），相对顺序不因目录聚合改变。
     assert '"E_CHILD_TASKS_NOT_CLOSED"' in src
     assert "parent_id = ?1 AND status != 'closed'" in src
     # 拒绝错误必须发生在任务状态写入之前（fail-closed）
@@ -55,7 +76,7 @@ def test_close_has_child_status_gate():
 
 def test_close_has_zero_steps_and_not_done_gate():
     """S2：叶子任务必须至少一个步骤且全部 done/skipped 才能关闭。"""
-    src = _collab_src()
+    src = _daemon_src()
     assert '"E_NO_STEPS"' in src
     assert '"E_STEPS_NOT_DONE"' in src
     assert "status IN ('pending', 'failed', 'blocked')" in src
@@ -63,7 +84,7 @@ def test_close_has_zero_steps_and_not_done_gate():
 
 def test_apply_close_lease_clock_fail_closed():
     """S3：lease clock 不可用时 apply/close 均返回 E_LEASE_CLOCK_UNAVAILABLE。"""
-    src = _collab_src()
+    src = _daemon_src()
     assert '"E_LEASE_CLOCK_UNAVAILABLE"' in src
     assert "fn validate_lease_for_mutation" in src
     assert "pub fn with_clock" in src
@@ -73,7 +94,9 @@ def test_apply_close_lease_clock_fail_closed():
 
 def test_completion_review_zero_steps_blocked():
     """S4：零步骤普通任务 completion-review 返回 blocked，不能 vacuous pass。"""
-    src = _collab_src()
+    src = _daemon_src()
+    # review_idx（task_collab_planning.rs:385）及其后的 blocked/E_NO_STEPS/无法进行
+    # 完成性评审（同文件 415/418/411）相对顺序不变，切片语义仍成立。
     review_idx = src.index("pub fn handle_task_completion_review")
     review_src = src[review_idx:]
     assert '"blocked"' in review_src
@@ -83,7 +106,7 @@ def test_completion_review_zero_steps_blocked():
 
 def test_close_writes_closed_at():
     """S5：close 的 UPDATE 必须写入真实非零 closed_at 时间戳。"""
-    src = _collab_src()
+    src = _daemon_src()
     close_idx = src.index("pub fn handle_task_close")
     close_src = src[close_idx:]
     assert "closed_at = ?1" in close_src

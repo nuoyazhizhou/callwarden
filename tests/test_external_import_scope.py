@@ -73,6 +73,15 @@ def test_extract_python_package_symbols_does_not_recurse_modules():
         submodule.inner = lambda: None
         module.submodule = submodule
 
+        # stale 依据：external_symbols(package_name, package_version) 有复合 FK 指向
+        # package_versions（db/schema.py:777）；连接默认 foreign_keys=ON
+        # （db/db_base.py:3425-3426），缺父行时 _extract_package_symbols 的 INSERT 会
+        # 抛 IntegrityError。生产调用链（_import_python_package）先写 package_versions
+        # 再调本函数；旧测试直接调用未建父行，故补建。
+        db.conn.execute(
+            "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
+            ("demo", "1.0.0"),
+        )
         created = db._extract_package_symbols("demo", "1.0.0", module, "")
         rows = [
             dict(r)
@@ -101,6 +110,14 @@ def test_prune_external_symbols_keeps_project_deps_and_stdlib():
             ("ext-python-torch", "2.0.0", "torch.Tensor"),
         ]
         for pkg, version, qn in rows:
+            # stale 依据：external_symbols(package_name, package_version) 复合 FK 指向
+            # package_versions（db/schema.py:777），foreign_keys=ON（db/db_base.py:3425-3426）。
+            # 旧测试先插 external_symbols 后插 package_versions，触发 FK 违规；故调整为
+            # 先写 package_versions 父行再写 external_symbols。
+            db.conn.execute(
+                "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
+                (pkg, version),
+            )
             db.conn.execute(
                 """
                 INSERT INTO external_symbols
@@ -109,10 +126,6 @@ def test_prune_external_symbols_keeps_project_deps_and_stdlib():
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (pkg, version, pkg, qn, qn.rsplit(".", 1)[-1], "fn", "", "", ""),
-            )
-            db.conn.execute(
-                "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
-                (pkg, version),
             )
         db.conn.commit()
 
@@ -288,6 +301,15 @@ def test_java_archive_scanner_prefers_shallow_public_surface(monkeypatch):
 
         monkeypatch.setattr("callwarden.db.db_external.subprocess.run", fake_run)
 
+        # stale 依据：同 test_extract_python_package_symbols_does_not_recurse_modules——
+        # javap 扫描写 external_symbols 需要 package_versions 父行（复合 FK，
+        # db/schema.py:777；foreign_keys=ON 见 db/db_base.py:3425-3426）。生产导入链
+        # 先建 package_versions；旧测试直接调用未建，故补建（pkg_key 规则见
+        # db/db_external.py:2323：f"ext-java-{package_name}"）。
+        db.conn.execute(
+            "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
+            ("ext-java-com.example:demo", "1.0.0"),
+        )
         created = db._scan_java_class_jar_via_javap(
             jar_path, "com.example:demo", "1.0.0"
         )

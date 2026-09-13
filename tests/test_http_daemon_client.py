@@ -268,15 +268,34 @@ def test_production_factory_selects_http_client(monkeypatch):
     assert isinstance(client, HttpDaemonRpcClient)
 
 
-def test_production_factory_default_legacy(monkeypatch):
-    """非 HTTP 模式下 factory 返回 legacy DaemonClient（is_http_client=False）。"""
-    from callwarden.server.daemon_client import DaemonClient, get_daemon_client
+def test_production_factory_default_http(monkeypatch):
+    """factory 按 is_http_transport_enabled() 选通道。
 
+    stale 修正：依据 server/daemon_client.py:2040-2049，get_daemon_client() 先判
+    is_http_transport_enabled()；依据 config.py:1747-1755，未设置 CW_DAEMON_TRANSPORT
+    （或 http/auto）→ True。故「默认返回 legacy DaemonClient」的旧期望已过期：
+    默认走 HTTP thin client；仅显式指定 named-pipe/uds 等才回落 legacy。
+    """
+    from callwarden.server.daemon_client import (
+        DaemonClient,
+        HttpDaemonRpcClient,
+        get_daemon_client,
+    )
+
+    # 默认（未设置 transport）→ HTTP thin client
     monkeypatch.delenv("CW_DAEMON_TRANSPORT", raising=False)
+    HttpDaemonRpcClient.reset_instance()
     DaemonClient.reset_instance()
-    client = get_daemon_client()
-    assert client.is_http_client is False
-    assert isinstance(client, DaemonClient)
+    default_client = get_daemon_client()
+    assert default_client.is_http_client is True
+    assert isinstance(default_client, HttpDaemonRpcClient)
+
+    # 显式固定 legacy 通道 → DaemonClient
+    monkeypatch.setenv("CW_DAEMON_TRANSPORT", "named-pipe")
+    DaemonClient.reset_instance()
+    legacy_client = get_daemon_client()
+    assert legacy_client.is_http_client is False
+    assert isinstance(legacy_client, DaemonClient)
 
 
 def test_http_client_has_no_sqlite_fallback():

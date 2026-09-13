@@ -1,19 +1,28 @@
-"""Phase 8.7: snapshot GC 测试。
+"""Phase 8.7: snapshot GC 测试（daemon authority / HTTP thin-client 迁移后）。
 
-测试覆盖：
-1. GCPolicy / GarbageItem / GCStats 数据类
-2. SnapshotGC mark 阶段：扫描各类可回收项
-3. SnapshotGC sweep 阶段：执行删除
-4. dry_run 模式：只统计不删除
-5. 回收策略：retention_count、max_age_seconds
-6. 边界情况：空目录、表不存在、删除失败
+stale 依据（A 类：被测模块已是 daemon 薄客户端）：
+- ``server/snapshot_gc.py:37-47`` 定义 ``_GC_METHODS`` RPC method 命名空间；
+  ``:50-71`` ``_call_daemon_rpc`` / ``_rpc_items`` 经统一 HTTP client 调用 daemon。
+- ``server/snapshot_gc.py:244-292`` ``_scan_expired_backup_history`` /
+  ``_scan_expired_migrations_log`` / ``_scan_expired_audit_logs`` /
+  ``_scan_orphaned_workspaces`` / ``_get_registered_snapshot_ids`` 全部经 RPC，
+  旧用例「本地建 registry.db/audit.db 表再断言扫描结果」的期望已整体过期。
+- ``server/snapshot_gc.py:354-384`` ``_delete_*`` / ``_vacuum_databases`` 经 RPC。
+- **仍本地**：``GCPolicy`` / ``GarbageItem`` / ``GCStats`` 数据类；``:197-242``
+  ``_scan_orphaned_snapshot_files``（本地扫 ``data_root/snapshots`` + RPC 取已注册 id）；
+  ``:298-352`` ``run_gc`` mark/sweep/dry_run/batch_size 逻辑与 snapshot_file 本地 ``os.remove``；
+  ``:390-407`` ``get_stats_summary``。
+
+因此失败用例改为 **mock RPC seam**：断言路由到正确 method + 正确 params + 回包透传 +
+失败 fail-closed；本地文件系统 / 数据类 / 回调契约保留断言。
 """
 
 import os
 import time
-import sqlite3
+
 import pytest
 
+from callwarden.server import snapshot_gc
 from callwarden.server.snapshot_gc import (
     SnapshotGC,
     GCPolicy,
@@ -23,6 +32,70 @@ from callwarden.server.snapshot_gc import (
 from callwarden.server.daemon_config import DaemonConfig
 
 
+# RPC method 命名空间（server/snapshot_gc.py:37-47）
+SCAN_BACKUP = "mcp.snapshot_gc.scan_expired_backup_history"
+SCAN_MIGRATION = "mcp.snapshot_gc.scan_expired_migrations_log"
+SCAN_AUDIT = "mcp.snapshot_gc.scan_expired_audit_logs"
+SCAN_WORKSPACES = "mcp.snapshot_gc.scan_orphaned_workspaces"
+REGISTERED = "mcp.snapshot_gc.get_registered_snapshot_ids"
+DELETE_BACKUP = "mcp.snapshot_gc.delete_backup_history_record"
+DELETE_MIGRATION = "mcp.snapshot_gc.delete_migration_log_record"
+DELETE_AUDIT = "mcp.snapshot_gc.delete_expired_audit_logs"
+VACUUM = "mcp.snapshot_gc.vacuum_databases"
+
+DELETE_METHODS = {DELETE_BACKUP, DELETE_MIGRATION, DELETE_AUDIT, VACUUM}
+
+
+def _item(item_type, key, *, size_bytes=0, reason="expired", **metadata):
+    return {
+        "item_type": item_type,
+        "key": key,
+        "size_bytes": size_bytes,
+        "reason": reason,
+        "metadata": metadata,
+    }
+
+
+class FakeSnapshotGCDaemon:
+    """内存态 snapshot GC daemon：模拟 Rust 侧扫描 / 删除 / vacuum。"""
+
+    def __init__(self):
+        self.available = True
+        self.calls = []
+        self.registered = {"snap-001"}
+        self.items = {
+            SCAN_BACKUP: [],
+            SCAN_MIGRATION: [],
+            SCAN_AUDIT: [],
+            SCAN_WORKSPACES: [],
+        }
+
+    def __call__(self, method, params):
+        if not self.available:
+            raise RuntimeError("daemon unavailable")
+        self.calls.append((method, params))
+        if method == REGISTERED:
+            return sorted(self.registered)
+        if method in self.items:
+            return list(self.items[method])
+        if method in DELETE_METHODS:
+            return {"deleted": 1, "source": "rust"}
+        raise RuntimeError(f"unexpected method: {method}")
+
+    def methods(self):
+        return [method for method, _ in self.calls]
+
+    def params_for(self, method):
+        return [params for m, params in self.calls if m == method]
+
+
+@pytest.fixture()
+def fake_daemon(monkeypatch):
+    daemon = FakeSnapshotGCDaemon()
+    monkeypatch.setattr(snapshot_gc, "_call_daemon_rpc", daemon)
+    return daemon
+
+
 # ======================================================================
 # 测试夹具
 # ======================================================================
@@ -30,7 +103,11 @@ from callwarden.server.daemon_config import DaemonConfig
 
 @pytest.fixture
 def setup_daemon_env_with_gc(tmp_path):
-    """创建完整的 daemon 环境用于 GC 测试。"""
+    """创建 GC 测试用的 data_root / snapshots 目录 / audit DB 占位。
+
+    registry.db 的数据库权威已下沉 daemon，本夹具只准备测试需直接操纵的
+    本地文件系统资源（snapshot 二进制文件）与 audit DB 存在性。
+    """
     data_root = str(tmp_path / "data")
     os.makedirs(data_root, exist_ok=True)
 
@@ -42,107 +119,32 @@ def setup_daemon_env_with_gc(tmp_path):
         },
     })
 
-    # 创建 registry DB 并插入数据
-    registry_path = cfg.registry_db_path
-    conn = sqlite3.connect(registry_path)
-    conn.executescript("""
-        CREATE TABLE daemon_workspaces (
-            workspace_id INTEGER PRIMARY KEY,
-            workspace_instance_id TEXT,
-            snapshot_id TEXT,
-            owner_uid INTEGER,
-            last_active_at REAL,
-            status TEXT DEFAULT 'active'
-        );
+    # audit DB 占位（_scan_expired_audit_logs 仅在文件存在时才发起 RPC）
+    open(cfg.audit_log_path, "w").close()
 
-        CREATE TABLE backup_history (
-            backup_id TEXT PRIMARY KEY,
-            backup_type TEXT,
-            created_at REAL,
-            file_count INTEGER,
-            total_size_bytes INTEGER,
-            checksum TEXT,
-            deleted_at REAL DEFAULT 0
-        );
-
-        CREATE TABLE schema_migrations_log (
-            id INTEGER PRIMARY KEY,
-            db_name TEXT,
-            from_version INTEGER,
-            to_version INTEGER,
-            applied_at REAL,
-            duration_ms INTEGER,
-            status TEXT,
-            error TEXT
-        );
-    """)
-
-    # 插入 active workspace
-    conn.execute("""
-        INSERT INTO daemon_workspaces
-        (workspace_instance_id, snapshot_id, owner_uid, last_active_at, status)
-        VALUES ('ws-active', 'snap-001', 1000, ?, 'active')
-    """, (time.time(),))
-
-    # 插入 archived workspace（很久以前）
-    conn.execute("""
-        INSERT INTO daemon_workspaces
-        (workspace_instance_id, snapshot_id, owner_uid, last_active_at, status)
-        VALUES ('ws-archived', 'snap-002', 1000, ?, 'archived')
-    """, (time.time() - 30 * 24 * 3600,))  # 30 天前
-
-    conn.commit()
-    conn.close()
-
-    # 创建 audit DB
-    audit_path = cfg.audit_log_path
-    conn = sqlite3.connect(audit_path)
-    conn.executescript("""
-        CREATE TABLE audit_log (
-            event_id TEXT PRIMARY KEY,
-            timestamp REAL,
-            event_type TEXT,
-            actor_uid INTEGER,
-            action TEXT
-        );
-    """)
-    # 插入一条旧记录和一条新记录
-    conn.execute("""
-        INSERT INTO audit_log (event_id, timestamp, event_type, actor_uid, action)
-        VALUES ('A-old', ?, 'admin_operation', 0, 'old')
-    """, (time.time() - 30 * 24 * 3600,))  # 30 天前
-    conn.execute("""
-        INSERT INTO audit_log (event_id, timestamp, event_type, actor_uid, action)
-        VALUES ('A-new', ?, 'admin_operation', 0, 'new')
-    """, (time.time(),))
-    conn.commit()
-    conn.close()
-
-    # 创建 snapshots 目录
     snapshot_dir = os.path.join(data_root, "snapshots")
     os.makedirs(snapshot_dir, exist_ok=True)
 
-    # 创建已注册的 snapshot 文件
+    # 已注册的 snapshot 文件
     with open(os.path.join(snapshot_dir, "snap-001"), "w") as f:
         f.write("active snapshot content")
 
-    # 创建孤立的 snapshot 文件（很久以前）
+    # 孤立的 snapshot 文件（30 天前）
     orphan_path = os.path.join(snapshot_dir, "orphan-snap")
     with open(orphan_path, "w") as f:
         f.write("orphan content")
-    old_time = time.time() - 30 * 24 * 3600  # 30 天前
+    old_time = time.time() - 30 * 24 * 3600
     os.utime(orphan_path, (old_time, old_time))
 
-    # 创建新的孤立文件（未过期）
-    new_orphan_path = os.path.join(snapshot_dir, "new-orphan")
-    with open(new_orphan_path, "w") as f:
+    # 新的孤立文件（未过期）
+    with open(os.path.join(snapshot_dir, "new-orphan"), "w") as f:
         f.write("new orphan")
 
     return cfg
 
 
 # ======================================================================
-# 数据类测试
+# 数据类测试（纯 Python，仍有效）
 # ======================================================================
 
 
@@ -208,112 +210,110 @@ class TestGarbageItem:
 
 
 # ======================================================================
-# SnapshotGC mark 测试
+# SnapshotGC mark 测试（本地 FS + mock RPC seam）
 # ======================================================================
 
 
 class TestSnapshotGCMark:
-    def test_collect_empty_env(self, tmp_path):
-        """空环境应返回空列表。"""
+    def test_collect_empty_env(self, fake_daemon, tmp_path):
+        """空环境：无 snapshots 目录，daemon 各扫描均返回空 → 空列表。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
         gc = SnapshotGC(cfg)
         items = gc.collect_garbage_stats()
         assert items == []
+        assert fake_daemon.methods() == [SCAN_BACKUP, SCAN_MIGRATION, SCAN_WORKSPACES]
 
-    def test_scan_orphaned_snapshot_files(self, setup_daemon_env_with_gc):
-        """扫描应找到过期的孤立 snapshot 文件。"""
+    def test_scan_orphaned_snapshot_files(self, fake_daemon, setup_daemon_env_with_gc):
+        """本地扫描应找到过期的孤立 snapshot 文件（已注册 id 来自 RPC）。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg)
         items = gc._scan_orphaned_snapshot_files()
-        # 找到 orphan-snap，不包含 new-orphan（未过期）
         paths = [i.key for i in items]
         assert "orphan-snap" in paths
-        assert "new-orphan" not in paths
-        assert "snap-001" not in paths  # 已注册
+        assert "new-orphan" not in paths  # 未过期
+        assert "snap-001" not in paths  # 已注册（daemon 返回）
+        assert fake_daemon.methods() == [REGISTERED]
+        assert fake_daemon.calls[0][1] == {"registry_db_path": cfg.registry_db_path}
 
-    def test_scan_registered_snapshot_excluded(self, setup_daemon_env_with_gc):
+    def test_scan_registered_snapshot_excluded(self, fake_daemon, setup_daemon_env_with_gc):
         """已注册的 snapshot 文件不应被标记为可回收。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg)
-        items = gc._scan_orphaned_snapshot_files()
-        # snap-001 已注册，不应出现
-        for item in items:
+        for item in gc._scan_orphaned_snapshot_files():
             assert item.key != "snap-001"
 
-    def test_scan_archived_workspaces(self, setup_daemon_env_with_gc):
-        """扫描应找到 archived 且过期的 workspace。"""
+    def test_scan_archived_workspaces(self, fake_daemon, setup_daemon_env_with_gc):
+        """workspace 扫描经 RPC 路由，回包透传。"""
         cfg = setup_daemon_env_with_gc
+        fake_daemon.items[SCAN_WORKSPACES] = [
+            _item("workspace_cache", "ws-archived", reason="unregistered", last_active_at=1),
+        ]
         gc = SnapshotGC(cfg)
         items = gc._scan_orphaned_workspaces()
         keys = [i.key for i in items]
         assert "ws-archived" in keys
         assert "ws-active" not in keys
+        assert fake_daemon.methods() == [SCAN_WORKSPACES]
+        assert fake_daemon.calls[0][1]["registry_db_path"] == cfg.registry_db_path
 
-    def test_scan_expired_backup_history(self, setup_daemon_env_with_gc):
-        """扫描应找到已删除和过期的 backup_history 记录。"""
+    def test_scan_expired_backup_history(self, fake_daemon, setup_daemon_env_with_gc):
+        """backup_history 扫描经 daemon RPC，回包透传为 GarbageItem。"""
         cfg = setup_daemon_env_with_gc
-        # 插入测试数据
-        conn = sqlite3.connect(cfg.registry_db_path)
-        # 已删除
-        conn.execute("""
-            INSERT INTO backup_history
-            (backup_id, backup_type, created_at, file_count, total_size_bytes, checksum, deleted_at)
-            VALUES ('B-deleted', 'full', ?, 1, 100, 'abc', ?)
-        """, (time.time() - 1, time.time() - 1))
-        # 过期但未删除
-        conn.execute("""
-            INSERT INTO backup_history
-            (backup_id, backup_type, created_at, file_count, total_size_bytes, checksum, deleted_at)
-            VALUES ('B-expired', 'full', ?, 1, 200, 'def', 0)
-        """, (time.time() - 30 * 24 * 3600,))
-        # 正常
-        conn.execute("""
-            INSERT INTO backup_history
-            (backup_id, backup_type, created_at, file_count, total_size_bytes, checksum, deleted_at)
-            VALUES ('B-normal', 'full', ?, 1, 300, 'ghi', 0)
-        """, (time.time(),))
-        conn.commit()
-        conn.close()
-
+        fake_daemon.items[SCAN_BACKUP] = [
+            _item("backup_history", "B-deleted", size_bytes=100),
+            _item("backup_history", "B-expired", size_bytes=200),
+        ]
         gc = SnapshotGC(cfg)
         items = gc._scan_expired_backup_history()
         keys = [i.key for i in items]
-        assert "B-deleted" in keys
-        assert "B-expired" in keys
+        assert keys == ["B-deleted", "B-expired"]
         assert "B-normal" not in keys
+        assert fake_daemon.calls[0][1] == {
+            "registry_db_path": cfg.registry_db_path,
+            "max_age_seconds": gc.policy.max_age_seconds,
+        }
 
-    def test_scan_expired_audit_logs_disabled(self, setup_daemon_env_with_gc):
-        """audit GC 默认禁用，collect_garbage_stats 不应包含 audit_log 类型。"""
+    def test_scan_expired_audit_logs_disabled(self, fake_daemon, setup_daemon_env_with_gc):
+        """audit GC 默认禁用，collect_garbage_stats 不发起 audit 扫描。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg, enable_audit_gc=False)
         items = gc.collect_garbage_stats()
-        audit_items = [i for i in items if i.item_type == "audit_log"]
-        assert audit_items == []
+        assert [i for i in items if i.item_type == "audit_log"] == []
+        assert SCAN_AUDIT not in fake_daemon.methods()
 
-    def test_scan_expired_audit_logs_enabled(self, setup_daemon_env_with_gc):
-        """启用 audit GC 后应找到过期记录。"""
+    def test_scan_expired_audit_logs_enabled(self, fake_daemon, setup_daemon_env_with_gc):
+        """启用 audit GC 后应经 RPC 找到过期记录并透传 metadata。"""
         cfg = setup_daemon_env_with_gc
+        fake_daemon.items[SCAN_AUDIT] = [
+            _item("audit_log", "expired_batch", count=1, cutoff=10.0),
+        ]
         gc = SnapshotGC(cfg, enable_audit_gc=True)
         items = gc._scan_expired_audit_logs()
         assert len(items) == 1
         assert items[0].item_type == "audit_log"
         assert items[0].metadata["count"] == 1
+        assert fake_daemon.calls[0][1] == {
+            "audit_db_path": cfg.audit_log_path,
+            "max_age_seconds": gc.policy.max_age_seconds,
+        }
 
-    def test_collect_all_types(self, setup_daemon_env_with_gc):
-        """collect_garbage_stats 应汇总所有类型。"""
+    def test_collect_all_types(self, fake_daemon, setup_daemon_env_with_gc):
+        """collect_garbage_stats 应汇总本地 snapshot_file 与 RPC workspace_cache。"""
         cfg = setup_daemon_env_with_gc
+        fake_daemon.items[SCAN_WORKSPACES] = [
+            _item("workspace_cache", "ws-archived", reason="unregistered"),
+        ]
         gc = SnapshotGC(cfg, enable_audit_gc=True)
-        items = gc.collect_garbage_stats()
-        types = {i.item_type for i in items}
-        # 至少包含 snapshot_file 和 workspace_cache
+        types = {i.item_type for i in gc.collect_garbage_stats()}
         assert "snapshot_file" in types
         assert "workspace_cache" in types
 
-    def test_collect_no_snapshots_dir(self, tmp_path):
-        """snapshots 目录不存在时应返回空。"""
+    def test_collect_no_snapshots_dir(self, fake_daemon, tmp_path):
+        """snapshots 目录不存在时应返回空，且不发起 registered RPC。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
         gc = SnapshotGC(cfg)
         assert gc._scan_orphaned_snapshot_files() == []
+        assert fake_daemon.methods() == []
 
 
 # ======================================================================
@@ -322,68 +322,53 @@ class TestSnapshotGCMark:
 
 
 class TestSnapshotGCSweep:
-    def test_run_gc_dry_run(self, setup_daemon_env_with_gc):
-        """dry_run 模式应只统计不删除。"""
+    def test_run_gc_dry_run(self, fake_daemon, setup_daemon_env_with_gc):
+        """dry_run 模式应只统计不删除，也不发起 delete RPC。"""
         cfg = setup_daemon_env_with_gc
+        fake_daemon.items[SCAN_BACKUP] = [_item("backup_history", "B-1", size_bytes=10)]
         gc = SnapshotGC(cfg, policy=GCPolicy(dry_run=True))
         stats = gc.run_gc()
 
         assert stats.marked_count > 0
-        assert stats.swept_count == 0  # dry_run 不删除
+        assert stats.swept_count == 0
 
-        # 验证文件未被删除
         snapshot_dir = os.path.join(cfg.data_root, "snapshots")
-        orphan_path = os.path.join(snapshot_dir, "orphan-snap")
-        assert os.path.exists(orphan_path)
+        assert os.path.exists(os.path.join(snapshot_dir, "orphan-snap"))
+        assert not (DELETE_METHODS & set(fake_daemon.methods()))
 
-    def test_run_gc_deletes_orphaned_files(self, setup_daemon_env_with_gc):
-        """正常 GC 应删除过期的孤立文件。"""
+    def test_run_gc_deletes_orphaned_files(self, fake_daemon, setup_daemon_env_with_gc):
+        """正常 GC 应本地删除过期孤立文件，保留已注册 / 未过期文件。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg)
         stats = gc.run_gc()
 
-        # 找到被删除的 snapshot_file
         swept_files = [s for s in stats.swept if s.item_type == "snapshot_file"]
         assert len(swept_files) > 0
 
-        # orphan-snap 应被删除
         snapshot_dir = os.path.join(cfg.data_root, "snapshots")
-        orphan_path = os.path.join(snapshot_dir, "orphan-snap")
-        assert not os.path.exists(orphan_path)
-
-        # 已注册的 snap-001 不应被删除
+        assert not os.path.exists(os.path.join(snapshot_dir, "orphan-snap"))
         assert os.path.exists(os.path.join(snapshot_dir, "snap-001"))
-
-        # 新的孤立文件不应被删除（未过期）
         assert os.path.exists(os.path.join(snapshot_dir, "new-orphan"))
 
-    def test_run_gc_deletes_backup_history(self, setup_daemon_env_with_gc):
-        """GC 应删除已标记的 backup_history 记录。"""
+    def test_run_gc_deletes_backup_history(self, fake_daemon, setup_daemon_env_with_gc):
+        """sweep 阶段应对 backup_history 项发起 delete RPC。"""
         cfg = setup_daemon_env_with_gc
-        # 插入测试数据
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.execute("""
-            INSERT INTO backup_history
-            (backup_id, backup_type, created_at, file_count, total_size_bytes, checksum, deleted_at)
-            VALUES ('B-del', 'full', ?, 1, 100, 'x', ?)
-        """, (time.time() - 1, time.time() - 1))
-        conn.commit()
-        conn.close()
-
+        fake_daemon.items[SCAN_BACKUP] = [_item("backup_history", "B-del", size_bytes=100)]
         gc = SnapshotGC(cfg)
         gc.run_gc()
 
-        # 验证记录已删除
-        conn = sqlite3.connect(cfg.registry_db_path)
-        row = conn.execute(
-            "SELECT backup_id FROM backup_history WHERE backup_id = ?", ("B-del",)
-        ).fetchone()
-        conn.close()
-        assert row is None
+        assert fake_daemon.methods().count(DELETE_BACKUP) == 1
+        assert fake_daemon.params_for(DELETE_BACKUP) == [{
+            "registry_db_path": cfg.registry_db_path,
+            "backup_id": "B-del",
+        }]
 
-    def test_run_gc_evicts_workspace_cache(self, setup_daemon_env_with_gc):
+    def test_run_gc_evicts_workspace_cache(self, fake_daemon, setup_daemon_env_with_gc):
         """GC 应通过回调驱逐 workspace 缓存。"""
         cfg = setup_daemon_env_with_gc
+        fake_daemon.items[SCAN_WORKSPACES] = [
+            _item("workspace_cache", "ws-archived", reason="unregistered"),
+        ]
         evicted = []
 
         def evictor(workspace_id):
@@ -395,10 +380,9 @@ class TestSnapshotGCSweep:
 
         assert "ws-archived" in evicted
 
-    def test_run_gc_sweep_failure_recorded(self, setup_daemon_env_with_gc):
+    def test_run_gc_sweep_failure_recorded(self, fake_daemon, setup_daemon_env_with_gc):
         """单个回收失败不应中断整个 GC。"""
         cfg = setup_daemon_env_with_gc
-        # 创建一个无法删除的文件（模拟权限错误）
         snapshot_dir = os.path.join(cfg.data_root, "snapshots")
         protected_path = os.path.join(snapshot_dir, "protected-snap")
         with open(protected_path, "w") as f:
@@ -408,15 +392,12 @@ class TestSnapshotGCSweep:
 
         gc = SnapshotGC(cfg)
         stats = gc.run_gc()
-
-        # 应有 swept 或 failed 记录
         assert stats.marked_count > 0
 
-    def test_run_gc_returns_duration(self, setup_daemon_env_with_gc):
+    def test_run_gc_returns_duration(self, fake_daemon, setup_daemon_env_with_gc):
         """GC 结果应包含执行时间。"""
         cfg = setup_daemon_env_with_gc
-        gc = SnapshotGC(cfg)
-        stats = gc.run_gc()
+        stats = SnapshotGC(cfg).run_gc()
         assert stats.duration_ms >= 0
 
 
@@ -426,35 +407,33 @@ class TestSnapshotGCSweep:
 
 
 class TestGCPolicyIntegration:
-    def test_short_max_age(self, setup_daemon_env_with_gc):
-        """较短的 max_age 应标记更多文件。"""
+    def test_short_max_age(self, fake_daemon, setup_daemon_env_with_gc):
+        """较短的 max_age 应标记更多本地文件。"""
         cfg = setup_daemon_env_with_gc
-        # 让 new-orphan 文件变旧（5 秒前）
         snapshot_dir = os.path.join(cfg.data_root, "snapshots")
         new_orphan_path = os.path.join(snapshot_dir, "new-orphan")
         old_time = time.time() - 5
         os.utime(new_orphan_path, (old_time, old_time))
 
-        # 2 秒 max_age，new-orphan 现在也应过期
         gc = SnapshotGC(cfg, policy=GCPolicy(max_age_seconds=2))
-        items = gc.collect_garbage_stats()
-        snapshot_items = [i for i in items if i.item_type == "snapshot_file"]
-        # 应包含 new-orphan
+        snapshot_items = [
+            i for i in gc.collect_garbage_stats() if i.item_type == "snapshot_file"
+        ]
         assert any(i.key == "new-orphan" for i in snapshot_items)
 
-    def test_long_max_age(self, setup_daemon_env_with_gc):
-        """很长的 max_age 应标记更少文件。"""
+    def test_long_max_age(self, fake_daemon, setup_daemon_env_with_gc):
+        """很长的 max_age 应标记更少本地文件。"""
         cfg = setup_daemon_env_with_gc
-        # 365 天 max_age，几乎没有文件过期
         gc = SnapshotGC(cfg, policy=GCPolicy(max_age_seconds=365 * 24 * 3600))
-        items = gc.collect_garbage_stats()
-        # orphan-snap 是 30 天前，不应被标记
-        snapshot_items = [i for i in items if i.item_type == "snapshot_file"]
+        snapshot_items = [
+            i for i in gc.collect_garbage_stats() if i.item_type == "snapshot_file"
+        ]
         assert all(i.key != "orphan-snap" for i in snapshot_items)
 
-    def test_batch_size_limit(self, setup_daemon_env_with_gc):
+    def test_batch_size_limit(self, fake_daemon, setup_daemon_env_with_gc):
         """batch_size 应限制单次 sweep 数量。"""
         cfg = setup_daemon_env_with_gc
+        fake_daemon.items[SCAN_BACKUP] = [_item("backup_history", "B-1", size_bytes=10)]
         gc = SnapshotGC(cfg, policy=GCPolicy(batch_size=1))
         stats = gc.run_gc()
         assert stats.swept_count <= 1
@@ -466,7 +445,7 @@ class TestGCPolicyIntegration:
 
 
 class TestGetStatsSummary:
-    def test_summary_structure(self, setup_daemon_env_with_gc):
+    def test_summary_structure(self, fake_daemon, setup_daemon_env_with_gc):
         """get_stats_summary 应返回结构化统计。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg, enable_audit_gc=True)
@@ -478,15 +457,15 @@ class TestGetStatsSummary:
         assert "policy" in summary
         assert summary["total_items"] > 0
 
-    def test_summary_by_type(self, setup_daemon_env_with_gc):
+    def test_summary_by_type(self, fake_daemon, setup_daemon_env_with_gc):
         """by_type 应按类型分类。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg, enable_audit_gc=True)
         summary = gc.get_stats_summary()
         assert isinstance(summary["by_type"], dict)
-        assert summary["by_type"]  # 非空
+        assert summary["by_type"]
 
-    def test_summary_includes_policy(self, setup_daemon_env_with_gc):
+    def test_summary_includes_policy(self, fake_daemon, setup_daemon_env_with_gc):
         """summary 应包含 policy 配置。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg, policy=GCPolicy(retention_count=7, dry_run=True))
@@ -501,112 +480,58 @@ class TestGetStatsSummary:
 
 
 class TestEdgeCases:
-    def test_empty_data_root(self, tmp_path):
+    def test_empty_data_root(self, fake_daemon, tmp_path):
         """空 data_root 不应崩溃。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        gc = SnapshotGC(cfg)
-        stats = gc.run_gc()
+        stats = SnapshotGC(cfg).run_gc()
         assert stats.marked_count == 0
         assert stats.swept_count == 0
 
-    def test_no_registry_db(self, tmp_path):
-        """registry.db 不存在时不应崩溃。"""
+    def test_no_registry_db(self, fake_daemon, tmp_path):
+        """daemon 报告无 registry 数据时 workspace 扫描返回空。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        gc = SnapshotGC(cfg)
-        items = gc._scan_orphaned_workspaces()
+        items = SnapshotGC(cfg)._scan_orphaned_workspaces()
         assert items == []
+        assert fake_daemon.methods() == [SCAN_WORKSPACES]
 
-    def test_no_backup_history_table(self, tmp_path):
-        """backup_history 表不存在时应跳过。"""
+    def test_no_backup_history_table(self, fake_daemon, tmp_path):
+        """daemon 报告无 backup_history 数据时扫描返回空。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        # 创建空的 registry.db
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.execute("CREATE TABLE daemon_workspaces (id INTEGER)")
-        conn.commit()
-        conn.close()
-
-        gc = SnapshotGC(cfg)
-        items = gc._scan_expired_backup_history()
+        items = SnapshotGC(cfg)._scan_expired_backup_history()
         assert items == []
+        assert fake_daemon.methods() == [SCAN_BACKUP]
 
-    def test_no_migrations_log_table(self, tmp_path):
-        """schema_migrations_log 表不存在时应跳过。"""
+    def test_no_migrations_log_table(self, fake_daemon, tmp_path):
+        """daemon 报告无 migrations_log 数据时扫描返回空。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.execute("CREATE TABLE daemon_workspaces (id INTEGER)")
-        conn.commit()
-        conn.close()
-
-        gc = SnapshotGC(cfg)
-        items = gc._scan_expired_migrations_log()
+        items = SnapshotGC(cfg)._scan_expired_migrations_log()
         assert items == []
+        assert fake_daemon.methods() == [SCAN_MIGRATION]
 
-    def test_migrations_log_under_keep_count(self, tmp_path):
-        """记录数少于 keep_count 时不标记。"""
+    def test_migrations_log_under_keep_count(self, fake_daemon, tmp_path):
+        """记录数少于 keep_count 时由 daemon 判定为空；Python 侧下发 retention_count。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.executescript("""
-            CREATE TABLE schema_migrations_log (
-                id INTEGER PRIMARY KEY,
-                db_name TEXT,
-                from_version INTEGER,
-                to_version INTEGER,
-                applied_at REAL,
-                duration_ms INTEGER,
-                status TEXT,
-                error TEXT
-            );
-        """)
-        # 只插入 5 条
-        for i in range(5):
-            conn.execute("""
-                INSERT INTO schema_migrations_log
-                (db_name, from_version, to_version, applied_at, duration_ms, status, error)
-                VALUES ('registry', ?, ?, ?, 10, 'success', '')
-            """, (i, i + 1, time.time()))
-        conn.commit()
-        conn.close()
-
         gc = SnapshotGC(cfg, policy=GCPolicy(retention_count=3))
         items = gc._scan_expired_migrations_log()
-        assert items == []  # 5 条 < keep_count=30
+        assert items == []
+        assert fake_daemon.calls[0][1]["retention_count"] == 3
 
-    def test_migrations_log_over_keep_count(self, tmp_path):
-        """记录数超过 keep_count 时应标记最旧的。"""
+    def test_migrations_log_over_keep_count(self, fake_daemon, tmp_path):
+        """超过 keep_count 的标记逻辑在 daemon；Python 侧透传其返回项。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.executescript("""
-            CREATE TABLE schema_migrations_log (
-                id INTEGER PRIMARY KEY,
-                db_name TEXT,
-                from_version INTEGER,
-                to_version INTEGER,
-                applied_at REAL,
-                duration_ms INTEGER,
-                status TEXT,
-                error TEXT
-            );
-        """)
-        # 插入 60 条（keep_count 默认 50）
-        for i in range(60):
-            conn.execute("""
-                INSERT INTO schema_migrations_log
-                (db_name, from_version, to_version, applied_at, duration_ms, status, error)
-                VALUES ('registry', ?, ?, ?, 10, 'success', '')
-            """, (i, i + 1, time.time() - (60 - i)))
-        conn.commit()
-        conn.close()
-
+        fake_daemon.items[SCAN_MIGRATION] = [
+            _item("migration_log", str(i), reason="old_log", db_name="registry")
+            for i in range(10)  # daemon 侧 60 - 50 = 10
+        ]
         gc = SnapshotGC(cfg, policy=GCPolicy(retention_count=3))
         items = gc._scan_expired_migrations_log()
-        assert len(items) == 10  # 60 - 50 = 10
+        assert len(items) == 10
+        assert fake_daemon.calls[0][1]["retention_count"] == 3
 
-    def test_vacuum_db(self, setup_daemon_env_with_gc):
-        """启用 vacuum_db 时不应崩溃。"""
+    def test_vacuum_db(self, fake_daemon, setup_daemon_env_with_gc):
+        """启用 vacuum_db 时应经 RPC 请求 daemon vacuum。"""
         cfg = setup_daemon_env_with_gc
         gc = SnapshotGC(cfg, policy=GCPolicy(vacuum_db=True))
         gc.run_gc()
-        # 验证 DB 仍可正常打开
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.execute("SELECT 1")
-        conn.close()
+        assert VACUUM in fake_daemon.methods()
+        assert fake_daemon.params_for(VACUUM)[0]["registry_db_path"] == cfg.registry_db_path

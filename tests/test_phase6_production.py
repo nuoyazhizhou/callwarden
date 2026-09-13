@@ -9,6 +9,15 @@
 3. Metrics 集成（RPC/CAS/Staging 指标）
 4. 安全测试（路径遍历/symlink escape/跨 UID/FD 伪造/资源耗尽）
 5. Schema migration N-1 兼容
+
+stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
+==========================================================
+- `server/replicator.py:364-384 daemon_handle_refresh` 已是薄客户端：仅序列化
+  `msg`（canonical_bytes → `canonical_bytes_hex`）后
+  `_call_daemon_rpc("mcp.replicator.daemon_handle_refresh", params)`；stale session
+  由 Rust daemon 决策并回传结构化错误，失败 fail-closed。旧用例「用本地 ws_conn
+  断言 ProtocolError stale session」已过期，改为 mock RPC seam。
+- `daemon_handle_connect`（`server/replicator.py:180+`）仍为本地实现，epoch 断言保留。
 """
 
 import os
@@ -17,6 +26,40 @@ import tempfile
 import textwrap
 
 import pytest
+
+
+# daemon RPC method 命名空间（生产侧见 server/replicator.py:52）
+REPLICATOR_REFRESH_METHOD = "mcp.replicator.daemon_handle_refresh"
+
+
+class _RpcRecorder:
+    """daemon RPC 替身：记录 (method, params) 并抛预设异常。"""
+
+    def __init__(self):
+        self.calls = []
+        self._raise = None
+
+    def raise_with(self, exc):
+        self._raise = exc
+        return self
+
+    def __call__(self, method, params):
+        self.calls.append((method, dict(params or {})))
+        if self._raise is not None:
+            raise self._raise
+        return None
+
+    @property
+    def methods(self):
+        return [m for m, _ in self.calls]
+
+
+@pytest.fixture
+def refresh_daemon(monkeypatch):
+    """把 `server.replicator._call_daemon_rpc` 替换为记录型替身。"""
+    rec = _RpcRecorder()
+    monkeypatch.setattr("callwarden.server.replicator._call_daemon_rpc", rec)
+    return rec
 
 
 # ============================================
@@ -244,9 +287,10 @@ class TestSecurity:
         assert config.max_queue_bytes > 0
         assert config.max_batch_files > 0
 
-    def test_stale_session_rejected(self, tmp_path):
-        """stale session 被拒绝。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError, init_session_schema
+    def test_stale_session_rejected(self, tmp_path, refresh_daemon):
+        """stale session 由 daemon 拒绝（A 类：refresh 走 RPC）。"""
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
 
         ws_db_path = str(tmp_path / "ws.db")
         ws_conn = sqlite3.connect(ws_db_path)
@@ -258,10 +302,13 @@ class TestSecurity:
         epoch1 = r1["session_epoch"]
 
         # 第二次连接（覆盖第一次）
-        r2 = daemon_handle_connect(1000, 1, "session-2", ws_conn)
+        daemon_handle_connect(1000, 1, "session-2", ws_conn)
 
-        # 旧 session 请求被拒绝
-        with pytest.raises(ProtocolError, match="stale session"):
+        # 旧 session 请求被 daemon 拒绝（错误透传）
+        refresh_daemon.raise_with(
+            DaemonRemoteError("stale_session", "stale session epoch")
+        )
+        with pytest.raises(DaemonRemoteError) as ei:
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
                 msg={
@@ -273,6 +320,8 @@ class TestSecurity:
                 ws_conn=ws_conn, cas_conn=None,
                 canonical_bytes=b"x = 1\n",
             )
+        assert ei.value.code == "stale_session"
+        assert refresh_daemon.methods == [REPLICATOR_REFRESH_METHOD]
 
         ws_conn.close()
 

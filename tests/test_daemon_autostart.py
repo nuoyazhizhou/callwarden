@@ -28,6 +28,7 @@ from callwarden.server.daemon_autostart import (
     _start_daemon_macos,
     _start_daemon_windows,
     ensure_daemon,
+    ensure_http_daemon,
     get_default_endpoint,
     try_connect,
 )
@@ -308,13 +309,20 @@ class TestFindDaemonBinary:
     """_find_daemon_binary 搜索逻辑。"""
 
     def test_env_var_takes_priority(self):
-        """CW_DAEMON_BINARY 环境变量优先。"""
+        """CW_DAEMON_BIN / CW_DAEMON_BINARY 环境变量优先（CW_DAEMON_BIN 优先）。
+
+        stale 依据：_find_daemon_binary 现按 ``CW_DAEMON_BIN`` 再
+        ``CW_DAEMON_BINARY`` 读取（server/daemon_autostart.py:573-577）。旧测试只设
+        CW_DAEMON_BINARY，未隔离宿主已导出的 CW_DAEMON_BIN，后者会抢先命中而误判。
+        故在 patch 作用域内显式移除 CW_DAEMON_BIN，仅保留 CW_DAEMON_BINARY 验证其被采纳。
+        """
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             f.write(b"fake")
             fake_path = f.name
 
         try:
             with mock.patch.dict(os.environ, {"CW_DAEMON_BINARY": fake_path}):
+                os.environ.pop("CW_DAEMON_BIN", None)
                 result = _find_daemon_binary()
             assert result == fake_path
         finally:
@@ -473,3 +481,61 @@ class TestDaemonClientAutoRoute:
                 with mock.patch.object(client, "_sql_fallback_get_stats", return_value={"files": 0}):
                     assert client.get_stats(db_path=None) == {"files": 0}
         DaemonClient.reset_instance()
+
+
+# ---------------------------------------------------------------------------
+# CR15（client_convergence_codereview_20260909 §5.8）: ensure_http_daemon
+# deadline 必须包含 window——否则窗口退化为单次探针，退避成死代码
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureHttpDaemonBoundedWindow:
+    """ensure_http_daemon 在有界窗口内退避重试 HTTP 就绪探针。"""
+
+    def test_succeeds_on_nth_probe_within_window(self):
+        """前两次探针失败、第三次成功：窗口内必须持续重试并返回 endpoint。"""
+        calls = {"n": 0}
+
+        def flaky_ready(ep):
+            calls["n"] += 1
+            return calls["n"] >= 3
+
+        t0 = time.monotonic()
+        result = ensure_http_daemon(
+            "http://127.0.0.1:1", window=5.0, readiness_check=flaky_ready
+        )
+        elapsed = time.monotonic() - t0
+
+        assert result == "http://127.0.0.1:1"
+        assert calls["n"] >= 3
+
+    def test_single_probe_failure_does_not_give_up_immediately(self):
+        """首轮探针失败后不得立即放弃（CR15 死代码回归锚点）：窗口内至少探 2 次。"""
+        calls = {"n": 0}
+
+        def never_ready(ep):
+            calls["n"] += 1
+            return False
+
+        ensure_http_daemon(
+            "http://127.0.0.1:1", window=0.4, readiness_check=never_ready
+        )
+        # 修复前：deadline 不含 window → 单次探针即返回，calls==1
+        assert calls["n"] >= 2
+
+    def test_returns_none_when_window_expires(self):
+        """窗口耗尽仍不就绪 → 返回 None。"""
+        result = ensure_http_daemon(
+            "http://127.0.0.1:1", window=0.3, readiness_check=lambda ep: False
+        )
+        assert result is None
+
+    def test_default_probe_uses_try_http_connect(self):
+        """未提供 readiness_check 时走 try_http_connect 探针。"""
+        with mock.patch(
+            "callwarden.server.daemon_autostart.try_http_connect",
+            side_effect=[False, True],
+        ) as m:
+            result = ensure_http_daemon("http://127.0.0.1:1", window=5.0)
+        assert result == "http://127.0.0.1:1"
+        assert m.call_count == 2

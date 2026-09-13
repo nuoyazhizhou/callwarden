@@ -382,27 +382,48 @@ class TestTimestampCleanup:
 
 
 class TestCliDbConsistency:
-    """验证 CLI 命令与 DB 方法的行为一致"""
+    """验证 CLI 命令与 DB 方法的行为一致
 
-    def test_cli_reopen_matches_db_reopen(self, db):
-        """CLI cw task reopen 与 db.task_reopen 行为一致"""
+    stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
+    `cli/main.py:5426-5485` 的 reopen CLI 分支经 `route_task_write("task.reopen",
+    {task_id, reviewer, reason, identity, lease...}, _local_reopen)`（:5460）走
+    daemon 权威；`_local_reopen`（`cli/main.py:5456-5457`，内部 `db.task_reopen`）
+    仅在 local 回落时调用。故 CLI 层不再直接改写本地 DB，本类改断言「CLI 走对
+    RPC + 渲染 daemon 回包 / daemon error fail-closed」。DB 层语义仍由
+    `TestTaskReopenCommand` 等直连 `db.task_reopen` 的用例覆盖。
+    """
+
+    def test_cli_reopen_matches_db_reopen(self, db, route_stub):
+        """CLI cw task reopen 经 RPC 路由到 task.reopen（daemon authority）"""
         task_id = _create_task(db, title="task")
         _complete_task_to_status(db, task_id, TASK_STATUS_CLOSED)
+
+        route_stub.reply("task.reopen", {
+            "task_id": task_id,
+            "status": TASK_STATUS_IN_PROGRESS,
+            "previous_status": TASK_STATUS_CLOSED,
+        })
 
         # 通过 CLI handler 调用
         argv = ["reopen", task_id, "--reviewer", "cli_test"]
         result = cli_main._handle_task(argv, db)
 
         assert result is True
-        assert _get_status(db, task_id) == TASK_STATUS_IN_PROGRESS
+        assert route_stub.count("task.reopen") == 1
+        params = route_stub.last_params("task.reopen")
+        assert params["task_id"] == task_id
+        assert params["reviewer"] == "cli_test"
 
-    def test_cli_reopen_nonexistent_returns_error(self, db):
-        """CLI reopen 不存在的任务返回错误"""
+    def test_cli_reopen_nonexistent_returns_error(self, db, route_stub):
+        """CLI reopen 不存在的任务：daemon 回包 error → fail-closed RC=2"""
+        route_stub.reply("task.reopen", {"error": "task not found"})
+
         argv = ["reopen", "T-nonexistent", "--reviewer", "cli_test"]
-        result = cli_main._handle_task(argv, db)
+        # daemon 权威返回 error 属失败路径，禁止 RC=0 假成功（GOV-FIX-08）
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main._handle_task(argv, db)
 
-        # _handle_task 返回 True 表示已处理（即使失败也打印了错误）
-        assert result is True
+        assert exc_info.value.code == 2
 
 
 # ============================================

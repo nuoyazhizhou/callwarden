@@ -9,6 +9,16 @@
 3. Ubuntu 14.04-24.04 串行 CI 矩阵
 4. /opt 工具链、/home、SMB/CIFS、VS Code Remote 工作区 fixture
 5. 双 UID 权限、断线重连、路径变化、refresh/query 验收
+
+stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
+==========================================================
+- `server/replicator.py:364-384 daemon_handle_refresh` 已是薄客户端：仅序列化
+  `msg`（canonical_bytes → `canonical_bytes_hex`）后
+  `_call_daemon_rpc("mcp.replicator.daemon_handle_refresh", params)`；stale session /
+  epoch 校验由 Rust daemon 决策，失败 fail-closed。旧用例「用本地 ws_conn 断言
+  committed / stale session」已过期，改为 mock RPC seam。
+- `daemon_handle_connect`（`server/replicator.py:180+`）仍为本地实现，epoch 递增
+  断言保留。
 """
 
 import hashlib
@@ -21,6 +31,45 @@ import tempfile
 import time
 
 import pytest
+
+
+# daemon RPC method 命名空间（生产侧见 server/replicator.py:52）
+REPLICATOR_REFRESH_METHOD = "mcp.replicator.daemon_handle_refresh"
+
+
+class _RpcRecorder:
+    """daemon RPC 替身：记录 (method, params) 并回放预设 payload / 抛预设异常。"""
+
+    def __init__(self):
+        self.calls = []
+        self._reply = None
+        self._raise = None
+
+    def reply(self, payload):
+        self._reply = payload
+        return self
+
+    def raise_with(self, exc):
+        self._raise = exc
+        return self
+
+    def __call__(self, method, params):
+        self.calls.append((method, dict(params or {})))
+        if self._raise is not None:
+            raise self._raise
+        return self._reply
+
+    @property
+    def methods(self):
+        return [m for m, _ in self.calls]
+
+
+@pytest.fixture
+def refresh_daemon(monkeypatch):
+    """把 `server.replicator._call_daemon_rpc` 替换为记录型替身。"""
+    rec = _RpcRecorder()
+    monkeypatch.setattr("callwarden.server.replicator._call_daemon_rpc", rec)
+    return rec
 
 
 # ============================================================
@@ -169,8 +218,8 @@ class TestVSCodeRemoteFixture:
         assert env["CW_DAEMON_SOCKET"].endswith(".sock")
         assert "remote-user" in env["CW_WORKSPACE_ROOT"]
 
-    def test_workspace_switch_without_restart(self, tmp_path):
-        """workspace 切换后无需重启 MCP 即可看到新 snapshot。"""
+    def test_workspace_switch_without_restart(self, tmp_path, refresh_daemon):
+        """workspace 切换后无需重启 MCP 即可看到新 snapshot（A 类：refresh 走 RPC）。"""
         from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
 
         ws_db_path = str(tmp_path / "vscode_ws.db")
@@ -184,6 +233,7 @@ class TestVSCodeRemoteFixture:
             requested_session_id="vscode-ws1",
             ws_conn=ws_conn,
         )
+        refresh_daemon.reply({"status": "committed", "content_hash": "hash-ws1"})
         result1 = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg={
@@ -203,6 +253,7 @@ class TestVSCodeRemoteFixture:
             requested_session_id="vscode-ws2",
             ws_conn=ws_conn,
         )
+        refresh_daemon.reply({"status": "committed", "content_hash": "hash-ws2"})
         result2 = daemon_handle_refresh(
             peer_uid=1000, workspace_id=2,
             msg={
@@ -218,6 +269,14 @@ class TestVSCodeRemoteFixture:
         # 两个 workspace 的内容不同
         assert result1.get("content_hash") != result2.get("content_hash")
 
+        # 两次 refresh 均路由到 daemon，且 canonical bytes 逐次透传
+        assert refresh_daemon.methods == [
+            REPLICATOR_REFRESH_METHOD, REPLICATOR_REFRESH_METHOD
+        ]
+        hexes = [p["canonical_bytes_hex"] for _, p in refresh_daemon.calls]
+        assert hexes[0] == b"def app1(): pass\n".hex()
+        assert hexes[1] == b"def app2(): return 42\n".hex()
+
         ws_conn.close()
 
 
@@ -229,9 +288,10 @@ class TestVSCodeRemoteFixture:
 class TestDisconnectReconnect:
     """验收 §6.3: 断线重连。"""
 
-    def test_reconnect_gets_new_epoch(self, tmp_path):
-        """断线重连后获得新 epoch，旧 session 失效。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError, init_session_schema
+    def test_reconnect_gets_new_epoch(self, tmp_path, refresh_daemon):
+        """断线重连后获得新 epoch（本地 connect），旧 session 由 daemon 拒绝。"""
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
 
         ws_db_path = str(tmp_path / "reconnect.db")
         ws_conn = sqlite3.connect(ws_db_path)
@@ -255,8 +315,11 @@ class TestDisconnectReconnect:
         epoch2 = r2["session_epoch"]
         assert epoch2 > epoch1, "重连后 epoch 应递增"
 
-        # 旧 session 应被拒绝
-        with pytest.raises(ProtocolError, match="stale session"):
+        # 旧 session 应被 daemon 拒绝（错误透传）
+        refresh_daemon.raise_with(
+            DaemonRemoteError("stale_session", "stale session epoch")
+        )
+        with pytest.raises(DaemonRemoteError) as ei:
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
                 msg={
@@ -268,6 +331,8 @@ class TestDisconnectReconnect:
                 ws_conn=ws_conn, cas_conn=None,
                 canonical_bytes=b"x = 1\n",
             )
+        assert ei.value.code == "stale_session"
+        assert refresh_daemon.methods == [REPLICATOR_REFRESH_METHOD]
 
         ws_conn.close()
 

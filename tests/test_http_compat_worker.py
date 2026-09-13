@@ -1,10 +1,17 @@
 """H3: compat worker / registry 的进程级与帧协议测试。
 
+**stale 依据（B 桶 · INT-001 compat 面清零）**：默认 registry 清零后，原「已知
+python_compat 方法可受理」断言失效；改为 fail-closed（`E_COMPAT_METHOD_NOT_FOUND`）
+断言 + 合成注入只读方法白盒验证引擎门。
+
 覆盖（契约 docs/design/http-daemon-mvp-compatibility-contract.md §3.3）：
 - 帧编解码 roundtrip / EOF / 超长拒绝
 - 帧校验 fail-closed：缺字段、错误协议版本、db_path 禁止、governance_write 禁止
-- handle_frame 成功路径：stats_top_files（get_uncommented_symbols 已 W2-1
-  迁移 rust_native，见 test_migrated_native_method_not_served_by_worker）
+- handle_frame 方法分发：INT-001（T-1787322971676-e9aae4d4）后默认 registry 已
+  清零（server/compat_registry.py:174-220 空 CompatRegistry，RUST_COMPAT_ROUTE={}），
+  全部方法名（含 stats_top_files / get_uncommented_symbols）均 fail-closed 返回
+  E_COMPAT_METHOD_NOT_FOUND；引擎门（operation_class / 执行异常）经合成注入的
+  read_only 方法白盒验证
 - 异常路径：未知方法、表缺失（E_COMPAT_EXECUTION_ERROR）
 - 子进程 main() roundtrip：真实 stdin/stdout 帧协议 + EOF 正常退出
 - 子进程协议损坏：垃圾输入回 E_COMPAT_WORKER_PROTOCOL 帧
@@ -109,8 +116,8 @@ def make_temp_db(tmp_path: Path, workspace_id: int = 1) -> str:
 
 
 def _base_frame(**overrides) -> dict:
-    # W2-1（T-1786840097330-dec66710）：默认方法改用仍注册于 worker 的
-    # stats_top_files（get_uncommented_symbols 已迁移 rust_native，worker 不再受理）
+    # 默认方法取退役的 stats_top_files 作为「帧结构合法但方法不再受理」的代表；
+    # INT-001 后 worker registry 为空，任何方法名在分发阶段均 fail-closed。
     frame = {
         "worker_protocol_version": WORKER_PROTOCOL_VERSION,
         "request_id": "req-1",
@@ -138,6 +145,23 @@ def _isolated_db(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cfg, "get_project_db_path", lambda project_root="": db_path)
     yield db_path
+
+
+@pytest.fixture
+def _synthetic_compat_method(monkeypatch):
+    """注入合成 read_only 方法到 registry 单例，白盒验证 worker 引擎门。
+
+    INT-001 后 `_build_default_registry()` 返回空 registry（server/
+    compat_registry.py:174-220），生产已无 compat 方法可分发；但 worker 引擎
+    （operation_class 门 / 执行异常映射，compat_worker.py:233-272）代码仍存活，
+    故用合成方法覆盖这些分支。
+    """
+    def _install(method, handler, operation_class=reg.READ_ONLY):
+        r = reg.CompatRegistry()
+        r.register(method, operation_class, reg.SCOPE_WORKSPACE, "synthetic", handler)
+        monkeypatch.setattr(reg, "_DEFAULT_REGISTRY", r)
+        return method
+    return _install
 
 
 # ---------------------------------------------------------------
@@ -215,7 +239,7 @@ def test_frame_missing_required_field():
 
 
 # ---------------------------------------------------------------
-# handle_frame 成功路径
+# handle_frame 方法分发（INT-001 后 compat 面清零）
 # ---------------------------------------------------------------
 
 
@@ -231,41 +255,38 @@ def test_migrated_native_method_not_served_by_worker():
     assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
 
 
-def test_stats_top_files_respects_limit():
+def test_retired_stats_top_files_not_served():
+    """INT-001：stats_top_files 迁 rust_native，worker 不再受理（limit 无关）。
+
+    生产真相源：server/compat_registry.py:174-220（空默认 registry）、
+    rust_ext/src/daemon/dispatch.rs:2883（query.stats_top_files 为 native RPC）。
+    """
     resp = handle_frame(_base_frame(method="stats_top_files", params={"limit": 2}))
-    assert resp["ok"] is True
-    assert resp["result"]["count"] == 2
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
 
 
-def test_stats_top_files_invalid_limit():
+def test_retired_stats_top_files_skips_limit_validation():
+    """INT-001：limit 校验随 handler 迁至 Rust（_coerce_limit 仅存于 registry），
+    worker 在方法查找阶段即 fail-closed，不再进入 limit 校验/执行分支。"""
     resp = handle_frame(_base_frame(method="stats_top_files", params={"limit": 999}))
     assert resp["ok"] is False
-    assert resp["error"]["code"] == ERR_EXECUTION
+    assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
 
 
-def test_stats_top_files_returns_coverage():
+def test_retired_stats_top_files_returns_no_result():
+    """INT-001：退役方法不返回 result 载荷（coverage 计算已迁 rust_native）。"""
     resp = handle_frame(_base_frame(method="stats_top_files", params={"limit": 10}))
-    assert resp["ok"] is True
-    result = resp["result"]
-    assert result["count"] == 2
-    by_path = {f["rel_path"]: f for f in result["files"]}
-    # src/app.py: 2 符号 1 注释 → 0.5；src/util.py: 2 符号 0 注释 → 0.0
-    assert by_path["src/app.py"]["symbol_count"] == 2
-    assert by_path["src/app.py"]["commented_count"] == 1
-    assert by_path["src/app.py"]["comment_coverage"] == 0.5
-    assert by_path["src/util.py"]["comment_coverage"] == 0.0
-    # 按 symbol_count 降序（同 count 时顺序不保证，只校验 Top 集合）
-    assert result["files"][0]["symbol_count"] >= result["files"][1]["symbol_count"]
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
+    assert "result" not in resp
 
 
-def test_other_workspace_isolated():
-    # workspace_id 是顶层帧字段（daemon 注入的显式上下文），不在 params 内；
-    # stats_top_files 按注入 workspace_id=2 过滤 → 仅 other/main.py 1 个文件
+def test_retired_stats_top_files_ignores_workspace():
+    """INT-001：workspace_id 过滤已迁 rust_native，退役方法在分发前即拒绝。"""
     resp = handle_frame(_base_frame(workspace_id=2))
-    assert resp["ok"] is True
-    result = resp["result"]
-    assert result["count"] == 1
-    assert result["files"][0]["rel_path"] == "other/main.py"
+    assert resp["ok"] is False
+    assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
 
 
 # ---------------------------------------------------------------
@@ -279,20 +300,32 @@ def test_unknown_method():
     assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
 
 
-def test_operation_class_mismatch():
-    # 注册为 read_only，frame 声称 index_write → 拒绝
+def test_operation_class_mismatch(_synthetic_compat_method):
+    # 默认 registry 已清零（INT-001），注入合成 read_only 方法白盒验证引擎的
+    # operation_class 门（compat_worker.py:233-240）：frame 声称 index_write → 拒绝
+    _synthetic_compat_method("stats_top_files", lambda ctx: {})
     resp = handle_frame(_base_frame(operation_class="index_write"))
     assert resp["ok"] is False
     assert resp["error"]["code"] == ERR_PROTOCOL
 
 
-def test_execution_error_on_missing_table(tmp_path, monkeypatch):
-    # 空 DB（无表）→ E_COMPAT_EXECUTION_ERROR（可重试 + 恢复指引）
+def test_execution_error_on_missing_table(
+    tmp_path, monkeypatch, _synthetic_compat_method
+):
+    # 空 DB（无表）→ handler 查询抛 sqlite3.OperationalError →
+    # E_COMPAT_EXECUTION_ERROR（可重试 + 恢复指引，compat_worker.py:257-265）。
+    # INT-001 后默认 registry 清零，需注入合成方法才能触达执行分支。
     empty_db = str(tmp_path / "empty.db")
     sqlite3.connect(empty_db).close()
     import callwarden.config as cfg
 
     monkeypatch.setattr(cfg, "get_project_db_path", lambda project_root="": empty_db)
+
+    def _query_missing_table(ctx):
+        ctx.conn.execute("SELECT * FROM no_such_table").fetchall()
+        return {}
+
+    _synthetic_compat_method("stats_top_files", _query_missing_table)
     resp = handle_frame(_base_frame())
     assert resp["ok"] is False
     assert resp["error"]["code"] == ERR_EXECUTION
@@ -316,21 +349,19 @@ def test_registry_rejects_duplicate_and_governance():
         r.register("m3", "bogus", reg.SCOPE_WORKSPACE, "d", lambda ctx: {})
 
 
-def test_default_registry_has_one_method():
-    # W2-1：get_uncommented_symbols 已迁移 rust_native，_build_default_registry()
-    # 仅注册 stats_top_files 1 项。注意：get_compat_registry() 单例在 import
-    # server.compat_worker 时被工具模块 register_compat_routes 装配至全量
-    # 104 项（含 H4C-2/3 方法），故长度断言针对默认注册器本身，单例另验
-    # get_uncommented_symbols 已不在其中。
+def test_default_registry_is_empty():
+    # INT-001（server/compat_registry.py:174-220）：_build_default_registry()
+    # 返回空 CompatRegistry()，RUST_COMPAT_ROUTE={}；stats_top_files 已迁
+    # rust_native。工具模块的 register_compat_routes 白名单亦为空 dict 条件注册，
+    # 故进程级单例 get_compat_registry() 同样为空。
     r = reg._build_default_registry()
-    assert len(r) == 1
-    assert r.is_compat_method("stats_top_files")
+    assert len(r) == 0
+    assert not r.is_compat_method("stats_top_files")
     assert not r.is_compat_method("get_uncommented_symbols")
-    assert r.operation_class("stats_top_files") == "read_only"
 
     full = reg.get_compat_registry()
-    assert full.is_compat_method("stats_top_files")
-    assert not full.is_compat_method("get_uncommented_symbols")
+    assert len(full) == 0
+    assert not full.is_compat_method("stats_top_files")
 
 
 # ---------------------------------------------------------------
@@ -362,26 +393,32 @@ def _spawn_worker(tmp_path: Path):
 
 
 def test_subprocess_roundtrip_and_eof(tmp_path):
+    """真实子进程帧协议 roundtrip + EOF 正常退出。
+
+    INT-001 后 worker registry 为空，任何方法名均返回 method_not_found；本用例
+    仍验证「帧写入 → 响应帧读取 → request_id 回显 → 关 stdin 退出 0」的进程级
+    协议闭环（不依赖具体 compat 方法是否存活）。
+    """
     proc = _spawn_worker(tmp_path)
     try:
-        # W2-1：get_uncommented_symbols 已迁移 rust_native，子进程帧协议验证改用
-        # 仍注册于 worker 的默认方法 stats_top_files
         frame = _base_frame(method="stats_top_files", params={"limit": 100})
         write_frame(proc.stdin, frame)  # type: ignore[union-attr]
         proc.stdin.flush()  # type: ignore[union-attr]
         resp = read_frame(proc.stdout)  # type: ignore[arg-type]
         assert resp is not None
-        assert resp["ok"] is True
-        assert resp["result"]["count"] == 2
+        assert resp["ok"] is False
+        assert resp["error"]["code"] == ERR_METHOD_NOT_FOUND
         assert resp["request_id"] == frame["request_id"]
 
-        # 第二个请求：stats_top_files（limit 变体）
-        frame2 = _base_frame(method="stats_top_files", params={"limit": 5})
+        # 第二个请求：仍 fail-closed，验证 worker 循环可持续处理多帧
+        frame2 = _base_frame(method="get_uncommented_symbols", params={"limit": 5})
         write_frame(proc.stdin, frame2)  # type: ignore[union-attr]
         proc.stdin.flush()  # type: ignore[union-attr]
         resp2 = read_frame(proc.stdout)  # type: ignore[arg-type]
-        assert resp2["ok"] is True
-        assert resp2["result"]["count"] == 2
+        assert resp2 is not None
+        assert resp2["ok"] is False
+        assert resp2["error"]["code"] == ERR_METHOD_NOT_FOUND
+        assert resp2["request_id"] == frame2["request_id"]
 
         # 关闭 stdin → worker 应正常退出（exit code 0）
         proc.stdin.close()  # type: ignore[union-attr]

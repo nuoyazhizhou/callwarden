@@ -209,16 +209,22 @@ class TestBug2RefreshUniqueConstraint(unittest.TestCase):
         self.assertEqual(rows[0]["end_line"], 25)
 
     def test_no_update_in_save_symbols(self):
-        """_save_symbols_for_version 不应包含 UPDATE symbols 语句（避免 UNIQUE 冲突）"""
+        """_save_symbols_for_version_python 不应包含 UPDATE symbols 语句（避免 UNIQUE 冲突）"""
         db_build_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "db", "db_build.py"
         )
         with open(db_build_path, "r", encoding="utf-8") as f:
             content = f.read()
-        # 找到 _save_symbols_for_version 函数体
-        start = content.find("def _save_symbols_for_version")
-        self.assertGreater(start, 0, "应找到 _save_symbols_for_version 函数")
+        # stale 修复：_save_symbols_for_version 已拆分为薄调度器（优先 Rust
+        # batch_save_symbols，回退 Python 实现）。真正的 DELETE+INSERT 逻辑位于
+        # _save_symbols_for_version_python。
+        # 权威来源：db/db_build.py:3570 定义 `_save_symbols_for_version_python`，
+        # db/db_build.py:3628 含 "DELETE FROM symbols WHERE file_instance_id = ?"；
+        # 而 db/db_build.py:3498 的 `_save_symbols_for_version` 仅做调度。
+        # 找到 _save_symbols_for_version_python 函数体
+        start = content.find("def _save_symbols_for_version_python")
+        self.assertGreater(start, 0, "应找到 _save_symbols_for_version_python 函数")
         # 截取函数体（到下一个 def 为止）
         end = content.find("\n    def ", start + 1)
         func_body = content[start:end]

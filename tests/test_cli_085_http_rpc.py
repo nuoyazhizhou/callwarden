@@ -1,5 +1,8 @@
 """CLI-085: cw local-reopen -> Rust daemon HTTP thin client (negative matrix).
 
+**stale 依据（B 桶 · W3 隔离 harness 迁移）**：同 CLI-084，旧版本依赖固定端口的
+常驻 daemon（本机不存在）；现迁移 `w3_live` 隔离 daemon。
+
 This module exercises the HTTP JSON-RPC transport used by the live
 ``cw local-reopen`` path. The card's RPC focus is ``task.reopen``; the
 thin client is ``callwarden.server.daemon_client.HttpDaemonRpcClient``.
@@ -25,6 +28,8 @@ import os
 import sys
 import types
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Self-bootstrapping import.
 #
@@ -47,12 +52,27 @@ from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
 # ---------------------------------------------------------------------------
 # Fixtures / constants
 # ---------------------------------------------------------------------------
-LIVE_ENDPOINT = os.environ.get("CW_DAEMON_ENDPOINT", "http://127.0.0.1:12376")
 DEAD_ENDPOINT = "http://127.0.0.1:9"
 TASK_ID = "T-1787322799770-e34ac71c"
 
 
-def make_client(endpoint=LIVE_ENDPOINT, timeout=5.0):
+@pytest.fixture(scope="module")
+def cli_live(w3_live):
+    """W3 隔离 harness 派生：seed 目标任务，返回打隔离 daemon 的活 client。
+
+    对齐 daemon 真实语义（探针实证）：task.reopen 无身份门禁，任务存在即直接
+    in_progress（不报 IDENTITY）。test_authority 断言改为：要么被拒绝（含
+    IDENTITY），要么 daemon 权威成功（含 task_id）——两种都证明请求正确路由
+    到 daemon 且无静默降级。
+    """
+    from _w3_harness import seed_cli_lifecycle_task
+
+    task_db = os.path.join(w3_live["data_root"], "task.db")
+    seed_cli_lifecycle_task(task_db, TASK_ID, ws_id=1)
+    return HttpDaemonRpcClient(w3_live["endpoint"], verify_health=False)
+
+
+def make_client(endpoint, timeout=5.0):
     """Build a thin HTTP client without the /health cross-check (verify_health=False)."""
     return HttpDaemonRpcClient(endpoint, verify_health=False, timeout=timeout)
 
@@ -79,22 +99,22 @@ def _invoke(client, method, params):
 # 5 negative-matrix checks
 # ---------------------------------------------------------------------------
 
-def test_success():
+def test_success(cli_live):
     """Read-only HTTP round-trip: task.status returns a well-formed status dict."""
-    client = make_client()
+    client = cli_live
     result = _invoke(client, "task.status", {"task_id": TASK_ID})
     assert "error" not in result, "task.status should not error: %r" % (result,)
     assert "status" in result, "task.status result missing 'status': %r" % (result,)
 
 
-def test_invalid():
+def test_invalid(cli_live):
     """Negative: task.reopen with no task_id must be rejected (error present)."""
-    client = make_client()
+    client = cli_live
     result = _invoke(client, "task.reopen", {})
     assert "error" in result, "reopen without task_id should be rejected, got: %r" % (result,)
 
 
-def test_authority():
+def test_authority(cli_live):
     """Negative: task.reopen with no identity must not perform an unguarded transition.
 
     On a daemon build that enforces authority, this returns an ``error`` whose
@@ -102,7 +122,7 @@ def test_authority():
     pilot build the call may succeed; in that case we still assert the response
     is well-formed and exercised the transport/contract without crashing.
     """
-    client = make_client()
+    client = cli_live
     result = _invoke(client, "task.reopen", {"task_id": TASK_ID})
     if "error" in result:
         assert "IDENTITY" in result["error"].upper(), (
@@ -123,7 +143,7 @@ def test_unavailable():
     assert "error" in result, "dead endpoint should yield an error, got: %r" % (result,)
 
 
-def test_restart():
+def test_restart(cli_live):
     """Recovery: after a dead endpoint, a fresh live client restores success path."""
     # 1) repeat the unavailable scenario against the dead URL
     dead = make_client(DEAD_ENDPOINT, timeout=2.0)
@@ -131,7 +151,7 @@ def test_restart():
     assert "error" in dead_result, "dead endpoint should yield an error, got: %r" % (dead_result,)
 
     # 2) fresh live client to the running daemon, re-running the success logic
-    live = make_client()
+    live = cli_live
     live_result = _invoke(live, "task.status", {"task_id": TASK_ID})
     assert "error" not in live_result, "live client should recover, got: %r" % (live_result,)
     assert "status" in live_result, "recovered task.status missing 'status': %r" % (live_result,)
@@ -141,29 +161,9 @@ def test_restart():
 # Bare-python runner (no pytest dependency)
 # ---------------------------------------------------------------------------
 
-def _run_all():
-    checks = [
-        ("test_success", test_success),
-        ("test_invalid", test_invalid),
-        ("test_authority", test_authority),
-        ("test_unavailable", test_unavailable),
-        ("test_restart", test_restart),
-    ]
-    passed = 0
-    for name, fn in checks:
-        try:
-            fn()
-            print("PASS  %s" % name)
-            passed += 1
-        except AssertionError as ae:
-            print("FAIL  %s  -> %s" % (name, ae))
-        except Exception as e:  # pragma: no cover - defensive
-            print("FAIL  %s  -> %s: %s" % (name, type(e).__name__, e))
-    print("----")
-    print("%d/%d checks passed" % (passed, len(checks)))
-    return passed == len(checks)
-
-
 if __name__ == "__main__":
-    ok = _run_all()
-    sys.exit(0 if ok else 1)
+    # 迁移到隔离 harness 后，活 daemon 由 w3_live fixture 启动，__main__ 裸跑
+    # 无法获得隔离 endpoint（也不应依赖后台常驻 daemon）。业务权威在 rust
+    # daemon；请用 pytest 运行（python -m pytest tests/test_cli_085_http_rpc.py）。
+    print("CLI-085 已迁移到隔离 daemon harness，请用 pytest 运行（不可裸跑 __main__）。")
+    sys.exit(1)

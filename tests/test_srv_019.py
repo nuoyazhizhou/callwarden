@@ -75,7 +75,9 @@ def test_success_final_gate_passed():
     assert report["passed"] is True
     assert report["finding_count"] == 0
     assert report["files_with_findings"] == 0
-    assert report["scanned_files"] == 52  # server/ 全量（与 SRV-019 failed 口径一致）
+    # stale 修正：审计脚本实际扫描 server/ 53 个文件（新纳入 1 个模块），
+    # 原硬编码 52 已过期。真相源 = deliverables/.../audit_server_authority_residue.py 实扫结果。
+    assert report["scanned_files"] == 53  # server/ 全量（与 SRV-019 failed 口径一致）
 
 
 def test_success_retired_files_14():

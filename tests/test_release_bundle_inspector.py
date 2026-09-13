@@ -193,11 +193,10 @@ def test_mcp_import_check_has_no_startup_side_effects(monkeypatch, capsys):
 
     monkeypatch.setattr(sys, "argv", ["cw", "--check-imports"])
     monkeypatch.setattr(mcp_server, "create_mcp_server", FakeServer)
-    monkeypatch.setattr(
-        mcp_server,
-        "_auto_sync_agents_md",
-        lambda: calls.append("sync"),
-    )
+    # stale 修正：`_auto_sync_agents_md` 符号已不存在（T03 收敛，AGENTS.md 同步
+    # 下沉 daemon RPC，见 mcp_server.py:330-340 main() docstring），故删除该 patch。
+    # --check-imports 分支（mcp_server.py:343-345）在 create_mcp_server 后直接
+    # print + return，不触发 probe/semgrep/run，calls 仍应为空。
     monkeypatch.setattr(
         mcp_server,
         "_ensure_semgrep_rules_cache",

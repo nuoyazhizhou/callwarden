@@ -353,6 +353,13 @@ def test_daemon_client_injects_bridge_token():
         "callwarden.config.is_bridge_transport", return_value=True
     ), patch(
         "callwarden.config.get_bridge_token", return_value="secret-token"
+    ), patch(
+        # stale 依据（A 类：测试侧期望陈旧）：parse_response 内部会先触发
+        # _is_rust_protocol_rolled_back()（server/daemon_protocol.py:53-81，60s 缓存 +
+        # 经帧收发 RPC 查询），该 RPC 复用同一被 patch 的 send_message，会覆盖
+        # captured["method"]。隔离 rollback 探测，使 captured 只反映本次 ping。
+        "callwarden.server.daemon_protocol._is_rust_protocol_rolled_back",
+        return_value=False,
     ):
         client = UnixDaemonRpcClient.__new__(UnixDaemonRpcClient)
         client.socket_path = "tcp://127.0.0.1:8456"
@@ -430,12 +437,18 @@ def test_bridge_endpoint_override_wins_over_global_endpoint(monkeypatch):
 
 
 def test_try_connect_prefers_tcp_on_windows(monkeypatch):
-    """Windows 上的 TCP bridge endpoint 不能被 Named Pipe 分支截走。"""
+    """Windows 上的 TCP bridge endpoint 不能被 Named Pipe 分支截走。
+
+    stale 依据（A 类：测试侧期望陈旧）：try_connect 的 TCP 分支入口已改为
+    _transport_connect_tcp（server/daemon_autostart.py:196-197 + 233-255）；
+    _try_connect_tcp 已下沉为 daemon RPC 探测（daemon_autostart.py:215-230，
+    返回 dict 而非 socket），不再是 try_connect 的返回值来源。
+    """
     import callwarden.server.daemon_autostart as autostart
 
     tcp_marker = object()
     monkeypatch.setattr(autostart.sys, "platform", "win32")
-    monkeypatch.setattr(autostart, "_try_connect_tcp", lambda endpoint: tcp_marker)
+    monkeypatch.setattr(autostart, "_transport_connect_tcp", lambda endpoint: tcp_marker)
     monkeypatch.setattr(
         autostart,
         "_try_connect_windows",

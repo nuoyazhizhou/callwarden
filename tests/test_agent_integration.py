@@ -176,107 +176,98 @@ def test_task_quality_gate_mcp_tools_registered():
     assert "task_resolve_quality_finding" in names, "task_resolve_quality_finding 未注册"
 
 
-def test_task_quality_findings_mcp_end_to_end():
-    """task_quality_findings / task_resolve_quality_finding 端到端"""
+def test_task_quality_findings_mcp_end_to_end(monkeypatch):
+    """task_quality_findings / task_resolve_quality_finding（A 桶：mock RPC seam）。
+
+    stale 依据（生产已薄客户端化）：`server/tools/tools_task.py:1028-1035`
+    `task_quality_findings` / `task_resolve_quality_finding` 已退化为
+    `return _route('<rpc method>', {...}, '<OP_CLASS>')`（`_route` 即
+    `server/daemon_client.py::route_rpc`，同文件 :46 导入）。旧用例把 finding 写进
+    进程内临时 `CodeGraphDB` 再经 `_mcp_common._db_instance` 注入——但工具层已不再读
+    本地 db，而是发 HTTP RPC 给 daemon 权威，故无 daemon 时 `E_HTTP_MANIFEST_MISSING`
+    fail-closed（不回退本地 SQLite）。现代语义应断言「工具路由到正确 RPC method /
+    params 逐字透传 / op_class 正确 / daemon 回包原样返回」。
+    """
     import asyncio
-    import callwarden.server._mcp_common as mcp_common_mod
+    from callwarden.server.tools import tools_task
 
-    tmpdir = tempfile.mkdtemp()
-    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
-    try:
-        task_id = db.task_create("quality-gate-test", steps=[{"action": "edit"}])
+    calls = []
 
-        fid = db.record_task_quality_finding(
-            task_id, severity="warn", message="test-warn",
-        )
-        db.record_task_quality_finding(
-            task_id, severity="error", message="test-error",
-        )
+    def fake_route(method, params, op_class):
+        calls.append((method, dict(params), op_class))
+        if method == "task.quality_findings":
+            return [{"message": "test-warn"}, {"message": "test-error"}]
+        if method == "task.resolve_quality_finding":
+            return {"success": True, "status": "resolved"}
+        raise AssertionError(f"未预期的 RPC: {method}")
 
-        mcp = create_mcp_server()
-        # monkey-patch _db_instance 让 MCP 工具使用我们的临时 db
-        # 注意：拆分后工具函数从 _mcp_common 导入 get_db，patch mcp_server.get_db 不再生效，
-        # 必须 patch _mcp_common._db_instance（get_db 函数体内读取该全局）。
-        orig_db_instance = mcp_common_mod._db_instance
-        mcp_common_mod._db_instance = db
-        try:
-            # 调用 task_quality_findings 工具（返回 list[dict]）
-            open_result = asyncio.run(
-                mcp.call_tool("task_quality_findings",
-                              {"task_id": task_id, "status": "open", "severity": ""})
-            )
-            open_findings = _extract_tool_payload_list(open_result)
-            assert len(open_findings) == 2
-            messages = {f["message"] for f in open_findings}
-            assert "test-warn" in messages
-            assert "test-error" in messages
+    monkeypatch.setattr(tools_task, "_route", fake_route)
 
-            # severity 过滤
-            error_result = asyncio.run(
-                mcp.call_tool("task_quality_findings",
-                              {"task_id": task_id, "status": "open", "severity": "error"})
-            )
-            error_only = _extract_tool_payload_list(error_result)
-            assert len(error_only) == 1
-            assert error_only[0]["message"] == "test-error"
+    mcp = create_mcp_server()
+    # task.quality_findings（READ_ONLY）：params 逐字透传，回包透传
+    open_result = asyncio.run(
+        mcp.call_tool("task_quality_findings",
+                      {"task_id": "T-1", "status": "open", "severity": ""})
+    )
+    open_findings = _extract_tool_payload_list(open_result)
+    assert len(open_findings) == 2
+    messages = {f["message"] for f in open_findings}
+    assert messages == {"test-warn", "test-error"}
 
-            # 解决 finding（返回单个 dict）
-            resolve_result = asyncio.run(
-                mcp.call_tool("task_resolve_quality_finding",
-                              {"finding_id": fid, "resolution": "fixed", "resolved_by": "agent"})
-            )
-            resolved = _extract_tool_payload(resolve_result)
-            assert resolved["success"] is True
-            assert resolved["status"] == "resolved"
+    # task.resolve_quality_finding（PROTECTED_MUTATION）：回包透传
+    resolve_result = asyncio.run(
+        mcp.call_tool("task_resolve_quality_finding",
+                      {"finding_id": 7, "resolution": "fixed", "resolved_by": "agent"})
+    )
+    resolved = _extract_tool_payload(resolve_result)
+    assert resolved["success"] is True
+    assert resolved["status"] == "resolved"
 
-            # resolved 过滤
-            resolved_list = _extract_tool_payload_list(asyncio.run(
-                mcp.call_tool("task_quality_findings",
-                              {"task_id": task_id, "status": "resolved", "severity": ""})
-            ))
-            assert len(resolved_list) == 1
-            assert resolved_list[0]["message"] == "test-warn"
-
-            # 剩余 open
-            open_after = _extract_tool_payload_list(asyncio.run(
-                mcp.call_tool("task_quality_findings",
-                              {"task_id": task_id, "status": "open", "severity": ""})
-            ))
-            assert len(open_after) == 1
-        finally:
-            mcp_common_mod._db_instance = orig_db_instance
-    finally:
-        db.close()
+    assert calls[0] == (
+        "task.quality_findings",
+        {"task_id": "T-1", "status": "open", "severity": ""},
+        "READ_ONLY",
+    )
+    assert calls[1] == (
+        "task.resolve_quality_finding",
+        {"finding_id": 7, "resolution": "fixed", "resolved_by": "agent"},
+        "PROTECTED_MUTATION",
+    )
 
 
-def test_task_completion_review_mcp_end_to_end():
-    """task_completion_review MCP 工具端到端（空数据库 pass）"""
+def test_task_completion_review_mcp_end_to_end(monkeypatch):
+    """task_completion_review MCP 工具（A 桶：mock RPC seam）。
+
+    stale 依据（生产已薄客户端化）：`server/tools/tools_task.py:1023-1025`
+    `task_completion_review` 已退化为 `return _route('task.completion_review',
+    {"task_id": task_id, "step_id": step_id}, 'PROTECTED_MUTATION')`；旧用例经
+    本地 db 注入期望「空库 pass」，现无 daemon 时 fail-closed。现代语义断言
+    「路由 task.completion_review + params 透传 + daemon 回包透传」。
+    """
     import asyncio
-    import callwarden.server._mcp_common as mcp_common_mod
+    from callwarden.server.tools import tools_task
 
-    tmpdir = tempfile.mkdtemp()
-    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
-    try:
-        task_id = db.task_create("review-test", steps=[{"action": "edit"}])
+    calls = []
 
-        mcp = create_mcp_server()
-        orig_db_instance = mcp_common_mod._db_instance
-        mcp_common_mod._db_instance = db
-        try:
-            result = _extract_tool_payload(asyncio.run(
-                mcp.call_tool("task_completion_review",
-                              {"task_id": task_id, "step_id": ""})
-            ))
-            # 无变更文件 → pass（无发现）
-            assert result["decision"] == "pass"
-            assert isinstance(result["findings"], list)
-            assert len(result["findings"]) == 0
-            assert "counts" in result
-            assert result["counts"]["error"] == 0
-        finally:
-            mcp_common_mod._db_instance = orig_db_instance
-    finally:
-        db.close()
+    def fake_route(method, params, op_class):
+        calls.append((method, dict(params), op_class))
+        return {"decision": "pass", "findings": [], "counts": {"error": 0}}
+
+    monkeypatch.setattr(tools_task, "_route", fake_route)
+
+    mcp = create_mcp_server()
+    result = _extract_tool_payload(asyncio.run(
+        mcp.call_tool("task_completion_review",
+                      {"task_id": "T-1", "step_id": ""})
+    ))
+    assert result["decision"] == "pass"
+    assert isinstance(result["findings"], list)
+    assert len(result["findings"]) == 0
+    assert result["counts"]["error"] == 0
+    assert calls == [
+        ("task.completion_review", {"task_id": "T-1", "step_id": ""},
+         "PROTECTED_MUTATION"),
+    ]
 
 
 def _extract_tool_payload_list(tool_result):
@@ -324,23 +315,30 @@ def _extract_tool_payload(tool_result):
 
 
 def test_install_agent_generates_templates():
+    """install-agent 生成集成模板（A 桶：直调 handler，隔离 daemon 依赖）。
+
+    stale 依据（生产已 daemon authority 化）：`cli/main.py:1466-1478`
+    `_run_subcommand_mode` 对非只读子命令（`install-agent` 不在
+    `_is_readonly_command` 白名单）会先 `db.list_workspaces()`（现为
+    `RpcDBProxy.list_workspaces` → `route_rpc("workspace.list", ...)`，见
+    `cli/main.py:1356-1360`）做 workspace 自动注册/激活；因此旧的「子进程跑
+    `cw.py install-agent`」用例在没有 live daemon 时 fail-closed
+    （`E_HTTP_MANIFEST_MISSING`）。生成器本身 `_handle_install_agent`
+    只读 `db.client_workspace_root`、不触达 daemon，故现代语义直接以 stub db
+    调用该 handler，验证「模板产物布局」这一被测契约。
+    """
+    from callwarden.cli.main import _handle_install_agent
+
     tmpdir = tempfile.mkdtemp()
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = os.path.join(tmpdir, "integrations")
-    env = {
-        **os.environ,
-        "CALLWARDEN_LANG": "en_US",
-        "PYTHONIOENCODING": "utf-8",
-    }
-    result = subprocess.run(
-        [sys.executable, os.path.join(repo, "cw.py"), "install-agent", "all", "--output-dir", out_dir, "--force"],
-        cwd=repo,
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
+
+    class _StubDb:
+        client_workspace_root = repo
+
+    assert _handle_install_agent(
+        ["all", "--output-dir", out_dir, "--force"], _StubDb()
+    ) is True
     assert os.path.isfile(os.path.join(out_dir, "codex", "callwarden-plugin", ".codex-plugin", "plugin.json"))
     assert os.path.isfile(os.path.join(out_dir, "claude-code", "settings.snippet.json"))
     assert os.path.isfile(os.path.join(out_dir, "cursor", "callwarden.mdc"))

@@ -79,6 +79,15 @@ def _insert_symbol(
     name: str,
     qualified_name: str,
 ) -> int:
+    # stale 依据：symbols.symbol_hash 有 FK 指向 symbol_contents(content_hash)
+    # （db/schema.py:67）；连接在 CW_USE_RUST_STORAGE 默认开启时 foreign_keys=ON
+    # （db/db_base.py:3425-3426），缺父行会 IntegrityError。旧测试未建父行，
+    # 故按真实写入路径补建 symbol_contents 行。
+    db.conn.execute(
+        "INSERT OR IGNORE INTO symbol_contents "
+        "(content_hash, name, kind, content, qualified_name) VALUES (?, ?, 'fn', '', ?)",
+        (symbol_hash, name, qualified_name),
+    )
     cur = db.conn.execute(
         """
         INSERT INTO symbols (
@@ -92,6 +101,14 @@ def _insert_symbol(
 
 
 def _insert_file(db: CodeGraphDB, workspace_id: int, rel_path: str) -> int:
+    # stale 依据：file_instances.current_content_hash 有 FK 指向 file_contents(content_hash)
+    # （db/schema.py:44）；INSERT 未显式给该列（默认 ''）时需 file_contents('') 占位行，
+    # 否则 foreign_keys=ON（db/db_base.py:3425-3426）下 IntegrityError。
+    # 补建占位行（与 db/db_build.py 首文件注册前的 D1 修复同构）。
+    db.conn.execute(
+        "INSERT OR IGNORE INTO file_contents "
+        "(content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, 0)"
+    )
     cur = db.conn.execute(
         """
         INSERT INTO file_instances (

@@ -436,6 +436,24 @@ def _query_workspace_exists(codegraph_db_path, workspace_id):
     return row is not None
 
 
+def _query_workspace_by_root(codegraph_db_path, root_path_suffix):
+    """按 root_path 业务键查询 workspace（返回 (id, root_path) 或 None）。
+
+    stale 依据（A 类：测试侧陈旧期望）：Rust 侧权威映射已从「把 registry
+    workspace_id 直插权威库」改为按 `root_path` 业务键映射
+    （rust_ext/src/daemon/cas_merge.rs:257-262 注明 ensure_workspace_row 已废弃；
+    :1277-1285 走 super::fs_handlers::ensure_workspace_row_by_root）。因此
+    workspace_id=999 不再决定权威库行 id，必须按 root_path 断言。
+    """
+    conn = sqlite3.connect(str(codegraph_db_path))
+    row = conn.execute(
+        "SELECT id, root_path FROM workspaces WHERE root_path LIKE ?",
+        (f"%{root_path_suffix}%",),
+    ).fetchone()
+    conn.close()
+    return row
+
+
 def _query_manifest(codegraph_db_path, workspace_id, rel_path):
     """查询 workspace_manifests 表"""
     conn = sqlite3.connect(str(codegraph_db_path))
@@ -628,9 +646,20 @@ class TestCasMergeDiff:
         assert rust_resolved == 1, f"Rust 应 resolve 1 个本文件 call，实际={rust_resolved}"
 
     def test_m6_workspace_not_exist(self, tmp_path):
-        """M6: workspace 不存在（INSERT OR IGNORE 自动创建）
+        """M6: workspace 不存在（自动创建 workspace 行）
 
-        两端均应自动创建 workspace 行
+        stale 依据（A 类：测试侧陈旧期望）：旧断言要求两端都按传入的
+        `workspace_id=999` 直插权威库行；但 Rust 侧权威映射已改为按 `root_path`
+        业务键映射（rust_ext/src/daemon/cas_merge.rs:1277-1285 调用
+        `super::fs_handlers::ensure_workspace_row_by_root`，:257-262 明确
+        `ensure_workspace_row` 已废弃），权威库行 id 由 AUTOINCREMENT 分配，
+        不再等于 registry 的 999。Python 侧 `db_cas_merge._ensure_workspace_row`
+        （db/db_cas_merge.py:81-86）仍是 `INSERT OR IGNORE (id, ...)` 直插，
+        故两端分别断言：Python 按 id；Rust 按 root_path（默认 "/app"）。
+
+        差分断言：
+        - Python：workspace_id=999 行存在（直插语义未变）
+        - Rust：按 root_path="/app" 能查到 workspace 行
         """
         cas_db = tmp_path / "cas.db"
         cg_db_py = tmp_path / "codegraph_py.db"
@@ -641,13 +670,14 @@ class TestCasMergeDiff:
         _make_codegraph_db(cg_db_py)
         _make_codegraph_db(cg_db_rust)
 
-        # workspace_id=999 不存在
+        # workspace_id=999 不存在（root_path 默认 "/app"）
         _py_merge(cas_db, cg_db_py, cas_key="k1", workspace_id=999)
         _rust_merge(cas_db, cg_db_rust, cas_key="k1", workspace_id=999)
 
-        # 两端均创建 workspace
+        # Python：按 registry workspace_id 直插
         assert _query_workspace_exists(cg_db_py, 999)
-        assert _query_workspace_exists(cg_db_rust, 999)
+        # Rust：按 root_path 业务键映射（id 由权威库分配，不再是 999）
+        assert _query_workspace_by_root(cg_db_rust, "/app") is not None
 
     def test_m7_file_size_in_manifest(self, tmp_path):
         """M7: workspace_manifests.file_size 字段来源一致性

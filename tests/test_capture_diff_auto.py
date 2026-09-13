@@ -244,16 +244,21 @@ def test_auto_returns_auto_field_in_result():
 # CLI cw task capture-diff --auto
 # ----------------------------------------------------------------------
 
-def test_cli_capture_diff_auto_no_task_id_required():
-    """--auto 模式下 task_id 可省略。"""
-    import sys
-    from unittest import mock
+def test_cli_capture_diff_auto_no_task_id_required(route_stub):
+    """--auto 模式下 task_id 可省略。
+
+    stale 依据（A2 / daemon authority 化）：CLI capture-diff --auto 已改走
+    ``route_task_write("task.capture_diff", {"auto": True}, ...)``（cli/main.py:5574-5579），
+    不再直连本地 ``db.task_capture_diff_auto``；旧断言 spy 本地 db 方法，在无 daemon
+    环境下因路由失败（E_HTTP_MANIFEST_MISSING）而误判未被调用。改用
+    tests/conftest.py:100-108 的 route_stub 按 RPC 契约断言。
+    """
+    import tempfile
     from callwarden.cli import main as cli_main
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
         try:
-            call_log = {"count": 0, "result": None}
             expected = {
                 "auto": True,
                 "success": True,
@@ -270,23 +275,20 @@ def test_cli_capture_diff_auto_no_task_id_required():
                 "error": "",
                 "reason": "",
             }
+            route_stub.reply("task.capture_diff", expected)
 
-            def fake_auto():
-                call_log["count"] += 1
-                call_log["result"] = expected
-                return expected
+            ret = None
+            try:
+                ret = cli_main._handle_task(["capture-diff", "--auto"], db)
+            except SystemExit:
+                pass
 
-            with mock.patch.object(db, "task_capture_diff_auto", side_effect=fake_auto):
-                old_argv = sys.argv
-                sys.argv = ["cw", "task", "capture-diff", "--auto"]
-                try:
-                    ret = cli_main._handle_task(["capture-diff", "--auto"], db)
-                except SystemExit:
-                    pass
-                finally:
-                    sys.argv = old_argv
-
-            assert call_log["count"] == 1, "task_capture_diff_auto 必须被调用一次"
+            assert route_stub.count("task.capture_diff") == 1, (
+                "capture-diff --auto 必须走 task.capture_diff RPC 一次"
+            )
+            assert route_stub.last_params("task.capture_diff").get("auto") is True, (
+                f"--auto 应以 auto=True 路由，实际: {route_stub.last_params('task.capture_diff')}"
+            )
             assert ret is True
         finally:
             db.close()
@@ -388,45 +390,39 @@ def test_cli_capture_diff_manual_missing_task_id_errors():
             db.close()
 
 
-def test_cli_capture_diff_auto_with_task_id_uses_auto():
-    """--auto 和 task_id 同时给出时，走 auto 路径（task_id 被忽略）。"""
-    import sys
-    from unittest import mock
+def test_cli_capture_diff_auto_with_task_id_uses_auto(route_stub):
+    """--auto 和 task_id 同时给出时，走 auto 路径（task_id 被忽略）。
+
+    stale 依据（A2 / daemon authority 化）：CLI 已改走
+    ``route_task_write("task.capture_diff", ...)``（cli/main.py:5574-5579）；
+    auto 路径的 RPC params 仅 {"auto": True}（不含 task_id），手动路径会携带
+    task_id 等字段（cli/main.py:5687-5694）。故断言 params == {"auto": True}
+    即证明走 auto 路径且未走手动路径。
+    """
+    import tempfile
     from callwarden.cli import main as cli_main
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db = CodeGraphDB(workspace_root=tmpdir)
         try:
-            auto_called = {"count": 0}
-            manual_called = {"count": 0}
+            route_stub.reply("task.capture_diff", {
+                "auto": True, "success": True, "task_id": "T-auto",
+                "step_id": "", "base": "abc", "dry_run": False,
+                "scan_id": 1, "changed_files": [], "linked_symbols": [],
+                "quality_findings": [], "quality_decision": "",
+                "next_action": "noop", "error": "", "reason": "",
+            })
 
-            def fake_auto():
-                auto_called["count"] += 1
-                return {
-                    "auto": True, "success": True, "task_id": "T-auto",
-                    "step_id": "", "base": "abc", "dry_run": False,
-                    "scan_id": 1, "changed_files": [], "linked_symbols": [],
-                    "quality_findings": [], "quality_decision": "",
-                    "next_action": "noop", "error": "", "reason": "",
-                }
+            try:
+                cli_main._handle_task(["capture-diff", "T-xxx", "--auto"], db)
+            except SystemExit:
+                pass
 
-            def fake_manual(*args, **kwargs):
-                manual_called["count"] += 1
-                return {}
-
-            with mock.patch.object(db, "task_capture_diff_auto", side_effect=fake_auto):
-                with mock.patch.object(db, "task_capture_diff", side_effect=fake_manual):
-                    old_argv = sys.argv
-                    sys.argv = ["cw", "task", "capture-diff", "T-xxx", "--auto"]
-                    try:
-                        cli_main._handle_task(["capture-diff", "T-xxx", "--auto"], db)
-                    except SystemExit:
-                        pass
-                    finally:
-                        sys.argv = old_argv
-
-            assert auto_called["count"] == 1, "--auto 应触发 task_capture_diff_auto"
-            assert manual_called["count"] == 0, "--auto 不应调用手动 task_capture_diff"
+            assert route_stub.count("task.capture_diff") == 1, "--auto 应路由 task.capture_diff 一次"
+            params = route_stub.last_params("task.capture_diff")
+            assert params.get("auto") is True and "task_id" not in params, (
+                f"--auto 路径不应携带 task_id，实际: {params}"
+            )
         finally:
             db.close()
 

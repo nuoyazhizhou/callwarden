@@ -48,22 +48,39 @@ def _write_manifest(tmp_path, mutate) -> str:
 # ---------------------------------------------------------------------------
 # success：真实 daemon 权威响应
 # ---------------------------------------------------------------------------
-def test_health_success_live_daemon():
-    r = HttpDaemonRpcClient().health()
+def test_health_success_live_daemon(w3_live):
+    """B 桶：迁移到 w3_live 隔离 daemon 权威栈做真实 HTTP round-trip。
+
+    stale 依据（B 桶：live daemon harness）：无参 `HttpDaemonRpcClient()`
+    （`server/daemon_client.py:2141`）经 `discover()` →
+    `resolve_http_endpoint_and_manifest`（`server/daemon_autostart.py:979-1030`），
+    仅在存在 authority-scoped manifest 或显式 `CW_DAEMON_HTTP_ENDPOINT` 时成功，
+    否则 fail-closed `E_HTTP_MANIFEST_MISSING`。现代语义「Python 仅 HTTP thin shell，
+    Rust daemon 为权威」需要 live daemon，故改用 tests/conftest.py::w3_live 隔离栈。
+    """
+    r = w3_live["client"].health()
     assert isinstance(r, dict)
     for k in ("endpoint", "pid", "schema_version", "capability_registry_revision"):
         assert k in r
 
 
-def test_capability_success_live_daemon():
-    r = HttpDaemonRpcClient().capabilities()
+def test_capability_success_live_daemon(w3_live):
+    """B 桶：迁移到 w3_live 隔离 daemon（见 test_health_success_live_daemon 依据）。"""
+    r = w3_live["client"].capabilities()
     assert isinstance(r, dict)
     assert "methods" in r
     assert "health" in r["methods"]
 
 
-def test_manifest_success_live():
-    _ep, manifest = resolve_http_endpoint_and_manifest()
+def test_manifest_success_live(w3_live):
+    """B 桶：迁移到 w3_live 隔离 daemon（见 test_health_success_live_daemon 依据）。
+
+    以隔离 daemon client 落盘的 authority manifest 路径显式解析，验证
+    `resolve_http_endpoint_and_manifest` 对真实 manifest 的 authority 校验通过。
+    """
+    _ep, manifest = resolve_http_endpoint_and_manifest(
+        manifest_path=w3_live["client"]._manifest_path
+    )
     assert isinstance(manifest, dict)
     assert manifest.get("authority_id") == get_http_authority_id()
 
@@ -109,12 +126,17 @@ def test_daemon_unavailable_fail_closed():
 # ---------------------------------------------------------------------------
 # get_stats 真实 round-trip（Python 仅作 HTTP thin shell，Rust 权威响应）
 # ---------------------------------------------------------------------------
-def test_get_stats_round_trip():
-    c = HttpDaemonRpcClient()
-    # get_stats MCP tool -> RPC query.stats；无已发布 snapshot 时 daemon 返回
-    # 结构化 snapshot_not_ready，但已是经 Rust 权威的真实 HTTP round-trip。
+def test_get_stats_round_trip(w3_live):
+    """B 桶：迁移到 w3_live 隔离 daemon（见 test_health_success_live_daemon 依据）。
+
+    原用例无参 `HttpDaemonRpcClient()` 在无后台 daemon 时 fail-closed
+    `E_HTTP_MANIFEST_MISSING`（非 round-trip）。改用隔离 daemon client + 已注册的
+    workspace_instance_id，做真实 `query.stats` HTTP round-trip；daemon 已发布空
+    snapshot，成功返回 dict 或返回结构化业务错误（皆为真实往返，非连接失败）。
+    """
+    c = w3_live["client"]
     try:
-        r = c.call("query.stats", {"workspace_instance_id": "4baea3ff12c2ea5c"})
+        r = c.call("query.stats", {"workspace_instance_id": w3_live["inst"]})
     except DaemonRemoteError as e:
         # 结构化错误也是真实 round-trip（daemon 已响应，非连接失败）
         assert e.code in ("snapshot_not_ready", "workspace_not_found")

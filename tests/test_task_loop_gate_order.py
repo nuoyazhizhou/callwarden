@@ -20,6 +20,23 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # 已知 authority 写入口 → (相对路径, 方法名, gate 标记, 首个 DB 写语句标记)
+#
+# stale 修复（PYT 回归卡 step#4 · A 桶）：原第 5 项
+# `server/tools/tools_p3_identity.py::register_attestation_revocation`
+# （gate 标记 `_get_daemon_mode() != "local"`、db 标记
+# `db.register_attestation_revocation(`）已随 MCP 工具 `_route` 薄壳化失效：
+# 生产侧 server/tools/tools_p3_identity.py:163-191 现为一行式
+# `return _route('admin.register_attestation_revocation', {...}, 'GOVERNANCE_WRITE')`
+# —— 方法体内已无 `_get_daemon_mode()` 分支、也无 `db.register_attestation_revocation(`
+# 调用点（两标记均不存在，`body.index()` 抛 ValueError: substring not found）。
+# 即该工具的 authority 写不再由 Python API 层打开 DB transaction，而是经
+# route_rpc（server/daemon_client.py:3880-3994）以 GOVERNANCE_WRITE op_class
+# 下发 daemon；gate-first 锁序随之迁入 Rust
+# （rust_ext/src/daemon/task_loop/capability_control.rs 的 CapabilityMutationGate
+# → authority store → task-DB，由本文件下方 Rust 契约用例锁定）。
+# Python 侧因此不再有该入口的「gate → DB 写」结构可断言，条目移除；
+# 薄壳的「路由方法 + op_class」契约由 test_task_loop_capability_authority.py 覆盖
+# （本文件 docstring 即声明不重复其功能断言）。
 AUTHORITY_WRITE_ENTRIES = [
     ("db/db_task_identity.py", "register_attestation_revocation",
      "_require_authority_gate()", "self.conn.execute"),
@@ -29,8 +46,6 @@ AUTHORITY_WRITE_ENTRIES = [
      "_require_authority_gate()", "self.conn.execute"),
     ("cli/main.py", "_identity_revoke",
      'get_daemon_mode() != "local"', "register_attestation_revocation"),
-    ("server/tools/tools_p3_identity.py", "register_attestation_revocation",
-     '_get_daemon_mode() != "local"', "db.register_attestation_revocation("),
 ]
 
 

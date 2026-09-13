@@ -93,7 +93,11 @@ def test_unavailable_does_not_fallback_to_local_db(fake_daemon, tmp_path):
     migrator = schema_migrator.SchemaMigrator(str(tmp_path / "registry.db"))
     with pytest.raises(RuntimeError, match="daemon unavailable"):
         migrator.get_current_version()
-    assert not list(tmp_path.iterdir())
+    # stale 依据：原断言 `assert not list(tmp_path.iterdir())` 已陈旧——
+    # tests/conftest.py:30-43 的 autouse fixture `_isolate_db_path` 会为每个用例创建
+    # tmp_path/callwarden_dir，故目录必非空。改为断言本用例原意：daemon 不可用时
+    # 不得回落到本地库（即在 tmp_path 下不得新建任何 .db 文件）。
+    assert not list(tmp_path.glob("*.db")), list(tmp_path.glob("*.db"))
 
 
 def test_restart_retries_after_daemon_becomes_available(fake_daemon, tmp_path):

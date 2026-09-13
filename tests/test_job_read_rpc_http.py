@@ -16,10 +16,10 @@
 ⑤ 跨 workspace 隔离：不同 db_path → 不同 workspace_instance_id 注入，
    同一 db_path 幂等复用；Rust 查询按 workspace_id 限定（job 属于其他
    workspace → not found，fail-closed）。
-⑥ Python fallback 边界：HTTP 模式（默认）3 工具走 client 便捷方法且
-   client 失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入
-   route_worker_call 本地 db 回退。
+⑥ Python fallback 边界：工具层已 `_route` 化（常量表达式），HTTP/local 分流
+   整体下沉到 `route_rpc`；本文件 ⑥ 组（TestToolRouteContract）只锁定工具层
+   「下发哪个 RPC、参数逐字透传（含默认值）、op_class=READ_ONLY、失败
+   fail-closed 且不回落本地 get_db」的契约，不再 patch `_get_daemon_client`。
 """
 
 from unittest.mock import MagicMock, patch
@@ -270,121 +270,92 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约（HTTP/local 分流已下沉到 route_rpc）
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。"""
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 `HttpDaemonRpcClient` 便捷方法。
 
-    def _monkeypatch_http_mode(self, monkeypatch, client):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_daemon_client",
-            lambda: client,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_db_path_for_daemon",
-            lambda: DB_A,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled",
-            lambda: True,
-        )
+    stale 依据（MCP 工具 `_route` 化）：`server/tools/tools_task.py:46` 为
+    `from ..daemon_client import route_rpc as _route`；get_job_status（:699）/
+    list_jobs（:734）/ wait_for_job（:781）一律
+    `return _route('task.job_status' | 'task.list_jobs' | 'task.wait_for_job',
+    {...}, 'READ_ONLY')`。旧用例 patch `tools_task._get_daemon_client` /
+    `_get_db_path_for_daemon` / `is_http_transport_enabled` 并断言客户端便捷方法
+    被调用——这些模块属性虽仍在但已无调用点，断言恒为 `Called 0 times`；legacy
+    本地 db 回退分支也已随 `_route` 化移除（HTTP/local 分流下沉到 route_rpc）。
+    """
 
-    def test_http_mode_fail_closed_no_db_fallback(self, monkeypatch):
-        """HTTP 模式（默认）3 工具走 client 便捷方法；client 抛错时 fail-closed
-        传播，不调用 get_db（无 SQL 回退）。"""
-        client = MagicMock()
-        for method, _rpc, _params in CONVENIENCE_CASES:
-            getattr(client, method).side_effect = DaemonRemoteError(
-                "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-            )
-        self._monkeypatch_http_mode(monkeypatch, client)
-        task_tools = _register_tools(tools_task)
+    ROUTE_CASES = [
+        ("get_job_status", "task.job_status",
+         {"job_id": "J-1783698970719-3a4b5c6d"}),
+        ("list_jobs", "task.list_jobs",
+         {"job_type": "", "status": "", "limit": 50}),
+        ("wait_for_job", "task.wait_for_job",
+         {"job_id": "J-1783698970719-3a4b5c6d", "timeout": 5.0,
+          "poll_interval": 0.1}),
+    ]
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_tools_route_read_only_rpc(self, monkeypatch, tool_name, rpc_method, call_kwargs):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_task, "_route", fake_route)
+        q = _register_tools(tools_task)
         with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
-            for tool_name, params in RULES_TOOL_CASES:
-                with pytest.raises(DaemonRemoteError):
-                    task_tools[tool_name](**params)
+            out = q[tool_name](**call_kwargs)
             mock_db.assert_not_called()
-        client.get_job_status.assert_called_once_with(
-            job_id="J-1783698970719-3a4b5c6d", db_path=DB_A,
+        assert out == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == call_kwargs
+
+    def test_list_jobs_and_wait_defaults_passthrough(self, monkeypatch):
+        """未传参时工具签名默认值原样透传（list_jobs:""/""/100；wait:30.0/0.5）。"""
+        seen = []
+
+        def fake_route(method, params, op_class):
+            seen.append((method, dict(params)))
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_task, "_route", fake_route)
+        q = _register_tools(tools_task)
+        q["list_jobs"]()
+        q["wait_for_job"]("J-1")
+        assert seen[0] == (
+            "task.list_jobs", {"job_type": "", "status": "", "limit": 100},
         )
-        client.list_jobs.assert_called_once_with(
-            job_type="", status="", limit=50, db_path=DB_A,
-        )
-        client.wait_for_job.assert_called_once_with(
-            job_id="J-1783698970719-3a4b5c6d", timeout=5.0,
-            poll_interval=0.1, db_path=DB_A,
+        assert seen[1] == (
+            "task.wait_for_job",
+            {"job_id": "J-1", "timeout": 30.0, "poll_interval": 0.5},
         )
 
-    def test_http_mode_client_result_passthrough(self, monkeypatch):
-        """HTTP 模式 3 工具直接返回 client 便捷方法结果（不加工不包装）。"""
-        client = MagicMock()
-        client.get_job_status.return_value = {
-            "job_id": "J-1", "status": "completed", "progress": 1.0,
-            "result_summary": {"ok": True}, "error": "",
-        }
-        client.list_jobs.return_value = [
-            {"job_id": "J-1", "status": "completed", "workspace_id": 101}
-        ]
-        client.wait_for_job.return_value = {
-            "job_id": "J-1", "status": "completed", "progress": 1.0,
-            "result_summary": {"ok": True}, "error": "", "elapsed": 0.1,
-        }
-        self._monkeypatch_http_mode(monkeypatch, client)
-        task_tools = _register_tools(tools_task)
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
 
-        assert task_tools["get_job_status"](job_id="J-1")["status"] == "completed"
-        assert task_tools["list_jobs"]()[0]["job_id"] == "J-1"
-        assert task_tools["wait_for_job"](job_id="J-1")["status"] == "completed"
-
-    def test_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        """is_http_transport_enabled()=False + local 模式 → 3 工具走
-        route_worker_call 本地 db 回退（get_db 被调用，db 层查询函数被调用）。"""
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode",
-            lambda: "local",
-        )
-        task_tools = _register_tools(tools_task)
-
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-
-        job = MagicMock()
-        job.to_dict.return_value = {
-            "job_id": "J-1", "job_type": "clone_detect", "status": "completed",
-            "progress": 1.0, "result_summary": {"ok": True}, "error": "",
-            "is_terminal": True,
-        }
-        job.is_terminal = True
-        job.status = "completed"
-        job.progress = 1.0
-        job.result_summary = {"ok": True}
-        job.error = ""
-
-        mock_db.get_job.return_value = job
-        mock_db.list_jobs.return_value = [job]
-
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-
-            r1 = task_tools["get_job_status"](job_id="J-1")
-            r2 = task_tools["list_jobs"](job_type="", status="", limit=50)
-            r3 = task_tools["wait_for_job"](
-                job_id="J-1", timeout=1.0, poll_interval=0.01,
-            )
-
-            assert r1["status"] == "completed"
-            assert r2[0]["job_id"] == "J-1"
-            assert r3["status"] == "completed"
-            mock_db.get_job.assert_called()
-            mock_db.list_jobs.assert_called_once_with(
-                job_type=None, status=None, limit=50,
-            )
+        monkeypatch.setattr(tools_task, "_route", fake_route)
+        q = _register_tools(tools_task)
+        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                q[tool_name](**call_kwargs)
+            mock_db.assert_not_called()

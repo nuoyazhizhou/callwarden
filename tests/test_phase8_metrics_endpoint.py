@@ -1,17 +1,19 @@
 """Phase 8 metrics endpoint 闭合测试。
 
 验证：
-1. `cw daemon metrics` CLI 子命令（--format prometheus/json + --name 过滤 + --reset）
-2. `get_metrics` MCP 工具（format=json/prometheus + name + reset）
+1. `cw daemon metrics` CLI 子命令（--format prometheus/json + --name 过滤）
+2. `get_metrics` MCP 工具（format=json/prometheus + name）
 
-设计原则：metrics 不依赖 daemon RPC（避免连不上 daemon 时无法查看本地指标），
-直接复用 server/metrics.py 的 MetricsCollector 单例。
+现状（CLI-004 整改后）：metrics 默认经 daemon RPC 获取（Rust daemon 为唯一
+authority，fail-closed），不再有 --local/--reset 进程内降级；--from-file 仅作
+显式离线快照检视。
 """
 
 import json
 import subprocess
 import sys
 import os
+from unittest.mock import patch
 
 import pytest
 
@@ -27,16 +29,51 @@ from callwarden.server.metrics import (
 from callwarden.cli.daemon_commands import run_daemon_command, _parser
 
 
+# stale 依据（A 类：测试侧期望陈旧）：metrics CLI 默认路径已改为 daemon RPC
+# （cli/daemon_commands.py:479-509，Rust daemon 为唯一 authority，fail-closed），
+# 不再走进程内 MetricsCollector 的 hidden local 降级；CLI 输出的是 daemon 进程
+# 指标（daemon.* / callwarden_daemon_*），不含 Python 进程的 memory_rss_bytes。
+# 原用例直接调用 CLI 依赖 live daemon（不可达时 rc=2，可达时指标集不同），
+# 因此注入伪 RPC 客户端，使 CLI 格式化路径离线且确定性地被验证。
+_FAKE_DAEMON_SNAPSHOT = {
+    "timestamp": 123.0,
+    "uptime": 45.0,
+    "counters": {"daemon.rpc_total": {"help": "", "values": {"": 7}}},
+    "gauges": {
+        "daemon.uptime_seconds": {"help": "Daemon uptime in seconds", "values": {"": 45.0}},
+        "daemon.active_jobs": {"help": "", "values": {"": 0}},
+    },
+    "histograms": {},
+}
+
+_FAKE_DAEMON_PROMETHEUS = (
+    "# HELP callwarden_daemon_uptime_seconds Daemon uptime in seconds\n"
+    "# TYPE callwarden_daemon_uptime_seconds gauge\n"
+    "callwarden_daemon_uptime_seconds 45.0\n"
+)
+
+
+class _FakeDaemonRpcClient:
+    """伪 daemon RPC 客户端：返回 Rust daemon metrics.snapshot/prometheus 形状。"""
+
+    def __init__(self, socket_path=None, **kwargs):
+        pass
+
+    def call(self, method, params=None, **kwargs):
+        if method == "metrics.prometheus":
+            return _FAKE_DAEMON_PROMETHEUS
+        return _FAKE_DAEMON_SNAPSHOT
+
+
 # ----------------------------------------------------------------------
 # CLI 子命令：cw daemon metrics
 # ----------------------------------------------------------------------
 
 def test_metrics_cli_parser_json_default():
-    """--format 缺省为 json。"""
+    """--format 缺省为 json（--reset/--local 已在 CLI-004 整改中移除）。"""
     args = _parser(include_serve=False).parse_args(["metrics"])
     assert args.format == "json"
     assert args.name is None
-    assert args.reset is False
 
 
 def test_metrics_cli_parser_prometheus_format():
@@ -55,16 +92,34 @@ def test_metrics_cli_parser_name_filter():
     assert args.name == "memory_rss_bytes"
 
 
-def test_metrics_cli_parser_reset_flag():
-    """--reset 标志正确解析。"""
-    args = _parser(include_serve=False).parse_args(["metrics", "--reset"])
-    assert args.reset is True
+def test_metrics_cli_reset_flag_removed():
+    """--reset 已从 CLI 移除（CLI-004：metrics 仅经 daemon RPC，无本地重置）。"""
+    with pytest.raises(SystemExit):
+        _parser(include_serve=False).parse_args(["metrics", "--reset"])
 
 
-def test_metrics_cli_json_output_has_builtin_gauges(capsys):
-    """CLI json 输出包含内置 gauge（memory_rss_bytes 等）。"""
-    reset_metrics_collector()  # 重置单例确保干净状态
-    rc = run_daemon_command(["metrics", "--format", "json"], include_serve=False)
+def test_metrics_cli_local_flag_removed():
+    """--local 已从 CLI 移除（CLI-004：取消进程内 SQLite 降级）。"""
+    with pytest.raises(SystemExit):
+        _parser(include_serve=False).parse_args(["metrics", "--local", "--reset"])
+
+
+def test_metrics_cli_from_file_missing_returns_error(capsys):
+    """--from-file 指向缺失文件时 fail-closed 返回 exit code 2。"""
+    rc = run_daemon_command(
+        ["metrics", "--from-file", "no-such-snapshot.json"], include_serve=False
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "快照文件不存在或损坏" in err
+
+
+def test_metrics_cli_json_output_has_daemon_gauges(capsys):
+    """CLI json 输出来自 daemon RPC 快照（daemon.* gauge）。"""
+    with patch(
+        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+    ):
+        rc = run_daemon_command(["metrics", "--format", "json"], include_serve=False)
     out = capsys.readouterr().out
     assert rc == 0
     data = json.loads(out)
@@ -73,39 +128,41 @@ def test_metrics_cli_json_output_has_builtin_gauges(capsys):
     assert "counters" in data
     assert "gauges" in data
     assert "histograms" in data
-    # 内置 gauge 应被采集（collect_runtime_metrics 在 to_json 时自动调用）
-    assert "memory_rss_bytes" in data["gauges"]
-    assert "uptime_seconds" in data["gauges"]
+    # daemon RPC 快照的 gauge 应被原样输出
+    assert "daemon.uptime_seconds" in data["gauges"]
 
 
 def test_metrics_cli_prometheus_output_starts_with_help(capsys):
-    """CLI prometheus 输出以 # HELP 开头。"""
-    reset_metrics_collector()
-    rc = run_daemon_command(
-        ["metrics", "--format", "prometheus"], include_serve=False
-    )
+    """CLI prometheus 输出直接透传 daemon metrics.prometheus 文本。"""
+    with patch(
+        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+    ):
+        rc = run_daemon_command(
+            ["metrics", "--format", "prometheus"], include_serve=False
+        )
     out = capsys.readouterr().out
     assert rc == 0
     # Prometheus 文本格式必有 # HELP 和 # TYPE 行
     assert "# HELP" in out
     assert "# TYPE" in out
-    # 应包含内置指标名
-    assert "memory_rss_bytes" in out
-    assert "uptime_seconds" in out
+    # 应包含 daemon 指标名
+    assert "callwarden_daemon_uptime_seconds" in out
 
 
 def test_metrics_cli_name_filter_returns_subset(capsys):
-    """--name 过滤后只返回指定指标。"""
-    reset_metrics_collector()
-    rc = run_daemon_command(
-        ["metrics", "--name", "memory_rss_bytes"], include_serve=False
-    )
+    """--name 过滤后只返回指定指标（daemon RPC 快照）。"""
+    with patch(
+        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+    ):
+        rc = run_daemon_command(
+            ["metrics", "--name", "daemon.uptime_seconds"], include_serve=False
+        )
     out = capsys.readouterr().out
     assert rc == 0
     data = json.loads(out)
     assert data["found"] is True
-    assert data["name_filter"] == "memory_rss_bytes"
-    assert "memory_rss_bytes" in data["gauges"]
+    assert data["name_filter"] == "daemon.uptime_seconds"
+    assert "daemon.uptime_seconds" in data["gauges"]
     # 其他类别应为空
     assert data["counters"] == {}
     assert data["histograms"] == {}
@@ -113,42 +170,16 @@ def test_metrics_cli_name_filter_returns_subset(capsys):
 
 def test_metrics_cli_name_filter_nonexistent_returns_found_false(capsys):
     """--name 不存在时 found=False。"""
-    reset_metrics_collector()
-    rc = run_daemon_command(
-        ["metrics", "--name", "nonexistent_metric"], include_serve=False
-    )
+    with patch(
+        "callwarden.cli.daemon_commands.UnixDaemonRpcClient", _FakeDaemonRpcClient
+    ):
+        rc = run_daemon_command(
+            ["metrics", "--name", "nonexistent_metric"], include_serve=False
+        )
     out = capsys.readouterr().out
     assert rc == 0
     data = json.loads(out)
     assert data["found"] is False
-
-
-def test_metrics_cli_reset_clears_counters(capsys):
-    """--reset --local 重置所有指标。
-
-    G13（2026-07-20）：--reset 现在仅 --local 模式支持（不能重置远端 daemon 指标），
-    所以需要 --local 参数。
-    """
-    # 先 increment 一些计数器
-    collector = get_metrics_collector()
-    collector.increment("requests_total")
-    assert collector.get_metric("requests_total").get() == 1.0
-
-    rc = run_daemon_command(["metrics", "--local", "--reset"], include_serve=False)
-    out = capsys.readouterr().out
-    assert rc == 0
-    data = json.loads(out)
-    assert data["status"] == "reset"
-    # 重置后计数器归零
-    assert collector.get_metric("requests_total").get() == 0.0
-
-
-def test_metrics_cli_reset_without_local_returns_error(capsys):
-    """G13: --reset 不带 --local 应返回 exit code 2（不能重置远端 daemon 指标）"""
-    rc = run_daemon_command(["metrics", "--reset"], include_serve=False)
-    assert rc == 2
-    err = capsys.readouterr().err
-    assert "--reset 仅支持 --local" in err or "仅 --local 模式" in err
 
 
 # ----------------------------------------------------------------------
@@ -195,12 +226,13 @@ def test_get_metrics_mcp_tool_registered():
 
 
 def test_get_metrics_mcp_tool_count_increased():
-    """MCP 工具总数 237（拆分后注册在 server/tools 功能域模块）。"""
+    """MCP 工具总数 243（拆分后注册在 server/tools 功能域模块）。"""
     import re
     content = _mcp_sources_combined()
     matches = re.findall(r'(?m)^    @mcp\.tool\(\)$', content)
-    # P4 assignment/lease 新增 8 工具（227→235），P3/P4 后合计 237
-    assert len(matches) == 237, f"MCP 工具数应为 237，实际 {len(matches)}"
+    # P4 assignment/lease 新增 8 工具（227→235），P3/P4 后 237；
+    # 后续批次（SRV/backup/gc/snapshot/mount/toolchain 等）增至 243。
+    assert len(matches) == 243, f"MCP 工具数应为 243，实际 {len(matches)}"
 
 
 def test_get_metrics_mcp_function_callable():

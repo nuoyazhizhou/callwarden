@@ -55,9 +55,20 @@ def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeyp
         "mcp.common.get_db_path_for_daemon",
         {},
     )
+    # stale（PYT 回归卡 step#4 · A 桶）：route_rpc 的 workspace 权威注入块除
+    # workspace_instance_id 外，还会补 workspace_root。生产依据：
+    # server/daemon_client.py:3955-3959 在非 task-scoped 请求上
+    # `params.setdefault("workspace_root", client._project_root)`（compat 面
+    # Python worker 需按 root_path 解析权威数字 id，2026-09-05 修 get_impact 等
+    # compat 方法 "没有 active workspace" fail-closed）。此处 _project_root 由
+    # configure_workspace 置为 C:\git_work\callwarden，故 workspace.status 的
+    # params 多出 workspace_root 键（旧断言仅含单键，已陈旧）。
     assert client.call.call_args_list[1].args == (
         "workspace.status",
-        {"workspace_instance_id": "authority-ws-1"},
+        {
+            "workspace_instance_id": "authority-ws-1",
+            "workspace_root": r"C:\git_work\callwarden",
+        },
     )
 
 

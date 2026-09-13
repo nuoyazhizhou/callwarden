@@ -48,17 +48,34 @@ class TestMcpDiffExpose(unittest.TestCase):
         self.assertIn("def compare_snapshots(", self.content,
                       "compare_snapshots MCP 工具应存在")
 
-    def test_diff_callers_calls_daemon_client(self):
-        """diff_callers MCP 工具应调用 _get_daemon_client().diff_callers"""
-        self.assertIn("client.diff_callers(", self.content)
+    def test_diff_callers_routes_read_only_rpc(self):
+        """diff_callers MCP 工具经 `_route` 下发 query.diff_callers（READ_ONLY）。
 
-    def test_diff_callees_calls_daemon_client(self):
-        """diff_callees MCP 工具应调用 _get_daemon_client().diff_callees"""
-        self.assertIn("client.diff_callees(", self.content)
+        stale 依据：旧断言 `client.diff_callers(`（客户端便捷方法直连）已过期——
+        `server/tools/tools_security.py:113` 已退化为一行式
+        `return _route('query.diff_callers', {...}, 'READ_ONLY')`，
+        工具层不再出现 `client.diff_callers(` 调用点。
+        """
+        self.assertIn("_route('query.diff_callers'", self.content)
+        self.assertIn("'READ_ONLY'", self.content)
 
-    def test_compare_snapshots_calls_daemon_client(self):
-        """compare_snapshots MCP 工具应调用 _get_daemon_client().compare_snapshots"""
-        self.assertIn("client.compare_snapshots(", self.content)
+    def test_diff_callees_routes_read_only_rpc(self):
+        """diff_callees MCP 工具经 `_route` 下发 query.diff_callees（READ_ONLY）。
+
+        stale 依据：旧断言 `client.diff_callees(` 已过期——
+        `server/tools/tools_security.py:135` 已退化为一行式
+        `return _route('query.diff_callees', {...}, 'READ_ONLY')`。
+        """
+        self.assertIn("_route('query.diff_callees'", self.content)
+
+    def test_compare_snapshots_routes_read_only_rpc(self):
+        """compare_snapshots MCP 工具经 `_route` 下发 admin.snapshot_compare（READ_ONLY）。
+
+        stale 依据：旧断言 `client.compare_snapshots(` 已过期——
+        `server/tools/tools_security.py:159` 已退化为一行式
+        `return _route('admin.snapshot_compare', {...}, 'READ_ONLY')`。
+        """
+        self.assertIn("_route('admin.snapshot_compare'", self.content)
 
     def test_all_three_decorated_with_mcp_tool(self):
         """3 个工具都应有 @mcp.tool() 装饰器"""

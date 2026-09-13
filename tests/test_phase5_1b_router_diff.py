@@ -42,12 +42,37 @@ def py_is_daemon_required() -> bool:
     return py_get_daemon_mode() == "enterprise"
 
 
-def py_is_daemon_available(socket_path: str, platform: str) -> bool:
-    """Python 真相源：config.py:is_daemon_available() (L1376-1383)
+def _windows_named_pipe_available() -> bool:
+    """现状：Windows 下 daemon 可用性 = Named Pipe 真实探测。
 
-    参数化版本（原函数无参数，用全局 DAEMON_SOCKET_PATH + os.name）。
+    stale 依据（A 类：测试侧陈旧期望）：早期真相源模型假定「非 Linux（Windows/macOS）
+    恒为 False（UDS 仅 Linux）」。生产演进后两端都改为 Windows 命名管道探测：
+    Rust `rust_ext/src/cli/router.rs:146-181` 的
+    `windows_named_pipe_available()`（WaitNamedPipeW 探测
+    `\\\\.\\pipe\\callwarden-<sid>`），Python `config.py:1691-1704` 的
+    `is_daemon_available()` 在 win32 分支 `try_connect(endpoint)`。
+    故 Windows 可用性不再是与 socket_path 无关的常量，而是运行时探测结果。
     """
-    # Windows/macOS 永远不可用（UDS 是 Linux 特有）
+    if sys.platform != "win32":
+        # 与 Rust `#[cfg(not(windows))] windows_named_pipe_available() -> false` 对齐
+        return False
+    try:
+        from callwarden.config import is_daemon_available as _prod_is_daemon_available
+        return bool(_prod_is_daemon_available())
+    except Exception:
+        return False
+
+
+def py_is_daemon_available(socket_path: str, platform: str) -> bool:
+    """Python 真相源：config.py:is_daemon_available() (L1691-1704)
+
+    参数化版本。现状（生产演进后）：
+    - Windows：委托命名管道探测（见 _windows_named_pipe_available）
+    - macOS：false（UDS/Named Pipe 均不可用）
+    - Linux：socket_path 文件存在性
+    """
+    if platform == "windows":
+        return _windows_named_pipe_available()
     if platform != "linux":
         return False
     return os.path.exists(socket_path)
@@ -212,11 +237,14 @@ def test_d3_is_daemon_available():
     tmp = Path(tempfile.gettempdir()) / "cw_test_socket_d3.sock"
     tmp.write_bytes(b"")
 
+    # stale 修正：Windows 行期望由「恒 False」改为运行时命名管道探测结果
+    # （生产演进：router.rs:146-181 / config.py:1691-1704 已改为真实探测）。
+    win_avail = _windows_named_pipe_available()
     test_cases = [
         # (socket_path, platform, expected)
         (str(tmp), "linux", True),              # D3.1
         ("/run/callwarden/nonexistent.sock", "linux", False),  # D3.2
-        ("C:\\callwarden\\socket.sock", "windows", False),      # D3.3
+        ("C:\\callwarden\\socket.sock", "windows", win_avail),  # D3.3
         ("/tmp/callwarden.sock", "macos", False),               # D3.4
     ]
 
@@ -250,15 +278,20 @@ def test_d4_route_command():
     tmp = Path(tempfile.gettempdir()) / "cw_test_socket_d4.sock"
     tmp.write_bytes(b"")
 
+    # stale 修正：Windows 行期望由静态常量改为运行时命名管道探测结果
+    # （生产演进：router.rs:146-181 / config.py:1691-1704 已改为真实探测）。
+    win_avail = _windows_named_pipe_available()
     test_cases = [
         # (mode, socket_path, platform, expected)
         ("local", str(tmp), "linux", "local"),                # D4.1
         ("enterprise", str(tmp), "linux", "enterprise"),      # D4.2
         ("enterprise", "/run/cw/nonexistent.sock", "linux", "unavailable"),  # D4.3
-        ("enterprise", "C:\\socket.sock", "windows", "unavailable"),          # D4.4
+        ("enterprise", "C:\\socket.sock", "windows",
+         "enterprise" if win_avail else "unavailable"),       # D4.4
         ("auto", str(tmp), "linux", "enterprise"),            # D4.5
         ("auto", "/run/cw/nonexistent.sock", "linux", "local"),                # D4.6
-        ("auto", "C:\\socket.sock", "windows", "local"),      # D4.7
+        ("auto", "C:\\socket.sock", "windows",
+         "enterprise" if win_avail else "local"),             # D4.7
         ("local", "C:\\socket.sock", "windows", "local"),      # D4.8
         # 额外：未知 mode → auto fail-soft
         ("unknown", str(tmp), "linux", "enterprise"),

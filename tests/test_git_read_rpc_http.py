@@ -16,14 +16,16 @@ test_build_read_rpc_http.py 同构）：
    时异常原样传播，不回退本地 SQL。
 ⑤ 跨 workspace 隔离：不同 db_path → 不同 workspace_instance_id 注入，
    同一 db_path 幂等复用；Rust 查询按 workspace_id 限定。
-⑥ Python fallback 边界：HTTP 模式（默认）走 client 便捷方法且 client
-   失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入本地 db 回退。
+⑥ Python fallback 边界：工具层已 `_route` 化（常量表达式），HTTP/local 分流
+   整体下沉到 `route_rpc`；本文件 ⑥ 组（TestToolRouteContract）只锁定工具层
+   「下发哪个 RPC、参数逐字透传（含默认值）、op_class=READ_ONLY、失败
+   fail-closed 且不回落本地 get_db」的契约，不再 patch `_get_daemon_client`。
+   get_file_history 的绝对路径规范化随 HTTP 分支移除 → file_path 逐字透传。
 
-语义差异风险点（记录）：get_file_history 的绝对路径 → rel_path 规范化保留
-在 Python 工具层（db 层同源，workspaces.root_path 为真相源），Rust 侧只按
-最终 rel_path 精确匹配；get_commit_tasks 复刻 Python 全局查询（无 workspace
-维度），git_commits 含 workspace_id 列、git_file_changes 无（经 JOIN 隔离）。
+语义差异风险点（记录）：`_route` 化后 get_file_history 的 file_path 由工具层
+逐字透传给 Rust（旧的 Python 侧绝对路径 → rel_path 规范化分支已随 HTTP 分支
+移除）；get_commit_tasks 复刻 Python 全局查询（无 workspace 维度），git_commits
+含 workspace_id 列、git_file_changes 无（经 JOIN 隔离）。
 """
 
 from unittest.mock import MagicMock, patch
@@ -261,236 +263,108 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约（HTTP/local 分流已下沉到 route_rpc）
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 daemon client 便捷方法。
 
-    tools_query / tools_task 在模块顶层 import `_get_daemon_client` /
-    `_get_db_path_for_daemon`（可直接 patch 模块属性）；tools_workspace 在
-    函数体内局部 import（需 patch 来源模块 `callwarden.server._mcp_common`）。
+    stale 依据（MCP 工具 `_route` 化）：`server/tools/tools_query.py:56` /
+    `server/tools/tools_task.py:46` / `server/tools/tools_workspace.py:29` 均为
+    `from ..daemon_client import route_rpc as _route`；get_file_history（:162）→
+    `_route('query.file_history', {...}, 'READ_ONLY')`，get_commit_tasks（:237）→
+    `_route('query.commit_tasks', {...}, 'READ_ONLY')`，get_git_commits（:270）/
+    get_commit_changes（:287）/ get_git_stats（:301）同款 READ_ONLY。旧用例 patch
+    `_get_daemon_client` / `_get_db_path_for_daemon` / `is_http_transport_enabled`
+    并断言客户端便捷方法被调用——这些模块属性虽仍在但已无调用点，断言恒为
+    `Called 0 times`；legacy 本地 db 回退分支也已随 `_route` 化移除。
     """
 
-    # --------------------------------------------------------
-    # tools_query.get_file_history（顶层 import）
-    # --------------------------------------------------------
+    ROUTE_CASES = [
+        (tools_query, "get_file_history", "query.file_history",
+         ("src/main.py",), {}, {"file_path": "src/main.py"}),
+        (tools_task, "get_commit_tasks", "query.commit_tasks",
+         ("abc123def456",), {}, {"commit_hash": "abc123def456",
+                                 "include_task_details": True}),
+        (tools_workspace, "get_git_commits", "query.git_commits",
+         (), {"limit": 5}, {"limit": 5, "offset": 0}),
+        (tools_workspace, "get_commit_changes", "query.git_commit_changes",
+         ("abc",), {}, {"commit_hash": "abc"}),
+        (tools_workspace, "get_git_stats", "query.git_stats", (), {}, {}),
+    ]
+    _IDS = ["get_file_history", "get_commit_tasks", "get_git_commits",
+            "get_commit_changes", "get_git_stats"]
 
-    def test_file_history_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.get_file_history.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled", lambda: True
-        )
-        q = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                q["get_file_history"]("src/main.py")
+    @pytest.mark.parametrize(
+        "module,tool_name,rpc_method,args,kwargs,expect_params",
+        ROUTE_CASES,
+        ids=_IDS,
+    )
+    def test_tools_route_read_only_rpc(
+        self, monkeypatch, module, tool_name, rpc_method, args, kwargs, expect_params
+    ):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"ok": True}
+
+        monkeypatch.setattr(module, "_route", fake_route)
+        q = _register_tools(module)
+        with patch(f"{module.__name__}.get_db") as mock_db:
+            out = q[tool_name](*args, **kwargs)
             mock_db.assert_not_called()
-        client.get_file_history.assert_called_once_with(
-            file_path="src/main.py", db_path=DB_A,
-        )
+        assert out == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
 
-    def test_file_history_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.get_file_history.return_value = [
-            {"version_num": 2, "rel_path": "src/main.py"}
-        ]
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled", lambda: True
-        )
+    def test_file_history_abs_path_passthrough_verbatim(self, monkeypatch):
+        """`_route` 化后绝对路径不再在工具层规范化，file_path 逐字透传。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["params"] = dict(params)
+            return []
+
+        monkeypatch.setattr(tools_query, "_route", fake_route)
         q = _register_tools(tools_query)
-        result = q["get_file_history"]("src/main.py")
-        assert result[0]["version_num"] == 2
+        q["get_file_history"]("C:/repo/src/main.py")
+        assert seen["params"] == {"file_path": "C:/repo/src/main.py"}
 
-    def test_file_history_abs_path_normalized_in_http_mode(self, monkeypatch):
-        """绝对路径在 HTTP 分支规范化为 rel_path（复刻 db 层 relpath 语义）。"""
-        client = MagicMock()
-        client.get_file_history.return_value = []
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled", lambda: True
-        )
-        mock_db = MagicMock()
-        mock_db.workspace_root = "C:/repo"
-        with patch("callwarden.server.tools.tools_query.get_db", return_value=mock_db):
-            q = _register_tools(tools_query)
-            q["get_file_history"]("C:/repo/src/main.py")
-        client.get_file_history.assert_called_once_with(
-            file_path="src/main.py", db_path=DB_A,
-        )
+    def test_commit_tasks_explicit_false_passthrough(self, monkeypatch):
+        """include_task_details=False 原样透传。"""
+        seen = {}
 
-    def test_file_history_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        q = _register_tools(tools_query)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.get_file_history.return_value = [{"version_num": 1}]
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q["get_file_history"]("src/main.py")
-        assert result[0]["version_num"] == 1
-        mock_db.get_file_history.assert_called_once_with("src/main.py")
+        def fake_route(method, params, op_class):
+            seen["params"] = dict(params)
+            return []
 
-    # --------------------------------------------------------
-    # tools_task.get_commit_tasks（顶层 import）
-    # --------------------------------------------------------
-
-    def test_commit_tasks_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.get_commit_tasks.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled", lambda: True
-        )
+        monkeypatch.setattr(tools_task, "_route", fake_route)
         t = _register_tools(tools_task)
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_db:
+        t["get_commit_tasks"]("abc123def456", include_task_details=False)
+        assert seen["params"] == {
+            "commit_hash": "abc123def456", "include_task_details": False,
+        }
+
+    @pytest.mark.parametrize(
+        "module,tool_name,rpc_method,args,kwargs,expect_params",
+        ROUTE_CASES,
+        ids=_IDS,
+    )
+    def test_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, module, tool_name, rpc_method, args, kwargs, expect_params
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(module, "_route", fake_route)
+        q = _register_tools(module)
+        with patch(f"{module.__name__}.get_db") as mock_db:
             with pytest.raises(DaemonRemoteError):
-                t["get_commit_tasks"]("abc123def456")
+                q[tool_name](*args, **kwargs)
             mock_db.assert_not_called()
-        client.get_commit_tasks.assert_called_once_with(
-            commit_hash="abc123def456", include_task_details=True, db_path=DB_A,
-        )
-
-    def test_commit_tasks_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.get_commit_tasks.return_value = [{"task_id": "T-1", "change_count": 2}]
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled", lambda: True
-        )
-        t = _register_tools(tools_task)
-        result = t["get_commit_tasks"]("abc123def456", include_task_details=False)
-        assert result[0]["task_id"] == "T-1"
-        client.get_commit_tasks.assert_called_once_with(
-            commit_hash="abc123def456", include_task_details=False, db_path=DB_A,
-        )
-
-    def test_commit_tasks_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_task.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        t = _register_tools(tools_task)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.get_commit_tasks.return_value = [{"task_id": "T-1"}]
-        with patch("callwarden.server.tools.tools_task.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = t["get_commit_tasks"]("abc123def456", include_task_details=False)
-        assert result[0]["task_id"] == "T-1"
-        mock_db.get_commit_tasks.assert_called_once_with(
-            commit_hash="abc123def456", include_task_details=False
-        )
-
-    # --------------------------------------------------------
-    # tools_workspace.get_git_commits / get_commit_changes / get_git_stats
-    # （函数体内局部 import，patch 来源模块）
-    # --------------------------------------------------------
-
-    def _patch_workspace_http(self, monkeypatch, client):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: True
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_db_path_for_daemon", lambda: DB_A
-        )
-
-    def test_git_tools_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.get_git_commits.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        client.get_commit_changes.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        client.get_git_stats.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        self._patch_workspace_http(monkeypatch, client)
-        w = _register_tools(tools_workspace)
-        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                w["get_git_commits"](limit=5)
-            with pytest.raises(DaemonRemoteError):
-                w["get_commit_changes"]("abc")
-            with pytest.raises(DaemonRemoteError):
-                w["get_git_stats"]()
-            mock_db.assert_not_called()
-
-    def test_git_tools_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.get_git_commits.return_value = [{"commit_hash": "abc"}]
-        client.get_commit_changes.return_value = {"commit": None, "file_changes": []}
-        client.get_git_stats.return_value = {"commit_count": 0}
-        self._patch_workspace_http(monkeypatch, client)
-        w = _register_tools(tools_workspace)
-        assert w["get_git_commits"](limit=5)[0]["commit_hash"] == "abc"
-        assert w["get_commit_changes"]("abc")["commit"] is None
-        assert w["get_git_stats"]()["commit_count"] == 0
-
-    def test_git_tools_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        w = _register_tools(tools_workspace)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.get_git_commits.return_value = [{"commit_hash": "abc"}]
-        mock_db.get_commit_changes.return_value = {"commit": None, "file_changes": []}
-        mock_db.get_git_stats.return_value = {"commit_count": 0}
-        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            assert w["get_git_commits"](limit=5)[0]["commit_hash"] == "abc"
-            assert w["get_commit_changes"]("abc")["commit"] is None
-            assert w["get_git_stats"]()["commit_count"] == 0
-        mock_db.get_git_commits.assert_called_once_with(limit=5, offset=0)
-        mock_db.get_commit_changes.assert_called_once_with("abc")
-        mock_db.get_git_stats.assert_called_once_with()

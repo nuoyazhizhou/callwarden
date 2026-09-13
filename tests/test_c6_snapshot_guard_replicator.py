@@ -133,7 +133,19 @@ class TestEvaluateGenerationProtection:
 
 
 class TestDaemonHandleRefreshGenerationProtection:
-    """daemon_handle_refresh 真实调用：C6 保护门控在 merge 之前、committed 段之前。"""
+    """daemon_handle_refresh 薄客户端转发契约：C6 保护门控已下沉 daemon。
+
+    stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
+    `server/replicator.py:364-384 daemon_handle_refresh` 现为纯薄客户端——
+    函数体 `del peer_uid, workspace_id, ws_conn, cas_conn, ...`（:379-380）后仅
+    `return _call_daemon_rpc(_REPLICATOR_REFRESH_METHOD, params)`（:384，方法常量
+    `mcp.replicator.daemon_handle_refresh` 见 :52）。C6 保护门控 / merge / committed
+    段（`latest_committed_generation` 推进）均在 Rust daemon
+    （`rust_ext/src/daemon/snapshot_guard.rs`）内执行，本地 `_daemon_parse_and_publish`
+    已非调用路径（成为兼容死代码）。故本类改为 mock 模块级 `R._call_daemon_rpc`，
+    断言「转发正确 method+params（含 canonical_bytes_hex）、回包逐字透传、本地
+    ws_conn 不被写入（无本地提交回退）」这一现代契约。
+    """
 
     def _setup(self, tmp_path):
         from callwarden.server.replicator import (
@@ -169,60 +181,82 @@ class TestDaemonHandleRefreshGenerationProtection:
         }
 
     def _committed_generation(self, ws_conn):
+        """本地 ws_conn 的 committed generation；无行（薄客户端从不本地提交）归一为 ""。"""
         row = ws_conn.execute(
             "SELECT latest_committed_generation FROM file_generations "
             "WHERE workspace_id=7 AND rel_path='a.py'"
         ).fetchone()
-        return None if row is None else row["latest_committed_generation"]
+        return "" if row is None else row["latest_committed_generation"]
 
-    def test_parse_failure_blocked_does_not_commit(self, tmp_path, monkeypatch):
-        """验收点 5：parse_failed → blocked，latest_committed_generation 不推进。"""
+    def _stub_daemon(self, monkeypatch, response):
+        """安装 RPC seam 替身：记录 (method, params) 并按 method 回放 daemon 回包。"""
         from callwarden.server import replicator as R
 
+        calls = []
+
+        def fake_rpc(method, params):
+            calls.append((method, dict(params)))
+            return response
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", fake_rpc)
+        return R, calls
+
+    def test_parse_failure_blocked_does_not_commit(self, tmp_path, monkeypatch):
+        """验收点 5：daemon 判定 parse_failed → blocked，回包透传且无本地提交。"""
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
-
-        def fake_publish(**kwargs):
-            return {
+        canonical = b"def a():\n    pass\n"
+        resp = {
+            "status": "blocked",
+            "cas_state": "parse_failed",
+            "protection": {
+                "blocked": True,
+                "reason": "parse failure",
                 "cas_state": "parse_failed",
-                "cas_key": "k-fail",
-                "content_hash": "h1",
-                "language": "python",
-            }
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+                "parse_status": "failed",
+                "dirty_overlay": False,
+                "allows_retry": True,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
             msg=self._make_msg(epoch, 1, "a.py", "/work/a.py"),
             ws_conn=ws_conn, cas_conn=cas_conn,
-            canonical_bytes=b"def a():\n    pass\n",
+            canonical_bytes=canonical,
         )
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
+        assert calls[0][1]["canonical_bytes_hex"] == canonical.hex()
+        assert calls[0][1]["rel_path"] == "a.py"
+        assert calls[0][1]["agent_session_id"] == "sess-c6"
         assert result["status"] == "blocked"
         assert result["cas_state"] == "parse_failed"
-        protection = result["protection"]
-        assert protection["blocked"] is True
-        assert protection["parse_status"] == "failed"
-        assert protection["allows_retry"] is True
-        # committed 段未执行 → latest_committed_generation 为空
+        assert result["protection"]["blocked"] is True
+        assert result["protection"]["parse_status"] == "failed"
+        assert result["protection"]["allows_retry"] is True
+        # 薄客户端不写本地 DB：committed 段只存在于 daemon
         assert self._committed_generation(ws_conn) == ""
 
         ws_conn.close()
         cas_conn.close()
 
     def test_publish_failure_blocked(self, tmp_path, monkeypatch):
-        """验收点 5：publish_failed → blocked。"""
-        from callwarden.server import replicator as R
-
+        """验收点 5：daemon 判定 publish_failed → blocked，回包透传。"""
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
-
-        def fake_publish(**kwargs):
-            return {
+        resp = {
+            "status": "blocked",
+            "cas_state": "publish_failed",
+            "protection": {
+                "blocked": True,
+                "reason": "publish failure",
                 "cas_state": "publish_failed",
-                "cas_key": "k-fail",
-                "content_hash": "h1",
-            }
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+                "parse_status": "failed",
+                "dirty_overlay": False,
+                "allows_retry": True,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
@@ -230,6 +264,8 @@ class TestDaemonHandleRefreshGenerationProtection:
             ws_conn=ws_conn, cas_conn=cas_conn,
             canonical_bytes=b"def a():\n    pass\n",
         )
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
         assert result["status"] == "blocked"
         assert result["protection"]["parse_status"] == "failed"
         assert self._committed_generation(ws_conn) == ""
@@ -238,15 +274,21 @@ class TestDaemonHandleRefreshGenerationProtection:
         cas_conn.close()
 
     def test_partial_blocked_does_not_replace_snapshot(self, tmp_path, monkeypatch):
-        """验收点 7：partial_published → blocked（不替换上一代 snapshot）。"""
-        from callwarden.server import replicator as R
-
+        """验收点 7：daemon 判定 partial_published → blocked（不替换上一代 snapshot）。"""
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
-
-        def fake_publish(**kwargs):
-            return {"cas_state": "partial_published", "cas_key": "k-p", "content_hash": "h2"}
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+        resp = {
+            "status": "blocked",
+            "cas_state": "partial_published",
+            "protection": {
+                "blocked": True,
+                "reason": "partial parse",
+                "cas_state": "partial_published",
+                "parse_status": "partial",
+                "dirty_overlay": False,
+                "allows_retry": False,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
@@ -254,6 +296,8 @@ class TestDaemonHandleRefreshGenerationProtection:
             ws_conn=ws_conn, cas_conn=cas_conn,
             canonical_bytes=b"def a():\n    pass\n",
         )
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
         assert result["status"] == "blocked"
         assert result["protection"]["parse_status"] == "partial"
         assert self._committed_generation(ws_conn) == ""
@@ -262,21 +306,29 @@ class TestDaemonHandleRefreshGenerationProtection:
         cas_conn.close()
 
     def test_unsupported_blocked(self, tmp_path, monkeypatch):
-        """unsupported_language（真实 CAS 主链）→ blocked。"""
-        from callwarden.server import replicator as R
-
+        """daemon 判定 unsupported_language → blocked，回包透传。"""
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
-
-        def fake_publish(**kwargs):
-            return {"cas_state": "unsupported_language", "cas_key": "k-u", "content_hash": "h3"}
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+        resp = {
+            "status": "blocked",
+            "cas_state": "unsupported_language",
+            "protection": {
+                "blocked": True,
+                "reason": "unsupported language",
+                "cas_state": "unsupported_language",
+                "parse_status": "unsupported",
+                "dirty_overlay": False,
+                "allows_retry": False,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
             msg=self._make_msg(epoch, 1, "a.unknown", "/work/a.unknown"),
             ws_conn=ws_conn, cas_conn=cas_conn,
         )
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
         assert result["status"] == "blocked"
         assert result["protection"]["parse_status"] == "unsupported"
 
@@ -284,15 +336,21 @@ class TestDaemonHandleRefreshGenerationProtection:
         cas_conn.close()
 
     def test_dirty_overlay_blocked_even_if_ready(self, tmp_path, monkeypatch):
-        """dirty overlay 路径 → blocked，即使 cas_state=ready_published。"""
-        from callwarden.server import replicator as R
-
+        """dirty overlay 路径 → daemon 判定 blocked，即使 cas_state=ready_published。"""
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
-
-        def fake_publish(**kwargs):
-            return {"cas_state": "ready_published", "cas_key": "k-ok", "content_hash": "h4"}
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+        resp = {
+            "status": "blocked",
+            "cas_state": "ready_published",
+            "protection": {
+                "blocked": True,
+                "reason": "dirty overlay rejected",
+                "cas_state": "ready_published",
+                "parse_status": "stale",
+                "dirty_overlay": True,
+                "allows_retry": False,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
@@ -300,6 +358,8 @@ class TestDaemonHandleRefreshGenerationProtection:
             ws_conn=ws_conn, cas_conn=cas_conn,
             canonical_bytes=b"def a():\n    pass\n",
         )
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
         assert result["status"] == "blocked"
         assert result["protection"]["dirty_overlay"] is True
         assert self._committed_generation(ws_conn) == ""
@@ -308,15 +368,25 @@ class TestDaemonHandleRefreshGenerationProtection:
         cas_conn.close()
 
     def test_ready_state_commits(self, tmp_path, monkeypatch):
-        """回归：ready_published → committed，latest_committed_generation 推进。"""
-        from callwarden.server import replicator as R
+        """回归：daemon 判定 ready_published → committed，回包透传。
 
+        注：`latest_committed_generation` 的推进发生在 daemon 侧（权威库），
+        Python 薄客户端不再写本地 ws_conn，故此处只断言回包透传 + 本地无副作用。
+        """
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
-
-        def fake_publish(**kwargs):
-            return {"cas_state": "ready_published", "cas_key": "k-ok", "content_hash": "h5"}
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+        resp = {
+            "status": "committed",
+            "cas_state": "ready_published",
+            "protection": {
+                "blocked": False,
+                "reason": "",
+                "cas_state": "ready_published",
+                "parse_status": "ok",
+                "dirty_overlay": False,
+                "allows_retry": False,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
@@ -324,23 +394,31 @@ class TestDaemonHandleRefreshGenerationProtection:
             ws_conn=ws_conn, cas_conn=cas_conn,
             canonical_bytes=b"def a():\n    pass\n",
         )
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
         assert result["status"] == "committed"
-        assert self._committed_generation(ws_conn) == f"{epoch}:1"
+        assert self._committed_generation(ws_conn) == ""
 
         ws_conn.close()
         cas_conn.close()
 
     def test_no_cas_conn_skips_protection(self, tmp_path, monkeypatch):
-        """回归：cas_conn=None（无 CAS 主链）→ 不启用保护，committed。"""
-        from callwarden.server import replicator as R
-
+        """回归：cas_conn=None（无 CAS 主链）→ daemon 判定 committed，回包透传。"""
         ws_conn, cas_conn, epoch = self._setup(tmp_path)
         cas_conn.close()
-
-        def fake_publish(**kwargs):
-            return {"cas_state": "no_cas_conn", "cas_key": "", "content_hash": "h6"}
-
-        monkeypatch.setattr(R, "_daemon_parse_and_publish", fake_publish)
+        resp = {
+            "status": "committed",
+            "cas_state": "",
+            "protection": {
+                "blocked": False,
+                "reason": "",
+                "cas_state": "",
+                "parse_status": "ok",
+                "dirty_overlay": False,
+                "allows_retry": False,
+            },
+        }
+        R, calls = self._stub_daemon(monkeypatch, resp)
 
         result = R.daemon_handle_refresh(
             peer_uid=1000, workspace_id=7,
@@ -348,10 +426,36 @@ class TestDaemonHandleRefreshGenerationProtection:
             ws_conn=ws_conn, cas_conn=None,
             canonical_bytes=b"def a():\n    pass\n",
         )
-        # no_cas_conn 在 Python 侧不启用保护（镜像 Rust cas_store=None → 不保护）
+        assert result == resp
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
         assert result["status"] == "committed"
 
         ws_conn.close()
+
+    def test_daemon_unavailable_fail_closed_no_local_fallback(self, tmp_path, monkeypatch):
+        """fail-closed：daemon RPC 失败时异常透传，绝不回退本地解析/提交。"""
+        from callwarden.server import replicator as R
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+
+        ws_conn, cas_conn, epoch = self._setup(tmp_path)
+
+        def boom(method, params):
+            raise DaemonRemoteError("E_HTTP_MANIFEST_MISSING", "fail-closed")
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", boom)
+
+        with pytest.raises(DaemonRemoteError):
+            R.daemon_handle_refresh(
+                peer_uid=1000, workspace_id=7,
+                msg=self._make_msg(epoch, 1, "a.py", "/work/a.py"),
+                ws_conn=ws_conn, cas_conn=cas_conn,
+                canonical_bytes=b"def a():\n    pass\n",
+            )
+        # 未回退本地：本地无任何 committed 提交
+        assert self._committed_generation(ws_conn) == ""
+
+        ws_conn.close()
+        cas_conn.close()
 
 
 # ============================================================

@@ -33,13 +33,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "rust_ext" / "target" / "p
 # ============================================
 
 try:
-    from server.replicator import (
-        SESSION_SCHEMA_DDL,
-        ProtocolError,
-        daemon_handle_connect,
-        daemon_handle_refresh,
-        init_session_schema,
-    )
+    # 统一走 canonical 包路径（callwarden.server）：避免与顶层 `server.*` 形成双模块
+    # 实例——server/_mcp_common.py:12 `from ..db import CodeGraphDB` 在顶层 server.*
+    # 包下会「越界相对导入」失败。
+    from callwarden.server import replicator as _R
+
+    SESSION_SCHEMA_DDL = _R.SESSION_SCHEMA_DDL
+    ProtocolError = _R.ProtocolError
+    daemon_handle_connect = _R.daemon_handle_connect
+    daemon_handle_refresh = _R.daemon_handle_refresh
+    init_session_schema = _R.init_session_schema
     _REPLICATOR_AVAILABLE = True
 except ImportError:
     _REPLICATOR_AVAILABLE = False
@@ -82,25 +85,39 @@ def _refresh_msg(session_id: str, epoch: int, seq: int,
 @pytest.mark.skipif(not _REPLICATOR_AVAILABLE,
                     reason="server.replicator 不可用（需 Rust 扩展）")
 class TestStaleSessionRejected:
-    """stale session/generation 拒绝测试
+    """stale session/generation 拒绝契约（A 桶：RPC seam 迁移）
 
-    场景：daemon 被 kill -9 后重启，旧 session 的 epoch 已失效。
-    新 session 连接后获得更高 epoch，旧 session 的 refresh 应被拒绝。
+    stale 依据：`server/replicator.py:364-384 daemon_handle_refresh` 已 daemon
+    authority 化——kill -9 恢复后的 session epoch CAS（stale session 拒绝 /
+    stale seq 丢弃 / 两阶段 commit）现由 Rust daemon 持有
+    （`rust_ext/src/daemon/snapshot_guard.rs` 等），Python 侧只做参数序列化 +
+    回包透传 + 异常上抛。本地 epoch-CAS 实现已删除，故本类断言
+    「转发 / 透传 / fail-closed」契约。
     """
 
-    def test_old_session_rejected_after_new_connect(self):
-        """新 session 连接后，旧 session 的 refresh 被拒绝（模拟 kill -9 恢复）"""
+    def _connect(self, session_id: str = "s1"):
         conn = _open_db()
-        # 旧 session s1 连接
-        resp1 = daemon_handle_connect(
+        resp = daemon_handle_connect(
             peer_uid=1000, workspace_id=1,
-            requested_session_id="s1", ws_conn=conn,
+            requested_session_id=session_id, ws_conn=conn,
         )
-        old_epoch = resp1["session_epoch"]
+        return conn, resp["session_epoch"]
+
+    def _stub(self, monkeypatch, response):
+        calls = []
+
+        def fake_rpc(method, params):
+            calls.append((method, dict(params)))
+            return response
+
+        monkeypatch.setattr(_R, "_call_daemon_rpc", fake_rpc)
+        return calls
+
+    def test_old_session_rejected_after_new_connect(self, monkeypatch):
+        """kill -9 恢复：S1(epoch1) 被 S2(epoch2) 接管 → daemon 拒绝 S1 refresh"""
+        conn, old_epoch = self._connect("s1")
         assert old_epoch == 1
 
-        # 模拟 daemon kill -9 后重启，新 agent 用 s2 连接
-        # （实际场景中 daemon 重启会重建内存状态，但 session 表持久化在 SQLite）
         resp2 = daemon_handle_connect(
             peer_uid=1000, workspace_id=1,
             requested_session_id="s2", ws_conn=conn,
@@ -108,59 +125,48 @@ class TestStaleSessionRejected:
         new_epoch = resp2["session_epoch"]
         assert new_epoch == 2
 
-        # 旧 session s1 用旧 epoch 发 refresh → 应被拒绝
+        forward_calls = []
+
+        def fake_rpc(method, params):
+            forward_calls.append((method, dict(params)))
+            # daemon 侧：epoch=1 已被 epoch=2 接管 → stale session 拒绝
+            raise ProtocolError("stale session", code="stale_session")
+
+        monkeypatch.setattr(_R, "_call_daemon_rpc", fake_rpc)
         with pytest.raises(ProtocolError, match="stale session"):
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
                 msg=_refresh_msg("s1", epoch=old_epoch, seq=1),
                 ws_conn=conn,
             )
+        assert forward_calls[0][0] == _R._REPLICATOR_REFRESH_METHOD
+        assert forward_calls[0][1]["session_epoch"] == old_epoch
+        assert forward_calls[0][1]["agent_session_id"] == "s1"
 
-    def test_stale_seq_dropped(self):
-        """旧 seq 的 refresh 被丢弃（stale_seq_dropped）"""
-        conn = _open_db()
-        daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="s1", ws_conn=conn,
-        )
-        # 先发 seq=5
-        resp1 = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=5),
-            ws_conn=conn,
-        )
-        # seq=5 应该被接受（committed 或 stale_seq_dropped 取决于 CAS 状态）
-        assert resp1["status"] in ("committed", "stale_seq_dropped")
-
-        # 再发 seq=3（小于 5）→ 应被 dropped
-        resp2 = daemon_handle_refresh(
+    def test_stale_seq_dropped(self, monkeypatch):
+        """daemon 判定 stale_seq_dropped → 原样回包（本地不再判定）"""
+        conn, _ = self._connect("s1")
+        calls = self._stub(monkeypatch, {"status": "stale_seq_dropped"})
+        resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=3),
             ws_conn=conn,
         )
-        assert resp2["status"] == "stale_seq_dropped"
+        assert resp["status"] == "stale_seq_dropped"
+        assert calls[0][1]["monotonic_seq"] == 3
 
-    def test_correct_session_epoch_accepted(self):
-        """正确 epoch 的 session refresh 不被拒绝"""
-        conn = _open_db()
-        resp = daemon_handle_connect(
+    def test_correct_session_epoch_accepted(self, monkeypatch):
+        """正确 epoch 的 refresh 转发后回包 committed，无本地 ProtocolError"""
+        conn, epoch = self._connect("s1")
+        self._stub(monkeypatch, {"status": "committed",
+                                 "generation": f"{epoch}:1"})
+        result = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
-            requested_session_id="s1", ws_conn=conn,
+            msg=_refresh_msg("s1", epoch=epoch, seq=1),
+            ws_conn=conn,
         )
-        epoch = resp["session_epoch"]
-        # 用正确 epoch 发 refresh（无 CAS store，会返回 committed 或 no_cas）
-        try:
-            result = daemon_handle_refresh(
-                peer_uid=1000, workspace_id=1,
-                msg=_refresh_msg("s1", epoch=epoch, seq=1),
-                ws_conn=conn,
-            )
-            # 不应抛 ProtocolError
-            assert result["status"] in ("committed", "stale_seq_dropped")
-        except ProtocolError as e:
-            # no_cas 是预期错误（没有 CAS store），不是 stale session 错误
-            assert "stale session" not in str(e), \
-                f"正确 epoch 不应被 stale 拒绝: {e}"
+        assert result["status"] == "committed"
+        assert result["generation"] == f"{epoch}:1"
 
 
 # ============================================

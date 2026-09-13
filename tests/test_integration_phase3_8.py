@@ -12,6 +12,21 @@
 - 真实链路：每一步都通过实际 API 调用，模拟真实 daemon 工作流
 
 关联父任务：T-1783698949011-2740（Enterprise Daemon Shared Snapshot）
+
+stale 依据（daemon authority / HTTP thin-client 迁移）
+====================================================
+- **A 类（被测模块已是 daemon 薄客户端，改 mock RPC seam）**
+  * `server/replicator.py:364-384 daemon_handle_refresh`：签名仅为兼容形状，实际
+    只做参数序列化后 `_call_daemon_rpc("mcp.replicator.daemon_handle_refresh",
+    params)`；session epoch / stale seq / CAS 两阶段 / generation 推进全部在 Rust
+    daemon。旧用例「用本地 ws_conn/cas_conn 断言 epoch、file_generations 表」已过期。
+    （`daemon_handle_connect` 仍为本地实现，其断言保留。）
+  * `server/schema_migrator.py:1-6/146-202`：`migrate_daemon_dbs` 由 daemon 经
+    `mcp.schema_migrator.apply_migrations` 执行，旧用例「本地建 registry 表」已过期。
+- **仍本地，保留断言**：`server/backup_restore.py` `BackupManager` /
+  `RestoreManager` 的 Python fallback（`_RUST_BACKUP_MANAGER_AVAILABLE=False`，
+  本地文件系统复制/恢复）；`db/db_daemon.py:15-61 init_daemon_schema` 仍提供本地
+  registry DDL，用于为本地 fallback 组件准备 schema。
 """
 import os
 import sys
@@ -54,8 +69,67 @@ from callwarden.server.query_budget import (
     shallow_budget,
 )
 from callwarden.server.daemon_config import DaemonConfig
+from callwarden.server.daemon_client import DaemonUnavailableError
+from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.schema_migrator import migrate_daemon_dbs
 from callwarden.server.backup_restore import BackupManager, RestoreManager
+
+
+# daemon RPC method 命名空间（生产侧见 server/replicator.py:52 /
+# server/schema_migrator.py:19-22）
+REPLICATOR_REFRESH_METHOD = "mcp.replicator.daemon_handle_refresh"
+SCHEMA_APPLY_METHOD = "mcp.schema_migrator.apply_migrations"
+
+
+class _RpcRecorder:
+    """daemon RPC 替身：记录 (method, params) 并回放预设 payload / 抛预设异常。
+
+    用于在被测模块已成为 daemon 薄客户端后，断言「路由到正确 RPC + 参数正确 +
+    回包透传 + 失败 fail-closed（不回退本地）」这一现代契约。
+    """
+
+    def __init__(self, reply=None, raise_exc=None):
+        self.calls = []
+        self._reply = reply
+        self._raise = raise_exc
+
+    def reply(self, payload):
+        self._reply = payload
+        return self
+
+    def raise_with(self, exc):
+        self._raise = exc
+        return self
+
+    def __call__(self, method, params):
+        self.calls.append((method, dict(params or {})))
+        if self._raise is not None:
+            raise self._raise
+        return self._reply
+
+    @property
+    def methods(self):
+        return [m for m, _ in self.calls]
+
+    def last_params(self):
+        return self.calls[-1][1] if self.calls else None
+
+
+def _init_local_registry(cfg: DaemonConfig) -> None:
+    """建立本地 registry schema（仅服务仍为本地实现的 fallback 组件）。
+
+    daemon authority 迁移后 ``migrate_daemon_dbs`` 不再在本地建表；而
+    ``BackupManager`` / ``RestoreManager`` 的 Python fallback 仍直接复制/恢复
+    本地 DB 文件，故此处复用 ``db/db_daemon.init_daemon_schema`` 的本地 DDL。
+    """
+    from callwarden.db.db_daemon import init_daemon_schema
+
+    conn = sqlite3.connect(cfg.registry_db_path)
+    try:
+        init_daemon_schema(conn)
+    finally:
+        conn.close()
+
 
 
 # ============================================
@@ -81,6 +155,22 @@ def tmp_ws_conn():
     init_session_schema(conn)
     yield conn
     conn.close()
+
+
+@pytest.fixture
+def replicator_daemon(monkeypatch):
+    """把 `server.replicator._call_daemon_rpc` 替换为记录型替身（A 类 mock seam）。"""
+    rec = _RpcRecorder()
+    monkeypatch.setattr("callwarden.server.replicator._call_daemon_rpc", rec)
+    return rec
+
+
+@pytest.fixture
+def schema_daemon(monkeypatch):
+    """把 `server.schema_migrator._call_daemon_rpc` 替换为记录型替身（A 类 mock seam）。"""
+    rec = _RpcRecorder()
+    monkeypatch.setattr("callwarden.server.schema_migrator._call_daemon_rpc", rec)
+    return rec
 
 
 def _make_parse_result(symbols=None, raw_calls=None, imports=None):
@@ -356,10 +446,11 @@ class TestPhase5DaemonIPCIntegration:
         ).fetchone()
         assert row["revoked_at"] is not None, "s1 应被撤销"
 
-    def test_daemon_refresh_valid_epoch_committed(self, tmp_ws_conn):
-        """valid epoch 的 refresh 应返回 committed"""
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=tmp_ws_conn)
+    def test_daemon_refresh_valid_epoch_committed(self, tmp_ws_conn, replicator_daemon):
+        """A 类：refresh 路由到 daemon RPC，参数序列化正确并透传 committed 回包。"""
+        replicator_daemon.reply({
+            "status": "committed", "generation": "1:1", "cas_state": "no_cas_conn",
+        })
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
@@ -368,36 +459,32 @@ class TestPhase5DaemonIPCIntegration:
         )
         assert resp["status"] == "committed"
         assert resp["generation"] == "1:1"
-        # cas_conn=None 时应有 cas_state 字段
-        assert "cas_state" in resp
+        assert resp["cas_state"] == "no_cas_conn"
+        assert replicator_daemon.methods == [REPLICATOR_REFRESH_METHOD]
+        params = replicator_daemon.last_params()
+        assert params["rel_path"] == "test.py"
+        assert params["agent_session_id"] == "s1"
+        assert params["monotonic_seq"] == 1
+        assert params["session_epoch"] == 1
 
-    def test_daemon_refresh_stale_epoch_rejected(self, tmp_ws_conn):
-        """stale epoch 的 refresh 应抛 ProtocolError"""
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=tmp_ws_conn)
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s2", ws_conn=tmp_ws_conn)
-        # s1 的 epoch=1 已被 s2 的 epoch=2 取代
-        with pytest.raises(ProtocolError, match="stale session"):
+    def test_daemon_refresh_stale_epoch_rejected(self, tmp_ws_conn, replicator_daemon):
+        """A 类：stale epoch 由 daemon 拒绝，Python 侧透传 DaemonRemoteError。"""
+        replicator_daemon.raise_with(
+            DaemonRemoteError("stale_session", "stale session epoch")
+        )
+        with pytest.raises(DaemonRemoteError) as ei:
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
                 msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
                 ws_conn=tmp_ws_conn,
                 cas_conn=None,
             )
+        assert ei.value.code == "stale_session"
+        assert replicator_daemon.methods == [REPLICATOR_REFRESH_METHOD]
 
-    def test_daemon_refresh_stale_seq_dropped(self, tmp_ws_conn):
-        """同 epoch 内 stale seq 的 refresh 返回 stale_seq_dropped"""
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=tmp_ws_conn)
-        # seq=1 先到
-        daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
-            ws_conn=tmp_ws_conn,
-            cas_conn=None,
-        )
-        # seq=1 再次到达（stale）→ 应被丢弃
+    def test_daemon_refresh_stale_seq_dropped(self, tmp_ws_conn, replicator_daemon):
+        """A 类：同 epoch 内 stale seq 由 daemon 判定，回包透传 stale_seq_dropped。"""
+        replicator_daemon.reply({"status": "stale_seq_dropped"})
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
@@ -406,94 +493,49 @@ class TestPhase5DaemonIPCIntegration:
         )
         assert resp["status"] == "stale_seq_dropped"
 
-    def test_daemon_refresh_updates_file_generations(self, tmp_ws_conn):
-        """refresh 后 file_generations 表正确更新 seen/committed generation"""
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=tmp_ws_conn)
-        daemon_handle_refresh(
+    def test_daemon_refresh_updates_file_generations(self, tmp_ws_conn, replicator_daemon):
+        """A 类：generation 推进在 daemon 侧；Python 只透传回包字段。"""
+        replicator_daemon.reply({
+            "status": "committed",
+            "generation": "1:1",
+            "latest_seen_generation": "1:1",
+            "latest_committed_generation": "1:1",
+        })
+        resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="src/main.py"),
             ws_conn=tmp_ws_conn,
             cas_conn=None,
         )
-        row = tmp_ws_conn.execute(
-            "SELECT latest_session_epoch, latest_seq, "
-            "latest_seen_generation, latest_committed_generation "
-            "FROM file_generations WHERE workspace_id=1 AND rel_path='src/main.py'"
-        ).fetchone()
-        assert row is not None, "file_generations 应有记录"
-        assert row["latest_session_epoch"] == 1
-        assert row["latest_seq"] == 1
-        assert row["latest_seen_generation"] == "1:1"
-        assert row["latest_committed_generation"] == "1:1"
+        assert resp["latest_seen_generation"] == "1:1"
+        assert resp["latest_committed_generation"] == "1:1"
+        assert replicator_daemon.last_params()["rel_path"] == "src/main.py"
 
-    def test_daemon_refresh_end_to_end_with_cas(self, tmp_ws_conn, tmp_cas_conn):
-        """端到端：connect → refresh 真实 .py 文件 → 验证 CAS 发布"""
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=tmp_ws_conn)
+    def test_daemon_refresh_end_to_end_with_cas(self, tmp_ws_conn, replicator_daemon):
+        """A 类：端到端参数序列化——canonical_bytes 转 hex，daemon 回包透传。"""
+        replicator_daemon.reply({
+            "status": "committed", "generation": "1:1",
+            "cas_state": "ready_published", "cas_key": "k1",
+        })
+        canonical = b'{"rel_path":"test.py"}'
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
+            ws_conn=tmp_ws_conn,
+            cas_conn=None,
+            canonical_bytes=canonical,
+        )
+        assert resp["status"] == "committed"
+        assert resp["cas_state"] == "ready_published"
+        assert resp["cas_key"] == "k1"
+        params = replicator_daemon.last_params()
+        assert params["canonical_bytes_hex"] == canonical.hex()
 
-        # 写一个真实的 Python 文件
-        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
-            f.write("def add(a, b):\n    return a + b\n")
-            tmp_path = f.name
-        try:
-            msg = _refresh_msg("s1", epoch=1, seq=1, rel_path="test.py")
-            msg["abs_path"] = tmp_path
-            resp = daemon_handle_refresh(
-                peer_uid=1000, workspace_id=1,
-                msg=msg,
-                ws_conn=tmp_ws_conn,
-                cas_conn=tmp_cas_conn,
-            )
-            # C6（S2）：真实 CAS 主链下，ready 状态才 committed；失败状态被
-            # generation 保护拦截为 blocked（不推进 latest_committed_generation）。
-            assert resp["status"] in ("committed", "blocked"), resp
-            assert "cas_key" in resp
-            assert "cas_state" in resp
-            # cas_state 应该是 ready_published / ready_cache_hit / parse_failed 之一
-            # （取决于 Rust parser 是否可用）
-            assert resp["cas_state"] in (
-                "ready_published", "ready_cache_hit",
-                "parse_failed", "no_cas_conn",
-                "canonicalize_failed", "unsupported_language",
-                "cas_module_unavailable",
-            ), f"未预期的 cas_state: {resp['cas_state']}"
-
-            # 若 Rust 可用并成功发布，验证 CAS 表有记录
-            if resp["cas_state"] in ("ready_published", "ready_cache_hit"):
-                assert resp["status"] == "committed"
-                cas_key = resp["cas_key"]
-                cas_row = cas_lookup(tmp_cas_conn, cas_key)
-                assert cas_row is not None, "CAS 表应有 ready 记录"
-                assert cas_row["state"] == "ready"
-                assert cas_row["language"] == "python"
-            else:
-                # C6：失败状态 → blocked（generation 保护），不得推进 committed
-                assert resp["status"] == "blocked", (
-                    f"cas_state={resp['cas_state']} 应为 blocked: {resp}"
-                )
-                protection = resp.get("protection") or {}
-                assert protection.get("blocked") is True
-
-            # 验证 file_generations：ready → committed 推进；blocked → 仅 seen 推进
-            gen_row = tmp_ws_conn.execute(
-                "SELECT latest_seen_generation, latest_committed_generation "
-                "FROM file_generations WHERE workspace_id=1 AND rel_path='test.py'"
-            ).fetchone()
-            assert gen_row is not None
-            assert gen_row["latest_seen_generation"] == "1:1"
-            if resp["status"] == "committed":
-                assert gen_row["latest_committed_generation"] == "1:1"
-            else:
-                # C6 验收点 5：任一步失败时 latest_committed_generation 不得推进
-                assert gen_row["latest_committed_generation"] != "1:1"
-        finally:
-            os.unlink(tmp_path)
-
-    def test_daemon_refresh_unsupported_language_skips_cas(self, tmp_ws_conn):
-        """不支持的文件扩展名 → cas_state=unsupported_language"""
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=tmp_ws_conn)
+    def test_daemon_refresh_unsupported_language_skips_cas(self, tmp_ws_conn, replicator_daemon):
+        """A 类：不支持扩展名由 daemon 判定 unsupported_language，回包透传。"""
+        replicator_daemon.reply({
+            "status": "committed", "cas_state": "unsupported_language",
+        })
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="README.unknown"),
@@ -503,65 +545,132 @@ class TestPhase5DaemonIPCIntegration:
         assert resp["status"] == "committed"
         assert resp["cas_state"] == "unsupported_language"
 
+    def test_daemon_refresh_unavailable_is_fail_closed(self, tmp_ws_conn, monkeypatch):
+        """A 类 fail-closed：daemon 不可用抛错，绝不回退本地写 file_generations。"""
+        def _boom(method, params):
+            raise DaemonUnavailableError("E_HTTP_DAEMON_UNAVAILABLE")
+
+        monkeypatch.setattr("callwarden.server.replicator._call_daemon_rpc", _boom)
+        with pytest.raises(DaemonUnavailableError):
+            daemon_handle_refresh(
+                peer_uid=1000, workspace_id=1,
+                msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
+                ws_conn=tmp_ws_conn,
+                cas_conn=None,
+            )
+        count = tmp_ws_conn.execute(
+            "SELECT COUNT(*) FROM file_generations"
+        ).fetchone()[0]
+        assert count == 0, "daemon 不可用时不得在本地写入 file_generations"
+
 
 # ============================================
 # Phase 8: Schema Migration + Backup/Restore 集成
 # ============================================
 
 
-class TestPhase8SchemaMigrationIntegration:
-    """Phase 8 Schema Migration 端到端"""
+def _phase8_cfg(tmp_path) -> DaemonConfig:
+    data_root = str(tmp_path / "data")
+    os.makedirs(data_root, exist_ok=True)
+    return DaemonConfig.load_from_dict({
+        "data_root": data_root,
+        # 显式指向不存在路径，避免默认 audit_log_path 命中宿主机已有文件导致
+        # migrate_daemon_dbs 额外触发一次 audit RPC（使断言非确定）。
+        "security": {
+            "admin_uids": [0, 1000],
+            "audit_log_path": str(tmp_path / "no_such_audit.db"),
+        },
+    })
 
-    def test_migrate_daemon_dbs_fresh_success(self, tmp_path):
-        """在全新 DB 上执行 migrate_daemon_dbs 应成功"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {"admin_uids": [0, 1000]},
+
+class TestPhase8SchemaMigrationIntegration:
+    """Phase 8 Schema Migration 端到端（A 类：daemon 薄客户端）
+
+    stale 依据：`server/schema_migrator.py:1-6/183-202 migrate_daemon_dbs`
+    现仅做参数序列化后经 `mcp.schema_migrator.apply_migrations` 请求 daemon，
+    DDL/迁移版本决策/历史全部在 Rust daemon，失败不回退 Python SQLite。
+    旧用例「在本地 registry DB 上建 daemon_workspaces 表」已过期，改为断言
+    RPC 路由/参数/回包透传 + fail-closed（本地不得落盘）。
+    """
+
+    def test_migrate_daemon_dbs_routes_apply_rpc(self, tmp_path, schema_daemon):
+        """migrate_daemon_dbs 应路由到 apply_migrations RPC 并透传结果"""
+        cfg = _phase8_cfg(tmp_path)
+        schema_daemon.reply({
+            "db_path": cfg.registry_db_path,
+            "from_version": 0,
+            "to_version": 3,
+            "applied": [1, 2, 3],
+            "skipped": [],
+            "failed": None,
+            "error": None,
         })
         results = migrate_daemon_dbs(cfg)
+
         assert "registry" in results, "应有 registry 迁移结果"
-        assert results["registry"].status != "failed", \
-            f"registry 迁移应成功: {results['registry']}"
+        assert results["registry"].status == "migrated"
+        assert results["registry"].applied == [1, 2, 3]
+        # 路由到正确 RPC method + 正确 params
+        assert schema_daemon.methods == [SCHEMA_APPLY_METHOD]
+        params = schema_daemon.last_params()
+        assert params["db_path"] == cfg.registry_db_path
+        assert params["migration_set"] == "registry"
 
-    def test_migrate_daemon_dbs_idempotent(self, tmp_path):
-        """二次 migrate 不报错（幂等）"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {"admin_uids": [0, 1000]},
+    def test_migrate_daemon_dbs_idempotent(self, tmp_path, schema_daemon):
+        """二次 migrate 仍幂等经 RPC；每次都是 daemon 端决策"""
+        cfg = _phase8_cfg(tmp_path)
+        schema_daemon.reply({
+            "db_path": cfg.registry_db_path,
+            "from_version": 3,
+            "to_version": 3,
+            "applied": [],
+            "skipped": [1, 2, 3],
+            "failed": None,
+            "error": None,
         })
-        # 第一次迁移
         results1 = migrate_daemon_dbs(cfg)
-        assert results1["registry"].status != "failed"
-        # 第二次迁移（幂等）
         results2 = migrate_daemon_dbs(cfg)
-        assert results2["registry"].status != "failed", "二次迁移应幂等成功"
+        assert results1["registry"].status == "up_to_date"
+        assert results2["registry"].status == "up_to_date"
+        assert schema_daemon.methods == [SCHEMA_APPLY_METHOD, SCHEMA_APPLY_METHOD]
 
-    def test_migrate_creates_registry_tables(self, tmp_path):
-        """迁移后 registry DB 应有 daemon_workspaces 表"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {"admin_uids": [0, 1000]},
+    def test_migrate_does_not_write_local_registry(self, tmp_path, schema_daemon):
+        """fail-closed：daemon 迁移不得在 Python 侧建本地 registry DB"""
+        cfg = _phase8_cfg(tmp_path)
+        schema_daemon.reply({
+            "db_path": cfg.registry_db_path,
+            "from_version": 0,
+            "to_version": 3,
+            "applied": [1, 2, 3],
+            "skipped": [],
+            "failed": None,
+            "error": None,
         })
         migrate_daemon_dbs(cfg)
 
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.row_factory = sqlite3.Row
-        tables = [r["name"] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()]
-        conn.close()
-        assert "daemon_workspaces" in tables, \
-            f"registry DB 应有 daemon_workspaces 表，实际: {tables}"
+        assert not os.path.isfile(cfg.registry_db_path), \
+            "daemon 迁移后 Python 侧不应创建本地 registry DB"
+
+    def test_migrate_unavailable_is_fail_closed(self, tmp_path, schema_daemon):
+        """daemon 不可用时应抛错且不落本地 DB"""
+        cfg = _phase8_cfg(tmp_path)
+        schema_daemon.raise_with(
+            DaemonUnavailableError("mcp.schema_migrator.apply_migrations")
+        )
+        with pytest.raises(DaemonUnavailableError):
+            migrate_daemon_dbs(cfg)
+        assert not os.path.isfile(cfg.registry_db_path), \
+            "daemon 不可用时不得回退到本地 SQLite"
 
 
 class TestPhase8BackupRestoreIntegration:
-    """Phase 8 Backup/Restore 端到端往返"""
+    """Phase 8 Backup/Restore 端到端往返（B 类：备份/恢复仍为本地 fallback）
+
+    stale 依据：`server/backup_restore.py` 的 `BackupManager` / `RestoreManager`
+    在 `_RUST_BACKUP_MANAGER_AVAILABLE=False` 时仍直接复制/恢复本地 DB 文件，
+    故这里不再调用已 RPC 化的 `migrate_daemon_dbs`（会 fail-closed），改用
+    `db/db_daemon.init_daemon_schema` 直接准备本地 registry schema。
+    """
 
     def test_backup_full_creates_backup_dir(self, tmp_path):
         """backup_full 创建备份目录和文件"""
@@ -573,7 +682,7 @@ class TestPhase8BackupRestoreIntegration:
             "data_root": data_root,
             "security": {"admin_uids": [0, 1000]},
         })
-        migrate_daemon_dbs(cfg)
+        _init_local_registry(cfg)
 
         mgr = BackupManager(cfg, backup_root=backup_root)
         result = mgr.backup_full(backup_id="B-test-001")
@@ -599,7 +708,7 @@ class TestPhase8BackupRestoreIntegration:
             "data_root": data_root,
             "security": {"admin_uids": [0, 1000]},
         })
-        migrate_daemon_dbs(cfg)
+        _init_local_registry(cfg)
 
         # 1. 插入原始数据
         conn = sqlite3.connect(cfg.registry_db_path)

@@ -22,20 +22,34 @@ Rust 侧语义：
 - workspace.register：INSERT OR REPLACE（幂等），instance_id =
   sha256(owner_uid|host_real_root|git_remote_url|git_head_commit_sha)[:16]。
 - workspace.activate：owned ACL（owner_uid 匹配，任意状态可激活）→ status=active。
-- workspace.remove：owned ACL → status=archived（软删语义，读面 owned ACL
-  已排除 archived 行）。
+- workspace.remove：owned ACL → status=archived（软删语义）。
 
 覆盖矩阵（对齐统一验收标准 6 问）：
 - HTTP 注入：写面便捷方法自动 register（幂等）后注入权威 instance_id；
   缓存复用不重复 register；register 响应缺 instance_id → DaemonUnavailableError
-- 工具层 HTTP 分支：三写工具 SQLite 真相源先行 + daemon 同步；返回语义不变；
-  daemon 不可用 → DaemonUnavailableError 传播（fail-closed，无静默 SQL 回退）
-- 越界参数：workspace 不存在 → False（不调 daemon）；register 缺 instance_id
-  → DaemonUnavailableError
+- 工具层薄壳路由：三写工具经 `_route(<rpc method>, {...}, 'PROTECTED_MUTATION')`
+  下发，参数逐字透传、原样回包、不触碰本地 db
 - 跨 workspace 隔离：root_path 为 join key，不同 root 映射不同 instance_id
-- Python fallback 边界：非 HTTP（legacy）模式三工具走纯 SQL，不触碰 daemon
 - 进程级 round-trip：真实 daemon register→activate→remove 三态验证
-  （remove 后 workspace.status → workspace_not_found，即读面不可见）
+  （remove 后 workspace.status 经统一权威返回 status=archived）
+
+陈旧期望修正（PYT 回归 step#4，2026-09）——对齐生产演进后的现状：
+1. 三写工具已随 T03 收敛为一行式
+   `_route(<rpc method>, {...}, 'PROTECTED_MUTATION')`
+   （server/tools/tools_workspace.py:107 register_workspace、:121
+   set_active_workspace、:138 delete_workspace）。HTTP/local 分流、SQLite 真相源
+   先行写入、daemon 便捷方法同步、fail-closed 传播全部下沉到
+   server/daemon_client.py::route_rpc（L3880-3994）。故工具层测试改为断言薄壳
+   路由契约，不再 mock tools_workspace.get_db / HttpDaemonRpcClient.get_instance /
+   is_http_transport_enabled（这些 seam 已无调用点）。
+2. `workspace_register` 便捷方法现经 `_workspace_snapshot_metadata` 附带 git
+   provenance（server/daemon_client.py:3290-3291、1091-1113），register params
+   含 git_remote_url / git_head_commit_sha，不再等于仅 client_view_root 的单键 dict。
+3. `workspace.status` 现经统一权威解析（rust_ext/src/daemon/snapshot_state.rs:478-527
+   → task_collab.rs:1756-1772 → workspace_reconciliation.rs:211+），
+   registry `get_workspace_status`（workspace.rs:578-595）不过滤 archived，故
+   workspace.remove 归档后 workspace.status 返回 status="archived" 而非抛错
+   （旧断言"读面不可见 → workspace_not_found"陈旧）。
 
 前置条件（进程级部分，与 test_workspace_rpc_http.py 一致）：
 1. Windows 平台
@@ -129,7 +143,15 @@ class TestHttpWriteConvenienceMethods:
 
         row = client.workspace_register(root)
 
-        assert calls == [("workspace.register", {"client_view_root": root})]
+        # stale 依据：workspace_register 现经 _workspace_snapshot_metadata 附加
+        # git provenance（server/daemon_client.py:3290-3291、1091-1113）——
+        # register params 不再等于仅 client_view_root 的单键 dict（旧断言陈旧）。
+        methods = [m for m, _ in calls]
+        assert methods == ["workspace.register"]
+        assert calls[0][1]["client_view_root"] == root
+        assert set(calls[0][1]) <= {
+            "client_view_root", "git_remote_url", "git_head_commit_sha",
+        }
         assert row["workspace_instance_id"] == "inst-w2"
         assert client._workspace_instance_by_root[
             _norm_key(root)
@@ -207,36 +229,36 @@ def _norm_key(p: str) -> str:
     return normalized
 
 
+def _route_recorder(monkeypatch, module, result):
+    """把模块级 `_route` 替换为记录器，返回记录列表 [(method, params, op_class)]。"""
+    calls = []
+
+    def _fake(method, params, op_class):
+        calls.append((method, dict(params), op_class))
+        return result
+
+    monkeypatch.setattr(module, "_route", _fake)
+    return calls
+
+
 # ----------------------------------------------------------------------
-# 工具层 HTTP 分支单测（mock HttpDaemonRpcClient + get_db）
+# 工具层薄壳路由单测（对齐 T03 收敛后的 `_route` 契约）
 # ----------------------------------------------------------------------
 
 class TestWriteToolsHttpBranches:
-    """tools_workspace.py 三写工具 HTTP 分支单测。
+    """tools_workspace.py 三写工具薄壳路由单测（陈旧期望已重写）。
 
-    - register_workspace：SQLite 真相源先行（db.register_workspace 幂等返回
-      ws_id），再 client.workspace_register(root_path)；返回 ws_id 语义不变
-    - set_active_workspace：db.set_active_workspace 成功后再
-      client.workspace_activate(row.root_path)；workspace 不存在 → False
-    - delete_workspace：先 _find_workspace_root 解析 root_path，再 SQLite 硬删，
-      再 client.workspace_remove(root_path)；不存在 → False
-    - fail-closed：daemon 不可用（DaemonUnavailableError）→ 传播，不静默
-      回退纯 SQL；legacy（非 HTTP）模式纯 SQL 不触碰 daemon
+    stale 依据：T03 收敛后三写工具已改为一行式
+    `_route(<rpc method>, {...}, 'PROTECTED_MUTATION')`
+    （server/tools/tools_workspace.py:107 register_workspace、:121
+    set_active_workspace、:138 delete_workspace）。HTTP/local 分流、SQLite 真相源
+    先行写入、daemon 便捷方法同步（client.workspace_register / workspace_activate
+    / workspace_remove）、fail-closed 传播全部下沉到
+    server/daemon_client.py::route_rpc（L3880-3994）。因此旧断言 mock 的
+    tools_workspace.get_db / HttpDaemonRpcClient.get_instance /
+    is_http_transport_enabled 已无调用点（恒为 Called 0 times，或未 patch 时直连
+    真实 daemon 抛 path_not_found / invalid_params）；现改为断言薄壳透传的路由契约。
     """
-
-    @pytest.fixture
-    def mock_http_mode(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: True,
-        )
-
-    @pytest.fixture
-    def mock_legacy_mode(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
 
     def _register_tools(self):
         from unittest.mock import MagicMock
@@ -254,308 +276,70 @@ class TestWriteToolsHttpBranches:
         tools_workspace.register(mcp)
         return registrations
 
-    # -- register_workspace ------------------------------------------------
+    # (tool_name, 调用 kwargs, rpc_method, 期望 params)
+    WRITE_ROUTE_CASES = [
+        ("register_workspace",
+         {"name": "ws1", "root_path": r"C:\ws1", "description": "desc"},
+         "workspace.register",
+         {"name": "ws1", "client_view_root": r"C:\ws1", "description": "desc"}),
+        ("register_workspace",
+         {"name": "ws1", "root_path": r"C:\ws1"},
+         "workspace.register",
+         {"name": "ws1", "client_view_root": r"C:\ws1", "description": ""}),
+        ("set_active_workspace",
+         {"workspace_id_or_name": "3"},
+         "workspace.activate",
+         {"workspace_id_or_name": "3"}),
+        ("set_active_workspace",
+         {"workspace_id_or_name": "ws4"},
+         "workspace.activate",
+         {"workspace_id_or_name": "ws4"}),
+        ("delete_workspace",
+         {"workspace_id_or_name": "9"},
+         "workspace.remove",
+         {"workspace_id_or_name": "9"}),
+        ("delete_workspace",
+         {"workspace_id_or_name": "ws10"},
+         "workspace.remove",
+         {"workspace_id_or_name": "ws10"}),
+    ]
 
-    def test_register_workspace_http_sqlite_then_daemon_sync(
-        self, mock_http_mode, monkeypatch
+    @pytest.mark.parametrize(
+        "tool_name, kwargs, rpc_method, expect_params",
+        WRITE_ROUTE_CASES,
+        ids=[f"{c[0]}:{c[2]}" for c in WRITE_ROUTE_CASES],
+    )
+    def test_write_tool_routes_protected_mutation_rpc(
+        self, monkeypatch, tool_name, kwargs, rpc_method, expect_params,
     ):
-        from unittest.mock import MagicMock, patch
+        """三写工具经 `_route(..., 'PROTECTED_MUTATION')` 下发，参数逐字透传、
+        原样回包，且不触碰本地 db（get_db 已非工具层调用点）。"""
+        from unittest.mock import patch
         from callwarden.server.tools import tools_workspace
 
-        mock_db = MagicMock()
-        mock_db.register_workspace.return_value = 42
-        client = MagicMock()
-        client.workspace_register.return_value = {
-            "workspace_id": 7,
-            "workspace_instance_id": "inst-r",
-            "client_view_root": r"C:\ws1",
-            "status": "active",
-        }
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["register_workspace"]("ws1", r"C:\ws1", "desc")
+        expected = {"ok": True, "value": 1}
+        calls = _route_recorder(monkeypatch, tools_workspace, expected)
+        tools = self._register_tools()
 
-        # SQLite 真相源先行
-        mock_db.register_workspace.assert_called_once_with("ws1", r"C:\ws1", "desc")
-        # daemon 同步随后
-        client.workspace_register.assert_called_once_with(r"C:\ws1")
-        # 返回语义不变（int ws_id）
-        assert result == 42
+        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
+            out = tools[tool_name](**kwargs)
+            mock_db.assert_not_called()
 
-    def test_register_workspace_http_daemon_unavailable_raises(
-        self, mock_http_mode, monkeypatch
-    ):
-        """fail-closed：daemon 不可用 → DaemonUnavailableError 传播，禁止
-        静默回退纯 SQL（否则读面 workspace.list 看不到新 workspace）。"""
-        from unittest.mock import MagicMock, patch
+        assert out == expected
+        assert calls == [(rpc_method, expect_params, "PROTECTED_MUTATION")]
+
+    def test_write_tool_route_error_propagates(self, monkeypatch):
+        """fail-closed：route_rpc 抛 DaemonUnavailableError → 薄壳原样传播
+        （不静默回退纯 SQL）。"""
         from callwarden.server.tools import tools_workspace
 
-        mock_db = MagicMock()
-        mock_db.register_workspace.return_value = 42
-        client = MagicMock()
-        client.workspace_register.side_effect = DaemonUnavailableError("daemon down")
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            with pytest.raises(DaemonUnavailableError):
-                tools["register_workspace"]("ws1", r"C:\ws1")
+        def _boom(method, params, op_class):
+            raise DaemonUnavailableError("daemon down")
 
-    def test_register_workspace_legacy_pure_sql(self, mock_legacy_mode, monkeypatch):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.register_workspace.return_value = 42
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["register_workspace"]("ws1", r"C:\ws1")
-
-        mock_db.register_workspace.assert_called_once_with("ws1", r"C:\ws1", "")
-        client.workspace_register.assert_not_called()
-        assert result == 42
-
-    # -- set_active_workspace ----------------------------------------------
-
-    def test_set_active_workspace_http_sqlite_then_daemon_activate(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.set_active_workspace.return_value = True
-        mock_db.get_active_workspace.return_value = {
-            "id": 3,
-            "name": "ws3",
-            "root_path": r"C:\ws3",
-            "is_active": 1,
-        }
-        client = MagicMock()
-        client.workspace_activate.return_value = {
-            "workspace_id": 3,
-            "workspace_instance_id": "inst-a",
-            "status": "active",
-        }
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["set_active_workspace"]("3")
-
-        assert result is True
-        mock_db.set_active_workspace.assert_called_once_with(3)
-        # daemon 同步注入 SQLite 真相源行的 root_path
-        client.workspace_activate.assert_called_once_with(r"C:\ws3")
-
-    def test_set_active_workspace_http_by_name(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.set_active_workspace.return_value = True
-        mock_db.get_active_workspace.return_value = {
-            "id": 4,
-            "name": "ws4",
-            "root_path": r"C:\ws4",
-        }
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["set_active_workspace"]("ws4")
-
-        assert result is True
-        mock_db.set_active_workspace.assert_called_once_with("ws4")
-        client.workspace_activate.assert_called_once_with(r"C:\ws4")
-
-    def test_set_active_workspace_http_not_found_no_daemon(
-        self, mock_http_mode, monkeypatch
-    ):
-        """越界参数：workspace 不存在 → False，不调 daemon。"""
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.set_active_workspace.return_value = False
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["set_active_workspace"]("nope")
-
-        assert result is False
-        client.workspace_activate.assert_not_called()
-
-    def test_set_active_workspace_http_daemon_unavailable_raises(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.set_active_workspace.return_value = True
-        mock_db.get_active_workspace.return_value = {
-            "id": 5,
-            "name": "ws5",
-            "root_path": r"C:\ws5",
-        }
-        client = MagicMock()
-        client.workspace_activate.side_effect = DaemonUnavailableError("daemon down")
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            with pytest.raises(DaemonUnavailableError):
-                tools["set_active_workspace"]("5")
-
-    def test_set_active_workspace_legacy_pure_sql(self, mock_legacy_mode, monkeypatch):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.set_active_workspace.return_value = True
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["set_active_workspace"]("7")
-
-        assert result is True
-        mock_db.set_active_workspace.assert_called_once_with(7)
-        client.workspace_activate.assert_not_called()
-
-    # -- delete_workspace ----------------------------------------------------
-
-    def test_delete_workspace_http_resolves_root_then_sql_then_daemon(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.list_workspaces.return_value = [
-            {"id": 9, "name": "ws9", "root_path": r"C:\ws9"},
-        ]
-        mock_db.delete_workspace.return_value = True
-        client = MagicMock()
-        client.workspace_remove.return_value = {
-            "workspace_id": 9,
-            "workspace_instance_id": "inst-d",
-            "status": "archived",
-        }
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["delete_workspace"]("9")
-
-        assert result is True
-        # 先解析 root_path（SQLite 删除前），再 SQLite 硬删（真相源），
-        # 再 daemon workspace.remove 归档同步
-        mock_db.delete_workspace.assert_called_once_with(9)
-        client.workspace_remove.assert_called_once_with(r"C:\ws9")
-
-    def test_delete_workspace_http_by_name(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.list_workspaces.return_value = [
-            {"id": 10, "name": "ws10", "root_path": r"C:\ws10"},
-        ]
-        mock_db.delete_workspace.return_value = True
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["delete_workspace"]("ws10")
-
-        assert result is True
-        mock_db.delete_workspace.assert_called_once_with("ws10")
-        client.workspace_remove.assert_called_once_with(r"C:\ws10")
-
-    def test_delete_workspace_http_not_found_no_daemon(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.list_workspaces.return_value = []
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["delete_workspace"]("missing")
-
-        assert result is False
-        mock_db.delete_workspace.assert_not_called()
-        client.workspace_remove.assert_not_called()
-
-    def test_delete_workspace_http_daemon_unavailable_raises(
-        self, mock_http_mode, monkeypatch
-    ):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.list_workspaces.return_value = [
-            {"id": 11, "name": "ws11", "root_path": r"C:\ws11"},
-        ]
-        mock_db.delete_workspace.return_value = True
-        client = MagicMock()
-        client.workspace_remove.side_effect = DaemonUnavailableError("daemon down")
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            with pytest.raises(DaemonUnavailableError):
-                tools["delete_workspace"]("11")
-
-    def test_delete_workspace_legacy_pure_sql(self, mock_legacy_mode, monkeypatch):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-
-        mock_db = MagicMock()
-        mock_db.delete_workspace.return_value = True
-        client = MagicMock()
-        with patch.object(tools_workspace, "get_db", return_value=mock_db), patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ):
-            tools = self._register_tools()
-            result = tools["delete_workspace"]("12")
-
-        assert result is True
-        mock_db.delete_workspace.assert_called_once_with(12)
-        client.workspace_remove.assert_not_called()
+        monkeypatch.setattr(tools_workspace, "_route", _boom)
+        tools = self._register_tools()
+        with pytest.raises(DaemonUnavailableError):
+            tools["register_workspace"]("ws1", r"C:\ws1")
 
 
 # ----------------------------------------------------------------------
@@ -647,7 +431,7 @@ class TestRealDaemonWriteRoundTrip:
 
     register→activate→remove 三态：register 幂等拿 instance_id；
     workspace.status 命中 active；workspace.remove 归档后 workspace.status
-    → workspace_not_found（读面不可见，即"删除"对调用方生效）；越权参数
+    经统一权威返回 status="archived"（读面权威仍在，归档态可解析）；越权参数
     拒绝（不存在 instance_id → workspace_not_found）。
     """
 
@@ -683,7 +467,7 @@ class TestRealDaemonWriteRoundTrip:
     @requires_binaries
     def test_register_activate_remove_roundtrip(self, real_daemon_client):
         """a) register 幂等拿 instance_id；b) activate 后 status=active；
-        c) remove 后 status → workspace_not_found（读面不可见）。"""
+        c) remove 后 registry 权威 status=archived（归档，读面权威仍可解析）。"""
         root = tempfile.mkdtemp(prefix="cw_w12_ws_")
         try:
             # 注册（幂等）→ 权威 instance_id
@@ -703,13 +487,17 @@ class TestRealDaemonWriteRoundTrip:
             assert rem["workspace_instance_id"] == instance_id
             assert rem["status"] == "archived"
 
-            # 读面不可见：workspace.status → workspace_not_found（owned ACL
-            # 排除 archived 行，对调用方呈现"已删除"）
-            with pytest.raises(DaemonRemoteError) as exc:
-                real_daemon_client.call(
-                    "workspace.status", {"workspace_instance_id": instance_id}
-                )
-            assert exc.value.code == "workspace_not_found"
+            # 归档态权威：workspace.status 经统一权威解析
+            # （rust_ext/src/daemon/snapshot_state.rs:478-527 →
+            # task_collab.rs:1756-1772 → workspace_reconciliation.rs:211+），
+            # registry get_workspace_status（workspace.rs:578-595）不过滤
+            # archived，故返回 status="archived" 而非抛错（旧断言
+            # "读面不可见 → workspace_not_found" 陈旧）。
+            status = real_daemon_client.call(
+                "workspace.status", {"workspace_instance_id": instance_id}
+            )
+            assert status["registry_instance_id"] == instance_id
+            assert status["status"] == "archived"
         finally:
             import shutil
             shutil.rmtree(root, ignore_errors=True)

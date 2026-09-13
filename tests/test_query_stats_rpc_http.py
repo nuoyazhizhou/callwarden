@@ -15,10 +15,10 @@
    异常原样传播，不回退本地 SQL。
 ⑤ 跨 workspace 隔离：不同 db_path → 不同 workspace_instance_id 注入，
    同一 db_path 幂等复用。
-⑥ Python fallback 边界：HTTP 模式（默认）三工具走 client 便捷方法且
-   client 失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入 route_worker_call
-   本地 db 回退。
+⑥ 工具层 `_route` 契约：三工具已退化为一行式 `_route('<rpc method>', {...},
+   'READ_ONLY')`，HTTP/local 分流整体下沉 `route_rpc`；旧「HTTP 模式走 client
+   便捷方法 / legacy 走 route_worker_call 本地 db 回退」的客户端分支已被删除，
+   失败一律 fail-closed 传播（不回落本地 get_db）。
 """
 
 from unittest.mock import MagicMock, patch
@@ -237,65 +237,87 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。"""
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 client 便捷方法 / route_worker_call。
 
-    def test_http_mode_fail_closed_no_db_fallback(self, monkeypatch):
-        """HTTP 模式（默认）三工具走 client；client 抛错时 fail-closed 传播，
-        不调用 get_db（无 SQL 回退）。"""
-        client = MagicMock()
-        client.get_semgrep_stats.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_daemon_client",
-            lambda: client,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_db_path_for_daemon",
-            lambda: DB_A,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled",
-            lambda: True,
-        )
-        tools = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_get_db:
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：
+    `server/tools/tools_query.py:56` 为
+    `from ..daemon_client import route_rpc as _route`；本文件涉及的 4 个工具一律
+    退化为一行式 `_route(...)`——get_stats(:63)/get_module_call_stats(:248)/
+    get_semgrep_stats(:315)/get_uncommented_symbols(:412) 均为
+    `return _route('<rpc method>', {...}, 'READ_ONLY')`。
+    旧用例 patch `tools_query._get_daemon_client` / `_get_db_path_for_daemon` /
+    `is_http_transport_enabled` 并断言客户端便捷方法被调用——这些模块属性虽仍在
+    （故 monkeypatch 不报错）但已无调用点，于是断言恒为 `Called 0 times`；且
+    HTTP/legacy 分支已下沉到 `route_rpc`，不再由工具层判断。
+
+    因此工具层只需锁定「下发哪个 RPC、参数是否逐字透传（含默认值）、op_class
+    是否为 READ_ONLY、失败是否 fail-closed 且不回落本地 get_db」。
+    """
+
+    ROUTE_CASES = [
+        ("stats_default", "get_stats", "query.stats", {}, {}),
+        ("uncommented_default", "get_uncommented_symbols",
+         "query.uncommented_symbols", {},
+         {"kind": "fn", "module_filter": "", "limit": 100}),
+        ("uncommented_explicit", "get_uncommented_symbols",
+         "query.uncommented_symbols",
+         {"kind": "struct", "module_filter": "core::", "limit": 5},
+         {"kind": "struct", "module_filter": "core::", "limit": 5}),
+        ("module_call_default", "get_module_call_stats",
+         "query.module_call_stats", {}, {"limit": 30}),
+        ("module_call_explicit", "get_module_call_stats",
+         "query.module_call_stats", {"limit": 10}, {"limit": 10}),
+        ("semgrep_default", "get_semgrep_stats", "query.semgrep_stats", {}, {}),
+    ]
+
+    @pytest.mark.parametrize(
+        "case_id,tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_query_stats_tools_route_read_only_rpc(
+        self, monkeypatch, case_id, tool_name, rpc_method, call_kwargs,
+        expect_params,
+    ):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_query, "_route", fake_route)
+        q = _register_tools(tools_query)
+        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+            out = q[tool_name](**call_kwargs)
+            mock_db.assert_not_called()
+        assert out == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
+
+    @pytest.mark.parametrize(
+        "case_id,tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_query_stats_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, case_id, tool_name, rpc_method, call_kwargs,
+        expect_params,
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(tools_query, "_route", fake_route)
+        q = _register_tools(tools_query)
+        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
             with pytest.raises(DaemonRemoteError):
-                tools["get_semgrep_stats"]()
-            mock_get_db.assert_not_called()
-        client.get_semgrep_stats.assert_called_once_with(db_path=DB_A)
-
-    def test_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        """is_http_transport_enabled()=False + local 模式 → 三工具走
-        route_worker_call 本地 db 回退（get_db 被调用）。"""
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled",
-            lambda: False,
-        )
-        # route_worker_call 内部引用 daemon_client 模块内的函数
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode",
-            lambda: "local",
-        )
-        tools = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_db.get_module_call_stats.return_value = [
-                {"caller_module": "a", "callee_module": "b", "call_count": 1}
-            ]
-            mock_get_db.return_value = mock_db
-
-            result = tools["get_module_call_stats"]()
-
-            mock_db.get_module_call_stats.assert_called_once_with(limit=30)
-            assert result == [
-                {"caller_module": "a", "callee_module": "b", "call_count": 1}
-            ]
+                q[tool_name](**call_kwargs)
+            mock_db.assert_not_called()

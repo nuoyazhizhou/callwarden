@@ -39,11 +39,11 @@ _PY_EXE = r"C:\Python314\python.exe"
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CW_PY = os.path.join(_REPO_ROOT, "cw.py")
-# P0-G 部署期：nested target（17:46 构建，已验证含 G1 修复 + INT-001 + role_contracts）。
-# 沙箱环境下无法在 stage-refresh 目录重建，故指向已验证产物。
-_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "rust_ext", "target", "stage-refresh", "release", "cw-daemon.exe")
+# 优先使用最新 release 构建（2026-09-13 08:19，含最新 workspace 注册 / identity / snapshot 修复）；
+# stage-refresh 部署产物（2026-08-26）已过时，仅作为不存在时的回退。
+_DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
 if not os.path.exists(_DAEMON_BIN):
-    _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
+    _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "rust_ext", "target", "stage-refresh", "release", "cw-daemon.exe")
 
 _TASK_ID_RE = re.compile(r"T-[0-9A-Za-z-]+")
 _STEP_ID_RE = re.compile(r"S-[0-9A-Za-z-]+")
@@ -116,8 +116,15 @@ def recover_env():
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f)
     log = open(os.path.join(tmp, "daemon.log"), "w", encoding="utf-8")
+    # workspace.list / task_collab store 按 env（CW_DAEMON_REGISTRY_DB /
+    # CW_DAEMON_TASK_DB）而非 config 解析权威库路径：必须与 config 指向同一隔离
+    # 文件，否则 register 写 tmp/registry.db 而 list 读默认 registry → matches=0。
+    _daemon_env = dict(os.environ)
+    _daemon_env["CW_DAEMON_REGISTRY_DB"] = os.path.join(tmp, "registry.db")
+    _daemon_env["CW_DAEMON_TASK_DB"] = os.path.join(tmp, "callwarden.db")
     proc = subprocess.Popen(
         [_DAEMON_BIN, "--config", config_path],
+        env=_daemon_env,
         stdout=log, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
     )
 
@@ -139,15 +146,29 @@ def recover_env():
         pytest.fail("隔离 daemon 未在超时内响应")
 
     task_db = os.path.join(tmp, "callwarden.db")
-    conn = sqlite3.connect(task_db)
     try:
-        conn.execute(
-            "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'claim-recover-test', '.', ?1)",
-            (time.time(),),
+        # CLI task.create 经 resolve_workspace_pair_from_daemon 要求 registry 侧存在
+        # active 且 root=仓库根 的 canonical workspace（workspace.list 命中），否则
+        # matches=0 fail-closed。root 必须与 callwarden.config.PROJECT_ROOT 归一化一致。
+        reg = client.call("workspace.register", {"client_view_root": _REPO_ROOT})
+        instance_id = (reg or {}).get("workspace_instance_id") or ""
+        if not instance_id:
+            raise RuntimeError(f"workspace.register 未返回 workspace_instance_id: {reg!r}")
+        # workspace.status 的 task-DB 侧只读 workspace_authority_captures：仅 seed
+        # workspaces 表会导致 task_db_workspace_id=null → resolver matches=0。
+        # seed_cli_task_authority 补齐 workspaces + c14n rule + rev=1 capture。
+        from tests._w3_harness import seed_cli_task_authority
+
+        seed_cli_task_authority(
+            task_db, ws_id=1, name="claim-recover-test",
+            root_path=_REPO_ROOT, instance_id=instance_id,
         )
-        conn.commit()
-    finally:
-        conn.close()
+    except Exception:
+        # setup 失败（yield 前）必须回收 daemon，否则残留进程占用默认管道，
+        # 令后续所有 CLI 家族用例按设计 skip。
+        if proc.poll() is None:
+            proc.kill()
+        raise
 
     yield client, tmp, task_db, proc, pipe
 
@@ -241,9 +262,23 @@ def _create_via_cli(tmpdir: str, pipe: str, title: str) -> str:
     return match.group(0)
 
 
-def _claim_via_cli(tmpdir: str, pipe: str, task_id: str, session: str) -> str:
-    proc = _run_cw_cli(["task", "next", task_id],
-                       _cli_env(pipe, session=session), tmpdir)
+def _claim_via_cli(tmpdir: str, pipe: str, task_id: str, session: str,
+                   agent_id: str, instance_id: str = "", role: str = "executor",
+                   model_id: str = "model-x") -> str:
+    """CLI task next（claim）→ 解析 step_id。
+
+    携带结构化 identity：A3 冻结 Role Contract 后 claim 必须携带 identity
+    （否则 E_IDENTITY_REQUIRED），且 agent 须已注册 active（_register_agent）；
+    instance 非空时需透传 --agent-instance-id 保持一致（E_IDENTITY_INSTANCE_MISMATCH）。
+    """
+    args = ["task", "next", task_id,
+            "--agent-id", agent_id,
+            "--session-id", session,
+            "--model-id", model_id,
+            "--role", role]
+    if instance_id:
+        args += ["--agent-instance-id", instance_id]
+    proc = _run_cw_cli(args, _cli_env(pipe, session=session), tmpdir)
     _assert_ok(proc, f"task next {task_id} session={session}")
     match = _STEP_ID_RE.search(_all_out(proc))
     assert match, f"task next 输出未解析到 step_id:\n{_all_out(proc)}"
@@ -328,11 +363,13 @@ class TestCliClaimRecover:
         client, tmp, task_db, _proc, pipe = recover_env
         # 注册 old owner / reviewer / adjudicator（独立 agent/instance/session）
         _register_agent(client, "old-owner", "old-inst", "old-sess", "implementer")
-        _register_agent(client, "rev-1", "rev-inst-1", "rev-sess-1", "reviewer")
+        # reviewer 注册身份须与 _acquire_lease_via_cli 派生约定一致：
+        # lease holder = agent-{tag} / session-{tag}（daemon 校验 reviewer 已注册 active 且 session 一致）
+        _register_agent(client, "agent-rev-1", "", "session-rev-1", "reviewer")
         _register_agent(client, "adj-1", "adj-inst-1", "adj-sess-1", "adjudicator")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-OK")
-        _claim_via_cli(tmp, pipe, task_id, "old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "old-sess", "old-owner", "old-inst", "implementer")
         assert client.task_status(task_id)["status"] == "in_progress"
 
         # 独立 Reviewer acquire reviewer lease
@@ -358,18 +395,18 @@ class TestCliClaimRecover:
         assert len(released) == 1, f"task_events 未看到 claim_released:\n{json.dumps(events, ensure_ascii=False)[:800]}"
         # 新 Executor 可显式 claim（recovery 不隐式替新角色写 claim）
         _register_agent(client, "new-exec", "new-inst", "new-sess", "implementer")
-        step = _claim_via_cli(tmp, pipe, task_id, "new-sess")
+        step = _claim_via_cli(tmp, pipe, task_id, "new-sess", "new-exec", "new-inst", "implementer")
         assert step, "新 Executor 应能 claim 已释放的任务"
 
     def test_fresh_owner_rejected(self, recover_env):
         """old owner 仍 active/fresh → E_CLAIM_OWNER_ACTIVE，零 mutation。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "fresh-old", "fresh-old-inst", "fresh-old-sess", "implementer")
-        _register_agent(client, "rev-fresh", "rev-fresh-inst", "rev-fresh-sess", "reviewer")
+        _register_agent(client, "agent-rev-fresh", "", "session-rev-fresh", "reviewer")
         _register_agent(client, "adj-fresh", "adj-fresh-inst", "adj-fresh-sess", "adjudicator")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-FRESH")
-        _claim_via_cli(tmp, pipe, task_id, "fresh-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "fresh-old-sess", "fresh-old", "fresh-old-inst", "implementer")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "rev-fresh", role="reviewer")
         # 不标记 stale → 仍 active
@@ -384,10 +421,10 @@ class TestCliClaimRecover:
         """非 adjudicator role → E_RECOVERY_ROLE_REQUIRED，零 mutation。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "na-old", "na-old-inst", "na-old-sess", "implementer")
-        _register_agent(client, "rev-na", "rev-na-inst", "rev-na-sess", "reviewer")
+        _register_agent(client, "agent-rev-na", "", "session-rev-na", "reviewer")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-ROLE")
-        _claim_via_cli(tmp, pipe, task_id, "na-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "na-old-sess", "na-old", "na-old-inst", "implementer")
         _mark_owner_stale(task_db, "na-old-sess")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "rev-na", role="reviewer")
@@ -405,7 +442,7 @@ class TestCliClaimRecover:
         _register_agent(client, "adj-ml", "adj-ml-inst", "adj-ml-sess", "adjudicator")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-NOLEASE")
-        _claim_via_cli(tmp, pipe, task_id, "ml-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "ml-old-sess", "ml-old", "ml-old-inst", "implementer")
         _mark_owner_stale(task_db, "ml-old-sess")
 
         # 完全不提供 lease 凭证 → CLI fail-closed E_LEASE_REQUIRED
@@ -420,11 +457,11 @@ class TestCliClaimRecover:
         """token 错 → E_LEASE_TOKEN_MISMATCH（daemon 层），零 mutation。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "wt-old", "wt-old-inst", "wt-old-sess", "implementer")
-        _register_agent(client, "rev-wt", "rev-wt-inst", "rev-wt-sess", "reviewer")
+        _register_agent(client, "agent-rev-wt", "", "session-rev-wt", "reviewer")
         _register_agent(client, "adj-wt", "adj-wt-inst", "adj-wt-sess", "adjudicator")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-WTOKEN")
-        _claim_via_cli(tmp, pipe, task_id, "wt-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "wt-old-sess", "wt-old", "wt-old-inst", "implementer")
         _mark_owner_stale(task_db, "wt-old-sess")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "rev-wt", role="reviewer")
@@ -440,11 +477,11 @@ class TestCliClaimRecover:
         """fencing stale → E_LEASE_FENCING_STALE（daemon 层），零 mutation。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "sf-old", "sf-old-inst", "sf-old-sess", "implementer")
-        _register_agent(client, "rev-sf", "rev-sf-inst", "rev-sf-sess", "reviewer")
+        _register_agent(client, "agent-rev-sf", "", "session-rev-sf", "reviewer")
         _register_agent(client, "adj-sf", "adj-sf-inst", "adj-sf-sess", "adjudicator")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-SFENCING")
-        _claim_via_cli(tmp, pipe, task_id, "sf-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "sf-old-sess", "sf-old", "sf-old-inst", "implementer")
         _mark_owner_stale(task_db, "sf-old-sess")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "rev-sf", role="reviewer")
@@ -460,19 +497,21 @@ class TestCliClaimRecover:
         """Reviewer 与 Adjudicator 同 agent → E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "sa-old", "sa-old-inst", "sa-old-sess", "implementer")
-        # 同一 agent 同时注册 reviewer 与 adjudicator 身份（不同 session）
-        _register_agent(client, "sa-shared", "sa-shared-inst", "sa-rev-sess", "reviewer")
-        _register_agent(client, "sa-shared", "sa-shared-inst", "sa-adj-sess", "adjudicator")
+        # agent_registrations 以 agent_id 为唯一键：同一 agent 只能注册一种角色。
+        # 故仅注册 reviewer（lease holder=agent-sa-shared/session-sa-shared），
+        # adjudicator 身份不注册，仅通过 CLI 透传同 agent_id、不同 session →
+        # validate_ 链在 SAME_AGENT 检查（早于 adjudicator 注册检查）先行拒绝。
+        _register_agent(client, "agent-sa-shared", "", "session-sa-shared", "reviewer")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-SAMEAGENT")
-        _claim_via_cli(tmp, pipe, task_id, "sa-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "sa-old-sess", "sa-old", "sa-old-inst", "implementer")
         _mark_owner_stale(task_db, "sa-old-sess")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "sa-shared", role="reviewer")
         # adjudicator 用同一 agent_id（不同 session）→ 跨角色校验拒绝
         proc = _claim_recover_cli(
             tmp, pipe, task_id, "same agent misuse",
-            _identity_flags("sa-shared", "sa-shared-inst", "sa-adj-sess", "adjudicator"),
+            _identity_flags("agent-sa-shared", "", "sa-adj-sess", "adjudicator"),
             _lease_flags(rev_holder))
         _assert_cli_rejected(proc, "同 agent 必须拒绝",
                              "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_AGENT")
@@ -482,18 +521,19 @@ class TestCliClaimRecover:
         """Reviewer 与 Adjudicator 同 session → E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "ss-old", "ss-old-inst", "ss-old-sess", "implementer")
-        # reviewer 与 adjudicator 不同 agent 但同 session
-        _register_agent(client, "ss-rev", "ss-rev-inst", "ss-shared-sess", "reviewer")
-        _register_agent(client, "ss-adj", "ss-adj-inst", "ss-shared-sess", "adjudicator")
+        # reviewer 与 adjudicator 不同 agent 但同 session：
+        # reviewer 注册身份须与 lease 派生一致（agent-ss-rev / session-ss-rev）；
+        # adjudicator 透传同 session → SAME_SESSION 拒绝
+        _register_agent(client, "agent-ss-rev", "", "session-ss-rev", "reviewer")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-SAMESESS")
-        _claim_via_cli(tmp, pipe, task_id, "ss-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "ss-old-sess", "ss-old", "ss-old-inst", "implementer")
         _mark_owner_stale(task_db, "ss-old-sess")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "ss-rev", role="reviewer")
         proc = _claim_recover_cli(
             tmp, pipe, task_id, "same session misuse",
-            _identity_flags("ss-adj", "ss-adj-inst", "ss-shared-sess", "adjudicator"),
+            _identity_flags("ss-adj", "ss-adj-inst", "session-ss-rev", "adjudicator"),
             _lease_flags(rev_holder))
         _assert_cli_rejected(proc, "同 session 必须拒绝",
                              "E_GOVERNANCE_REVIEWER_ADJUDICATOR_SAME_SESSION")
@@ -503,11 +543,11 @@ class TestCliClaimRecover:
         """同 request_id 重试 → dedup 返回原结果，不产生第二个 claim_released。"""
         client, tmp, task_db, _proc, pipe = recover_env
         _register_agent(client, "dd-old", "dd-old-inst", "dd-old-sess", "implementer")
-        _register_agent(client, "rev-dd", "rev-dd-inst", "rev-dd-sess", "reviewer")
+        _register_agent(client, "agent-rev-dd", "", "session-rev-dd", "reviewer")
         _register_agent(client, "adj-dd", "adj-dd-inst", "adj-dd-sess", "adjudicator")
 
         task_id = _create_via_cli(tmp, pipe, "T-RECOVER-DEDUP")
-        _claim_via_cli(tmp, pipe, task_id, "dd-old-sess")
+        _claim_via_cli(tmp, pipe, task_id, "dd-old-sess", "dd-old", "dd-old-inst", "implementer")
         _mark_owner_stale(task_db, "dd-old-sess")
 
         rev_holder = _acquire_lease_via_cli(tmp, pipe, task_id, "rev-dd", role="reviewer")

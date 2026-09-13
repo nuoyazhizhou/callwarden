@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -32,6 +33,7 @@ if _PKG_PARENT not in sys.path:
 
 from callwarden.server import _mcp_common as _mcp_common_module
 from callwarden.server.mcp_server import HAS_FASTMCP, create_mcp_server, get_db
+from callwarden.server.tools import tools_query, tools_workspace
 
 
 pytestmark = pytest.mark.skipif(
@@ -260,37 +262,73 @@ def test_tool_names_are_unique():
     assert not duplicates, f"运行时发现重复工具名: {duplicates}"
 
 
-def test_get_stats_tool_returns_dict_on_empty_db(reset_mcp_db_singleton, tmp_path):
-    """实际调用 get_stats 工具，验证返回值是 dict。
+def test_get_stats_tool_returns_dict_on_empty_db(reset_mcp_db_singleton, tmp_path, monkeypatch):
+    """[A 类·stale] get_stats MCP 工具经模块级 `_route` 下发 READ_ONLY RPC。
 
-    覆盖 H9 checklist #2：工具 I/O 契约 — get_stats 声明返回 dict，
-    空数据库下应返回包含 keys 的 dict（count 为 0）。
+    stale 依据（生产侧 server/tools/tools_query.py）：
+    `tools_query.py:56` 为 `from ..daemon_client import route_rpc as _route`；
+    `get_stats`（tools_query.py:63）已退化为一行式
+    `return _route('query.stats', {}, 'READ_ONLY')`。
+    旧用例注释「get_stats 走 daemon client，daemon 未启动时回退 SQL」已过期：
+    `route_rpc`（server/daemon_client.py:3880）在 daemon 发现失败时 fail-closed
+    抛 `DaemonRemoteError(E_HTTP_MANIFEST_MISSING/E_HTTP_MANIFEST_STALE)`
+    （:1018-1025 / discover :2195），绝不回落本地 SQLite——实测
+    `mcp.server.fastmcp.exceptions.ToolError: ... E_HTTP_MANIFEST_MISSING`。
+
+    因此改为 mock 模块级 `_route` seam（同 test_query_stats_rpc_http.py
+    ::TestToolRouteContract 模板），锁定 RPC method/params/op_class 透传，
+    并断言不回落到本地 get_db。
     """
-    # 隔离 workspace_root 到临时目录，避免命中真实项目
+    seen = {}
+
+    def fake_route(method, params, op_class):
+        seen["method"] = method
+        seen["params"] = dict(params)
+        seen["op"] = op_class
+        return {"file_count": 0, "function_count": 0}
+
     mcp = create_mcp_server()
-    # 切换 MCP db 单例到临时 workspace
-    ws_root = str(tmp_path)
-    db = get_db(workspace=ws_root)
-    # 直接调用工具函数（绕过 daemon，因为 daemon 可能未启动）
-    stats = _call_tool_sync(mcp, "get_stats", {})
-    # get_stats 走 daemon client，daemon 未启动时回退 SQL，
-    # 返回结果应该是 dict（可能是空 dict 或包含统计字段）
+    monkeypatch.setattr(tools_query, "_route", fake_route)
+    with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+        stats = _call_tool_sync(mcp, "get_stats", {})
+        mock_db.assert_not_called()
+
     assert isinstance(stats, (dict, list)), (
         f"get_stats 返回值应为 dict 或 list，实际 {type(stats)}: {stats}"
     )
+    assert seen["method"] == "query.stats"
+    assert seen["op"] == "READ_ONLY"
+    assert seen["params"] == {}
 
 
-def test_list_workspaces_tool_returns_list(reset_mcp_db_singleton, tmp_path):
-    """实际调用 list_workspaces 工具，验证返回值包含 workspace 字段。
+def test_list_workspaces_tool_returns_list(reset_mcp_db_singleton, tmp_path, monkeypatch):
+    """[A 类·stale] list_workspaces MCP 工具经模块级 `_route` 下发 workspace.list。
 
-    覆盖 H9 checklist #2：list_workspaces 声明返回 list。
-    FastMCP 编码差异：单 workspace 返回 dict，多 workspace 返回 list[dict]，
-    本测试接受两种形式，验证包含 name/root_path 字段。
+    stale 依据（生产侧 server/tools/tools_workspace.py）：
+    `tools_workspace.py:29` 为 `from ..daemon_client import route_rpc as _route`；
+    `list_workspaces`（tools_workspace.py:89）已退化为一行式
+    `return _route('workspace.list', {}, 'READ_ONLY')`。旧用例假设工具会本地
+    `get_db()` 读 workspaces 表——该路径在 daemon authority 迁移后已不存在，
+    实际经 `route_rpc` → daemon discover，失败即
+    `ToolError: ... E_HTTP_MANIFEST_MISSING`（实测）。
+
+    改为 mock `_route` seam：断言 RPC method/params/op_class，并验证返回结果
+    仍携带 name/root_path 字段（工具对 daemon 行的最小兼容映射契约）。
     """
-    ws_root = str(tmp_path)
-    db = get_db(workspace=ws_root)
+    seen = {}
+
+    def fake_route(method, params, op_class):
+        seen["method"] = method
+        seen["params"] = dict(params)
+        seen["op"] = op_class
+        return [{"name": "ws-x", "root_path": "/tmp/ws-x"}]
+
     mcp = create_mcp_server()
-    result = _call_tool_sync(mcp, "list_workspaces", {})
+    monkeypatch.setattr(tools_workspace, "_route", fake_route)
+    with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
+        result = _call_tool_sync(mcp, "list_workspaces", {})
+        mock_db.assert_not_called()
+
     # FastMCP 编码差异：单 workspace 是 dict，多 workspace 是 list[dict]
     if isinstance(result, dict):
         ws_list = [result]
@@ -301,43 +339,64 @@ def test_list_workspaces_tool_returns_list(reset_mcp_db_singleton, tmp_path):
     assert ws_list, (
         f"list_workspaces 应返回包含 workspace 信息的 list 或 dict，实际 {type(result)}: {result}"
     )
-    # 每个 workspace 应有 name / root_path 字段
     for ws in ws_list:
         assert "name" in ws, f"workspace 应有 name 字段，实际: {ws}"
         assert "root_path" in ws, f"workspace 应有 root_path 字段，实际: {ws}"
+    assert seen["method"] == "workspace.list"
+    assert seen["op"] == "READ_ONLY"
+    assert seen["params"] == {}
 
 
-def test_register_and_list_workspace_roundtrip(reset_mcp_db_singleton, tmp_path):
-    """register_workspace → list_workspaces 往返契约。
+def test_register_and_list_workspace_roundtrip(reset_mcp_db_singleton, tmp_path, monkeypatch):
+    """[A 类·stale] register_workspace → list_workspaces 的 `_route` 转发契约。
 
-    覆盖 H9 checklist #2：工具调用链契约（write → read 一致性）。
+    stale 依据（生产侧 server/tools/tools_workspace.py）：
+    `register_workspace`（tools_workspace.py:107）已退化为一行式
+    `return _route('workspace.register', {"name": ..., "client_view_root": root_path,
+    "description": ...}, 'PROTECTED_MUTATION')`。旧用例注释描述的是本地
+    `db.register_workspace` SQL（`SELECT id WHERE name=? OR root_path=?` 幂等）——
+    该本地写路径在 daemon authority 迁移后已被 daemon RPC 取代，实际调用经
+    `route_rpc`（server/daemon_client.py:3880）fail-closed（实测
+    `ToolError: ... E_HTTP_MANIFEST_MISSING`）。
 
-    注意：register_workspace 的 SQL 是 `SELECT id WHERE name=? OR root_path=?`，
-    若 root_path 已存在则返回已存在的 id，不插入新记录。因此本测试用
-    不同的 root_path 注册新 workspace，确保实际插入新记录。
+    故改为 mock `_route` seam，用内存注册表回放 register→list，锁定：
+    register 的 RPC method/op_class 及 `root_path→client_view_root` 参数映射，
+    并验证 list 结果包含刚注册的 workspace。
     """
-    ws_root = str(tmp_path)
-    db = get_db(workspace=ws_root)
+    calls = []
+    registry = {}
+
+    def fake_route(method, params, op_class):
+        calls.append((method, dict(params), op_class))
+        if method == "workspace.register":
+            registry[params["name"]] = {
+                "name": params["name"],
+                "root_path": params["client_view_root"],
+            }
+            return 1
+        if method == "workspace.list":
+            return list(registry.values())
+        raise AssertionError(f"未预期的 RPC method: {method}")
+
     mcp = create_mcp_server()
+    monkeypatch.setattr(tools_workspace, "_route", fake_route)
+    with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
+        new_ws_root = str(tmp_path / "new_ws")
+        ws_id_raw = _call_tool_sync(
+            mcp, "register_workspace",
+            {"name": "test-h9-ws", "root_path": new_ws_root, "description": "H9 测试工作区"},
+        )
+        try:
+            ws_id = int(ws_id_raw)
+        except (TypeError, ValueError):
+            ws_id = 0
+        assert ws_id > 0, (
+            f"register_workspace 应返回正整数 ID，实际: {ws_id_raw!r}"
+        )
 
-    # 用不同的 root_path 注册新 workspace（避免与默认 active workspace 撞 root_path）
-    new_ws_root = str(tmp_path / "new_ws")
-    os.makedirs(new_ws_root, exist_ok=True)
-    ws_id_raw = _call_tool_sync(
-        mcp, "register_workspace",
-        {"name": "test-h9-ws", "root_path": new_ws_root, "description": "H9 测试工作区"},
-    )
-    # FastMCP 返回的可能是 int 或字符串数字
-    try:
-        ws_id = int(ws_id_raw)
-    except (TypeError, ValueError):
-        ws_id = 0
-    assert ws_id > 0, (
-        f"register_workspace 应返回正整数 ID，实际: {ws_id_raw!r}"
-    )
+        workspaces_raw = _call_tool_sync(mcp, "list_workspaces", {})
+        mock_db.assert_not_called()
 
-    # 列出 workspaces，应包含刚注册的
-    workspaces_raw = _call_tool_sync(mcp, "list_workspaces", {})
     # FastMCP 编码差异：单 workspace 是 dict，多 workspace 是 list[dict]
     if isinstance(workspaces_raw, dict):
         ws_list = [workspaces_raw]
@@ -350,118 +409,120 @@ def test_register_and_list_workspace_roundtrip(reset_mcp_db_singleton, tmp_path)
         f"list_workspaces 应包含刚注册的 'test-h9-ws'，实际: {names}"
     )
 
+    # register 的 RPC 转发契约：method/op_class 与 root_path→client_view_root 映射
+    reg_method, reg_params, reg_op = calls[0]
+    assert reg_method == "workspace.register"
+    assert reg_op == "PROTECTED_MUTATION"
+    assert reg_params == {
+        "name": "test-h9-ws",
+        "client_view_root": new_ws_root,
+        "description": "H9 测试工作区",
+    }
+    assert calls[1][0] == "workspace.list"
+
 
 # ============================================
-# 3. MCP 与 CLI 并发访问（WAL 模式下读写并发安全）
+# 3. MCP 与 CLI 并发访问（daemon authority 下的并发读安全）
 # ============================================
 
 
-def test_mcp_and_cli_concurrent_read_no_lock(tmp_path):
-    """同一 db_path 上 MCP 单例 + CLI 子进程并发读，验证无 SQLITE_BUSY。
+def _live_daemon_env(w3_live: dict) -> dict:
+    """[B 类] 构造指向 `w3_live` 隔离 daemon 的 CLI 子进程 env。
+
+    stale 依据（生产侧 cli/main.py）：CLI `--stats` 经
+    `RpcDBProxy.get_stats()`（cli/main.py:9149）→ `route_rpc('query.stats')`
+    （server/daemon_client.py:3880）转发 daemon，daemon 发现失败即 fail-closed，
+    不再本地直读 SQLite。实测子进程继承真实 HOME 时命中后台常驻 daemon 回收后
+    残留的 stale manifest → `E_HTTP_MANIFEST_STALE: manifest PID 43608 已不存活`，
+    rc=1（历史断言 `returncode in (0, 2)` 失败）。
+
+    修法：注入 w3_live 隔离 daemon 的显式 loopback endpoint
+    （`CW_DAEMON_HTTP_ENDPOINT`，合法独立发现路径），并把 USERPROFILE/HOME
+    重定向到隔离 userhome，使 authority manifest 落在隔离目录、避开真实 HOME
+    的 stale manifest（同 tests/test_integration_full_matrix.py:211-229 模板）。
+    """
+    env = os.environ.copy()
+    env["CW_DAEMON_HTTP_ENDPOINT"] = w3_live["endpoint"]
+    home = os.path.join(w3_live["data_root"], "userhome")
+    env["USERPROFILE"] = home
+    env["HOME"] = home
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                "http_proxy", "https_proxy", "all_proxy"):
+        env[key] = ""
+    return env
+
+
+def _w3_repo_root(w3_live: dict) -> str:
+    """w3_live 隔离栈注册的 workspace 根目录（conftest: data_root/repo）。"""
+    return os.path.join(w3_live["data_root"], "repo")
+
+
+def test_mcp_and_cli_concurrent_read_no_lock(w3_live):
+    """MCP 权威栈 + CLI 子进程并发读同一 daemon，验证无锁冲突。
 
     覆盖 H9 checklist #3：MCP 与 CLI 并发访问。
 
-    模拟场景：MCP Server 长连接持有 _db_instance（读已加载），
-    同时一个 CLI 子进程（cw --stats）查询同一个 db_path。
-    WAL 模式下多读者不阻塞，应全部成功。
+    [B 类·stale] 旧用例在本地 SQLite（WAL）上并发读同一 db_path。daemon
+    authority 迁移后 CLI/MCP 读面均经 daemon RPC（cli/main.py:9149 →
+    server/daemon_client.py:3880），本地 WAL 多读者语义不再适用，且子进程继承
+    真实 HOME 会命中 stale manifest（实测 `E_HTTP_MANIFEST_STALE`）而 rc=1。
+    现改为：MCP 侧经 w3_live live daemon 读 stats，CLI 侧子进程注入同一
+    isolated endpoint（`_live_daemon_env`），二者都须成功（无锁/无 fail-closed）。
     """
-    # 创建独立的临时 db（不与 conftest autouse 的 tmp_path 冲突）
-    db_path = str(tmp_path / "concurrent.db")
-    ws_root = str(tmp_path / "ws")
-    os.makedirs(ws_root, exist_ok=True)
+    # 1. MCP 侧：进程内经 daemon 权威栈读 stats（模拟 MCP 长连接持有读面）
+    mcp_stats = w3_live["client"].call(
+        "query.stats", {"workspace_instance_id": w3_live["inst"]},
+    )
+    assert isinstance(mcp_stats, dict), (
+        f"MCP 侧 query.stats 应返回 dict，实际 {type(mcp_stats)}: {mcp_stats}"
+    )
 
-    # 写入一个 Python 文件让 CLI 能解析
-    sample = os.path.join(ws_root, "calc.py")
-    with open(sample, "w", encoding="utf-8") as f:
-        f.write("def add(a, b):\n    return a + b\n")
-
-    # 1. 启动 MCP 单例（模拟 Server 长连接持有 db）
-    from callwarden.db.db import CodeGraphDB
-    mcp_db = CodeGraphDB(db_path=db_path, workspace_root=ws_root)
-    try:
-        ws_id = mcp_db.register_workspace("concurrent-test", ws_root, "")
-        mcp_db.set_active_workspace(ws_id)
-        mcp_db.build_full_graph()
-        # MCP 侧查询一次，确认连接活跃
-        stats = mcp_db.get_stats()
-        assert isinstance(stats, dict)
-    finally:
-        # 不立即关闭，保持模拟"MCP 长连接持有 db"的场景
-        pass
-
-    # 2. 并发：启动 CLI 子进程查询同一 db_path
-    env = os.environ.copy()
-    env["CALLWARDEN_DB_PATH"] = db_path  # 某些 CLI 路径支持环境变量覆盖
+    # 2. CLI 侧：子进程 `cw.py --stats` 查询同一隔离 daemon
     cli_result = subprocess.run(
         [sys.executable, os.path.join(_PKG_PARENT, "cw.py"), "--stats"],
-        cwd=ws_root,
+        cwd=_w3_repo_root(w3_live),
         capture_output=True,
         text=True,
-        env=env,
+        env=_live_daemon_env(w3_live),
         timeout=60,
     )
-    # CLI 退出码：0=成功，1=查询失败（包含 db 锁）
-    # 2=数据库锁定（AGENTS.md 规则 2 友好提示）
     cli_output = cli_result.stdout + cli_result.stderr
-    assert cli_result.returncode in (0, 2), (
-        f"CLI 应成功或仅因锁返回 2，实际退出码 {cli_result.returncode}，"
-        f"输出: {cli_output[-500:]}"
+    assert cli_result.returncode == 0, (
+        f"CLI --stats 应在 live daemon 上成功（无锁/fail-closed），实际退出码 "
+        f"{cli_result.returncode}，输出: {cli_output[-500:]}"
     )
-    # 若退出码是 2，输出应包含"数据库正忙"提示，证明是预期的锁等待而非硬故障
-    if cli_result.returncode == 2:
-        assert "数据库" in cli_output or "locked" in cli_output.lower(), (
-            f"退出码 2 应是 db 锁提示，实际输出: {cli_output[-300:]}"
-        )
-
-    # 3. 收尾
-    try:
-        mcp_db.close()
-    except Exception:
-        pass
 
 
-def test_concurrent_cli_reads_no_conflict(tmp_path):
-    """两个 CLI 子进程同时读同一个 db_path，验证 WAL 多读者不阻塞。
+def test_concurrent_cli_reads_no_conflict(w3_live):
+    """两个 CLI 子进程先后读同一 live daemon，验证无锁冲突。
 
     覆盖 H9 checklist #3 的另一面：纯 CLI 并发读（无 MCP）。
+
+    [B 类·stale] 同 `test_mcp_and_cli_concurrent_read_no_lock`：CLI 读面已由
+    daemon RPC 承担，旧断言假设的本地 SQLite 多读者无锁语义过期；子进程在真实
+    HOME 下实测 `E_HTTP_MANIFEST_STALE`（PID 43608）rc=1。改为两次子进程均注入
+    w3_live isolated endpoint，断言都成功（rc=0）。
     """
-    db_path = str(tmp_path / "twocli.db")
-    ws_root = str(tmp_path / "ws")
-    os.makedirs(ws_root, exist_ok=True)
-
-    # 写入文件并构建一次
-    with open(os.path.join(ws_root, "calc.py"), "w", encoding="utf-8") as f:
-        f.write("def add(a, b):\n    return a + b\n")
-
-    from callwarden.db.db import CodeGraphDB
-    setup_db = CodeGraphDB(db_path=db_path, workspace_root=ws_root)
-    try:
-        ws_id = setup_db.register_workspace("two-cli", ws_root, "")
-        setup_db.set_active_workspace(ws_id)
-        setup_db.build_full_graph()
-    finally:
-        setup_db.close()
-
-    # 并发启动两个 CLI --stats
-    env = os.environ.copy()
-    env["CALLWARDEN_DB_PATH"] = db_path
+    env = _live_daemon_env(w3_live)
+    repo = _w3_repo_root(w3_live)
 
     def _run_cli():
         return subprocess.run(
             [sys.executable, os.path.join(_PKG_PARENT, "cw.py"), "--stats"],
-            cwd=ws_root,
+            cwd=repo,
             capture_output=True,
             text=True,
             env=env,
             timeout=60,
         )
 
-    # 串行启动两个，验证都不撞锁（WAL 多读者应支持）
+    # 接连启动两个，验证都不撞锁/fail-closed
     r1 = _run_cli()
     r2 = _run_cli()
     for i, r in enumerate([r1, r2], 1):
-        assert r.returncode in (0, 2), (
-            f"CLI #{i} 应成功或仅因锁返回 2，实际退出码 {r.returncode}，"
+        assert r.returncode == 0, (
+            f"CLI #{i} 应在 live daemon 上成功，实际退出码 {r.returncode}，"
             f"输出: {(r.stdout + r.stderr)[-300:]}"
         )
 

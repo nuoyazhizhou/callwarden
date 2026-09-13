@@ -5,11 +5,22 @@
 - cw task resolve-finding <finding_id> [--resolution] [--by]
 - cw task list [--blocked]
 
-测试策略：
-- 通过 _handle_task 直接调用 CLI 处理函数（不启动子进程）
-- 验证返回值为 True（命令成功执行）
-- 验证副作用：findings 写入 / resolve 改变 status / list 输出正确
-- 验证 i18n key 走 t() 而非硬编码
+stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化，本文件覆盖的
+3 个命令现均为 daemon 薄客户端（Rust daemon 为唯一 authority，禁止回退本地 SQLite）：
+- `cli/main.py:5755-5768` findings → `route_task_read("task.quality_findings",
+  {task_id, status, severity}, _local_findings)`；`_local_findings`
+  （`cli/main.py:5758-5762`）为 forbidden，直接 `DaemonUnavailableError`。
+- `cli/main.py:5805-5820` resolve-finding → `route_task_write(
+  "task.resolve_quality_finding", {finding_id, resolution, resolved_by},
+  _local_resolve_finding)`；`_local_resolve_finding`（`cli/main.py:5810-5814`）
+  同样 forbidden。
+- `cli/main.py:5843-5857` list → `route_task_read("task.list", {status, limit},
+  _local_task_list)`；`--blocked` 过滤经 `_route_has_blocking_findings`
+  （`cli/main.py:3755-3769` → `route_task_read("task.has_blocking_findings", ...)`）。
+
+故测试改用 conftest 的 `route_stub`（mock `cli_main.route_task_read/
+route_task_write`），断言「CLI 走对 RPC + 渲染 daemon 回包」，不再断言本地 DB
+直连副作用（本地写库/查库语义已随 authority 迁移失效）。
 """
 
 import os
@@ -44,167 +55,150 @@ def _capture_output(func, *args, **kwargs):
 
 # ---------- cw task findings ----------
 
-def test_cli_task_findings_returns_true():
+def test_cli_task_findings_returns_true(route_stub):
     """cw task findings 命令返回 True（成功执行）"""
-    db, _root = _db_with_workspace()
-    try:
-        task_id = _create_task_with_step(db)
-        result, output = _capture_output(_handle_task, ["findings", task_id], db)
-        assert result is True
-        # 输出包含标题
-        assert "任务质量发现" in output or "Task Quality Findings" in output
-    finally:
-        db.close()
+    route_stub.reply("task.quality_findings", {"task_id": "T-1", "findings": []})
+    result, output = _capture_output(_handle_task, ["findings", "T-1"], None)
+    assert result is True
+    assert route_stub.count("task.quality_findings") == 1
+    # 输出包含标题
+    assert "任务质量发现" in output or "Task Quality Findings" in output
 
 
-def test_cli_task_findings_shows_findings():
+def test_cli_task_findings_shows_findings(route_stub):
     """有 finding 时显示 finding 详情"""
-    db, _root = _db_with_workspace()
-    try:
-        task_id = _create_task_with_step(db)
-        # 写入一条 finding
-        db.record_task_quality_finding(
-            task_id, severity="warn", message="test warning",
-            finding_type="semgrep", source="semgrep",
-        )
-        result, output = _capture_output(_handle_task, ["findings", task_id], db)
-        assert result is True
-        # 输出应包含 finding 的 message
-        assert "test warning" in output
-        assert "warn" in output
-    finally:
-        db.close()
+    route_stub.reply("task.quality_findings", {
+        "task_id": "T-1",
+        "findings": [{
+            "id": 1, "severity": "warn", "message": "test warning",
+            "status": "open", "finding_type": "semgrep", "source": "semgrep",
+        }],
+    })
+    result, output = _capture_output(_handle_task, ["findings", "T-1"], None)
+    assert result is True
+    # 输出应包含 finding 的 message
+    assert "test warning" in output
+    assert "warn" in output
 
 
-def test_cli_task_findings_status_filter():
-    """--status 过滤：只显示 resolved"""
-    db, _root = _db_with_workspace()
-    try:
-        task_id = _create_task_with_step(db)
-        # 第一条将被标记为 resolved（消息内容表明它原本是 open 状态）
-        fid = db.record_task_quality_finding(
-            task_id, severity="warn", message="will-be-resolved",
-        )
-        db.record_task_quality_finding(
-            task_id, severity="warn", message="still-open",
-        )
-        db.resolve_task_quality_finding(fid, resolution="fixed")
-        # --status resolved 应只显示已被解决的那一条
-        result, output = _capture_output(
-            _handle_task, ["findings", task_id, "--status", "resolved"], db
-        )
-        assert result is True
-        assert "will-be-resolved" in output
-        assert "still-open" not in output
-    finally:
-        db.close()
+def test_cli_task_findings_status_filter(route_stub):
+    """--status 过滤：经 RPC params 透传给 daemon，仅渲染回包内容"""
+    route_stub.reply("task.quality_findings", {
+        "task_id": "T-1",
+        "findings": [{
+            "id": 1, "severity": "warn", "message": "will-be-resolved",
+            "status": "resolved",
+        }],
+    })
+    # --status resolved 应经 RPC 透传给 daemon（过滤发生在 daemon 侧）
+    result, output = _capture_output(
+        _handle_task, ["findings", "T-1", "--status", "resolved"], None
+    )
+    assert result is True
+    assert route_stub.last_params("task.quality_findings")["status"] == "resolved"
+    assert "will-be-resolved" in output
+    assert "still-open" not in output
 
 
-def test_cli_task_findings_no_findings():
+def test_cli_task_findings_no_findings(route_stub):
     """无 finding 时显示 no findings 提示"""
-    db, _root = _db_with_workspace()
-    try:
-        task_id = _create_task_with_step(db)
-        result, output = _capture_output(_handle_task, ["findings", task_id], db)
-        assert result is True
-        # 输出包含「无质量发现」或「no findings」
-        assert "无质量发现" in output or "no findings" in output
-    finally:
-        db.close()
+    route_stub.reply("task.quality_findings", {"task_id": "T-1", "findings": []})
+    result, output = _capture_output(_handle_task, ["findings", "T-1"], None)
+    assert result is True
+    # 输出包含「无质量发现」或「no findings」
+    assert "无质量发现" in output or "no findings" in output
 
 
 # ---------- cw task resolve-finding ----------
 
-def test_cli_task_resolve_finding_success():
+def test_cli_task_resolve_finding_success(route_stub):
     """cw task resolve-finding 成功解决 finding"""
-    db, _root = _db_with_workspace()
-    try:
-        task_id = _create_task_with_step(db)
-        fid = db.record_task_quality_finding(
-            task_id, severity="error", message="error finding",
-        )
-        result, output = _capture_output(
-            _handle_task, ["resolve-finding", str(fid)], db
-        )
-        assert result is True
-        # 验证 finding 状态已变更为 resolved
-        findings = db.get_task_quality_findings(task_id, status="all")
-        assert findings[0]["status"] == "resolved"
-        # 输出应包含成功标记
-        assert "已解决" in output or "resolved" in output
-    finally:
-        db.close()
+    route_stub.reply("task.resolve_quality_finding", {
+        "finding_id": 1, "status": "resolved", "updated": True})
+    result, output = _capture_output(
+        _handle_task, ["resolve-finding", "1"], None
+    )
+    assert result is True
+    # daemon 权威写入：断言 RPC 契约（method + params）
+    assert route_stub.count("task.resolve_quality_finding") == 1
+    params = route_stub.last_params("task.resolve_quality_finding")
+    assert params["finding_id"] == 1
+    assert params["resolution"] == "fixed"
+    # 输出应包含成功标记
+    assert "已解决" in output or "resolved" in output
 
 
-def test_cli_task_resolve_finding_wontfix():
-    """--resolution wontfix 标记为 wontfix"""
-    db, _root = _db_with_workspace()
-    try:
-        task_id = _create_task_with_step(db)
-        fid = db.record_task_quality_finding(task_id, message="x")
-        result, _output = _capture_output(
-            _handle_task,
-            ["resolve-finding", str(fid), "--resolution", "wontfix"],
-            db,
-        )
-        assert result is True
-        findings = db.get_task_quality_findings(task_id, status="all")
-        assert findings[0]["status"] == "wontfix"
-    finally:
-        db.close()
+def test_cli_task_resolve_finding_wontfix(route_stub):
+    """--resolution wontfix 经 RPC 透传"""
+    route_stub.reply("task.resolve_quality_finding", {
+        "finding_id": 1, "status": "wontfix", "updated": True})
+    result, _output = _capture_output(
+        _handle_task,
+        ["resolve-finding", "1", "--resolution", "wontfix"],
+        None,
+    )
+    assert result is True
+    assert route_stub.last_params(
+        "task.resolve_quality_finding")["resolution"] == "wontfix"
 
 
-def test_cli_task_resolve_finding_not_found():
-    """不存在的 finding_id → 失败但不抛异常"""
-    db, _root = _db_with_workspace()
-    try:
-        result, output = _capture_output(
-            _handle_task, ["resolve-finding", "99999"], db
-        )
-        assert result is True  # 命令成功执行（即使业务失败也返回 True）
-        # 输出应包含失败提示
-        assert "失败" in output or "Failed" in output
-    finally:
-        db.close()
+def test_cli_task_resolve_finding_not_found(route_stub):
+    """不存在的 finding_id → daemon 回包失败但不抛异常"""
+    route_stub.reply("task.resolve_quality_finding", {"error": "not found"})
+    result, output = _capture_output(
+        _handle_task, ["resolve-finding", "99999"], None
+    )
+    assert result is True  # 命令成功执行（即使业务失败也返回 True）
+    # 输出应包含失败提示
+    assert "失败" in output or "Failed" in output
 
 
 # ---------- cw task list ----------
 
-def test_cli_task_list_returns_true():
+def test_cli_task_list_returns_true(route_stub):
     """cw task list 命令返回 True"""
-    db, _root = _db_with_workspace()
-    try:
-        _create_task_with_step(db, title="task-a")
-        _create_task_with_step(db, title="task-b")
-        result, output = _capture_output(_handle_task, ["list"], db)
-        assert result is True
-        # 输出包含标题
-        assert "任务列表" in output or "Task List" in output
-    finally:
-        db.close()
+    route_stub.reply("task.list", {"tasks": [
+        {"task_id": "T-a", "title": "task-a", "status": "open"},
+        {"task_id": "T-b", "title": "task-b", "status": "open"},
+    ]})
+    result, output = _capture_output(_handle_task, ["list"], None)
+    assert result is True
+    assert route_stub.count("task.list") == 1
+    # 输出包含标题
+    assert "任务列表" in output or "Task List" in output
 
 
-def test_cli_task_list_shows_tasks():
-    """list 显示所有任务"""
-    db, _root = _db_with_workspace()
-    try:
-        _create_task_with_step(db, title="visible-task")
-        result, output = _capture_output(_handle_task, ["list"], db)
-        assert result is True
-        assert "visible-task" in output
-    finally:
-        db.close()
+def test_cli_task_list_shows_tasks(route_stub):
+    """list 显示 daemon 返回的任务"""
+    route_stub.reply("task.list", {"tasks": [
+        {"task_id": "T-v", "title": "visible-task", "status": "open"},
+    ]})
+    result, output = _capture_output(_handle_task, ["list"], None)
+    assert result is True
+    assert "visible-task" in output
 
 
-def test_cli_task_list_blocked_filter():
-    """--blocked 只显示有阻塞发现的任务"""
+def test_cli_task_list_blocked_filter(route_stub):
+    """--blocked 只显示有阻塞发现的任务
+
+    任务列表经 `task.list` RPC 提供；阻塞状态经 `_route_has_blocking_findings`
+    （`cli/main.py:3755-3769`）判定。此处 `task.has_blocking_findings` 未预设回包
+    → 走 local 回落读取本地记录的 finding，验证 --blocked 过滤链路。
+    """
     db, _root = _db_with_workspace()
     try:
         # task-a：有 error finding（阻塞）
         task_a = _create_task_with_step(db, title="blocked-task")
         db.record_task_quality_finding(task_a, severity="error", message="blocking")
         # task-b：无 finding（不阻塞）
-        _create_task_with_step(db, title="clean-task")
+        task_b = _create_task_with_step(db, title="clean-task")
+
+        route_stub.reply("task.list", {"tasks": [
+            {"task_id": task_a, "title": "blocked-task", "status": "open"},
+            {"task_id": task_b, "title": "clean-task", "status": "open"},
+        ]})
+        # has_blocking_findings 未预设 → local 回落（本地已记录 error finding）
+        route_stub.use_fallback = True
 
         result, output = _capture_output(
             _handle_task, ["list", "--blocked"], db
@@ -217,12 +211,16 @@ def test_cli_task_list_blocked_filter():
         db.close()
 
 
-def test_cli_task_list_blocked_marker():
+def test_cli_task_list_blocked_marker(route_stub):
     """有阻塞发现的任务显示 [!] 标记"""
     db, _root = _db_with_workspace()
     try:
         task_id = _create_task_with_step(db, title="marked-task")
         db.record_task_quality_finding(task_id, severity="error", message="x")
+        route_stub.reply("task.list", {"tasks": [
+            {"task_id": task_id, "title": "marked-task", "status": "open"},
+        ]})
+        route_stub.use_fallback = True  # has_blocking_findings → local 回落
         result, output = _capture_output(_handle_task, ["list"], db)
         assert result is True
         # [!] 表示阻塞

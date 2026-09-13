@@ -121,28 +121,20 @@ def _build_snapshot_db(tmp_path: str, ws_id: int = 1,
 
 
 @pytest.fixture()
-def live_daemon():
-    """需要真实 daemon：endpoint 可达才运行 live 用例，否则 skip。"""
-    c = HttpDaemonRpcClient()
-    try:
-        health = c.health()
-    except Exception:
-        pytest.skip("daemon 未运行（无 HTTP endpoint），跳过 live 用例")
-    return c, health
+def live_daemon(w3_live):
+    """W3 隔离 harness：注入隔离 daemon client（无需真实后台 daemon）。"""
+    c = w3_live["client"]
+    return c, c.health()
 
 
 @pytest.fixture()
-def published_workspace(tmp_path):
+def published_workspace(w3_live, tmp_path):
     """注册临时 workspace 并发布 fixture snapshot，返回 (client, workspace_instance_id)。
 
     Rust snapshot loader 按 daemon 权威 workspace_id（registry workspaces.id）过滤
     symbols，因此必须先 register 拿到 ws_id，再用该 ws_id 构造 snapshot DB。
     """
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行，跳过 round-trip 用例")
+    c = w3_live["client"]
     root = os.path.join(str(tmp_path), "ws1")
     os.makedirs(root, exist_ok=True)
     ws = c.call("workspace.register", {"client_view_root": root})
@@ -261,13 +253,9 @@ def test_search_daemon_unavailable_fail_closed():
 # ---------------------------------------------------------------------------
 # restart：重新发布 snapshot 后查询仍可用
 # ---------------------------------------------------------------------------
-def test_search_republish_after_restart(tmp_path):
+def test_search_republish_after_restart(w3_live, tmp_path):
     """模拟 restart：新 client 实例 + 重发布 snapshot，查询依然稳定。"""
-    c = HttpDaemonRpcClient()
-    try:
-        c.health()
-    except Exception:
-        pytest.skip("daemon 未运行，跳过 restart 用例")
+    c = w3_live["client"]
     root = os.path.join(str(tmp_path), "ws1")
     os.makedirs(root, exist_ok=True)
     ws = c.call("workspace.register", {"client_view_root": root})
@@ -280,7 +268,12 @@ def test_search_republish_after_restart(tmp_path):
         "db_path": db,
     })
     # 新 client 实例（同 endpoint）重新查询
-    c2 = HttpDaemonRpcClient()
+    from callwarden.server.daemon_client import HttpDaemonRpcClient
+    # stale 修复：HttpDaemonRpcClient 的公开属性为 _authority_id，
+    # 不存在 authority_id 属性（权威来源：server/daemon_client.py:2163
+    # `self._authority_id = authority_id or get_http_authority_id()`）。
+    c2 = HttpDaemonRpcClient(endpoint=w3_live["endpoint"],
+                             authority_id=w3_live["client"]._authority_id)
     r = c2.call("query.search", {
         "workspace_instance_id": inst,
         "query": "alpha",

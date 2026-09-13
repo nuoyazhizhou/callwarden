@@ -17,10 +17,11 @@ test_build_read_rpc_http.py / test_task_stats_rpc_http.py 同构）：
    同一 db_path 幂等复用；Rust 查询按 workspace_id 限定（semgrep_findings
    表无 workspace_id 列，经 JOIN file_instances + WHERE fi.workspace_id 隔离，
    其他 workspace 的 findings 不可见，fail-closed）。
-⑥ Python fallback 边界：HTTP 模式（默认）走 client 便捷方法且 client
-   失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入
-   route_worker_call 本地 db 回退。
+⑥ 工具层 `_route` 契约：get_semgrep_findings 已退化为一行式
+   `_route('query.semgrep_findings', {...}, 'READ_ONLY')`，HTTP/local 分流整体
+   下沉 `route_rpc`；旧「HTTP 模式走 client 便捷方法 / legacy 走
+   route_worker_call 本地 db 回退」的客户端分支已被删除，失败一律 fail-closed
+   传播（不回落本地 get_db）。
 """
 
 from unittest.mock import MagicMock, patch
@@ -39,12 +40,6 @@ CONVENIENCE_CASES = [
     ("get_semgrep_findings", "query.semgrep_findings",
      {"severity": "ERROR", "language": "python", "rule_id": "no-else-return",
       "limit": 20}),
-]
-
-# 工具名 → 业务参数（tools_query 注册的 MCP 工具签名）
-RULES_TOOL_CASES = [
-    ("get_semgrep_findings", {"severity": "ERROR", "language": "python",
-                              "rule_id": "no-else-return", "limit": 20}),
 ]
 
 
@@ -255,97 +250,77 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。"""
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 client 便捷方法 / route_worker_call。
 
-    def _monkeypatch_http_mode(self, monkeypatch, client):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_daemon_client",
-            lambda: client,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query._get_db_path_for_daemon",
-            lambda: DB_A,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled",
-            lambda: True,
-        )
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：
+    `server/tools/tools_query.py:56` 为
+    `from ..daemon_client import route_rpc as _route`；get_semgrep_findings 在
+    tools_query.py:336 退化为一行式
+    `return _route('query.semgrep_findings', {...}, 'READ_ONLY')`。
+    旧用例 patch `tools_query._get_daemon_client` / `_get_db_path_for_daemon` /
+    `is_http_transport_enabled` 并断言客户端便捷方法被调用——这些模块属性虽仍在
+    （故 monkeypatch 不报错）但已无调用点，于是断言恒为 `Called 0 times`；且
+    HTTP/legacy 分支已下沉到 `route_rpc`，不再由工具层判断。
 
-    def test_http_mode_fail_closed_no_db_fallback(self, monkeypatch):
-        """HTTP 模式（默认）走 client 便捷方法；client 抛错时 fail-closed
-        传播，不调用 get_db（无 SQL 回退）。"""
-        client = MagicMock()
-        for method, _rpc, _params in CONVENIENCE_CASES:
-            getattr(client, method).side_effect = DaemonRemoteError(
-                "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-            )
-        self._monkeypatch_http_mode(monkeypatch, client)
-        query_tools = _register_tools(tools_query)
+    因此工具层只需锁定「下发哪个 RPC、参数是否逐字透传（含默认值）、op_class
+    是否为 READ_ONLY、失败是否 fail-closed 且不回落本地 get_db」。
+    """
+
+    ROUTE_CASES = [
+        ("semgrep_findings_explicit", {"severity": "ERROR", "language": "python",
+                                       "rule_id": "no-else-return", "limit": 20},
+         {"severity": "ERROR", "language": "python",
+          "rule_id": "no-else-return", "limit": 20}),
+        ("semgrep_findings_default", {}, {"severity": "", "language": "",
+                                          "rule_id": "", "limit": 50}),
+    ]
+
+    @pytest.mark.parametrize(
+        "case_id,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_semgrep_findings_route_read_only_rpc(
+        self, monkeypatch, case_id, call_kwargs, expect_params,
+    ):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return [{"rule_id": "no-else-return"}]
+
+        monkeypatch.setattr(tools_query, "_route", fake_route)
+        q = _register_tools(tools_query)
         with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
-            for tool_name, params in RULES_TOOL_CASES:
-                with pytest.raises(DaemonRemoteError):
-                    query_tools[tool_name](**params)
+            out = q["get_semgrep_findings"](**call_kwargs)
             mock_db.assert_not_called()
-        client.get_semgrep_findings.assert_called_once_with(
-            severity="ERROR", language="python", rule_id="no-else-return",
-            limit=20, db_path=DB_A,
-        )
+        assert out == [{"rule_id": "no-else-return"}]
+        assert seen["method"] == "query.semgrep_findings"
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
 
-    def test_http_mode_client_result_passthrough(self, monkeypatch):
-        """HTTP 模式直接返回 client 便捷方法结果（不加工不包装）。"""
-        client = MagicMock()
-        client.get_semgrep_findings.return_value = [
-            {"rule_id": "no-else-return", "severity": "ERROR",
-             "language": "python", "file_path": "src/app.py"}
-        ]
-        self._monkeypatch_http_mode(monkeypatch, client)
-        query_tools = _register_tools(tools_query)
+    @pytest.mark.parametrize(
+        "case_id,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_semgrep_findings_fail_closed_no_local_fallback(
+        self, monkeypatch, case_id, call_kwargs, expect_params,
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
 
-        result = query_tools["get_semgrep_findings"](
-            severity="ERROR", language="python",
-            rule_id="no-else-return", limit=20,
-        )
-        assert result[0]["rule_id"] == "no-else-return"
-        assert result[0]["severity"] == "ERROR"
-
-    def test_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        """is_http_transport_enabled()=False + local 模式 → 走
-        route_worker_call 本地 db 回退（get_db 被调用，db 层查询函数被调用）。"""
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_query.is_http_transport_enabled",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode",
-            lambda: "local",
-        )
-        query_tools = _register_tools(tools_query)
-
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.get_semgrep_findings.return_value = [
-            {"rule_id": "no-else-return", "severity": "ERROR",
-             "language": "python", "file_path": "src/app.py"}
-        ]
-
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-
-            result = query_tools["get_semgrep_findings"](
-                severity="ERROR", language="python",
-                rule_id="no-else-return", limit=20,
-            )
-
-            assert result[0]["rule_id"] == "no-else-return"
-            mock_db.get_semgrep_findings.assert_called_once_with(
-                severity="ERROR", language="python",
-                rule_id="no-else-return", limit=20,
-            )
+        monkeypatch.setattr(tools_query, "_route", fake_route)
+        q = _register_tools(tools_query)
+        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                q["get_semgrep_findings"](**call_kwargs)
+            mock_db.assert_not_called()

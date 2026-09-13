@@ -36,7 +36,7 @@ class TestMatrixMSectionCorrected:
 
     @pytest.fixture
     def matrix_content(self):
-        return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
+        return (ROOT / "docs" / "design" / "_feature_matrix.md").read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("mid,expected_keyword", [
         ("M4", "🟡"),
@@ -75,7 +75,7 @@ class TestMatrixNSectionCorrected:
 
     @pytest.fixture
     def matrix_content(self):
-        return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
+        return (ROOT / "docs" / "design" / "_feature_matrix.md").read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("mid", ["N5", "N6"])
     def test_n_entries_false_claim(self, matrix_content, mid):
@@ -146,7 +146,7 @@ class TestMatrixI7I17Updated:
 
     def test_i7_reflects_d7_fix(self):
         """I7 应反映 D7 修复后状态，不再停留在'建议撤销'文字层面。"""
-        fm = ROOT / "_feature_matrix.md"
+        fm = ROOT / "docs" / "design" / "_feature_matrix.md"
         content = fm.read_text(encoding="utf-8")
 
         i7_match = re.search(r"^\| I7 \|.*$", content, re.MULTILINE)
@@ -160,7 +160,7 @@ class TestMatrixI7I17Updated:
 
     def test_i17_mentions_user_guide_l118_fix(self):
         """I17 应标注 USER_GUIDE L118 204→205 的补修复。"""
-        fm = ROOT / "_feature_matrix.md"
+        fm = ROOT / "docs" / "design" / "_feature_matrix.md"
         content = fm.read_text(encoding="utf-8")
 
         i17_match = re.search(r"^\| I17 \|.*$", content, re.MULTILINE)
@@ -183,7 +183,7 @@ class TestMatrixI20PlusEntriesExist:
 
     @pytest.fixture
     def matrix_content(self):
-        return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
+        return (ROOT / "docs" / "design" / "_feature_matrix.md").read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("iid,expected_keyword", [
         ("I20", "A14"),
@@ -325,15 +325,21 @@ class TestMixinCountConsistent:
         "docs/design/implementation-status.md",
     ])
     def test_33_mixin_present(self, rel_path):
-        """关键文档必须写 35 个 Mixin 类。"""
+        """关键文档必须写 43 个 Mixin 类。
+
+        stale 依据（2026-09 PYT step#4）：旧断言要求文档写 "35"，已陈旧——
+        CodeGraphDB 实际组合 43 个功能 Mixin（权威来源 db/db.py:88-133 类定义；
+        CONTRIBUTING.md:12、docs/design/migration-manifest.md:27、
+        docs/design/implementation-status.md:3 均已写 43）。故期望值 35 更正为 43。
+        """
         path = ROOT / rel_path
         if not path.exists():
             pytest.skip(f"{rel_path} 不存在，跳过")
         content = path.read_text(encoding="utf-8")
 
-        # 必须写 35（当前 Mixin 数）
-        assert "35" in content and "Mixin" in content, (
-            f"{rel_path} 必须写 35 Mixin 类"
+        # 必须写 43（当前 Mixin 数，权威：db/db.py:88-133）
+        assert "43" in content and "Mixin" in content, (
+            f"{rel_path} 必须写 43 Mixin 类"
         )
 
 

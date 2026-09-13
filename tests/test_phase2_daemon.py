@@ -428,10 +428,18 @@ class TestDaemonMode:
         mode = get_daemon_mode()
         assert mode in ("auto", "enterprise", "local")
 
-    def test_is_daemon_available_windows_returns_false(self):
-        """Windows 上 is_daemon_available 返回 False。"""
+    def test_is_daemon_available_windows_returns_bool(self):
+        """Windows 上 is_daemon_available 返回 bool（daemon 可探测即 True）。
+
+        stale 依据（A 类：测试侧陈旧期望）：原断言「Windows 上恒为 False」基于早期
+        「daemon = Linux UDS」模型。生产演进后 config.py:1691-1704 的
+        is_daemon_available() 在 win32 分支改为 try_connect(endpoint) 真实探测
+        Windows Named Pipe（\\\\.\\pipe\\callwarden-<sid>，见
+        rust_ext/src/cli/router.rs:146-181），daemon 运行时返回 True。
+        故此处仅校验返回类型为 bool，可用性由运行时探测决定。
+        """
         if os.name == "nt":
-            assert is_daemon_available() is False
+            assert isinstance(is_daemon_available(), bool)
 
     def test_is_daemon_required(self):
         """is_daemon_required 返回 bool。"""

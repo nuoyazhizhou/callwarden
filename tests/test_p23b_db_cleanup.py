@@ -18,6 +18,52 @@ from callwarden.config import CALLWARDEN_DIR, norm_path
 from callwarden.db.db import CodeGraphDB
 
 
+def _local_scan_hash_databases(callwarden_dir):
+    """本地复刻 daemon `mcp.cli_admin.scan_hash_databases` 的回包形状。
+
+    生产侧 server/cli_admin.py:101-127 已把旧版 hash 库扫描下沉为 daemon RPC
+    （SRV-004），返回值形如
+    ``{"databases": [{"hash","dir","db_file","workspaces","error"}, ...]}``。
+    本测试以 A 类 mock RPC seam 复现同一形状，供 _handle_gc_db_cleanup 的孤儿
+    判定逻辑继续接受真实文件系统 fixture 驱动。
+    """
+    databases = []
+    if not os.path.isdir(callwarden_dir):
+        return {"databases": databases}
+    for name in sorted(os.listdir(callwarden_dir)):
+        full = os.path.join(callwarden_dir, name)
+        if len(name) != 16 or not os.path.isdir(full):
+            continue
+        db_file = os.path.join(full, "callwarden.db")
+        if not os.path.isfile(db_file):
+            continue
+        workspaces = []
+        error = None
+        try:
+            conn = sqlite3.connect(db_file)
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, root_path FROM workspaces"
+                ).fetchall()
+                workspaces = [
+                    {"id": r[0], "name": r[1], "root_path": r[2]} for r in rows
+                ]
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            error = str(exc)
+        databases.append(
+            {
+                "hash": name,
+                "dir": full,
+                "db_file": db_file,
+                "workspaces": workspaces,
+                "error": error,
+            }
+        )
+    return {"databases": databases}
+
+
 class TestConftestDbIsolation:
     """测试 conftest.py 的 _isolate_db_path fixture"""
 
@@ -63,6 +109,29 @@ class TestConftestDbIsolation:
 
 class TestGcDbCleanup:
     """测试 _handle_gc_db_cleanup 函数"""
+
+    @pytest.fixture(autouse=True)
+    def _stub_scan_rpc(self, monkeypatch):
+        """[A 类] mock daemon RPC seam：`mcp.cli_admin.scan_hash_databases`。
+
+        stale 依据（生产侧）：`scan_hash_databases`（server/cli_admin.py:101-127）
+        已随 SRV-004 下沉为 daemon handler，函数体仅
+        `_call_daemon_rpc("mcp.cli_admin.scan_hash_databases", {...})`
+        （:120-127 → :188-192）；`_handle_gc_db_cleanup`（cli/main.py:8289/8329）
+        直接调用该薄适配层。旧测试仅 patch `CALLWARDEN_DIR` 便期望本地扫描，
+        但 daemon 不可用时 `_call_daemon_rpc`（server/_mcp_common.py:27-44）
+        fail-closed 抛 E_HTTP_DAEMON_UNAVAILABLE（实测）。此处按 A 类 mock
+        RPC seam：断言 method/params 并回传同形状结果，使孤儿判定逻辑的
+        真实文件系统 fixture 仍驱动被测函数。
+        """
+        import callwarden.server.cli_admin as cli_admin_mod
+
+        def _fake_rpc(method, params):
+            assert method == "mcp.cli_admin.scan_hash_databases", method
+            assert "callwarden_dir" in params, params
+            return _local_scan_hash_databases(params["callwarden_dir"])
+
+        monkeypatch.setattr(cli_admin_mod, "_call_daemon_rpc", _fake_rpc)
 
     def _create_test_db(self, dir_path, root_path, name="test_ws"):
         """创建测试数据库（带 workspaces 表）"""

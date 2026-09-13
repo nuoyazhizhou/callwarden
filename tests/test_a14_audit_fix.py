@@ -222,16 +222,22 @@ class TestA14CLICommand:
 # ============================================
 
 class TestA14MCPTool:
-    """验证 scan_semgrep_incremental MCP 工具注册"""
+    """验证 scan_semgrep_incremental MCP 工具注册
+
+    stale 修正：MCP 工具已从 server/mcp_server.py 拆分到 server/tools/*.py
+    （见 mcp_server.py:39 注释「工具注册收敛到 server/tools 功能域模块」）。
+    scan_semgrep_incremental 现位于 server/tools/tools_query.py:356-385。
+    """
+
+    _TOOL_SRC = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "server", "tools", "tools_query.py",
+    )
 
     def test_mcp_tool_scan_semgrep_incremental_registered(self):
-        """server/mcp_server.py 应注册 scan_semgrep_incremental MCP 工具"""
+        """server/tools/tools_query.py 应注册 scan_semgrep_incremental MCP 工具"""
         # 读取源码验证（避免实际启动 MCP server）
-        with open(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "server", "mcp_server.py"),
-            "r", encoding="utf-8"
-        ) as f:
+        with open(self._TOOL_SRC, "r", encoding="utf-8") as f:
             src = f.read()
         # 应有 @mcp.tool() 装饰的 scan_semgrep_incremental 函数
         assert "def scan_semgrep_incremental" in src
@@ -243,11 +249,7 @@ class TestA14MCPTool:
 
     def test_mcp_tool_scan_semgrep_incremental_docstring_mentions_a14(self):
         """scan_semgrep_incremental MCP 工具 docstring 应提到 A14 修复"""
-        with open(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "server", "mcp_server.py"),
-            "r", encoding="utf-8"
-        ) as f:
+        with open(self._TOOL_SRC, "r", encoding="utf-8") as f:
             src = f.read()
         idx = src.find("def scan_semgrep_incremental")
         # 截取函数 docstring 段
@@ -471,7 +473,7 @@ class TestA14FeatureMatrixStatus:
         """读取 _feature_matrix.md 中的 A14 完整行"""
         matrix_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "_feature_matrix.md"
+            "docs", "design", "_feature_matrix.md"
         )
         with open(matrix_path, "r", encoding="utf-8") as f:
             for line in f:

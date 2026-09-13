@@ -15,12 +15,10 @@
 ⑤ 跨 workspace 隔离：不同 db_path → 不同 workspace_instance_id 注入，
    同一 db_path 幂等复用；Rust 查询按 workspace_id 限定（symbols /
    coverage_data 无 workspace_id 列，经 JOIN file_instances 限定）。
-⑥ Python fallback 边界：HTTP 模式（默认）走 client 便捷方法且 client
-   失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入本地 db 回退。
-   review_readiness 依赖 blast_radius 与 cross_layer_impact（均未迁移），
-   保持 python_compat（W4-2 决策，见 ledger §9.23）——HTTP 模式仍走
-   route_worker_call，不引入 HTTP 分支。
+⑥ Python fallback 边界：工具层已 `_route` 化（常量表达式），HTTP/local 分流
+   整体下沉到 `route_rpc`；本文件 ⑥ 组（TestToolRouteContract）只锁定工具层
+   「下发哪个 RPC、参数逐字透传、op_class=READ_ONLY、失败 fail-closed 且不
+   回落本地 get_db」的契约，不再 patch `_get_daemon_client`。
 
 语义差异风险点（记录）：diff_to_symbol 的 change_type 判定保持 Python
 先重置 hunk 计数后判定的行为（非文件删除恒为 "modified"）；coverage_pct
@@ -232,191 +230,103 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约（HTTP/local 分流已下沉到 route_rpc）
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 `HttpDaemonRpcClient` 便捷方法。
 
-    tools_summary 在模块顶层 import `_get_daemon_client` /
-    `_get_db_path_for_daemon` / `is_http_transport_enabled`（可直接 patch
-    模块属性）。review_readiness 保持 python_compat：HTTP 模式仍走
-    route_worker_call（无 HTTP 分支），不直连 daemon client。
+    stale 依据（MCP 工具 `_route` 化）：`server/tools/tools_summary.py:44` 为
+    `from ..daemon_client import route_rpc as _route`；get_coverage_for_symbol
+    （:122）→ `_route('query.coverage_for_symbol', {...}, 'READ_ONLY')`，
+    diff_to_symbol（:336）→ `_route('query.diff_to_symbol', {...}, 'READ_ONLY')`，
+    review_readiness（:350）→ `_route('review_readiness', {...}, 'READ_ONLY')`。
+    旧用例 patch `tools_summary._get_daemon_client` / `_get_db_path_for_daemon` /
+    `is_http_transport_enabled` 并断言客户端便捷方法被调用——这些模块属性虽仍在
+    （故 monkeypatch 不报错）但已无调用点，断言恒为 `Called 0 times`；legacy
+    本地 db 回退分支也已随 `_route` 化移除（HTTP/local 分流下沉到 route_rpc）。
     """
 
-    # --------------------------------------------------------
-    # tools_summary.get_coverage_for_symbol（顶层 import）
-    # --------------------------------------------------------
+    DIFF_TEXT = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 
-    def test_coverage_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.get_coverage_for_symbol.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
+    ROUTE_CASES = [
+        ("get_coverage_for_symbol", "query.coverage_for_symbol",
+         {"qualified_name": "src.main:foo"},
+         {"qualified_name": "src.main:foo"}),
+        ("diff_to_symbol", "query.diff_to_symbol",
+         {"diff_text": "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"},
+         {"diff_text": "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"}),
+        ("review_readiness", "review_readiness",
+         {"symbol_hash": "hash-123"},
+         {"symbol_hash": "hash-123"}),
+    ]
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_summary_tools_route_read_only_rpc(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs, expect_params
+    ):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
+        q = _register_tools(tools_summary)
+        with patch("callwarden.server.tools.tools_summary.get_db") as mock_db:
+            out = q[tool_name](**call_kwargs)
+            mock_db.assert_not_called()
+        assert out == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,call_kwargs,expect_params",
+        ROUTE_CASES,
+        ids=[c[0] for c in ROUTE_CASES],
+    )
+    def test_summary_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, tool_name, rpc_method, call_kwargs, expect_params
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
         q = _register_tools(tools_summary)
         with patch("callwarden.server.tools.tools_summary.get_db") as mock_db:
             with pytest.raises(DaemonRemoteError):
-                q["get_coverage_for_symbol"]("src.main:foo")
+                q[tool_name](**call_kwargs)
             mock_db.assert_not_called()
-        client.get_coverage_for_symbol.assert_called_once_with(
-            qualified_name="src.main:foo", db_path=DB_A,
-        )
 
-    def test_coverage_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.get_coverage_for_symbol.return_value = {
-            "qualified_name": "src.main:foo",
-            "coverage_pct": 66.7,
-            "tracked_lines": 3,
-        }
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
-        q = _register_tools(tools_summary)
-        result = q["get_coverage_for_symbol"]("src.main:foo")
-        assert result["coverage_pct"] == 66.7
+    def test_runtime_role_is_never_client_side_branched(self, monkeypatch):
+        """工具层不做 HTTP/local 分支：无论 transport 如何都走同一 `_route` 契约。
 
-    def test_coverage_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        q = _register_tools(tools_summary)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.get_coverage_for_symbol.return_value = {"qualified_name": "src.main:foo"}
-        with patch("callwarden.server.tools.tools_summary.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q["get_coverage_for_symbol"]("src.main:foo")
-        assert result["qualified_name"] == "src.main:foo"
-        mock_db.get_coverage_for_symbol.assert_called_once_with(qualified_name="src.main:foo")
-
-    # --------------------------------------------------------
-    # tools_summary.diff_to_symbol（顶层 import，保留 try-except 降级）
-    # --------------------------------------------------------
-
-    def test_diff_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.diff_to_symbol.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
-        q = _register_tools(tools_summary)
-        diff_text = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
-        with patch("callwarden.server.tools.tools_summary.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                q["diff_to_symbol"](diff_text)
-            mock_db.assert_not_called()
-        client.diff_to_symbol.assert_called_once_with(
-            diff_text=diff_text, db_path=DB_A,
-        )
-
-    def test_diff_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.diff_to_symbol.return_value = [
-            {"symbol_hash": "h1", "qualified_name": "a", "change_type": "modified"}
-        ]
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
-        )
-        q = _register_tools(tools_summary)
-        diff_text = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
-        result = q["diff_to_symbol"](diff_text)
-        assert result[0]["change_type"] == "modified"
-
-    def test_diff_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        q = _register_tools(tools_summary)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.diff_to_symbol.return_value = [{"symbol_hash": "h1"}]
-        with patch("callwarden.server.tools.tools_summary.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q["diff_to_symbol"]("--- a/x\n+++ b/x\n")
-        assert result[0]["symbol_hash"] == "h1"
-        mock_db.diff_to_symbol.assert_called_once_with("--- a/x\n+++ b/x\n")
-
-    # --------------------------------------------------------
-    # tools_summary.review_readiness（保持 python_compat）
-    # --------------------------------------------------------
-
-    def test_review_readiness_stays_compat_in_http_mode(self, monkeypatch):
-        """review_readiness 无 HTTP 分支：HTTP 模式仍经 route_worker_call（compat worker）。
-
-        W4-2 决策：review_readiness 依赖 blast_radius 与 cross_layer_impact
-        （均未迁移），保持 python_compat（见 ledger §9.23）。断言 HTTP 模式下
-        不调用 daemon client 便捷方法（模块属性 _get_daemon_client 不被调用）。
+        stale 依据：旧用例 monkeypatch `daemon_client.is_http_transport_enabled` /
+        `get_daemon_mode` 后期待工具改走本地 db；`_route` 化后工具是常量表达式，
+        分流只发生在 route_rpc 内部（其单测负责），工具层断言不再随 transport 变化。
         """
-        called = {"client": False}
+        calls = []
 
-        def fake_client():
-            called["client"] = True
-            return MagicMock()
+        def fake_route(method, params, op_class):
+            calls.append((method, op_class))
+            return {"ok": True}
 
+        monkeypatch.setattr(tools_summary, "_route", fake_route)
         monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_daemon_client", fake_client
+            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
         )
         monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary._get_db_path_for_daemon", lambda: DB_A
-        )
-        monkeypatch.setattr(
-            "callwarden.server.tools.tools_summary.is_http_transport_enabled", lambda: True
+            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
         )
         q = _register_tools(tools_summary)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.review_readiness_report.return_value = {"ready": True}
-        # route_worker_call（HTTP/enterprise 分支）→ compat worker 执行 _local
-        # 注意 patch 目标是 tools_summary 命名空间的引用（顶层 from import），
-        # 不能 patch daemon_client 模块属性（不影响本模块调用）。
-        with patch("callwarden.server.tools.tools_summary.get_db", return_value=mock_db), \
-                patch(
-                    "callwarden.server.tools.tools_summary.route_worker_call",
-                    side_effect=lambda method, params, local_fn: local_fn(),
-                ):
-            result = q["review_readiness"]("hash-123")
-        assert result == {"ready": True}
-        assert called["client"] is False
-        mock_db.review_readiness_report.assert_called_once_with("hash-123")
+        assert q["get_coverage_for_symbol"]("src.main:foo") == {"ok": True}
+        assert ("query.coverage_for_symbol", "READ_ONLY") in calls

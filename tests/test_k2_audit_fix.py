@@ -56,8 +56,11 @@ class TestK2PythonFix:
         # 找到 K2 修复代码块
         k2_idx = content.find("K2 评审修复")
         assert k2_idx >= 0, "daemon_server.py 必须包含 K2 评审修复"
-        # 取修复代码块（往后 800 字符）
-        block = content[k2_idx:k2_idx + 1200]
+        # stale 修正：startswith 校验现位于 server/daemon_server.py:1235；
+        # 该分支新增了「Phase 4-2 Rust 短路」检查（:1223-1232），使 K2 注释起点
+        # （:1212）到 startswith（:1235）跨度超过原 1200 字符窗口，导致扫描窗口过期。
+        # 与 Rust 侧一致放宽到 2500 字符，确保覆盖 startswith/os.sep/realpath。
+        block = content[k2_idx:k2_idx + 2500]
 
         # 必须包含 prefix 校验逻辑（startswith + os.sep）
         assert "startswith" in block, (

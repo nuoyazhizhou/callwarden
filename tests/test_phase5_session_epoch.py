@@ -3,6 +3,16 @@ Phase 5: Session epoch / generation CAS 协议测试
 
 规范：docs/design/watcher-generation-state-machine.md
 修复 T-1783751525743-7c76
+
+A 桶 stale 依据（薄客户端 RPC seam）：
+    ``server/replicator.py:364-384 daemon_handle_refresh`` 已 daemon authority 化——
+    函数体 ``del peer_uid, workspace_id, ws_conn, cas_conn, workspace_root ...``
+    （:379-380）后仅 ``return _call_daemon_rpc(_REPLICATOR_REFRESH_METHOD, params)``
+    （:384；方法常量 ``mcp.replicator.daemon_handle_refresh`` 见 :52）。
+    本地 SQLite 的 epoch-CAS（stale session 拒绝 / seq 去重 / 两阶段 commit）与
+    parse+publish 管道均已移入 Rust daemon（``rust_ext/src/daemon/snapshot_guard.rs``
+    等），Python 侧只保留 ``daemon_handle_connect`` 的本地 epoch 分配与
+    ``file_generations`` 会话重置（fallback SQL 路径）。
 """
 
 import sqlite3
@@ -15,13 +25,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "rust_ext" / "target" / "pyinstall"))
 
-from server.replicator import (
-    SESSION_SCHEMA_DDL,
-    ProtocolError,
-    daemon_handle_connect,
-    daemon_handle_refresh,
-    init_session_schema,
-)
+# 统一走 canonical 包路径（callwarden.server），避免与顶层 `server.*` 形成双模块
+# 实例——server/_mcp_common.py:12 `from ..db import CodeGraphDB` 在顶层 server.*
+# 包下会「越界相对导入」失败（attempted relative import beyond top-level package）。
+from callwarden.server import replicator as R
+
+SESSION_SCHEMA_DDL = R.SESSION_SCHEMA_DDL
+ProtocolError = R.ProtocolError
+daemon_handle_connect = R.daemon_handle_connect
+daemon_handle_refresh = R.daemon_handle_refresh
+init_session_schema = R.init_session_schema
 
 
 # ============================================
@@ -168,249 +181,146 @@ class TestDaemonHandleConnect:
 
 
 # ============================================
-# TestDaemonHandleRefresh —— refresh 消息处理
+# TestDaemonHandleRefresh —— refresh 薄客户端转发契约
 # ============================================
 
 class TestDaemonHandleRefresh:
-    """daemon_handle_refresh 测试"""
+    """daemon_handle_refresh 薄客户端转发契约（A 桶：RPC seam 迁移）。
 
-    def test_daemon_handle_refresh_stale_epoch_rejected(self):
-        """incoming epoch 与 active epoch 不匹配 → ProtocolError"""
+    stale 依据：``server/replicator.py:364-384`` 已 daemon authority 化——
+    epoch-CAS 判定（stale session 拒绝 / seq 去重 / 两阶段 commit）与
+    parse+publish 管道均在 Rust daemon 内执行，Python 侧只剩参数序列化 +
+    回包逐字透传。故本类断言现代契约：转发 method 常量与 msg 逐字段、
+    canonical_bytes → hex、legacy 形状参数不外发、回包透传、
+    RPC 异常 fail-closed（不落本地 SQLite 回退）。
+    """
+
+    def _connect(self, workspace_id=1, session_id="s1"):
         conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        # s2 接管 → active epoch = 2
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s2", ws_conn=conn)
-        # s1 用旧 epoch=1 发 refresh → 应被拒绝
+        resp = daemon_handle_connect(
+            peer_uid=1000, workspace_id=workspace_id,
+            requested_session_id=session_id, ws_conn=conn,
+        )
+        return conn, resp["session_epoch"]
+
+    def _stub(self, monkeypatch, response):
+        calls = []
+
+        def fake_rpc(method, params):
+            calls.append((method, dict(params)))
+            return response
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", fake_rpc)
+        return calls
+
+    def test_forwards_method_and_msg_params(self, monkeypatch):
+        """转发 method 常量 + msg 逐字段；legacy 形状参数不外发。"""
+        conn, epoch = self._connect()
+        calls = self._stub(monkeypatch, {"status": "committed", "generation": "1:1"})
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=epoch, seq=1),
+            ws_conn=conn, cas_conn=None, workspace_root="/some/root",
+        )
+        assert resp == {"status": "committed", "generation": "1:1"}
+        assert len(calls) == 1
+        method, params = calls[0]
+        assert method == R._REPLICATOR_REFRESH_METHOD
+        assert method == "mcp.replicator.daemon_handle_refresh"
+        assert params["rel_path"] == "src/main.py"
+        assert params["agent_session_id"] == "s1"
+        assert params["session_epoch"] == epoch
+        assert params["monotonic_seq"] == 1
+        # legacy 形状参数不再外发（daemon 不接收）
+        for legacy in ("peer_uid", "workspace_id", "ws_conn", "cas_conn",
+                       "workspace_root", "canonical_bytes_hex"):
+            assert legacy not in params
+
+    def test_canonical_bytes_serialized_as_hex(self, monkeypatch):
+        """canonical_bytes → canonical_bytes_hex；未提供时不出现在 params。"""
+        conn, epoch = self._connect()
+        calls = self._stub(monkeypatch, {"status": "committed"})
+        canonical = b"def foo():\n    pass\n"
+        daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=epoch, seq=1),
+            ws_conn=conn, canonical_bytes=canonical,
+        )
+        assert calls[0][1]["canonical_bytes_hex"] == canonical.hex()
+
+        calls.clear()
+        daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=epoch, seq=2),
+            ws_conn=conn,
+        )
+        assert "canonical_bytes_hex" not in calls[0][1]
+
+    def test_response_verbatim_passthrough(self, monkeypatch):
+        """daemon 回包（含 protection 嵌套）逐字透传，不重写字段。"""
+        conn, epoch = self._connect()
+        resp = {
+            "status": "blocked",
+            "cas_state": "parse_failed",
+            "protection": {
+                "blocked": True,
+                "reason": "parse failure",
+                "cas_state": "parse_failed",
+                "parse_status": "failed",
+                "dirty_overlay": False,
+                "allows_retry": True,
+            },
+        }
+        self._stub(monkeypatch, resp)
+        result = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=epoch, seq=1),
+            ws_conn=conn,
+        )
+        assert result == resp
+        assert result["protection"]["blocked"] is True
+        assert result["protection"]["allows_retry"] is True
+
+    def test_stale_seq_status_passthrough(self, monkeypatch):
+        """daemon 判定 stale_seq_dropped → 原样回包（本地不再做去重判定）。"""
+        conn, epoch = self._connect()
+        self._stub(monkeypatch, {"status": "stale_seq_dropped"})
+        result = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=epoch, seq=1),
+            ws_conn=conn,
+        )
+        assert result["status"] == "stale_seq_dropped"
+
+    def test_daemon_protocol_error_propagates_fail_closed(self, monkeypatch):
+        """daemon 抛 ProtocolError → 上抛且不写本地 SQLite（无回退）。"""
+        conn, epoch = self._connect()
+
+        def boom(method, params):
+            raise ProtocolError("stale session epoch", code="stale_session")
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", boom)
         with pytest.raises(ProtocolError, match="stale session"):
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
-                msg=_refresh_msg("s1", epoch=1, seq=1),
+                msg=_refresh_msg("s1", epoch=epoch, seq=1),
                 ws_conn=conn,
             )
+        rows = conn.execute("SELECT * FROM file_generations").fetchall()
+        assert rows == []
 
-    def test_daemon_handle_refresh_no_active_session(self):
-        """没有 active session 时 → ProtocolError"""
-        conn = _open_db()
-        # 未连接任何 session
-        with pytest.raises(ProtocolError, match="no active session"):
+    def test_rpc_unavailable_propagates(self, monkeypatch):
+        """daemon 不可用（非 ProtocolError）同样上抛，不回退本地实现。"""
+        conn, epoch = self._connect()
+
+        def boom(method, params):
+            raise RuntimeError("daemon unavailable")
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", boom)
+        with pytest.raises(RuntimeError, match="daemon unavailable"):
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
-                msg=_refresh_msg("s1", epoch=1, seq=1),
-                ws_conn=conn,
-            )
-
-    def test_daemon_handle_refresh_seen_success(self):
-        """valid epoch + seq → CAS 第一阶段 seen 成功"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        resp = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=1),
-            ws_conn=conn,
-        )
-        # 完整流程返回 committed
-        assert resp["status"] == "committed"
-        assert resp["generation"] == "1:1"
-        # latest_seen_generation 应被写入
-        row = conn.execute(
-            "SELECT latest_seen_generation, latest_committed_generation "
-            "FROM file_generations WHERE workspace_id=1 AND rel_path='src/main.py'"
-        ).fetchone()
-        assert row["latest_seen_generation"] == "1:1"
-        assert row["latest_committed_generation"] == "1:1"
-
-    def test_daemon_handle_refresh_stale_seq_dropped(self):
-        """seq <= latest_seq → stale_seq_dropped，不报错"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        # 先发 seq=5
-        daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=5),
-            ws_conn=conn,
-        )
-        # 再发 seq=5（等于）→ dropped
-        resp = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=5),
-            ws_conn=conn,
-        )
-        assert resp["status"] == "stale_seq_dropped"
-
-        # 再发 seq=3（小于）→ dropped
-        resp = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=3),
-            ws_conn=conn,
-        )
-        assert resp["status"] == "stale_seq_dropped"
-
-    def test_daemon_handle_refresh_committed_success(self):
-        """CAS 第二阶段 commit 成功"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        resp = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=1),
-            ws_conn=conn,
-        )
-        assert resp["status"] == "committed"
-        assert resp["generation"] == "1:1"
-
-        row = conn.execute(
-            "SELECT latest_committed_generation FROM file_generations "
-            "WHERE workspace_id=1 AND rel_path='src/main.py'"
-        ).fetchone()
-        assert row["latest_committed_generation"] == "1:1"
-
-    def test_daemon_handle_refresh_committed_stale_rejected(self):
-        """CAS 第二阶段 stale（seen_generation 被覆盖）→ ProtocolError"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        # 第一条消息正常完成两阶段
-        daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=1),
-            ws_conn=conn,
-        )
-
-        # 模拟 stale：手动篡改 latest_seen_generation 为不同值
-        # 让 incoming_gen 与 latest_seen_generation 不匹配
-        conn.execute(
-            "UPDATE file_generations SET latest_seen_generation='1:99' "
-            "WHERE workspace_id=1 AND rel_path='src/main.py'"
-        )
-        conn.commit()
-
-        # 此时 incoming_gen="1:1" 但 latest_seen_generation="1:99"
-        # 由于 seq=1 <= latest_seq=1，会在第一阶段就被 dropped，不会到第二阶段
-        # 为了测试第二阶段 stale，需要用一个新 seq 但 seen_generation 被覆盖
-        # 先让 seq 推进到 2（seen 阶段成功，写入 seen=1:2）
-        # 然后手动篡改 seen_generation，再尝试 commit 同一 gen
-        # 实际上：直接构造 incoming_gen 与 seen 不匹配的场景
-        # 更直接的测试：phase 2 单独失败
-        # 通过手动 INSERT 一个 file_generations 行，seen_generation 与 incoming 不匹配
-        conn.execute("DELETE FROM file_generations WHERE workspace_id=1")
-        conn.execute(
-            "INSERT INTO file_generations (workspace_id, rel_path, latest_session_id, "
-            "latest_session_epoch, latest_seq, latest_seen_generation, "
-            "latest_committed_generation) "
-            "VALUES (1, 'src/main.py', 's1', 1, 1, '1:99', '')"
-        )
-        conn.commit()
-
-        # incoming_seq=1 == latest_seq=1 → 会在第一阶段 dropped
-        # 为了真正测试 phase 2，需要 incoming_seq > latest_seq
-        # 设 latest_seq=0，incoming_seq=1，但 seen_generation 已被其他 handler 覆盖
-        conn.execute(
-            "UPDATE file_generations SET latest_seq=0, "
-            "latest_seen_generation='1:99' WHERE workspace_id=1 AND rel_path='src/main.py'"
-        )
-        conn.commit()
-
-        # 现在 incoming_seq=1 > latest_seq=0 → phase 1 会把 seen_generation 改为 "1:1"
-        # phase 2 会成功，这不能测试 stale
-        # 要测试 phase 2 stale，需要在 phase 1 和 phase 2 之间 seen_generation 被改
-        # 用多线程测试更合适，但单线程下可通过直接调 SQL 模拟
-        # 改为：先正常做 phase 1（调用一个 helper），然后篡改 seen_generation，再做 phase 2
-
-        # 重置：清空 file_generations，让 phase 1 插入新行
-        conn.execute("DELETE FROM file_generations WHERE workspace_id=1")
-        conn.commit()
-        # 不调用 daemon_handle_refresh（它会一次做完两阶段）
-        # 而是手动模拟 phase 1 完成后 seen_generation 被其他 handler 覆盖
-        # 直接构造 phase 2 失败的场景：incoming_gen 与 seen_generation 不匹配
-        conn.execute(
-            "INSERT INTO file_generations (workspace_id, rel_path, latest_session_id, "
-            "latest_session_epoch, latest_seq, latest_seen_generation, "
-            "latest_committed_generation) "
-            "VALUES (1, 'src/main.py', 's1', 1, 5, '1:99', '')"
-        )
-        conn.commit()
-
-        # 现在 latest_seq=5, latest_seen_generation='1:99'
-        # incoming_seq=6 > latest_seq=5 → phase 1 成功，把 seen 改为 "1:6"
-        # phase 2 会用 "1:6" 匹配，成功
-        # 还是不行。需要 phase 1 成功但 phase 2 时 seen 已被改
-
-        # 最简单：直接 mock phase 2 的 stale 条件
-        # 让 incoming_gen="1:6"，但 latest_seen_generation="1:99"（不等于 incoming_gen）
-        # 且 latest_seq >= incoming_seq（让 phase 1 drop 或不修改 seen）
-        # 如果 incoming_seq <= latest_seq → phase 1 drop，不到 phase 2
-        # 如果 incoming_seq > latest_seq → phase 1 会改 seen 为 incoming_gen → phase 2 成功
-
-        # 所以单线程下无法让 phase 1 通过但 phase 2 stale
-        # 唯一方式：phase 1 用 INSERT（row is None），然后 phase 2 之前 seen 被改
-        # 但 INSERT 时 seen_generation = incoming_gen，phase 2 也会匹配
-
-        # 结论：phase 2 stale 只能在并发场景下发生（S2 在 S1 的 phase1 和 phase2 之间覆盖 seen）
-        # 这个测试在 test_concurrent_same_workspace_rejected 中覆盖
-        # 这里跳过单线程 phase 2 stale 测试
-        # 但为了测试 phase 2 代码路径，可以构造一个 incoming_gen 与 seen 不匹配的场景
-        # 通过直接调用 SQL 模拟 phase 1 未执行、直接到 phase 2
-
-        # 直接验证：如果 latest_seen_generation != incoming_gen，phase 2 rowcount=0
-        # 这通过并发测试覆盖更合理。这里删除测试数据恢复原状
-        conn.execute("DELETE FROM file_generations WHERE workspace_id=1")
-        conn.commit()
-        # 重新建立正常状态
-        daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=1),
-            ws_conn=conn,
-        )
-
-        # 验证：手动篡改 seen_generation 后，再做一次 refresh 的 phase 2 会失败
-        # 通过直接执行 phase 2 的 SQL 来验证
-        conn.execute("BEGIN IMMEDIATE")
-        gen_cur = conn.execute(
-            "UPDATE file_generations SET latest_committed_generation = ? "
-            "WHERE workspace_id = ? AND rel_path = ? "
-            "AND latest_seen_generation = ?",
-            ("fake_gen", 1, "src/main.py", "fake_gen"),
-        )
-        # latest_seen_generation 是 "1:1" 不是 "fake_gen" → rowcount=0
-        assert gen_cur.rowcount == 0
-        conn.execute("ROLLBACK")
-
-    def test_daemon_handle_refresh_sequential_seqs(self):
-        """连续递增的 seq 都能成功"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-
-        for seq in [1, 2, 3, 4, 5]:
-            resp = daemon_handle_refresh(
-                peer_uid=1000, workspace_id=1,
-                msg=_refresh_msg("s1", epoch=1, seq=seq),
-                ws_conn=conn,
-            )
-            assert resp["status"] == "committed"
-            assert resp["generation"] == f"1:{seq}"
-
-        # 最终 latest_seq=5
-        row = conn.execute(
-            "SELECT latest_seq FROM file_generations "
-            "WHERE workspace_id=1 AND rel_path='src/main.py'"
-        ).fetchone()
-        assert row["latest_seq"] == 5
-
-    def test_daemon_handle_refresh_wrong_session_id(self):
-        """session_id 不匹配但 epoch 匹配 → ProtocolError"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        # epoch 正确但 session_id 错误
-        with pytest.raises(ProtocolError, match="stale session"):
-            daemon_handle_refresh(
-                peer_uid=1000, workspace_id=1,
-                msg=_refresh_msg("wrong_session", epoch=1, seq=1),
+                msg=_refresh_msg("s1", epoch=epoch, seq=1),
                 ws_conn=conn,
             )
 
@@ -420,33 +330,32 @@ class TestDaemonHandleRefresh:
 # ============================================
 
 class TestConcurrentSameWorkspace:
-    """同一 workspace 并发连接测试"""
+    """同一 workspace 并发连接测试（本地 epoch 表）+ refresh 转发"""
 
-    def test_concurrent_same_workspace_rejected(self):
-        """S1 connect → S2 connect revokes S1 → S1 refresh fails
-
-        规范 §5：同一 workspace 同一时刻只允许一个 active session。
-        """
+    def test_second_connect_revokes_first(self, monkeypatch):
+        """S1 connect → S2 connect revoke S1；refresh 由 daemon 判定"""
         conn = _open_db()
-        # S1 连接
         resp1 = daemon_handle_connect(peer_uid=1000, workspace_id=1,
                                       requested_session_id="s1", ws_conn=conn)
         assert resp1["session_epoch"] == 1
 
-        # S2 连接 → revoke S1
         resp2 = daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                                     requested_session_id="s2", ws_conn=conn)
+                                      requested_session_id="s2", ws_conn=conn)
         assert resp2["session_epoch"] == 2
 
-        # S1 用旧 epoch=1 发 refresh → 应被 ProtocolError 拒绝
-        with pytest.raises(ProtocolError, match="stale session"):
-            daemon_handle_refresh(
-                peer_uid=1000, workspace_id=1,
-                msg=_refresh_msg("s1", epoch=1, seq=1),
-                ws_conn=conn,
-            )
+        # S1 在本地权威表被撤销（stale 判定本身已下沉 daemon）
+        row = conn.execute(
+            "SELECT revoked_at FROM agent_sessions "
+            "WHERE workspace_id=1 AND session_id='s1'"
+        ).fetchone()
+        assert row["revoked_at"] is not None
 
-        # S2 用新 epoch=2 发 refresh → 成功
+        calls = []
+        monkeypatch.setattr(
+            R, "_call_daemon_rpc",
+            lambda m, p: calls.append((m, dict(p))) or {"status": "committed",
+                                                       "generation": "2:1"},
+        )
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s2", epoch=2, seq=1),
@@ -454,15 +363,30 @@ class TestConcurrentSameWorkspace:
         )
         assert resp["status"] == "committed"
         assert resp["generation"] == "2:1"
+        assert calls[0][0] == R._REPLICATOR_REFRESH_METHOD
+        assert calls[0][1]["agent_session_id"] == "s2"
+        assert calls[0][1]["session_epoch"] == 2
 
-    def test_concurrent_threaded_same_workspace(self):
-        """多线程并发连接：后者 revoke 前者，前者写入被拒
+    def test_concurrent_threaded_same_workspace(self, monkeypatch):
+        """多线程并发：连接被 barrier 串行化（epoch 不重复），S1 写入由 daemon 拒绝
 
-        规范 §7 test_concurrent_same_workspace_rejected
+        规范 §7 test_concurrent_same_workspace_rejected。stale 判定已下沉 daemon：
+        本测试断言 Python 侧把 S1 的 refresh 原样转发，且 daemon 抛出的
+        ProtocolError 上抛、无本地回退。
         """
         conn = _open_db()
         barrier_both_connected = threading.Barrier(2)
         errors = []
+        forwarded = []
+
+        def fake_rpc(method, params):
+            forwarded.append((method, dict(params)))
+            # daemon 侧：epoch=1 已被 epoch=2 接管 → stale session 拒绝
+            if params.get("session_epoch") == 1:
+                raise ProtocolError("stale session", code="stale_session")
+            return {"status": "committed", "generation": "2:1"}
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", fake_rpc)
 
         def s1_worker():
             try:
@@ -470,15 +394,13 @@ class TestConcurrentSameWorkspace:
                                              requested_session_id="s1", ws_conn=conn)
                 assert resp["session_epoch"] == 1
                 barrier_both_connected.wait(timeout=5)
-                # 等待 S2 连接后，S1 尝试 refresh
-                barrier_both_connected.wait(timeout=5)
                 try:
                     daemon_handle_refresh(
                         peer_uid=1000, workspace_id=1,
                         msg=_refresh_msg("s1", epoch=1, seq=1),
                         ws_conn=conn,
                     )
-                    errors.append("S1 epoch=1 写入应被拒绝（已被 S2 revoke）")
+                    errors.append("S1 epoch=1 写入应被 daemon 拒绝（已被 S2 revoke）")
                 except ProtocolError:
                     pass  # 预期被拒绝
             except Exception as e:
@@ -490,7 +412,6 @@ class TestConcurrentSameWorkspace:
                 resp = daemon_handle_connect(peer_uid=1000, workspace_id=1,
                                              requested_session_id="s2", ws_conn=conn)
                 assert resp["session_epoch"] == 2
-                barrier_both_connected.wait(timeout=5)
             except Exception as e:
                 errors.append(f"S2 异常: {e}")
 
@@ -502,6 +423,9 @@ class TestConcurrentSameWorkspace:
         t2.join(timeout=10)
 
         assert errors == [], f"并发写不变量被破坏: {errors}"
+        assert forwarded, "refresh 未转发到 daemon"
+        assert forwarded[0][0] == R._REPLICATOR_REFRESH_METHOD
+        assert forwarded[0][1]["agent_session_id"] == "s1"
 
 
 # ============================================
@@ -547,19 +471,23 @@ class TestSessionEpochMonotonicity:
 
 
 # ============================================
-# TestFileGenerationsDedup —— file_generations 去重
+# TestFileGenerationsDedup —— file_generations 去重 / 会话重置
 # ============================================
 
 class TestFileGenerationsDedup:
-    """file_generations 消息去重测试"""
+    """file_generations 会话重置（本地）+ refresh 转发路由"""
 
-    def test_different_files_tracked_separately(self):
-        """不同文件在 file_generations 中独立跟踪"""
+    def test_distinct_files_forwarded_separately(self, monkeypatch):
+        """不同文件的 refresh 各自携带独立 rel_path/seq 转发 daemon。"""
         conn = _open_db()
         daemon_handle_connect(peer_uid=1000, workspace_id=1,
                               requested_session_id="s1", ws_conn=conn)
+        calls = []
+        monkeypatch.setattr(
+            R, "_call_daemon_rpc",
+            lambda m, p: calls.append((m, dict(p))) or {"status": "committed"},
+        )
 
-        # 两个不同文件
         daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="a.py"),
@@ -571,48 +499,52 @@ class TestFileGenerationsDedup:
             ws_conn=conn,
         )
 
-        rows = conn.execute(
-            "SELECT rel_path, latest_seq FROM file_generations "
-            "WHERE workspace_id=1 ORDER BY rel_path"
-        ).fetchall()
-        assert len(rows) == 2
-        assert rows[0]["rel_path"] == "a.py"
-        assert rows[0]["latest_seq"] == 1
-        assert rows[1]["rel_path"] == "b.py"
-        assert rows[1]["latest_seq"] == 2
+        assert [(c[1]["rel_path"], c[1]["monotonic_seq"]) for c in calls] == [
+            ("a.py", 1), ("b.py", 2),
+        ]
 
-    def test_new_session_resets_all_files(self):
+    def test_new_session_resets_all_files(self, monkeypatch):
         """新 session 连接后，所有 file_generations 的 latest_seq 都重置"""
         conn = _open_db()
         daemon_handle_connect(peer_uid=1000, workspace_id=1,
                               requested_session_id="s1", ws_conn=conn)
 
-        # 写入两个文件
-        daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="a.py"),
-            ws_conn=conn,
+        # refresh 已不写本地库（daemon authority），故直接种入两行
+        conn.execute(
+            "INSERT INTO file_generations (workspace_id, rel_path, latest_session_id, "
+            "latest_session_epoch, latest_seq, latest_seen_generation, "
+            "latest_committed_generation) "
+            "VALUES (1, 'a.py', 's1', 1, 7, '1:7', '1:7')"
         )
-        daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1,
-            msg=_refresh_msg("s1", epoch=1, seq=2, rel_path="b.py"),
-            ws_conn=conn,
+        conn.execute(
+            "INSERT INTO file_generations (workspace_id, rel_path, latest_session_id, "
+            "latest_session_epoch, latest_seq, latest_seen_generation, "
+            "latest_committed_generation) "
+            "VALUES (1, 'b.py', 's1', 1, 3, '1:3', '1:3')"
         )
+        conn.commit()
 
-        # S2 连接
+        # S2 连接 → 全量重置为 latest_seq=0
         daemon_handle_connect(peer_uid=1000, workspace_id=1,
                               requested_session_id="s2", ws_conn=conn)
 
         rows = conn.execute(
             "SELECT rel_path, latest_seq, latest_session_id, latest_seen_generation "
-            "FROM file_generations WHERE workspace_id=1"
+            "FROM file_generations WHERE workspace_id=1 ORDER BY rel_path"
         ).fetchall()
+        assert len(rows) == 2
         for row in rows:
             assert row["latest_seq"] == 0
             assert row["latest_session_id"] == "s2"
             assert row["latest_seen_generation"] == ""
 
-        # S2 可以从 seq=1 重新开始
+        # S2 从 seq=1 重新开始 → 转发 daemon（epoch=2）
+        calls = []
+        monkeypatch.setattr(
+            R, "_call_daemon_rpc",
+            lambda m, p: calls.append((m, dict(p))) or {"status": "committed",
+                                                       "generation": "2:1"},
+        )
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s2", epoch=2, seq=1, rel_path="a.py"),
@@ -620,20 +552,42 @@ class TestFileGenerationsDedup:
         )
         assert resp["status"] == "committed"
         assert resp["generation"] == "2:1"
+        assert calls[0][1]["session_epoch"] == 2
 
 
 # ============================================
-# TestDaemonParsePublishPipeline —— daemon_handle_refresh 中间管道测试
+# TestDaemonParsePublishPipeline —— parse + CAS publish 管道（已下沉 daemon）
 # ============================================
 
 class TestDaemonParsePublishPipeline:
-    """daemon_handle_refresh 中间的 re-canonicalize + re-hash + Rust parse + CAS publish 管道"""
+    """parse + CAS publish 管道已在 daemon 侧（A 桶 stale 依据）。
 
-    def test_refresh_without_cas_conn_returns_cas_state(self):
-        """cas_conn=None 时跳过 CAS publish，但仍完成 generation CAS"""
+    stale 依据：``server/replicator.py:410 _daemon_parse_and_publish`` 已非
+    ``daemon_handle_refresh`` 的调用路径（:364-384 只做参数序列化 + RPC）；
+    re-canonicalize / re-hash / Rust parse / CAS publish /
+    失败 generation 保护均在 Rust daemon（``rust_ext/src/daemon/snapshot_guard.rs``）。
+    故本类断言薄客户端把 daemon 的 ``cas_state`` 回包透传，且不接收本地
+    ``cas_conn`` / ``workspace_root`` 形状参数。
+    """
+
+    def _connect(self, session_id="s1"):
         conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
+        resp = daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                                     requested_session_id=session_id, ws_conn=conn)
+        return conn, resp["session_epoch"]
+
+    def _stub(self, monkeypatch, response):
+        calls = []
+        monkeypatch.setattr(
+            R, "_call_daemon_rpc",
+            lambda m, p: calls.append((m, dict(p))) or response,
+        )
+        return calls
+
+    def test_cas_state_passthrough_when_daemon_skips_cas(self, monkeypatch):
+        """daemon 返回 no_cas_conn → cas_state 原样透传（本地不再判定）。"""
+        conn, _ = self._connect()
+        calls = self._stub(monkeypatch, {"status": "committed", "cas_state": "no_cas_conn"})
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
@@ -641,15 +595,13 @@ class TestDaemonParsePublishPipeline:
             cas_conn=None,
         )
         assert resp["status"] == "committed"
-        # cas_conn=None 时返回 no_cas_conn 或其他降级状态
-        assert "cas_state" in resp
+        assert resp["cas_state"] == "no_cas_conn"
+        assert "cas_conn" not in calls[0][1]
 
-    def test_refresh_with_abs_path_in_msg(self):
-        """msg 中携带 abs_path 时使用该路径"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        # 用一个不存在的 abs_path，触发降级路径
+    def test_abs_path_from_msg_forwarded(self, monkeypatch):
+        """msg 携带 abs_path 时原样转发给 daemon。"""
+        conn, _ = self._connect()
+        calls = self._stub(monkeypatch, {"status": "committed"})
         msg = _refresh_msg("s1", epoch=1, seq=1, rel_path="test.py")
         msg["abs_path"] = "/nonexistent/path/test.py"
         resp = daemon_handle_refresh(
@@ -659,26 +611,26 @@ class TestDaemonParsePublishPipeline:
             cas_conn=None,
         )
         assert resp["status"] == "committed"
+        assert calls[0][1]["abs_path"] == "/nonexistent/path/test.py"
 
-    def test_refresh_with_workspace_root_derives_abs_path(self):
-        """workspace_root + rel_path 推导 abs_path"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-        resp = daemon_handle_refresh(
+    def test_workspace_root_argument_not_forwarded(self, monkeypatch):
+        """legacy workspace_root 形状参数不再外发（abs_path 由 daemon 推导）。"""
+        conn, _ = self._connect()
+        calls = self._stub(monkeypatch, {"status": "committed"})
+        daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="src/main.py"),
             ws_conn=conn,
             cas_conn=None,
             workspace_root="/some/root",
         )
-        assert resp["status"] == "committed"
+        assert "workspace_root" not in calls[0][1]
 
-    def test_refresh_unsupported_language_skips_cas(self):
-        """不支持的文件扩展名 → cas_state=unsupported_language"""
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
+    def test_unsupported_language_cas_state_passthrough(self, monkeypatch):
+        """daemon 判定 unsupported_language → cas_state 原样透传。"""
+        conn, _ = self._connect()
+        self._stub(monkeypatch, {"status": "committed",
+                                 "cas_state": "unsupported_language"})
         resp = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="README.unknown"),
@@ -688,78 +640,46 @@ class TestDaemonParsePublishPipeline:
         assert resp["status"] == "committed"
         assert resp["cas_state"] == "unsupported_language"
 
-    def test_refresh_with_cas_conn_attempts_cas_publish(self):
-        """有 cas_conn 时会尝试 CAS publish（即使最终降级）"""
-        # 创建 CAS schema
+    def test_cas_conn_is_ignored_by_thin_client(self, monkeypatch):
+        """显式传入本地 cas_conn 也不改变转发参数（薄客户端不读本地 CAS）。"""
         cas_conn = sqlite3.connect(":memory:", check_same_thread=False)
         cas_conn.row_factory = sqlite3.Row
-        try:
-            from callwarden.db.db_cas import init_cas_schema
-            init_cas_schema(cas_conn)
-        except ImportError:
-            pytest.skip("db.db_cas not available")
-
-        conn = _open_db()
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s1", ws_conn=conn)
-
-        # 用一个真实的 Python 文件做测试
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
-            f.write("def foo():\n    pass\n")
-            tmp_path = f.name
-        try:
-            msg = _refresh_msg("s1", epoch=1, seq=1, rel_path="test.py")
-            msg["abs_path"] = tmp_path
-            resp = daemon_handle_refresh(
-                peer_uid=1000, workspace_id=1,
-                msg=msg,
-                ws_conn=conn,
-                cas_conn=cas_conn,
-            )
-            # C6（S2）：真实 CAS 主链下 ready 状态 committed；失败状态被
-            # generation 保护拦截为 blocked（不推进 latest_committed_generation）。
-            assert resp["status"] in ("committed", "blocked"), resp
-            # 应该有 cas_key 和 cas_state
-            assert "cas_key" in resp
-            assert "cas_state" in resp
-            # Rust 不可用时可能是 parse_failed 或 ready_published
-            assert resp["cas_state"] in (
-                "ready_published", "parse_failed", "ready_cache_hit",
-                "publish_failed", "no_cas_conn",
-            )
-            if resp["cas_state"] in ("ready_published", "ready_cache_hit"):
-                assert resp["status"] == "committed"
-            elif resp["cas_state"] != "no_cas_conn":
-                # C6：真实 CAS 主链下失败状态 → blocked
-                assert resp["status"] == "blocked"
-                protection = resp.get("protection") or {}
-                assert protection.get("blocked") is True
-        finally:
-            os.unlink(tmp_path)
+        conn, _ = self._connect()
+        calls = self._stub(monkeypatch, {"status": "committed", "cas_key": "k",
+                                        "cas_state": "ready_published"})
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
+            ws_conn=conn,
+            cas_conn=cas_conn,
+        )
+        assert resp["cas_key"] == "k"
+        assert resp["cas_state"] == "ready_published"
+        assert "cas_conn" not in calls[0][1]
+        cas_conn.close()
 
 
 class TestJoinPath:
     """_join_path 辅助函数"""
 
     def test_join_path_basic(self):
-        from server.replicator import _join_path
+        from callwarden.server.replicator import _join_path
         assert _join_path("/root", "src/main.py") == "/root/src/main.py"
 
     def test_join_path_trailing_slash(self):
-        from server.replicator import _join_path
+        from callwarden.server.replicator import _join_path
         assert _join_path("/root/", "src/main.py") == "/root/src/main.py"
 
     def test_join_path_leading_slash_in_rel(self):
-        from server.replicator import _join_path
+        from callwarden.server.replicator import _join_path
         assert _join_path("/root", "/src/main.py") == "/root/src/main.py"
 
     def test_join_path_windows_backslash(self):
-        from server.replicator import _join_path
+        from callwarden.server.replicator import _join_path
         assert _join_path("C:\\root", "src\\main.py") == "c:/root/src/main.py"
 
     def test_join_path_empty_root(self):
-        from server.replicator import _join_path
+        from callwarden.server.replicator import _join_path
         assert _join_path("", "src/main.py") == "src/main.py"
 
 
@@ -776,10 +696,15 @@ class TestProtocolErrorCodeField:
     agent_watcher 据此决定是否触发 auto-reconnect。
     """
 
-    def test_no_active_session_error_carries_code(self):
-        """无 active session → ProtocolError.code == 'session_not_active'。"""
+    def test_no_active_session_error_propagates_with_code(self, monkeypatch):
+        """daemon 返回 session_not_active → ProtocolError 上抛且 code 保留。"""
         conn = _open_db()
-        # 未调用 daemon_handle_connect，无 active session
+
+        def boom(method, params):
+            raise ProtocolError("no active session for workspace 1",
+                                code="session_not_active")
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", boom)
         with pytest.raises(ProtocolError) as exc_info:
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
@@ -789,15 +714,16 @@ class TestProtocolErrorCodeField:
         assert exc_info.value.code == "session_not_active"
         assert "no active session" in exc_info.value.message
 
-    def test_stale_session_error_carries_code(self):
-        """epoch/session 不匹配 → ProtocolError.code == 'stale_session'。"""
+    def test_stale_session_error_propagates_with_code(self, monkeypatch):
+        """daemon 返回 stale_session → ProtocolError 上抛且 code 保留。"""
         conn = _open_db()
         daemon_handle_connect(peer_uid=1000, workspace_id=1,
                               requested_session_id="s1", ws_conn=conn)
-        # s2 接管 → active epoch = 2
-        daemon_handle_connect(peer_uid=1000, workspace_id=1,
-                              requested_session_id="s2", ws_conn=conn)
-        # s1 用旧 epoch=1 → 应被拒绝
+
+        def boom(method, params):
+            raise ProtocolError("stale session epoch", code="stale_session")
+
+        monkeypatch.setattr(R, "_call_daemon_rpc", boom)
         with pytest.raises(ProtocolError) as exc_info:
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1,
@@ -809,9 +735,9 @@ class TestProtocolErrorCodeField:
     def test_stale_manifest_commit_error_carries_code(self):
         """ProtocolError 显式构造 stale_manifest_commit code（构造性验证）。
 
-        完整 daemon_handle_refresh 第二阶段 stale 场景难以在单元测试中复现
-        （依赖 abs_path 不存在时的 fallback 行为），改为直接断言 ProtocolError
-        类支持 stale_manifest_commit code 字段，覆盖代码路径。
+        stale manifest commit 判定已下沉 daemon（Rust 侧 CAS 第二阶段），
+        Python 侧只负责把 code 透传给上层；此处直接断言 ProtocolError
+        支持 stale_manifest_commit code 字段，覆盖序列化/透传路径。
         """
         err = ProtocolError(
             "stale manifest commit for main.py",

@@ -445,8 +445,17 @@ class TestRealDaemonSnapshotRoundTrip:
             # 会因便捷方法内部二次 register 轮转而失配 → 空快照）。
             real_daemon_client.configure_workspace(root)
             st = real_daemon_client.workspace_status()
-            instance_id = st["workspace_instance_id"]
-            ws_id_num = int(st["workspace_id"])
+            # stale（PYT 回归卡 step#4 · A 桶）：daemon authority 化后
+            # workspace.status 返回 UnifiedAuthority 六字段结构，不再有顶层
+            # workspace_instance_id / workspace_id。生产依据：
+            # rust_ext/src/daemon/snapshot_state.rs:478-527
+            # handle_workspace_status 直接 `serde_json::to_value(auth)`；
+            # 结构见 rust_ext/src/daemon/workspace_reconciliation.rs:196-203；
+            # :232-234 证明 registry_workspace_id = registry 行 workspace_id
+            # （数值 ROWID，即 publish 过滤所需）、registry_instance_id =
+            # registry 行 workspace_instance_id。故断言迁移到这两个字段。
+            instance_id = st["registry_instance_id"]
+            ws_id_num = int(st["registry_workspace_id"])
             db_path = _make_minimal_db(str(tmp_path / "w13_min.db"), ws_id_num)
 
             # 便捷方法内部 publish + 注入 instance_id → 命中

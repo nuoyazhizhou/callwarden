@@ -143,6 +143,11 @@ def test_migration_false_v48_stamp_repairs_via_v49():
         INSERT INTO workspaces (id, name, root_path, created_at, is_active) VALUES (1, 'ws', 'ROOT', 1, 1);
         CREATE TABLE guardrail_rules (rule_id TEXT PRIMARY KEY, category TEXT, severity TEXT, pattern TEXT, action TEXT, description TEXT, is_builtin INTEGER, created_at REAL);
         CREATE TABLE guardrail_findings (id INTEGER PRIMARY KEY, rule_id TEXT, file_path TEXT, symbol_hash TEXT DEFAULT '', severity TEXT DEFAULT 'warn', status TEXT DEFAULT 'open', message TEXT DEFAULT '', detected_at REAL, resolved_at REAL);
+        -- stale 依据：合成历史库缺 agent_registrations 表。SCHEMA_VERSION 已升至 60，
+        -- 打开时迁移链会执行 _migrate_v49_to_v50（db/db_base.py:2961-2982）的
+        -- `ALTER TABLE agent_registrations ADD COLUMN ...`，该迁移假设该表已由 v47
+        -- 迁移建出（db/db_base.py:2822-2835）。故按 v47 同构补建该表。
+        CREATE TABLE agent_registrations (agent_id TEXT PRIMARY KEY, agent_name TEXT NOT NULL, owner_key TEXT NOT NULL, capabilities TEXT DEFAULT '[]', registered_at REAL NOT NULL, last_heartbeat REAL NOT NULL, status TEXT DEFAULT 'active');
         INSERT INTO guardrail_rules VALUES ('r1','db_safety','warn','x','warn','',1,1);
         INSERT INTO guardrail_findings (id, rule_id, file_path, symbol_hash, severity, status, message, detected_at) VALUES (1,'r1','a.py','h1','warn','open','legacy-open',1);
         """
@@ -201,6 +206,9 @@ def test_stale_v49_stamp_without_column_healed_by_python_fallback():
         INSERT INTO workspaces (id, name, root_path, created_at, is_active) VALUES (1, 'ws', 'ROOT', 1, 1);
         CREATE TABLE guardrail_rules (rule_id TEXT PRIMARY KEY, category TEXT, severity TEXT, pattern TEXT, action TEXT, description TEXT, is_builtin INTEGER, created_at REAL);
         CREATE TABLE guardrail_findings (id INTEGER PRIMARY KEY, rule_id TEXT, file_path TEXT, symbol_hash TEXT DEFAULT '', severity TEXT DEFAULT 'warn', status TEXT DEFAULT 'open', message TEXT DEFAULT '', detected_at REAL, resolved_at REAL);
+        -- stale 依据：同 test_migration_false_v48_stamp_repairs_via_v49——合成库缺
+        -- agent_registrations，v50 迁移（db/db_base.py:2961-2982）会 ALTER 该表。
+        CREATE TABLE agent_registrations (agent_id TEXT PRIMARY KEY, agent_name TEXT NOT NULL, owner_key TEXT NOT NULL, capabilities TEXT DEFAULT '[]', registered_at REAL NOT NULL, last_heartbeat REAL NOT NULL, status TEXT DEFAULT 'active');
         INSERT INTO guardrail_rules VALUES ('r1','db_safety','warn','x','warn','',1,1);
         INSERT INTO guardrail_findings (rule_id, file_path, symbol_hash, severity, status, message, detected_at) VALUES ('r1','a.py','h1','warn','open','legacy-stale49',1);
         """
@@ -240,6 +248,10 @@ def test_migration_v47_to_v48_idempotent_and_orphans_legacy_open():
         INSERT INTO workspaces (id, name, root_path, created_at, is_active) VALUES (1, 'ws', 'ROOT', 1, 1);
         CREATE TABLE guardrail_rules (rule_id TEXT PRIMARY KEY, category TEXT, severity TEXT, pattern TEXT, action TEXT, description TEXT, is_builtin INTEGER, created_at REAL);
         CREATE TABLE guardrail_findings (id INTEGER PRIMARY KEY, rule_id TEXT, file_path TEXT, symbol_hash TEXT DEFAULT '', severity TEXT DEFAULT 'warn', status TEXT DEFAULT 'open', message TEXT DEFAULT '', detected_at REAL, resolved_at REAL);
+        -- stale 依据：v47 打标合成库缺 agent_registrations（真实 v47 库由 v47 迁移建出，
+        -- db/db_base.py:2822-2835）。SCHEMA_VERSION=60 时迁移链执行 v50 迁移
+        -- （db/db_base.py:2961-2982）会 ALTER 该表，故按 v47 同构补建。
+        CREATE TABLE agent_registrations (agent_id TEXT PRIMARY KEY, agent_name TEXT NOT NULL, owner_key TEXT NOT NULL, capabilities TEXT DEFAULT '[]', registered_at REAL NOT NULL, last_heartbeat REAL NOT NULL, status TEXT DEFAULT 'active');
         INSERT INTO guardrail_rules VALUES ('r1','db_safety','warn','x','warn','',1,1);
         INSERT INTO guardrail_findings (id, rule_id, file_path, symbol_hash, severity, status, message, detected_at) VALUES (1,'r1','a.py','h1','warn','open','msg',1);
         INSERT INTO guardrail_findings (id, rule_id, file_path, symbol_hash, severity, status, message, detected_at) VALUES (2,'r1','a.py','h1','warn','resolved','msg2',1);

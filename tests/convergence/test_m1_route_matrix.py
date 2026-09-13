@@ -27,7 +27,7 @@ _DISPATCH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "dispatch.rs")
 _HTTP_SERVER = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "http_server.rs")
 _COMPAT_REG = os.path.join(_REPO_ROOT, "server", "compat_registry.py")
 _TOOLS_DIR = os.path.join(_REPO_ROOT, "server", "tools")
-_EXPECTED_TOTAL = 239
+_EXPECTED_TOTAL = 243
 
 
 def _load_matrix():
@@ -101,16 +101,49 @@ class TestMatrixCoverage:
         assert not missing, f"dispatch.rs 未覆盖: {missing[:10]}"
 
     def test_compat_whitelist_two_side_aligned(self):
-        """python_compat 工具必须同时出现在 Rust 白名单与 Python RUST_COMPAT_ROUTE。"""
+        """python_compat 三向一致性（对齐 verify_route_matrix.py 门禁 4 分级语义）。
+
+        RUST_COMPAT_ROUTE（compat worker 侧）是 python_compat 的真相源；Rust
+        COMPAT_ROUTE_WHITELIST 缺失 / 两端皆缺 = KNOWN_DRIFT（daemon compat 域
+        既有缺陷，另卡承接）。漂移集以矩阵行派生的方式冻结登记：漂移集变化
+        （新增/消退）必须同步登记，防止静默新增无路由工具。
+        """
         m = _load_matrix()
         rust_wl = _rust_whitelist()
         py_routes = _py_compat_routes()
+        wl_missing = set()    # py 有、whitelist 缺（COMPAT_ROUTE_WHITELIST 未登记）
+        both_missing = set()  # 两端皆缺（无可用 python_compat worker 路由）
         for t in m["tools"]:
-            if t["target_backend"] == "python_compat":
-                assert t["rpc_method"] in rust_wl, \
-                    f"{t['name']}: 不在 http_server.rs COMPAT_ROUTE_WHITELIST"
-                assert t["rpc_method"] in py_routes, \
-                    f"{t['name']}: 不在 compat_registry.py RUST_COMPAT_ROUTE"
+            if t["target_backend"] != "python_compat":
+                continue
+            method = t["rpc_method"]
+            if method in py_routes and method not in rust_wl:
+                wl_missing.add(method)
+            elif method not in py_routes and method not in rust_wl:
+                both_missing.add(method)
+            else:
+                assert method in py_routes and method in rust_wl, \
+                    f"{t['name']}: 白名单独有（{method} 缺 worker 路由）"
+        # Rust whitelist 必须是 worker 路由的子集（不存在白名单独有项）
+        assert rust_wl - py_routes == set(), \
+            f"COMPAT_ROUTE_WHITELIST 独有（缺 RUST_COMPAT_ROUTE）: {sorted(rust_wl - py_routes)}"
+        # stale 修正（依据 server/compat_registry.py:174-220）：
+        # _build_default_registry() 现返回空 CompatRegistry()，RUST_COMPAT_ROUTE = {}；
+        # Rust COMPAT_ROUTE_WHITELIST 亦清零（http_server.rs:587 注释「白名单清零」）。
+        # python_compat 路由已全部迁 rust_native，故两处漂移集合均已空。
+        # 冻结为空集：任何非空漂移都视为回归（静默新增无路由工具）。
+        assert wl_missing == set(), \
+            f"KNOWN_DRIFT(wl 缺) 漂移变化: {sorted(wl_missing)}"
+        # 冻结已登记 KNOWN_DRIFT：两端皆缺（matrix 标 python_compat 但无 worker 路由）。
+        # stale 修正：python_compat 路由迁移后，矩阵仍标 python_compat 的行改为
+        # 「本地 SQL 保留执行」（见 server/tools/tools_query.py:25-30 说明），
+        # 该 11 项在 RUST_COMPAT_ROUTE / COMPAT_ROUTE_WHITELIST 两端均无登记。
+        assert both_missing == {
+            "assignment_show", "export_module_graph", "find_issues",
+            "get_attestation_validity", "get_comment_from_version", "get_impact",
+            "get_issue_summary", "get_recent_changes", "get_symbol_history",
+            "get_test_coverage", "list_attestation_revocations",
+        }, f"KNOWN_DRIFT(两端缺) 漂移变化: {sorted(both_missing)}"
 
     def test_all_tools_registered_in_mcp_shell(self):
         """每个矩阵工具名仍注册在 server/tools/*.py（MCP 不丢失）。"""
@@ -127,8 +160,8 @@ class TestMatrixCoverage:
         )
         assert r.returncode == 0, f"verify_route_matrix 退出码 {r.returncode}\n{r.stdout}\n{r.stderr}"
 
-    def test_mcp_server_registers_239_tools(self):
-        """create_mcp_server 注册工具数 = 239 且与矩阵 1:1（签名不丢）。"""
+    def test_mcp_server_registers_all_matrix_tools(self):
+        """create_mcp_server 注册工具数 = 243 且与矩阵 1:1（签名不丢）。"""
         m = _load_matrix()
         matrix_names = {t["name"] for t in m["tools"]}
         from callwarden.server.mcp_server import create_mcp_server
@@ -136,7 +169,7 @@ class TestMatrixCoverage:
         tools = mcp._tool_manager.list_tools()
         reg_names = {t.name for t in tools}
         assert len(reg_names) == _EXPECTED_TOTAL, \
-            f"MCP 注册 {len(reg_names)} != 239"
+            f"MCP 注册 {len(reg_names)} != {_EXPECTED_TOTAL}"
         assert matrix_names == reg_names, (
             f"矩阵与 MCP 注册不一致: 缺 {matrix_names - reg_names}, 多 {reg_names - matrix_names}"
         )

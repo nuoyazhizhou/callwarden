@@ -124,7 +124,14 @@ class TestHttpWorkspaceStatusInjection:
         assert methods == ["workspace.register", "snapshot.publish", "workspace.status"], \
             f"调用序应为 register→publish→workspace.status，实际 {methods}"
         # register：client_view_root 默认取进程 cwd（与 legacy 对齐）
-        assert calls[0][1] == {"client_view_root": os.getcwd()}
+        # stale 修正：db_path 非空时 _ensure_remote_snapshot 经
+        # _workspace_snapshot_metadata（server/daemon_client.py:2114-2116,
+        # 1091-1113）附加 git_remote_url/git_head_commit_sha，register params
+        # 不再等于仅 client_view_root 的单键 dict（旧断言陈旧）。
+        assert calls[0][1]["client_view_root"] == os.getcwd()
+        assert set(calls[0][1]) <= {
+            "client_view_root", "git_remote_url", "git_head_commit_sha",
+        }
         # publish：注入权威 instance_id + 透传 db_path（abspath 规范化）
         assert calls[1][1]["workspace_instance_id"] == "inst-w1"
         assert calls[1][1]["db_path"] == os.path.abspath(db_path)
@@ -169,29 +176,17 @@ class TestHttpWorkspaceStatusInjection:
 # ----------------------------------------------------------------------
 
 class TestToolsWorkspaceHttpBranches:
-    """tools_workspace.py 读面工具 HTTP 分支单测。
+    """tools_workspace.py 读面工具薄壳路由单测（陈旧期望已重写）。
 
-    - get_active_workspace：HTTP 模式必须调用 client.workspace_status 便捷
-      方法并传 db_path=_get_db_path_for_daemon()（修复前调
-      workspace.activate {} 缺注入）；返回结构做 legacy 兼容映射。
-    - list_workspaces：HTTP 模式走 workspace.list 并做逐行兼容映射。
+    stale 依据：T03 收敛后工具层已全部改为一行式
+    `_route(<rpc method>, {...}, <op_class>)`
+    （server/tools/tools_workspace.py:89 list_workspaces、
+    :161 get_active_workspace）。HTTP/local 分支、client_view_root→root_path
+    兼容映射、以及 client.workspace_status/_call_daemon_rpc/get_db 便捷调用
+    全部下沉到 server/daemon_client.py::route_rpc（L3878-3992）。因此旧断言
+    mock 的 tools_workspace.get_db / _call_daemon_rpc / client.workspace_status
+    已无调用点（陈旧）；现改为断言薄壳透传的路由契约。
     """
-
-    @pytest.fixture
-    def mock_http_mode(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: True,
-        )
-
-    @pytest.fixture
-    def mock_db_path(self, monkeypatch):
-        fake = r"C:\fake\ws\db.sqlite"
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_db_path_for_daemon",
-            lambda: fake,
-        )
-        return fake
 
     def _register_tools(self):
         from unittest.mock import MagicMock
@@ -209,151 +204,49 @@ class TestToolsWorkspaceHttpBranches:
         tools_workspace.register(mcp)
         return registrations
 
-    # -- get_active_workspace -------------------------------------------------
+    def test_get_active_workspace_routes_workspace_status(self, monkeypatch):
+        """get_active_workspace 薄壳：透传 workspace.status + READ_ONLY，原样回包。"""
+        from callwarden.server.tools import tools_workspace
+        seen = {}
 
-    def test_get_active_workspace_http_calls_convenience_with_db_path(
-        self, monkeypatch, mock_http_mode, mock_db_path
-    ):
-        from callwarden.server.daemon_client import HttpDaemonRpcClient
+        def fake_route(rpc_method, params, op_class="READ_ONLY"):
+            seen["method"] = rpc_method
+            seen["params"] = dict(params)
+            seen["op_class"] = op_class
+            return {"registry_instance_id": "inst-1", "status": "active"}
 
-        client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
-        calls = []
-        daemon_row = {
-            "workspace_id": 7,
-            "workspace_instance_id": "inst-w1-tool",
-            "snapshot_id": "snap-1",
-            "owner_uid": 1001,
-            "git_remote_url": "",
-            "git_head_commit_sha": "",
-            "client_view_root": r"C:\fake\ws",
-            "host_real_root": r"C:\fake\ws",
-            "toolchain_fingerprint": "fp",
-            "registered_at": 1700000000.0,
-            "last_active_at": 1700000001.0,
-            "status": "active",
-        }
-
-        def fake_workspace_status(db_path=None):
-            calls.append(db_path)
-            return dict(daemon_row)
-
-        monkeypatch.setattr(client, "workspace_status", fake_workspace_status)
-        monkeypatch.setattr(HttpDaemonRpcClient, "get_instance", classmethod(lambda cls: client))
-
+        monkeypatch.setattr(tools_workspace, "_route", fake_route)
         tools = self._register_tools()
         result = tools["get_active_workspace"]()
 
-        assert calls == [mock_db_path], \
-            f"便捷方法必须收到 db_path=_get_db_path_for_daemon()，实际 {calls}"
-        # 兼容映射：client_view_root→root_path、name 用 basename 兜底、
-        # host_real_root 保留、daemon 行其余字段透传
-        assert result["root_path"] == r"C:\fake\ws"
-        assert result["name"] == "ws"
-        assert result["host_real_root"] == r"C:\fake\ws"
-        assert result["workspace_instance_id"] == "inst-w1-tool"
-        assert result["status"] == "active"
-        assert result["workspace_id"] == 7
+        assert seen == {
+            "method": "workspace.status",
+            "params": {},
+            "op_class": "READ_ONLY",
+        }, f"薄壳路由契约不符，实际 {seen}"
+        # 薄壳原样透传 daemon 回包（映射下沉 route_rpc/daemon）
+        assert result == {"registry_instance_id": "inst-1", "status": "active"}
 
-    def test_get_active_workspace_http_returns_none(self, monkeypatch, mock_http_mode, mock_db_path):
-        from callwarden.server.daemon_client import HttpDaemonRpcClient
-        client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
-        monkeypatch.setattr(client, "workspace_status", lambda db_path=None: None)
-        monkeypatch.setattr(HttpDaemonRpcClient, "get_instance", classmethod(lambda cls: client))
+    def test_list_workspaces_routes_workspace_list(self, monkeypatch):
+        """list_workspaces 薄壳：透传 workspace.list + READ_ONLY，原样回包。"""
+        from callwarden.server.tools import tools_workspace
+        seen = {}
 
+        def fake_route(rpc_method, params, op_class="READ_ONLY"):
+            seen["method"] = rpc_method
+            seen["params"] = dict(params)
+            seen["op_class"] = op_class
+            return []
+
+        monkeypatch.setattr(tools_workspace, "_route", fake_route)
         tools = self._register_tools()
-        assert tools["get_active_workspace"]() is None
 
-    def test_get_active_workspace_http_passthrough_without_client_view_root(
-        self, monkeypatch, mock_http_mode, mock_db_path
-    ):
-        """daemon 行无 client_view_root（异常形态）时直接透传，不做映射。"""
-        from callwarden.server.daemon_client import HttpDaemonRpcClient
-        client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
-        odd_row = {"workspace_instance_id": "inst-odd", "status": "active"}
-        monkeypatch.setattr(client, "workspace_status", lambda db_path=None: dict(odd_row))
-        monkeypatch.setattr(HttpDaemonRpcClient, "get_instance", classmethod(lambda cls: client))
-
-        tools = self._register_tools()
-        result = tools["get_active_workspace"]()
-        assert result == odd_row
-
-    def test_get_active_workspace_legacy_when_not_http(self, monkeypatch):
-        """非 HTTP 模式保持 legacy db.get_active_workspace()（workspaces 表行）。"""
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        with patch.object(tools_workspace, "get_db") as mock_get_db:
-            mock_db = MagicMock()
-            legacy_row = {"id": 1, "name": "ws1", "root_path": r"C:\ws1", "is_active": 1}
-            mock_db.get_active_workspace.return_value = legacy_row
-            mock_get_db.return_value = mock_db
-            tools = self._register_tools()
-            result = tools["get_active_workspace"]()
-            assert result == legacy_row
-            mock_db.get_active_workspace.assert_called_once_with()
-
-    # -- list_workspaces ------------------------------------------------------
-
-    def test_list_workspaces_http_maps_daemon_rows(self, mock_http_mode):
-        from unittest.mock import patch
-        from callwarden.server.tools import tools_workspace
-        daemon_rows = [
-            {
-                "workspace_id": 1,
-                "workspace_instance_id": "inst-a",
-                "client_view_root": r"C:\proj\alpha",
-                "host_real_root": r"C:\proj\alpha",
-                "status": "active",
-            },
-            {
-                "workspace_id": 2,
-                "workspace_instance_id": "inst-b",
-                "client_view_root": r"C:\proj\beta",
-                "host_real_root": r"C:\proj\beta",
-                "status": "active",
-            },
-        ]
-        with patch.object(tools_workspace, "_call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = daemon_rows
-            tools = self._register_tools()
-            result = tools["list_workspaces"]()
-
-        mock_rpc.assert_called_once_with("workspace.list", {})
-        assert len(result) == 2
-        assert result[0]["root_path"] == r"C:\proj\alpha"
-        assert result[0]["name"] == "alpha"
-        assert result[0]["host_real_root"] == r"C:\proj\alpha"
-        assert result[0]["workspace_instance_id"] == "inst-a"
-        assert result[1]["root_path"] == r"C:\proj\beta"
-        assert result[1]["name"] == "beta"
-
-    def test_list_workspaces_http_handles_empty(self, mock_http_mode):
-        from unittest.mock import patch
-        from callwarden.server.tools import tools_workspace
-        with patch.object(tools_workspace, "_call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = []
-            tools = self._register_tools()
-            assert tools["list_workspaces"]() == []
-
-    def test_list_workspaces_legacy_when_not_http(self, monkeypatch):
-        from unittest.mock import MagicMock, patch
-        from callwarden.server.tools import tools_workspace
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        with patch.object(tools_workspace, "get_db") as mock_get_db:
-            mock_db = MagicMock()
-            legacy_rows = [{"id": 1, "name": "ws1", "root_path": r"C:\ws1", "is_active": 1}]
-            mock_db.list_workspaces.return_value = legacy_rows
-            mock_get_db.return_value = mock_db
-            tools = self._register_tools()
-            result = tools["list_workspaces"]()
-            assert result == legacy_rows
-            mock_db.list_workspaces.assert_called_once_with()
+        assert tools["list_workspaces"]() == []
+        assert seen == {
+            "method": "workspace.list",
+            "params": {},
+            "op_class": "READ_ONLY",
+        }, f"薄壳路由契约不符，实际 {seen}"
 
 
 # ----------------------------------------------------------------------
@@ -507,7 +400,17 @@ class TestRealDaemonWorkspaceRoundTrip:
             status = real_daemon_client.call(
                 "workspace.status", {"workspace_instance_id": instance_id}
             )
-            assert status["workspace_instance_id"] == instance_id
+            # stale（PYT 回归卡 step#4 · A 桶）：daemon authority 化后
+            # workspace.status 不再返回顶层 workspace_instance_id，改为返回
+            # UnifiedAuthority 跨库统一权威结构。生产依据：
+            # rust_ext/src/daemon/snapshot_state.rs:478-527 handle_workspace_status
+            # 直接 `serde_json::to_value(auth)`；结构定义见
+            # rust_ext/src/daemon/workspace_reconciliation.rs:194-203
+            # （registry_workspace_id/registry_instance_id/task_db_workspace_id/
+            # task_db_instance_id/client_view_root/status 六字段，无
+            # workspace_instance_id）。registry 侧 instance 即 register 返回的
+            # instance_id，故断言迁移到 registry_instance_id。
+            assert status["registry_instance_id"] == instance_id
             assert status["client_view_root"] == root
             assert status["status"] == "active"
         finally:
@@ -532,12 +435,18 @@ class TestRealDaemonWorkspaceRoundTrip:
 
     @requires_binaries
     def test_status_unknown_instance_rejected(self, real_daemon_client):
-        """d) 不存在 instance_id 的 workspace.status → workspace_not_found。"""
+        """d) 不存在 instance_id 的 workspace.status → E_WORKSPACE_NOT_FOUND。"""
         with pytest.raises(DaemonRemoteError) as exc:
             real_daemon_client.call(
                 "workspace.status", {"workspace_instance_id": "deadbeefdeadbeef01"}
             )
-        assert exc.value.code == "workspace_not_found"
+        # stale（PYT 回归卡 step#4 · A 桶）：旧断言用小写 domain 码
+        # "workspace_not_found"，但 UnifiedAuthority 权威缺失时 Rust 侧显式
+        # 返回大写错误码。生产依据：
+        # rust_ext/src/daemon/snapshot_state.rs:520-526
+        # `unified_workspace_authority` 返回 None → DaemonRpcError::new(
+        # "E_WORKSPACE_NOT_FOUND", ...)（非 workspace_not_found）。
+        assert exc.value.code == "E_WORKSPACE_NOT_FOUND"
 
     @requires_binaries
     def test_status_missing_instance_id_invalid_params(self, real_daemon_client):

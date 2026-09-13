@@ -24,12 +24,27 @@ import pytest
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _collab_src():
-    with open(
-        os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "task_collab.rs"),
-        encoding="utf-8",
-    ) as f:
-        return f.read()
+def _daemon_src():
+    """聚合 rust_ext/src/daemon 下全部非测试 Rust 源码。
+
+    stale 依据：生产已把单文件 task_collab.rs 拆分为多文件（现 task_collab.rs 仅剩薄壳）：
+    - task_collab_planning.rs:108 handle_task_split / :206 let plan_text = if
+      !plan_file.is_empty() / :227 params![sub_id, st_title, st_desc, owner, ts, ts,
+      task_id] / :231 insert_task_steps(&tx, &sub_id, &steps, ts)?
+    - parse_subtasks_from_plan_text 仍在 task_collab.rs:1465 content.find('@') /
+      :1470 content.find(':') / :1478-1481 action/target_file/target_symbol/check_items
+    只读 task_collab.rs 必然 assert in <薄壳> 失败。
+    这里递归聚合所有文件名不含 "test" 的 .rs，排除测试源码以免断言被测试代码自身满足。
+    """
+    root = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon")
+    parts = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in sorted(filenames):
+            if not name.endswith(".rs") or "test" in name:
+                continue
+            with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                parts.append(f.read())
+    return "\n".join(parts)
 
 
 # ------------------------------------------------------------
@@ -38,18 +53,21 @@ def _collab_src():
 
 def test_plan_file_branch_calls_insert_task_steps():
     """S1：plan_file 分支必须调用 insert_task_steps。"""
-    src = _collab_src()
+    src = _daemon_src()
     # plan_file 读取后的循环体内必须有 insert_task_steps 调用
     assert "let plan_text = if !plan_file.is_empty()" in src
-    assert "insert_task_steps(&tx, &sub_id, &step_values, ts)?" in src
-    # 确保调用发生在同一事务（tx 被复用）
-    assert "sub_id, st_title, st_desc, peer.owner_key()" in src
+    # stale 依据：task_collab_planning.rs:231 实际形参名为 steps（非旧 step_values），
+    # 拆分时该变量被重命名。
+    assert "insert_task_steps(&tx, &sub_id, &steps, ts)?" in src
+    # stale 依据：task_collab_planning.rs:227 现在用本地 owner 变量
+    # （:125 let owner = peer.owner_key()），不再内联 peer.owner_key()。
+    assert "sub_id, st_title, st_desc, owner, ts, ts, task_id" in src
 
 
 def test_parse_subtasks_produces_full_step_fields():
     """S2：解析出的步骤字段与 subtasks 参数路径一致（action/target_file/
     target_symbol/check_items 四字段齐全）。"""
-    src = _collab_src()
+    src = _daemon_src()
     assert '"action".to_string(), Value::String(action)' in src
     assert '"target_file".to_string(), Value::String(target_file)' in src
     assert '"target_symbol".to_string()' in src
@@ -58,7 +76,7 @@ def test_parse_subtasks_produces_full_step_fields():
 
 def test_parse_subtasks_handles_action_formats():
     """S2：三种步骤写法（@ / : / 纯 action）均被支持。"""
-    src = _collab_src()
+    src = _daemon_src()
     assert "content.find('@')" in src
     assert "content.find(':')" in src
 

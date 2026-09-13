@@ -1,5 +1,9 @@
 """H4C-1: compat worker 批量 read-only 基建扩展测试。
 
+**stale 依据（B 桶 · INT-001 compat 面清零）**：默认 registry 清零后，
+「批量 read_only 方法在生产 registry 中可取用」的旧断言失效；改为合成注入方法
+验证 `route_worker_call` 四态路由引擎，真实进程门退化为 method_not_found 断言。
+
 覆盖（派发单 T-1786713075422-d9a98426 要点 1/3/4）：
 - registry 批量 read_only 注册（register_read_only_batch + 模块级
   register_compat_routes 同步 RUST_COMPAT_ROUTE + 两端对齐门覆盖批量）；
@@ -39,11 +43,13 @@ from callwarden.server.daemon_client import (  # noqa: E402
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
 
-# 白名单内方法（默认 registry 已注册）与白名单外方法名。
-# W2-1（T-1786840097330-dec66710）：get_uncommented_symbols 已迁移 rust_native，
-# 默认 registry 现仅注册 stats_top_files；其 handler 只依赖 file_instances +
-# symbols 表，与 MINIMAL_SCHEMA 种子库兼容，故两个白名单方法均以
-# stats_top_files 的（workspace/limit）参数变体覆盖批量执行路径。
+# 白名单内方法（合成注入）与白名单外方法名。
+# INT-001（T-1787322971676-e9aae4d4）：默认 registry 已清零（server/
+# compat_registry.py:174-220 返回空 CompatRegistry()，RUST_COMPAT_ROUTE={}），
+# stats_top_files 已迁 rust_native，不再是 python_compat 方法。
+# TestRouteWorkerCall 经 monkeypatch 注入合成 read_only 白名单方法，继续验证
+# route_worker_call 四态路由引擎（daemon_client.py:3791-3847）；真实进程门
+# TestRealDaemonCompatWorkerBatch 则改为退役门（旧 compat RPC 名必 method_not_found）。
 WHITELISTED_METHOD = "stats_top_files"
 WHITELISTED_METHOD2 = "stats_top_files"
 NOT_WHITELISTED = "batch.worker_symbol_search"
@@ -137,8 +143,15 @@ class TestRegisterCompatRoutes:
         assert reg.compat_route("no_such_method") is None
 
     def test_batch_with_existing_whitelist_method_raises(self, monkeypatch):
-        # 批量注册方法名与默认 registry 冲突 → 复用 register 的重复校验
+        # 批量注册方法名与默认 registry 冲突 → 复用 register 的重复校验。
+        # INT-001 后默认 registry 已清零（server/compat_registry.py:174-220），
+        # 需先注入同名方法制造冲突；重复校验见 compat_registry.py:96-97。
         monkeypatch.setattr(reg, "RUST_COMPAT_ROUTE", {})
+        existing = reg.CompatRegistry()
+        existing.register(
+            WHITELISTED_METHOD, reg.READ_ONLY, reg.SCOPE_WORKSPACE, "d", _handler
+        )
+        monkeypatch.setattr(reg, "_DEFAULT_REGISTRY", existing)
         with pytest.raises(ValueError):
             reg.register_compat_routes(
                 {WHITELISTED_METHOD: _handler},
@@ -157,6 +170,15 @@ def mock_route_env(monkeypatch):
     """提供 route_worker_call 依赖的 env 开关 mock 基座。"""
 
     def _apply(*, http=False, mode="auto", rpc_client=None, daemon_required=False):
+        # INT-001 后默认 registry 清零（server/compat_registry.py:174-220），生产已无
+        # compat 白名单方法；注入合成 read_only 方法，使四态路由断言仍可验证
+        # route_worker_call 引擎（白名单前置检查见 daemon_client.py:3812-3830）。
+        synthetic = reg.CompatRegistry()
+        for m in {WHITELISTED_METHOD, WHITELISTED_METHOD2}:
+            synthetic.register(
+                m, reg.READ_ONLY, reg.SCOPE_WORKSPACE, "synthetic", _handler
+            )
+        monkeypatch.setattr(reg, "_DEFAULT_REGISTRY", synthetic)
         monkeypatch.setattr(
             "callwarden.server.daemon_client.is_http_transport_enabled",
             lambda: http,
@@ -427,14 +449,15 @@ def _expect_daemon_remote_error(client, method, params, expected_code):
 
 
 class TestRealDaemonCompatWorkerBatch:
-    """真实进程门：隔离 daemon + 生产 HttpDaemonRpcClient 覆盖 worker 批量行为。
+    """真实进程门：隔离 daemon + 生产 HttpDaemonRpcClient 验证 compat 面退役。
 
-    覆盖（派发单要点 4）：
-    - 批量执行成功：2 个白名单方法均经 worker 返回种子库真实数据（绝不
-      method_not_found）；
-    - 超时：deadline_ms=1 → E_COMPAT_WORKER_TIMEOUT（retryable，fail-closed）；
-    - worker 缺失：CW_COMPAT_WORKER_SCRIPT 指向不存在脚本 →
-      E_COMPAT_WORKER_UNAVAILABLE（fail-closed，不直连本地 SQLite）。
+    INT-001（T-1787322971676-e9aae4d4）/ P0-COMPAT-v3 / MCP-001 后 python_compat
+    worker 面已清零（server/compat_registry.py:174-220 空 registry，
+    RUST_COMPAT_ROUTE={}）；stats_top_files 迁移为 rust_native（RPC 名
+    query.stats_top_files，dispatch.rs:2883）。原 H4C-1「worker 批量成功 / 超时 /
+    worker 缺失」三态门随之退役——compat RPC 名（stats_top_files）在真实 daemon 上
+    已无路由，必返回 method_not_found（fail-closed，绝不回退本地 SQLite）。
+    本类改为退役回归门，守住「former compat 方法名不再可达」这一契约。
     """
 
     @pytest.fixture
@@ -462,53 +485,61 @@ class TestRealDaemonCompatWorkerBatch:
         )
         return proc, client
 
-    def test_batch_worker_success(self, daemon_bin, tmp_path):
-        """批量成功：白名单方法经 worker 返回种子库真实数据（无 method_not_found）。"""
+    def test_retired_compat_method_fails_closed(self, daemon_bin, tmp_path):
+        """退役门：former compat 白名单方法名（stats_top_files）不再可达。
+
+        INT-001 后 stats_top_files 仅为 rust_native RPC（query.stats_top_files），
+        以旧 compat RPC 名调用必 method_not_found（fail-closed，不回退本地 SQLite）。
+        """
         proc, client = self._spawn_with_client(daemon_bin, tmp_path)
         try:
-            # 方法 1：stats_top_files（workspace_id=1 → 2 个文件，含注释覆盖）
-            result = client.call(
-                WHITELISTED_METHOD, {"workspace_id": 1, "limit": 100, "deadline_ms": 10000}
-            )
-            assert result is not None
-            assert result["count"] == 2, f"批量成功路径应返回种子库真实数据: {result}"
-            by_path = {f["rel_path"]: f for f in result["files"]}
-            assert by_path["src/app.py"]["comment_coverage"] == 0.5
-            assert by_path["src/util.py"]["comment_coverage"] == 0.0
-            # 方法 2：stats_top_files（workspace_id=2 → 仅 other/main.py，隔离生效）
-            result2 = client.call(
-                WHITELISTED_METHOD2, {"workspace_id": 2, "limit": 10, "deadline_ms": 10000}
-            )
-            assert result2 is not None
-            assert result2["count"] == 1
-            assert result2["files"][0]["rel_path"] == "other/main.py"
-            assert result2["files"][0]["comment_coverage"] == 0.0
+            for method in (WHITELISTED_METHOD, WHITELISTED_METHOD2):
+                with pytest.raises(DaemonRemoteError) as ei:
+                    client.call(
+                        method,
+                        {"workspace_id": 1, "limit": 100, "deadline_ms": 10000},
+                    )
+                assert ei.value.code == "method_not_found", (
+                    f"{method} 已迁移 rust_native，compat RPC 名不应再可达: {ei.value}"
+                )
         finally:
             _terminate(proc)
 
-    def test_batch_worker_timeout_fail_closed(self, daemon_bin, tmp_path):
-        """超时：deadline_ms=1 → E_COMPAT_WORKER_TIMEOUT（worker 被终止，fail-closed）。"""
+    def test_retired_compat_method_ignores_deadline(self, daemon_bin, tmp_path):
+        """退役门：deadline_ms=1 不再触发 worker 超时（compat 路径已不存在）。
+
+        原 H4C-1 用例断言 E_COMPAT_WORKER_TIMEOUT；compat 面清零后 daemon 不再
+        spawn worker，直接 method_not_found（未进入执行阶段）。
+        """
         proc, client = self._spawn_with_client(daemon_bin, tmp_path)
         try:
-            _expect_daemon_remote_error(
-                client,
-                WHITELISTED_METHOD,
-                {"workspace_id": 1, "limit": 10, "deadline_ms": 1},
-                "E_COMPAT_WORKER_TIMEOUT",
-            )
+            with pytest.raises(DaemonRemoteError) as ei:
+                client.call(
+                    WHITELISTED_METHOD,
+                    {"workspace_id": 1, "limit": 10, "deadline_ms": 1},
+                )
+            assert ei.value.code == "method_not_found", ei.value
         finally:
             _terminate(proc)
 
-    def test_batch_worker_missing_fail_closed(self, daemon_bin, tmp_path):
-        """worker 缺失：脚本路径不存在 → E_COMPAT_WORKER_UNAVAILABLE（不直连 SQLite）。"""
+    def test_retired_compat_method_ignores_missing_worker_script(
+        self, daemon_bin, tmp_path
+    ):
+        """退役门：CW_COMPAT_WORKER_SCRIPT 指向缺失脚本不再影响结果。
+
+        原 H4C-1 用例断言 E_COMPAT_WORKER_UNAVAILABLE；compat 面清零后 daemon
+        不 spawn worker，故 worker 脚本缺失亦只返回 method_not_found。
+        """
         missing_script = str(tmp_path / "no_such_worker.py")
-        proc, client = self._spawn_with_client(daemon_bin, tmp_path, worker_script=missing_script)
+        proc, client = self._spawn_with_client(
+            daemon_bin, tmp_path, worker_script=missing_script
+        )
         try:
-            _expect_daemon_remote_error(
-                client,
-                WHITELISTED_METHOD,
-                {"workspace_id": 1, "limit": 10, "deadline_ms": 10000},
-                "E_COMPAT_WORKER_UNAVAILABLE",
-            )
+            with pytest.raises(DaemonRemoteError) as ei:
+                client.call(
+                    WHITELISTED_METHOD,
+                    {"workspace_id": 1, "limit": 10, "deadline_ms": 10000},
+                )
+            assert ei.value.code == "method_not_found", ei.value
         finally:
             _terminate(proc)

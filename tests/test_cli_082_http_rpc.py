@@ -24,8 +24,37 @@ from callwarden.i18n import set_language  # noqa: E402
 set_language("zh_CN")
 
 
+@pytest.fixture(autouse=True)
+def _stub_route_rpc_client(monkeypatch):
+    """A 桶：把路由 RPC client 替换为最小替身（daemon 权威 readback 短路）。
+
+    stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
+    `cli/main.py:3798-3811 _verify_create_readback` 在 create 回包为 dict 时经
+    `server.daemon_client._get_rpc_client_for_route()` 发 `task.status` readback RPC；
+    `cli/main.py:4589` 在缺显式 workspace pair 时经
+    `resolve_workspace_pair_from_daemon`（server/daemon_client.py:3551-3573）发
+    `workspace.list`。无 live daemon 时二者均 fail-closed
+    `E_HTTP_MANIFEST_MISSING`。本文件只验证 create 分支的
+    `route_task_write("task.create", ...)` 透传 + 渲染契约，故以替身满足 readback
+    （回 {}；用例回包无 workspace_* 键 → 不参与 provenance 比对），并由
+    `_handle_create` 显式传 workspace pair 跳过 pair 解析 RPC。
+    """
+    from callwarden.server import daemon_client as dc
+
+    class _StubClient:
+        def call(self, method, params=None, **kwargs):
+            if method == "task.status":
+                return {}
+            raise AssertionError(f"未预期的 RPC: {method}")
+
+    monkeypatch.setattr(dc, "_get_rpc_client_for_route", lambda: _StubClient())
+
+
 def _handle_create(title="t", desc="d", steps="[]", **extra_argv):
-    argv = ["create", "--title", title, "--desc", desc, "--steps", steps]
+    # 显式 workspace pair：跳过 cli/main.py:4589 的 resolve_workspace_pair_from_daemon
+    # （见 _stub_route_rpc_client stale 依据）。
+    argv = ["create", "--title", title, "--desc", desc, "--steps", steps,
+            "--workspace-id=7", "--workspace-instance-id=ws-inst-cli082"]
     argv += [f"--{k}={v}" for k, v in extra_argv.items()]
     return main_mod._handle_task(argv, main_mod.RpcDBProxy(workspace_root="C:/git_work/x"))
 
@@ -98,27 +127,40 @@ def test_cli082_error_dict_printed(monkeypatch, capsys):
     assert "invalid params" in out
 
 
-def test_cli082_wrong_authority_remote_error(monkeypatch, capsys):
-    """wrong/unknown authority：DaemonRemoteError（method_not_found）原样格式化。"""
+def test_cli082_wrong_authority_remote_error(monkeypatch):
+    """wrong/unknown authority：DaemonRemoteError（method_not_found）原样上抛。
+
+    stale 依据（A 桶：fail-closed 传播）：`cli/main.py:4631-4632` 的 legacy
+    （非 governed）create 分支直接 `route_task_write(...)`，daemon 业务拒绝
+    **不捕获格式化**（GATE-1B 注释 :4620-4624 明确 legacy root create 保持
+    pre-Gate 行为，本卡未重设计）；仅 governed create（:4625-4630）捕获并
+    `SystemExit(2)`。故现代期望为 DaemonRemoteError 原样上抛（fail-closed），
+    而非打印后返回 True。
+    """
     def _fake_route_write(method, params, fallback):
         raise main_mod.DaemonRemoteError("method_not_found", "no such method")
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    assert _handle_create() is True
-    out = capsys.readouterr().out
-    assert "method_not_found" in out
-    assert "no such method" in out
+    with pytest.raises(main_mod.DaemonRemoteError) as ei:
+        _handle_create()
+    assert ei.value.code == "method_not_found"
+    assert "no such method" in str(ei.value)
 
 
-def test_cli082_daemon_unavailable_fails_closed(monkeypatch, capsys):
-    """daemon unavailable：DaemonUnavailableError fail-closed 提示，无本地回退。"""
+def test_cli082_daemon_unavailable_fails_closed(monkeypatch):
+    """daemon unavailable：DaemonUnavailableError 原样上抛，无本地回退。
+
+    stale 依据（A 桶：fail-closed 传播）：同
+    test_cli082_wrong_authority_remote_error —— legacy create 分支不捕获
+    （`cli/main.py:4631-4632`），异常直达调用方，证明绝不回退本地 db.task_create。
+    """
     def _fake_route_write(method, params, fallback):
         raise main_mod.DaemonUnavailableError("daemon down")
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    assert _handle_create() is True
-    out = capsys.readouterr().out
-    assert "daemon down" in out
+    with pytest.raises(main_mod.DaemonUnavailableError) as ei:
+        _handle_create()
+    assert "daemon down" in str(ei.value)
 
 
 def test_cli082_http_wrapper_unwrapped(monkeypatch, capsys):

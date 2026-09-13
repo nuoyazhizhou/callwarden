@@ -138,16 +138,38 @@ def _register_tools(module, mcp=None):
 
 
 @pytest.mark.parametrize("mode", ["enterprise", "auto"])
-def test_api_register_attestation_revocation_fail_closed(daemon_mode, mode, monkeypatch):
+def test_api_register_attestation_revocation_routes_governance_write(
+    daemon_mode, mode, monkeypatch
+):
+    """MCP 工具已 `_route` 薄壳化：以 GOVERNANCE_WRITE 下发 daemon，不触碰 get_db。
+
+    stale 修复（PYT 回归卡 step#4 · A 桶）：旧用例 mock
+    `is_http_transport_enabled`=False 后调用工具，期望 Python API 层返回
+    `{"status": "error", "reason": {"code": E_TASK_LOOP_CAPABILITY_DISABLED}}` 且
+    `get_db` 不被触碰。生产侧 server/tools/tools_p3_identity.py:163-191 现为一行式
+    `return _route('admin.register_attestation_revocation', {...}, 'GOVERNANCE_WRITE')`
+    （:33 `route_rpc as _route`）：工具层已无 `_get_daemon_mode() != "local"` gate
+    分支、无 `db.register_attestation_revocation(` 直写、也不读 `get_db`；HTTP/local/
+    compat 分流与 fail-closed 整体下沉 route_rpc
+    （server/daemon_client.py:3880-3994）。0C gate-first 锁序随之迁入 Rust
+    （rust_ext/src/daemon/task_loop/capability_control.rs 的
+    `CapabilityMutationGate → authority store → task DB`；稳定错误码常量见
+    rust_ext/src/daemon/task_loop/types.rs:12）。故此处按「工具层 `_route` 契约」
+    重写：断言 (rpc_method, params, op_class) 三元组 + 回包原样透传 + 不触碰
+    get_db；路由细节由 test_http_governance_error_cutover.py 的 WRITE_ROUTE_CASES
+    覆盖。
+    """
     from callwarden.server.tools import tools_p3_identity
 
     daemon_mode(mode)
-    # HTTP transport 默认启用时会先命中 _http_unsupported（E_HTTP_COMPAT_UNSUPPORTED）；
-    # 强制非 HTTP，使工具走到 0B gate-first 检查（E_TASK_LOOP_CAPABILITY_DISABLED）。
-    monkeypatch.setattr(
-        "callwarden.server.daemon_client.is_http_transport_enabled",
-        lambda: False,
-    )
+    expected = {"code": "OK", "revocation_id": "rev-1"}
+    calls = []
+
+    def _fake_route(method, params, op_class="READ_ONLY"):
+        calls.append((method, dict(params), op_class))
+        return expected
+
+    monkeypatch.setattr(tools_p3_identity, "_route", _fake_route)
     tools = _register_tools(tools_p3_identity)
     fn = tools["register_attestation_revocation"]
     with patch.object(tools_p3_identity, "get_db") as mock_get_db:
@@ -156,11 +178,15 @@ def test_api_register_attestation_revocation_fail_closed(daemon_mode, mode, monk
             signing_key_id="k1",
             revocation_mode="compromised",
         )
-    assert isinstance(result, dict)
-    assert result["status"] == "error"
-    assert result["reason"]["code"] == GATE_DISABLED
-    # 无 bypass：fail-closed 在触碰 get_db 之前返回
+    # 工具层不读本地 db，一切经 _route 下发 daemon
     mock_get_db.assert_not_called()
+    assert result == expected
+    assert calls == [(
+        "admin.register_attestation_revocation",
+        {"issuer": "iss", "signing_key_id": "k1", "revocation_mode": "compromised",
+         "revocation_reason": "", "initiating_actor": "", "workspace_id": None},
+        "GOVERNANCE_WRITE",
+    )]
 
 
 # ============================================================
@@ -201,13 +227,23 @@ def test_cli_identity_revoke_fail_closed(monkeypatch):
 # 5. writer-inventory：全部 authority 写路径统一 fail-closed
 # ============================================================
 
-# 已知 authority 写路径清单（含 db / API / CLI 三层）。
+# 已知 authority 写路径清单（Python 侧：db / CLI 两层）。
 # 新增 authority 写入口必须同步登记并保持 gate-first，否则本清单回归失败。
+#
+# stale 修复（PYT 回归卡 step#4 · A 桶）：原清单含
+# `("api.register_attestation_revocation", "api")`，依赖 MCP 工具在 Python 侧
+# 做 gate-first fail-closed。工具 `_route` 薄壳化后（server/tools/tools_p3_identity.py:163-191
+# 一行式 `_route('admin.register_attestation_revocation', {...}, 'GOVERNANCE_WRITE')`）
+# 该 API 路径在 Python 侧已无 DB 写入口与 gate 分支：分流失衡与 fail-closed 下沉
+# route_rpc（server/daemon_client.py:3880-3994），gate-first 锁序迁入 Rust
+# （rust_ext/src/daemon/task_loop/capability_control.rs）；工具层 `_route` 契约由本文件
+# 上方 test_api_register_attestation_revocation_routes_governance_write 与
+# test_http_governance_error_cutover.py 覆盖。故 api 条目从「Python 侧 gate-first
+# 写路径」清单移除，避免用已失效的本地 gate 期望断言。
 WRITER_INVENTORY = [
     ("db.register_attestation_revocation", "db"),
     ("db.invalidate_evidence", "db"),
     ("db.revoke_verifier", "db"),
-    ("api.register_attestation_revocation", "api"),
     ("cli.identity_revoke", "cli"),
 ]
 
@@ -238,18 +274,6 @@ def _write_via(path, db, monkeypatch=None):
         return db.invalidate_evidence("E-x", "EVIDENCE_PAYLOAD_HASH_INVALID", "d")
     if path == "db.revoke_verifier":
         return db.revoke_verifier("v", "1", "cfg", "reason")
-    if path == "api.register_attestation_revocation":
-        from callwarden.server.tools import tools_p3_identity
-
-        # 强制非 HTTP，使工具走到 0B gate-first 检查（见 API 层专项测试）
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        fn = _register_tools(tools_p3_identity)["register_attestation_revocation"]
-        with patch.object(tools_p3_identity, "get_db"):
-            return fn(issuer="iss", signing_key_id="k1",
-                      revocation_mode="compromised")
     if path == "cli.identity_revoke":
         raise NotImplementedError("CLI 路径在 _write_via 内单独验证")
     raise KeyError(path)

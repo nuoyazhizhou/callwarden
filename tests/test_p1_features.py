@@ -77,10 +77,25 @@ def test_mcp_5_new_tools():
     print("PASS MCP: 5 个新工具接线完成\n")
 
 
-def test_cli_6_new_commands():
-    """CLI: 6 个新命令接线"""
+def test_cli_6_new_commands(route_stub):
+    """CLI: 6 个新命令接线
+
+    stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
+    `cli/main.py:4683` 的 `task next` 分支在 `route_task_write("task.claim", ...)`
+    之前会先 `_fetch_contract_claim`（`cli/main.py:16884-16903`），后者用
+    Named Pipe/UDS `route_task_read("task.contract_get", ...)`；daemon 不可达时
+    `server/daemon_client.py:3764 route_task_read` → `_inject_workspace_id`
+    （`server/daemon_client.py:3521`）抛 `DaemonRemoteError(E_HTTP_MANIFEST_MISSING)`，
+    且 `_fetch_contract_claim` 对 `DaemonRemoteError` 永不降级（fail-closed）。
+    故此处以 `route_stub`（mock `cli_main.route_task_read`/`route_task_write`）
+    验证「CLI 走对 RPC + 渲染 daemon 回包」这一现代契约，而非本地 DB 直连语义。
+    """
     print("--- CLI: 6 个新命令接线 ---")
     from callwarden.cli.main import _handle_task, _handle_vuln_blast, _handle_symbol_history
+
+    # daemon 权威语义：contract_get 无冻结合同（回包无 contracts）→ 不携带 contract_claim
+    route_stub.reply("task.contract_get", {"contracts": []})
+    route_stub.reply("task.claim", {"step_id": "S-1", "step_index": 0, "action": "noop", "status": "pending"})
 
     # 验证 3 个 handler 函数存在
     assert callable(_handle_task), "_handle_task 不可调用"

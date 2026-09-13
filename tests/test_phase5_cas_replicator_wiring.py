@@ -12,6 +12,16 @@
 6. daemon_handle_refresh 接收 canonical_bytes（不读 abs_path）
 7. EnterpriseDaemonService per-workspace 资源初始化
 8. 各阶段耗时报告
+
+stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
+==========================================================
+- `server/replicator.py:364-384 daemon_handle_refresh` 已改为薄客户端：`del` 旧
+  签名参数后仅序列化 `msg`（canonical_bytes → `canonical_bytes_hex`）并
+  `_call_daemon_rpc("mcp.replicator.daemon_handle_refresh", params)`。session epoch /
+  stale session / 重复或乱序 seq / generation 推进全部由 Rust daemon 决策，失败
+  fail-closed（不回退本地 SQLite）。旧用例「用本地 ws_conn 断言 committed /
+  generation / stale session」已过期，改为 mock RPC seam。
+- `daemon_handle_connect`（`server/replicator.py:180+`）仍为本地实现，其断言保留。
 """
 
 import hashlib
@@ -28,6 +38,47 @@ import pytest
 
 # 批次10 测试用：项目根目录（用于读取源文件验证修复标记）
 ROOT = Path(__file__).resolve().parent.parent
+
+# daemon RPC method 命名空间（生产侧见 server/replicator.py:52）
+REPLICATOR_REFRESH_METHOD = "mcp.replicator.daemon_handle_refresh"
+
+
+class _RpcRecorder:
+    """daemon RPC 替身：记录 (method, params) 并回放预设 payload / 抛预设异常。"""
+
+    def __init__(self, reply=None, raise_exc=None):
+        self.calls = []
+        self._reply = reply
+        self._raise = raise_exc
+
+    def reply(self, payload):
+        self._reply = payload
+        return self
+
+    def raise_with(self, exc):
+        self._raise = exc
+        return self
+
+    def __call__(self, method, params):
+        self.calls.append((method, dict(params or {})))
+        if self._raise is not None:
+            raise self._raise
+        return self._reply
+
+    @property
+    def methods(self):
+        return [m for m, _ in self.calls]
+
+    def last_params(self):
+        return self.calls[-1][1] if self.calls else None
+
+
+@pytest.fixture
+def refresh_daemon(monkeypatch):
+    """把 `server.replicator._call_daemon_rpc` 替换为记录型替身（A 类 mock seam）。"""
+    rec = _RpcRecorder()
+    monkeypatch.setattr("callwarden.server.replicator._call_daemon_rpc", rec)
+    return rec
 
 # ============================================================
 # CAS 集成测试
@@ -115,174 +166,133 @@ class TestCASHitMiss:
 
 
 class TestDaemonHandleRefreshCanonicalBytes:
-    """验收 §4.2: daemon_handle_refresh 接收 canonical_bytes，不读 abs_path。"""
+    """验收 §4.2: daemon_handle_refresh 接收 canonical_bytes，不读 abs_path。
 
-    def _setup_workspace(self, tmp_dir):
-        """创建 workspace session DB。"""
-        from callwarden.server.replicator import init_session_schema
-        ws_path = os.path.join(tmp_dir, "workspace.db")
-        ws_conn = sqlite3.connect(ws_path)
-        ws_conn.row_factory = sqlite3.Row
-        ws_conn.execute("PRAGMA busy_timeout=5000")
-        init_session_schema(ws_conn)
-        return ws_conn
+    A 类：被测函数已是 daemon 薄客户端（见文件头 stale 依据），改为断言 RPC
+    路由/参数序列化/回包透传/fail-closed。
+    """
 
-    def test_refresh_with_canonical_bytes_no_abs_path(self, tmp_path):
-        """传入 canonical_bytes 时不读 abs_path。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
+    def test_refresh_with_canonical_bytes_no_abs_path(self, refresh_daemon):
+        """传入 canonical_bytes 时序列化为 hex 走 RPC，不读 abs_path。"""
+        from callwarden.server.replicator import daemon_handle_refresh
 
-        tmp_dir = str(tmp_path)
-        ws_conn = self._setup_workspace(tmp_dir)
-
-        # 连接握手
-        connect_result = daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="test-session-1",
-            ws_conn=ws_conn,
-        )
-        epoch = connect_result["session_epoch"]
-        assert epoch >= 1
-
-        # refresh with canonical_bytes, abs_path 故意传一个不存在的路径
         canonical_bytes = b"def greet():\n    return 'hi'\n"
         msg = {
             "rel_path": "greet.py",
             "agent_session_id": "test-session-1",
-            "session_epoch": epoch,
+            "session_epoch": 1,
             "monotonic_seq": 1,
             "abs_path": "/nonexistent/path/that/should/not/be/read.py",
         }
+        refresh_daemon.reply({
+            "status": "committed",
+            "generation": "1:1",
+            "content_hash": hashlib.sha256(canonical_bytes).hexdigest(),
+        })
         result = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1, msg=msg,
-            ws_conn=ws_conn, cas_conn=None,
+            ws_conn=None, cas_conn=None,
             canonical_bytes=canonical_bytes,
         )
+        # 回包透传
         assert result["status"] == "committed"
-        assert result["generation"] == f"{epoch}:1"
-        # canonical_bytes 模式下 content_hash 应该从 bytes 计算
-        assert result.get("content_hash") == hashlib.sha256(
-            canonical_bytes).hexdigest()
+        assert result["generation"] == "1:1"
+        assert result["content_hash"] == hashlib.sha256(canonical_bytes).hexdigest()
+        # 路由到正确 RPC method + 参数序列化
+        assert refresh_daemon.methods == [REPLICATOR_REFRESH_METHOD]
+        params = refresh_daemon.last_params()
+        assert params["canonical_bytes_hex"] == canonical_bytes.hex()
+        assert params["abs_path"] == "/nonexistent/path/that/should/not/be/read.py"
+        assert params["monotonic_seq"] == 1
+        assert params["session_epoch"] == 1
 
-        ws_conn.close()
+    def test_refresh_stale_session_rejected_with_canonical_bytes(self, refresh_daemon):
+        """canonical_bytes 模式下 stale session 由 daemon 拒绝（错误透传）。"""
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+        from callwarden.server.replicator import daemon_handle_refresh
 
-    def test_refresh_stale_session_rejected_with_canonical_bytes(self, tmp_path):
-        """canonical_bytes 模式下 stale session 仍然被拒绝。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError
-
-        tmp_dir = str(tmp_path)
-        ws_conn = self._setup_workspace(tmp_dir)
-
-        daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="session-1",
-            ws_conn=ws_conn,
-        )
-
-        # 新 session 覆盖旧 session
-        connect2 = daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="session-2",
-            ws_conn=ws_conn,
-        )
-        new_epoch = connect2["session_epoch"]
-
-        # 用旧 session refresh → 应该被拒绝
+        refresh_daemon.raise_with(DaemonRemoteError("stale_session", "stale session"))
         msg = {
             "rel_path": "test.py",
             "agent_session_id": "session-1",
             "session_epoch": 1,
             "monotonic_seq": 1,
         }
-        with pytest.raises(ProtocolError, match="stale session"):
+        with pytest.raises(DaemonRemoteError) as ei:
             daemon_handle_refresh(
                 peer_uid=1000, workspace_id=1, msg=msg,
-                ws_conn=ws_conn, cas_conn=None,
+                ws_conn=None, cas_conn=None,
                 canonical_bytes=b"x = 1\n",
             )
+        assert ei.value.code == "stale_session"
+        assert "stale session" in str(ei.value)
+        assert refresh_daemon.methods == [REPLICATOR_REFRESH_METHOD]
 
-        ws_conn.close()
+    def test_refresh_duplicate_seq_dropped(self, refresh_daemon):
+        """重复 seq 由 daemon 返回 stale_seq_dropped 并透传。"""
+        from callwarden.server.replicator import daemon_handle_refresh
 
-    def test_refresh_duplicate_seq_dropped(self, tmp_path):
-        """重复 seq 直接丢弃，不报错。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
-
-        tmp_dir = str(tmp_path)
-        ws_conn = self._setup_workspace(tmp_dir)
-
-        connect_result = daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="session-dup",
-            ws_conn=ws_conn,
-        )
-        epoch = connect_result["session_epoch"]
-
-        canonical_bytes = b"y = 2\n"
-        msg1 = {
+        msg = {
             "rel_path": "dup.py",
             "agent_session_id": "session-dup",
-            "session_epoch": epoch,
+            "session_epoch": 1,
             "monotonic_seq": 1,
         }
-        result1 = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1, msg=msg1,
-            ws_conn=ws_conn, cas_conn=None,
-            canonical_bytes=canonical_bytes,
+        refresh_daemon.reply({"status": "stale_seq_dropped"})
+        result = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1, msg=msg,
+            ws_conn=None, cas_conn=None,
+            canonical_bytes=b"y = 2\n",
         )
-        assert result1["status"] == "committed"
+        assert result["status"] == "stale_seq_dropped"
+        assert refresh_daemon.methods == [REPLICATOR_REFRESH_METHOD]
+        assert refresh_daemon.last_params()["monotonic_seq"] == 1
 
-        # 重复 seq=1
+    def test_refresh_out_of_order_seq(self, refresh_daemon):
+        """乱序 seq：先 seq=2 由 daemon committed，再 seq=1 被 daemon 丢弃。"""
+        from callwarden.server.replicator import daemon_handle_refresh
+
+        def _msg(seq):
+            return {
+                "rel_path": "ooo.py",
+                "agent_session_id": "session-ooo",
+                "session_epoch": 1,
+                "monotonic_seq": seq,
+            }
+
+        refresh_daemon.reply({"status": "committed", "generation": "1:2"})
         result2 = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1, msg=msg1,
-            ws_conn=ws_conn, cas_conn=None,
-            canonical_bytes=canonical_bytes,
-        )
-        assert result2["status"] == "stale_seq_dropped"
-
-        ws_conn.close()
-
-    def test_refresh_out_of_order_seq(self, tmp_path):
-        """乱序 seq：先 seq=2 再 seq=1，seq=1 被丢弃。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
-
-        tmp_dir = str(tmp_path)
-        ws_conn = self._setup_workspace(tmp_dir)
-
-        connect_result = daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="session-ooo",
-            ws_conn=ws_conn,
-        )
-        epoch = connect_result["session_epoch"]
-
-        # seq=2 first
-        msg2 = {
-            "rel_path": "ooo.py",
-            "agent_session_id": "session-ooo",
-            "session_epoch": epoch,
-            "monotonic_seq": 2,
-        }
-        result2 = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1, msg=msg2,
-            ws_conn=ws_conn, cas_conn=None,
-            canonical_bytes=b"z = 3\n",
+            peer_uid=1000, workspace_id=1, msg=_msg(2),
+            ws_conn=None, cas_conn=None, canonical_bytes=b"z = 3\n",
         )
         assert result2["status"] == "committed"
 
-        # seq=1 (out of order) → dropped
-        msg1 = {
-            "rel_path": "ooo.py",
-            "agent_session_id": "session-ooo",
-            "session_epoch": epoch,
-            "monotonic_seq": 1,
-        }
+        refresh_daemon.reply({"status": "stale_seq_dropped"})
         result1 = daemon_handle_refresh(
-            peer_uid=1000, workspace_id=1, msg=msg1,
-            ws_conn=ws_conn, cas_conn=None,
-            canonical_bytes=b"a = 1\n",
+            peer_uid=1000, workspace_id=1, msg=_msg(1),
+            ws_conn=None, cas_conn=None, canonical_bytes=b"a = 1\n",
         )
         assert result1["status"] == "stale_seq_dropped"
+        assert refresh_daemon.methods == [
+            REPLICATOR_REFRESH_METHOD, REPLICATOR_REFRESH_METHOD
+        ]
+        assert [p["monotonic_seq"] for _, p in refresh_daemon.calls] == [2, 1]
 
-        ws_conn.close()
+    def test_refresh_unavailable_is_fail_closed(self, refresh_daemon):
+        """daemon 不可用时抛错，不产生任何本地兜底结果。"""
+        from callwarden.server.daemon_client import DaemonUnavailableError
+        from callwarden.server.replicator import daemon_handle_refresh
+
+        refresh_daemon.raise_with(
+            DaemonUnavailableError("mcp.replicator.daemon_handle_refresh")
+        )
+        with pytest.raises(DaemonUnavailableError):
+            daemon_handle_refresh(
+                peer_uid=1000, workspace_id=1,
+                msg={"rel_path": "x.py", "agent_session_id": "s",
+                     "session_epoch": 1, "monotonic_seq": 1},
+                ws_conn=None, cas_conn=None, canonical_bytes=b"q = 1\n",
+            )
 
 
 # ============================================================
@@ -528,44 +538,30 @@ class TestEnterpriseDaemonServiceResources:
 class TestPerformanceMetrics:
     """验收 §4.4: 报告各阶段耗时。"""
 
-    def test_refresh_timing(self, tmp_path):
-        """验证 refresh 返回耗时指标。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
-
-        tmp_dir = str(tmp_path)
-        from callwarden.server.replicator import init_session_schema
-        ws_path = os.path.join(tmp_dir, "ws_perf.db")
-        ws_conn = sqlite3.connect(ws_path)
-        ws_conn.row_factory = sqlite3.Row
-        init_session_schema(ws_conn)
-
-        connect_result = daemon_handle_connect(
-            peer_uid=1000, workspace_id=1,
-            requested_session_id="perf-session",
-            ws_conn=ws_conn,
-        )
-        epoch = connect_result["session_epoch"]
+    def test_refresh_timing(self, refresh_daemon):
+        """验证 refresh 经 RPC 完成且耗时可测（A 类：薄客户端）。"""
+        from callwarden.server.replicator import daemon_handle_refresh
 
         canonical_bytes = b"def perf():\n    return 42\n"
         msg = {
             "rel_path": "perf.py",
             "agent_session_id": "perf-session",
-            "session_epoch": epoch,
+            "session_epoch": 1,
             "monotonic_seq": 1,
         }
+        refresh_daemon.reply({"status": "committed", "generation": "1:1"})
 
         start = time.time()
         result = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1, msg=msg,
-            ws_conn=ws_conn, cas_conn=None,
+            ws_conn=None, cas_conn=None,
             canonical_bytes=canonical_bytes,
         )
         elapsed_ms = (time.time() - start) * 1000
 
         assert result["status"] == "committed"
         assert elapsed_ms < 5000, f"单次 refresh 应在 5 秒内完成，实际 {elapsed_ms:.1f}ms"
-
-        ws_conn.close()
+        assert refresh_daemon.methods == [REPLICATOR_REFRESH_METHOD]
 
     def test_replicate_timing(self, tmp_path):
         """验证 replicate 返回耗时指标。"""

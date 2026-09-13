@@ -23,85 +23,62 @@ from callwarden.server.snapshot_manager import SnapshotManagerService
 
 
 # ======================================================================
-# S8：publish_snapshot 使用 PASSIVE checkpoint
+# S8：publish_snapshot checkpoint authority 下沉 daemon
 # ======================================================================
 
 
-class _FakeCursor:
-    """模拟 PRAGMA wal_checkpoint 的返回行（busy, wal_pages, checkpointed）。"""
+def _make_client(monkeypatch):
+    """构造 UnixDaemonRpcClient，mock 最终 RPC 调用（记录 method 序列）。
 
-    def __init__(self, busy: int):
-        self._busy = busy
-
-    def fetchone(self):
-        return (self._busy, 0, 0)
-
-
-class _FakeConnection:
-    """记录执行的 SQL 的连接对象（支持 with 上下文）。"""
-
-    def __init__(self, busy: int = 0):
-        self.executed = []
-        self._busy = busy
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def execute(self, sql):
-        self.executed.append(sql)
-        if "wal_checkpoint" in sql:
-            return _FakeCursor(self._busy)
-        return _FakeCursor(0)
-
-
-def _make_client(monkeypatch, busy: int):
-    """构造 UnixDaemonRpcClient，mock sqlite3.connect 与后续 RPC 调用。"""
-    import callwarden.server.daemon_client as dc
-
-    fake_conn = _FakeConnection(busy=busy)
-
-    def fake_connect(db_path, **kwargs):
-        return fake_conn
-
-    monkeypatch.setattr(dc.sqlite3, "connect", fake_connect)
-
+    stale 修正：server/daemon_client.py:1012-1041 publish_snapshot 已删除本地
+    sqlite3 connect + PASSIVE checkpoint（SRV-006，checkpoint authority 下沉
+    Rust daemon），模块不再 import sqlite3，故不再 mock sqlite3.connect。
+    """
     client = UnixDaemonRpcClient(socket_path="unused-socket")
-    # 无论 win32 / unix 分支，都 mock 最终 RPC 调用
-    monkeypatch.setattr(client, "call", lambda *a, **k: {"generation": 1, "call_count": 1})
-    return client, fake_conn
+    calls = []
+
+    def fake_call(method, params=None, *args, **kwargs):
+        calls.append((method, params or {}))
+        if method == "mcp.daemon_client.publish_snapshot":
+            return {"checkpointed": True, "db_path": (params or {}).get("db_path")}
+        return {"generation": 1, "call_count": 1}
+
+    monkeypatch.setattr(client, "call", fake_call)
+    return client, calls
 
 
-def test_publish_snapshot_uses_passive_checkpoint(monkeypatch):
-    """S8: publish_snapshot 应使用 PASSIVE checkpoint 而非 FULL。"""
-    client, fake_conn = _make_client(monkeypatch, busy=0)
+def test_publish_snapshot_delegates_checkpoint_to_daemon(monkeypatch):
+    """S8: publish_snapshot 委派 daemon 执行 checkpoint（不再本地 PRAGMA）。"""
+    client, calls = _make_client(monkeypatch)
     result = client.publish_snapshot("ws-1", "/fake/db.sqlite", "ctx")
     assert result == {"generation": 1, "call_count": 1}
-    # 先设 busy_timeout 再 PASSIVE checkpoint，且不得出现 FULL
-    assert fake_conn.executed == [
-        "PRAGMA busy_timeout=5000",
-        "PRAGMA wal_checkpoint(PASSIVE)",
+    # 两步 RPC：先 daemon 权威 checkpoint，再 publish；无本地 FULL/PASSIVE
+    assert [m for m, _ in calls] == [
+        "mcp.daemon_client.publish_snapshot",
+        "snapshot.publish",
     ]
-    assert not any("FULL" in sql for sql in fake_conn.executed)
+    import callwarden.server.daemon_client as dc
+    assert not hasattr(dc, "sqlite3"), \
+        "daemon_client 不应再 import sqlite3（本地 checkpoint 已下沉 daemon）"
 
 
 def test_publish_snapshot_busy_does_not_raise(monkeypatch):
-    """S8: PASSIVE checkpoint 在 busy 时不 fail-fast（不抛 DaemonUnavailableError）。"""
-    client, _fake_conn = _make_client(monkeypatch, busy=1)
-    # 旧实现 busy=1 时 raise DaemonUnavailableError；新实现应继续走 RPC
+    """S8: checkpoint busy 由 daemon 兜底，Python 侧不抛 DaemonUnavailableError。"""
+    client, _calls = _make_client(monkeypatch)
     result = client.publish_snapshot("ws-1", "/fake/db.sqlite", "ctx")
     assert result["generation"] == 1
 
 
-def test_publish_snapshot_no_longer_raises_on_busy_checkpoint(monkeypatch):
-    """S8 回归：busy 时不再抛 DaemonUnavailableError（旧语义校验）。"""
-    client, _fake_conn = _make_client(monkeypatch, busy=1)
-    try:
-        client.publish_snapshot("ws-1", "/fake/db.sqlite", "ctx")
-    except DaemonUnavailableError:
-        pytest.fail("PASSIVE checkpoint busy 时不应抛 DaemonUnavailableError")
+def test_publish_snapshot_no_local_busy_fail_fast(monkeypatch):
+    """S8 回归：本地 busy fail-fast 分支已删除（旧实现 busy=1 时抛异常）。
+
+    stale 修正：daemon_client.py:1012-1041 现仅做 RPC 委派，
+    Python 侧不含 wal_checkpoint / busy_timeout 本地分支。
+    """
+    import inspect
+    src = inspect.getsource(UnixDaemonRpcClient.publish_snapshot)
+    assert "PRAGMA busy_timeout" not in src
+    assert "wal_checkpoint" not in src
 
 
 # ======================================================================

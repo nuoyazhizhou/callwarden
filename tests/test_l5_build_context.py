@@ -5,6 +5,15 @@
   - build-context CLI 子命令（cli/main.py）
   - db_toolchain.py 的 build_context CRUD
   - MCP 工具注册验证（server/mcp_server.py）
+
+stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
+==========================================================
+- `cli/main.py:12347-12508 _handle_build_context`：T04-followup S1 后
+  register / list / import-compile-commands 全量经
+  `route_rpc("build_context.*", ...)`（`cli/main.py:28` 引入）；CLI 不再实例化
+  CodeGraphDB、不直连 SQLite，不再读入参 `db`（`cli/main.py:12265` 形参仅兼容）。
+  旧用例「用本地 CodeGraphDB 建 workspace 后断言 CLI 本地写库」已过期，改为
+  mock `cli.main.route_rpc` 断言路由 method + params + 回包透传。
 """
 
 import json
@@ -240,52 +249,136 @@ class TestSplitCompileFlags:
 # build-context CLI 测试
 # ============================================
 
+class _RouteRecorder:
+    """`cli.main.route_rpc` 替身：记录 (method, params, op_class) 并按 method 回放。"""
+
+    def __init__(self):
+        self.calls = []
+        self._replies = {}
+
+    def set(self, method, payload):
+        self._replies[method] = payload
+        return self
+
+    def __call__(self, method, params, op_class="READ_ONLY"):
+        self.calls.append((method, dict(params or {}), op_class))
+        return self._replies.get(method)
+
+    @property
+    def methods(self):
+        return [m for m, _, _ in self.calls]
+
+    def last_params(self):
+        return self.calls[-1][1] if self.calls else None
+
+
+@pytest.fixture
+def build_context_rpc(monkeypatch):
+    """把 `cli.main.route_rpc` 替换为记录型替身（A 类 mock seam）。"""
+    rec = _RouteRecorder()
+    monkeypatch.setattr("callwarden.cli.main.route_rpc", rec)
+    return rec
+
+
 class TestBuildContextCLI:
-    """cw build-context CLI 子命令测试"""
+    """cw build-context CLI 子命令测试（A 类：经 daemon RPC 薄客户端）"""
 
-    def test_register_and_list(self, tmp_path):
-        """注册 + 列表"""
+    def test_register_and_list(self, tmp_path, build_context_rpc):
+        """注册 + 列表：经 route_rpc 路由到 build_context.* 并透传 params。"""
         from callwarden.cli.main import _handle_build_context
-        from callwarden.db import CodeGraphDB
 
-        db = CodeGraphDB(str(tmp_path / "test.db"))
-        # 先注册一个 workspace
-        ws_id = db.register_workspace("test", str(tmp_path))
+        ws_id = 1
+        build_context_rpc.set("build_context.register", {
+            "name": "debug",
+            "build_context_hash": "deadbeef",
+            "compile_flags": ["O2", "g"],
+            "defines": {"DEBUG": "1", "BOARD": "A98"},
+            "include_paths": ["./inc"],
+        })
+        build_context_rpc.set("build_context.list", [{
+            "name": "debug", "is_active": True,
+            "build_context_hash": "deadbeef",
+            "defines": {"DEBUG": "1"}, "include_paths": ["./inc"],
+        }])
 
         # 注册 build context（用 -- 分隔避免 argparse 把 -O2 误认为选项）
         ok = _handle_build_context(
             ["register", str(ws_id), "debug", "--flags", "O2", "g",
              "--defines", "DEBUG=1", "BOARD=A98", "--includes", "./inc"],
-            db,
+            None,
         )
         assert ok
+        # 路由 method + params 断言
+        method, params, op_class = build_context_rpc.calls[0]
+        assert method == "build_context.register"
+        assert op_class == "PROTECTED_MUTATION"
+        assert params["workspace_id"] == ws_id
+        assert params["name"] == "debug"
+        assert params["compile_flags"] == ["O2", "g"]
+        assert params["defines"] == {"DEBUG": "1", "BOARD": "A98"}
+        assert params["include_paths"] == ["./inc"]
+        assert params["set_active"] is False
 
         # 列表
-        ok = _handle_build_context(["list", str(ws_id)], db)
+        ok = _handle_build_context(["list", str(ws_id)], None)
         assert ok
+        method, params, op_class = build_context_rpc.calls[-1]
+        assert method == "build_context.list"
+        assert op_class == "READ_ONLY"
+        assert params["workspace_id"] == ws_id
 
-    def test_import_compile_commands(self, tmp_path, sample_compile_commands):
-        """从 compile_commands.json 导入"""
+    def test_import_compile_commands(self, tmp_path, sample_compile_commands, build_context_rpc):
+        """从 compile_commands.json 导入：内容透传给 daemon，再经 RPC 注册。"""
         from callwarden.cli.main import _handle_build_context
-        from callwarden.db import CodeGraphDB
 
         # 创建 compile_commands.json
         cc_path = tmp_path / "compile_commands.json"
         cc_path.write_text(json.dumps(sample_compile_commands))
 
-        db = CodeGraphDB(str(tmp_path / "test.db"))
-        ws_id = db.register_workspace("test", str(tmp_path))
+        ws_id = 1
+        build_context_rpc.set("build_context.import_compile_commands", {
+            "file_count": 3,
+            "compiler_path": "gcc",
+            "defines": {"DEBUG": "1", "CONFIG_DEBUG": "", "RELEASE": "1"},
+            "include_paths": ["./include", "./src", "./lib"],
+            "compile_flags": ["-O2", "-Os", "-O3"],
+        })
+        build_context_rpc.set("build_context.register", {
+            "name": "firmware-debug", "build_context_hash": "abc123",
+        })
+        build_context_rpc.set("build_context.list", [{
+            "name": "firmware-debug", "is_active": True,
+            "build_context_hash": "abc123",
+            "defines": {"DEBUG": "1"}, "include_paths": ["./include"],
+        }])
 
         ok = _handle_build_context(
             ["import-compile-commands", str(cc_path), str(ws_id),
              "--name", "firmware-debug", "--activate"],
-            db,
+            None,
         )
         assert ok
 
-        # 验证列表中有导入的 context
-        ok = _handle_build_context(["list", str(ws_id)], db)
+        # 先 import（内容透传）再 register（用 daemon 回包的聚合结果）
+        assert build_context_rpc.methods == [
+            "build_context.import_compile_commands", "build_context.register"
+        ]
+        imp_method, imp_params, imp_op = build_context_rpc.calls[0]
+        assert imp_op == "READ_ONLY"
+        assert "main.c" in imp_params["content"]
+        assert imp_params["workspace_root"]
+        reg_method, reg_params, reg_op = build_context_rpc.calls[1]
+        assert reg_op == "PROTECTED_MUTATION"
+        assert reg_params["workspace_id"] == ws_id
+        assert reg_params["name"] == "firmware-debug"
+        assert reg_params["compile_flags"] == ["-O2", "-Os", "-O3"]
+        assert reg_params["defines"] == {"DEBUG": "1", "CONFIG_DEBUG": "", "RELEASE": "1"}
+        assert reg_params["set_active"] is True
+
+        # 验证列表仍经 RPC
+        ok = _handle_build_context(["list", str(ws_id)], None)
         assert ok
+        assert build_context_rpc.methods[-1] == "build_context.list"
 
 
 # ============================================

@@ -12,6 +12,7 @@
 依赖：live daemon（含 d7e9a95 修复）经 UnixDaemonRpcClient；权威库只读断言。
 """
 
+import os
 import uuid
 
 import pytest
@@ -20,6 +21,7 @@ from callwarden.server.daemon_client import UnixDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 AUTH_DB = r"C:\Users\wanpi\.callwarden\callwarden.db"
+_REPO_ROOT = r"C:\git_work\callwarden"
 IDENTITY = {
     "agent_id": "executor-workbuddy-v1-cur",
     "session_id": "sess-workbuddy-cw-20260822-0320",
@@ -35,9 +37,61 @@ def _db():
     return conn
 
 
+def _norm_root(path: str) -> str:
+    return os.path.normcase(os.path.abspath(str(path)).replace("\\\\?\\", ""))
+
+
+def _resolve_pair(client):
+    """从 live daemon 解析当前仓库根的权威 (workspace_id, workspace_instance_id) 配对。
+
+    stale 修复（PYT 回归卡 step#4 · A 桶）：task.create 经 daemon 原生 task_loop
+    入口（rust_ext/src/daemon/task_loop/create.rs:36-37，BR-01）强制要求非空
+    workspace_instance_id，缺失即 E_TASK_WORKSPACE_INSTANCE_REQUIRED
+    （rust_ext/src/daemon/task_collab.rs:204-215 bind_task_to_workspace）。旧断言
+    只传数字 workspace_id=1，生产已演进为「registry ↔ task-DB 统一权威」配对。
+
+    配对判定对齐 server/daemon_client.py:3551-3620 的
+    resolve_workspace_pair_from_daemon（workspace.list 找 root 命中的 active 行 →
+    workspace.status 要求 registry_instance_id == task_db_instance_id == instance
+    且 task_db_workspace_id 为正整数）；此处直接用测试既有 client 调用，避免
+    该函数内部 _get_rpc_client_for_route 的 manifest 解析与本用例 client 分歧。
+    """
+    target = _norm_root(_REPO_ROOT)
+    for row in client.call("workspace.list", {}):
+        if not isinstance(row, dict) or row.get("status") != "active":
+            continue
+        row_root = row.get("client_view_root") or row.get("host_real_root") or ""
+        if _norm_root(row_root) != target:
+            continue
+        instance_id = row.get("workspace_instance_id")
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            continue
+        try:
+            status = client.call(
+                "workspace.status", {"workspace_instance_id": instance_id}
+            )
+        except DaemonRemoteError:
+            continue
+        if not isinstance(status, dict):
+            continue
+        task_db_id = status.get("task_db_workspace_id")
+        if (
+            isinstance(task_db_id, int)
+            and task_db_id > 0
+            and status.get("registry_instance_id") == instance_id
+            and status.get("task_db_instance_id") == instance_id
+        ):
+            return task_db_id, instance_id
+    raise DaemonRemoteError(
+        "E_WORKSPACE_PAIR_NOT_FOUND",
+        f"未找到当前仓库根 {_REPO_ROOT} 的权威 workspace 配对（registry↔task-DB）",
+    )
+
+
 def _create_parent(client, steps=None):
     """经 daemon 创建带 workspace binding 的父任务。"""
     tid = "T-SPLIT-" + uuid.uuid4().hex[:10]
+    ws_id, ws_instance_id = _resolve_pair(client)
     steps = steps or [
         {"action": "port_rust_authority", "target_file": "rust_ext/src/daemon/task_collab_planning.rs"},
     ]
@@ -46,7 +100,8 @@ def _create_parent(client, steps=None):
         "steps": steps, "creator": "test",
         "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
         "identity_policy": "legacy_identity_v1",
-        "workspace_id": 1, "request_id": f"mk-{tid}-{uuid.uuid4().hex[:8]}",
+        "workspace_id": ws_id, "workspace_instance_id": ws_instance_id,
+        "request_id": f"mk-{tid}-{uuid.uuid4().hex[:8]}",
     })
     return tid
 

@@ -9,6 +9,15 @@
 3. Dirty 文件仅进入 per-workspace overlay，不污染 Global CAS
 4. clean→dirty→clean / 分支切换时 generation 与查询一致性
 5. 双 UID 验证符号差异、调用链变化、未授权 workspace 隔离
+
+stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
+==========================================================
+- `server/replicator.py:364-384 daemon_handle_refresh` 已是薄客户端：仅序列化
+  `msg`（canonical_bytes → `canonical_bytes_hex`）后
+  `_call_daemon_rpc("mcp.replicator.daemon_handle_refresh", params)`；generation /
+  committed / stale seq 由 Rust daemon 决策，失败 fail-closed。旧用例「用本地
+  ws_conn 断言 committed / content_hash」已过期，改为 mock RPC seam。
+- `daemon_handle_connect`（`server/replicator.py:180+`）仍为本地实现，epoch 断言保留。
 """
 
 import hashlib
@@ -20,6 +29,38 @@ import tempfile
 import time
 
 import pytest
+
+
+# daemon RPC method 命名空间（生产侧见 server/replicator.py:52）
+REPLICATOR_REFRESH_METHOD = "mcp.replicator.daemon_handle_refresh"
+
+
+class _RpcRecorder:
+    """daemon RPC 替身：记录 (method, params) 并回放预设 payload。"""
+
+    def __init__(self):
+        self.calls = []
+        self._reply = None
+
+    def reply(self, payload):
+        self._reply = payload
+        return self
+
+    def __call__(self, method, params):
+        self.calls.append((method, dict(params or {})))
+        return self._reply
+
+    @property
+    def methods(self):
+        return [m for m, _ in self.calls]
+
+
+@pytest.fixture
+def refresh_daemon(monkeypatch):
+    """把 `server.replicator._call_daemon_rpc` 替换为记录型替身。"""
+    rec = _RpcRecorder()
+    monkeypatch.setattr("callwarden.server.replicator._call_daemon_rpc", rec)
+    return rec
 
 
 # ============================================================
@@ -373,8 +414,8 @@ class TestMultiBranchSessionManagement:
     def git_fixture(self, tmp_path):
         return GitFixture(str(tmp_path / "git"))
 
-    def test_different_branches_different_sessions(self, git_fixture, tmp_path):
-        """不同分支使用不同 session，互不干扰。"""
+    def test_different_branches_different_sessions(self, git_fixture, tmp_path, refresh_daemon):
+        """不同分支使用不同 session，互不干扰（A 类：refresh 走 RPC）。"""
         from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
 
         default = git_fixture._default_branch
@@ -409,6 +450,11 @@ class TestMultiBranchSessionManagement:
 
         # workspace 1 refresh
         stable_blob = git_fixture.get_blob_content(ws_stable, "HEAD", "calc.py")
+        stable_bytes = stable_blob.encode()
+        refresh_daemon.reply({
+            "status": "committed",
+            "content_hash": hashlib.sha256(stable_bytes).hexdigest(),
+        })
         result1 = daemon_handle_refresh(
             peer_uid=1000, workspace_id=1,
             msg={
@@ -418,12 +464,17 @@ class TestMultiBranchSessionManagement:
                 "monotonic_seq": 1,
             },
             ws_conn=ws_conn, cas_conn=None,
-            canonical_bytes=stable_blob.encode(),
+            canonical_bytes=stable_bytes,
         )
         assert result1["status"] == "committed"
 
         # workspace 2 refresh
         a_blob = git_fixture.get_blob_content(ws_a, "HEAD", "calc.py")
+        a_bytes = a_blob.encode()
+        refresh_daemon.reply({
+            "status": "committed",
+            "content_hash": hashlib.sha256(a_bytes).hexdigest(),
+        })
         result2 = daemon_handle_refresh(
             peer_uid=1000, workspace_id=2,
             msg={
@@ -433,12 +484,19 @@ class TestMultiBranchSessionManagement:
                 "monotonic_seq": 1,
             },
             ws_conn=ws_conn, cas_conn=None,
-            canonical_bytes=a_blob.encode(),
+            canonical_bytes=a_bytes,
         )
         assert result2["status"] == "committed"
 
         # 两个 workspace 的 content_hash 不同（不同分支内容不同）
         assert result1.get("content_hash") != result2.get("content_hash")
+        # 两次 refresh 均路由到 daemon，且各自 canonical bytes 透传
+        assert refresh_daemon.methods == [
+            REPLICATOR_REFRESH_METHOD, REPLICATOR_REFRESH_METHOD
+        ]
+        hexes = [p["canonical_bytes_hex"] for _, p in refresh_daemon.calls]
+        assert hexes[0] == stable_bytes.hex()
+        assert hexes[1] == a_bytes.hex()
 
         ws_conn.close()
 

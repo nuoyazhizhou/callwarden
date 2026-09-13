@@ -1,15 +1,35 @@
 """H4B-E: Governance/unsupported/error HTTP cutover 测试
 
-验证 tools_p2_graph.py、tools_p3_identity.py、tools_p4_lease.py 中工具的 HTTP 路由。
+验证 tools_p2_graph.py、tools_p3_identity.py、tools_p4_lease.py 中所有工具的
+HTTP 路由契约。
 
-三类路由语义（H4C-2 第三批 T-1786747295227-b876fddf 适配版）：
-1. 只读接入组（本批 11 个 + collab 4 个共 15 个）：HTTP/enterprise 模式经
-   route_worker_call → compat worker 执行（fail-closed，不构造 CodeGraphDB、
-   无 SQLite fallback）；local/auto 模式走 _local（保留原 get_db() legacy 语义）。
-2. 写语义组（governance_write，10 个）：HTTP 模式短路 _http_unsupported 返回
-   E_HTTP_COMPAT_UNSUPPORTED，绝不触碰 get_db()/本地 SQLite。
-3. rust_native 组（p4 lease_* 5 个）：HTTP 模式经 _call_daemon_rpc 真名透传
-   （daemon 权威路径，dispatch.rs 有真实 lease.* RPC 分支，不经 worker）。
+stale 依据（A 桶 / MCP 工具 `_route` 化）：
+旧版本断言三类旧路由机制——
+1. 只读接入组经 `route_worker_call()` → compat worker（tools_p2_graph.py:22 /
+   tools_p3_identity.py:22 / tools_p4_lease.py:26 的顶层 import 仍在，但工具体
+   内已无调用点，仅剩注释）；
+2. 写语义组 HTTP 模式短路 `_http_unsupported()` 返回 E_HTTP_COMPAT_UNSUPPORTED
+   （源码已无 `def _http_unsupported`，各模块仅剩注释引用）；
+3. rust_native lease_* HTTP 模式经 `_call_daemon_rpc()` 真名透传
+   （`from .._mcp_common import _call_daemon_rpc` 仍在 tools_p4_lease.py:23，
+   但工具体内已无调用点）。
+
+现行生产实现已全面 `_route` 化：
+- `server/tools/tools_p2_graph.py:33`、`tools_p3_identity.py:33`、
+  `tools_p4_lease.py:43` 均为
+  `from ..daemon_client import route_rpc as _route`；
+- 每个工具体退化为一行式 `return _route('<rpc method>', {...}, '<OP_CLASS>')`
+  （写语义 job_submit 类工具额外 unwrap `result`）；
+- 工具层不再有 HTTP/local 分支，也不再有 compat worker / `_http_unsupported` /
+  `_call_daemon_rpc` 分支——HTTP/local/compat 分流与 fail-closed（异常包装为
+  `DaemonUnavailableError`）整体下沉到 `route_rpc`（server/daemon_client.py）。
+
+因此本文件按「工具层 `_route` 契约」重写：
+- 只读组断言 `_route('<rpc>', {...}, 'READ_ONLY')`，参数逐字透传；
+- 写语义组断言 `_route('<rpc>', {...}, 'GOVERNANCE_WRITE'|'PROTECTED_MUTATION')`；
+- p4 lease_* 组断言 `_route('lease.*', {...}, ...)`；
+- 失败路径断言 `DaemonRemoteError` 原样传播且不回落本地 get_db()
+  （fail-closed 语义由 route_rpc 保证，工具层不做本地兜底）。
 """
 
 import sys
@@ -22,89 +42,17 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# 装配导入：import compat_worker 即触发其内部对工具模块的装配 import，
-# 模块级 register_compat_routes 随之注册到 registry 单例（与
-# test_http_combined_worker_cutover 同款）。只读接入组测试依赖
-# route_worker_call 的白名单检查通过（未注册方法会 fail-closed 返回
-# E_HTTP_COMPAT_UNSUPPORTED 而非调用 worker）。
-import server.compat_worker as _compat_worker_asm  # noqa: E402,F401
+from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
 
 
 # ============================================================
-# 辅助：Mock 工具函数的通用夹具
+# 辅助
 # ============================================================
 
 
-@pytest.fixture
-def mock_http_worker_route(monkeypatch):
-    """HTTP 模式 + mock rpc client 的 route_worker_call 基座。
-
-    route_worker_call 内部动态读取 callwarden.server.daemon_client 模块属性
-    （is_http_transport_enabled / get_daemon_mode / _get_rpc_client_for_route），
-    monkeypatch daemon_client 上的绑定即可生效（与
-    test_http_combined_worker_cutover.mock_http_worker_route 同款）。
-    """
-
-    def _apply(mode="auto"):
-        client = MagicMock()
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: True,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode",
-            lambda: mode,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client._get_rpc_client_for_route",
-            lambda: client,
-        )
-        return client
-
-    return _apply
-
-
-@pytest.fixture
-def mock_http_fail_closed(monkeypatch):
-    """HTTP 模式（fail-closed 短路）：写语义工具 _http_unsupported 通过
-    `import callwarden.server.daemon_client as _dc; _dc.is_http_transport_enabled()`
-    动态读取，monkeypatch daemon_client 模块属性后立即短路返回
-    E_HTTP_COMPAT_UNSUPPORTED。"""
-    monkeypatch.setattr(
-        "callwarden.server.daemon_client.is_http_transport_enabled",
-        lambda: True,
-    )
-
-
-@pytest.fixture
-def mock_http_lease_native(monkeypatch):
-    """HTTP 模式（rust_native lease_*）：工具函数顶层绑定
-    `from ...daemon_client import is_http_transport_enabled`，必须 monkeypatch
-    tools_p4_lease 模块上的绑定（daemon_client 上的改动对顶层绑定不生效）。"""
-    import callwarden.server.tools.tools_p4_lease as _lease_mod
-
-    monkeypatch.setattr(_lease_mod, "is_http_transport_enabled", lambda: True)
-
-
-@pytest.fixture
-def mock_legacy_mode(monkeypatch):
-    """legacy 模式（非 HTTP）：
-    - route_worker_call：mode=local 且非 HTTP → 直接执行 _local fallback（get_db()）
-    - _http_unsupported：is_http_transport_enabled=False → 返回 None 走 get_db()
-    - p4 lease_*：顶层绑定 is_http_transport_enabled / get_daemon_mode 同步覆盖
-    """
-    import callwarden.server.tools.tools_p4_lease as _lease_mod
-
-    monkeypatch.setattr(
-        "callwarden.server.daemon_client.is_http_transport_enabled",
-        lambda: False,
-    )
-    monkeypatch.setattr(
-        "callwarden.server.daemon_client.get_daemon_mode",
-        lambda: "local",
-    )
-    monkeypatch.setattr(_lease_mod, "is_http_transport_enabled", lambda: False)
-    monkeypatch.setattr(_lease_mod, "get_daemon_mode", lambda: "local")
+def _import_tool_module(module_name):
+    import importlib
+    return importlib.import_module("callwarden.server.tools." + module_name)
 
 
 def _register_tools(module, mcp=None):
@@ -124,43 +72,32 @@ def _register_tools(module, mcp=None):
     return registrations
 
 
+def _route_recorder(monkeypatch, module, result):
+    """把模块级 `_route` 替换为记录器，返回记录列表 [(method, params, op_class)]。
+
+    现行工具体一律 `return _route(method, params, op_class)`（tools_p2_graph.py:60
+    等），故此处直接替换模块属性即可捕获下发路由。
+    """
+    calls = []
+
+    def _fake(method, params, op_class):
+        calls.append((method, dict(params), op_class))
+        return result
+
+    monkeypatch.setattr(module, "_route", _fake)
+    return calls
+
+
+def _module_name(module):
+    return module.__name__
+
+
 # ============================================================
-# 参数化清单（H4C-2 第三批，T-1786747295227-b876fddf）
+# 1. 只读组：`_route(..., 'READ_ONLY')`
 # ============================================================
 
-# 写语义工具（governance_write，HTTP 模式必须短路 _http_unsupported 返回
-# E_HTTP_COMPAT_UNSUPPORTED，不触碰 get_db()/本地 SQLite）。
-# 参数按各工具真实签名提供（仅需满足 Python 调用不抛 TypeError，
-# _http_unsupported 在进入 db 写路径前拦截）。
-FAIL_CLOSED_TOOLS = [
-    ("tools_p2_graph", "import_envelope_dependencies",
-     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
-      "contract_revision": 1, "dependencies": []}),
-    ("tools_p2_graph", "record_artifact_identity",
-     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
-      "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py"}),
-    ("tools_p2_graph", "publish_interface",
-     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
-      "contract_revision": 1, "interface_name": "IFace", "version": "1.0"}),
-    ("tools_p2_graph", "select_interface_provider",
-     {"workspace_id": 1, "consumer_task_id": "T-001", "contract_id": "C-001",
-      "contract_revision": 1, "interface_name": "IFace",
-      "selected_provider_task_id": "T-002"}),
-    ("tools_p2_graph", "build_hard_dependency_edges",
-     {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1}),
-    ("tools_p3_identity", "record_action_identity",
-     {"action_id": "ACT-001", "action_type": "contract", "task_id": "T-001",
-      "identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}'}),
-    ("tools_p3_identity", "register_attestation_revocation",
-     {"issuer": "issuer-1", "signing_key_id": "key-1", "revocation_mode": "compromised"}),
-    ("tools_p4_lease", "assignment_create",
-     {"task_id": "T-001", "role": "implementer"}),
-    ("tools_p4_lease", "assignment_revoke", {"assignment_id": "ASG-001"}),
-]
-
-# 只读接入组（route_worker_call，HTTP/enterprise 经 worker 执行）：
-# (module_name, tool_name, 调用 kwargs, rpc_method, 期望 worker params)
-WORKER_ROUTED_TOOLS = [
+# (module_name, tool_name, 调用 kwargs, rpc_method, 期望 params)
+READ_ROUTE_CASES = [
     ("tools_p2_graph", "get_artifact_freshness",
      {"workspace_id": 1, "task_id": "T-001", "artifact_ref": "src/main.py"},
      "get_artifact_freshness",
@@ -213,314 +150,320 @@ WORKER_ROUTED_TOOLS = [
 ]
 
 
-def _import_tool_module(module_name):
-    import importlib
-    return importlib.import_module("callwarden.server.tools." + module_name)
+class TestReadToolsRouteReadOnly:
+    """只读组工具经 `_route(..., 'READ_ONLY')` 下发，参数逐字透传、不碰本地 db。
 
-
-# ============================================================
-# 1. 只读接入组：HTTP 模式经 route_worker_call → compat worker
-# ============================================================
-
-
-class TestReadonlyToolsWorkerRouted:
-    """本批只读接入组（p2 5 + p3 5 + p4 1）HTTP 模式经 worker 执行。
-
-    mock client 返回 worker 数据，工具函数原样透传；断言 route_worker_call
-    以 (rpc_method, params) 精确调用（HTTP fail-closed 不回退本地 SQLite）。
+    stale 依据：旧用例 patch `route_worker_call` 后断言 worker 被调用 / patch
+    `_get_daemon_client` 断言客户端便捷方法被调用；工具 `_route` 化后这些 seam
+    已无调用点（断言恒为 `Called 0 times`）。
     """
 
     @pytest.mark.parametrize(
-        "module_name, tool_name, kwargs, rpc_method, expected_params",
-        WORKER_ROUTED_TOOLS,
-        ids=[t[1] for t in WORKER_ROUTED_TOOLS],
+        "module_name, tool_name, kwargs, rpc_method, expect_params",
+        READ_ROUTE_CASES,
+        ids=[f"{c[0]}:{c[1]}" for c in READ_ROUTE_CASES],
     )
-    def test_readonly_tool_worker_routed(
-        self, mock_http_worker_route,
-        module_name, tool_name, kwargs, rpc_method, expected_params,
+    def test_read_tool_routes_read_only_rpc(
+        self, monkeypatch, module_name, tool_name, kwargs, rpc_method, expect_params,
     ):
         module = _import_tool_module(module_name)
-        client = mock_http_worker_route()
-        expected = {"ok": True, "worker": "compat"}
-        client.call.return_value = expected
+        expected = {"ok": True, "value": 1}
+        calls = _route_recorder(monkeypatch, module, expected)
 
         tools = _register_tools(module)
-        result = tools[tool_name](**kwargs)
+        with patch(f"{_module_name(module)}.get_db") as mock_db:
+            out = tools[tool_name](**kwargs)
+            mock_db.assert_not_called()
 
-        client.call.assert_called_once_with(rpc_method, expected_params)
-        assert result == expected
+        assert out == expected
+        assert calls == [(rpc_method, expect_params, "READ_ONLY")]
+
+    @pytest.mark.parametrize(
+        "module_name, tool_name, kwargs, rpc_method, expect_params",
+        READ_ROUTE_CASES,
+        ids=[f"{c[0]}:{c[1]}" for c in READ_ROUTE_CASES],
+    )
+    def test_read_tool_fail_closed_no_local_fallback(
+        self, monkeypatch, module_name, tool_name, kwargs, rpc_method, expect_params,
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db()。"""
+        module = _import_tool_module(module_name)
+
+        def _boom(*a, **kw):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(module, "_route", _boom)
+        tools = _register_tools(module)
+        with patch(f"{_module_name(module)}.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                tools[tool_name](**kwargs)
+            mock_db.assert_not_called()
 
 
 # ============================================================
-# 2. 写语义组：HTTP 模式 fail-closed（_http_unsupported 短路）
+# 2. 写语义组：`_route(..., 'GOVERNANCE_WRITE'|'PROTECTED_MUTATION')`
 # ============================================================
 
+# (module_name, tool_name, 调用 kwargs, rpc_method, 期望 params, op_class, unwrap_result)
+WRITE_ROUTE_CASES = [
+    ("tools_p2_graph", "import_envelope_dependencies",
+     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "dependencies": []},
+     "task.job_submit",
+     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "dependencies": [],
+      "job_type": "envelope_deps", "sync": True},
+     "PROTECTED_MUTATION", True),
+    ("tools_p2_graph", "record_artifact_identity",
+     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py"},
+     "admin.record_artifact_identity",
+     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py",
+      "artifact_hash": "", "workspace_snapshot_id": ""},
+     "GOVERNANCE_WRITE", False),
+    ("tools_p2_graph", "publish_interface",
+     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "interface_name": "IFace", "version": "1.0"},
+     "admin.publish_interface",
+     {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "interface_name": "IFace", "version": "1.0",
+      "interface_hash": ""},
+     "PROTECTED_MUTATION", False),
+    ("tools_p2_graph", "select_interface_provider",
+     {"workspace_id": 1, "consumer_task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "interface_name": "IFace",
+      "selected_provider_task_id": "T-002"},
+     "admin.select_interface_provider",
+     {"workspace_id": 1, "consumer_task_id": "T-001", "contract_id": "C-001",
+      "contract_revision": 1, "interface_name": "IFace",
+      "selected_provider_task_id": "T-002"},
+     "PROTECTED_MUTATION", False),
+    ("tools_p2_graph", "build_hard_dependency_edges",
+     {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1},
+     "task.job_submit",
+     {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1,
+      "job_type": "hard_dep_edges", "sync": True},
+     "PROTECTED_MUTATION", True),
+    ("tools_p3_identity", "record_action_identity",
+     {"action_id": "ACT-001", "action_type": "contract", "task_id": "T-001",
+      "identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}'},
+     "admin.record_action_identity",
+     {"action_id": "ACT-001", "action_type": "contract", "task_id": "T-001",
+      "identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}',
+      "contract_id": "", "contract_revision": 0, "workspace_id": None},
+     "GOVERNANCE_WRITE", False),
+    ("tools_p3_identity", "register_attestation_revocation",
+     {"issuer": "issuer-1", "signing_key_id": "key-1", "revocation_mode": "compromised"},
+     "admin.register_attestation_revocation",
+     {"issuer": "issuer-1", "signing_key_id": "key-1", "revocation_mode": "compromised",
+      "revocation_reason": "", "initiating_actor": "", "workspace_id": None},
+     "GOVERNANCE_WRITE", False),
+    ("tools_p4_lease", "assignment_create",
+     {"task_id": "T-001"},
+     "admin.assignment_create",
+     {"task_id": "T-001", "role": "implementer",
+      "agent_id": "", "session_id": "", "model_id": ""},
+     "PROTECTED_MUTATION", False),
+    ("tools_p4_lease", "assignment_revoke",
+     {"assignment_id": "ASG-001"},
+     "admin.assignment_revoke",
+     {"assignment_id": "ASG-001"},
+     "PROTECTED_MUTATION", False),
+]
 
-class TestWriteToolsFailClosed:
-    """写语义/治理工具（governance_write）HTTP 模式必须短路 _http_unsupported。
 
-    返回结构化 E_HTTP_COMPAT_UNSUPPORTED；get_db 以抛错桩替换，若工具绕过
-    fail-closed 触碰本地 SQLite 立即失败。
+class TestWriteToolsRouteMutation:
+    """写语义/治理工具经 `_route(..., 'GOVERNANCE_WRITE'|'PROTECTED_MUTATION')` 下发。
+
+    stale 依据：旧用例 patch `_http_unsupported`（源码已无此函数，仅剩注释）并断言
+    返回 E_HTTP_COMPAT_UNSUPPORTED；现行工具体直接 `_route` 到真实 RPC
+    （如 tools_p2_graph.py:85 `admin.record_artifact_identity`），无客户端 fail-closed
+    短路。HTTP 模式不可用等 fail-closed 语义整体下沉到 route_rpc。
     """
 
     @pytest.mark.parametrize(
-        "module_name, tool_name, kwargs",
-        FAIL_CLOSED_TOOLS,
-        ids=[t[1] for t in FAIL_CLOSED_TOOLS],
+        "module_name, tool_name, kwargs, rpc_method, expect_params, op_class, unwrap",
+        WRITE_ROUTE_CASES,
+        ids=[f"{c[0]}:{c[1]}" for c in WRITE_ROUTE_CASES],
     )
-    def test_write_tool_fail_closed(
-        self, mock_http_fail_closed, monkeypatch,
-        module_name, tool_name, kwargs,
+    def test_write_tool_routes_mutation_rpc(
+        self, monkeypatch, module_name, tool_name, kwargs,
+        rpc_method, expect_params, op_class, unwrap,
     ):
         module = _import_tool_module(module_name)
-
-        def _boom(*args, **kw):
-            raise AssertionError(
-                f"{tool_name} HTTP 模式不应触碰 get_db()/本地 SQLite")
-
-        monkeypatch.setattr(module, "get_db", _boom)
+        payload = {"result": {"value": 1}} if unwrap else {"value": 1}
+        calls = _route_recorder(monkeypatch, module, payload)
 
         tools = _register_tools(module)
-        result = tools[tool_name](**kwargs)
+        with patch(f"{_module_name(module)}.get_db") as mock_db:
+            out = tools[tool_name](**kwargs)
+            mock_db.assert_not_called()
 
-        assert result["error"] == "E_HTTP_COMPAT_UNSUPPORTED", (
-            f"{tool_name} HTTP 模式应 fail-closed 返回 E_HTTP_COMPAT_UNSUPPORTED"
-        )
-        assert result["tool"] == tool_name
-        assert result["backend"] == "python_compat"
+        # job_submit 类工具额外 unwrap `result`；其余原样返回
+        assert out == {"value": 1}
+        assert calls == [(rpc_method, expect_params, op_class)]
+
+    @pytest.mark.parametrize(
+        "module_name, tool_name, kwargs, rpc_method, expect_params, op_class, unwrap",
+        WRITE_ROUTE_CASES,
+        ids=[f"{c[0]}:{c[1]}" for c in WRITE_ROUTE_CASES],
+    )
+    def test_write_tool_fail_closed_no_local_fallback(
+        self, monkeypatch, module_name, tool_name, kwargs,
+        rpc_method, expect_params, op_class, unwrap,
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db()。"""
+        module = _import_tool_module(module_name)
+
+        def _boom(*a, **kw):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(module, "_route", _boom)
+        tools = _register_tools(module)
+        with patch(f"{_module_name(module)}.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                tools[tool_name](**kwargs)
+            mock_db.assert_not_called()
 
 
 # ============================================================
-# 3. rust_native 组（p4 lease_*）：HTTP 模式经 _call_daemon_rpc 真名透传
+# 3. p4 lease_* 组：`_route('lease.*', ...)`
 # ============================================================
 
+# (tool_name, 位置参数 args, rpc_method, 期望 params, op_class)
+LEASE_ROUTE_CASES = [
+    ("lease_acquire", ("T-001", "implementer", "agent-1", "sess-1", "model-1"),
+     "lease.acquire",
+     {"task_id": "T-001", "role": "implementer", "agent_id": "agent-1",
+      "session_id": "sess-1", "model_id": "model-1", "ttl_seconds": 3600.0},
+     "PROTECTED_MUTATION"),
+    ("lease_renew", ("T-001", "implementer", "token-abc"),
+     "lease.renew",
+     {"task_id": "T-001", "role": "implementer", "token": "token-abc",
+      "agent_id": "", "session_id": "", "model_id": "", "ttl_seconds": 3600.0},
+     "PROTECTED_MUTATION"),
+    ("lease_release", ("T-001", "implementer", "token-abc"),
+     "lease.release",
+     {"task_id": "T-001", "role": "implementer", "token": "token-abc",
+      "agent_id": "", "session_id": "", "model_id": ""},
+     "PROTECTED_MUTATION"),
+    ("lease_status", ("T-001", "implementer"),
+     "lease.status",
+     {"task_id": "T-001", "role": "implementer"},
+     "READ_ONLY"),
+    ("lease_list_events", ("T-001", "implementer"),
+     "lease.list_events",
+     {"task_id": "T-001", "role": "implementer"},
+     "READ_ONLY"),
+]
 
-class TestToolsP4LeaseHttpRouting:
-    """tools_p4_lease.py 中 lease_*（rust_native）HTTP 路由。
 
-    dispatch.rs 有真实 lease.* RPC 分支（daemon 权威路径），HTTP 模式经
-    _call_daemon_rpc 真名透传，不经 worker、不走本地 SQLite。
+class TestToolsP4LeaseRoute:
+    """tools_p4_lease.py 中 lease_* 工具现行经 `_route('lease.*', ...)` 下发。
+
+    stale 依据：旧用例 patch `tools_p4_lease._call_daemon_rpc` 并断言真名透传；
+    现行工具体为一行式 `_route('lease.acquire', {...}, 'PROTECTED_MUTATION')`
+    （tools_p4_lease.py:78/:109/:138/:156/:172），`_call_daemon_rpc` 已无调用点。
     """
 
-    def test_lease_acquire_http_native(self, mock_http_lease_native):
-        """lease_acquire HTTP 模式通过 _call_daemon_rpc 真名透传。"""
-        from callwarden.server.tools import tools_p4_lease
+    @pytest.mark.parametrize(
+        "tool_name, args, rpc_method, expect_params, op_class",
+        LEASE_ROUTE_CASES,
+        ids=[c[0] for c in LEASE_ROUTE_CASES],
+    )
+    def test_lease_tool_routes_native_rpc(
+        self, monkeypatch, tool_name, args, rpc_method, expect_params, op_class,
+    ):
+        module = _import_tool_module("tools_p4_lease")
+        expected = {"ok": True}
+        calls = _route_recorder(monkeypatch, module, expected)
 
-        expected = {"ok": True, "lease_id": "L-001", "token": "secret"}
-        with patch("callwarden.server.tools.tools_p4_lease._call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = expected
-            tools = _register_tools(tools_p4_lease)
-            result = tools["lease_acquire"]("T-001", "implementer", "agent-1", "sess-1", "model-1")
-            mock_rpc.assert_called_once()
-            args = mock_rpc.call_args[0]
-            assert args[0] == "lease.acquire"
-            assert args[1]["task_id"] == "T-001"
-            assert result == expected
+        tools = _register_tools(module)
+        with patch(f"{_module_name(module)}.get_db") as mock_db:
+            out = tools[tool_name](*args)
+            mock_db.assert_not_called()
 
-    def test_lease_renew_http_native(self, mock_http_lease_native):
-        """lease_renew HTTP 模式通过 _call_daemon_rpc 真名透传。"""
-        from callwarden.server.tools import tools_p4_lease
+        assert out == expected
+        assert calls == [(rpc_method, expect_params, op_class)]
 
-        expected = {"ok": True, "lease_id": "L-001", "renewed_at": 1234567890.0}
-        with patch("callwarden.server.tools.tools_p4_lease._call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = expected
-            tools = _register_tools(tools_p4_lease)
-            result = tools["lease_renew"]("T-001", "implementer", "token-abc")
-            mock_rpc.assert_called_once()
-            assert mock_rpc.call_args[0][0] == "lease.renew"
-            assert result == expected
+    @pytest.mark.parametrize(
+        "tool_name, args, rpc_method, expect_params, op_class",
+        LEASE_ROUTE_CASES,
+        ids=[c[0] for c in LEASE_ROUTE_CASES],
+    )
+    def test_lease_tool_fail_closed_no_local_fallback(
+        self, monkeypatch, tool_name, args, rpc_method, expect_params, op_class,
+    ):
+        module = _import_tool_module("tools_p4_lease")
 
-    def test_lease_release_http_native(self, mock_http_lease_native):
-        """lease_release HTTP 模式通过 _call_daemon_rpc 真名透传。"""
-        from callwarden.server.tools import tools_p4_lease
+        def _boom(*a, **kw):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
 
-        expected = {"ok": True, "lease_id": "L-001", "released_at": 1234567890.0}
-        with patch("callwarden.server.tools.tools_p4_lease._call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = expected
-            tools = _register_tools(tools_p4_lease)
-            result = tools["lease_release"]("T-001", "implementer", "token-abc")
-            mock_rpc.assert_called_once()
-            assert mock_rpc.call_args[0][0] == "lease.release"
-            assert result == expected
-
-    def test_lease_status_http_native(self, mock_http_lease_native):
-        """lease_status HTTP 模式通过 _call_daemon_rpc 真名透传。"""
-        from callwarden.server.tools import tools_p4_lease
-
-        expected = {"status": "active", "lease_id": "L-001"}
-        with patch("callwarden.server.tools.tools_p4_lease._call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = expected
-            tools = _register_tools(tools_p4_lease)
-            result = tools["lease_status"]("T-001", "implementer")
-            mock_rpc.assert_called_once_with(
-                "lease.status", {"task_id": "T-001", "role": "implementer"},
-            )
-            assert result == expected
-
-    def test_lease_list_events_http_native(self, mock_http_lease_native):
-        """lease_list_events HTTP 模式通过 _call_daemon_rpc 真名透传。"""
-        from callwarden.server.tools import tools_p4_lease
-
-        expected = [{"event_id": "EVT-001", "event_type": "acquire"}]
-        with patch("callwarden.server.tools.tools_p4_lease._call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = expected
-            tools = _register_tools(tools_p4_lease)
-            result = tools["lease_list_events"]("T-001", "implementer")
-            mock_rpc.assert_called_once_with(
-                "lease.list_events", {"task_id": "T-001", "role": "implementer"},
-            )
-            assert result == expected
+        monkeypatch.setattr(module, "_route", _boom)
+        tools = _register_tools(module)
+        with patch(f"{_module_name(module)}.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                tools[tool_name](*args)
+            mock_db.assert_not_called()
 
 
 # ============================================================
-# 4. legacy 模式：保留本地 get_db() 执行路径
-# ============================================================
-
-
-class TestLegacyFallback:
-    """legacy（非 HTTP）模式：只读接入组走 _local（get_db()）、写语义组与
-    rust_native 组走原 get_db() 本地路径，公开方法语义不变。"""
-
-    def test_legacy_fallback_import_envelope_dependencies(self, mock_legacy_mode):
-        """legacy 模式下 import_envelope_dependencies（写语义）走 get_db() 路径。"""
-        from callwarden.server.tools import tools_p2_graph
-
-        with patch("callwarden.server.tools.tools_p2_graph.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_db.import_envelope_dependencies.return_value = {"imported": 3, "skipped": 0, "errors": []}
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_p2_graph)
-            result = tools["import_envelope_dependencies"](
-                1, "T-001", "C-001", 1,
-                [{"dependency_type": "requires_existing", "target_ref": "fn_a"}],
-            )
-            assert result == {"imported": 3, "skipped": 0, "errors": []}
-            mock_get_db.assert_called_once()
-
-    def test_legacy_fallback_detect_cycle(self, mock_legacy_mode):
-        """legacy 模式下 detect_cycle（只读接入组）走 _local → get_db() 路径。"""
-        from callwarden.server.tools import tools_p2_graph
-
-        with patch("callwarden.server.tools.tools_p2_graph.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_db.detect_cycle.return_value = {"has_cycle": False, "cycle_path": []}
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_p2_graph)
-            result = tools["detect_cycle"](1)
-            assert result == {"has_cycle": False, "cycle_path": []}
-            mock_get_db.assert_called_once()
-
-    def test_legacy_fallback_get_action_identity(self, mock_legacy_mode):
-        """legacy 模式下 get_action_identity（只读接入组）走 _local → get_db() 路径。"""
-        from callwarden.server.tools import tools_p3_identity
-
-        with patch("callwarden.server.tools.tools_p3_identity.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_db.get_action_identity.return_value = {"action_id": "ACT-001", "agent_id": "a1"}
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_p3_identity)
-            result = tools["get_action_identity"]("ACT-001")
-            assert result == {"action_id": "ACT-001", "agent_id": "a1"}
-            mock_get_db.assert_called_once()
-
-    def test_legacy_fallback_record_action_identity(self, mock_legacy_mode):
-        """legacy 模式下 record_action_identity（写语义）走 get_db() 路径。"""
-        from callwarden.server.tools import tools_p3_identity
-
-        with patch("callwarden.server.tools.tools_p3_identity.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_db.validate_action_identity.return_value = (True, {})
-            mock_db.record_action_identity.return_value = (True, {"code": "OK"})
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_p3_identity)
-            result = tools["record_action_identity"](
-                "ACT-001", "contract", "T-001",
-                '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}',
-            )
-            assert result == {"code": "OK"}
-
-    def test_legacy_fallback_lease_status(self, mock_legacy_mode):
-        """legacy 模式下 lease_status（rust_native）走 get_db() 本地路径。"""
-        from callwarden.server.tools import tools_p4_lease
-
-        with patch("callwarden.server.tools.tools_p4_lease.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_db.get_lease_status.return_value = {"status": "active", "lease_id": "L-001"}
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_p4_lease)
-            result = tools["lease_status"]("T-001", "implementer")
-            assert result == {"status": "active", "lease_id": "L-001"}
-
-
-# ============================================================
-# 5. 路由覆盖完整性验证（三类语义全覆盖）
+# 4. 路由覆盖完整性（cutover 已完成，无旧 seam 残留）
 # ============================================================
 
 
 class TestRouteCoverage:
-    """验证三个模块所有工具已接入三类 HTTP 路由语义：
-    只读接入组 → route_worker_call；写语义组 → _http_unsupported；
-    rust_native 组（lease_*）→ _call_daemon_rpc 真名透传。"""
+    """三个模块所有工具已完整 `_route` 化，工具体内无旧 seam 残留。
 
-    P2_READ_ONLY = [
-        "get_artifact_freshness", "get_interface_providers", "detect_cycle",
-        "validate_revision_dependencies", "get_dependency_edges",
-    ]
-    P2_WRITE = [
-        "import_envelope_dependencies", "record_artifact_identity",
-        "publish_interface", "select_interface_provider",
-        "build_hard_dependency_edges",
-    ]
-    P3_READ_ONLY = [
-        "get_action_identity", "check_action_identity",
-        "check_session_separation", "get_attestation_validity",
-        "list_attestation_revocations",
-    ]
-    P3_WRITE = ["record_action_identity", "register_attestation_revocation"]
-    P4_LEASE_NATIVE = [
-        "lease_acquire", "lease_renew", "lease_release",
-        "lease_status", "lease_list_events",
-    ]
-    P4_WRITE = ["assignment_create", "assignment_revoke"]
-    P4_READ_ONLY = ["assignment_show"]
+    stale 依据：旧用例断言 `route_worker_call` / `_http_unsupported` /
+    `_call_daemon_rpc` 出现在工具源码中；现行工具一律 `return _route(...)`
+    （tools_p2_graph.py:60/85/98/115/128/144/159/171/187/202，
+    tools_p3_identity.py:66/82/98/114/139/161/191，
+    tools_p4_lease.py:78/109/138/156/172/199/213/228），旧 marker 已消失。
+    """
 
-    def _assert_markers(self, module, mapping, expected_total):
+    MODULE_TOOLS = {
+        "tools_p2_graph": [
+            "import_envelope_dependencies", "record_artifact_identity",
+            "get_artifact_freshness", "publish_interface",
+            "get_interface_providers", "select_interface_provider",
+            "build_hard_dependency_edges", "detect_cycle",
+            "validate_revision_dependencies", "get_dependency_edges",
+        ],
+        "tools_p3_identity": [
+            "record_action_identity", "get_action_identity",
+            "check_action_identity", "check_session_separation",
+            "get_attestation_validity", "list_attestation_revocations",
+            "register_attestation_revocation",
+        ],
+        "tools_p4_lease": [
+            "lease_acquire", "lease_renew", "lease_release",
+            "lease_status", "lease_list_events",
+            "assignment_create", "assignment_show", "assignment_revoke",
+        ],
+    }
+
+    STALE_MARKERS = ("_http_unsupported", "_call_daemon_rpc", "route_worker_call")
+
+    @pytest.mark.parametrize(
+        "module_name, expected_tools",
+        list(MODULE_TOOLS.items()),
+        ids=list(MODULE_TOOLS),
+    )
+    def test_all_tools_route_via_route_rpc(self, module_name, expected_tools):
         import inspect
 
+        module = _import_tool_module(module_name)
         tools = _register_tools(module)
-        assert len(tools) == expected_total, (
-            f"模块工具数应为 {expected_total}，实际 {len(tools)}"
+        assert sorted(tools) == sorted(expected_tools), (
+            f"{module_name} 工具集与预期不一致：{sorted(tools)}"
         )
         for name, fn in tools.items():
-            source = inspect.getsource(fn)
-            marker, desc = mapping[name]
-            assert marker in source, (
-                f"{name} 缺少 {desc}（期望含 '{marker}'）"
+            assert "_route(" in inspect.getsource(fn), (
+                f"{name} 未 `_route` 化（工具体内缺少 '_route('）"
             )
-
-    def test_tools_p2_graph_all_routed(self):
-        """tools_p2_graph.py：只读 5 个 route_worker_call，写 5 个 _http_unsupported。"""
-        from callwarden.server.tools import tools_p2_graph
-
-        mapping = {m: ("route_worker_call", "route_worker_call") for m in self.P2_READ_ONLY}
-        mapping.update({m: ("_http_unsupported", "_http_unsupported") for m in self.P2_WRITE})
-        self._assert_markers(tools_p2_graph, mapping, expected_total=10)
-
-    def test_tools_p3_identity_all_routed(self):
-        """tools_p3_identity.py：只读 5 个 route_worker_call，写 2 个 _http_unsupported。"""
-        from callwarden.server.tools import tools_p3_identity
-
-        mapping = {m: ("route_worker_call", "route_worker_call") for m in self.P3_READ_ONLY}
-        mapping.update({m: ("_http_unsupported", "_http_unsupported") for m in self.P3_WRITE})
-        self._assert_markers(tools_p3_identity, mapping, expected_total=7)
-
-    def test_tools_p4_lease_all_routed(self):
-        """tools_p4_lease.py：lease_* 5 个 _call_daemon_rpc 真名透传，
-        assignment_create/revoke 写语义 _http_unsupported，
-        assignment_show 只读接入 route_worker_call。"""
-        from callwarden.server.tools import tools_p4_lease
-
-        mapping = {m: ("_call_daemon_rpc", "_call_daemon_rpc") for m in self.P4_LEASE_NATIVE}
-        mapping.update({m: ("_http_unsupported", "_http_unsupported") for m in self.P4_WRITE})
-        mapping.update({m: ("route_worker_call", "route_worker_call") for m in self.P4_READ_ONLY})
-        self._assert_markers(tools_p4_lease, mapping, expected_total=8)
+            for marker in self.STALE_MARKERS:
+                assert marker not in inspect.getsource(fn), (
+                    f"{name} 工具体内仍含过期 seam '{marker}'"
+                )

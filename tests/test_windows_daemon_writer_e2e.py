@@ -415,7 +415,14 @@ def test_windows_daemon_multi_process_high_concurrency_writer_e2e():
 
 
 def test_auto_enterprise_fail_closed_without_daemon():
-    """验证 enterprise/auto 模式下 daemon 不可用时写操作严格 Fail-Closed"""
+    """验证 enterprise/auto 模式下 daemon 不可用时写操作严格 Fail-Closed
+
+    stale 修正：本用例以 Named Pipe endpoint 建模 daemon 不可达，故必须显式固定
+    legacy 通道（CW_DAEMON_TRANSPORT=named-pipe）。否则 is_http_transport_enabled()
+    迁移期默认 True（config.py:1747-1755），route_task_write 会走 HTTP 发现路径，
+    在 _inject_workspace_id（daemon_client.py:3716/3521）抛
+    DaemonRemoteError(E_HTTP_MANIFEST_MISSING) 而非 DaemonUnavailableError。
+    """
     fake_endpoint = "\\\\.\\pipe\\nonexistent-pipe-8888"
 
     called_local = False
@@ -427,8 +434,10 @@ def test_auto_enterprise_fail_closed_without_daemon():
     old_mode = os.environ.get("CW_DAEMON_MODE")
     old_endpoint = os.environ.get("CW_DAEMON_ENDPOINT")
     old_task_write_policy = os.environ.get("CW_TASK_WRITE_POLICY")
+    old_transport = os.environ.get("CW_DAEMON_TRANSPORT")
     try:
         os.environ["CW_DAEMON_ENDPOINT"] = fake_endpoint
+        os.environ["CW_DAEMON_TRANSPORT"] = "named-pipe"
 
         os.environ["CW_DAEMON_MODE"] = "enterprise"
         with pytest.raises(DaemonUnavailableError):
@@ -459,12 +468,23 @@ def test_auto_enterprise_fail_closed_without_daemon():
             os.environ["CW_TASK_WRITE_POLICY"] = old_task_write_policy
         else:
             os.environ.pop("CW_TASK_WRITE_POLICY", None)
+        if old_transport is not None:
+            os.environ["CW_DAEMON_TRANSPORT"] = old_transport
+        else:
+            os.environ.pop("CW_DAEMON_TRANSPORT", None)
 
 
 def test_route_task_preserves_daemon_remote_error_code():
     """独立单测：route_task_write/read 必须保留 DaemonRemoteError 的结构化错误语义
     （异常类型 + code 原样透传），不得包装成 DaemonUnavailableError；
-    连接层异常（OSError）在 enterprise/auto 下仍应包装为 DaemonUnavailableError。"""
+    连接层异常（OSError）在 enterprise/auto 下仍应包装为 DaemonUnavailableError。
+
+    stale 修正：本用例通过替换 UnixDaemonRpcClient 注入 fake 客户端，故必须显式
+    固定 legacy 通道（CW_DAEMON_TRANSPORT=named-pipe）。否则
+    _get_rpc_client_for_route()（daemon_client.py:3498-3506）在迁移期默认 HTTP，
+    走 HttpDaemonRpcClient 单例，fake 客户端完全不生效，实测抛
+    E_HTTP_MANIFEST_MISSING。
+    """
     import callwarden.server.daemon_client as _dc_mod
     _orig_client = _dc_mod.UnixDaemonRpcClient
 
@@ -481,13 +501,19 @@ def test_route_task_preserves_daemon_remote_error_code():
             raise OSError(2, "No such file or directory")
 
     old_mode = os.environ.get("CW_DAEMON_MODE")
+    old_transport = os.environ.get("CW_DAEMON_TRANSPORT")
+    os.environ["CW_DAEMON_TRANSPORT"] = "named-pipe"
     try:
+        # 说明：显式传 workspace_id 以跳过 route_task_write/read 在 try 之外的
+        # _inject_workspace_id（daemon_client.py:3518-3521 命中 workspace_id 即
+        # 短路），从而精确覆盖被测接缝——try 块内 rpc_client.call 的异常语义
+        # （:3717-3738 / :3765-3788）。
         # ---- 写路径：业务错误原样透传，绝不调用 local 闭包，绝不伪装成连接失败 ----
         os.environ["CW_DAEMON_MODE"] = "enterprise"
         _dc_mod.UnixDaemonRpcClient = lambda *a, **k: _FakeRemoteErrorClient("task_conflict", "任务已被其他 agent 抢占")
         try:
             with pytest.raises(DaemonRemoteError) as ei:
-                route_task_write("task.claim", {"task_id": "T-1"}, lambda: None)
+                route_task_write("task.claim", {"task_id": "T-1", "workspace_id": 1}, lambda: None)
             assert ei.value.code == "task_conflict", f"写路径 code 丢失: {ei.value.code}"
         finally:
             _dc_mod.UnixDaemonRpcClient = _orig_client
@@ -497,7 +523,7 @@ def test_route_task_preserves_daemon_remote_error_code():
         _dc_mod.UnixDaemonRpcClient = lambda *a, **k: _FakeRemoteErrorClient("task_not_found", "任务不存在")
         try:
             with pytest.raises(DaemonRemoteError) as ei:
-                route_task_read("task.status", {"task_id": "T-999"}, lambda: "LOCAL_READ")
+                route_task_read("task.status", {"task_id": "T-999", "workspace_id": 1}, lambda: "LOCAL_READ")
             assert ei.value.code == "task_not_found", f"读路径 code 丢失: {ei.value.code}"
         finally:
             _dc_mod.UnixDaemonRpcClient = _orig_client
@@ -507,7 +533,7 @@ def test_route_task_preserves_daemon_remote_error_code():
         _dc_mod.UnixDaemonRpcClient = lambda *a, **k: _FakeConnErrorClient()
         try:
             with pytest.raises(DaemonUnavailableError):
-                route_task_write("task.create", {"title": "x"}, lambda: "LOCAL")
+                route_task_write("task.create", {"title": "x", "workspace_id": 1}, lambda: "LOCAL")
         finally:
             _dc_mod.UnixDaemonRpcClient = _orig_client
 
@@ -517,3 +543,7 @@ def test_route_task_preserves_daemon_remote_error_code():
             os.environ["CW_DAEMON_MODE"] = old_mode
         else:
             os.environ.pop("CW_DAEMON_MODE", None)
+        if old_transport is not None:
+            os.environ["CW_DAEMON_TRANSPORT"] = old_transport
+        else:
+            os.environ.pop("CW_DAEMON_TRANSPORT", None)

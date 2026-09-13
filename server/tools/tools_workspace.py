@@ -5,12 +5,13 @@
 H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查路由归类说明
 - rust_native（H4A 已建路由）：list_workspaces（workspace.list）、
   get_active_workspace（workspace.activate），与 HEAD 基线一致，保留。
-- python_compat / legacy_local：其余 25 个工具全部由矩阵标注为 python_compat
-  或 legacy_local（file_grep/file_list 为 legacy_local）。daemon dispatch.rs 无
-  workspace.build_graph/workspace.refresh_file/file.read/git.*/metrics.* 等 RPC 分支，
-  建立指向不存在 RPC 的伪路由会在 HTTP 模式抛 method_not_found，违反 fail-closed
-  契约；故恢复本地 SQL/文件系统执行（与 HEAD 基线一致），待 H4B-C 扩展 compat_route
-  后迁移。本文件无 H4B-N assigned 的 rust_native read/query 行。
+- python_compat / legacy_local：其余工具由矩阵标注为 python_compat
+  或 legacy_local（file_grep/file_list 为 legacy_local）。
+- 更新（T-1788923523728-7a316cc4，2026-09-09）：daemon dispatch.rs 已新增
+  workspace.build_graph / workspace.file.refresh_file / workspace.build_directory
+  原生分支（含 tree-sitter 符号落库），build_graph/refresh_file/build_directory
+  三个工具改为直达 daemon RPC；输出模型从 bool 放宽为 dict 以匹配
+  daemon 结构化返回（旧 bool 签名会使 FastMCP 输出校验炸掉）。
 """
 
 # [L1] 构建刷新与工作区管理工具（build_graph / list_workspaces / set_active_workspace 等）
@@ -19,7 +20,7 @@ H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查�
 # [L8] Git 集成工具（import_git_history / get_git_commits / get_commit_changes 等）
 
 import os
-from typing import Optional
+from typing import Dict, Optional, TypedDict
 
 from mcp.server.fastmcp import FastMCP
 
@@ -28,18 +29,44 @@ from .._mcp_common import _call_daemon_rpc, get_db
 from ..daemon_client import route_rpc as _route
 
 
+class CodeMetricsSummary(TypedDict):
+    """`get_code_metrics_summary` 的显式 output 契约（冻结）。
+
+    逐字段对齐 legacy 权威实现 `db/db_metrics.py::get_code_metrics_summary`
+    与 daemon 端 `rust_ext/src/daemon/query_compat_handlers.rs::summary_metrics_summary`
+    （即 `query.metrics_summary` RPC 的实现）。字段缺失或改名即视为契约破坏：
+    FastMCP 会依据本注解生成 outputSchema，并在工具返回时校验、fail-closed。
+    """
+
+    file_count: int
+    function_count: int
+    total_lines: int
+    total_calls: int
+    avg_complexity: float
+    max_complexity: int
+    complexity_distribution: Dict[str, int]
+    comment_coverage: float
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
-    def build_graph() -> bool:
-        """完整构建代码知识图谱（全量扫描）"""
+    def build_graph() -> dict:
+        """完整构建代码知识图谱（全量扫描）
+
+        Returns:
+            daemon 结构化统计（scanned/inserted/unchanged/symbols/calls 等）
+        """
         return _route('workspace.build_graph', {}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def refresh_file(file_path: str) -> bool:
+    def refresh_file(file_path: str) -> dict:
         """刷新单个文件（增量更新）
 
         Args:
             file_path: 文件路径（相对或绝对路径）
+
+        Returns:
+            daemon 结构化结果（ok/file_path/content_hash/total_lines/symbols/calls）
         """
         return _route('workspace.file.refresh_file', {"file_path": file_path}, 'PROTECTED_MUTATION')
 
@@ -322,14 +349,15 @@ def register(mcp: FastMCP) -> None:
         return _route('query.symbol_content_by_hash', {"content_hash": content_hash}, 'READ_ONLY')
 
     @mcp.tool()
-    def get_code_metrics_summary() -> dict:
+    def get_code_metrics_summary() -> CodeMetricsSummary:
         """获取代码度量汇总统计
 
         包含文件数、函数数、总代码行、调用关系数、
         平均/最高圈复杂度、复杂度分布、注释覆盖率等。
 
         Returns:
-            全局度量统计字典
+            CodeMetricsSummary：显式 output 契约（见该 TypedDict），
+            由 FastMCP 生成 outputSchema 并校验 daemon 回包。
         """
         return _route('query.metrics_summary', {}, 'READ_ONLY')
 

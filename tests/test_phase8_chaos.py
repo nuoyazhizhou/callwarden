@@ -1,52 +1,185 @@
 """Phase 8.8: chaos tests（故障注入与混沌测试）。
 
-验证 Phase 8 各子系统的鲁棒性：
+stale 依据（daemon authority / HTTP thin-client 迁移后）：
+- **A 类（被测模块已是 daemon 薄客户端）**：
+  * ``server/schema_migrator.py:1-6/126-149``：``SchemaMigrator.apply_migrations`` /
+    ``migrate_daemon_dbs`` 经 ``mcp.schema_migrator.*`` RPC，DDL 与事务回滚在 Rust；
+    旧用例「本地注册迁移函数 + 断言 call_log / 本地表 / 断点续跑」的期望已过期。
+  * ``server/snapshot_gc.py:244-292``：backup/migration/audit/workspace 扫描与
+    ``get_registered_snapshot_ids`` 经 ``mcp.snapshot_gc.*`` RPC。
+  * ``server/audit_log.py:154-370``：``AuditLogger`` 为纯 daemon RPC 薄客户端
+    （SRV-002），``log``/``query``/``count`` 经 ``mcp.audit_log.*``；旧用例
+    「写本地 audit.db 再 sqlite3 读取」已过期。
+- **仍本地，保留断言**：``server/health_check.py:390-634`` ``RecoveryHandler``
+  （零生产调用方，compat/test-only，本地 sqlite 读写）；``server/backup_restore.py``
+  ``BackupManager`` / ``RestoreManager`` 的 Python fallback（本地文件系统）；
+  ``AccessChecker`` / ``TokenValidator`` / ``metrics.Counter`` 等纯 Python 逻辑。
 
-1. **daemon restart recovery**：模拟 daemon crash 后重启，验证
-   RecoveryHandler 能恢复 workspace registry、清理 stale jobs
-2. **并发写冲突**：多线程并发执行 schema migration、backup、GC，
-   验证 SQLite 锁处理和数据一致性
-3. **备份-恢复往返**：备份 → 修改 → 恢复 → 验证数据完整性
-4. **schema migration 故障注入**：迁移中途失败后能否从断点续跑
-5. **GC 安全性**：GC 不会删除活跃 workspace 的数据
-6. **权限边界**：AccessChecker 在混沌场景下仍拒绝越权
-7. **metrics 在高负载下不丢失**：Counter 在并发递增下计数准确
-8. **audit log 完整性**：故障场景下审计日志不丢失
-
-验收对应（Phase 8 验收标准）：
-- daemon restart 后自动恢复 workspace registry 和 snapshots ✓
-- 内存、CPU、队列、错误率可观测 ✓
-- 权限测试覆盖越权路径、symlink 逃逸、TCP token 错误、跨 UID 查询 ✓
+因此：``chaos_env`` 改为直接建立本地 registry schema（供本地 compat 组件使用），
+并对 RPC 组件注入 ``FakeChaosDaemon``（mock RPC seam），断言路由 / 透传 / fail-closed。
 """
 
 import os
 import time
-import json
 import sqlite3
-import shutil
 import threading
 import random
+
 import pytest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from callwarden.server.daemon_config import (
-    DaemonConfig, PermissionRole, PermissionTemplate,
+    DaemonConfig, PermissionTemplate,
     AccessChecker, AccessDeniedError, TokenValidator,
 )
 from callwarden.server.schema_migrator import (
-    SchemaMigrator, MigrationSpec, migrate_daemon_dbs,
+    SchemaMigrator, migrate_daemon_dbs,
 )
 from callwarden.server.backup_restore import BackupManager, RestoreManager
 from callwarden.server.snapshot_gc import SnapshotGC, GCPolicy
 from callwarden.server.metrics import (
-    get_metrics_collector, Counter, Gauge, MetricsCollector,
+    get_metrics_collector, Counter, Gauge,
 )
 from callwarden.server.audit_log import (
-    AuditLogger, AuditEventType, AuditResult,
+    AuditLogger, AuditEventType,
 )
 from callwarden.server.health_check import (
-    HealthChecker, HealthStatus, RecoveryHandler,
+    RecoveryHandler,
 )
+
+
+# ----------------------------------------------------------------------
+# RPC method 命名空间（生产侧见 server/schema_migrator.py:19-22 /
+# server/snapshot_gc.py:37-47 / server/audit_log.py:192-366）
+# ----------------------------------------------------------------------
+SCHEMA_APPLY = "mcp.schema_migrator.apply_migrations"
+SCHEMA_CURRENT = "mcp.schema_migrator.get_current_version"
+SCHEMA_HISTORY = "mcp.schema_migrator.get_migration_history"
+SCHEMA_VALIDATE = "mcp.schema_migrator.validate_schema"
+
+GC_REGISTERED = "mcp.snapshot_gc.get_registered_snapshot_ids"
+GC_SCAN_BACKUP = "mcp.snapshot_gc.scan_expired_backup_history"
+GC_SCAN_MIGRATION = "mcp.snapshot_gc.scan_expired_migrations_log"
+GC_SCAN_AUDIT = "mcp.snapshot_gc.scan_expired_audit_logs"
+GC_SCAN_WORKSPACES = "mcp.snapshot_gc.scan_orphaned_workspaces"
+GC_SCAN_METHODS = {GC_SCAN_BACKUP, GC_SCAN_MIGRATION, GC_SCAN_AUDIT, GC_SCAN_WORKSPACES}
+GC_DELETE_METHODS = {
+    "mcp.snapshot_gc.delete_backup_history_record",
+    "mcp.snapshot_gc.delete_migration_log_record",
+    "mcp.snapshot_gc.delete_expired_audit_logs",
+    "mcp.snapshot_gc.vacuum_databases",
+}
+
+AUDIT_INIT = "mcp.audit_log.init_db"
+AUDIT_APPEND = "mcp.audit_log.append"
+AUDIT_QUERY = "mcp.audit_log.query"
+AUDIT_COUNT = "mcp.audit_log.count"
+
+
+class FakeChaosDaemon:
+    """内存态 daemon：统一处理 schema_migrator / snapshot_gc / audit_log 三命名空间。
+
+    线程安全（concurrent 用例）；``available=False`` 时 fail-closed（抛错，不落地）。
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.calls = []
+        self.available = True
+        self.schema_versions = {}
+        self.schema_apply_script = None  # list[dict]：按序返回，用于故障注入
+        self.registered_snapshots = {"snap-chaos-1"}
+        self.gc_items = {}
+        self.audit_events = []
+
+    # ----- 观测辅助 -----
+    def methods(self):
+        with self.lock:
+            return [m for m, _ in self.calls]
+
+    def params_for(self, method):
+        with self.lock:
+            return [p for m, p in self.calls if m == method]
+
+    def __call__(self, method, params):
+        if not self.available:
+            raise RuntimeError("daemon unavailable")
+        with self.lock:
+            self.calls.append((method, params))
+
+            if method == SCHEMA_CURRENT:
+                return self.schema_versions.get(params["db_path"], 0)
+            if method == SCHEMA_HISTORY:
+                current = self.schema_versions.get(params["db_path"], 0)
+                return [{"version": v, "description": f"v{v}"} for v in range(1, current + 1)]
+            if method == SCHEMA_APPLY:
+                if self.schema_apply_script:
+                    return self.schema_apply_script.pop(0)
+                target = 2 if params.get("migration_set") == "audit" else 3
+                current = self.schema_versions.get(params["db_path"], 0)
+                self.schema_versions[params["db_path"]] = target
+                return {
+                    "db_path": params["db_path"],
+                    "from_version": current,
+                    "to_version": target,
+                    "applied": list(range(current + 1, target + 1)),
+                    "skipped": [],
+                    "failed": None,
+                    "error": None,
+                }
+            if method == SCHEMA_VALIDATE:
+                return {
+                    "valid": True,
+                    "missing_tables": [],
+                    "missing_indexes": [],
+                    "current_version": self.schema_versions.get(params["db_path"], 0),
+                    "source": "rust",
+                }
+
+            if method == GC_REGISTERED:
+                return sorted(self.registered_snapshots)
+            if method in GC_SCAN_METHODS:
+                return list(self.gc_items.get(method, []))
+            if method in GC_DELETE_METHODS:
+                return {"deleted": 1, "source": "rust"}
+
+            if method == AUDIT_INIT:
+                return {"ok": True}
+            if method == AUDIT_APPEND:
+                event = dict(params.get("event", {}))
+                self.audit_events.append(event)
+                return {"ok": True, "event_id": event.get("event_id")}
+            if method == AUDIT_QUERY:
+                return self._audit_query(params)
+            if method == AUDIT_COUNT:
+                return {"count": len(self._audit_filtered(params))}
+
+        raise RuntimeError(f"unexpected method: {method}")
+
+    def _audit_filtered(self, params):
+        out = []
+        etype = params.get("event_type")
+        for event in self.audit_events:
+            if etype is not None and event.get("event_type") != etype:
+                continue
+            out.append(event)
+        return out
+
+    def _audit_query(self, params):
+        out = sorted(self._audit_filtered(params), key=lambda e: e.get("timestamp", 0), reverse=True)
+        limit = params.get("limit", 100)
+        offset = params.get("offset", 0)
+        return out[offset:offset + limit]
+
+
+@pytest.fixture(autouse=True)
+def fake_daemon(monkeypatch):
+    """将三个薄客户端模块的 RPC seam 统一指向内存态 daemon。"""
+    daemon = FakeChaosDaemon()
+    monkeypatch.setattr("callwarden.server.schema_migrator._call_daemon_rpc", daemon)
+    monkeypatch.setattr("callwarden.server.snapshot_gc._call_daemon_rpc", daemon)
+    monkeypatch.setattr("callwarden.server.audit_log._call_daemon_rpc", daemon)
+    return daemon
 
 
 # ======================================================================
@@ -54,9 +187,62 @@ from callwarden.server.health_check import (
 # ======================================================================
 
 
+def _create_local_registry(cfg, workspaces=()):
+    """直接建立本地 registry schema（供本地 compat 组件 RecoveryHandler 使用）。"""
+    conn = sqlite3.connect(cfg.registry_db_path)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS daemon_workspaces (
+            workspace_instance_id TEXT PRIMARY KEY,
+            snapshot_id TEXT,
+            owner_uid INTEGER,
+            git_remote_url TEXT,
+            git_head_commit_sha TEXT,
+            client_view_root TEXT,
+            host_real_root TEXT,
+            toolchain_fingerprint TEXT,
+            registered_at REAL,
+            last_active_at REAL,
+            status TEXT DEFAULT 'active'
+        );
+        CREATE TABLE IF NOT EXISTS backup_history (
+            backup_id TEXT PRIMARY KEY,
+            backup_type TEXT,
+            created_at REAL,
+            file_count INTEGER,
+            total_size_bytes INTEGER,
+            checksum TEXT,
+            deleted_at REAL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS schema_migrations_log (
+            id INTEGER PRIMARY KEY,
+            db_name TEXT,
+            from_version INTEGER,
+            to_version INTEGER,
+            applied_at REAL,
+            duration_ms INTEGER,
+            status TEXT,
+            error TEXT
+        );
+    """)
+    for ws in workspaces:
+        conn.execute("""
+            INSERT OR REPLACE INTO daemon_workspaces
+            (workspace_instance_id, snapshot_id, owner_uid, git_remote_url,
+             git_head_commit_sha, client_view_root, host_real_root,
+             toolchain_fingerprint, registered_at, last_active_at, status)
+            VALUES (?, ?, ?, 'origin', 'abc123', '/view', '/host', 'tc-fp', ?, ?, 'active')
+        """, (ws[0], ws[1], ws[2], time.time(), time.time()))
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def chaos_env(tmp_path):
-    """创建完整的 chaos 测试环境。"""
+    """chaos 测试环境：本地 compat 组件所需的 registry schema + snapshot 文件。
+
+    注：daemon authority 迁移后 ``migrate_daemon_dbs`` 不再建立本地 DB schema；
+    此处直接建立本地表，仅服务于仍为本地实现的 compat 组件（RecoveryHandler 等）。
+    """
     data_root = str(tmp_path / "data")
     backup_root = str(tmp_path / "backups")
     os.makedirs(data_root, exist_ok=True)
@@ -69,23 +255,11 @@ def chaos_env(tmp_path):
         },
     })
 
-    # 初始化所有 DB schema
-    migrate_daemon_dbs(cfg)
+    _create_local_registry(cfg, workspaces=[("ws-chaos-1", "snap-chaos-1", 1000)])
 
-    # 插入测试数据到 registry
-    conn = sqlite3.connect(cfg.registry_db_path)
-    conn.execute("""
-        INSERT OR REPLACE INTO daemon_workspaces
-        (workspace_instance_id, snapshot_id, owner_uid, git_remote_url,
-         git_head_commit_sha, client_view_root, host_real_root,
-         toolchain_fingerprint, registered_at, last_active_at, status)
-        VALUES ('ws-chaos-1', 'snap-chaos-1', 1000, 'origin',
-                'abc123', '/view', '/host', 'tc-fp', ?, ?, 'active')
-    """, (time.time(), time.time()))
-    conn.commit()
-    conn.close()
+    # audit DB 占位（BackupManager 备份 audit.db 需文件存在）
+    open(cfg.audit_log_path, "w").close()
 
-    # 创建 snapshots 目录
     snapshot_dir = os.path.join(data_root, "snapshots")
     os.makedirs(snapshot_dir, exist_ok=True)
     with open(os.path.join(snapshot_dir, "snap-chaos-1"), "w") as f:
@@ -103,7 +277,7 @@ def checker(chaos_env):
 
 
 # ======================================================================
-# 1. daemon restart recovery 测试
+# 1. daemon restart recovery 测试（RecoveryHandler 仍为本地 compat 实现）
 # ======================================================================
 
 
@@ -111,14 +285,11 @@ class TestDaemonRestartRecovery:
     """模拟 daemon crash 后重启的恢复测试。"""
 
     def test_recovery_handler_restores_workspace(self, chaos_env):
-        """daemon 重启后 RecoveryHandler 应能恢复 workspace registry。"""
         cfg, _ = chaos_env
         recovery = RecoveryHandler(cfg)
         result = recovery.recover()
 
-        # recovery 返回的 status 来自 HealthStatus.from_checks
         assert result["status"] in ("healthy", "degraded", "unhealthy")
-        # workspace 应仍在 registry 中
         conn = sqlite3.connect(cfg.registry_db_path)
         row = conn.execute(
             "SELECT * FROM daemon_workspaces WHERE workspace_instance_id = ?",
@@ -128,9 +299,7 @@ class TestDaemonRestartRecovery:
         assert row is not None
 
     def test_recovery_handler_cleans_stale_jobs(self, chaos_env):
-        """daemon 重启后应清理 stale jobs。"""
         cfg, _ = chaos_env
-        # 插入一个 running 状态的 job
         conn = sqlite3.connect(cfg.registry_db_path)
         try:
             conn.execute("""
@@ -150,10 +319,8 @@ class TestDaemonRestartRecovery:
         finally:
             conn.close()
 
-        recovery = RecoveryHandler(cfg)
-        recovery.recover()
+        RecoveryHandler(cfg).recover()
 
-        # stale job 应被标记为 failed
         conn = sqlite3.connect(cfg.registry_db_path)
         row = conn.execute(
             "SELECT status FROM jobs WHERE job_id = ?", ("job-stale",)
@@ -163,7 +330,6 @@ class TestDaemonRestartRecovery:
         assert row[0] == "failed"
 
     def test_recovery_idempotent(self, chaos_env):
-        """多次执行 recovery 应幂等。"""
         cfg, _ = chaos_env
         recovery = RecoveryHandler(cfg)
 
@@ -173,13 +339,14 @@ class TestDaemonRestartRecovery:
         assert r1["status"] in ("healthy", "degraded", "unhealthy")
         assert r2["status"] in ("healthy", "degraded", "unhealthy")
 
-    def test_recovery_with_empty_registry(self, tmp_path):
-        """空 registry 的 recovery 应成功。"""
+    def test_recovery_with_empty_registry(self, fake_daemon, tmp_path):
+        """空 registry：migrate 经 daemon RPC（不落地本地 DB），recovery 仍可完成。"""
         cfg = DaemonConfig.load_from_dict({"data_root": str(tmp_path)})
-        migrate_daemon_dbs(cfg)
+        results = migrate_daemon_dbs(cfg)
+        assert results["registry"].status in ("migrated", "up_to_date")
+        assert not os.path.isfile(cfg.registry_db_path)  # 薄客户端不建本地 DB
 
-        recovery = RecoveryHandler(cfg)
-        result = recovery.recover()
+        result = RecoveryHandler(cfg).recover()
         assert result["status"] in ("healthy", "degraded", "unhealthy")
 
 
@@ -189,10 +356,10 @@ class TestDaemonRestartRecovery:
 
 
 class TestConcurrentWrites:
-    """并发写操作的 SQLite 锁处理测试。"""
+    """并发写操作的锁 / 计数正确性测试。"""
 
     def test_concurrent_backups(self, chaos_env):
-        """多个线程并发 backup 不应导致数据损坏。"""
+        """多个线程并发 backup 不应导致数据损坏（本地 fallback）。"""
         cfg, backup_root = chaos_env
         mgr = BackupManager(cfg, backup_root=backup_root)
 
@@ -205,7 +372,7 @@ class TestConcurrentWrites:
                 r = mgr.backup_full(backup_id=f"concurrent-{i}")
                 with lock:
                     results.append(r["backup_id"])
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - 记录锁冲突，不使测试崩溃
                 with lock:
                     errors.append(str(e))
 
@@ -214,22 +381,20 @@ class TestConcurrentWrites:
             for f in as_completed(futures):
                 f.result()
 
-        # 至少部分 backup 应成功
         assert len(results) > 0
-        # 每个 backup 目录应完整
         for bid in results:
             meta_path = os.path.join(backup_root, bid, "backup_meta.json")
             assert os.path.isfile(meta_path)
 
-    def test_concurrent_migrations_different_dbs(self, tmp_path):
-        """不同 DB 的并发迁移不应互相阻塞。"""
+    def test_concurrent_migrations_different_dbs(self, fake_daemon, tmp_path):
+        """不同 DB 的并发迁移各自路由到 daemon，均返回 migrated。"""
         db1 = str(tmp_path / "db1.db")
         db2 = str(tmp_path / "db2.db")
 
         m1 = SchemaMigrator(db1)
-        m1.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
+        m1.register_migration(1, "v1")
         m2 = SchemaMigrator(db2)
-        m2.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t2 (id INTEGER)"))
+        m2.register_migration(1, "v1")
 
         results = []
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -239,6 +404,7 @@ class TestConcurrentWrites:
             results.append(f2.result())
 
         assert all(r.status == "migrated" for r in results)
+        assert sorted(p["db_path"] for p in fake_daemon.params_for(SCHEMA_APPLY)) == sorted([db1, db2])
 
     def test_concurrent_metrics_increment(self):
         """Counter 在并发递增下应计数准确。"""
@@ -256,12 +422,11 @@ class TestConcurrentWrites:
         for t in threads_list:
             t.join()
 
-        # Counter 使用 .get() 而非 .value
         assert counter.get() == iterations * threads
 
 
 # ======================================================================
-# 3. 备份-恢复往返测试
+# 3. 备份-恢复往返测试（BackupManager/RestoreManager 本地 fallback）
 # ======================================================================
 
 
@@ -269,16 +434,13 @@ class TestBackupRestoreRoundtrip:
     """备份 → 修改 → 恢复 → 验证完整性。"""
 
     def test_full_roundtrip(self, chaos_env):
-        """完整往返：备份 → 修改 → 恢复 → 验证。"""
         cfg, backup_root = chaos_env
         backup_mgr = BackupManager(cfg, backup_root=backup_root)
         restore_mgr = RestoreManager(cfg, backup_root=backup_root)
 
-        # 1. 备份
         backup_result = backup_mgr.backup_full()
         assert backup_result["backup_type"] == "full"
 
-        # 2. 修改 registry DB
         conn = sqlite3.connect(cfg.registry_db_path)
         conn.execute("DELETE FROM daemon_workspaces")
         conn.execute("""
@@ -291,21 +453,16 @@ class TestBackupRestoreRoundtrip:
         conn.commit()
         conn.close()
 
-        # 3. 恢复
         restore_result = restore_mgr.restore(backup_result["backup_id"])
         assert restore_result["status"] == "success"
 
-        # 4. 验证数据恢复到备份时状态
         conn = sqlite3.connect(cfg.registry_db_path)
-        row = conn.execute(
-            "SELECT workspace_instance_id FROM daemon_workspaces"
-        ).fetchone()
+        row = conn.execute("SELECT workspace_instance_id FROM daemon_workspaces").fetchone()
         conn.close()
         assert row is not None
         assert row[0] == "ws-chaos-1"
 
     def test_backup_then_verify(self, chaos_env):
-        """备份后验证应通过。"""
         cfg, backup_root = chaos_env
         backup_mgr = BackupManager(cfg, backup_root=backup_root)
         restore_mgr = RestoreManager(cfg, backup_root=backup_root)
@@ -315,23 +472,19 @@ class TestBackupRestoreRoundtrip:
         assert verify_result["status"] == "valid"
 
     def test_multiple_backups_restore_latest(self, chaos_env):
-        """多次备份后恢复最新的。"""
         cfg, backup_root = chaos_env
         backup_mgr = BackupManager(cfg, backup_root=backup_root)
         restore_mgr = RestoreManager(cfg, backup_root=backup_root)
 
-        b1 = backup_mgr.backup_full()
+        backup_mgr.backup_full()
         time.sleep(0.01)
         b2 = backup_mgr.backup_full()
 
-        # 恢复第二个
         result = restore_mgr.restore(b2["backup_id"])
         assert result["status"] == "success"
 
     def test_backup_with_audit_db(self, chaos_env):
-        """备份应包含 audit DB。"""
-        cfg, _ = chaos_env
-        # 先在 audit DB 中写入数据
+        cfg, backup_root = chaos_env
         logger = AuditLogger(cfg.audit_log_path)
         logger.log_admin_operation(
             actor_uid=0, actor_role="admin",
@@ -340,7 +493,7 @@ class TestBackupRestoreRoundtrip:
         )
         logger.flush()
 
-        backup_mgr = BackupManager(cfg, backup_root=os.path.join(os.path.dirname(cfg.data_root), "backups"))
+        backup_mgr = BackupManager(cfg, backup_root=backup_root)
         result = backup_mgr.backup_full()
 
         file_names = [f["name"] for f in result["files"]]
@@ -348,89 +501,75 @@ class TestBackupRestoreRoundtrip:
 
 
 # ======================================================================
-# 4. schema migration 故障注入
+# 4. schema migration 故障注入（A 类：经 daemon RPC）
 # ======================================================================
 
 
 class TestMigrationFaultInjection:
-    """迁移故障注入测试。"""
+    """迁移故障注入：Python 侧只透传 daemon 结果并 fail-closed。"""
 
-    def test_migration_failure_then_resume(self, tmp_path):
-        """迁移中途失败后能从断点续跑。"""
+    def test_migration_failure_then_resume(self, fake_daemon, tmp_path):
+        """daemon 报告 v2 失败后，下一次 apply 从断点续跑（透传 daemon 结果）。"""
         db_path = str(tmp_path / "fault.db")
         m = SchemaMigrator(db_path)
+        m.register_migration(1, "v1")
+        m.register_migration(2, "v2")
+        m.register_migration(3, "v3")
 
-        call_log = []
+        fake_daemon.schema_apply_script = [
+            {"db_path": db_path, "from_version": 0, "to_version": 1, "applied": [1],
+             "skipped": [], "failed": 2, "error": "injected failure"},
+            {"db_path": db_path, "from_version": 1, "to_version": 3, "applied": [2, 3],
+             "skipped": [], "failed": None, "error": None},
+        ]
 
-        def v1(conn):
-            call_log.append("v1")
-            conn.execute("CREATE TABLE t1 (id INTEGER)")
-
-        def v2_failing(conn):
-            call_log.append("v2")
-            conn.execute("CREATE TABLE t2 (id INTEGER)")
-            raise RuntimeError("injected failure")
-
-        def v3(conn):
-            call_log.append("v3")
-            conn.execute("CREATE TABLE t3 (id INTEGER)")
-
-        m.register_migration(1, "v1", v1)
-        m.register_migration(2, "v2 failing", v2_failing)
-        m.register_migration(3, "v3", v3)
-
-        # 第一次：v1 成功，v2 失败
         r1 = m.apply_migrations()
         assert r1.failed == 2
         assert r1.to_version == 1
-        assert call_log == ["v1", "v2"]
 
-        # 修复 v2（重新注册一个新的 migrator）
-        m2 = SchemaMigrator(db_path)
-        m2.register_migration(2, "v2 fixed", lambda c: c.execute("CREATE TABLE t2 (id INTEGER)"))
-        m2.register_migration(3, "v3", v3)
-
-        # 第二次：从 v1 续跑
-        r2 = m2.apply_migrations()
+        r2 = m.apply_migrations()
         assert r2.status == "migrated"
         assert r2.from_version == 1
         assert r2.applied == [2, 3]
         assert r2.to_version == 3
+        assert fake_daemon.methods() == [SCHEMA_APPLY, SCHEMA_APPLY]
 
-    def test_migration_with_data_loss_simulation(self, tmp_path):
-        """模拟迁移中数据操作失败后数据不丢失。"""
+    def test_migration_failure_does_not_touch_local_db(self, fake_daemon, tmp_path):
+        """daemon 事务失败时 Python 不得触碰本地 DB（回滚由 daemon 保证）。"""
         db_path = str(tmp_path / "data.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE users (id INTEGER, name TEXT)")
+        conn.execute("INSERT INTO users VALUES (1, 'alice')")
+        conn.commit()
+        conn.close()
+
+        fake_daemon.schema_apply_script = [
+            {"db_path": db_path, "from_version": 2, "to_version": 2, "applied": [],
+             "skipped": [], "failed": 3, "error": "update failed"},
+        ]
+
         m = SchemaMigrator(db_path)
-
-        m.register_migration(1, "init", lambda c: c.execute("CREATE TABLE users (id INTEGER, name TEXT)"))
-        m.register_migration(2, "insert", lambda c: c.execute("INSERT INTO users VALUES (1, 'alice')"))
-        m.apply_migrations()
-
-        # 第三步失败
-        def failing_update(conn):
-            conn.execute("UPDATE users SET name = 'bob'")
-            raise RuntimeError("update failed")
-
-        m.register_migration(3, "failing update", failing_update)
+        m.register_migration(1, "init")
+        m.register_migration(2, "insert")
+        m.register_migration(3, "failing update")
         r = m.apply_migrations()
         assert r.failed == 3
 
-        # 数据不应被修改（事务回滚）
         conn = sqlite3.connect(db_path)
         row = conn.execute("SELECT name FROM users WHERE id = 1").fetchone()
         conn.close()
-        assert row[0] == "alice"  # 仍是原始值
+        assert row[0] == "alice"  # 本地数据未被 Python 迁移逻辑修改
 
-    def test_migration_gap_handling(self, tmp_path):
-        """迁移版本跳号时应正常处理。"""
-        db_path = str(tmp_path / "gap.db")
-        m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        m.register_migration(10, "v10", lambda c: c.execute("CREATE TABLE t10 (id INTEGER)"))
+    def test_migration_gap_handling(self, fake_daemon, tmp_path):
+        """版本跳号仅是本地元数据；实际迁移经 daemon。"""
+        m = SchemaMigrator(str(tmp_path / "gap.db"))
+        m.register_migration(1, "v1")
+        m.register_migration(10, "v10")
+        assert m.target_version == 10
+
         result = m.apply_migrations()
-
-        assert result.applied == [1, 10]
-        assert result.to_version == 10
+        assert fake_daemon.methods() == [SCHEMA_APPLY]
+        assert result.status == "migrated"
 
 
 # ======================================================================
@@ -441,69 +580,47 @@ class TestMigrationFaultInjection:
 class TestGCSafety:
     """GC 不会删除活跃数据的安全测试。"""
 
-    def test_gc_preserves_active_workspace(self, chaos_env):
-        """GC 不应删除 active workspace 的 snapshot。"""
+    def test_gc_preserves_active_workspace(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
-        gc = SnapshotGC(cfg)
-        gc.run_gc()
+        SnapshotGC(cfg).run_gc()
 
         snapshot_dir = os.path.join(cfg.data_root, "snapshots")
-        snap_path = os.path.join(snapshot_dir, "snap-chaos-1")
-        assert os.path.exists(snap_path)
+        assert os.path.exists(os.path.join(snapshot_dir, "snap-chaos-1"))
 
-    def test_gc_preserves_registered_backup(self, chaos_env):
-        """GC 不应删除未过期的 backup_history 记录。"""
+    def test_gc_preserves_registered_backup(self, chaos_env, fake_daemon):
+        """daemon 报告无过期 backup 时不发起任何 delete RPC。"""
         cfg, _ = chaos_env
-        # 插入一个正常 backup 记录
-        conn = sqlite3.connect(cfg.registry_db_path)
-        conn.execute("""
-            INSERT INTO backup_history
-            (backup_id, backup_type, created_at, file_count, total_size_bytes, checksum, deleted_at)
-            VALUES ('B-active', 'full', ?, 5, 1024, 'abc', 0)
-        """, (time.time(),))
-        conn.commit()
-        conn.close()
+        fake_daemon.gc_items[GC_SCAN_BACKUP] = []
 
-        gc = SnapshotGC(cfg)
-        gc.run_gc()
+        SnapshotGC(cfg).run_gc()
 
-        # 记录应仍存在
-        conn = sqlite3.connect(cfg.registry_db_path)
-        row = conn.execute(
-            "SELECT backup_id FROM backup_history WHERE backup_id = ?", ("B-active",)
-        ).fetchone()
-        conn.close()
-        assert row is not None
+        methods = fake_daemon.methods()
+        assert not (GC_DELETE_METHODS & set(methods))
 
-    def test_gc_dry_run_never_deletes(self, chaos_env):
-        """dry_run 模式绝不删除任何文件。"""
+    def test_gc_dry_run_never_deletes(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
         snapshot_dir = os.path.join(cfg.data_root, "snapshots")
 
-        # 创建一个过期孤立文件
         orphan_path = os.path.join(snapshot_dir, "orphan")
         with open(orphan_path, "w") as f:
             f.write("orphan")
         old_time = time.time() - 30 * 24 * 3600
         os.utime(orphan_path, (old_time, old_time))
 
-        gc = SnapshotGC(cfg, policy=GCPolicy(dry_run=True))
-        stats = gc.run_gc()
+        stats = SnapshotGC(cfg, policy=GCPolicy(dry_run=True)).run_gc()
 
         assert stats.marked_count > 0
         assert stats.swept_count == 0
-        assert os.path.exists(orphan_path)  # 未删除
+        assert os.path.exists(orphan_path)
 
-    def test_gc_with_zero_retention(self, chaos_env):
-        """retention_count=0 时不应崩溃。"""
+    def test_gc_with_zero_retention(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
-        gc = SnapshotGC(cfg, policy=GCPolicy(retention_count=0))
-        stats = gc.run_gc()
+        stats = SnapshotGC(cfg, policy=GCPolicy(retention_count=0)).run_gc()
         assert stats.duration_ms >= 0
 
 
 # ======================================================================
-# 6. 权限边界混沌测试
+# 6. 权限边界混沌测试（AccessChecker / TokenValidator 仍为本地实现）
 # ======================================================================
 
 
@@ -511,7 +628,6 @@ class TestPermissionChaos:
     """混沌场景下的权限边界测试。"""
 
     def test_path_traversal_chaos(self, checker):
-        """各种路径遍历变体应被拒绝。"""
         traversal_variants = [
             "../../../etc/passwd",
             "..\\..\\..\\windows\\system32",
@@ -525,7 +641,6 @@ class TestPermissionChaos:
                 checker.check_path_safety(path, "/workspace/root")
 
     def test_cross_uid_access_denied(self, checker):
-        """UID 1001 不能查询 UID 1000 的 workspace（跨 UID 查询）。"""
         with pytest.raises(AccessDeniedError):
             checker.check_workspace_access(
                 uid=1001,
@@ -534,7 +649,6 @@ class TestPermissionChaos:
             )
 
     def test_admin_uid_access_any_workspace(self, checker):
-        """admin UID 可以访问任何 workspace。"""
         # admin UID 0 应能访问（不抛异常即通过）
         checker.check_workspace_access(
             uid=0,
@@ -543,7 +657,6 @@ class TestPermissionChaos:
         )
 
     def test_invalid_token_rejected(self, chaos_env):
-        """TCP 无效 token 应被拒绝。"""
         cfg, _ = chaos_env
         template = PermissionTemplate()
         checker = AccessChecker(cfg, template)
@@ -557,21 +670,16 @@ class TestPermissionChaos:
             )
 
     def test_revoked_token_rejected(self, chaos_env, tmp_path):
-        """已撤销的 token 应被拒绝。"""
         cfg, _ = chaos_env
         token_store = str(tmp_path / "tokens.json")
         validator = TokenValidator(token_store_path=token_store)
         token = validator.generate_token(
             container_id="container-1", uid=1000, role="user"
         )
-
-        # 撤销
         validator.revoke_token(token)
 
-        # 验证应失败
         template = PermissionTemplate()
         checker = AccessChecker(cfg, template)
-        # 强制 config 要求 token
         with pytest.raises(AccessDeniedError):
             checker.check_tcp_token(
                 token=token,
@@ -580,15 +688,12 @@ class TestPermissionChaos:
             )
 
     def test_expired_token_rejected(self, chaos_env, tmp_path):
-        """过期的 token 应被拒绝。"""
         cfg, _ = chaos_env
         token_store = str(tmp_path / "tokens.json")
         validator = TokenValidator(token_store_path=token_store)
-
-        # 生成一个已过期的 token
         token = validator.generate_token(
             container_id="container-2", uid=1000, role="user",
-            expires_in=-1  # 已过期
+            expires_in=-1
         )
 
         template = PermissionTemplate()
@@ -602,7 +707,7 @@ class TestPermissionChaos:
 
 
 # ======================================================================
-# 7. metrics 高负载测试
+# 7. metrics 高负载测试（纯 Python）
 # ======================================================================
 
 
@@ -610,7 +715,6 @@ class TestMetricsUnderLoad:
     """metrics 在高负载下的正确性测试。"""
 
     def test_counter_high_concurrency(self):
-        """高并发下 Counter 计数准确。"""
         counter = Counter("chaos_counter", "chaos counter")
         total_increments = 10000
         threads = 20
@@ -625,11 +729,9 @@ class TestMetricsUnderLoad:
         for t in threads_list:
             t.join()
 
-        # Counter 使用 .get() 而非 .value
         assert counter.get() == total_increments
 
     def test_gauge_concurrent_set(self):
-        """并发 Gauge.set 最终值应为最后设置的值之一。"""
         gauge = Gauge("chaos_gauge", "chaos gauge")
         values = list(range(100))
 
@@ -639,40 +741,34 @@ class TestMetricsUnderLoad:
         with ThreadPoolExecutor(max_workers=10) as executor:
             list(executor.map(set_value, values))
 
-        # 最终值应为 100 次设置中的某一个
         assert gauge.get() in values
 
     def test_metrics_collector_export_consistency(self):
-        """MetricsCollector 在并发导出下应一致。"""
         collector = get_metrics_collector()
         counter = collector.register_counter("chaos_export", "chaos export test")
         counter.inc(10)
 
-        # 并发导出（使用 to_prometheus）
         exports = []
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(collector.to_prometheus) for _ in range(10)]
             for f in as_completed(futures):
                 exports.append(f.result())
 
-        # 所有导出应包含 counter
         for text in exports:
             assert "chaos_export" in text
 
 
 # ======================================================================
-# 8. audit log 完整性测试
+# 8. audit log 完整性测试（A 类：AuditLogger 经 daemon RPC）
 # ======================================================================
 
 
 class TestAuditLogIntegrity:
     """故障场景下审计日志的完整性测试。"""
 
-    def test_audit_log_survives_migration(self, chaos_env):
-        """迁移后审计日志数据应保留。"""
+    def test_audit_log_survives_migration(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
 
-        # 先写入审计日志
         logger = AuditLogger(cfg.audit_log_path)
         logger.log_admin_operation(
             actor_uid=0, actor_role="admin",
@@ -680,42 +776,26 @@ class TestAuditLogIntegrity:
         )
         logger.flush()
 
-        # 执行迁移（幂等）
         migrate_daemon_dbs(cfg)
 
-        # 审计日志应仍在
-        conn = sqlite3.connect(cfg.audit_log_path)
-        rows = conn.execute(
-            "SELECT * FROM audit_log WHERE action = ?", ("test_before_migration",)
-        ).fetchall()
-        conn.close()
-        assert len(rows) == 1
+        events = logger.query(event_type=AuditEventType.ADMIN_OPERATION)
+        assert any(e["action"] == "test_before_migration" for e in events)
 
-    def test_audit_log_survives_gc(self, chaos_env):
-        """GC 不应删除未过期的审计日志。"""
+    def test_audit_log_survives_gc(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
 
         logger = AuditLogger(cfg.audit_log_path)
         logger.log_admin_operation(
-            actor_uid=0, actor_role="admin",
-            action="gc_test", target="system"
+            actor_uid=0, actor_role="admin", action="gc_test", target="system"
         )
         logger.flush()
 
-        # 执行 GC（audit GC 默认禁用）
-        gc = SnapshotGC(cfg, enable_audit_gc=False)
-        gc.run_gc()
+        SnapshotGC(cfg, enable_audit_gc=False).run_gc()
 
-        # 审计日志应仍在
-        conn = sqlite3.connect(cfg.audit_log_path)
-        rows = conn.execute(
-            "SELECT * FROM audit_log WHERE action = ?", ("gc_test",)
-        ).fetchall()
-        conn.close()
-        assert len(rows) == 1
+        events = logger.query(event_type=AuditEventType.ADMIN_OPERATION)
+        assert any(e["action"] == "gc_test" for e in events)
 
-    def test_audit_log_records_failures(self, chaos_env):
-        """失败操作也应记录审计日志。"""
+    def test_audit_log_records_failures(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
         logger = AuditLogger(cfg.audit_log_path)
 
@@ -730,8 +810,7 @@ class TestAuditLogIntegrity:
         assert len(events) >= 1
         assert events[-1]["result"] == "denied"
 
-    def test_concurrent_audit_writes(self, chaos_env):
-        """并发写入审计日志不应丢失记录。"""
+    def test_concurrent_audit_writes(self, chaos_env, fake_daemon):
         cfg, _ = chaos_env
 
         def write_logs(count):
@@ -755,13 +834,8 @@ class TestAuditLogIntegrity:
         for t in threads_list:
             t.join()
 
-        # 验证记录数（可能有部分丢失，但应大部分成功）
-        conn = sqlite3.connect(cfg.audit_log_path)
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE action LIKE 'concurrent_%'"
-        ).fetchone()
-        conn.close()
-        assert rows[0] >= per_thread * threads_count * 0.8  # 至少 80% 成功
+        count = AuditLogger(cfg.audit_log_path).count()
+        assert count >= per_thread * threads_count * 0.8  # 至少 80% 成功
 
 
 # ======================================================================
@@ -772,20 +846,16 @@ class TestAuditLogIntegrity:
 class TestEndToEndChaos:
     """端到端混沌场景测试。"""
 
-    def test_full_lifecycle(self, chaos_env):
-        """完整生命周期：迁移 → 备份 → 操作 → GC → 恢复。"""
+    def test_full_lifecycle(self, chaos_env, fake_daemon):
         cfg, backup_root = chaos_env
 
-        # 1. 迁移（幂等）
         results = migrate_daemon_dbs(cfg)
         assert results["registry"].status in ("up_to_date", "migrated")
 
-        # 2. 备份
         backup_mgr = BackupManager(cfg, backup_root=backup_root)
         backup_result = backup_mgr.backup_full()
         assert backup_result["backup_type"] == "full"
 
-        # 3. 操作：写入审计日志
         logger = AuditLogger(cfg.audit_log_path)
         logger.log_admin_operation(
             actor_uid=0, actor_role="admin",
@@ -793,50 +863,36 @@ class TestEndToEndChaos:
         )
         logger.flush()
 
-        # 4. GC（不删除活跃数据）
-        gc = SnapshotGC(cfg, policy=GCPolicy(dry_run=True))
-        gc.run_gc()
+        SnapshotGC(cfg, policy=GCPolicy(dry_run=True)).run_gc()
 
-        # 5. 验证备份
         restore_mgr = RestoreManager(cfg, backup_root=backup_root)
         verify_result = restore_mgr.verify_backup(backup_result["backup_id"])
         assert verify_result["status"] == "valid"
 
-        # 6. 数据仍完整
         conn = sqlite3.connect(cfg.registry_db_path)
-        row = conn.execute(
-            "SELECT workspace_instance_id FROM daemon_workspaces"
-        ).fetchone()
+        row = conn.execute("SELECT workspace_instance_id FROM daemon_workspaces").fetchone()
         conn.close()
         assert row is not None
         assert row[0] == "ws-chaos-1"
 
-    def test_restart_backup_gc_cycle(self, chaos_env):
-        """模拟 daemon restart → backup → GC 循环。"""
+    def test_restart_backup_gc_cycle(self, chaos_env, fake_daemon):
         cfg, backup_root = chaos_env
+        backup_mgr = None
 
         for cycle in range(3):
-            # 模拟 restart recovery
-            recovery = RecoveryHandler(cfg)
-            recovery.recover()
+            RecoveryHandler(cfg).recover()
 
-            # backup
             backup_mgr = BackupManager(cfg, backup_root=backup_root)
             backup_mgr.backup_full(backup_id=f"cycle-{cycle}")
 
-            # GC
-            gc = SnapshotGC(cfg, policy=GCPolicy(dry_run=True))
-            gc.run_gc()
+            SnapshotGC(cfg, policy=GCPolicy(dry_run=True)).run_gc()
 
-        # 验证所有 backup 存在
         backups = backup_mgr.list_backups()
         assert len(backups) >= 3
 
-    def test_chaos_random_operations(self, chaos_env):
-        """随机操作序列不应导致崩溃。"""
+    def test_chaos_random_operations(self, chaos_env, fake_daemon):
         cfg, backup_root = chaos_env
         backup_mgr = BackupManager(cfg, backup_root=backup_root)
-        restore_mgr = RestoreManager(cfg, backup_root=backup_root)
         gc = SnapshotGC(cfg, policy=GCPolicy(dry_run=True))
 
         operations = [
@@ -847,14 +903,12 @@ class TestEndToEndChaos:
         ]
 
         for _ in range(20):
-            op_name, op = random.choice(operations)
+            _, op = random.choice(operations)
             try:
                 op()
-            except Exception:
-                # 操作可能失败（如锁冲突），但不应崩溃
+            except Exception:  # noqa: BLE001 - 操作可能失败，但不应崩溃
                 pass
 
-        # 最终状态应一致
         backups = backup_mgr.list_backups()
         for b in backups:
             assert os.path.isdir(os.path.join(backup_root, b["backup_id"]))

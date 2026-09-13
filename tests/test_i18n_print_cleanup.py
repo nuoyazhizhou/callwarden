@@ -149,38 +149,53 @@ def test_i18n_key_translations_contain_placeholders():
 # ----------------------------------------------------------------------
 
 def test_cw_entry_point_uses_t():
-    """cw.py 的 _check_entry_point_sqlite 错误提示应通过 t() 获取翻译文本。"""
+    """cw.py 的入口提示应通过 t() 获取翻译文本。
+
+    stale 修正：
+    - 依据 cw.py:138，现为相对导入 `from .i18n import t`（不再是绝对导入）。
+    - 依据 cw.py:18-21 T04 收敛，`_check_entry_point_sqlite` 与
+      `entry_point_sqlite_error` 已随「移除 entry_point sqlite 检测」删除；
+      现存的 t() 调用为 `t("cli_test_usage")`（cw.py:139）。
+    """
     cw_py = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "cw.py",
     )
     with open(cw_py, "r", encoding="utf-8") as f:
         source = f.read()
-    # 必须包含 t() 调用
-    assert "from callwarden.i18n import t" in source, \
-        "cw.py 应通过 from callwarden.i18n import t 获取翻译"
-    assert "entry_point_sqlite_error" in source, \
-        "cw.py 应引用 i18n key cli.messages.entry_point_sqlite_error"
+    # 必须包含 t() 调用（相对导入）
+    assert "from .i18n import t" in source, \
+        "cw.py 应通过 from .i18n import t 获取翻译"
+    assert 't("cli_test_usage")' in source, \
+        "cw.py 应通过 t() 获取入口提示译文"
     # 不应再硬编码中文错误文案
     assert '"错误：通过 cw.exe 启动时' not in source, \
         "cw.py 不应再硬编码中文错误文案"
 
 
 def test_cw_entry_point_handles_encoding():
-    """cw.py 应检测 stderr.encoding 并 reconfigure（Windows GBK 终端兼容）。"""
-    cw_py = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "cw.py",
-    )
+    """cw.py 入口应保证 stdout/stderr UTF-8（Windows GBK 终端兼容）。
+
+    stale 修正：编码处理实现已收敛（cw.py:47-53 委托
+    cli/console.py:63-81 的 ensure_utf8_output()）；cw.py 自身不再出现
+    `sys.stderr.encoding` 字面量，也无 `buffer.write` 兜底分支（改用
+    `getattr(stream, "reconfigure", None)` 探测，见 console.py:76-81）。
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cw_py = os.path.join(root, "cw.py")
+    console_py = os.path.join(root, "cli", "console.py")
     with open(cw_py, "r", encoding="utf-8") as f:
         source = f.read()
-    # 必须有编码检测逻辑
-    assert "sys.stderr.encoding" in source, \
-        "cw.py 应检测 sys.stderr.encoding"
-    assert "reconfigure" in source, \
-        "cw.py 应使用 reconfigure(encoding='utf-8') 处理非 utf-8 终端"
-    assert "errors=\"replace\"" in source or "errors='replace'" in source, \
-        "cw.py reconfigure 应使用 errors='replace' 避免抛异常"
-    # 必须有 buffer.write 兜底（reconfigure 不可用时）
-    assert "buffer.write" in source, \
-        "cw.py 应有 buffer.write 兜底（reconfigure 不可用时的 fallback）"
+    with open(console_py, "r", encoding="utf-8") as f:
+        console_source = f.read()
+    # cw.py 入口必须委托统一实现
+    assert "ensure_utf8_output" in source, \
+        "cw.py 应调用 cli.console.ensure_utf8_output() 统一处理编码"
+    # 统一实现必须 reconfigure(encoding='utf-8', errors='replace')
+    assert "reconfigure" in console_source, \
+        "cli/console.py 应使用 reconfigure(encoding='utf-8') 处理非 utf-8 终端"
+    assert "errors=\"replace\"" in console_source or "errors='replace'" in console_source, \
+        "cli/console.py reconfigure 应使用 errors='replace' 避免抛异常"
+    # frozen 分支仍直接 reconfigure stderr（cw.py:85/:94）
+    assert "sys.stderr.reconfigure" in source, \
+        "cw.py frozen 分支应 reconfigure stderr"

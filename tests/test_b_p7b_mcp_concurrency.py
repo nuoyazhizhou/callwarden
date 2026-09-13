@@ -51,6 +51,20 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
         # 初始化 schema + 测试数据
         from callwarden.db.db import CodeGraphDB
         cls.db = CodeGraphDB(db_path=cls.db_path, workspace_root=_project_root)
+        # stale 依据：本用例多处直接 INSERT file_instances(current_content_hash='') /
+        # symbols(symbol_hash='')，而这两列分别有 FK 指向 file_contents(content_hash)
+        # （db/schema.py:44）与 symbol_contents(content_hash)（db/schema.py:67）；
+        # 连接默认 foreign_keys=ON（db/db_base.py:3425-3426），缺父行会 IntegrityError。
+        # 旧测试未建空占位行，故补建（与 db/db_base.py:166-193 _ensure_empty_hash_row 同构）。
+        cls.db.conn.execute(
+            "INSERT OR IGNORE INTO file_contents "
+            "(content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, 0)"
+        )
+        cls.db.conn.execute(
+            "INSERT OR IGNORE INTO symbol_contents "
+            "(content_hash, name, kind, content, qualified_name) VALUES ('', '', '', '', '')"
+        )
+        cls.db.conn.commit()
         # 插入测试数据
         cls._insert_test_symbols(cls.db, count=10)
 

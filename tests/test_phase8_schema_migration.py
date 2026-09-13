@@ -1,20 +1,29 @@
-"""Phase 8.6: schema migration 测试。
+"""Phase 8.6: schema migration 测试（daemon authority / HTTP thin-client 迁移后）。
 
-测试覆盖：
-1. SchemaMigrator：注册、版本查询、应用迁移、幂等性
-2. MigrationSpec / MigrationResult：数据类行为
-3. registry.db 迁移：v1-v3 各阶段
-4. audit.db 迁移：v1-v2 各阶段
-5. migrate_daemon_dbs：统一入口
-6. validate_daemon_dbs：schema 校验
-7. 事务回滚：迁移失败时回滚
-8. 边界情况：空迁移、重复注册、版本跳跃
+stale 依据（A 类：被测模块已是 daemon 薄客户端）：
+- ``server/schema_migrator.py:1-6`` 明确写「Schema migrator 的 Python 薄客户端」：
+  数据库连接、迁移版本决策、DDL/DML、历史查询与 schema 校验全部下沉 Rust cw-daemon，
+  经 HTTP RPC 执行，daemon 失败不回退 Python SQLite。
+- ``server/schema_migrator.py:25-29`` ``_call_daemon_rpc`` 委托
+  ``server/_mcp_common.py:27-44`` 的纯 client 薄壳；失败抛 DaemonUnavailableError。
+- ``server/schema_migrator.py:126-163`` ``get_current_version`` / ``get_migration_history`` /
+  ``apply_migrations`` / ``validate_schema`` 全部经 RPC（method 常量见 :19-22）；
+  ``:104-124`` ``register_migration`` / ``register_migrations`` / ``target_version``
+  仍是本地兼容 API。
+
+因此旧用例「tmp_path DB + ``SchemaMigrator.apply_migrations`` 后 ``sqlite3.connect``
+直接断言本地建表 / DDL / 事务回滚」的期望已整体过期。现改为 **mock RPC seam**：
+断言路由到正确 method + 正确 params + 回包透传 + 失败 fail-closed（不回退本地 DB）。
+纯 Python 数据类（MigrationSpec / MigrationResult）与本地注册元数据的断言保留。
 """
 
 import os
 import sqlite3
+from pathlib import Path
+
 import pytest
 
+from callwarden.server import schema_migrator
 from callwarden.server.schema_migrator import (
     SchemaMigrator,
     MigrationSpec,
@@ -27,23 +36,104 @@ from callwarden.server.schema_migrator import (
 from callwarden.server.daemon_config import DaemonConfig
 
 
+# RPC method 命名空间（server/schema_migrator.py:19-22）
+APPLY = "mcp.schema_migrator.apply_migrations"
+CURRENT = "mcp.schema_migrator.get_current_version"
+HISTORY = "mcp.schema_migrator.get_migration_history"
+VALIDATE = "mcp.schema_migrator.validate_schema"
+
+REGISTRY_TARGET = 3
+AUDIT_TARGET = 2
+
+
+class FakeSchemaDaemon:
+    """内存态 schema 迁移 daemon：模拟 Rust 侧版本决策与 schema 校验。"""
+
+    def __init__(self):
+        self.available = True
+        self.calls = []
+        self.versions = {}
+        self.apply_override = None
+        self.current_override = None
+
+    @staticmethod
+    def _target(migration_set):
+        return AUDIT_TARGET if migration_set == "audit" else REGISTRY_TARGET
+
+    def __call__(self, method, params):
+        if not self.available:
+            raise RuntimeError("daemon unavailable")
+        self.calls.append((method, params))
+        db_path = params["db_path"]
+        migration_set = params["migration_set"]
+        target = self._target(migration_set)
+        current = self.versions.get(db_path, 0)
+
+        if method == CURRENT:
+            return self.current_override if self.current_override is not None else current
+        if method == HISTORY:
+            return [
+                {"version": v, "description": f"v{v}", "applied_at": float(v)}
+                for v in range(1, current + 1)
+            ]
+        if method == APPLY:
+            if self.apply_override is not None:
+                return self.apply_override
+            self.versions[db_path] = target
+            return {
+                "db_path": db_path,
+                "from_version": current,
+                "to_version": target,
+                "applied": list(range(current + 1, target + 1)),
+                "skipped": [],
+                "failed": None,
+                "error": None,
+            }
+        if method == VALIDATE:
+            ready = current >= target
+            return {
+                "valid": ready,
+                "missing_tables": [] if ready else list(params.get("expected_tables", [])),
+                "missing_indexes": [] if ready else list(params.get("expected_indexes", [])),
+                "current_version": current,
+                "source": "rust",
+            }
+        raise RuntimeError(f"unexpected method: {method}")
+
+
+@pytest.fixture()
+def fake_daemon(monkeypatch):
+    daemon = FakeSchemaDaemon()
+    monkeypatch.setattr(schema_migrator, "_call_daemon_rpc", daemon)
+    return daemon
+
+
+def _cfg(tmp_path, audit=True):
+    data_root = str(tmp_path / "data")
+    os.makedirs(data_root, exist_ok=True)
+    audit_path = os.path.join(data_root, "audit.db") if audit else ""
+    return DaemonConfig.load_from_dict({
+        "data_root": data_root,
+        "security": {"admin_uids": [0], "audit_log_path": audit_path},
+    })
+
+
 # ======================================================================
-# SchemaMigrator 基础测试
+# SchemaMigrator 基础测试（本地兼容 API，仍有效）
 # ======================================================================
 
 
 class TestSchemaMigratorBasic:
-    """SchemaMigrator 基础功能测试。"""
+    """SchemaMigrator 本地注册表 / target_version 行为（不触发 RPC）。"""
 
-    def test_register_migration(self, tmp_path):
-        """注册迁移后应能在 target_version 中反映。"""
+    def test_register_migration(self, fake_daemon, tmp_path):
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         m.register_migration(1, "init", lambda conn: None)
         assert m.target_version == 1
+        assert fake_daemon.calls == []  # 注册纯本地，不应触发 RPC
 
     def test_register_multiple(self, tmp_path):
-        """注册多个迁移后 target_version 取最大值。"""
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         m.register_migration(1, "v1", lambda c: None)
@@ -52,21 +142,18 @@ class TestSchemaMigratorBasic:
         assert m.target_version == 3
 
     def test_register_invalid_version_zero(self, tmp_path):
-        """version <= 0 应拒绝。"""
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         with pytest.raises(ValueError):
             m.register_migration(0, "zero", lambda c: None)
 
     def test_register_invalid_version_negative(self, tmp_path):
-        """负数 version 应拒绝。"""
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         with pytest.raises(ValueError):
             m.register_migration(-1, "neg", lambda c: None)
 
     def test_register_duplicate_version(self, tmp_path):
-        """重复注册同一 version 应拒绝。"""
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         m.register_migration(1, "v1", lambda c: None)
@@ -74,7 +161,6 @@ class TestSchemaMigratorBasic:
             m.register_migration(1, "dup", lambda c: None)
 
     def test_register_migrations_batch(self, tmp_path):
-        """批量注册迁移。"""
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         specs = [
@@ -85,557 +171,320 @@ class TestSchemaMigratorBasic:
         assert m.target_version == 2
 
     def test_empty_migrator_target_version(self, tmp_path):
-        """未注册任何迁移时 target_version=0。"""
         db_path = str(tmp_path / "test.db")
         m = SchemaMigrator(db_path)
         assert m.target_version == 0
 
 
-class TestGetCurrentVersion:
-    """get_current_version 只读查询测试。"""
+# ======================================================================
+# get_current_version：经 daemon 只读
+# ======================================================================
 
-    def test_fresh_db_returns_zero(self, tmp_path):
-        """全新 DB（无 schema_version 表）返回 0。"""
+
+class TestGetCurrentVersion:
+    """get_current_version 经 daemon RPC（server/schema_migrator.py:126-132）。"""
+
+    def test_fresh_db_returns_zero(self, fake_daemon, tmp_path):
+        """daemon 报告 0 时返回 0，且路由到 CURRENT。"""
         db_path = str(tmp_path / "fresh.db")
         m = SchemaMigrator(db_path)
         assert m.get_current_version() == 0
+        assert fake_daemon.calls[-1] == (
+            CURRENT, {"db_path": db_path, "migration_set": "registry"}
+        )
 
-    def test_nonexistent_db_returns_zero(self, tmp_path):
-        """不存在的 DB 文件返回 0。
-
-        注意：sqlite3.connect 会创建空文件，因此无法用文件不存在来
-        区分"全新数据库"——但 schema_version 表不存在时仍返回 0。
-        """
-        db_path = str(tmp_path / "nonexistent.db")
+    def test_daemon_version_passthrough(self, fake_daemon, tmp_path):
+        """daemon 返回的版本号原样透传。"""
+        db_path = str(tmp_path / "registry.db")
+        fake_daemon.versions[db_path] = 3
         m = SchemaMigrator(db_path)
-        assert m.get_current_version() == 0
+        assert m.get_current_version() == 3
 
-    def test_after_migration(self, tmp_path):
-        """应用迁移后版本应更新。"""
-        db_path = str(tmp_path / "test.db")
+    def test_dict_result_is_unwrapped(self, fake_daemon, tmp_path):
+        """daemon 返回 dict 时兼容提取 version/current_version。"""
+        db_path = str(tmp_path / "registry.db")
+        fake_daemon.current_override = {"current_version": 5}
+        assert SchemaMigrator(db_path).get_current_version() == 5
+
+    def test_migration_set_inferred_from_basename(self, fake_daemon, tmp_path):
+        """basename 以 audit 开头时 migration_set 推断为 audit。"""
+        db_path = str(tmp_path / "audit.db")
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "init", lambda c: c.execute("CREATE TABLE t (id INTEGER)"))
+        assert m.migration_set == "audit"
+        m.get_current_version(conn=object())  # 兼容 conn 参数被有意忽略
+        assert fake_daemon.calls == [
+            (CURRENT, {"db_path": db_path, "migration_set": "audit"})
+        ]
+
+    def test_after_migration(self, fake_daemon, tmp_path):
+        """apply 后 daemon 版本更新，get_current_version 反映新版本。"""
+        db_path = str(tmp_path / "registry.db")
+        m = SchemaMigrator(db_path)
+        m.register_migrations(get_registry_migrations())
         m.apply_migrations()
-        assert m.get_current_version() == 1
+        assert m.get_current_version() == REGISTRY_TARGET
+
+
+# ======================================================================
+# apply_migrations：经 daemon 写操作
+# ======================================================================
 
 
 class TestApplyMigrations:
-    """apply_migrations 写操作测试。"""
+    """apply_migrations 经 daemon RPC（server/schema_migrator.py:146-149）。"""
 
-    def test_apply_single_migration(self, tmp_path):
-        """应用单个迁移。"""
-        db_path = str(tmp_path / "test.db")
+    def test_apply_single_migration(self, fake_daemon, tmp_path):
+        db_path = str(tmp_path / "registry.db")
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "create table", lambda c: c.execute("CREATE TABLE foo (id INTEGER)"))
+        m.register_migrations(get_registry_migrations())
         result = m.apply_migrations()
 
+        assert fake_daemon.calls[-1] == (
+            APPLY, {"db_path": db_path, "migration_set": "registry"}
+        )
         assert result.status == "migrated"
         assert result.from_version == 0
-        assert result.to_version == 1
-        assert result.applied == [1]
+        assert result.to_version == REGISTRY_TARGET
+        assert result.applied == [1, 2, 3]
         assert result.failed is None
         assert result.error is None
 
-    def test_apply_multiple_migrations(self, tmp_path):
-        """按版本顺序应用多个迁移。"""
-        db_path = str(tmp_path / "test.db")
+    def test_apply_multiple_migrations_in_order(self, fake_daemon, tmp_path):
+        """daemon 返回的有序 applied 列表原样透传。"""
+        db_path = str(tmp_path / "registry.db")
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        m.register_migration(2, "v2", lambda c: c.execute("CREATE TABLE t2 (id INTEGER)"))
-        m.register_migration(3, "v3", lambda c: c.execute("CREATE TABLE t3 (id INTEGER)"))
+        m.register_migrations(get_registry_migrations())
         result = m.apply_migrations()
-
-        assert result.status == "migrated"
         assert result.applied == [1, 2, 3]
-        assert result.to_version == 3
+        assert result.to_version == REGISTRY_TARGET
 
-    def test_apply_idempotent(self, tmp_path):
-        """已应用的迁移不会重复执行。"""
-        db_path = str(tmp_path / "test.db")
+    def test_apply_idempotent(self, fake_daemon, tmp_path):
+        """二次 apply：daemon 报告已是最新，返回 up_to_date。"""
+        db_path = str(tmp_path / "registry.db")
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t (id INTEGER)"))
+        m.register_migrations(get_registry_migrations())
 
         r1 = m.apply_migrations()
-        assert r1.applied == [1]
+        assert r1.applied == [1, 2, 3]
 
         r2 = m.apply_migrations()
         assert r2.status == "up_to_date"
         assert r2.applied == []
 
-    def test_apply_partial_then_resume(self, tmp_path):
-        """部分迁移后再次调用应从断点续跑。"""
-        db_path = str(tmp_path / "test.db")
+    def test_apply_routes_without_local_registration(self, fake_daemon, tmp_path):
+        """薄客户端：apply 不读取本地注册表，结果完全由 daemon 决定。"""
+        db_path = str(tmp_path / "registry.db")
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        m.register_migration(2, "v2", lambda c: c.execute("CREATE TABLE t2 (id INTEGER)"))
+        assert m.target_version == 0
+        result = m.apply_migrations()
+        assert fake_daemon.calls[-1][0] == APPLY
+        assert result.to_version == REGISTRY_TARGET
 
-        r1 = m.apply_migrations()
-        assert r1.to_version == 2
-
-        # 注册新迁移
-        m.register_migration(3, "v3", lambda c: c.execute("CREATE TABLE t3 (id INTEGER)"))
-        r2 = m.apply_migrations()
-        assert r2.from_version == 2
-        assert r2.applied == [3]
-        assert r2.to_version == 3
-
-    def test_migration_creates_schema_version_table(self, tmp_path):
-        """迁移后应自动创建 schema_version 表。"""
-        db_path = str(tmp_path / "test.db")
+    def test_migration_history_passthrough(self, fake_daemon, tmp_path):
+        """get_migration_history 经 HISTORY 路由并透传 daemon 历史。"""
+        db_path = str(tmp_path / "registry.db")
+        fake_daemon.versions[db_path] = 2
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: None)
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-        assert "schema_version" in tables
-
-    def test_migration_records_history(self, tmp_path):
-        """迁移历史应记录在 schema_version 表中。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
-        m.register_migration(1, "first migration", lambda c: None)
-        m.register_migration(2, "second migration", lambda c: None)
-        m.apply_migrations()
-
+        m.register_migrations(get_registry_migrations())
         history = m.get_migration_history()
+        assert fake_daemon.calls[-1] == (
+            HISTORY, {"db_path": db_path, "migration_set": "registry"}
+        )
         assert len(history) == 2
         assert history[0]["version"] == 1
-        assert history[0]["description"] == "first migration"
         assert history[1]["version"] == 2
-        assert history[1]["description"] == "second migration"
 
-    def test_no_migrations_registered(self, tmp_path):
-        """未注册任何迁移时返回 up_to_date。"""
-        db_path = str(tmp_path / "test.db")
+    def test_get_pending_versions(self, fake_daemon, tmp_path):
+        """get_pending_versions 依赖 daemon 当前版本（:142-144）。"""
+        db_path = str(tmp_path / "registry.db")
         m = SchemaMigrator(db_path)
-        result = m.apply_migrations()
-        assert result.status == "up_to_date"
-        assert result.applied == []
+        m.register_migration(1, "v1")
+        m.register_migration(2, "v2")
+        m.register_migration(3, "v3")
 
-    def test_get_pending_versions(self, tmp_path):
-        """获取待应用版本列表。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: None)
-        m.register_migration(2, "v2", lambda c: None)
-        m.register_migration(3, "v3", lambda c: None)
-
-        # 全新 DB，所有迁移都待应用
+        # 全新 DB：daemon 返回 0，本地注册的 1/2/3 都待应用
         assert m.get_pending_versions() == [1, 2, 3]
 
-        # 应用 v1 后
-        m.apply_migrations()
+        # daemon 报告当前版本 3 后，无待应用
+        fake_daemon.versions[db_path] = 3
         assert m.get_pending_versions() == []
+        assert [c[0] for c in fake_daemon.calls] == [CURRENT, CURRENT]
 
 
 # ======================================================================
-# 事务回滚测试
+# 迁移失败契约（事务回滚已下沉 daemon）
 # ======================================================================
 
 
-class TestMigrationRollback:
-    """迁移失败时的事务回滚测试。"""
+class TestMigrationFailureContract:
+    """迁移失败 / 回滚语义已下沉 daemon，Python 侧只透传并 fail-closed。"""
 
-    def test_failed_migration_rolls_back(self, tmp_path):
-        """迁移失败时应回滚，不留下半成品。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
-
-        def failing_migration(conn):
-            conn.execute("CREATE TABLE will_fail (id INTEGER)")
-            raise RuntimeError("simulated failure")
-
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        m.register_migration(2, "failing", failing_migration)
-
-        result = m.apply_migrations()
+    def test_failed_result_passthrough(self, fake_daemon, tmp_path):
+        db_path = str(tmp_path / "registry.db")
+        fake_daemon.apply_override = {
+            "db_path": db_path,
+            "from_version": 0,
+            "to_version": 0,
+            "applied": [],
+            "skipped": [],
+            "failed": 2,
+            "error": "simulated failure",
+        }
+        result = SchemaMigrator(db_path).apply_migrations()
         assert result.status == "failed"
         assert result.failed == 2
         assert "simulated failure" in result.error
 
-        # v1 应该已应用（在 v2 失败前 commit 了）
-        # 注意：每个迁移在单独事务中，v1 已 commit
-        assert m.get_current_version() == 1
+    def test_daemon_unavailable_is_fail_closed(self, fake_daemon, tmp_path):
+        """daemon 不可用时原样抛错，且不落地任何本地 DB 文件。"""
+        fake_daemon.available = False
+        m = SchemaMigrator(str(tmp_path / "registry.db"))
+        with pytest.raises(RuntimeError, match="daemon unavailable"):
+            m.apply_migrations()
+        assert not list(tmp_path.glob("*.db")), list(tmp_path.glob("*.db"))
 
-        # will_fail 表不应存在（v2 回滚了）
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-        assert "will_fail" not in tables
-        assert "t1" in tables
-
-    def test_failed_migration_stops_subsequent(self, tmp_path):
-        """迁移失败后不应继续执行后续迁移。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        m.register_migration(2, "failing", lambda c: (_ for _ in ()).throw(RuntimeError("fail")))
-        m.register_migration(3, "v3", lambda c: c.execute("CREATE TABLE t3 (id INTEGER)"))
-
-        result = m.apply_migrations()
-        assert result.failed == 2
-
-        # v3 不应被执行
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-        assert "t3" not in tables
+    def test_invalid_rpc_result_is_rejected(self, fake_daemon, tmp_path):
+        """daemon 返回非 dict 结果时应显式报错，而非静默接受。"""
+        fake_daemon.apply_override = "not-a-dict"
+        with pytest.raises(RuntimeError, match="invalid result"):
+            SchemaMigrator(str(tmp_path / "registry.db")).apply_migrations()
 
 
 # ======================================================================
-# registry.db 迁移测试
+# registry.db / audit.db 迁移元数据（本地元数据 + RPC 路由）
 # ======================================================================
 
 
 class TestRegistryMigrations:
-    """registry.db 的迁移测试。"""
+    """registry 迁移元数据本地保留，实际迁移经 daemon。"""
 
-    def test_registry_v1_creates_tables(self, tmp_path):
-        """v1 迁移应创建 daemon_workspaces 等表。"""
-        db_path = str(tmp_path / "registry.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_registry_migrations())
-        m.apply_migrations()
+    def test_registry_metadata_versions(self):
+        specs = get_registry_migrations()
+        assert [s.version for s in specs] == [1, 2, 3]
 
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-
-        assert "daemon_workspaces" in tables
-        assert "container_mount_mappings" in tables
-        assert "daemon_state" in tables
-
-    def test_registry_v1_creates_indexes(self, tmp_path):
-        """v1 迁移应创建索引。"""
-        db_path = str(tmp_path / "registry.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_registry_migrations())
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        indexes = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        ).fetchall()}
-        conn.close()
-
-        assert "idx_workspaces_owner" in indexes
-        assert "idx_workspaces_snapshot" in indexes
-        assert "idx_workspaces_status" in indexes
-
-    def test_registry_v2_creates_backup_history(self, tmp_path):
-        """v2 迁移应创建 backup_history 表。"""
-        db_path = str(tmp_path / "registry.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_registry_migrations())
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-
-        assert "backup_history" in tables
-
-    def test_registry_v3_creates_migrations_log(self, tmp_path):
-        """v3 迁移应创建 schema_migrations_log 表。"""
-        db_path = str(tmp_path / "registry.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_registry_migrations())
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-
-        assert "schema_migrations_log" in tables
-
-    def test_registry_full_migration_version(self, tmp_path):
-        """完整迁移后版本应为 3。"""
+    def test_registry_apply_routes(self, fake_daemon, tmp_path):
         db_path = str(tmp_path / "registry.db")
         m = SchemaMigrator(db_path)
         m.register_migrations(get_registry_migrations())
         result = m.apply_migrations()
-
-        assert result.to_version == 3
+        assert m.target_version == REGISTRY_TARGET
+        assert fake_daemon.calls[-1] == (
+            APPLY, {"db_path": db_path, "migration_set": "registry"}
+        )
         assert result.applied == [1, 2, 3]
-
-    def test_registry_tables_usable(self, tmp_path):
-        """迁移后表应该可正常读写。"""
-        db_path = str(tmp_path / "registry.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_registry_migrations())
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        # 插入 workspace
-        conn.execute("""
-            INSERT INTO daemon_workspaces
-            (workspace_instance_id, owner_uid, client_view_root,
-             host_real_root, registered_at, last_active_at)
-            VALUES ('ws-1', 1000, '/view', '/host', 12345.0, 12345.0)
-        """)
-        conn.commit()
-
-        # 查询
-        row = conn.execute(
-            "SELECT * FROM daemon_workspaces WHERE workspace_instance_id = ?",
-            ("ws-1",)
-        ).fetchone()
-        assert row is not None
-
-        # 插入 backup_history
-        conn.execute("""
-            INSERT INTO backup_history
-            (backup_id, backup_type, created_at, file_count, total_size_bytes, checksum)
-            VALUES ('B-001', 'full', 12345.0, 5, 1024, 'abc123')
-        """)
-        conn.commit()
-        conn.close()
-
-
-# ======================================================================
-# audit.db 迁移测试
-# ======================================================================
 
 
 class TestAuditMigrations:
-    """audit.db 的迁移测试。"""
+    """audit 迁移元数据本地保留，实际迁移经 daemon。"""
 
-    def test_audit_v1_creates_table(self, tmp_path):
-        """v1 迁移应创建 audit_log 表。"""
-        db_path = str(tmp_path / "audit.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_audit_migrations())
-        m.apply_migrations()
+    def test_audit_metadata_versions(self):
+        specs = get_audit_migrations()
+        assert [s.version for s in specs] == [1, 2]
 
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-
-        assert "audit_log" in tables
-
-    def test_audit_v2_creates_indexes(self, tmp_path):
-        """v2 迁移应创建索引。"""
-        db_path = str(tmp_path / "audit.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_audit_migrations())
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        indexes = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        ).fetchall()}
-        conn.close()
-
-        assert "idx_audit_log_timestamp" in indexes
-        assert "idx_audit_log_event_type" in indexes
-        assert "idx_audit_log_actor_uid" in indexes
-        assert "idx_audit_log_result" in indexes
-
-    def test_audit_full_migration_version(self, tmp_path):
-        """完整迁移后版本应为 2。"""
+    def test_audit_apply_routes(self, fake_daemon, tmp_path):
         db_path = str(tmp_path / "audit.db")
         m = SchemaMigrator(db_path)
         m.register_migrations(get_audit_migrations())
         result = m.apply_migrations()
-
-        assert result.to_version == 2
+        assert fake_daemon.calls[-1] == (
+            APPLY, {"db_path": db_path, "migration_set": "audit"}
+        )
         assert result.applied == [1, 2]
-
-    def test_audit_table_usable(self, tmp_path):
-        """迁移后 audit_log 表应可正常读写。"""
-        db_path = str(tmp_path / "audit.db")
-        m = SchemaMigrator(db_path)
-        m.register_migrations(get_audit_migrations())
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        conn.execute("""
-            INSERT INTO audit_log
-            (event_id, timestamp, event_type, actor_uid, action)
-            VALUES ('A-1', 12345.0, 'admin_operation', 0, 'test')
-        """)
-        conn.commit()
-        row = conn.execute("SELECT * FROM audit_log WHERE event_id = ?", ("A-1",)).fetchone()
-        assert row is not None
-        conn.close()
+        assert result.to_version == AUDIT_TARGET
 
 
 # ======================================================================
-# migrate_daemon_dbs 统一入口测试
+# migrate_daemon_dbs 统一入口
 # ======================================================================
 
 
 class TestMigrateDaemonDbs:
-    """migrate_daemon_dbs 统一入口测试。"""
+    """migrate_daemon_dbs 统一入口（server/schema_migrator.py:183-202）。"""
 
-    def test_migrate_all_dbs(self, tmp_path):
-        """统一入口应迁移 registry 和 audit 两个 DB。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": os.path.join(data_root, "audit.db"),
-            },
-        })
-
+    def test_migrate_all_dbs(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path)
+        Path(cfg.audit_log_path).touch()  # daemon-owned audit DB 已存在
         results = migrate_daemon_dbs(cfg)
 
-        assert "registry" in results
-        assert "audit" in results
+        assert set(results) == {"registry", "audit"}
         assert results["registry"].status == "migrated"
         assert results["audit"].status == "migrated"
+        assert [c[0] for c in fake_daemon.calls] == [APPLY, APPLY]
+        assert fake_daemon.calls[0][1]["migration_set"] == "registry"
+        assert fake_daemon.calls[1][1]["migration_set"] == "audit"
 
-    def test_migrate_idempotent(self, tmp_path):
-        """二次调用应返回 up_to_date。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": os.path.join(data_root, "audit.db"),
-            },
-        })
-
+    def test_migrate_idempotent(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path)
+        Path(cfg.audit_log_path).touch()
         migrate_daemon_dbs(cfg)
         results = migrate_daemon_dbs(cfg)
-
         assert results["registry"].status == "up_to_date"
         assert results["audit"].status == "up_to_date"
 
-    def test_migrate_without_audit_path(self, tmp_path):
-        """未配置 audit_log_path 时只迁移 registry。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": "",  # 空 audit 路径
-            },
-        })
-
+    def test_migrate_without_audit_path(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path, audit=False)
         results = migrate_daemon_dbs(cfg)
         assert "registry" in results
         assert "audit" not in results
+        assert [c[0] for c in fake_daemon.calls] == [APPLY]
 
-    def test_migrate_with_extra_migrators(self, tmp_path):
-        """extra_migrators 应被应用。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {"admin_uids": [0]},
-        })
-
+    def test_migrate_with_extra_migrators(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path, audit=False)
         extra_db = str(tmp_path / "extra.db")
         extra_m = SchemaMigrator(extra_db)
-        extra_m.register_migration(1, "extra v1", lambda c: c.execute("CREATE TABLE extra (id INTEGER)"))
+        extra_m.register_migration(1, "extra v1")
 
         results = migrate_daemon_dbs(cfg, extra_migrators=[extra_m])
         assert "extra_0" in results
         assert results["extra_0"].status == "migrated"
+        assert fake_daemon.calls[-1][1]["db_path"] == extra_db
 
 
 # ======================================================================
-# validate_daemon_dbs 测试
+# validate_daemon_dbs：经 daemon 只读校验
 # ======================================================================
 
 
 class TestValidateDaemonDbs:
-    """validate_daemon_dbs 校验测试。"""
+    """validate_daemon_dbs 经 daemon RPC（server/schema_migrator.py:205-233）。"""
 
-    def test_validate_before_migration(self, tmp_path):
-        """未迁移前校验应报告缺失表。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": os.path.join(data_root, "audit.db"),
-            },
-        })
-
+    def test_validate_before_migration(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path)
         results = validate_daemon_dbs(cfg)
         assert results["registry"]["valid"] is False
         assert "daemon_workspaces" in results["registry"]["missing_tables"]
+        assert fake_daemon.calls[-1][0] == VALIDATE
+        # 期望表清单由 Python 侧显式下发
+        assert "daemon_workspaces" in fake_daemon.calls[-1][1]["expected_tables"]
+        assert "idx_workspaces_owner" in fake_daemon.calls[-1][1]["expected_indexes"]
 
-    def test_validate_after_migration(self, tmp_path):
-        """迁移后校验应通过。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": os.path.join(data_root, "audit.db"),
-            },
-        })
-
+    def test_validate_after_migration(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path)
+        Path(cfg.audit_log_path).touch()
         migrate_daemon_dbs(cfg)
         results = validate_daemon_dbs(cfg)
-
         assert results["registry"]["valid"] is True
         assert results["registry"]["missing_tables"] == []
         assert results["audit"]["valid"] is True
 
-    def test_validate_returns_current_version(self, tmp_path):
-        """校验结果应包含 current_version。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": os.path.join(data_root, "audit.db"),
-            },
-        })
-
+    def test_validate_returns_current_version(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path)
+        Path(cfg.audit_log_path).touch()
         migrate_daemon_dbs(cfg)
         results = validate_daemon_dbs(cfg)
+        assert results["registry"]["current_version"] == REGISTRY_TARGET
+        assert results["audit"]["current_version"] == AUDIT_TARGET
 
-        assert results["registry"]["current_version"] == 3  # registry 最新版本
-        assert results["audit"]["current_version"] == 2     # audit 最新版本
-
-    def test_validate_skips_nonexistent_audit(self, tmp_path):
-        """audit DB 不存在时不校验。"""
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        cfg = DaemonConfig.load_from_dict({
-            "data_root": data_root,
-            "security": {
-                "admin_uids": [0],
-                "audit_log_path": os.path.join(data_root, "audit.db"),
-            },
-        })
-
-        # 只迁移 registry，不迁移 audit
+    def test_validate_skips_nonexistent_audit(self, fake_daemon, tmp_path):
+        cfg = _cfg(tmp_path)
+        # audit DB 不存在 → 不校验 audit
         results = validate_daemon_dbs(cfg)
         assert "registry" in results
         assert "audit" not in results
 
 
 # ======================================================================
-# MigrationResult 数据类测试
+# MigrationResult 数据类测试（纯 Python，仍有效）
 # ======================================================================
 
 
@@ -675,87 +524,49 @@ class TestMigrationResult:
 
 
 class TestEdgeCases:
-    """边界情况测试。"""
+    """边界情况：本地注册元数据 + daemon 路由 / fail-closed。"""
 
-    def test_version_gap_ok(self, tmp_path):
-        """迁移版本可以不连续（跳号）。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
-        m.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        m.register_migration(5, "v5", lambda c: c.execute("CREATE TABLE t5 (id INTEGER)"))
-        result = m.apply_migrations()
+    def test_version_gap_registration_is_local_only(self, fake_daemon, tmp_path):
+        """版本跳号仅是本地元数据；实际 applied 由 daemon 决定。"""
+        m = SchemaMigrator(str(tmp_path / "test.db"))
+        m.register_migration(1, "v1")
+        m.register_migration(5, "v5")
+        assert m.target_version == 5
+        m.apply_migrations()
+        assert fake_daemon.calls[-1][0] == APPLY
 
-        assert result.applied == [1, 5]
-        assert result.to_version == 5
-
-    def test_migration_function_can_use_executescript(self, tmp_path):
-        """迁移函数内部可以使用 executescript 批量执行。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
+    def test_migration_functions_are_not_executed_in_python(self, fake_daemon, tmp_path):
+        """迁移函数由 daemon 执行，Python 侧不得调用注册的 up()。"""
+        called = []
 
         def up(conn):
-            conn.executescript("""
-                CREATE TABLE a (id INTEGER);
-                CREATE TABLE b (id INTEGER);
-                CREATE INDEX idx_a ON a(id);
-            """)
+            called.append(conn)
 
+        m = SchemaMigrator(str(tmp_path / "test.db"))
         m.register_migration(1, "multi", up)
         m.apply_migrations()
+        assert called == []
+        assert fake_daemon.calls[-1][0] == APPLY
 
-        conn = sqlite3.connect(db_path)
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()}
-        conn.close()
-        assert {"a", "b"} <= tables
-
-    def test_migration_with_data_manipulation(self, tmp_path):
-        """迁移可以包含 DML（数据操作）。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
-        m.register_migration(1, "init", lambda c: c.execute("CREATE TABLE t (id INTEGER, val TEXT)"))
-
-        def insert_data(conn):
-            conn.execute("INSERT INTO t (id, val) VALUES (1, 'hello')")
-
-        m.register_migration(2, "insert", insert_data)
-        m.apply_migrations()
-
-        conn = sqlite3.connect(db_path)
-        row = conn.execute("SELECT val FROM t WHERE id = 1").fetchone()
-        conn.close()
-        assert row is not None
-        assert row[0] == "hello"
-
-    def test_get_history_empty(self, tmp_path):
-        """全新 DB 的迁移历史为空。"""
-        db_path = str(tmp_path / "test.db")
-        m = SchemaMigrator(db_path)
+    def test_get_history_empty(self, fake_daemon, tmp_path):
+        m = SchemaMigrator(str(tmp_path / "test.db"))
         assert m.get_migration_history() == []
+        assert fake_daemon.calls[-1][0] == HISTORY
 
-    def test_concurrent_migrators_different_dbs(self, tmp_path):
-        """不同 DB 的 migrator 互不干扰。"""
+    def test_concurrent_migrators_different_dbs(self, fake_daemon, tmp_path):
+        """不同 DB 的 migrator 各自携带独立 db_path 路由到 daemon。"""
         db1 = str(tmp_path / "db1.db")
         db2 = str(tmp_path / "db2.db")
 
-        m1 = SchemaMigrator(db1)
-        m1.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t1 (id INTEGER)"))
-        r1 = m1.apply_migrations()
+        r1 = SchemaMigrator(db1).apply_migrations()
+        r2 = SchemaMigrator(db2).apply_migrations()
 
-        m2 = SchemaMigrator(db2)
-        m2.register_migration(1, "v1", lambda c: c.execute("CREATE TABLE t2 (id INTEGER)"))
-        r2 = m2.apply_migrations()
-
-        assert r1.to_version == 1
-        assert r2.to_version == 1
-
-        # 各自独立
-        assert m1.get_current_version() == 1
-        assert m2.get_current_version() == 1
+        assert r1.to_version == REGISTRY_TARGET
+        assert r2.to_version == REGISTRY_TARGET
+        assert fake_daemon.calls[0][1]["db_path"] == db1
+        assert fake_daemon.calls[1][1]["db_path"] == db2
 
     def test_migration_spec_dataclass(self):
-        """MigrationSpec 数据类字段。"""
         def up(conn):
             pass
 
@@ -765,10 +576,9 @@ class TestEdgeCases:
         assert spec.up is up
         assert spec.down is None
 
-    def test_migrator_with_existing_db(self, tmp_path):
-        """已有数据的 DB 也能应用迁移。"""
+    def test_migrator_does_not_touch_local_db(self, fake_daemon, tmp_path):
+        """已有本地 DB 的数据不应被 Python 侧迁移逻辑触碰（迁移在 daemon）。"""
         db_path = str(tmp_path / "test.db")
-        # 先创建一个已有表的 DB
         conn = sqlite3.connect(db_path)
         conn.execute("CREATE TABLE legacy (id INTEGER)")
         conn.execute("INSERT INTO legacy VALUES (1)")
@@ -776,12 +586,11 @@ class TestEdgeCases:
         conn.close()
 
         m = SchemaMigrator(db_path)
-        m.register_migration(1, "add table", lambda c: c.execute("CREATE TABLE new (id INTEGER)"))
+        m.register_migration(1, "add table")
         result = m.apply_migrations()
 
         assert result.status == "migrated"
-        # 原有数据应保留
         conn = sqlite3.connect(db_path)
         row = conn.execute("SELECT * FROM legacy").fetchone()
-        assert row is not None
         conn.close()
+        assert row is not None

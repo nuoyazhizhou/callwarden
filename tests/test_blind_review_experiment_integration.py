@@ -47,9 +47,16 @@ from callwarden.cli.main import _handle_experiment
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """创建临时数据库实例。"""
+    """创建临时数据库实例。
+
+    stale 依据（A1）：旧 fixture 未传 workspace_root，默认落在 cwd=仓库根；该路径被
+    _ensure_self_bootstrap_policy 判定为 self_bootstrap（db/db_base.py:4372），从而在
+    task_report_step 触发 runtime deployment gate（db/db_tasks.py:1963-1992），任务保持
+    open 无法进入 review，导致 test_full_lifecycle_create_to_review 期望 review 得 open。
+    改用普通 tmp_path 工作区（standard 策略）以恢复状态机原意。
+    """
     db_path = str(tmp_path / "test_integration.db")
-    db = CodeGraphDB(db_path=db_path)
+    db = CodeGraphDB(db_path=db_path, workspace_root=str(tmp_path))
     yield db
     db.conn.close()
 

@@ -35,7 +35,16 @@ from callwarden.db.schema import (
 def db():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = os.path.join(tmpdir, "test.db")
-        db = CodeGraphDB(db_path)
+        # stale 依据（A 类：测试侧期望陈旧）：
+        # 生产已引入 self-bootstrap runtime deployment gate
+        # （db/db_tasks.py:768-810 _runtime_deployment_gate；db/db_base.py:4372-4394
+        # _ensure_self_bootstrap_policy）。当 CodeGraphDB 的 workspace_root 解析到
+        # CallWarden 仓库根目录（仓库内 AGENTS.md + cw.py 组合）时，工作区
+        # runtime_policy=self_bootstrap：父任务完成自身步骤后会 fail-closed 追加唯一
+        # pending 的 runtime_deployment 步骤并保持 in_progress，不再自动级联 close。
+        # 本文件只验证父/子任务级联状态机，故显式把工作区隔离到临时目录
+        # （runtime_policy=standard），避免被自举部署门禁拦截。
+        db = CodeGraphDB(db_path, workspace_root=tmpdir)
         yield db
         db.close()
 

@@ -25,15 +25,52 @@ except ImportError:
 
 
 def _make_test_db(db_path):
-    """构造测试用 callwarden.db"""
+    """构造测试用 callwarden.db
+
+    stale 修复（PYT 回归卡 step#4 A 桶）：
+    1) daemon 侧 GraphStore 的 SQL 加载（rust_ext/src/graph.rs:1691-1709）在
+       workspace_id>0 时追加 `AND workspace_id = {n}`；query.symbol 的
+       handle_query_symbol（rust_ext/src/daemon/snapshot_state.rs:1414-1419）用
+       registry 行的 `workspace_id` 过滤 file_instances.workspace_id。旧 DDL 无
+       workspace_id 列 → `prepare file_instances query failed: no such column:
+       workspace_id`。
+    2) snapshot.publish 的 resolve_true_workspace_id
+       （rust_ext/src/daemon/snapshot_state.rs:4280-4317）按 client_view_root 匹配
+       workspaces.root_path 解析过滤 id。二者必须在同一数值上对齐——沿用
+       tests/test_cli02_search_daemon_only.py:140-143 既有约定：以
+       workspace.register 返回的 registry `workspace_id` 同时作为
+       file_instances.workspace_id 与 workspaces.id。权威 schema 见
+       db/schema.py:10-46。
+    """
+    from callwarden.server.daemon_client import DaemonClient
+
+    client = DaemonClient.get_instance()
+    client._ensure_daemon_endpoint()
+    root = client._project_root or os.getcwd()
+    ws_id = client._rpc.call(
+        "workspace.register", {"client_view_root": root}
+    )["workspace_id"]
+
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
     cur.execute("""
-        CREATE TABLE file_instances (
-            id INTEGER PRIMARY KEY, rel_path TEXT, status TEXT DEFAULT 'active'
+        CREATE TABLE workspaces (
+            id INTEGER PRIMARY KEY, root_path TEXT NOT NULL
         )
     """)
-    cur.execute("INSERT INTO file_instances (id, rel_path) VALUES (1, 'src/main.py')")
+    cur.execute(
+        "INSERT INTO workspaces (id, root_path) VALUES (?, ?)", (ws_id, root)
+    )
+    cur.execute("""
+        CREATE TABLE file_instances (
+            id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL,
+            rel_path TEXT, abs_path TEXT, status TEXT DEFAULT 'active'
+        )
+    """)
+    cur.execute(
+        "INSERT INTO file_instances (id, workspace_id, rel_path, abs_path) "
+        "VALUES (1, ?, 'src/main.py', '/repo/src/main.py')", (ws_id,)
+    )
     cur.execute("""
         CREATE TABLE symbols (
             id INTEGER PRIMARY KEY, file_instance_id INTEGER, kind TEXT,
@@ -52,6 +89,41 @@ def _make_test_db(db_path):
         )
     """)
     cur.execute("INSERT INTO calls VALUES (1, 2, 'init', 12, 0)")
+    # stale 修复（PYT 回归卡 step#4 A 桶）：daemon 的 query.symbol 现走
+    # query_symbol_detail（rust_ext/src/symbol_query.rs:13-108），JOIN
+    # file_symbol_versions / symbol_contents / file_versions / file_instances 并
+    # 通过 query_calls_out / query_called_by（:129-200）JOIN call_versions。
+    # 旧 DDL 缺这些表，导致 `cannot query symbol detail: no such table:
+    # file_symbol_versions`。权威 schema 见 db/schema.py:97-153。
+    cur.executescript("""
+        CREATE TABLE file_versions (
+            id INTEGER PRIMARY KEY, file_instance_id INTEGER NOT NULL,
+            is_current INTEGER DEFAULT 1
+        );
+        CREATE TABLE symbol_contents (
+            content_hash TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+            signature TEXT DEFAULT '', has_comment INTEGER DEFAULT 0,
+            comment_content TEXT DEFAULT ''
+        );
+        CREATE TABLE file_symbol_versions (
+            file_version_id INTEGER NOT NULL, symbol_hash TEXT NOT NULL,
+            qualified_name TEXT NOT NULL, module_path TEXT DEFAULT '',
+            start_line INTEGER NOT NULL, end_line INTEGER NOT NULL,
+            depth INTEGER DEFAULT -1, is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE call_versions (
+            file_version_id INTEGER NOT NULL, caller_qualified TEXT NOT NULL,
+            caller_hash TEXT DEFAULT '', callee_name TEXT NOT NULL,
+            callee_module TEXT DEFAULT '', callee_qualified TEXT DEFAULT '',
+            callee_file TEXT DEFAULT '', call_line INTEGER DEFAULT 0
+        );
+        INSERT INTO file_versions VALUES (1, 1, 1);
+        INSERT INTO symbol_contents VALUES ('hash-main', 'main', 'fn', 'main()', 0, '');
+        INSERT INTO file_symbol_versions VALUES
+            (1, 'hash-main', 'main', '', 10, 20, 0, 0);
+        INSERT INTO call_versions VALUES
+            (1, 'main', 'hash-main', 'init', '', 'main.init', 'src/main.py', 12);
+    """)
     conn.commit()
     conn.close()
 

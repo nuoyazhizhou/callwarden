@@ -10,8 +10,29 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _daemon_src() -> str:
+    """聚合 rust_ext/src/daemon 下全部非测试 Rust 源码。
+
+    stale 依据：生产已把单文件 task_collab.rs 拆分为多文件（现 task_collab.rs 仅剩薄壳）：
+    - params.get("changes") → task_collab_lifecycle.rs:172
+    - E_CHANGE_PATH_NOT_ALLOWED → task_collab_lifecycle.rs:293
+    - INSERT OR REPLACE INTO change_audit → task_collab_lifecycle.rs:335
+    - pub fn handle_evidence_query → task_collab_evidence.rs:256
+    - pub fn handle_gate_decision_query → task_collab_evidence.rs:369
+    只读 task_collab.rs 必然 assert in <薄壳> 失败。
+    排除文件名含 "test" 的 .rs，避免断言被测试源码自身满足。
+    """
+    root = ROOT / "rust_ext" / "src" / "daemon"
+    parts = []
+    for path in sorted(root.rglob("*.rs")):
+        if "test" in path.name:
+            continue
+        parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_daemon_report_has_explicit_change_whitelist_and_atomic_audit():
-    source = (ROOT / "rust_ext/src/daemon/task_collab.rs").read_text(encoding="utf-8")
+    source = _daemon_src()
     assert 'params.get("changes")' in source
     assert 'E_CHANGE_PATH_NOT_ALLOWED' in source
     assert 'INSERT OR REPLACE INTO change_audit' in source
@@ -27,7 +48,7 @@ def test_cli_report_exposes_task_bound_evidence_inputs():
 
 def test_daemon_authority_exposes_read_only_evidence_and_gate_queries():
     dispatch = (ROOT / "rust_ext/src/daemon/dispatch.rs").read_text(encoding="utf-8")
-    source = (ROOT / "rust_ext/src/daemon/task_collab.rs").read_text(encoding="utf-8")
+    source = _daemon_src()
     assert '"evidence.query" => store.handle_evidence_query' in dispatch
     assert '"gate.decision.query" => store.handle_gate_decision_query' in dispatch
     assert "pub fn handle_evidence_query" in source

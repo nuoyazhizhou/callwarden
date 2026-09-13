@@ -71,6 +71,9 @@ class TestConcurrentTaskCreate:
     def test_two_agents_create_same_title(self, isolated_http_daemon, qa_workspace):
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：daemon 现强制 task.create 显式传非空 workspace_instance_id（否则
+        # E_TASK_WORKSPACE_INSTANCE_REQUIRED）。权威：rust_ext/src/daemon/task_loop/create.rs:36-37,277-287
+        ws_inst = qa_workspace["workspace_instance_id"]
         title = f"QA-CONC-{uuid.uuid4().hex[:8]}"
 
         def create(agent: str):
@@ -79,6 +82,7 @@ class TestConcurrentTaskCreate:
                 "title": title,
                 "description": f"created-by-{agent}",
                 "workspace_id": ws_id,
+                "workspace_instance_id": ws_inst,
             })
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
@@ -96,6 +100,8 @@ class TestConcurrentTaskCreate:
         """N=8 并发 create（同 workspace、不同 title）：全部成功、无 E_* 误冲突。"""
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         n = 8
 
         def create(i: int):
@@ -103,6 +109,7 @@ class TestConcurrentTaskCreate:
             return client.call("task.create", {
                 "title": f"QA-CONC-{uuid.uuid4().hex[:8]}-{i}",
                 "workspace_id": ws_id,
+                "workspace_instance_id": ws_inst,
             })
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
@@ -121,11 +128,14 @@ class TestRequestIdDedup:
     def test_same_request_id_returns_same_task(self, isolated_http_daemon, qa_workspace):
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         req_id = f"req-{uuid.uuid4().hex}"
         params = {
             "title": "QA-DEDUP",
             "description": "dedup test",
             "workspace_id": ws_id,
+            "workspace_instance_id": ws_inst,
             "request_id": req_id,
         }
         client = _new_client(ep)
@@ -137,8 +147,11 @@ class TestRequestIdDedup:
     def test_distinct_request_id_creates_distinct_tasks(self, isolated_http_daemon, qa_workspace):
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         client = _new_client(ep)
-        base = {"title": "QA-DEDUP-2", "workspace_id": ws_id}
+        base = {"title": "QA-DEDUP-2", "workspace_id": ws_id,
+                "workspace_instance_id": ws_inst}
         r1 = client.call("task.create", {**base, "request_id": f"req-{uuid.uuid4().hex}"})
         r2 = client.call("task.create", {**base, "request_id": f"req-{uuid.uuid4().hex}"})
         assert r1["task_id"] != r2["task_id"]
@@ -147,18 +160,22 @@ class TestRequestIdDedup:
 class TestConcurrentLeaseFencing:
     """lease 争用 + fencing：并发 acquire 同 task 只有一方成功；旧 token 被拒。"""
 
-    def _create_task(self, client, ws_id) -> str:
+    def _create_task(self, client, ws_id, ws_inst) -> str:
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
         r = client.call("task.create", {
             "title": f"QA-LEASE-{uuid.uuid4().hex[:8]}",
             "workspace_id": ws_id,
+            "workspace_instance_id": ws_inst,
         })
         return r["task_id"]
 
     def test_concurrent_acquire_single_winner(self, isolated_http_daemon, qa_workspace):
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         setup = _new_client(ep)
-        task_id = self._create_task(setup, ws_id)
+        task_id = self._create_task(setup, ws_id, ws_inst)
         # 两个 agent 都先注册（active holder），制造真实争用
         _register_agent(setup, "agent-0", ws_id)
         _register_agent(setup, "agent-1", ws_id)
@@ -195,8 +212,10 @@ class TestConcurrentLeaseFencing:
         """fencing：新 reviewer lease 发布后，旧 token/counter 提交 task.apply 必须被拒。"""
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         client = _new_client(ep)
-        task_id = self._create_task(client, ws_id)
+        task_id = self._create_task(client, ws_id, ws_inst)
         _register_agent(client, "agent-a", ws_id)
         _register_agent(client, "agent-b", ws_id)
 
@@ -243,8 +262,10 @@ class TestConcurrentLeaseFencing:
         """并发 task.apply + task.close 同 task：串行化、最终状态一致、无 E_* 误冲突。"""
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         setup = _new_client(ep)
-        task_id = self._create_task(setup, ws_id)
+        task_id = self._create_task(setup, ws_id, ws_inst)
         _register_agent(setup, "agent-main", ws_id)
         lease = setup.call("lease.acquire", {
             "task_id": task_id, "role": "implementer", "ttl_seconds": 300,
@@ -282,12 +303,15 @@ class TestNoDeadlockUnderConcurrency:
     def test_mixed_concurrent_workload(self, isolated_http_daemon, qa_workspace):
         ep = isolated_http_daemon["endpoint"]
         ws_id = qa_workspace["workspace_id"]
+        # stale 修复：task.create 需显式 workspace_instance_id（create.rs:277-287）。
+        ws_inst = qa_workspace["workspace_instance_id"]
         setup = _new_client(ep)
         # 预创建 3 个任务
         task_ids = []
         for i in range(3):
             r = setup.call("task.create", {
                 "title": f"QA-STORM-{i}-{uuid.uuid4().hex[:6]}", "workspace_id": ws_id,
+                "workspace_instance_id": ws_inst,
             })
             task_ids.append(r["task_id"])
 
@@ -304,6 +328,7 @@ class TestNoDeadlockUnderConcurrency:
             client = _new_client(ep)
             return client.call("task.create", {
                 "title": f"QA-STORM-W-{i}-{uuid.uuid4().hex[:6]}", "workspace_id": ws_id,
+                "workspace_instance_id": ws_inst,
             })
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:

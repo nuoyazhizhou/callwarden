@@ -17,10 +17,10 @@
    便捷方法只注入连接级 workspace_instance_id（Rust handler 用于打开
    snapshot 库，owned_workspace ACL），**不**注入任一分支的 workspace_id；
    不同 db_path → 不同 workspace_instance_id，同一 db_path 幂等复用。
-⑥ Python fallback 边界：HTTP 模式（默认）走 client 便捷方法且 client
-   失败时 fail-closed 传播（不调 get_db）；legacy
-   （is_http_transport_enabled()=False + local 模式）才进入本地 db 回退
-   （db.diff_branches 纯 SELECT，语义不变）。
+⑥ Python fallback 边界：工具层已 `_route` 化（常量表达式），HTTP/local 分流
+   整体下沉到 `route_rpc`；本文件 ⑥ 组（TestToolRouteContract）只锁定工具层
+   「下发哪个 RPC、参数逐字透传、op_class=READ_ONLY、失败 fail-closed 且不回落
+   本地 get_db」的契约，不再 patch `_get_daemon_client`。
 
 语义差异风险点（记录）：
 - Rust handler 用 `workspaces WHERE name = ?` 精确匹配（取首行），与 Python
@@ -31,13 +31,11 @@
   行序（Python dict 插入序 = SQLite 行序，无 ORDER BY），Rust 用 Vec 保序 +
   HashMap 索引复刻（重复 qn 覆盖值不改位置）。
 
-写面决策（import_git_history，见 ledger §9.25）：
-- import_git_history 是 governance_write（INSERT OR IGNORE git_commits）+
-  依赖 git 子进程（workspace_root 下 .git + `git log`），按 MVP 计划 §4
-  写面 fail-closed 契约**不迁移** rust_native，保持 python_compat；
-- HTTP 模式显式 fail-closed：返回 E_HTTP_COMPAT_UNSUPPORTED，不直连本地
-  SQLite 写主库（tools_workspace.py import_git_history 已加拦截）；legacy
-  模式保持本地执行（db.import_git_history）。
+写面已 `_route` 化（import_git_history）：
+- 旧实现曾以 `_http_unsupported()` 返回 E_HTTP_COMPAT_UNSUPPORTED 拦截；现生产
+  已改为 `_route('task.job_submit', {"max_commits": ..., "job_type":
+  "git_history", "sync": True}, 'PROTECTED_MUTATION')`（tools_workspace.py:236-252），
+  并 unwrap 回包的 `result` 字段。HTTP/local 分流整体下沉到 route_rpc。
 """
 
 from unittest.mock import MagicMock, patch
@@ -256,158 +254,125 @@ class TestCrossWorkspaceIsolation:
 
 
 # ============================================================
-# ⑥ Python fallback 边界
+# ⑥ 工具层 `_route` 契约（HTTP/local 分流已下沉到 route_rpc）
 # ============================================================
 
-class TestPythonFallbackBoundary:
-    """HTTP 模式 fail-closed（不回落 get_db）；legacy 模式才走本地回退。
+class TestToolRouteContract:
+    """工具层已纯 `_route` 化：不再直连 daemon client 便捷方法。
 
-    tools_security.diff_branches 函数体内局部 import
-    `callwarden.server.daemon_client.is_http_transport_enabled` 与
-    `.._mcp_common._get_daemon_client / _get_db_path_for_daemon`
-    （动态读取，monkeypatch 目标为 daemon_client / _mcp_common 模块属性）。
+    stale 依据（MCP 工具 `_route` 化）：`server/tools/tools_security.py:43` 为
+    `from ..daemon_client import route_rpc as _route`；diff_branches（:92）→
+    `_route('query.diff_branches', {"source_branch": ..., "target_branch": ...},
+    'READ_ONLY')`。旧用例 patch `daemon_client.is_http_transport_enabled` /
+    `_mcp_common._get_daemon_client` 并断言客户端便捷方法被调用——这些模块属性虽
+    仍在但已无调用点，断言恒为 `Called 0 times`；legacy 本地 db 回退分支也已随
+    `_route` 化移除（HTTP/local 分流下沉到 route_rpc）。
     """
 
-    # --------------------------------------------------------
-    # tools_security.diff_branches
-    # --------------------------------------------------------
+    def test_diff_branches_route_read_only_rpc(self, monkeypatch):
+        """工具经模块级 `_route` 下发 READ_ONLY RPC，参数逐字透传，不碰本地 db。"""
+        seen = {}
 
-    def test_diff_http_mode_fail_closed(self, monkeypatch):
-        client = MagicMock()
-        client.diff_branches.side_effect = DaemonRemoteError(
-            "E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达"
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: True
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_db_path_for_daemon", lambda: DB_A
-        )
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"added": [], "removed": [], "modified": [], "unchanged_count": 0}
+
+        monkeypatch.setattr(tools_security, "_route", fake_route)
+        q = _register_tools(tools_security)
+        with patch("callwarden.server.tools.tools_security.get_db") as mock_db:
+            out = q["diff_branches"]("main", "feature-x")
+            mock_db.assert_not_called()
+        assert out["unchanged_count"] == 0
+        assert seen["method"] == "query.diff_branches"
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == {
+            "source_branch": "main", "target_branch": "feature-x",
+        }
+
+    def test_diff_branches_result_passthrough(self, monkeypatch):
+        """RPC 回包原样透传（含分支不存在的正常错误体 {"error": ...}）。"""
+        for payload in (
+            {"added": [{"qualified_name": "a"}], "removed": [], "modified": [],
+             "unchanged_count": 0},
+            {"error": "源分支不存在: main"},
+        ):
+            monkeypatch.setattr(
+                tools_security, "_route", lambda m, p, o, _p=payload: _p
+            )
+            q = _register_tools(tools_security)
+            assert q["diff_branches"]("main", "feature-x") == payload
+
+    def test_diff_branches_fail_closed_no_local_fallback(self, monkeypatch):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(tools_security, "_route", fake_route)
         q = _register_tools(tools_security)
         with patch("callwarden.server.tools.tools_security.get_db") as mock_db:
             with pytest.raises(DaemonRemoteError):
                 q["diff_branches"]("main", "feature-x")
             mock_db.assert_not_called()
-        client.diff_branches.assert_called_once_with(
-            source_branch="main", target_branch="feature-x", db_path=DB_A,
-        )
-
-    def test_diff_http_mode_result_passthrough(self, monkeypatch):
-        client = MagicMock()
-        client.diff_branches.return_value = {
-            "added": [{"qualified_name": "a", "symbol_hash": "h1",
-                       "name": "a", "kind": "function"}],
-            "removed": [],
-            "modified": [],
-            "unchanged_count": 0,
-        }
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: True
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_db_path_for_daemon", lambda: DB_A
-        )
-        q = _register_tools(tools_security)
-        result = q["diff_branches"]("main", "feature-x")
-        assert result["added"][0]["qualified_name"] == "a"
-        assert result["unchanged_count"] == 0
-
-    def test_diff_http_mode_error_body_passthrough(self, monkeypatch):
-        """分支不存在等业务错误是正常响应体（{"error": ...}），原样透传。"""
-        client = MagicMock()
-        client.diff_branches.return_value = {"error": "源分支不存在: main"}
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: True
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_daemon_client", lambda: client
-        )
-        monkeypatch.setattr(
-            "callwarden.server._mcp_common._get_db_path_for_daemon", lambda: DB_A
-        )
-        q = _register_tools(tools_security)
-        result = q["diff_branches"]("main", "feature-x")
-        assert result == {"error": "源分支不存在: main"}
-
-    def test_diff_legacy_local_mode_keeps_db_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        q = _register_tools(tools_security)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.diff_branches.return_value = {
-            "added": [], "removed": [], "modified": [], "unchanged_count": 3,
-        }
-        with patch("callwarden.server.tools.tools_security.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q["diff_branches"]("main", "feature-x")
-        assert result["unchanged_count"] == 3
-        mock_db.diff_branches.assert_called_once_with("main", "feature-x")
-
-    def test_diff_legacy_local_mode_db_error_body(self, monkeypatch):
-        """legacy 模式 db 层异常 → {"error": str(e)}（保留原 try-except 降级语义）。"""
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
-        )
-        q = _register_tools(tools_security)
-        with patch("callwarden.server.tools.tools_security.get_db") as mock_get_db:
-            mock_get_db.side_effect = RuntimeError("db boom")
-            result = q["diff_branches"]("main", "feature-x")
-        assert result == {"error": "db boom"}
 
 
 # ============================================================
-# 写面决策：import_git_history 保持 python_compat（HTTP fail-closed）
+# import_git_history：写面已 `_route` 化（经 task.job_submit 同步 job 透传）
 # ============================================================
 
-class TestImportGitHistoryWriteChannel:
-    """import_git_history 写面通道决策（ledger §9.25）。
+class TestImportGitHistoryRoute:
+    """import_git_history 已 `_route` 化，不再是旧的 E_HTTP_COMPAT_UNSUPPORTED 拦截。
 
-    governance_write（INSERT OR IGNORE git_commits）+ 依赖 git 子进程，按
-    http-daemon-mvp-task-plan §4 写面 fail-closed 契约**不迁移** rust_native：
-    - HTTP 模式显式返回 E_HTTP_COMPAT_UNSUPPORTED（tools_workspace.py
-      import_git_history 已加拦截），不直连本地 SQLite 写主库、不调 get_db；
-    - legacy 模式保持本地执行（db.import_git_history）。
+    stale 依据（MCP 工具 `_route` 化）：`server/tools/tools_workspace.py:236-252`
+    import_git_history 现为 `_route('task.job_submit', {"max_commits": ...,
+    "job_type": "git_history", "sync": True}, 'PROTECTED_MUTATION')`，并 unwrap
+    回包的 `result` 字段。旧用例断言 HTTP 模式返回 `E_HTTP_COMPAT_UNSUPPORTED`
+    + `get_db` 桩，该 `_http_unsupported` 拦截结构已随 `_route` 化移除，故改为
+    断言新 RPC 语义（写路由 op_class=PROTECTED_MUTATION + 回包透传 + fail-closed）。
     """
 
-    def test_http_mode_fail_closed_no_db_write(self, monkeypatch):
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: True
-        )
+    def test_route_protected_mutation_and_unwrap_result(self, monkeypatch):
+        """写路由经 `_route` 下发 PROTECTED_MUTATION，并 unwrap 回包的 result。"""
+        seen = {}
+
+        def fake_route(method, params, op_class):
+            seen["method"] = method
+            seen["params"] = dict(params)
+            seen["op"] = op_class
+            return {"result": {"ok": True, "imported": 10}}
+
+        monkeypatch.setattr(tools_workspace, "_route", fake_route)
         q = _register_tools(tools_workspace)
         with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
-            result = q["import_git_history"](max_commits=50)
+            out = q["import_git_history"](max_commits=50)
             mock_db.assert_not_called()
-        assert result["error"] == "E_HTTP_COMPAT_UNSUPPORTED"
-        assert result["tool"] == "import_git_history"
-        assert result["backend"] == "python_compat"
+        assert out == {"ok": True, "imported": 10}
+        assert seen["method"] == "task.job_submit"
+        assert seen["op"] == "PROTECTED_MUTATION"
+        assert seen["params"] == {
+            "max_commits": 50, "job_type": "git_history", "sync": True,
+        }
 
-    def test_legacy_local_mode_keeps_db_write(self, monkeypatch):
+    def test_route_result_passthrough_without_result_key(self, monkeypatch):
+        """回包无 `result` 字段时原样透传（`.get` fallback）。"""
         monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled", lambda: False
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode", lambda: "local"
+            tools_workspace, "_route",
+            lambda m, p, o: {"job_id": "J-1", "status": "pending"},
         )
         q = _register_tools(tools_workspace)
-        mock_db = MagicMock()
-        mock_db.conn = MagicMock()
-        mock_db.import_git_history.return_value = {"ok": True, "imported": 10}
-        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
-            result = q["import_git_history"](max_commits=50)
-        assert result == {"ok": True, "imported": 10}
-        mock_db.import_git_history.assert_called_once_with(max_commits=50)
+        assert q["import_git_history"](max_commits=5) == {
+            "job_id": "J-1", "status": "pending",
+        }
+
+    def test_route_fail_closed_no_local_db_write(self, monkeypatch):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db 写主库。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
+
+        monkeypatch.setattr(tools_workspace, "_route", fake_route)
+        q = _register_tools(tools_workspace)
+        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                q["import_git_history"](max_commits=5)
+            mock_db.assert_not_called()

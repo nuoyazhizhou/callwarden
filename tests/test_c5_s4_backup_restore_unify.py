@@ -10,8 +10,10 @@
 契约：docs/design/c5-replicator-snapshot-disaster-recovery-contract.md §2.3/§3 C8
 """
 
+import hashlib
 import json
 import os
+import shutil
 import pytest
 
 from callwarden.server import backup_restore as br
@@ -71,9 +73,36 @@ def setup_daemon_env(tmp_path):
 
 @pytest.fixture
 def force_fallback(monkeypatch):
-    """强制走 Python 回退路径（模拟 Rust 不可用）。"""
+    """强制走 Python 回退路径（模拟 Rust 不可用）+ mock daemon 文件备份 RPC。
+
+    stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
+    `BackupManager._backup_file`（`server/backup_restore.py:457-482`）现为纯薄客户端，
+    内部 `_call_daemon_rpc("mcp.backup_restore.backup_file", {...})`
+    （`server/backup_restore.py:473`），文件复制权威已下沉到 daemon
+    （`backup_restore_handlers.rs::handle_backup_file`）。仅置
+    `_RUST_BACKUP_MANAGER_AVAILABLE/_RUST_BACKUP_AVAILABLE=False` 只关闭 Rust 短路，
+    回退分支仍会经 RPC 触达 daemon，无 live daemon 时 fail-closed 抛错。
+    故本 fixture 同时 mock 模块级 `br._call_daemon_rpc`，按 daemon 契约仿真
+    `handle_backup_file`（src 不存在→None；否则 copy 并回 `{name,size,sha256}`），
+    使「回退路径请求备份了哪些文件 + 原子发布/清理」这一被测契约可验证。
+    """
+
+    def _fake_daemon_rpc(method, params):
+        assert method == "mcp.backup_restore.backup_file", method
+        src_path = params["src_path"]
+        dest_dir = params["dest_dir"]
+        dest_name = params["dest_name"]
+        if not os.path.isfile(src_path):
+            return None
+        dest_path = os.path.join(dest_dir, dest_name)
+        shutil.copy2(src_path, dest_path)
+        with open(dest_path, "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+        return {"name": dest_name, "size": os.path.getsize(dest_path), "sha256": sha}
+
     monkeypatch.setattr(br, "_RUST_BACKUP_MANAGER_AVAILABLE", False)
     monkeypatch.setattr(br, "_RUST_BACKUP_AVAILABLE", False)
+    monkeypatch.setattr(br, "_call_daemon_rpc", _fake_daemon_rpc)
     yield
 
 

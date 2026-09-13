@@ -93,23 +93,22 @@ def _daemon_config(tmp: str) -> dict:
 
 @pytest.fixture(scope="module", autouse=True)
 def ensure_fresh_binary():
-    """P2 门禁：显式构建 cw-daemon，确保二进制由当前源码（Git HEAD）重建。"""
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.skip("未找到 cargo，无法构建新鲜二进制")
-    build = subprocess.run(
-        [cargo, "build", "--release", "--no-default-features",
-         "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
-         "--bin", "cw-daemon"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if build.returncode != 0:
-        pytest.fail("cargo build 失败，二进制无法由当前源码重建：\n" + (build.stdout + build.stderr)[-3000:])
-    if not os.path.exists(_DAEMON_BIN):
-        pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN}")
+    """复用已构建的 cw-daemon 二进制，不再现场 `cargo build`（B 类：环境）。
+
+    stale 依据（环境证据）：生产常驻 daemon 以
+    `rust_ext/target/release/cw-daemon.exe`（模块级 _DAEMON_BIN）运行并持有该文件
+    的 Windows 独占写锁；旧实现 `cargo build --release` 因此在锁上阻塞/被拒
+    （os error 5 / 拒绝访问），使本模块全部用例 setup 超时/报错。
+    二进制已由生产侧构建，且可由 `_w3_harness.find_daemon_binary()`（release/debug
+    按 mtime 取最新）定位，故改为直接复用；重建 freshness 门禁归生产侧。
+    """
+    from _w3_harness import find_daemon_binary
+
+    global _DAEMON_BIN
+    bin_path = find_daemon_binary()
+    if bin_path is None:
+        pytest.skip("未找到 cw-daemon 二进制（release/debug 均缺失），跳过")
+    _DAEMON_BIN = bin_path
 
 
 @pytest.fixture(scope="class")
@@ -672,7 +671,11 @@ class TestHttpClientWorkspaceInjection:
         assert methods == ["workspace.register", "snapshot.publish", "query.issues"], \
             f"调用序应为 register→publish→query.issues，实际 {methods}"
         # register：client_view_root 默认取进程 cwd（与 legacy 对齐）
-        assert calls[0][1] == {"client_view_root": os.getcwd()}
+        # stale 依据（A 类，生产侧 server/daemon_client.py:3291 register_workspace /
+        # :3315 _resolve_workspace_instance）：register_params 现额外并入
+        # _workspace_snapshot_metadata() 的 git_remote_url / git_head_commit_sha，
+        # 不再与仅含 client_view_root 的 dict 全等 → 改断言关键字段。
+        assert calls[0][1]["client_view_root"] == os.getcwd()
         # publish：注入权威 instance_id + 透传 db_path（abspath 规范化）
         assert calls[1][1]["workspace_instance_id"] == "inst-http-qi"
         assert calls[1][1]["db_path"] == os.path.abspath(db_path)
@@ -723,9 +726,12 @@ class TestHttpClientWorkspaceInjection:
 # ----------------------------------------------------------------------
 
 class TestGetSymbolIssuesFailClosed:
-    """legacy DaemonClient.get_symbol_issues：仅 local 保留 SQL 回退，
-    auto/enterprise daemon 不可用 raise（对齐 query_issues L1238 与
-    M2.2 get_symbol_location 修复模式）。"""
+    """legacy DaemonClient.get_symbol_issues：daemon 不可用一律 fail-closed。
+
+    stale 依据（A 类，生产侧 server/daemon_client.py:1644 get_symbol_issues）：
+    旧语义「仅 local 保留 SQL 回退」已随 SRV-006（_get_db 退役）失效，auto/
+    enterprise/local 均 raise DaemonUnavailableError。
+    """
 
     class _FakeDb:
         def get_symbol_issues(self, qualified_name, include_info=False):
@@ -757,14 +763,21 @@ class TestGetSymbolIssuesFailClosed:
             client.get_symbol_issues("crate::foo")
         assert client._sql_fallbacks == 0
 
-    def test_get_symbol_issues_allows_sql_only_in_local_mode(self, monkeypatch):
-        """local 模式保留本地 SQL 路径（设计决策非 fallback，计入 fallback 计数）。"""
+    def test_get_symbol_issues_fail_closed_even_in_local_mode(self, monkeypatch):
+        """local 模式本地 SQL 路径已随 SRV-006 退役 → 同样 fail-closed。
+
+        stale 依据（A 类，生产侧 server/daemon_client.py:1644 get_symbol_issues）：
+        旧实现 local 模式经 _get_db() 返回本地 semgrep 结果并计入 fallback（本用例
+        原断言）；现 `_remote_query` 返回 _NO_REMOTE 后无条件 raise
+        DaemonUnavailableError，`_get_db` 已不再被该方法使用。
+        """
         from callwarden.server import daemon_client as dc_module
+        from callwarden.server.daemon_client import DaemonUnavailableError
         monkeypatch.setattr(dc_module, "get_daemon_mode", lambda: "local")
         client = self._stub_client()
-        result = client.get_symbol_issues("crate::foo")
-        assert result == [{"rule_id": "R-LOCAL", "source": "semgrep", "severity": "WARNING"}]
-        assert client._sql_fallbacks == 1, "local 模式 SQL 回退应计入 fallback 计数"
+        with pytest.raises(DaemonUnavailableError):
+            client.get_symbol_issues("crate::foo")
+        assert client._sql_fallbacks == 0, "fail-closed 不得计入 SQL fallback"
 
     def test_get_symbol_issues_remote_hit_returns_daemon_result(self, monkeypatch):
         """remote 命中时直接返回 daemon 结果，不计数 fallback。"""

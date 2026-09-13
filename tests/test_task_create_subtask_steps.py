@@ -39,12 +39,28 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 1. 源码静态断言（不依赖运行时，Windows/Linux 均可执行）
 # ------------------------------------------------------------
 
-def _collab_src():
-    with open(
-        os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "task_collab.rs"),
-        encoding="utf-8",
-    ) as f:
-        return f.read()
+def _daemon_src():
+    """聚合 rust_ext/src/daemon 下全部非测试 Rust 源码。
+
+    stale 依据：生产已把单文件 task_collab.rs 拆分为多文件（现 task_collab.rs 仅剩薄壳）：
+    - task_collab_planning.rs:509 handle_task_create_subtask（:531 params.get("steps") /
+      :543 unchecked_transaction() / :627 insert_task_steps(&tx, &task_id, steps, ts)? /
+      :629 tx.commit() / :635 "parent_id" / :638 "status" / :640 "step_count"；
+      该函数为 planning.rs 末函数）
+    - task_collab_lease.rs:56 handle_task_claim（:676 "step_id" / :678 "step_index" /
+      :681 "action" / :682 "target_file" / :683 "target_symbol" / :684 "check_items"）
+    只读 task_collab.rs 必然 substring not found。
+    这里递归聚合所有文件名不含 "test" 的 .rs，排除测试源码以免断言被测试代码自身满足。
+    """
+    root = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon")
+    parts = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in sorted(filenames):
+            if not name.endswith(".rs") or "test" in name:
+                continue
+            with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                parts.append(f.read())
+    return "\n".join(parts)
 
 
 def _tools_src():
@@ -57,7 +73,7 @@ def _tools_src():
 
 def test_handler_reads_steps_and_calls_insert_task_steps():
     """S1/S6：handle_task_create_subtask 必须读取 steps、调用 insert_task_steps、用事务包裹。"""
-    src = _collab_src()
+    src = _daemon_src()
     # 从 handle_task_create_subtask 到函数结束的切片
     start = src.index("pub fn handle_task_create_subtask")
     end = src.index("\n    pub fn ", start + 10)
@@ -70,7 +86,7 @@ def test_handler_reads_steps_and_calls_insert_task_steps():
 
 def test_handler_returns_step_count_and_structured_result():
     """S8：返回结构化结果 {task_id, parent_id, status, step_count}。"""
-    src = _collab_src()
+    src = _daemon_src()
     start = src.index("pub fn handle_task_create_subtask")
     end = src.index("\n    pub fn ", start + 10)
     body = src[start:end]
@@ -81,7 +97,7 @@ def test_handler_returns_step_count_and_structured_result():
 
 def test_handler_task_events_no_longer_swallows_errors():
     """S6：task_events 写入不再用 .ok() 吞错。"""
-    src = _collab_src()
+    src = _daemon_src()
     start = src.index("pub fn handle_task_create_subtask")
     end = src.index("\n    pub fn ", start + 10)
     body = src[start:end]
@@ -91,7 +107,7 @@ def test_handler_task_events_no_longer_swallows_errors():
 
 def test_claim_returns_step_details():
     """S1/S3：handle_task_claim 返回步骤详情字段（step_id/step_index/action/target_file/...）。"""
-    src = _collab_src()
+    src = _daemon_src()
     start = src.index("pub fn handle_task_claim")
     end = src.index("\n    pub fn ", start + 10)
     body = src[start:end]
@@ -112,19 +128,27 @@ def _wrapper_body(src: str, func_name: str) -> str:
 
 
 def test_wrapper_normalizes_daemon_dict():
-    """S9：task_create_subtask wrapper 必须归一化 daemon dict（dict 含 task_id 时返回 task_id）。"""
+    """S9：task_create_subtask wrapper 走统一薄壳路由，daemon 结构化 dict 原样透传。"""
     src = _tools_src()
     body = _wrapper_body(src, "task_create_subtask")
-    assert "isinstance(res, dict)" in body, "wrapper 必须处理 dict 返回"
-    assert '"task_id" in res' in body, "必须从 dict 提取 task_id"
+    # stale 依据：commit 1415432 已把 wrapper 从本地 `isinstance(res, dict)` 取 task_id
+    # 改为 `_route` 薄壳；server/daemon_client.py:3881 route_rpc 明确“结果原样返回，
+    # 无映射/无本地逻辑”。daemon 端 handle_task_create_subtask
+    # （task_collab_planning.rs:633）已直接返回含 task_id 的结构化对象，wrapper 无需再做
+    # dict 归一化。故断言其路由到 task.create_subtask 且按受保护写操作派发。
+    assert "_route('task.create_subtask'" in body, "wrapper 必须路由 task.create_subtask RPC"
+    assert "'PROTECTED_MUTATION'" in body, "create_subtask 属受保护写操作"
 
 
 def test_next_step_wrapper_returns_none_without_step():
-    """S9：task_next_step wrapper 在 daemon 返回无 step_id 时归一化为 None。"""
+    """S9：task_next_step wrapper 走统一薄壳路由，无待执行步骤语义由 daemon 决定。"""
     src = _tools_src()
     body = _wrapper_body(src, "task_next_step")
-    assert '"step_id" not in res' in body, "缺少 step_id 时视为无待执行步骤"
-    assert "return None" in body
+    # stale 依据：同上薄壳化——wrapper 不再本地做 `"step_id" not in res -> return None`，
+    # daemon 返回结果原样透传（server/daemon_client.py:3881）；领取契约见
+    # task_collab_lease.rs:56 handle_task_claim。故断言其路由到 task.claim。
+    assert "_route('task.claim'" in body, "wrapper 必须路由 task.claim RPC"
+    assert "'PROTECTED_MUTATION'" in body, "claim 属受保护写操作"
 
 
 # ------------------------------------------------------------

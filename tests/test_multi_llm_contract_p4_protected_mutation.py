@@ -10,6 +10,7 @@
 """
 import json
 import os
+import sqlite3
 import time
 
 import pytest
@@ -30,8 +31,13 @@ def _identity(agent_id="agent-a", session_id="sess-1", model_id="model-x", role=
 
 
 @pytest.fixture()
-def db(tmp_path):
-    os.environ["CW_USE_RUST_STORAGE"] = "0"
+def db(tmp_path, monkeypatch):
+    # 隔离说明（A 类：测试侧环境泄漏）：原实现直接写 os.environ 且不还原，会把
+    # CW_USE_RUST_STORAGE="0" 泄漏给同进程后续用例，改变后续用例的
+    # PRAGMA foreign_keys 与 schema_version 写入路径（db/db_base.py:3425-3428，
+    # Rust storage 开启时 foreign_keys=ON）。改用 monkeypatch 于用例结束后
+    # 自动还原，本用例内语义不变（仍为 Python 兼容迁移路径）。
+    monkeypatch.setenv("CW_USE_RUST_STORAGE", "0")
     d = CodeGraphDB(str(tmp_path / "p4mut.db"))
     d.register_workspace("mut-ws", str(tmp_path))
     d.set_active_workspace("mut-ws")
@@ -53,6 +59,36 @@ def _mk_task_with_step(db, title="P4 protected task"):
 
 def _task_status(db, task_id):
     return db.conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()["status"]
+
+
+# Stage_Toggle 存储 schema（daemon 配置存储）。权威来源：
+# db/db_task_gate.py:174-247（_stage_toggle_store_path / _resolve_stage_toggle），
+# 与 tests/test_task_report_step_evidence_gate.py:26-50 既有约定一致。
+_STAGE_TOGGLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS stage_toggles (
+    stage       TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    actor       TEXT NOT NULL DEFAULT '',
+    changed_at  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (stage, scope_key)
+)
+"""
+
+
+def _set_p1_enabled(store_path):
+    """写入 P1 Stage_Toggle（global scope enabled），使 Evidence Gate 评估 P1 条款。"""
+    conn = sqlite3.connect(store_path)
+    try:
+        conn.execute(_STAGE_TOGGLE_SCHEMA)
+        conn.execute(
+            "INSERT OR REPLACE INTO stage_toggles (stage, scope_key, enabled, actor, changed_at) "
+            "VALUES ('P1', 'global', 1, 'test', ?)",
+            (str(time.time()),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _inject_contract(db, task_id, contract_id="C-p4mut-001"):
@@ -135,8 +171,19 @@ def test_role_escalation_rejected(db):
     assert _task_status(db, task_id) == before
 
 
-def test_valid_lease_but_evidence_gate_block(db):
-    """有效 lease 但 Evidence Gate 失败：契约已发布、无 verdict → step blocked，task data 不变。"""
+def test_valid_lease_but_evidence_gate_block(db, monkeypatch, tmp_path):
+    """有效 lease 但 Evidence Gate 失败：契约已发布、无 verdict → step blocked，task data 不变。
+
+    stale 修复（PYT 回归卡 step#4 A 桶）：Evidence Gate 现为 Stage_Toggle 感知，
+    仅在 P1 enabled 时评估 P1 条款（db/db_task_gate.py:185-259 全局默认 disabled，
+    见 evaluate_evidence_gate_for_task db/db_task_gate.py:576-694）。旧用例未启用
+    P1，gate 判定 pass → task_report_step 返回 None。权威写法见
+    tests/test_task_report_step_evidence_gate.py:26-95（CW_DAEMON_CONFIG_DB + P1 global）。
+    """
+    store_path = os.path.join(str(tmp_path), "daemon_config.db")
+    monkeypatch.setenv("CW_DAEMON_CONFIG_DB", store_path)
+    _set_p1_enabled(store_path)
+
     task_id, step_id = _mk_task_with_step(db)
     ok, r = db.acquire_lease(task_id, "implementer", _identity())
     assert ok

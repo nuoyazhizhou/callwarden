@@ -99,16 +99,25 @@ def test_task_quality_findings_defaults():
     """默认值：severity='warn', status='open', resolved_by='', resolved_at=NULL。"""
     db, _root = _db_with_workspace()
     try:
+        # stale 依据（A 类：测试侧期望陈旧）：task_quality_findings.task_id 现有
+        # FK → tasks(id)（db/db_base.py:1347）。Rust storage 路径下连接
+        # PRAGMA foreign_keys=ON（db/db_base.py:3425-3428），直接插入不存在的父行
+        # 会 FOREIGN KEY constraint failed。故先物化真实 task 行，再验证列默认值。
+        task_id = db.task_create(
+            title="finding-defaults",
+            steps=[{"action": "verify", "target_file": ""}],
+            creator="test",
+        )
         db.conn.execute(
             "INSERT INTO task_quality_findings (task_id, finding_type, message, created_at) "
             "VALUES (?, ?, ?, ?)",
-            ("T-test", "semgrep", "test message", 0.0),
+            (task_id, "semgrep", "test message", 0.0),
         )
         db.conn.commit()
         cur = db.conn.execute(
             "SELECT severity, status, resolved_by, resolved_at, source, evidence, step_id "
             "FROM task_quality_findings WHERE task_id = ?",
-            ("T-test",),
+            (task_id,),
         )
         row = cur.fetchone()
         assert row["severity"] == "warn"
@@ -181,12 +190,18 @@ def test_schema_version_table_records_v23_on_fresh_db():
         db.close()
 
 
-def test_legacy_v22_db_migrates_to_v23_via_init_schema():
+def test_legacy_v22_db_migrates_to_v23_via_init_schema(monkeypatch):
     """旧 v22 库通过 _init_schema 自动迁移到 v23。
 
     构造一个 v22 库（schema_version 表标记为 22，不含 agent_rule 表），
     再用 CodeGraphDB 打开，触发 _migrate_schema(22, 23)。
     """
+    # stale 依据（A 类：测试侧期望陈旧 / 同进程环境泄漏）：同进程其它用例会把
+    # CW_USE_RUST_STORAGE 泄漏为 "0"（例如 test_multi_llm_contract_p4_*.py 的
+    # 模块/fixture 级赋值），从而改变 PRAGMA foreign_keys 与 schema_version 的
+    # 写入路径（db/db_base.py:3425-3428、db/db_base.py:4048-4079），使本用例的
+    # v24 迁移记录断言变得不稳定。此处显式固定 Rust storage 路径（默认即此路径）。
+    monkeypatch.setenv("CW_USE_RUST_STORAGE", "1")
     root = tempfile.mkdtemp()
     db_path = os.path.join(root, "callwarden.db")
     import time
@@ -2552,9 +2567,24 @@ def _inject_symbol_change_with_signature(
 
 def _inject_caller(db, caller_name, caller_file, callee_name,
                    callee_qualified="mod::fn", callee_id=1, call_line=10):
-    """辅助：注入 calls 表记录（模拟调用方）"""
+    """辅助：注入 calls 表记录（模拟调用方）
+
+    stale 依据（A 类：测试侧期望陈旧）：Rust storage 路径下连接
+    PRAGMA foreign_keys=ON（db/db_base.py:3425-3428），而本辅助函数此前直接在
+    未物化父行的表上 INSERT，触发 FOREIGN KEY constraint failed：
+    - file_instances.current_content_hash → file_contents(content_hash)（db/schema.py:44）
+    - symbols.symbol_hash → symbol_contents(content_hash)（db/schema.py:67）
+    故先补齐 file_contents('') 与 symbol_contents(<symbol_hash>) 父行，再插入
+    file_instances / symbols / calls。
+    """
     # 需要 symbols 表中有 caller 符号 + file_instances 中有 caller 文件
     ws_id = db._get_active_workspace_id()
+    # FK: file_instances.current_content_hash → file_contents(content_hash)
+    db.conn.execute(
+        "INSERT OR IGNORE INTO file_contents (content_hash, first_seen_at) "
+        "VALUES ('', ?)",
+        (time.time(),),
+    )
     # 先确保 file_instances 有记录
     cur = db.conn.execute(
         "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
@@ -2576,11 +2606,19 @@ def _inject_caller(db, caller_name, caller_file, callee_name,
         fi_row = cur.fetchone()
     fi_id = fi_row["id"]
 
+    # FK: symbols.symbol_hash → symbol_contents(content_hash)
+    symbol_hash = f"hash-{caller_name}-{int(time.time()*1000)}"
+    db.conn.execute(
+        "INSERT OR IGNORE INTO symbol_contents "
+        "(content_hash, name, kind, content, signature) "
+        "VALUES (?, ?, 'fn', ?, '')",
+        (symbol_hash, caller_name, "caller-content"),
+    )
     # 插入 caller 符号
     db.conn.execute(
         "INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, "
         "start_line, end_line) VALUES (?, ?, ?, 'fn', 1, 10)",
-        (fi_id, f"hash-{caller_name}-{int(time.time()*1000)}", caller_name),
+        (fi_id, symbol_hash, caller_name),
     )
     db.conn.commit()
     caller_id_row = db.conn.execute(

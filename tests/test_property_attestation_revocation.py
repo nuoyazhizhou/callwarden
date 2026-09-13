@@ -26,6 +26,8 @@ import random
 import sys
 from pathlib import Path
 
+import pytest
+
 _PKG_PARENT = str(Path(__file__).resolve().parents[1].parent)
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
@@ -37,6 +39,20 @@ E_REVOCATION_MODE_REQUIRED = "E_REVOCATION_MODE_REQUIRED"
 MODES = ("compromised", "rotated")
 SEED = 20260803
 ITERATIONS = 20
+
+
+@pytest.fixture(autouse=True)
+def _force_local_daemon_mode(monkeypatch):
+    """stale 修复（PYT 回归卡 step#4 A 桶）：本文件断言对象是 Attestation 撤销
+    模式语义与时点可重算（Req 10.10-10.18），与 daemon CapabilityMutationGate
+    正交。db/db_task_identity.py:82-103 的 _require_authority_gate 在
+    auto/enterprise 模式下对 authority 写入口 fail-closed
+    （E_TASK_LOOP_CAPABILITY_DISABLED，0B gate-first），使
+    register_attestation_revocation 无法进入本体逻辑。权威依据：
+    config.py:1478-1494 规定 local 模式仅供 CW_TEST_MODE=1 使用，故此处切到
+    local 在 DB 层直接验证撤销派生（gate fail-closed 行为由其它专门用例覆盖）。
+    """
+    monkeypatch.setenv("CW_DAEMON_MODE", "local")
 
 
 _DB_COUNTER = 0

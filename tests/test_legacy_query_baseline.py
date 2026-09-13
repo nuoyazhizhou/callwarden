@@ -1,5 +1,10 @@
 r"""B3（T-1786590722456-db00d074-sub-3）五类查询 legacy 基线核对。
 
+**stale 依据（A 桶 · T03 薄壳收敛）**：工具实现由 `client.<method>()` 便捷方法改为
+`return _route('<rpc>', params, op_class)`（`server/tools/tools_query.py:57-145`、
+`server/tools/tools_task.py:507-621`），RPC 名真相源为
+`rust_ext/src/daemon/dispatch.rs` 路由臂。
+
 核对 file / symbol / grep / issues / tests 五类查询的三条基线：
 
 1. **统一入口**：MCP 工具（tools_query.py / tools_task.py）→ DaemonClient 方法
@@ -116,25 +121,29 @@ CLIENT_DELEGATE = {
     "get_test_coverage_summary": "query_tests",
 }
 
-# MCP 工具（tools_query.py / tools_task.py）→ 其调用的 client 方法名
-TOOL_CLIENT = {
+# MCP 工具（tools_query.py / tools_task.py）→ 其经统一薄壳路由 _route() 调用的
+# RPC 方法名（T03 收敛：工具实现已由 `client.<method>()` 便捷方法改为
+# `return _route('<rpc>', params, op_class)`，见 server/tools/tools_query.py:57-145
+# 与 server/tools/tools_task.py:507-621；RPC 名以 rust_ext/src/daemon/dispatch.rs
+# 路由臂为真相源）。
+TOOL_RPC = {
     "tools_query.py": {
-        "get_file_symbols": "get_file_symbols",
-        "search_symbols": "search_symbols",
-        "get_symbol": "get_symbol",
-        "get_symbol_location": "get_symbol_location",
-        "get_callers": "get_callers",
-        "get_callees": "get_callees",
-        "get_topological_order": "get_topological_order",
-        "get_call_chain_down": "get_call_chain_down",
-        "get_stats": "get_stats",
+        "get_file_symbols": "query.file",
+        "search_symbols": "query.search",
+        "get_symbol": "query.symbol",
+        "get_symbol_location": "query.symbol_location",
+        "get_callers": "query.callers",
+        "get_callees": "query.callees",
+        "get_topological_order": "query.topological_order",
+        "get_call_chain_down": "query.call_chain_down",
+        "get_stats": "query.stats",
     },
     "tools_task.py": {
-        "get_symbol_issues": "get_symbol_issues",
-        "get_test_cases": "get_test_cases",
-        "get_tested_functions": "get_tested_functions",
-        "get_test_stability": "get_test_stability",
-        "get_test_coverage_summary": "get_test_coverage_summary",
+        "get_symbol_issues": "query.issues",
+        "get_test_cases": "query.tests",
+        "get_tested_functions": "query.tests",
+        "get_test_coverage_summary": "query.tests",
+        "get_test_stability": "query.tests",
     },
 }
 
@@ -237,37 +246,44 @@ class TestClientRpcRouting:
             f"{client_method} 未委托 self.{CLIENT_DELEGATE[client_method]}()"
         )
 
-    def test_legacy_direct_db_methods_remain_python(self):
-        """legacy_local 工具的 db 直调方法（get_symbol_history）保持 Python 入口，
-        不得混入 daemon RPC（矩阵 rpc_none 声明）。get_file_history 已 W4-1
-        （T-1786886251769-22b94ee8-sub-1）迁移 rust_native（HTTP 分支新增
-        _get_daemon_client），不再属于本清单。"""
+    def test_legacy_compat_tool_uses_unified_router(self):
+        """get_symbol_history 仍为 python_compat（rust_ext/src/daemon/route_matrix.rs:144
+        Backend::PythonCompat / rpc_method=get_symbol_history；dispatch.rs:2431 有
+        对应路由臂），但 T03 收敛后工具实现已从本地直调 SQL（get_db()）改为统一
+        薄壳路由 `_route(...)`（= daemon_client.route_rpc，见 tools_query.py:145）：
+        HTTP 模式经 daemon RPC 执行，Python 侧仅保留 compat worker 镜像
+        `_h_get_symbol_history`（tools_query.py:520-522），不再直连本地 SQLite。
+        get_file_history 已 W4-1（T-1786886251769-22b94ee8-sub-1）迁移 rust_native，
+        不再属于本清单。
+        """
         src = _read_rel("server/tools/tools_query.py")
-        for tool in ("get_symbol_history",):
-            m = re.search(r"\n\s+def\s+%s\b" % re.escape(tool), src)
-            assert m, f"tools_query.py 缺少 {tool}"
-            # 工具实现应通过 get_db()（Python 直调），不引用 _get_daemon_client
-            block = src[m.end():]
-            next_def = re.search(r"\n    def ", block)
-            body = block[:next_def.start()] if next_def else block
-            assert "get_db()" in body, f"{tool} 未使用 Python get_db() 入口"
-            assert "_get_daemon_client" not in body, f"{tool} 不应路由 daemon RPC"
+        tool = "get_symbol_history"
+        m = re.search(r"\n\s+def\s+%s\b" % re.escape(tool), src)
+        assert m, f"tools_query.py 缺少 {tool}"
+        block = src[m.end():]
+        next_def = re.search(r"\n    def ", block)
+        body = block[:next_def.start()] if next_def else block
+        assert "_route('get_symbol_history'" in body, (
+            f"{tool} 未经统一薄壳路由 _route('get_symbol_history', ...) 调用")
+        assert "get_db()" not in body, f"{tool} 不应再本地直调 get_db()"
+        assert "_get_daemon_client" not in body, (
+            f"{tool} 不应直接引用 _get_daemon_client")
 
 
 class TestMcpToolsEntry:
-    """MCP 工具注册存在且调用对应 client 方法（统一入口第一层）。"""
+    """MCP 工具注册存在且经统一薄壳路由调用对应 RPC（统一入口第一层）。"""
 
-    @pytest.mark.parametrize("mod_name", sorted(TOOL_CLIENT))
+    @pytest.mark.parametrize("mod_name", sorted(TOOL_RPC))
     def test_tools_call_client(self, mod_name):
         src = _read_tools(mod_name)
-        for tool, client_method in TOOL_CLIENT[mod_name].items():
+        for tool, rpc_method in TOOL_RPC[mod_name].items():
             m = re.search(r"\n\s+def\s+%s\b" % re.escape(tool), src)
             assert m, f"{mod_name} 缺少 MCP 工具 {tool}"
             block = src[m.end():]
             next_def = re.search(r"\n    def ", block)
             body = block[:next_def.start()] if next_def else block
-            assert re.search(r"client\.%s\s*\(" % re.escape(client_method), body), (
-                f"{mod_name}.{tool} 未调用 client.{client_method}()"
+            assert re.search(r"_route\(\s*'%s'" % re.escape(rpc_method), body), (
+                f"{mod_name}.{tool} 未经统一薄壳路由调用 RPC {rpc_method}"
             )
 
 
@@ -295,6 +311,17 @@ class TestStructuredRejectionCodes:
 
 class TestClientFailClosed:
     """五类查询 client 方法 fail-closed 语义（auto/enterprise 不可回退，local 才允许）。"""
+
+    @pytest.fixture(autouse=True)
+    def _restore_daemon_mode(self):
+        # _make_client 用裸赋值改写 daemon_client.get_daemon_mode（daemon_client.py:57
+        # 从 config 导入的模块全局），不还原会泄漏到同进程后续测试
+        # （如 test_windows_daemon_writer_e2e 的 local 分支依赖真实 config.get_daemon_mode）。
+        from callwarden.server import daemon_client as dc_module
+
+        original = dc_module.get_daemon_mode
+        yield
+        dc_module.get_daemon_mode = original
 
     def _make_client(self, mode, remote_result=_NO_REMOTE):
         client = DaemonClient.__new__(DaemonClient)

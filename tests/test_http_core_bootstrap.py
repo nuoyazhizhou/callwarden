@@ -41,17 +41,39 @@ class MockHttpResponse:
         pass
 
 
-def _make_http_response(result: dict, status: int = 200, request_id: str = "1") -> MockHttpResponse:
-    body = json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}).encode("utf-8")
-    return MockHttpResponse(body, status=status)
+def _echo_request_id(urlopen_mock, *, result=None, results_by_method=None,
+                     error=None, status: int = 200) -> None:
+    """让 mock urlopen 从请求体回显 id。
 
+    stale 修正：server/daemon_client.py:2304-2308 现生成全局唯一 request id
+    （显式参数 / params["request_id"] / uuid4），并在 :2367-2370 **严格校验**
+    响应 id 必须等于出向 id。旧的静态 id="1" 响应会触发
+    `daemon 响应 request id 不匹配`。故 mock 必须回显请求信封的 id。
 
-def _make_http_error(code: str = "E_TEST", message: str = "test error", request_id: str = "1") -> MockHttpResponse:
-    body = json.dumps({
-        "jsonrpc": "2.0", "id": request_id,
-        "error": {"code": -32000, "message": message, "data": {"code": code}},
-    }).encode("utf-8")
-    return MockHttpResponse(body, status=200)
+    results_by_method：按请求 method 返回不同 result（如 get_stats 先
+    workspace.register 再 query.stats）。
+    """
+    def _side_effect(req, *args, **kwargs):
+        rid = "1"
+        method = ""
+        data = getattr(req, "data", None)
+        if isinstance(data, (bytes, bytearray)):
+            try:
+                envelope = json.loads(bytes(data).decode("utf-8"))
+                rid = envelope.get("id", "1")
+                method = envelope.get("method", "")
+            except (ValueError, UnicodeDecodeError, AttributeError):
+                rid = "1"
+        payload = {"jsonrpc": "2.0", "id": rid}
+        if error is not None:
+            payload["error"] = error
+        elif results_by_method is not None:
+            payload["result"] = results_by_method.get(method)
+        else:
+            payload["result"] = result
+        return MockHttpResponse(json.dumps(payload).encode("utf-8"), status=status)
+
+    urlopen_mock.side_effect = _side_effect
 
 
 # ============================================================
@@ -90,7 +112,7 @@ class TestHttpDaemonRpcClient:
     @patch("urllib.request.urlopen")
     def test_call_ok(self, mock_urlopen):
         """call() 成功调用 RPC 方法。"""
-        mock_urlopen.return_value = _make_http_response({"workspaces": ["ws1", "ws2"]})
+        _echo_request_id(mock_urlopen, result={"workspaces": ["ws1", "ws2"]})
         client = _make_discovered_client()
         resp = client.call("workspace.list", {})
         assert resp == {"workspaces": ["ws1", "ws2"]}
@@ -98,7 +120,9 @@ class TestHttpDaemonRpcClient:
     @patch("urllib.request.urlopen")
     def test_call_error(self, mock_urlopen):
         """call() 透传业务错误。"""
-        mock_urlopen.return_value = _make_http_error("E_TEST", "test error")
+        _echo_request_id(mock_urlopen, error={
+            "code": -32000, "message": "test error", "data": {"code": "E_TEST"},
+        })
         client = _make_discovered_client()
         from callwarden.server.daemon_protocol import DaemonRemoteError
         with pytest.raises(DaemonRemoteError) as exc:
@@ -117,8 +141,10 @@ class TestHttpDaemonRpcClient:
     @patch("urllib.request.urlopen")
     def test_get_stats(self, mock_urlopen):
         """get_stats() 通过 HTTP 返回统计数据。"""
-        mock_urlopen.return_value = _make_http_response({
-            "files": 100, "functions": 500, "calls": 2000,
+        # get_stats 先 _ensure_remote_snapshot → workspace.register，再 query.stats
+        _echo_request_id(mock_urlopen, results_by_method={
+            "workspace.register": {"workspace_instance_id": "ws-1"},
+            "query.stats": {"files": 100, "functions": 500, "calls": 2000},
         })
         client = _make_discovered_client()
         resp = client.get_stats()
@@ -127,7 +153,7 @@ class TestHttpDaemonRpcClient:
     @patch("urllib.request.urlopen")
     def test_search_symbols(self, mock_urlopen):
         """search_symbols() 通过 HTTP 返回符号搜索结果。"""
-        mock_urlopen.return_value = _make_http_response([
+        _echo_request_id(mock_urlopen, result=[
             {"name": "test_fn", "kind": "function", "file": "test.py"},
         ])
         client = _make_discovered_client()
@@ -138,7 +164,7 @@ class TestHttpDaemonRpcClient:
     @patch("urllib.request.urlopen")
     def test_list_workspaces(self, mock_urlopen):
         """list_workspaces() 通过 HTTP 返回工作区列表。"""
-        mock_urlopen.return_value = _make_http_response([
+        _echo_request_id(mock_urlopen, result=[
             {"id": 1, "name": "ws1", "root_path": "/path/ws1"},
         ])
         client = _make_discovered_client()
