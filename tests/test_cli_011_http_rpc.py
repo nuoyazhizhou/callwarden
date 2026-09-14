@@ -22,7 +22,8 @@ def test_cli011_assignment_create_routes_to_daemon(monkeypatch, capsys):
         captured["method"] = method
         captured["params"] = params
         captured["op"] = op_class
-        return {"ok": True, "assignment_id": 5, "task_id": "T-1",
+        return {"ok": True, "assignment_id": "ASG-0123456789abcdef",
+                "task_id": "T-1",
                 "role": "reviewer", "agent_id": "ag", "session_id": "ss",
                 "model_id": "md", "created_at": 1.0}
 
@@ -39,7 +40,7 @@ def test_cli011_assignment_create_routes_to_daemon(monkeypatch, capsys):
     assert captured["params"].get("task_id") == "T-1"
     out = capsys.readouterr().out
     assert "Assignment created" in out
-    assert "5" in out
+    assert "ASG-0123456789abcdef" in out
 
 
 def test_cli011_assignment_revoke_routes_to_daemon(monkeypatch, capsys):
@@ -49,7 +50,7 @@ def test_cli011_assignment_revoke_routes_to_daemon(monkeypatch, capsys):
     def _fake_route(method, params, op_class):
         captured["method"] = method
         captured["op"] = op_class
-        return {"ok": True, "task_id": "T-1", "role": "reviewer"}
+        return {"ok": True, "assignment_id": "ASG-x", "revoked_at": 1.0}
 
     monkeypatch.setattr(main_mod, "route_rpc", _fake_route)
 
