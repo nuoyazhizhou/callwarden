@@ -58,12 +58,22 @@ Handoff: <完成后交给哪个角色>
 [.agents/skills/cw-task-loop/references/role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md)。
 聊天 Handoff 只是通知；控制台/daemon 的结构化事件、状态投影和精确 task_id 才是 authority。
 
-当前启动入口为：`Callwarden 无人值守循环启动模板：Executor v4.md`、
-`Callwarden 无人值守循环启动模板：Reviewer v4.md`、`Callwarden 无人值守循环启动模板：Adjudicator v4.md`。
-`Callwarden 无人值守循环启动模板：Planner v1.md` 当前为 **design-only**：daemon 声明 capability
+当前启动入口为：`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Executor v4.md`、
+`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Reviewer v4.md`、`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Adjudicator v4.md`。
+`docs/role-loop-templates/Callwarden 无人值守循环启动模板：Planner v1.md` 当前为 **design-only**：daemon 声明 capability
 `planner_governance_v1` 前不可作为现行派工入口（daemon 不接受 planner 合同，也不产生 `READY/PLAN` 派工），
 仅作为目标角色模型的设计参考。旧 v1/v2/v3 文件仅在 `archive/role-loop/templates/legacy/` 以字节级原件
 追溯，不得用于新任务。
+
+> **Production prompt 来源（RP-09 cutover）：** 各角色启动模板与 `$cw-task-loop` 的 production prompt
+> 唯一来源是 daemon 编译的 Role Prompt Bundle（RPC `task.prompt.compile`，capability
+> `role_prompt_compiler_v1`）；模板正文只保留过程纪律与只读回退骨架，字段必须逐字取自 daemon。
+> 首选路径为 CLI `cw task prompt <task_id> --format llm` 或 MCP `task_get_role_prompt(task_id)`（逐字输出
+> `prompt.text` 与 bundle 结构化字段，`--format` 只改本地展示）；capability 未声明时，只有已取得
+> **daemon 返回的 exact workspace instance ID** 才允许回落到只读
+> `cw task next-action <task_id> --workspace-instance-id <instance-id> --json`，否则 fail closed。
+> 禁止客户端 derive workspace（如 `derive_workspace_instance_id`）、本地渲染 production prompt，或回落
+> Python Prompt Compiler / SQLite / PyO3 authority。
 
 Planner 是执行前的架构、任务分解和自有任务树治理修复责任人（目标模型）。新任务默认先做复杂度预检；只有完整、可验证且
 已绑定 Contract 的计划后，Executor 才能领取实现步骤。Planner 发现数据、Contract、binding、认证、派工或 daemon/client
@@ -716,10 +726,10 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 | 文档                                                                                     | 说明                                                         |
 | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | [.agents/skills/cw-task-loop/references/role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md) | 四角色共享协议（workflow_status 枚举 / Handoff §5 / finding schema §4 / 命令陷阱 §7 的唯一单源） |
-| [Callwarden 无人值守循环启动模板：Executor v4.md](Callwarden%20无人值守循环启动模板：Executor%20v4.md)                 | Executor 启动入口                                             |
-| [Callwarden 无人值守循环启动模板：Reviewer v4.md](Callwarden%20无人值守循环启动模板：Reviewer%20v4.md)                 | Reviewer 启动入口                                            |
-| [Callwarden 无人值守循环启动模板：Adjudicator v4.md](Callwarden%20无人值守循环启动模板：Adjudicator%20v4.md)           | Adjudicator 启动入口                                         |
-| [Callwarden 无人值守循环启动模板：Planner v1.md](Callwarden%20无人值守循环启动模板：Planner%20v1.md)                 | Planner 启动入口（design-only，capability 声明前不可派工）    |
+| [Callwarden 无人值守循环启动模板：Executor v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Executor%20v4.md)                 | Executor 启动入口                                             |
+| [Callwarden 无人值守循环启动模板：Reviewer v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Reviewer%20v4.md)                 | Reviewer 启动入口                                            |
+| [Callwarden 无人值守循环启动模板：Adjudicator v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Adjudicator%20v4.md)           | Adjudicator 启动入口                                         |
+| [Callwarden 无人值守循环启动模板：Planner v1.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Planner%20v1.md)                 | Planner 启动入口（design-only，capability 声明前不可派工）    |
 | [docs/design/requirements.md](docs/design/requirements.md)                               | 需求基线（Req 15 治理三件套之一，冻结）                       |
 | [docs/design/cw-role-handoff-task-loop.md](docs/design/cw-role-handoff-task-loop.md)     | Req 15 角色交接设计基线（冻结，v1 正文不再直接修改）         |
 | [docs/design/cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md) | 四角色模型修订（capability 分层与双轨整改，现行依据）        |

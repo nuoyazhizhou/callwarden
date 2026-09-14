@@ -1,0 +1,42 @@
+{
+  "evidence_id": "workspace-authority-live-tuple-v3-reproduction",
+  "task_id": "T-1788392053931-05b8a0e4",
+  "step_id": "S-1788392053932-05c8f688",
+  "remediation_of": "T-1788382908707-bbdd0cfc",
+  "original_defect_task": "T-1788346430756-8c900ec0",
+  "captured_at": "2026-09-03T10:25:26+08:00",
+  "environment": {
+    "daemon_endpoint": "http://127.0.0.1:7292",
+    "daemon_pid": 2748,
+    "daemon_git_commit": "fdead5104256ea03ed8d60fb48c615d82078aa18",
+    "runtime_binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+    "fresh_process": true,
+    "note": "daemon was freshly restarted for this probe after prior background process (PID 2476) exited; client is a fresh Python process"
+  },
+  "read_path_authority": {
+    "rpc_method": "workspace.status",
+    "params": { "workspace_id": 1102 },
+    "response": {
+      "registry_workspace_id": 1102,
+      "registry_instance_id": "4baea3ff12c2ea5c",
+      "task_db_workspace_id": 1,
+      "task_db_instance_id": "4baea3ff12c2ea5c",
+      "client_view_root": "C:\\git_work\\callwarden",
+      "status": "active"
+    },
+    "conclusion": "read path (resolve_status_authority) reports the reconciled live tuple correctly; task-DB workspace 1 canonical instance is 4baea3ff12c2ea5c"
+  },
+  "write_path_failure": {
+    "command": "cw.py task create --title 'v3 live tuple repro probe (delete-me)' --steps '[{\"action\":\"annotate\",\"target_file\":\"docs/evidence/workspace-authority-live-tuple-v3-reproduction.json\"}]' --workspace-id 1102 --workspace-instance-id 4baea3ff12c2ea5c",
+    "exit_code_nonzero": true,
+    "error": "E_WORKSPACE_AUTHORITY_MISMATCH: workspace_id=1 权威 workspace_instance_id=ws-1，请求 4baea3ff12c2ea5c 不一致；禁止同一 workspace 换 instance / 合成 ws-{id}",
+    "analysis": "task.create resolved numeric 1102 -> task_db workspace_id=1, but a later binding/capture path re-read the stale legacy row and derived instance 'ws-1' instead of using the reconciled canonical instance 4baea3ff12c2ea5c already present in the task-DB. resolve_create_authority resolves the numeric side; the instance side is re-inferred from legacy rows after reconciliation.",
+    "no_partial_mutation": "error raised before task/binding/capture/contract/step/event rows were written (fail-closed); verified by absence of any new task with title 'v3 live tuple repro probe (delete-me)' via task list"
+  },
+  "required_behavior_gap": [
+    "task.create must carry the daemon-resolved canonical authority (task_db_workspace_id=1, task_db_instance_id=4baea3ff12c2ea5c) into binding/capture without re-reading legacy ws-1",
+    "fresh daemon + fresh client must accept the exact live status tuple 1102/4baea3ff12c2ea5c",
+    "mismatch/stale/unknown/TokenSlim cross-project tuples must still fail before any partial rows"
+  ],
+  "frozen_by": "executor (T-1788392053931-05b8a0e4 step #0 freeze_live_tuple_rejection)"
+}

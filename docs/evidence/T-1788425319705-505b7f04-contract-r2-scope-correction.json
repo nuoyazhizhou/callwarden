@@ -1,0 +1,55 @@
+{
+  "schema_version": "task_write_client_contract_scope_correction/v1",
+  "task_id": "T-1788425319705-505b7f04",
+  "kind": "append_only_contract_scope_correction",
+  "previous_contract": {
+    "revision": 1,
+    "hash": "sha256:351b78edfd2364c2b67552cea0676d6e4faf595eeed2c9e84f4e0de8577dc5c7"
+  },
+  "immutable_workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "source_observations": [
+    {
+      "claim": "next-action emits authorization.lease_role from the acting governance role except for adjudicator.",
+      "path": "rust_ext/src/daemon/task_loop/next_action.rs",
+      "lines": "890-900",
+      "impact": "executor was emitted although task.handoff validates the concrete runtime identity role."
+    },
+    {
+      "claim": "task.handoff validates the active lease using identity.role after mapping that role to governance from_role.",
+      "path": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "lines": "1123-1184",
+      "impact": "an implementer lease is required for a legacy executor runtime identity."
+    },
+    {
+      "claim": "lease acquire currently returns token in JSON and task report returns success from its handler path after daemon errors are caught by a broad dispatch handler.",
+      "path": "cli/main.py",
+      "lines": "4916-4945;17145-17329",
+      "impact": "automation cannot rely on a consistent protected-mutation client contract."
+    }
+  ],
+  "scope_change": {
+    "remove": [
+      "rust_ext/src/daemon/task_collab_governance.rs"
+    ],
+    "add": [
+      "rust_ext/src/daemon/task_loop/next_action.rs",
+      "rust_ext/src/daemon/task_loop/next_action_test.rs",
+      "tests/test_task_write_client_contract.py"
+    ],
+    "preserve": [
+      "cli/main.py",
+      "no direct SQLite fallback",
+      "no workspace binding change",
+      "no Role Prompt compiler production change"
+    ]
+  },
+  "governance_guard": {
+    "claim_already_recorded": true,
+    "no_production_change_has_been_made": true,
+    "revision_1_and_step_history_must_remain_append_only": true,
+    "reviewer_and_adjudicator_are_distinct_from_executor": true
+  }
+}

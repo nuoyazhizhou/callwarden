@@ -1,0 +1,22 @@
+{
+  "task_id": "T-1788963105720-60bfc80c",
+  "step_index": 1,
+  "action": "thin_python_client",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_security",
+  "retired": {
+    "server/tools/tools_security.py": {
+      "_SECURITY_READ_ONLY_METHODS": {},
+      "register": "空 dict 条件跳过，15 个 _h_* handler 保留供追溯"
+    },
+    "server/compat_registry.py": {
+      "RUST_COMPAT_ROUTE_removed": 15,
+      "size_after": 19
+    }
+  },
+  "verification": {
+    "whitelist_empty": true,
+    "handlers_kept": true,
+    "route_entries_removed": 15
+  }
+}

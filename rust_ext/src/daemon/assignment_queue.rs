@@ -438,6 +438,44 @@ pub(crate) fn persist_claimed_assignment(
     status: &str,
     ts: f64,
 ) -> Result<(), DaemonRpcError> {
+    // role 兜底（防「空 role 覆写」漂移 #2）：`cw task report` 的 identity 是可选
+    // 参数，缺省时 daemon 侧 report_role 为空串；若直接写入，`INSERT OR REPLACE`
+    // 会用同一规范 id 覆写 claim 时已写好的 role，导致物理行 role 被清空，
+    // 后续按 role 过滤的 assignment 查询（下一棒派工、current_assignment）全部失配。
+    // 因此这里 fail-closed 地回填：优先取同 (task, step) 既有物理行的 role。
+    let role = if role.trim().is_empty() {
+        // 物理表 `task_assignments` 无 step_id 列（per (task, role) 粒度），
+        // 故按 task 回填。回填优先级：
+        //   ① 既有物理行的非空 role（claim 补偿写已写好的行）；
+        //   ② `task_leases` 最近一条 role（report 时 lease 可能已释放但行仍在）；
+        //   ③ 均无 → 跳过本次补偿写（宁可不动，也不写空 role 污染查询面）。
+        let recovered: Option<String> = tx
+            .query_row(
+                "SELECT role FROM task_assignments
+                 WHERE task_id = ?1 AND role IS NOT NULL AND role <> ''
+                 ORDER BY created_at DESC LIMIT 1",
+                rusqlite::params![task_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .or_else(|| {
+                tx.query_row(
+                    "SELECT role FROM task_leases
+                     WHERE task_id = ?1 AND role IS NOT NULL AND role <> ''
+                     ORDER BY acquired_at DESC LIMIT 1",
+                    rusqlite::params![task_id],
+                    |row| row.get(0),
+                )
+                .ok()
+            });
+        match recovered {
+            Some(existing) => existing,
+            None => return Ok(()),
+        }
+    } else {
+        role.to_string()
+    };
+    let role = role.as_str();
     // 物理行 id 规范派生：与事件流 id（source 相关）解耦，保证 claim(active) 与
     // report(completed) 命中同一行，从而收敛孤儿 active 行。
     let assignment_id = assignment_id_for(task_id, step_id, role, PHYSICAL_ASSIGNMENT_ROW_SOURCE);
@@ -821,6 +859,101 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1, "active 与 completed 必须是同一行的更新，不得复制");
+    }
+
+    #[test]
+    fn persist_does_not_blank_role_when_identity_absent() {
+        // 漂移 #2 回归：`cw task report` 的 identity 是可选参数，缺省时
+        // 完成补偿写会拿到空 role。修复前它用同一规范 id 覆写 claim 行，
+        // 把 role 清空（实测污染 17 行，含 G4 卡），导致按 role 过滤的
+        // assignment 查询永久失配。修复后必须回填既有 role，绝不写空值。
+        let mut conn = conn();
+        conn.execute_batch(
+            "CREATE TABLE task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                assignment_id TEXT NOT NULL UNIQUE,
+                task_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );",
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        // claim 侧正常写 role=executor
+        persist_claimed_assignment(
+            &tx, 7, "T-norole", Some("S-norole"),
+            "executor", "exec-agent", "exec-session", "exec-model", "active", 11.0,
+        )
+        .unwrap();
+        // report 侧 identity 缺失 → role 传空串
+        persist_claimed_assignment(
+            &tx, 7, "T-norole", Some("S-norole"),
+            "", "exec-agent", "exec-session", "exec-model", "completed", 12.0,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let row: (String, String) = conn
+            .query_row(
+                "SELECT role, status FROM task_assignments WHERE task_id = 'T-norole'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, "executor", "空 role 必须回填既有 role，不得清空");
+        assert_eq!(row.1, "completed", "状态仍应收敛为 completed");
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments WHERE task_id = 'T-norole'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "回填后仍命中同一行，不得派生新行");
+    }
+
+    #[test]
+    fn persist_skips_write_when_no_role_available() {
+        // 无既有行且 role 为空时，补偿写必须跳过（返回 Ok），
+        // 而不是写入 role='' 污染行。事件投影仍是权威来源。
+        let mut conn = conn();
+        conn.execute_batch(
+            "CREATE TABLE task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                assignment_id TEXT NOT NULL UNIQUE,
+                task_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );",
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        persist_claimed_assignment(
+            &tx, 7, "T-empty", Some("S-empty"),
+            "", "agent", "session", "model", "completed", 12.0,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments WHERE task_id = 'T-empty'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "无 role 可回填时不得写入空 role 行");
     }
 
     #[test]

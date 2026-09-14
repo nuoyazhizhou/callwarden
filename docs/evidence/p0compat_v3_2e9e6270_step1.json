@@ -1,0 +1,44 @@
+{
+  "task_id": "T-1788963104879-2e9e6270",
+  "step_index": 1,
+  "action": "thin_python_client",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_semantic",
+  "methods": [
+    "get_symbol_commit_history",
+    "parse_codeowners",
+    "get_project_dependencies",
+    "semantic_search",
+    "find_similar_functions"
+  ],
+  "retired": {
+    "server/tools/tools_semantic.py": {
+      "_SEMANTIC_READ_ONLY_METHODS": {},
+      "register_compat_routes": "空 dict 条件注册（不再注册空集合）",
+      "handlers_kept_for_traceability": [
+        "_h_semantic_search",
+        "_h_find_similar_functions",
+        "_h_get_symbol_commit_history",
+        "_h_parse_codeowners",
+        "_h_get_project_dependencies"
+      ]
+    },
+    "server/compat_registry.py": {
+      "RUST_COMPAT_ROUTE_removed": [
+        "semantic_search",
+        "find_similar_functions",
+        "get_symbol_commit_history",
+        "parse_codeowners",
+        "get_project_dependencies"
+      ],
+      "RUST_COMPAT_ROUTE_size_after": 34
+    }
+  },
+  "verification": {
+    "command": ".venv_test/Scripts/python.exe -c 'import callwarden.server.tools.tools_semantic as ts; import callwarden.server.compat_registry as cr; ...'",
+    "whitelist_empty": true,
+    "handlers_kept": true,
+    "route_entries_removed": 5
+  },
+  "authority_handover": "Rust daemon 已接管 5 方法（step0 live 验证逐字段对齐 Python 真相源）；Python 侧不再有任何 compat 注册"
+}

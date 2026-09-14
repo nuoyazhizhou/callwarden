@@ -1,0 +1,68 @@
+{
+  "schema_version": "rp_evidence_v1",
+  "card_id": "RP-06",
+  "task_id": "T-1788701744712-86b22b34",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "title": "Role Prompt Compiler v1 RP-06: compiler_policy_id alignment and golden refresh",
+  "frozen_authority": {
+    "spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "spec_literal_compiler_policy_id": "cw.role_prompt.compiler_policy.v1"
+  },
+  "predecessor": {
+    "task_id": "T-1788699893336-781258c0",
+    "lifecycle_status": "closed",
+    "reviewer_verdict": "V-735867e7fb38ad5188b01889 (pass, 2 advisory)"
+  },
+  "advisory_source": {
+    "origin": "RP-04 Reviewer PASS V-7301cd44c586655a46315423 advisory #1",
+    "finding": "compiler_policy asset self-declared ID cw.compiler.policy.v1 vs frozen spec literal cw.role_prompt.compiler_policy.v1"
+  },
+  "step_ids": [
+    "S-1788701744713-86c38c08",
+    "S-1788701744713-86c454d0",
+    "S-1788701744713-86c48be4",
+    "S-1788701744713-86c4b290"
+  ],
+  "changes": [
+    {
+      "file": "rust_ext/resources/role_prompts/v1/compiler_policy.md",
+      "change": "line-1 template ID cw.compiler.policy.v1 -> cw.role_prompt.compiler_policy.v1; body sections untouched",
+      "old_asset_sha256": "sha256:4d6e8b62f3e8667fc8c2e5ff769476c5e858d71faf5d97b122c1e2765322a4bb",
+      "new_asset_sha256": "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d"
+    },
+    {
+      "file": "rust_ext/resources/role_prompts/v1/manifest.json",
+      "change": "compiler_policy.content_sha256 recomputed to match edited asset; git diff single-line, format preserved"
+    },
+    {
+      "file": "rust_ext/src/daemon/task_prompt/route.rs",
+      "change": "advisory comment replaced with RP-06 alignment note; COMPILER_POLICY_ID constant value unchanged (already spec-literal)"
+    },
+    {
+      "file": "rust_ext/src/daemon/task_prompt/bundle_tests.rs",
+      "change": "all 7 GOLDEN_* tuples refrozen under new policy hash via unfreeze -> golden_print --nocapture -> refreeze loop (governance semantic: golden re-freeze explicitly authorized by this card, not silent drift); body hashes unchanged (templates untouched); context/prompt/bundle hashes chain-updated"
+    }
+  ],
+  "commands": [
+    {
+      "cmd": "cargo test task_prompt_renderer_golden_print --lib -- --nocapture",
+      "result": "7 fresh GOLDEN tuples printed; policy=sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d across all shapes"
+    },
+    {
+      "cmd": "cargo test task_prompt --lib",
+      "result": "test result: ok. 65 passed; 0 failed (9 context + 46 renderer + 10 rpc; no regression vs RP-05 baseline 65/65)"
+    }
+  ],
+  "hash_chain": {
+    "policy_asset": "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
+    "manifest_content_sha256": "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
+    "compiler_policy_id_constant": "cw.role_prompt.compiler_policy.v1",
+    "consistency": "spec literal == asset line-1 == manifest == route constant; build.rs generated constants recompute at compile time"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "scope_discipline": "only files listed in card globs touched; handler.rs/render.rs/capability_control.rs untouched; frozen spec untouched"
+}

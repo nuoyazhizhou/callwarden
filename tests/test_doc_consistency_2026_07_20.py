@@ -90,7 +90,7 @@ class TestHeaderBaselineAligned:
 
     def test_feature_matrix_baseline_table(self):
         """_feature_matrix.md 基线表应反映实际值。"""
-        fm = ROOT / "_feature_matrix.md"
+        fm = ROOT / "docs" / "design" / "_feature_matrix.md"
         content = fm.read_text(encoding="utf-8")
 
         # 找到 "## 实际基线数据" 章节
@@ -155,7 +155,7 @@ class TestD1DocumentationCorrected:
 
     def test_feature_matrix_d1_status_corrected(self):
         """_feature_matrix.md D1 状态必须是"部分完成"而非"已实现 sqlite-vec"。"""
-        fm = ROOT / "_feature_matrix.md"
+        fm = ROOT / "docs" / "design" / "_feature_matrix.md"
         content = fm.read_text(encoding="utf-8")
 
         # 找到 D1 行（含表格中跨多列的全部文本，到下一个 | D 或 | # 之前）
@@ -188,7 +188,7 @@ class TestD7StatusCorrected:
 
     def test_feature_matrix_d7_status_corrected(self):
         """_feature_matrix.md D7 必须标注 2026-07-20 评审修复。"""
-        fm = ROOT / "_feature_matrix.md"
+        fm = ROOT / "docs" / "design" / "_feature_matrix.md"
         content = fm.read_text(encoding="utf-8")
 
         d7_match = re.search(r"\| D7 \|.*?\|.*?\|.*?\|.*?\|", content)

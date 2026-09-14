@@ -1,5 +1,9 @@
 """H4B-R: compat registry 能力与两端对齐门测试
 
+**stale 依据（B 桶 · INT-001 compat 面清零）**：`_build_default_registry()` 现返回
+空 `CompatRegistry()`（`server/compat_registry.py:174-220`），模块级
+`RUST_COMPAT_ROUTE = {}`；旧版「80/81 项」计数断言随之失效（常量归零）。
+
 验证 server/compat_registry.py 的 H4B-R 扩展（H4B-C docstring 承接的
 compat_route 注册/查询/校验 API）：
 - 恢复的 _build_default_registry / get_compat_registry 懒加载单例
@@ -106,162 +110,31 @@ from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 
 
 # ------------------------------------------------------------
-# H4C 全量 compat 方法集合（三端真相：Rust COMPAT_ROUTE_WHITELIST 80 项）
+# H4C 全量 compat 方法集合（迁移后已清零）
 # ------------------------------------------------------------
-# H4C-1 默认 registry 的 1 个方法（http_server.rs `compat_route` 首批声明；
-# W2-1：get_uncommented_symbols 已迁移 rust_native，2->1）
-_H4C1_DEFAULT_METHODS = {"stats_top_files"}
-
-# Rust COMPAT_ROUTE_WHITELIST 全量 80 项（H4C-1 1 + H4C-2 13 + H4C-3 8 +
-# H4C-2 第二批 20 + H4C-2 第三批 18 +
-# H4C-2 第三批（T-1786747295227-b876fddf）collab/p2/p3/p4 15，
-# http_server.rs COMPAT_ROUTE_WHITELIST），
-# 与装配后 RUST_COMPAT_ROUTE / 运行时 registry 对齐。
-# 整改（T-1786747295227-49c90d68）：rule_candidate_list / rule_list /
-# get_applicable_rules 3 个纯 SELECT 只读方法接入 worker，security 组 14→17。
-# W2-1（T-1786840097330-dec66710）：get_uncommented_symbols /
-# get_module_call_stats / get_semgrep_stats 3 个迁移 rust_native，107→104。
-# W2-2（T-1786840097330-a9e0ec69）：get_clone_stats / get_job_stats /
-# get_clone_group_stats 3 个迁移 rust_native，任务组 16→13，104→101。
-# W2-3（T-1786840097331-fd01a3f8）：defect_stats / get_edit_stats 2 个迁移
-# rust_native，摘要组 27→26、security 组 14→13，101→99。
-# W3-1（T-1786861820150-bfe5e805）：list_build_contexts / get_build_context /
-# get_active_build_context / get_resolved_edges / count_resolved_edges 5 个迁移
-# rust_native，rules 组 8→3，99→94。
-# W3-2（T-1786861820151-f3cecf40）：get_job_status / list_jobs / wait_for_job
-# 3 个迁移 rust_native，任务组 13→10，94→91。
-# W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 迁移 rust_native，
-# 符号组 15→14，91→90。
-# W4-1（T-1786886251769-22b94ee8-sub-1）：get_file_history / get_commit_tasks
-# 2 个迁移 rust_native，符号组 14→13、任务组 10→9，90→88。
-# W4-2（T-1786886251769-22b94ee8-sub-2）：get_coverage_for_symbol /
-# diff_to_symbol 2 个迁移 rust_native，摘要组 26→24，88→86。
-# review_readiness 依赖 blast_radius 与 cross_layer_impact（均未迁移），
-# 保持 python_compat。
-_EXPECTED_COMPAT_METHODS_81 = {
-    # H4C-1 默认（1）
-    "stats_top_files",
-    # H4C-2 符号组只读（13；get_semgrep_findings 已 W3-3
-    # T-1786861820151-deb64c48 迁移 rust_native（15→14）、get_file_history 已
-    # W4-1 T-1786886251769-22b94ee8-sub-1 迁移 rust_native（14→13））
-    "get_symbol_history",
-    "get_recent_changes",
-    "get_impact",
-    "get_top_callers",
-    "get_orphan_symbols",
-    "get_deepest_functions",
-    "get_comment_from_version",
-    "get_issue_summary",
-    "find_issues",
-    "get_comment_coverage",
-    "get_call_heatmap",
-    "get_test_coverage",
-    "export_module_graph",
-    # H4C-3 任务组只读（8；get_job_status / list_jobs / wait_for_job 已
-    # W3-2 T-1786861820151-f3cecf40 迁移 rust_native（13→10）、get_commit_tasks
-    # 已 W4-1 T-1786886251769-22b94ee8-sub-1 迁移 rust_native（10→9）、
-    # get_defect_correlation 已 W4-3 T-1786886251769-22b94ee8-sub-3 迁移
-    # rust_native（9→8））
-    "get_symbol_change_tasks",
-    "audit_verify_chain",
-    "list_audit_signing_keys",
-    "bootstrap_status",
-    "list_clones",
-    "list_clone_groups",
-    "get_clone_group_detail",
-    "task_plan_template",
-    # H4C-2 第二批（T-1786747295213-64204cce）：摘要/演化/护栏/缺陷组只读（20；
-    # defect_correlation / churn_analysis / defect_search / defect_suggest_fix 已
-    # W4-3 T-1786886251769-22b94ee8-sub-3 迁移 rust_native，defect_learn 写面
-    # 保持 python_compat）
-    "get_summary",
-    "project_brief",
-    "repo_map",
-    # W4-2（T-1786886251769-22b94ee8-sub-2）：get_coverage_for_symbol 已迁移
-    # rust_native（query.coverage_for_symbol），不再注册于 compat registry
-    "find_uncovered_functions",
-    "test_impact_selection",
-    "who_to_ask",
-    "get_ownership_map",
-    "guardrail_scan",
-    "guardrail_check_edit",
-    "guardrail_list_rules",
-    "blast_radius",
-    "ask_codebase",
-    "get_token_savings_report",
-    "get_vulnerability_blast_radius",
-    "get_clone_aware_impact",
-    # W4-2（T-1786886251769-22b94ee8-sub-2）：diff_to_symbol 已迁移 rust_native
-    # （query.diff_to_symbol），不再注册于 compat registry；review_readiness
-    # 依赖 blast_radius 与 cross_layer_impact（均未迁移），保持 python_compat
-    "review_readiness",
-    "cross_layer_impact",
-    "evolution_frequency",
-    "hotspot_evolution",
-    "defect_learn",
-    # H4C-2 第二批：语义/外部符号组只读（5）
-    "semantic_search",
-    "find_similar_functions",
-    "get_symbol_commit_history",
-    "parse_codeowners",
-    "get_project_dependencies",
-    # H4C-2 第三批（T-1786747295227-49c90d68）：security 组只读（12；
-    # diff_branches 已 W4-4 T-1786886251769-22b94ee8-sub-4 迁移 rust_native，
-    # 13→12）
-    "list_branches",
-    "merge_preview",
-    "get_edit_history",
-    "find_shared_symbols",
-    "cross_repo_impact",
-    "cross_repo_summary",
-    "lsp_hover",
-    "lsp_definition",
-    "lsp_references",
-    "lsp_diagnostics",
-    "lsp_completion",
-    "lsp_check_available",
-    # H4C-2 第三批：rules 组只读（3；list_build_contexts / get_build_context /
-    # get_active_build_context / get_resolved_edges / count_resolved_edges 已
-    # W3-1 T-1786861820150-bfe5e805 迁移 rust_native，8→3）
-    "list_toolchains",
-    "get_toolchain",
-    "get_workspace_toolchains",
-    # H4C-2 第三批（T-1786747295227-49c90d68 整改）：规则查询组只读（3）
-    "rule_candidate_list",
-    "rule_list",
-    "get_applicable_rules",
-    # H4C-2 第三批（T-1786747295227-b876fddf）：collab 组只读（4）
-    "get_role_view",
-    "find_evidence",
-    "get_freshness_status",
-    "get_gate_decision",
-    # H4C-2 第三批（T-1786747295227-b876fddf）：p2 依赖图/环检测组只读（5）
-    "get_artifact_freshness",
-    "get_interface_providers",
-    "detect_cycle",
-    "validate_revision_dependencies",
-    "get_dependency_edges",
-    # H4C-2 第三批（T-1786747295227-b876fddf）：p3 身份/证明组只读（5）
-    "get_action_identity",
-    "check_action_identity",
-    "check_session_separation",
-    "get_attestation_validity",
-    "list_attestation_revocations",
-    # H4C-2 第三批（T-1786747295227-b876fddf）：p4 租约组只读（1）
-    "assignment_show",
-}
+# 生产真相源：server/compat_registry.py:174-220 的 _build_default_registry() 现返回
+# 空 CompatRegistry()，模块级 RUST_COMPAT_ROUTE = {}；rust_ext/src/daemon/
+# http_server.rs COMPAT_ROUTE_WHITELIST 亦为空。INT-001（stats_top_files）、
+# P0-COMPAT-v3（tools_summary / tools_semantic 组）、MCP-001（get_role_view 等
+# collab 组）等 python_compat 方法已全部迁移 rust_native，故本文件所有
+# 「80/81 项」计数断言随之归零（下两常量保持为空集，避免与新真相漂移）。
+_H4C1_DEFAULT_METHODS: set = set()
+_EXPECTED_COMPAT_METHODS_81: set = set()
 
 
-def _full_registry() -> CompatRegistry:
-    """构造与 H4C 运行时 registry 同构的独立 registry（80 项，handler 用 dummy）。
+@pytest.fixture
+def synthetic_rust_route(monkeypatch):
+    """把模块级 RUST_COMPAT_ROUTE 替换为合成路由，用于单测漂移检测/注册校验语义。
 
-    供 validate_against_rust_route 负向用例使用：基于 H4C-1 默认 1 项，
-    补齐 H4C-2/3 新增 80 项（read_only / SCOPE_WORKSPACE）。
+    生产 RUST_COMPAT_ROUTE 现为空（server/compat_registry.py:206-220），
+    validate_against_rust_route / register_compat_route 的 missing/extra/
+    mismatch 分支已无法用真实常量触发；此处 monkeypatch 合成
+    {alpha: read_only, beta: read_only}，测试结束由 monkeypatch 自动还原，
+    不污染「空路由」的生产真相。
     """
-    reg = _build_default_registry()
-    for method in sorted(_EXPECTED_COMPAT_METHODS_81 - _H4C1_DEFAULT_METHODS):
-        reg.register(method, READ_ONLY, SCOPE_WORKSPACE, "h4b-r 测试夹具", _dummy_handler)
-    return reg
+    synthetic = {"alpha": READ_ONLY, "beta": READ_ONLY}
+    monkeypatch.setattr(compat_registry_mod, "RUST_COMPAT_ROUTE", dict(synthetic))
+    return synthetic
 
 
 # ============================================================
@@ -274,14 +147,22 @@ class TestRegistryRestored:
         """懒加载单例：多次调用返回同一实例。"""
         assert get_compat_registry() is get_compat_registry()
 
-    def test_default_registry_has_full_route_methods(self):
-        """默认 registry（H4C 装配后单例）方法名集合与 Rust `compat_route` 全量一致（80 项）。"""
+    def test_default_registry_is_empty(self):
+        """默认 registry（单例）与 Rust `compat_route` 均已清零（0 项）。
+
+        生产真相源：server/compat_registry.py:174-220。python_compat 面全部
+        迁移 rust_native 后，运行时 registry 不再服务任何方法。
+        """
         reg = get_compat_registry()
-        assert len(reg) == 80
+        assert len(reg) == 0
         assert set(reg.methods()) == set(RUST_COMPAT_ROUTE) == _EXPECTED_COMPAT_METHODS_81
 
     def test_default_entries_are_read_only(self):
-        """两个默认方法均为 read_only（与 Rust `compat_route` 一致）。"""
+        """（历史用例）对默认 registry 的每个方法校验 read_only。
+
+        registry 已清零，循环体为空；保留以固化「非空时必为 read_only」的
+        不变量，待 compat 面恢复时自动生效。
+        """
         reg = get_compat_registry()
         for method, op_class in RUST_COMPAT_ROUTE.items():
             entry = reg.get(method)
@@ -289,15 +170,22 @@ class TestRegistryRestored:
             assert entry.operation_class == op_class
             assert entry.operation_class == READ_ONLY
 
-    def test_default_entries_scopes(self):
-        """workspace_scope：stats_top_files=authority；get_uncommented_symbols 已
-        W2-1 迁移 rust_native，不再注册于默认 registry。"""
+    def test_default_registry_scopes_empty(self):
+        """registry 清零后 stats_top_files 等旧默认方法均不可见（workspace_scope None）。
+
+        INT-001（T-1787322971676-e9aae4d4）：stats_top_files 已迁移 rust_native，
+        不再是 compat 方法。
+        """
         reg = get_compat_registry()
-        assert reg.workspace_scope("stats_top_files") == SCOPE_AUTHORITY
+        assert reg.workspace_scope("stats_top_files") is None
+        assert not reg.is_compat_method("stats_top_files")
         assert not reg.is_compat_method("get_uncommented_symbols")
 
     def test_default_entries_have_callable_handlers(self):
-        """handler 可调用且返回 CompatMethod 实例（契约 §3.3 字段齐备）。"""
+        """（历史用例）默认 registry 每个方法均有可调用 handler。
+
+        registry 已清零，循环体为空；保留以固化「非空时字段齐备」的不变量。
+        """
         reg = get_compat_registry()
         for method in RUST_COMPAT_ROUTE:
             entry = reg.get(method)
@@ -305,14 +193,13 @@ class TestRegistryRestored:
             assert callable(entry.handler)
             assert isinstance(entry.description, str) and entry.description
 
-    def test_build_default_registry_is_h4c1_subset_of_rust_route(self):
-        """_build_default_registry() 为 H4C-1 默认 1 项，是 Rust 全量路由（80 项）的子集。
+    def test_build_default_registry_is_empty_subset_of_rust_route(self):
+        """_build_default_registry() 现为空，且（空集）是 Rust 全量路由的子集。
 
-        H4C-2/3 新增 89 项由工具模块 register_compat_routes 注册到单例，
-        不属于 `_build_default_registry`（保持 H4C-1 语义）。
+        生产真相源：server/compat_registry.py:174-182 直接返回 CompatRegistry()。
         """
         reg = _build_default_registry()
-        assert set(reg.methods()) == _H4C1_DEFAULT_METHODS
+        assert set(reg.methods()) == _H4C1_DEFAULT_METHODS == set()
         assert set(reg.methods()) <= set(RUST_COMPAT_ROUTE)
 
 
@@ -322,10 +209,10 @@ class TestRegistryRestored:
 
 
 class TestCompatRouteQuery:
-    def test_rust_compat_route_constant_mirrors_rust(self):
-        """常量键集精确镜像 http_server.rs `compat_route` 全量 80 项（均 read_only）。"""
-        assert set(RUST_COMPAT_ROUTE) == _EXPECTED_COMPAT_METHODS_81
-        assert set(RUST_COMPAT_ROUTE.values()) == {READ_ONLY}
+    def test_rust_compat_route_constant_is_empty(self):
+        """常量 RUST_COMPAT_ROUTE 已清零（生产真相源 server/compat_registry.py:206-220）。"""
+        assert set(RUST_COMPAT_ROUTE) == _EXPECTED_COMPAT_METHODS_81 == set()
+        assert set(RUST_COMPAT_ROUTE.values()) == set()
 
     def test_route_returns_operation_class_for_compat_methods(self):
         for method, op_class in RUST_COMPAT_ROUTE.items():
@@ -356,24 +243,32 @@ def _dummy_handler(ctx: CompatCallContext):
 
 
 class TestRegisterCompatRoute:
-    def test_register_matching_operation_class_succeeds(self, iso_registry):
-        """已声明方法 + 与 Rust 一致的 operation_class → 注册成功。"""
+    def test_register_matching_operation_class_succeeds(
+        self, iso_registry, synthetic_rust_route
+    ):
+        """已声明方法 + 与 Rust 一致的 operation_class → 注册成功。
+
+        生产 RUST_COMPAT_ROUTE 已清零，改用 synthetic_rust_route 合成路由验证
+        「已声明」分支（server/compat_registry.py:233-257）。
+        """
         register_compat_route(
-            "stats_top_files", READ_ONLY, SCOPE_AUTHORITY,
+            "alpha", READ_ONLY, SCOPE_WORKSPACE,
             "h4b-r 测试注册", _dummy_handler,
         )
-        assert iso_registry.is_compat_method("stats_top_files")
+        assert iso_registry.is_compat_method("alpha")
 
-    def test_register_mismatched_operation_class_raises(self, iso_registry):
+    def test_register_mismatched_operation_class_raises(
+        self, iso_registry, synthetic_rust_route
+    ):
         """已声明方法 + 与 Rust 不一致的 operation_class → ValueError（两端对齐门）。"""
         with pytest.raises(ValueError) as ei:
             register_compat_route(
-                "stats_top_files", INDEX_WRITE, SCOPE_AUTHORITY,
+                "alpha", INDEX_WRITE, SCOPE_WORKSPACE,
                 "h4b-r 测试注册", _dummy_handler,
             )
-        assert "stats_top_files" in str(ei.value)
+        assert "alpha" in str(ei.value)
         # 注册被拒绝：隔离 registry 未被污染
-        assert not iso_registry.is_compat_method("stats_top_files")
+        assert not iso_registry.is_compat_method("alpha")
 
     def test_register_new_method_allowed(self, iso_registry):
         """Rust 未声明的方法允许注册（供后续 phase 扩展，调用方自行保证 Rust 同步）。"""
@@ -402,10 +297,13 @@ class TestRegisterCompatRoute:
             )
 
     def test_global_singleton_not_polluted(self):
-        """register_compat_route 的默认目标是全局单例；隔离测试不污染单例（仍 80 方法）。"""
+        """register_compat_route 的默认目标是全局单例；隔离测试不污染单例（仍为空）。
+
+        生产真相源：server/compat_registry.py:174-220（registry 已清零）。
+        """
         reg = get_compat_registry()
-        assert len(reg) == 80
-        assert set(reg.methods()) == set(RUST_COMPAT_ROUTE)
+        assert len(reg) == 0
+        assert set(reg.methods()) == set(RUST_COMPAT_ROUTE) == set()
 
 
 # ============================================================
@@ -422,46 +320,40 @@ class TestValidateAgainstRustRoute:
         assert result["extra"] == []
         assert result["mismatch"] == {}
 
-    def test_missing_method_detected(self):
-        """registry 缺 Rust 声明的方法 → aligned=False，missing 精确（全量 80 项）。"""
+    def test_missing_method_detected(self, synthetic_rust_route):
+        """registry 缺 Rust 声明的方法 → aligned=False，missing 精确。
+
+        生产 RUST_COMPAT_ROUTE 已清零，用 synthetic_rust_route（{alpha, beta}）
+        触发 missing 分支：registry 仅注册 alpha → missing == ["beta"]。
+        """
         reg = CompatRegistry()
-        reg.register(
-            "stats_top_files", READ_ONLY, SCOPE_AUTHORITY,
-            "h4b-r 缺其余方法", _dummy_handler,
-        )
+        reg.register("alpha", READ_ONLY, SCOPE_WORKSPACE, "h4b-r", _dummy_handler)
         result = validate_against_rust_route(reg)
         assert result["aligned"] is False
-        assert result["missing"] == sorted(
-            _EXPECTED_COMPAT_METHODS_81 - {"stats_top_files"}
-        )
+        assert result["missing"] == ["beta"]
+        assert result["extra"] == []
+        assert result["mismatch"] == {}
 
-    def test_extra_method_detected(self):
-        """registry 有 Rust 未声明的方法 → aligned=False，extra 精确（基于 80 全量）。"""
-        reg = _full_registry()
+    def test_extra_method_detected(self, synthetic_rust_route):
+        """registry 有 Rust 未声明的方法 → aligned=False，extra 精确。"""
+        reg = CompatRegistry()
+        for method in ("alpha", "beta"):
+            reg.register(method, READ_ONLY, SCOPE_WORKSPACE, "h4b-r", _dummy_handler)
         reg.register("extra_method", READ_ONLY, SCOPE_WORKSPACE, "h4b-r", _dummy_handler)
         result = validate_against_rust_route(reg)
         assert result["aligned"] is False
         assert result["extra"] == ["extra_method"]
         assert result["missing"] == []
 
-    def test_mismatch_operation_class_detected(self):
+    def test_mismatch_operation_class_detected(self, synthetic_rust_route):
         """同方法 operation_class 与 Rust 不一致 → aligned=False，mismatch 含明细。"""
         reg = CompatRegistry()
-        for method in sorted(_EXPECTED_COMPAT_METHODS_81):
-            if method == "stats_top_files":
-                reg.register(
-                    method, INDEX_WRITE, SCOPE_AUTHORITY,
-                    "h4b-r 错误 op_class", _dummy_handler,
-                )
-            else:
-                reg.register(
-                    method, READ_ONLY, SCOPE_WORKSPACE,
-                    "h4b-r 正确", _dummy_handler,
-                )
+        reg.register("alpha", INDEX_WRITE, SCOPE_WORKSPACE, "h4b-r", _dummy_handler)
+        reg.register("beta", READ_ONLY, SCOPE_WORKSPACE, "h4b-r", _dummy_handler)
         result = validate_against_rust_route(reg)
         assert result["aligned"] is False
         assert result["mismatch"] == {
-            "stats_top_files": {
+            "alpha": {
                 "rust": READ_ONLY,
                 "python": INDEX_WRITE,
             }
@@ -487,8 +379,12 @@ class TestWorkerIntegration:
         """compat_worker import 不再 ImportError（H3 误删修复的回归门）。"""
         assert server.compat_worker.get_compat_registry is get_compat_registry
 
-    def test_compat_worker_registry_has_full_route_methods(self):
-        """worker 通过 get_compat_registry() 拿到与 Rust `compat_route` 一致的全量 registry。"""
+    def test_compat_worker_registry_is_empty(self):
+        """worker 通过 get_compat_registry() 拿到的 registry 已清零（与 RUST_COMPAT_ROUTE 一致）。
+
+        生产真相源：server/compat_registry.py:174-220（python_compat 面全部迁移
+        rust_native，含 INT-001 stats_top_files 与 MCP-001 get_role_view）。
+        """
         reg = server.compat_worker.get_compat_registry()
         assert set(reg.methods()) == set(RUST_COMPAT_ROUTE) == _EXPECTED_COMPAT_METHODS_81
         for method, op_class in RUST_COMPAT_ROUTE.items():
@@ -635,37 +531,17 @@ class TestRealDaemonCompatRpcAlignment:
     NEGATIVE_UNREGISTERED = "get_code_metrics_summary"
 
     @pytest.fixture
-    def real_daemon(self, tmp_path):
-        """启动隔离真实 daemon，yield 生产类 HttpDaemonRpcClient。"""
-        bin_path = _find_daemon_binary()
-        if bin_path is None:
-            pytest.skip("cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）")
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        backup = _backup_http_manifest()
-        proc = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
-        try:
-            manifest = _wait_manifest(proc)
-            if manifest is None:
-                pytest.fail("隔离 daemon 未发布 manifest")
-            client = HttpDaemonRpcClient(
-                endpoint=manifest["endpoint"],
-                verify_health=False,
-                timeout=5.0,
-            )
-            # 整改（T-1786747295227-49c90d68 步骤#3）：worker 冷启动预热，参照
-            # combined_worker_cutover 整改 4——manifest 只代表 HTTP 层就绪，
-            # compat worker（Python 子进程 + 装配导入）首次调用才 spawn，冷启动
-            # 可能超过 client.timeout（5s）→ E_HTTP_REQUEST_TIMEOUT。用只读方法
-            # stats_top_files（H4C-1 默认方法，W2-1 后唯一仍注册的默认方法；
-            # get_uncommented_symbols 已迁移 rust_native 不再走 worker）预热触发
-            # spawn，对 retryable 超时统一重试 2 次（有界，非固定 sleep）；非超时
-            # 错误立即上抛不掩盖。
-            self._wait_worker_ready(proc, client)
-            yield client
-        finally:
-            _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, backup)
+    def real_daemon(self, w3_live):
+        """迁移到 conftest 模块级 `w3_live`（内部 tests/_w3_harness.setup_w3_client：
+        模式A USERPROFILE 重定向 + workspace.register + task-DB seed + 空 codegraph
+        snapshot.publish），取代本文件此前内联复制的 daemon spawn/manifest 逻辑。
+
+        原内联 `_wait_manifest` 读父进程 `get_http_manifest_dir()`（共享 authority
+        manifest 目录），与本机并行/共享 daemon 的 manifest 争用 → 稳定复现假
+        『隔离 daemon 未发布 manifest』。w3_live 用隔离 data_root/userhome + 显式
+        manifest_path 规避。yield 生产类 HttpDaemonRpcClient，测试语义零改动。
+        """
+        yield w3_live["client"]
 
     def _wait_worker_ready(self, proc, client, retries: int = 2):
         """worker 冷启动就绪等待（整改 4 模式，无 sleep 兜底）。"""

@@ -1,0 +1,12 @@
+{
+  "task_id": "T-1788963104058-fdb2e848",
+  "step": "S-1788963104059-fdbce104 (step3 matrix_verify)",
+  "matrix_flips": "8 条目 target_backend=python_compat→rust_native、batch=P0-COMPAT-v3、status=migrated",
+  "route_matrix_repair": {
+    "problem": "gen_route_matrix.py ROUTE_OVERRIDES 与运行时 registry/route_matrix.rs mirror 三向脱节（31 条目：MCP-002..012 + tools_query 8 + toolchain 3 等在 registry/mirror 已 rust_native，但脚本与 JSON 矩阵仍 python_compat/transition）→ 首次 --emit-rust 曾把 mirror 拉低（已回滚重做）",
+    "evidence": "31/31 经 http_server.rs registry add() backend 字段实证 rust_native",
+    "fix": "脚本 overrides 按 mirror 真值回写 31 条 + 本卡 8 条原地翻转 → --emit-json + --emit-rust + --check 全绿（39 条翻转 = 8 本卡 + 31 漂移修复，仅动 target_backend/batch/status）"
+  },
+  "check": "gen_route_matrix.py --check: CHECK OK（矩阵 JSON 243 工具与 Rust mirror 均与内存生成一致）",
+  "final_regression": "11 套件 113 passed / 2 skipped / 0 failed（重建后 daemon PID 新, snapshot gen=1 128398 symbols）"
+}

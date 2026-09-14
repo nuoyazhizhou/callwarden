@@ -1,0 +1,18 @@
+{
+  "task_id": "T-1788963104879-2e9e6270",
+  "step_index": 3,
+  "action": "matrix_verify",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_semantic",
+  "changes": {
+    "scripts/gen_route_matrix.py": "ROUTE_OVERRIDES tools_semantic 分节 5 条原地翻转（python_compat/transition → rust_native/migrated，batch=P0-COMPAT-v3）",
+    "deliverables/software-company/tool_migration_matrix.json": "--emit-json 重新生成（243 工具，5 条翻转）",
+    "rust_ext/src/daemon/route_matrix.rs": "--emit-rust 重新生成 mirror（243 条目）"
+  },
+  "verification": {
+    "command": "python scripts/gen_route_matrix.py --check",
+    "result": "CHECK OK: 矩阵 JSON（243 工具）与 Rust mirror 条目段均与内存生成一致",
+    "three_way": "gen_route_matrix.py ROUTE_OVERRIDES ↔ tool_migration_matrix.json ↔ route_matrix.rs 三向一致"
+  },
+  "authority_cross_check": "5 方法在 http_server.rs registry add() backend=rust_native（step0 翻转），矩阵/mirror/registry 三处一致"
+}

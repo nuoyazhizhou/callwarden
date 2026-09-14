@@ -12,7 +12,11 @@
    与 `READY/PLAN` 引用必须带 capability/cutover 说明；
 5. 归档字节级校验：archive/role-loop/templates/README.md 声明的原始 blob id 必须与
    归档文件实际内容一致（sha1 blob hash，等价 git hash-object，无 filter）；
-6. --self-test 负向测试：对故意破坏的副本断言每个检查项都会报对应错误码。
+6. --self-test 负向测试：对故意破坏的副本断言每个检查项都会报对应错误码；
+7. production prompt 来源纪律（RP-09 cutover）：派生文档必须声明唯一来源为 daemon 编译的
+   Role Prompt Bundle（RPC `task.prompt.compile`，capability `role_prompt_compiler_v1`），
+   next-action 回退必须带 capability/exact workspace instance 前提，禁止本地渲染 production
+   prompt 或复用 `derive_workspace_instance_id` 客户端 derive fallback。
 
 用法（仓库根）：
   & C:\\Python314\\python.exe scripts/validate_template_compliance.py
@@ -37,7 +41,9 @@ DEFAULT_USER_GUIDE = REPO_ROOT / ".agents/skills/cw-task-loop/references/user-gu
 DEFAULT_DESIGN_V1 = REPO_ROOT / "docs/design/cw-role-handoff-task-loop.md"
 DEFAULT_DESIGN_V2 = REPO_ROOT / "docs/design/cw-role-handoff-task-loop-v2-amendment.md"
 DEFAULT_ARCHIVE_README = REPO_ROOT / "archive/role-loop/templates/README.md"
-DEFAULT_TEMPLATE_DIR = REPO_ROOT
+# 当前角色启动模板（Planner/Executor/Reviewer/Adjudicator）自 2026-09-09 归位于 docs/role-loop-templates/
+TEMPLATE_DIR = REPO_ROOT / "docs" / "role-loop-templates"
+DEFAULT_TEMPLATE_DIR = TEMPLATE_DIR
 DEFAULT_ARCHIVE_DIR = REPO_ROOT / "archive/role-loop/templates/legacy"
 
 CAPABILITY = "planner_governance_v1"
@@ -84,6 +90,18 @@ RESERVED_GUARD_TOKENS = ("协议保留", CAPABILITY, "design-only")
 ENUM_DUP_WINDOW = 3
 ENUM_DUP_THRESHOLD = 6
 FINDING_DUP_THRESHOLD = 6
+
+# --- RP-09 production prompt 来源纪律 -----------------------------------------
+PROMPT_CAPABILITY = "role_prompt_compiler_v1"
+PROMPT_METHOD = "task.prompt.compile"
+# 任一出现即视为声明了 daemon 编译来源（RPC 方法名或 bundle 名称）。
+PROMPT_SOURCE_TOKENS = (PROMPT_METHOD, "Role Prompt Bundle")
+# 「本地/客户端 …… 渲染|生成|拼装|合成 …… prompt」：客户端不得本地渲染 production prompt。
+LOCAL_RENDER_RE = re.compile(r"(?:本地|客户端)[^。；\n]{0,14}(?:渲染|生成|拼装|合成)[^。；\n]{0,24}prompt")
+NEGATION_TOKENS = ("不得", "禁止", "不可", "不允许", "严禁")
+# next-action 回退必须带 capability 门禁或 exact workspace instance 前提。
+FALLBACK_GUARD_TOKENS = (PROMPT_CAPABILITY, "capability", "exact workspace instance", "exact daemon-returned")
+FALLBACK_CONTEXT_RE = re.compile(r"回退|回落|fallback")
 
 
 @dataclass
@@ -293,6 +311,8 @@ def check_derived_doc(path: Path, text: str, spec: ProtocolSpec, *, role: str | 
     lines = text.splitlines()
     protocol_ref = "role-protocol.md"
 
+    violations.extend(check_prompt_source_discipline(path, text))
+
     if protocol_ref not in text:
         violations.append(Violation("E_PROTOCOL_REF_MISSING", name, "未引用唯一单源 role-protocol.md"))
 
@@ -353,6 +373,45 @@ def check_derived_doc(path: Path, text: str, spec: ProtocolSpec, *, role: str | 
                 "E_PLANNER_DESIGN_ONLY_MISSING", name,
                 f"Planner 模板必须包含 design-only 声明与 capability {CAPABILITY}（daemon 未声明前不得作为现行派工入口）",
             ))
+    return violations
+
+
+def check_prompt_source_discipline(path: Path, text: str) -> list[Violation]:
+    """RP-09：production prompt 必须来自 daemon 编译的 bundle，回退受 capability/authority 约束。"""
+    violations: list[Violation] = []
+    name = str(path)
+    lines = text.splitlines()
+
+    if not any(tok in text for tok in PROMPT_SOURCE_TOKENS) or PROMPT_CAPABILITY not in text:
+        violations.append(Violation(
+            "E_PROMPT_SOURCE_MISSING", name,
+            f"未声明 production prompt 的唯一来源：daemon 编译的 Role Prompt Bundle（{PROMPT_METHOD}，"
+            f"capability {PROMPT_CAPABILITY}）；客户端模板/Skill 正文不得作为 production prompt 来源",
+        ))
+
+    for i, line in enumerate(lines):
+        # 否定词允许出现在同一行或紧邻行（禁止清单常跨行换行），但必须紧邻、不得远距。
+        context = "\n".join(lines[max(0, i - 1):i + 2])
+        if LOCAL_RENDER_RE.search(line) and not any(tok in context for tok in NEGATION_TOKENS):
+            violations.append(Violation(
+                "E_CLIENT_PROMPT_RENDER", name,
+                f"第 {i + 1} 行声称在客户端本地渲染/生成 production prompt；"
+                f"production prompt 只能由 daemon 编译并逐字输出",
+            ))
+        if "derive_workspace_instance_id" in line and not any(tok in context for tok in NEGATION_TOKENS):
+            violations.append(Violation(
+                "E_DERIVE_FALLBACK", name,
+                f"第 {i + 1} 行复用/触发 `derive_workspace_instance_id` 客户端 derive fallback；"
+                f"workspace instance 只能逐字取自 daemon 返回",
+            ))
+        if "next-action" in line and FALLBACK_CONTEXT_RE.search(line):
+            if not any(tok in context for tok in FALLBACK_GUARD_TOKENS):
+                violations.append(Violation(
+                    "E_FALLBACK_NO_GUARD", name,
+                    f"第 {i + 1} 行的 next-action 回退缺少 capability/exact workspace instance 前提："
+                    f"仅 capability {PROMPT_CAPABILITY} 未声明且已取得 daemon 返回的 exact workspace "
+                    f"instance 时才允许回落既有只读 role card",
+                ))
     return violations
 
 
@@ -485,6 +544,11 @@ SELF_TEST_CASES: list[tuple[str, str]] = [
     ("proto_status_layer_fixed", "E_PROTO_IMPLEMENTED_FIXED"),
     # 冻结 v1 是字节级基线：任何改写（含追加 supersede 指针）都必须报错。
     ("design_v1_blob_mismatch", "E_DESIGN_V1_BLOB_MISMATCH"),
+    # RP-09 cutover：production prompt 来源、受保护回退与禁止客户端本地渲染/derive。
+    ("prompt_source_missing", "E_PROMPT_SOURCE_MISSING"),
+    ("client_prompt_render", "E_CLIENT_PROMPT_RENDER"),
+    ("derive_fallback", "E_DERIVE_FALLBACK"),
+    ("fallback_no_guard", "E_FALLBACK_NO_GUARD"),
 ]
 
 ENUM_LIST_SNIPPET = "`queued`、`planning_pending`、`execution_ready`、`remediation_pending`、`review_pending`、`completed`、`governance_blocked`。"
@@ -556,17 +620,29 @@ def _break_doc(raw: str, case: str) -> str:
     if case == "ready_plan_no_guard":
         return raw + "\n收到 `READY/PLAN` 后开始规划。\n"
     if case == "planner_design_only_missing":
-        return re.sub(r"> \*\*design-only 声明：\*\*.*?\n\n", "", raw, flags=re.DOTALL)
+        raw = re.sub(r"> \*\*design-only 声明：\*\*.*?\n\n", "", raw, flags=re.DOTALL)
+        # RP-09 cutover 段同样引述 design-only 与 planner_governance_v1；负向用例必须一并移除，
+        # 否则删掉声明后仍能在别处命中锚点，检查会误报 PASS。
+        return re.sub(r"（本模板自身仍是 design-only，受 capability `planner_governance_v1`\s*约束）", "", raw)
     if case == "protocol_ref_missing":
         return raw.replace("role-protocol.md", "protocol.md")
+    if case == "prompt_source_missing":
+        # 删掉整段 RP-09 cutover 声明：派生文档不再声明 daemon bundle 为唯一来源 → 必须报错。
+        return re.sub(r"## Prompt 来源（RP-09 cutover）.*?(?=\n## |\Z)", "", raw, flags=re.DOTALL)
+    if case == "client_prompt_render":
+        return raw + "\n本模板在客户端本地渲染 production prompt。\n"
+    if case == "derive_fallback":
+        return raw + "\nworkspace 未知时调用 `derive_workspace_instance_id` 补全即可。\n"
+    if case == "fallback_no_guard":
+        return raw + "\n直接回落 `cw task next-action <task_id>` 即可，不需要其他前提。\n"
     return raw
 
 
-def run_self_test(root: Path) -> tuple[int, int]:
+def run_self_test() -> tuple[int, int]:
     protocol = DEFAULT_PROTOCOL
     agents = DEFAULT_AGENTS
-    executor_tpl = root / "Callwarden 无人值守循环启动模板：Executor v4.md"
-    planner_tpl = root / "Callwarden 无人值守循环启动模板：Planner v1.md"
+    executor_tpl = TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Executor v4.md"
+    planner_tpl = TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Planner v1.md"
     protocol_raw = read_text(protocol)
     spec, _ = parse_protocol(protocol_raw)
     if spec is None:
@@ -640,14 +716,14 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.self_test:
-        _, failed = run_self_test(REPO_ROOT)
+        _, failed = run_self_test()
         return 1 if failed else 0
 
     templates = args.template or [
-        REPO_ROOT / "Callwarden 无人值守循环启动模板：Planner v1.md",
-        REPO_ROOT / "Callwarden 无人值守循环启动模板：Executor v4.md",
-        REPO_ROOT / "Callwarden 无人值守循环启动模板：Reviewer v4.md",
-        REPO_ROOT / "Callwarden 无人值守循环启动模板：Adjudicator v4.md",
+        TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Planner v1.md",
+        TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Executor v4.md",
+        TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Reviewer v4.md",
+        TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Adjudicator v4.md",
     ]
     violations = run_checks(
         protocol=args.protocol,

@@ -33,6 +33,49 @@ def _bridge_src():
         return f.read()
 
 
+def _ensure_bridge_binary(tmp_path):
+    """返回可用的 cw-bridge.exe 路径。
+
+    优先复用已构建的 `rust_ext/target/debug/cw-bridge.exe`（与
+    tests/_w3_harness.find_daemon_binary 同思路）——向隔离空 CARGO_TARGET_DIR
+    做 fresh `cargo build --bin cw-bridge` 会全量重编依赖树，常 >180s 且长期占用
+    cargo 工具链（多 agent 共享时尤甚）。仅当预置产物缺失时才回退到隔离构建。
+    """
+    from pathlib import Path
+
+    prebuilt = Path(_REPO_ROOT) / "rust_ext" / "target" / "debug" / "cw-bridge.exe"
+    if prebuilt.is_file():
+        return prebuilt
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        pytest.fail(
+            "Windows bridge 验收：无预置 cw-bridge.exe 且缺 cargo，禁止静默跳过"
+        )
+    target_dir = tmp_path / "cargo-target"
+    build = subprocess.run(
+        [
+            cargo,
+            "build",
+            "--no-default-features",
+            "--manifest-path",
+            os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
+            "--bin",
+            "cw-bridge",
+        ],
+        env={**os.environ, "CARGO_TARGET_DIR": str(target_dir)},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    if build.returncode != 0:
+        pytest.fail("cargo build cw-bridge 失败：\n" + (build.stdout + build.stderr)[-4000:])
+    bridge_bin = target_dir / "debug" / "cw-bridge.exe"
+    assert bridge_bin.is_file(), f"cargo build 成功但缺少产物: {bridge_bin}"
+    return bridge_bin
+
+
 def _validate_token(request: dict, expected: str):
     """镜像 cw_bridge.rs validate_token：校验并剥离 bridge_token。"""
     provided = request.pop("bridge_token", "")
@@ -107,33 +150,8 @@ def test_bridge_src_has_rust_unit_tests():
 @pytest.mark.skipif(sys.platform != "win32", reason="bridge 进程验收需要 Windows")
 def test_bridge_process_rejects_invalid_token(tmp_path):
     """真实 bridge 进程必须在下游 daemon 之前拒绝错误 token。"""
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.fail("Windows bridge 验收禁止在缺少 cargo 时静默跳过")
-
-    target_dir = tmp_path / "cargo-target"
-    build = subprocess.run(
-        [
-            cargo,
-            "build",
-            "--no-default-features",
-            "--manifest-path",
-            os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
-            "--bin",
-            "cw-bridge",
-        ],
-        env={**os.environ, "CARGO_TARGET_DIR": str(target_dir)},
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=180,
-    )
-    if build.returncode != 0:
-        pytest.fail("cargo build cw-bridge 失败：\n" + (build.stdout + build.stderr)[-4000:])
-
-    bridge_bin = target_dir / "debug" / "cw-bridge.exe"
-    assert bridge_bin.is_file(), f"cargo build 成功但缺少产物: {bridge_bin}"
+    bridge_bin = _ensure_bridge_binary(tmp_path)
+    assert bridge_bin.is_file(), f"缺少可用 cw-bridge 产物: {bridge_bin}"
 
     token_file = tmp_path / "bridge.token"
     token_file.write_text("expected-token\n", encoding="utf-8")
@@ -210,33 +228,8 @@ def test_bridge_process_accepts_tcp_endpoint(tmp_path):
     Windows daemon 即完成 真实 TCP → bridge → Named Pipe → daemon round-trip；
     daemon 不可用时返回结构化 E_AUTHORITY_UNAVAILABLE（fail-closed）。
     """
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.fail("Windows bridge 验收禁止在缺少 cargo 时静默跳过")
-
-    target_dir = tmp_path / "cargo-target-tcp"
-    build = subprocess.run(
-        [
-            cargo,
-            "build",
-            "--no-default-features",
-            "--manifest-path",
-            os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
-            "--bin",
-            "cw-bridge",
-        ],
-        env={**os.environ, "CARGO_TARGET_DIR": str(target_dir)},
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=240,
-    )
-    if build.returncode != 0:
-        pytest.fail("cargo build cw-bridge 失败：\n" + (build.stdout + build.stderr)[-4000:])
-
-    bridge_bin = target_dir / "debug" / "cw-bridge.exe"
-    assert bridge_bin.is_file(), f"cargo build 成功但缺少产物: {bridge_bin}"
+    bridge_bin = _ensure_bridge_binary(tmp_path)
+    assert bridge_bin.is_file(), f"缺少可用 cw-bridge 产物: {bridge_bin}"
 
     token_file = tmp_path / "bridge.token"
     token_file.write_text("expected-token\n", encoding="utf-8")
@@ -425,6 +418,12 @@ def _run_fake_bridge(port: int, captured: dict, response: dict):
             if not payload:
                 return
             captured["frame"] = json.loads(payload.decode("utf-8"))
+            # stale 依据：生产 UnixDaemonRpcClient.call 会校验响应 id == 请求 id
+            # （server/daemon_client.py:636-637），且请求 id 为 uuid4（同文件 594-598）；
+            # 而 _PING_OK 硬编码 "id": 1。旧 fake bridge 未回显请求 id，导致
+            # DaemonUnavailableError("daemon 响应 request id 不匹配")。故回显请求 id。
+            response = dict(response)
+            response["id"] = captured["frame"].get("id")
             body = json.dumps(response, separators=(",", ":")).encode("utf-8")
             conn.sendall(struct.pack(">I", len(body)) + body)
 

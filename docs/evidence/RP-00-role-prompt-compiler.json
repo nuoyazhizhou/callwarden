@@ -1,0 +1,100 @@
+{
+  "schema": "cw.rp00.executor.evidence.v1",
+  "task_id": "T-1788668722815-04496bb0",
+  "task_title": "Role Prompt Compiler v1 RP-00: merged frozen spec and machine planning artifacts",
+  "contract_hash": "sha256:898d860ef6ac82fb02e7d9cdd3916f96289c0a402ab24e2c4ce82b45850e8681",
+  "contract_id": "TC-T-1788668722815-04496bb0",
+  "contract_revision": 1,
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1788668722815-04496bb0-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-72314460"
+  },
+  "identity": {
+    "agent_id": "executor-wb-rp00-01",
+    "agent_instance_id": "inst-executor-wb-rp00-01",
+    "session_id": "sess-executor-wb-rp00-20260906",
+    "role": "implementer"
+  },
+  "snapshot_ids": ["5ecb6b87e19b1d62"],
+  "lease": {"lease_id": "L-506b6e644bb6b8cb", "fencing_counter": 1, "role": "implementer", "note": "raw token withheld from evidence"},
+  "commands": [
+    "C:/Python314/python.exe -c hashlib.sha256(...)  # inventory/matrix/spec file hashes",
+    "C:/Python314/python.exe -c structural coverage assertions on inventory (1972 clauses)",
+    "C:/Python314/python.exe -c structural coverage assertions on matrix (1972 resolutions)",
+    "cw.py collab publish --workspace=.  # snapshot 5ecb6b87e19b1d62, generation 2"
+  ],
+  "steps": {
+    "S-1788668722816-0450b3c0": {
+      "index": 0,
+      "action": "freeze_source_clause_inventory",
+      "positive_results": [
+        "inventory sha256 = 25C6E9FFBF822008656FCAC9520EDAA9A559F4BA28B6128E3B1837CCD22BAFB5 (matches manifest companion_artifacts and step check item)",
+        "1972 clauses; clause_id unique; per-source counts consistent (R1,R2,R3,R4,R4D sum = 1972)",
+        "every clause carries source_path/line_start/section/kind/source_sha256 anchors",
+        "no production file modified"
+      ],
+      "negative_results": [],
+      "changed_paths": []
+    },
+    "S-1788668722816-0451cd00": {
+      "index": 1,
+      "action": "resolve_every_clause",
+      "positive_results": [
+        "matrix sha256 = EF62FB874ABACF85F65EA57A2D66E3AD6406ACF31C860B4B442707FCA091450A (matches manifest companion_artifacts)",
+        "resolution_count = 1972 == inventory clause_count; one-to-one by clause_id (set equality, no duplicates)",
+        "every resolution.disposition within matrix allowed_dispositions",
+        "matrix.inventory.sha256 == inventory file sha256 (cross-artifact consistency)"
+      ],
+      "negative_results": [],
+      "changed_paths": []
+    },
+    "S-1788668722816-0452034c": {
+      "index": 2,
+      "action": "freeze_task_manifest",
+      "positive_results": [
+        "feature_parent.task_id resolved: T-1788668721548-b8c6f4dc (daemon create receipt)",
+        "RP-00 card task_id resolved: T-1788668722815-04496bb0; parent_task_id set on all 11 cards",
+        "RP-00 predecessor GATE-1B resolved: T-1788583773351-2da3bb54 (COMPLETE_CONFIRMED)",
+        "authorization_state.feature_parent_and_rp00_creation -> true with release provenance; RP-01..RP-10 creation still false",
+        "status -> FROZEN_BY_RP00_STEP2 with freeze_record; unresolved placeholders limited to RP-01..RP-10 task ids and per-card evidence sha256 (released by their own cards)",
+        "release_order[0..1] resolved; JSON reparse + assertions pass"
+      ],
+      "negative_results": [],
+      "changed_paths": ["deliverables/software-company/role-prompt-v1-task-manifest.json"]
+    },
+    "S-1788668722816-045224e4": {
+      "index": 3,
+      "action": "validate_coverage_and_artifact_hashes",
+      "positive_results": [
+        "validate_role_prompt_spec.py PASS over inventory/matrix/spec/manifest (exit 0, errors=[])",
+        "pytest tests/test_role_prompt_spec_validator.py: 8 passed (real artifacts x2 + 6 negative fixtures)",
+        "git diff --check clean (exit 0)",
+        "all artifact SHA-256 recorded in docs/evidence/RP-00-role-prompt-compiler-validation.json",
+        "validator bug found and fixed during self-test: RP-01..RP-10 freeze check misfired on task_id_placeholder key (empty-string startswith)"
+      ],
+      "negative_results": [],
+      "changed_paths": [
+        "deliverables/software-company/role-prompt-v1-task-manifest.json",
+        "scripts/validate_role_prompt_spec.py",
+        "tests/test_role_prompt_spec_validator.py",
+        "docs/evidence/RP-00-role-prompt-compiler-validation.json"
+      ]
+    }
+  },
+  "commit_sha": "ce17c9368f87b35a4bca7285beb67abd40de221f (implementation commit; evidence files committed separately as append-only addendum)",
+  "changed_paths_total": [
+    "deliverables/software-company/role-prompt-v1-task-manifest.json",
+    "scripts/validate_role_prompt_spec.py",
+    "tests/test_role_prompt_spec_validator.py",
+    "docs/evidence/RP-00-role-prompt-compiler.json",
+    "docs/evidence/RP-00-role-prompt-compiler-validation.json"
+  ],
+  "deployment_receipt_if_applicable": null,
+  "note": "steps 0/1 are read-only verification against pre-frozen planning artifacts; step2 froze the successor manifest; step3 created the validator + tests and recorded coverage/hash validation",
+  "negative_acceptance_watch": {
+    "daemon_unavailable_fallback": "not triggered; all writes via daemon CLI",
+    "raw_credentials_in_evidence": false
+  }
+}

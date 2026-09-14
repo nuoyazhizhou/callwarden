@@ -1,0 +1,45 @@
+{
+  "task_id": "T-1788447967354-616aa470",
+  "step_id": "S-1788447967355-617a6414",
+  "objective": "add_recovery_tests",
+  "scope": [
+    "rust_ext/src/daemon/task_collab_tests_lease.rs"
+  ],
+  "contract": {
+    "task_contract": "TC-T-1788447967354-616aa470",
+    "revision": 1,
+    "hash": "sha256:41eb5bf899d9628c10bc88ee62c41084ef96e8b1c905b03de38f91b42f3db0be",
+    "role_contract": "rcl-T-1788447967354-616aa470-executor",
+    "role_contract_hash": "sha256:b959357cb5225a33f8545e4239cba8b194c6f3a0ddb9e438af969c173cac887d"
+  },
+  "tests": {
+    "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml lease_recover --lib",
+    "result": "passed",
+    "passed": 3,
+    "failed": 0,
+    "cases": [
+      "test_lease_recover_atomically_expires_orphan_and_stales_assignment",
+      "test_lease_recover_rejects_healthy_active_lease",
+      "test_lease_recover_rejects_raw_secret_fields_before_mutation"
+    ]
+  },
+  "assertions": [
+    "A registered planner can recover an orphaned reviewer lease when the old holder registration is missing.",
+    "Lease recovery expires the lease and appends assignment_stale in the same transaction.",
+    "The recovered assignment is absent from the active assignment projection.",
+    "Replaying the same request returns replayed=true without adding lease or assignment events.",
+    "A healthy active lease is rejected with E_LEASE_RECOVERY_NOT_ELIGIBLE and remains active.",
+    "Raw token fields are rejected before any mutation with E_LEASE_RECOVERY_SECRET_FIELD."
+  ],
+  "source_sha256": {
+    "rust_ext/src/daemon/task_collab_tests_lease.rs": "E381E0E4F0E3077F1F7FEAF457A52D504F8C6CE5D8B3E2E2F97CEBB26DFD7FCD",
+    "rust_ext/src/daemon/task_collab.rs": "75804B5B22A022AE5D33B9B7F60A5870E61130A68F56C92F7636257009260026",
+    "rust_ext/src/daemon/task_loop/lifecycle_lease.rs": "993E40463645826038C383635C6DD764088940797F82B25CA4417F3D7C62336D",
+    "rust_ext/src/daemon/dispatch.rs": "5DC9F6A31B3DB614DFE771019147E4D5BF5B4DB2D9C7BA1A36B0E3A4157E888C"
+  },
+  "hygiene": {
+    "git_diff_check": "passed",
+    "raw_token_returned_or_persisted": false,
+    "direct_sqlite_production_path": false
+  }
+}

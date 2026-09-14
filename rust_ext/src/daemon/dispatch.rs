@@ -14,6 +14,21 @@ use super::protocol::{make_error_response, make_ok_response};
 use serde_json::{Map, Value};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+/// Q10（2026-09-17）：multipart raw-gz-body 传输的带外 payload。
+///
+/// 二进制 canonical_bytes 不经 JSON 信封（消除 base64 税），由 HTTP 层
+/// 解析 multipart part 后以本枚举传入 dispatch 链。编码方式由 part 名
+/// 确定性区分（`payload` = 裸，`payload_gz` = gzip），daemon 不做魔法字节
+/// 猜测。解压上限按 params.canonical_len（Q9 bomb 防护语义不变）。
+#[derive(Debug, Clone, Copy)]
+pub enum InlinePayload<'a> {
+    /// 裸 canonical_bytes（未压缩）。同机环回下比 gz 更快
+    /// （实测 1MB 裸传 0.5ms vs 压缩链 CPU 17ms）。
+    Raw(&'a [u8]),
+    /// gzip(canonical_bytes)。用于接近 body 上限 / 内存关切 / 跨网络场景。
+    Gz(&'a [u8]),
+}
+
 /// M2.1（T-1786519351240-73127ab4）：query.file 越界路径结构化校验辅助。
 ///
 /// 通过 `#[path]` 内联声明本子模块——`mod.rs` 不在 M2.1 所有权白名单（不可改），
@@ -294,6 +309,12 @@ pub trait DaemonStateExt {
             Value::Number(state.schema_version.into()),
         );
         m.insert("workspace_count".to_string(), Value::Number(0u32.into()));
+        // RP-05（spec §11.3）：capability 投影由域模块提供（schema version、
+        // manifest hash、compiler policy hash、enabled），dispatch 只做字段透传。
+        m.insert(
+            "role_prompt_compiler".to_string(),
+            crate::daemon::task_prompt::handler::capability_projection(),
+        );
         Ok(Value::Object(m))
     }
 
@@ -324,7 +345,13 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found("workspace.list"))
+        let state = self.daemon_state();
+        let store = state
+            .task_collab_store
+            .as_ref()
+            .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
+        let list = store.list_unified_workspaces()?;
+        Ok(Value::Array(list))
     }
 
     fn handle_workspace_status(
@@ -332,8 +359,29 @@ pub trait DaemonStateExt {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found("workspace.status"))
+        let _ = peer;
+        let key = params
+            .get("workspace_instance_id")
+            .or_else(|| params.get("workspace_id"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                DaemonRpcError::invalid_params(
+                    "workspace.status 需要 workspace_instance_id 或 workspace_id",
+                )
+            })?;
+        let state = self.daemon_state();
+        let store = state
+            .task_collab_store
+            .as_ref()
+            .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
+        match store.unified_workspace_authority(key)? {
+            Some(auth) => Ok(serde_json::to_value(auth).unwrap_or(Value::Null)),
+            None => Err(DaemonRpcError::new(
+                "E_WORKSPACE_NOT_FOUND",
+                format!("workspace.status 未找到权威：key={key}"),
+            )),
+        }
     }
 
     fn handle_workspace_activate(
@@ -368,8 +416,9 @@ pub trait DaemonStateExt {
         peer: PeerCredential,
         params: &Value,
         received_fds: &[i32],
+        inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params, received_fds);
+        let _ = (peer, params, received_fds, inline_payload);
         Err(DaemonRpcError::method_not_found("workspace.file.refresh"))
     }
 
@@ -405,8 +454,9 @@ pub trait DaemonStateExt {
         peer: PeerCredential,
         params: &Value,
         received_fds: &[i32],
+        inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params, received_fds);
+        let _ = (peer, params, received_fds, inline_payload);
         Err(DaemonRpcError::method_not_found("snapshot.publish"))
     }
 
@@ -1381,6 +1431,13 @@ pub trait DaemonStateExt {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
+            // GOV-FIX-04：终态（closed/reverted）没有待 claim 的动作。policy 未决只影响
+            // claim 安全性，不应把已终结任务的只读投影覆盖成 governance_blocked /
+            // 广播 claim_requirements——否则 `closed` 裸卡会永远看起来"待处置"。
+            let terminal_projection = matches!(
+                projection.get("lifecycle_status").and_then(Value::as_str),
+                Some("closed") | Some("reverted")
+            );
             if let Some(object) = projection.as_object_mut() {
                 object.insert(
                     "assignment".to_string(),
@@ -1414,7 +1471,8 @@ pub trait DaemonStateExt {
                     "identity_policy_status".to_string(),
                     Value::String(policy_status.to_string()),
                 );
-                if matches!(&policy_state,
+                if !terminal_projection
+                    && matches!(&policy_state,
                     TaskContractPolicyState::Declared(policy) if policy == POLICY_ROLE_WORKER_V1)
                 {
                     object.insert(
@@ -1430,7 +1488,9 @@ pub trait DaemonStateExt {
                             "separation": {"required": true}
                         }),
                     );
-                } else if matches!(policy_state, TaskContractPolicyState::Unresolved) {
+                } else if !terminal_projection
+                    && matches!(policy_state, TaskContractPolicyState::Unresolved)
+                {
                     object.insert(
                         "claim_requirements".to_string(),
                         serde_json::json!({
@@ -1444,20 +1504,25 @@ pub trait DaemonStateExt {
                 // claim_current_step）；未决 policy 指向 daemon 自举修复，而不是把用户
                 // 当成 Contract 技术维护者。
                 // task.claim 的同一事务门禁保留为权威第二道防线。
-                let blocked_reason: Option<String> = match &policy_state {
-                    TaskContractPolicyState::Unresolved => Some(
-                        "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
-                            .to_string(),
-                    ),
-                    TaskContractPolicyState::Declared(policy)
-                        if policy != POLICY_ROLE_WORKER_V1
-                            && policy != POLICY_LEGACY_IDENTITY_V1 =>
-                    {
-                        Some(format!(
-                            "identity policy {policy} 未知，claim fail-closed（禁止隐式降级）"
-                        ))
+                let blocked_reason: Option<String> = if terminal_projection {
+                    // 终态短路：不覆盖 workflow_status/decision（见 terminal_projection 注释）。
+                    None
+                } else {
+                    match &policy_state {
+                        TaskContractPolicyState::Unresolved => Some(
+                            "合同 revision 缺少可解析 identity_policy，claim fail-closed（禁止隐式降级）"
+                                .to_string(),
+                        ),
+                        TaskContractPolicyState::Declared(policy)
+                            if policy != POLICY_ROLE_WORKER_V1
+                                && policy != POLICY_LEGACY_IDENTITY_V1 =>
+                        {
+                            Some(format!(
+                                "identity policy {policy} 未知，claim fail-closed（禁止隐式降级）"
+                            ))
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 };
                 if let Some(reason) = blocked_reason {
                     object.insert(
@@ -1515,6 +1580,23 @@ pub trait DaemonStateExt {
             Ok(projection)
         } else {
             Err(DaemonRpcError::method_not_found("task.next_action"))
+        }
+    }
+    /// RP-05（spec §4.1）：唯一生产 prompt RPC 的薄注册。dispatch 不做任何
+    /// route/模板业务逻辑；域 handler 在单只读 `with_conn` closure 内完成
+    /// 全部查询（无 DB 写入、无 lease/claim/assignment/event/lifecycle
+    /// mutation、无递归 JSON-RPC），fail-closed 错误码由域层提供。
+    fn handle_task_prompt_compile(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.with_conn(|conn| {
+                crate::daemon::task_prompt::handler::compile(conn, params)
+            })
+        } else {
+            Err(DaemonRpcError::method_not_found("task.prompt.compile"))
         }
     }
     fn handle_task_events(
@@ -1820,6 +1902,18 @@ pub trait DaemonStateExt {
         }
     }
 
+    fn handle_lease_recover(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_lease_recover(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("lease.recover"))
+        }
+    }
+
     fn handle_lease_extend(
         &mut self,
         peer: PeerCredential,
@@ -1933,6 +2027,14 @@ pub trait DaemonStateExt {
                 // 语义与 Python tools_p3_identity._h_check_session_separation 一致：解析
                 // reviewer/implementer_identity JSON → 校验 session 分离 → 返回 valid/reason。
                 "check_session_separation" => store.handle_check_session_separation(peer, params),
+                // P0-COMPAT-v3（T-1788963088148-495d7208）：p3 attestation 只读两方法 +
+                // p4 assignment_show 迁移 rust_native，语义与 Python tools_p3_identity /
+                // tools_p4_lease handler + db 层查询逐字段一致。
+                "get_attestation_validity" => store.handle_get_attestation_validity(peer, params),
+                "list_attestation_revocations" => {
+                    store.handle_list_attestation_revocations(peer, params)
+                }
+                "assignment_show" => store.handle_assignment_show(peer, params),
                 "gate.decision.query" => store.handle_gate_decision_query(peer, params),
                 "gate.decision.append" => store.handle_gate_decision_append(peer, params),
                 _ => Err(DaemonRpcError::method_not_found(method)),
@@ -2062,6 +2164,36 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("resolved_edges.replace"))
     }
 
+    // ---- G4（T-1789022024819-8cb9f614）：build-context daemon 化 ----
+    fn handle_resolved_edges_compute(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("resolved_edges.compute"))
+    }
+
+    fn handle_resolved_edges_rebuild(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("resolved_edges.rebuild"))
+    }
+
+    fn handle_build_context_import_compile_commands(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found(
+            "build_context.import_compile_commands",
+        ))
+    }
+
     // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
     // 单一 catch-all 钩子：所有 T02 新增 method（workspace.file.* / query.code_health /
     // task.job_* / admin.* / edit.* / rule.* / gate.* / summary.generate 等）经
@@ -2103,7 +2235,7 @@ pub fn dispatch<S: DaemonStateExt>(
     params: &Value,
     received_fds: &[i32],
 ) -> Value {
-    let result = dispatch_inner(state, peer, method, params, received_fds);
+    let result = dispatch_inner(state, peer, method, params, received_fds, None);
     match result {
         Ok(value) => make_ok_response(value),
         Err(err) => make_error_response(&err.code, &err.message),
@@ -2139,6 +2271,21 @@ pub const ADMIN_ONLY_METHODS: &[&str] = &[
     "mcp.backup_restore.backup_file",
 ];
 
+/// GATE-1A：`task.create` 严格字段注册（薄注册，无业务逻辑）。
+///
+/// dispatch 层只负责把 `task.create` 路由到 domain handler
+/// （`TaskCollabStore::handle_task_create`），**不含**任何 parent 业务逻辑：
+/// parent 存在性、唯一 binding/capture、workspace exact match、Task/Role Contract、
+/// identity policy 门禁与未知字段拒绝全部在 handler 内实现；且 unknown-field
+/// 拒绝仅在 parent-aware（frozen request contract）分支启用，root 分支
+/// （parent_id 缺失/规范化空）保持 Gate 前 bit-for-bit 行为。
+///
+/// 字段集合的唯一权威源是 `task_collab_shared::TASK_CREATE_FROZEN_FIELDS`
+/// （经 `task_collab.rs` 的 `pub(crate) use task_collab_shared::*;` 再导出），
+/// 此处仅注册引用，不复制字段清单，防止双份拷贝漂移。
+pub(crate) const TASK_CREATE_STRICT_FIELDS: &[&str] =
+    crate::daemon::task_collab::TASK_CREATE_FROZEN_FIELDS;
+
 /// Protected_Mutation 方法列表（Req 14.6）。
 ///
 /// 所有 Protected_Mutation 必须经由 daemon 进程内唯一串行化点（SerializationPoint）应用，
@@ -2162,6 +2309,8 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "mcp.backup_restore.backup_file",
     // Task 协同写操作（multi-llm-contract-collaboration）
     "agent.register",
+    // G4（T-1789022024819-8cb9f614）：resolved_edges 重建写面（compute+清旧+落库）
+    "resolved_edges.rebuild",
     "task.create",
     "task.claim",
     "task.assignment.heartbeat",
@@ -2220,6 +2369,7 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "gate.decision.append",
     // Lease 操作
     "lease.acquire",
+    "lease.recover",
     "lease.release",
     "lease.extend",
     // lease.renew 是 lease.extend 的兼容别名（同为写操作，须经串行化点）
@@ -2248,6 +2398,12 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "admin.record_artifact_identity",
     "admin.publish_interface",
     "admin.select_interface_provider",
+    // semgrep CLI 写面（C-13）：run_semgrep / run_semgrep_and_save /
+    // scan_semgrep_incremental 均可能改动工作区或落库，与 cw semgrep 的
+    // PROTECTED_MUTATION 分类一致，统一经唯一串行化点。
+    "run_semgrep",
+    "run_semgrep_and_save",
+    "scan_semgrep_incremental",
     // 编辑/提案/规则写面
     "edit.propose",
     "edit.propose_range_patch",
@@ -2294,6 +2450,66 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "list_toolchains",
     "get_toolchain",
     "get_workspace_toolchains",
+    // P0-COMPAT-v3（T-1788963103216-cb818938）：tools_query 组（8）
+    "get_symbol_history",
+    "get_recent_changes",
+    "get_impact",
+    "get_comment_from_version",
+    "get_issue_summary",
+    "find_issues",
+    "get_test_coverage",
+    "export_module_graph",
+    // P0-COMPAT-v3（T-1788963104058-fdb2e848）：tools_task 组（8）
+    "get_symbol_change_tasks",
+    "audit_verify_chain",
+    "list_audit_signing_keys",
+    "bootstrap_status",
+    "list_clones",
+    "list_clone_groups",
+    "get_clone_group_detail",
+    "task_plan_template",
+    // P0-COMPAT-v3（T-1788963105720-60bfc80c）：tools_security 组 15 方法
+    "list_branches",
+    "merge_preview",
+    "get_edit_history",
+    "find_shared_symbols",
+    "cross_repo_impact",
+    "cross_repo_summary",
+    "lsp_hover",
+    "lsp_definition",
+    "lsp_references",
+    "lsp_diagnostics",
+    "lsp_completion",
+    "lsp_check_available",
+    "rule_candidate_list",
+    "rule_list",
+    "get_applicable_rules",
+    // P0-COMPAT-v3（T-1788963104879-2e9e6270）：tools_semantic 组（5）
+    "get_symbol_commit_history",
+    "parse_codeowners",
+    "get_project_dependencies",
+    "semantic_search",
+    "find_similar_functions",
+    // P0-COMPAT-v3（T-1788963106520-907544c8）：tools_summary 组 19 方法
+    "get_summary",
+    "project_brief",
+    "repo_map",
+    "test_impact_selection",
+    "who_to_ask",
+    "get_ownership_map",
+    "guardrail_scan",
+    "guardrail_check_edit",
+    "guardrail_list_rules",
+    "blast_radius",
+    "ask_codebase",
+    "get_token_savings_report",
+    "get_vulnerability_blast_radius",
+    "get_clone_aware_impact",
+    "review_readiness",
+    "cross_layer_impact",
+    "evolution_frequency",
+    "hotspot_evolution",
+    "defect_learn",
     // 文件/构建面（T02-fs，9）
     "workspace.build_graph",
     "workspace.build_directory",
@@ -2356,6 +2572,13 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "admin.record_artifact_identity",
     "admin.publish_interface",
     "admin.select_interface_provider",
+    // semgrep CLI 面（C-13：CLI-061 semgrep_handlers 接线，4 方法）
+    // run_semgrep / run_semgrep_and_save / scan_semgrep_incremental 为写（经串行化点），
+    // get_semgrep_summary 为只读；方法名与 cli/main.py:1207-1212 _METHOD_MAP 逐字一致。
+    "run_semgrep",
+    "get_semgrep_summary",
+    "run_semgrep_and_save",
+    "scan_semgrep_incremental",
     // 编辑/提案/规则写面（T02-edit，19 写 + 2 读）
     "edit.propose",
     "edit.propose_range_patch",
@@ -2405,7 +2628,7 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
     if is_protected_mutation(method) {
         // Protected_Mutation 经唯一串行化点（Req 14.6）
         match serialization_point
-            .execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds))
+            .execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds, None))
         {
             Ok(value) => make_ok_response(value),
             Err(err) => make_error_response(&err.code, &err.message),
@@ -2413,6 +2636,51 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
     } else {
         // 非 Protected_Mutation 直接执行
         dispatch(state, peer, method, params, received_fds)
+    }
+}
+
+/// Q10（2026-09-17）：multipart raw-gz-body 传输的分发入口。
+///
+/// 与 [`dispatch_rpc`] 完全同构（串行化点 / Protected_Mutation 语义不变），
+/// 唯一差异是携带 `inline_payload`：multipart 请求里二进制 part 的原始
+/// 字节（裸 canonical_bytes 或其 gzip 流），由 HTTP 层在解析 multipart
+/// 后传入。安全门禁（owned_workspace / stale_session / request_id 去重）
+/// 全部在 dispatch_inner 内照常生效，payload 只是数据来源，不旁路任何校验。
+pub fn dispatch_rpc_with_payload<S: DaemonStateExt>(
+    state: &mut S,
+    peer: PeerCredential,
+    method: &str,
+    params: &Value,
+    received_fds: &[i32],
+    serialization_point: &super::serialization::SerializationPoint,
+    inline_payload: Option<InlinePayload<'_>>,
+) -> Value {
+    if is_protected_mutation(method) {
+        match serialization_point
+            .execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds, inline_payload))
+        {
+            Ok(value) => make_ok_response(value),
+            Err(err) => make_error_response(&err.code, &err.message),
+        }
+    } else {
+        dispatch_with_payload(state, peer, method, params, received_fds, inline_payload)
+    }
+}
+
+/// [`dispatch`] 的带外 payload 变体（Q10）。非串行化路径，供测试与
+/// `dispatch_rpc_with_payload` 的非 Protected 分支使用。
+pub fn dispatch_with_payload<S: DaemonStateExt>(
+    state: &mut S,
+    peer: PeerCredential,
+    method: &str,
+    params: &Value,
+    received_fds: &[i32],
+    inline_payload: Option<InlinePayload<'_>>,
+) -> Value {
+    let result = dispatch_inner(state, peer, method, params, received_fds, inline_payload);
+    match result {
+        Ok(value) => make_ok_response(value),
+        Err(err) => make_error_response(&err.code, &err.message),
     }
 }
 
@@ -2620,12 +2888,18 @@ pub fn is_admin(peer: &PeerCredential) -> bool {
 }
 
 /// dispatch 内部实现（返回 Result<Value, DaemonRpcError>）
+///
+/// `inline_payload`：multipart 传输的带外 payload（Q10 2026-09-17）——
+/// 二进制 canonical_bytes（裸或 gz）不经 JSON 信封，直接由 HTTP 层
+/// 传入。仅 `workspace.file.refresh` / `snapshot.publish` 消费；
+/// 其余方法忽略。None = 老路径（FD/hex/b64/gz_b64 全在 params 内）。
 fn dispatch_inner<S: DaemonStateExt>(
     state: &mut S,
     peer: PeerCredential,
     method: &str,
     params: &Value,
     received_fds: &[i32],
+    inline_payload: Option<InlinePayload<'_>>,
 ) -> Result<Value, DaemonRpcError> {
     // 管理员方法授权检查（fail-closed：未授权直接拒绝，不进入 handler）
     //
@@ -2666,12 +2940,14 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.remove" => state.handle_workspace_remove(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
         "workspace.refresh.plan" => state.handle_workspace_refresh_plan(peer, params),
-        "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params, received_fds),
+        "workspace.file.refresh" => state
+            .handle_workspace_file_refresh(peer, params, received_fds, inline_payload),
         "workspace.file.delete" => state.handle_workspace_file_delete(peer, params),
         "workspace.recover" => state.handle_workspace_recover(peer, params),
 
         // ---- Snapshot 管理（R6 实现）----
-        "snapshot.publish" => state.handle_snapshot_publish(peer, params, received_fds),
+        "snapshot.publish" => state
+            .handle_snapshot_publish(peer, params, received_fds, inline_payload),
         "gc.snapshots" => state.handle_gc_snapshots(peer, params),
 
         // ---- CAS GC（R6 实现）----
@@ -2840,6 +3116,12 @@ fn dispatch_inner<S: DaemonStateExt>(
         "resolved_edges.get" => state.handle_resolved_edges_get(peer, params),
         "resolved_edges.count" => state.handle_resolved_edges_count(peer, params),
         "resolved_edges.replace" => state.handle_resolved_edges_replace(peer, params),
+        // ---- G4（T-1789022024819-8cb9f614）：build-context daemon 化 ----
+        "resolved_edges.compute" => state.handle_resolved_edges_compute(peer, params),
+        "resolved_edges.rebuild" => state.handle_resolved_edges_rebuild(peer, params),
+        "build_context.import_compile_commands" => {
+            state.handle_build_context_import_compile_commands(peer, params)
+        }
 
         // ---- Agent & Task 协同 RPC ----
         "agent.register" => state.handle_agent_register(peer, params),
@@ -2870,6 +3152,9 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.reconcile" => state.handle_task_reconcile(peer, params),
         "task.steps.bootstrap_legacy" => state.handle_task_steps_bootstrap_legacy(peer, params),
         "task.next_action" => state.handle_task_next_action(peer, params),
+        // RP-05（spec §4.1）：唯一生产 prompt RPC。薄注册——无 route/模板
+        // 业务逻辑，域 handler 在单只读 with_conn closure 内完成全部查询。
+        "task.prompt.compile" => state.handle_task_prompt_compile(peer, params),
         "task.events" => state.handle_task_events(peer, params),
         "task.wait" => state.handle_task_wait(peer, params),
         "task.list" => state.handle_task_list(peer, params),
@@ -2914,6 +3199,7 @@ fn dispatch_inner<S: DaemonStateExt>(
 
         // ---- Lease Control Plane（M7；写操作经串行化点，只读直接执行）----
         "lease.acquire" => state.handle_lease_acquire(peer, params),
+        "lease.recover" => state.handle_lease_recover(peer, params),
         // lease.renew 是 lease.extend 的兼容别名（同一 handler，docs + 测试记录）
         "lease.extend" | "lease.renew" => state.handle_lease_extend(peer, params),
         "lease.release" => state.handle_lease_release(peer, params),
@@ -2937,6 +3223,9 @@ fn dispatch_inner<S: DaemonStateExt>(
         | "get_action_identity"
         | "check_action_identity"
         | "check_session_separation"
+        | "get_attestation_validity"
+        | "list_attestation_revocations"
+        | "assignment_show"
         | "evidence.append"
         | "evidence.query"
         | "freshness.status"
@@ -3264,6 +3553,51 @@ mod tests {
     }
 
     // ---- 基础方法测试 ----
+
+    // GATE-1A：task.create 严格字段注册必须保持薄注册。
+    // - dispatch 层不得出现 parent 业务逻辑（错误码/校验函数调用）；
+    // - unknown-field 拒绝只在 frozen request contract（domain parent-aware 分支）启用，
+    //   dispatch 层不调用 reject_unknown_create_fields；
+    // - 注册常量只引用 domain 权威源 TASK_CREATE_FROZEN_FIELDS，字段清单冻结为 11 项。
+    #[test]
+    fn test_task_create_strict_field_registration_is_thin_and_frozen() {
+        let fields: &[&str] = TASK_CREATE_STRICT_FIELDS;
+        let expected = [
+            "title",
+            "description",
+            "parent_id",
+            "workspace_id",
+            "workspace_instance_id",
+            "steps",
+            "role_contracts",
+            "task_id",
+            "task_contract_envelope",
+            "identity_policy",
+            "request_id",
+        ];
+        assert_eq!(fields, &expected[..]);
+
+        // 薄注册：dispatch 层零 parent 业务逻辑（route 只转发到 handler）。
+        // 只扫描 `#[cfg(test)]` 之前的模块主体，排除本测试自身的错误码字面量。
+        let dispatch_src =
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/daemon/dispatch.rs"));
+        let dispatch_body = dispatch_src.split("#[cfg(test)]").next().unwrap();
+        assert!(!dispatch_body.contains("state.reject_unknown_create_fields"));
+        assert!(!dispatch_body.contains("state.validate_parent_for_child_create"));
+        for err_code in [
+            "E_TASK_PARENT_NOT_FOUND",
+            "E_TASK_PARENT_UNBOUND",
+            "E_TASK_PARENT_AMBIGUOUS_BINDING",
+            "E_TASK_PARENT_CAPTURE_MISSING",
+            "E_TASK_PARENT_CONTRACT_REQUIRED",
+            "E_TASK_CREATE_UNKNOWN_FIELD",
+        ] {
+            assert!(
+                !dispatch_body.contains(err_code),
+                "dispatch must not contain parent business error code {err_code}"
+            );
+        }
+    }
 
     #[test]
     fn test_ping_returns_ok_with_peer_uid() {
@@ -4026,6 +4360,7 @@ mod tests {
                 peer.clone(),
                 &json!({
                     "workspace_id": 1,
+                    "workspace_instance_id": "ws-1",
                     "task_id": rw_task,
                     "title": "p0l step3 next_action projection",
                     "steps": [{"action": "implement", "target_file": "a.rs"}],
@@ -4059,6 +4394,7 @@ mod tests {
                 peer.clone(),
                 &json!({
                     "workspace_id": 1,
+                    "workspace_instance_id": "ws-1",
                     "task_id": bare_task,
                     "title": "no contract revision",
                     "steps": [{"action": "implement", "target_file": "a.rs"}]
@@ -4138,6 +4474,7 @@ mod tests {
                     peer.clone(),
                     &json!({
                         "workspace_id": 1,
+                        "workspace_instance_id": "ws-1",
                         "task_id": task_id,
                         "title": "p0l R3 blocked projection",
                         "steps": [{"action": "implement", "target_file": "a.rs"}]

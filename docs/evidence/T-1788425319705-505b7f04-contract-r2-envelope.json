@@ -1,0 +1,46 @@
+{
+  "contract_id": "TC-T-1788425319705-505b7f04",
+  "revision": 2,
+  "supersedes_revision": 1,
+  "supersedes_contract_hash": "sha256:351b78edfd2364c2b67552cea0676d6e4faf595eeed2c9e84f4e0de8577dc5c7",
+  "profile": "code_change",
+  "objective": "Correct the task-write client-contract repair scope after source inspection: executor lease-role projection is owned by rust_ext/src/daemon/task_loop/next_action.rs, not task_collab_governance.rs. Preserve revision 1 and its original step records; implement only the unified report failure-exit, lease JSON compatibility, and executor runtime-role contract with focused regression coverage.",
+  "source_provenance": "Append-only scope correction for T-1788425319705-505b7f04. Executor preflight after claim located authorization.lease_role rendering at task_loop/next_action.rs:890-900, while task.handoff validates the concrete identity role at task_collab_lifecycle.rs:1123-1184. The r1 descriptive target path task_collab_governance.rs is therefore inaccurate and must not authorize an out-of-scope edit. See task-owned evidence T-1788425319705-505b7f04-contract-r2-scope-correction.json.",
+  "interfaces": [
+    "cw task report",
+    "cw lease acquire/release JSON response",
+    "task.next_action authorization.lease_role",
+    "task.handoff protected mutation"
+  ],
+  "allowed_edit_scope": [
+    "cli/main.py",
+    "rust_ext/src/daemon/task_loop/next_action.rs",
+    "rust_ext/src/daemon/task_loop/next_action_test.rs",
+    "tests/test_task_write_client_contract.py",
+    "docs/evidence/T-1788425319705-505b7f04-contract-r2-envelope.json",
+    "docs/evidence/T-1788425319705-505b7f04-contract-r2-scope-correction.json",
+    "docs/evidence/T-1788425319705-505b7f04-task-write-client-contract-results.json",
+    "cw_task_commit_ledger.json"
+  ],
+  "acceptance_clauses": [
+    "A daemon-rejected cw task report exits non-zero and does not print a successful report result.",
+    "lease acquire JSON presents lease_token as the canonical machine field and preserves token as an explicitly tested compatibility alias without writing either value to evidence or logs.",
+    "For executor work, task.next_action authorization.lease_role equals the concrete runtime lease role accepted by task.handoff: implementer.",
+    "Focused positive and negative tests cover the report, lease, and executor handoff contract; no task/apply/close, workspace binding, Role Prompt compiler, or direct SQLite behavior changes."
+  ],
+  "risks": [
+    "Changing only a CLI label without preserving the token compatibility alias can break existing automation.",
+    "Treating governance executor and runtime implementer as interchangeable without an explicit projection rule can strand a valid lease.",
+    "Catching daemon errors without propagating a non-zero process status lets automation falsely report success."
+  ],
+  "rollback": [
+    "Revert only this task's task-bound commits if regression is found.",
+    "Do not rewrite revision 1, claimed step records, leases, assignments, reports, verdicts, or workspace bindings."
+  ],
+  "dependencies": [
+    "Immutable workspace binding 1 / 4baea3ff12c2ea5c",
+    "Active independent reviewer lease with current fencing counter",
+    "Registered adjudicator identity distinct from the reviewer and executor"
+  ],
+  "identity_policy": "legacy_identity_v1"
+}

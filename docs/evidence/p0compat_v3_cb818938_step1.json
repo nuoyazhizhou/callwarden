@@ -1,0 +1,18 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1788963103216-cb818938",
+  "step_index": 1,
+  "action": "thin_python_client",
+  "changed_files": [
+    "server/tools/tools_query.py",
+    "server/compat_registry.py"
+  ],
+  "summary": "_SYMBOL_READ_ONLY_METHODS 清空 + 空 dict 条件注册；RUST_COMPAT_ROUTE 摘除 8 行（两端对齐）",
+  "verification": {
+    "rust_build": "cargo build --bin cw-daemon Finished (MSVC env, CARGO_INCREMENTAL=0)",
+    "pytest": "21/21 PASS (tests/test_mcp_compat_tools_query_http_rpc.py) + 15/15 回归 (identity-lease-small + assignment_show)",
+    "capabilities_endpoint": "8 methods backend=rust_native, status=available"
+  },
+  "created_at": "2026-09-10T00:19:17+0800",
+  "request_id": "req-evd-865cd723"
+}

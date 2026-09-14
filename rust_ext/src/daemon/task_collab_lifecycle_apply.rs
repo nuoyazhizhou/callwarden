@@ -259,7 +259,20 @@ impl TaskCollabStore {
     /// 3. 写 closed（系统权威，reason_code=cascade_closed，actor=coordinator）；
     /// 4. 递归向上直到根或遇到未收尾节点。
     ///
+    /// **被替代卡豁免（GOV-FIX-03）**：叶子节点若存在 supersede 关系（即已被后继卡
+    /// 收编），其 `pending`/`failed` 步骤已被后继卡 scope 承接、属作废遗留，不再阻塞
+    /// 收尾；此时 `reason` 记为 `superseded by <superseding_task_id>（leaf steps waived）`。
+    /// 动因：`task.supersede` 按设计只写关系不改 status（见 `task_supersede.rs`），
+    /// 而缺合同的裸卡又无法走 close S2 / `task.step.resolve`（后者只吃 `failed` 步），
+    /// 若不豁免则被替代裸卡永久 open 且无任何 daemon 写路径可收尾。
+    ///
     /// 幂等：已 closed 节点跳过；返回实际收尾的节点清单。
+    ///
+    /// **拒绝语义（GOV-FIX-06）**：门禁不满足时不再静默返回空 `closed`，响应携带
+    /// `target_closed`（目标卡本次是否已收尾，含幂等重提）与 `blocked`（首个未满足
+    /// 条件的节点：`children_not_closed` 带未闭子卡数 / `leaf_steps_pending` 带未完成
+    /// 步数），供 CLI 与脚本以 RC=2 显式拒绝，杜绝“✓ Task closed 但 status 未变”的
+    /// 假成功。
     pub fn handle_task_cascade_close(
         &self,
         peer: PeerCredential,
@@ -306,6 +319,10 @@ impl TaskCollabStore {
         // 再逐级向上。切勿 rev()——否则先处理 root 会在自身未满足条件时 break。）
         let mut closed: Vec<String> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
+        // GOV-FIX-06：门禁拒绝语义。break 时记录首个未满足条件的节点，
+        // 让 CLI/脚本可程序化判定“请求成功但目标卡未被收尾”（此前返回
+        // closed=[] 却仍是 ok，CLI 打印 ✓ Task closed 且 RC=0 —— 假成功缺陷）。
+        let mut blocked: Option<Value> = None;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
@@ -322,6 +339,20 @@ impl TaskCollabStore {
                 skipped.push(node.clone());
                 continue;
             }
+
+            // 被替代卡（supersede 收编）判定：存在出边即视为已由后继卡承接 scope。
+            let superseded_by: Option<String> = tx
+                .query_row(
+                    "SELECT superseding_task_id FROM task_supersede_relations \
+                     WHERE superseded_task_id = ?1 \
+                     ORDER BY authoritative_timestamp DESC LIMIT 1",
+                    params![node],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("查询 supersede 关系失败: {e}"))
+                })?;
 
             // S1: 直接子任务全 closed（聚合判定核心）
             let child_total: i64 = tx
@@ -341,10 +372,16 @@ impl TaskCollabStore {
                     .unwrap_or(0);
                 if open_children > 0 {
                     // 子树未全 closed → 停止级联（不跳过，直接 break 保留现场）
+                    blocked = Some(serde_json::json!({
+                        "task_id": node,
+                        "reason": "children_not_closed",
+                        "open_children": open_children,
+                    }));
                     break;
                 }
             } else {
-                // 叶子节点：步骤必须全 done（复用 close S2 语义）
+                // 叶子节点：步骤必须全 done（复用 close S2 语义）。
+                // 被替代卡豁免：步骤已由后继卡 scope 承接，属作废遗留，不阻塞收尾。
                 let step_count: i64 = tx
                     .query_row(
                         "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1",
@@ -352,7 +389,7 @@ impl TaskCollabStore {
                         |r| r.get(0),
                     )
                     .unwrap_or(0);
-                if step_count > 0 {
+                if step_count > 0 && superseded_by.is_none() {
                     let not_done: i64 = tx
                         .query_row(
                             "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1 AND status IN ('pending', 'blocked')",
@@ -364,6 +401,12 @@ impl TaskCollabStore {
                         crate::daemon::task_loop::next_action::unresolved_failed_step_ids(&tx, node)?
                             .len() as i64;
                     if not_done + unresolved_failed > 0 {
+                        blocked = Some(serde_json::json!({
+                            "task_id": node,
+                            "reason": "leaf_steps_pending",
+                            "not_done_steps": not_done,
+                            "unresolved_failed_steps": unresolved_failed,
+                        }));
                         break;
                     }
                 }
@@ -496,13 +539,18 @@ impl TaskCollabStore {
             )
             .map_err(|e| DaemonRpcError::internal_error(format!("级联 close 失败: {e}")))?;
             let seq = self.next_seq();
+            let close_reason = match superseded_by.as_deref() {
+                Some(succ) => format!("superseded by {succ} (leaf steps waived)"),
+                None => "subtree aggregate closed".to_string(),
+            };
             tx.execute(
                 "INSERT INTO task_events
                  (task_id, from_status, to_status, reason_code, reason, actor_identity, role, monotonic_seq, authoritative_timestamp)
-                 VALUES (?1, ?2, 'closed', 'cascade_closed', 'subtree aggregate closed', ?3, ?4, ?5, ?6)",
+                 VALUES (?1, ?2, 'closed', 'cascade_closed', ?3, ?4, ?5, ?6, ?7)",
                 params![
                     node,
                     node_status,
+                    close_reason,
                     owner_key,
                     identity.as_ref().map(|id| id.role.as_str()).unwrap_or("coordinator"),
                     seq,
@@ -517,6 +565,8 @@ impl TaskCollabStore {
             DaemonRpcError::internal_error(format!("提交级联事务失败: {e}"))
         })?;
 
+        // GOV-FIX-06：目标卡真实收尾判定（含幂等重提：已在 skipped 亦算 closed）。
+        let target_closed = closed.iter().any(|n| n == task_id) || skipped.iter().any(|n| n == task_id);
         let mut res = Map::new();
         res.insert("task_id".to_string(), Value::String(task_id.to_string()));
         res.insert(
@@ -526,6 +576,11 @@ impl TaskCollabStore {
         res.insert(
             "skipped".to_string(),
             Value::Array(skipped.into_iter().map(Value::String).collect()),
+        );
+        res.insert("target_closed".to_string(), Value::Bool(target_closed));
+        res.insert(
+            "blocked".to_string(),
+            blocked.unwrap_or(Value::Null),
         );
         let val = Value::Object(res);
         self.save_dedup(params, &val);

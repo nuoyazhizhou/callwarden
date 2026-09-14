@@ -392,7 +392,7 @@ class TestFeatureMatrixStatusRust:
 
         注：G11/G29 经复审回退为 ❌/🟡，不再断言 ✅。
         """
-        matrix_path = os.path.join(ROOT, "_feature_matrix.md")
+        matrix_path = os.path.join(ROOT, "docs", "design", "_feature_matrix.md")
         source = _read_file(matrix_path)
         pattern_prefix = f"| {gid} |"
         lines = source.split("\n")

@@ -1,0 +1,18 @@
+{
+  "evidence_id": "role-prompt-v1-rp01-supersede-execution",
+  "task_id": "T-1788671453544-d0625554",
+  "superseding_task_id": "T-1788673904079-5fa6fb84",
+  "reason_code": "defective_creation_superseded",
+  "context": {
+    "defect_card": "T-1788671453544-d0625554 (RP-01 first creation): planner-side step target_file payload wrote prose strings instead of literal file paths, so the daemon literal whitelist could never accept executor reports. Documented in docs/evidence/role-prompt-v1-rp01-creation-supersede.json (sha256 6CC80DC1 family).",
+    "successor_card": "T-1788673904079-5fa6fb84 (RP-01 corrected creation): executed to full loop closure COMPLETE_CONFIRMED (commits 89860ded + 89f83b3e, ledger entry t1788673904079_rp01).",
+    "enabling_fix": "T-1788675318818-c4b18cfc (SR-01): route_task_write/route_task_read no longer inject the legacy active workspace into task-scoped supersede requests; commit 37dfa370143e54bb936709c356261150170a6745. Before SR-01 the supersede call failed closed with E_WORKSPACE_AUTHORITY_MISMATCH (binding ws-1 vs injected active ws-10)."
+  },
+  "governance": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "role": "adjudicator",
+    "source_task_lease": "reviewer-role lease re-acquired on the superseded (source) task after the prior holder lease expired; fencing counter per daemon issuance"
+  },
+  "expected_outcome": "task_supersede_relations row T1 -> T2 with append-only event + ledger result; T1 projection superseded; T2 unaffected (already closed)"
+}

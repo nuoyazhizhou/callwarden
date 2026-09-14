@@ -1,6 +1,6 @@
 # reviewer_blocked 修正进度（本地可读镜像，非权威；权威在 cw tracker + .rb_progress.json）
 
-更新时间: 2026-08-27 12:26:13  模式: apply
+更新时间: 2026-09-08 10:49:11  模式: investigate
 
 - `T-1787367417246-34190890` → diagnosed / investigated — diagnosis recorded
 - `T-1787321708639-d6d362f4` → diagnosed / investigated — diagnosis recorded
@@ -15,9 +15,9 @@
 - `T-1787321708760-de068a9c` → diagnosed / investigated — diagnosis recorded
 - `T-1787321708856-e3c10624` → diagnosed / investigated — diagnosis recorded
 - `T-1787321713424-f4071e14` → diagnosed / investigated — diagnosis recorded
-- `T-1787321713485-f7a90848` → diagnosed / compat_pending — 迁移未完成（矩阵 get_clone_group_detail: target_backend=python_compat, status=transition）；退休 Python 会破坏工具，需先做实际 Rust 迁移再退休。非安全退休。
-- `T-1787321713551-fb94f87c` → diagnosed / compat_pending — 迁移未完成（矩阵 task_plan_template: target_backend=python_compat, status=transition）；退休 Python 会破坏工具，需先做实际 Rust 迁移再退休。非安全退休。
-- `T-1787322794529-aae5f8d4` → diagnosed / cli_pending — CLI thin-client conversion identified; pending explicit guarded edit (shared file cli/main.py).
+- `T-1787321713485-f7a90848` → diagnosed / investigated — diagnosis recorded
+- `T-1787321713551-fb94f87c` → diagnosed / investigated — diagnosis recorded
+- `T-1787322794529-aae5f8d4` → diagnosed / investigated — diagnosis recorded
 - `T-1787322794614-affbd0b4` → diagnosed / investigated — diagnosis recorded
 - `T-1787322794681-b3f8e33c` → diagnosed / investigated — diagnosis recorded
 - `T-1787322794745-b7c1ed10` → diagnosed / investigated — diagnosis recorded
@@ -31,3 +31,22 @@
 - `T-1787322795307-d949b968` → diagnosed / investigated — diagnosis recorded
 - `T-1787322795374-dd442bac` → diagnosed / investigated — diagnosis recorded
 - `T-1787322795173-d141864c` → diagnosed / investigated — diagnosis recorded
+- `T-1787323461742-03e6a000` → diagnosed / investigated — diagnosis recorded
+- `T-1787323461683-0059e5a0` → diagnosed / investigated — diagnosis recorded
+- `T-1787823611412-2f503878` → diagnosed / investigated — diagnosis recorded
+- `T-1787823627134-d86d83b8` → diagnosed / investigated — diagnosis recorded
+- `T-1787850432491-f42a2b8c` → diagnosed / investigated — diagnosis recorded
+- `T-1787888909289-881595e0` → diagnosed / investigated — diagnosis recorded
+- `T-1788011722055-1b59cb4c` → diagnosed / investigated — diagnosis recorded
+- `T-1788019804377-eb4595d8` → diagnosed / investigated — diagnosis recorded
+- `T-1788045499955-a314fad0` → diagnosed / investigated — diagnosis recorded
+- `T-1788046887458-b0ad9b68` → diagnosed / investigated — diagnosis recorded
+- `T-1788047855059-fa334ee0` → diagnosed / investigated — diagnosis recorded
+- `T-1788050221973-114dab10` → diagnosed / investigated — diagnosis recorded
+- `T-1788055266079-7d76f734` → diagnosed / investigated — diagnosis recorded
+- `T-1788063720353-e7768bb0` → diagnosed / investigated — diagnosis recorded
+- `T-1788065933399-2b3cead8` → diagnosed / investigated — diagnosis recorded
+- `T-1788067569565-1e5b45ac` → diagnosed / investigated — diagnosis recorded
+- `T-1788077285594-4eceeaac` → diagnosed / investigated — diagnosis recorded
+- `T-1788079398046-26c63824` → diagnosed / investigated — diagnosis recorded
+- `T-1788447967354-616aa470` → diagnosed / investigated — diagnosis recorded

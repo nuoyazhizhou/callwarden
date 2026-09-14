@@ -1,0 +1,52 @@
+{
+  "evidence_id": "SR-02-role-prompt-route-semantics-fix",
+  "task_id": "T-1788680451232-c06332f4",
+  "created_at": "2026-09-06T16:20:00+08:00",
+  "frozen_authority": {
+    "spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+  },
+  "defect": {
+    "summary": "RP-01 validator rejected role-kind templates with routes:[] (E_ASSET_ROUTE_INVALID) while enforcing global route uniqueness, making the frozen spec section 7.3 production tree (7 role templates, 4 legal routes, READY/PLAN hard error in v1) unsatisfiable; RP-02 could never land.",
+    "root_cause": "Per-template '>=1 route' mandate was an RP-01 implementation addition beyond the frozen spec text; SS11.1(4) route completeness/unambiguity is route-coverage semantics, not per-template.",
+    "discovery": "Pre-creation verification for RP-02 (2026-09-06): legacy hashes/IDs verified byte-exact; current v4 template self-declared IDs collected; manifest schema feasibility analysis vs validator rules showed 7 role templates > 4 routes under global uniqueness."
+  },
+  "adjudication": {
+    "decision_by": "user (2026-09-06)",
+    "options_presented": [
+      "Option B: drop per-template mandate, keep global route uniqueness (recommended)",
+      "Option C: route-to-role mapping uniqueness, legacy/current share routes",
+      "report-only, no card"
+    ],
+    "selected": "Option B"
+  },
+  "fix": {
+    "files": [
+      "rust_ext/build_support/role_prompt_validator.rs",
+      "rust_ext/tests/role_prompt_validator_negative.rs",
+      "rust_ext/tests/role_prompt_validator_positive.rs"
+    ],
+    "semantics": [
+      "role-kind templates may declare routes:[] (legacy exact-ID+hash selection per SS7.1; planner pre-cutover non-routable per SS6)",
+      "global route uniqueness retained (E_ASSET_ROUTE_AMBIGUOUS)",
+      "system templates still must not claim action-ready routes (E_ASSET_ROUTE_INVALID)",
+      "positive regression proves the full frozen SS7.3 shape validates: 7 role (3 legacy routeless; current executor CLAIM+REVISE, reviewer REVIEW, adjudicator ADJUDICATE, planner routeless) + 3 system, with exact 4-route unambiguous coverage"
+    ],
+    "code_commit": "bcc6015810b8a9cade911e8a2dbd778523db7cf6"
+  },
+  "verification": {
+    "cargo_test_role_prompt_validator": "negative 20 passed; positive 7 passed (5 pre-existing + 2 new); exit=0",
+    "cargo_check": "green with CARGO_INCREMENTAL=0; note: rustc 1.93.1 ICE under incremental check profile (compiler bug, unrelated to diff; test profile compiles the same lib green)",
+    "git_diff_check": "clean",
+    "regression_matrix": {
+      "task_id_discriminator": "N/A (Rust validator scope)",
+      "negative_suite": "20/20 passed incl. duplicate id/path, path escape, CRLF, non-UTF8, ambiguous route, system-with-route, unknown route, legacy exception triple, body id mismatch, secrets, unknown fields, schema version, oversized id, missing file",
+      "positive_suite": "7/7 passed incl. role+system mix, absent manifest, compiler policy hash, both hash wire forms, empty role routes, frozen 7.3 tree shape"
+    }
+  },
+  "identity": {
+    "executor": "executor-wb-sr02-01",
+    "reviewer": "reviewer-wb-sr02-01",
+    "adjudicator": "adjudicator-wb-sr02-01"
+  }
+}

@@ -310,7 +310,9 @@ use super::support::*;
             )
             .unwrap();
         assert_eq!(res["task_id"], "T-LEASE-1");
-        assert_eq!(res["role"], "implementer");
+        // C-24：lease.acquire 须把 runtime role（implementer）归一到治理角色
+        // executor 后落库并回显，与 task_leases 行及 lease.status 保持同源。
+        assert_eq!(res["role"], "executor");
         assert_eq!(res["fencing_counter"], 1);
         let raw_token = res["token"].as_str().unwrap().to_string();
         assert!(!raw_token.is_empty(), "raw token 必须返回");
@@ -330,6 +332,88 @@ use super::support::*;
         assert_eq!(counter, 1);
         assert!(lease_id.starts_with("L-"));
         drop(conn);
+    }
+
+    #[test]
+    fn c24_production_acquire_canonicalizes_runtime_role_and_variant_lookup_blocks_double_active() {
+        // C-24 生产路径实证（lease.acquire RPC 实际分发的 handler）：
+        // 1) runtime role implementer → 归一为 executor 落库 + 响应同源；
+        // 2) 同治理角色的另一 runtime 变体（planner）发起 acquire 时，
+        //    变体集查找须命中已存在的 active executor 行 → E_LEASE_ACTIVE_EXISTS。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        seed_task_binding(&store, "T-C24-PROD");
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "agent-c24a",
+            "inst-c24a",
+            "sess-c24a",
+            "implementer",
+        );
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "agent-c24b",
+            "inst-c24b",
+            "sess-c24b",
+            "planner",
+        );
+
+        // (1) implementer → executor 落库
+        let res = store
+            .handle_lease_acquire(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-C24-PROD",
+                    "role": "implementer",
+                    "ttl_seconds": 3600.0,
+                    "identity": lease_identity("agent-c24a", "sess-c24a", "model-c24", "implementer"),
+                }),
+            )
+            .unwrap();
+        assert_eq!(res["role"], "executor", "C-24 响应须为归一后的治理角色");
+        let raw_token = res["token"].as_str().unwrap().to_string();
+        let conn = store.conn.lock().unwrap();
+        let (stored_role, counter): (String, i64) = conn
+            .query_row(
+                "SELECT role, fencing_counter FROM task_leases
+                 WHERE workspace_id = 1 AND task_id = 'T-C24-PROD' AND status = 'active'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored_role, "executor", "C-24 落库角色须为 executor");
+        assert_eq!(counter, 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT token_hash FROM task_leases WHERE task_id = 'T-C24-PROD' AND status = 'active'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap(),
+            sha256_hex(raw_token.as_bytes()),
+            "DB 只存 hash"
+        );
+        drop(conn);
+
+        // (2) planner（executor 的另一 runtime 变体）→ 命中同一 active 槽位
+        let err = store
+            .handle_lease_acquire(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-C24-PROD",
+                    "role": "planner",
+                    "ttl_seconds": 3600.0,
+                    "identity": lease_identity("agent-c24b", "sess-c24b", "model-c24", "planner"),
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_LEASE_ACTIVE_EXISTS", "C-24 变体集查找须命中 executor 行");
     }
 
     #[test]
@@ -1814,4 +1898,269 @@ use super::support::*;
             )
             .unwrap_err();
         assert_eq!(err.code, "task_conflict");
+    }
+
+    fn seed_recovery_assignment(store: &TaskCollabStore, task_id: &str) {
+        let mut conn = store.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        assignment_queue::queue_assignment(
+            &tx,
+            task_id,
+            None,
+            "reviewer",
+            "recovery-queue",
+            None,
+            "old-agent",
+            "old-session",
+            store.next_seq(),
+            now_ts(),
+        )
+        .unwrap();
+        assignment_queue::claim_assignment(
+            &tx,
+            task_id,
+            None,
+            "reviewer",
+            "old-agent",
+            "old-session",
+            "old-model",
+            "recovery-claim",
+            "old-agent",
+            false,
+            store.next_seq(),
+            now_ts(),
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO task_events
+             (task_id, from_status, to_status, reason_code, reason, actor_identity,
+              agent_session_id, role, monotonic_seq, authoritative_timestamp)
+             VALUES (?1, 'in_progress', 'in_progress', 'claimed', 'test claim',
+                     'old-agent', 'old-session', 'reviewer', ?2, ?3)",
+            params![task_id, store.next_seq(), now_ts()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+
+    fn recovery_params(task_id: &str, request_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "task_id": task_id,
+            "role": "reviewer",
+            "workspace_id": 1,
+            "workspace_instance_id": "ws-inst-test",
+            "request_id": request_id,
+            "reason": "previous reviewer session disappeared",
+            "identity": {
+                "agent_id": "recovery-planner",
+                "agent_instance_id": "recovery-planner-inst",
+                "client_id": "test",
+                "provider": "test",
+                "model_id": "claude-test",
+                "model_mode": "agent",
+                "system_fingerprint": "fp-1",
+                "session_id": "recovery-planner-session",
+                "role": "planner",
+                "runtime_hash": "runtime-test"
+            }
+        })
+    }
+
+    #[test]
+    fn test_lease_recover_atomically_expires_orphan_and_stales_assignment() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        let task_id = "T-LEASE-RECOVER-ORPHAN";
+        seed_task_binding(&store, task_id);
+        seed_reviewer_lease(
+            &store,
+            task_id,
+            "orphan-token",
+            4,
+            "old-agent",
+            "old-session",
+            "old-model",
+        );
+        seed_recovery_assignment(&store, task_id);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "recovery-planner",
+            "recovery-planner-inst",
+            "recovery-planner-session",
+            "planner",
+        );
+
+        let params = recovery_params(task_id, "recover-orphan-1");
+        let response = store
+            .handle_lease_recover(peer.clone(), &params)
+            .expect("registered planner should recover an orphan lease");
+        assert_eq!(response["lease_status"], "expired");
+        assert_eq!(response["assignment_status"], "stale");
+        assert_eq!(response["recovery_reason"], "holder_registration_missing");
+        assert_eq!(response["replayed"], false);
+        assert!(response.get("token").is_none(), "response 不得包含 raw token");
+
+        let conn = store.conn.lock().unwrap();
+        let lease_status: String = conn
+            .query_row(
+                "SELECT status FROM task_leases WHERE task_id = ?1 AND role = 'reviewer'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(lease_status, "expired");
+        let expire_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_lease_events WHERE task_id = ?1 AND event_type = 'expire'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stale_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id = ?1 AND reason_code = 'assignment_stale'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(expire_events, 1);
+        assert_eq!(stale_events, 1);
+        let claim_released_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_events WHERE task_id = ?1 AND reason_code = 'claim_released'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(claim_released_events, 1, "同一 lease holder 的 task claim 必须随 recovery 原子释放");
+        assert!(assignment_queue::current_assignment(&conn, task_id, None, Some("reviewer"))
+            .unwrap()
+            .is_none());
+        drop(conn);
+
+        let event_counts_before: (i64, i64) = {
+            let conn = store.conn.lock().unwrap();
+            (
+                conn.query_row(
+                    "SELECT COUNT(*) FROM task_lease_events WHERE task_id = ?1",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+                conn.query_row(
+                    "SELECT COUNT(*) FROM task_events WHERE task_id = ?1 AND reason_code = 'assignment_stale'",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            )
+        };
+        let replay = store
+            .handle_lease_recover(peer, &params)
+            .expect("same request should replay deterministically");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["lease_id"], response["lease_id"]);
+        let event_counts_after: (i64, i64) = {
+            let conn = store.conn.lock().unwrap();
+            (
+                conn.query_row(
+                    "SELECT COUNT(*) FROM task_lease_events WHERE task_id = ?1",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+                conn.query_row(
+                    "SELECT COUNT(*) FROM task_events WHERE task_id = ?1 AND reason_code = 'assignment_stale'",
+                    params![task_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            )
+        };
+        assert_eq!(event_counts_after, event_counts_before);
+    }
+
+    #[test]
+    fn test_lease_recover_rejects_healthy_active_lease() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        seed_workspace(&store);
+        let task_id = "T-LEASE-RECOVER-HEALTHY";
+        seed_task_binding(&store, task_id);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "healthy-reviewer",
+            "healthy-reviewer-inst",
+            "healthy-reviewer-session",
+            "reviewer",
+        );
+        seed_reviewer_lease(
+            &store,
+            task_id,
+            "healthy-token",
+            8,
+            "healthy-reviewer",
+            "healthy-reviewer-session",
+            "healthy-model",
+        );
+        register_agent_with_identity(
+            &store,
+            &peer,
+            "recovery-planner",
+            "recovery-planner-inst",
+            "recovery-planner-session",
+            "planner",
+        );
+
+        let err = store
+            .handle_lease_recover(
+                peer,
+                &recovery_params(task_id, "recover-healthy-1"),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "E_LEASE_RECOVERY_NOT_ELIGIBLE");
+        let conn = store.conn.lock().unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM task_leases WHERE task_id = ?1 AND role = 'reviewer'",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "active");
+        let events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_lease_events WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(events, 0, "健康 lease 拒绝 recovery 时不得追加 expire 事件");
+    }
+
+    #[test]
+    fn test_lease_recover_rejects_raw_secret_fields_before_mutation() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let mut params = recovery_params("T-LEASE-RECOVER-SECRET", "recover-secret-1");
+        params["token"] = Value::String("must-not-be-accepted".to_string());
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let err = store.handle_lease_recover(peer, &params).unwrap_err();
+        assert_eq!(err.code, "E_LEASE_RECOVERY_SECRET_FIELD");
+        let conn = store.conn.lock().unwrap();
+        let leases: i64 = conn
+            .query_row("SELECT COUNT(*) FROM task_leases", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(leases, 0, "敏感字段拒绝不得写入 lease");
     }

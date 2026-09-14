@@ -23,7 +23,15 @@ impl TaskCollabStore {
         let contract_hash = required("contract_hash")?;
         let role_contract_id = required("role_contract_id")?;
         let role_contract_hash = required("role_contract_hash")?;
-        let snapshot_id = required("snapshot_id")?;
+        // Pre-snapshot 时代有界兼容（T-1788665370580-83851bf0）：snapshot_id 允许为空，
+        // 但仅当事务内证明该任务的事件历史不存在任何非空 snapshot_id（机制引入前的
+        // 存量任务，无 snapshot 溯源可引用）；任务历史存在任何非空 snapshot 时仍强制
+        // 要求非空 snapshot_id（fail-closed）。禁止 daemon 猜测或生成 snapshot 引用。
+        let snapshot_id = params
+            .get("snapshot_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
         let view_manifest_hash = required("view_manifest_hash")?;
         let request_id = required("request_id")?;
         if request_id
@@ -113,6 +121,25 @@ impl TaskCollabStore {
 
         let mut conn = self.conn.lock().unwrap();
         let tx = begin_immediate_with_retry(&conn, "verdict")?;
+        // Pre-snapshot 时代兼容判定（事务内，fail-closed）：空 snapshot_id 仅在任务
+        // 全事件历史零非空 snapshot 时放行；否则维持"缺少 snapshot_id"拒绝。
+        if snapshot_id.is_empty() {
+            let with_snapshot: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM task_events \
+                     WHERE task_id = ?1 AND snapshot_id IS NOT NULL AND snapshot_id != ''",
+                    params![task_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("pre-snapshot 时代判定失败: {}", e))
+                })?;
+            if with_snapshot > 0 {
+                return Err(DaemonRpcError::invalid_params(
+                    "缺少 snapshot_id（任务事件历史携带 snapshot 溯源，verdict 必须提供一致 snapshot_id）",
+                ));
+            }
+        }
         self.validate_lease_for_mutation(
             &tx,
             task_id,

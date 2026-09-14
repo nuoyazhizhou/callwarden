@@ -1,0 +1,42 @@
+{
+  "evidence_id": "rp01-step3-934fc634",
+  "task_id": "T-1788671453544-d0625554",
+  "step_id": "S-1788671453545-d06ef8e0",
+  "action": "verify_compile_failure_contract",
+  "recorded_at": "2026-09-07T13:58:42.671480+00:00",
+  "tamper_test": {
+    "procedure": "backup manifest.json; corrupt templates[0].content_sha256 to sha256:0*64; run cargo check",
+    "expected": "build fails closed with explicit diagnostics",
+    "actual_exit_code": 101,
+    "actual_diagnostics": [
+      "role prompt build gate FAILED (3 issue[s])",
+      "E_ASSET_HASH_MISMATCH: templates[0]: asset legacy/executor_planner_startup_v1.md declared sha256:0*64 but actual sha256:59a459f7...",
+      "E_ASSET_BODY_ID_MISMATCH",
+      "E_ASSET_LEGACY_EXCEPTION_VIOLATED",
+      "panicked at build.rs:47:13: role prompt build gate: invalid production assets"
+    ],
+    "restored": true,
+    "restore_verified_no_diff": true
+  },
+  "acceptance_commands": {
+    "cargo_check_no_default_features": {
+      "exit_code": 0,
+      "green": true
+    },
+    "cargo_test_role_prompt_validator": {
+      "exit_code": 0,
+      "green": true
+    },
+    "git_diff_check": {
+      "exit_code": 0,
+      "green": true
+    }
+  },
+  "file_sha256": {
+    "rust_ext\\build_support\\role_prompt_validator.rs": "d79e9fe1aeab9d1643823a2989a42ae8e8a919508139da782c0d745a3358cfdd",
+    "rust_ext\\build.rs": "4a6c2c9ac1430144186650659504c9a2d0786b21b57c7fa94e047233f4519c08",
+    "rust_ext\\tests\\role_prompt_validator_negative.rs": "d7f2783e1ac21cb22f4ac0272e91675496198024c2846cce97bf167f05fd6da0",
+    "rust_ext\\tests\\role_prompt_validator_positive.rs": "7443ba22ca3fe46bdabba17323ef54fa7e6dacd60bf91beadf710da2629d4ee0",
+    "rust_ext\\resources\\role_prompts\\v1\\manifest.json": "1b0cdaa1bdbb617c52e6a8b61a894f992dde4b2b5919dbe8e66c59f7ac2be309"
+  }
+}

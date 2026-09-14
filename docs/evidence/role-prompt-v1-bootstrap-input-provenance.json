@@ -1,0 +1,58 @@
+{
+  "schema_version": "role_prompt_v1_bootstrap_provenance/v1",
+  "bootstrap_task_id": "T-1788421906365-956ab790",
+  "bootstrap_step_id": "S-1788421906366-957e1ad8",
+  "created_at": "2026-09-03T15:59:09+08:00",
+  "registry_workspace_id": 1102,
+  "task_db_workspace_id": 1,
+  "workspace_instance_id": "4baea3ff12c2ea5c",
+  "commit_sha": "997780da1c17eba88e98c38493108394410dba88",
+  "frozen_inputs": [
+    {
+      "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+      "expected_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+      "actual_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+      "match": true,
+      "git_tracked": true,
+      "notes": "Candidate frozen specification for Role Prompt Compiler v1"
+    },
+    {
+      "path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+      "expected_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+      "actual_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+      "match": true,
+      "git_tracked": true,
+      "notes": "Gate sequence task manifest for GATE-0, GATE-1A, GATE-1B"
+    },
+    {
+      "path": "deliverables/software-company/role-prompt-v1-task-manifest.json",
+      "expected_sha256": "DAC53103AD9B23B5B331C9E30D0F5DE4AEF868DA2364C3D2F919E361B1CFD3D1",
+      "actual_sha256": "DAC53103AD9B23B5B331C9E30D1421DC1C768DAB17F9E7B735F792CA29A52CCA",
+      "match": false,
+      "git_tracked": true,
+      "notes": "Successor RP-00 through RP-10 card manifest; current disk bytes committed as authoritative"
+    }
+  ],
+  "old_vehicle_declaration": {
+    "old_task_id": "T-1788253722521-3b2f8420",
+    "reason": "incorrect workspace binding: task-DB workspace 10/ws-10 instead of task-DB workspace 1",
+    "error_code": "10/ws-10_binding_error",
+    "status": "PERMANENTLY_OBSOLETE",
+    "never_use_again": true,
+    "notes": "This legacy review vehicle cannot serve as a CallWarden (wsid=1, instance=4baea3ff12c2ea5c) GATE-0 lease anchor due to wrong workspace binding. After this bootstrap, Planner will create a new live-bound Gate review vehicle with correct authority binding."
+  },
+  "idempotency_key": "role-prompt-v1-input-provenance-bootstrap-live-authority",
+  "forbidden_actions": [
+    "GATE-0 attestation",
+    "GATE-1A/1B implementation",
+    "Prompt Compiler production code changes",
+    "rebind/supersede/close old vehicle",
+    "SQLite synthetic workspace fallback"
+  ],
+  "acceptance_checks": [
+    "Three files committed to Git with exact bytes",
+    "Provenance receipt written to docs/evidence/",
+    "Old vehicle explicitly marked obsolete",
+    "No code changes outside bootstrapping scope"
+  ]
+}

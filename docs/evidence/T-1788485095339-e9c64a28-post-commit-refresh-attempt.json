@@ -1,0 +1,10 @@
+{
+  "task_id": "T-1788485095339-e9c64a28",
+  "purpose": "append-only record of required post-commit graph refresh attempt",
+  "command": "python cw.py refresh --all",
+  "observed_output": "method_not_found: 未知方法: build_full_graph",
+  "process_exit_code": 0,
+  "result": "refresh_failed",
+  "interpretation": "The CLI returned a successful process code despite reporting an unavailable daemon graph capability. No SQLite, legacy client, or other authority bypass was used. This graph-capability defect is outside the completed workspace/snapshot remediation and does not invalidate its READY/REVIEW projection.",
+  "follow_up_owner": "planner_governance_backlog"
+}

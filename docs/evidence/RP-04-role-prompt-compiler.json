@@ -1,0 +1,56 @@
+{
+  "task_id": "T-1788696869654-76a02598",
+  "card": "RP-04",
+  "feature_parent": "T-1788668721548-b8c6f4dc",
+  "predecessor": "T-1788687110713-48673344",
+  "step_ids": [
+    "S-1788696869658-76dc2f84"
+  ],
+  "contract_hash": "daemon-authoritative; triple fetched via task.governance_projection.get at review time (governance.task_contract.id/revision/hash, governance.role_contract.revision_id/hash), reviewer view_manifest_hash via get_role_view(reviewer)",
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-1993328572",
+    "source": "daemon parent binding (immutable authority capture); no client-derived or synthetic binding"
+  },
+  "commands": [
+    "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features --lib task_prompt_renderer",
+    "git diff --check"
+  ],
+  "positive_results": [
+    "cargo test task_prompt_renderer: 46 passed; 0 failed (route state machine matrix incl. READY/CLAIM|REVISE/REVIEW/ADJUDICATE + BLOCKED/WAITING/COMPLETE; READY/PLAN and unknown routes hard-error; registry integrity vs generated constants; canonical JSON key order/compactness/float rejection/null preservation; sha256 wire-form normalization; clipping scalar-safe boundary; omissions record with original sha256; next_action 4KiB / ID 256B / prompt.text 64KiB budget negatives; fixed composition order; untrusted block injection escaping; context_hash exact 9-item include set; bundle_hash minimal closure; generated_at exclusion)",
+    "goldens frozen per spec 11.2: 7 bundles (executor/reviewer/adjudicator legacy, executor current, blocked/waiting/terminal system), each pinning compiler_policy_hash=sha256:4d6e8b62f3e8667fc8c2e5ff769476c5e858d71faf5d97b122c1e2765322a4bb, body hash (matches frozen section 7.2 table for legacy templates), context_hash, prompt sha256, bundle_hash",
+    "same-snapshot determinism: continuous 100x composition byte-identical (prompt.text, bundle_json, context_hash, bundle_hash)",
+    "git diff --check: clean"
+  ],
+  "negative_results": [
+    "unknown/PLAN route -> E_TASK_PROMPT_UNSUPPORTED_ACTION (no Planner synthesis pre-cutover)",
+    "missing template id / hash, illegal wire form -> E_TASK_PROMPT_TEMPLATE_ID_REQUIRED / E_TASK_PROMPT_TEMPLATE_HASH_REQUIRED",
+    "unknown template id -> E_TASK_PROMPT_TEMPLATE_NOT_FOUND (never); hash mismatch / current impersonating legacy -> E_TASK_PROMPT_TEMPLATE_HASH_MISMATCH",
+    "template role or route pair mismatch -> E_TASK_PROMPT_TEMPLATE_ROUTE_MISMATCH",
+    "required_role inconsistency / null -> E_TASK_PROMPT_ROLE_NOT_ELIGIBLE",
+    "next_action >4KiB / ID >256B / prompt.text >64KiB -> E_TASK_PROMPT_BUDGET_EXCEEDED (never clipped)",
+    "secret denylist hits (PEM, Bearer, Authorization value, credentials.bin, Set-Cookie, lease/fencing assignments, API keys, bare 64-hex) -> E_TASK_PROMPT_SECRET_DETECTED with category-only reason codes; sha256:-prefixed authority hashes and bundle authorization object key pass",
+    "untrusted closing-tag injection stays escaped inside CW_UNTRUSTED_TASK_DATA (JSON string-safe encoding of </&)"
+  ],
+  "changed_paths": [
+    "rust_ext/src/daemon/task_prompt/route.rs",
+    "rust_ext/src/daemon/task_prompt/route_tests.rs",
+    "rust_ext/src/daemon/task_prompt/render.rs",
+    "rust_ext/src/daemon/task_prompt/render_tests.rs",
+    "rust_ext/src/daemon/task_prompt/canonical.rs",
+    "rust_ext/src/daemon/task_prompt/canonical_tests.rs",
+    "rust_ext/src/daemon/task_prompt/redaction.rs",
+    "rust_ext/src/daemon/task_prompt/redaction_tests.rs",
+    "rust_ext/src/daemon/task_prompt/bundle.rs",
+    "rust_ext/src/daemon/task_prompt/bundle_tests.rs",
+    "rust_ext/src/daemon/task_prompt/mod.rs"
+  ],
+  "commit_sha": "10b879aa8c02eeafa041863394f901871391cb96",
+  "deployment_receipt_if_applicable": null,
+  "notes": [
+    "Planner-issued contract extension (RP-02/RP-03 precedent, rationale in task description): mod.rs requires exactly five pub mod registration lines for the new submodules; card globs cover only route*/render*/canonical*/redaction*/bundle*.rs.",
+    "Advisory finding: bundle template.compiler_policy_id uses frozen spec section 5.1 schema literal 'cw.role_prompt.compiler_policy.v1'; the compiler_policy.md asset self-declares 'cw.compiler.policy.v1'. Bundle field follows the frozen spec as authority; asset self-ID drift flagged for a follow-up spec/asset alignment card if adjudicator concurs.",
+    "redaction exemption (documented): compiler policy body self-references the frozen spec SHA (bare uppercase 64-hex); bare-hex denylist rule exempts this build-gate-endorsed constant (KNOWN_NON_SECRET_HEX_REFS)."
+  ]
+}

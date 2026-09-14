@@ -1,0 +1,49 @@
+{
+  "task_id": "T-1788447967354-616aa470",
+  "step_id": "S-1788447967355-6179c5e0",
+  "step_index": 0,
+  "action": "implement_recovery_domain",
+  "status": "completed",
+  "scope": [
+    "rust_ext/src/daemon/task_loop/lifecycle_lease.rs"
+  ],
+  "implementation": {
+    "domain_primitive": "recover_orphaned_lease",
+    "recovery_eligibility": [
+      "lease_expired",
+      "holder_registration_missing",
+      "holder_registration_inactive",
+      "holder_heartbeat_stale"
+    ],
+    "healthy_active_lease": "rejected and left unchanged",
+    "audit": "append-only expire event",
+    "raw_token": "not accepted, generated, returned, or persisted",
+    "assignment": "not changed in step 0; reserved for the single transaction RPC step"
+  },
+  "verification": {
+    "cargo_check": {
+      "command": "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml",
+      "status": "passed"
+    },
+    "focused_tests": {
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml lifecycle_lease_test --lib",
+      "status": "passed",
+      "passed": 15,
+      "failed": 0
+    },
+    "diff_check": {
+      "command": "git diff --check -- rust_ext/src/daemon/task_loop/lifecycle_lease.rs",
+      "status": "passed"
+    },
+    "global_format_check": {
+      "status": "blocked_by_preexisting_workspace_drift",
+      "note": "Global cargo fmt --check reports unrelated existing files; no destructive formatting was applied."
+    }
+  },
+  "source_sha256": "D094A513D90EC0AD56CE98A3609FA9FA46A7B473C6E2EFCD92CA242290CF2DDE",
+  "notes": [
+    "The helper is the shared source of truth for lease orphan eligibility.",
+    "The later RPC step must perform authorization before invoking it and append assignment recovery in the same outer transaction.",
+    "No task state, historical event, or unrelated workspace data was modified."
+  ]
+}

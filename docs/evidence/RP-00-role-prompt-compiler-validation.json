@@ -1,0 +1,50 @@
+{
+  "schema": "cw.rp00.validation.evidence.v1",
+  "task_id": "T-1788668722815-04496bb0",
+  "step_id": "S-1788668722816-045224e4",
+  "action": "validate_coverage_and_artifact_hashes",
+  "generated_at": "2026-09-06T13:30:00+08:00",
+  "identity": {
+    "agent_id": "executor-wb-rp00-01",
+    "agent_instance_id": "inst-executor-wb-rp00-01",
+    "session_id": "sess-executor-wb-rp00-20260906",
+    "role": "implementer"
+  },
+  "artifact_hashes": {
+    "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "docs/evidence/RP-00-source-clause-inventory.json": "25C6E9FFBF822008656FCAC9520EDAA9A559F4BA28B6128E3B1837CCD22BAFB5",
+    "docs/evidence/RP-00-review-resolution-matrix.json": "EF62FB874ABACF85F65EA57A2D66E3AD6406ACF31C860B4B442707FCA091450A",
+    "deliverables/software-company/role-prompt-v1-gate-task-manifest.json": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+    "deliverables/software-company/role-prompt-v1-task-manifest.json": "AFF06EB1B30713BF5E227B3D69137CA989B1FB9BCBECB7542AC14A5891CCEFC2 (as of implementation commit ce17c9368f87b35a4bca7285beb67abd40de221f; re-hashed after evidence sha placeholder fill, see master evidence)",
+    "_final_manifest_sha256_after_placeholder_fill": "58D9053998A5E5A384743E3335DCA7252986A576733D802F65AF0F180FB0D420"
+  },
+  "commands": [
+    {
+      "cmd": "C:\\Python314\\python.exe scripts/validate_role_prompt_spec.py --inventory docs/evidence/RP-00-source-clause-inventory.json --resolution docs/evidence/RP-00-review-resolution-matrix.json --spec docs/design/cw-role-prompt-compiler-v1-frozen-spec.md --manifest deliverables/software-company/role-prompt-v1-task-manifest.json",
+      "exit_code": 0,
+      "result": "{\"result\": \"PASS\", \"errors\": []}"
+    },
+    {
+      "cmd": "C:\\Python314\\python.exe -m pytest tests/test_role_prompt_spec_validator.py -q",
+      "exit_code": 0,
+      "result": "8 passed"
+    },
+    {
+      "cmd": "git diff --check",
+      "exit_code": 0,
+      "result": "clean"
+    }
+  ],
+  "coverage_summary": {
+    "inventory_clauses": 1972,
+    "matrix_resolutions": 1972,
+    "one_to_one": true,
+    "allowed_dispositions": ["retained", "superseded", "rejected", "deferred"],
+    "sources": ["R1", "R2", "R3", "R4", "R4D"]
+  },
+  "validator_file": "scripts/validate_role_prompt_spec.py",
+  "validator_tests": "tests/test_role_prompt_spec_validator.py (8 cases: real artifacts pass x2 + 6 negative fixtures)",
+  "disclosures": [
+    "scripts/validate_role_prompt_spec.py and tests/test_role_prompt_spec_validator.py were created during step3 but the step's daemon attribution target_file is only the validation json; all changed files are within the RP-00 card allowed_path_globs and are fully listed in the master evidence changed_paths and the commit."
+  ]
+}

@@ -18,6 +18,10 @@ pub mod task_supersede;
 /// fail-closed stubs / 禁用 shim，cutover 前能力禁用）
 pub mod task_loop;
 
+/// Role Prompt Compiler v1 domain（RP-03：单 snapshot authority context；
+/// renderer/RPC 由 RP-04/RP-05 后续接入）
+pub mod task_prompt;
+
 /// 平台无关传输抽象（D0 3.1：TransportListener / TransportConnection trait）
 /// Unix: UDS + SO_PEERCRED；Windows: 命名管道 + ImpersonateNamedPipeClient
 pub mod transport;
@@ -34,6 +38,7 @@ pub mod client;
 /// Workspace registry + UID ACL（跨平台，rusqlite 数据层）
 /// R4：实现 workspace.register / list / status + 路径校验 + owned_workspace ACL
 pub mod workspace;
+pub mod workspace_reconciliation;
 
 /// CAS（Content-Addressable Storage）+ file_generations 两阶段 CAS（跨平台）
 /// R5：实现 compute_cas_key_v1 + cas_publish 四阶段原子发布 + cas_pin + cas_gc +
@@ -229,6 +234,12 @@ pub mod admin_handlers;
 /// 3.19: 编辑/提案/规则写面 handler（edit.propose* / rule.* / gate.* / summary.generate）
 /// 对应 61 个拒止工具中的编辑/规则写面（T02-edit 批次，经 CAS + SerializationPoint）。
 pub mod edit_handlers;
+
+/// 3.20: semgrep CLI 专用 handler（run_semgrep / run_semgrep_and_save /
+/// scan_semgrep_incremental / get_semgrep_summary）。
+/// CLI-061（T-1787322798303-8bd1779c）产物；本模块此前从未声明，导致文件虽在仓库
+/// 但从未参与编译，四个方法在 daemon 侧始终 method_not_found（C-13）。
+pub mod semgrep_handlers;
 
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。

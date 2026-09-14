@@ -1,0 +1,25 @@
+{
+  "task_id": "T-1788415431169-f5b190cc",
+  "record_type": "task_scoped_workspace_authority_reproduction",
+  "historical_failure": {
+    "affected_task_id": "T-1788392053931-05b8a0e4",
+    "canonical_task_binding": {
+      "task_db_workspace_id": 1,
+      "workspace_instance_id": "4baea3ff12c2ea5c"
+    },
+    "incorrect_client_numeric_workspace_id": 10,
+    "error_code": "E_WORKSPACE_AUTHORITY_MISMATCH",
+    "failure_mode": "HTTP client injected the unrelated legacy active workspace before the daemon validated the immutable task binding."
+  },
+  "repair_contract": {
+    "task_scoped_authority": "task_id resolves through immutable task_workspace_bindings",
+    "optional_client_workspace_fields": "validation assertions only",
+    "explicit_mismatch": "fail closed before mutation",
+    "workspace_scoped_requests": "retain explicit active numeric workspace injection"
+  },
+  "post_deploy_read_only_check": {
+    "runtime_commit": "323a034ca742d63f3f721284828ad4970f408e9a",
+    "cli_and_shared_http_result": "lease.status returned the bound task's released reviewer lease without workspace authority mismatch",
+    "mutations_performed": false
+  }
+}

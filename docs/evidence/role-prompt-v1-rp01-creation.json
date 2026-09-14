@@ -1,0 +1,46 @@
+{
+  "artifact": "role-prompt-v1-order-rp01-creation",
+  "recorded_at": "2026-09-06T13:25:00+08:00",
+  "recorded_by": "planner-wb-rp00-01 (compatibility-mapped planner)",
+  "authority": {
+    "frozen_spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "successor_manifest": "deliverables/software-company/role-prompt-v1-task-manifest.json",
+    "successor_manifest_card": "RP-01",
+    "release_rule_source": "RP-00 card successor_rule (closed + task.next_action COMPLETE)",
+    "predecessor": {
+      "task_id": "T-1788668722815-04496bb0",
+      "lifecycle_status": "closed",
+      "next_action": "COMPLETE",
+      "verdict": "V-db675d0462be898196ef31b8"
+    }
+  },
+  "creation": {
+    "entrypoint": "cw task create (parent-aware governed create, GATE-1B path)",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "workspace_provenance": {
+      "workspace_id": "1",
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "workspace_binding_id": "tb-T-1788671453544-d0625554-4baea3ff12c2ea5c",
+      "workspace_capture_id": "wc-4baea3ff12c2ea5c-3496676200"
+    },
+    "task_id": "T-1788671453544-d0625554",
+    "title": "Role Prompt Compiler v1 RP-01: asset compiler and build-time validation gate",
+    "idempotency_key": "role-prompt-v1-rp01",
+    "identity_policy": "legacy_identity_v1",
+    "step_count": 4,
+    "steps": [
+      "implement_validator_core",
+      "integrate_build_gate",
+      "add_negative_fixtures",
+      "verify_compile_failure_contract"
+    ],
+    "role_contracts_source": "frozen manifest card RP-01 role_contracts (arrays '; '-joined, allowed fields only)"
+  },
+  "preflight": {
+    "daemon_health": "pid 42288 healthy, git_commit 974bddcf",
+    "dedup_check": "idempotency key role-prompt-v1-rp01: 0 hits before create (read-only DB query)",
+    "predecessor_gate": "RP-00 closed COMPLETE confirmed before release"
+  },
+  "next_step": "register executor/reviewer/adjudicator identities for RP-01 and run full role loop"
+}

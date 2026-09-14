@@ -1,0 +1,81 @@
+{
+ "evidence_id": "RP-03-role-prompt-compiler",
+ "card_id": "RP-03",
+ "task_id": "T-1788687110713-48673344",
+ "parent_task_id": "T-1788668721548-b8c6f4dc",
+ "created_at": "2026-09-06T17:56:00+08:00",
+ "frozen_authority": {
+  "spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+  "spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+ },
+ "prerequisite": {
+  "RP-02": {
+   "task_id": "T-1788682521002-a852a710",
+   "summary": "production template assets and byte/hash goldens closed/COMPLETE",
+   "code_commit": "ef7cccf73bfd7ae443f6b7b5e4361a04348df9aa"
+  }
+ },
+ "deliverables": {
+  "context_domain": {
+   "path": "rust_ext/src/daemon/task_prompt/context.rs",
+   "schema_version": "role_prompt_context_v1",
+   "public_api": [
+    "aggregate_authority_context(conn, workspace_instance_id, task_id)",
+    "E_TASK_PROMPT_TASK_NOT_FOUND",
+    "E_TASK_PROMPT_AUTHORITY_UNAVAILABLE",
+    "CONTEXT_SCHEMA_VERSION"
+   ],
+   "sections": [
+    "authority: workspace_id/workspace_instance_id/workspace_binding_id/workspace_capture_id/snapshot_id(null)/source_event_watermark(MAX(task_events.event_id))",
+    "routing: decision/action/required_role/next_action/step_id via in-process task_loop::next_action::evaluate_next_action on the same Connection",
+    "contract: task_contract id/revision/hash + role_contract revision_id/hash + prompt_template_id/prompt_hash resolved from routed role_contract_revisions.canonical_payload_json in the same snapshot + identity_policy_status 3-state",
+    "authorization: routing_state READY->action_ready else non_actionable; valid_for_claim=false; mutation_recheck_required=true"
+   ]
+  },
+  "tests": {
+   "path": "rust_ext/src/daemon/task_prompt/context_tests.rs",
+   "count": 9,
+   "filter_token": "task_prompt_context",
+   "coverage": [
+    "READY/CLAIM full aggregation",
+    "same-snapshot determinism (two calls byte-identical)",
+    "zero-write trace across tasks/task_steps/task_leases/task_events/task_workspace_bindings/task_contract_revisions/role_contract_revisions/task_verdict_events",
+    "missing task -> E_TASK_PROMPT_TASK_NOT_FOUND",
+    "missing binding -> E_TASK_PROMPT_AUTHORITY_UNAVAILABLE",
+    "capture instance mismatch -> E_TASK_PROMPT_AUTHORITY_UNAVAILABLE",
+    "closed task -> COMPLETE/non_actionable",
+    "identity policy resolved/unresolved/not_applicable",
+    "error message no-leak discipline"
+   ]
+  },
+  "module_registration": {
+   "path": "rust_ext/src/daemon/task_prompt/mod.rs",
+   "content": "pub mod context; #[cfg(test)] mod context_tests; (declaration only, no business logic)",
+   "registration_edit": "rust_ext/src/daemon/mod.rs: pub mod task_prompt; (planner-issued contract extension beyond card globs, rationale recorded in task description)"
+  }
+ },
+ "negative_acceptance": {
+  "no_recursive_json_rpc": "single-snapshot invariant 2.3-2: aggregation runs entirely on the caller-provided Connection; RP-05 handler will invoke inside with_conn closure",
+  "fail_closed": "task-not-found / missing binding / capture mismatch all return stable E_TASK_PROMPT_* errors, never synthesize authority",
+  "no_write_context": "zero-write test proves read-only behavior; no task state mutation",
+  "no_secrets": "error messages carry task_id + reason only; no tokens/paths"
+ },
+ "scope_boundary": {
+  "not_in_rp03": [
+   "route state machine template selection (RP-04)",
+   "renderer/canonical hashes/clipping/secret guard (RP-04)",
+   "RPC handler/dispatch registration/capability publication (RP-05)"
+  ]
+ },
+ "verification": {
+  "cargo_test_task_prompt_context": "9/9 passed (CARGO_INCREMENTAL=0; full lib test target compiled green)",
+  "git_diff_check": "clean",
+  "commit_policy": "git reset then whitelist add: rust_ext/src/daemon/mod.rs + rust_ext/src/daemon/task_prompt/"
+ },
+ "code_commit": "3e9e578bdce07a104e53bf83944246eb64d0eaba",
+ "identity": {
+  "executor": "executor-wb-rp03-01",
+  "reviewer": "reviewer-wb-rp03-01",
+  "adjudicator": "adjudicator-wb-rp03-01"
+ }
+}

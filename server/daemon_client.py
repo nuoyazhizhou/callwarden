@@ -90,13 +90,27 @@ class DaemonUnavailableError(RuntimeError):
         self.code = code
 
 
+class MultipartUnsupportedError(DaemonUnavailableError):
+    """daemon 不支持 `POST /v1/rpc/multipart`（版本早于 Q10）。
+
+    caller 捕获本异常后应降级到 JSON 内联路径（`call` + gz_b64），
+    保证 client 新版本对旧 daemon 的前向兼容（滚动部署窗口）。
+    """
+
+    def __init__(self, message: str = "daemon 不支持 /v1/rpc/multipart（旧版本）") -> None:
+        super().__init__(message, code="E_MULTIPART_ROUTE_UNAVAILABLE")
+
+
 class SharedTaskWriterRequiredError(DaemonUnavailableError):
     """共享任务库禁止 local 进程绕过 daemon 单写点。"""
 
     code = "E_SHARED_TASK_WRITER_REQUIRED"
 
     def __init__(self, message: str):
-        super().__init__(f"{self.code}: {message}")
+        # C-09：‘code’ 必须显式回传，否则父类 DaemonUnavailableError.__init__
+        # 会把实例属性覆盖回 E_HTTP_DAEMON_UNAVAILABLE（类属性被实例属性遮蔽），
+        # 导致调用方 `except DaemonUnavailableError` 侧无法据 .code 判别该写点拒绝。
+        super().__init__(f"{self.code}: {message}", code=self.code)
 
 
 def _is_task_write(rpc_method: str) -> bool:
@@ -172,7 +186,7 @@ class UnixDaemonRpcClient:
     # Task 协同 RPC 便利包装
     # ------------------------------------------------------------------
 
-    def task_create(self, title: str, description: str = "", steps: list = None, creator: str = "agent", parent_id: str = "", workspace_id: str = "", workspace_instance_id: str = "", role_contracts: list = None) -> dict:
+    def task_create(self, title: str, description: str = "", steps: list = None, creator: str = "agent", parent_id: str = "", workspace_id: str = "", workspace_instance_id: str = "", role_contracts: list = None, *, identity_policy=None, task_contract_envelope=None, task_id=None) -> dict:
         """task.create：显式转发 daemon-returned workspace 配对（BR-02）。
 
         BR-01 后 daemon 强制要求 `workspace_instance_id` 非空（缺失 →
@@ -194,6 +208,13 @@ class UnixDaemonRpcClient:
         # A3：Planner 可在 task.create 一次性冻结 Role Contract（revision=1）
         if role_contracts:
             params["role_contracts"] = role_contracts
+        if parent_id or any(v is not None for v in (identity_policy, task_contract_envelope, task_id)):
+            params.pop("creator")
+        for key, value in (("identity_policy", identity_policy),
+                           ("task_contract_envelope", task_contract_envelope),
+                           ("task_id", task_id)):
+            if value is not None:
+                params[key] = value
         return self.call("task.create", params)
 
     def task_attest_legacy_workspace_binding(
@@ -1047,9 +1068,21 @@ def derive_workspace_instance_id(project_root: str) -> str:
     用项目根路径的 SHA-256 前 16 位作为 workspace_instance_id，确保同一项目
     在不同进程（CLI / MCP / daemon）中标识一致。
     注意：此 hash 仅用于 workspace 标识，不再用于数据库路径（数据库已改为用户级统一路径）。
+
+    CR7（2026-09-09）：路径写法归一化——realpath 解析符号链接/junction 后，
+    反斜杠→正斜杠、Windows 全路径 ASCII 小写（NTFS 大小写不敏感）、strip 尾部斜杠。
+    此前 `C:/…` 与 `c:/…`（或大小写差异）会派生不同 id → 客户端 cwd 写法
+    差异即产生新实例（与 daemon 侧 normalize_identity_root 同语义）。
     """
-    abs_root = os.path.abspath(project_root)
+    abs_root = os.path.realpath(os.path.abspath(project_root))
     norm_root = abs_root.replace("\\", "/")
+    if os.name == "nt":
+        # 与 Rust normalize_identity_root 对齐：仅 ASCII 小写，非 ASCII 原样
+        norm_root = "".join(
+            ch.lower() if "A" <= ch <= "Z" else ch for ch in norm_root
+        )
+    while len(norm_root) > 1 and norm_root.endswith("/"):
+        norm_root = norm_root.rstrip("/")
     return hashlib.sha256(norm_root.encode("utf-8")).hexdigest()[:16]
 
 
@@ -2042,6 +2075,38 @@ def get_daemon_client():
 # 详见 docs/design/http-daemon-mvp-compatibility-contract.md §4。
 
 
+def _build_multipart_body(parts, boundary: str) -> bytes:
+    """Q10（2026-09-17）：按 RFC 7578 编码 multipart/form-data body。
+
+    stdlib 无自带 multipart 编码器，此处实现最小子集（daemon 侧由 axum
+    `multipart` feature 解析，双方字段语义一致）：
+
+    - 每段：``--{boundary}\\r\\n`` + Content-Disposition + Content-Type
+      + 空行 + 数据 + ``\\r\\n``
+    - 结尾：``--{boundary}--\\r\\n``
+    - 二进制 part 原样嵌入（不做 base64 / 转义），这是 Q10 消除编码税的关键
+
+    Args:
+        parts: ``[(name, bytes, content_type), ...]``
+        boundary: 分界符（caller 传入随机值，避免与 payload 冲突）
+
+    Returns:
+        完整 body 字节流。
+    """
+    chunks = []
+    for name, data, ctype in parts:
+        chunks.append(f"--{boundary}\r\n".encode("ascii"))
+        chunks.append(
+            f'Content-Disposition: form-data; name="{name}"\r\n'.encode("ascii")
+        )
+        chunks.append(f"Content-Type: {ctype}\r\n".encode("ascii"))
+        chunks.append(b"\r\n")
+        chunks.append(data)
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+    return b"".join(chunks)
+
+
 class HttpDaemonRpcClient:
     """Python 3.14 thin HTTP/JSON-RPC client（H0-frozen protocol）。
 
@@ -2051,6 +2116,12 @@ class HttpDaemonRpcClient:
 
     # H2：标识该 client 走 HTTP MVP transport（供 production factory 选择）。
     is_http_client: bool = True
+
+    # Q10（2026-09-17）：显式声明本 client 支持 multipart raw-gz-body 传输
+    # （POST /v1/rpc/multipart）。agent_protocol 按本标志做分档选择；
+    # mock/UDS client 无此标志 → 自动降级 gz_b64 JSON 内联（零回归）。
+    supports_multipart: bool = True
+
     _instance: Optional["HttpDaemonRpcClient"] = None
 
     @classmethod
@@ -2315,6 +2386,103 @@ class HttpDaemonRpcClient:
                 status = resp.status
         except urllib.error.HTTPError as e:
             status = e.code
+            try:
+                raw = e.read()
+            except Exception:
+                raw = b""
+            return self._handle_response(status, raw, rid, url)
+        except OSError as e:
+            raise self._connection_error(e, url)
+        return self._handle_response(status, raw, rid, url)
+
+    def call_multipart(
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        payload: Optional[bytes] = None,
+        gz: bool = False,
+        request_id: Optional[str] = None,
+    ) -> Any:
+        """Q10（2026-09-17）：multipart raw-gz-body 传输。
+
+        与 `call` 完全同构的 JSON-RPC 语义（envelope / request_id 去重 /
+        Protected_Mutation 串行化 / 错误处理全部复用 `_handle_response`），
+        唯一差异是数据面：二进制 payload 不进 JSON 信封（消除 base64 税），
+        而是作为 multipart part 原样传输。
+
+        成帧（与 daemon `rpc_multipart_handler` 一致）：
+        - part ``params``：完整 JSON-RPC envelope（application/json）
+        - part ``payload`` / ``payload_gz``：canonical_bytes 裸 / gzip
+          （application/octet-stream，二者互斥；由 ``gz`` 选择）
+
+        Args:
+            method: RPC method（仅 workspace.file.refresh / snapshot.publish
+                会消费 payload；其余方法忽略 payload）。
+            params: JSON object 参数（缺省 {}）。大文件场景 caller 应写入
+                ``canonical_len``，daemon 侧据此限制 gz 解压容量（防 bomb）。
+            payload: 带外二进制字节流；None 时不携带 payload part（退化为
+                纯控制面调用，但走 multipart 路由）。
+            gz: True → 以 `payload_gz` 名发送 gzip 流；False → 以 `payload`
+                名发送裸字节。
+            request_id: 显式 request id（重试复用同一 id 以命中 dedup Replay）。
+
+        Returns:
+            response 的 result 字段。
+
+        Raises:
+            DaemonRemoteError: 结构化业务错误（含 E_PAYLOAD_CONFLICT /
+                E_PAYLOAD_TOO_LARGE / E_GZ_DECOMPRESS_FAILED 等 Q10 新码）。
+            MultipartUnsupportedError: daemon 返回 404（旧版本无本路由），
+                caller 应降级到 `call` 的 JSON 内联路径。
+            DaemonUnavailableError: 连接/超时/发现失败（fail-closed）。
+        """
+        endpoint = self.discover()
+        rid = request_id
+        if rid is None and isinstance(params, dict):
+            rid = params.get("request_id") or None
+        if rid is None:
+            rid = str(uuid.uuid4())
+        self.last_request_id = rid
+        envelope = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "protocol_version": HTTP_PROTOCOL_VERSION,
+            "method": method,
+            "params": params if params is not None else {},
+        }
+        self.last_request_body = envelope
+
+        params_bytes = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+        parts = [("params", params_bytes, "application/json")]
+        if payload is not None:
+            part_name = "payload_gz" if gz else "payload"
+            parts.append((part_name, payload, "application/octet-stream"))
+
+        boundary = "cw-q10-" + uuid.uuid4().hex
+        body = _build_multipart_body(parts, boundary)
+        if len(body) > HTTP_MAX_BODY_BYTES:
+            raise DaemonRemoteError(
+                E_REQUEST_TOO_LARGE,
+                f"multipart 请求体 {len(body)} 字节超过上限",
+            )
+
+        url = endpoint.rstrip("/") + "/v1/rpc/multipart"
+        content_type = f'multipart/form-data; boundary="{boundary}"'
+        try:
+            req = urllib.request.Request(
+                url, data=body, method="POST",
+                headers={"Content-Type": content_type},
+            )
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                raw = resp.read()
+                status = resp.status
+        except urllib.error.HTTPError as e:
+            status = e.code
+            if status == 404:
+                # 旧 daemon 无 multipart 路由 → 标记降级
+                raise MultipartUnsupportedError(
+                    f"daemon 未部署 /v1/rpc/multipart（status=404, url={url}）"
+                )
             try:
                 raw = e.read()
             except Exception:
@@ -3253,7 +3421,7 @@ class HttpDaemonRpcClient:
         Rust `handle_workspace_register`（workspace.rs L1332）强制
         client_view_root（validate_owned_path 要求路径为目录），返回行以
         `workspace_instance_id` 为权威（compute = sha256(owner_uid|
-        host_real_root|git_remote_url|git_head_commit_sha) 前 16 位）；
+        host_real_root) 前 16 位）；Git remote/HEAD 只形成 snapshot provenance；
         响应缺该字段抛 `DaemonUnavailableError`（fail-closed，与
         `_ensure_remote_snapshot` 同款校验）。
 
@@ -3284,15 +3452,17 @@ class HttpDaemonRpcClient:
         W1-2：workspaces 表无 workspace_instance_id 列（禁改 schema），
         set_active/delete 用 root_path（workspaces.root_path UNIQUE）做
         join key 映射到 daemon workspace_instance_id。workspace.register 是
-        INSERT OR REPLACE（幂等），instance_id 是 (owner_uid, host_real_root,
-        git_remote_url, git_head_commit_sha) 的确定性 hash，因此重复 register
-        必得同一 id，映射可随时重建——最小侵入、无持久化状态分裂。
+        provenance-preserving UPSERT；instance_id 只由 (owner_uid,
+        host_real_root) 的确定性 hash 决定，Git metadata 只更新 snapshot，
+        因此重复 register 不会旋转物理 workspace 身份。
         """
         key = _norm_root(root_path)
         cached = self._workspace_instance_by_root.get(key)
         if cached is not None:
             return cached
-        workspace = self.call("workspace.register", {"client_view_root": root_path})
+        register_params = {"client_view_root": root_path}
+        register_params.update(_workspace_snapshot_metadata(root_path))
+        workspace = self.call("workspace.register", register_params)
         if not isinstance(workspace, dict) or "workspace_instance_id" not in workspace:
             raise DaemonUnavailableError(
                 f"workspace.register 响应缺少 workspace_instance_id: {workspace!r}"
@@ -3503,58 +3673,101 @@ def _inject_workspace_id(params: dict) -> dict:
     return result["params"]
 
 
-def resolve_workspace_pair_from_daemon() -> dict:
-    """BR-02：从 daemon 解析 (workspace_id, workspace_instance_id) 权威配对。
+def _is_task_scoped_authority_request(params: dict) -> bool:
+    """Return whether ``params`` identifies an immutable task binding.
 
-    契约（role-prompt-v1 work order BR-02 steps[0] resolve_workspace_pair_from_
-    daemon_status；workspace_authority 约束）：
-    - `workspace_id`：`mcp.daemon_client.inject_workspace_id`（daemon 权威解析
-      active workspace，fail-closed；**不猜数字** forbid_numeric_guess）；
-    - `workspace_instance_id`：`workspace.status` 返回的 daemon-returned 注册表行
-      （**不合成 ws-{id}** forbid_synthetic_ws_id；**不回退 active workspace**
-      forbid_active_workspace_fallback）；
-    - 任一步失败（无 active workspace / workspace 未注册 / daemon 不可达）→
-      fail-closed 上抛，绝不本地推导或 SQLite 回退。
+    A task-scoped daemon method must resolve its numeric workspace through
+    ``task_workspace_bindings``.  Injecting the legacy active workspace here
+    is both unnecessary and unsafe in a multi-project daemon: the active row
+    can belong to a different registered project while the task binding is
+    still authoritative.  The presence of a non-blank task ID is deliberately
+    the discriminator, rather than a hand-maintained RPC allowlist, so newly
+    added task/lease methods inherit the same rule.
 
-    Returns:
-        {"workspace_id": int, "workspace_instance_id": str}
+    ``superseded_id`` is recognized as the same-strength discriminator: it
+    identifies the source task of ``task.supersede`` / ``task.superseded_by``
+    (SR-01).  Both daemon handlers resolve an omitted numeric workspace from
+    the immutable binding and fail closed on an explicit mismatch, so the
+    legacy active-workspace injection must never preempt them.
+    """
+    for key in ("task_id", "superseded_id"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
 
-    Raises:
-        DaemonUnavailableError: daemon 不可达或未返回权威配对。
-        RuntimeError: daemon 返回结构异常。
+
+def resolve_workspace_pair_from_daemon(project_root: Optional[str] = None) -> dict:
+    """Resolve the current project's canonical daemon workspace pair.
+
+    Task creation must not use the task DB's global ``is_active`` row: when
+    CallWarden and TokenSlim share a daemon, that row can resolve to another
+    project (for example ``10/ws-10``).  This read-only resolver instead finds
+    the current project in the daemon registry and accepts it only when the
+    registry and task DB agree on the same immutable instance ID.
+
+    No numeric ID is inferred, no ``ws-{id}`` value is synthesized, and zero
+    or multiple reconciled candidates fail closed.
     """
     client = _get_rpc_client_for_route()
     call = getattr(client, "call", None)
     if call is None:
         raise DaemonUnavailableError("RPC client 缺少 call 方法（transport 未就绪）")
-    injected = call("mcp.daemon_client.inject_workspace_id", {"params": {}})
-    if not isinstance(injected, dict) or not isinstance(injected.get("params"), dict):
-        raise RuntimeError(
-            f"resolve_workspace_pair: inject_workspace_id 返回非对象结果 {injected!r}"
-        )
-    workspace_id = injected["params"].get("workspace_id")
-    if workspace_id is None:
+
+    if not project_root:
+        from callwarden.config import PROJECT_ROOT
+        project_root = PROJECT_ROOT
+    target_root = _norm_root(os.path.abspath(str(project_root)).replace("\\\\?\\", ""))
+
+    rows = call("workspace.list", {})
+    if not isinstance(rows, list):
         raise DaemonUnavailableError(
-            "resolve_workspace_pair: daemon 未解析出 workspace_id（无 active workspace，fail-closed）"
+            f"resolve_workspace_pair: workspace.list 返回非数组: {rows!r}"
         )
-    try:
-        ws = call("workspace.status", {"workspace_id": workspace_id})
-    except DaemonRemoteError as exc:
-        # workspace_not_found / workspace_forbidden 等：workspace 未在 daemon
-        # 注册表登记（legacy SQLite is_active id 不在注册表）→ 明确 fail-closed，
-        # 引导先 workspace.register，绝不猜测 instance。
+
+    matches = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("status") != "active":
+            continue
+        row_root = row.get("client_view_root") or row.get("host_real_root") or ""
+        if _norm_root(str(row_root).replace("\\\\?\\", "")) != target_root:
+            continue
+        instance_id = row.get("workspace_instance_id")
+        if not isinstance(instance_id, str) or not instance_id.strip():
+            continue
+        try:
+            status = call("workspace.status", {"workspace_instance_id": instance_id})
+        except DaemonRemoteError:
+            continue
+        if not isinstance(status, dict):
+            continue
+        registry_id = status.get("registry_workspace_id")
+        registry_instance = status.get("registry_instance_id")
+        task_db_id = status.get("task_db_workspace_id")
+        task_db_instance = status.get("task_db_instance_id")
+        if (
+            not isinstance(registry_id, int)
+            or registry_id <= 0
+            or not isinstance(task_db_id, int)
+            or task_db_id <= 0
+            or registry_instance != instance_id
+            or task_db_instance != instance_id
+        ):
+            continue
+        # ``registry_workspace_id`` identifies the daemon registry row, while
+        # task.create persists the task-DB workspace ID.  Return the latter so
+        # the client forwards the same numeric authority that will appear in
+        # its immutable binding/readback; reconciliation remains a server-side
+        # safety net, not a hidden client-side ID translation.
+        matches.append((task_db_id, instance_id))
+
+    if len(matches) != 1:
         raise DaemonUnavailableError(
-            f"resolve_workspace_pair: workspace.status 无法解析权威配对"
-            f"（workspace_id={workspace_id}）: {exc}"
-        ) from exc
-    if not isinstance(ws, dict) or not ws.get("workspace_instance_id"):
-        raise DaemonUnavailableError(
-            f"resolve_workspace_pair: workspace.status 未返回权威 workspace_instance_id: {ws!r}"
+            "resolve_workspace_pair: 当前项目未获得唯一的 registry/task-DB "
+            f"canonical workspace binding（root={target_root!r}, matches={len(matches)}）"
         )
-    return {
-        "workspace_id": workspace_id,
-        "workspace_instance_id": ws["workspace_instance_id"],
-    }
+    workspace_id, workspace_instance_id = matches[0]
+    return {"workspace_id": workspace_id, "workspace_instance_id": workspace_instance_id}
 
 
 # 连接/发现级错误码：这些不是 daemon 的业务结论，而是 daemon 不可达或
@@ -3589,6 +3802,11 @@ def route_task_write(rpc_method: str, params: dict, fallback_func):
     4. enterprise / auto 模式下若 daemon 不可用，禁止 fallback 本地 SQLite，抛出 DaemonUnavailableError (fail-closed)
     """
     mode = get_daemon_mode()
+    governed_create = rpc_method == "task.create" and (
+        bool(params.get("parent_id")) or
+        any(key in params for key in ("task_contract_envelope", "identity_policy", "task_id")))
+    if governed_create and mode == "local":
+        raise DaemonUnavailableError("Governed task.create requires daemon authority; no local fallback")
     if mode == "local":
         if _is_task_write(rpc_method) and get_task_write_policy() != "isolated":
             raise SharedTaskWriterRequiredError(
@@ -3601,10 +3819,50 @@ def route_task_write(rpc_method: str, params: dict, fallback_func):
         import uuid
         params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"
 
+    # A task report is the review-input handoff.  In HTTP mode the thin client
+    # asks the daemon for its authority DB path, publishes a snapshot through
+    # the daemon, then forwards the returned identity.  Calling
+    # _ensure_remote_snapshot(None) would only register the workspace and can
+    # never manufacture a snapshot for a fresh client.  Callers must not
+    # calculate or hand-copy this value.  The daemon remains the final
+    # fail-closed validator, including direct callers and non-HTTP transports.
+    if rpc_method == "task.report" and not str(params.get("snapshot_id") or "").strip():
+        if is_http_transport_enabled():
+            client = HttpDaemonRpcClient.get_instance()
+            if client._project_root is None:
+                # 兜底按调用进程 cwd（同 route_rpc：禁止硬编码 PROJECT_ROOT）
+                client.configure_workspace(os.getcwd())
+            db_result = client.call("mcp.common.get_db_path_for_daemon", {})
+            snapshot_db_path = (
+                db_result.get("db_path") if isinstance(db_result, dict) else None
+            )
+            if not snapshot_db_path:
+                raise DaemonUnavailableError(
+                    "daemon 未返回可用于 task.report snapshot.publish 的权威 db_path",
+                    code="E_TASK_REPORT_SNAPSHOT_REQUIRED",
+                )
+            workspace_instance_id = client._ensure_remote_snapshot(snapshot_db_path)
+            snapshot_id = client._remote_snapshot_id
+            if not workspace_instance_id or not snapshot_id:
+                raise DaemonUnavailableError(
+                    "task.report 需要 daemon workspace.register 签发的 snapshot_id",
+                    code="E_TASK_REPORT_SNAPSHOT_REQUIRED",
+                )
+            params["workspace_instance_id"] = workspace_instance_id
+            params["snapshot_id"] = snapshot_id
+
     rpc_client = _get_rpc_client_for_route()
     # workspace_id 注入在 try 之外：无 active workspace 时直接抛错（fail-closed），
     # 绝不落入“daemon 不可用 → 本地回退”路径（本地读同样缺少 workspace 隔离）。
-    rpc_params = _inject_workspace_id(params)
+    # SR-01：task.supersede / task.superseded_by 是 task-scoped authority 请求，
+    # 数字 workspace 由 daemon 从不可变 task_workspace_bindings 解析（省略时）或
+    # 显式一致性校验（提供时）；注入 legacy active workspace 会在多项目 daemon
+    # 下用其他项目的 workspace 抢占 authority（E_WORKSPACE_AUTHORITY_MISMATCH /
+    # 错误的 workspace 过滤投影），故跳过注入。
+    if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY and _is_task_scoped_authority_request(params):
+        rpc_params = params
+    else:
+        rpc_params = _inject_workspace_id(params)
     try:
         call = (
             rpc_client.call_with_autostart
@@ -3618,8 +3876,8 @@ def route_task_write(rpc_method: str, params: dict, fallback_func):
             # 原样透传，不得伪装成 "daemon 连接失败"，否则客户端无法区分业务冲突与连接故障
             raise
         exc: BaseException = dre  # 连接/发现级（stale/missing manifest、daemon 不可达）
-    except Exception as exc:
-        pass
+    except Exception as error:
+        exc = error
     # 连接级故障统一处理（enterprise/auto fail-closed，绝无本地 SQLite 回退）
     if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY:
         # P0-H：governance mutation 无任何本地回退（即使非 enterprise/auto）
@@ -3646,7 +3904,13 @@ def route_task_read(rpc_method: str, params: dict, fallback_func):
     rpc_client = _get_rpc_client_for_route()
     # workspace_id 注入在 try 之外：无 active workspace 时直接抛错（fail-closed），
     # 绝不落入“daemon 不可用 → 本地回退”路径。
-    rpc_params = _inject_workspace_id(params)
+    # SR-01：task.supersede / task.superseded_by 为 task-scoped authority 请求，
+    # 跳过 legacy active workspace 注入（同 route_task_write 内注释），
+    # 否则 task.superseded_by 只读投影会按错误 workspace 过滤而漏行。
+    if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY and _is_task_scoped_authority_request(params):
+        rpc_params = params
+    else:
+        rpc_params = _inject_workspace_id(params)
     try:
         return rpc_client.call(rpc_method, rpc_params)
     except DaemonRemoteError as dre:
@@ -3801,12 +4065,13 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
     if rpc_method not in _NO_WORKSPACE_METHODS:
         if http_enabled:
             client = HttpDaemonRpcClient.get_instance()
-            # route_rpc 是 MCP/CLI 的共同入口。确保两者都绑定到代码包解析的
-            # 项目根，而不是短生命周期宿主的 cwd；create_mcp_server 已提前
-            # 配置时保留显式 workspace。
+            # route_rpc 是 MCP/CLI 的共同入口。兜底语义：调用方未显式配置
+            # workspace 时，按调用进程 cwd 绑定（用户裁决：读本地环境每次
+            # 传过去，禁止硬编码 callwarden 仓库根——硬编码会使 CLI 跨项目
+            # 查询静默落到 callwarden 自身 workspace，报 snapshot_not_ready）。
+            # MCP 宿主场景由 create_mcp_server 提前 configure，不触发本兜底。
             if client._project_root is None:
-                from callwarden.config import PROJECT_ROOT
-                client.configure_workspace(PROJECT_ROOT)
+                client.configure_workspace(os.getcwd())
 
             # workspace.status 与原生 query 面需要一个真实 snapshot 才能形成
             # 可核验的 authority projection。DB 路径由 daemon 返回，随后
@@ -3823,14 +4088,38 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
                         "daemon 未返回可用于 snapshot.publish 的权威 db_path"
                     )
                 snapshot_db_path = db_result["db_path"]
-            ws_id = client._ensure_remote_snapshot(snapshot_db_path)
-            if ws_id is not None and "workspace_instance_id" not in params:
-                params["workspace_instance_id"] = ws_id
-            # HTTP 任务/lease 方法还需数值 workspace_id（task-DB workspaces.id）：
-            # Rust task handler 的 required_workspace_id_param 只认数值 id，且
-            # http_server.rs:820 compat 分支同样读 workspace_id。复用 _inject_workspace_id
-            # （取当前进程 active workspace，与 workspace_instance_id 同一 MCP workspace）。
-            if rpc_method.startswith(("task.", "lease.")):
+            # ADJ-RP10-01 fix: task-scoped authority requests (non-blank
+            # task_id / superseded_id) resolve their numeric workspace through
+            # the immutable task_workspace_bindings on the daemon side.
+            # Injecting workspace_instance_id / workspace_root here puts
+            # unknown fields on the wire (spec 4.1-3) and the daemon
+            # parse_request fails closed (e.g. task.prompt.compile ->
+            # E_TASK_PROMPT_TASK_ID_REQUIRED).  Skip the whole workspace
+            # injection block for those requests.
+            is_task_scoped = _is_task_scoped_authority_request(params)
+            if not is_task_scoped:
+                ws_id = client._ensure_remote_snapshot(snapshot_db_path)
+                if ws_id is not None and "workspace_instance_id" not in params:
+                    params["workspace_instance_id"] = ws_id
+                # compat 面（Python worker）需要 workspace_root 解析权威数字 id：
+                # worker 的 _bind_readonly_db 按 root_path 查 workspaces 表（2026-09-05，
+                # 修 get_impact 等 compat 方法 "没有 active workspace" fail-closed）。
+                if client._project_root:
+                    params.setdefault("workspace_root", client._project_root)
+            # task-scoped methods already have the stronger authority source:
+            # task_id -> immutable task_workspace_bindings.  Never replace it
+            # with the legacy active workspace numeric ID: in a multi-project
+            # daemon that active row can belong to another project.  The Rust
+            # handler resolves an omitted numeric ID from the binding and
+            # rejects an explicitly supplied mismatch before mutation.
+            #
+            # Workspace-scoped methods (including task.create and lease event
+            # listing without task_id) still require the existing explicit
+            # numeric workspace injection path.
+            if (
+                rpc_method.startswith(("task.", "lease."))
+                and not is_task_scoped
+            ):
                 params = _inject_workspace_id(params)
         else:
             if "workspace_id" not in params and "workspace_instance_id" not in params:

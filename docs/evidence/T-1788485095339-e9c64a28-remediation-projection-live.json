@@ -1,0 +1,36 @@
+{
+  "task_id": "T-1788485095339-e9c64a28",
+  "purpose": "append-only live receipt for completed remediation projection recovery",
+  "source_commit": "144c63fe50513b527b61e792dfc0050f4eb558d4",
+  "runtime_receipt": {
+    "path": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260904-231836-144c63fe5051-8a86cf84.json",
+    "sha256": "95612F91F721331237D808210D98B0889C49EDF9EC88FA5E06DF9829B141E362",
+    "status": "passed",
+    "git_head": "144c63fe50513b527b61e792dfc0050f4eb558d4",
+    "daemon_pid": 49692,
+    "daemon_binary_sha256": "da32f0bb76269c3c3bccaaab21c0796ef18173ffdf2d00e24b64958405a656db"
+  },
+  "daemon_health": {
+    "endpoint": "http://127.0.0.1:6741",
+    "git_commit": "144c63fe50513b527b61e792dfc0050f4eb558d4",
+    "schema_version": 60,
+    "worker_status": "healthy"
+  },
+  "authoritative_next_action": {
+    "lifecycle_status": "review",
+    "workflow_status": "review_pending",
+    "decision": "READY",
+    "action": "REVIEW",
+    "required_role": "reviewer",
+    "review_state": "pending",
+    "inbound_handoff_event_id": "he-a22f3e86150dbaacee154dd9",
+    "inbound_handoff_matches_current_routing": true,
+    "remediation_step_id": "S-773f2afd8369e7ef0836018a",
+    "remediation_report_request_id": "req-89383befe484"
+  },
+  "prior_remediation_evidence": {
+    "path": "docs/evidence/T-1788485095339-e9c64a28-snapshot-authority-remediation.json",
+    "sha256": "66C10C969A08F89C3AADDE2681C4F988C93E174CCCBB217337197BA830377A19"
+  },
+  "result": "The immutable workspace, snapshot-provenance, and completed-remediation proofs now produce READY/REVIEW rather than a stale READY/REVISE projection. This receipt does not substitute for an independent reviewer verdict."
+}

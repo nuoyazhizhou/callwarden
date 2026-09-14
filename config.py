@@ -36,8 +36,58 @@ PROJECT_ROOT = _MODULE_DIR  # callwarden 包根目录（parsers/module_resolver.
 PACKAGES_DIR = _EXE_DIR  # 冻结模式下为可执行文件所在目录，开发模式下为父目录
 SRC_DIR = os.path.join(_EXE_DIR, "..", "src")
 
+def _resolve_user_home() -> str:
+    """解析用户主目录并返回绝对路径（fail-closed）。
+
+    os.path.expanduser("~") 在环境同时缺少 USERPROFILE/HOME/HOMEDRIVE+HOMEPATH
+    时会原样返回 "~"（Windows 下常见于环境被裁剪的子进程）。此时若继续用
+    os.path.join 拼接，会得到以 ~ 开头的相对路径，最终把 MCP 配置/标记文件写进
+    进程 CWD 下的字面 ~ 目录（曾出现 C:\\git_work\\callwarden\\~ 残留）。
+    这里显式兜底：取不到主目录时直接报错，拒绝以字面 ~ 相对路径落盘。
+    """
+    home = os.path.expanduser("~")
+    if not home.startswith("~"):
+        return os.path.normpath(home)
+    # expanduser 未展开：按 Windows 标准顺序显式读取主目录环境变量
+    for key in ("USERPROFILE", "HOME"):
+        value = os.environ.get(key)
+        if value:
+            home = value
+            break
+    else:
+        drive = os.environ.get("HOMEDRIVE") or ""
+        home_path = os.environ.get("HOMEPATH") or ""
+        if drive and home_path:
+            home = drive + home_path
+        else:
+            raise RuntimeError(
+                "无法确定用户主目录：USERPROFILE/HOME/HOMEDRIVE+HOMEPATH "
+                "环境变量均缺失，拒绝以字面 '~' 相对路径创建文件")
+    # 兜底值仍以 ~ 开头说明环境取值异常（如 HOME='~'），同样拒绝落盘到 CWD\\~
+    if home.startswith("~"):
+        raise RuntimeError(
+            "用户主目录环境变量取值异常（{0}），拒绝创建文件于 CWD\\~".format(home))
+    return os.path.normpath(home)
+
+
+def expand_tilde(path: str) -> str:
+    """把路径前缀 ~ 展开为真实用户主目录的绝对路径。
+
+    与 os.path.expanduser 的差异：当展开失败（Windows 下缺 USERPROFILE/HOME
+    等环境变量时 expanduser 会静默原样返回 '~...' 相对路径）时，不会返回该
+    相对路径，而是基于 import 期已解析的 USER_HOME 补齐，杜绝向 CWD 下字面
+    ~ 目录写入。
+    """
+    if not path or not path.startswith("~"):
+        return path
+    expanded = os.path.expanduser(path)
+    if not expanded.startswith("~"):
+        return expanded
+    return os.path.join(USER_HOME, path[1:].lstrip("/\\"))
+
+
 # 数据库根目录：用户主目录下的 .callwarden/
-USER_HOME = os.path.expanduser("~")
+USER_HOME = _resolve_user_home()
 CALLWARDEN_DIR = os.path.join(USER_HOME, ".callwarden")
 
 # 向后兼容的默认 DB_PATH（推荐使用 get_project_db_path 按项目隔离）

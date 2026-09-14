@@ -1,7 +1,27 @@
 {
+  "t1788583773351_gate1b_delivery_20260905": {
+    "task_id": "T-1788583773351-2da3bb54",
+    "commit_id": "20d3f5ad44ed6ba36f58d6c5a99d19658a5b96d4",
+    "status": "new_in_master",
+    "scope": "Immutable Gate evidence and implementation commit ledger",
+    "report_request_id": "req-5aa8f5e7bdd7",
+    "handoff_event_id": "he-afb08ddf9ad485a909898ceb",
+    "handoff_request_id": "gate1b-handoff-r2-20260905-01a06f02-5558-7830-b436-bcfdb17380f0",
+    "snapshot_id": "490b429a2e06163a",
+    "evidence_sha256": "8ad7c32b173409d029265d6c59ba05d6838b10ef73f6eacc2ec7a8ce4fb2679f",
+    "verified_status": "review/review_pending; READY; blocking_reasons=[]; 4/4 steps done; inbound handoff matches_current_routing=true",
+    "note": "message includes task_id; runtime PID 46844 remained healthy across subsequent task report/handoff and final readback; executor and implementer leases released; full refresh attempted and rejected with method_not_found build_full_graph; independent review and final close are still pending"
+  },
+  "t1788583773351_gate1b_cli_20260905": {
+    "task_id": "T-1788583773351-2da3bb54",
+    "commit_id": "94a470d72eb3b4d6e5d2242ba9cac4f5af265667",
+    "status": "new_in_master",
+    "scope": "GATE-1B parent-aware governed task.create CLI, typed client, tests and documentation",
+    "note": "message includes task_id; 16 focused tests and 14 workspace regressions passed; runtime receipt 20260905-130027-94a470d72eb3-aa37c57d passed; full graph refresh failed with method_not_found build_full_graph; no independent PASS asserted"
+  },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-08-31T12:20:00.000000+08:00",
+  "updated_at": "2026-09-16T10:40:00+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -1315,6 +1335,712 @@
       "source": "executor_p0d_20260830",
       "scope": "P0-D immutable binding / workspace capture freshness: next_action fail-closed tests + evidence",
       "note": "commit message 内嵌 task_id"
+    },
+    {
+      "task_id": "T-1788339177806-d7198e98",
+      "commit_id": "1373f7861b5b0998d7e8c94630f121d10e72605e",
+      "status": "new_in_master",
+      "source": "role_prompt_v1_bootstrap_recovery_finalization",
+      "scope": "deliverables/software-company/role-prompt-v1-bootstrap-recovery-work-order.json + docs/design/cw-role-prompt-compiler-v1-bootstrap-recovery-amendment.md + docs/evidence/role-prompt-v1-bootstrap-recovery-finalization.json",
+      "note": "Role Prompt v1 bootstrap recovery provenance finalization：两份不可变规划输入原样入 Git（BF78E5B0…A2756F / C2E390EB…CBE45，零字节改动）+ append-only finalization receipt。v1 vehicle T-1788253722521-3b2f8420 保持 append-only，supersede 仅记录请求（target T-1788315869918-0cb69b10），由 Adjudicator 以真实 reviewer lease 执行。backfill commit 即承载本条台账的提交（message 内嵌 task_id）。",
+      "backfill_commit": "b8dceb8bc733f5d790c915924b1799bb34209950",
+      "backfilled_receipt_sha256": "4e5adc25f14546b6610d0d9330feab45e47db909bfbba150e18fe8fdd7812716",
+      "pre_backfill_receipt_sha256": "bf3de20bc56338352a40448d93ff0497fd59e23966b646f8c79199e398915d92",
+      "recorded_at": "2026-09-02T17:21:04+08:00"
+    },
+    {
+      "task_id": "T-1788346430756-8c900ec0",
+      "commit_id": "b91b4c438354ee9be86bdaaba65b6c07cef11381",
+      "status": "new_in_master",
+      "source": "workspace_authority_reconciliation_executor_finalization",
+      "scope": "rust_ext/src/daemon/workspace_reconciliation.rs + mod.rs + snapshot_state.rs + task_collab.rs + workspace.rs + dispatch.rs + docs/design/workspace-authority-reconciliation-v1.md + tests/e2e_workspace_authority_reconciliation.py + docs/evidence/workspace-authority-reconciliation-e2e.md",
+      "note": "Workspace authority reconciliation: unified task-DB/registry authority keyed on workspace_instance_id. Deployed daemon runtime sha 5cd88614 (PID 27212, HTTP 127.0.0.1:7292); E2E 4/4 PASS (status 144 -> instance 4baea3ff12c2ea5c; status ws-1 -> task_db id=1; status 1 surfaces registry/task_db id collision). 4 executor steps reported; task lifecycle=review (review_pending) awaiting independent reviewer."
+    },
+    {
+      "task_id": "T-1788346430756-8c900ec0",
+      "commit_id": "cc799b04b51a8c075db72e2d5121b1d1839075da",
+      "status": "new_in_master",
+      "source": "workspace_authority_reconciliation_e2e_hardening_post_closure",
+      "scope": "tests/e2e_workspace_authority_reconciliation.py + docs/evidence/workspace-authority-reconciliation-e2e.md",
+      "note": "registry numeric id drifted 144->156; E2E now auto-discovers id from stable instance id; production fix confirmed live (binary 10cc6edc, git 4ae1447b). No Rust change.",
+      "updated_at": "2026-09-03T00:19:01"
+    },
+    {
+      "task_id": "T-1788392053931-05b8a0e4",
+      "commit_id": "09e49155e9a482fb0ae5616b0aba3383ff11221f",
+      "status": "new_in_master",
+      "source": "workspace_authority_live_tuple_v3_bugfix",
+      "scope": "rust_ext/src/daemon/task_collab.rs + rust_ext/src/daemon/task_collab_tests_ws_authority.rs",
+      "note": "Bugfix v3: task.create consumes reconciled live tuple (1102/4baea3ff12c2ea5c). bind_task_to_workspace fail-closes only on un-established instance; binding write + governance contract bootstrap + create response all thread canonical eff_workspace_id (fixes role_contract_lineages FK); parent-aware compares RAW workspace_id. 4 ws_authority regression tests; task_collab 130 + reconciliation 8 pass; 2 parent_create regressions fixed.",
+      "updated_at": "2026-09-03T12:16:41"
+    },
+    {
+      "task_id": "T-1788392053931-05b8a0e4",
+      "commit_id": "dfe71c9",
+      "status": "new_in_master",
+      "source": "workspace_authority_live_tuple_v3_evidence",
+      "scope": "tests/e2e_workspace_authority_live_tuple_v3.py + docs/evidence/workspace-authority-live-tuple-v3-e2e.json + reproduction.json step_id fix",
+      "note": "Fresh-restart E2E 6/6 PASS (AUTH/WRITE/NEG mismatch+stale+unknown/cross-project). Positive create T-1788408744022-fca9860c persisted canonical binding/capture/alias/lineage (workspace 1, instance 4baea3ff12c2ea5c). Deploy closed-loop runtime==target sha256 64e8a8ce, git_commit==HEAD 09e4915.",
+      "updated_at": "2026-09-03T12:16:41"
+    },
+    {
+      "task_id": "T-1788923523728-7a316cc4",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-CR，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: subtree aggregate closed",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962298062-54927dac",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-COMPAT-v2 identity-lease，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: superseded by T-1788963088148-495d7208 (leaf steps waived)",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962307288-7a8526d4",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-COMPAT-v2 tools_query，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: superseded by T-1788963103216-cb818938 (leaf steps waived)",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962308102-ab09ac58",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-COMPAT-v2 tools_task，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: superseded by T-1788963104058-fdb2e848 (leaf steps waived)",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962308958-de061718",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-COMPAT-v2 tools_semantic，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: superseded by T-1788963104879-2e9e6270 (leaf steps waived)",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962309851-13447b90",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-COMPAT-v2 tools_security，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: superseded by T-1788963105720-60bfc80c (leaf steps waived)",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962310755-49297814",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "new_in_master",
+      "source": "govfix03_trigger_card_ledger",
+      "scope": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "note": "触发卡（P0-COMPAT-v2 tools_summary，closed）：被 supersede 的叶子卡因 pending 步骤无法走 close/cascade_close，促成 GOV-FIX-03（commit 67b5c8e，task T-1789078476262-2ce6dfc8）。该 commit 为其补 daemon 写路径；因果链 task→commit 登记于此。收尾审计 reason: superseded by T-1788963106520-907544c8 (leaf steps waived)",
+      "updated_at": "2026-09-11T06:17:34"
+    },
+    {
+      "task_id": "T-1788962298062-54927dac",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（P0-COMPAT-v2 identity-lease，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1788962307288-7a8526d4",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（P0-COMPAT-v2 tools_query，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1788962308102-ab09ac58",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（P0-COMPAT-v2 tools_task，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1788962308958-de061718",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（P0-COMPAT-v2 tools_semantic，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1788962309851-13447b90",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（P0-COMPAT-v2 tools_security，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1788962310755-49297814",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（P0-COMPAT-v2 tools_summary，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1787322795307-d949b968",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（closed+合同缺 identity_policy → overlay 漏网，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1787322795374-dd442bac",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（closed+合同缺 identity_policy → overlay 漏网，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1787322799980-efcb2090",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "new_in_master",
+      "source": "govfix04_trigger_card_ledger",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "触发卡（closed+合同缺 identity_policy → overlay 漏网，status=closed）：作为 GOV-FIX-04 的 live 回归证据——修复前投影为 governance_blocked（或 E_WORKSPACE_AUTHORITY_UNAVAILABLE），修复后 workflow_status=completed。commit 031355e",
+      "updated_at": "2026-09-11T07:35:45"
+    },
+    {
+      "task_id": "T-1789083808963-caacecc4",
+      "commit_id": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+      "status": "closed_completed",
+      "source": "govfix04_governance_card_full_loop",
+      "scope": "rust_ext/src/daemon/task_loop/next_action.rs; rust_ext/src/daemon/task_loop/next_action_test.rs; rust_ext/src/daemon/task_collab_query.rs; rust_ext/src/daemon/task_collab_tests_projection.rs; rust_ext/src/daemon/dispatch.rs",
+      "note": "GOV-FIX-04 事后治理包装卡全循环闭环（Executor 3/3 步 report + Reviewer verdict V-31af5018ca7de54ebcc97900 PASS findings=0 + Adjudicator apply/close，workflow COMPLETE）。卡 steps 与 commit 031355e 文件一一对应，hash_after 与工作区一致；live 50/50 closed→completed、20/20 非终态 0 误判。evidence: docs/evidence/T-1789083808963-caacecc4-evidence-20260911.json + review-20260911.json",
+      "verdict_id": "V-31af5018ca7de54ebcc97900",
+      "updated_at": "2026-09-11T09:35:01"
+    },
+    {
+      "task_id": "T-1789078476262-2ce6dfc8",
+      "commit_id": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+      "status": "closed_completed",
+      "source": "govfix03_governance_card_full_loop",
+      "scope": "rust_ext/src/daemon/task_collab_lifecycle_apply.rs; rust_ext/src/daemon/task_collab_tests_cascade.rs",
+      "note": "GOV-FIX-03 事后治理包装卡全循环闭环（Reviewer verdict V-b8bd5dd910b5aeff771ae854 PASS findings=0 + Adjudicator apply/close）。supersede 出边豁免叶子步骤门禁实现与 scope 一致，67b5c8e 为 HEAD 祖先；live 7/7 被替代卡 closed；修复已被 GOV-FIX-04 终态短路继承增强。",
+      "verdict_id": "V-b8bd5dd910b5aeff771ae854",
+      "updated_at": "2026-09-11T09:35:01"
+    },
+    {
+      "task_id": "T-1785738813380-0e706400,T-1786086952249-b6cc3bec,T-1786086989793-7491743c,T-1786087014630-3d00a398,T-1786087031736-389bc220,T-1786088313941-c1f45264,T-1786088331508-d9097264,T-1787183083779-b9405964,T-1787183096151-9ab65298,T-1787550557781-ee98e5b4,T-1787740451078-e9209124,T-1787820571899-7e3c1504,T-1787239495237-0a293bf8,T-1788160425990-f08e3d64",
+      "commit_id": null,
+      "status": "closed_completed",
+      "source": "govfix04_followup_probe_cards_cascade_close",
+      "scope": "governance-only",
+      "note": "A 组 14 张无合同旧 smoke/qa-probe/t/ZTEST/probe 探针卡经 task.cascade_close 收尾（用户裁决'现在 cascade_close'），权威投影逐张验证 14/14 closed/completed/COMPLETE。含 ZTEST T-1787239495237-0a293bf8 走 GOV-FIX-03 被替代卡豁免。B 组 7 张（无 daemon 写路径）与 C 组 2 张贝叶斯 backlog 卡未动，另行处置。",
+      "updated_at": "2026-09-11T09:35:01"
+    },
+    {
+      "task_id": "T-1786853522730-d006c978,T-1787209408488-ec357cec,T-1787209437399-a76a471c,T-1787209465034-169c2ac8,T-1787239501902-9772e0e4,T-1787239520771-fc1efb8c,T-1787758490098-f2862990",
+      "commit_id": null,
+      "status": "closed_completed",
+      "source": "bgroup_probe_cards_supersede_cascade_close",
+      "scope": "governance-only",
+      "note": "B 组 7 张抛弃型探针/诊断卡（bootstrap-probe ×3 / ZTEST-SUPERSEDE-NEW,C-ACCEPT / DIAG-probe / authority-recovery-diagnosis）经用户裁决收尾：逐张 supersede 到 GOV-FIX-04 治理卡 T-1789083808963-caacecc4（7 条 SUP 出边，evidence B-GROUP-cleanup-evidence-20260911.json），借被替代卡豁免 cascade_close；权威投影 7/7 closed/completed/COMPLETE。d006c978 无 binding，先由 GOV-FIX-04 卡 anchor 走 task.attest-legacy-workspace-binding 补齐。supersede 门禁要点：reviewer lease 必须由注册 reviewer（reviewer-wb-186loop/sess-reviewer-wb-186loop）持有，actor 用 adjudicator 身份，两 agent 不得相同。",
+      "updated_at": "2026-09-11T10:02:19"
+    },
+    {
+      "task_id": "T-1788268314722-a8b6a945,T-1788268321485-5315820b,T-1789091925759-a1632a68,T-1789091926928-e7138e40",
+      "commit_id": null,
+      "status": "old_closed_new_backlog_ready",
+      "source": "cgroup_bayesian_backlog_successor_cards",
+      "scope": "governance-only",
+      "note": "C 组 TokenSlim 贝叶斯真实 backlog 处置：开 2 张带 A' 三角色 legacy 合同 + binding 的承接卡（a1632a68 贝叶斯语义分类压缩路由 / e7138e40 T-A 极简朴素贝叶斯分类器，均 open/queued/READY）；旧裸卡（a8b6a945 / 5315820b）经 anchor attestation 补 binding 后 supersede 到承接卡（evidence C-GROUP-bayesian-successor-evidence-20260911.json）并 cascade_close，权威投影旧卡 2/2 closed/completed/COMPLETE，backlog 意图完整保留在承接卡。",
+      "updated_at": "2026-09-11T10:02:19"
+    },
+    {
+      "task_id": "GOV-FIX-05-batch1 (121 cards)",
+      "commit_id": null,
+      "status": "superseded_closed_114_plus_7_roots_pending",
+      "source": "govfix05_batch1_legacy_cards_cleanup",
+      "scope": "governance-only",
+      "note": "GOV-FIX-05 批次 1（用户裁决路线 B）：Rust 迁移系 + 临时验证系 + 注释系共 121 张无合同非终态卡。全部 121 张已 supersede 到 GOV-FIX-04 卡（出边落库，evidence GOV-FIX-05-batch1-evidence-20260911.json sha256 b7d421ca18e6c52cda26ba2f10d4607116936bed2620804c1bb0c7361fbe37fb，attest 补 binding 118 张），114 张 cascade_close 至 closed/completed/COMPLETE；7 张 epic 根卡（多LLM实施计划 117469ed / Python兼容入口 7f57ac2d / 六个主线闭环 37b0e1cf / GD检查点 ee58dac7 / 跟踪snapshot缺口 86f28184 / VERIFY整改 daf28674 / CW业务下沉 9f873bfc）因有批次 2 未闭合子卡被叶子门禁拒，待批次 2 处置后闭合。发现 CLI 缺陷：cascade-close 对子树未全闭返回 RC=0 且打印 ✓ Task closed，status 实际未变（误导），待开修复卡。批次 2 剩余 110 张裁决清单：docs/evidence/GOV-FIX-05-batch2-decision-list-20260911.md。",
+      "updated_at": "2026-09-11T10:49:09"
+    },
+    {
+      "task_id": "T-1789097000747-3e3feaa0",
+      "commit_id": "53b2958b18c55d94b4ff5e8dc35eb63e9219ad77",
+      "status": "closed_completed_governance_loop",
+      "source": "govfix06_cascade_close_reject_semantics",
+      "scope": "governance+code",
+      "note": "GOV-FIX-06：修复 task.cascade-close 假成功缺陷（子树未全闭时 RC=0 且打印 Task closed，status 实际未变）。daemon 响应新增 target_closed/blocked（children_not_closed/leaf_steps_pending）；CLI 对 error 与目标卡未收尾均 RC=2 显式拒绝（仅凭 closed/skipped 判定，旧 daemon 兼容）；幂等重提 RC=0。验收：cascade 目标测试 3/3、release 全量 1772 passed（6 failed 为环境态/基线无关）、live 拒绝 RC=2 + status 保持 open、幂等 RC=0；daemon eadfdfec 部署；治理全循环 Executor 3/3 report → Reviewer PASS → Adjudicator apply/close → COMPLETE。事故记录：执行期间 git 对象库 pack 丢失，经 fetch --refetch + 工作树重建恢复（recovery commit 53b2958），原 5 个治理提交 hash 失效内容保全。",
+      "updated_at": "2026-09-11T12:16:09"
+    },
+    {
+      "task_id": "GOV-FIX-05-batch2 (110 cards) + b1 roots (6/7)",
+      "commit_id": null,
+      "status": "superseded_closed_116_of_117_one_exception",
+      "source": "govfix05_batch2_legacy_cards_cleanup",
+      "scope": "governance-only",
+      "note": "GOV-FIX-05 批次 2（用户裁决四组全 A）：ROOT 其他 41 / G0 实验系 17 / 多LLM 8 + GovSuite 9 / W2-D0 8 + Windows-Daemon-Writer 6 + Orchestrator 6 + 六个主线 5 + 零散 10，共 110 张 supersede 到 GOV-FIX-04 卡（attest 补 binding ~95 张，anchor lease fencing 需传实测值）后 cascade_close；批次 1 遗留 7 张 epic 根卡 6 张随子卡闭合。全库无合同非终态卡 231 -> 1：唯一例外 T-1787203926824-9f873bfc（CW 业务下沉根卡），其有 3 张带合同真实工作子卡未竟（a59bcf9c S2 重建 / a275c53c bridge-probe / 45c94bd8 PYT 回归），待其走完各自生命周期后自然闭合，不作强关。新发现 CLI 缺陷（同 cascade-close 假成功族）：attest-legacy-workspace-binding 被拒（E_REQUEST_ID_REUSE_MISMATCH 等）仍 RC=0 打印 ✗——驱动脚本需 rc+✗ 双重判定；daemon request_id 重放保护要求唯一 request_id。脚本执行期间修复三轮：lease stdout 解析、唯一 request_id、rc+✗ 双重判定。",
+      "updated_at": "2026-09-11T13:56:56"
+    },
+    {
+      "task_id": "T-1789110285614-5e09ba98",
+      "commit_id": "cedadf0a8590b25d65ada1b79995a884fe155829",
+      "status": "closed_govfix07_full_loop",
+      "source": "govfix07_card_ledger",
+      "scope": "cli/main.py (dispatch DaemonRemoteError RC=2 + attest error paths sys.exit(2)) + tests/test_cli_govfix07_daemon_error_rc.py + docs/evidence/GOV-FIX-07-live-verification-20260911.md",
+      "note": "GOV-FIX-07 治理卡全循环闭环（T-1789110285614-5e09ba98, verdict V-955f5c2d2a4565b509405fb8, snapshot 23ba7a5158bfcbe8）：daemon 业务拒绝在 CLI 层 RC=0 假成功修复——HTTP 传输 error 信封走 DaemonRemoteError 异常，此前 _dispatch_subcommand 通用 except 吞 RC；GOV-FIX-06 cascade_close error 分支在 HTTP 下同为死代码，由本卡 dispatch 层统一兜住。live 验收：E_LEGACY_BIND_TASK_NOT_FOUND RC=2，成功路径 RC=0 不破坏。",
+      "updated_at": "2026-09-11T15:27:13"
+    },
+    {
+      "task_id": "T-1789113280915-c3e851b0",
+      "commit_id": "c98102691f6761ee1c66626fe21e76ea52b0748f",
+      "status": "closed_govfix08_full_loop",
+      "source": "govfix08_card_ledger",
+      "scope": "cli/main.py (12 命令 18 处 error dict/no response 路径 sys.exit(2)) + tests/test_cli_govfix08_error_dict_rc.py + docs/evidence/GOV-FIX-08-audit-20260911.md",
+      "note": "GOV-FIX-08 治理卡全循环闭环（T-1789113280915-c3e851b0, verdict V-19b2e0e410cf3e4eccfda2b4）：GOV-FIX-07 ADV-1 后续卡——socket 传输 error dict/no response 失败路径 RC=0 假成功统一巡检修复，14/14 分支全谱系闭合（RC 假成功缺陷族 GOV-FIX-06/07/08 终结）。live 验收 REAL_RC=2；成功路径语义锁定。",
+      "updated_at": "2026-09-11T16:08:40"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "15de3c8f14fd8bdba2d0691376414f54eedd8b97",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "tests/test_agent_rules.py, tests/test_bootstrap_capture.py, tests/test_sync_log_cleanup.py",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] test(A桶-2): 断言对齐 daemon authority 落点（21→10 FAILED）。路径合规：allowed_paths 内（tests/** 等）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "904df983cadfa43a0ea14e9b3f7791ff62924d7c",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "docs/evidence/T-1789139378194-02f1f66c-a-bucket-batch2-20260912.json",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] evidence: A 桶第二批修复清单 + D1/D2 相邻缺陷登记。路径合规：⚠️ docs/evidence/** 不在 allowed_paths（合同证据路径为 deliverables/software-company/**）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "9d4193155509ddec88f214fdc45f0e489be1f2b7",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "db/db_base.py, db/db_build.py",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] fix(db): D1 新库首文件注册补 file_contents 占位（FK 修复）。路径合规：⚠️ 触碰 step#4 合同 forbidden_paths 中的 db/**（待 scope 裁决）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "eb15a7e9d77f972c43365f956f58133844810ff2",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "tests/test_agent_rules.py, tests/test_audit_chain.py",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] test: file_symbol_content 走 RPC 契约 + legacy v21 构造贴近真实 + D2 回归用例。路径合规：allowed_paths 内（tests/** 等）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "8211219672dd69c6e7765a89b6068a7d48ff3c60",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "docs/evidence/T-1789139378194-02f1f66c-d1-d2-fix-20260912.json",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] evidence: D1/D2 修复证据（含 A/B 反证与回归结果）。路径合规：⚠️ docs/evidence/** 不在 allowed_paths（合同证据路径为 deliverables/software-company/**）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "b87f545bfb73ca9c9aebdf54d36c22ba12bd6b60",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "db/db_base.py, tests/test_db_v2_to_v3_migration_fk.py",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] fix(db): v2→v3 迁移空 hash 占位 + 修正过早 DROP（D3）。路径合规：⚠️ 触碰 step#4 合同 forbidden_paths 中的 db/**（待 scope 裁决）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "3e479503972203a63e0a7295fdf45ec0f8115a86",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "tests/test_cli_task_reopen.py",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] test(A桶): task reopen CLI 断言对齐 daemon RPC 契约。路径合规：allowed_paths 内（tests/** 等）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "1061ba3d39bd2f7fd0e3cb00100e467442d4585f",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "docs/evidence/T-1789139378194-02f1f66c-d3-v2-migration-20260912.json",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] evidence: D3 修复 + D4/D5 连带过早 DROP + reopen A 桶证据。路径合规：⚠️ docs/evidence/** 不在 allowed_paths（合同证据路径为 deliverables/software-company/**）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "fd23c89d13aa962e4db28e08b3a4d1eb12b251d4",
+      "status": "prefix_corrected_step_id_as_task_id",
+      "source": "step4_identity_correction_20260912",
+      "scope": "db/db_base.py",
+      "note": "身份更正：提交消息前缀误写为本卡 step#4 的 step_id `T-1789139378194-02f1f66c`，真实 task_id 为 `T-1788871227327-45c94bd8`（AGENTS.md：task_id 不得用 step 替代；daemon `next-action` 明确 step_id=T-1789139378194-02f1f66c、task_id=T-1788871227327-45c94bd8）。原始 subject: [T-1789139378194-02f1f66c] fix(db): D3 占位行改为按 NOT NULL 约束动态构造。路径合规：⚠️ 触碰 step#4 合同 forbidden_paths 中的 db/**（待 scope 裁决）",
+      "updated_at": "2026-09-12T13:59:58+08:00"
+    },
+    {
+      "task_id": "T-1788871227327-45c94bd8",
+      "commit_id": "e53de7a7bcfb1c58c4de5cee0e18cbdb40a6a8fb",
+      "status": "step5_parked_disclosure",
+      "source": "step5_parked_step_disclosure_20260913",
+      "scope": "deliverables/software-company/pyt_regression_step5_parked_step_disclosure.md, deliverables/software-company/pyt_regression_step4_handoff_backlog.md",
+      "evidence_sha256": "514d1a70de09d9f4d797d7c2aa09b1d3c577aa41b7c6ead2b3392bfe418154b5",
+      "report_request_id": "req-9093e553d6d6",
+      "note": "step#5 `T-1789293259780-5c3d5fd8`（action=fix_defect，daemon system_evaluator 对 unresolved failed step 的机械重复派工）复查确认 `owner_route=planner`：acceptance ② 残余失败结构性落在本卡 forbidden_paths（cli/**、server/**、rust_ext/src/daemon/**），只改 tests/** 无法闭合，改测试即造假绿。按 role-protocol §3「Parked remediation step」：不得实施代码、不得标记 done、不得升级用户；step#5 保持未完成属预期状态，重复派工不构成新授权。HEAD 源码级复核 C-04/C-10/C-11/C-12 落点仍成立（cli/main.py:3448 / :2559-2563 / :14892 / :15056）。report --fail 后 step#5 status=failed、daemon 立即派生 step#6 `T-1789293736662-649f0c98`（fix_defect, queued）——即 §3 所述重复派工活锁，按「不构成新授权」不再领取、不再重做。路径合规：allowed_paths 内（deliverables/software-company/**）、required_evidence 内。",
+      "updated_at": "2026-09-13T18:00:53+08:00"
+    },
+    {
+      "task_id": "T-1789274621921-e5464ad8",
+      "commit_id": "18b00bacb74066a44589871213fb2a617be08b7c",
+      "status": "complete",
+      "source": "w12_metrics_summary_remediation_20260913",
+      "scope": "rust_ext/src/daemon/metrics_handlers.rs, rust_ext/src/daemon/query_compat_handlers.rs, server/tools/tools_workspace.py, deliverables/software-company/w12_metrics_summary_remediation_contract.md, deliverables/software-company/create_w12_metrics_summary_remediation_task.py, deliverables/software-company/w12_metrics_summary_remediation_evidence.md",
+      "evidence_sha256": "fb3647f0f70e4f39946d304ae573ce07c95a58a53d37f861cdfebfe0142d3cee",
+      "report_request_id": "req-5017cdc216a7",
+      "handoff_event_id": "he-35296c7a58b3035106585567",
+      "handoff_request_id": "w12-exec-reviewer-handoff-20260913-18b00ba",
+      "snapshot_id": "30fa422d8b75b549",
+      "review_verdict_id": "V-47b9fa19cfbd42932dc24bc6",
+      "review_request_id": "w12-reviewer-verdict-20260913-18b00ba",
+      "review_handoff_event_id": "he-61529463dfd96c99a639cfef",
+      "review_handoff_request_id": "w12-reviewer-handoff-20260913-18b00ba",
+      "adjudication_lease_id": "L-adc3caa67e680396",
+      "adjudication_fencing_counter": 9,
+      "note": "W12 承接卡（方案 A 从 PYT 卡 T-1788871227327-45c94bd8 剥离）：3 处生产改动落地并提交（提交前缀为本卡 task_id，未复用 PYT 卡 id）。steps 0-4 全部 done——step0 S-1789274621923-e5584788 report req-6de772e2021f；step1 S-1789274621923-e5595f38 req-325e0c28d55a；step2 S-1789274621923-e5599cf0 req-2a91dea976f2；step3 S-1789274621923-e559c84c req-7f34402ea382；step4 S-1789274621923-e559f3a8 req-5017cdc216a7。commit 后实跑验收：cargo test --no-default-features --lib metrics_handlers 7 passed / pytest tests/test_cli_046_http_rpc.py+084..088 26 passed in 36.47s（046 出向信封断言命中 query.metrics_summary，真实 HTTP transport）/ git diff --check exit 0。handoff executor_ready_for_review -> reviewer（handoff_event_id he-35296c7a58b3035106585567，inbound matches_current_routing=true）；executor lease L-5f1dbdf196a1718e 已释放；task_status=review / workflow_status=review_pending / decision=READY / blocking_reasons=[]，next_session=reviewer（must_be_new_session=true），等待独立 reviewer verdict。hash 演进披露：evidence manifest 在 step0 report 之后修订了 §4 的 registry/snapshot 描述（原误把 workspace.status 的独立默认 registry 路径与 52a28d6c4f56d16a 当作 report 门禁依据），故 step0 报告绑定的是修订前 hash 7beaf24516ca38c272fa2cb0189fe9e86230d34c5e0aec2edb4efce8cc7579cf；修订后最终 hash = fb3647f0f70e4f39946d304ae573ce07c95a58a53d37f861cdfebfe0142d3cee（step1-4 报告与 handoff 均绑定该最终值）。report 门禁权威 snapshot_id=30fa422d8b75b549（store 实际读取的 registry = C:/Users/wanpi/.callwarden/registry.db）。【Reviewer 独立复核闭环 2026-09-13】由独立 reviewer 子代理（注册身份 reviewer-wb-186loop/inst-reviewer-wb-186loop，session sess-w12-rev-20260913，model_id workbuddy，与 executor session 互异）只读复核：4 项验收判据全通过（no second field-set；single source of truth = pub(crate) summary_metrics_summary 被 metrics_handlers.rs 与 query_compat_handlers.rs 共用、恰 8 字段；forbidden paths untouched——18b00ba 仅 6 文件、无 cli/** 无 db/**；empty-workspace 负例已证）；独立复跑 cargo test --no-default-features --lib metrics_handlers 7 passed、pytest 046+084..088 26 passed、git diff --check exit 0；evidence SHA-256 实测 = fb3647f0f70e4f39946d304ae573ce07c95a58a53d37f861cdfebfe0142d3cee（与绑定值一致）。verdict V-47b9fa19cfbd42932dc24bc6（blind_first_pass / overall=pass / findings=0 / view_manifest_hash 916bbc836d5b7058e2b6e1e1a0a0d9bc7eb6d9447776feea471b61fe257775b1）→ handoff reviewer_pass -> adjudicator（he-61529463dfd96c99a639cfef，independence=required，新 assignment A-ded3801d0edd1d148bf55d93）；reviewer lease L-c7e4b804825403f0 已释放。非阻塞 finding（只读发现、本卡未修，供后续治理卡跟踪）：cw collab verdict 硬编码 Named Pipe DaemonClient，而 cw lease acquire 走 HTTP 1615，两侧 authority 不一致 → Named Pipe 侧 E_TASK_WORKSPACE_UNBOUND/E_LEASE_NOT_FOUND；本次 verdict 与 handoff 均经权威 HTTP 面完成，未绕过、未改 DB、未伪造。当前 task_status=review / workflow_status=adjudication_pending / decision=READY / action=ADJUDICATE / required_role=adjudicator（must_be_new_session=true，且需同时独立于 Executor 与 Reviewer），等待独立 adjudicator 复核。【Adjudicator 独立终审闭环 2026-09-13】由独立 adjudicator 子代理（身份 adjudicator-wb-186loop / inst-adjudicator-wb-186loop / session sess-w12-adj-20260913 / model_id workbuddy / --role adjudicator，与 executor 及 reviewer 会话均互异）执行受保护收尾：legacy_identity_v1 路径下由 adjudicator 自身身份 acquire 一个 role=reviewer 的 lease（L-adc3caa67e680396，fencing=9；raw token 仅内存使用、未落盘）→ cw task apply（status=applied，identity recorded）→ 复核 workflow_status=applied_pending_close → cw task close（status=closed，未报 E_LEASE_HOLDER_MISMATCH）→ cw lease release（Released At 1789298684.0）。终态由调用方独立复核：decision=COMPLETE / action=NONE / lifecycle_status=closed / workflow_status=completed / current_role=null / required_role=null / blocking_conditions=[] / routing.next_role=complete / routing.reason=任务已 closed 所有终态门禁满足。全程未改生产代码、未直连数据库、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-13T19:25:00+08:00"
+    },
+    {
+      "task_id": "T-1789301330757-87f33c34",
+      "commit_id": "f0b726877b742865890fa179562e3b1046728b5c",
+      "status": "complete",
+      "source": "w17_collab_authority_migration_20260913",
+      "scope": "cli/main.py, tests/test_task_verdict_cli.py, tests/test_cli_collab_snapshot_publish.py, TOOLS.md, docs/cli_reference.md, .agents/skills/cw-task-loop/references/role-protocol.md, deliverables/software-company/w17_collab_authority_migration_evidence.md",
+      "evidence_sha256": "bcad75d82fc90f437d1f45e7776f9215cac001c4cf3e6f99cfc475241fa37704",
+      "report_request_id": "req-566242bdd612",
+      "handoff_event_id": "he-b52083b48dd0c7c2e68feed6",
+      "handoff_request_id": "req-handoff-w17-1789305147",
+      "snapshot_id": "52a28d6c4f56d16a",
+      "review_verdict_id": "V-23583814b61df9f3985a69e6",
+      "review_request_id": "rv-w17-20260913214537",
+      "review_handoff_event_id": "he-ccb789cc66bdb5053f6a9c46",
+      "review_handoff_request_id": "req-handoff-w17-reviewer-20260913214558",
+      "adjudication_lease_id": "L-aee37b0255a563bd",
+      "adjudication_fencing_counter": 4,
+      "note": "W17 承接卡（从 W12 承接卡 T-1789274621921-e5464ad8 的独立 Reviewer 非阻塞 finding 剥离，用户 2026-09-13 裁决「新建独立承接卡 + 4 个治理写方法一并迁移」）：cli/main.py::_handle_collab 的 4 个治理写方法（snapshot.publish / verdict.submit / reveal.submit / gate.decide）由本地 Unix 传输面统一收敛到权威路由 route_rpc(..., 'GOVERNANCE_WRITE')（HTTP authority face，与 cw lease / cw task 写命令面同一真相源）。删除本地 DaemonClient.get_instance()/call_with_autostart 与 degraded 信封处理（route_rpc 原样返回 daemon result）；snapshot.publish HTTP 模式下先 configure_workspace 显式绑定 --workspace，workspace_instance_id 只取 workspace.register 权威返回值（CLI 不派生，snapshot_id 由 daemon 继承故不再搬运）；fail-closed 改为 _collab_governance_rejection + raise SystemExit(1)（无本地 SQLite 回退、无静默降级，不再走 dispatcher RC=0 假成功分支）。验收：源码级 AST 断言 _handle_collab 内 DaemonClient/UnixDaemonRpcClient 出现次数 = 0、route_rpc 调用 1 处；pytest tests/test_task_verdict_cli.py + tests/test_cli_collab_snapshot_publish.py 7 passed；相邻 HTTP authority 回归面 8 文件 47 passed/4 skipped；git diff --check exit 0。实测定论合同 §4 已知风险：route_rpc('gate.decide'/'reveal.submit') 返回 DaemonRemoteError method_not_found（非 invalid_params），证明 route_rpc 的 workspace 注入未被 daemon 拒绝，§3.1 对 server/daemon_client.py 的最小增补条件不成立，故本卡未修改该文件；根因是 daemon dispatch.rs::handle_collab_rpc 未实现这两方法（属 daemon 侧任务，本卡 forbidden_paths 含 rust_ext/**）。披露：tests/test_cli_011_http_rpc.py / test_cli_057_http_rpc.py 共 4 例失败经 git stash 复核为既有失败（assignment/rules 命令面），与本卡无关。提交前缀为本卡 task_id，未复用 PYT 卡 T-1788871227327-45c94bd8 或 W12 卡 id。 【治理闭环 2026-09-13】6 个 step 全部 report（req-9a9a436f8ab7 / req-ab75cf58b056 / req-6a0501b3a55e / req-005bbb40f454 / req-6622c713ba1a / req-566242bdd612，分别绑定 step S-1789301330761-882ce1a0 / 882d4a50 / 882d7098 / 882d90a0 / 882dacc0 / 882dc8e0，task_events 8717/8719/8721/8723/8725/8727）→ executor handoff executor_ready_for_review → reviewer（he-b52083b48dd0c7c2e68feed6，request_id req-handoff-w17-1789305147，event 8729）。独立 reviewer（注册身份 reviewer-w17-wb-01 / inst-reviewer-w17-wb-01 / session sess-w17-review-20260913 / model_id workbuddy，与 executor session 互异）只读复核后提交 verdict V-23583814b61df9f3985a69e6（blind_first_pass / overall=pass / findings=0 / step_id S-1789301330761-882dc8e0 / snapshot_id 52a28d6c4f56d16a / view_manifest_hash 23f3f1c6f9c8ae0c153e7bae9399fd4bb55af7c2e2c0fb435fdc5657125107f5 / request_id rv-w17-20260913214537）→ handoff reviewer_pass → adjudicator（he-ccb789cc66bdb5053f6a9c46，request_id req-handoff-w17-reviewer-20260913214558，event 8730）。独立 adjudicator（adjudicator-w17-wb-01 / inst-adjudicator-w17-wb-01 / session sess-w17-adjudicate-20260913 / --role adjudicator，与 executor、reviewer 会话均互异）在 legacy_identity_v1 路径下由自身身份 acquire 一个 role=reviewer 的 lease（L-aee37b0255a563bd，fencing_counter=4；raw token 仅内存使用、未落盘、用后立即 release）→ cw task apply（event 8733，review→applied，applied_at 1789307248.55834）→ 复核 workflow_status=applied_pending_close → cw task close（event 8734，applied→closed，closed_at 1789307249.7608633；未报 E_LEASE_HOLDER_MISMATCH，叶子步骤门禁满足——本卡 6 step 全 done）→ release。终态 decision=COMPLETE / action=NONE / lifecycle_status=closed / workflow_status=completed / blocking_conditions=[]。自致 lease 泄漏披露（前序 session）：用于 executor handoff 的 implementer lease L-c7d97523f51212d2（fencing=2，--ttl 1800 且未释放）把 current_role 钉在 implementer 约 30 分钟；因 cw lease 无 fast-release（release 必需 raw token）只能等 expires_at=1789306946 自然过期，过期后 task next-action 才翻转为 READY / current_role=reviewer。教训固化：治理 lease 统一 --ttl 300 且用后立即 release。环境 finding 核验（本会话实测、未改代码）：(1) 2 例 tests/test_cli_011_http_rpc.py assignment 路由失败经 baseline 提交 a2d559e 对照复现，属既有缺陷，已由 C-06 承接卡 T-1789290073049-6442e268 覆盖，非本次引入；(2) 前序登记的 cli/main.py:12806-12812 破坏 `--workspace PATH` 空格形式，本会话实测不成立（`cw --workspace <含空格路径> task list` 与 `cw task list --workspace <含空格路径>` 均 exit 0），故不予登记；(3) tests/conftest.py 已按 W4 修复逐测试隔离 CALLWARDEN_DIR，未发现新的 manifest 劫持证据。全程未改生产代码、未直连数据库写、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-13T22:06:13+08:00"
+    },
+    {
+      "task_id": "T-1789290072972-5fad5b5c",
+      "commit_id": "d71d1175f7727f96be8e21025e4b9432adc8acb0",
+      "status": "complete",
+      "source": "c03_p0_compile_blocker_20260913",
+      "scope": "rust_ext/src/daemon/transport.rs, rust_ext/src/daemon/http_server.rs, rust_ext/src/daemon/daemon_autostart_handlers.rs, tests/test_wsl_local_daemon_e2e.py, deliverables/software-company/c03_p0_compile_blocker_evidence.md, deliverables/software-company/T-1789290072972-5fad5b5c-adjudicator-close.md",
+      "evidence_sha256": "9b9657f630f6f9f0b6346f2b102625e3984933fb01f367bc36f26a0190dc94a7",
+      "report_request_id": "req-415d649f3273",
+      "handoff_event_id": "8761",
+      "handoff_request_id": "hof-c03-exec-1789312251",
+      "snapshot_id": "52a28d6c4f56d16a",
+      "review_verdict_id": "V-d861ac076d1289cc01ee74a1",
+      "review_request_id": "rv-c03-5fad5b5c-c4",
+      "review_handoff_event_id": "8762",
+      "review_handoff_request_id": "hof-c03-5fad5b5c-c4r",
+      "adjudication_lease_id": "L-0064c43be90af9d4",
+      "adjudication_fencing_counter": 2,
+      "note": "卡 C-03 承接卡（从 PYT 回归卡 T-1788871227327-45c94bd8 step#4 剥离，登记 finding C-03）：rust_ext unix/Linux target 编译阻断修复，解除 WSL 共存契约阻断。承接来源与 finding 明细见 deliverables/software-company/pyt_regression_step4_handoff_backlog.md §W13/W14/W15。5 个 step 全部 done（均绑定权威 snapshot_id=52a28d6c4f56d16a、证据 deliverables/software-company/c03_p0_compile_blocker_evidence.md sha256:9b9657f630f6f9f0b6346f2b102625e3984933fb01f367bc36f26a0190dc94a7）：step0 S-1789290072977-5ff36318 req-a01bc28277f6（transport.rs create_listener 补 http: None，E0063）；step1 S-1789290072977-5ff431bc req-d3b959ff4cde（http_server.rs 去掉私有 Permissions::from_mode，改 std PermissionsExt::from_mode(0o600)，E0603/E0599）；step2 S-1789290072977-5ff47de8 req-858538d16908（daemon_autostart_handlers.rs 去掉 SocketAddr::from_path 与 UnixStream::connect_timeout，改 UnixStream::connect，E0599 两处）；step3 S-1789290072977-5ff4ad2c req-a1b7e130f9aa（tests/test_wsl_local_daemon_e2e.py 夹具权威前置修正）；step4 S-1789290072977-5ff4d630 req-415d649f3273（release_verify）。验收 4 项判据全绿：WSL 内 cargo build --no-default-features --bin cw-daemon 零 error（Finished dev profile in 10.64s，ERR_COUNT=0）；tests/test_wsl_local_daemon_e2e.py 由 2 errors 转 2 passed in 20.13s；Windows cargo build 未退化；git diff --check clean。诚实披露：判据②转绿含测试夹具权威前置修正（tests/test_wsl_local_daemon_e2e.py 3 类 5 处：workspace.register 与隔离 task-DB workspaces 权威行前置、task.create 显式传入 workspace_id 与 workspace_instance_id、启动脚本注入 CW_DAEMON_TRANSPORT=uds），依据新增权威门禁 commit 4b1380a 与 WSL 共存契约 §7.2，未弱化任何断言、未使用 xfail 或 skip；代码面 3 个 rust 文件为平台盲区修复并附中文说明注释。【治理闭环 2026-09-13】executor handoff executor_ready_for_review → reviewer（event 8761，request_id hof-c03-exec-1789312251，implementer lease L-8965182717cdd1bf fencing=1 已 release，reviewer assignment A-0bb83d44f217cc8b0a9ad162）。独立 reviewer（reviewer-w17-wb-01 / inst-reviewer-w17-wb-01 / sess-w17-review-20260913 / workbuddy，与 executor session 互异）只读复核 diff 后提交 verdict V-d861ac076d1289cc01ee74a1（blind_first_pass / overall=pass / findings=0 / step_id S-1789290072977-5ff4d630 / snapshot_id 52a28d6c4f56d16a / view_manifest_hash ac58a6e09ad1cfc749405a855ea1e0c713e0e75694793c616f9905e6d5bd8d61 / contract_hash sha256:a5409d75ddb6d8d62b7d9806de519c45a4b8b6f554fe0acbc3e7e0b74b8b0bc2 / role_contract_hash sha256:3f691024970453f94a17d7ddc7a5845db2eaf19f1d25af9b8c9000272a6f8863 / request_id rv-c03-5fad5b5c-c4，task_verdict_events id=628），view_manifest_hash 经 MCP get_role_view(task_id, role=reviewer) 取得（符合 role-prompt-v1-gate-task-manifest.json:141 唯一受支持来源，未派生）→ handoff reviewer_pass → adjudicator（event 8762，request_id hof-c03-5fad5b5c-c4r）。独立 adjudicator（adjudicator-w17-wb-01 / inst-adjudicator-w17-wb-01 / sess-w17-adjudicate-20260913 / --role adjudicator，与 executor、reviewer 会话均互异）在 legacy_identity_v1 路径下由自身身份 acquire 一个 role=reviewer 的 lease（L-0064c43be90af9d4，fencing_counter=2；raw token 仅内存使用、未落盘、用后立即 release）→ cw task apply（event 8765，review→applied，role=adjudicator，applied_at 1789312583.3303583）→ 复核 workflow_status=applied_pending_close → cw task close（event 8766，applied→closed，closed_at 1789312583.8304403；叶子步骤门禁满足——5 step 全 done）→ release。终态 lifecycle_status=closed / workflow_status=completed / next_action=finalize / review=not_in_review / verdicts=1（V-d861ac076d1289cc01ee74a1 overall=pass）。提交 d71d1175f7727f96be8e21025e4b9432adc8acb0（前缀为本卡 task_id，未复用 PYT 卡 T-1788871227327-45c94bd8 或 W12/W17 卡 id）。全程未直连数据库写、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-13T23:20:00+08:00"
+    },
+    {
+      "task_id": "T-1789290073049-6442e268",
+      "commit_id": "b2c675288ddec88dee806fa30a13345fb442682a",
+      "status": "complete",
+      "source": "c04_c07_cli_i18n_rpc_contract_20260914",
+      "scope": "cli/main.py, tests/test_cli_061_http_rpc.py, deliverables/software-company/T-1789290073049-6442e268-evidence.md, deliverables/software-company/T-1789290073049-6442e268-adjudicator-close.md",
+      "evidence_sha256": "6105beceda61be2297779c595dcfbb1e0090e8390da3415a4cc49249e3323a74",
+      "report_request_id": "req-f23908ba82ca",
+      "handoff_event_id": "8793",
+      "handoff_request_id": "hof-c04-6442e268-exec-20260914-02",
+      "snapshot_id": "09f3012f597ed5da",
+      "review_verdict_id": "V-f60e227d7fe59c5fde3eb27c",
+      "review_request_id": "rv-c04-6442e268-20260914",
+      "review_handoff_event_id": "8794",
+      "review_handoff_request_id": "hof-c04-6442e268-rev-20260914",
+      "adjudication_lease_id": "L-b9e4c7a8205f3e64",
+      "adjudication_fencing_counter": 2,
+      "note": "卡 C-04..C-07 承接卡（从 PYT 回归卡 T-1788871227327-45c94bd8 step#4 tests-only 边界剥离，登记 finding C-04/C-05/C-06/C-07）：cli/main.py i18n 循环变量遮蔽 + RPC 契约缺陷修复，含 W14 追加 C-10/C-11/C-12。承接来源与 finding 明细见 deliverables/software-company/pyt_regression_step4_handoff_backlog.md §W13/W14/W15。修复内容：C-04 cw churn trend 循环变量遮蔽模块级 i18n t → item；C-05 cw test-impact 同理 → item；C-06 新增 _unwrap_bool_result（dict/2 元组归一）+ _resolve_assignment_workspace_instance_id（经 daemon 权威解析，不本地兜底）+ RpcDBProxy._METHOD_MAP.create_assignment 参数名由 (task_id, role, identity) 改为 daemon 扁平 holder identity (task_id, role, agent_id, session_id, model_id)，revoke/create 两处改用归一化返回值；C-07 _METHOD_MAP 补 get_semgrep_summary（READ_ONLY，具名 target_paths 透传）；追加 C-10 _handle_rule_list 信封解包、C-11/C-12 _agent_start/_agent_status 由 UnixDaemonRpcClient 迁 HttpDaemonRpcClient。5 个 step 全部 done（均绑定权威 snapshot_id=09f3012f597ed5da、证据 deliverables/software-company/T-1789290073049-6442e268-evidence.md sha256:6105beceda61be2297779c595dcfbb1e0090e8390da3415a4cc49249e3323a74）：step0 S-1789290073051-6456d8f4 req-1855d0031269（event 8770）；step1 S-1789290073051-6464ce00 req-f4c74f12328c（event 8775）；step2 S-1789290073052-6465dd7c req-d3a2707c4092（event 8780）；step3 S-1789290073052-646642a8 req-4308b6211658（event 8785）；step4 S-1789290073052-64668da8 req-f23908ba82ca（event 8790 → review）。验收：独立复跑 tests/test_cli_005/006/011/020/057/061/066_http_rpc.py 共 23 passed；git diff --check exit 0；forbidden paths（db/**、scripts/refresh_shared_runtime.ps1）未触碰。残余登记（daemon 侧越界，本卡 allowed_paths 外，未以本地旁路伪造成功）：C-13 semgrep_handlers 未编译接线（get_semgrep_summary method_not_found）、C-14 task_assignments 缺 assignment_id 列（assignment create NOT NULL constraint failed）、C-15 revoke 强制 task_id 字段（缺字段: task_id），见证据 §4。【治理闭环 2026-09-14】executor handoff executor_ready_for_review → reviewer（event 8793，request_id hof-c04-6442e268-exec-20260914-02；首次同 request_id 重发触发 E_REQUEST_ID_REUSE_MISMATCH，换新 id 后成功；implementer lease L-337dd61c7117777f fencing=1 已 release，reviewer assignment A-e4c0ff62451c5bc72bf22a7a）。独立 reviewer（reviewer-w17-wb-01 / inst-reviewer-w17-wb-01 / sess-c04-review-20260914 / workbuddy，与 executor session 互异）只读复核 diff 后提交 verdict V-f60e227d7fe59c5fde3eb27c（blind_first_pass / overall=pass / findings=0 / step_id S-1789290073052-64668da8 / snapshot_id 09f3012f597ed5da / view_manifest_hash d598573e8b94d345fd34accb94268fc26ec5523b3192e162a03008479cedecc1 / contract_hash sha256:0454e7971db436fd136003e119bedbe5f0da4399775e3a4a38639ed7650f3ea8 / role_contract_hash sha256:3f691024970453f94a17d7ddc7a5845db2eaf19f1d25af9b8c9000272a6f8863 / request_id rv-c04-6442e268-20260914，task_verdict_events id=629），view_manifest_hash 经 MCP get_role_view(task_id, role=reviewer) 取得（符合 role-prompt-v1-gate-task-manifest.json:141 唯一受支持来源，未派生）→ handoff reviewer_pass → adjudicator（event 8794，request_id hof-c04-6442e268-rev-20260914，新 assignment A-5e3f539db20328f680b5922f）。独立 adjudicator（adjudicator-w17-wb-01 / inst-adjudicator-w17-wb-01 / sess-c04-adjudicate-20260914 / --role adjudicator，与 executor、reviewer 会话均互异）在 legacy_identity_v1 路径下由自身身份 acquire 一个 role=reviewer 的 lease（L-b9e4c7a8205f3e64，fencing_counter=2；raw token 仅内存使用、未落盘、用后立即 release）→ cw task apply（event 8797，review→applied，role=adjudicator，applied_at 1789320790.220287）→ 复核 workflow_status=applied_pending_close → cw task close（event 8798，applied→closed，closed_at 1789320799.5329235；叶子步骤门禁满足——5 step 全 done）→ release。前置 lease 链（task_leases）：L-337dd61c7117777f（implementer，counter=1，released）/ L-cbfd9158046c260f（reviewer，counter=1，reviewer-w17-wb-01，released）/ L-b9e4c7a8205f3e64（reviewer，counter=2，adjudicator-w17-wb-01，released），与卡①一致的三段式 lease 递进。终态 lifecycle_status=closed / workflow_status=completed / next_action=finalize / review=not_in_review / verdicts=1（V-f60e227d7fe59c5fde3eb27c overall=pass）。提交 b2c675288ddec88dee806fa30a13345fb442682a（前缀为本卡 task_id，未复用 PYT 卡 T-1788871227327-45c94bd8 或 W12/W17/C-03 卡 id）。教训复用：治理 lease 统一 --ttl 300 且用后立即 release（卡① 自致 lease 泄漏教训）；无 lease 时先 acquire 再 handoff（错误文案「task.apply/task.close 必须携带完整 reviewer lease 凭证」为 task_collab_lifecycle_ops.rs require_lease_params 硬编码字符串，实际校验角色为 identity.role）。全程未直连数据库写、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-14T00:13:35+08:00"
+    },
+    {
+      "task_id": "T-1789290073113-6808b1ac",
+      "commit_id": "740fed0fcfe9de1b43e4442bc999046a91b2a056",
+      "status": "complete",
+      "source": "c08_c09_server_authz_error_code_20260914",
+      "scope": "server/daemon_server.py, server/daemon_client.py, tests/test_phase8_admin_rpc_authz.py, deliverables/software-company/T-1789290073113-6808b1ac-evidence.md, deliverables/software-company/T-1789290073113-6808b1ac-adjudicator-close.md",
+      "evidence_sha256": "00f0bdc024732dc83e6f92ff9d6d68db1812ca79754be4c77cb50d960f5ac23b",
+      "report_request_id": "req-a3ce69068a19",
+      "handoff_event_id": "8817",
+      "handoff_request_id": "hof-c0809-6808b1ac-exec-20260914-02",
+      "snapshot_id": "a87ae6c43b7bb6cd",
+      "review_verdict_id": "V-afd3253b4af8144eb34c23c2",
+      "review_request_id": "vd-c0809-6808b1ac-rev-20260914",
+      "review_handoff_event_id": "8818",
+      "review_handoff_request_id": "hof-c0809-6808b1ac-rev-20260914",
+      "adjudication_lease_id": "L-73f7d7245da73216",
+      "adjudication_fencing_counter": 2,
+      "note": "卡 C-08..C-09 承接卡（从 PYT 回归卡 T-1788871227327-45c94bd8 step#4 tests-only 边界剥离，登记 finding C-08/C-09）：server/ 授权清单与错误 code 契约修复。承接来源与 finding 明细见 deliverables/software-company/pyt_regression_step4_handoff_backlog.md §W13/W14/W15。修复内容：C-08 server/daemon_server.py 的 ADMIN_ONLY_METHODS 补入 mcp.backup_restore.backup_file（14→15，与 Rust dispatch.rs:2254 对齐，fail-closed），并将注释行号由 L545-564 修正为 L2233-2255、显式说明 Rust 端为该集合子集；C-09 server/daemon_client.py 的 SharedTaskWriterRequiredError.__init__ 由 super().__init__(f\"{self.code}: {message}\") 改为 super().__init__(f\"{self.code}: {message}\", code=self.code)，消除父类 DaemonUnavailableError.__init__ 实例属性（默认 E_HTTP_DAEMON_UNAVAILABLE）对子类类属性的遮蔽，使调用方可据 .code 判别共享任务写点拒绝。3 个 step 全部 done（均绑定权威 snapshot_id=a87ae6c43b7bb6cd、证据 deliverables/software-company/T-1789290073113-6808b1ac-evidence.md sha256:00f0bdc024732dc83e6f92ff9d6d68db1812ca79754be4c77cb50d960f5ac23b）：step0 S-1789290073114-681c093c（首报 req-99be029cf510 event 8801；provenance 补齐 req-1552c5387c68 event 8814）；step1 S-1789290073114-6826601c（首报 req-6301af57dfbc event 8806；补齐 req-759d8b89c083 event 8815）；step2 S-1789290073115-68271b38（首报 req-2485e306a2ae event 8811 → review；补齐 req-a3ce69068a19 event 8816）。验收：独立复跑 tests/test_phase8_admin_rpc_authz.py tests/test_shared_task_writer.py tests/test_cli_079_http_rpc.py tests/test_cli_govfix07_daemon_error_rc.py 共 45 passed；相邻面 tests/test_c5_s4_backup_restore_unify.py tests/test_srv_003.py 共 30 passed；-k \"C08 or C09\" 共 5 passed；git diff --check clean；forbidden paths（db/**、scripts/refresh_shared_runtime.ps1）未触碰。诚实披露：三个 step 首次 report 未携带 --evidence-path/--evidence-hash，task_events 的 reported 行 evidence 三元组为空，executor handoff 被 E_HANDOFF_REPORT_PROVENANCE_MISMATCH fail-closed 拒绝（门禁要求 report 行三元组与 handoff 逐字非空相等）；处理方式为先 release 旧 implementer lease （E_TASK_GOVERNANCE_BLOCKED：存在 active lease 时 report 亦被拒），再以新 request_id 逐 step 重新 report 补齐 evidence（event 8814/8815/8816），未绕过门禁、未伪造 provenance。【治理闭环 2026-09-14】executor handoff executor_ready_for_review → reviewer（event 8817，request_id hof-c0809-6808b1ac-exec-20260914-02，report-request-id req-a3ce69068a19，implementer lease L-968fac38522f6171 fencing=2 已 release，reviewer assignment A-596993b20c9e8833a9d0588e）。独立 reviewer（reviewer-w17-wb-01 / inst-reviewer-w17-wb-01 / sess-c0809-review-20260914 / workbuddy，与 executor session 互异）逐行只读复核 diff 并独立复跑回归后提交 verdict V-afd3253b4af8144eb34c23c2（blind_first_pass / overall=pass / findings=0 / step_id S-1789290073115-68271b38 / snapshot_id a87ae6c43b7bb6cd / view_manifest_hash a0cedb2bf2fbccf94d94120cf8041be4860073878c63d055be760fe10f59db10 / contract_hash sha256:79bdf6d15037e1ebb65392e7e40b445cb0d8e53d6758a7caee884b9af28360a8 / role_contract_hash sha256:3f691024970453f94a17d7ddc7a5845db2eaf19f1d25af9b8c9000272a6f8863 / request_id vd-c0809-6808b1ac-rev-20260914，task_verdict_events id=630）；view_manifest_hash 经 MCP get_role_view(task_id, role=reviewer) 取得（符合 role-prompt-v1-gate-task-manifest.json:141 唯一受支持来源，未派生）→ handoff reviewer_pass → adjudicator（event 8818，request_id hof-c0809-6808b1ac-rev-20260914，新 assignment A-3386eba89c776f8432dcfc99）。独立 adjudicator（adjudicator-w17-wb-01 / inst-adjudicator-w17-wb-01 / sess-c0809-adjudicate-20260914 / --role reviewer，与 executor、reviewer 会话均互异）由自身身份 acquire 一个 role=reviewer 的 lease （L-73f7d7245da73216，fencing_counter=2；raw token 仅内存使用、未落盘、用后立即 release）→ cw task apply（event 8821，review→applied，role=reviewer，applied_at 1789339951.7396514）→ 复核 workflow_status=applied_pending_close → cw task close（event 8822，applied→closed，closed_at 1789339959.4783063；叶子步骤门禁满足——3 step 全 done）→ release。前置 lease 链（task_leases，4 条全部 released）：L-e6fd98616ca6d602（implementer，counter=1，executor-pytreg-01，released）/ L-968fac38522f6171（implementer，counter=2，executor-pytreg-01，released）/ L-ba7171dab60a149d（reviewer，counter=1，reviewer-w17-wb-01，released）/ L-73f7d7245da73216（reviewer，counter=2，adjudicator-w17-wb-01，released），与卡①/卡② 一致的 lease 递进（counter 递增为 2）。终态 lifecycle_status=closed / workflow_status=completed / next_action=finalize / review=not_in_review / verdicts=1（V-afd3253b4af8144eb34c23c2 overall=pass）。提交 740fed0fcfe9de1b43e4442bc999046a91b2a056（前缀为本卡 task_id，未复用 PYT 卡 T-1788871227327-45c94bd8 或卡①/卡② id）。残余登记（daemon 侧越界，本卡 allowed_paths 外，未以本地旁路伪造成功）：C-13/C-14/C-15 见证据 §4；build_context.{register,set_active,delete} 为 Python 端较 Rust 端的已知差集（Rust 侧为 method_not_found stub），方向 fail-closed，由 TestBatch11RustPythonAlignment 精确断言，两端同步时须同时更新。教训复用：报告幂等键为 request_id（不同参数复用同一 id 会触发 E_REQUEST_ID_REUSE_MISMATCH），补齐 evidence 必须用新 request_id；E_TASK_GOVERNANCE_BLOCKED 在存在 active lease 时同样拒绝 report，流程上须先 release 再 report；治理 lease 统一 --ttl 300 且用后立即 release。全程未直连数据库写、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-14T06:54:37+08:00"
+    },
+    {
+      "task_id": "T-1789340885170-02a8fe9c",
+      "commit_id": "1afabc8e1939c29bcc1856f0319c1c600e992752",
+      "status": "complete",
+      "source": "c13_semgrep_handlers_wiring_20260914",
+      "scope": "rust_ext/src/daemon/mod.rs, rust_ext/src/daemon/snapshot_state.rs, rust_ext/src/daemon/dispatch.rs, tests/test_c13_semgrep_dispatch_wiring.py, deliverables/software-company/T-1789340885170-02a8fe9c-evidence.md, deliverables/software-company/T-1789340885170-02a8fe9c-reviewer-review.md, deliverables/software-company/T-1789340885170-02a8fe9c-adjudicator-close.md",
+      "evidence_sha256": "390ca6b4ae773e8b9d3709dfc002dc8c719343f1dc3e5d93952aa3128c049b28",
+      "report_request_id": "req-8373ff929454",
+      "handoff_event_id": "8838",
+      "handoff_request_id": "",
+      "snapshot_id": "a87ae6c43b7bb6cd",
+      "review_verdict_id": "V-76f8df41df79cc908c9d7875",
+      "review_request_id": "rev-c13-wb-blind-pass-2f3a9e51",
+      "review_handoff_event_id": "he-38a8e38225d430c878607808",
+      "review_handoff_request_id": "rev-c13-pass-handoff-20260914-a19c",
+      "adjudication_lease_id": "L-e762fb30d9a426b9",
+      "adjudication_fencing_counter": 2,
+      "note": "卡 C-13 承接卡（从 PYT 回归卡 T-1788871227327-45c94bd8 step#4 tests-only 边界剥离，登记 finding C-13，rust_ext/** 域）：semgrep_handlers 编译接线与 semgrep RPC route 落地，解锁 C-07 端到端。承接来源与 finding 明细见 deliverables/software-company/pyt_regression_step4_handoff_backlog.md §W13。根因：rust_ext/src/daemon/semgrep_handlers.rs（CLI-061 卡 T-1787322798303-8bd1779c 产物）从未在 mod.rs 声明 pub mod，文件虽在仓库但从未参与编译，run_semgrep / run_semgrep_and_save / scan_semgrep_incremental / get_semgrep_summary 四个裸方法名在 daemon 侧恒落 CONVERGENCE_RPC_METHODS 的 method_not_found 兜底。修复内容（3 文件 +105 行 + 1 新增测试文件）：mod.rs 新增 pub mod semgrep_handlers;（+6，含根因注释）；snapshot_state.rs 在 handle_convergence_rpc 内 use super::semgrep_handlers as semgrep; 并新增 4 个方法名 match arm（3 写面经 open_codegraph_db_write，get_semgrep_summary 只读经 open_query_connection，+86）；dispatch.rs 在 PROTECTED_MUTATION_METHODS 增 3 写面、CONVERGENCE_RPC_METHODS 增 4 方法（+13）；新增 tests/test_c13_semgrep_dispatch_wiring.py（9 测试，源码契约层：模块声明 / 方法清单双处登记 / arm 与 CLI _METHOD_MAP 逐字一致 / 写面用写连接）。5 个 step 全部 done（step0 S-1789340885181-03574b50 / step1 S-1789340885182-035bf704 / step2 S-1789340885182-035c4c2c / step3 S-1789340885182-035c7404 / step4 S-1789340885182-035c9600，均绑定 authority snapshot_id=a87ae6c43b7bb6cd、证据 deliverables/software-company/T-1789340885170-02a8fe9c-evidence.md sha256:390ca6b4ae773e8b9d3709dfc002dc8c719343f1dc3e5d93952aa3128c049b28）；step 报告 request_id 依次 req-2727d5ef4b61（首报，evidence_hash 为空被门禁拒）/ req-4aad7323b001（step0 补齐 evidence 后重报）/ req-6424a3d3f46f（step1）/ req-b6c2322ba53e（step2）/ req-cd9b5f31ee38（step3）/ req-8373ff929454（step4，event 8838，in_progress→review）。验收：cargo build EXIT=0 零 error；cargo test --lib 1776 passed 7 failed，7 项全在 cli::router/cli::runtime/cli::refresh 且与 stash 基线同集（基线 6 failed + 1 flaky test_d5_1_env_override 隔离重跑通过），零新增失败；scripts/verify_route_matrix.py 门禁全绿（names(T)=names(M)=mirror=243、http_server 白名单=0）；tests/test_c13_semgrep_dispatch_wiring.py + tests/convergence/test_m1_route_matrix.py + tests/test_cli_061_http_rpc.py 合跑 20/20 passed；新增进程内 dispatch 行为级回归 1 passed（4 个方法名各以空 params 走真实 dispatch，断言非 method_not_found 且报错含 workspace_instance_id）；git diff --check EXIT=0 clean；forbidden paths（scripts/refresh_shared_runtime.ps1、db/**）未触碰。step2（route_matrix.rs）判定无需改动并给出双份依据（门禁全绿 + test_m1_route_matrix.py 7 passed），零变更。【治理闭环 2026-09-14】本卡 executor→reviewer handoff 由 step4 report 直接完成（event 8838 in_progress→review，role=implementer），daemon 据此 queued reviewer assignment A-4f925be93474732abcbc5575（event 8839），无独立 handoff_structured 记录，故 handoff_event_id 取该 transition event 8838、handoff_request_id 留空（如实披露，不用 report request id 冒充）。独立 reviewer（reviewer-c13-wb-01 / inst-review-c13-20260914 / sess-review-c13-20260914 / workbuddy，与 executor session 互异）不采信 executor 报告，独立实跑 cargo build 零 error、verify_route_matrix.py 门禁全绿、test_c13_semgrep_dispatch_wiring.py 9 passed，逐行复核 mod.rs 模块声明与 4 个 dispatch arm 和 CLI _METHOD_MAP 逐字一致，并复核证据文件 SHA256=390ca6b4... 与 report 一致；提交 verdict V-76f8df41df79cc908c9d7875（task_verdict_events id=631，blind_first_pass / overall=pass / findings=0 / clause_results=[] / step_id S-1789340885182-035c9600 / snapshot_id a87ae6c43b7bb6cd / view_manifest_hash 7a87c1f1864b16986c5c43e964dad15d51c3043077224ee0421e7d1d130c1784 / contract_hash sha256:152d3c902bb289facbdafeb4ade9c77476e8c876e70011057905964135189487 / role_contract_hash sha256:3f691024970453f94a17d7ddc7a5845db2eaf19f1d25af9b8c9000272a6f8863 / normalization_version verdict-normalization/v1 / normalization_rules_hash sha256:b41cbdb3f2882b3efc0fbbbddfb4fd5b40e23549cdbeb49af2dec798184b0e8d / request_id rev-c13-wb-blind-pass-2f3a9e51；overall=pass 经 normalize_overall 兜底映射保持 pass，非 UNVERIFIED）→ handoff reviewer_pass → adjudicator（event 8840 handoff_structured，handoff_event_id he-38a8e38225d430c878607808，request_id rev-c13-pass-handoff-20260914-a19c，evidence_path ...reviewer-review.md / evidence_hash F3090DDB200420A3DCE016F6A295D512007DB9969CF29D3BFC68E1A43EFFE489，fencing_counter=1，新 assignment A-13b3b2f0c0caaa9fbcb0851e，event 8842）。独立 adjudicator（adjudicator-c13-wb-01 / inst-adj-c13-20260914 / sess-adj-c13-20260914 / workbuddy，与 executor、reviewer 会话均互异）经只读核实 task.apply/task.close 门禁实为 validate_lease_for_mutation(role=reviewer)（task_collab_lifecycle_apply.rs:36-44 / 124-132），遂以自身身份 lease.acquire --role reviewer 触发 daemon 权威 orphan 回收（reviewer 盲审 lease L-526f03de5b10db00 raw token 按设计仅 acquire 响应返回一次、未落盘、关闭阶段不可再用，其 holder reviewer-c13-wb-01 不在 agent_registrations 中，命中 holder_registration_missing；task_lease_events id=5838 event_type=expire 为同事务追加审计）→ 取得新 reviewer lease L-e762fb30d9a426b9（fencing_counter=2，task_lease_events id=5839）→ cw task apply（event 8843，review→applied，role=adjudicator，applied_at=1789352822.8872607）→ 复核 workflow_status 转 applied → cw task close（event 8844，applied→closed，closed_at=1789352837.3268495；叶子步骤门禁满足——5 step 全 done）→ release（reviewer L-e762fb30d9a426b9 与 adjudicator L-b333d7766b2e20d2 均 released，event_type=release id=5840/5841）。前置 lease 链（task_leases）：L-9067737a5aea3b48（implementer，counter=1，executor-pytreg-01）/ L-526f03de5b10db00（reviewer，counter=1，reviewer-c13-wb-01，expired via orphan 回收）/ L-e762fb30d9a426b9（reviewer，counter=2，adjudicator-c13-wb-01，released）/ L-b333d7766b2e20d2（adjudicator，counter=1，adjudicator-c13-wb-01，released）。终态 lifecycle_status=closed / workflow_status=completed / decision=COMPLETE / next_action=finalize / review=not_in_review / verdicts=1（V-76f8df41df79cc908c9d7875 overall=pass）/ blocking_conditions=[]。动作身份链：action_identities 记录 6 条 implementer report + 1 条 reviewer task.handoff + 2 条 adjudicator state_transition（apply/close 均 adjudicator-c13-wb-01 / sess-adj-c13-20260914 / workbuddy）。诚实披露三条：(1) C-07 端到端「后」回执在本卡边界内不可得——运行中的共享 daemon 二进制 git_commit=25ee96b1 早于本卡修复，且 Windows 下管道名由用户 SID 派生无法并起隔离实例、重建共享 runtime 属本卡 forbidden_paths；本卡以「前」真实回执（旧 daemon：未知方法 run_semgrep / get_semgrep_summary）+ 进程内 dispatch 行为级可达性证明替代，未以此冒充端到端已完成；(2) change_audit 归属限制——task.report 门禁要求 changes[].file_path 逐字等于该 step 的 target_file 白名单项（E_CHANGE_PATH_NOT_ALLOWED，精确字符串相等），故仅 step0（mod.rs）/ step1（snapshot_state.rs）可携带 changes；tests/ 与 rust_ext 为目录级 scope、dispatch.rs（+13，在卡级 allowed_paths 内但不在任何 step target_file）均无法入账，改以证据 §1/§5 变更表 + 工作树真实 diff + 本次提交留痕替代，未伪造目录级 file_path；(3) implementer lease L-9067737a5aea3b48 在 task_leases 中 status 仍为 active 但 expires_at=1789344660 已过期，因任务已终态、不影响门禁，未做额外清理（daemon 未提供非 holder 的强制释放入口）。残余登记（daemon 侧越界，见证据 §4）：C-07 端到端回执待共享 runtime 重建后补；后续建卡建议——为「路由常量登记」单列 step 并把 dispatch.rs 写进其 target_file，目录级 scope 的 step 应在合同层显式列出计划产出的具体文件路径。提交 1afabc8e1939c29bcc1856f0319c1c600e992752（[T-1789340885170-02a8fe9c] 前缀，未复用 PYT 卡 T-1788871227327-45c94bd8 或卡①/卡②/卡③ id）。全程未直连数据库写、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-14T10:32:33+08:00"
+    },
+    {
+      "task_id": "T-1789340885245-071cb9b4",
+      "commit_id": "158432be194ca24693471373c73325650962de15",
+      "status": "complete",
+      "source": "c14_c15_assignment_contract_20260914",
+      "scope": "rust_ext/src/daemon/admin_handlers.rs, tests/test_c14_c15_assignment_contract.py, tests/test_cli_011_http_rpc.py, deliverables/software-company/T-1789340885245-071cb9b4-contract-adjudication.md, deliverables/software-company/T-1789340885245-071cb9b4-evidence.md, deliverables/software-company/T-1789340885245-071cb9b4-reviewer-review.md, deliverables/software-company/T-1789340885245-071cb9b4-adjudicator-close.md, deliverables/software-company/pyt_regression_step4_handoff_backlog.md",
+      "evidence_sha256": "2bf673eb8227a28fbcd9be4744e2cf5bb0a60831a5af3c9c13f04478972b6ed8",
+      "report_request_id": "req-6b9314ce3dff",
+      "snapshot_id": "dfcac6f16b827a30",
+      "handoff_event_id": "8861",
+      "handoff_request_id": "he-c14c15-wb-reviewer-pass-1",
+      "review_verdict_id": "V-da5ad4a015f77515dc890d76",
+      "review_request_id": "rev-c14c15-wb-blind-pass-7f21b3c9",
+      "reviewer_review_sha256": "7bb7ec99ff2be1d3fe9b9eb0dd8a6ff733003e9d87610d2556fe3915f0cb7c75",
+      "adjudication_lease_id": "L-fdd705414242b5e8",
+      "adjudication_fencing_counter": 4,
+      "note": "卡 A（C-14 + C-15）承接卡（从 PYT 回归卡 T-1788871227327-45c94bd8 step#4 tests-only 边界剥离，登记 finding C-14/C-15，rust_ext/** 域；与 C-13 卡 T-1789340885170-02a8fe9c 同批裁决、按落点文件+契约耦合切分）：daemon assignment create/revoke 契约一致性修复（assignment_id 单源）。承接来源与 finding 明细见 deliverables/software-company/pyt_regression_step4_handoff_backlog.md §W13/W14。根因：(1) C-14 handle_assignment_create 的 INSERT 列清单缺 assignment_id，而 db/schema.py:1626-1639 该列为 assignment_id TEXT NOT NULL UNIQUE，故任何 create 恒 NOT NULL constraint failed，且返回值误用 last_insert_rowid() 整数；(2) C-15 handle_assignment_revoke 强制入参 task_id(+可选 role)，与五面已文档化契约（MCP tool schema / docs/mcp_tools.md:1972 / docs/cli_reference.md:3251 / CLI _METHOD_MAP:1268 / db.db_task_leases.revoke_assignment:297-322）要求的 assignment_id 相悖，且无 assignment_id→task_id 反查 RPC。修复（单文件 +74/-16，1 个新测试文件，1 个测试文件 3 处 stub/断言适配）：admin_handlers.rs 新增 gen_assignment_id()（getrandom::fill 8 字节 + hex，形如 ASG-<16hex>，与 Python ASG-<uuid4.hex[:16]> 等价，不引新 crate）；handle_assignment_create INSERT 补 assignment_id 列并返回字符串 id；handle_assignment_revoke 改 require_str_param(assignment_id)，先 SELECT task_id WHERE assignment_id=?1（.optional()）反查再 UPDATE ... WHERE workspace_id=?2 AND assignment_id=?3 AND status='active'，返回 {ok, assignment_id, revoked_at}；两 handler 均改走权威 resolver crate::daemon::task_collab::task_bound_workspace_id（task_collab_shared.rs:471-507，读不可变 task_workspace_bindings，无 binding 时 E_TASK_WORKSPACE_UNBOUND fail-closed）。step0 契约单源裁决（D1-D11）：assignment_revoke 以 assignment_id 为准且不保留回退、返回体 {ok, assignment_id, revoked_at}、不新增反查 RPC、ASG-<16hex> 由 getrandom+hex 生成不引新依赖、C-16 出界另建卡。5 个 step 全部 done（step0 S-1789340885248-074dfe98 / step1 S-1789340885248-074e5424 / step2 S-1789340885248-074e87b4 / step3 S-1789340885248-07544924 / step4 S-1789340885248-0754adec，均绑定 snapshot_id=dfcac6f16b827a30、证据 deliverables/software-company/T-1789340885245-071cb9b4-evidence.md sha256:2bf673eb8227a28fbcd9be4744e2cf5bb0a60831a5af3c9c13f04478972b6ed8）；step 报告 request_id 依次 req-c891a206e508/req-6b7f16faf87f/req-c619eff28834/req-97b1bc413684/req-6b9314ce3dff（step4 event 转 review）。验收：cargo build EXIT=0 零 error（2 条 warning 为既有存量、不在本卡文件内）；python -m pytest tests/test_c14_c15_assignment_contract.py tests/test_cli_011_http_rpc.py -q 共 19 passed（15 新 + 4 既有）；scripts/verify_route_matrix.py 门禁全绿；git diff --check EXIT=0；forbidden paths（db/**、scripts/refresh_shared_runtime.ps1、snapshot_state.rs、task_collab_shared.rs）零改动；规则 43 部署门禁三方一致——%USERPROFILE%/.callwarden/runtime/current/cw-daemon.exe 与 rust_ext/target/stage-refresh/release/cw-daemon.exe 的 LastWriteTime 14/9/2026 11:40:32、Length 45735424、SHA256 BE67915CBC5D4641AE3FBC255AC160D21ADA8D791B163CB98B0A0ED19DD3DF92 完全相同，即运行中的共享 daemon 已含本卡修复。【治理闭环 2026-09-14】独立 reviewer（reviewer-c14c15-wb-01 / inst-review-c14c15-20260914 / sess-review-c14c15-20260914 / workbuddy，与 executor executor-pytreg-01/sess-exec-pytreg-01-6c9613cd/trae-agent-executor 互异）不采信 executor 报告，独立重放 cargo build、19 例确定性回归、route_matrix 门禁、五面契约逐面只读对照，并以二进制哈希三方一致确认部署产物含修复后，对已部署 daemon 以全新 role=revprobe 重放 create→show(workspace_id=1)→revoke→show→revoke 重放 五步全部符合契约（create 返回 ASG-d32d37a9c0bdec45；show 命中 id=449 status=active；revoke 返回 {ok, assignment_id, revoked_at:1789362390.91}；撤销后 show=none；重放 assignment_not_found RC=2），提交 verdict V-da5ad4a015f77515dc890d76（task_verdict_events id=632，blind_first_pass / overall=pass / findings=0 / clause_results=[] / amendment_ref 空 / step_id S-1789340885248-0754adec / snapshot_id dfcac6f16b827a30 / view_manifest_hash 86ad4321954e9999e0cebe58962bf777edd7fbd85b5c0af03a9263ad114ba0c5 / workspace_id=1 / contract_hash sha256:8050e0816d872eac4a1c3dc8e7bd8870460adb11bd7edb6e2f2ba4f9072ba500 / role_contract_hash sha256:3f691024970453f94a17d7ddc7a5845db2eaf19f1d25af9b8c9000272a6f8863 / normalization_version verdict-normalization/v1 / normalization_rules_hash sha256:b41cbdb3f2882b3efc0fbbbddfb4fd5b40e23549cdbeb49af2dec798184b0e8d / request_id rev-c14c15-wb-blind-pass-7f21b3c9）；reviewer 回执 deliverables/software-company/T-1789340885245-071cb9b4-reviewer-review.md sha256:7bb7ec99ff2be1d3fe9b9eb0dd8a6ff733003e9d87610d2556fe3915f0cb7c75 → handoff reviewer_pass → adjudicator（event 8861 handoff_structured，request_id he-c14c15-wb-reviewer-pass-1，report_request_id rev-c14c15-wb-blind-pass-7f21b3c9，evidence_path ...reviewer-review.md / evidence_hash 7BB7EC99FF2BE1D3FE9B9EB0DD8A6FF733003E9D87610D2556FE3915F0CB7C75，source_verdict_id V-da5ad4a015f77515dc890d76，fencing_counter=2，新 assignment A-a311a947778ae18451ad3169）。独立 adjudicator（adjudicator-c14c15-wb-01 / inst-adj-c14c15-20260914 / sess-adj-c14c15-20260914 / workbuddy，与 executor、reviewer 会话均互异）先只读复核 task_verdict_events id=632 与 handoff 事件 8861 的 provenance（workspace_id 与 task_workspace_bindings 一致、evidence 三元组逐字一致、关闭时点两文件哈希未漂移），确认 task.apply/task.close 门禁为 validate_lease_for_mutation(role=reviewer)（task_collab_lifecycle_apply.rs:36-44 / 124-132），遂以自身身份 lease.acquire --role reviewer → L-fdd705414242b5e8（counter=4）→ cw task apply（event 8864，review→applied，applied_at 1789362829.3678992）→ 复核 workflow_status=applied_pending_close / lifecycle_status=applied → cw task close（event 8865，applied→closed，closed_at 1789362831.0826275；叶子步骤门禁满足，5 step 全 done）→ 复核 workflow_status=completed / lifecycle_status=closed / next_action=finalize → release。前置 lease 链（task_leases，6 条）：L-03db9bed7915bc36（implementer，counter=1，released）/ L-fdb1065d0d53dec9（implementer，counter=2，仍 active 但 expires_at 已过期）/ L-e80c89ca5ead72f0（reviewer，counter=1，reviewer-c14c15-wb-01，因 raw token 未落盘且 holder 未注册被 daemon 权威 orphan 回收为 expired，holder_registration_missing）/ L-1b6fed9867d7feaf（reviewer，counter=2，reviewer-c14c15-wb-01，released）/ L-a6b3fbefff607c5e（reviewer，counter=3，adjudicator-c14c15-wb-01，released，该次 apply/close 未执行）/ L-fdd705414242b5e8（reviewer，counter=4，adjudicator-c14c15-wb-01，released）。终态 lifecycle_status=closed / workflow_status=completed / next_action=finalize / verdicts=1（V-da5ad4a015f77515dc890d76 overall=pass）。动作身份链：action_identities 记录 6 条 implementer/executor state_transition + 1 条 reviewer task.handoff（id=4681）+ 2 条 adjudicator state_transition（apply/close，均 adjudicator-c14c15-wb-01 / sess-adj-c14c15-20260914 / workbuddy）。诚实披露七条：(1) C-16 出界未修——assignment_show 的 positive 分支对生产调用方不可达（CLI/MCP 不给数值 workspace_id，daemon 缺省即走 none 分支），reviewer 已独立复现不带 workspace_id 时返回 {'status':'none'}、显式 workspace_id=1 才命中 id=449，落点 rust_ext/src/daemon/task_collab_lease.rs 与 server/daemon_client.py 均不在本卡 executor_allowed，已登记 backlog §W13/W18 另建承接卡；(2) C-17 剩余暴露面——snapshot_state.rs admin 路由块对其余 18 个 admin handler 存在同类 registry 代理 id 当 task DB workspace_id 的命名空间风险，本卡仅收口 assignment 两处，其余未改未评估（未做盘点即下结论），已登记 backlog §W13/W18；(3) 未新增隔离 daemon live pytest——共享夹具 _pick_bin() 优先解析 rust_ext/target/release/cw-daemon.exe（该文件早于本卡修复），直接复用会得到环境失真的失败，改动共享夹具会波及全套收敛测试并超出 executor_allowed，故以源码文本确定性回归 19 例 + 规则 43 部署门禁哈希一致 + 对已部署 daemon 的独立往返重放替代，口径写入 evidence §4.5；(4) cargo test 未全量重跑（约 21 分钟且存在 6 例环境既有失败，全在 src/cli/ 的 router/runtime/refresh，与本卡模块无关；executor 曾以 git stash 回落 HEAD 做基线对照同样 6 failed），reviewer 以同口径子集独立复现完全相同的 34 passed / 6 failed，判定非本卡引入；(5) reviewer 身份 reviewer-c14c15-wb-01 未走 agent.register（agent.register 属 PROTECTED_MUTATION_METHODS，不在本次会话可授权面内），与 C-13 先例一致，未伪造注册状态；(6) implementer lease L-fdb1065d0d53dec9 在 task_leases 中 status 仍为 active 但 expires_at=1789361295 已过期，因任务已终态、不影响门禁，未做额外清理（daemon 未提供非 holder 的强制释放入口）；(7) 一次无效尝试——adjudicator 首次 acquire 的 L-a6b3fbefff607c5e（counter=3）虽取得，但 cw task apply --json 因该子命令无 --json 参数被 argparse 拒绝（RC=2，未产生任何写入），该 lease 随即 release，随后以 counter=4 重做并成功，全程未绕过门禁、未伪造 token、未直接写库。教训复用：cw task apply / cw task close 子命令不接受 --json；lease raw token 按设计仅在 acquire 响应返回一次且不得写入日志/evidence/ledger/模板，故 acquire 与使用它的受保护 mutation 必须在同一进程命令链内完成（跨 RunCommand 进程的 $env 变量不保留，会导致 argument --lease-token: expected one argument）；未走 agent.register 的 holder 会在下次 acquire 时被 orphan 回收，counter 递增，故不得硬编码 fencing_counter。提交 158432be194ca24693471373c73325650962de15（[T-1789340885245-071cb9b4] 前缀，未复用 PYT 卡 T-1788871227327-45c94bd8 或卡 C-13/C-08-C-09/C-04-C-07 id）。全程未直连数据库写、未执行 supersede/reopen/rollback、未伪造或切换身份。本卡闭环完成。",
+      "updated_at": "2026-09-14T13:16:18+08:00"
+    },
+    {
+      "task_id": "T-1789365537146-bef4c2e4",
+      "commit_id": "5cfb1589f6df5a3844f8d515ae3f3bc49415e030",
+      "status": "complete",
+      "source": "c16_assignment_show_workspace_authority_20260914",
+      "scope": "rust_ext/src/daemon/task_collab_lease.rs, tests/test_c16_assignment_show_workspace_authority.py, deliverables/software-company/T-1789365537146-bef4c2e4-contract-adjudication.md, deliverables/software-company/T-1789365537146-bef4c2e4-evidence.md, deliverables/software-company/T-1789365537146-bef4c2e4-reviewer-review.md, deliverables/software-company/T-1789365537146-bef4c2e4-adjudicator-close.md, deliverables/software-company/pyt_regression_step4_handoff_backlog.md",
+      "evidence_sha256": "a114c601b12eae43a4d83a938489b5bbd1b9b6908ef66460daae9afc4cec26e8",
+      "report_request_id": "req-abebf5e9edd1",
+      "snapshot_id": "dfcac6f16b827a30",
+      "handoff_event_id": "8890",
+      "handoff_request_id": "handoff-T-1789365537146-bef4c2e4-rev-01",
+      "review_verdict_id": "V-4c428e7c30851e88a67a9e5f",
+      "review_request_id": "review-T-1789365537146-bef4c2e4-S-1789365537156-bf90f8bc-01",
+      "reviewer_review_sha256": "1b96ce3e35585c0e0aed5aeced26e8975924b37e855ee09287e3c2204e9ab4b6",
+      "adjudication_lease_id": "L-04a6fb12dde9af37",
+      "adjudication_fencing_counter": 2,
+      "note": "C-16 承接卡（从 PYT 回归卡 T-1788871227327-45c94bd8 step#4 tests-only 边界剥离，登记 finding C-16，rust_ext/** 域；父卡场景见 backlog §W18）：daemon handle_assignment_show workspace 权威解析修复。根因：旧实现以 unwrap_or(0) 取 workspace_id，与 task_assignments.workspace_id 的实际取值域（task DB workspaces.id，经不可变 task_workspace_bindings 绑定）不同源 → SQL 恒空 → 恒走 none 分支，使 positive 分支对 CLI/MCP 调用方整体不可达。修法：daemon 单侧改走权威 resolver task_bound_workspace_id（无 binding → E_TASK_WORKSPACE_UNBOUND fail-closed；显式不一致 → E_WORKSPACE_AUTHORITY_MISMATCH；空/纯空白 task_id → invalid_params），并补 .trim()。server/daemon_client.py 经 step0 裁决「不改」（契约单源：task-scoped 的数字 workspace 应由 daemon 从不可变 binding 解析；改调用侧注入门禁会注入 legacy active workspace 且 blast radius 覆盖全部 task.*/lease.*）。验收：对已部署二进制 87C6200 复跑 10 例负向矩阵 10/10；反证修复前基线 BE67915C 得 7 failed/3 passed；部署门禁 status=passed/rollback=false/git_head=5cfb158==HEAD/daemon_runtime.sha256=87c6200/ping=0；cargo test --lib task_collab 150/150。相邻/残留（均已登记，不在本卡 scope）：①MCP-015 tests/test_mcp_assignment_show_http_rpc.py 4 例陈旧断言转红 → backlog §W19 建议承接卡 C-18；②scripts/refresh_shared_runtime.ps1:537 脏树打戳隐患；③tests/_w3_harness.py::find_daemon_binary() 按 mtime 竞争 + MSYS 路径静默跳过（本卡自带严格优先级 _find_daemon_binary 不受影响）；④step§3.4 范围偏差（.trim() 落 step2 白名单外文件）已披露+重取证+独立复跑验证，判可接受。C-17（卡 D T-1789365537230-c3f02eb4）仍 open，不在本卡 scope。"
+    },
+    {
+      "task_id": "T-1789365537230-c3f02eb4",
+      "commit_id": "186582ee2f18dddae41500b4d3556eca267d9a0e",
+      "status": "complete",
+      "source": "c17_admin_route_workspace_authority_20260914",
+      "scope": "rust_ext/src/daemon/snapshot_state.rs, tests/test_c17_admin_route_workspace_authority.py, deliverables/software-company/T-1789365537230-c3f02eb4-inventory.md, deliverables/software-company/T-1789365537230-c3f02eb4-evidence.md, deliverables/software-company/T-1789365537230-c3f02eb4-reviewer-review.md, deliverables/software-company/T-1789365537230-c3f02eb4-adjudicator-close.md, deliverables/software-company/pyt_regression_step4_handoff_backlog.md",
+      "evidence_sha256": "f763d6f6e6ed5af3f10815b9374dccb2b761f0cd737249be42111eba3a134bd4",
+      "report_request_id": "req-f9abbfbf1357",
+      "snapshot_id": "dfcac6f16b827a30",
+      "handoff_event_id": "8913",
+      "handoff_request_id": "handoff-T-1789365537230-c3f02eb4-rev-01",
+      "review_verdict_id": "V-59ba9c1b4ba50de7efb2f804",
+      "review_request_id": "review-T-1789365537230-c3f02eb4-S-1789365537231-c403fca0-01",
+      "reviewer_review_sha256": "fe935a5d750b7e7625846bc6e78751bf57b16b24ca5bab6aa192e562df84e7b5",
+      "adjudication_lease_id": "L-464605cf68d24751",
+      "adjudication_fencing_counter": 2,
+      "note": "C-17 承接卡（卡 D，父 PYT 卡 T-1788871227327-45c94bd8，交接文档 c16_c17_remediation_handoff_20260914.md）：admin 路由块 workspace 命名空间错配收口。根因：snapshot_state.rs admin guard（21 方法）以 owned_workspace().workspace_id（registry 代理 ROWID，本机 207）作为 handler workspace 作用域并 open_write 物理库，与物理库 workspaces.id（真 id=1）不同命名空间 → 三类后果：FK 表恒 FOREIGN KEY constraint failed（gc_archive_import/record_artifact_identity）、WHERE 恒不命中静默空/误报（gc_archive_inspect/list、gc_retention、snapshot_compare、clear_clones、branch_switch）、无 FK 表静默脏写代理 id（branch_register、publish_interface、select_interface_provider）。修法：路由层单点改走同文件既有 open_codegraph_db_write（ACL 保留 + client_view_root 规范化匹配 workspaces.root_path 取真 id；semgrep 写面先例），handler 层零改动。step0 盘点：21−2（卡 A 已收口 assignment_create/revoke）=19 待盘点，15 有缺陷，不收窄；计数差异已澄清（原记 18 漏计兜底臂 select_interface_provider）。验证：隔离判别矩阵 tests/test_c17_admin_route_workspace_authority.py 18/18（夹具以 dummy registry 行占 ROWID=1 复现代理≠真 id 分裂）+ 基线反证 87C6200 10 failed/8 passed + 部署门禁 passed/rollback=false/git_head==186582e==HEAD/daemon_runtime.sha256=C9C3A5DB + 生产实例只读实测 gc_retention 151/2205、snapshot_compare 151/2205/39723、archive_list 5 行、inspect 命中 id=151（修复前恒空）+ cargo test --lib task_collab 150/150。A′ 全环：executor L-98683177c9bc1072 c=1 / reviewer L-238c778e09e264c6 c=1（verdict V-59ba9c1b4ba50de7efb2f804，event 634）/ adjudicator-持 reviewer L-464605cf68d24751 c=2（apply event 8916 / close event 8917），三 lease 全 released。相邻/残留（登记 backlog §W20，不在本卡 scope）：F1 gc_audit_get/list 引用不存在的 tasks.workspace_id；F2 record_action_identity 缺 action_id；F3 register_attestation_revocation 缺 revocation_id；F4 edit.*/rule.* 第二路由块同类代理 id 缺陷；F5 C 桶模板目录级 target_file 白名单与 changes[] 全等比对不兼容（step2/step3 changes 不可入账，按 C-13 卡先例 evidence+commit 留痕并如实披露）。环境披露：refresh post-swap genie-trash 拒绝访问（swap 已完成）；脚本 daemon 随父进程退出，已前台 exec 重启 pid 7744 / endpoint 8950 / healthy。"
+    },
+    {
+      "task_id": "T-1789377001689-0aee0a6c",
+      "commit_id": "2a6918e7f3fb84bd220a649f60b862ac326e8c1a",
+      "status": "new_in_master",
+      "source": "c_bucket_remediation_C18",
+      "scope": "tests-only: MCP-015 assignment_show stale assertions + W3 harness",
+      "note": "A/B 6F/9P->16P; reviewer V-509150d248804075c2e04ba9; adjudicator applied+closed COMPLETE",
+      "updated_at": "2026-09-14T18:55:00+08:00"
+    },
+    {
+      "task_id": "T-1789392878852-bb9bef18",
+      "commit_id": "e2a28530da13432409c16d1f3219435ed74cbfb3",
+      "status": "new_in_master",
+      "source": "c_bucket_remediation_C19",
+      "scope": "product-code: rust_ext/src/daemon/admin_handlers.rs gc_audit_get/list SQL 作用域修复（tasks.workspace_id 不存在列 -> task_workspace_bindings join，与 task_bound_workspace_id 权威语义同源）+ tests/test_c17_admin_route_workspace_authority.py F1 锚迁移（4 正例/隔离负例）+ 卡文档；已部署",
+      "evidence_sha256": "0180a35e32088c6fc7d42240d39cfe14425ee8944ce05f3ad971895416e90b5c",
+      "snapshot_id": "dfcac6f16b827a30",
+      "review_verdict_id": "V-17b7a6a8a1df30d61f369d25",
+      "reviewer_review_sha256": "efca627fa7ba57c229249ef39504f34ae4ce85a7c7bbf024f52d7342f93ed4ef",
+      "deployed_binary_sha256": "1ac3e759bf0cb8b1b8190e547106466b98d3cf182e8ee4deaf0504e68b767626",
+      "note": "C-19 承接卡（§W20 F1，父 PYT 卡 T-1788871227327-45c94bd8）：gc_audit_get(list) SQL 引用不存在列 tasks.workspace_id 恒 prepare 失败。修法：两处 SQL 改经 task_workspace_bindings join（admin_handlers.rs:138/:176 区域），unbound task 行不可见 fail-closed；C-17 F1 known-defect 锚迁移为 4 条正例/隔离负例（F2/F3 锚保持冻结待 C-20）。验证：A/B 旧二进制 c9c3a5db 同集 4F/17P（as-truthful）-> 新二进制 21/21；隔离 daemon 预置行命中 + 跨 workspace 不可见；部署门禁 refresh_shared_runtime -TaskId 本卡 health.git_commit==e2a2853==HEAD + 三方 sha256 1AC3E759 一致 + rollback=false + PID 30080；生产只读 probe 修复前恒 no such column -> 修复后返回 5 行（含本卡自身 change_audit 行）。A′ 全环：executor 5 步全 done（2 次 re-report 修正占位 hash，append-only 最新事件权威）/ reviewer PASS V-17b7a6a8a1df30d61f369d25（3 条 in_scope findings）/ adjudicator ACCEPT + adjudicator 持 reviewer lease c=2 apply/close，lease 全 released，投影 closed/completed/COMPLETE。环境披露：refresh 脚本拉起的 daemon 随前台 PS 会话退出被 job-object 回收（PID 20284/22732 先后失效），须 run_in_background 前台 exec 重启；RPC get_role_view 为裸方法名（task.get_role_view 报 method_not_found）；task.handoff 仅 CLI 可用（RPC 直连 E_HANDOFF_STRUCTURED_REQUIRED）。",
+      "updated_at": "2026-09-14T22:34:50+08:00"
+    },
+    {
+      "task_id": "T-1789397153198-ee7baf18",
+      "commit_id": "878e9242d2fb1a5b5266e5d501bb83b9f5c57fe9",
+      "status": "new_in_master",
+      "source": "c_bucket_remediation_C20",
+      "scope": "product-code: rust_ext/src/daemon/admin_handlers.rs 新增 gen_action_id()/gen_revocation_id() 并补齐两处 INSERT 的 NOT NULL UNIQUE 列（action_identities.action_id / attestation_revocation_records.revocation_id）+ tests/test_c17_admin_route_workspace_authority.py F2/F3 known-defect 锚迁移为 3 条正例 + 卡盘点文档；已部署",
+      "followup_commit_id": "885aded7453459f56a3219180f371ec64f0b591e",
+      "followup_commit_scope": "docs: step4 部署门禁证据 + reviewer/adjudicator 证据 + backlog §W20 F2/F3 标记已闭环",
+      "evidence_sha256": "c7c6f2be51bbbdfdbb25a29ed5a6fd87c3688bb03be3533b4bab60716d644374",
+      "reviewer_evidence_sha256": "eebf8b7a2651299124171e7d8040e2dafaa054c49ee57c308bd76c3d7fa6ce97",
+      "adjudicator_evidence_sha256": "5b71ff8264042068b22bbb6f34e80e3ee40d26b05daabe7a59ecabcc74f8e8e3",
+      "snapshot_id": "dfcac6f16b827a30",
+      "review_verdict_id": "V-0c82595367c1f79caa180eb8",
+      "deployed_binary_sha256": "bd3ad67122a68a2b77e3ca15647587f2be3f736447f2d1e20d509a68289175c8",
+      "daemon_pid": 41792,
+      "note": "C-20 承接卡（§W20 F2+F3，父 PYT 卡 T-1788871227327-45c94bd8）：admin.record_action_identity / admin.register_attestation_revocation 两处 INSERT 缺 NOT NULL UNIQUE 列，恒 NOT NULL constraint failed。修法：对齐卡 A gen_assignment_id() 先例新增 gen_action_id()/gen_revocation_id()（getrandom 8B → hex::encode，前缀 ACT-/REV-，无 uuid crate）；action_id 调用方入参优先、为空回退生成（镜像 Python db/db_task_identity.py:170-203），revocation_id 内部生成（镜像同文件 :609）；db/schema.py 零触碰。验证：隔离 A/B —— C-19 基线二进制（含 C-19 修复、不含 C-20 修复，rust_ext/target-c19/release/cw-daemon.exe）19P/3F，错误即 NOT NULL constraint failed: action_identities.action_id / attestation_revocation_records.revocation_id；修复后二进制（target-c20）22P/0F；**反证由独立 reviewer 复跑复现**（非仅凭 executor 自述）。cargo build 零 error；cargo test --release --lib 1778P/6F，失败集为 C-13 归档基线（deliverables/software-company/_c13_cargo_test.log，1776P/7F）真子集，零新增，根因为 Windows is_daemon_available 忽略 socket_path 参数的陈旧断言。部署门禁：scripts/refresh_shared_runtime.ps1 -TaskId 本卡，回执 status=passed、git_head=878e9242==HEAD、rollback=false、stage/runtime/running 三方 sha256 一致 bd3ad671…；部署同 sha 二进制隔离矩阵复跑 22/22；生产只读核查 action_identities 4718 行 / attestation_revocation_records 6 行零 NULL 空 id。A′ 全环：executor 5 步全 done → handoff executor_ready_for_review（event 9009）→ 独立 reviewer（reviewer-wb-c20-01 / sess-rev-wb-c20-20260915）9 项复核全过，verdict V-0c82595367c1f79caa180eb8（blind_first_pass / pass）→ handoff reviewer_pass（event 9010）→ 独立 adjudicator（adjudicator-wb-c20-01）ACCEPT（event 9013）→ adjudicator 改持 reviewer lease（c=2）apply/close，lease 全 released。环境披露：(1) 部署脚本旧版本清理步骤抛 [safe-delete][SAFE_DELETE_FAIL_CLOSED]，发生在 build/switch/start/回执之后，回执 status=passed，仅旧版本目录未清理；(2) 生产为只读核查、未做合成写 probe，生产生效性由结构事实 + 隔离 A/B（含反证）支撑；(3) RPC verdict.submit 走 legacy 扁平契约参数面（contract_id/contract_hash/role_contract_id/role_contract_hash/contract_revision/role_contract_revision/attestation 均为必填），非 task_loop 的嵌套 task_contract/role_contract 形态；request_id 一次失败即被占用，须换号重发（E_REQUEST_ID_REUSE_MISMATCH）；(4) task.apply/task.close 强制 reviewer 角色 lease，adjudicator 须先 release 再以 reviewer 身份 acquire（fencing 递增到 2）。",
+      "updated_at": "2026-09-15T05:05:00+08:00"
+    },
+    {
+      "task_id": "T-1789397153231-f07a8d84",
+      "commit_id": "b7fa16f135eaa0f3512a458758c0d75110a4bc38",
+      "status": "new_in_master",
+      "source": "c_bucket_remediation_C21",
+      "scope": "product-code: rust_ext/src/daemon/snapshot_state.rs 第二路由块（edit/rule 写面 19 方法，arm ~L3284）由 owned_workspace().workspace_id（registry 代理 ROWID）改走同文件 open_codegraph_db_write 路由层单点（client_view_root 匹配物理库 workspaces.root_path 取真 id），方法名列表/match 臂/全部 handler 零改动（19+/10-）+ tests/test_c21_edit_rule_route_workspace_authority.py 新 22 测试隔离矩阵 + 卡盘点文档；已部署",
+      "followup_commit_id": "36067ca6b6c2bfa80b19fb2ba80ee1fd8d34bd0a",
+      "followup_commit_scope": "docs: step4 部署门禁证据 + reviewer 独立复核证据 + backlog §W20 F4 标记已闭环",
+      "evidence_sha256": "997828d7630eb27c151116f59bc86876c8f27698d7fc51c3414aebccf1b0c8c5",
+      "reviewer_evidence_sha256": "a2ee41e5a4e9ea3b26d70f992806f1202d9e53929632e17491ca54ada60f76ff",
+      "adjudicator_evidence_sha256": "a2ee41e5a4e9ea3b26d70f992806f1202d9e53929632e17491ca54ada60f76ff",
+      "snapshot_id": "dfcac6f16b827a30",
+      "review_verdict_id": "V-ae6e85b13bfe707d0b9adb3e",
+      "deployed_binary_sha256": "4ea587d395b1dc68ef08f73f95c277c66d44abf13e7f7ea8ae5274a26f6efb9a",
+      "daemon_pid": 25756,
+      "note": "C-21 承接卡（§W20 F4，父 PYT 卡 T-1788871227327-45c94bd8）：snapshot_state.rs 第二路由块 19 方法与 admin 块同根因（代理 ROWID 与物理库 workspaces.id 非同命名空间），handler 侧 10 方法严格判别恒失败（3×FK / edit_not_found / 2×symbol_not_found / restored=0 / candidates=0 / 2×查根失败）、7 方法 SQL 不消费 workspace_id 不可判别。修法：路由层单文件单点改 open_codegraph_db_write，零 handler 改动。验证：22 测试隔离矩阵（registry dummy 行占 ROWID=1 复现代理≠真 id，PEER_UID=4294967295，CW_DAEMON_BIN 显式选二进制）——修复前部署二进制（bd3ad671…）10F/10P/2xfail → 修复后（target-c21 dev 构建 44117cbd…）0F/20P/2xfail exit=0，反证由独立 reviewer 复跑复现（失败集与 before 腿 10 严格判别锚逐一吻合，修复前二进制保留于 runtime/previous-20260915-065249/）；cargo build 零 error（隔离 target-c21，9m36s，180 既有 warnings）；cargo test --release --lib 1778P/6F 与 C-13 基线同集（refresh×2/router×2/runtime×2，零新增）；C-17 admin 块矩阵 22/22 不受影响。部署门禁：refresh_shared_runtime.ps1 -TaskId 本卡，回执 status=passed、git_head=b7fa16f==HEAD、rollback=false、三方 sha256 一致 4ea587d3…；部署二进制隔离矩阵复跑 22/0F/0E/2xfail。A′ 全环：executor 4 步全 done → handoff executor_ready_for_review（event 9039，req-handoff-exec-c21-02）→ 独立 reviewer（reviewer-wb-c21-01 / sess-rev-wb-c21-20260915）双腿复跑 + 门禁/范围核验，verdict V-ae6e85b13bfe707d0b9adb3e（blind_first_pass / pass，RPC 直连 flat schema）→ handoff reviewer_pass（event 9040）→ 独立 adjudicator（adjudicator-wb-c21-01）adjudicator_accepted（event 9043，independence=not_applicable）→ reviewer lease apply/close，lease 全 released。新发现登记：NF1 gate.resolve_findings 引用不存在列 tasks.workspace_id（与 F1 同族，C-19 只修了 admin.gc_audit_get/list）；NF2 summary.generate upsert ON CONFLICT(symbol_hash) 在权威 schema 无匹配 PRIMARY KEY/UNIQUE（仅非唯一 idx_summaries_hash）——曾被路由缺陷双重掩盖（WHERE 代理 id 恒空从不触达 upsert），自上线从未端到端可用；均以 xfail(strict) 正例体锚登记，待独立缺陷卡承接。环境披露：(1) task.report 须带 --snapshot-id 与 --changes-json object 数组；(2) task.handoff 强制非空 evidence_path/evidence_hash 且与 report 事件存储值逐字一致——step2/3/4 report 未带 evidence 参数，step4 以同参数补登 report（req-cf0d21a6879f）后 handoff 方通过；handoff outcome 枚举为 executor_ready_for_review/reviewer_pass/adjudicator_accepted 等（源码 task_collab_lifecycle.rs 路由表），request_id 一次失败即占用须换号；(3) executor tester lease 过期后重领（新 fencing=1）；lease.release RPC 字段名为 token（非 lease_token）；(4) 部署脚本本次以 pipe 模式拉起 daemon（PID 41880）且随脚本会话终止（E_HTTP_MANIFEST_STALE），按 C-16/C-17 先例以 current 二进制手动 HTTP 模式重启（新端点 8535，PID 25756，git_commit==HEAD 复验一致）；脚本收尾旧 core-backup 清理 genie-trash fail-closed（已知坑，swap 已完成）；(5) 嵌套 powershell -File 首次运行因 shell 变量 head 获取失败连锁报错，主会话点源运行成功；(6) 生产为只读核查、未做合成写 probe，生产生效性由结构事实 + 隔离 A/B（含反证）支撑。",
+      "updated_at": "2026-09-15T07:35:00+08:00"
+    },
+    {
+      "task_id": "T-1789397153261-f23f38b8",
+      "commit_id": "6986826e5911a63ad985366582e657b8429772bf",
+      "status": "complete",
+      "source": "c22_template_target_file_20260915",
+      "scope": "deliverables/software-company/create_c_bucket_remediation_tasks.py, tests/test_c_bucket_template_target_file_whitelist.py, deliverables/software-company/c22_remediation_inventory.md, docs/evidence/T-1789397153261-f23f38b8-step1-20260915-0735.json, docs/evidence/T-1789397153261-f23f38b8-step2-20260915-0742.json, docs/evidence/T-1789397153261-f23f38b8-step3-20260915-0745.json, docs/evidence/T-1789397153261-f23f38b8-review-20260915-0751.json",
+      "evidence_sha256": "a04092335f108c5d72b614f9ddda599c635d26692bcac9b0314ed6d1ced69567",
+      "report_request_id": "req-a7221ce61029",
+      "handoff_event_id": "9067",
+      "handoff_request_id": "req-handoff-exec-c22-02",
+      "snapshot_id": "dfcac6f16b827a30",
+      "review_verdict_id": "V-e287a2cc0b4ee3f1758c41df",
+      "review_request_id": "verdict-c22-reviewer-pass-1",
+      "review_handoff_event_id": "9068",
+      "review_handoff_request_id": "req-handoff-rev-c22-01",
+      "adjudication_lease_id": "L-5e2b72be34be846a",
+      "adjudication_fencing_counter": 1,
+      "note": "卡 C-22 承接卡（backlog §W20 F5；父 PYT 卡 T-1788871227327-45c94bd8）：C 桶建卡模板 step target_file 目录级白名单与 changes[] 全等比对不兼容修复。修复 = create_c_bucket_remediation_tasks.py 残留 9 处目录级 target_file 全量文件级 token 化（tests/ ×2、rust_ext ×2、deliverables/software-company/ ×4、runtime/current ×1；已闭环卡引用实际产物名 T-<ts>-<id>-evidence/-inventory.md，C-03 三 rust 文件与台账 scope 逐字对应 commit d71d117，多文件 ; 连接）+ docstring SyntaxWarning 根治 + 计数 14→15（补 C-03 runtime/current）+ F5 语义注记（target_file 文件级全等 vs executor_allowed 可目录前缀）；新增 tests/test_c_bucket_template_target_file_whitelist.py 6 用例固化不变量（daemon task_collab_lifecycle.rs L285-290 解析语义复刻、多文件拆分、docstring 防回退、C-20/21/22 预声明名在列）。校验 6/6 绿（.venv_test）；幂等回归 12 exists/0 created（CW_DAEMON_ENDPOINT=8535，daemon health 回执在证）；git diff --check clean。tests/deliverables-only 无产品代码改动 → 未部署 runtime（不触发部署门禁；daemon 与 C-21 部署态一致 8535/PID 25756/4EA587D3/git_commit b7fa16f）。证据 sha256：step1 198bee7b…、step2 dde4c939…、step3 e4335928…、review a0409233…（evidence_sha256 字段为 review 权威证据）、step0 inventory 39cf2033…。A′ 环：executor handoff executor_ready_for_review（event 9067，req-handoff-exec-c22-02）→ reviewer（reviewer-wb-c22-01 / inst-rev-wb-c22-01 / sess-rev-wb-c22-20260915，与 executor session 互异）独立复跑校验测试 6/6 + 幂等回归 12 exists/0 created + commit scope 核验（6 文件全白名单内，rust_ext/server/db 零触碰）+ 工作树脚本 sha256 与 step1 证据逐字一致（8bf8b433…）→ verdict V-e287a2cc0b4ee3f1758c41df（blind_first_pass / overall=pass / RPC 直连，verdict event 639）→ reviewer_pass handoff（event 9068）→ adjudicator_accepted（event 9071，req-handoff-adj-c22-01，independence=not_applicable）→ reviewer lease apply（1789430034）+ close（1789430036）。全部 5 条lease 已 release（executor/implementer/reviewer/adjudicator）。诚实披露：①前轮 14 次连续 Edit 对模板脚本持久化竞态（约 8 处丢失，残留 9 处目录级条目），弃用连续 Edit 改单次原子脚本重做（锚点 count==1 守卫 + 写后同进程即时复验，脚本首跑因结构笔误触发守卫中止、文件未触碰，修正后 11/11 锚点命中）；②step2 report 误传占位符 evidence-hash（req-2e786f171ea9，事件 9058），按 C-21 先例同参数重报补登真值（req-3824e3e7b4aa，事件 9061，latest reported event 权威）；③executor handoff request_id 一次烧号（req-handoff-exec-c22-01 → -02，E_REQUEST_ID_REUSE_MISMATCH）；④executor lease role 命名与 C-21 范式不符（executor vs implementer），E_LEASE_NOT_FOUND 后按范式补领 implementer-role lease（L-4807ac533807f0f4）；⑤next-action WAITING 坑复现：executor lease未释放时合同三元组不返回，release 后恢复（对齐 MEMORY 已知坑）。step2 测试首跑 1F 为测试自身范围 bug（字面锚误扫 executor_allowed 合法目录前缀），修正为仅扫 target_file 字段后 6/6 绿，处置留披露。台账与治理文档分开提交，本条目单独 commit。"
+    },
+    {
+      "task_id": "T-1789436398881-877c169c",
+      "commit_id": "5c9806b7a6f1016aca1b965caeecd7a4415b5213",
+      "status": "complete",
+      "source": "nf1_gate_resolve_findings_20260915",
+      "scope": "rust_ext/src/daemon/edit_handlers.rs, tests/test_c21_edit_rule_route_workspace_authority.py, deliverables/software-company/nf1_remediation_inventory.md, docs/evidence/T-1789436398881-877c169c-step1-20260915-1210.json, docs/evidence/T-1789436398881-877c169c-step2-20260915-1220.json, docs/evidence/T-1789436398881-877c169c-step3-20260915-1050.json, docs/evidence/T-1789436398881-877c169c-review-20260915-1125.json",
+      "evidence_sha256": "dca7ffa9b82c33709cb14070ddcd846e8341a1b09d7001d674397ee00ac6fcde",
+      "report_request_id": "req-d20ceee64d91",
+      "handoff_event_id": "9089",
+      "handoff_request_id": "req-handoff-exec-nf1-02",
+      "snapshot_id": "dfcac6f16b827a30",
+      "review_verdict_id": "V-93325c2aa5b3dd4cefd916be",
+      "review_request_id": "verdict-nf1-reviewer-pass-1",
+      "review_handoff_event_id": "9090",
+      "review_handoff_request_id": "req-handoff-rev-nf1-01",
+      "adjudication_lease_id": "L-0e980f9dc36b0409",
+      "adjudication_fencing_counter": 1,
+      "note": "卡 NF1 承接卡（backlog §W20 F1 同族/F4 相邻登记；父 PYT 卡 T-1788871227327-45c94bd8；C-21 期新发现独立建卡）：gate.resolve_findings SQL 作用域子查询引用不存在列 tasks.workspace_id 修复。修复 = edit_handlers.rs handle_resolve_gate_findings 单点改写：子查询 (SELECT id FROM tasks WHERE workspace_id = ?4) -> (SELECT task_id FROM task_workspace_bindings WHERE workspace_id = ?4)，与 C-19 handle_gc_audit_get 修复同款、task_bound_workspace_id 权威语义同源；handler 其余逻辑（changed==0 -> gate_not_found 分支）零改动。根因更正（相对建卡时登记）：「prepare 恒失败」经 A/B 实证不成立——SQLite 相关名解析把子查询中未知列 workspace_id 解析到外层 UPDATE 目标表 task_gate_decisions 的 schema 保留列（261 行全 NULL）-> 子查询恒空 -> changed==0 -> 自上线以来恒发 gate_not_found；修复前后行为曲线 gate_not_found 恒发 -> 结构化响应。C-21 NF1 xfail(strict) 锚迁移为正确行为正例 test_gate_resolve_findings_nf1_fixed（fixture 无预置 gate 行，新增 4 行 FK 种子四元组 captures/tasks/bindings/decision），NF2 锚本卡零触碰。隔离 A/B：修复前二进制（target/stage-refresh 4EA587D3…=C-21 部署版 b7fa16f）1F/20P/1xf（锚失败签名 gate_not_found: gate GATE-c21-nf1 不存在）-> 修复后（target-nf1 release）21P/1xf/0F。cargo test --release --lib 同集对照 1778P/6F（失败集与 C-21/C-13 基线逐名同集，零新增失败，90.38s）。产品代码改动 -> 部署门禁必走：按 C-21 时序先提交修复 5c9806b 再 refresh_shared_runtime.ps1（回执 20260915-103844-5c9806b7a6f1-68c540f2 status=passed/rollback=false/error=null，构建 8m07s；退出码 1 系末尾旧 core-backup 清理 safe-delete 13065>50 门槛，与 C-21 step4 披露同源）；health.git_commit==HEAD==5c9806b 三方一致、sha256 26519773…6709C 三方一致（receipt==runtime/current==独立复核）、PID 39428 worker healthy（pipe 模式 daemon 随脚本会话终止，按 C-16/C-17/C-21 先例以 HTTP 模式 --http-bind=127.0.0.1:8535 手动重启）；生产只读探针 gate.resolve_findings(不存在 gate_id) 结构化 gate_not_found 无状态变更（判别力如实披露：来自隔离 A/B + 三方 sha256 链）。git diff --check clean。证据 sha256：step3 部署门禁 661e2672…、review dca7ffa9…（evidence_sha256 字段为 review 权威证据）、step1 f872a195…（重报后权威）、step2 90018ef5…、step0 inventory 892b06aa…。A′ 环：executor handoff executor_ready_for_review（event 9089，req-handoff-exec-nf1-02）→ reviewer（reviewer-wb-nf1-01 / inst-rev-wb-nf1-01 / sess-rev-nf1-20260915，与 executor session 互异）独立复核：矩阵对部署二进制 复跑 22/0/0/1xf（junitxml nf1_review_junit.xml 落盘）+ git show 修复 diff 核验 + 部署三方独立复核 + A/B 判别链复核 → verdict V-93325c2aa5b3dd4cefd916be（blind_first_pass / overall=pass / RPC 直连，event 640）→ reviewer_pass handoff（event 9090，req-handoff-rev-nf1-01）→ adjudicator_accepted（event 9093，req-handoff-adj-nf1-01，independence=not_applicable）→ reviewer lease apply（1789441296）+ close（1789441302）。诚实披露：①step1 证据 JSON step-id 笔误（88f3e8c4 -> 88c0133c）改 sha 后按 C-22 先例同参数重报补登真值（req-219de3b5b885，evidence-hash 与存储值逐字一致含 sha256: 前缀）；②executor handoff 首传 E_HANDOFF_REPORT_PROVENANCE_MISMATCH——evidence_path 必须与 report 事件存储值逐字一致（相对路径 docs/evidence/...，绝对路径不被接受），req-handoff-exec-nf1-01 烧号后 -02 成功；③tester lease（10:31 取 TTL 3600s）token 未随会话延续无法主动释放，executor/implementer/reviewer/adjudicator 四条 lease 已主动 release，tester 自然过期（投影 WAITING 不阻塞 verdict.submit 与 handoff，仅路由显示）；④step3 verify 以 executor 角色报告（executor/implementer/tester 同属 executor 侧角色面，step 全绑 executor 合同修订 rcr-…-executor-r1）。step3 报告 req-d20ceee64d91。台账与治理文档分开提交，本条目单独 commit。"
+    },
+    {
+      "task_id": "T-1789436399100-948b9498",
+      "commit_id": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+      "status": "complete",
+      "source": "nf2_summary_generate_20260915",
+      "scope": "rust_ext/src/daemon/edit_handlers.rs, rust_ext/src/daemon/snapshot_state.rs, tests/test_c21_edit_rule_route_workspace_authority.py, deliverables/software-company/nf2_remediation_inventory.md, docs/evidence/T-1789436399100-948b9498-step1-20260915-1126.json, docs/evidence/T-1789436399100-948b9498-step2-20260915-1142.json, docs/evidence/T-1789436399100-948b9498-step3-20260915-1154.json, docs/evidence/T-1789436399100-948b9498-review-20260915-1158.json",
+      "evidence_sha256": "4556f5d86c102a2ec8bd6c62b070fb822c6e860b03b7db05867f55ca546511cc",
+      "report_request_id": "req-29a22dba6d0e",
+      "handoff_event_id": "9106",
+      "handoff_request_id": "req-handoff-exec-nf2-01",
+      "snapshot_id": "dfcac6f16b827a30",
+      "review_verdict_id": "V-f7836ac941bc4f94b9baac72",
+      "review_request_id": "verdict-nf2-reviewer-pass-1",
+      "review_handoff_event_id": "9107",
+      "review_handoff_request_id": "req-handoff-rev-nf2-01",
+      "adjudication_lease_id": "L-d3dcf2b07ef8d097",
+      "adjudication_fencing_counter": 1,
+      "note": "卡 NF2 承接卡（backlog §W20 F2/F3 同族登记；父 PYT 卡 T-1788871227327-45c94bd8；C-21 期 step2 A/B 新发现独立建卡）：summary.generate 的 handle_summary_generate 对 symbol_summaries 使用 ON CONFLICT(symbol_hash) DO UPDATE upsert，而该表权威 schema 无任何 PRIMARY KEY/UNIQUE 约束（仅非唯一索引 idx_summaries_hash + FK symbol_contents.content_hash）-> 真 prepare 失败（与 NF1 的 schema 保留列相关名遮蔽不同类），自上线起恒 internal_error；缺陷双掩盖：C-21 路由缺陷期 WHERE 代理 id 恒空从不触达 INSERT，路由修复后真实暴露。修复 = 弃 upsert，按 db/db_summary.py generate_summary L56-76 版本化语义重写：per-row UPDATE symbol_summaries SET is_current=0 -> SELECT COALESCE(MAX(version),0)+1 -> INSERT (version=next, is_current=1)，整批包 unchecked_transaction 原子提交（daemon 先例 task_collab.rs L897/L2792/L3114/L3294）；B 选项（补 UNIQUE 约束）排除——symbol_summaries 设计为每符号多版本（_migrate_v5_to_v6 docstring），UNIQUE 会破坏 Python 侧多版本写。签名 &Connection -> &mut Connection，全库扫描确认唯一调用点 = snapshot_state.rs edit 路由块 fallthrough 臂（同步 &mut conn；该文件不在 step1 白名单，按 C-13 先例 changes 只报白名单内 edit_handlers.rs，联动已在证据 files[]/disclosures 留痕，reviewer 判 in_scope_acceptable）。同型扫描全库仅此一处坏点（job_runner.rs symbol_embeddings upsert 有 PRIMARY KEY 合法）。C-21 NF2 xfail(strict) 锚迁移为正例 test_summary_generate_nf2_fixed，断言升级为双调用多版本（第 2 次调用须把 v1 is_current 压 0 并插入 version=2/is_current=1 新行——旧 upsert 语义恒单行，对双版本断言无判别力损失）。隔离 A/B（迁移后测试矩阵 22 例，CW_DAEMON_BIN 显式指定，junitxml 权威）：before = 部署版冻结副本（sha 26519773…6709C，git_commit 5c9806b 含 NF2 缺陷）-> tests=22 failures=1，唯一失败即 NF2 锚且错误文案逐字命中根因（internal_error: symbol_summaries upsert: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint）-> 缺陷真实复现；after = 修复 dev 构建（target-nf1 release sha 3621D1A5…）-> tests=22 failures=0，曲线 1F->0F 判别成立。cargo test --release --lib 同集对照 1778P/6F（失败集与 NF1/C-21/C-13 基线逐名同集，零新增失败，102.37s）。产品代码改动 -> 部署门禁必走：按 C-21 时序先提交修复 00ca39b 再 refresh_shared_runtime.ps1 -TaskId（回执 20260915-114340-00ca39b14e0c-b2340306 status=passed/rollback=false/error=null，构建 8m49s；退出码 1 系末尾旧 core-backup 清理 safe-delete 13065>50 门槛，三度同源已知坑）；health.git_commit==HEAD==回执git_head==00ca39b 四方一致、sha256 48b58ed2…7451 三方一致（receipt binaries==独立重哈希==receipt expected/actual 自检）、PID 14740 schema 60（pipe 模式 daemon PID 24300 随脚本会话终止，按 C-16/C-17/C-21/NF1 四度先例以 HTTP 模式 --http-bind=127.0.0.1:8535 手动重启）；生产探针 summary.generate(target=nf2-probe-nonexistent) -> {ok:true, summaries_generated:0} 零写入（判别力如实披露：零命中路径新旧同响应，判别力来自隔离 A/B + 三方 sha256/git_commit 链）。git diff --check clean。证据 sha256：step3 部署门禁 842ecb50…、review 4556f5d8…（evidence_sha256 字段为 review 权威证据）、step1 bcbfd47c…、step2 4dfe17b8…、step0 inventory 187b4988…。A′ 环：executor handoff executor_ready_for_review（event 9106，req-handoff-exec-nf2-01，evidence_path/hash 与 report 事件逐字一致）-> reviewer（reviewer-wb-nf2-01 / inst-rev-wb-nf2-01 / sess-rev-nf2-20260915，与 executor session 互异）独立复核：部署二进制 48B58ED2 上矩阵复跑 22/0/0（junitxml nf2_review_matrix.xml 落盘）+ git show 00ca39b 修复 diff 机械核验（handler 内 ON CONFLICT 零残留/版本化三步/unchecked_transaction/&mut conn 唯一调用点）+ 部署三方独立复核 + A/B 判别链复核 -> verdict V-f7836ac941bc4f94b9baac72（blind_first_pass / overall=pass / RPC 直连，event 641）-> reviewer_pass handoff（event 9107，req-handoff-rev-nf2-01）-> adjudicator_accepted（event 9110，req-handoff-adj-nf2-01，independence=not_applicable）-> reviewer lease apply（1789445171.98）+ close（1789445176.63）；theta 三角色 lease（executor L-2a291d0389ca013c / reviewer L-64cef23340858bd2 / adjudicator L-d3dcf2b07ef8d097）全量主动 release。诚实披露：①同文件并行编辑竞态自伤 1 次（snapshot_state.rs 两处 Edit 同消息并行下发，后者覆盖前者丢注释+mut 绑定，git diff 复核发现后顺序补写）——严格串行编辑纪律；②沙箱 bash 缺 basename/dirname/mkdir，scripts/msvc-env.sh 不可 source（shebang shim 撞 WSL bash 被安全策略拦），MSVC 环境改由 python 探测 + eval 注入（VS2022 Community 14.44.35207 + SDK 10.0.26100.0，link.exe 解析验证）；③step1 首轮 cargo check E0277 x2（query_row 闭包 |row| row.get(0) 类型推断落空默认 ()），闭包内显式 get::<_, i64>(0) 修复后 30.53s 零错误；④pytest 首跑漏 PYTHONPATH=C:/git_work 报 ModuleNotFoundError（conftest 导入 callwarden 包），修正后 A/B 两腿结果以重跑为准。step3 报告 req-29a22dba6d0e。台账与治理文档分开提交，本条目单独 commit。"
+    },
+    {
+      "task_id": "T-1789529126780-6cf84728",
+      "commit_id": "22580e9dc54f793395355f61a08630f46c2560f5",
+      "status": "new_in_master",
+      "source": "w3_step0_harness_plan_20260916",
+      "scope": "tests/_w3_harness.py, tests/test_http_capability_registry.py, tests/test_http_native_read_cutover.py, tests/test_rust_cli_diff.py, deliverables/software-company/w3_harness_rollout_plan_20260916.md",
+      "note": "W3 step0/step1：live-daemon 族推广 _w3_harness（setup_w3_client 复用预建二进制 + manifest 发布 + seed_cli_task_authority）与 step0 残留盘点/迁移方案；18 个已迁移文件 17/18 绿。step0 文档前置，不改产品码。"
+    },
+    {
+      "task_id": "T-1789529126780-6cf84728",
+      "commit_id": "0d106e1",
+      "status": "new_in_master",
+      "source": "w3_step3_step4_stale_assertions_20260916",
+      "scope": "tests/test_windows_wsl_authority_e2e.py, tests/test_windows_daemon_e2e.py, tests/test_lease_gate_empirical.py",
+      "note": "W3 step3+4 陈旧断言修复（tests-only）：wsl authority 4 类（named-pipe transport/bridge RPC 创建/step_id report/workspace seed）、windows daemon（registry 隔离 + _wait_daemon 150s + workspace 权威 seed）、lease gate 3 类（agent.register holder/三角色合同 + identity_policy/fail-closed transport seam _get_rpc_client_for_route）。族级回归 38 passed/1 skipped/0 failed。越界产品缺陷（tools_task.py task_create 缺 workspace 参数 + 返回注解不符）另立卡。"
+    },
+    {
+      "task_id": "T-1789564402123-9b47d988",
+      "commit_id": "e4b335d",
+      "status": "new_in_master",
+      "source": "c23_mcp_task_create_workspace_params_20260916",
+      "scope": "server/tools/tools_task.py, tests/test_tools_task_create_workspace_params.py",
+      "note": "C-23 承接（§W3 卡 T-1789529126780-6cf84728 step3 越界发现）：MCP 工具 task_create 签名补 workspace_id: int = 0 / workspace_instance_id: str = \"\"（逐字转发 task.create 载荷，BR-01/BR-02 可满足）；返回注解 -> str 改 Optional[dict]（fastmcp 不再拒绝 dict）。验证：单元回归 3 passed（配对转发 + dict 返回 + 缺省线缆形状）；共享 daemon live e2e 显式配对创建成功（task_id=T-1789563951668-ba0c338c / open），缺省对照 fail-closed 不变。daemon 由 refresh_shared_runtime.ps1 -TaskId T-1789529126780-6cf84728 拉起（PID 40860，health.git_commit==HEAD，三方 sha256 一致）。"
+    },
+    {
+      "task_id": "T-1789564402123-9b47d988",
+      "commit_id": "1ee4654",
+      "status": "apraclose_governance_only",
+      "source": "c23_aprime_closure_20260916",
+      "scope": "deliverables/software-company/c23_remediation_inventory.md (A′ 收尾章节 §5)",
+      "note": "C-23 A′ 环闭合（无代码 commit）：executor 4 步 done → executor_ready_for_review (r4/ev9154) → reviewer verdict V-C23-REVIEWER-PASS-2 (ev643) → reviewer_pass (r4/ev9157) → adjudicator completion-review=pass → adjudicator_accepted (r3/ev9160) → task.apply (applied 1789570299) → task.close (closed 1789570367)。终态 workflow_status=completed / decision=COMPLETE。reviewer 独立复审（新 session）：pytest 3P + live e2e 显式配对成功 T-1789569050551-e72d6938 + 缺省 E_TASK_WORKSPACE_UNBOUND fail-closed。过程障碍：stray lease token 丢失经 daemon holder_registration_missing 回收解除；发现 canonical_claim_role 三处消费点未归一化（lease.recover/handoff/apply 查询落空），建议另立卡根因修复。"
+    },
+    {
+      "task_id": "T-1789572547537-1bc143b4",
+      "commit_id": "2eebf41",
+      "status": "implemented_pending_release_verify",
+      "source": "c24_canonical_role_dual_end_20260916",
+      "scope": "rust_ext/src/daemon: task_collab_shared.rs(+runtime_role_variants/role_in_match) / task_collab_lease.rs(B1-B8) / task_loop/lifecycle_lease.rs(A1-A5) / task_collab.rs(H) / report_handoff.rs(F) / verdict_evidence_gate.rs(G) / bootstrap_review_bridge.rs(E1-E2) + tests(lifecycle_lease_test +3, task_collab_tests_lease +1) + deliverables/software-company/c24_canonical_role_inventory.md",
+      "note": "C-24 双端归一实现并提交 2eebf41。step 报告：step0 adjudicate(req-8843a6ef1929)/step1 implement(req-e9793e18db69)/step2 test(req-cd245c73b855)。回归 lease 81P/handoff 32P/verdict 30P/bridge 11P/supersede 16P（隔离 test target），cargo check rc=0。边界：task_collab_lifecycle_ops.rs(validate_lease_for_mutation role=?2 + 2 处 reviewer 硬编码)与 task_supersede.rs(2 处 reviewer 硬编码查询)不在本卡 allowed_paths，已 git checkout 回退，缺陷转承接卡。下一步 step3 release_verify：refresh_shared_runtime.ps1 -TaskId 本卡 + live e2e(implementer acquire -> executor handoff/verdict)。"
     }
   ],
   "known_commits": {
@@ -2102,5 +2828,548 @@
     "status": "review_pending",
     "scope": "step8 fix_defect（修 step6 failed test，target rust_ext/src/daemon/）+ 两处漂移修复 step9/step10：①task.claim 事件投影补偿写回物理表 task_assignments（persist_claimed_assignment，report success 收敛 completed 防孤儿行，新增回归测试）；②next_action rule7 感知 claim 状态返回 WAIT 破 AFK 无限重 claim；③tools_p2_graph 空白名单跳过注册修 compat_worker 级联崩溃",
     "note": "message 内嵌 T-1787850432491-f42a2b8c；验证 cargo test --lib daemon::task_loop daemon::assignment_queue daemon::task_collab_lease --test-threads=1 = 210 passed/0 failed；父任务 9 step 全 done 进入 review（review_pending），BR-01 gate#2 解除；交付说明 drift_fix_step9_step10_20260901.md；daemon 已部署（PID 9564，git_commit 517f9337）但二进制由未提交工作树构建，本 commit 后需重编译部署闭环（health.git_commit==HEAD + runtime/target sha256 相等）；交付说明 §7 已追加（commit 398432c，已 push）；daemon 35156 部署闭环三项全过（git_commit=e949ce9==HEAD、runtime sha256=d1be36ca==evidence、worker healthy）；2026-09-01 23:55 父任务闭环：独立 reviewer PASS（reviewer-wb-186loop，verdict V-404d2b7cd6086820cdb5806e，completion_review=pass + audit 3000/3000）+ adjudicator 持证 apply/close（adjudicator-workbuddy-p0adj-01）→ status=closed / next_action=COMPLETE / 无残留 lease，BR-01 gate #2 最终解除；交付说明 §8 已追加（commit d5525ea）"
+  },
+  "t1788382908707_full_remediation_20260902": {
+    "task_id": "T-1788382908707-bbdd0cfc",
+    "commit_id": "fdead51",
+    "status": "new_in_master",
+    "scope": "Bugfix: persist workspace authority reconciliation across daemon restart（T-1788346430756-8c900ec0 的 append-only remediation）。resolve_status_authority 在 numeric/instance 两键路径记录 resolved_instance 后经 task_db_capture_by_instance + alias_by_instance（按稳定 workspace_instance_id）跨引 task-DB 侧，消除 fresh restart 后 registry autoincrement id 漂移（144->156->158->161->170->175）导致的 task_db_workspace_id=null",
+    "note": "验证闭环：①cargo test --release workspace_reconciliation 7 passed；②fresh-process E2E tests/e2e_workspace_authority_reconciliation_v2.py 三轮（registry id 161/170/175）AUTH/READ/WRITE/NEG/MULTI 全 PASS，carrier (1,ws-1) 恰好 1 binding，NEG fail-closed 无 partial rows，TokenSlim probe 8f6a68ab29926f5f 不可跨项目绑定；③部署闭环 runtime/current==target/release==manifest sha256=8bd47619...（git f6fdafd，daemon PID 3744）；④lifecycle 全链路证明 probe T-1788389592438-e9549dfc：create(A-prime 三角色合同)→executor claim/report→reviewer lease→persisted verdict V-944c7cae2f965ff8d7d56d12（blind_first_pass/pass，snapshot f474570cd364a8f0 为 registry eb81cf5375f5446e 真实 workspace snapshot）→lease.release。evidence: docs/evidence/workspace-authority-reconciliation-v2-{reproduction,e2e}.json；whitelist 提交（5 文件），未触碰 task.apply/close/supersede，任务 review_pending 交独立 Reviewer"
+  },
+  "t1788392053931_live_tuple_v3_20260903": {
+    "task_id": "T-1788392053931-05b8a0e4",
+    "remediation_of": "T-1788382908707-bbdd0cfc",
+    "original_defect_task": "T-1788346430756-8c900ec0",
+    "commits": [
+      "09e49155e9a482fb0ae5616b0aba3383ff11221f",
+      "dfe71c9"
+    ],
+    "fix_summary": "thread one daemon-resolved canonical authority through task.create binding/capture AND governance contract bootstrap; no re-read of legacy ws-1; append-only alias",
+    "e2e": "tests/e2e_workspace_authority_live_tuple_v3.py 6/6 PASS; positive task T-1788408744022-fca9860c; negative fail-closed zero partial rows",
+    "deploy": "runtime==target sha256 64e8a8ce; git_commit==HEAD 09e4915; daemon PID 35524",
+    "evidence": [
+      "docs/evidence/workspace-authority-live-tuple-v3-reproduction.json",
+      "docs/evidence/workspace-authority-live-tuple-v3-e2e.json"
+    ],
+    "updated_at": "2026-09-03T12:16:41"
+  },
+  "t1788415431169_task_scoped_workspace_authority_20260903": {
+    "task_id": "T-1788415431169-f5b190cc",
+    "commit_id": "323a034ca742d63f3f721284828ad4970f408e9a",
+    "evidence_commit_id": "5db14a198cd01e4317af859254f631d037062d4d",
+    "status": "review_pending",
+    "scope": "Fix Python HTTP task/lease routing so a nonblank task_id uses immutable task_workspace_bindings rather than injecting the unrelated legacy active numeric workspace. Preserve explicit mismatch fail-closed behavior and workspace-scoped numeric injection.",
+    "note": "message 内嵌 task_id；targeted Python 5 passed、Rust lease/binding 14 passed、cargo check passed；release receipt C:/Users/wanpi/.callwarden/runtime/evidence/20260903-142407-323a034ca742-d69e9837.json sha256=3080A4311873D1C277265FE91A91429F5542F69330500AEA4A3DF97659CE1386；live CLI and shared HTTP lease.status for T-1788392053931-05b8a0e4 returned its bound released lease without E_WORKSPACE_AUTHORITY_MISMATCH; no apply/close/supersede performed."
+  },
+  "t1788421906365_role_prompt_bootstrap_contract_r2_20260903": {
+    "task_id": "T-1788421906365-956ab790",
+    "commit_id": "e5ee9512c07e5e9d7c035e0ed1ba46d3dc056f6c",
+    "status": "new_in_master",
+    "scope": "Append-only Role Prompt v1 bootstrap Contract r2 correction: revision 1 successor-manifest SHA transcription corrected to the verified committed bytes; active Git provenance anchor recorded as 10a727d812f1eaabb8842fec89a09d06820f23a5; frozen inputs and original receipt preserved.",
+    "note": "message 内嵌 task_id；task.contract_revise r1→r2 request=role-prompt-v1-bootstrap-contract-r2-20260903 contract_hash=sha256:2070d7ce2b637d2283e3323309d3957c08199c921541de2f3ff7cb21058621f4；三份输入 SHA 与 JSON 解析验证通过；Executor reports req-c772671e13a3 / req-f6624bbe1cea；lease 均已 release；未执行 Gate、生产代码、rebind、supersede、apply 或 close。"
+  },
+  "t1788425319705_task_write_client_contract_20260903": {
+    "task_id": "T-1788425319705-505b7f04",
+    "commit_id": "31d68937a96ae2a479ab0c43fe4f968a823d3016",
+    "status": "review_pending",
+    "scope": "Thin-client task-write contract: make daemon-rejected task.report and contract-claim failures exit 2; expose canonical lease_token while retaining token compatibility; project executor governance work to implementer runtime lease role.",
+    "note": "message 内嵌 task_id；Python focused 3 passed、Rust next_action 22 passed；release receipt C:/Users/wanpi/.callwarden/runtime/evidence/20260903-211533-293a1cbee415-ff82089a.json sha256=4AB1DD42C5BF7ACAD13103428441620CC2EC320DEE589764C006C82565B25731；live daemon verified report task_not_found exits 2, next-action lease_role=implementer, and acquire/release JSON offers equal lease_token/token without persisting a raw token. Contract r2 corrected actual Rust scope; legacy step target_file remains stale, so no false changes-json path was sent for steps 2/3."
+  },
+  "t1788446981877_task_split_unique_child_id_20260903": {
+    "task_id": "T-1788446981877-ee71e784",
+    "commit_id": "bb5f6d379ad492207b3aab82147207b27d304351",
+    "status": "execution_in_progress",
+    "scope": "Daemon task.split collision safety: preserve the compatibility child ID when free; when an imported or repeated split already owns it, generate and recheck an opaque daemon suffix inside the same transaction. No direct SQLite or historical task mutation.",
+    "note": "Step 0 reported as req-cefd8531a6f3; source and evidence committed after report. Targeted cargo compilation completed successfully (the selected filter matched 0 tests); git diff --check passed. Lease L-3fe5b5e238d4bdd3 remains active because the first release attempt used --lease-token instead of the CLI-required --token and the daemon does not re-emit an existing raw token. Remaining steps are not claimed."
+  },
+  "t1788447967354_lease_recovery_rpc_tests_20260903": {
+    "task_id": "T-1788447967354-616aa470",
+    "commit_id": "8e39eccb20314bc3295c9c672e65461ce4715a7c",
+    "status": "new_in_master",
+    "scope": "Centralized orphan lease recovery domain, protected lease.recover RPC, and focused recovery test matrix for orphan expiry, assignment staleness, healthy-lease rejection, secret-field rejection, and idempotent replay.",
+    "note": "message 内嵌 task_id；step0 recovery domain、step1 protected RPC wiring 与 step2 tests 已提交；lease.recover focused tests 3/3 passed；cargo check 与 git diff --check passed；step3 fresh daemon HTTP round-trip remains pending."
+  },
+  "t1788447967354_lease_recovery_e2e_20260904": {
+    "task_id": "T-1788447967354-616aa470",
+    "commit_id": "ee6331c87e5b7deecedd8361eecb61666e45ee9a",
+    "status": "review_pending",
+    "scope": "Fresh-process HTTP E2E for lease recovery, including same-holder task-claim release, paired assignment staleness, stable request replay, and healthy active lease refusal; append-only correction of the step2 placeholder evidence hash.",
+    "note": "message 内嵌 task_id；report_request_id=req-d024717d3de4；step3 evidence sha256=dc35d6b88b7cbb5f12549a9ffbb6ffc37dba0a3e34884556de5e220a412efd78；runtime receipt git_head=0e34781d349c955a5a5c3ee8abb7e962d7efdda1；fresh HTTP E2E PASS；lease/assignment/task-claim transitions verified by daemon；无 apply/close。"
+  },
+  "t1788476803072_workspace_authority_20260904": {
+    "task_id": "T-1788476803072-3822d034",
+    "commit_id": "fee48022255f7f377810228f2292180cb08a0dfe",
+    "status": "new_in_master",
+    "scope": "Resolve task-creation workspace authority from the current project root using daemon workspace.list/status reconciliation; return the canonical task-DB workspace ID and fail closed for zero, multiple, malformed, unavailable, or mismatched candidates. Add focused positive and negative regression coverage.",
+    "note": "message 内嵌 task_id；focused pytest 14 passed；live daemon resolver returned workspace_id=1/workspace_instance_id=4baea3ff12c2ea5c；git diff --check passed；task report and executor handoff are daemon-bound; no apply/close/supersede."
+  },
+  "t1788476803072_workspace_authority_refresh_20260904": {
+    "task_id": "T-1788476803072-3822d034",
+    "commit_id": "2422a44",
+    "status": "refresh_failed",
+    "scope": "Post-commit daemon refresh attempt for the task-owned workspace-authority change.",
+    "note": "refresh attempted only after source and ledger commits; daemon returned method_not_found: 未知方法: build_full_graph；刷新未完成，未使用 SQLite 或旧 CLI 旁路伪造成功。"
+  },
+  "t1788485095339_workspace_authority_recovery_20260904": {
+    "task_id": "T-1788485095339-e9c64a28",
+    "commit_id": "d20ef9d1b086bc0475b152ee325bb2b73dda4898",
+    "status": "new_in_master",
+    "scope": "Stabilize daemon workspace identity by physical checkout, preserve authoritative workspace provenance during incomplete registration, auto-forward daemon snapshots for HTTP task.report, and reject no-snapshot reports before lifecycle mutation.",
+    "note": "message 内嵌 task_id；source verification: Python py_compile, workspace identity regression, task_collab core 34/34, task_collab projection 24/24, git diff --check; evidence sha256=7DFBCD6A6389241396B5C7835D8E0FFC6BBAA9D394065127F2231206E80F7C99. Runtime receipt and live daemon E2E are recorded after deployment."
+  },
+  "t1788485095339_workspace_report_snapshot_followup_20260904": {
+    "task_id": "T-1788485095339-e9c64a28",
+    "commit_id": "6d6eb35ad063ce8cdacd513cbeca1c0b40b9eb60",
+    "status": "new_in_master",
+    "scope": "Follow-up closure for HTTP task.report: retrieve the daemon-owned DB path, publish a daemon-issued snapshot before routing the report, and test both positive forwarding and missing-path fail-closed behavior.",
+    "note": "message 内嵌 task_id；pytest tests/test_task_report_snapshot_authority.py 2 passed; current evidence sha256=2B89DF5617652A40659D8CDC1687E01790E3E3A17071646B111B67FF42E0C232; prior evidence hash remains append-only in the initial ledger entry."
+  },
+  "t1788485095339_workspace_authority_live_receipt_20260904": {
+    "task_id": "T-1788485095339-e9c64a28",
+    "commit_id": "268e00808cc7a46242b55741f133dfdb61600bb4",
+    "status": "new_in_master",
+    "scope": "Append-only deployed-runtime receipt: task authority tuple, daemon commit/PID, three executor report request IDs, and non-empty review-input snapshot verification.",
+    "note": "message 内嵌 task_id；receipt sha256=B580A5CE148FBF2593E9DBEB8206552BC4A0F0376AF98A8AC4C47FFD0E2C570F; deployed daemon=5b72b13c1af29cc7f91fe6bbe7555be131d1ab27; reports=req-9ce4bcf8fa41/req-31aad54ea0ac/req-a169fd57e31f; review snapshot=daa02801adf4d5c1."
+  },
+  "t1788485095339_remediation_projection_20260904": {
+    "task_id": "T-1788485095339-e9c64a28",
+    "commits": [
+      "b6d4784767f85e00e210265161807270635fb19d",
+      "ecf61b20d723d4835bd22d916e7da7b803030f71",
+      "144c63fe50513b527b61e792dfc0050f4eb558d4",
+      "e96ca416f7362b0c33df75a47fee89b47315b85e",
+      "936e914711a4eb1e2fc94a0fc4e671d548da02c4"
+    ],
+    "status": "new_in_master",
+    "scope": "Complete the provenance-bound fix_defect recovery: scope task leases by immutable workspace, recover stale durable assignment projection, requeue a completed remediation only after matching source verdict, task.report and executor_ready_for_review handoff proofs, and record the deployed runtime result.",
+    "note": "message 内嵌 task_id；focused next_action tests 27 passed；cargo check -p callwarden-core --bin cw-daemon passed；release receipt C:/Users/wanpi/.callwarden/runtime/evidence/20260904-231836-144c63fe5051-8a86cf84.json sha256=95612F91F721331237D808210D98B0889C49EDF9EC88FA5E06DF9829B141E362 status=passed git_head=144c63fe50513b527b61e792dfc0050f4eb558d4 daemon PID=49692；live next-action is READY/REVIEW with inbound handoff he-a22f3e86150dbaacee154dd9 matching remediation step S-773f2afd8369e7ef0836018a and report req-89383befe484；live evidence docs/evidence/T-1788485095339-e9c64a28-remediation-projection-live.json；post-commit refresh attempt recorded in docs/evidence/T-1788485095339-e9c64a28-post-commit-refresh-attempt.json after daemon rejected build_full_graph (CLI exit code incorrectly remained 0)."
+  },
+  "T-1788583773351-2da3bb54-fixdefect": {
+    "task_id": "T-1788583773351-2da3bb54",
+    "commit": "2039a03917d016f9a8255fa6c7d5a0923074fcd9",
+    "step": "S-f52a8e741039134de4f8e5ca (fix_defect, remediation_of V-155c02fc finding#2)",
+    "status": "closed_complete_confirmed",
+    "scope": "GATE-1B fix_defect: governed task.create CLI fail-closed exit code. Daemon-rejected/authority-unavailable governed create exits 2 with byte-preserved error; legacy root create unchanged.",
+    "note": "43 focused regressions passed (19 parent governance incl. 3 new); live negative probe exit=2, task_created=false. Reviewer PASS V-f9d9ff64426539f0e128b634 (blind_first_pass, reviewer-wb-gate1bfix-01); adjudicator-wb-gate1b-01 held reviewer-role lease L-4720ad159aeeb9ae fencing=3 for apply/close; stale reviewer lease L-2d4e9c01c9946434 recovered via TTL-expired re-acquire. Evidence sha256 1EED3984149EB425F76F39E138B0EF4477F41FEFD975B03FA06A8DAE132B1D83. Stray probe task T-1788656001859-30369600 disclosed in evidence."
+  },
+  "t1788595874892_bridge_20260906": {
+    "task_id": "T-1788595874892-c9b82244",
+    "commits": [
+      "aa09454a92734332161c08500c9adf679793bca9",
+      "d1019746303bd0280a416be2b0bde32e94e9b62f"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "legacy parent to canonical child authority bridge: bounded fail-closed equivalence proof in validate_parent_for_child_create + append-only alias provenance; 149 focused regressions; deployed receipt 20260906-110736",
+    "note": "Reviewer PASS V-f3aa7efb2c961e1ed0b5b1d7; adjudicator apply/close fencing=2. Positive probe child T-1788664683905-a275c53c bound to canonical 4baea3ff12c2ea5c (no ws-1 propagation). Resolves GATE-1B V-155c02fc finding#1."
+  },
+  "t1788665370580_compat_20260906": {
+    "task_id": "T-1788665370580-83851bf0",
+    "commits": [
+      "974bddcf4fa7be286bdf24f2e244794abe292629",
+      "2edd7ec69e5977f0b198ac73b6614da47c7b655e"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "verdict.submit pre-snapshot era bounded compatibility (empty snapshot only when task history has zero non-empty snapshot rows; fail-closed otherwise)",
+    "note": "Created via bridge under legacy Epic. Reviewer PASS V-304517aed381f6f11b334d9c; adjudicator apply/close fencing=2. Deploy receipt 20260906-113927; live unblock: bootstrap verdict V-f97d42b9 accepted. Evidence sha256 22AAB2091573366036620D366F5957F75E103602AEF32A46988C98EED69DB1F5."
+  },
+  "t1788421906365_bootstrap_20260906": {
+    "task_id": "T-1788421906365-956ab790",
+    "commits": [
+      "10a727d812f1eaabb8842fec89a09d06820f23a5"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "Role Prompt v1 bootstrap: freeze live-authority review inputs (frozen spec/gate manifest/successor manifest git-tracked; live tuple 1102/1/4baea3ff12c2ea5c)",
+    "note": "Executor steps pre-existing (10a727d). Reviewer PASS V-f97d42b9dda86e40a7ac1d6d with auditable empty snapshot (pre-snapshot compat) + 1 warn finding (receipt commit_sha 997780da superseded sibling, blobs byte-identical, harmless); adjudicator apply/close fencing=3. Unblocks Planner order for new Gate review vehicle."
+  },
+  "t1788668722815_rp00_20260906": {
+    "task_id": "T-1788668722815-04496bb0",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "ce17c9368f87b35a4bca7285beb67abd40de221f",
+      "59eb377eb99bc5bcf3019d35d8cdeb04f6013642"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "Role Prompt Compiler v1 RP-00: merged frozen spec and machine planning artifacts (manifest freeze + validator + tests + evidence)",
+    "note": "Executor executor-wb-rp00-01: 4/4 steps success (inventory/matrix byte-stable one-to-one 1972 clauses; manifest FROZEN_BY_RP00_STEP2; validate_role_prompt_spec.py PASS + pytest 8 passed + git diff --check clean). Reviewer blind_first_pass PASS V-db675d0462be898196ef31b8 (1 warn finding: pytest PYTHONPATH precondition). Adjudicator adjudicator-wb-rp00-01 applied+closed via own reviewer-role lease (fencing 3). Snapshot 5ecb6b87e19b1d62. RP-01+ creation remains forbidden until RP-00-successor rule evaluated.",
+    "recorded_at": "2026-09-06T13:20:00+08:00"
+  },
+  "t1788673904079_rp01_20260906": {
+    "task_id": "T-1788673904079-5fa6fb84",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "89860dedf88ca4477287c3e8309cd45ac707d88f",
+      "89f83b3ee989c7f283dc4cf12e362f612cd97865"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "Role Prompt Compiler v1 RP-01: asset compiler + build-time validation gate (sole validator core, fail-closed build.rs gate, OUT_DIR generated hash inventory, 26 negative/positive fixtures)",
+    "note": "Executor executor-wb-rp01-01: 4/4 steps success (cargo check 0, cargo test role_prompt_validator 26 passed, git diff --check clean, end-to-end tamper probe tampered->101 E_ASSET_HASH_MISMATCH restored->0). Reviewer blind_first_pass PASS V-24bdbb5dcfdced50747902c6 (1 warn finding: task.supersede route injection resolves active legacy workspace ws-10 instead of task binding ws-1 -> separate remediation card). Adjudicator adjudicator-wb-rp01-01 applied+closed via own reviewer-role lease (fencing 3). Snapshot dfe15a8dac5b314b. Defective first creation T-1788671453544-d0625554 supersede pending the injection fix (planner-side target_file payload bug, evidence docs/evidence/role-prompt-v1-rp01-creation-supersede.json).",
+    "recorded_at": "2026-09-06T14:50:00+08:00"
+  },
+  "t1788675318818_sr01_20260906": {
+    "task_id": "T-1788675318818-c4b18cfc",
+    "parent_task_id": null,
+    "commits": [
+      "37dfa370143e54bb936709c356261150170a6745",
+      "45a08099cea0fae220a2a35acdb541dfb67ac97c"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "SR-01: task.supersede/superseded_by route authority injection fix (_is_task_scoped_authority_request recognizes superseded_id; route_task_write/route_task_read skip legacy active-workspace injection for TASK_SUPERSEDE_ROUTE_POLICY task-scoped requests; 12-case regression suite tests/test_task_supersede_route_authority.py)",
+    "note": "Executor executor-wb-sr01-01: 4/4 steps success (pytest supersede suites 20 passed/8 pre-existing skipped, py_compile green, git diff --check clean). Reviewer reviewer-wb-sr01-01 blind_first_pass PASS V-86967a4e047c99d9ab411098 (1 warn: commit 37dfa370 swept 3 stranded 2026-09-05 compat-worker hunks [PROJECT_ROOT->cwd fallback x2, route_rpc workspace_root injection] via whole-file add in shared worktree; provenance-separation follow-up pending). Adjudicator adjudicator-wb-sr01-01 applied+closed via own reviewer-role lease. Live proof: cw.py task supersede T-1788671453544-d0625554 -> T-1788673904079-5fa6fb84 succeeded post-fix (supersedence SUP-059dd5046f8a0f3d, workspace_id=1 binding-resolved; pre-fix same call failed E_WORKSPACE_AUTHORITY_MISMATCH with injected ws-10). Operational lessons: lease.status reports expired rows as active (poll expires_at); handoff report_request_id only validated non-empty; supersede requires lease holder registered role exactly 'reviewer' distinct from acting adjudicator identity, and CLI supersede lacks --agent-instance-id passthrough (use no-instance registration).",
+    "recorded_at": "2026-09-06T15:30:00+08:00"
+  },
+  "t1788682521002_rp02_20260906": {
+    "task_id": "T-1788682521002-a852a710",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "ef7cccf73bfd7ae443f6b7b5e4361a04348df9aa",
+      "9f3bdeb1953ccb7434c252acd239bedfe38648cc"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "RP-02: production template assets + byte/hash goldens (manifest role_prompt_assets_v1 with 10 templates = 7 role + 3 system; legacy bytes byte-exact vs frozen 7.2 hashes; alias exception exact triple; current v4/planner imports; 3 system templates; compiler_policy; 4-golden test suite; build gate ACTIVE fail-closed)",
+    "note": "Prerequisite SR-02 T-1788680451232-c06332f4 (Option B route semantics). Executor executor-wb-rp02-01: 4/4 steps. Reviewer reviewer-wb-rp02-01 blind_first_pass PASS V-8288cfd86aaad22ba7b2befc (no findings). Adjudicator adjudicator-wb-rp02-01 apply/close. Evidence docs/evidence/RP-02-role-prompt-compiler.json sha256 42C11A4BE9D84EEC5DCCF5A2C2ED4E1B3957C8A0443C11A5CE9EA2DE53735435, manifest sha256 277560df40e0cf7f5b28309d878755824cec54114b0ac6a510b5f20717067cbc."
+  },
+  "t1788680451232_sr02_20260906": {
+    "task_id": "T-1788680451232-c06332f4",
+    "parent_task_id": null,
+    "commits": [
+      "bcc6015810b8a9cade911e8a2dbd778523db7cf6",
+      "35039e42f20ea1090c1fa567a088b8d57b48be90"
+    ],
+    "status": "closed_complete_confirmed",
+    "scope": "SR-02: role-prompt validator route semantics fix (Option B, user-adjudicated) - per-template >=1-route mandate removed so the frozen 7.3 tree (7 role templates vs 4 routes) is representable; global route uniqueness + system no-route rules retained; stale negative fixture converted; 2 positive regressions incl. full frozen tree shape",
+    "note": "Executor executor-wb-sr02-01: 3/3 steps (cargo test role_prompt_validator 20+7 green; cargo check green with CARGO_INCREMENTAL=0, rustc 1.93.1 incremental ICE unrelated compiler bug). Reviewer reviewer-wb-sr02-01 blind_first_pass PASS V-224aa76eae993ac9bb1d6eed (no findings). Adjudicator adjudicator-wb-sr02-01 apply/close. Evidence docs/evidence/SR-02-role-prompt-route-semantics-fix.json sha256 1288930C14BA7BE3F4C1115B96C9B0EE09C961F8C312FC30EA28F9846B41EB1D."
+  },
+  "t1788687110713_rp03_20260906": {
+    "task_id": "T-1788687110713-48673344",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "3e9e578bdce07a104e53bf83944246eb64d0eaba",
+      "4069193e00255db3322ee442aac6bef3f9b47b17"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-03: Role Prompt Compiler v1 single-snapshot authority context domain - rust_ext/src/daemon/task_prompt/context.rs (authority binding/capture/watermark + in-process next-action on same Connection, no recursive JSON-RPC, Task/Role Contract + step binding, prompt fields from routed revision canonical payload, fail-closed E_TASK_PROMPT_TASK_NOT_FOUND/E_TASK_PROMPT_AUTHORITY_UNAVAILABLE, routing_state READY->action_ready else non_actionable, valid_for_claim=false) + context_tests.rs 9 tests (task_prompt_context filter) + module registration (task_prompt/mod.rs + 1-line daemon/mod.rs planner-issued extension). Reviewer PASS V-bbb4730340e10cf13a7e1be8, adjudicator apply/close. Evidence docs/evidence/RP-03-role-prompt-compiler.json sha256 3BB1F4830D22AC0D583046D5BF616FA95596528CC307F580E95782B062E7B724.",
+    "created_at": "2026-09-06T18:05:00+08:00"
+  },
+  "t1788696869654_rp04_20260906": {
+    "task_id": "T-1788696869654-76a02598",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "10b879aa8c02eeafa041863394f901871391cb96",
+      "86ea379647c1f5bd1409138ca8b33af3b0cce0ba"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-04: Role Prompt Compiler v1 renderer, canonical hashes, clipping and secret guard - route.rs (spec 6 state machine, READY/PLAN + unknown hard-error E_TASK_PROMPT_UNSUPPORTED_ACTION; spec 7.1 exact id+hash selection with wire-form normalization, full fail-closed code set, no fallback; compile-time include_str registry integrity-checked vs build-generated constants per 11.1-10), render.rs (8.1 fixed composition order, 8.2 untrusted block JSON string-safe </& escaping, 9.2 processing order, 9.3 budgets, 9.4 never-clip set, 9.5 context_hash exact 9-item include set), canonical.rs (cw.canonical_json.v1 + sha256 wire-form normalization), redaction.rs (8.3 denylist pre/post compose, category-only reason codes, documented exemptions), bundle.rs (5.1 assembly, 9.6 bundle_hash minimal closure, 9.7 generated_at exclusion), mod.rs 5 registration lines (planner-issued extension). task_prompt_renderer 46/46 green incl. 7 frozen goldens (11.2) + 100x byte determinism. Reviewer PASS V-7301cd44c586655a46315423 (2 advisory findings non-blocking), adjudicator apply/close. Evidence docs/evidence/RP-04-role-prompt-compiler.json sha256 51D018CA25A52670211BABDD0DA2991FFE44057A921885488BA80830D10C7945.",
+    "created_at": "2026-09-06T20:58:00+08:00"
+  },
+  "t1788699893336_rp05_20260906": {
+    "task_id": "T-1788699893336-781258c0",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "72cc047671a3580fa1478abb0c59599b3aa5d78b",
+      "deff08cc2f2d1003b6f4e0677c29d956ff7bfa4c"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-05: Role Prompt Compiler v1 daemon RPC and capability publication - task_prompt/handler.rs (spec 4.1 strict request schema with fail-closed unknown fields; workspace self-resolved from immutable binding chain tasks -> task_workspace_bindings.workspace_capture_id -> workspace_authority_captures.workspace_instance_id with 10.2 error-code ordering; 4.2 guard mismatch E_TASK_PROMPT_AUTHORITY_MISMATCH never hashed; capability role_prompt_compiler_v1 disabled fail-closed; composition via RP-03/04 domain APIs on caller-provided read-only Connection, single snapshot, zero writes, no recursive JSON-RPC; untrusted title/description segment-3 only; built-in civil-date RFC3339 generated_at display-only), dispatch.rs 26-line thin registration (trait method + method arm + health capability pass-through per 11.3), task_prompt/mod.rs 1 registration line (planner-issued extension), capability_control.rs intentionally untouched (justified). task_prompt filter 65/65 (9 context + 46 renderer + 10 rpc, no regression), cargo check clean, git diff --check clean. Reviewer PASS V-735867e7fb38ad5188b01889 (2 advisory: retry_class wire field deferred to transport; live RPC probe requires deployment), adjudicator apply/close. Evidence docs/evidence/RP-05-role-prompt-compiler.json sha256 8B6389980BB1524E97EAC5B1F1ADB321E3C5B4F3D1AB8CC550C3AA67217112A9.",
+    "created_at": "2026-09-06T21:28:00+08:00"
+  },
+  "t1788701744712_rp06_20260906": {
+    "task_id": "T-1788701744712-86b22b34",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "b4d5bff800ec44f6626dfc2f07bb2be8f2f942bb"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-06: compiler_policy_id alignment and golden refresh - compiler_policy.md line-1 template ID cw.compiler.policy.v1 -> cw.role_prompt.compiler_policy.v1 (asset sha256 4d6e8b62.. -> 663807e4.., body sections untouched); manifest.json compiler_policy.content_sha256 recomputed (single-line diff); route.rs advisory comment replaced with alignment note, COMPILER_POLICY_ID unchanged (already spec-literal); bundle_tests.rs all 7 GOLDEN_* tuples refrozen via unfreeze -> golden_print -> refreeze loop (explicitly authorized by card, body hashes unchanged, context/prompt/bundle chain-updated). Hash chain spec literal == asset line-1 == manifest == constant. cargo test task_prompt --lib 65/65 green, no regression vs RP-05 baseline. Closes RP-04 reviewer advisory #1.",
+    "reviewer_verdict": "V-b787203fc2a372cf816ce7c3",
+    "reviewer_pass": true,
+    "adjudicator": "adjudicator-wb-rp06-01",
+    "evidence_path": "docs/evidence/RP-06-compiler-policy-alignment.json",
+    "evidence_sha256": "754C7F2B54DE9404CA1A38BCB5279398C33A7B480A15916E2C2A60B046ACE7C7",
+    "closed_at": "2026-09-06"
+  },
+  "t1788703546980_rp07_20260906": {
+    "task_id": "T-1788703546980-263dff6c",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "db040312e1c0fd8c13fa21cb2f81dfd974e59a2c"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-07: route matrix SSOT reconciliation per frozen spec section 12 - generator sole SSOT (ROUTE_OVERRIDES get_role_view drift repair + 3 governance tool overrides; new --emit-rust/--check); matrix JSON regenerated N=242 (2 non-MCP residuals removed via MCP source extraction; 3 new governance tools routed); route_matrix.rs TOOL_ROUTES regenerated between BEGIN/END GENERATED markers (3 zombie compat-alias entries removed, mirror==generate(M)); verify_route_matrix.py rewritten (hardcoded total removed, N source-derived, names(T)==tool_names(M), mirror==generate(M), D-subset, thin-shell gates; 17 pre-existing compat-domain drifts registered as explicit KNOWN_DRIFT, routed to future daemon compat task); tests/test_route_matrix_generation.py 13/13. cargo route_matrix 4/4; full lib 1736 passed / 6 pre-existing cli-domain env-sensitive failures.",
+    "reviewer_verdict": "V-8dc33470353a863fb9e17c3a",
+    "reviewer_pass": true,
+    "advisory": "COMPAT_DOMAIN_KNOWN_DRIFT_BACKLOG (17 items registered; 9 unrouted zombie python_compat tools fail-closed; recommend unrouted-9 decision in successor compat task)",
+    "adjudicator": "adjudicator-wb-rp07-01",
+    "evidence_path": "docs/evidence/RP-07-route-matrix-ssot.json",
+    "evidence_sha256": "4A8019CA005D0A1F6D1D5FFCC2B78B54B4953B917B94667CA3D517BBC8570644",
+    "closed_at": "2026-09-06"
+  },
+  "t1788710667638_rp08_20260907": {
+    "task_id": "T-1788710667638-0e8eb8b8",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "c0184b5e29acb1cd06a2bb741bab1aef044fcf21",
+      "b2e049a29c3545785fae96b2c3c85ef1360d23c6"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-08: MCP HTTP thin client and N+1 route publication per successor manifest - new server/tools/tools_task_prompt.py single thin tool task_get_role_prompt(task_id) -> daemon RPC task.prompt.compile (spec section 4.4: only task_id param, no blind get_role_view, fail-closed, purity clean); registration via _MODULES (card-authorized manifest gap); N+1 publication: TOOL_MODULES + ROUTE_OVERRIDES override (rust_native/READ_ONLY/RP-08/migrated), matrix JSON + Rust mirror regenerated N=243, --check green, hand-authored assertions 242->243; tests/test_task_prompt_mcp.py 6/6 (mock client, live probe deferred to post-deployment); test_route_matrix_generation.py N baseline 242->243 (card-authorized); docs/mcp_tools.md entries.",
+    "reviewer_verdict": "V-16edc92de70da3a725ef5450",
+    "reviewer_pass": true,
+    "advisory": "live RPC probe pending daemon deployment (runtime 974bddcf); manifest RP-06 key deviation (role-prompt-v1-rp06 consumed by alignment card T-1788701744712-86b22b34) - CLI thin client card to be re-created under variant key role-prompt-v1-rp06-cli",
+    "adjudicator": "adjudicator-wb-rp08-01",
+    "evidence_path": "docs/evidence/RP-08-role-prompt-compiler.json",
+    "evidence_sha256": "4D23549B1FABD647C197700251004E9F0A498BFE76222E643492CCAD95FE188B",
+    "closed_at": "2026-09-07"
+  },
+  "t1788726774416_rp06cli_20260907": {
+    "task_id": "T-1788726774416-354c5a00",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "025c1533f262a4df47f0a10b2e282630ff3d6dfb",
+      "7439593115b8155dd6f30d404eb26b15f194f979",
+      "53248306b4ad283726b8072a023950fc184b177b"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-06-cli: CLI HTTP thin client per successor manifest card RP-06, re-created under variant key role-prompt-v1-rp06-cli (original key role-prompt-v1-rp06 consumed by alignment card T-1788701744712-86b22b34; deviation registered in RP-08 records) - new cli/task_prompt.py thin passthrough to daemon RPC task.prompt.compile (spec section 4.1 params exactly task_id + optional expected_workspace_instance_id, no workspace derivation, no legacy derive_workspace_instance_id reuse; section 4.3 three local display formats llm/card/json never transmitted: llm verbatim prompt.text, card verbatim field projection with em-dash placeholders, json exact bundle; fail-closed structured errors, no local fallback); cli/main.py thin registration (prompt parser + single dispatch branch + _READONLY_TASK_ACTIONS); tests/test_task_prompt_cli.py 14/14 (mock route_rpc, live probe deferred to RP-10 post-deployment per spec 17.3, runtime remains old build 974bddcf); docs/cli_reference.md cw task prompt contract; check_client_purity 0 violations; git diff --check clean",
+    "reviewer_verdict": "V-123dbda04287de6c55666bd2",
+    "reviewer_handoff_request_id": "rp06cli-rev-handoff-23610cf3",
+    "evidence": {
+      "path": "docs/evidence/RP-06-cli-role-prompt-compiler.json",
+      "sha256": "29DC497F7567AB41875763591CDE8B4661C2AB66418F6CF36314FC965D26CA37"
+    },
+    "identities": "executor-wb-rp06cli-01/reviewer-wb-rp06cli-01/adjudicator-wb-rp06cli-01 (inst-exec/rev/adj-rp06cli)",
+    "notes": "full executor->reviewer->adjudicator loop; executor handoff required provenance retries (report event must carry role=implementer + evidence_path + evidence_hash; two stuck implementer leases waited out to TTL); step4 report of record req-bfda532474e8"
+  },
+  "t1788737615420_rp09_20260907": {
+    "task_id": "T-1788737615420-538057d4",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "commits": [
+      "7a6564a57d852704f1ac06ac6b72ca8cced7c6b8",
+      "670fe23943697253f2975b514a6059eade5fb93f",
+      "f0e3cfdb6636fa553cdbce81438264bce829e877"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-09 Skill and documentation cutover per successor manifest card RP-09 (key role-prompt-v1-rp09): (1) .agents/skills/cw-task-loop/SKILL.md declares the daemon-compiled Role Prompt Bundle (RPC task.prompt.compile, capability role_prompt_compiler_v1) as the only production prompt source - primary path CLI 'cw task prompt <task_id> --format llm' or MCP task_get_role_prompt(task_id), prompt.text plus routing/authority/template/contract/hashes emitted verbatim, single guarded fallback (capability not declared AND exact daemon-returned workspace instance known) to the read-only next-action role card, otherwise capability/authority unavailable fail closed, no derive_workspace_instance_id, no local production prompt rendering, no Python Prompt Compiler/SQLite/PyO3 authority fallback (spec 4.3/4.4/4.5/11.3/18); (2) four startup templates (Executor/Reviewer/Adjudicator/Planner v4/v1) retire their bodies as production prompt source into process discipline + read-only fallback skeleton; (3) AGENTS.md, references/user-guide.md (stale 'fallback 文本' line corrected) and docs/agent-usage-guide.md document the same contract; (4) scripts/validate_template_compliance.py gains four structured checks E_PROMPT_SOURCE_MISSING / E_CLIENT_PROMPT_RENDER / E_DERIVE_FALLBACK / E_FALLBACK_NO_GUARD with negative self-test cases (22/22); (5) tests/test_role_prompt_skill.py 20/20. No shared runtime cutover or live probe per spec 17.3 (runtime daemon remains old build 974bddcf); live HTTP/CLI/MCP/Skill parity round-trip belongs to RP-10.",
+    "reviewer_verdict": "V-7c08070c6d157dcb6c3e88cd",
+    "reviewer_handoff_request_id": "rp09-rev-handoff-dfdf8fe5",
+    "evidence": {
+      "path": "docs/evidence/RP-09-role-prompt-compiler.json",
+      "sha256": "8B28BAB5B50675A52E7045A2771AE6A5DC0A9F7644DA3AD612A3C775F704E8F8"
+    },
+    "identities": "executor-wb-rp09-01/reviewer-wb-rp09-01/adjudicator-wb-rp09-01 (inst-exec/rev/adj-rp09-01); extra reviewer-wb-rp09-02 (role=reviewer, inst-rev-rp09-02) unused",
+    "notes": "full executor->reviewer->adjudicator loop closed on the first handoff attempt (report provenance bound from the start: identity + --evidence-path + --evidence-hash). Advisories: live probe deferred to RP-10; validator negation-window accepts adjacent-line negation; planner self-test fixture had to strip the new cutover parenthetical that re-states design-only/planner_governance_v1."
+  },
+  "t1788753260274_rp10_20260907": {
+    "task_id": "T-1788753260274-ed7e21d4",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "predecessor_task_id": "T-1788737615420-538057d4",
+    "commits": [
+      "910c256ff1988a4bfd46346a8b9b31281d4d3314",
+      "a948312173ec0919e1f2fa7b34753248ff1a2814"
+    ],
+    "status": "closed_completed",
+    "scope": "RP-10 cross-layer E2E security and release gate for the Role Prompt Compiler v1 (frozen spec sections 4.1/4.3/4.4/4.5/8.3/9.3/12/17.3/18). step0 run_live_parity_e2e: tests/test_task_prompt_e2e.py 6/6 + rust_ext/tests/role_prompt_e2e.rs 4/4 (fresh-db TaskCollabStore migration; Python E2E boots isolated temp daemon, HTTP RPC task.prompt.compile live parity on governed task with sha256:-prefixed legacy v1 contracts per spec 9.3 wire form; Rust E2E full-chain create->contract->context->route->compile_bundle with independently recomputable hash closure, zero row mutation; MCP task_get_role_prompt surface + Skill guarded-fallback gating covered; no fabricated bundle). step1 run_full_regression_and_security: Rust lib 1735 passed / 7 pre-existing env-dependent cli failures; integration targets green incl. role_prompt_e2e 4/4 + role_prompt_assets_golden 4/4; RP-family suites green (role_prompt_skill 20/20, task_prompt_cli 14/14, task_prompt_e2e 6/6, task_prompt_mcp 6/6); scripts/check_client_purity.py 0 violations; git diff --check clean. step2 perform_single_controlled_deploy: scripts/refresh_shared_runtime.ps1 foreground produced receipt 20260907-151430-ba6e9aae326a-4354a6e2.json status=passed, git_head ba6e9aa (= HEAD), runtime/current cw-daemon.exe sha256 6fac603527c3bf143a55974ac68aaa1c10e289838005e674af99621b7a1a1cc1 == stage-refresh/release, daemon_start_pid 32492; live closure cw.py daemon health PID 32492 @ http://127.0.0.1:6217 (dynamic port, 9365 retired), worker healthy, schema v60, git_commit == deployed HEAD, capability_registry_revision http-mvp-cap-registry-v1. Live probes on closed RP-09 card T-1788737615420-538057d4: HTTP RPC task.prompt.compile positive PASS (role_prompt_bundle_v1 / prompt_kind terminal / bundle_hash sha256:fa1c9a4a2b173ac8a3a84407e73e4c3bac7baae1b0a611db315f0dc0da5fbb58) proves daemon-compiled surface; CLI 'cw task prompt --format llm' fail-closed E_TASK_PROMPT_TASK_ID_REQUIRED (request 含未知字段 workspace_instance_id, spec 4.1-3) = ADJ-RP10-01 adjacent defect in server/daemon_client.py route_rpc (NOT in this card's allowed paths; remediation card required); positive/negative dual evidence. step3 freeze_release_evidence: docs/evidence/RP-10-role-prompt-compiler.json sha256 42A761E14C61E4D3994A5F4C5D22030B3029595658CF429B2CCC8F8E83444134, reports req-69dc1b4c5c91 (step2) + req-08f67a15a853 (step3) bound to daemon snapshot 144a1565717e4118 with full trio. Pre-existing pytest failures (6877 passed / 892 failed / 33 errors / 506 skipped / 1 xfailed) are daemon-state/cutover families on files untouched by RP cards; Rust cli failures env-dependent; unrelated dirty files belong to parallel agents and are excluded.",
+    "reviewer_verdict": "V-ed1863ed7ca4e618a830c135",
+    "reviewer_handoff_request_id": "rp10-rev-b-handoff-9bd0014e",
+    "evidence": {
+      "path": "docs/evidence/RP-10-role-prompt-compiler.json",
+      "sha256": "42A761E14C61E4D3994A5F4C5D22030B3029595658CF429B2CCC8F8E83444134"
+    },
+    "identities": "executor-wb-rp10-01/reviewer-wb-rp10-01/reviewer-wb-rp10-02/adjudicator-wb-rp10-01 (inst-exec/rev/rev/adj-rp10-01); dual-slot review: reviewer-wb-rp10-02 (role=reviewer) PASS V-f1eaedfde58c6a800e0b9173 + reviewer-wb-rp10-01 (role=independent_reviewer) PASS V-ed1863ed7ca4e618a830c135 (handoff under same identity per daemon constraint)",
+    "notes": "full executor->reviewer->adjudicator loop closed (task auto-entered review on final report, workflow_status completed, 4/4 steps 100%). Executor handoff first attempt failed E_HANDOFF_REPORT_PROVENANCE_MISMATCH because handoff evidence_hash had sha256: prefix while report event recorded bare hash - fixed and retried. Reviewer handoff first attempt failed E_HANDOFF_VERDICT_IDENTITY_MISMATCH (slot A submitted verdict under reviewer-wb-rp10-02, handoff used reviewer-wb-rp10-01) - daemon requires handoff identity == verdict reviewer identity; slot B re-submitted its own verdict under reviewer-wb-rp10-01 and handed off. Advisories accepted: ADJ-RP10-01 remediation card required; pre-existing pytest failures excluded; Rust cli env-dependent failures; unrelated parallel-agent dirty files."
+  },
+  "t1788771487068_adjrp10_20260907": {
+    "task_id": "T-1788771487068-af16bbc8",
+    "parent_task_id": "T-1788668721548-b8c6f4dc",
+    "predecessor_task_id": "T-1788753260274-ed7e21d4",
+    "commits": [
+      "d8921a59477f72128c55523fa5082eae32b67711",
+      "7e83184546513f083f9efad509da183b3635cc15"
+    ],
+    "status": "closed_completed",
+    "scope": "ADJ-RP10-01 adjacent defect (recorded by RP-10 T-1788753260274-ed7e21d4, idempotency key adj-rp10-01-route-rpc-workspace-root): server/daemon_client.py route_rpc unconditionally injected workspace_root for every RPC not in _NO_WORKSPACE_METHODS, INCLUDING task-scoped authority requests; daemon parse_request (frozen spec 4.1-3) rejects unknown fields so task.prompt.compile CLI/MCP surfaces failed closed E_TASK_PROMPT_TASK_ID_REQUIRED (observed live on closed RP-09 card T-1788737615420-538057d4). step0 fix_route_rpc_workspace_injection: route_rpc now computes is_task_scoped = _is_task_scoped_authority_request(params) (non-blank task_id or superseded_id) BEFORE the workspace injection block and skips workspace_instance_id/workspace_root injection for task-scoped authority requests (numeric workspace resolved by Rust handler from immutable task_workspace_bindings); workspace-scoped methods (task.create without task_id, lease event listing, workspace.status) keep injection. Rust rust_ext/src/daemon/** untouched. step1 verify_cli_mcp_live_parity: tests/test_task_prompt_cli.py 14/14, tests/test_task_prompt_e2e.py 6/6 (now asserts POSITIVE HTTP/CLI/MCP parity in addition to pinned fail-closed), tests/test_task_prompt_mcp.py 6/6 (26/26 total), scripts/check_client_purity.py 0 violations, git diff --check clean; LIVE probe on running shared daemon http://127.0.0.1:6217: CLI 'cw task prompt <closed RP-09 card task_id> --format llm' returns daemon-compiled bundle (no E_TASK_PROMPT_TASK_ID_REQUIRED). Negative acceptance unchanged (daemon unavailable fail-closed, no fabricated bundle, no raw credential/lease token). Evidence docs/evidence/ADJ-RP10-01-route-rpc-workspace-root.json sha256 e3a1504650877b75a77b3715243237d2111306e91d78f8c34409b65db3a3dc69, reports bound to daemon snapshot 144a1565717e4118.",
+    "reviewer_verdict": "V-49226663a40a4d6e7ee7016a",
+    "reviewer_handoff_request_id": "adjrp10-rev-b-handoff-1feb398f",
+    "evidence": {
+      "path": "docs/evidence/ADJ-RP10-01-route-rpc-workspace-root.json",
+      "sha256": "e3a1504650877b75a77b3715243237d2111306e91d78f8c34409b65db3a3dc69"
+    },
+    "identities": "executor-wb-adjrp10-01/reviewer-wb-adjrp10-01/reviewer-wb-adjrp10-02/adjudicator-wb-adjrp10-01 (inst-exec/rev/rev/adj-adjrp10-01); dual-slot review: reviewer-wb-adjrp10-02 (role=reviewer) PASS V-244e9fcd5d27dbca610b7f60 + reviewer-wb-adjrp10-01 (role=independent_reviewer) PASS V-49226663a40a4d6e7ee7016a (handoff under same identity per daemon constraint)",
+    "notes": "full executor->reviewer->adjudicator loop closed: claim -> step0 fix (d8921a5) -> step1 verify 26/26 + purity 0 + live CLI llm probe positive -> report bound to snapshot 144a1565717e4118 -> dual-slot reviewer PASS -> adjudicator verified verdict provenance (V-49226663a40a4d6e7ee7016a blind_first_pass pass, role contract rcr-...-reviewer-r1 sha256:1944b82f.., workspace binding 1) -> handoff adjudicator_accepted -> apply -> close (closed_at 1788775683, lifecycle_status closed / workflow_status completed). 2 non-blocking advisories accepted (unrelated parallel-agent dirty files excluded; pre-existing env-dependent test failures excluded)."
+  },
+  "t1788253722521_review_vehicle_v1_20260907": {
+    "task_id": "T-1788253722521-3b2f8420",
+    "parent_task_id": "",
+    "predecessor_task_id": "",
+    "commits": [],
+    "status": "closed_completed",
+    "scope": "Stale duplicate of the Role Prompt v1 Gate manifest independent review vehicle. v1 (this card, idempotency key role-prompt-v1-gate-manifest-review-vehicle, created 2026-09-01) was created mis-bound to ws-10 TokenSlim (c:/git_work/TokenSlim) while the gate manifest deliverables/software-company/role-prompt-v1-gate-task-manifest.json and frozen spec live in ws-1 callwarden. The corrected successor v2 T-1788315869918-0cb69b10 (idempotency key role-prompt-v1-gate-manifest-review-vehicle-v2, ws-1) completed the identical review-vehicle lifecycle and closed 2026-09-02. Governance supersede v1->v2 is impossible by design: task.supersede requires both tasks bound to the SAME workspace (task_supersede.rs validate_supersede_domain E_SUPERSEDE_CROSS_WORKSPACE) and task_workspace_bindings are immutable (no rebind API). Executing v1's step was rejected (would duplicate/conflict with v2's frozen review input under the same step contract path). Resolved via task.cascade_close (coordinator system path, reason_code cascade_closed, actor coordinator-wb-ws10-01) on 2026-09-07: lifecycle_status closed / workflow_status completed. No workspace binding was mutated; ws-10 task authority is derived from the calling cwd (derive_workspace_instance_id), so no DB binding adjustment was required.",
+    "reviewer_verdict": "-",
+    "reviewer_handoff_request_id": "-",
+    "evidence": {
+      "path": "-",
+      "sha256": "-"
+    },
+    "identities": "coordinator-wb-ws10-01 (role=reviewer, inst-coord-ws10-01) via task.cascade_close",
+    "notes": "Stale v1 review vehicle closed without execution. Supersede-by-v2 recorded in ledger scope (formal supersede relation blocked by daemon cross-workspace guard). v2 T-1788315869918-0cb69b10 remains the authoritative closed review vehicle for GATE-0. BR-03 e2e B T-1788313854785-dd64cebc (ws-10, 'not cross-bind to callwarden') untouched: governance_blocked with no pending steps and no actionable work."
+  },
+  "t1788668721548_rp_umbrella_close_20260908": {
+    "task_id": "T-1788668721548-b8c6f4dc",
+    "closed_with": "T-1788671453544-d0625554",
+    "parent_task_id": "T-1787203926824-9f873bfc",
+    "predecessor_task_id": "",
+    "commits": [],
+    "status": "closed_completed",
+    "scope": "Role Prompt Compiler v1 feature umbrella (idempotency key role-prompt-v1-feature-parent, ws-1) aggregate close. All 14 children RP-00..RP-10 + ADJ-RP10-01 closed; final blocking child RP-01 twin T-1788671453544-d0625554 was the defective first creation superseded by authoritative RP-01 T-1788673904079-5fa6fb84 (closed via full reviewer/adjudicator loop 2026-09-06). Twin was re-run by stale executor (4/4 steps done, review_pending, 0 verdicts) after supersede; its review input was superseded product and would duplicate the frozen v2 contract path. Resolved via task.cascade_close (coordinator system path, reason_code cascade_closed, identity coordinator-workbuddy-v1) on 2026-09-08: closed [T-1788671453544-d0625554, T-1788668721548-b8c6f4dc]; epic T-1787203926824-9f873bfc untouched (other open children). Events 7617/7618.",
+    "reviewer_verdict": "-",
+    "reviewer_handoff_request_id": "-",
+    "evidence": {
+      "path": "-",
+      "sha256": "-"
+    },
+    "identities": "coordinator-workbuddy-v1 (role=coordinator) via task.cascade_close",
+    "notes": "RP-01 twin closed without review loop (superseded defunct v1, v2 authoritative closed). Umbrella aggregate closed when subtree fully closed (trunk=aggregate projection, no audit point). Gate manifest role-prompt-v1-task-manifest.json RP-00..RP-10 fully closed_completed."
+  },
+  "t1788963104058_tools_task_20260910": {
+    "task_id": "T-1788963104058-fdb2e848",
+    "parent_task_id": "T-1788963104058-fdb2e848",
+    "predecessor_task_id": "",
+    "commits": [
+      "3347050"
+    ],
+    "status": "closed_completed",
+    "scope": "P0-COMPAT-v3 tools_task 8 方法迁移 rust_native（audit_verify_chain/bootstrap_status/get_clone_group_detail/get_symbol_change_tasks/list_audit_signing_keys/list_clone_groups/list_clones/task_plan_template）。含 31 条路由矩阵三向漂移修复（registry 实证回写脚本 overrides，--check 全绿）+ 8 个 MCP-070 陈旧套件对齐现契约。verdict V-cb3d89ee4f9404f739841270（reviewer-wb-186loop PASS），adjudicator-wb-186loop apply+close。",
+    "closed_at": "2026-09-10"
+  },
+  "t1788963104879_tools_semantic_20260910": {
+    "task_id": "T-1788963104879-2e9e6270",
+    "parent_task_id": "T-1788963104879-2e9e6270",
+    "predecessor_task_id": "",
+    "commits": [
+      "1b8a755"
+    ],
+    "status": "closed_completed",
+    "scope": "P0-COMPAT-v3 tools_semantic 5 方法迁移 rust_native（get_symbol_commit_history/parse_codeowners/get_project_dependencies/semantic_search/find_similar_functions）。含 9 个陈旧套件修复（CANONICAL_INSTANCE 注入 + fail-closed 对齐 + who_to_ask 补 workspace_id + 502 消息断言放宽）+ daemon 环境事故修复（PYTHONPATH 缺失致 compat worker 全红 + snapshot_cache_capacity 2->32）。verdict V-d542923cf5b70c91b5bd1c25（reviewer-wb-186loop PASS），adjudicator-wb-186loop apply+close。批次 24/58。",
+    "closed_at": "2026-09-10"
+  },
+  "t1788963105720_tools_security_20260910": {
+    "task_id": "T-1788963105720-60bfc80c",
+    "parent_task_id": "T-1788963105720-60bfc80c",
+    "predecessor_task_id": "",
+    "commits": [
+      "9c7ff4b"
+    ],
+    "status": "closed_completed",
+    "scope": "P0-COMPAT-v3 tools_security 15 方法迁移 rust_native（list_branches/merge_preview/get_edit_history/find_shared_symbols/cross_repo_impact/cross_repo_summary/lsp_hover/lsp_definition/lsp_references/lsp_diagnostics/lsp_completion/lsp_check_available/rule_candidate_list/rule_list/get_applicable_rules）。blast_radius 实现全 SQL BFS（声明式行为改进，Python worker binding 缺 GraphStore 恒 skip）；LSP fail-soft 对等（本机未装 LSP server）；15 个陈旧套件修复（workspace_instance_id 注入 + lsp 形状对齐）；live 17 组参数 field-level EQ。verdict V-8ae8084df8a3fa0006e3f32e（reviewer-wb-186loop PASS），adjudicator-wb-186loop apply+close。批次 39/58。",
+    "closed_at": "2026-09-10"
+  },
+  "t1788963106520_tools_summary_20260910": {
+    "task_id": "T-1788963106520-907544c8",
+    "parent_task_id": "T-1788963106520-907544c8",
+    "predecessor_task_id": "",
+    "commits": [
+      "b203ed8"
+    ],
+    "status": "closed_completed",
+    "scope": "P0-COMPAT-v3 tools_summary 19 方法迁移 rust_native（get_summary/project_brief/repo_map/test_impact_selection/who_to_ask/get_ownership_map/guardrail_scan/guardrail_check_edit/guardrail_list_rules/blast_radius/ask_codebase/get_token_savings_report/get_vulnerability_blast_radius/get_clone_aware_impact/review_readiness/cross_layer_impact/evolution_frequency/hotspot_evolution/defect_learn）。写面语义 probeproven：guardrail_scan/list_rules fail-closed（_init_builtin_rules INSERT，parity python ro OperationalError）、defect_learn 判定后写、ask_codebase keyword_fallback（query 归一化 ','/'.' 与 Python parity，不拆下划线）。19 逐方法套件修复（workspace_instance_id 注入 + 形状探针实证 + fail-closed 消息放宽）+ 新建 compat_tools_summary 套件 22 用例；live 回归 83 passed/2 skipped + compat 前四卡 108 passed。开卡模板缺陷修正：task_steps 白名单对齐兄弟卡（query_compat_handlers.rs/snapshot_state.rs + 19 套件 + matrix 三件套）。环境坑实证：本会话 APPDATA 被剥离致 python314 user site 解析漂移（site-packages 探测失败），部署需显式 $env:APPDATA。verdict V-8a60606f7da78d329f33139a（reviewer-wb-186loop PASS），adjudicator-wb-186loop apply+close。批次 58/58 —— P0-COMPAT-v3 全量完成。",
+    "closed_at": "2026-09-10"
+  },
+  "t1789022024819_g4_build_context_20260910": {
+    "task_id": "T-1789022024819-8cb9f614",
+    "predecessor_task_id": "",
+    "commits": [
+      "97becdd"
+    ],
+    "status": "closed_completed",
+    "scope": "G4 backlog（client_convergence_codereview_20260909.md §六/§十二）：cw build-context resolve/import-compile-commands daemon 化。实证前提：ToolchainStore 无生产注入点（写面全死）+ open_readonly_conn 已改 RPC 探测语义（resolve 必炸 AttributeError）。方案：instance 模式主库写面（register/set_active/delete/resolved_edges.store/replace，open_codegraph_db_write）+ resolved_edges.compute（5 级解析复刻 + limit 限流防 8MB）+ resolved_edges.rebuild（compute+单事务清旧落库，PROTECTED_MUTATION）+ build_context.import_compile_commands（parse-only）；CLI 改薄壳 route_rpc。顺修 W3-1 遗留真 bug：build_context.get 短 hash 前缀 = SQL（LIKE 才通配）恒 Null。新建套件 8 用例全绿 + CLI 行为级验收（import 全链 / resolve 短 hash 125421→115539 / 幂等 cleared=stored）+ compat 六卡 130 passed；门禁全绿；第四轮部署 passed（sha256 8b2f2c8b）。verdict V-6f383997071bbe3c810422b2（reviewer-wb-186loop PASS），adjudicator-wb-186loop apply+close。部署环境新坑：refresh_shared_runtime.ps1 清理旧 runtime 备份时 genie-trash fail-closed（每轮卡死一个 core-backup），已把全部旧备份移至 C:/tmp/callwarden_stale_runtime_backups/ 规避（待 trash 服务修复后处理）。",
+    "closed_at": "2026-09-10"
+  },
+  "t1789033155586_govfix01_20260910": {
+    "task_id": "T-1789033155586-221d1f28",
+    "commit_id": "d817a4d",
+    "status": "closed_completed",
+    "scope": "assignment 空 role 覆写漂移修复 + CLI governance gate + identity_discovery 投影（外部 agent 审计驱动）",
+    "trigger_task": "T-1788923523728-7a316cc4",
+    "files": [
+      "cli/main.py",
+      "rust_ext/src/daemon/assignment_queue.rs",
+      "rust_ext/src/daemon/task_prompt/context.rs",
+      "tests/test_cli_governance_gate.py"
+    ],
+    "tests": {
+      "rust_lib_assignment_queue": "12/12 passed",
+      "python_cli_governance_gate": "6/6 passed"
+    },
+    "verdict_id": "V-20efaf4a570cc2e6e7ccd830",
+    "snapshot_id": "ceee94c63a8e1d49",
+    "contract_id": "TC-T-1789033155586-221d1f28",
+    "contract_hash": "sha256:f7c909869cadcfac5bfa94dc6a38db89e650874890b1c05f33ac0ac49414247d",
+    "reviewer": "reviewer-wb-186loop",
+    "adjudicator": "adjudicator-wb-186loop",
+    "deployed_git_commit": "d817a4dc6da70f136e623cb0d3b34fe2975d44b5",
+    "gate_live_verified": true
+  },
+  "t1789078476262_govfix03_20260911": {
+    "task_id": "T-1789078476262-2ce6dfc8",
+    "commit_id": "67b5c8e",
+    "commit_id_full": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+    "status": "executor_reported_pending_review",
+    "scope": "task.cascade_close 叶子分支新增「被替代卡豁免」（supersede 出边存在则跳过 pending 步骤门禁直接收尾；reason 动态化 superseded by <后继卡> (leaf steps waived)，reason_code 仍 cascade_closed；无 supersede 的 pending 叶子不扩大化）",
+    "trigger_task": "T-1788923523728-7a316cc4,T-1788962298062-54927dac,T-1788962307288-7a8526d4,T-1788962308102-ab09ac58,T-1788962308958-de061718,T-1788962309851-13447b90,T-1788962310755-49297814",
+    "trigger_commit_note": "commit 67b5c8e 提交时尚未开卡（无 task_id 前缀）；本卡为事后治理包装，executor report/证据已于 2026-09-11 经 daemon 补录（3/3 步 done，snapshot 3c98e7c735b5c10d）",
+    "files": [
+      "rust_ext/src/daemon/task_collab_lifecycle_apply.rs",
+      "rust_ext/src/daemon/task_collab_tests_cascade.rs",
+      "rust_ext/src/daemon/task_collab_tests.rs"
+    ],
+    "tests": {
+      "cargo_check_all_targets": "RC=0 / 0 errors",
+      "cargo_build_release_bin_cw_daemon": "RC=0",
+      "cargo_test_lib_daemon_task_collab_tests_cascade": "2 passed / 0 failed",
+      "live_cascade_close": "7/7 被替代卡 closed（closed_at 非零、零残留 lease）"
+    },
+    "contract_id": "TC-T-1789078476262-2ce6dfc8",
+    "contract_hash": "sha256:189aef4aeedad6568e613b5e18f774135cd52502eb85aab70f1d927655ff5e5b",
+    "evidence_manifest": {
+      "path": "docs/evidence/T-1789078476262-2ce6dfc8-evidence-20260911-061628.json",
+      "sha256": "0eeb1fbb662c6d31116c3a6190fd2479ceca8684d38c4e55169542a775c6f344"
+    },
+    "deployed_daemon_sha256": "sha256:72d428e2e291b9266df3f41c0427e56138d61e167a940c99a088617a25065c9c",
+    "executor": "executor-wb-g4-01 (inst-exec-wb-g4-01 / sess-exec-wb-g4-20260910)",
+    "reviewer": "pending",
+    "adjudicator": "pending",
+    "verdict_id": null,
+    "registry_refresh": "未执行（本卡为治理包装 + Rust 侧 daemon 写路径，不涉及 code graph 内容变更）",
+    "gate_live_verified": true
+  },
+  "govfix04_20260911": {
+    "task_id": null,
+    "commit_id": "031355e",
+    "commit_id_full": "031355e5bc10711f78c32cdc92bfddda26c6dfc4",
+    "status": "closed_completed",
+    "scope": "终态投影短路：closed/reverted 在规则 1/3/4 之前短路返回终态；RPC policy overlay 对终态不再覆盖。修复 closed 卡被误报 governance_blocked / E_WORKSPACE_AUTHORITY_UNAVAILABLE 的二阶投影缺陷。",
+    "trigger_task": "T-1788962298062-54927dac,T-1788962307288-7a8526d4,T-1788962308102-ab09ac58,T-1788962308958-de061718,T-1788962309851-13447b90,T-1788962310755-49297814,T-1787322795307-d949b968,T-1787322795374-dd442bac,T-1787322799980-efcb2090",
+    "governance_note": "GOV-FIX-04 治理卡已于 2026-09-11 走完 Executor→Reviewer→Adjudicator 全角色循环（verdict V-31af5018ca7de54ebcc97900 PASS findings=0，apply/close workflow COMPLETE）。",
+    "files": [
+      "rust_ext/src/daemon/task_loop/next_action.rs",
+      "rust_ext/src/daemon/task_loop/next_action_test.rs",
+      "rust_ext/src/daemon/task_collab_query.rs",
+      "rust_ext/src/daemon/task_collab_tests_projection.rs",
+      "rust_ext/src/daemon/dispatch.rs"
+    ],
+    "tests": {
+      "cargo_check_all_targets": "RC=0 / 0 errors",
+      "cargo_build_release_bin_cw_daemon": "RC=0",
+      "cargo_test_lib_targeted": "7 passed / 0 failed（3 新 next_action + 1 新 projection + 3 既有，无回归）",
+      "live_closed_sample": "50/50 随机 closed → completed",
+      "live_non_terminal_sample": "20/20 随机非终态 0 张被误判为终态（不扩大化）"
+    },
+    "deployed_daemon_sha256": "sha256:8840a1733f6fc749aa328964fe4f2cc4d0ed",
+    "daemon_pid": 33592,
+    "executor": "unassigned（未开卡）",
+    "reviewer": "pending",
+    "adjudicator": "pending",
+    "verdict_id": "V-31af5018ca7de54ebcc97900",
+    "governance_card": "T-1789083808963-caacecc4",
+    "updated_at": "2026-09-11T09:35:01"
   }
 }

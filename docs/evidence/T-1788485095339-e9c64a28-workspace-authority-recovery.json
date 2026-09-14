@@ -1,0 +1,88 @@
+{
+  "task_id": "T-1788485095339-e9c64a28",
+  "title": "Workspace authority recovery: stable instance identity and review snapshot preflight",
+  "status": "executor_evidence_draft",
+  "date": "2026-09-04",
+  "scope": {
+    "included": [
+      "stable workspace_instance_id based on owner plus physical checkout root",
+      "workspace registration upsert that preserves existing provenance on incomplete re-registration",
+      "HTTP client forwarding of daemon-published snapshot provenance",
+      "task.report rejection before state mutation when snapshot provenance is absent",
+      "focused Rust and Python verification"
+    ],
+    "excluded": [
+      "direct SQLite repair",
+      "Role Prompt Gate/RP task creation",
+      "legacy task mutation",
+      "unrelated dirty worktree files"
+    ]
+  },
+  "root_causes": [
+    {
+      "id": "WA-1",
+      "summary": "Workspace instance identity included Git HEAD and changed for the same physical checkout after a commit."
+    },
+    {
+      "id": "WA-2",
+      "summary": "workspace.register used INSERT OR REPLACE and incomplete client registration could erase persisted snapshot and Git provenance."
+    },
+    {
+      "id": "WA-3",
+      "summary": "task.report allowed an empty snapshot_id, creating a review state that no provenance-valid reviewer verdict could consume."
+    }
+  ],
+  "implementation": [
+    {
+      "path": "rust_ext/src/daemon/workspace.rs",
+      "change": "Separate stable physical checkout identity from mutable Git/snapshot provenance and merge registration provenance with an UPSERT."
+    },
+    {
+      "path": "server/daemon_client.py",
+      "change": "Forward snapshot metadata during registration and automatically obtain a daemon-issued snapshot before HTTP task.report."
+    },
+    {
+      "path": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "change": "Reject empty task.report snapshot_id before task, step, or event state changes."
+    },
+    {
+      "path": "rust_ext/src/daemon/task_collab_tests_core.rs",
+      "change": "Cover no-snapshot report rejection and unchanged in_progress state."
+    },
+    {
+      "path": "rust_ext/src/daemon/task_collab_tests_projection.rs",
+      "change": "Keep a valid snapshot on the report used by handoff provenance coverage."
+    }
+  ],
+  "source_verification": [
+    {
+      "command": "tokenslim run C:\\Python314\\python.exe -m py_compile server/daemon_client.py",
+      "result": "passed"
+    },
+    {
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml daemon::workspace::tests::test_register_workspace_preserves_identity_and_provenance_on_empty_reregister --lib",
+      "result": "passed"
+    },
+    {
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml daemon::task_collab::tests::core --lib",
+      "result": "passed (34 tests)"
+    },
+    {
+      "command": "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_report_snapshot_authority.py -q",
+      "result": "passed (2 tests); verifies daemon DB-path lookup, snapshot publication forwarding, and fail-closed missing-path handling"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "runtime_verification": {
+    "status": "pending_deploy",
+    "required": [
+      "fresh daemon registration preserves one workspace instance across repeated registration",
+      "snapshot.publish returns a non-empty authority snapshot",
+      "task.report enters review only after all task steps complete and carries the authority snapshot",
+      "independent reviewer can consume the review input without no_snapshot"
+    ]
+  }
+}

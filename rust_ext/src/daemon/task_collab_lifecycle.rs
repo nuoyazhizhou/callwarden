@@ -5,6 +5,122 @@
 use super::*;
 
 impl TaskCollabStore {
+    /// Report 的 review input snapshot 必须由任务不可变 workspace binding 所指向
+    /// 的 daemon registry 发布。仅接受字符串非空会让客户端伪造 snapshot_id，导致
+    /// 后续 verdict 的 source snapshot 无法审计。
+    fn validate_report_snapshot_authority(
+        &self,
+        tx: &Transaction<'_>,
+        task_id: &str,
+        snapshot_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        let workspace_instance_id: String = tx
+            .query_row(
+                "SELECT c.workspace_instance_id
+                 FROM task_workspace_bindings b
+                 JOIN workspace_authority_captures c
+                   ON c.workspace_capture_id = b.workspace_capture_id
+                 WHERE b.task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!(
+                    "读取 task.report workspace authority binding 失败: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+                    "task.report 缺少可验证的 workspace authority binding",
+                )
+            })?;
+
+        #[cfg(test)]
+        let registry_path = match &self.registry_db_path_for_tests {
+            Some(path) => path.clone(),
+            // Historical unit fixtures do not start a registry.  They remain
+            // isolated from production authority, while the dedicated tests
+            // below exercise both matching and mismatching registry snapshots.
+            None => return Ok(()),
+        };
+        #[cfg(not(test))]
+        let registry_path = self.registry_db_path.clone();
+
+        let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
+            .map_err(|error| {
+                DaemonRpcError::new(
+                    "E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+                    format!("task.report 无法只读打开 workspace registry: {error}"),
+                )
+            })?;
+        // 迁移期 authority：binding 可能指向 legacy instance（如 `ws-1`），而 daemon
+        // registry 只注册 canonical instance（如 `4baea3ff12c2ea5c`）。直接查询未命中时，
+        // 经 append-only `workspace_reconciliation_aliases` 解析 canonical instance 再校验，
+        // 不改写历史 binding/capture（§8 纪律）。alias 解析失败保持 fail-closed。
+        let mut workspace = registry
+            .get_workspace_status(&workspace_instance_id)
+            .map_err(|error| {
+                DaemonRpcError::new(
+                    "E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+                    format!("task.report 查询 workspace registry 失败: {error}"),
+                )
+            })?;
+        if workspace.is_none() {
+            let canonical_instance: Option<String> = tx
+                .query_row(
+                    "SELECT registry_instance_id \
+                     FROM workspace_reconciliation_aliases \
+                     WHERE task_db_instance_id = ?1 \
+                       AND reconciliation_status = 'active' \
+                     ORDER BY rowid DESC LIMIT 1",
+                    params![workspace_instance_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    DaemonRpcError::internal_error(format!(
+                        "读取 task.report workspace reconciliation alias 失败: {error}"
+                    ))
+                })?;
+            if let Some(canonical) = canonical_instance {
+                workspace = registry
+                    .get_workspace_status(&canonical)
+                    .map_err(|error| {
+                        DaemonRpcError::new(
+                            "E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+                            format!("task.report 查询 canonical workspace registry 失败: {error}"),
+                        )
+                    })?;
+            }
+        }
+        let workspace = workspace.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+                "task.report 的 workspace authority 未在 registry 注册",
+            )
+        })?;
+        let registered_snapshot_id = workspace
+            .get("snapshot_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+                    "task.report 的 workspace authority 尚无 daemon 发布 snapshot",
+                )
+            })?;
+        if registered_snapshot_id != snapshot_id {
+            return Err(DaemonRpcError::new(
+                "E_TASK_REPORT_SNAPSHOT_MISMATCH",
+                "task.report snapshot_id 与绑定 workspace authority 的 daemon snapshot 不一致",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn handle_task_report(
         &self,
         peer: PeerCredential,
@@ -20,7 +136,9 @@ impl TaskCollabStore {
         let summary = params
             .get("summary")
             .and_then(|v| v.as_str())
-            .unwrap_or("report submitted");
+            // CR4 写入侧 hash 规范化（裸 64-hex → sha256: 前缀）
+            .map(crate::daemon::task_prompt::redaction::normalize_bare_sha256_refs)
+            .unwrap_or_else(|| "report submitted".to_string());
         let evidence_path = params
             .get("evidence_path")
             .and_then(|v| v.as_str())
@@ -115,6 +233,19 @@ impl TaskCollabStore {
                 }
             }
         }
+
+        // A root report is the immutable review input.  Permitting an empty
+        // snapshot here creates a task that can reach `review` but can never
+        // submit a provenance-valid verdict.  Reject before any task/step/event
+        // transition; callers must first publish/register real authority
+        // provenance and pass the daemon-issued snapshot_id through unchanged.
+        if snapshot_id.is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_REPORT_SNAPSHOT_REQUIRED",
+                "task.report 必须携带非空、daemon authority 发布的 snapshot_id；禁止创建 no_snapshot review 输入",
+            ));
+        }
+        self.validate_report_snapshot_authority(&tx, task_id, snapshot_id)?;
 
         let current_status: String = tx
             .query_row(
@@ -1099,6 +1230,8 @@ impl TaskCollabStore {
         let next_role = text_field("next_role")?;
         let next_action = text_field("next_action")?;
         let reason = text_field("reason")?;
+        // CR4 写入侧 hash 规范化：reason 是自由文本（常含 evidence/contract SHA）
+        let reason = crate::daemon::task_prompt::redaction::normalize_bare_sha256_refs(&reason);
         let independence_requirement = text_field("independence_requirement")?;
         let request_id = text_field("request_id")?;
         // task-level Reviewer BLOCKED 没有具体源步骤，必须用显式 JSON null

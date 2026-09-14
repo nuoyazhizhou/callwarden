@@ -1,0 +1,28 @@
+{
+  "task_id": "T-1788963104058-fdb2e848",
+  "step": "S-1788963104059-fdbc0c84 (step0 port_rust_handler)",
+  "methods": [
+    "get_symbol_change_tasks",
+    "audit_verify_chain",
+    "list_audit_signing_keys",
+    "bootstrap_status",
+    "list_clones",
+    "list_clone_groups",
+    "get_clone_group_detail",
+    "task_plan_template"
+  ],
+  "changes": {
+    "query_compat_handlers.rs": "+8 handler（get_symbol_change_tasks/audit_verify_chain/list_audit_signing_keys/bootstrap_status/list_clones/list_clone_groups/get_clone_group_detail/task_plan_template）+ get_f64_param_or/clone_group_row_to_json/detect_plan_template_locale 辅助；audit_verify_chain 复用 cli::security::verify_audit_chain",
+    "snapshot_state.rs": "tools_task 组分发 arm（open_query_connection → 8 方法 match）",
+    "dispatch.rs": "CONVERGENCE_RPC_METHODS +8（is_convergence_rpc 门禁同步）",
+    "http_server.rs": "registry 8 行翻转 rust_native（batch=T-1788963104058-fdb2e848#P0-COMPAT-v3）+ COMPAT_ROUTE_WHITELIST 摘 8 条目（H4C-3 组清零）"
+  },
+  "semantic_notes": [
+    "bootstrap_status：Python 通道因 compat worker 无 active workspace 报 E_COMPAT_EXECUTION_ERROR；Rust 以 workspace_id 直查治理表正常返回（行为改进）",
+    "list_clones/list_clone_groups：Python 返回 [{'error':...}]（同因）；Rust 正常返回真实行",
+    "audit_verify_chain：limit<=0 fail-closed invalid_params（Python 直传 SQL）；未知 key reason 名 signing_key_missing（Python 记 signature_mismatch）",
+    "task_plan_template：内嵌 en/zh 双模板，env 链（CALLWARDEN_LANG→LC_ALL/LC_MESSAGES/LANG）选择，默认 en（本机 Python 实测 en 一致）；getdefaultlocale 分支未复刻（注释声明）"
+  ],
+  "build": "cargo build --bin cw-daemon OK（msvc-env + unset INCLUDE）",
+  "live_smoke": "daemon_wb_migration.json 重启 + snapshot.publish（gen=1, 128398 symbols）后 8/8 方法 OK，audit_verify_chain 与 Python 基线逐字段一致"
+}

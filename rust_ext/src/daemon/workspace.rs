@@ -75,14 +75,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OpenFlags, Row};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::cas::{CasService, CasServiceFacade, CasStore};
 use super::dispatch::{
     get_int_param, get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
-    DaemonStateExt, PeerCredential,
+    DaemonStateExt, InlinePayload, PeerCredential,
 };
 use super::parse_retry_log::{replay_pending, ParseRetryLog, ReplayConfig};
 use super::parser_metrics::ParserMetrics;
@@ -96,6 +96,9 @@ use super::staging_log::{StagingEntry, StagingLog};
 const MAX_REFRESH_MANIFEST_FILES: usize = 500_000;
 const MAX_ACTIVE_REFRESH_PLANS: usize = 32;
 const REFRESH_PLAN_TTL: Duration = Duration::from_secs(10 * 60);
+/// canonical_bytes_gz_b64 解压结果的默认容量上限（与 memfd FD 读取上限对齐）。
+/// 仅当 client 未声明 canonical_len 时使用。
+const DEFAULT_MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
 struct RefreshPlanAccumulator {
     owner_uid: u32,
@@ -159,19 +162,22 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// 计算 workspace_instance_id（与 Python db_daemon.py:register_workspace 一致）
-/// sha256("owner_uid|host_real_root|git_remote_url|git_head_commit_sha")[:16]
+/// 计算一个物理 checkout 的稳定 workspace_instance_id。
+///
+/// Git remote、HEAD 和 toolchain 是 snapshot provenance，不是 workspace 身份；
+/// 将它们混入这里会让一次 commit/checkout 为同一个目录创造新的 authority。
+/// sha256("owner_uid|host_real_root")[:16]
+/// CR7：host_real_root 先经 `normalize_identity_root` 归一化再进哈希，
+/// 使同物理 checkout 的不同路径写法派生同一 instance id。
 fn compute_workspace_instance_id(
     owner_uid: u32,
     host_real_root: &str,
-    git_remote_url: &str,
-    git_head_commit_sha: &str,
+    _git_remote_url: &str,
+    _git_head_commit_sha: &str,
 ) -> String {
+    let norm_root = normalize_identity_root(host_real_root);
     let mut hasher = Sha256::new();
-    hasher.update(format!(
-        "{}|{}|{}|{}",
-        owner_uid, host_real_root, git_remote_url, git_head_commit_sha
-    ));
+    hasher.update(format!("{}|{}", owner_uid, norm_root));
     let full = hasher.finalize();
     // 取前 8 字节，hex 编码后 16 字符
     hex_encode(&full[..8])
@@ -199,6 +205,34 @@ fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+/// CR7（2026-09-09）：workspace 身份输入归一化。
+///
+/// 同一物理 checkout 的路径写法差异（`\\?\` verbatim 前缀、`\` vs `/`、
+/// 盘符/目录大小写、尾部斜杠）此前直接进入 instance id 哈希输入，客户端
+/// cwd 写法不同即派生新实例 → 图谱/快照数据分裂（审查报告 P2-CR7）。
+/// 归一规则：
+/// 1. strip canonicalize 产生的 `\\?\` / `\??\` verbatim 前缀；
+/// 2. `\` → `/`；
+/// 3. Windows 上全路径 ASCII 小写（NTFS 默认大小写不敏感）；
+/// 4. strip 尾部 `/`（保留根 `/`）。
+pub fn normalize_identity_root(root: &str) -> String {
+    let mut s = root.trim().to_string();
+    for prefix in ["\\\\?\\", "\\??\\"] {
+        if s.starts_with(prefix) {
+            s = s[prefix.len()..].to_string();
+            break;
+        }
+    }
+    s = s.replace('\\', "/");
+    if cfg!(windows) {
+        s = s.to_ascii_lowercase();
+    }
+    while s.len() > 1 && s.ends_with('/') {
+        s.pop();
     }
     s
 }
@@ -237,6 +271,22 @@ impl WorkspaceRegistry {
         Ok(Self {
             conn: Mutex::new(conn),
             db_path: ":memory:".to_string(),
+        })
+    }
+
+    /// 只读打开 registry DB（用于 `workspace.status` / `workspace.list` 等
+    /// 跨 registry↔task-DB 统一权威解析，避免与在线 registry writer 争用写锁）。
+    pub fn open_readonly(db_path: &str) -> Result<Self, rusqlite::Error> {
+        use rusqlite::OpenFlags;
+        let conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            db_path: db_path.to_string(),
         })
     }
 
@@ -292,9 +342,78 @@ impl WorkspaceRegistry {
         git_head_commit_sha: &str,
         toolchain_fingerprint: &str,
     ) -> Result<Value, rusqlite::Error> {
+        self.register_workspace_preferred(
+            owner_uid,
+            client_view_root,
+            host_real_root,
+            git_remote_url,
+            git_head_commit_sha,
+            toolchain_fingerprint,
+            &[],
+        )
+    }
+
+    /// 注册 workspace（CR7 扩展：带 task-DB 权威 capture 偏好）。
+    ///
+    /// `preferred` 为按权威度降序的 instance id 列表（来自 task-DB
+    /// `workspace_authority_captures` 同 root hash 绑定）；同 owner + 同归一化
+    /// root 的历史分裂行中命中 preferred 的行优先收编，无命中则取最早注册行。
+    pub fn register_workspace_preferred(
+        &self,
+        owner_uid: u32,
+        client_view_root: &str,
+        host_real_root: &str,
+        git_remote_url: &str,
+        git_head_commit_sha: &str,
+        toolchain_fingerprint: &str,
+        preferred: &[String],
+    ) -> Result<Value, rusqlite::Error> {
+        // CR7（2026-09-09）：身份输入归一化——存储行与哈希输入统一用归一化
+        // root，保证同物理 checkout 的任意路径写法收敛到同一 instance id。
+        let norm_root = normalize_identity_root(host_real_root);
+        // CR7 自愈：归一化上线前已存在同 owner + 同归一化 root 的历史分裂行
+        // （instance id 不同）→ 复用权威/最早行的身份，原地刷新 root 与
+        // provenance，不再产生新的分裂行。
+        if let Some(legacy_id) =
+            self.find_adoptable_instance(owner_uid, &norm_root, preferred)?
+        {
+            let now = now_ts();
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                r#"UPDATE daemon_workspaces SET
+                       client_view_root = ?1,
+                       host_real_root = ?2,
+                       snapshot_id = CASE WHEN ?3 <> '' THEN ?3 ELSE snapshot_id END,
+                       git_remote_url = CASE WHEN ?4 <> '' THEN ?4 ELSE git_remote_url END,
+                       git_head_commit_sha = CASE WHEN ?5 <> '' THEN ?5 ELSE git_head_commit_sha END,
+                       toolchain_fingerprint = CASE WHEN ?6 <> '' THEN ?6 ELSE toolchain_fingerprint END,
+                       last_active_at = ?7,
+                       status = 'active'
+                   WHERE workspace_instance_id = ?8"#,
+                params![
+                    client_view_root,
+                    &norm_root,
+                    if !git_remote_url.is_empty() && !git_head_commit_sha.is_empty() {
+                        compute_snapshot_id(
+                            git_remote_url,
+                            git_head_commit_sha,
+                            toolchain_fingerprint,
+                        )
+                    } else {
+                        String::new()
+                    },
+                    git_remote_url,
+                    git_head_commit_sha,
+                    toolchain_fingerprint,
+                    now,
+                    &legacy_id,
+                ],
+            )?;
+            return fetch_workspace_by_instance(&conn, &legacy_id);
+        }
         let instance_id = compute_workspace_instance_id(
             owner_uid,
-            host_real_root,
+            &norm_root,
             git_remote_url,
             git_head_commit_sha,
         );
@@ -311,11 +430,32 @@ impl WorkspaceRegistry {
         let now = now_ts();
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO daemon_workspaces
+            r#"INSERT INTO daemon_workspaces
              (workspace_instance_id, snapshot_id, owner_uid, git_remote_url,
               git_head_commit_sha, client_view_root, host_real_root,
               toolchain_fingerprint, registered_at, last_active_at, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')
+             ON CONFLICT(workspace_instance_id) DO UPDATE SET
+                snapshot_id = CASE
+                    WHEN excluded.snapshot_id IS NOT NULL THEN excluded.snapshot_id
+                    ELSE daemon_workspaces.snapshot_id
+                END,
+                git_remote_url = CASE
+                    WHEN excluded.git_remote_url <> '' THEN excluded.git_remote_url
+                    ELSE daemon_workspaces.git_remote_url
+                END,
+                git_head_commit_sha = CASE
+                    WHEN excluded.git_head_commit_sha <> '' THEN excluded.git_head_commit_sha
+                    ELSE daemon_workspaces.git_head_commit_sha
+                END,
+                client_view_root = excluded.client_view_root,
+                host_real_root = excluded.host_real_root,
+                toolchain_fingerprint = CASE
+                    WHEN excluded.toolchain_fingerprint <> '' THEN excluded.toolchain_fingerprint
+                    ELSE daemon_workspaces.toolchain_fingerprint
+                END,
+                last_active_at = excluded.last_active_at,
+                status = 'active'"#,
             params![
                 instance_id,
                 snapshot_id,
@@ -323,13 +463,85 @@ impl WorkspaceRegistry {
                 git_remote_url,
                 git_head_commit_sha,
                 client_view_root,
-                host_real_root,
+                &norm_root,
                 toolchain_fingerprint,
                 now,
                 now,
             ],
         )?;
+        // A stable workspace_instance_id replaced an older identity formula
+        // that included Git provenance.  A task created before that migration
+        // may therefore remain bound to a legacy registry row for the exact
+        // same owner and physical checkout.  Preserve the historical binding,
+        // but carry the newly registered snapshot provenance to that legacy
+        // row so report/verdict validation sees one current authority.
+        //
+        // The match is deliberately restricted to owner_uid + host_real_root;
+        // a client cannot use a numeric workspace id or a different root to
+        // update another workspace's snapshot.
+        if let Some(snapshot_id) = snapshot_id.as_deref() {
+            conn.execute(
+                r#"UPDATE daemon_workspaces
+                   SET snapshot_id = ?1,
+                       git_remote_url = ?2,
+                       git_head_commit_sha = ?3,
+                       toolchain_fingerprint = ?4,
+                       last_active_at = ?5
+                   WHERE owner_uid = ?6
+                     AND host_real_root = ?7
+                     AND workspace_instance_id <> ?8"#,
+                params![
+                    snapshot_id,
+                    git_remote_url,
+                    git_head_commit_sha,
+                    toolchain_fingerprint,
+                    now,
+                    owner_uid,
+                    host_real_root,
+                    instance_id,
+                ],
+            )?;
+        }
         fetch_workspace_by_instance(&conn, &instance_id)
+    }
+
+    /// CR7：在同 owner 下查找归一化 root 相同、可收编的存量行（自愈目标）。
+    ///
+    /// 选行顺序：
+    /// 1. `preferred` 中出现在候选里的行（task-DB 权威 capture 绑定，按
+    ///    capture 数降序传入）——保证图谱/快照/任务绑定面连续；
+    /// 2. 兜底取注册最早的行（确定性）。
+    /// 行数量级为个位数～几十，Rust 侧逐行归一化比较即可，无需 SQL 函数。
+    fn find_adoptable_instance(
+        &self,
+        owner_uid: u32,
+        norm_root: &str,
+        preferred: &[String],
+    ) -> Result<Option<String>, rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT workspace_instance_id, host_real_root FROM daemon_workspaces
+             WHERE owner_uid = ?1 ORDER BY registered_at ASC",
+        )?;
+        let rows = stmt.query_map(params![owner_uid], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut matching: Vec<String> = Vec::new();
+        for row in rows {
+            let (instance_id, root) = row?;
+            if normalize_identity_root(&root) == norm_root {
+                matching.push(instance_id);
+            }
+        }
+        if matching.is_empty() {
+            return Ok(None);
+        }
+        for p in preferred {
+            if matching.iter().any(|m| m == p) {
+                return Ok(Some(p.clone()));
+            }
+        }
+        Ok(Some(matching.remove(0)))
     }
 
     /// 列出 workspace（对应 Python list_workspaces）
@@ -421,6 +633,66 @@ impl WorkspaceRegistry {
             "UPDATE daemon_workspaces SET status = ?1, last_active_at = ?2
              WHERE workspace_instance_id = ?3",
             params![status, now, workspace_instance_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    /// Q9-VCS（2026-09-17）：消费客户端 refresh 时上报的 VCS head。
+    ///
+    /// agent 端 `probe_vcs_info`（agent_protocol.py）探测到 git head 后随
+    /// `workspace.file.refresh` 报文上报 `head_sha`；daemon 在此写入
+    /// `daemon_workspaces.git_head_commit_sha`，使 bootstrap_status 的
+    /// staleness 判定及 snapshot_id 计算不再依赖 daemon 自行 spawn git。
+    ///
+    /// 不变量保持：head 变化时同步重算 snapshot_id（复用行内已有的
+    /// git_remote_url + toolchain_fingerprint），与 register/adopt 路径一致。
+    /// 空值或与当前值相同则跳过（不产生无效写入，也不返回错误）。
+    pub fn update_workspace_vcs_head(
+        &self,
+        workspace_instance_id: &str,
+        head_sha: &str,
+    ) -> Result<bool, rusqlite::Error> {
+        if head_sha.is_empty() {
+            return Ok(false);
+        }
+        let conn = self.conn.lock().unwrap();
+        // 取当前 provenance 三元组：判断是否需要更新 + 重算 snapshot_id 所需
+        let row: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT git_head_commit_sha, git_remote_url, toolchain_fingerprint
+                 FROM daemon_workspaces WHERE workspace_instance_id = ?1",
+                params![workspace_instance_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((cur_head, remote_url, toolchain_fp)) = row else {
+            // workspace 不存在（不该发生，ACL 已校验）——无操作
+            return Ok(false);
+        };
+        if cur_head == head_sha {
+            return Ok(false);
+        }
+        let now = now_ts();
+        // 与 register_workspace_preferred 一致：仅当 remote_url + head 均非空
+        // 时生成 snapshot_id，否则置空保持「无 provenance」语义
+        let new_snapshot_id = if !remote_url.is_empty() {
+            compute_snapshot_id(&remote_url, head_sha, &toolchain_fp)
+        } else {
+            String::new()
+        };
+        let affected = conn.execute(
+            r#"UPDATE daemon_workspaces
+               SET git_head_commit_sha = ?1,
+                   snapshot_id = CASE WHEN ?2 <> '' THEN ?2 ELSE snapshot_id END,
+                   last_active_at = ?3
+               WHERE workspace_instance_id = ?4"#,
+            params![head_sha, new_snapshot_id, now, workspace_instance_id],
         )?;
         Ok(affected > 0)
     }
@@ -675,12 +947,8 @@ pub fn validate_owned_path(
     peer_uid: u32,
     require_file: bool,
 ) -> Result<String, DaemonRpcError> {
-    let real_path = std::fs::canonicalize(path)
-        .map_err(|_| DaemonRpcError::new("path_not_found", format!("路径不存在: {}", path)))?;
-    let real_path_str = real_path.to_string_lossy().to_string();
-
-    // 检查文件类型
-    let metadata = std::fs::metadata(&real_path)
+    let real_path_str = validate_owned_path_any(path, peer_uid)?;
+    let metadata = std::fs::metadata(&real_path_str)
         .map_err(|_| DaemonRpcError::new("path_not_found", real_path_str.clone()))?;
     if require_file && !metadata.is_file() {
         return Err(DaemonRpcError::new(
@@ -694,12 +962,32 @@ pub fn validate_owned_path(
             format!("不是目录: {}", real_path_str),
         ));
     }
+    Ok(real_path_str)
+}
+
+/// 校验路径存在（文件或目录均可）且属于对端用户（P0-CR2 修复）。
+///
+/// build_directory / build_graph(scan_root) 等目录级入口此前误用
+/// require_file=true 的 validate_owned_path，导致目录路径一律报
+/// `path_not_found: 不是文件`，目录递归建图 RPC 从未真正可用。
+/// 本函数只做 canonicalize + 存在性 + owner ACL，不约束文件/目录类型。
+pub fn validate_owned_path_any(path: &str, peer_uid: u32) -> Result<String, DaemonRpcError> {
+    let real_path = std::fs::canonicalize(path)
+        .map_err(|_| DaemonRpcError::new("path_not_found", format!("路径不存在: {}", path)))?;
+    let real_path_str = real_path.to_string_lossy().to_string();
+
+    // 存在性（file / dir 均可）
+    if std::fs::metadata(&real_path).is_err() {
+        return Err(DaemonRpcError::new("path_not_found", real_path_str.clone()));
+    }
 
     // Unix UID ACL 检查（root 跳过）
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         if peer_uid != 0 {
+            let metadata = std::fs::metadata(&real_path)
+                .map_err(|_| DaemonRpcError::new("path_not_found", real_path_str.clone()))?;
             let owner_uid = metadata.uid();
             if owner_uid != peer_uid {
                 return Err(DaemonRpcError::new(
@@ -1307,6 +1595,72 @@ impl WorkspaceDaemonState {
     }
 }
 
+impl WorkspaceDaemonState {
+    /// CR7（2026-09-09）：带 task-DB 权威 capture 偏好的注册入口。
+    ///
+    /// `preferred` 为同 root hash 的权威 instance id（按 capture 数降序），
+    /// 由 SnapshotDaemonState 覆写层从 task-DB 查得后传入；默认空表 =
+    /// 纯 registry 兜底（最早注册行）。
+    pub fn handle_workspace_register_preferred(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+        preferred: &[String],
+    ) -> Result<Value, DaemonRpcError> {
+        let client_view_root = require_str_param(params, "client_view_root")?;
+        // 路径校验（require_file=false，要求是目录）
+        let host_real_root = validate_owned_path(client_view_root, peer.uid, false)?;
+        let git_remote_url = get_str_param_or(params, "git_remote_url", "");
+        let git_head_commit_sha = get_str_param_or(params, "git_head_commit_sha", "");
+        let toolchain_fingerprint = get_str_param_or(params, "toolchain_fingerprint", "");
+
+        self.registry
+            .register_workspace_preferred(
+                peer.uid,
+                client_view_root,
+                &host_real_root,
+                &git_remote_url,
+                &git_head_commit_sha,
+                &toolchain_fingerprint,
+                preferred,
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("register_workspace: {}", e)))
+    }
+
+    /// 解压 gzip 字节流，解压结果不得超过 ``max_out_bytes``。
+    ///
+    /// # 背景（Q9 大文件优化，2026-09-17）
+    /// client 侧将 canonical_bytes gzip 压缩 + base64 编码后内联传输
+    /// （参数 ``canonical_bytes_gz_b64``）。daemon 解码 base64 后调用本函数解压。
+    ///
+    /// # 安全性
+    /// gzip 流可能被构造为「decompression bomb」（小压缩体 → 极大解压结果）。
+    /// 本函数用 ``Read::take`` 限制读取字节数：多读 1 字节以区分「恰好达到上限」
+    /// （合法）与「超出上限」（拒绝）两种情形，避免无界内存分配。
+    /// 上限取自 client 声明的 ``canonical_len``（原始字节数，daemon 不信任但
+    /// 仅用作容量上限——即使被低估，超出即拒绝；真正的内容校验由后续
+    /// content_hash 比对与 tree-sitter 解析覆盖）。
+    fn decompress_gz_bounded(gz: &[u8], max_out: usize) -> Result<Vec<u8>, String> {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        // saturating_add 防 max_out == usize::MAX 溢出
+        let cap = max_out.saturating_add(1);
+        let mut decoder = GzDecoder::new(gz).take(cap as u64);
+        let mut out = Vec::with_capacity(gz.len().min(cap));
+        decoder
+            .read_to_end(&mut out)
+            .map_err(|e| format!("gzip stream error: {e}"))?;
+        if out.len() > max_out {
+            return Err(format!(
+                "decompressed {} bytes exceeds declared limit {}",
+                out.len(),
+                max_out
+            ));
+        }
+        Ok(out)
+    }
+}
+
 impl DaemonStateExt for WorkspaceDaemonState {
     fn daemon_state(&self) -> &DaemonState {
         &self.base
@@ -1389,23 +1743,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let client_view_root = require_str_param(params, "client_view_root")?;
-        // 路径校验（require_file=false，要求是目录）
-        let host_real_root = validate_owned_path(client_view_root, peer.uid, false)?;
-        let git_remote_url = get_str_param_or(params, "git_remote_url", "");
-        let git_head_commit_sha = get_str_param_or(params, "git_head_commit_sha", "");
-        let toolchain_fingerprint = get_str_param_or(params, "toolchain_fingerprint", "");
-
-        self.registry
-            .register_workspace(
-                peer.uid,
-                client_view_root,
-                &host_real_root,
-                &git_remote_url,
-                &git_head_commit_sha,
-                &toolchain_fingerprint,
-            )
-            .map_err(|e| DaemonRpcError::internal_error(format!("register_workspace: {}", e)))
+        self.handle_workspace_register_preferred(peer, params, &[])
     }
 
     fn handle_workspace_list(
@@ -1539,6 +1877,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
         peer: PeerCredential,
         params: &Value,
         received_fds: &[i32],
+        inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
         // 对应 Python daemon_server.py L376-423
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
@@ -1572,17 +1911,67 @@ impl DaemonStateExt for WorkspaceDaemonState {
             abs_path: abs_path.clone(),
         };
 
+        // Q9-VCS（2026-09-17）：消费客户端上报的 VCS head（agent 端
+        // probe_vcs_info 探测，跨平台统一）。daemon 不再自行 spawn git
+        // 取版本号；head 非空时写入 daemon_workspaces，供 bootstrap_status
+        // staleness 判定 + snapshot_id 使用。失败仅记录、不阻断 refresh
+        // （VCS 元数据是尽力而为的附加信息，refresh 主链路不受影响）。
+        let vcs_head_sha = get_str_param(params, "head_sha").unwrap_or("");
+        if !vcs_head_sha.is_empty() {
+            if let Err(e) = self
+                .registry
+                .update_workspace_vcs_head(workspace_instance_id, vcs_head_sha)
+            {
+                eprintln!(
+                    "[daemon.vcs] 更新 workspace {} 的 VCS head 失败（不阻断 refresh）: {}",
+                    workspace_instance_id, e
+                );
+            }
+        }
+
         // G8-T3：提取 canonical_bytes（优先 FD，次选 hex/b64）
         // 规范：daemon-ipc-security.md §3.2 —— daemon 不信任 agent 提供的 hash，必须重新计算
         // 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
-        // 四种获取方式（按优先级）：
-        // 1. FD（仅 Unix，SCM_RIGHTS 传递）：daemon 直接读文件内容，消除 TOCTOU
-        // 2. canonical_bytes_hex（跨平台）：客户端 hex 编码后传入（agent_protocol.py 默认路径）
-        // 3. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入（兼容旧客户端）
-        // 4. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
+        // 六种获取方式（按优先级）：
+        // 1. multipart inline payload（Q10 2026-09-17）：二进制不经 JSON 信封，
+        //    消除 base64 税；Raw 裸字节 / Gz 按 canonical_len 限解压
+        // 2. FD（仅 Unix，SCM_RIGHTS 传递）：daemon 直接读文件内容，消除 TOCTOU
+        // 3. canonical_bytes_hex（跨平台）：客户端 hex 编码后传入（agent_protocol.py 小文件默认路径）
+        // 4. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入（兼容旧客户端）
+        // 5. canonical_bytes_gz_b64（跨平台，Q9 2026-09-17）：gzip 压缩 + base64，
+        //    HTTP 传输的主力大文件路径（生产 cw-agent 走 HttpDaemonRpcClient）
+        // 6. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
         //
         // G10/G20: FD 路径用四重校验替代 read_to_end 无界读，避免 OOM 攻击
-        let canonical_bytes: Option<Vec<u8>> = if !received_fds.is_empty() {
+        let canonical_bytes: Option<Vec<u8>> = if let Some(payload) = inline_payload {
+            // Q10（2026-09-17）：multipart raw-gz-body —— 最高优先级档。
+            // 二进制 canonical_bytes 不经 JSON 信封，消除 base64 税。
+            // 编码方式由 part 名确定性区分（daemon 不猜魔法字节）；
+            // gz 档复用 Q9 的 decompress_gz_bounded（按 canonical_len 限解压防 bomb）。
+            match payload {
+                InlinePayload::Raw(bytes) => Some(bytes.to_vec()),
+                InlinePayload::Gz(gz) => {
+                    let max_out = params
+                        .get("canonical_len")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .filter(|n| *n > 0)
+                        .unwrap_or(DEFAULT_MAX_INLINE_BYTES);
+                    match Self::decompress_gz_bounded(gz, max_out) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => {
+                            return Err(DaemonRpcError::new(
+                                "gz_decompress_failed",
+                                format!(
+                                    "inline gz payload decompress failed (limit {} bytes): {}",
+                                    max_out, e
+                                ),
+                            ))
+                        }
+                    }
+                }
+            }
+        } else if !received_fds.is_empty() {
             #[cfg(unix)]
             {
                 if received_fds.len() > 1 {
@@ -1658,6 +2047,43 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     return Err(DaemonRpcError::new(
                         "base64_decode_failed",
                         format!("canonical_bytes_b64 decode failed: {}", e),
+                    ));
+                }
+            }
+        } else if let Some(gz_b64) = params.get("canonical_bytes_gz_b64").and_then(|v| v.as_str()) {
+            // canonical_bytes_gz_b64（Q9 大文件优化，2026-09-17）：
+            // client 侧 gzip 压缩 + base64 编码后内联传输（HTTP 传输的主力路径——
+            // 生产 cw-agent 走 HttpDaemonRpcClient，Windows 无 FD 能力）。
+            // 代码文件 gzip 压缩率典型 3-5x，使 body 上限可覆盖数十 MB 源码。
+            // canonical_len（client 侧原始字节数）作为解压容量上限，防 decompression bomb；
+            // 缺失/非法时退回 DEFAULT_MAX_INLINE_BYTES。
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(gz_b64) {
+                Ok(gz_bytes) => {
+                    let max_out = params
+                        .get("canonical_len")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .filter(|n| *n > 0)
+                        .unwrap_or(DEFAULT_MAX_INLINE_BYTES);
+                    match Self::decompress_gz_bounded(&gz_bytes, max_out) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => {
+                            return Err(DaemonRpcError::new(
+                                "gz_decompress_failed",
+                                format!(
+                                    "canonical_bytes_gz_b64 decompress failed \
+                                     (limit {} bytes): {}",
+                                    max_out, e
+                                ),
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(DaemonRpcError::new(
+                        "base64_decode_failed",
+                        format!("canonical_bytes_gz_b64 decode failed: {}", e),
                     ));
                 }
             }
@@ -3421,6 +3847,146 @@ mod tests {
         assert_eq!(count, 0);
     }
 
+    // ---- CR7（2026-09-09）：instance 身份输入归一化 ----
+
+    #[test]
+    fn test_normalize_identity_root_strips_verbatim_and_trailing_slash() {
+        #[cfg(windows)]
+        {
+            // verbatim 前缀（canonicalize 产物）+ 大小写归一
+            assert_eq!(normalize_identity_root("\\\\?\\C:\\Foo\\Bar"), "c:/foo/bar");
+            assert_eq!(normalize_identity_root("\\??\\C:\\Foo\\Bar"), "c:/foo/bar");
+            // 反斜杠 → 正斜杠
+            assert_eq!(normalize_identity_root("C:\\Foo\\Bar"), "c:/foo/bar");
+            // 尾部斜杠收敛
+            assert_eq!(normalize_identity_root("C:/Foo/Bar/"), "c:/foo/bar");
+            assert_eq!(normalize_identity_root("\\\\?\\C:\\"), "c:");
+        }
+        #[cfg(not(windows))]
+        {
+            // POSIX 保留大小写
+            assert_eq!(normalize_identity_root("/tmp/X"), "/tmp/X");
+        }
+        // 跨平台通用：尾部斜杠 / 空白容忍（POSIX 形态）
+        assert_eq!(normalize_identity_root("/"), "/");
+        assert_eq!(normalize_identity_root("  /tmp/x  "), "/tmp/x");
+    }
+
+    #[test]
+    fn test_register_same_root_different_spelling_converges() {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        // 同一物理 checkout 的两种写法（Windows：盘符+大小写差异；POSIX：尾斜杠差异）
+        #[cfg(windows)]
+        let (root_a, root_b) = ("C:\\Foo\\Bar", "c:/foo/BAR");
+        #[cfg(not(windows))]
+        let (root_a, root_b) = ("/tmp/foo/Bar", "/tmp/foo/Bar/");
+
+        let first = registry
+            .register_workspace(1000, root_a, root_a, "", "", "")
+            .unwrap();
+        let second = registry
+            .register_workspace(1000, root_b, root_b, "", "", "")
+            .unwrap();
+        assert_eq!(
+            first["workspace_instance_id"], second["workspace_instance_id"],
+            "同 root 不同写法必须收敛到同一 instance id（CR7）"
+        );
+        // 存储行 root 已归一化
+        assert_eq!(second["host_real_root"], normalize_identity_root(root_a));
+        assert_eq!(registry.count_workspaces().unwrap(), 1, "不得分裂新行");
+        // 不同 owner 仍是不同实例
+        let third = registry
+            .register_workspace(1001, root_a, root_a, "", "", "")
+            .unwrap();
+        assert_ne!(
+            first["workspace_instance_id"], third["workspace_instance_id"]
+        );
+    }
+
+    #[test]
+    fn test_register_self_heals_legacy_raw_root_row() {
+        // 模拟 CR7 归一化上线前的历史分裂行：直接以未归一化 root 造行
+        // （register 现在会归一化，所以用 SQL 手工插入旧行形态）。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        #[cfg(windows)]
+        let (legacy_raw, new_spelling) = ("C:\\Foo\\Bar", "c:/foo/bar");
+        #[cfg(not(windows))]
+        // POSIX 大小写敏感：旧写法与新写法仅差尾部斜杠（归一化后相同）
+        let (legacy_raw, new_spelling) = ("/tmp/foo/bar", "/tmp/foo/bar/");
+        let _ = (legacy_raw, new_spelling);
+        let legacy_id = {
+            let conn = registry.conn.lock().unwrap();
+            // 旧行：root 保留原始写法（含大小写），instance id 为旧公式产物
+            let legacy_instance = {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(format!("{}|{}", 1000u32, legacy_raw));
+                hex_encode(&h.finalize()[..8])
+            };
+            conn.execute(
+                r#"INSERT INTO daemon_workspaces
+                   (workspace_instance_id, owner_uid, client_view_root, host_real_root,
+                    registered_at, last_active_at, status)
+                   VALUES (?1, 1000, ?2, ?2, 100.0, 100.0, 'active')"#,
+                rusqlite::params![legacy_instance, legacy_raw],
+            )
+            .unwrap();
+            legacy_instance
+        };
+        // 新写法注册 → 必须复用旧行身份（自愈），不得另起新行
+        let reg = registry
+            .register_workspace(1000, new_spelling, new_spelling, "", "", "")
+            .unwrap();
+        assert_eq!(reg["workspace_instance_id"], legacy_id.as_str());
+        assert_eq!(registry.count_workspaces().unwrap(), 1);
+        // 行 root 已被自愈刷新为归一化值
+        assert_eq!(reg["host_real_root"], normalize_identity_root(legacy_raw));
+    }
+
+    #[test]
+    fn test_register_prefers_task_db_capture_authority_row() {
+        // CR7：同 owner + 同归一化 root 存在多行历史分裂时，
+        // task-DB 权威 capture 绑定的行优先收编（而非最早注册行）。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let root = if cfg!(windows) { "C:\\Foo\\Bar" } else { "/tmp/foo/bar" };
+        {
+            let conn = registry.conn.lock().unwrap();
+            // 旧行 A（最早注册）与旧行 B（task-DB 权威）
+            for (idx, id) in ["legacy-older-row", "legacy-authority-row"].iter().enumerate() {
+                conn.execute(
+                    r#"INSERT INTO daemon_workspaces
+                       (workspace_instance_id, owner_uid, client_view_root, host_real_root,
+                        registered_at, last_active_at, status)
+                       VALUES (?1, 1000, ?2, ?2, ?3, ?3, 'active')"#,
+                    rusqlite::params![id, root, 100.0 + idx as f64],
+                )
+                .unwrap();
+            }
+        }
+        let preferred = vec!["legacy-authority-row".to_string()];
+        let reg = registry
+            .register_workspace_preferred(1000, root, root, "", "", "", &preferred)
+            .unwrap();
+        assert_eq!(
+            reg["workspace_instance_id"], "legacy-authority-row",
+            "必须优先收编 task-DB 权威 capture 绑定行"
+        );
+        assert_eq!(registry.count_workspaces().unwrap(), 2);
+        // 无偏好时兜底最早注册行
+        {
+            let conn = registry.conn.lock().unwrap();
+            conn.execute(
+                "DELETE FROM daemon_workspaces WHERE workspace_instance_id <> 'legacy-older-row'",
+                [],
+            )
+            .unwrap();
+        }
+        let reg2 = registry
+            .register_workspace(1000, root, root, "", "", "")
+            .unwrap();
+        assert_eq!(reg2["workspace_instance_id"], "legacy-older-row");
+    }
+
     #[test]
     fn test_registry_open_in_memory_writes_schema_version() {
         let registry = WorkspaceRegistry::open_in_memory().unwrap();
@@ -3476,17 +4042,136 @@ mod tests {
     }
 
     #[test]
-    fn test_register_workspace_idempotent_insert_or_replace() {
+    fn test_register_workspace_preserves_identity_and_provenance_on_empty_reregister() {
         let registry = WorkspaceRegistry::open_in_memory().unwrap();
-        // 相同参数注册两次，应该返回同一 workspace_instance_id
+        // 同一物理 checkout 的 HEAD 变化不得创建新的 instance；随后由不带
+        // Git metadata 的 client 重新注册也不得抹掉已有 snapshot provenance。
         let r1 = registry
             .register_workspace(1000, "/tmp/cv", "/var/hr", "url", "head", "fp")
             .unwrap();
         let r2 = registry
-            .register_workspace(1000, "/tmp/cv", "/var/hr", "url", "head", "fp")
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "url", "next-head", "fp-next")
             .unwrap();
         assert_eq!(r1["workspace_instance_id"], r2["workspace_instance_id"]);
-        // 仍然只有一条记录
+        assert_ne!(r1["snapshot_id"], r2["snapshot_id"]);
+        assert_eq!(r1["workspace_id"], r2["workspace_id"]);
+        let r3 = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        assert_eq!(r2["workspace_instance_id"], r3["workspace_instance_id"]);
+        assert_eq!(r2["snapshot_id"], r3["snapshot_id"]);
+        assert_eq!(r2["workspace_id"], r3["workspace_id"]);
+        assert_eq!(registry.count_workspaces().unwrap(), 1);
+    }
+
+    // ---- Q9-VCS（2026-09-17）：refresh 时消费客户端上报的 head_sha ----
+
+    #[test]
+    fn test_update_workspace_vcs_head_updates_head_and_snapshot_id() {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "https://x/y.git", "head-a", "fp")
+            .unwrap();
+        let instance = r["workspace_instance_id"].as_str().unwrap();
+        let snap_before = r["snapshot_id"].as_str().unwrap().to_string();
+
+        // 客户端 refresh 上报新 head → head + snapshot_id 同步更新
+        let changed = registry
+            .update_workspace_vcs_head(instance, "head-bbbbbbbbbbbb")
+            .unwrap();
+        assert!(changed, "head 变化时应写入");
+        let after = registry
+            .get_workspace_status(instance)
+            .unwrap()
+            .unwrap();
+        assert_eq!(after["git_head_commit_sha"], "head-bbbbbbbbbbbb");
+        let snap_after = after["snapshot_id"].as_str().unwrap().to_string();
+        assert_ne!(snap_before, snap_after, "snapshot_id 应随 head 重算");
+        assert_eq!(snap_after.len(), 16);
+    }
+
+    #[test]
+    fn test_update_workspace_vcs_head_skips_empty_and_unchanged() {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "https://x/y.git", "head-a", "fp")
+            .unwrap();
+        let instance = r["workspace_instance_id"].as_str().unwrap();
+        let snap = r["snapshot_id"].as_str().unwrap().to_string();
+
+        // 空 head → 无操作
+        assert!(!registry.update_workspace_vcs_head(instance, "").unwrap());
+        // 相同 head → 无操作
+        assert!(!registry.update_workspace_vcs_head(instance, "head-a").unwrap());
+        let after = registry.get_workspace_status(instance).unwrap().unwrap();
+        assert_eq!(after["snapshot_id"], snap, "未变化时 snapshot_id 不应改动");
+    }
+
+    #[test]
+    fn test_update_workspace_vcs_head_without_remote_clears_snapshot_id() {
+        // 注册时无 git provenance（remote 为空）→ snapshot_id 为 null；
+        // 之后 refresh 上报 head，因 remote 仍为空，snapshot_id 保持空
+        // （与 register_workspace_preferred 的 CASE 语义一致）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "fp")
+            .unwrap();
+        let instance = r["workspace_instance_id"].as_str().unwrap();
+        assert!(r["snapshot_id"].is_null());
+
+        assert!(registry.update_workspace_vcs_head(instance, "head-only").unwrap());
+        let after = registry.get_workspace_status(instance).unwrap().unwrap();
+        assert_eq!(after["git_head_commit_sha"], "head-only");
+        // remote 为空 → 不生成 snapshot_id（空串语义）
+        let snap = after["snapshot_id"].as_str().unwrap_or("");
+        assert!(snap.is_empty(), "remote 为空时 snapshot_id 应为空");
+    }
+
+    #[test]
+    fn test_update_workspace_vcs_head_unknown_instance_no_op() {
+        // 不存在的 instance → 无操作、不报错（ACL 层已保证只有 owner 能到这）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        assert!(!registry
+            .update_workspace_vcs_head("deadbeefdeadbeef", "head-x")
+            .unwrap());
+    }
+
+    #[test]
+    fn test_register_workspace_updates_snapshot_for_legacy_identity_at_same_root() {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let now = now_ts();
+        {
+            let conn = registry.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO daemon_workspaces \
+                 (workspace_instance_id, snapshot_id, owner_uid, git_remote_url, \
+                  git_head_commit_sha, client_view_root, host_real_root, \
+                  toolchain_fingerprint, registered_at, last_active_at, status) \
+                 VALUES (?1, NULL, ?2, '', '', ?3, ?4, '', ?5, ?5, 'active')",
+                params!["legacy-provenance-instance", 1000, "/tmp/cv", "/var/hr", now],
+            )
+            .unwrap();
+        }
+
+        // CR7（2026-09-09）：同 owner + 同归一化 root 的存量行（旧身份公式产物）
+        // 注册时被原地收编——身份保留、provenance 就地更新，不再另立新身份并存。
+        let adopted = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "url", "head", "toolchain")
+            .unwrap();
+
+        assert_eq!(
+            adopted["workspace_instance_id"], "legacy-provenance-instance",
+            "自愈必须复用存量行身份（CR7 收敛语义）"
+        );
+        assert!(
+            !adopted["snapshot_id"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty(),
+            "带完整 git metadata 的注册必须生成 snapshot provenance"
+        );
+        assert_eq!(adopted["git_remote_url"], "url");
+        assert_eq!(adopted["git_head_commit_sha"], "head");
         assert_eq!(registry.count_workspaces().unwrap(), 1);
     }
 
@@ -3606,6 +4291,13 @@ mod tests {
         let id1 = compute_workspace_instance_id(1000, "/var/hr", "url", "head");
         let id2 = compute_workspace_instance_id(2000, "/var/hr", "url", "head");
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_compute_workspace_instance_id_ignores_git_provenance() {
+        let before = compute_workspace_instance_id(1000, "/var/hr", "url-a", "head-a");
+        let after = compute_workspace_instance_id(1000, "/var/hr", "url-b", "head-b");
+        assert_eq!(before, after);
     }
 
     #[test]
@@ -5394,6 +6086,96 @@ mod tests {
         );
         assert_eq!(response["ok"], true, "hex 路径应正常工作");
         assert_eq!(response["result"]["status"], "committed");
+    }
+
+    #[test]
+    fn test_refresh_accepts_canonical_bytes_gz_b64() {
+        // Q9 大文件优化（2026-09-17）：canonical_bytes_gz_b64 路径
+        // client gzip 压缩 + base64 编码内联传输，daemon 解码 + 解压后入库。
+        // 本测试用 flate2 构造压缩流（与 Python gzip 同为 RFC 1952 格式），
+        // 验证 daemon 侧完整还原并正常 commit。
+        use base64::Engine;
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 重复代码（压缩率高，贴近真实大文件场景）
+        let canonical = b"pub fn main() { println!(\"hello\"); }\n".repeat(2048);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&canonical).unwrap();
+        let gz = encoder.finish().unwrap();
+        // 压缩体应显著小于原文（验证压缩确实发生）
+        assert!(gz.len() < canonical.len() / 10, "gzip 应显著压缩重复代码");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&gz);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust",
+                "canonical_bytes_gz_b64": b64,
+                "canonical_len": canonical.len(),
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true, "gz+b64 路径应正常工作");
+        assert_eq!(response["result"]["status"], "committed");
+    }
+
+    #[test]
+    fn test_decompress_gz_bounded_rejects_decompression_bomb() {
+        // Q9 安全性：decompression bomb 防护。
+        // 小压缩体 + 声明 canonical_len 远小于实际解压大小 → 必须拒绝，
+        // 避免无界内存分配。模拟「client 谎报 canonical_len」的场景。
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        // 10MB 高度可压缩数据 → gzip 压缩后极小
+        let big = b"x".repeat(10 * 1024 * 1024);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&big).unwrap();
+        let gz = encoder.finish().unwrap();
+        assert!(gz.len() < 100 * 1024, "bomb 压缩体应很小");
+
+        // 声称解压上限仅 1KB（实际解压 10MB）→ 拒绝
+        let r = WorkspaceDaemonState::decompress_gz_bounded(&gz, 1024);
+        assert!(r.is_err(), "超出声明上限的解压必须被拒绝");
+        // 声称 20MB（充足）→ 接受并完整还原
+        let r2 = WorkspaceDaemonState::decompress_gz_bounded(&gz, 20 * 1024 * 1024);
+        assert_eq!(r2.unwrap(), big);
+    }
+
+    #[test]
+    fn test_decompress_gz_bounded_boundary_exact() {
+        // Q9 边界用例：解压大小恰好等于上限时应被接受（而非误判为截断）。
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let data = b"hello world\n".repeat(1000);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&data).unwrap();
+        let gz = encoder.finish().unwrap();
+
+        // 上限恰好 = 解压大小
+        let r = WorkspaceDaemonState::decompress_gz_bounded(&gz, data.len());
+        assert_eq!(r.unwrap(), data);
+        // 上限少 1 字节 → 拒绝
+        let r2 = WorkspaceDaemonState::decompress_gz_bounded(&gz, data.len() - 1);
+        assert!(r2.is_err(), "少 1 字节的上限应被拒绝");
     }
 
     #[test]

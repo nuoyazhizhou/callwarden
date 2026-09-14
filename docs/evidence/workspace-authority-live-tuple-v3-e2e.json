@@ -1,0 +1,117 @@
+{
+  "evidence_id": "workspace-authority-live-tuple-v3-e2e",
+  "task_id": "T-1788392053931-05b8a0e4",
+  "step_id": "S-1788392053932-05ca3bec",
+  "remediation_of": "T-1788382908707-bbdd0cfc",
+  "original_defect_task": "T-1788346430756-8c900ec0",
+  "captured_at": "2026-09-03T12:13:51+08:00",
+  "fix_commit": "09e49155e9a482fb0ae5616b0aba3383ff11221f",
+  "deployment": {
+    "runtime_binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+    "target_binary": "rust_ext/target/release/cw-daemon.exe",
+    "runtime_sha256": "64e8a8ce44dadaca4a3e48698f65d92ab4e0d1941c25643ef6f22cd2d2c3292e",
+    "target_sha256": "64e8a8ce44dadaca4a3e48698f65d92ab4e0d1941c25643ef6f22cd2d2c3292e",
+    "binary_sha256_match": true,
+    "daemon_git_commit": "09e49155e9a482fb0ae5616b0aba3383ff11221f",
+    "head_git_commit": "09e49155e9a482fb0ae5616b0aba3383ff11221f",
+    "git_commit_match": true,
+    "daemon_pid": 35524,
+    "daemon_endpoint": "http://127.0.0.1:7292",
+    "worker_status": "healthy",
+    "compat_worker_python": "C:/git_work/callwarden/.venv_test/Scripts/python.exe",
+    "fresh_restart": true
+  },
+  "e2e_script": "tests/e2e_workspace_authority_live_tuple_v3.py",
+  "e2e_result": "ALL LIVE-TUPLE WORKSPACE AUTHORITY V3 E2E CHECKS PASSED",
+  "checks": [
+    {
+      "id": "AUTH",
+      "result": "PASS",
+      "detail": "status(4baea3ff12c2ea5c) -> registry(id=1102,inst=4baea3ff12c2ea5c) task_db(id=1,inst=4baea3ff12c2ea5c); both non-null and instances equal"
+    },
+    {
+      "id": "WRITE",
+      "result": "PASS",
+      "detail": "task.create(1102,4baea3ff12c2ea5c) -> task T-1788408744022-fca9860c, exactly 1 binding, instance=4baea3ff12c2ea5c, task_db_workspace_id=1"
+    },
+    {
+      "id": "NEG-mismatch",
+      "result": "PASS",
+      "detail": "valid ws + un-established instance fail-closed, zero partial rows"
+    },
+    {
+      "id": "NEG-stale",
+      "result": "PASS",
+      "detail": "stale numeric id + unknown instance fail-closed, zero partial rows"
+    },
+    {
+      "id": "NEG-unknown",
+      "result": "PASS",
+      "detail": "never-seen instance fail-closed, zero partial rows"
+    },
+    {
+      "id": "NEG-cross-project",
+      "result": "PASS",
+      "detail": "foreign registry-only instance (2bba6e894ee2546f, Qoder) cannot be task-bound"
+    }
+  ],
+  "positive_create_persistence": {
+    "task_id": "T-1788408744022-fca9860c",
+    "task_workspace_binding": {
+      "workspace_id": 1,
+      "workspace_binding_id": "tb-T-1788408744022-fca9860c-4baea3ff12c2ea5c",
+      "workspace_capture_id": "wc-4baea3ff12c2ea5c-4239613932"
+    },
+    "capture": {
+      "workspace_capture_id": "wc-4baea3ff12c2ea5c-4239613932",
+      "workspace_id": 1,
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "capture_revision": 9
+    },
+    "reconciliation_alias": {
+      "alias_id": "wa-4baea3ff12c2ea5c-4baea3ff12c2ea5c",
+      "registry_workspace_id": 1102,
+      "registry_instance_id": "4baea3ff12c2ea5c",
+      "task_db_workspace_id": 1,
+      "task_db_instance_id": "4baea3ff12c2ea5c",
+      "reconciliation_status": "active"
+    },
+    "role_contract_lineages": [
+      { "role": "executor", "workspace_id": 1 },
+      { "role": "reviewer", "workspace_id": 1 },
+      { "role": "adjudicator", "workspace_id": 1 }
+    ],
+    "task_contract_revision": { "workspace_id": 1, "contract_id": "TC-T-1788408744022-fca9860c" }
+  },
+  "canonical_authority_end_to_end": {
+    "conclusion": "one daemon-resolved canonical authority (task_db_workspace_id=1, canonical_instance=4baea3ff12c2ea5c) threaded through binding/capture AND governance contract bootstrap (role_contract_lineages / task_contract_revisions / task_step_role_contract_bindings all workspace_id=1). No re-read of legacy ws-1; no historical binding/event rewritten; reconciliation alias recorded append-only.",
+    "fix_points": [
+      "bind_task_to_workspace: fail-closed only if requested instance not established in capture chain (not 'latest capture is legacy ws-1')",
+      "handle_task_create: binding write uses authority.canonical_instance_id",
+      "handle_task_create: contract bootstrap + create response use eff_workspace_id (canonical task-DB id), not raw registry numeric id",
+      "handle_task_create: parent-aware workspace-exact-match compares child RAW requested workspace_id"
+    ]
+  },
+  "create_to_verdict_matrix": {
+    "note": "create→claim→report→persisted reviewer verdict was proven end-to-end by the predecessor remediation (T-1788382908707-bbdd0cfc) on probe task T-1788389592438-e9549dfc / verdict V-944c7cae2f965ff8d7d56d12 (blind_first_pass). This task's matrix covers the fresh-process / restart / registry-taskDB mapping / positive+negative create axis; the verdict handoff is the Reviewer's downstream step after executor_ready_for_review.",
+    "regression_matrix": [
+      "fresh-process: each E2E check runs in a fresh client process",
+      "restart: daemon was killed, binary deployed, and restarted before the E2E run (fresh_restart=true)",
+      "registry-taskDB mapping: AUTH/WRITE assert registry_workspace_id=1102 vs task_db_workspace_id=1 both non-null with equal instance 4baea3ff12c2ea5c",
+      "create (positive): live tuple accepted, canonical binding/capture/alias/lineage persisted",
+      "create (negative): mismatch/stale/unknown/cross-project fail-closed with zero partial rows"
+    ]
+  },
+  "regression_tests": {
+    "rust_unit": "task_collab_tests_ws_authority.rs (4 cases) — all passed; task_collab + reconciliation suites 138 passed / 0 failed",
+    "rust_full_lib": "task_collab 130 passed; reconciliation 8 passed; 2 pre-existing parent_create regressions fixed",
+    "e2e": "tests/e2e_workspace_authority_live_tuple_v3.py — 6/6 PASSED"
+  },
+  "forbidden_respected": [
+    "no direct SQLite writes (all DB inspection read-only mode=ro)",
+    "no fabricated identity / lease / binding",
+    "no historical task/event/evidence rewrite (append-only alias + new capture revision)",
+    "no client-side tuple substitution to 1/ws-1",
+    "task.apply/close/supersede not performed by executor"
+  ]
+}

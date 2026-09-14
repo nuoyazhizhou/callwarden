@@ -23,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Path, Request, State},
+    extract::{Multipart, Path, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::Response,
@@ -33,18 +33,29 @@ use axum::{
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::net::ToSocketAddrs;
-use tokio::net::TcpListener;
 use tokio::sync::Mutex as TokioMutex;
 
 use super::compat_adapter::{CompatAdapter, CompatAdapterConfig};
 use super::dispatch::{
-    current_daemon_owner_key, is_protected_mutation, DaemonStateExt, PeerCredential,
+    current_daemon_owner_key, is_protected_mutation, DaemonStateExt, InlinePayload, PeerCredential,
 };
 use super::serialization::SerializationPoint;
 use super::SCHEMA_VERSION;
 
-/// 8 MiB 请求体上限（按原始 body bytes 计）。
-const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+/// 请求体上限（按原始 body bytes 计）。
+///
+/// Q9 大文件优化（2026-09-17）：8 MiB → 64 MiB。生产 cw-agent 走 HTTP 传输
+/// （HttpDaemonRpcClient，无 FD 能力），大文件以 canonical_bytes_gz_b64
+/// （gzip + base64）内联传输：代码文件 gzip 压缩率典型 3-5x，64 MiB body
+/// 可覆盖数十 MB 源码。client 侧无 FD 时，超过本上限的文件会收到 413。
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Q10（2026-09-17）：单个 multipart payload part 的字节数上限。
+///
+/// 与 `MAX_BODY_BYTES` 同值（body 整体上限在中间件 `enforce_max_body_size`
+/// 按 Content-Length 预拦，此处是 part 级的二次防线，防止分块传输绕过
+/// Content-Length 判定）。超过 → 413 `E_PAYLOAD_TOO_LARGE`。
+const MAX_PAYLOAD_PART_BYTES: usize = MAX_BODY_BYTES;
 
 /// 固定 security profile 标识。
 const SECURITY_PROFILE: &str = "dev_loopback_unauthenticated";
@@ -339,17 +350,30 @@ pub fn validate_loopback_bind(spec: &str) -> Result<(), HttpServerError> {
 }
 
 /// 绑定成功后的句柄（listener 已就绪、manifest 已发布）。
+///
+/// CR10：listener 为 std socket——预绑定发生在 tokio runtime 建立之前，
+/// serve 时经 `TcpListener::from_std` 转换后 accept。
 pub struct BoundHttp {
-    pub listener: TcpListener,
+    pub listener: std::net::TcpListener,
     pub local_addr: SocketAddr,
     pub manifest: Value,
 }
 
 /// 绑定 + 发布 manifest（仅在成功 bind 之后）。
-pub async fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
+///
+/// CR10（client_convergence_codereview_20260909 §八）：使用 std listener 同步
+/// 预绑定，可在 daemon 重启动步骤（recovery / snapshot 恢复 / TaskCollabStore
+/// 打开，实测 ~40s）之前调用——manifest 携带新 PID/endpoint 在进程启动 ~1s 内
+/// 原子替换，消除重启后旧 manifest（已死 PID）导致的 E_HTTP_MANIFEST_STALE
+/// fail-closed 窗口；listener 先行入内核 backlog，TCP connect 探针即刻成功。
+pub fn bind_http(cfg: &HttpServerConfig) -> Result<BoundHttp, HttpServerError> {
     let addr = resolve_loopback(&cfg.bind_spec)?;
-    let listener = TcpListener::bind(addr)
-        .await
+    let listener =
+        std::net::TcpListener::bind(addr).map_err(|e| HttpServerError::Bind(e.to_string()))?;
+    // CR10：预绑定期即置 nonblocking——serve_prebound 经 from_std 转换时
+    // 要求 socket 已是非阻塞态，否则 accept 会阻塞 tokio executor（挂死 serve）。
+    listener
+        .set_nonblocking(true)
         .map_err(|e| HttpServerError::Bind(e.to_string()))?;
     let local = listener
         .local_addr()
@@ -372,7 +396,24 @@ pub async fn serve<S>(
 where
     S: DaemonStateExt + Send + Sync + 'static,
 {
-    let mut config = config;
+    let bound = bind_http(&config)?;
+    serve_prebound(bound, state, sp, config).await
+}
+
+/// 使用已预绑定的 listener 进入 accept 循环（CR10）。
+///
+/// manifest 已在 [`bind_http`] 阶段发布；此处启动 compat worker 后将最新
+/// `worker_status` 回写 manifest（预绑定阶段该字段尚为 `not_started`）。
+pub async fn serve_prebound<S>(
+    bound: BoundHttp,
+    state: Arc<TokioMutex<S>>,
+    sp: Arc<SerializationPoint>,
+    mut config: HttpServerConfig,
+) -> Result<SocketAddr, HttpServerError>
+where
+    S: DaemonStateExt + Send + Sync + 'static,
+{
+    let local = bound.local_addr;
     // H3: 启动 compat worker（非致命：失败标记 unhealthy，调用时返回
     // E_COMPAT_WORKER_UNAVAILABLE，不阻塞 HTTP transport 启动）。
     let compat = Arc::new(CompatAdapter::new(
@@ -386,8 +427,14 @@ where
         );
     }
     config.worker_status = compat.worker_status();
-    let bound = bind_http(&config).await?;
-    config.endpoint = format!("http://{}", bound.local_addr);
+    config.endpoint = format!("http://{}", local);
+    // CR10：compat worker 状态回写 manifest（非致命：失败仅影响 manifest 字段新鲜度）
+    {
+        let manifest = build_manifest(&config, &local);
+        if let Err(e) = publish_manifest_atomic(&config.manifest_path, &manifest) {
+            eprintln!("[cw_daemon][http] manifest worker_status 回写失败（忽略）: {}", e);
+        }
+    }
     // P0-2：打开持久化去重存储（与 manifest 同目录，跨 restart 保留 ≥24h）
     let dedup = Arc::new(DedupStore::open(&config.dedup_db_path)?);
     let app_state = AppState {
@@ -399,10 +446,12 @@ where
         compat,
     };
     let router = build_router(app_state);
-    axum::serve(bound.listener, router)
+    let listener = tokio::net::TcpListener::from_std(bound.listener)
+        .map_err(|e| HttpServerError::Serve(e.to_string()))?;
+    axum::serve(listener, router)
         .await
         .map_err(|e| HttpServerError::Serve(e.to_string()))?;
-    Ok(bound.local_addr)
+    Ok(local)
 }
 
 /// 在独立 OS 线程 + tokio runtime 中启动 HTTP transport，与现有 UDS/Named Pipe transport 并行运行。
@@ -442,7 +491,7 @@ where
 // ============================================
 
 /// 自定义中间件：在进入 handler / body 提取之前，依据声明的 Content-Length
-/// 头部强制 8 MiB 上限。超出立即返回 413，且因未触发 body 读取，不会像
+/// 头部强制 body 上限。超出立即返回 413，且因未触发 body 读取，不会像
 /// axum 的 DefaultBodyLimit 那样在读取途中中止连接导致 RST（客户端读不到 413）。
 async fn enforce_max_body_size(req: Request, next: Next, git: &str) -> Response {
     let exceeded = req
@@ -457,7 +506,7 @@ async fn enforce_max_body_size(req: Request, next: Next, git: &str) -> Response 
             None,
             -32600,
             "E_REQUEST_TOO_LARGE",
-            "request body exceeds the 8 MiB limit",
+            "request body exceeds the limit",
             413,
             git,
         );
@@ -471,6 +520,7 @@ pub fn build_router<S: DaemonStateExt + Send + Sync + 'static>(app: AppState<S>)
         .route("/health", get(health_handler::<S>))
         .route("/capabilities", get(capabilities_handler::<S>))
         .route("/v1/rpc", post(rpc_handler::<S>))
+        .route("/v1/rpc/multipart", post(rpc_multipart_handler::<S>))
         .route("/v1/jobs", post(jobs_handler::<S>))
         .route("/v1/jobs/{job_id}", get(job_get_handler::<S>))
         .route("/v1/jobs/{job_id}/cancel", post(job_cancel_handler::<S>))
@@ -555,14 +605,6 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     // get_semgrep_findings 已 W3-3 迁移 rust_native，T-1786861820151-deb64c48；
     // get_file_history 已 W4-1 迁移 rust_native，T-1786886251769-22b94ee8-sub-1，
     // 剩 13 项）
-    ("get_symbol_history", "read_only"),
-    ("get_recent_changes", "read_only"),
-    ("get_impact", "read_only"),
-    ("get_comment_from_version", "read_only"),
-    ("get_issue_summary", "read_only"),
-    ("find_issues", "read_only"),
-    ("get_test_coverage", "read_only"),
-    ("export_module_graph", "read_only"),
     // H4C-3 任务组只读工具（13 项，T-1786716190783-ba187c88#H4C-3；
     // get_clone_stats / get_job_stats / get_clone_group_stats 已 W2-2 迁移
     // rust_native，T-1786840097330-a9e0ec69；
@@ -570,78 +612,43 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     // T-1786861820151-f3cecf40；
     // get_commit_tasks 已 W4-1 迁移 rust_native，T-1786886251769-22b94ee8-sub-1；
     // get_defect_correlation 已 W4-3 迁移 rust_native，
-    // T-1786886251769-22b94ee8-sub-3，剩 8 项）
-    ("get_symbol_change_tasks", "read_only"),
-    ("audit_verify_chain", "read_only"),
-    ("list_audit_signing_keys", "read_only"),
-    ("bootstrap_status", "read_only"),
-    ("list_clones", "read_only"),
-    ("list_clone_groups", "read_only"),
-    ("get_clone_group_detail", "read_only"),
-    ("task_plan_template", "read_only"),
+    // T-1786886251769-22b94ee8-sub-3；
+    // P0-COMPAT-v3 剩余 8 项（get_symbol_change_tasks / audit_verify_chain /
+    // list_audit_signing_keys / bootstrap_status / list_clones /
+    // list_clone_groups / get_clone_group_detail / task_plan_template）已迁
+    // rust_native，T-1788963104058-fdb2e848，白名单清零）
     // H4C-2 第二批摘要/演化/护栏/缺陷组只读工具（27 项，T-1786747295213-64204cce#步骤#0；
     // defect_stats 已 W2-3 迁移 rust_native 并移除白名单，T-1786840097331-fd01a3f8；
     // get_coverage_for_symbol / diff_to_symbol 已 W4-2 迁移 rust_native，
     // T-1786886251769-22b94ee8-sub-2；defect_correlation / churn_analysis /
     // defect_search / defect_suggest_fix 已 W4-3 迁移 rust_native 并移除白名单，
-    // T-1786886251769-22b94ee8-sub-3，剩 20 项（含 defect_learn 写面保留 python_compat））
-    ("get_summary", "read_only"),
-    ("project_brief", "read_only"),
-    ("repo_map", "read_only"),
-    ("test_impact_selection", "read_only"),
-    ("who_to_ask", "read_only"),
-    ("get_ownership_map", "read_only"),
-    ("guardrail_scan", "read_only"),
-    ("guardrail_check_edit", "read_only"),
-    ("guardrail_list_rules", "read_only"),
-    ("blast_radius", "read_only"),
-    ("ask_codebase", "read_only"),
-    ("get_token_savings_report", "read_only"),
-    ("get_vulnerability_blast_radius", "read_only"),
-    ("get_clone_aware_impact", "read_only"),
-    ("review_readiness", "read_only"),
-    ("cross_layer_impact", "read_only"),
-    ("evolution_frequency", "read_only"),
-    ("hotspot_evolution", "read_only"),
-    ("defect_learn", "read_only"),
+    // T-1786886251769-22b94ee8-sub-3；剩 20 项（含 defect_learn 写面）已迁
+    // rust_native（P0-COMPAT-v3，T-1788963106520-907544c8，2026-09-10，白名单清零；
+    // defect_learn 写面在只读快照连接 fail-closed，与 Python worker readonly 语义一致））
     // defect_stats 已 W2-3 迁移 rust_native（T-1786840097331-fd01a3f8），白名单条目移除
-    // H4C-2 第二批语义/外部符号组只读工具（5 项，T-1786747295213-64204cce#步骤#1）
-    ("semantic_search", "read_only"),
-    ("find_similar_functions", "read_only"),
-    ("get_symbol_commit_history", "read_only"),
-    ("parse_codeowners", "read_only"),
-    ("get_project_dependencies", "read_only"),
-    // H4C-2 第三批分支/编辑历史/跨仓库/LSP 组只读工具（13 项，T-1786747295227-49c90d68#步骤#0；
+    // H4C-2 第二批语义/外部符号组只读工具（5 项）已 P0-COMPAT-v3 迁移 rust_native
+    // （T-1788963104879-2e9e6270），compat 白名单条目全部移除。
+    // H4C-2 第三批分支/编辑历史/跨仓库/LSP 组只读工具（13 项）已 P0-COMPAT-v3
+    // 迁移 rust_native（T-1788963105720-60bfc80c），compat 白名单条目全部移除；
     // get_edit_stats 已 W2-3 迁移 rust_native，T-1786840097331-fd01a3f8；
-    // diff_branches 已 W4-4 迁移 rust_native，T-1786886251769-22b94ee8-sub-4）
-    ("list_branches", "read_only"),
-    ("merge_preview", "read_only"),
-    ("get_edit_history", "read_only"),
-    ("find_shared_symbols", "read_only"),
-    ("cross_repo_impact", "read_only"),
-    ("cross_repo_summary", "read_only"),
-    ("lsp_hover", "read_only"),
-    ("lsp_definition", "read_only"),
-    ("lsp_references", "read_only"),
-    ("lsp_diagnostics", "read_only"),
-    ("lsp_completion", "read_only"),
-    ("lsp_check_available", "read_only"),
+    // diff_branches 已 W4-4 迁移 rust_native，T-1786886251769-22b94ee8-sub-4。
     // H4C-2 第三批 toolchain/edge 组只读工具（8 项，T-1786747295227-49c90d68#步骤#1；
     // list_build_contexts / get_build_context / get_active_build_context /
     // get_resolved_edges / count_resolved_edges 已 W3-1 迁移 rust_native，
     // T-1786861820150-bfe5e805；list_toolchains / get_toolchain /
     // get_workspace_toolchains 已 S2 批次2 迁移 rust_native，T-1787209948470-a59bcf9c）
-    // H4C-2 第三批规则查询组只读工具（3 项，T-1786747295227-49c90d68 整改：
-    // rule_candidate_list/rule_list/get_applicable_rules 纯 SELECT 接入 worker）
-    ("rule_candidate_list", "read_only"),
-    ("rule_list", "read_only"),
-    ("get_applicable_rules", "read_only"),
+    // H4C-2 第三批规则查询组只读工具（3 项）已 P0-COMPAT-v3 迁移 rust_native
+    // （T-1788963105720-60bfc80c），compat 白名单条目全部移除。
     // H4C-2 第三批 collab 组只读工具（4 项，T-1786747295227-b876fddf#步骤#0；
     // get_role_view 已 MCP-001 迁移 rust_native 并移除白名单，
-    // T-1787321708699-da5d8224，剩 3 项）
-    ("find_evidence", "read_only"),
-    ("get_freshness_status", "read_only"),
-    ("get_gate_decision", "read_only"),
+    // T-1787321708699-da5d8224；
+    // find_evidence / get_freshness_status / get_gate_decision 已 MCP-002/003/004
+    // 迁移 rust_native（T-1787321708760-de068a9c / T-1787321708856-e3c10624 /
+    // T-1787321708926-e7ebfac4），handler 在 task_collab store 的
+    // handle_collab_rpc；本轮收敛审查（client_convergence_codereview_20260909 §7）
+    // 发现迁移时白名单条目漏摘——compat_route 先于 dispatch 命中，导致
+    // native 实现被 Python compat worker 遮蔽，现移除（61->58），
+    // Python 侧 compat_registry.RUST_COMPAT_ROUTE 镜像同步删除）
     // H4C-2 第三批 p2 依赖图/环检测组只读工具（5 项，T-1786747295227-b876fddf#步骤#1；
     // get_artifact_freshness 已 MCP-005 迁移 rust_native 并移除白名单，
     // T-1787321709137-2df7bd97；get_interface_providers 已 MCP-006 迁移 rust_native
@@ -653,12 +660,13 @@ const COMPAT_ROUTE_WHITELIST: &[(&str, &str)] = &[
     // get_action_identity 已 MCP-010 迁移 rust_native 并移除白名单，
     // T-1787321709432-060d1128；check_action_identity 已 MCP-011 迁移 rust_native
     // 并移除白名单，T-1787321709518-0b31a484；check_session_separation 已 MCP-012
-    // 迁移 rust_native 并移除白名单，T-1787321709584-0f2573f4，剩 2 项）
-    ("get_attestation_validity", "read_only"),
-    ("list_attestation_revocations", "read_only"),
+    // 迁移 rust_native 并移除白名单，T-1787321709584-0f2573f4；
+    // get_attestation_validity / list_attestation_revocations 已 P0-COMPAT-v3
+    // 迁移 rust_native 并移除白名单，T-1788963088148-495d7208，剩 0 项）
     // H4C-2 第三批 p4 assignment 只读工具（1 项，T-1786747295227-b876fddf#步骤#1；
-    // lease_* 5 项 rust_native 走 daemon dispatch，不在此白名单）
-    ("assignment_show", "read_only"),
+    // assignment_show 已 P0-COMPAT-v3 迁移 rust_native 并移除白名单，
+    // T-1788963088148-495d7208，剩 0 项；lease_* 5 项 rust_native 走 daemon
+    // dispatch，从不在此白名单）
 ];
 
 /// 判断 method 是否为 python_compat（由 H3 compat worker 提供服务），返回其
@@ -724,79 +732,10 @@ async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
         }
     };
 
-    // protocol_version 必须为字符串 "1"（否则 426）
-    match parsed.get("protocol_version").and_then(|v| v.as_str()) {
-        Some("1") => {}
-        _ => {
-            return json_rpc_error(
-                None,
-                -32600,
-                "E_PROTOCOL_VERSION_UNSUPPORTED",
-                "protocol_version must be \"1\"",
-                426,
-                &app.config.git_commit,
-            )
-        }
-    }
-
-    // jsonrpc 必须严格 "2.0"
-    if parsed.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") {
-        return json_rpc_error(
-            None,
-            -32600,
-            "E_INVALID_REQUEST",
-            "jsonrpc must be \"2.0\"",
-            400,
-            &app.config.git_commit,
-        );
-    }
-
-    // id 必须 1..128 字节非空字符串
-    let id = match parsed.get("id").and_then(|v| v.as_str()) {
-        Some(s) if !s.is_empty() && s.len() <= 128 => s.to_string(),
-        _ => {
-            return json_rpc_error(
-                None,
-                -32600,
-                "E_INVALID_REQUEST",
-                "id must be 1..128 byte non-empty string",
-                400,
-                &app.config.git_commit,
-            )
-        }
-    };
-
-    // method 必须非空
-    let method = match parsed.get("method").and_then(|v| v.as_str()) {
-        Some(m) if !m.is_empty() => m.to_string(),
-        _ => {
-            return json_rpc_error(
-                Some(&id),
-                -32600,
-                "E_INVALID_REQUEST",
-                "method required",
-                400,
-                &app.config.git_commit,
-            )
-        }
-    };
-
-    // params 必须是 object（缺省空 object）
-    let params = match parsed.get("params") {
-        Some(Value::Object(_)) | None => parsed
-            .get("params")
-            .cloned()
-            .unwrap_or(Value::Object(Map::new())),
-        Some(_) => {
-            return json_rpc_error(
-                Some(&id),
-                -32600,
-                "E_INVALID_REQUEST",
-                "params must be object",
-                400,
-                &app.config.git_commit,
-            )
-        }
+    // envelope 字段校验（Q10：与 /v1/rpc/multipart 共用同一函数，语义严格一致）
+    let (id, method, params) = match validate_rpc_envelope(&parsed, &app.config.git_commit) {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     // mutation request_id 去重（P0-2：持久化 + 原子占位，跨 restart 保留 ≥24h）
@@ -899,6 +838,388 @@ async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
     let result = {
         let mut st = app.state.lock().await;
         super::dispatch::dispatch_rpc(&mut *st, peer, &method, &params, &[], &app.serialization)
+    };
+
+    if is_mut {
+        let _ = app.dedup.store_result(&ws, &method, &id, &result);
+    }
+
+    build_rpc_response(&id, &result, &app.config.git_commit)
+}
+
+/// JSON-RPC 2.0 envelope 字段校验（Q10，2026-09-17）。
+///
+/// 从已解析的 `Value` 中按 `/v1/rpc` 冻结契约逐项校验，返回
+/// `(id, method, params)`；任一项失败时返回构造好的错误响应（调用方
+/// 直接 `return`）。`/v1/rpc` 与 `/v1/rpc/multipart` 共用本函数，
+/// 保证两条入口的 envelope 语义严格一致（含错误码与 HTTP 状态码）。
+///
+/// 注意：raw-body 的 strict duplicate-key 检测由各 handler 自行完成
+/// （它需要原始字节），本函数只做结构化字段校验。
+fn validate_rpc_envelope(
+    parsed: &Value,
+    git: &str,
+) -> Result<(String, String, Value), Response> {
+    // protocol_version 必须为字符串 "1"（否则 426）
+    match parsed.get("protocol_version").and_then(|v| v.as_str()) {
+        Some("1") => {}
+        _ => {
+            return Err(json_rpc_error(
+                None,
+                -32600,
+                "E_PROTOCOL_VERSION_UNSUPPORTED",
+                "protocol_version must be \"1\"",
+                426,
+                git,
+            ))
+        }
+    }
+
+    // jsonrpc 必须严格 "2.0"
+    if parsed.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") {
+        return Err(json_rpc_error(
+            None,
+            -32600,
+            "E_INVALID_REQUEST",
+            "jsonrpc must be \"2.0\"",
+            400,
+            git,
+        ));
+    }
+
+    // id 必须 1..128 字节非空字符串
+    let id = match parsed.get("id").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() && s.len() <= 128 => s.to_string(),
+        _ => {
+            return Err(json_rpc_error(
+                None,
+                -32600,
+                "E_INVALID_REQUEST",
+                "id must be 1..128 byte non-empty string",
+                400,
+                git,
+            ))
+        }
+    };
+
+    // method 必须非空
+    let method = match parsed.get("method").and_then(|v| v.as_str()) {
+        Some(m) if !m.is_empty() => m.to_string(),
+        _ => {
+            return Err(json_rpc_error(
+                Some(&id),
+                -32600,
+                "E_INVALID_REQUEST",
+                "method required",
+                400,
+                git,
+            ))
+        }
+    };
+
+    // params 必须是 object（缺省空 object）
+    let params = match parsed.get("params") {
+        Some(Value::Object(_)) | None => parsed
+            .get("params")
+            .cloned()
+            .unwrap_or(Value::Object(Map::new())),
+        Some(_) => {
+            return Err(json_rpc_error(
+                Some(&id),
+                -32600,
+                "E_INVALID_REQUEST",
+                "params must be object",
+                400,
+                git,
+            ))
+        }
+    };
+
+    Ok((id, method, params))
+}
+
+/// POST /v1/rpc/multipart — Q10（2026-09-17）raw-gz-body 传输入口。
+///
+/// 与 `/v1/rpc` 同构的 JSON-RPC 2.0 语义（envelope 校验 / request_id 去重 /
+/// Protected_Mutation 串行化 / owned-workspace ACL / stale_session 门禁 /
+/// 错误码体系全部不变，由 `validate_rpc_envelope` + `dispatch_rpc_with_payload`
+/// 共用实现），唯一差异在数据面：二进制 canonical_bytes 不进 JSON 信封
+/// （消除 base64 税，实测代码文件 gzip 压缩率 3-8x，裸传同机环回 0.5ms/MB），
+/// 而是作为 multipart part 原样传输。
+///
+/// 成帧（client 与 daemon 一致，见 `Temp/q10_raw_gz_body_spec.md`）：
+/// - Content-Type: `multipart/form-data; boundary=...`
+/// - part `params`（必需，application/json）：完整 JSON-RPC envelope
+/// - part `payload`（可选，application/octet-stream）：裸 canonical_bytes
+/// - part `payload_gz`（可选，application/octet-stream）：gzip(canonical_bytes)
+/// - `payload` 与 `payload_gz` 互斥 → 同时出现返回 `E_PAYLOAD_CONFLICT`
+///
+/// payload 只对 `workspace.file.refresh` / `snapshot.publish` 生效（分别映射
+/// 到 `InlinePayload::Raw` / `InlinePayload::Gz`，由 handler 内 6 档 canonical
+/// bytes 链消费）；其余方法忽略 payload，控制面方法应继续走 `/v1/rpc`。
+/// 炸弹防护语义不变：`payload_gz` 的解压上限由 params.canonical_len 声明，
+/// daemon 侧 `decompress_gz_bounded` 强制截断。
+async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
+    State(app): State<AppState<S>>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Response {
+    // ---- 1. 解析 multipart：params（必需）+ payload / payload_gz（互斥可选）
+    let mut params_bytes: Option<Vec<u8>> = None;
+    let mut payload_raw: Option<Vec<u8>> = None;
+    let mut payload_gz: Option<Vec<u8>> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        let data = match field.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(_) => {
+                return json_rpc_error(
+                    None,
+                    -32700,
+                    "E_MULTIPART_PART_READ_FAILED",
+                    "failed to read multipart part body",
+                    400,
+                    &app.config.git_commit,
+                );
+            }
+        };
+        match name.as_str() {
+            "params" => params_bytes = Some(data),
+            "payload" => payload_raw = Some(data),
+            "payload_gz" => payload_gz = Some(data),
+            _ => {} // 忽略未知 part（向前兼容，不报错）
+        }
+    }
+
+    let params_bytes = match params_bytes {
+        Some(b) if !b.is_empty() => b,
+        _ => {
+            return json_rpc_error(
+                None,
+                -32600,
+                "E_MULTIPART_EXPECTED",
+                "multipart request must include a non-empty 'params' JSON part",
+                400,
+                &app.config.git_commit,
+            )
+        }
+    };
+
+    // ---- 2. payload 互斥 + 尺寸门禁
+    if payload_raw.is_some() && payload_gz.is_some() {
+        return json_rpc_error(
+            None,
+            -32600,
+            "E_PAYLOAD_CONFLICT",
+            "parts 'payload' and 'payload_gz' are mutually exclusive",
+            400,
+            &app.config.git_commit,
+        );
+    }
+    if let Some(b) = payload_raw.as_ref().or(payload_gz.as_ref()) {
+        if b.len() > MAX_PAYLOAD_PART_BYTES {
+            return json_rpc_error(
+                None,
+                -32600,
+                "E_PAYLOAD_TOO_LARGE",
+                &format!(
+                    "payload part exceeds {} bytes; use FD transport or reduce file size",
+                    MAX_PAYLOAD_PART_BYTES
+                ),
+                413,
+                &app.config.git_commit,
+            );
+        }
+    }
+
+    // ---- 3. envelope 解析 + 校验（strict duplicate-key 门禁在原始字节上做）
+    if let Err(e) =
+        crate::daemon::task_loop::strict_transport::parse_strict_envelope(&params_bytes)
+    {
+        if e.code == crate::daemon::task_loop::strict_transport::ERR_DUPLICATE_JSON_KEY {
+            return json_rpc_error(
+                None,
+                -32600,
+                "E_DUPLICATE_JSON_KEY",
+                &e.message,
+                400,
+                &app.config.git_commit,
+            );
+        }
+    }
+    let parsed: Value = match serde_json::from_slice::<Value>(&params_bytes) {
+        Ok(v) => v,
+        Err(_) => {
+            return json_rpc_error(
+                None,
+                -32700,
+                "E_PARSE_ERROR",
+                "malformed JSON in 'params' part",
+                400,
+                &app.config.git_commit,
+            )
+        }
+    };
+    let (id, method, params) = match validate_rpc_envelope(&parsed, &app.config.git_commit) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    // ---- 4. mutation request_id 去重（与 /v1/rpc 同语义；refresh/publish 均属
+    //         protected mutation，重放与 InFlight 等待行为完全一致）
+    let ws = params
+        .get("workspace_instance_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let is_mut = is_protected_mutation(&method);
+    let params_hash = sha256_hex(
+        serde_json::to_string(&params)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+
+    if is_mut {
+        let deadline_ms = params
+            .get("deadline_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30_000)
+            .clamp(1, 120_000);
+        let start = std::time::Instant::now();
+        loop {
+            match app.dedup.check_and_reserve(&ws, &method, &id, &params_hash) {
+                Ok(DedupCheck::First) => break,
+                Ok(DedupCheck::Replay(resp)) => {
+                    let v: Value = serde_json::from_str(&resp).unwrap_or(Value::Null);
+                    return build_rpc_response(&id, &v, &app.config.git_commit);
+                }
+                Ok(DedupCheck::Mismatch) => {
+                    return json_rpc_error(
+                        Some(&id),
+                        -32000,
+                        "E_REQUEST_ID_REUSE_MISMATCH",
+                        "request_id reused with different params",
+                        200,
+                        &app.config.git_commit,
+                    );
+                }
+                Ok(DedupCheck::InFlight) => {
+                    if start.elapsed().as_millis() as u64 >= deadline_ms {
+                        return json_rpc_error(
+                            Some(&id),
+                            -32000,
+                            "E_REQUEST_IN_FLIGHT",
+                            "duplicate mutation still in flight",
+                            200,
+                            &app.config.git_commit,
+                        );
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Err(e) => {
+                    return json_rpc_error(
+                        Some(&id),
+                        -32603,
+                        "E_DEDUP_STORE_ERROR",
+                        &e.to_string(),
+                        500,
+                        &app.config.git_commit,
+                    );
+                }
+            }
+        }
+    }
+
+    // ---- 5b. 异步受理（Q10 第二阶段，2026-09-17）
+    //
+    // 仅 `workspace.file.refresh` 支持：tree-sitter 解析 + DB 写入可能远超
+    // client HTTP 超时（实测 1.2MB ~25s）。dedup reserve（First）已在上面
+    // 同步完成（所有 ACL / stale_session / envelope 门禁照常生效），随后：
+    //   1. 整个 dispatch 移入后台 tokio task（含 CAS 存储与解析）
+    //   2. 立即返回 202 accepted
+    //   3. client 按同一 request_id 轮询（payload 可省），经 dedup
+    //      InFlight 等待 → Replay 拿到最终结果（语义与同步完全一致）
+    // `X-CW-Wait: 1` 请求头 → 强制同步（测试 / 需即时结果的路径）。
+    let sync_wait = headers
+        .get("x-cw-wait")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false);
+    if !sync_wait && method == "workspace.file.refresh" {
+        let app_bg = app.clone();
+        let bg_method = method.clone();
+        let bg_params = params.clone();
+        let bg_id = id.clone();
+        let bg_ws = ws.clone();
+        let bg_peer = synthetic_local_owner_peer();
+        tokio::spawn(async move {
+            // InlinePayload 在 task 内构造，payload Vec 直接 move（零额外拷贝）
+            let inline_payload = match (payload_raw.as_deref(), payload_gz.as_deref()) {
+                (Some(raw), _) => Some(InlinePayload::Raw(raw)),
+                (_, Some(gz)) => Some(InlinePayload::Gz(gz)),
+                (None, None) => None,
+            };
+            let result = {
+                let mut st = app_bg.state.lock().await;
+                super::dispatch::dispatch_rpc_with_payload(
+                    &mut *st,
+                    bg_peer,
+                    &bg_method,
+                    &bg_params,
+                    &[],
+                    &app_bg.serialization,
+                    inline_payload,
+                )
+            };
+            // 最终结果落 dedup：后续同 request_id 的轮询经 Replay 直接返回
+            let _ = app_bg.dedup.store_result(&bg_ws, &bg_method, &bg_id, &result);
+        });
+        // 202 Accepted：受理回执（result.status="accepted" 供 client 识别）
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "status": "accepted",
+                "async": true,
+                "request_id": id,
+                "poll_hint": "re-send the same request_id to retrieve the final result",
+            },
+            "server": {
+                "protocol_version": "1",
+                "git_commit": app.config.git_commit,
+                "schema_version": SCHEMA_VERSION,
+            },
+        });
+        return json_response(
+            StatusCode::ACCEPTED,
+            serde_json::to_string(&body).unwrap(),
+        );
+    }
+
+    // ---- 6. 同步分发（合成 local-owner peer；multipart 入口不经 compat 路由——
+    //         携带 payload 的方法 workspace.file.refresh / snapshot.publish
+    //         均为 rust_native，python_compat 控制面方法请走 /v1/rpc）
+    //
+    // 异步分支已在上面 return；到达此处 = X-CW-Wait 同步模式 或非 refresh 方法。
+    let inline_payload = match (payload_raw.as_deref(), payload_gz.as_deref()) {
+        (Some(raw), _) => Some(InlinePayload::Raw(raw)),
+        (_, Some(gz)) => Some(InlinePayload::Gz(gz)),
+        (None, None) => None,
+    };
+    let peer = synthetic_local_owner_peer();
+
+    let result = {
+        let mut st = app.state.lock().await;
+        super::dispatch::dispatch_rpc_with_payload(
+            &mut *st,
+            peer,
+            &method,
+            &params,
+            &[],
+            &app.serialization,
+            inline_payload,
+        )
     };
 
     if is_mut {
@@ -1455,7 +1776,10 @@ fn publish_manifest_atomic(path: &PathBuf, value: &Value) -> Result<(), HttpServ
     #[cfg(not(windows))]
     {
         // Unix：owner-only 权限 0600
-        let _ = std::fs::set_permissions(&tmp, std::os::unix::fs::Permissions::from_mode(0o600));
+        // 修正：`std::os::unix::fs::Permissions` 已是私有类型别名（E0603），须改用
+        // `std::fs::Permissions`；`from_mode` 由 `PermissionsExt` trait 提供（E0599）。
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
         // Unix rename 覆盖已存在目标（原子）
         std::fs::rename(&tmp, path).map_err(|e| HttpServerError::Manifest(e.to_string()))?;
     }
@@ -2842,7 +3166,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "get_symbol_history",
         "get_symbol_history",
         "get-symbol-history",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -2850,8 +3174,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-symbol-history-ok",
         "fixture-get-symbol-history-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     // W4-1（T-1786886251769-22b94ee8-sub-1）：get_file_history 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除（90->88）。
@@ -2874,7 +3198,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "get_recent_changes",
         "get_recent_changes",
         "get-recent-changes",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -2882,14 +3206,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-recent-changes-ok",
         "fixture-get-recent-changes-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_impact",
         "get_impact",
         "get-impact",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -2897,8 +3221,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-impact-ok",
         "fixture-get-impact-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_top_callers",
@@ -2966,7 +3290,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "get_comment_from_version",
         "get_comment_from_version",
         "get-comment-from-version",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -2974,14 +3298,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-comment-from-version-ok",
         "fixture-get-comment-from-version-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_issue_summary",
         "get_issue_summary",
         "get-issue-summary",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -2989,14 +3313,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-issue-summary-ok",
         "fixture-get-issue-summary-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     add(
         "find_issues",
         "find_issues",
         "find-issues",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3004,8 +3328,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-find-issues-ok",
         "fixture-find-issues-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     // W2-1（T-1786840097330-dec66710）：get_semgrep_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3075,7 +3399,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "get_test_coverage",
         "get_test_coverage",
         "get-test-coverage",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3083,14 +3407,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-test-coverage-ok",
         "fixture-get-test-coverage-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     add(
         "export_module_graph",
         "export_module_graph",
         "export-module-graph",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3098,17 +3422,19 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-export-module-graph-ok",
         "fixture-export-module-graph-err",
-        "T-1786716190783-ba187c88#H4C-2",
-        "legacy-python",
+        "T-1788963103216-cb818938#P0-COMPAT-v3",
+        "",
     );
     // H4C-3 任务组只读工具（13 项，workspace scope，T-1786716190783-ba187c88#H4C-3；
+    // 剩余 8 项已 P0-COMPAT-v3 迁移 rust_native（T-1788963104058-fdb2e848），
+    // backend 翻转，COMPAT_ROUTE_WHITELIST 对应条目已移除；
     // get_clone_stats / get_job_stats / get_clone_group_stats 3 项已 W2-2 迁移
     // rust_native（T-1786840097330-a9e0ec69），16->13）
     add(
         "get_symbol_change_tasks",
         "get_symbol_change_tasks",
         "get-symbol-change-tasks",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3116,8 +3442,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-symbol-change-tasks-ok",
         "fixture-get-symbol-change-tasks-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     // W4-1（T-1786886251769-22b94ee8-sub-1）：get_commit_tasks 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除（90->88）。
@@ -3187,7 +3513,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "audit_verify_chain",
         "audit_verify_chain",
         "audit-verify-chain",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3195,14 +3521,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-audit-verify-chain-ok",
         "fixture-audit-verify-chain-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     add(
         "list_audit_signing_keys",
         "list_audit_signing_keys",
         "list-audit-signing-keys",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3210,14 +3536,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-list-audit-signing-keys-ok",
         "fixture-list-audit-signing-keys-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     add(
         "bootstrap_status",
         "bootstrap_status",
         "bootstrap-status",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3225,14 +3551,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-bootstrap-status-ok",
         "fixture-bootstrap-status-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     add(
         "list_clones",
         "list_clones",
         "list-clones",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3240,8 +3566,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-list-clones-ok",
         "fixture-list-clones-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     // W2-2（T-1786840097330-a9e0ec69）：get_clone_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3347,7 +3673,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "list_clone_groups",
         "list_clone_groups",
         "list-clone-groups",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3355,14 +3681,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-list-clone-groups-ok",
         "fixture-list-clone-groups-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_clone_group_detail",
         "get_clone_group_detail",
         "get-clone-group-detail",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3370,8 +3696,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-clone-group-detail-ok",
         "fixture-get-clone-group-detail-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     // W2-2（T-1786840097330-a9e0ec69）：get_clone_group_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3394,7 +3720,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "task_plan_template",
         "task_plan_template",
         "task-plan-template",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3402,15 +3728,15 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-task-plan-template-ok",
         "fixture-task-plan-template-err",
-        "T-1786716190783-ba187c88#H4C-3",
-        "legacy-python",
+        "T-1788963104058-fdb2e848#P0-COMPAT-v3",
+        "",
     );
     // H4C-2 第二批（T-1786747295213-64204cce）：摘要/演化/护栏/缺陷组只读（27 项）
     add(
         "get_summary",
         "get_summary",
         "get-summary",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3418,14 +3744,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-summary-ok",
         "fixture-get-summary-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "project_brief",
         "project_brief",
         "project-brief",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3433,14 +3759,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-project-brief-ok",
         "fixture-project-brief-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "repo_map",
         "repo_map",
         "repo-map",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3448,8 +3774,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-repo-map-ok",
         "fixture-repo-map-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     // W4-2（T-1786886251769-22b94ee8-sub-2）：get_coverage_for_symbol 迁移
     // rust_native，backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST
@@ -3488,7 +3814,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "test_impact_selection",
         "test_impact_selection",
         "test-impact-selection",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3496,14 +3822,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-test-impact-selection-ok",
         "fixture-test-impact-selection-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "who_to_ask",
         "who_to_ask",
         "who-to-ask",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3511,14 +3837,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-who-to-ask-ok",
         "fixture-who-to-ask-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_ownership_map",
         "get_ownership_map",
         "get-ownership-map",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3526,14 +3852,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-ownership-map-ok",
         "fixture-get-ownership-map-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "guardrail_scan",
         "guardrail_scan",
         "guardrail-scan",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3541,14 +3867,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-guardrail-scan-ok",
         "fixture-guardrail-scan-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "guardrail_check_edit",
         "guardrail_check_edit",
         "guardrail-check-edit",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3556,14 +3882,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-guardrail-check-edit-ok",
         "fixture-guardrail-check-edit-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "guardrail_list_rules",
         "guardrail_list_rules",
         "guardrail-list-rules",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3571,14 +3897,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-guardrail-list-rules-ok",
         "fixture-guardrail-list-rules-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "blast_radius",
         "blast_radius",
         "blast-radius",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3586,14 +3912,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-blast-radius-ok",
         "fixture-blast-radius-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "ask_codebase",
         "ask_codebase",
         "ask-codebase",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3601,14 +3927,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-ask-codebase-ok",
         "fixture-ask-codebase-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_token_savings_report",
         "get_token_savings_report",
         "get-token-savings-report",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3616,14 +3942,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-token-savings-report-ok",
         "fixture-get-token-savings-report-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_vulnerability_blast_radius",
         "get_vulnerability_blast_radius",
         "get-vulnerability-blast-radius",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3631,14 +3957,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-vulnerability-blast-radius-ok",
         "fixture-get-vulnerability-blast-radius-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_clone_aware_impact",
         "get_clone_aware_impact",
         "get-clone-aware-impact",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3646,8 +3972,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-clone-aware-impact-ok",
         "fixture-get-clone-aware-impact-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     // W4-2（T-1786886251769-22b94ee8-sub-2）：diff_to_symbol 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3672,7 +3998,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "review_readiness",
         "review_readiness",
         "review-readiness",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3680,14 +4006,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-review-readiness-ok",
         "fixture-review-readiness-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "cross_layer_impact",
         "cross_layer_impact",
         "cross-layer-impact",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3695,14 +4021,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-cross-layer-impact-ok",
         "fixture-cross-layer-impact-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "evolution_frequency",
         "evolution_frequency",
         "evolution-frequency",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3710,8 +4036,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-evolution-frequency-ok",
         "fixture-evolution-frequency-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     // W4-3（T-1786886251769-22b94ee8-sub-3）：defect 读组 4 工具
     // （defect_correlation / churn_analysis / defect_search /
@@ -3738,7 +4064,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "hotspot_evolution",
         "hotspot_evolution",
         "hotspot-evolution",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3746,8 +4072,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-hotspot-evolution-ok",
         "fixture-hotspot-evolution-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     add(
         "churn_analysis",
@@ -3798,7 +4124,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "defect_learn",
         "defect_learn",
         "defect-learn",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3806,8 +4132,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-defect-learn-ok",
         "fixture-defect-learn-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963106520-907544c8#P0-COMPAT-v3",
+        "",
     );
     // W2-3（T-1786840097331-fd01a3f8）：defect_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3826,12 +4152,12 @@ fn build_capability_registry() -> Result<Value, String> {
         "T-1786840097331-fd01a3f8#W2-3",
         "",
     );
-    // H4C-2 第二批：语义/外部符号组只读（5 项）
+    // H4C-2 第二批：语义/外部符号组只读（5 项，已 P0-COMPAT-v3 迁移 rust_native）
     add(
         "semantic_search",
         "semantic_search",
         "semantic-search",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3839,14 +4165,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-semantic-search-ok",
         "fixture-semantic-search-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963104879-2e9e6270#P0-COMPAT-v3",
+        "",
     );
     add(
         "find_similar_functions",
         "find_similar_functions",
         "find-similar-functions",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3854,14 +4180,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-find-similar-functions-ok",
         "fixture-find-similar-functions-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963104879-2e9e6270#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_symbol_commit_history",
         "get_symbol_commit_history",
         "get-symbol-commit-history",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3869,14 +4195,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-symbol-commit-history-ok",
         "fixture-get-symbol-commit-history-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963104879-2e9e6270#P0-COMPAT-v3",
+        "",
     );
     add(
         "parse_codeowners",
         "parse_codeowners",
         "parse-codeowners",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3884,14 +4210,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-parse-codeowners-ok",
         "fixture-parse-codeowners-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963104879-2e9e6270#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_project_dependencies",
         "get_project_dependencies",
         "get-project-dependencies",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3899,8 +4225,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-project-dependencies-ok",
         "fixture-get-project-dependencies-err",
-        "T-1786747295213-64204cce#H4C-2-B2",
-        "legacy-python",
+        "T-1788963104879-2e9e6270#P0-COMPAT-v3",
+        "",
     );
     // H4C-2 第三批（T-1786747295227-49c90d68）：security 组只读（14 项；
     // get_edit_stats 已 W2-3 迁移 rust_native，剩 13 项，T-1786840097331-fd01a3f8）
@@ -3908,7 +4234,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "list_branches",
         "list_branches",
         "list-branches",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3916,8 +4242,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-list-branches-ok",
         "fixture-list-branches-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     // W4-4（T-1786886251769-22b94ee8-sub-4）：diff_branches 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3943,7 +4269,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "merge_preview",
         "merge_preview",
         "merge-preview",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3951,14 +4277,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-merge-preview-ok",
         "fixture-merge-preview-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_edit_history",
         "get_edit_history",
         "get-edit-history",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3966,8 +4292,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-edit-history-ok",
         "fixture-get-edit-history-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     // W2-3（T-1786840097331-fd01a3f8）：get_edit_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
@@ -3990,7 +4316,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "find_shared_symbols",
         "find_shared_symbols",
         "find-shared-symbols",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -3998,14 +4324,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-find-shared-symbols-ok",
         "fixture-find-shared-symbols-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "cross_repo_impact",
         "cross_repo_impact",
         "cross-repo-impact",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4013,14 +4339,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-cross-repo-impact-ok",
         "fixture-cross-repo-impact-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "cross_repo_summary",
         "cross_repo_summary",
         "cross-repo-summary",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4028,14 +4354,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-cross-repo-summary-ok",
         "fixture-cross-repo-summary-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "lsp_hover",
         "lsp_hover",
         "lsp-hover",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4043,14 +4369,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-lsp-hover-ok",
         "fixture-lsp-hover-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "lsp_definition",
         "lsp_definition",
         "lsp-definition",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4058,14 +4384,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-lsp-definition-ok",
         "fixture-lsp-definition-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "lsp_references",
         "lsp_references",
         "lsp-references",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4073,14 +4399,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-lsp-references-ok",
         "fixture-lsp-references-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "lsp_diagnostics",
         "lsp_diagnostics",
         "lsp-diagnostics",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4088,14 +4414,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-lsp-diagnostics-ok",
         "fixture-lsp-diagnostics-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "lsp_completion",
         "lsp_completion",
         "lsp-completion",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4103,14 +4429,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-lsp-completion-ok",
         "fixture-lsp-completion-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "lsp_check_available",
         "lsp_check_available",
         "lsp-check-available",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4118,8 +4444,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-lsp-check-available-ok",
         "fixture-lsp-check-available-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     // H4C-2 第三批：rules 组只读（8 项；list_build_contexts / get_build_context /
     // get_active_build_context / get_resolved_edges / count_resolved_edges 已 W3-1
@@ -4259,7 +4585,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "rule_candidate_list",
         "rule_candidate_list",
         "rule-candidate-list",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4267,14 +4593,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-rule-candidate-list-ok",
         "fixture-rule-candidate-list-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "rule_list",
         "rule_list",
         "rule-list",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4282,14 +4608,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-rule-list-ok",
         "fixture-rule-list-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     add(
         "get_applicable_rules",
         "get_applicable_rules",
         "get-applicable-rules",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4297,8 +4623,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-applicable-rules-ok",
         "fixture-get-applicable-rules-err",
-        "T-1786747295227-49c90d68#H4C-2-B3",
-        "legacy-python",
+        "T-1788963105720-60bfc80c#P0-COMPAT-v3",
+        "",
     );
     // H4C-2 第三批：collab 组只读（4 项，T-1786747295227-b876fddf#H4C-2-B3）
     // MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native，
@@ -4489,7 +4815,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "get_attestation_validity",
         "get_attestation_validity",
         "get-attestation-validity",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4497,14 +4823,14 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-get-attestation-validity-ok",
         "fixture-get-attestation-validity-err",
-        "T-1786747295227-b876fddf#H4C-2-B3",
-        "legacy-python",
+        "T-1788963088148-495d7208#P0-COMPAT-v3",
+        "",
     );
     add(
         "list_attestation_revocations",
         "list_attestation_revocations",
         "list-attestation-revocations",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4512,16 +4838,16 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-list-attestation-revocations-ok",
         "fixture-list-attestation-revocations-err",
-        "T-1786747295227-b876fddf#H4C-2-B3",
-        "legacy-python",
+        "T-1788963088148-495d7208#P0-COMPAT-v3",
+        "",
     );
-    // H4C-2 第三批：p4 assignment 只读（1 项，T-1786747295227-b876fddf#H4C-2-B3；
+    // H4C-2 第三批：p4 assignment 只读（1 项，原 T-1786747295227-b876fddf#H4C-2-B3；
     // lease_* 5 项 rust_native 走 daemon dispatch，不在此 registry）
     add(
         "assignment_show",
         "assignment_show",
         "assignment-show",
-        "python_compat",
+        "rust_native",
         "available",
         "read_only",
         "workspace",
@@ -4529,8 +4855,8 @@ fn build_capability_registry() -> Result<Value, String> {
         "/v1/rpc",
         "fixture-assignment-show-ok",
         "fixture-assignment-show-err",
-        "T-1786747295227-b876fddf#H4C-2-B3",
-        "legacy-python",
+        "T-1788963088148-495d7208#P0-COMPAT-v3",
+        "",
     );
 
     // CLI-083（T-1787322799648-dc001930）：cw task findings 的 daemon-only
@@ -4656,7 +4982,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let manifest = dir.path().join("http-manifest.json");
         let cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
-        let bound = bind_http(&cfg).await.unwrap();
+        let bound = bind_http(&cfg).unwrap();
         let addr = bound.local_addr;
         let mut cfg = cfg;
         cfg.endpoint = format!("http://{}", addr);
@@ -4687,8 +5013,10 @@ mod tests {
         };
         let router = build_router(app_state);
         // 在测试运行时中驱动 accept loop；丢弃 JoinHandle 仅分离任务（运行时结束才终止）。
+        // CR10：bind_http 返回 std listener，serve 前转 tokio listener。
+        let tokio_listener = tokio::net::TcpListener::from_std(bound.listener).unwrap();
         let _ = tokio::spawn(async move {
-            let _ = axum::serve(bound.listener, router).await;
+            let _ = axum::serve(tokio_listener, router).await;
         });
         // 给 accept loop 一点启动时间，避免竞态导致连接被拒。
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -4759,6 +5087,66 @@ mod tests {
         let body_start = s.find("\r\n\r\n").map(|i| i + 4).unwrap_or(s.len());
         let resp_body = s[body_start..].to_string();
         (status, resp_body)
+    }
+
+    /// 与 `raw_request` 相同，但允许追加额外请求头（如 `X-CW-Wait: 1`）。
+    async fn raw_request_extra(
+        addr: &SocketAddr,
+        method: &str,
+        path: &str,
+        ctype: &str,
+        extra_header: &str,
+        body: &[u8],
+        content_length: usize,
+    ) -> (u16, String) {
+        let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+            .await
+            .expect("connect timed out")
+            .expect("connect failed");
+        let req = format!(
+            "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: {}\r\n{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            method, path, ctype, extra_header, content_length
+        );
+        let (mut rd, mut wr) = stream.into_split();
+        let write_req = req.into_bytes();
+        let write_body = body.to_vec();
+        tokio::spawn(async move {
+            let _ = wr.write_all(&write_req).await;
+            let _ = wr.write_all(&write_body).await;
+            std::future::pending::<()>().await;
+        });
+        let mut buf = vec![0u8; 65536];
+        let mut total = Vec::new();
+        loop {
+            match tokio::time::timeout(Duration::from_secs(10), rd.read(&mut buf)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    total.extend_from_slice(&buf[..n]);
+                    if total.windows(4).any(|w| w == b"\r\n\r\n") {
+                        if let Ok(Ok(n2)) =
+                            tokio::time::timeout(Duration::from_millis(300), rd.read(&mut buf))
+                                .await
+                        {
+                            if n2 > 0 {
+                                total.extend_from_slice(&buf[..n2]);
+                            }
+                        }
+                        break;
+                    }
+                }
+                Ok(Err(_)) => break,
+                Err(_) => break,
+            }
+        }
+        let s = String::from_utf8_lossy(&total);
+        let status_line = s.lines().next().unwrap_or("");
+        let status: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|x| x.parse().ok())
+            .unwrap_or(0);
+        let body_start = s.find("\r\n\r\n").map(|i| i + 4).unwrap_or(s.len());
+        (status, s[body_start..].to_string())
     }
 
     #[tokio::test]
@@ -4932,12 +5320,34 @@ mod tests {
         assert!(matches!(res, Err(HttpServerError::LoopbackOnly)));
         // bind_http 在拒绝时不应发布 manifest
         let cfg = HttpServerConfig::new("0.0.0.0:0".into(), manifest.clone());
-        let res = bind_http(&cfg).await;
+        let res = bind_http(&cfg);
         assert!(matches!(res, Err(HttpServerError::LoopbackOnly)));
         assert!(
             !manifest.exists(),
             "manifest must NOT be published for non-loopback bind"
         );
+    }
+
+    /// CR10（client_convergence_codereview_20260909 §八）：预绑定同步返回、
+    /// manifest 即时发布（携带新 PID/endpoint），且 listener 已入内核 backlog
+    /// ——serve 启动前 TCP connect 探针即可成功。纯同步测试，证明预绑定
+    /// 不依赖 tokio runtime。
+    #[test]
+    fn test_prebind_publishes_manifest_and_accepts_connect() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("http-manifest.json");
+        let cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest.clone());
+        let bound = bind_http(&cfg).unwrap();
+        // manifest 已原子发布且内容指向本次预绑定
+        assert!(manifest.exists(), "manifest must be published at pre-bind");
+        let m: Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(m["pid"], json!(std::process::id()));
+        assert_eq!(m["endpoint"], json!(format!("http://{}", bound.local_addr)));
+        assert!(m["manifest_hash"].as_str().map(|h| h.len() == 64).unwrap_or(false));
+        // serve 尚未启动，listener 已入 backlog：TCP connect 立即成功
+        let probe = std::net::TcpStream::connect(bound.local_addr);
+        assert!(probe.is_ok(), "TCP connect must succeed right after pre-bind");
     }
 
     #[tokio::test]
@@ -5024,5 +5434,334 @@ mod tests {
         assert_eq!(s3, 200);
         let v3: Value = serde_json::from_str(&r3).unwrap();
         assert_eq!(v3["error"]["data"]["code"], "E_REQUEST_ID_REUSE_MISMATCH");
+    }
+
+    // ============================================
+    // Q10（2026-09-17）：multipart raw-gz-body 路由测试
+    // ============================================
+
+    /// 构造 multipart/form-data body（与 client 侧 `_build_multipart_body` 同语义）。
+    fn multipart_body(boundary: &str, parts: &[(&str, &str, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (name, ctype, data) in parts {
+            out.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            out.extend_from_slice(
+                format!("Content-Disposition: form-data; name=\"{}\"\r\n", name).as_bytes(),
+            );
+            out.extend_from_slice(format!("Content-Type: {}\r\n", ctype).as_bytes());
+            out.extend_from_slice(b"\r\n");
+            out.extend_from_slice(data);
+            out.extend_from_slice(b"\r\n");
+        }
+        out.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+        out
+    }
+
+    /// envelope 校验公共函数：合法 envelope 直接通过。
+    #[test]
+    fn test_validate_rpc_envelope_ok() {
+        let v = json!({
+            "jsonrpc": "2.0",
+            "id": "q10-1",
+            "protocol_version": "1",
+            "method": "ping",
+            "params": {"a": 1}
+        });
+        let (id, method, params) = validate_rpc_envelope(&v, "git").expect("valid envelope");
+        assert_eq!(id, "q10-1");
+        assert_eq!(method, "ping");
+        assert_eq!(params["a"], 1);
+    }
+
+    /// envelope 校验：缺 protocol_version → 426（与 /v1/rpc 严格一致）。
+    #[test]
+    fn test_validate_rpc_envelope_missing_protocol_version() {
+        let v = json!({"jsonrpc": "2.0", "id": "q10-2", "method": "ping"});
+        let resp = validate_rpc_envelope(&v, "git").expect_err("must reject");
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    /// envelope 校验：jsonrpc 非 "2.0" → 400。
+    #[test]
+    fn test_validate_rpc_envelope_bad_jsonrpc() {
+        let v = json!({
+            "jsonrpc": "1.0", "id": "q10-3", "protocol_version": "1", "method": "ping"
+        });
+        let resp = validate_rpc_envelope(&v, "git").expect_err("must reject");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// envelope 校验：id 缺失 → 400。
+    #[test]
+    fn test_validate_rpc_envelope_missing_id() {
+        let v = json!({
+            "jsonrpc": "2.0", "protocol_version": "1", "method": "ping"
+        });
+        validate_rpc_envelope(&v, "git").expect_err("must reject missing id");
+    }
+
+    /// multipart 路由：控制面方法（ping）无 payload → 200，result 正常返回。
+    #[tokio::test]
+    async fn test_rpc_multipart_ping_without_payload() {
+        let addr = spawn_server().await;
+        let envelope = json!({
+            "jsonrpc": "2.0", "id": "q10-ping", "protocol_version": "1",
+            "method": "ping", "params": {}
+        })
+        .to_string();
+        let body = multipart_body(
+            "test-boundary-1",
+            &[("params", "application/json", envelope.as_bytes())],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-1",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 200, "status={} body={}", status, resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], "q10-ping");
+        assert!(v["result"].is_object());
+    }
+
+    /// multipart 路由：缺 params part → 400 E_MULTIPART_EXPECTED。
+    #[tokio::test]
+    async fn test_rpc_multipart_missing_params_part() {
+        let addr = spawn_server().await;
+        let body = multipart_body(
+            "test-boundary-2",
+            &[("payload", "application/octet-stream", b"raw-bytes")],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-2",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 400, "status={} body={}", status, resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["error"]["data"]["code"], "E_MULTIPART_EXPECTED");
+    }
+
+    /// multipart 路由：payload 与 payload_gz 同时出现 → 400 E_PAYLOAD_CONFLICT。
+    #[tokio::test]
+    async fn test_rpc_multipart_payload_conflict() {
+        let addr = spawn_server().await;
+        let envelope = json!({
+            "jsonrpc": "2.0", "id": "q10-conflict", "protocol_version": "1",
+            "method": "ping", "params": {}
+        })
+        .to_string();
+        let body = multipart_body(
+            "test-boundary-3",
+            &[
+                ("params", "application/json", envelope.as_bytes()),
+                ("payload", "application/octet-stream", b"raw"),
+                ("payload_gz", "application/octet-stream", b"gz"),
+            ],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-3",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 400, "status={} body={}", status, resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["error"]["data"]["code"], "E_PAYLOAD_CONFLICT");
+    }
+
+    /// multipart 路由：malformed params part → 400 E_PARSE_ERROR。
+    #[tokio::test]
+    async fn test_rpc_multipart_malformed_params() {
+        let addr = spawn_server().await;
+        let body = multipart_body(
+            "test-boundary-4",
+            &[("params", "application/json", b"{not json")],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-4",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 400, "status={} body={}", status, resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["error"]["data"]["code"], "E_PARSE_ERROR");
+    }
+
+    /// multipart 路由：duplicate-key envelope → 400 E_DUPLICATE_JSON_KEY
+    /// （与 /v1/rpc 的 strict 门禁语义一致）。
+    #[tokio::test]
+    async fn test_rpc_multipart_duplicate_json_key() {
+        let addr = spawn_server().await;
+        // 手工构造重复 key 的 JSON（serde_json 会保留最后值，但 strict parser 先拦）
+        let bad = b"{\"jsonrpc\":\"2.0\",\"id\":\"q10-dup\",\"id\":\"q10-dup\",\
+                    \"protocol_version\":\"1\",\"method\":\"ping\",\"params\":{}}";
+        let body = multipart_body(
+            "test-boundary-5",
+            &[("params", "application/json", bad)],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-5",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 400, "status={} body={}", status, resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["error"]["data"]["code"], "E_DUPLICATE_JSON_KEY");
+    }
+
+    /// Q10 异步：workspace.file.refresh 无 X-CW-Wait → 立即 202 accepted。
+    ///
+    /// 测试 DaemonState 未实现 refresh（返回 method_not_found），但异步分支
+    /// 在 dispatch 之前返回，因此仍须是 202。最终结果由后台 task 落 dedup。
+    #[tokio::test]
+    async fn test_rpc_multipart_refresh_returns_202_async() {
+        let addr = spawn_server().await;
+        let envelope = json!({
+            "jsonrpc": "2.0", "id": "q10-async-1", "protocol_version": "1",
+            "method": "workspace.file.refresh",
+            "params": {"workspace_instance_id": "ws-async"}
+        })
+        .to_string();
+        let body = multipart_body(
+            "test-boundary-async",
+            &[
+                ("params", "application/json", envelope.as_bytes()),
+                ("payload", "application/octet-stream", b"fn main() {}"),
+            ],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-async",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 202, "status={} body={}", status, resp);
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], "q10-async-1");
+        assert_eq!(v["result"]["status"], "accepted");
+        assert_eq!(v["result"]["async"], true);
+        assert_eq!(v["result"]["request_id"], "q10-async-1");
+    }
+
+    /// Q10 异步：X-CW-Wait: 1 → 强制同步（不走 202 分支）。
+    ///
+    /// 同步路径下 dispatch 在本请求内完成；测试 DaemonState 对 refresh
+    /// 返回 method_not_found（错误信封，HTTP 200），关键是不得返回 202。
+    #[tokio::test]
+    async fn test_rpc_multipart_refresh_sync_with_wait_header() {
+        let addr = spawn_server().await;
+        let envelope = json!({
+            "jsonrpc": "2.0", "id": "q10-sync-1", "protocol_version": "1",
+            "method": "workspace.file.refresh",
+            "params": {"workspace_instance_id": "ws-sync"}
+        })
+        .to_string();
+        let body = multipart_body(
+            "test-boundary-sync",
+            &[
+                ("params", "application/json", envelope.as_bytes()),
+                ("payload", "application/octet-stream", b"fn main() {}"),
+            ],
+        );
+        let (status, resp) = raw_request_extra(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-sync",
+            "X-CW-Wait: 1",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_ne!(status, 202, "X-CW-Wait 必须强制同步，不该返回 202");
+        let v: Value = serde_json::from_str(&resp).unwrap();
+        assert!(v["error"].is_object() || v["result"].is_object());
+    }
+
+    /// Q10 异步：同 request_id 轮询，后台完成后经 Replay 拿到最终结果。
+    ///
+    /// 第一次请求返回 202；随后重复发送（无 payload），dedup 最终 Replay
+    /// 出后台 task 的结果（method_not_found 错误信封——测试 state 不支持
+    /// refresh，但轮询语义的验证不依赖结果内容）。
+    #[tokio::test]
+    async fn test_rpc_multipart_refresh_poll_replays_final_result() {
+        let addr = spawn_server().await;
+        let envelope = json!({
+            "jsonrpc": "2.0", "id": "q10-poll-1", "protocol_version": "1",
+            "method": "workspace.file.refresh",
+            "params": {"workspace_instance_id": "ws-poll"}
+        })
+        .to_string();
+        let body = multipart_body(
+            "test-boundary-poll",
+            &[
+                ("params", "application/json", envelope.as_bytes()),
+                ("payload", "application/octet-stream", b"fn main() {}"),
+            ],
+        );
+        let (status, resp) = raw_request(
+            &addr,
+            "POST",
+            "/v1/rpc/multipart",
+            "multipart/form-data; boundary=test-boundary-poll",
+            &body,
+            body.len(),
+        )
+        .await;
+        assert_eq!(status, 202);
+        assert_eq!(serde_json::from_str::<Value>(&resp).unwrap()["result"]["status"], "accepted");
+
+        // 轮询：最终结果非 accepted（后台已完成 → Replay）
+        let poll_body = multipart_body(
+            "test-boundary-poll2",
+            &[("params", "application/json", envelope.as_bytes())],
+        );
+        let mut got_final = false;
+        for _ in 0..40 {
+            let (st2, r2) = raw_request(
+                &addr,
+                "POST",
+                "/v1/rpc/multipart",
+                "multipart/form-data; boundary=test-boundary-poll2",
+                &poll_body,
+                poll_body.len(),
+            )
+            .await;
+            let v: Value = serde_json::from_str(&r2).unwrap();
+            if v["result"]["status"].as_str() != Some("accepted") {
+                // 拿到最终结果（Replay 的错误信封也是「最终结果」）
+                assert_eq!(st2, 200);
+                assert!(v["error"].is_object() || v["result"].is_object());
+                got_final = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        assert!(got_final, "轮询未在 10s 内拿到最终结果");
     }
 }

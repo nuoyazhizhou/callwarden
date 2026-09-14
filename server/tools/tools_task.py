@@ -48,21 +48,46 @@ from ..daemon_client import route_rpc as _route
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
-    def task_create(title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
-        """创建任务并返回 task_id
+    def task_create(
+        title: str,
+        description: str = "",
+        steps: list = None,
+        creator: str = "agent",
+        workspace_id: int = 0,
+        workspace_instance_id: str = "",
+    ) -> Optional[dict]:
+        """创建任务并返回任务对象（含 task_id / status / request_id / snapshot_id）
 
         Agent 通过此工具创建有步骤的任务，然后通过 task_next_step 逐步执行。
+
+        BR-01/BR-02 权威契约：task.create 必须显式传入整数 workspace_id (>0)
+        与非空 workspace_instance_id；两值由 workspace.register（CLI `cw workspace
+        register` 或等价 RPC）签发，缺 instance 时 daemon 拒绝
+        （E_TASK_WORKSPACE_INSTANCE_REQUIRED），不回退隐式合成。
 
         Args:
             title: 任务标题
             description: 任务描述
             steps: 步骤列表，每个元素含 action/target_file/target_symbol/check_items
             creator: 创建者标识
+            workspace_id: 工作区整数 id（workspace.register 签发，必传 >0）
+            workspace_instance_id: 工作区实例 id（workspace.register 签发，必传非空）
 
         Returns:
-            task_id
+            任务对象字典；task_id 字段为新任务 id
         """
-        return _route('task.create', {"title": title, "description": description, "steps": steps, "creator": creator}, 'PROTECTED_MUTATION')
+        return _route(
+            "task.create",
+            {
+                "title": title,
+                "description": description,
+                "steps": steps,
+                "creator": creator,
+                "workspace_id": workspace_id,
+                "workspace_instance_id": workspace_instance_id,
+            },
+            "PROTECTED_MUTATION",
+        )
 
     @mcp.tool()
     def task_next_step(task_id: str, agent_session_id: str = "", identity: dict = None, contract_claim: dict = None, agent_instance_id: str = "") -> Optional[dict]:
@@ -959,11 +984,11 @@ def register(mcp: FastMCP) -> None:
         return _route('admin.cleanup_rule_sync_log', {"older_than_days": older_than_days, "keep_latest": keep_latest, "dry_run": dry_run}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
+    def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> dict:
         """在父任务下创建子任务
 
         当任务过大时，可将其拆分为多个子任务。子任务完成后，
-        系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。
+        系统自动推进父任务状态，避免 Agent 遗忘任务或遗忘上下文。
 
         Args:
             parent_task_id: 父任务 ID
@@ -973,7 +998,7 @@ def register(mcp: FastMCP) -> None:
             creator: 创建者标识
 
         Returns:
-            新建子任务的 task_id
+            新建子任务信息（task_id / parent_id / status / step_count）
         """
         return _route('task.create_subtask', {"parent_task_id": parent_task_id, "title": title, "description": description, "steps": steps, "creator": creator}, 'PROTECTED_MUTATION')
 
@@ -995,8 +1020,12 @@ def register(mcp: FastMCP) -> None:
         return _route('task.status_tree', {"task_id": task_id}, 'READ_ONLY')
 
     @mcp.tool()
-    def task_create_from_plan(title: str, plan_md: str, description: str = "") -> str:
-        """从 Markdown 任务计划自动创建父子任务树"""
+    def task_create_from_plan(title: str, plan_md: str, description: str = "") -> dict:
+        """从 Markdown 任务计划自动创建父子任务树
+
+        Returns:
+            创建结果（root_task_id / plan_file / created）
+        """
         return _route('task.create_from_plan', {"title": title, "plan_md": plan_md, "description": description}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
@@ -1171,25 +1200,17 @@ def _h_task_plan_template(ctx: CompatCallContext) -> Any:
 # get_commit_tasks 已 W4-1 迁移 rust_native（T-1786886251769-22b94ee8-sub-1），
 # 从本白名单移除（10->9）；
 # get_defect_correlation 已 W4-3 迁移 rust_native（T-1786886251769-22b94ee8-sub-3），
-# 从本白名单移除（9->8）。
-_TASK_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_symbol_change_tasks": _h_get_symbol_change_tasks,
-    "audit_verify_chain": _h_audit_verify_chain,
-    "list_audit_signing_keys": _h_list_audit_signing_keys,
-    "bootstrap_status": _h_bootstrap_status,
-    "list_clones": _h_list_clones,
-    "list_clone_groups": _h_list_clone_groups,
-    "get_clone_group_detail": _h_get_clone_group_detail,
-    "task_plan_template": _h_task_plan_template,
-}
+# 从本白名单移除（9->8）；
+# P0-COMPAT-v3（T-1788963104058-fdb2e848）：剩余 8 个只读方法全部迁移
+# rust_native，compat worker 白名单清空（空 dict 条件注册，退役后 handler
+# 函数保留供追溯）。
+_TASK_READ_ONLY_METHODS: Dict[str, Any] = {}
 
-# 模块级注册：worker 装配 import 本模块时执行（compat_worker.py L44-45），
-# 注册到 compat_registry 单例并同步 RUST_COMPAT_ROUTE（Rust 侧步骤#2 同步）。
-register_compat_routes(
-    _TASK_READ_ONLY_METHODS,
-    workspace_scope=_TASK_COMPAT_SCOPE,
-    description="H4C-3 任务组只读工具（8 个，T-1786716190783-ba187c88 步骤#1；"
-    "W3-2 T-1786861820151-f3cecf40 迁移 get_job_status/list_jobs/wait_for_job 后 13->10；"
-    "W4-1 T-1786886251769-22b94ee8-sub-1 迁移 get_commit_tasks 后 10->9；"
-    "W4-3 T-1786886251769-22b94ee8-sub-3 迁移 get_defect_correlation 后 9->8）",
-)
+# 模块级注册：worker 装配 import 本模块时执行。P0-COMPAT-v3 起白名单为空，
+# 仅在仍有残留条目时注册（空 dict 直接跳过，避免注册空集合）。
+if _TASK_READ_ONLY_METHODS:
+    register_compat_routes(
+        _TASK_READ_ONLY_METHODS,
+        workspace_scope=_TASK_COMPAT_SCOPE,
+        description="H4C-3 任务组只读工具（P0-COMPAT-v3 后全部 rust_native）",
+    )

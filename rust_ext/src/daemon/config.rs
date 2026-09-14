@@ -108,6 +108,32 @@ pub fn default_authority_task_db_path() -> PathBuf {
     PathBuf::from(home).join(".callwarden").join("callwarden.db")
 }
 
+/// 主机级 CodeGraph 单库默认路径（`~/.callwarden/callwarden.db`）。
+///
+/// 对齐 Python `config.py:DB_PATH` 与 `daemon_config.resolve_codegraph_db_path()`
+/// 的空模板回退分支。
+///
+/// 设计前提（2026-09-05 修正）：CodeGraph 已演进为**整台主机一个数据库**——
+/// 库内 `workspaces` 表区分不同项目，`file_instances.workspace_id` 承载项目维度
+/// （`UNIQUE(workspace_id, rel_path)`），`file_contents` / `symbol_contents` 按
+/// 内容哈希全局去重、跨 workspace 共享。因此：
+///
+/// 1. 不再需要 `{workspace_instance_id}` 维度的 per-workspace 数据库文件
+///    （那是"每个 workspace 一个数据库"时代的产物）；
+/// 2. 任何平台都不应硬编码 `/var/lib/callwarden` 之类的系统目录作为
+///    codegraph 存储位置。
+///
+/// 主目录未知时返回空 `PathBuf`，由调用方 fail-closed。
+pub fn default_codegraph_db_path() -> PathBuf {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .unwrap_or_default();
+    if home.is_empty() {
+        return PathBuf::new();
+    }
+    PathBuf::from(home).join(".callwarden").join("callwarden.db")
+}
+
 /// 默认审计日志 DB 路径（对齐 Python `daemon_config.py:audit_log_path`）
 ///
 /// 与 Python daemon 的 `audit.db`（由 `schema_migrator` 迁移、建 `audit_log` 表）
@@ -127,11 +153,16 @@ impl Default for DaemonConfig {
             request_timeout_secs: 30,
             socket_mode: 0o660,
             snapshot_cache_capacity: DEFAULT_SNAPSHOT_CACHE_CAPACITY,
-            // P0-2 修复：默认启用 CodeGraph 发布（save-to-query 数据链闭合）
-            codegraph_db_path_template: format!(
-                "{}/workspaces/{{workspace_instance_id}}/codegraph.db",
-                DEFAULT_DATA_ROOT
-            ),
+            // 2026-09-05 修正：默认**不再使用** per-workspace codegraph 模板。
+            // 空模板 → resolve_codegraph_db_path() 回退主机级单库
+            // ~/.callwarden/callwarden.db（与 Python daemon_config.py 默认 "" 语义
+            // 完全一致）。旧默认 `/var/lib/callwarden/workspaces/{id}/codegraph.db`
+            // 是"每个 workspace 一个数据库"时代的残留：① 任何平台硬编码 Linux
+            // 系统目录在 Windows 上必然打不开；② codegraph schema 本身就是
+            // 单库多 workspace 设计（workspaces 表 + file_instances.workspace_id），
+            // per-workspace 文件与 schema 自相矛盾。
+            // 需要隔离测试时仍可显式注入 CW_DAEMON_CODEGRAPH_DB_TEMPLATE。
+            codegraph_db_path_template: String::new(),
             // P0-3 修复：默认 socket 组为 callwarden-clients（多用户 UDS 访问）
             socket_group: String::from("callwarden-clients"),
             // D0 3.12：Stage_Toggle 配置存储
@@ -218,6 +249,12 @@ impl DaemonConfig {
                 if self.registry_db_path == default_registry_db_path() {
                     self.registry_db_path = self.data_root.join("registry.db");
                 }
+                // stage_toggle 同理跟随（2026-09-05：消除与 registry 同构的
+                // 非对称遗漏——否则覆盖 data_root 后 stage_toggle 仍落
+                // /var/lib/callwarden/stage_toggle.db，Windows 上不可写）
+                if self.stage_toggle_db_path == default_stage_toggle_db_path() {
+                    self.stage_toggle_db_path = self.data_root.join("stage_toggle.db");
+                }
             }
         }
         if let Ok(v) = std::env::var("CW_DAEMON_WORKERS") {
@@ -251,11 +288,19 @@ impl DaemonConfig {
 
     /// G11: 解析 workspace 的 CodeGraph DB 路径
     ///
-    /// 模板中的 `{workspace_instance_id}` 占位符替换为实际 workspace ID。
-    /// 模板为空时返回空字符串（调用方应判断空值跳过 snapshot 发布）。
+    /// 解析顺序（与 Python `daemon_config.resolve_codegraph_db_path` 完全对齐）：
+    /// 1. 模板为空 → 回退**主机级单库** `~/.callwarden/callwarden.db`
+    ///    （默认部署形态：一台主机一个数据库，`{workspace_instance_id}` 维度
+    ///    已由库内 `workspaces` 表 + `file_instances.workspace_id` 承载）；
+    /// 2. 模板含 `{workspace_instance_id}` 占位符 → 替换为实际 ID
+    ///    （仅显式注入模板的隔离测试场景使用）；
+    /// 3. 模板无占位符 → 原样返回。
+    ///
+    /// 主目录未知（HOME/USERPROFILE 均缺失）且模板为空时返回空字符串，
+    /// 调用方应判断空值 fail-closed 跳过。
     pub fn resolve_codegraph_db_path(&self, workspace_instance_id: &str) -> String {
         if self.codegraph_db_path_template.is_empty() {
-            return String::new();
+            return default_codegraph_db_path().to_string_lossy().to_string();
         }
         self.codegraph_db_path_template
             .replace("{workspace_instance_id}", workspace_instance_id)
@@ -327,7 +372,12 @@ impl DaemonConfig {
         // 即校验 CAS/staging 的父目录——另一 daemon 若与 data_root 或其子目录冲突，
         // paths_conflict 的父子目录检测会判定冲突。
         out.push(("data_root", normalize(&self.data_root)));
-        if !self.codegraph_db_path_template.is_empty() {
+        // codegraph：无论模板是否配置都纳入冲突检测，保证单库落点与
+        // task_db / registry 的关系始终被校验。
+        let codegraph_path = if self.codegraph_db_path_template.is_empty() {
+            // 主机级单库（~/.callwarden/callwarden.db）
+            self.resolve_codegraph_db_path("")
+        } else {
             // 模板含 {workspace_instance_id} 占位符，取模板目录作为代表性路径
             let template_dir = self
                 .codegraph_db_path_template
@@ -335,12 +385,10 @@ impl DaemonConfig {
                 .take_while(|seg| *seg != "{workspace_instance_id}")
                 .collect::<Vec<_>>()
                 .join("/");
-            let dir = if template_dir.is_empty() {
-                PathBuf::from(self.codegraph_db_path_template.clone())
-            } else {
-                PathBuf::from(template_dir)
-            };
-            out.push(("codegraph", normalize(&dir)));
+            template_dir
+        };
+        if !codegraph_path.is_empty() {
+            out.push(("codegraph", normalize(std::path::Path::new(&codegraph_path))));
         }
         if !self.stage_toggle_db_path.as_os_str().is_empty() {
             out.push(("stage_toggle", normalize(&self.stage_toggle_db_path)));
@@ -351,12 +399,19 @@ impl DaemonConfig {
     /// 校验本 daemon 内部存储路径无自冲突。
     ///
     /// 例如 task_db 与 registry 指向同一路径（角色不同但落点相同）属于配置错误。
+    /// 例外：task_db 与 codegraph 允许同路径——默认部署下两者都是权威单库
+    /// `~/.callwarden/callwarden.db` 的不同角色（同一文件同时承载任务协同与
+    /// CodeGraph 数据，与 Python `config.py:DB_PATH` 单库设计一致），属设计而非
+    /// 配置错误。
     /// 冲突时返回 `E_AUTHORITY_STORAGE_CONFLICT`。
     pub fn validate_internal_storage(&self) -> Result<(), ConfigError> {
         let paths = self.storage_paths();
+        // task_db 与 codegraph 同路径豁免（同一权威单库的两个角色）
+        let same_authority_db =
+            |a: &str, b: &str| matches!((a, b), ("task_db", "codegraph") | ("codegraph", "task_db"));
         for i in 0..paths.len() {
             for j in (i + 1)..paths.len() {
-                if paths[i].1 == paths[j].1 {
+                if paths[i].1 == paths[j].1 && !same_authority_db(paths[i].0, paths[j].0) {
                     return Err(ConfigError::StorageConflict(format!(
                         "本 daemon 存储路径冲突: {} == {} == {}",
                         paths[i].0,
@@ -605,10 +660,38 @@ mod tests {
 
     #[test]
     fn test_resolve_codegraph_db_path_empty_template() {
-        // P0-2 修复后：默认模板不再为空，需显式构造空模板验证 resolve 行为
-        let mut cfg = DaemonConfig::default();
-        cfg.codegraph_db_path_template = String::new();
-        assert_eq!(cfg.resolve_codegraph_db_path("ws-123"), "");
+        // 2026-09-05 修正：空模板回退**主机级单库** ~/.callwarden/callwarden.db
+        // （与 Python daemon_config.resolve_codegraph_db_path 语义对齐），
+        // 不再返回空串。用 IsolatedDaemonEnv 固定 HOME 保证断言确定性。
+        // 期望值用 PathBuf::join 构造，避免 Windows 下分隔符差异导致误报。
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/cgtest");
+        let cfg = DaemonConfig::default();
+        assert!(cfg.codegraph_db_path_template.is_empty());
+        let expected = PathBuf::from("/home/cgtest")
+            .join(".callwarden")
+            .join("callwarden.db");
+        assert_eq!(
+            PathBuf::from(cfg.resolve_codegraph_db_path("ws-123")),
+            expected
+        );
+
+        // 主目录未知（USERPROFILE/HOME 均为空）→ 空路径，由调用方 fail-closed
+        env.set_home("");
+        let cfg_no_home = DaemonConfig::default();
+        assert_eq!(cfg_no_home.resolve_codegraph_db_path("ws-123"), "");
+    }
+
+    #[test]
+    fn test_validate_internal_storage_allows_single_authority_db() {
+        // 2026-09-05 修正：默认部署下 task_db 与 codegraph 都是权威单库
+        // ~/.callwarden/callwarden.db 的不同角色，同路径属设计而非冲突。
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/cgtest");
+        let cfg = DaemonConfig::default();
+        // 默认模板为空 → codegraph 解析到单库，与 task_db 同路径 → 必须豁免
+        cfg.validate_internal_storage()
+            .expect("task_db 与 codegraph 同为权威单库不应判冲突");
     }
 
     #[test]

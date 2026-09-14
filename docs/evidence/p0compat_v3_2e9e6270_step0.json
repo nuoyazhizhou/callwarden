@@ -1,0 +1,58 @@
+{
+  "task_id": "T-1788963104879-2e9e6270",
+  "step_index": 0,
+  "action": "port_rust_handler",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_semantic",
+  "methods": [
+    "get_symbol_commit_history",
+    "parse_codeowners",
+    "get_project_dependencies",
+    "semantic_search",
+    "find_similar_functions"
+  ],
+  "python_truth_source": {
+    "note": "compat worker 已退出（E_COMPAT_WORKER_UNAVAILABLE），改按 tools_semantic._bind_readonly_db 同款绑定直调 CodeGraphDB 真相源取基线",
+    "get_symbol_commit_history_rows": 3,
+    "get_project_dependencies_languages": [
+      "javascript",
+      "python",
+      "typescript"
+    ],
+    "get_project_dependencies_python_count": 24,
+    "parse_codeowners_rules": 0,
+    "semantic_search": [],
+    "find_similar_functions": []
+  },
+  "rust_live": {
+    "daemon_git_commit": "bb5bd68b737cadf8934625214aed082df1b91027",
+    "snapshot": {
+      "generation": 1,
+      "symbol_count": 128398,
+      "snapshot_id": "dec9b29f9c471b5f"
+    },
+    "parity": {
+      "get_symbol_commit_history": true,
+      "get_project_dependencies": true,
+      "parse_codeowners": true,
+      "semantic_search": true,
+      "find_similar_functions": true
+    }
+  },
+  "rust_unit_tests": {
+    "command": "cargo test --lib daemon::query_compat_handlers::semantic_tests",
+    "passed": 7,
+    "failed": 0
+  },
+  "declared_deviation": [
+    "get_symbol_commit_history limit<0：Python 直传 SQL（负 LIMIT=不限行数），Rust fail-closed 返回 invalid_params",
+    "semantic_search：Rust daemon 无嵌入模型运行时，沿用 Python 无 embedder 的降级契约返回 []；仅当库内 embedding 全为 daemon 自产 hash-v1 确定性向量时才用同款 sha256 近似向量检索，外部模型向量一律 fail-closed 返回 []",
+    "get_project_dependencies：覆盖 python/rust/go/node/java/scala/kotlin/php/ruby/swift/csharp/elixir manifest 解析；未覆盖语言的解析细节与 Python 可能存在差异（本机实测命中 python/typescript/javascript，逐字段一致）"
+  ],
+  "files_changed": [
+    "rust_ext/src/daemon/query_compat_handlers.rs",
+    "rust_ext/src/daemon/snapshot_state.rs",
+    "rust_ext/src/daemon/dispatch.rs",
+    "rust_ext/src/daemon/http_server.rs"
+  ]
+}

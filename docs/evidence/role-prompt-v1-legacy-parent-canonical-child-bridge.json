@@ -1,0 +1,188 @@
+{
+  "schema": "cw.legacy_parent_bridge.preflight.v1",
+  "task_id": "T-1788595874892-c9b82244",
+  "step_id": "S-1788595874894-c9cdae48",
+  "observed_date": "2026-09-06",
+  "record_kind": "executor_preclaim_architecture_finding",
+  "formal_verdict": null,
+  "task_contract_revision": 1,
+  "task_contract_hash": "sha256:d9c9d6240d4b0324a8b9967bf881a37b414dcd81d7e53e6c2f4ef71c83282891",
+  "daemon_projection": {
+    "lifecycle_status": "open",
+    "workflow_status": "queued",
+    "decision": "READY",
+    "action": "CLAIM",
+    "assignment_id": "A-919cb8ea555bb07a8e0fe682",
+    "assignment_status": "queued",
+    "holder_agent_id": "",
+    "holder_session_id": ""
+  },
+  "authority_readback": {
+    "canonical": {
+      "command": "python cw.py daemon status 4baea3ff12c2ea5c",
+      "registry_workspace_id": 1193,
+      "registry_instance_id": "4baea3ff12c2ea5c",
+      "task_db_workspace_id": 1,
+      "task_db_instance_id": "4baea3ff12c2ea5c",
+      "client_view_root": "C:\\git_work\\callwarden",
+      "status": "active"
+    },
+    "legacy": {
+      "command": "python cw.py daemon status ws-1",
+      "registry_workspace_id": null,
+      "registry_instance_id": null,
+      "task_db_workspace_id": 1,
+      "task_db_instance_id": "ws-1",
+      "client_view_root": null,
+      "status": null
+    }
+  },
+  "finding": {
+    "local_reference": "legacy-canonical-proof-preflight-20260906",
+    "daemon_finding_id": null,
+    "severity": "block",
+    "scope": "governance",
+    "finding_type": "architecture",
+    "introduced_by_change": false,
+    "owner_route": "planner",
+    "blocking": true,
+    "root_cause": "The frozen precondition requires verified persisted root/owner equivalence before implementation. Existing readback and historical receipts do not expose the complete captures. Moreover capture.created_by has two different producer semantics and alias.root_path_hash is not a root hash, so neither field can be used as an ownership/root equivalence shortcut.",
+    "source_facts": [
+      {
+        "path": "rust_ext/src/daemon/task_supersede.rs",
+        "symbol": "handle_task_attest_legacy_workspace_binding",
+        "fact": "Calls bind_task_to_workspace with identity.agent_id as created_by. This is the attesting agent, not a proven operating-system workspace owner."
+      },
+      {
+        "path": "rust_ext/src/daemon/task_collab.rs",
+        "symbol": "bind_task_to_workspace / task.create handler",
+        "fact": "Captures contain root and manifest hashes; normal create supplies peer.owner_key as created_by. Equal created_by values cannot be imposed as a uniform owner rule across attested and ordinary captures."
+      },
+      {
+        "path": "rust_ext/src/daemon/workspace_reconciliation.rs",
+        "symbol": "record_reconciliation_alias",
+        "fact": "root_path_hash is computed from registry_instance_id.as_bytes(), not from the project root. This existing numeric reconciliation alias is not a legacy-to-canonical root attestation."
+      },
+      {
+        "path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json",
+        "fact": "legacy_capture records wc-ws-1-355448432, workspace 1 and ws-1 only; it does not contain the complete root/manifest/owner proof. The receipt's historical claims are not treated as current authority."
+      }
+    ],
+    "call_chain": "task.create -> resolve_create_authority -> validate_parent_for_child_create -> bind_task_to_workspace",
+    "impact_radius": "Canonical children under the historical Epic T-1787203926824-9f873bfc; no finding asserted against unrelated tasks.",
+    "impact": "Current exact-instance rejection remains in force. Relaxing it based only on workspace_id, created_by or alias.root_path_hash would not meet the frozen authority proof requirement.",
+    "minimal_fix": "Planner should revise this same task, not create nested remediation cards: identify an existing supported read-only complete capture/owner proof source, or authorize a bounded task-owned authority-proof readback and explicit owner provenance resolution before implementing the bridge. Persisted source records must be verified; absent or ambiguous evidence must continue to reject.",
+    "acceptance": "Preflight returns independently verifiable legacy and canonical capture hashes, real root agreement and a documented registered owner provenance chain. A missing source remains a structured rejection; no old capture/binding rewrite and no numeric-only equivalence."
+  },
+  "actions": {
+    "claim": false,
+    "lease_acquire": false,
+    "production_edits": false,
+    "database_access_bypass": false,
+    "task_state_mutation": false,
+    "report": false,
+    "deployment": false,
+    "commit": false,
+    "planner_notification": true
+  },
+  "persistence": "Local preflight evidence plus notification to existing Planner thread 01a06f02-5558-7830-b436-bcfdb17380f0. Not a daemon verdict, handoff or completed step.",
+  "identity": {
+    "agent_id": null,
+    "agent_instance_id": null,
+    "session_id": null,
+    "model_id": null,
+    "role": "executor",
+    "note": "Registered mutation identity not revalidated; no claim or identity-bearing mutation attempted."
+  },
+  "resolution_record": {
+    "record_kind": "executor_bridge_implementation_and_deploy_evidence",
+    "resolves_preflight_finding": "legacy-canonical-proof-preflight-20260906",
+    "resolution_of_concerns": {
+      "created_by_semantics": "The implemented bridge does NOT use created_by as an owner/root equivalence shortcut. Equivalence is proven exclusively from daemon-persisted capture columns (client_view_root_hash, host_real_root_hash, registry_identity_payload_json) plus numeric workspace identity.",
+      "alias_root_path_hash": "record_reconciliation_alias's synthetic sha256(instance) root_path_hash is left untouched. The bridge writes its own equivalence provenance row with the REAL shared root hash."
+    },
+    "pre_implementation_authority_proof": {
+      "parent_binding_capture": "wc-ws-1-355448432 (instance ws-1, workspace_id 1, client_view_root_hash == host_real_root_hash == b9515f7c28f5d0f06375053c131e59bdaae784d319deb5cc98d0daa6e581677d)",
+      "canonical_instance_captures": "4baea3ff12c2ea5c has 19 daemon-owned captures, all workspace_id 1, identical client/host root hashes",
+      "conclusion": "legacy ws-1 and canonical 4baea3ff12c2ea5c provably denote the same workspace authority; acceptance clause of the preflight finding (independently verifiable capture hashes + real root agreement + registry identity provenance) is met"
+    },
+    "implementation": {
+      "commit": "aa09454a92734332161c08500c9adf679793bca9",
+      "files": [
+        "rust_ext/src/daemon/workspace_reconciliation.rs",
+        "rust_ext/src/daemon/task_collab_shared.rs",
+        "rust_ext/src/daemon/task_collab.rs",
+        "rust_ext/src/daemon/task_collab_tests.rs",
+        "rust_ext/src/daemon/task_collab_tests_bridge.rs"
+      ],
+      "bounded_proof_semantics": "On instance mismatch inside validate_parent_for_child_create, permit a canonical child ONLY when: parent capture instance is legacy ws-<digits>; both parent and canonical latest captures are immutable self-consistent (client_root == host_root, non-empty); requested instance exists in the daemon-persisted capture domain with a UNIQUE numeric workspace equal to parent AND requested workspace id; shared root hash byte-equal across both captures; registry identity payload of both captures cross-proves the shared root/instance. Otherwise fail-closed E_WORKSPACE_AUTHORITY_MISMATCH.",
+      "provenance": "On success, one append-only row is inserted into workspace_reconciliation_aliases (alias_id wa-<canonical>-<legacy>, root_path_hash = real shared root hash) inside the same create transaction; idempotent via existing unique index. Historical binding/capture rows are never rewritten; legacy instance is never propagated to the new task; exact numeric workspace rejection is preserved (workspace equality step unchanged)."
+    },
+    "regressions": {
+      "new_bridge_tests": 6,
+      "bridge_test_file": "rust_ext/src/daemon/task_collab_tests_bridge.rs",
+      "bridge_cases": [
+        "parent_aware_task_create_legacy_parent_bridge_to_canonical_child_success (positive + no propagation + alias idempotency + parent binding unchanged)",
+        "parent_aware_task_create_rejects_bridge_on_root_hash_divergence (negative, zero partial rows, zero alias)",
+        "parent_aware_task_create_rejects_bridge_for_non_legacy_parent_instance",
+        "parent_aware_task_create_rejects_bridge_on_canonical_workspace_divergence (numeric rejection preserved)",
+        "parent_aware_task_create_rejects_bridge_on_missing_canonical_authority (no invent)",
+        "parent_aware_task_create_rejects_bridge_on_identity_payload_tamper"
+      ],
+      "matrix_results": {
+        "task_collab::tests": "142 passed (incl. existing rollback/no-partial-rows frozen tests)",
+        "workspace_reconciliation": "7 passed",
+        "focused_total": "149 passed, 0 failed"
+      }
+    },
+    "deployment": {
+      "method": "scripts/refresh_shared_runtime.ps1 -TaskId T-1788595874892-c9b82244 -Configuration release -RestartMcp",
+      "receipt": "C:/Users/wanpi/.callwarden/runtime/evidence/20260906-110736-aa09454a9273-ad6d634b.json",
+      "closure_checks": {
+        "daemon_health_git_commit": "aa09454a92734332161c08500c9adf679793bca9 (== deployed HEAD)",
+        "cw_daemon_sha256_match": "runtime/current/cw-daemon.exe == rust_ext/target/stage-refresh/release/cw-daemon.exe (20affd311e190950...)",
+        "daemon_pid_after_restart": 36044
+      }
+    },
+    "live_probes": {
+      "negative_parent_not_found": {
+        "result": "E_TASK_PARENT_NOT_FOUND, cli exit code 2, task_created=false"
+      },
+      "negative_numeric_workspace_rejection_preserved": {
+        "result": "E_WORKSPACE_AUTHORITY_MISMATCH (parent binding workspace=1 vs requested 2), cli exit code 2, task_created=false"
+      },
+      "positive_legacy_to_canonical_child": {
+        "task_id": "T-1788664683905-a275c53c",
+        "parent_id": "T-1787203926824-9f873bfc",
+        "workspace": "1 / 4baea3ff12c2ea5c",
+        "child_binding_instance": "4baea3ff12c2ea5c (legacy ws-1 NOT propagated)",
+        "child_binding": "tb-T-1788664683905-a275c53c-4baea3ff12c2ea5c / wc-4baea3ff12c2ea5c-2727420096",
+        "cli_exit_code": 0
+      },
+      "alias_provenance_row": {
+        "alias_id": "wa-4baea3ff12c2ea5c-ws-1",
+        "registry_workspace_id": 1,
+        "registry_instance_id": "4baea3ff12c2ea5c",
+        "task_db_workspace_id": 1,
+        "task_db_instance_id": "ws-1",
+        "root_path_hash_prefix": "b9515f7c28f5d0f06375",
+        "reconciliation_status": "active"
+      },
+      "immutability_check": {
+        "legacy_epic_binding_after_probe": "T-1787203926824-9f873bfc / workspace 1 / wc-ws-1-355448432 (unchanged)"
+      }
+    },
+    "operational_disclosures": [
+      "Positive live probe created real task T-1788664683905-a275c53c under the legacy Epic (title marked as evidence probe, supersede candidate, not a feature/RP task; disclosed per append-only policy).",
+      "Deployment script initially died silently at ~2m01s when run through nested/background PowerShell sessions (process-tree kill); succeeded via direct foreground invocation. Build/deploy artifacts unaffected.",
+      "No credentials, tokens, or lease material are recorded in this evidence file."
+    ],
+    "recorded_at": "2026-09-06T11:16:30+08:00",
+    "recorded_by": {
+      "agent_id": "executor-wb-gate1b-fix-01",
+      "agent_instance_id": "inst-executor-wb-gate1b-fix-01",
+      "session_id": "sess-executor-wb-gate1b-fix-20260906",
+      "role": "implementer"
+    }
+  }
+}

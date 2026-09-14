@@ -36,6 +36,9 @@ use super::task_loop::bootstrap_review_bridge::{
 use super::task_loop::operation_store::{
     DedupeOutcome, LedgerProvenance, OperationStore, ParamsRules,
 };
+use super::task_loop::lifecycle_lease::{
+    recover_orphaned_lease_for_task, LeaseIdentity as LifecycleLeaseIdentity,
+};
 use super::task_loop::role_worker::{
     parse_identity_policy, parse_role_worker_auth, policy_from_envelope_payload,
     validate_and_record as validate_role_worker,
@@ -51,6 +54,12 @@ use super::task_supersede::{validate_supersede_schema, verify_registered_identit
 use task_collab_contract_repair::normalize_p0l_repair_envelope;
 
 use crate::canonicalize::sha256_hex;
+use crate::daemon::config::default_registry_db_path;
+use crate::daemon::workspace::WorkspaceRegistry;
+use crate::daemon::workspace_reconciliation::{
+    ensure_reconciliation_table, resolve_create_authority, resolve_status_authority,
+    UnifiedAuthority,
+};
 use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEMA_VERSION};
 
 #[path = "task_collab_types.rs"]
@@ -222,14 +231,36 @@ pub(crate) fn bind_task_to_workspace(
         })?;
     if let Some(auth_instance) = authoritative_instance {
         if auth_instance != instance_id {
-            return Err(DaemonRpcError::new(
-                "E_WORKSPACE_AUTHORITY_MISMATCH",
-                format!(
-                    "workspace_id={} 权威 workspace_instance_id={}，请求 {} 不一致；\
-                     禁止同一 workspace 换 instance / 合成 ws-{{id}}",
-                    workspace_id, auth_instance, instance_id
-                ),
-            ));
+            // T-1788392053931-05b8a0e4：reconciliation 迁移期同一 task-DB workspace 的
+            // capture 链可能并存 legacy ws-1 与 canonical 稳定 instance（如 4baea3ff…）。
+            // 权威以稳定身份 instance 为准：resolve_create_authority 已按 instance 判定
+            // (workspace, instance) 配对并记录 append-only alias；此处不得用「最新 capture
+            // 的 instance」重新推导权威并拒绝 canonical instance（曾致 live tuple
+            // 1102/4baea3ff… create 必败）。仅当请求 instance 在本 workspace 的 capture
+            // 链中完全未确立（同 workspace 换新 instance / 合成 / 跨项目）时 fail-closed。
+            let established: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM workspace_authority_captures \
+                     WHERE workspace_id = ?1 AND workspace_instance_id = ?2",
+                    params![workspace_id, instance_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!(
+                        "workspace instance 确立性读取失败: {}",
+                        e
+                    ))
+                })?;
+            if established == 0 {
+                return Err(DaemonRpcError::new(
+                    "E_WORKSPACE_AUTHORITY_MISMATCH",
+                    format!(
+                        "workspace_id={} 权威 workspace_instance_id={}，请求 {} 不一致且未在\
+                         本 workspace capture 链确立；禁止同一 workspace 换 instance / 合成 ws-{{id}}",
+                        workspace_id, auth_instance, instance_id
+                    ),
+                ));
+            }
         }
     }
 
@@ -1720,6 +1751,101 @@ impl TaskCollabStore {
         f(&mut guard)
     }
 
+    /// 跨 registry↔task-DB 统一权威解析（供 `workspace.status` / `workspace.list`）。
+    /// registry 以只读方式打开，避免与在线 registry writer 争用写锁。
+    pub fn unified_workspace_authority(
+        &self,
+        key: &str,
+    ) -> Result<Option<UnifiedAuthority>, DaemonRpcError> {
+        let registry_path = std::env::var("CW_DAEMON_REGISTRY_DB")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(default_registry_db_path);
+        let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
+            .map_err(|e| DaemonRpcError::new("E_REGISTRY_UNAVAILABLE", format!("registry 只读打开失败: {e}")))?;
+        let guard = self
+            .conn
+            .lock()
+            .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
+        resolve_status_authority(&guard, &registry, key)
+    }
+
+    /// 跨 registry↔task-DB 统一 workspace 列表（供 `workspace.list`）。
+    pub fn list_unified_workspaces(&self) -> Result<Vec<serde_json::Value>, DaemonRpcError> {
+        let registry_path = std::env::var("CW_DAEMON_REGISTRY_DB")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(default_registry_db_path);
+        let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
+            .map_err(|e| DaemonRpcError::new("E_REGISTRY_UNAVAILABLE", format!("registry 只读打开失败: {e}")))?;
+        let reg_list = registry
+            .list_workspaces(None)
+            .map_err(|e| DaemonRpcError::internal_error(format!("registry list 失败: {e}")))?;
+
+        let guard = self
+            .conn
+            .lock()
+            .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
+        let mut stmt = guard
+            .prepare(
+                "SELECT DISTINCT workspace_id, workspace_instance_id \
+                 FROM workspace_authority_captures ORDER BY workspace_id, workspace_instance_id",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("task-DB capture 列举失败: {e}")))?;
+        let task_rows: Vec<(i64, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| DaemonRpcError::internal_error(format!("task-DB capture 映射失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| DaemonRpcError::internal_error(format!("task-DB capture 收集失败: {e}")))?;
+
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for reg in &reg_list {
+            let mut e = reg.clone();
+            e["authority_source"] = serde_json::json!("registry");
+            out.push(e);
+        }
+        for (tid, tinst) in task_rows {
+            out.push(serde_json::json!({
+                "workspace_id": tid,
+                "workspace_instance_id": tinst,
+                "authority_source": "task_db_capture",
+            }));
+        }
+        Ok(out)
+    }
+
+    /// CR7（2026-09-09）：查询绑定在给定归一化 root hash 上的权威 instance id。
+    ///
+    /// `workspace_authority_captures.host_real_root_hash = sha256(normalize_identity_root(host_real_root))`
+    /// （全量 64 hex）。返回按 capture 数降序的 instance id 列表，供
+    /// `workspace.register` 自愈选行：同 root 的历史分裂行中，task-DB 有
+    /// 权威 capture 的行优先复用，保证图谱/快照/任务绑定面连续。
+    pub fn captured_instance_ids_for_root_hash(
+        &self,
+        root_hash: &str,
+    ) -> Result<Vec<String>, DaemonRpcError> {
+        let guard = self
+            .conn
+            .lock()
+            .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
+        let mut stmt = guard
+            .prepare(
+                "SELECT workspace_instance_id, COUNT(*) AS n \
+                 FROM workspace_authority_captures \
+                 WHERE host_real_root_hash = ?1 \
+                 GROUP BY workspace_instance_id ORDER BY n DESC",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("capture 查询失败: {e}")))?;
+        let rows: Vec<String> = stmt
+            .query_map(params![root_hash], |r| r.get(0))
+            .map_err(|e| DaemonRpcError::internal_error(format!("capture 映射失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| DaemonRpcError::internal_error(format!("capture 收集失败: {e}")))?;
+        Ok(rows)
+    }
+
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, DaemonRpcError> {
         let conn = Connection::open(&db_path).map_err(|e| {
             DaemonRpcError::internal_error(format!(
@@ -1736,6 +1862,8 @@ impl TaskCollabStore {
         // P0-H（T-1787277487109-758e56d0）：supersede 表已入 canonical v59 schema，
         // 此处仅做列级 fail-closed 校验（不再以启动期 DDL 创建/掩盖迁移）。
         validate_supersede_schema(&conn)?;
+        // T-1788346430756-8c900ec0：workspace authority reconciliation 表（append-only）。
+        ensure_reconciliation_table(&conn)?;
 
         let max_seq: i64 = conn
             .query_row(
@@ -1750,6 +1878,13 @@ impl TaskCollabStore {
             seq_counter: Arc::new(Mutex::new(max_seq)),
             dedup_cache: Arc::new(Mutex::new(HashMap::new())),
             clock: None,
+            registry_db_path: std::env::var("CW_DAEMON_REGISTRY_DB")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(default_registry_db_path),
+            #[cfg(test)]
+            registry_db_path_for_tests: None,
         })
     }
 
@@ -1759,6 +1894,26 @@ impl TaskCollabStore {
     /// 返回 `E_LEASE_CLOCK_UNAVAILABLE`，绝不降级为无凭证写（Req 11.9 / 14.30）。
     pub fn with_clock(mut self, clock: Arc<AuthoritativeClock>) -> Self {
         self.clock = Some(clock);
+        self
+    }
+
+    /// 将启动配置的 registry authority 注入 task governance store。
+    ///
+    /// `TaskCollabStore` 不能从进程环境重新推导该路径：runtime launcher 可通过
+    /// CLI/config 传入 Windows registry，而不会把同一值导出为环境变量。
+    pub fn with_registry_db_path(mut self, registry_db_path: impl Into<std::path::PathBuf>) -> Self {
+        self.registry_db_path = registry_db_path.into();
+        self
+    }
+
+    /// 为单元测试绑定隔离 registry；生产构建不编译该入口，避免测试 fixture
+    /// 改变 daemon 的 workspace authority 来源。
+    #[cfg(test)]
+    pub(crate) fn with_registry_db_path_for_tests(
+        mut self,
+        registry_db_path: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        self.registry_db_path_for_tests = Some(registry_db_path.into());
         self
     }
 
@@ -1806,6 +1961,13 @@ impl TaskCollabStore {
             seq_counter: Arc::new(Mutex::new(max_seq)),
             dedup_cache: Arc::new(Mutex::new(HashMap::new())),
             clock: None,
+            registry_db_path: std::env::var("CW_DAEMON_REGISTRY_DB")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(default_registry_db_path),
+            #[cfg(test)]
+            registry_db_path_for_tests: None,
         })
     }
 
@@ -1966,6 +2128,448 @@ impl TaskCollabStore {
         (actor, session)
     }
 
+    /// Recover an orphaned lease and its durable assignment as one protected
+    /// mutation.  This is intentionally task-scoped: the caller must be a
+    /// registered Planner or Adjudicator owned by the transport peer, and the
+    /// task binding/capture must match exactly.  No lease token, credential, or
+    /// fencing value is accepted; the domain decides eligibility from the
+    /// authoritative holder registration and heartbeat state.
+    pub fn handle_lease_recover(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        const METHOD: &str = "lease.recover";
+        const ALLOWED_TARGET_ROLES: &[&str] = &["executor", "reviewer", "adjudicator"];
+        const GOVERNANCE_ROLES: &[&str] = &["planner", "adjudicator"];
+        const FORBIDDEN_SECRET_FIELDS: &[&str] = &[
+            "token",
+            "lease_token",
+            "credential",
+            "role_worker_auth",
+            "role_worker_credential",
+            "fencing_counter",
+        ];
+
+        let object = params.as_object().ok_or_else(|| {
+            DaemonRpcError::invalid_params("lease.recover params 必须是 JSON object")
+        })?;
+        if let Some(field) = FORBIDDEN_SECRET_FIELDS
+            .iter()
+            .find(|field| object.contains_key(**field))
+        {
+            return Err(DaemonRpcError::new(
+                "E_LEASE_RECOVERY_SECRET_FIELD",
+                format!("lease.recover 不接受敏感字段 {field}；使用已注册治理 identity"),
+            ));
+        }
+        let task_id = object
+            .get("task_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| DaemonRpcError::invalid_params("lease.recover 缺少 task_id"))?;
+        let target_role = object
+            .get("role")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            // 归一化后判定（C-24）：使 runtime role（implementer 等）也能通过
+            // 白名单校验，与查找侧归一一致后可恢复历史 lease。
+            .map(canonical_claim_role)
+            .filter(|value| ALLOWED_TARGET_ROLES.contains(value))
+            .ok_or_else(|| {
+                DaemonRpcError::invalid_params(
+                    "lease.recover.role 必须是 executor/reviewer/adjudicator",
+                )
+            })?;
+        let request_id = object
+            .get("request_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| DaemonRpcError::invalid_params("lease.recover 缺少 request_id"))?;
+        let workspace_instance_id = object
+            .get("workspace_instance_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                DaemonRpcError::invalid_params("lease.recover 缺少 workspace_instance_id")
+            })?;
+        let workspace_id = required_workspace_id_param(params)?;
+        let reason = object
+            .get("reason")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| DaemonRpcError::invalid_params("lease.recover 缺少非空 reason"))?;
+        let identity = parse_action_identity(params)?.ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_IDENTITY_INCOMPLETE",
+                "lease.recover 需要完整 registered identity",
+            )
+        })?;
+        if !GOVERNANCE_ROLES.contains(&identity.role.as_str()) {
+            return Err(DaemonRpcError::new(
+                "E_LEASE_RECOVERY_ROLE_REQUIRED",
+                "lease.recover 只允许 registered planner 或 adjudicator identity",
+            ));
+        }
+
+        let clock = self.clock.as_ref().ok_or_else(|| {
+            DaemonRpcError::new(
+                "E_LEASE_CLOCK_UNAVAILABLE",
+                format!("{METHOD}（task={task_id} role={target_role}）需要 daemon 权威时钟"),
+            )
+        })?;
+        let now = clock.now_secs() as f64;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = begin_immediate_with_retry(&conn, METHOD)?;
+
+        // Authorization is intentionally before operation-ledger lookup.  A
+        // replay must never become an oracle for an untrusted peer or identity.
+        let bound_workspace = task_bound_workspace_id(&tx, task_id, Some(workspace_id))?;
+        let binding_instance: String = tx
+            .query_row(
+                "SELECT c.workspace_instance_id
+                 FROM task_workspace_bindings b
+                 JOIN workspace_authority_captures c
+                   ON c.workspace_capture_id = b.workspace_capture_id
+                 WHERE b.task_id = ?1 AND b.workspace_id = ?2",
+                params![task_id, bound_workspace],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!(
+                    "读取 lease.recover workspace authority 失败: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "E_WORKSPACE_AUTHORITY_UNAVAILABLE",
+                    "task 缺少可复核的 workspace authority capture",
+                )
+            })?;
+        if binding_instance != workspace_instance_id {
+            return Err(DaemonRpcError::new(
+                "E_WORKSPACE_AUTHORITY_MISMATCH",
+                format!(
+                    "task binding workspace_instance_id={} 与请求 {} 不一致",
+                    binding_instance, workspace_instance_id
+                ),
+            ));
+        }
+
+        let registered: Option<(String, String, String, String, String)> = tx
+            .query_row(
+                "SELECT owner_key, status, session_id, agent_instance_id, role
+                 FROM agent_registrations WHERE agent_id = ?1",
+                params![identity.agent_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!(
+                    "查询 lease.recover registered identity 失败: {error}"
+                ))
+            })?;
+        let Some((owner_key, status, registered_session, registered_instance, registered_role)) =
+            registered
+        else {
+            return Err(DaemonRpcError::new(
+                "E_IDENTITY_UNREGISTERED",
+                "lease.recover identity 未注册",
+            ));
+        };
+        if owner_key != peer.owner_key()
+            || status != "active"
+            || registered_session != identity.session_id
+            || (!registered_instance.is_empty()
+                && registered_instance != identity.agent_instance_id)
+            || registered_role != identity.role
+        {
+            return Err(DaemonRpcError::new(
+                "E_IDENTITY_NOT_ACTIVE",
+                "lease.recover identity owner/session/instance/role 与 daemon 注册不一致",
+            ));
+        }
+
+        let operation_store = OperationStore;
+        let (rules, canonical_params_hash) = match operation_store.dedupe(
+            &tx,
+            workspace_instance_id,
+            METHOD,
+            request_id,
+            params,
+        )? {
+            DedupeOutcome::Replay {
+                response_or_error_json,
+            } => {
+                if let Some(error) = response_or_error_json.get("error") {
+                    return Err(DaemonRpcError::new(
+                        error
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .unwrap_or("E_LEASE_RECOVERY_REPLAY_ERROR"),
+                        error
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("lease.recover replay was rejected"),
+                    ));
+                }
+                let mut replay = response_or_error_json;
+                if let Some(value) = replay.as_object_mut() {
+                    value.insert("replayed".to_string(), Value::Bool(true));
+                }
+                return Ok(replay);
+            }
+            DedupeOutcome::FirstRequest {
+                rules,
+                canonical_params_hash,
+            } => (rules, canonical_params_hash),
+        };
+        let provenance = LedgerProvenance {
+            workspace_id: Some(bound_workspace),
+            task_id: Some(task_id.to_string()),
+            ..Default::default()
+        };
+        macro_rules! reject {
+            ($code:expr, $message:expr) => {{
+                let error = DaemonRpcError::new($code, $message);
+                let body = json!({
+                    "error": {"code": error.code, "message": error.message}
+                });
+                operation_store.record_result(
+                    &tx,
+                    workspace_instance_id,
+                    METHOD,
+                    request_id,
+                    &rules,
+                    &canonical_params_hash,
+                    &provenance,
+                    &body,
+                )?;
+                tx.commit().map_err(|commit_error| {
+                    DaemonRpcError::internal_error(format!(
+                        "提交 lease.recover 拒绝结果失败: {commit_error}"
+                    ))
+                })?;
+                return Err(error);
+            }};
+        }
+
+        let recovery_actor = LifecycleLeaseIdentity {
+            agent_id: identity.agent_id.clone(),
+            session_id: identity.session_id.clone(),
+            model_id: identity.model_id.clone(),
+            role: identity.role.clone(),
+        };
+        let (lease_id, fencing_counter, recovery_reason) =
+            match recover_orphaned_lease_for_task(
+                &tx,
+                bound_workspace,
+                task_id,
+                target_role,
+                &recovery_actor,
+                now,
+            ) {
+                Ok(value) => value,
+                Err(error) if error.code == "E_LEASE_RECOVERY_NOT_ELIGIBLE" => {
+                    reject!(&error.code, &error.message)
+                }
+                Err(error) if error.code == "E_LEASE_NOT_FOUND" => {
+                    reject!(&error.code, &error.message)
+                }
+                Err(error) => return Err(error),
+            };
+
+        let current_assignment = assignment_queue::current_assignment(
+            &tx,
+            task_id,
+            None,
+            Some(target_role),
+        )?;
+        // A lease recovery must also release the task-level claim when the
+        // recovered lease holder is the same owner.  Otherwise the lease is
+        // expired and its assignment is stale, but task.claim still sees the
+        // old claim event as authoritative and rejects the next same-role
+        // worker with task_conflict.
+        let claim_released_event_id = {
+            // 查找侧变体集（C-24）：target_role 可能是 runtime 名称。
+            let target_role_canon = canonical_claim_role(target_role);
+            let (role_sql, role_params) = role_in_match(target_role_canon);
+            let mut recover_args: Vec<Box<dyn rusqlite::ToSql>> = vec![
+                Box::new(lease_id.to_string()),
+                Box::new(task_id.to_string()),
+            ];
+            for v in role_params {
+                recover_args.push(Box::new(v));
+            }
+            let recover_arg_refs: Vec<&dyn rusqlite::ToSql> = recover_args
+                .iter()
+                .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
+                .collect();
+            let lease_holder_session: Option<String> = tx
+                .query_row(
+                    &format!(
+                        "SELECT session_id FROM task_leases
+                         WHERE lease_id = ?1 AND task_id = ?2 AND {role_sql}"
+                    ),
+                    rusqlite::params_from_iter(recover_arg_refs.iter().copied()),
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    DaemonRpcError::internal_error(format!(
+                        "读取 lease.recover holder session 失败: {error}"
+                    ))
+                })?;
+            let (old_actor, old_session, old_role) = self.get_task_claim_details(&tx, task_id);
+            let same_role = old_role
+                .as_deref()
+                .map(|role| {
+                    role == target_role
+                        || (target_role == "executor" && role == "implementer")
+                })
+                .unwrap_or(false);
+            if let (Some(holder_session), Some(old_actor), Some(old_session), true) =
+                (lease_holder_session, old_actor, old_session, same_role)
+            {
+                if holder_session == old_session {
+                    let reason = json!({
+                        "old_actor_identity": old_actor,
+                        "old_session_id": old_session,
+                        "old_role": old_role,
+                        "recovery": "lease_recover",
+                        "recovery_reason": recovery_reason,
+                        "source_request_id": request_id,
+                    })
+                    .to_string();
+                    Some(Self::append_task_event(
+                        &tx,
+                        task_id,
+                        "in_progress",
+                        "in_progress",
+                        "claim_released",
+                        &reason,
+                        &identity.agent_id,
+                        &identity.session_id,
+                        &identity.role,
+                        self.next_seq(),
+                        now,
+                    )?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        let assignment_event_id = if let Some(assignment) = current_assignment.as_ref() {
+            let assignment_reason = json!({
+                "assignment_id": assignment.assignment_id,
+                "task_id": task_id,
+                "step_id": assignment.step_id,
+                "role": assignment.role,
+                "status": "stale",
+                "stale_at": now,
+                "source_request_id": request_id,
+                "recovery_reason": recovery_reason,
+                "request_reason": reason,
+                "old_holder_agent_id": assignment.holder_agent_id,
+                "old_holder_session_id": assignment.holder_session_id,
+                "old_holder_model_id": assignment.holder_model_id,
+            })
+            .to_string();
+            let event_id = Self::append_task_event(
+                &tx,
+                task_id,
+                "assignment",
+                "assignment",
+                "assignment_stale",
+                &assignment_reason,
+                &identity.agent_id,
+                &identity.session_id,
+                &identity.role,
+                self.next_seq(),
+                now,
+            )?;
+
+            // Keep the legacy physical projection convergent when present.
+            // Event projection remains authoritative; this update never
+            // manufactures an assignment row or changes terminal rows.
+            let physical_table_exists: bool = tx.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type='table' AND name='task_assignments'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!(
+                    "查询 task_assignments 表存在性失败: {error}"
+                ))
+            })?;
+            if physical_table_exists {
+                tx.execute(
+                    "UPDATE task_assignments
+                     SET status = 'stale'
+                    WHERE task_id = ?1 AND role = ?2
+                       AND status NOT IN ('completed', 'stale', 'released', 'revoked')",
+                    params![task_id, target_role],
+                )
+                .map_err(|error| {
+                    DaemonRpcError::internal_error(format!(
+                        "同步 task_assignments stale 投影失败: {error}"
+                    ))
+                })?;
+            }
+            Some(event_id)
+        } else {
+            None
+        };
+
+        record_action_identity(&tx, task_id, &identity, METHOD, self.next_seq(), now)?;
+        let response = json!({
+            "ok": true,
+            "task_id": task_id,
+            "role": target_role,
+            "lease_id": lease_id,
+            "fencing_counter": fencing_counter,
+            "lease_status": "expired",
+            "recovery_reason": recovery_reason,
+            "assignment_status": current_assignment.as_ref().map(|_| "stale").unwrap_or("none"),
+            "assignment_event_id": assignment_event_id,
+            "claim_released_event_id": claim_released_event_id,
+            "request_id": request_id,
+            "replayed": false,
+        });
+        operation_store.record_result(
+            &tx,
+            workspace_instance_id,
+            METHOD,
+            request_id,
+            &rules,
+            &canonical_params_hash,
+            &provenance,
+            &response,
+        )?;
+        tx.commit().map_err(|error| {
+            DaemonRpcError::internal_error(format!("提交 lease.recover 事务失败: {error}"))
+        })?;
+        Ok(response)
+    }
+
     pub fn handle_agent_register(
         &self,
         peer: PeerCredential,
@@ -2124,18 +2728,33 @@ impl TaskCollabStore {
             return Ok(cached);
         }
 
-        let title = params
+        let title_owned = params
             .get("title")
             .and_then(|v| v.as_str())
+            // CR4 写入侧 hash 规范化：自由文本中裸 64-hex 统一补 sha256: 前缀，
+            // 避免 role prompt 编译被 bare_credential_hash fail-closed。
+            .map(crate::daemon::task_prompt::redaction::normalize_bare_sha256_refs)
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 title"))?;
-        let description = params
+        let title = title_owned.as_str();
+        let description_owned = params
             .get("description")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(crate::daemon::task_prompt::redaction::normalize_bare_sha256_refs)
+            .unwrap_or_default();
+        let description = description_owned.as_str();
         let parent_id = params
             .get("parent_id")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        // GATE-1A：parent-aware 分支仅在 parent_id 规范化非空时启用；root 分支
+        // （缺失/空）保持 Gate 前行为 bit-for-bit（frozen spec §13.3）。
+        let parent_aware = !parent_id.is_empty();
+        if parent_aware {
+            // frozen request contract：parent-aware 请求拒绝白名单之外的未知字段。
+            reject_unknown_create_fields(params)?;
+        }
         // workspace authority fail-closed：task.create 必须显式传入 workspace_id（>0）
         // 且 workspace 真实存在；禁止用 active workspace / cwd 补齐（§8.1.1）。
         let workspace_id = required_workspace_id_param(params)?;
@@ -2165,6 +2784,18 @@ impl TaskCollabStore {
                 DaemonRpcError::invalid_params("role_contracts 必须是 JSON array")
             })?,
         };
+        // GATE-1A：parent-aware 分支要求 child 携带完整 Role Contracts（受治理 child
+        // 不允许裸建——frozen spec §13.3 "Task/Role Contract ... 在同一事务成功"）。
+        if parent_aware && role_contracts.is_empty() {
+            return Err(DaemonRpcError::new(
+                ERR_TASK_PARENT_CONTRACT_REQUIRED,
+                format!(
+                    "task.create parent-aware：child 必须携带非空 role_contracts \
+                     （parent={}）；受治理 child 不允许裸建",
+                    parent_id
+                ),
+            ));
+        }
 
         let task_id = params
             .get("task_id")
@@ -2179,6 +2810,33 @@ impl TaskCollabStore {
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| DaemonRpcError::internal_error(format!("开启事务失败: {}", e)))?;
+
+        // BR-01 / authority reconciliation：把请求的 (registry 数字 id, instance) 解析为
+        // 规范的 task-DB 绑定权威；若 registry 数字 id 与 task-DB 数字 id 不同（迁移期分裂），
+        // 则 append-only 记录别名，使同一物理 workspace 在两侧共享稳定 instance。
+        ensure_reconciliation_table(&tx)?;
+        let authority =
+            resolve_create_authority(&tx, workspace_id, &workspace_instance_id, &peer.owner_key())?;
+        let eff_workspace_id = authority.task_db_workspace_id;
+
+        // GATE-1A：parent-aware 分支在事务内校验 parent 存在 + 唯一 binding/capture +
+        // workspace exact match；任何缺口返回 Err，事务 drop 时整事务 rollback。
+        if parent_aware {
+            // T-1788392053931-05b8a0e4：workspace exact match 必须比对 child 的**原始
+            // 请求 workspace_id**（numeric 漂移的 reconciliation 只在 binding 层按
+            // instance 对齐，不得侵蚀 parent-child workspace 一致性门禁）。若此处传
+            // reconciled 的 eff_workspace_id，workspace_id=2/9 会被 by_instance 误判为
+            // 漂移而 reconcile 成 parent 的 workspace，从而绕过 mismatch 拒绝，最终在
+            // role-contract lineage 写入处以 FK 失败暴露成 internal_error（掩盖本应
+            // 返回的 E_WORKSPACE_AUTHORITY_MISMATCH）。
+            validate_parent_for_child_create(
+                &tx,
+                &parent_id,
+                workspace_id,
+                &workspace_instance_id,
+                &peer.owner_key(),
+            )?;
+        }
 
         tx.execute(
             "INSERT INTO tasks 
@@ -2197,11 +2855,14 @@ impl TaskCollabStore {
         .map_err(|e| DaemonRpcError::internal_error(format!("task_create 失败: {}", e)))?;
 
         // 不可变 task→workspace binding 与 task 行同一事务写入（§8.1.1）。
+        // T-1788392053931-05b8a0e4：instance 取 resolver 产出的 canonical 权威
+        // （resolve_create_authority 已完成 numeric→task-DB 对齐），不再直接消费
+        // 请求原值，保证一次解析的 canonical authority 贯穿 binding/capture。
         let (binding_id, capture_id) = bind_task_to_workspace(
             &tx,
             &task_id,
-            workspace_id,
-            &workspace_instance_id,
+            eff_workspace_id,
+            &authority.canonical_instance_id,
             &peer.owner_key(),
         )?;
 
@@ -2209,7 +2870,7 @@ impl TaskCollabStore {
             "INSERT INTO task_events 
              (task_id, workspace_id, from_status, to_status, reason_code, reason, actor_identity, monotonic_seq, authoritative_timestamp)
              VALUES (?1, ?2, 'none', 'open', 'created', ?3, ?4, ?5, ?6)",
-            params![task_id, workspace_id.to_string(), title, peer.owner_key(), seq, ts],
+            params![task_id, eff_workspace_id.to_string(), title, peer.owner_key(), seq, ts],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("task_event append 失败: {}", e)))?;
 
@@ -2263,6 +2924,12 @@ impl TaskCollabStore {
             } else {
                 caller_envelope
             };
+            // T-1788392053931-05b8a0e4：contract bootstrap 的 workspace_id 必须用
+            // resolver 产出的 canonical task-DB id（eff_workspace_id），而非请求原值。
+            // 否则当请求的 registry 数字 id（如 1102）经 instance 对齐 reconcile 到
+            // task-DB workspace 1 时，role_contract_lineages / task_contract_revisions /
+            // task_step_role_contract_bindings 会以 1102 写入，命中 workspaces.id 外键
+            // 失败而暴露成 internal_error（FK），掩盖本应成功的 canonical 绑定。
             let projection = bootstrap_task_governance_contracts(
                 &tx,
                 &BootstrapInput {
@@ -2271,7 +2938,7 @@ impl TaskCollabStore {
                     created_by: peer.owner_key(),
                     role_contract_source: "legacy".to_string(),
                 },
-                workspace_id,
+                eff_workspace_id,
             )?;
             // exact match：事务内回读已持久化 envelope 的 policy，与 caller 输入比对；
             // 不一致即拒绝提交（整事务回滚），杜绝声明与持久化漂移。
@@ -2325,9 +2992,11 @@ impl TaskCollabStore {
             "monotonic_seq".to_string(),
             Value::Number(serde_json::Number::from(seq)),
         );
+        // T-1788392053931-05b8a0e4：响应返回 canonical task-DB workspace_id，与
+        // 实际绑定的 binding/capture 一致，而非客户端传入的 registry 数字 id。
         res.insert(
             "workspace_id".to_string(),
-            Value::Number(serde_json::Number::from(workspace_id)),
+            Value::Number(serde_json::Number::from(eff_workspace_id)),
         );
         res.insert(
             "workspace_instance_id".to_string(),

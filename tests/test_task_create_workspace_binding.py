@@ -39,76 +39,104 @@ from callwarden.server.daemon_client import (
 class _FakeClient:
     """可控的假 daemon RPC client（记录调用）。"""
 
-    def __init__(self, inject_result, status_result=None, status_error=None):
-        self.inject_result = inject_result
-        self.status_result = status_result
-        self.status_error = status_error
+    def __init__(self, workspace_rows, statuses):
+        self.workspace_rows = workspace_rows
+        self.statuses = statuses
         self.calls = []
 
     def call(self, method, params):
         self.calls.append((method, params))
-        if method == "mcp.daemon_client.inject_workspace_id":
-            return self.inject_result
+        if method == "workspace.list":
+            return self.workspace_rows
         if method == "workspace.status":
-            if self.status_error is not None:
-                raise self.status_error
-            return self.status_result
+            result = self.statuses[params["workspace_instance_id"]]
+            if isinstance(result, Exception):
+                raise result
+            return result
         raise AssertionError(f"unexpected method: {method}")
 
 
-def test_resolve_pair_returns_daemon_authoritative_pair(monkeypatch):
-    """A1：daemon 返回 workspace_id + workspace.status 返回 instance → 配对原样返回。"""
+def _workspace_row(root, instance_id, status="active"):
+    return {
+        "client_view_root": root,
+        "workspace_instance_id": instance_id,
+        "status": status,
+    }
+
+
+def _canonical_status(registry_id, instance_id, task_db_id=1,
+                      task_db_instance_id=None):
+    return {
+        "registry_workspace_id": registry_id,
+        "registry_instance_id": instance_id,
+        "task_db_workspace_id": task_db_id,
+        "task_db_instance_id": task_db_instance_id or instance_id,
+    }
+
+
+def test_resolve_pair_returns_current_root_canonical_pair(monkeypatch):
+    """A1：忽略别的项目和旧注册行，只接收当前根目录的一致 binding。"""
+    canonical = "canonical-callwarden"
+    stale = "stale-callwarden"
     fake = _FakeClient(
-        inject_result={"params": {"workspace_id": 10}, "injected": True},
-        status_result={"workspace_id": 10, "workspace_instance_id": "2bba6e894ee2546f",
-                       "status": "active"},
+        workspace_rows=[
+            _workspace_row(r"C:\work\tokenslim", "tokenslim"),
+            _workspace_row(r"C:\work\callwarden", stale),
+            _workspace_row(r"C:\work\callwarden", canonical),
+        ],
+        statuses={
+            stale: _canonical_status(100, stale, task_db_id=None),
+            canonical: _canonical_status(1174, canonical),
+        },
     )
     monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
                         lambda: fake)
-    pair = resolve_workspace_pair_from_daemon()
-    assert pair == {"workspace_id": 10, "workspace_instance_id": "2bba6e894ee2546f"}
-    # 只调用了 inject + workspace.status，无任何本地推导
+    pair = resolve_workspace_pair_from_daemon(r"C:\work\callwarden")
+    assert pair == {"workspace_id": 1, "workspace_instance_id": canonical}
     assert [m for m, _ in fake.calls] == [
-        "mcp.daemon_client.inject_workspace_id", "workspace.status"]
+        "workspace.list", "workspace.status", "workspace.status"]
 
 
-def test_resolve_pair_missing_workspace_id_fails_closed(monkeypatch):
-    """A1：daemon 未解析出 workspace_id（无 active workspace）→ fail-closed。"""
-    fake = _FakeClient(inject_result={"params": {}, "injected": True})
-    monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
-                        lambda: fake)
-    with pytest.raises(DaemonUnavailableError):
-        resolve_workspace_pair_from_daemon()
-
-
-def test_resolve_pair_workspace_not_registered_fails_closed(monkeypatch):
-    """A1：workspace 未在 daemon 注册表（legacy is_active id 不在注册表）→ fail-closed。
-
-    绝不猜测 instance / 绝不回退 active workspace（forbid_numeric_guess /
-    forbid_active_workspace_fallback）。
-    """
-    from callwarden.server.daemon_client import DaemonRemoteError
-    err = DaemonRemoteError("workspace_not_found", "10")
+def test_resolve_pair_missing_current_root_fails_closed(monkeypatch):
+    """A1：注册表没有当前项目根目录时 fail-closed，绝不读全局 active 行。"""
     fake = _FakeClient(
-        inject_result={"params": {"workspace_id": 10}, "injected": True},
-        status_error=err,
+        workspace_rows=[_workspace_row(r"C:\work\tokenslim", "tokenslim")],
+        statuses={},
     )
     monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
                         lambda: fake)
     with pytest.raises(DaemonUnavailableError):
-        resolve_workspace_pair_from_daemon()
+        resolve_workspace_pair_from_daemon(r"C:\work\callwarden")
 
 
-def test_resolve_pair_missing_instance_fails_closed(monkeypatch):
-    """A1：workspace.status 未返回 workspace_instance_id → fail-closed。"""
+def test_resolve_pair_unreconciled_candidate_fails_closed(monkeypatch):
+    """A1：registry 与 task DB instance 不一致时绝不合成或回退。"""
     fake = _FakeClient(
-        inject_result={"params": {"workspace_id": 72}, "injected": True},
-        status_result={"workspace_id": 72},  # 缺 instance
+        workspace_rows=[_workspace_row(r"C:\work\callwarden", "stale")],
+        statuses={"stale": _canonical_status(1174, "stale", task_db_instance_id="ws-10")},
     )
     monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
                         lambda: fake)
     with pytest.raises(DaemonUnavailableError):
-        resolve_workspace_pair_from_daemon()
+        resolve_workspace_pair_from_daemon(r"C:\work\callwarden")
+
+
+def test_resolve_pair_multiple_canonical_candidates_fails_closed(monkeypatch):
+    """A1：存在多个一致候选时 fail-closed，不任选一个。"""
+    fake = _FakeClient(
+        workspace_rows=[
+            _workspace_row(r"C:\work\callwarden", "one"),
+            _workspace_row(r"C:\work\callwarden", "two"),
+        ],
+        statuses={
+            "one": _canonical_status(1174, "one"),
+            "two": _canonical_status(1175, "two"),
+        },
+    )
+    monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
+                        lambda: fake)
+    with pytest.raises(DaemonUnavailableError):
+        resolve_workspace_pair_from_daemon(r"C:\work\callwarden")
 
 
 # ----------------------------------------------------------------------

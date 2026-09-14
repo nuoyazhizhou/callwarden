@@ -1,0 +1,78 @@
+{
+  "task_id": "T-1788447967354-616aa470",
+  "step_id": "S-1788447967355-617a8098",
+  "step_name": "verify_daemon_round_trip",
+  "status": "passed",
+  "authority": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "transport": "http",
+    "runtime_receipt": "C:/Users/wanpi/.callwarden/runtime/evidence/20260903-235820-0e34781d349c-d84bc3b2.json",
+    "runtime_receipt_sha256": "sha256:8b9cdbffe14829ac2c04947239c52c21c7ff1d5706fab76df46570762a37a00d",
+    "git_head": "0e34781d349c955a5a5c3ee8abb7e962d7efdda1"
+  },
+  "implementation": {
+    "lease_recovery": {
+      "method": "lease.recover",
+      "authorization_before_dedupe": true,
+      "healthy_active_lease_rejected": "E_LEASE_RECOVERY_NOT_ELIGIBLE",
+      "orphaned_lease_transition": "active -> expired",
+      "assignment_transition": "claimed -> stale",
+      "same_holder_claim_transition": "claimed -> claim_released",
+      "raw_token_returned": false,
+      "raw_token_persisted": false
+    },
+    "source_sha256": {
+      "rust_ext/src/daemon/task_collab.rs": "sha256:3b9f0ce201fcf07c1b82b6106b31cc3138acc494dada0b1d4d86f4480c4bf87c",
+      "rust_ext/src/daemon/dispatch.rs": "sha256:5dc9f6a31b3db614dfe771019147e4d5bf5b4db2d9c7ba1a36b0e3a4157e888c",
+      "rust_ext/src/daemon/task_loop/lifecycle_lease.rs": "sha256:993e40463645826038c383635c6dd764088940797f82b25ca4417f3d7c62336d",
+      "rust_ext/src/daemon/task_collab_tests_lease.rs": "sha256:677cc6db8ad291aa71c570f1e51ba76884eb7a85fcc9ebf327a56a8d5b727d43",
+      "tests/e2e_lease_recovery.py": "sha256:df84ea0dd69961b8bd12c12b099c62d585b60ea4a5032189fea59ef097edcb3b"
+    }
+  },
+  "verification": {
+    "rust_focused_tests": {
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml lease_recover --lib",
+      "result": "3 passed, 0 failed"
+    },
+    "cargo_check": {
+      "command": "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml",
+      "result": "passed; pre-existing warnings only"
+    },
+    "http_e2e": {
+      "command": "python tests/e2e_lease_recovery.py",
+      "result": "LEASE_RECOVERY_E2E_PASS",
+      "positive": "expired lease + paired assignment stale + same-holder claim released",
+      "replay": "stable response and unchanged projections at HTTP transport dedup boundary",
+      "negative": "healthy active lease refused with E_LEASE_RECOVERY_NOT_ELIGIBLE",
+      "observed_lease_id": "L-8cf97eb63f8ffd10",
+      "observed_fencing_counter": 4,
+      "cleanup_claim_released_event_id": 6782
+    },
+    "post_run_projection": {
+      "current_assignment": null,
+      "active_executor_lease": false,
+      "apply_or_close_attempted": false
+    }
+  },
+  "historical_correction": {
+    "step2_report_request_id": "req-3d227794440b",
+    "recorded_evidence_hash": "sha256:pending-local-evidence-hash",
+    "actual_evidence_file_sha256": "sha256:9d6266a6b62032f8fd93a7fc71f06c5fc3bd99927f4ec23229ec12753d9202e7",
+    "policy": "historical report and daemon event are preserved; the mismatch is disclosed append-only and not rewritten"
+  },
+  "scope": {
+    "changed_path": "tests/e2e_lease_recovery.py",
+    "source_fix_paths": [
+      "rust_ext/src/daemon/task_collab.rs",
+      "rust_ext/src/daemon/task_collab_tests_lease.rs"
+    ],
+    "forbidden_actions_respected": [
+      "no direct SQLite mutation",
+      "no apply",
+      "no close",
+      "no historical evidence rewrite",
+      "no raw token in evidence"
+    ]
+  }
+}

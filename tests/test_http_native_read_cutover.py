@@ -1,34 +1,36 @@
 """H4B-N: Native read/query HTTP cutover 测试
 
-验证 tools_query.py / tools_workspace.py 在 HTTP daemon 模式下只路由真实存在的
+验证 tools_query.py / tools_workspace.py 在 `_route` 化后只下发真实存在的
 rust_native RPC，不建立指向不存在 RPC 的伪路由（fail-closed 契约：伪路由会在
 HTTP 模式抛 method_not_found）。
 
+MCP 工具层 cutover（A 桶）：`server/tools/tools_query.py:56` /
+`server/tools/tools_workspace.py:29` 均为
+`from ..daemon_client import route_rpc as _route`，所有工具体退化为一行式
+`return _route('<rpc method>', {...}, '<OP_CLASS>')`；HTTP/local/compat 分流
+整体下沉 `server/daemon_client.py::route_rpc`。因此本文件 1–4 节锁定
+「`_route` 三元组（method/params/op_class）+ 回包透传 + 失败 fail-closed 不回落
+本地 get_db」，旧 seam（`_get_daemon_client()`、`_call_daemon_rpc`、
+`is_http_transport_enabled()`）已无调用点。
+
 归类依据：.trae-cn/evidence/http-daemon-capability-matrix.json（237 tools 矩阵）
 
-- tools_query.py rust_native（H4A 已建路由，走 _get_daemon_client()）10 个：
-  get_stats / search_symbols / get_symbol / get_symbol_location / get_file_symbols /
-  get_callers / get_callees / get_topological_order / get_call_chain_down / detect_cycles
-  W2-1（T-1786840097330-dec66710）：+ get_uncommented_symbols / get_module_call_stats /
-  get_semgrep_stats（HTTP 分支直连 HttpDaemonRpcClient 便捷方法），共 13 个
-  W3-3（T-1786861820151-deb64c48）：+ get_semgrep_findings，共 14 个
-- tools_query.py 本地 SQL（矩阵 daemon_rpc_method=none / 语义不映射）3 个：
-  get_issue_summary / find_issues / get_test_coverage（M2.4/M2.5 说明）
-- tools_query.py python_compat（归 H4B-compat-read，待 compat_route 扩展）15 个：
-  其余工具保持本地 get_db() 执行
-- tools_workspace.py rust_native（H4A 已建路由）2 个：
-  list_workspaces（workspace.list）/ get_active_workspace
-  （W1-1，T-1786808777378-bbcbf059：经 HttpDaemonRpcClient.workspace_status
-  便捷方法 → workspace.status，替代修复前缺 workspace_instance_id 注入的
-  workspace.activate {} 直接调用——Rust handle_workspace_activate/status
-  强制 require workspace_instance_id，旧调用返回 invalid_params）
-- tools_workspace.py python_compat / legacy_local 25 个：保持本地执行
+- tools_query.py rust_native 14 个：get_stats / search_symbols / get_symbol /
+  get_symbol_location / get_file_symbols / get_callers / get_callees /
+  get_topological_order / get_call_chain_down / detect_cycles /
+  get_uncommented_symbols / get_module_call_stats / get_semgrep_stats /
+  get_semgrep_findings
+- tools_query.py 其余工具（get_issue_summary / find_issues / get_test_coverage /
+  get_symbol_history / get_impact / get_top_callers 等）同样 `_route` 化，
+  本地/compat 回退由 `route_rpc` 内部承担
+- tools_workspace.py 全部工具 `_route` 化（list_workspaces→workspace.list、
+  get_active_workspace→workspace.status、build_graph→workspace.build_graph 等）
 
-H4B-N 复审整改（BLOCKED → 已修复）：
-- HttpDaemonRpcClient.get_stats / search_symbols / get_active_workspace /
-  set_active_workspace 的 RPC 名已对齐 dispatch.rs（query.stats / query.search /
-  workspace.activate），见本文件「真实进程级 RPC 名对齐门」。
-- tools_workspace.py get_active_workspace 工具的 _call_daemon_rpc 名已同步对齐。
+真实进程级 RPC 名对齐门（第 5 节 TestRealDaemonRpcNameAlignment）：dispatch.rs
+仅存在 query.stats / query.search，隔离 daemon 未注册 workspace、未发布
+snapshot 时调用会返回业务错误（invalid_params / snapshot_not_ready），但绝不
+返回 method_not_found。该节需要隔离 daemon harness（cw-daemon 二进制 + 发布
+manifest），属环境/harness 依赖，本文件保持原样不动。
 
 超范围遗留（需后续任务处理，本任务不触碰）：
 - http_server.rs::build_capability_registry 宣告的 "workspace.active" / "stats"
@@ -62,41 +64,28 @@ from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 # 辅助夹具
 # ============================================================
 
-DB_PATH = "/tmp/h4b_test.db"
 
+def _route_recorder(monkeypatch, module, result=None):
+    """patch 模块级 `_route`，记录 (method, params, op_class) 并返回固定回包。
 
-@pytest.fixture
-def mock_http_mode(monkeypatch):
-    """启用 HTTP 模式（is_http_transport_enabled 返回 True）。"""
-    monkeypatch.setattr(
-        "callwarden.server.daemon_client.is_http_transport_enabled",
-        lambda: True,
-    )
-
-
-@pytest.fixture
-def mock_daemon_client(monkeypatch):
-    """patch tools_query._get_daemon_client / _get_db_path_for_daemon，返回 mock client。
-
-    W2-1（T-1786840097330-dec66710）：同时固定 tools_query.is_http_transport_enabled
-    =True——三工具 HTTP 分支依赖该判断，避免 CI 环境设置 CW_DAEMON_TRANSPORT
-    导致分支偏移（tools_query 经 `from callwarden.config import is_http_transport_enabled`
-    绑定引用，patch daemon_client 模块不影响 tools_query）。
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：生产工具体已从
+    `_get_daemon_client()` / `_call_daemon_rpc()` / `is_http_transport_enabled()`
+    分支退化为一行式 `return _route('<rpc method>', {...}, '<OP_CLASS>')`
+    （`server/tools/tools_query.py:56`、`server/tools/tools_workspace.py:29`），
+    HTTP/local/compat 分流整体下沉 `server/daemon_client.py::route_rpc`。
+    旧 seam（client 便捷方法计数、`_call_daemon_rpc` 名断言）已无调用点，
+    故改为锁定 `_route` 三元组。
     """
-    client = MagicMock()
-    monkeypatch.setattr(
-        "callwarden.server.tools.tools_query._get_daemon_client",
-        lambda: client,
-    )
-    monkeypatch.setattr(
-        "callwarden.server.tools.tools_query._get_db_path_for_daemon",
-        lambda: DB_PATH,
-    )
-    monkeypatch.setattr(
-        "callwarden.server.tools.tools_query.is_http_transport_enabled",
-        lambda: True,
-    )
-    return client
+    seen = {}
+
+    def fake_route(method, params, op_class):
+        seen["method"] = method
+        seen["params"] = dict(params)
+        seen["op"] = op_class
+        return result if result is not None else {"ok": True}
+
+    monkeypatch.setattr(module, "_route", fake_route)
+    return seen
 
 
 def _register_tools(module, mcp=None):
@@ -118,311 +107,301 @@ def _register_tools(module, mcp=None):
 
 
 # ============================================================
-# 1. tools_query.py rust_native 路由（H4A 已建，走 _get_daemon_client）
+# 1. tools_query.py rust_native 路由（`_route` 化，走真实 RPC 名）
 # ============================================================
 
-# (工具名, 调用 args, 调用 kwargs, client 方法, client args, client kwargs, 返回值)
+# (工具名, 调用 args, 调用 kwargs, RPC method, 期望 params)
 NATIVE_READ_CASES = [
     pytest.param(
-        "get_stats", (), {},
-        "get_stats", (), {"db_path": DB_PATH},
-        {"files": 10, "functions": 20},
+        "get_stats", (), {}, "query.stats", {},
         id="get_stats",
     ),
     pytest.param(
-        "search_symbols", ("fn_a",), {},
-        "search_symbols", ("fn_a",), {"kind": None, "limit": 20, "db_path": DB_PATH},
-        [{"qualified_name": "test::fn_a"}],
+        "search_symbols", ("fn_a",), {}, "query.search",
+        {"query": "fn_a", "kind": "", "limit": 20},
         id="search_symbols",
     ),
     pytest.param(
-        "get_symbol", ("test::fn_a",), {},
-        "get_symbol", ("test::fn_a",), {"db_path": DB_PATH},
+        "get_symbol", ("test::fn_a",), {}, "query.symbol",
         {"qualified_name": "test::fn_a"},
         id="get_symbol",
     ),
     pytest.param(
-        "get_symbol_location", ("fn_a",), {},
-        "get_symbol_location", ("fn_a",), {"file_path": "", "db_path": DB_PATH},
-        {"file": "a.rs", "line": 1},
+        "get_symbol_location", ("fn_a",), {}, "query.symbol_location",
+        {"name": "fn_a", "file_path": ""},
         id="get_symbol_location",
     ),
     pytest.param(
-        "get_file_symbols", ("src/main.rs",), {},
-        "get_file_symbols", ("src/main.rs",), {"db_path": DB_PATH},
-        [{"name": "main"}],
+        "get_file_symbols", ("src/main.rs",), {}, "query.file",
+        {"file_path": "src/main.rs"},
         id="get_file_symbols",
     ),
     pytest.param(
-        "get_callers", ("fn_a",), {},
-        "get_callers", ("fn_a", None), {"db_path": DB_PATH},
-        [{"caller": "fn_b"}],
+        "get_callers", ("fn_a",), {}, "query.callers",
+        {"callee_name": "fn_a", "qualified_name": None},
         id="get_callers",
     ),
     pytest.param(
-        "get_callees", ("fn_a",), {},
-        "get_callees", ("fn_a", None), {"db_path": DB_PATH},
-        [{"callee": "fn_c"}],
+        "get_callees", ("fn_a",), {}, "query.callees",
+        {"caller_name": "fn_a", "qualified_name": None},
         id="get_callees",
     ),
     pytest.param(
-        "get_topological_order", (), {},
-        "get_topological_order", (), {"limit": 50, "db_path": DB_PATH},
-        ["test::fn_a"],
+        "get_topological_order", (), {}, "query.topological_order", {"limit": 50},
         id="get_topological_order",
     ),
     pytest.param(
-        "detect_cycles", (), {},
-        "detect_cycles", (), {"max_depth": 10, "db_path": DB_PATH},
-        [["a", "b"]],
+        "detect_cycles", (), {}, "query.detect_cycles", {"max_depth": 10},
         id="detect_cycles",
     ),
 ]
 
 
 class TestToolsQueryNativeRead:
-    """tools_query.py 中 10 个 rust_native 工具在 daemon 模式下走 client 路由。"""
+    """tools_query.py 中 rust_native 工具经模块级 `_route` 下发真实 RPC（READ_ONLY）。"""
 
     @pytest.mark.parametrize(
-        "tool_name,args,kwargs,client_method,expect_args,expect_kwargs,expected",
+        "tool_name,args,kwargs,rpc_method,expect_params",
         NATIVE_READ_CASES,
     )
-    def test_native_read_routes_to_client(self, mock_daemon_client, tool_name, args,
-                                          kwargs, client_method, expect_args,
-                                          expect_kwargs, expected):
+    def test_native_read_routes_to_route(self, monkeypatch, tool_name, args,
+                                         kwargs, rpc_method, expect_params):
+        """工具经 `_route` 下发 READ_ONLY RPC，params 逐字透传，回包透传，不碰本地 db。
+
+        stale 依据：旧用例 patch `tools_query._get_daemon_client` 并断言 client
+        便捷方法被调用；`server/tools/tools_query.py:56` 已改为
+        `from ..daemon_client import route_rpc as _route`，各工具体（tools_query.py
+        :63/:74/:87/:97/:110/:123/:136/:180/:260）均 `return _route(..., 'READ_ONLY')`，
+        client 便捷方法已无调用点（故旧断言恒为 `Called 0 times`）。
+        """
+        seen = _route_recorder(monkeypatch, tools_query, result={"ok": True})
         tools = _register_tools(tools_query)
-        mock_method = getattr(mock_daemon_client, client_method)
-        mock_method.return_value = expected
+        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+            result = tools[tool_name](*args, **kwargs)
+            mock_db.assert_not_called()
+        assert result == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
 
-        result = tools[tool_name](*args, **kwargs)
+    def test_get_call_chain_down_passthrough(self, monkeypatch):
+        """get_call_chain_down：`_route` 回包逐字透传（旧 list→dict 兼容转换已移除）。
 
-        mock_method.assert_called_once_with(*expect_args, **expect_kwargs)
-        assert result == expected
-
-    def test_get_call_chain_down_converts_list_to_dict(self, mock_daemon_client):
-        """get_call_chain_down：daemon 返回 list，MCP 接口期望 dict（兼容旧格式）。"""
+        stale 依据：旧用例断言 `client.get_call_chain_down(...)` 并把 daemon 返回
+        的 list 转成 `{"chain": [...], "edges": [...]}`；`tools_query.py:200`
+        已退化为 `return _route('query.call_chain_down', {...}, 'READ_ONLY')`，
+        不再做任何形状转换。
+        """
+        seen = _route_recorder(monkeypatch, tools_query, result=["a", "b"])
         tools = _register_tools(tools_query)
-        mock_daemon_client.get_call_chain_down.return_value = ["a", "b"]
 
         result = tools["get_call_chain_down"]("test::fn_a", max_depth=3)
 
-        mock_daemon_client.get_call_chain_down.assert_called_once_with(
-            "test::fn_a", max_depth=3, db_path=DB_PATH
-        )
-        assert result == {"chain": ["a", "b"], "edges": ["a", "b"]}
+        assert result == ["a", "b"]
+        assert seen["method"] == "query.call_chain_down"
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == {"qualified_name": "test::fn_a", "max_depth": 3}
 
 
 # ============================================================
-# 2. tools_query.py 非 rust_native 工具：HTTP 模式下保持本地执行
+# 2. tools_query.py 其余工具：同样 `_route` 化（分流下沉 route_rpc）
 # ============================================================
 
-LOCAL_KEEP_CASES = [
-    # (工具名, 调用 args, 调用 kwargs, db 方法, db args, db kwargs, 返回值)
+# (工具名, 调用 args, 调用 kwargs, RPC method, 期望 params)
+COMPAT_ROUTE_CASES = [
     pytest.param(
-        "get_issue_summary", (), {}, "get_issue_summary", (), {},
-        {"total_issues": 10}, id="local-sql-get_issue_summary",
+        "get_issue_summary", (), {}, "get_issue_summary", {},
+        id="get_issue_summary",
     ),
     pytest.param(
-        "find_issues", ("unwrap_call",), {}, "get_function_issues", (),
-        {"issue_filter": "unwrap_call", "limit": 30},
-        [{"issue_type": "unwrap_call"}], id="local-sql-find_issues",
+        "find_issues", ("unwrap_call",), {}, "find_issues",
+        {"issue_type": "unwrap_call", "limit": 30}, id="find_issues",
     ),
     pytest.param(
-        "get_test_coverage", (), {}, "get_test_coverage", (), {},
-        {"total_tests": 5}, id="local-sql-get_test_coverage",
+        "get_test_coverage", (), {}, "get_test_coverage", {},
+        id="get_test_coverage",
     ),
     pytest.param(
         "get_symbol_history", ("test::fn_a",), {}, "get_symbol_history",
-        ("test::fn_a",), {}, [{"version": 1}], id="python_compat-get_symbol_history",
+        {"qualified_name": "test::fn_a"}, id="get_symbol_history",
     ),
     pytest.param(
-        "get_impact", ("test::fn_a",), {"max_depth": 5}, "get_call_chain_up",
-        ("test::fn_a",), {"max_depth": 5}, {"chain": []}, id="python_compat-get_impact",
+        "get_impact", ("test::fn_a",), {"max_depth": 5}, "get_impact",
+        {"qualified_name": "test::fn_a", "max_depth": 5}, id="get_impact",
     ),
     pytest.param(
-        "get_top_callers", (), {}, "get_top_callers", (),
-        {"limit": 20, "kind": "fn", "module_filter": ""},
-        [{"name": "fn_a"}], id="python_compat-get_top_callers",
+        "get_top_callers", (), {}, "get_top_callers",
+        {"limit": 20, "kind": "fn", "module_filter": ""}, id="get_top_callers",
     ),
 ]
 
 
-class TestToolsQueryStaysLocal:
-    """非 rust_native 工具的 HTTP/legacy 路由边界（W2-1 同步修正断言）。
+class TestToolsQueryCompatRouted:
+    """非 rust_native 工具同样退化为 `_route`（分流下沉 route_rpc）。
 
-    H4C-2 之后这些工具经 route_worker_call：HTTP 模式 fail-closed（经 compat
-    worker RPC 执行，client 失败即上抛，不回落本地 SQLite）；仅 legacy local
-    模式（is_http_transport_enabled()=False + mode=local）才回退 get_db()
-    本地执行。原断言「HTTP 模式下调用 get_db」与 fail-closed 契约相悖，且
-    依赖本机是否运行 daemon（非确定性），W2-1（T-1786840097330-dec66710）
-    一并修正。
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：旧用例把这里当作「HTTP 模式经
+    compat worker / legacy 回退 get_db」的边界，patch
+    `daemon_client._get_rpc_client_for_route` / `get_daemon_mode` 并断言本地 db
+    方法调用。`server/tools/tools_query.py:56` 全面 `_route` 化后，这些工具体
+    （tools_query.py:289/:303/:434/:145/:190/:211）均 `return _route(..., 'READ_ONLY')`，
+    HTTP/local/compat 分流已整体下沉 `route_rpc`，工具层不再判断模式。
+
+    本类只锁定「下发哪个 RPC、params 逐字透传、READ_ONLY、失败 fail-closed
+    且不回落本地 get_db」；真实 local 回退行为由 `route_rpc` 单测覆盖。
     """
 
     @pytest.mark.parametrize(
-        "tool_name,args,kwargs,db_method,db_args,db_kwargs,expected",
-        LOCAL_KEEP_CASES,
+        "tool_name,args,kwargs,rpc_method,expect_params",
+        COMPAT_ROUTE_CASES,
     )
-    def test_http_mode_routes_worker_no_db(self, mock_http_mode, tool_name, args,
-                                           kwargs, db_method, db_args, db_kwargs,
-                                           expected):
-        """HTTP 模式：经 compat worker RPC 执行（result 透传），不调用 get_db。"""
-        client = MagicMock()
-        client.call.return_value = expected
-        with patch(
-            "callwarden.server.daemon_client._get_rpc_client_for_route",
-            return_value=client,
-        ), patch("callwarden.server.tools.tools_query.get_db") as mock_get_db:
-            tools = _register_tools(tools_query)
-
+    def test_compat_tools_route_read_only_rpc(self, monkeypatch, tool_name, args,
+                                              kwargs, rpc_method, expect_params):
+        seen = _route_recorder(monkeypatch, tools_query, result={"ok": True})
+        tools = _register_tools(tools_query)
+        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
             result = tools[tool_name](*args, **kwargs)
-
-            mock_get_db.assert_not_called()
-            assert result == expected
+            mock_db.assert_not_called()
+        assert result == {"ok": True}
+        assert seen["method"] == rpc_method
+        assert seen["op"] == "READ_ONLY"
+        assert seen["params"] == expect_params
 
     @pytest.mark.parametrize(
-        "tool_name,args,kwargs,db_method,db_args,db_kwargs,expected",
-        LOCAL_KEEP_CASES,
+        "tool_name,args,kwargs,rpc_method,expect_params",
+        COMPAT_ROUTE_CASES,
     )
-    def test_legacy_local_mode_falls_back_to_db(self, monkeypatch, tool_name, args,
-                                                kwargs, db_method, db_args, db_kwargs,
-                                                expected):
-        """legacy local 模式（HTTP 关闭 + mode=local）→ 回退 get_db() 本地执行。"""
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.is_http_transport_enabled",
-            lambda: False,
-        )
-        monkeypatch.setattr(
-            "callwarden.server.daemon_client.get_daemon_mode",
-            lambda: "local",
-        )
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            getattr(mock_db, db_method).return_value = expected
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_query)
+    def test_compat_tools_fail_closed_no_local_fallback(
+        self, monkeypatch, tool_name, args, kwargs, rpc_method, expect_params,
+    ):
+        """`_route` 抛 DaemonRemoteError → 原样传播，绝不回落本地 get_db。"""
+        def fake_route(method, params, op_class):
+            raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
 
-            result = tools[tool_name](*args, **kwargs)
-
-            getattr(mock_db, db_method).assert_called_once_with(*db_args, **db_kwargs)
-            assert result == expected
+        monkeypatch.setattr(tools_query, "_route", fake_route)
+        tools = _register_tools(tools_query)
+        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+            with pytest.raises(DaemonRemoteError):
+                tools[tool_name](*args, **kwargs)
+            mock_db.assert_not_called()
 
 
 # ============================================================
-# 3. tools_workspace.py：2 个 H4A 路由 + 其余本地保持
+# 3. tools_workspace.py：全部 `_route` 化
 # ============================================================
+
+# (工具名, 调用 args, 调用 kwargs, RPC method, 期望 params, op_class)
+WORKSPACE_ROUTE_CASES = [
+    pytest.param("list_workspaces", (), {}, "workspace.list", {}, "READ_ONLY",
+                 id="list_workspaces"),
+    pytest.param("get_active_workspace", (), {}, "workspace.status", {},
+                 "READ_ONLY", id="get_active_workspace"),
+    pytest.param("build_graph", (), {}, "workspace.build_graph", {},
+                 "PROTECTED_MUTATION", id="build_graph"),
+]
+
 
 class TestToolsWorkspaceRouting:
-    """tools_workspace.py 的 HTTP 路由（仅 H4A 的 2 个）与本地保持。"""
+    """tools_workspace.py 工具经模块级 `_route` 下发（含写面 op_class）。
+
+    stale 依据（A 桶 / MCP 工具 `_route` 化）：旧用例 `test_h4a_routes_via_rpc`
+    patch `tools_workspace._call_daemon_rpc`、`test_get_active_workspace_...`
+    patch `HttpDaemonRpcClient.get_instance` 并断言 `client.workspace_status(...)`、
+    `test_build_graph_stays_local_in_http_mode` 断言本地 `db.build_full_graph()`。
+    `server/tools/tools_workspace.py:29` 改为
+    `from ..daemon_client import route_rpc as _route`；对应工具体
+    （tools_workspace.py:89 list_workspaces /:161 get_active_workspace /
+    :59 build_graph）分别下发 workspace.list（READ_ONLY）/ workspace.status
+    （READ_ONLY）/ workspace.build_graph（PROTECTED_MUTATION）。旧 seam 已无调用点。
+    """
 
     @pytest.mark.parametrize(
-        "tool_name,rpc_method,expected",
-        [
-            pytest.param("list_workspaces", "workspace.list", [{"name": "ws1"}],
-                         id="list_workspaces-workspace.list"),
-        ],
+        "tool_name,args,kwargs,rpc_method,expect_params,op_class",
+        WORKSPACE_ROUTE_CASES,
     )
-    def test_h4a_routes_via_rpc(self, mock_http_mode, tool_name, rpc_method, expected):
-        with patch("callwarden.server.tools.tools_workspace._call_daemon_rpc") as mock_rpc:
-            mock_rpc.return_value = expected
-            tools = _register_tools(tools_workspace)
-
-            result = tools[tool_name]()
-
-            mock_rpc.assert_called_once_with(rpc_method, {})
-            assert result == expected
-
-    def test_get_active_workspace_via_workspace_status_convenience(self, mock_http_mode):
-        """W1-1：get_active_workspace HTTP 分支经 workspace_status 便捷方法注入
-        workspace_instance_id（修复前 workspace.activate {} 缺注入 → invalid_params）。"""
-        client = MagicMock()
-        client.workspace_status.return_value = {
-            "workspace_id": 1,
-            "workspace_instance_id": "inst-1",
-            "client_view_root": r"C:\ws1",
-            "host_real_root": r"C:\ws1",
-            "status": "active",
-        }
-        with patch(
-            "callwarden.server.daemon_client.HttpDaemonRpcClient.get_instance",
-            return_value=client,
-        ), patch(
-            "callwarden.server._mcp_common._get_db_path_for_daemon",
-            return_value=DB_PATH,
-        ):
-            tools = _register_tools(tools_workspace)
-            result = tools["get_active_workspace"]()
-
-        client.workspace_status.assert_called_once_with(db_path=DB_PATH)
-        # 兼容映射：client_view_root→root_path、name=basename 兜底
-        assert result["root_path"] == r"C:\ws1"
-        assert result["name"] == "ws1"
-        assert result["workspace_instance_id"] == "inst-1"
-
-    def test_build_graph_stays_local_in_http_mode(self, mock_http_mode):
-        """build_graph（python_compat）在 HTTP 模式仍走本地 db，不调用 RPC。"""
-        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_get_db:
-            mock_db = MagicMock()
-            mock_get_db.return_value = mock_db
-            tools = _register_tools(tools_workspace)
-
-            result = tools["build_graph"]()
-
-            assert result is True
-            mock_db.build_full_graph.assert_called_once_with()
+    def test_workspace_tools_route_via_route(self, monkeypatch, tool_name, args,
+                                             kwargs, rpc_method, expect_params,
+                                             op_class):
+        """工具经 `_route` 下发对应 RPC 与 op_class，params 逐字透传，不碰本地 db。"""
+        seen = _route_recorder(monkeypatch, tools_workspace, result=[{"name": "ws1"}])
+        tools = _register_tools(tools_workspace)
+        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
+            result = tools[tool_name](*args, **kwargs)
+            mock_db.assert_not_called()
+        assert result == [{"name": "ws1"}]
+        assert seen["method"] == rpc_method
+        assert seen["op"] == op_class
+        assert seen["params"] == expect_params
 
 
 # ============================================================
-# 4. fail-closed 静态验证：无伪路由
+# 4. 静态验证：全部 `_route` 化、无旧 seam、native 名对齐
 # ============================================================
 
 class TestNoPseudoRoutes:
-    """fail-closed：不得存在指向不存在 RPC 的伪路由。"""
+    """fail-closed：工具体统一 `_route`，无旧 client/RPC seam，native 名对齐。"""
 
-    QUERY_NATIVE = {
-        "get_stats", "search_symbols", "get_symbol", "get_symbol_location",
-        "get_file_symbols", "get_callers", "get_callees", "get_topological_order",
-        "get_call_chain_down", "detect_cycles",
-        # W2-1（T-1786840097330-dec66710）：三工具迁移 rust_native
-        "get_uncommented_symbols", "get_module_call_stats", "get_semgrep_stats",
-        # W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 迁移 rust_native
-        "get_semgrep_findings",
+    QUERY_NATIVE_RPC = {
+        "get_stats": "query.stats",
+        "search_symbols": "query.search",
+        "get_symbol": "query.symbol",
+        "get_symbol_location": "query.symbol_location",
+        "get_file_symbols": "query.file",
+        "get_callers": "query.callers",
+        "get_callees": "query.callees",
+        "get_topological_order": "query.topological_order",
+        "get_call_chain_down": "query.call_chain_down",
+        "detect_cycles": "query.detect_cycles",
+        "get_uncommented_symbols": "query.uncommented_symbols",
+        "get_module_call_stats": "query.module_call_stats",
+        "get_semgrep_stats": "query.semgrep_stats",
+        "get_semgrep_findings": "query.semgrep_findings",
     }
 
-    def test_query_native_tools_use_daemon_client(self):
-        """tools_query.py 的 14 个 rust_native 工具均走 _get_daemon_client()。"""
+    def test_query_native_tools_route_to_real_rpc(self):
+        """tools_query.py 的 rust_native 工具均 `_route('<真实 RPC 名>', ...)`。
+
+        stale 依据：旧断言 `_get_daemon_client()` in source 已过期——
+        `server/tools/tools_query.py:56` 全面 `_route` 化后，工具体不再出现该 seam。
+        """
         tools = _register_tools(tools_query)
-        for name, fn in tools.items():
-            if name in self.QUERY_NATIVE:
-                assert "_get_daemon_client()" in inspect.getsource(fn), (
-                    f"{name} 应走 _get_daemon_client()"
+        for name, rpc in self.QUERY_NATIVE_RPC.items():
+            assert f"_route('{rpc}'" in inspect.getsource(tools[name]), (
+                f"{name} 应经 _route 下发 {rpc}"
+            )
+
+    def test_no_legacy_daemon_seam_in_route_modules(self):
+        """两模块工具体不再出现 `_get_daemon_client(` / `_call_daemon_rpc(` 旧 seam。
+
+        stale 依据：旧用例按「native 走 _get_daemon_client()、其余走本地、
+        workspace 走 _call_daemon_rpc」三分法断言；cutover 后所有工具体统一
+        `return _route(...)`（tools_query.py:56 / tools_workspace.py:29），
+        故改为反向断言：旧 seam 调用点必须为 0。
+        """
+        for module in (tools_query, tools_workspace):
+            for name, fn in _register_tools(module).items():
+                source = inspect.getsource(fn)
+                assert "_get_daemon_client(" not in source, (
+                    f"{module.__name__}.{name} 不应再有 _get_daemon_client 调用"
+                )
+                assert "_call_daemon_rpc(" not in source, (
+                    f"{module.__name__}.{name} 不应再有 _call_daemon_rpc 调用"
+                )
+                assert "_route(" in source, (
+                    f"{module.__name__}.{name} 应经 _route 路由"
                 )
 
-    def test_query_local_tools_have_no_daemon_route(self):
-        """tools_query.py 其余 19 个工具不得含 client 或 RPC 伪路由。"""
-        tools = _register_tools(tools_query)
-        for name, fn in tools.items():
-            if name in self.QUERY_NATIVE:
-                continue
-            source = inspect.getsource(fn)
-            assert "_get_daemon_client" not in source, f"{name} 不应有 client 路由"
-            assert "_call_daemon_rpc" not in source, f"{name} 不应有 daemon RPC 伪路由"
-
-    def test_workspace_only_h4a_tools_have_rpc(self):
-        """tools_workspace.py 仅 2 个 H4A 工具含 daemon 路由：
-        list_workspaces 走 _call_daemon_rpc；get_active_workspace 经
-        workspace_status 便捷方法（W1-1）。其余 25 个保持本地。"""
+    def test_workspace_tools_route_to_real_rpc(self):
+        """tools_workspace.py 关键工具 `_route` 名对齐（含写面 PROTECTED_MUTATION）。"""
         tools = _register_tools(tools_workspace)
-        for name, fn in tools.items():
-            source = inspect.getsource(fn)
-            if name == "list_workspaces":
-                assert "_call_daemon_rpc" in source, "list_workspaces 应走 workspace.list"
-            elif name == "get_active_workspace":
-                assert "workspace_status" in source and "HttpDaemonRpcClient" in source, (
-                    "get_active_workspace 应经 workspace_status 便捷方法"
-                )
-            else:
-                assert "_call_daemon_rpc" not in source, f"{name} 不应有 daemon RPC 伪路由"
-                assert "workspace_status" not in source, f"{name} 不应有便捷方法路由"
+        expects = {
+            "list_workspaces": "workspace.list",
+            "get_active_workspace": "workspace.status",
+            "build_graph": "workspace.build_graph",
+        }
+        for name, rpc in expects.items():
+            assert f"_route('{rpc}'" in inspect.getsource(tools[name]), (
+                f"{name} 应经 _route 下发 {rpc}"
+            )
 
 
 # ============================================================
@@ -546,28 +525,15 @@ class TestRealDaemonRpcNameAlignment:
     """
 
     @pytest.fixture
-    def real_daemon(self, tmp_path):
-        """启动隔离真实 daemon，yield 生产类 HttpDaemonRpcClient。"""
-        bin_path = _find_daemon_binary()
-        if bin_path is None:
-            pytest.skip("cw-daemon 二进制不可用（需先 cargo build --bin cw-daemon）")
-        data_root = str(tmp_path / "data")
-        os.makedirs(data_root, exist_ok=True)
-        backup = _backup_http_manifest()
-        proc = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
-        try:
-            manifest = _wait_manifest(proc)
-            if manifest is None:
-                pytest.fail("隔离 daemon 未发布 manifest")
-            client = HttpDaemonRpcClient(
-                endpoint=manifest["endpoint"],
-                verify_health=False,
-                timeout=5.0,
-            )
-            yield client
-        finally:
-            _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, backup)
+    def real_daemon(self, w3_live):
+        """迁移到 conftest 模块级 `w3_live`（内部 tests/_w3_harness.setup_w3_client：
+        USERPROFILE 重定向 + workspace.register + task-DB seed + snapshot.publish），
+        取代本文件内联复制的 daemon spawn/manifest 逻辑——其 `_wait_manifest` 读父进程
+        `get_http_manifest_dir()`（共享 authority manifest 目录），与并行/共享 daemon
+        争用 → 假『隔离 daemon 未发布 manifest』。yield 生产类 HttpDaemonRpcClient，
+        测试语义零改动（get_stats/search_symbols 只校验非 method_not_found 或返回结构）。
+        """
+        yield w3_live["client"]
 
     def test_get_stats_rpc_name_aligned(self, real_daemon):
         """get_stats 走 query.stats：不得 method_not_found。"""

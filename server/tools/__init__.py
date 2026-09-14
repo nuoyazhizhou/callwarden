@@ -15,6 +15,7 @@ _MODULES = [
     "tools_p2_graph",
     "tools_p3_identity",
     "tools_p4_lease",
+    "tools_task_prompt",
 ]
 
 

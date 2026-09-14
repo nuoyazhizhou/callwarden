@@ -1,0 +1,198 @@
+{
+  "schema_version": "cw.bootstrap_recovery_work_order.v1",
+  "work_order_id": "role-prompt-v1-task-create-binding-bootstrap-recovery",
+  "status": "PLANNED_NOT_IMPORTED",
+  "import_state": "BLOCKED_BY_TASK_CREATE_BINDING_BUG",
+  "planning_owner": "planner",
+  "execution_owner": "executor",
+  "source": {
+    "base_gate_manifest_path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+    "base_gate_manifest_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+    "frozen_spec_path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "bootstrap_amendment_path": "docs/design/cw-role-prompt-compiler-v1-bootstrap-recovery-amendment.md",
+    "bootstrap_amendment_sha256": "C2E390EBE35890FB6A89FDC27876AB05255D6FFC6A7A3B0E0C519986D9FCBE45"
+  },
+  "failed_attempt": {
+    "task_id": "T-1788253722521-3b2f8420",
+    "step_id": "S-1788253727027-47bec72c",
+    "task_contract_id": "TC-T-1788253722521-3b2f8420",
+    "task_contract_revision": 1,
+    "task_contract_hash": "sha256:dff6148524fbb96cc4f34b9267f4b503bb7c162bbfe9c7258c11496e058964e5",
+    "executor_role_contract_hash": "sha256:ee8ce769d8166f2d3b298677708583d27263e7537aea37706f2c63402ca4779f",
+    "preservation": "append_only_no_claim_no_rewrite"
+  },
+  "workspace_authority": {
+    "expected_workspace_instance_id": "4baea3ff12c2ea5c",
+    "must_match_live_daemon_before_import": true,
+    "workspace_id_is_runtime_resolved": true,
+    "forbid_numeric_guess": true,
+    "forbid_synthetic_ws_id": true,
+    "forbid_active_workspace_fallback": true
+  },
+  "cards": [
+    {
+      "card_id": "BR-01",
+      "title": "Bootstrap BR-01: daemon strict task.create workspace binding and provenance readback",
+      "idempotency_key": "role-prompt-v1-bootstrap-br01-daemon-binding",
+      "predecessor": "T-1787850432491-f42a2b8c_COMPLETE_OR_DAEMON_CONFIRMED_NONOVERLAP",
+      "ownership_gate": {
+        "conflicting_task_id": "T-1787850432491-f42a2b8c",
+        "shared_path": "rust_ext/src/daemon/task_collab.rs",
+        "require_no_conflicting_assignment_or_lease": true,
+        "require_thin_integration_only": true
+      },
+      "allowed_paths": [
+        "rust_ext/src/daemon/task_collab.rs",
+        "rust_ext/src/daemon/task_collab_query.rs",
+        "rust_ext/src/daemon/task_loop/create.rs",
+        "rust_ext/src/daemon/task_loop/create_test.rs",
+        "rust_ext/src/daemon/task_collab_tests_core.rs",
+        "docs/evidence/role-prompt-v1-bootstrap-br01-daemon.json"
+      ],
+      "excluded_paths": [
+        "cli/**",
+        "server/**",
+        "db/**",
+        "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md"
+      ],
+      "steps": [
+        "reject_missing_or_blank_workspace_instance_before_domain_write",
+        "verify_numeric_instance_registry_pair",
+        "return_and_read_back_binding_capture_assignment_step_ids",
+        "run_atomicity_and_multi_workspace_matrix"
+      ],
+      "acceptance": [
+        "missing instance returns E_TASK_WORKSPACE_INSTANCE_REQUIRED with zero task/capture/binding/assignment rows",
+        "numeric/instance mismatch returns E_WORKSPACE_AUTHORITY_MISMATCH",
+        "create and task.status return identical workspace/binding/capture/assignment identifiers",
+        "production paths contain no empty-instance to ws-{id} synthesis",
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_create",
+        "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+        "tokenslim run git diff --check"
+      ],
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br01-daemon.json"
+    },
+    {
+      "card_id": "BR-02",
+      "title": "Bootstrap BR-02: Python cw task.create daemon binding parity",
+      "idempotency_key": "role-prompt-v1-bootstrap-br02-python-client",
+      "predecessor": "BR-01_COMPLETE_AND_DEPLOYED",
+      "allowed_paths": [
+        "cli/main.py",
+        "server/daemon_client.py",
+        "tests/test_task_create_workspace_binding.py",
+        "docs/cli_reference.md",
+        "i18n/en_US.json",
+        "i18n/zh_CN.json",
+        "docs/evidence/role-prompt-v1-bootstrap-br02-python-client.json"
+      ],
+      "excluded_paths": [
+        "rust_ext/src/daemon/**",
+        "db/**",
+        "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md"
+      ],
+      "steps": [
+        "resolve_workspace_pair_from_daemon_status",
+        "forward_workspace_id_and_workspace_instance_id",
+        "render_create_provenance_and_compare_readback",
+        "prove_no_sql_or_local_fallback"
+      ],
+      "acceptance": [
+        "Python CLI forwards the exact daemon-returned workspace pair",
+        "create output includes task/binding/capture/assignment/step identifiers",
+        "readback mismatch fails closed",
+        "daemon unavailable never creates a local task",
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_create_workspace_binding.py -q",
+        "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+        "tokenslim run git diff --check"
+      ],
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br02-python-client.json"
+    },
+    {
+      "card_id": "BR-03",
+      "title": "Bootstrap BR-03: runtime Rust cw task.create daemon binding parity",
+      "idempotency_key": "role-prompt-v1-bootstrap-br03-rust-cli",
+      "predecessor": "BR-02_COMPLETE",
+      "allowed_paths": [
+        "rust_ext/src/bin/cw_cli.rs",
+        "rust_ext/src/cli/runtime.rs",
+        "rust_ext/src/cli/task.rs",
+        "rust_ext/src/cli/task_enterprise.rs",
+        "docs/cli_reference.md",
+        "docs/evidence/role-prompt-v1-bootstrap-br03-rust-cli.json"
+      ],
+      "excluded_paths": [
+        "rust_ext/src/daemon/task_collab.rs",
+        "rust_ext/src/daemon/task_collab_query.rs",
+        "cli/**",
+        "server/**",
+        "db/**",
+        "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md"
+      ],
+      "steps": [
+        "resolve_workspace_pair_from_daemon_status",
+        "forward_workspace_id_and_workspace_instance_id",
+        "render_create_provenance_and_compare_readback",
+        "run_named_pipe_multi_workspace_e2e"
+      ],
+      "acceptance": [
+        "runtime/current cw forwards the exact daemon-returned workspace pair",
+        "local numeric active semantics never enter enterprise params",
+        "create output and task show expose identical provenance identifiers",
+        "Callwarden and TokenSlim task creation do not cross-bind",
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features cw_cli",
+        "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+        "tokenslim run git diff --check"
+      ],
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br03-rust-cli.json"
+    },
+    {
+      "card_id": "BR-04",
+      "title": "Bootstrap BR-04: create correctly bound Role Prompt Gate review vehicle v2",
+      "idempotency_key": "role-prompt-v1-gate-manifest-review-vehicle-v2",
+      "predecessor": "BR-01_BR-02_BR-03_COMPLETE_AND_DEPLOYED",
+      "code_change": false,
+      "required_readback": [
+        "task_id",
+        "step_id",
+        "task_contract_id",
+        "task_contract_revision",
+        "task_contract_hash",
+        "role_contract_ids_and_hashes",
+        "workspace_id",
+        "workspace_instance_id",
+        "workspace_binding_id",
+        "workspace_capture_id",
+        "assignment_id"
+      ],
+      "successor": "task_bound_reviewer_of_base_manifest_plus_bootstrap_amendment"
+    }
+  ],
+  "release_order": [
+    "TASK_COLLAB_OWNERSHIP_PREFLIGHT",
+    "BR-01",
+    "BR-01_DEPLOY",
+    "BR-02",
+    "BR-03",
+    "CROSS_CLIENT_DEPLOY_AND_E2E",
+    "BR-04",
+    "REVIEWER_PASS",
+    "GATE-0"
+  ],
+  "forbidden_shortcuts": [
+    "generic RPC task.create bypass",
+    "direct SQLite task or binding write",
+    "local-mode task creation for an enterprise task",
+    "task.split while it synthesizes ws-{id}",
+    "claim or repurpose T-1788253722521-3b2f8420",
+    "silent replacement of base manifest hash"
+  ]
+}

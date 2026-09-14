@@ -60,7 +60,10 @@ mod unix {
 
     use callwarden_core::daemon::config::DaemonConfig;
     use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
-    use callwarden_core::daemon::server::{spawn_http_transport, start_server, ServerConfig, ServerHandle};
+    use callwarden_core::daemon::server::{
+        spawn_http_transport, spawn_http_transport_prebound, start_server, ServerConfig,
+        ServerHandle,
+    };
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::daemon::SCHEMA_VERSION;
@@ -220,6 +223,86 @@ mod unix {
             config.registry_db_path.display()
         );
 
+        // CR10（client_convergence_codereview_20260909 §八）：HTTP 预绑定 + manifest
+        // 前移发布。旧流程 manifest 在 recovery / snapshot 恢复 / TaskCollabStore
+        // 之后才发布（实测 ~40s），重启后旧 manifest 携带已死 PID，客户端
+        // validate_http_manifest 报 E_HTTP_MANIFEST_STALE fail-closed。此处同步
+        // 预绑定（std listener + 原子 manifest 发布），使 manifest 在进程启动 ~1s
+        // 内生效；listener 先行入内核 backlog，TCP connect 探针即刻成功。
+        // H6: HTTP 默认 transport（迁移期，安全后置）——未显式指定 transport 时默认启用 HTTP。
+        // 显式 --http-bind 时用指定地址；CW_DAEMON_TRANSPORT=http/auto 或未设置时启用 HTTP
+        // （默认 127.0.0.1:0 动态端口）；显式指定其他 transport（named-pipe/uds/windows-bridge/
+        // cli-bridge）时回落旧通道（HTTP 不启用）。
+        let http_spec: Option<String> = if cli.http_bind.is_some() {
+            cli.http_bind.clone()
+        } else {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            // 迁移期默认 transport = http；显式指定非 http transport 时回落
+            if transport.is_empty() || transport == "http" || transport == "auto" {
+                Some(
+                    std::env::var("CW_DAEMON_HTTP_BIND")
+                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
+                )
+            } else {
+                None
+            }
+        };
+        // H6：HTTP 成为迁移期默认 transport；未显式指定具体 transport 时，
+        // 让 daemon 状态报告 transport=http（dispatch::transport_from_env 读取该环境变量）。
+        if http_spec.is_some() {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if transport.is_empty() || transport == "auto" {
+                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
+            }
+        }
+        // 预绑定：非 loopback fail-closed 退出（与旧 validate_loopback_bind 语义一致）；
+        // 其余预绑定失败（端口占用/manifest 写入）非致命——记日志并禁用 HTTP transport。
+        let prebound_http: Option<(
+            callwarden_core::daemon::http_server::BoundHttp,
+            callwarden_core::daemon::http_server::HttpServerConfig,
+        )> = match http_spec.as_deref() {
+            Some(spec) => {
+                // P1-3/H6 修复：authority-scoped manifest（目录固定 ~/.callwarden，
+                // 与 Python get_http_manifest_path 一致）。
+                let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+                let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+                    callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+                );
+                let http_cfg = callwarden_core::daemon::http_server::HttpServerConfig::new(
+                    spec.to_string(),
+                    manifest_path,
+                );
+                match callwarden_core::daemon::http_server::bind_http(&http_cfg) {
+                    Ok(bound) => {
+                        eprintln!(
+                            "[cw_daemon] [INFO] HTTP MVP pre-bound at http://{} (manifest published)",
+                            bound.local_addr
+                        );
+                        Some((bound, http_cfg))
+                    }
+                    Err(callwarden_core::daemon::http_server::HttpServerError::LoopbackOnly) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
+                            spec
+                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP MVP pre-bind failed (HTTP disabled): {:?}",
+                            e
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
         // 3. schema 初始化（WorkspaceRegistry::open 会自动 init_conn + 写入 schema_version）
         let registry = match WorkspaceRegistry::open(&config.registry_db_path.to_string_lossy()) {
             Ok(r) => r,
@@ -311,7 +394,7 @@ mod unix {
             &callwarden_db_path,
         ) {
             Ok(store) => Arc::new(
-                store.with_clock(Arc::new(
+                store.with_registry_db_path(config.registry_db_path.clone()).with_clock(Arc::new(
                     callwarden_core::daemon::clock::AuthoritativeClock::new(),
                 )),
             ),
@@ -350,51 +433,13 @@ mod unix {
             Ok(state)
         };
 
-        // H6: HTTP 默认 transport（迁移期，安全后置）——未显式指定 transport 时默认启用 HTTP。
-        // 显式 --http-bind 时用指定地址；CW_DAEMON_TRANSPORT=http/auto 或未设置时启用 HTTP
-        // （默认 127.0.0.1:0 动态端口）；显式指定其他 transport（named-pipe/uds/windows-bridge/
-        // cli-bridge）时回落旧通道（HTTP 不启用）。
-        // 绑定地址在绑定前做 loopback 校验：非 loopback 直接 fail-closed 退出。
-        let http_spec: Option<String> = if cli.http_bind.is_some() {
-            cli.http_bind.clone()
-        } else {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            // 迁移期默认 transport = http；显式指定非 http transport 时回落
-            if transport.is_empty() || transport == "http" || transport == "auto" {
-                Some(
-                    std::env::var("CW_DAEMON_HTTP_BIND")
-                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
-                )
-            } else {
-                None
-            }
-        };
-        // H6：HTTP 成为迁移期默认 transport；未显式指定具体 transport 时，
-        // 让 daemon 状态报告 transport=http（dispatch::transport_from_env 读取该环境变量）。
-        if http_spec.is_some() {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if transport.is_empty() || transport == "auto" {
-                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
-            }
-        }
-        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if let Some(spec) = http_spec.as_deref() {
-            // fail-closed 预校验：非 loopback 绑定必须被拒绝，且不发布 manifest
-            if let Err(e) = callwarden_core::daemon::http_server::validate_loopback_bind(spec) {
-                eprintln!(
-                    "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): {:?}",
-                    spec, e
-                );
-                return 1;
-            }
+        // H6/CR10：http_spec 解析与预绑定已前移至启动最前（见 "HTTP 预绑定" 块）。
+        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if http_spec.is_some() {
+            // CR10：loopback fail-closed 校验已在预绑定阶段完成（LoopbackOnly → return 1）。
             match state_factory() {
                 Ok(s) => {
                     eprintln!(
-                        "[cw_daemon] [INFO] HTTP MVP transport enabled, binding {} (loopback-only)",
-                        spec
+                        "[cw_daemon] [INFO] HTTP MVP transport enabled (loopback-only, pre-bound)"
                     );
                     Some(Arc::new(TokioMutex::new(s)))
                 }
@@ -439,22 +484,12 @@ mod unix {
             config.socket_mode
         );
 
-        // H1: 启动 HTTP MVP listener（与既有 UDS transport 并行；loopback-only）
-        // 仅在成功 loopback 绑定后由 http_server::serve 内部原子发布 manifest。
-        if let (Some(spec), Some(state)) = (http_spec.clone(), http_state) {
-            // P1-3 修复：authority-scoped manifest 文件名（与 H2 get_http_manifest_path 一致）。
-            // H6 修复：manifest 目录固定为 ~/.callwarden（http_manifest_dir，与 Python 权威
-            // 目录 get_http_manifest_dir 一致）；不随 config.data_root（默认 /var/lib/callwarden），
-            // 否则 Python 客户端按 get_http_manifest_path 读取不到。
-            let authority_id = callwarden_core::daemon::http_server::http_authority_id();
-            let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
-                callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
-            );
-            let http_cfg =
-                callwarden_core::daemon::http_server::HttpServerConfig::new(spec, manifest_path);
+        // H1/CR10: 启动 HTTP MVP accept loop（与既有 UDS transport 并行；loopback-only）。
+        // manifest 已在预绑定阶段原子发布（新 PID/endpoint）；此处仅接管 listener。
+        if let (Some((bound, http_cfg)), Some(state)) = (prebound_http, http_state) {
             // P0-1 修复：复用 start_server 的唯一串行化点，避免 HTTP 与 UDS mutation 并发。
             let http_sp = handle.serialization_point();
-            spawn_http_transport(state, http_sp, http_cfg);
+            spawn_http_transport_prebound(bound, state, http_sp, http_cfg);
         }
 
         // 8. 注册信号处理
@@ -2011,7 +2046,9 @@ mod windows {
 
     use callwarden_core::daemon::config::DaemonConfig;
     use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
-    use callwarden_core::daemon::server::{spawn_http_transport, start_server, ServerConfig, ServerHandle};
+    use callwarden_core::daemon::server::{
+        spawn_http_transport_prebound, start_server, ServerConfig, ServerHandle,
+    };
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::daemon::SCHEMA_VERSION;
@@ -2199,6 +2236,78 @@ mod windows {
             config.registry_db_path.display()
         );
 
+        // CR10（client_convergence_codereview_20260909 §八）：HTTP 预绑定 + manifest
+        // 前移发布。旧流程 manifest 在 recovery / snapshot 恢复 / TaskCollabStore
+        // 之后才发布（实测 ~40s），重启后旧 manifest 携带已死 PID，客户端
+        // validate_http_manifest 报 E_HTTP_MANIFEST_STALE fail-closed。此处同步
+        // 预绑定（std listener + 原子 manifest 发布），使 manifest 在进程启动 ~1s
+        // 内生效；listener 先行入内核 backlog，TCP connect 探针即刻成功。
+        let http_spec: Option<String> = if cli.http_bind.is_some() {
+            cli.http_bind.clone()
+        } else {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            // 迁移期默认 transport = http；显式指定非 http transport 时回落
+            if transport.is_empty() || transport == "http" || transport == "auto" {
+                Some(
+                    std::env::var("CW_DAEMON_HTTP_BIND")
+                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
+                )
+            } else {
+                None
+            }
+        };
+        if http_spec.is_some() {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if transport.is_empty() || transport == "auto" {
+                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
+            }
+        }
+        // 预绑定：非 loopback fail-closed 退出；其余预绑定失败（端口占用/manifest 写入）
+        // 非致命——记日志并禁用 HTTP transport。
+        let prebound_http: Option<(
+            callwarden_core::daemon::http_server::BoundHttp,
+            callwarden_core::daemon::http_server::HttpServerConfig,
+        )> = match http_spec.as_deref() {
+            Some(spec) => {
+                let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+                let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+                    callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+                );
+                let http_cfg = callwarden_core::daemon::http_server::HttpServerConfig::new(
+                    spec.to_string(),
+                    manifest_path,
+                );
+                match callwarden_core::daemon::http_server::bind_http(&http_cfg) {
+                    Ok(bound) => {
+                        eprintln!(
+                            "[cw_daemon] [INFO] HTTP MVP pre-bound at http://{} (manifest published)",
+                            bound.local_addr
+                        );
+                        Some((bound, http_cfg))
+                    }
+                    Err(callwarden_core::daemon::http_server::HttpServerError::LoopbackOnly) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): E_HTTP_MVP_LOOPBACK_ONLY",
+                            spec
+                        );
+                        return 1;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] HTTP MVP pre-bind failed (HTTP disabled): {:?}",
+                            e
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
         // 3. schema 初始化（WorkspaceRegistry::open 会自动 init_conn + 写入 schema_version）
         let registry = match WorkspaceRegistry::open(&config.registry_db_path.to_string_lossy()) {
             Ok(r) => r,
@@ -2282,7 +2391,7 @@ mod windows {
             &callwarden_db_path,
         ) {
             Ok(store) => Arc::new(
-                store.with_clock(Arc::new(
+                store.with_registry_db_path(config.registry_db_path.clone()).with_clock(Arc::new(
                     callwarden_core::daemon::clock::AuthoritativeClock::new(),
                 )),
             ),
@@ -2318,51 +2427,13 @@ mod windows {
             Ok(state)
         };
 
-        // H6: HTTP 默认 transport（迁移期，安全后置）——未显式指定 transport 时默认启用 HTTP。
-        // 显式 --http-bind 时用指定地址；CW_DAEMON_TRANSPORT=http/auto 或未设置时启用 HTTP
-        // （默认 127.0.0.1:0 动态端口）；显式指定其他 transport（named-pipe/uds/windows-bridge/
-        // cli-bridge）时回落旧通道（HTTP 不启用）。
-        // 绑定地址在绑定前做 loopback 校验：非 loopback 直接 fail-closed 退出。
-        let http_spec: Option<String> = if cli.http_bind.is_some() {
-            cli.http_bind.clone()
-        } else {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            // 迁移期默认 transport = http；显式指定非 http transport 时回落
-            if transport.is_empty() || transport == "http" || transport == "auto" {
-                Some(
-                    std::env::var("CW_DAEMON_HTTP_BIND")
-                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
-                )
-            } else {
-                None
-            }
-        };
-        // H6：HTTP 成为迁移期默认 transport；未显式指定具体 transport 时，
-        // 让 daemon 状态报告 transport=http（dispatch::transport_from_env 读取该环境变量）。
-        if http_spec.is_some() {
-            let transport = std::env::var("CW_DAEMON_TRANSPORT")
-                .map(|v| v.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if transport.is_empty() || transport == "auto" {
-                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
-            }
-        }
-        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if let Some(spec) = http_spec.as_deref() {
-            // fail-closed 预校验：非 loopback 绑定必须被拒绝，且不发布 manifest
-            if let Err(e) = callwarden_core::daemon::http_server::validate_loopback_bind(spec) {
-                eprintln!(
-                    "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): {:?}",
-                    spec, e
-                );
-                return 1;
-            }
+        // H6/CR10：http_spec 解析与预绑定已前移至启动最前（见 "HTTP 预绑定" 块）。
+        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if http_spec.is_some() {
+            // CR10：loopback fail-closed 校验已在预绑定阶段完成（LoopbackOnly → return 1）。
             match state_factory() {
                 Ok(s) => {
                     eprintln!(
-                        "[cw_daemon] [INFO] HTTP MVP transport enabled, binding {} (loopback-only)",
-                        spec
+                        "[cw_daemon] [INFO] HTTP MVP transport enabled (loopback-only, pre-bound)"
                     );
                     Some(Arc::new(TokioMutex::new(s)))
                 }
@@ -2394,22 +2465,12 @@ mod windows {
         };
         eprintln!("[cw_daemon] [INFO] named pipe server listening");
 
-        // H1: 启动 HTTP MVP listener（与既有 Named Pipe transport 并行；loopback-only）
-        // 仅在成功 loopback 绑定后由 http_server::serve 内部原子发布 manifest。
-        if let (Some(spec), Some(state)) = (http_spec.clone(), http_state) {
-            // P1-3 修复：authority-scoped manifest 文件名（与 H2 get_http_manifest_path 一致）。
-            // H6 修复：manifest 目录固定为 ~/.callwarden（http_manifest_dir，与 Python 权威
-            // 目录 get_http_manifest_dir 一致）；不随 config.data_root（默认 /var/lib/callwarden），
-            // 否则 Python 客户端按 get_http_manifest_path 读取不到。
-            let authority_id = callwarden_core::daemon::http_server::http_authority_id();
-            let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
-                callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
-            );
-            let http_cfg =
-                callwarden_core::daemon::http_server::HttpServerConfig::new(spec, manifest_path);
+        // H1/CR10: 启动 HTTP MVP accept loop（与既有 Named Pipe transport 并行；loopback-only）。
+        // manifest 已在预绑定阶段原子发布（新 PID/endpoint）；此处仅接管 listener。
+        if let (Some((bound, http_cfg)), Some(state)) = (prebound_http, http_state) {
             // P0-1 修复：复用 start_server 的唯一串行化点，避免 HTTP 与 Named Pipe mutation 并发。
             let http_sp = handle.serialization_point();
-            spawn_http_transport(state, http_sp, http_cfg);
+            spawn_http_transport_prebound(bound, state, http_sp, http_cfg);
         }
 
         // 8. 注册控制台 Ctrl+C / Ctrl+Break 优雅关闭

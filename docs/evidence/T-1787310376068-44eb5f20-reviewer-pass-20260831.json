@@ -1,0 +1,107 @@
+{
+  "task": {
+    "id": "T-1787310376068-44eb5f20",
+    "title": "P0-F：Bootstrap evidence / review bridge（A′ 冷启动治理死锁修复）",
+    "lifecycle_status": "review",
+    "review_state": "unverified (pre-verdict)",
+    "fix_defect_step": "S-cd7bd679466ab0b031a1f066"
+  },
+  "reviewer": {
+    "role": "independent_reviewer",
+    "agent_id": "reviewer-workbuddy-p0review-01",
+    "agent_instance_id": "inst-reviewer-workbuddy-p0review-01",
+    "client_id": "workbuddy-cli",
+    "model_id": "workbuddy",
+    "session_id": "sess-reviewer-workbuddy-p0review-01-20260831",
+    "mode": "read-only verification (no code/doc/DB mutation outside daemon RPC)"
+  },
+  "verdict": {
+    "overall": "pass",
+    "scope": "executor-owned fix_defect acceptance R1~R6 (commits f44a872, 517f933)",
+    "out_of_scope": "R7 / R8 (planner-owned) — NOT remediated in this fix_defect; see carry-over below"
+  },
+  "findings": [
+    {
+      "id": "P0F-R1",
+      "severity": "pass",
+      "owner_route": "executor",
+      "summary": "bootstrap_reviewer_pass 增加 empty-projection 门禁（no_governance_projection）",
+      "evidence": "bootstrap_review_bridge.rs:296-298 调用 no_governance_projection(tx,&task_id)；新增测试 reviewer_pass_rejects_when_governance_projection_exists_stage_two（ERR_BRIDGE_NOT_EMPTY，拒绝后不写 event/lease）；真实 daemon R5 取证 stage2 仅在空投影任务成功。"
+    },
+    {
+      "id": "P0F-R2",
+      "severity": "pass",
+      "owner_route": "executor",
+      "summary": "bootstrap_executor_evidence 校验步骤 status=done 且覆盖全部步骤",
+      "evidence": "bootstrap_review_bridge.rs:188-198（done 断言）、:223-249（全量覆盖 COUNT 比对）；测试 executor_evidence_rejects_pending_step（ERR_BRIDGE_STATE，任务保持 open）、executor_evidence_rejects_partial_step_coverage（ERR_BRIDGE_INVALID）。"
+    },
+    {
+      "id": "P0F-R3",
+      "severity": "pass",
+      "owner_route": "executor",
+      "summary": "reviewer lease 去硬编码：workspace_id=bound_workspace / model_id=真实身份 / fencing=历史 max+1",
+      "evidence": "bootstrap_review_bridge.rs:367-390；handler task_collab.rs:2695-2700 传入 bound_workspace 与 identity.model_id；bound_workspace 经 task_bound_workspace_id 推导（非字面量 1）；测试 reviewer_lease_uses_bound_workspace_and_monotonic_fencing（workspace_id≠1 用例、fencing 单调递增）。真实 daemon R5：lease 行 workspace_id=1, model_id=deepseek-v4-flash, fencing_counter=1（均派生值，非硬编码空值）。"
+    },
+    {
+      "id": "P0F-R4",
+      "severity": "pass",
+      "owner_route": "executor",
+      "summary": "三重独立性：executor agent_instance_id 持久化于 event reason provenance，阶段二去除空串短路",
+      "evidence": "bootstrap_review_bridge.rs:209-215 写 executor_agent_instance_id；task_collab.rs:2651-2673 从 task_events 读回；阶段二比较移除 !executor_agent_instance_id.is_empty() 前置（:340-347）；测试 reviewer_pass_rejects_same_agent_instance_as_executor（ERR_BRIDGE_INDEPENDENCE）。真实 daemon R5 db_verify：action_identities reason 含 executor_agent_instance_id=inst-bridge-exec，阶段二 inst-bridge-exec vs inst-bridge-rev 通过。"
+    },
+    {
+      "id": "P0F-R5",
+      "severity": "pass",
+      "owner_route": "executor",
+      "summary": "真实 daemon 正向两阶段 bridge + request-id 幂等/冲突重放取证",
+      "evidence": "docs/evidence/T-1787310376068-44eb5f20-p0f-positive-rerun-20260831-152506.json：stage1 bootstrap_executor_evidence→review；stage2 bootstrap_reviewer_pass→review 签发 brtl-...-r1；同 request-id 重放返回同一结果；冲突参数重放 E_REQUEST_ID_REUSE_MISMATCH。"
+    },
+    {
+      "id": "P0F-R6",
+      "severity": "pass_with_caveat",
+      "owner_route": "executor",
+      "summary": "可复现部署：运行 daemon 二进制 == 已提交源码（核心保证达成）；on-disk target/release 二进制为陈旧制品，与目标二进制 hash 不一致（非部署正确性缺陷，属制品卫生）",
+      "evidence": "daemon health.git_commit=f44a872c233d5e535ecfc14f234b465fba34130c == 源码 HEAD 的代码（517f933 仅追加 docs/scripts，无代码变更）；运行进程 C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe（PID 14288，启动 14:47）自报 git_commit=f44a872c，且 R5 真实取证证明 R1~R4 修复确实生效。NOTE：on-disk rust_ext/target/release/cw-daemon.exe 时间戳为 2026-08-30 20:09（陈旧，早于 f44a872c 部署），sha256=82cc528b… 与 runtime/current 3a412b5b… 不一致。该 target/release 为历史遗留产物，运行部署由部署脚本独立 fresh-build 产出，故运行二进制与提交源码一致、R6 核心保证满足。建议：自当前 HEAD 重建 target/release 以对齐磁盘制品（非阻断）。"
+    },
+    {
+      "id": "P0F-R7",
+      "severity": "open",
+      "owner_route": "planner",
+      "summary": "任务绑定指向幻影 workspace ws-1（daemon 注册表不存在），review snapshot 由 reviewer 以真实 callwarden workspace 快照 ad2e04caa27280fe 代填（provenance 偏差）",
+      "evidence": "本 verdict 的 snapshot_id 沿用既有披露偏差值 ad2e04caa27280fe（与 2026-08-31 首次 reviewer_blocked 同口径）。R7 为 planner 主导项，本次 executor fix_defect 未触及。须在 planner 轨道独立解决：workspace re-attestation（权威 workspace instance b9515f7c28f5d0f0）+ 真实 snapshot 绑定；resolve_workspace_id_by_instance 对未注册 workspace 须 fail-closed 拒绝。R7 不计入本 verdict 的 PASS 范围。"
+    }
+  ],
+  "clause_results": [
+    {"clause": "r1_stage2_empty_projection_gate", "result": "pass", "evidence": "no_governance_projection 在 bootstrap_reviewer_pass 入口调用；定向测试通过"},
+    {"clause": "r2_step_done_and_full_coverage", "result": "pass", "evidence": "done 断言 + 全量覆盖比对；两项负向测试通过"},
+    {"clause": "r3_lease_de_hardcoded", "result": "pass", "evidence": "bound_workspace/model_id/max+1；workspace_id≠1 测试通过；R5 lease 行非硬编码"},
+    {"clause": "r4_triple_independence", "result": "pass", "evidence": "agent_instance_id 持久化+去空串短路；同 instance 拒绝测试通过；R5 三重异通过"},
+    {"clause": "r5_real_daemon_two_stage_bridge", "result": "pass", "evidence": "p0f-positive-rerun manifest：两阶段+幂等重放+冲突拒绝"},
+    {"clause": "r6_deploy_reproducible_core", "result": "pass", "evidence": "运行 daemon git_commit==f44a872c==源码；R5 证明修复生效（制品卫生 cave 见 R6 finding）"},
+    {"clause": "r7_workspace_attestation", "result": "open", "evidence": "planner-owned；幻影 ws-1 未 re-attestation；snapshot 仍为披露偏差值"}
+  ],
+  "independent_test_evidence": {
+    "command": "cargo test -p callwarden-core daemon::task_loop::bootstrap_review_bridge_test",
+    "result": "11 passed; 0 failed",
+    "coverage": "R1 stage-2 gate / R2 done+coverage / R3 de-hardcode / R4 triple-independence / two-stage happy path / wrong-state / partial / no-exec-evidence / same-agent / role-constants"
+  },
+  "git_provenance": {
+    "r1_r4_source_commit": "f44a872c233d5e535ecfc14f234b465fba34130c",
+    "executor_checklist_evidence_commit": "517f9337828ca4be39a9e55639859208dbce54ff",
+    "author": "nuoyazhizhou <nuoyazhizhou@hotmail.com>",
+    "worktree_clean_except": ["_claim_fixdefect.py (untracked dev script, not part of commits)"]
+  },
+  "daemon_runtime": {
+    "health_git_commit": "f44a872c233d5e535ecfc14f234b465fba34130c",
+    "running_binary": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe (PID 14288, started 2026-08-31 14:47:54)",
+    "running_binary_sha256": "3a412b5b49b342345a6b7ff4059202cb7fa990e050e5b784692286c0be852760",
+    "stale_target_release_sha256": "82cc528b50e7f70e9d1b23ce39df70b81839b14db906062c859dcd8ebc4cd846 (2026-08-30 20:09, pre-f44a872c artifact)"
+  },
+  "attestation": "Independent Reviewer (reviewer-workbuddy-p0review-01, instance inst-reviewer-workbuddy-p0review-01, session sess-reviewer-workbuddy-p0review-01-20260831, model workbuddy) attests P0-F (T-1787310376068-44eb5f20) fix_defect R1~R6 Reviewer PASS via read-only verification: (1) 源码核验 bootstrap_review_bridge.rs / task_collab.rs 改动（R1 阶段二 empty-projection 门禁、R2 step done+全量覆盖、R3 去硬编码 workspace/model/fencing、R4 三重独立性 event-provenance 持久化+去空串短路）；(2) 独立 cargo test 11/11 通过；(3) 真实 daemon R5 两阶段桥接+幂等重放+冲突拒绝取证（manifest）；(4) daemon health.git_commit=f44a872c == 源码 HEAD 代码，R5 证明修复生效。R6 核心可复现保证（运行二进制==提交源码）达成；on-disk target/release 为陈旧制品、与运行二进制 hash 不一致属制品卫生问题、非部署缺陷，建议自 HEAD 重建对齐（非阻断）。R7（planner 主导：幻影 ws-1 / snapshot provenance 偏差）明确 OUT OF SCOPE，未计入本 PASS，须由 planner 轨道独立解决；本 verdict 沿用既有披露偏差 snapshot_id=ad2e04caa27280fe。HEAD=517f933 仅追加 docs/scripts，无代码变更。未执行任何越权写（无代码/文档/库变更，仅经 daemon RPC 提交 verdict 与 handoff）。",
+  "carry_over": {
+    "R7": "OPEN / planner-owned — 独立 planner 任务：workspace re-attestation (b9515f7c28f5d0f0) + 真实 snapshot 绑定；resolve_workspace_id_by_instance 对未注册 workspace fail-closed",
+    "R8": "OPEN / planner-owned — capability registry 纳入治理 RPC 声明（非阻断）",
+    "R9": "OPEN / executor — CLI 将确定性治理拒绝误报 Database is busy（相邻非阻断缺陷，建议同批清理）"
+  },
+  "next_action_recommendation": "本 verdict 将 P0-F 自 review 交 Adjudicator（reviewer_pass）。R7 为 planner 轨道遗留项，须在 Adjudicator/Planner 环节以独立任务追踪，不得随 P0-F 关闭而掩盖。"
+}

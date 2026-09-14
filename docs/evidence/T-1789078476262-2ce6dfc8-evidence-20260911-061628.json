@@ -1,0 +1,126 @@
+{
+  "task_id": "T-1789078476262-2ce6dfc8",
+  "card": "T-1789078476262-2ce6dfc8",
+  "generated_at": "2026-09-10T22:16:28.011514+00:00",
+  "producer": {
+    "agent_id": "executor-wb-g4-01",
+    "agent_instance_id": "inst-exec-wb-g4-01",
+    "session_id": "sess-exec-wb-g4-20260910",
+    "model_id": "deepseek-v4-flash",
+    "role": "executor"
+  },
+  "change": {
+    "purpose": "task.cascade_close 叶子分支新增「被替代卡豁免」：节点存在 task_supersede_relations 出边时跳过步骤门禁直接收尾；reason 动态化为 superseded by <superseding_task_id> (leaf steps waived)；无 supersede 关系的 pending 叶子仍受门禁（不扩大化）",
+    "commit": "67b5c8e",
+    "commit_full": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+    "git_stat": "67b5c8e fix(governance): cascade_close 豁免被替代卡步骤门禁（GOV-FIX-03）\n\n rust_ext/src/daemon/task_collab_lifecycle_apply.rs |  33 +++++-\n rust_ext/src/daemon/task_collab_tests.rs           |   2 +\n rust_ext/src/daemon/task_collab_tests_cascade.rs   | 116 +++++++++++++++++++++\n 3 files changed, 148 insertions(+), 3 deletions(-)",
+    "files": [
+      {
+        "path": "rust_ext/src/daemon/task_collab_lifecycle_apply.rs",
+        "sha256_after": "18d6da351dab80f3955c97c65b1e088d806b48687bf3b148580f48771ba6a5a1"
+      },
+      {
+        "path": "rust_ext/src/daemon/task_collab_tests_cascade.rs",
+        "sha256_after": "ac2787ac429782d3682bc1adb958260c3c9f6cf07a0526228317dbef563808b1"
+      },
+      {
+        "path": "rust_ext/src/daemon/task_collab_tests.rs",
+        "sha256_after": "fb6e3ce4e5dc6efc176b61cf5da2e2ebe69b01f83a780a595571f262b2baa4c9"
+      }
+    ]
+  },
+  "repo": {
+    "head": "67b5c8e1708563c1081f9a68355cf37fe3fdb1bc",
+    "branch": "master",
+    "head_is_fix_commit": true
+  },
+  "build_and_tests": {
+    "cargo_check_all_targets": {
+      "command": "cargo check --all-targets",
+      "rc": 0,
+      "errors": 0
+    },
+    "cargo_build_release_bin_cw_daemon": {
+      "command": "cargo build --release --bin cw-daemon",
+      "rc": 0
+    },
+    "cargo_test": {
+      "command": "cargo test --lib daemon::task_collab::tests::cascade",
+      "passed": 2,
+      "failed": 0
+    }
+  },
+  "deployment": {
+    "binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+    "sha256": "72d428e2e291b9266df3f41c0427e56138d61e167a940c99a088617a25065c9c",
+    "sha256_short": "72d428e2e291b926",
+    "backup": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe.bak-20260910-govfix03",
+    "daemon_pid": 5372,
+    "endpoint": "http://127.0.0.1:1615",
+    "manifest_registry_snapshot_id": "3c98e7c735b5c10d",
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "live_verification": {
+    "method": "新 daemon 上对 7 张被替代卡逐张执行 cw task cascade-close",
+    "result": "7/7 closed",
+    "cards": [
+      {
+        "task_id": "T-1788923523728-7a316cc4",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "subtree aggregate closed",
+        "active_leases": 0
+      },
+      {
+        "task_id": "T-1788962298062-54927dac",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "superseded by T-1788963088148-495d7208 (leaf steps waived)",
+        "active_leases": 0
+      },
+      {
+        "task_id": "T-1788962307288-7a8526d4",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "superseded by T-1788963103216-cb818938 (leaf steps waived)",
+        "active_leases": 0
+      },
+      {
+        "task_id": "T-1788962308102-ab09ac58",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "superseded by T-1788963104058-fdb2e848 (leaf steps waived)",
+        "active_leases": 0
+      },
+      {
+        "task_id": "T-1788962308958-de061718",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "superseded by T-1788963104879-2e9e6270 (leaf steps waived)",
+        "active_leases": 0
+      },
+      {
+        "task_id": "T-1788962309851-13447b90",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "superseded by T-1788963105720-60bfc80c (leaf steps waived)",
+        "active_leases": 0
+      },
+      {
+        "task_id": "T-1788962310755-49297814",
+        "status": "closed",
+        "closed_at_nonzero": true,
+        "reason_code": "cascade_closed",
+        "reason": "superseded by T-1788963106520-907544c8 (leaf steps waived)",
+        "active_leases": 0
+      }
+    ]
+  },
+  "evidence_note": "commit 67b5c8e 未携带 task_id 前缀（执行时尚未开卡）；本卡为事后治理包装，scope 与 commit 一一对应。"
+}

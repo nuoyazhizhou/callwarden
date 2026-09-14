@@ -38,7 +38,20 @@ from callwarden.db.db_task_gate import (
     GATE_VERDICT_ABSENT,
     GATE_EVIDENCE_ABSENT,
 )
-from callwarden.server.stage_toggle_migration import ensure_stage_toggle_schema
+
+
+# Stage_Toggle 存储 schema 现由 Rust daemon 权威创建（server/stage_toggle_migration.py
+# 仅保留迁移 RPC，无 SQLite 权威）；测试 helper 内联同一 DDL 模拟 daemon 配置存储。
+_STAGE_TOGGLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS stage_toggles (
+    stage       TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    actor       TEXT NOT NULL DEFAULT '',
+    changed_at  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (stage, scope_key)
+)
+"""
 
 
 @pytest.fixture(autouse=True)
@@ -90,10 +103,10 @@ def _create_task_at_review(db):
 
 
 def _set_p1(store_path, scope_key="global", enabled=True):
-    """写入 P1 Stage_Toggle（复用 daemon 配置存储 schema）。"""
+    """写入 P1 Stage_Toggle（按 Rust 权威 schema 建 daemon 配置存储表）。"""
     conn = sqlite3.connect(str(store_path))
     try:
-        ensure_stage_toggle_schema(conn)
+        conn.execute(_STAGE_TOGGLE_SCHEMA)
         conn.execute(
             "INSERT OR REPLACE INTO stage_toggles (stage, scope_key, enabled, actor, changed_at) "
             "VALUES ('P1', ?, ?, 'test', ?)",

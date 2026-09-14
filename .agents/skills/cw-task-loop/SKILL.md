@@ -1,6 +1,6 @@
 ---
 name: cw-task-loop
-description: Chat entrypoint for the cw task loop. Use when the user or an agent asks "what should happen next" for a cw task (`$cw-task-loop TASK_ID`). It runs the read-only `cw task next-action --json` evaluator, renders the Planner/Executor/Reviewer/Adjudicator role card verbatim from the daemon response, and gives claim/independence/lease guidance without ever mutating task state or faking identity.
+description: Chat entrypoint for the cw task loop. Use when the user or an agent asks "what should happen next" for a cw task (`$cw-task-loop TASK_ID`). It reads the daemon-compiled Role Prompt Bundle (RPC `task.prompt.compile`, capability `role_prompt_compiler_v1`) and emits `prompt.text` verbatim, falls back to the read-only `cw task next-action --json` role card only when an exact daemon-returned workspace instance is known, and gives claim/independence/lease guidance without ever mutating task state, deriving workspace, or rendering a production prompt locally.
 ---
 
 # cw-task-loop Skill
@@ -19,6 +19,28 @@ logic, never claims a step, never switches identity, and never mutates task stat
 > 本入口 Skill 不是任务 Role Contract 所要求的 skill，绝不写入 `role_contract.skill_id`；
 > 后者当前由 Executor 冻结并由 claim 校验；post-cutover（capability `planner_governance_v1`
 > 声明后）计划侧合同由 Planner 冻结（见 v2 amendment §3）。
+
+## Prompt Source and Capability Gate（RP-09 cutover）
+
+production prompt 的唯一来源是 daemon 编译的 Role Prompt Bundle：RPC `task.prompt.compile`
+（capability `role_prompt_compiler_v1`，冻结规范 §11.3）。本入口**不得**本地渲染、拼装或缓存
+production prompt，也不得把客户端模板正文当作 prompt 来源。
+
+1. **首选路径**：对精确 `task_id` 调用下列两个受支持表面之一，取回 bundle：
+   - CLI：`& C:\Python314\python.exe cw.py task prompt <task-id> --format llm`（默认 `llm`；
+     `--format` 仅本地展示，不发送给 daemon、不进入任何 hash）
+   - MCP：`task_get_role_prompt(task_id)`（不接受 role、format、workspace、credential 或 lease 参数）
+2. **原样输出**：逐字输出 `prompt.text`；结构化摘要只允许逐字投影 bundle 字段（`routing`、
+   `authority`、`template`、`contract`、`hashes`），缺失标 `—`，不得补造或本地重算。
+3. **受保护回退**：capability `role_prompt_compiler_v1` 未声明或未启用时，只有在**已取得 daemon 返回的
+   exact workspace instance ID** 的前提下才回落到既有只读 `cw task next-action <task-id>
+   --workspace-instance-id <instance-id> --json` role card；否则显示 capability/authority
+   unavailable 并 fail closed。
+4. **禁止**：触发 `derive_workspace_instance_id` 之类的客户端 derive fallback；本地渲染 production
+   prompt；回落 Python Prompt Compiler 或 SQLite/PyO3 authority（冻结规范 §18）。
+
+`cw task prompt` 或 MCP 返回 `E_DAEMON_UNAVAILABLE`、capability 未启用或 authority 不匹配时一律
+fail closed：只报告不可用事实与精确 `task_id`，不输出虚构决策，也不输出任何本地生成的角色提示词。
 
 ## Governance Status Projection
 
@@ -61,15 +83,23 @@ step_id、request_id 或聊天文本替代精确 `task_id`。
 4. 冻结设计 `docs/design/cw-role-handoff-task-loop.md`（v1）仅作**历史冻结基线**（blob
    `34668462…`）与未 supersede 条目（§7 分期路线图、workspace authority、Verdict Ledger 等）
    的依据；其 §3/§5 与 v2 amendment 冲突处一律以 v2 为准，不作为现行规则来源。
-5. 执行 `& C:\Python314\python.exe cw.py task next-action <task-id> --workspace-instance-id <instance_id> --json` 并以其响应为唯一事实来源。
-   - daemon 未启动时命令返回 `E_DAEMON_UNAVAILABLE`：向用户说明需 `cw daemon start`，不得伪造决策。
+5. 先执行首选路径 `& C:\Python314\python.exe cw.py task prompt <task-id> --format llm`（或 MCP
+   `task_get_role_prompt(task_id)`），逐字输出 `prompt.text` 与结构化摘要；capability
+   `role_prompt_compiler_v1` 未声明时才按下一项的 exact workspace instance 前提回落。
+6. 回落到只读 `& C:\Python314\python.exe cw.py task next-action <task-id> --workspace-instance-id <instance_id> --json`
+   并以其响应为唯一事实来源（`<instance_id>` 必须逐字来自 daemon 返回，不得客户端 derive）。
+   - daemon 未启动时命令返回 `E_DAEMON_UNAVAILABLE`：向用户说明需 `cw daemon start`，不得伪造决策，
+     也不得本地渲染 production prompt。
 
 ## Fixed Procedure
 
 对 `<task-id>` 依序执行，不得跳步：
 
-1. **读取** AGENTS.md、`references/role-protocol.md` 与 v2 amendment（见 Required Reading），并调用 `& C:\Python314\python.exe cw.py task next-action <task-id> --workspace-instance-id <instance_id> --json`。
-2. **逐字渲染角色卡**（仅派生，不改写任何字段），格式见下节。
+1. **读取** AGENTS.md、`references/role-protocol.md` 与 v2 amendment（见 Required Reading），并按
+   Prompt Source and Capability Gate 取回 prompt/bundle：首选 `cw task prompt <task-id> --format llm`；
+   capability 未声明时才以 daemon 返回的 exact workspace instance 回落 `cw task next-action <task-id> --workspace-instance-id <instance_id> --json`。
+2. **逐字输出**：首选路径逐字输出 `prompt.text` 并逐字投影 bundle 结构化字段；回落路径逐字渲染角色卡
+   （仅派生，不改写任何字段），格式见下节。两条路径都不得本地渲染或补造 production prompt。
 3. **`READY/PLAN`**（协议保留：capability `planner_governance_v1` 声明前 daemon 不产生）：只输出目标角色（planner）新会话应执行的规划指引、任务 Contract 和 identity 要求；
    **`READY/CLAIM`**：只输出目标角色（executor）**新会话**应执行的领取指引、
    task contract / role contract id 与 identity 要求；仅该新会话可显式调用现有
@@ -169,3 +199,5 @@ daemon 不产生；若出现在聊天中，先核对 daemon 投影），必须�
 - 用户文档（窗口/会话独立性、角色卡示例、常见问答）：`references/user-guide.md`
 - 四角色共享协议（状态、finding、决策请求、远端交互、命令纪律）：`references/role-protocol.md`
 - 模板合规检查：`scripts/validate_template_compliance.py`
+- production prompt 编译契约（capability、bundle schema、回退纪律）：
+  `docs/design/cw-role-prompt-compiler-v1-frozen-spec.md` §4.3/§4.4/§4.5/§11.3/§18

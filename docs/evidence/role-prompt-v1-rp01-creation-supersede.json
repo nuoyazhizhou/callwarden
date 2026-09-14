@@ -1,0 +1,21 @@
+{
+  "artifact": "role-prompt-v1-rp01-creation-supersede",
+  "recorded_at": "2026-09-06T14:35:00+08:00",
+  "recorded_by": "executor-wb-rp01-01 (acting on planner-side creation defect)",
+  "defect": {
+    "task_id": "T-1788671453544-d0625554",
+    "summary": "Planner creation driver set step target_file to the literal string 'rust_ext/build_support/** (RP-01 allowed paths only)'. Daemon change-path whitelist is a literal ','/';'-separated exact-match list (rust_ext/src/daemon/task_collab_lifecycle.rs task.report handler), so no real changed file can ever match; first task.report fails E_CHANGE_PATH_NOT_ALLOWED.",
+    "root_cause": "planner-side creation payload bug (RP-01 card steps carry glob arrays; the creator wrote a prose literal instead of exact per-step file paths). No code defect: implementation commits 89860ded/89f83b3e are unaffected."
+  },
+  "resolution": "supersede the defective creation and recreate RP-01 with exact per-step target_file whitelists; append-only history preserved",
+  "corrected_step_target_files": {
+    "implement_validator_core": "rust_ext/build_support/role_prompt_validator.rs",
+    "integrate_build_gate": "rust_ext/build.rs; rust_ext/Cargo.toml",
+    "add_negative_fixtures": "rust_ext/tests/role_prompt_validator_negative.rs; rust_ext/tests/role_prompt_validator_positive.rs",
+    "verify_compile_failure_contract": "docs/evidence/RP-01-role-prompt-compiler.json"
+  },
+  "implementation_commits_unchanged": [
+    "89860dedf88ca4477287c3e8309cd45ac707d88f",
+    "89f83b3ee989c7f283dc4cf12e362f612cd97865"
+  ]
+}

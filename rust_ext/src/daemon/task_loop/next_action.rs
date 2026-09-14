@@ -19,6 +19,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::canonicalize::sha256_hex;
+use crate::daemon::assignment_queue::{current_assignment, STALE_AFTER_SECS};
 use crate::daemon::dispatch::DaemonRpcError;
 use super::claim::read_current_binding;
 use super::create::registry_identity_hash;
@@ -710,15 +711,47 @@ fn step_claim_role(conn: &Connection, step_id: &str) -> Result<Option<String>, D
     })
 }
 
-/// 当前 task 的 active 未过期 lease 持有角色（§3.2 规则 6；不泄露 token）。
-fn active_lease_role(conn: &Connection, task_id: &str) -> Result<Option<String>, DaemonRpcError> {
+/// `in_progress` 只是步骤的历史状态，不是持有权本身。只有同一步骤存在仍在
+/// heartbeat 窗口内的 durable `claimed` assignment 才应阻塞下一位 Executor。
+///
+/// queued assignment 没有 holder；stale claimed assignment 则应被投影为可领取，
+/// 让 `task.claim` 的同角色 takeover 事务完成接管和审计。不能仅凭 step 状态无限
+/// WAIT，否则一次崩溃会永久阻塞任务树。
+fn step_has_fresh_claimed_assignment(
+    conn: &Connection,
+    task_id: &str,
+    step_id: &str,
+) -> Result<bool, DaemonRpcError> {
+    let Some(assignment) = current_assignment(conn, task_id, Some(step_id), None)? else {
+        return Ok(false);
+    };
+    if assignment.status != "claimed" {
+        return Ok(false);
+    }
+    let last_activity = assignment
+        .last_heartbeat_at
+        .or(assignment.claimed_at)
+        .unwrap_or(assignment.queued_at);
+    Ok(now_unix() - last_activity <= STALE_AFTER_SECS)
+}
+
+/// 当前 task 的**绑定 workspace**内 active 未过期 lease 持有角色（§3.2 规则 6；不泄露 token）。
+///
+/// task_id 在历史 workspace 中可能留有 lease 审计行；那些行绝不能阻塞当前
+/// task workspace binding 的派工。所有 lease 读取入口必须用同一个不可变 binding
+/// workspace_id 过滤，不能只按 task_id 查找。
+fn active_lease_role(
+    conn: &Connection,
+    workspace_id: i64,
+    task_id: &str,
+) -> Result<Option<String>, DaemonRpcError> {
     let now = now_unix();
     let row: Option<String> = conn
         .query_row(
             "SELECT role FROM task_leases \
-             WHERE task_id = ?1 AND status = 'active' AND expires_at > ?2 \
+             WHERE workspace_id = ?1 AND task_id = ?2 AND status = 'active' AND expires_at > ?3 \
              ORDER BY id ASC LIMIT 1",
-            rusqlite::params![task_id, now],
+            rusqlite::params![workspace_id, task_id, now],
             |row| row.get(0),
         )
         .optional()
@@ -745,10 +778,11 @@ fn first_claimable_step(
 /// 规则 6 前置：当前步骤仍有 active 未过期 lease → `WAITING/WAIT`（review/applied 也适用）。
 fn wait_if_active_lease(
     conn: &Connection,
+    workspace_id: i64,
     task_id: &str,
     task_status: &str,
 ) -> Result<Option<Value>, DaemonRpcError> {
-    match active_lease_role(conn, task_id)? {
+    match active_lease_role(conn, workspace_id, task_id)? {
         Some(holder) => {
             let step = first_claimable_step(conn, task_id)?.unwrap_or_default();
             Ok(Some(wait_outcome(task_id, task_status, &step, &holder)?))
@@ -781,6 +815,88 @@ fn latest_block_verdict(
         .map_err(|e| infra_error(&format!("verdict findings 读取失败: {e}")))?;
     let findings = serde_json::from_str::<Vec<Value>>(&findings_json).unwrap_or_default();
     Ok(Some((verdict_id, findings)))
+}
+
+/// A reviewer BLOCKED verdict remains immutable, but it must not permanently
+/// shadow the re-review route once its exact, provenance-bound remediation has
+/// been reported and handed back.  Do not infer this from task status alone:
+/// require all three durable records so a completed unrelated step, a report
+/// without handoff, or a handoff for another report cannot reopen review.
+fn block_verdict_has_completed_remediation(
+    conn: &Connection,
+    task_id: &str,
+    verdict_id: &str,
+) -> Result<bool, DaemonRpcError> {
+    let mut steps = conn
+        .prepare(
+            "SELECT id, result FROM task_steps
+             WHERE task_id = ?1 AND action = 'fix_defect' AND status = 'done'
+             ORDER BY step_index DESC",
+        )
+        .map_err(|e| infra_error(&format!("remediation steps 读取失败: {e}")))?;
+    let candidates = steps
+        .query_map(rusqlite::params![task_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| infra_error(&format!("remediation steps 查询失败: {e}")))?;
+
+    for candidate in candidates {
+        let (step_id, metadata_raw) = candidate
+            .map_err(|e| infra_error(&format!("remediation step 读取失败: {e}")))?;
+        let metadata = serde_json::from_str::<Value>(&metadata_raw).unwrap_or(Value::Null);
+        if metadata
+            .get("source_verdict_id")
+            .and_then(Value::as_str)
+            != Some(verdict_id)
+        {
+            continue;
+        }
+
+        let mut reports = conn
+            .prepare(
+                "SELECT request_id, authoritative_timestamp FROM task_events
+                 WHERE task_id = ?1 AND step_id = ?2 AND reason_code = 'reported'
+                 ORDER BY event_id DESC",
+            )
+            .map_err(|e| infra_error(&format!("remediation report 读取失败: {e}")))?;
+        let report_rows = reports
+            .query_map(rusqlite::params![task_id, &step_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })
+            .map_err(|e| infra_error(&format!("remediation report 查询失败: {e}")))?;
+
+        for report in report_rows {
+            let (report_request_id, report_ts) = report
+                .map_err(|e| infra_error(&format!("remediation report 读取失败: {e}")))?;
+            let mut handoffs = conn
+                .prepare(
+                    "SELECT reason FROM task_events
+                     WHERE task_id = ?1 AND reason_code = 'handoff_structured'
+                       AND authoritative_timestamp >= ?2
+                     ORDER BY event_id DESC",
+                )
+                .map_err(|e| infra_error(&format!("remediation handoff 读取失败: {e}")))?;
+            let handoff_rows = handoffs
+                .query_map(rusqlite::params![task_id, report_ts], |row| row.get::<_, String>(0))
+                .map_err(|e| infra_error(&format!("remediation handoff 查询失败: {e}")))?;
+            for handoff in handoff_rows {
+                let raw = handoff
+                    .map_err(|e| infra_error(&format!("remediation handoff 读取失败: {e}")))?;
+                let envelope = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+                if envelope.get("from_role").and_then(Value::as_str) == Some("executor")
+                    && envelope.get("outcome").and_then(Value::as_str)
+                        == Some("executor_ready_for_review")
+                    && envelope.get("next_role").and_then(Value::as_str) == Some("reviewer")
+                    && envelope.get("step_id").and_then(Value::as_str) == Some(step_id.as_str())
+                    && envelope.get("report_request_id").and_then(Value::as_str)
+                        == Some(report_request_id.as_str())
+                {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// 读取 verdict 的结构化 finding 数量；投影只返回数量，不泄露 finding 原文。
@@ -888,12 +1004,14 @@ fn render(r: &Rendered, task_status: &str) -> Value {
     let rc = &r.role_contract;
     let rc_obj = rc.as_ref().map(rc_json).unwrap_or(Value::Null);
     let acting_role = r.required_role.clone().unwrap_or_default();
-    // Adjudicator 执行 apply/close 的 acting role 是 `adjudicator`，取得的 lease role 是 `reviewer`（§3.1）。
-    let is_adjudicator = acting_role == "adjudicator";
-    let lease_role = if is_adjudicator {
-        "reviewer".to_string()
-    } else {
-        acting_role.clone()
+    // `acting_role` is a governance role, while protected mutations validate
+    // the concrete runtime lease role.  Legacy executor work is implemented
+    // by `implementer`; advertising `executor` here stranded a valid lease at
+    // task.handoff.  Adjudicator still deliberately borrows a reviewer lease.
+    let lease_role = match acting_role.as_str() {
+        "adjudicator" => "reviewer".to_string(),
+        "executor" => "implementer".to_string(),
+        _ => acting_role.clone(),
     };
     let authorization = serde_json::json!({
         "acting_role": if acting_role.is_empty() { Value::Null } else { Value::String(acting_role) },
@@ -1306,9 +1424,34 @@ fn complete_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpc
     Ok(value)
 }
 
-// ---------------------------------------------------------------------------
-// 主入口：§3.2 12 条规则（只读，fail-closed）
-// ---------------------------------------------------------------------------
+/// `reverted` 终态的只读投影（与 `complete_outcome` 同构，仅 `next_role` 不同）。
+///
+/// 与 `closed` 一样：终态不解析 Task Contract / workspace binding，
+/// 避免历史裸卡被误报为 `governance_blocked`。
+fn terminal_outcome(task_id: &str, task_status: &str) -> Result<Value, DaemonRpcError> {
+    let r = Rendered {
+        decision: "COMPLETE",
+        action: "NONE",
+        required_role: None,
+        step_id: None,
+        task_contract: None,
+        role_contract: None,
+        verdict_eligibility: "not_evaluated",
+        blocking_conditions: Vec::new(),
+        revision_hint: None,
+        next_role: Some("reverted".to_string()),
+        next_action: "finalize",
+        routing_reason: vec![format!("任务已 {task_status}（终态），无待路由动作")],
+        next_session: None,
+        review_verdict_id: None,
+        review_findings_count: None,
+    };
+    let mut value = render(&r, task_status);
+    if let Value::Object(m) = &mut value {
+        m.insert("task_id".to_string(), Value::String(task_id.to_string()));
+    }
+    Ok(value)
+}
 
 /// 纯只读派工 evaluator：计算 task 的下一合法动作（cw-role-handoff-task-loop.md §3.2）。
 ///
@@ -1334,6 +1477,20 @@ fn evaluate_next_action_inner(
             ))
         }
     };
+
+    // 终态短路（先于规则 1/3/4）：`closed` / `reverted` 是终态，其只读派工投影
+    // 不依赖 Task Contract，也不依赖不可变 workspace binding/capture。历史卡——
+    // 尤其是 supersede 收编卡、早期 backlog/探针卡——常缺合同或缺 binding；若先
+    // 跑规则 1/3/4，会把已经终结的任务误报为 `governance_blocked`（有 binding 但
+    // 缺合同），甚至直接抛 `E_WORKSPACE_AUTHORITY_UNAVAILABLE`（无 binding）。
+    // 终态没有任何后续派工，这里直接回答终态投影；非终态一律继续走规则 1/3/4，
+    // fail-closed 语义不变。
+    if task_status == "closed" {
+        return complete_outcome(task_id, &task_status);
+    }
+    if task_status == "reverted" {
+        return terminal_outcome(task_id, &task_status);
+    }
 
     // 规则 1/3：不可变 workspace binding + capture 链复核。
     let binding_row: Option<(i64, String)> = conn
@@ -1403,8 +1560,12 @@ fn evaluate_next_action_inner(
     }
 
     // 规则 12：终态门禁满足 → COMPLETE/NONE。
+    // 注：`closed`/`reverted` 已在入口「终态短路」处提前返回，此块仅作防御性兜底。
     if task_status == "closed" {
         return complete_outcome(task_id, &task_status);
+    }
+    if task_status == "reverted" {
+        return terminal_outcome(task_id, &task_status);
     }
 
     // 规则 8-11：review 状态由 Verdict Ledger 的 versioned 有效投影驱动。
@@ -1414,7 +1575,7 @@ fn evaluate_next_action_inner(
         // 评审，而非弹回 WAITING——修复 reviewer_blocked 反复指出的"派工投影不稳定"：
         // 取得 reviewer lease 后 recheck 由 REVIEW 翻转为 WAITING/wait_for_current_lease。
         // 仅当 lease 由非 reviewer 角色持有（如 executor 步骤 lease 残留）时才 WAITING。
-        if let Some(holder) = active_lease_role(conn, task_id)? {
+        if let Some(holder) = active_lease_role(conn, workspace_id, task_id)? {
             if holder == "reviewer" {
                 let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "reviewer")? {
                     Some(rc) => rc,
@@ -1466,6 +1627,24 @@ fn evaluate_next_action_inner(
                 );
             }
             Some(v) if v.normalized_overall == "block" => {
+                if block_verdict_has_completed_remediation(conn, task_id, &v.verdict_id)? {
+                    let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "reviewer")? {
+                        Some(rc) => rc,
+                        None => {
+                            return blocked(
+                                task_id,
+                                &task_status,
+                                "remediation 已完成但缺少 reviewer Role Contract lineage（合同缺失）".to_string(),
+                            )
+                        }
+                    };
+                    return review_outcome(
+                        task_id,
+                        &task_status,
+                        tc,
+                        rc,
+                    );
+                }
                 let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "executor")? {
                     Some(rc) => Some(rc),
                     None => None,
@@ -1515,7 +1694,7 @@ fn evaluate_next_action_inner(
     // 规则 11：adjudicator 已接受（applied），可执行最终 close（仍需独立 instance + 真实 lease）。
     if task_status == "applied" {
         // 规则 6 优先于 11：仍有 active 未过期 lease → WAITING/WAIT。
-        if let Some(wait) = wait_if_active_lease(conn, task_id, &task_status)? {
+        if let Some(wait) = wait_if_active_lease(conn, workspace_id, task_id, &task_status)? {
             return Ok(wait);
         }
         let rc = match resolve_lineage_role_contract(conn, workspace_id, task_id, "adjudicator")? {
@@ -1603,8 +1782,10 @@ fn resolve_or_block_step(
     // （status='in_progress'）后，原本只查 `active_lease_role`，而 step 领取只改
     // step 状态、不必然持有 lease，导致始终返回 `Ready`/`CLAIM`，使 AFK/无人值守
     // loop 无限重领取同一 remediation step。此处：若目标 step 已处于 in_progress
-    // （已被某角色领取），直接返回 `WAIT`，携带由 step action 推导出的治理角色，
-    // 让 loop 等待该 step 完成/resolve，而非反复 CLAIM。未知 action 映射时回退到
+    // （已被某角色领取）且有 fresh durable assignment 时，返回 `WAIT`，携带由
+    // step action 推导出的治理角色，避免 loop 反复 CLAIM。单独的 in_progress
+    // 不是 holder proof：queued/no assignment 或 stale heartbeat 均应回到 Ready，
+    // 由 task.claim 的原子 takeover 路径接管并写入审计。未知 action 映射时回退到
     // 下方的 Role Contract 解析（fail-closed：映射不出治理角色即 Blocked）。
     let step_status: Option<String> = conn
         .query_row(
@@ -1614,12 +1795,14 @@ fn resolve_or_block_step(
         )
         .optional()
         .map_err(|e| infra_error(&format!("step 状态读取失败: {e}")))?;
-    if step_status.as_deref() == Some("in_progress") {
+    if step_status.as_deref() == Some("in_progress")
+        && step_has_fresh_claimed_assignment(conn, task_id, step_id)?
+    {
         if let Some(role) = step_claim_role(conn, step_id)? {
             return Ok(StepResolution::Waiting { holder_role: role });
         }
     }
-    if let Some(holder) = active_lease_role(conn, task_id)? {
+    if let Some(holder) = active_lease_role(conn, workspace_id, task_id)? {
         return Ok(StepResolution::Waiting { holder_role: holder });
     }
     match resolve_step_role_contract(conn, workspace_id, task_id, step_id)? {

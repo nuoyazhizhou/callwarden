@@ -893,7 +893,14 @@ class BuildMixin:
 
         # 扫描该目录下的源文件
         supported_extensions = set(get_supported_extensions())
-        skip_dirs = {".git", "node_modules", "target", "dist", "build", ".next", "__pycache__"}
+        # build/ 不在硬编码跳过列：它是歧义目录（Gradle/Maven 放编译产物，
+        # 也有项目放编译脚本 build.sh / release.py / *.cmake）。
+        # 与 _scan_supported_files 不同，本路径不过 _load_ignore_patterns
+        # （safe_walk 只做容错遍历，不套 ignore 规则），所以 build/ 会被
+        # 深入扫描；扩展名白名单挡住 .class/.o 等产物，只入库源码文件。
+        # 用户若要排除 build/，在 .callwardenignore 写 build/ 并改用
+        # build_full_graph（全仓扫描路径会尊重该契约）。
+        skip_dirs = {".git", "node_modules", "target", "dist", ".next", "__pycache__"}
         files = []
         for root, dirs, filenames in safe_walk(abs_dir):
             dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
@@ -944,7 +951,10 @@ class BuildMixin:
             "__pycache__/", ".venv/", "venv/", "env/", ".tox/", "*.egg-info/",
             # === 构建输出目录（AOSP/嵌入式/Make/Cargo）===
             # 这些目录包含编译中间产物和 autogen 源码，体积巨大且无分析价值
-            "target/", "dist/", "build/", "out/", "output/", "outputs/",
+            # 注意：build/ 不在此列——它是歧义目录（Gradle/Maven 放产物，
+            # 也有项目放编译脚本 build.sh / release.py）。交给用户在
+            # .callwardenignore 按项目声明；扩展名白名单另会挡住 .class/.o。
+            "target/", "dist/", "out/", "output/", "outputs/",
             "obj/", "bin/", "rootfs/", "staging/", "sysroot/", "ccache/",
             # === 预构建 / 二进制 / 工具链 ===
             # prebuilt/prebuilts/blob 是厂商二进制，toolchain/ndk/jdk 是工具链
@@ -2939,6 +2949,16 @@ class BuildMixin:
             )
             return row["id"]
         else:
+            # file_instances.current_content_hash 外键引用 file_contents(content_hash)，
+            # 且默认连接开启 PRAGMA foreign_keys=ON。首次注册写入的占位 hash '' 必须
+            # 先存在于 file_contents，否则新库（file_contents 为空）注册任何文件都会
+            # 触发 FOREIGN KEY constraint failed。老库因历史数据已存在 content_hash=''
+            # 行而侥幸可用，故该缺陷只在全新库/新项目上暴露。
+            self.conn.execute(
+                "INSERT OR IGNORE INTO file_contents "
+                "(content_hash, language, total_lines, first_seen_at) VALUES ('', '', 0, ?)",
+                (time.time(),),
+            )
             cur = self.conn.execute(
                 """INSERT INTO file_instances
                    (workspace_id, rel_path, abs_path, current_content_hash, mtime, total_lines, last_parsed, status, module_path)

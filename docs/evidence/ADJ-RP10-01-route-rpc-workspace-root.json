@@ -1,0 +1,53 @@
+{
+  "task_id": "T-1788771487068-af16bbc8",
+  "idempotency_key": "adj-rp10-01-route-rpc-workspace-root",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "source_adj": "ADJ-RP10-01 (recorded by RP-10 T-1788753260274-ed7e21d4 closed/COMPLETE)",
+  "step_ids": {
+    "S-1788771487076-af8d218c": "fix_route_rpc_workspace_injection",
+    "S-1788771487077-af9ab5b8": "verify_cli_mcp_live_parity"
+  },
+  "contract_hash": "sha256:e924cc7f9f2874f0c2f9274986e7459cf5d6689981d77456aef8e127b21d5067",
+  "role_contract_hashes": {
+    "executor": "sha256:4496a8780341a587ee17c34d048935db65d3b37122933adc5f03ef24b4600353",
+    "reviewer": "sha256:1944b82fedb712dad03946014a8e3a8df667e1b73cc61e5aaf9d28f19ccfbf6f",
+    "adjudicator": "sha256:c960641ff6565c305d2d3c2f28e4887504bb232ce8f79bd213d45a309429f8d5"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1788771487068-af16bbc8-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-2943227064"
+  },
+  "root_cause": "server/daemon_client.py route_rpc (shared CLI/MCP entry) unconditionally injected workspace_instance_id (via _ensure_remote_snapshot) and workspace_root (params.setdefault) for every RPC not in _NO_WORKSPACE_METHODS, including task-scoped authority requests. The daemon task.prompt.compile parse_request (frozen spec 4.1-3) accepts only task_id + optional expected_workspace_instance_id and fails closed on any unknown field -> CLI/MCP surfaces returned E_TASK_PROMPT_TASK_ID_REQUIRED instead of the compiled bundle.",
+  "fix": "route_rpc now computes is_task_scoped = _is_task_scoped_authority_request(params) (non-blank task_id or superseded_id) BEFORE the workspace injection block and skips the entire workspace_instance_id / workspace_root injection for task-scoped requests. The Rust handler resolves the numeric workspace from the immutable task_workspace_bindings; the client-side workspace fields are neither needed nor accepted. Workspace-scoped methods (task.create without task_id, lease event listing without task_id, workspace.status/list, etc.) keep the existing injection path unchanged.",
+  "commands": [
+    "python -m pytest tests/test_task_prompt_cli.py tests/test_task_prompt_e2e.py tests/test_task_prompt_mcp.py -q",
+    "python scripts/check_client_purity.py",
+    "git diff --check",
+    "python cw.py task prompt T-1788737615420-538057d4 --format llm (live, shared daemon http://127.0.0.1:6217)",
+    "python cw.py task show T-1788771487068-af16bbc8 (task-scoped regression)",
+    "python cw.py workspace list (workspace-scoped regression)"
+  ],
+  "positive_results": {
+    "task_prompt_suites": "26/26 passed (test_task_prompt_cli 14/14, test_task_prompt_e2e 6/6 incl. new positive CLI/MCP parity tests, test_task_prompt_mcp 6/6)",
+    "purity": "0 violations (hard + soft gates)",
+    "git_diff_check": "clean",
+    "live_cli_llm": "PASS: 'cw task prompt T-1788737615420-538057d4 --format llm' returned daemon-compiled bundle header '**模板标识：** cw.role_prompt.compiler_policy.v1' / 'Role Prompt Compiler v1 - Compiler Policy (daemon-owned)' - no E_TASK_PROMPT_TASK_ID_REQUIRED",
+    "task_scoped_regression": "cw task show T-1788771487068-af16bbc8 works (task-scoped command, no injection)",
+    "workspace_scoped_regression": "cw workspace list works (non-exempt path unchanged)"
+  },
+  "negative_results": {
+    "missing_task": "E2E test_missing_task_fails_closed_all_surfaces still fails closed with E_TASK_PROMPT_TASK_NOT_FOUND and no fabricated bundle on any surface",
+    "workspace_guard": "E2E test_http_rpc_workspace_guard_fails_closed still returns E_TASK_PROMPT_AUTHORITY_MISMATCH on wrong expected_workspace_instance_id",
+    "no_fallback": "daemon unavailable still fail-closed with no local Python authority fallback (unchanged route_rpc semantics)"
+  },
+  "changed_paths": [
+    "server/daemon_client.py",
+    "tests/test_task_prompt_e2e.py"
+  ],
+  "commit_sha": "d8921a59477f72128c55523fa5082eae32b67711",
+  "frozen_authority": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md (SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7), spec 4.1-3 / 4.3",
+  "scope_boundary": "STRICTLY Python thin-client layer; rust_ext/src/daemon/** untouched (daemon parse_request is correct per spec 4.1-3; the defect was client-side over-injection)",
+  "no_secrets": "no credential or lease token included"
+}

@@ -1,0 +1,144 @@
+{
+  "schema_version": "cw.gate1b.executor-evidence.v1",
+  "task_id": "T-1788583773351-2da3bb54",
+  "step_id": "S-1788583773353-2dc9cd6c",
+  "recorded_at": "2026-09-05",
+  "post_deployment_recovery": {
+    "cause_observed": "Receipt PID 8708 exited after deployment; subsequent health returned E_HTTP_MANIFEST_STALE. Cause of process exit not established.",
+    "action": "Started the same verified runtime/current binary with the existing socket, hidden background process; no binary or database replacement.",
+    "pid": 46844,
+    "git_commit": "94a470d72eb3b4d6e5d2242ba9cac4f5af265667",
+    "health": "healthy",
+    "binary_sha256": "da32f0bb76269c3c3bccaaab21c0796ef18173ffdf2d00e24b64958405a656db"
+  },
+  "implementation_commit": "94a470d72eb3b4d6e5d2242ba9cac4f5af265667",
+  "workspace": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "task_contract": {
+    "contract_id": "TC-T-1788583773351-2da3bb54",
+    "revision": 1,
+    "hash": "sha256:a4efbbebcf2163fa670a904a9cbf66ad6124cd12c27bf384a8605042c7fb6934",
+    "normalization_version": "verdict-normalization/v1",
+    "normalization_rules_hash": "sha256:b41cbdb3f2882b3efc0fbbbddfb4fd5b40e23549cdbeb49af2dec798184b0e8d"
+  },
+  "source_hashes": {
+    "cli/main.py": "9df9450b021cafca2ba6d759ed55e47054d6dc5d4d9f330e0a487c50b79deff2",
+    "server/daemon_client.py": "9353159a0a6199749e7ccb6e0bd926662c1c4e46db2b47f3712a2ac9dcebee2c",
+    "i18n/en_US.json": "04758fba64b4a77882d89990050c8de891710beaf2a46a9e8ab77027ca4e8790",
+    "i18n/zh_CN.json": "41c19c57b54125f5bc3cb6e497fc5ed4c404019651dca24716f4a44e6e0c5bce",
+    "tests/test_task_create_parent_governance.py": "6251e7b93134ea60af8991e82bd919879c9aa7d8a613da8527bd71710b4a1eeb",
+    "docs/cli_reference.md": "9e0b91523dbfc8cfd5aac6d47d164e1e7842d3331cf7f34958829703bc1d664e"
+  },
+  "identity": {
+    "agent_id": "codex-finalizer-01a06f02-5558-7830-b436-bcfdb17380f0",
+    "agent_instance_id": "codex-root-01a06f02-5558-7830-b436-bcfdb17380f0",
+    "session_id": "01a06f02-5558-7830-b436-bcfdb17380f0",
+    "model_id": "gpt-6",
+    "role": "executor"
+  },
+  "validation": {
+    "focused_pytest": {
+      "command": "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_create_parent_governance.py -q",
+      "passed": 16
+    },
+    "combined_regressions": {
+      "passed": 30,
+      "files": [
+        "tests/test_task_create_parent_governance.py",
+        "tests/test_task_create_workspace_binding.py"
+      ]
+    },
+    "client_purity": {
+      "exit_code": 0,
+      "violations": 0
+    },
+    "diff_check": {
+      "exit_code": 0
+    },
+    "live_negative": {
+      "parent_id": "T-gate1b-nonexistent-parent-negative",
+      "error_code": "E_TASK_PARENT_NOT_FOUND",
+      "task_created": false,
+      "cli_process_exit_code": 0
+    }
+  },
+  "deployment": {
+    "status": "passed",
+    "receipt": "C:/Users/wanpi/.callwarden/runtime/evidence/20260905-130027-94a470d72eb3-aa37c57d.json",
+    "receipt_sha256": "5abbdd376896e6787e726e251914067444ba5e9d7400aee22dfb601c1f7fc852",
+    "source_head": "94a470d72eb3b4d6e5d2242ba9cac4f5af265667",
+    "health": {
+      "pid": 8708,
+      "git_commit": "94a470d72eb3b4d6e5d2242ba9cac4f5af265667",
+      "worker_status": "healthy"
+    },
+    "daemon_runtime": {
+      "pid": 8708,
+      "executable": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+      "sha256": "da32f0bb76269c3c3bccaaab21c0796ef18173ffdf2d00e24b64958405a656db",
+      "expected_sha256": "da32f0bb76269c3c3bccaaab21c0796ef18173ffdf2d00e24b64958405a656db",
+      "python_dependency_mode": "python_free",
+      "python_dependencies": [],
+      "ping_exit_code": 0,
+      "ping_output": "{\n  \"status\": \"ok\",\n  \"peer_uid\": 4294967295,\n  \"pid\": 8708,\n  \"authority_id\": \"LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/7d417522fd0ab9a1cb5064123cdcbd6edd8f66a6062d3769f1025fa2c671b967\",\n  \"transport\": \"http\",\n  \"task_db_fingerprint\": \"7d417522fd0ab9a1cb5064123cdcbd6edd8f66a6062d3769f1025fa2c671b967\",\n  \"protocol_version\": 1,\n  \"timestamp\": 1788584457.1169758\n}"
+    }
+  },
+  "reports_before_final": [
+    "req-937ea7b181ae",
+    "req-1007cf28cf3a",
+    "req-8ce568eeb3a3"
+  ],
+  "snapshot_binding": "Final task.report publishes and binds its own daemon snapshot. Read the final report event for the authoritative snapshot; no synthetic value is supplied.",
+  "authority_blocker_finalization": {
+    "task_id": "T-1788485095339-e9c64a28",
+    "verdict_id": "V-8612c6bbfa860879032e7fb1",
+    "accepted_handoff": "he-86d78d31ca3f96ce2d634821",
+    "finalizer_lease_id": "L-84dca4b814efeab3",
+    "fencing_counter": 5,
+    "applied_at": 1788583585.962008,
+    "closed_at": 1788583586.6778257,
+    "lease_released": true,
+    "verified_projection": "closed/completed/COMPLETE"
+  },
+  "limitations": [
+    "Full graph refresh attempted and failed: daemon method_not_found build_full_graph. No local database fallback used.",
+    "Existing top-level CLI business-error handling prints E_TASK_PARENT_NOT_FOUND but exits 0. Consumers must inspect the daemon result; recorded as an adjacent CLI error-exit defect.",
+    "No independent Reviewer verdict or Adjudicator completion is asserted for this new implementation. No additional role windows opened, per user instruction.",
+    "Historical review-input and verdict files were not overwritten; the old wrong-workspace v1 review carrier is excluded from this delivery."
+  ],
+  "fix_defect_remediation": {
+    "remediation_step_id": "S-f52a8e741039134de4f8e5ca",
+    "remediation_of_step_id": "S-1788583773353-2dc9cd6c",
+    "remediation_of_verdict": "V-155c02fc6c4e44428d707b17",
+    "finding": "error[owner_route=executor] unknown-parent governed task.create rejected by daemon but CLI process exit code 0 (fail-closed CLI boundary gap)",
+    "fix": {
+      "file": "cli/main.py",
+      "change": "Governed create path (parent_id/identity_policy/task_contract_envelope/task_id present) now catches DaemonRemoteError/DaemonUnavailableError from route_task_write, prints the byte-preserved daemon error, and exits with code 2. Legacy root create retains pre-Gate behavior (error propagates un-reclassified; exit path unchanged).",
+      "scope_note": "Narrow fix per GATE-1B card: no daemon changes, no local fallback added, no client purity regression (pure exception boundary at CLI adapter)."
+    },
+    "tests": {
+      "focused_matrix": "pytest tests/test_task_create_parent_governance.py tests/test_task_create_workspace_binding.py tests/test_task_create_warning.py -> 43 passed",
+      "new_regressions": [
+        "test_governed_create_daemon_rejection_exits_nonzero",
+        "test_governed_create_daemon_unavailable_exits_nonzero",
+        "test_legacy_root_create_daemon_error_behavior_unchanged"
+      ],
+      "live_negative_probe": {
+        "command": "cw task create --title gate1b-negative-probe-defectrepro-3 --parent-id T-gate1b-nonexistent-parent-negative --workspace-id 1 --workspace-instance-id 4baea3ff12c2ea5c",
+        "daemon_error_preserved": "E_TASK_PARENT_CONTRACT_REQUIRED",
+        "cli_process_exit_code": 2,
+        "task_created": false
+      }
+    },
+    "adjacent_preexisting_failures_not_in_scope": [
+      "tests/test_http_governance_error_cutover.py: _FakeHttpClient lacks _project_root / legacy route expectations - caused by parallel uncommitted server/daemon_client.py changes in the shared worktree, not by this fix",
+      "tests/test_task_create_subtask_steps.py: Rust source assertions ('pub fn handle_task_claim') no longer match - parallel daemon refactor moved symbols, not by this fix"
+    ],
+    "operational_notes": [
+      "Probe accident: an empty-title root create probe created open task T-1788656001859-30369600 (0 steps) during live verification; disclosed here, left append-only, no data rewrite."
+    ],
+    "recorded_at": "2026-09-06T08:57:42.802603"
+  }
+}

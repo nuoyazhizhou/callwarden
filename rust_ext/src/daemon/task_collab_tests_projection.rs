@@ -99,6 +99,164 @@ use super::support::*;
     }
 
     #[test]
+    fn test_task_status_progress_percent_two_decimals() {
+        // 契约验收：percent 必须保留两位小数（(ratio*100*100).round()/100），
+        // 非整除进度（1/3、2/3）不得输出 33.0/33.333... 等错误精度。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-PCT-2DEC",
+                    "title": "two decimals percent",
+                    "steps": [
+                        {"action": "a", "target_file": "a.rs"},
+                        {"action": "b", "target_file": "b.rs"},
+                        {"action": "c", "target_file": "c.rs"},
+                    ]
+                }),
+            )
+            .unwrap();
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE task_steps SET status='done', completed_at=1.0
+             WHERE task_id='T-PCT-2DEC' AND step_index=0",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let one_third = store
+            .handle_task_status(
+                peer.clone(),
+                &serde_json::json!({"task_id": "T-PCT-2DEC"}),
+            )
+            .unwrap();
+        assert_eq!(one_third["progress"]["total"], 3);
+        assert_eq!(one_third["progress"]["done"], 1);
+        // 1/3=0.3333... -> 33.33（两位小数，绝不放宽为 33.0）
+        assert_eq!(one_third["progress"]["ratio"], 1.0 / 3.0);
+        assert_eq!(one_third["progress"]["percent"], 33.33);
+
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE task_steps SET status='done', completed_at=1.0
+             WHERE task_id='T-PCT-2DEC' AND step_index=1",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let two_thirds = store
+            .handle_task_status(
+                peer,
+                &serde_json::json!({"task_id": "T-PCT-2DEC"}),
+            )
+            .unwrap();
+        assert_eq!(two_thirds["progress"]["done"], 2);
+        // 2/3=0.6666... -> 66.67
+        assert_eq!(two_thirds["progress"]["percent"], 66.67);
+    }
+
+    #[test]
+    fn test_task_status_historical_blocked_vs_bound_projection() {
+        // 契约验收：历史任务（缺不可变 binding/capture/合同）不得静默按 raw status
+        // 猜测，必须显式 governance_blocked；具备完整治理事实的新任务显示正常投影。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        // 历史任务：只有 tasks 行，无 workspace binding。
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+             VALUES ('T-HIST-BLOCKED', 'historic', '', 'test', 'in_progress', 1.0, 1.0, '')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let hist = store
+            .handle_task_status(
+                peer.clone(),
+                &serde_json::json!({"task_id": "T-HIST-BLOCKED"}),
+            )
+            .unwrap();
+        assert_eq!(hist["lifecycle_status"], "in_progress");
+        assert_eq!(hist["workflow_status"], "governance_blocked");
+        assert!(hist["blocking_reasons"].as_array().unwrap().len() > 0);
+
+        // 新任务：task.create 写入不可变 binding，但缺 contract 时同样不伪造投影。
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-BOUND-NEW",
+                    "title": "bound new task",
+                    "steps": [{"action": "implement", "target_file": "a.rs"}]
+                }),
+            )
+            .unwrap();
+        let bound = store
+            .handle_task_status(
+                peer,
+                &serde_json::json!({"task_id": "T-BOUND-NEW"}),
+            )
+            .unwrap();
+        // 生命周期保留 open，但缺可验证治理事实 → governance_blocked（与历史任务同规则）。
+        assert_eq!(bound["lifecycle_status"], "open");
+        assert_eq!(bound["workflow_status"], "governance_blocked");
+        assert!(bound["blocking_reasons"].as_array().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_task_status_closed_historical_is_completed_not_blocked() {
+        // GOV-FIX-04：终态短路。历史 closed 卡（无 binding/合同）必须显示 completed，
+        // 不能再被标为 governance_blocked——否则已终结任务会看起来像"待处置的坏卡"。
+        // 同时确认 `reverted` 保留自身终态语义。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+                 VALUES ('T-HIST-CLOSED', 'historic closed', '', 'test', 'closed', 1.0, 1.0, '')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+                 VALUES ('T-HIST-REVERTED', 'historic reverted', '', 'test', 'reverted', 1.0, 1.0, '')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let closed = store
+            .handle_task_status(
+                peer.clone(),
+                &serde_json::json!({"task_id": "T-HIST-CLOSED"}),
+            )
+            .unwrap();
+        assert_eq!(closed["lifecycle_status"], "closed");
+        assert_eq!(closed["workflow_status"], "completed");
+        assert_eq!(closed["blocking_reasons"].as_array().map(Vec::len), Some(0));
+
+        let reverted = store
+            .handle_task_status(peer, &serde_json::json!({"task_id": "T-HIST-REVERTED"}))
+            .unwrap();
+        assert_eq!(reverted["lifecycle_status"], "reverted");
+        assert_eq!(reverted["workflow_status"], "reverted");
+        assert_eq!(reverted["blocking_reasons"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
     fn test_task_create_requires_workspace_id_fail_closed() {
         // 任务接口强制绑定：task.create 缺显式 workspace_id → fail-closed。
         let (_dir, db_path) = temp_db();
@@ -498,6 +656,7 @@ use super::support::*;
                     "request_id":"report-handoff-1",
                     "evidence_path":"deliverables/evidence.json",
                     "evidence_hash":"sha256:evidence-1",
+                    "snapshot_id":"snapshot-handoff-provenance",
                     "summary":"implemented",
                     "success":true,
                     "identity": executor_identity

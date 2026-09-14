@@ -29,6 +29,8 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::daemon::dispatch::DaemonRpcError;
+use crate::daemon::task_collab::canonical_claim_role;
+use crate::daemon::task_collab::role_in_match;
 use super::executor::TaskMutationExecutor;
 use super::types::{
     DomainOutcome, FrozenAuthorityInput, InfrastructureError, InvocationClass,
@@ -55,6 +57,8 @@ pub const ERR_LEASE_HOLDER_MISMATCH: &str = "E_LEASE_HOLDER_MISMATCH";
 pub const ERR_LEASE_ACTIVE_EXISTS: &str = "E_LEASE_ACTIVE_EXISTS";
 /// 确定性拒绝：唯一索引防双活冲突（并发 acquire 竞态，fail-closed）。
 pub const ERR_LEASE_ALREADY_ACTIVE: &str = "E_LEASE_ALREADY_ACTIVE";
+/// 确定性拒绝：active lease 仍由健康 holder 持有，不允许 recovery 清除。
+pub const ERR_LEASE_RECOVERY_NOT_ELIGIBLE: &str = "E_LEASE_RECOVERY_NOT_ELIGIBLE";
 /// 确定性拒绝：身份不完整（acquire 需要 agent_id/session_id/model_id）。
 pub const ERR_IDENTITY_INCOMPLETE: &str = "E_IDENTITY_INCOMPLETE";
 /// 确定性拒绝：close 父任务存在未关闭子任务。
@@ -184,6 +188,10 @@ impl AcquireInput {
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.acquire 缺少字段: task_id"))?;
         let role = params.get("role").and_then(|v| v.as_str()).map(|s| s.to_string())
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.acquire 缺少字段: role"))?;
+        // 存储侧归一（C-24）：runtime role（implementer/planner/tester/evidence/
+        // independent_reviewer 等）统一映射到治理角色再落库，使 fencing 聚合键、
+        // check_lease 查找、lease.recover 白名单三方一致；未知角色透传不编造。
+        let role = canonical_claim_role(&role).to_string();
         let ttl = params.get("ttl_seconds").and_then(|v| v.as_f64()).unwrap_or(DEFAULT_LEASE_TTL);
         if ttl <= 0.0 {
             return Err(DaemonRpcError::invalid_params("ttl_seconds 必须大于 0"));
@@ -213,6 +221,9 @@ impl RenewInput {
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.renew 缺少字段: task_id"))?;
         let role = params.get("role").and_then(|v| v.as_str()).map(|s| s.to_string())
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.renew 缺少字段: role"))?;
+        // 存储侧归一（C-24）：与 acquire 同一归一点，保证 renew 的 role 查找键
+        // 与落库值一致（历史 implementer lease 亦可被 renew）。
+        let role = canonical_claim_role(&role).to_string();
         let token = params.get("token").and_then(|v| v.as_str()).map(|s| s.to_string())
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.renew 缺少字段: token"))?;
         let ttl = params.get("ttl_seconds").and_then(|v| v.as_f64()).unwrap_or(DEFAULT_LEASE_TTL);
@@ -246,6 +257,9 @@ impl ReleaseInput {
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.release 缺少字段: task_id"))?;
         let role = params.get("role").and_then(|v| v.as_str()).map(|s| s.to_string())
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.release 缺少字段: role"))?;
+        // 存储侧归一（C-24）：与 acquire/renew 同一归一点，release 的 role 查找键
+        // 与落库值一致（历史 implementer lease 亦可被 release）。
+        let role = canonical_claim_role(&role).to_string();
         let token = params.get("token").and_then(|v| v.as_str()).map(|s| s.to_string())
             .ok_or_else(|| DaemonRpcError::invalid_params("lease.release 缺少字段: token"))?;
         Ok(ReleaseInput {
@@ -263,7 +277,7 @@ struct DomainWriteOk {
 }
 
 /// 领域执行期间的失败类别（封闭、类型化）。
-enum LifecycleDomainError {
+pub(crate) enum LifecycleDomainError {
     /// 确定性、可重放失败：外层在 savepoint 回滚后写可重放 ledger error 并 commit。
     Deterministic { code: String, message: String },
     /// 基础设施失败：回滚 outer transaction、领域写入与 ledger result。
@@ -300,6 +314,19 @@ impl LifecycleDomainError {
             }
         }
     }
+
+    /// Convert a lease-domain failure for callers that own the surrounding
+    /// transaction (for example the task-scoped recovery RPC).  The wrapper
+    /// entrypoints use `into_outcome`; recovery keeps the transaction open so
+    /// the assignment projection can be updated atomically with the lease.
+    pub(crate) fn into_rpc_error(self) -> DaemonRpcError {
+        match self {
+            LifecycleDomainError::Deterministic { code, message } => {
+                DaemonRpcError::new(&code, message)
+            }
+            LifecycleDomainError::Infrastructure(error) => error,
+        }
+    }
 }
 
 /// 受保护写操作（apply/close）前校验 reviewer lease（Req 11.2-11.9）。
@@ -316,14 +343,24 @@ fn validate_lease_for_mutation(
     identity: Option<&LeaseIdentity>,
 ) -> Result<(), LifecycleDomainError> {
     let now = now_unix();
+    // 查找侧归一（C-24）：历史行可能以 runtime role（如 implementer）落库，
+    // 治理角色查询须匹配其变体集，否则会误报 E_LEASE_NOT_FOUND。
+    let role = canonical_claim_role(role);
+    let (role_sql, role_params) = role_in_match(role);
+    let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+    for v in &role_params {
+        lookup_params.push(v);
+    }
     let lease = tx
         .query_row(
-            "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
-                    agent_id, session_id, model_id \
-             FROM task_leases \
-             WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active' \
-             ORDER BY id ASC LIMIT 1",
-            rusqlite::params![workspace_id, task_id, role],
+            &format!(
+                "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
+                        agent_id, session_id, model_id \
+                 FROM task_leases \
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active' \
+                 ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(lookup_params),
             |r| {
                 Ok(LeaseRow {
                     id: r.get(0)?,
@@ -375,7 +412,7 @@ fn validate_lease_for_mutation(
 }
 
 /// active lease 查询行。
-struct LeaseRow {
+pub(crate) struct LeaseRow {
     id: i64,
     lease_id: String,
     token_hash: String,
@@ -384,6 +421,160 @@ struct LeaseRow {
     agent_id: String,
     session_id: String,
     model_id: String,
+}
+
+/// 判断 active lease 是否已经满足 daemon-authoritative orphan recovery 条件。
+///
+/// 这条规则必须是 lease domain 的唯一实现，供 `lease.acquire` 和后续受控
+/// recovery RPC 共同复用：
+/// - 已过期 lease 可以回收；
+/// - 未过期但 holder 注册缺失、已 inactive 或心跳超过 orphan 阈值，可以回收；
+/// - 健康且心跳新鲜的 active lease 不得被 Planner/其他 agent 强制清除。
+fn orphan_recovery_reason(
+    tx: &Connection,
+    active: &LeaseRow,
+    now: f64,
+) -> Result<Option<&'static str>, LifecycleDomainError> {
+    if now > active.expires_at {
+        return Ok(Some("lease_expired"));
+    }
+
+    let holder: Option<(String, f64)> = tx
+        .query_row(
+            "SELECT status, last_heartbeat FROM agent_registrations
+             WHERE agent_id = ?1 AND session_id = ?2 LIMIT 1",
+            rusqlite::params![active.agent_id, active.session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| LifecycleDomainError::infra_msg(e, "查询 lease holder 注册失败"))?;
+
+    Ok(match holder {
+        None => Some("holder_registration_missing"),
+        Some((status, _)) if status != "active" => Some("holder_registration_inactive"),
+        Some((_, last_heartbeat)) if now - last_heartbeat > ORPHAN_CLAIM_STALE_SECS => {
+            Some("holder_heartbeat_stale")
+        }
+        _ => None,
+    })
+}
+
+/// 原子回收一条符合 orphan 条件的 active lease，并追加 append-only 审计事件。
+///
+/// 返回实际回收原因；`Ok(None)` 表示 holder 仍健康，调用方必须保持
+/// `ERR_LEASE_ACTIVE_EXISTS`/`ERR_LEASE_RECOVERY_NOT_ELIGIBLE` 的 fail-closed 语义。
+/// 本函数不接收也不生成 raw token，且不触碰 assignment；assignment 事件必须由
+/// 上层 recovery transaction 在同一事务中追加。
+pub(crate) fn recover_orphaned_lease(
+    tx: &Connection,
+    workspace_id: i64,
+    task_id: &str,
+    role: &str,
+    active: &LeaseRow,
+    recovery_actor: &LeaseIdentity,
+    now: f64,
+) -> Result<Option<&'static str>, LifecycleDomainError> {
+    let Some(reason) = orphan_recovery_reason(tx, active, now)? else {
+        return Ok(None);
+    };
+
+    tx.execute(
+        "UPDATE task_leases SET status = 'expired', released_at = ?1 WHERE id = ?2 AND status = 'active'",
+        rusqlite::params![now, active.id],
+    )
+    .map_err(|e| LifecycleDomainError::infra_msg(e, "回收 orphan lease 失败"))?;
+    append_lease_event(
+        tx,
+        workspace_id,
+        &active.lease_id,
+        task_id,
+        role,
+        "expire",
+        active.fencing_counter,
+        now,
+        recovery_actor,
+        &format!(
+            "orphan recovery: reason={reason}, old_holder_agent_id={}, old_holder_session_id={}",
+            active.agent_id, active.session_id
+        ),
+    )?;
+    Ok(Some(reason))
+}
+
+/// Recover the current active lease for a task while retaining the caller's
+/// transaction.  This is the public domain boundary for task-scoped recovery:
+/// it owns active-row lookup, orphan eligibility, fencing preservation and the
+/// append-only lease event.  It deliberately does not know about assignments;
+/// the RPC layer appends the corresponding assignment event in the same
+/// transaction after this function succeeds.
+pub(crate) fn recover_orphaned_lease_for_task(
+    tx: &Connection,
+    workspace_id: i64,
+    task_id: &str,
+    role: &str,
+    recovery_actor: &LeaseIdentity,
+    now: f64,
+) -> Result<(String, i64, &'static str), DaemonRpcError> {
+    // 查找侧归一（C-24）：历史 lease 可能以 runtime role（implementer 等）落库，
+    // 归一到治理角色后按全部 runtime 变体集匹配，使旧行亦可被定位与恢复。
+    let role = canonical_claim_role(role);
+    let (role_sql, role_params) = role_in_match(role);
+    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+    for v in &role_params {
+        params.push(v);
+    }
+    let active = tx
+        .query_row(
+            &format!(
+                "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
+                        agent_id, session_id, model_id
+                 FROM task_leases
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active'
+                 ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(params),
+            |r| {
+                Ok(LeaseRow {
+                    id: r.get(0)?,
+                    lease_id: r.get(1)?,
+                    token_hash: r.get(2)?,
+                    fencing_counter: r.get(3)?,
+                    expires_at: r.get(4)?,
+                    agent_id: r.get(5)?,
+                    session_id: r.get(6)?,
+                    model_id: r.get(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("查询 active lease 失败: {e}")))?
+        .ok_or_else(|| {
+            DaemonRpcError::new(
+                ERR_LEASE_NOT_FOUND,
+                format!("task={task_id} role={role} 无 active lease，不能执行 recovery"),
+            )
+        })?;
+    let lease_id = active.lease_id.clone();
+    let fencing_counter = active.fencing_counter;
+    let reason = recover_orphaned_lease(
+        tx,
+        workspace_id,
+        task_id,
+        role,
+        &active,
+        recovery_actor,
+        now,
+    )
+    .map_err(LifecycleDomainError::into_rpc_error)?
+    .ok_or_else(|| {
+        DaemonRpcError::new(
+            ERR_LEASE_RECOVERY_NOT_ELIGIBLE,
+            format!(
+                "task={task_id} role={role} 的 active lease 仍由健康 holder 持有，拒绝 recovery"
+            ),
+        )
+    })?;
+    Ok((lease_id, fencing_counter, reason))
 }
 
 /// 从不可变 `task_workspace_bindings` 解析 task 的 workspace_id（lease 归属唯一权威）。
@@ -800,20 +991,30 @@ fn write_acquire(
     input: &AcquireInput,
     issued_token: &mut Option<String>,
 ) -> Result<DomainWriteOk, LifecycleDomainError> {
+    // 存储侧归一（C-24）：runtime role 映射到治理角色，覆盖直构 Input 的
+    // 领域调用方（RPC 路径已在 from_params/handler 归一，此处幂等）。
+    let role = canonical_claim_role(&input.role).to_string();
     let workspace_id = workspace_id_of(tx, &input.task_id)?;
     let now = now_unix();
     let ttl = if input.ttl_seconds > 0.0 { input.ttl_seconds } else { DEFAULT_LEASE_TTL };
     let expires_at = now + ttl;
 
     // 1. 原子比较当前 active lease（Req 11.2）。
+    let (role_sql, role_params) = role_in_match(&role);
+    let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &input.task_id];
+    for v in &role_params {
+        lookup_params.push(v);
+    }
     let active: Option<LeaseRow> = tx
         .query_row(
-            "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
-                    agent_id, session_id, model_id \
-             FROM task_leases \
-             WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active' \
-             ORDER BY id ASC LIMIT 1",
-            rusqlite::params![workspace_id, input.task_id, input.role],
+            &format!(
+                "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
+                        agent_id, session_id, model_id \
+                 FROM task_leases \
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active' \
+                 ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(lookup_params),
             |r| {
                 Ok(LeaseRow {
                     id: r.get(0)?,
@@ -831,75 +1032,73 @@ fn write_acquire(
         .map_err(|e| LifecycleDomainError::infra_msg(e, "查询 active lease 失败"))?;
     if let Some(active) = active {
         if now <= active.expires_at {
-            // 未过期并不等于仍有可用 owner：Executor 进程异常退出时旧 lease 可能还有
-            // 很长 TTL。仅当 holder 注册状态/心跳明确 stale 时才在同一事务回收。
-            let holder: Option<(String, f64)> = tx
-                .query_row(
-                    "SELECT status, last_heartbeat FROM agent_registrations \
-                     WHERE agent_id = ?1 AND session_id = ?2 LIMIT 1",
-                    rusqlite::params![active.agent_id, active.session_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(|e| LifecycleDomainError::infra_msg(e, "查询 lease holder 注册失败"))?;
-            let stale_reason = match holder {
-                None => Some("holder_registration_missing"),
-                Some((status, _)) if status != "active" => Some("holder_registration_inactive"),
-                Some((_, last_heartbeat)) if now - last_heartbeat > ORPHAN_CLAIM_STALE_SECS => {
-                    Some("holder_heartbeat_stale")
-                }
-                _ => None,
+            // 未过期并不等于仍有可用 owner，但只有 domain 原语确认 holder
+            // 注册/心跳明确 stale 时才允许同一事务回收。
+            let actor = LeaseIdentity {
+                agent_id: active.agent_id.clone(),
+                session_id: active.session_id.clone(),
+                model_id: active.model_id.clone(),
+                role: role.clone(),
             };
-            if let Some(reason) = stale_reason {
-                tx.execute(
-                    "UPDATE task_leases SET status = 'expired', released_at = ?1 WHERE id = ?2",
-                    rusqlite::params![now, active.id],
-                )
-                .map_err(|e| LifecycleDomainError::infra_msg(e, "回收 stale lease 失败"))?;
-                let actor = LeaseIdentity {
-                    agent_id: active.agent_id.clone(),
-                    session_id: active.session_id.clone(),
-                    model_id: active.model_id.clone(),
-                    role: input.role.clone(),
-                };
-                append_lease_event(
-                    tx, workspace_id, &active.lease_id, &input.task_id, &input.role, "expire",
-                    active.fencing_counter, now, &actor,
-                    &format!(
-                        "stale holder recovered: reason={reason}, holder_agent_id={}, holder_session_id={}",
-                        active.agent_id, active.session_id
-                    ),
-                )?;
-            } else {
+            if recover_orphaned_lease(
+                tx,
+                workspace_id,
+                &input.task_id,
+                &role,
+                &active,
+                &actor,
+                now,
+            )?
+            .is_none()
+            {
                 return Err(LifecycleDomainError::det(
                     ERR_LEASE_ACTIVE_EXISTS,
                     format!(
                         "task={} role={} 已有未过期 lease ({}, expires_at={:.1})",
-                        input.task_id, input.role, active.lease_id, active.expires_at
+                        input.task_id, role, active.lease_id, active.expires_at
                     ),
                 ));
             }
         }
         if now > active.expires_at {
-            // 已过期 → 旧 lease 置 expired（释放唯一 active 槽位，对齐既有 acquire）。
-            tx.execute(
-                "UPDATE task_leases SET status = 'expired', released_at = ?1 WHERE id = ?2",
-                rusqlite::params![now, active.id],
-            )
-            .map_err(|e| LifecycleDomainError::infra_msg(e, "过期 lease 置 expired 失败"))?;
+            // 已过期 → 通过同一 domain 原语释放 active 槽位。
+            let actor = LeaseIdentity {
+                agent_id: active.agent_id.clone(),
+                session_id: active.session_id.clone(),
+                model_id: active.model_id.clone(),
+                role: role.clone(),
+            };
+            recover_orphaned_lease(
+                tx,
+                workspace_id,
+                &input.task_id,
+                &role,
+                &active,
+                &actor,
+                now,
+            )?;
         }
     }
 
     // 2. 单调递增 fencing counter（Req 11.3）：该 task+role 全历史 MAX + 1。
-    let fencing_counter: i64 = tx
-        .query_row(
-            "SELECT COALESCE(MAX(fencing_counter), 0) FROM task_leases \
-             WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3",
-            rusqlite::params![workspace_id, input.task_id, input.role],
+    // 变体集聚合（C-24）：历史 implementer/planner 行的 counter 也必须计入，否则会回退。
+    let fencing_counter: i64 = {
+        let (fsql, fparams) = role_in_match(&role);
+        let mut fargs: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &input.task_id];
+        for v in &fparams {
+            fargs.push(v);
+        }
+        tx.query_row(
+            &format!(
+                "SELECT COALESCE(MAX(fencing_counter), 0) FROM task_leases \
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {fsql}"
+            ),
+            rusqlite::params_from_iter(fargs),
             |r| r.get::<_, i64>(0),
         )
         .map_err(|e| LifecycleDomainError::infra_msg(e, "查询 fencing counter 失败"))?
-        + 1;
+            + 1
+    };
 
     // 3. 生成 raw token 与 lease_id（raw token 只在本次响应返回，DB 只存 hash）。
     let token = gen_lease_token();
@@ -913,7 +1112,7 @@ fn write_acquire(
           token_hash, fencing_counter, acquired_at, expires_at, status) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active')",
         rusqlite::params![
-            workspace_id, lease_id, input.task_id, input.role,
+            workspace_id, lease_id, input.task_id, role,
             input.identity.agent_id, input.identity.session_id, input.identity.model_id,
             token_hash, fencing_counter, now, expires_at,
         ],
@@ -924,7 +1123,7 @@ fn write_acquire(
                 ERR_LEASE_ALREADY_ACTIVE,
                 format!(
                     "task={} role={} 已有 active lease（唯一索引防双活）",
-                    input.task_id, input.role
+                    input.task_id, role
                 ),
             )
         } else {
@@ -934,7 +1133,7 @@ fn write_acquire(
 
     // 5. 追加审计事件（append-only，不写 raw token）；此时才视为成功签发。
     append_lease_event(
-        tx, workspace_id, &lease_id, &input.task_id, &input.role, "acquire",
+        tx, workspace_id, &lease_id, &input.task_id, &role, "acquire",
         fencing_counter, now, &input.identity,
         &format!("acquired, expires_at={expires_at:.1}"),
     )?;
@@ -944,7 +1143,7 @@ fn write_acquire(
         response: serde_json::json!({
             "lease_id": lease_id,
             "task_id": input.task_id,
-            "role": input.role,
+            "role": role,
             "token_hash": token_hash,
             "fencing_counter": fencing_counter,
             "acquired_at": now,
@@ -1003,18 +1202,29 @@ fn apply_renew(
 
 /// 在 savepoint 事务内执行校验 + 续期 + 审计（Req 11.4-11.5，§8.1.6）。
 fn write_renew(tx: &Connection, input: &RenewInput) -> Result<DomainWriteOk, LifecycleDomainError> {
+    // 存储侧归一（C-24）：runtime role 映射到治理角色，覆盖直构 Input 的
+    // 领域调用方（RPC 路径已在 from_params/handler 归一，此处幂等）。
+    let role = canonical_claim_role(&input.role).to_string();
     let workspace_id = workspace_id_of(tx, &input.task_id)?;
     let now = now_unix();
     let ttl = if input.ttl_seconds > 0.0 { input.ttl_seconds } else { DEFAULT_LEASE_TTL };
 
+    // 查找侧变体集（C-24）：命中以 runtime role 落库的历史 active 行。
+    let (role_sql, role_params) = role_in_match(&role);
+    let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &input.task_id];
+    for v in &role_params {
+        lookup_params.push(v);
+    }
     let lease: LeaseRow = tx
         .query_row(
-            "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
-                    agent_id, session_id, model_id \
-             FROM task_leases \
-             WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active' \
-             ORDER BY id ASC LIMIT 1",
-            rusqlite::params![workspace_id, input.task_id, input.role],
+            &format!(
+                "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
+                        agent_id, session_id, model_id \
+                 FROM task_leases \
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active' \
+                 ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(lookup_params),
             |r| {
                 Ok(LeaseRow {
                     id: r.get(0)?,
@@ -1033,7 +1243,7 @@ fn write_renew(tx: &Connection, input: &RenewInput) -> Result<DomainWriteOk, Lif
         .ok_or_else(|| {
             LifecycleDomainError::det(
                 ERR_LEASE_NOT_FOUND,
-                format!("task={} role={} 无 active lease", input.task_id, input.role),
+                format!("task={} role={} 无 active lease", input.task_id, role),
             )
         })?;
 
@@ -1072,22 +1282,32 @@ fn write_renew(tx: &Connection, input: &RenewInput) -> Result<DomainWriteOk, Lif
 
     // 幂等续租：不递增 counter，不创建新 lease（Req 11.5）。
     let new_expires = now + ttl;
-    tx.execute(
-        "UPDATE task_leases SET renewed_at = ?1, expires_at = ?2 \
-         WHERE workspace_id = ?3 AND task_id = ?4 AND role = ?5 AND status = 'active'",
-        rusqlite::params![now, new_expires, workspace_id, input.task_id, input.role],
-    )
-    .map_err(|e| LifecycleDomainError::infra_msg(e, "renew 续期失败"))?;
+    {
+        let (rsql, rparams) = role_in_match(&role);
+        let mut rargs: Vec<&dyn rusqlite::ToSql> =
+            vec![&now, &new_expires, &workspace_id, &input.task_id];
+        for v in &rparams {
+            rargs.push(v);
+        }
+        tx.execute(
+            &format!(
+                "UPDATE task_leases SET renewed_at = ?1, expires_at = ?2 \
+                 WHERE workspace_id = ?3 AND task_id = ?4 AND {rsql} AND status = 'active'"
+            ),
+            rusqlite::params_from_iter(rargs),
+        )
+        .map_err(|e| LifecycleDomainError::infra_msg(e, "renew 续期失败"))?;
+    }
 
     // 事件 actor 取 lease holder（对齐既有 renew 语义）。
     let actor = LeaseIdentity {
         agent_id: lease.agent_id.clone(),
         session_id: lease.session_id.clone(),
         model_id: lease.model_id.clone(),
-        role: input.role.clone(),
+        role: role.clone(),
     };
     append_lease_event(
-        tx, workspace_id, &lease.lease_id, &input.task_id, &input.role, "renew",
+        tx, workspace_id, &lease.lease_id, &input.task_id, &role, "renew",
         lease.fencing_counter, now, &actor,
         &format!("renewed, expires_at={new_expires:.1}"),
     )?;
@@ -1096,7 +1316,7 @@ fn write_renew(tx: &Connection, input: &RenewInput) -> Result<DomainWriteOk, Lif
         response: serde_json::json!({
             "lease_id": lease.lease_id,
             "task_id": input.task_id,
-            "role": input.role,
+            "role": role,
             "fencing_counter": lease.fencing_counter,
             "renewed_at": now,
             "expires_at": new_expires,
@@ -1152,17 +1372,27 @@ fn apply_release(
 
 /// 在 savepoint 事务内执行 token 校验 + 置 released + 审计（Req 11.6-11.7，§8.1.6）。
 fn write_release(tx: &Connection, input: &ReleaseInput) -> Result<DomainWriteOk, LifecycleDomainError> {
+    // 存储侧归一（C-24）：runtime role 映射到治理角色，覆盖直构 Input 的
+    // 领域调用方（RPC 路径已在 from_params/handler 归一，此处幂等）。
+    let role = canonical_claim_role(&input.role).to_string();
     let workspace_id = workspace_id_of(tx, &input.task_id)?;
     let now = now_unix();
 
+    let (role_sql, role_params) = role_in_match(&role);
+    let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &input.task_id];
+    for v in &role_params {
+        lookup_params.push(v);
+    }
     let active: Option<LeaseRow> = tx
         .query_row(
-            "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
-                    agent_id, session_id, model_id \
-             FROM task_leases \
-             WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active' \
-             ORDER BY id ASC LIMIT 1",
-            rusqlite::params![workspace_id, input.task_id, input.role],
+            &format!(
+                "SELECT id, lease_id, token_hash, fencing_counter, expires_at, \
+                        agent_id, session_id, model_id \
+                 FROM task_leases \
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active' \
+                 ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(lookup_params),
             |r| {
                 Ok(LeaseRow {
                     id: r.get(0)?,
@@ -1203,10 +1433,10 @@ fn write_release(tx: &Connection, input: &ReleaseInput) -> Result<DomainWriteOk,
             agent_id: lease.agent_id.clone(),
             session_id: lease.session_id.clone(),
             model_id: lease.model_id.clone(),
-            role: input.role.clone(),
+            role: role.clone(),
         };
         append_lease_event(
-            tx, workspace_id, &lease.lease_id, &input.task_id, &input.role, "release",
+            tx, workspace_id, &lease.lease_id, &input.task_id, &role, "release",
             lease.fencing_counter, now, &actor,
             &format!("released at {now:.1}"),
         )?;
@@ -1215,7 +1445,7 @@ fn write_release(tx: &Connection, input: &ReleaseInput) -> Result<DomainWriteOk,
             response: serde_json::json!({
                 "lease_id": lease.lease_id,
                 "task_id": input.task_id,
-                "role": input.role,
+                "role": role,
                 "fencing_counter": lease.fencing_counter,
                 "released_at": now,
                 "status": "released",
@@ -1224,13 +1454,21 @@ fn write_release(tx: &Connection, input: &ReleaseInput) -> Result<DomainWriteOk,
     }
 
     // 无 active lease → 幂等分支（Req 11.7）：最近历史 lease 已 released 且 token 匹配视为已释放。
+    // 历史行变体集（C-24）：最近历史 lease 可能以 runtime role 落库。
+    let (hist_sql, hist_params) = role_in_match(&role);
+    let mut hist_args: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &input.task_id];
+    for v in &hist_params {
+        hist_args.push(v);
+    }
     let hist: Option<(String, String, i64, String, f64)> = tx
         .query_row(
-            "SELECT lease_id, token_hash, fencing_counter, status, COALESCE(released_at, 0) \
-             FROM task_leases \
-             WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 \
-             ORDER BY id DESC LIMIT 1",
-            rusqlite::params![workspace_id, input.task_id, input.role],
+            &format!(
+                "SELECT lease_id, token_hash, fencing_counter, status, COALESCE(released_at, 0) \
+                 FROM task_leases \
+                 WHERE workspace_id = ?1 AND task_id = ?2 AND {hist_sql} \
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(hist_args),
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()
@@ -1241,7 +1479,7 @@ fn write_release(tx: &Connection, input: &ReleaseInput) -> Result<DomainWriteOk,
                 response: serde_json::json!({
                     "lease_id": lease_id,
                     "task_id": input.task_id,
-                    "role": input.role,
+                    "role": role,
                     "fencing_counter": hist_counter,
                     "released_at": hist_released_at,
                     "status": "released",
@@ -1252,7 +1490,7 @@ fn write_release(tx: &Connection, input: &ReleaseInput) -> Result<DomainWriteOk,
     }
     Err(LifecycleDomainError::det(
         ERR_LEASE_NOT_FOUND,
-        format!("task={} role={} 无 active lease", input.task_id, input.role),
+        format!("task={} role={} 无 active lease", input.task_id, role),
     ))
 }
 

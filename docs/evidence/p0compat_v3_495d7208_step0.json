@@ -1,0 +1,20 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1788963088148-495d7208",
+  "step_index": 0,
+  "action": "port_rust_handler",
+  "changed_files": [
+    "rust_ext/src/daemon/task_collab_identity.rs",
+    "rust_ext/src/daemon/task_collab_lease.rs",
+    "rust_ext/src/daemon/dispatch.rs",
+    "rust_ext/src/daemon/http_server.rs"
+  ],
+  "summary": "handle_get_attestation_validity/handle_list_attestation_revocations 落 task_collab_identity.rs；handle_assignment_show 落 task_collab_lease.rs；dispatch.rs handle_collab_rpc 加 3 arm + capability-list 加 3 方法；http_server.rs build_capability_registry 3 行 python_compat→rust_native （batch=P0-COMPAT-v3）+ COMPAT_ROUTE_WHITELIST 摘除 3 条目",
+  "verification": {
+    "rust_build": "cargo build --bin cw-daemon Finished (CARGO_INCREMENTAL=0, unset INCLUDE)",
+    "pytest": "15/15 PASS (tests/test_mcp_compat_identity-lease-small_http_rpc.py + test_mcp_assignment_show_http_rpc.py)",
+    "capabilities_endpoint": "3 methods backend=rust_native, status=available"
+  },
+  "created_at": "2026-09-09T23:20:04+0800",
+  "request_id": "req-evd-8d4a4859"
+}

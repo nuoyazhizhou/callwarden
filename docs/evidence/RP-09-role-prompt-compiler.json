@@ -1,0 +1,84 @@
+{
+  "evidence_id": "RP-09-role-prompt-compiler",
+  "card_id": "RP-09",
+  "idempotency_key": "role-prompt-v1-rp09",
+  "task_id": "T-1788737615420-538057d4",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "predecessor_task_id": "T-1788710667638-0e8eb8b8",
+  "title": "Role Prompt Compiler v1 RP-09: Skill and documentation cutover",
+  "frozen_authority": {
+    "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "sections": ["4.3", "4.4", "4.5", "11.3", "17.3", "18"]
+  },
+  "step_ids": [
+    "S-1788737615421-5396726c",
+    "S-1788737615421-5396fb24",
+    "S-1788737615421-53972810",
+    "S-1788737615421-539743cc"
+  ],
+  "step_actions": [
+    "cutover_task_loop_skill",
+    "retire_client_template_bodies",
+    "update_shared_docs_and_validator",
+    "verify_template_and_skill_contract"
+  ],
+  "step_report_request_ids": {
+    "S-1788737615421-5396726c": "req-a73fd3d1a5b9",
+    "S-1788737615421-5396fb24": "req-493fecbdb475",
+    "S-1788737615421-53972810": "req-24ef9b6bcdf9",
+    "S-1788737615421-539743cc": "req-a66965c17c69"
+  },
+  "contract_hash": {
+    "task_contract_revision": 1,
+    "executor": "sha256:88b949d6d0e549fd2539cad8234c28e9d3592bea5bd4e1b5e4a6443c3694db08",
+    "reviewer": "sha256:83fc727ed4b7ba64c9c12b67905f8b83cb68e1cf24e87856e04fe68f8ca42ba6",
+    "adjudicator": "sha256:c960641ff6565c305d2d3c2f28e4887504bb232ce8f79bd213d45a309429f8d5"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1788737615420-538057d4-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-1401551720",
+    "snapshot_id": null,
+    "source": "daemon parent binding + immutable authority capture (no client derivation)"
+  },
+  "changed_paths": [
+    ".agents/skills/cw-task-loop/SKILL.md",
+    ".agents/skills/cw-task-loop/references/user-guide.md",
+    "Callwarden 无人值守循环启动模板：Executor v4.md",
+    "Callwarden 无人值守循环启动模板：Reviewer v4.md",
+    "Callwarden 无人值守循环启动模板：Adjudicator v4.md",
+    "Callwarden 无人值守循环启动模板：Planner v1.md",
+    "AGENTS.md",
+    "docs/agent-usage-guide.md",
+    "scripts/validate_template_compliance.py",
+    "tests/test_role_prompt_skill.py"
+  ],
+  "commit_sha": "7a6564a57d852704f1ac06ac6b72ca8cced7c6b8",
+  "commands": [
+    "C:/Python314/python.exe scripts/validate_template_compliance.py --self-test",
+    "C:/Python314/python.exe -m pytest tests/test_role_prompt_skill.py -q",
+    "git diff --check"
+  ],
+  "positive_results": [
+    "validate_template_compliance --self-test: 22 通过, 0 失败（新增 prompt_source_missing / client_prompt_render / derive_fallback / fallback_no_guard 四项）",
+    "validate_template_compliance (repository): 0 violations — 协议单源、4 个角色模板、Skill/user-guide、设计 supersede、归档 blob 与 RP-09 prompt 来源纪律均一致",
+    "pytest tests/test_role_prompt_skill.py -q: 20 passed",
+    "git diff --check: clean",
+    "SKILL.md: primary path is daemon-compiled Role Prompt Bundle (RPC task.prompt.compile, capability role_prompt_compiler_v1) via CLI 'cw task prompt <task_id> --format llm' or MCP task_get_role_prompt(task_id); prompt.text emitted verbatim with verbatim bundle field projection",
+    "four startup templates: body retired as production prompt source, became process discipline + read-only fallback skeleton with verbatim daemon fields",
+    "AGENTS.md / references/user-guide.md / docs/agent-usage-guide.md: same cutover contract documented"
+  ],
+  "negative_results": [
+    "E_PROMPT_SOURCE_MISSING: 删除 RP-09 cutover 段后校验器报错（production prompt 唯一来源必须是 daemon 编译 bundle + capability role_prompt_compiler_v1）",
+    "E_CLIENT_PROMPT_RENDER: 追加「本入口在客户端本地渲染 production prompt」后校验器报错",
+    "E_DERIVE_FALLBACK: 追加「调用 derive_workspace_instance_id 补全」后校验器报错（workspace instance 只能逐字取自 daemon）",
+    "E_FALLBACK_NO_GUARD: 追加「直接回落 cw task next-action，不需要其他前提」后校验器报错（回退必须带 capability 门禁或 exact daemon-returned workspace instance 前提）",
+    "runtime daemon is still old build 974bddcf and capability role_prompt_compiler_v1 is therefore not declared: per spec 17.3 no shared runtime cutover was performed and no live RPC probe is claimed; the guarded read-only next-action fallback remains the active behaviour"
+  ],
+  "deployment_receipt_if_applicable": null,
+  "secret_scan": "no raw credential, lease token, Authorization header or session-store content in this manifest",
+  "db_no_write_trace": "all governance writes via daemon RPC (task.next/task.report); SQLite opened read-only for contract/binding verification only",
+  "rollback": "disable role_prompt_compiler_v1 capability / close CLI+MCP entries / return Skill to the existing read-only next-action role card (spec 18); no history rewrite"
+}

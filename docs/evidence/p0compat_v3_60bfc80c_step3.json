@@ -1,0 +1,17 @@
+{
+  "task_id": "T-1788963105720-60bfc80c",
+  "step_index": 3,
+  "action": "matrix_verify",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_security",
+  "changes": {
+    "scripts/gen_route_matrix.py": "ROUTE_OVERRIDES tools_security 分节 15 条原地翻转",
+    "deliverables/software-company/tool_migration_matrix.json": "--emit-json 重新生成（243 工具）",
+    "rust_ext/src/daemon/route_matrix.rs": "--emit-rust 重新生成（243 条目）"
+  },
+  "verification": {
+    "command": "python scripts/gen_route_matrix.py --check",
+    "result": "CHECK OK 三向一致",
+    "authority_cross_check": "15 方法 http_server.rs registry add() backend=rust_native 与矩阵/mirror 一致"
+  }
+}

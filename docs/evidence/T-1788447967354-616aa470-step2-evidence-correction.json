@@ -1,0 +1,10 @@
+{
+  "task_id": "T-1788447967354-616aa470",
+  "corrects_step_id": "S-1788447967355-617a6414",
+  "original_report_request_id": "req-3d227794440b",
+  "historical_recorded_hash": "sha256:pending-local-evidence-hash",
+  "actual_evidence_sha256_at_report": "sha256:9d6266a6b62032f8fd93a7fc71f06c5fc3bd99927f4ec23229ec12753d9202e7",
+  "correction_type": "append_only_provenance_correction",
+  "correction_reason": "The original report stored a placeholder hash; this correction records the actual task evidence hash without rewriting the original report or daemon event.",
+  "historical_record_preserved": true
+}

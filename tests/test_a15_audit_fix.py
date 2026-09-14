@@ -285,7 +285,7 @@ class TestA15FeatureMatrixStatus:
 
     @pytest.fixture(scope="class")
     def matrix(self) -> str:
-        return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
+        return (ROOT / "docs" / "design" / "_feature_matrix.md").read_text(encoding="utf-8")
 
     def test_a15_status_is_fixed(self, matrix: str):
         """A15 状态必须从 🟡 部分完成 改为 ✅ 已修复。"""

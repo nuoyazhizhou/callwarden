@@ -1,0 +1,71 @@
+{
+  "task_id": "T-1788671453544-d0625554",
+  "card": "RP-01: asset compiler and build-time validation gate",
+  "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+  "workspace_binding": {
+    "workspace_id": "1",
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1788671453544-d0625554-4baea3ff12c2ea5c"
+  },
+  "step_ids": {
+    "implement_validator_core": "S-1788671453544-d06dcaec",
+    "integrate_build_gate": "CLAIMED_PER_STEP",
+    "add_negative_fixtures": "CLAIMED_PER_STEP",
+    "verify_compile_failure_contract": "CLAIMED_PER_STEP"
+  },
+  "contract": {
+    "idempotency_key": "role-prompt-v1-rp01",
+    "identity_policy": "legacy_identity_v1",
+    "allowed_path_globs": [
+      "rust_ext/build.rs",
+      "rust_ext/build_support/**",
+      "rust_ext/Cargo.toml",
+      "rust_ext/tests/role_prompt_validator_*"
+    ]
+  },
+  "commands": [
+    {
+      "command": "cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+      "result": "exit 0 (dev profile finished; build gate ran with absent manifest -> ROLE_PROMPTS_MANIFEST_PRESENT=false)"
+    },
+    {
+      "command": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_validator",
+      "result": "exit 0; 26 passed / 0 failed (21 negative + 5 positive) across role_prompt_validator_negative + role_prompt_validator_positive"
+    },
+    {
+      "command": "git diff --check",
+      "result": "exit 0, clean"
+    }
+  ],
+  "positive_results": [
+    "sole parser/validator core at rust_ext/build_support/role_prompt_validator.rs (#[path]-included by build.rs and both test files -> exactly one rule set)",
+    "build.rs fail-closed gate: manifest absent (pre-RP-02) emits ROLE_PROMPTS_MANIFEST_PRESENT=false; manifest present but invalid panics with full issue list (cargo check/build/test fail)",
+    "OUT_DIR/role_prompts_generated.rs compile-time hash inventory: manifest sha, compiler policy sha, template ids/paths/sha256 arrays",
+    "frozen §11.1 checks implemented: schema closed-field parse; unique template ids + paths; relative no-escape paths (backslash/absolute/.. rejected); UTF-8 + LF-only + exact sha256; route completeness/unambiguity (4 action-ready routes, no duplicates, system templates route-free); legacy alias exception locked to exact ID+hash+declared body id triple (§7.2); body self-declared ID consistency incl. the historical 模板标识 form; high-confidence secret denylist scan (§8.3 subset); ID/path budgets (§9.3)",
+    "frozen legacy exception positive test uses the real historical byte source deliverables/software-company/aprime_role_contracts/executor_planner_startup_v1.md (sha256 59a459f7... verified LF-only)"
+  ],
+  "negative_results": [
+    "26 fail-closed fixture tests: declared hash mismatch, md5 wire form, duplicate template id, duplicate path, directory escape, windows/absolute paths, CRLF, non-UTF-8, ambiguous route, system template with action route, role template without route, unknown route, legacy exception outside frozen triple, source_declared mismatch, body self-declared ID mismatch, 4 secret patterns, unknown manifest fields, wrong schema version, empty templates array, oversized/bad-charset template id, missing asset file",
+    "no bypass flag exists anywhere in the core or build.rs; drafts outside the scan root are unreachable by design"
+  ],
+  "changed_paths": [
+    "rust_ext/build.rs",
+    "rust_ext/build_support/role_prompt_validator.rs",
+    "rust_ext/Cargo.toml",
+    "rust_ext/tests/role_prompt_validator_positive.rs",
+    "rust_ext/tests/role_prompt_validator_negative.rs"
+  ],
+  "file_sha256_prefixes": {
+    "rust_ext/build.rs": "4A6C2C9AC1430144",
+    "rust_ext/build_support/role_prompt_validator.rs": "0432821F824DA5B6",
+    "rust_ext/Cargo.toml": "66C90C1D8A9277A6",
+    "rust_ext/tests/role_prompt_validator_positive.rs": "3615E8B93E732522",
+    "rust_ext/tests/role_prompt_validator_negative.rs": "C6B1E948EF33FBE6"
+  },
+  "commit_sha": "89860dedf88ca4477287c3e8309cd45ac707d88f",
+  "notes": [
+    "No production resources created (rust_ext/resources/role_prompts/** is RP-02 scope and excluded here).",
+    "Cargo.toml [build-dependencies] mirrors serde_json/sha2/hex for build.rs; integration tests reuse the crate's own dependencies.",
+    "Negative-fixtures test names carry the role_prompt_validator_ prefix so the frozen acceptance filter `cargo test role_prompt_validator` selects them."
+  ]
+}

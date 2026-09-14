@@ -1,0 +1,2891 @@
+{
+  "schema_version": "cw.role_prompt_task_manifest.v1",
+  "manifest_id": "role-prompt-v1-task-manifest",
+  "status": "FROZEN_BY_RP00_STEP2",
+  "authorization_state": {
+    "feature_parent_and_rp00_creation": true,
+    "rp01_through_rp10_creation": false,
+    "feature_parent_and_rp00_release_condition": "GATE-0 attested and review vehicle COMPLETE, then GATE-1A and GATE-1B closed in order.",
+    "rp01_through_rp10_release_condition": "RP-00 four artifacts receive task-bound independent Reviewer PASS and RP-00 is applied, closed and projects COMPLETE.",
+    "reason": "The candidate is intentionally bootstrap-safe: Gate completion may release only the feature parent and RP-00; RP-01+ remain forbidden until RP-00 formally freezes and reviews these artifacts.",
+    "release_provenance": "GATE-0 attested + review vehicle COMPLETE + GATE-1A COMPLETE + GATE-1B COMPLETE_CONFIRMED; created under legacy Epic T-1787203926824-9f873bfc via parent-aware governed task.create (daemon authority 1/4baea3ff12c2ea5c); creation evidence: docs/evidence/role-prompt-v1-order5-feature-parent-rp00-creation.json"
+  },
+  "source": {
+    "frozen_spec_path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+  },
+  "companion_artifacts": {
+    "source_clause_inventory": {
+      "path": "docs/evidence/RP-00-source-clause-inventory.json",
+      "sha256": "25C6E9FFBF822008656FCAC9520EDAA9A559F4BA28B6128E3B1837CCD22BAFB5"
+    },
+    "review_resolution_matrix": {
+      "path": "docs/evidence/RP-00-review-resolution-matrix.json",
+      "sha256": "EF62FB874ABACF85F65EA57A2D66E3AD6406ACF31C860B4B442707FCA091450A"
+    },
+    "gate_manifest": {
+      "path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+      "sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947"
+    }
+  },
+  "feature_parent": {
+    "parent_task_id": "T-1787203926824-9f873bfc",
+    "title": "Role Prompt Compiler v1：task-id-first daemon prompt authority",
+    "idempotency_key": "role-prompt-v1-feature-parent",
+    "creation_requires": [
+      "GATE-0 attested and review vehicle COMPLETE",
+      "GATE-1A COMPLETE",
+      "GATE-1B COMPLETE"
+    ],
+    "binding_requirements": "inherit the exact immutable workspace authority returned by the daemon; reject synthetic IDs",
+    "task_id": "T-1788668721548-b8c6f4dc"
+  },
+  "contract_model": {
+    "planning_owner": "Planner is design owner but planner_governance_v1 is not assumed.",
+    "runtime_role_contracts": [
+      "executor",
+      "reviewer",
+      "adjudicator"
+    ],
+    "rule": "No client may synthesize Planner routing or a fourth legacy Role Contract before capability cutover."
+  },
+  "cards": [
+    {
+      "card_id": "RP-00",
+      "title": "Role Prompt Compiler v1 RP-00: merged frozen spec and machine planning artifacts",
+      "description": "Implement only merged frozen spec and machine planning artifacts. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp00.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "external_card_id": "GATE-1B",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE",
+        "task_id": "T-1788583773351-2da3bb54"
+      },
+      "idempotency_key": "role-prompt-v1-rp00",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+        "docs/evidence/RP-00-source-clause-inventory.json",
+        "docs/evidence/RP-00-review-resolution-matrix.json",
+        "docs/evidence/RP-00-role-prompt-compiler-validation.json",
+        "deliverables/software-company/role-prompt-v1-task-manifest.json",
+        "scripts/validate_role_prompt_spec.py",
+        "tests/test_role_prompt_spec_validator.py"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/**",
+        "rust_ext/resources/**",
+        "cli/**",
+        "server/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "freeze_source_clause_inventory",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-source-clause-inventory.json",
+            "docs/evidence/RP-00-review-resolution-matrix.json",
+            "docs/evidence/RP-00-role-prompt-compiler-validation.json",
+            "deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "scripts/validate_role_prompt_spec.py",
+            "tests/test_role_prompt_spec_validator.py"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "resolve_every_clause",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-source-clause-inventory.json",
+            "docs/evidence/RP-00-review-resolution-matrix.json",
+            "docs/evidence/RP-00-role-prompt-compiler-validation.json",
+            "deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "scripts/validate_role_prompt_spec.py",
+            "tests/test_role_prompt_spec_validator.py"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "freeze_task_manifest",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-source-clause-inventory.json",
+            "docs/evidence/RP-00-review-resolution-matrix.json",
+            "docs/evidence/RP-00-role-prompt-compiler-validation.json",
+            "deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "scripts/validate_role_prompt_spec.py",
+            "tests/test_role_prompt_spec_validator.py"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "validate_coverage_and_artifact_hashes",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-source-clause-inventory.json",
+            "docs/evidence/RP-00-review-resolution-matrix.json",
+            "docs/evidence/RP-00-role-prompt-compiler-validation.json",
+            "deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "scripts/validate_role_prompt_spec.py",
+            "tests/test_role_prompt_spec_validator.py"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-source-clause-inventory.json",
+            "docs/evidence/RP-00-review-resolution-matrix.json",
+            "docs/evidence/RP-00-role-prompt-compiler-validation.json",
+            "deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "scripts/validate_role_prompt_spec.py",
+            "tests/test_role_prompt_spec_validator.py"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/**",
+            "rust_ext/resources/**",
+            "cli/**",
+            "server/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/validate_role_prompt_spec.py --inventory docs/evidence/RP-00-source-clause-inventory.json --resolution docs/evidence/RP-00-review-resolution-matrix.json --spec docs/design/cw-role-prompt-compiler-v1-frozen-spec.md --manifest deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_spec_validator.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/validate_role_prompt_spec.py --inventory docs/evidence/RP-00-source-clause-inventory.json --resolution docs/evidence/RP-00-review-resolution-matrix.json --spec docs/design/cw-role-prompt-compiler-v1-frozen-spec.md --manifest deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_spec_validator.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/validate_role_prompt_spec.py --inventory docs/evidence/RP-00-source-clause-inventory.json --resolution docs/evidence/RP-00-review-resolution-matrix.json --spec docs/design/cw-role-prompt-compiler-v1-frozen-spec.md --manifest deliverables/software-company/role-prompt-v1-task-manifest.json",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_spec_validator.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run C:\\Python314\\python.exe scripts/validate_role_prompt_spec.py --inventory docs/evidence/RP-00-source-clause-inventory.json --resolution docs/evidence/RP-00-review-resolution-matrix.json --spec docs/design/cw-role-prompt-compiler-v1-frozen-spec.md --manifest deliverables/software-company/role-prompt-v1-task-manifest.json",
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_spec_validator.py -q",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-00-role-prompt-compiler.json",
+        "sha256_placeholder": "195D631AABE1B6F8245844FCF9F19A28116E3734F5153E9870EE552DBCAED488",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "task_id": "T-1788668722815-04496bb0",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-01",
+      "task_id_placeholder": "${RP01_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-01: asset compiler and build-time validation gate",
+      "description": "Implement only asset compiler and build-time validation gate. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp01.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE",
+        "task_id": "T-1788668722815-04496bb0"
+      },
+      "idempotency_key": "role-prompt-v1-rp01",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "rust_ext/build.rs",
+        "rust_ext/build_support/**",
+        "rust_ext/Cargo.toml",
+        "rust_ext/tests/role_prompt_validator_*"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/resources/role_prompts/**",
+        "rust_ext/src/daemon/task_prompt/**",
+        "cli/**",
+        "server/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "implement_validator_core",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/build.rs",
+            "rust_ext/build_support/**",
+            "rust_ext/Cargo.toml",
+            "rust_ext/tests/role_prompt_validator_*"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "integrate_build_gate",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/build.rs",
+            "rust_ext/build_support/**",
+            "rust_ext/Cargo.toml",
+            "rust_ext/tests/role_prompt_validator_*"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "add_negative_fixtures",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/build.rs",
+            "rust_ext/build_support/**",
+            "rust_ext/Cargo.toml",
+            "rust_ext/tests/role_prompt_validator_*"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_compile_failure_contract",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/build.rs",
+            "rust_ext/build_support/**",
+            "rust_ext/Cargo.toml",
+            "rust_ext/tests/role_prompt_validator_*"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "rust_ext/build.rs",
+            "rust_ext/build_support/**",
+            "rust_ext/Cargo.toml",
+            "rust_ext/tests/role_prompt_validator_*"
+          ],
+          "forbidden_paths": [
+            "rust_ext/resources/role_prompts/**",
+            "rust_ext/src/daemon/task_prompt/**",
+            "cli/**",
+            "server/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_validator",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_validator",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_validator",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_validator",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-01-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP01_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-02",
+      "task_id_placeholder": "${RP02_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-02: production template assets and byte/hash goldens",
+      "description": "Implement only production template assets and byte/hash goldens. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp02.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP01_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp02",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "rust_ext/resources/role_prompts/v1/**",
+        "rust_ext/tests/role_prompt_assets_*"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/daemon/**",
+        "cli/**",
+        "server/**",
+        ".agents/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "freeze_asset_manifest",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/resources/role_prompts/v1/**",
+            "rust_ext/tests/role_prompt_assets_*"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "import_legacy_byte_assets",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/resources/role_prompts/v1/**",
+            "rust_ext/tests/role_prompt_assets_*"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "add_current_and_system_assets",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/resources/role_prompts/v1/**",
+            "rust_ext/tests/role_prompt_assets_*"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_asset_goldens",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/resources/role_prompts/v1/**",
+            "rust_ext/tests/role_prompt_assets_*"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "rust_ext/resources/role_prompts/v1/**",
+            "rust_ext/tests/role_prompt_assets_*"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/daemon/**",
+            "cli/**",
+            "server/**",
+            ".agents/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_assets",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_assets",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_assets",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features role_prompt_assets",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-02-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP02_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-03",
+      "task_id_placeholder": "${RP03_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-03: single-snapshot authority context domain",
+      "description": "Implement only single-snapshot authority context domain. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp03.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP02_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp03",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "rust_ext/src/daemon/task_prompt/context*.rs",
+        "rust_ext/src/daemon/task_prompt/context_tests*.rs"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/daemon/task_prompt/render*.rs",
+        "rust_ext/src/daemon/dispatch.rs",
+        "cli/**",
+        "server/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "capture_single_snapshot",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/context*.rs",
+            "rust_ext/src/daemon/task_prompt/context_tests*.rs"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "aggregate_binding_and_next_action",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/context*.rs",
+            "rust_ext/src/daemon/task_prompt/context_tests*.rs"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "bind_contract_step_and_watermark",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/context*.rs",
+            "rust_ext/src/daemon/task_prompt/context_tests*.rs"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_no_write_context_tests",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/context*.rs",
+            "rust_ext/src/daemon/task_prompt/context_tests*.rs"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/context*.rs",
+            "rust_ext/src/daemon/task_prompt/context_tests*.rs"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/daemon/task_prompt/render*.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "cli/**",
+            "server/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_context",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_context",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_context",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_context",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-03-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP03_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-04",
+      "task_id_placeholder": "${RP04_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-04: renderer, canonical hashes, clipping and secret guard",
+      "description": "Implement only renderer, canonical hashes, clipping and secret guard. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp04.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP03_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp04",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "rust_ext/src/daemon/task_prompt/route*.rs",
+        "rust_ext/src/daemon/task_prompt/render*.rs",
+        "rust_ext/src/daemon/task_prompt/canonical*.rs",
+        "rust_ext/src/daemon/task_prompt/redaction*.rs",
+        "rust_ext/src/daemon/task_prompt/bundle*.rs"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/daemon/dispatch.rs",
+        "cli/**",
+        "server/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "implement_route_and_render",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/route*.rs",
+            "rust_ext/src/daemon/task_prompt/render*.rs",
+            "rust_ext/src/daemon/task_prompt/canonical*.rs",
+            "rust_ext/src/daemon/task_prompt/redaction*.rs",
+            "rust_ext/src/daemon/task_prompt/bundle*.rs"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "implement_canonical_hashes",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/route*.rs",
+            "rust_ext/src/daemon/task_prompt/render*.rs",
+            "rust_ext/src/daemon/task_prompt/canonical*.rs",
+            "rust_ext/src/daemon/task_prompt/redaction*.rs",
+            "rust_ext/src/daemon/task_prompt/bundle*.rs"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "implement_clipping_and_secret_guard",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/route*.rs",
+            "rust_ext/src/daemon/task_prompt/render*.rs",
+            "rust_ext/src/daemon/task_prompt/canonical*.rs",
+            "rust_ext/src/daemon/task_prompt/redaction*.rs",
+            "rust_ext/src/daemon/task_prompt/bundle*.rs"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_golden_determinism_matrix",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/route*.rs",
+            "rust_ext/src/daemon/task_prompt/render*.rs",
+            "rust_ext/src/daemon/task_prompt/canonical*.rs",
+            "rust_ext/src/daemon/task_prompt/redaction*.rs",
+            "rust_ext/src/daemon/task_prompt/bundle*.rs"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/route*.rs",
+            "rust_ext/src/daemon/task_prompt/render*.rs",
+            "rust_ext/src/daemon/task_prompt/canonical*.rs",
+            "rust_ext/src/daemon/task_prompt/redaction*.rs",
+            "rust_ext/src/daemon/task_prompt/bundle*.rs"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/daemon/dispatch.rs",
+            "cli/**",
+            "server/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_renderer",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_renderer",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_renderer",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_renderer",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-04-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP04_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-05",
+      "task_id_placeholder": "${RP05_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-05: daemon RPC and capability publication",
+      "description": "Implement only daemon RPC and capability publication. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp05.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP04_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp05",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "rust_ext/src/daemon/task_prompt/handler*.rs",
+        "rust_ext/src/daemon/dispatch.rs",
+        "rust_ext/src/daemon/task_loop/capability_control.rs",
+        "rust_ext/src/daemon/task_prompt/rpc_tests*.rs"
+      ],
+      "excluded_path_globs": [
+        "cli/**",
+        "server/**",
+        "rust_ext/resources/role_prompts/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "implement_rpc_handler",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/handler*.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_loop/capability_control.rs",
+            "rust_ext/src/daemon/task_prompt/rpc_tests*.rs"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "register_thin_dispatch",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/handler*.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_loop/capability_control.rs",
+            "rust_ext/src/daemon/task_prompt/rpc_tests*.rs"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "publish_capability",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/handler*.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_loop/capability_control.rs",
+            "rust_ext/src/daemon/task_prompt/rpc_tests*.rs"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_isolated_round_trip",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/handler*.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_loop/capability_control.rs",
+            "rust_ext/src/daemon/task_prompt/rpc_tests*.rs"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_prompt/handler*.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_loop/capability_control.rs",
+            "rust_ext/src/daemon/task_prompt/rpc_tests*.rs"
+          ],
+          "forbidden_paths": [
+            "cli/**",
+            "server/**",
+            "rust_ext/resources/role_prompts/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_rpc",
+            "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_rpc",
+            "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_rpc",
+            "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_prompt_rpc",
+        "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-05-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP05_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-06",
+      "task_id_placeholder": "${RP06_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-06: CLI HTTP thin client",
+      "description": "Implement only CLI HTTP thin client. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp06.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP05_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp06",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "cli/task_prompt.py",
+        "cli/main.py",
+        "tests/test_task_prompt_cli.py",
+        "docs/cli_reference.md"
+      ],
+      "excluded_path_globs": [
+        "db/**",
+        "server/**",
+        "rust_ext/src/daemon/task_prompt/**",
+        "rust_ext/resources/role_prompts/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "add_task_prompt_command",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "cli/task_prompt.py",
+            "cli/main.py",
+            "tests/test_task_prompt_cli.py",
+            "docs/cli_reference.md"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "render_three_local_formats",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "cli/task_prompt.py",
+            "cli/main.py",
+            "tests/test_task_prompt_cli.py",
+            "docs/cli_reference.md"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "document_cli_contract",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "cli/task_prompt.py",
+            "cli/main.py",
+            "tests/test_task_prompt_cli.py",
+            "docs/cli_reference.md"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_no_fallback_and_purity",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "cli/task_prompt.py",
+            "cli/main.py",
+            "tests/test_task_prompt_cli.py",
+            "docs/cli_reference.md"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "cli/task_prompt.py",
+            "cli/main.py",
+            "tests/test_task_prompt_cli.py",
+            "docs/cli_reference.md"
+          ],
+          "forbidden_paths": [
+            "db/**",
+            "server/**",
+            "rust_ext/src/daemon/task_prompt/**",
+            "rust_ext/resources/role_prompts/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_cli.py -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_cli.py -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_cli.py -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_cli.py -q",
+        "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-06-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP06_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-07",
+      "task_id_placeholder": "${RP07_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-07: route matrix SSOT reconciliation",
+      "description": "Implement only route matrix SSOT reconciliation. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp07.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP06_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp07",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "scripts/gen_route_matrix.py",
+        "scripts/verify_route_matrix.py",
+        "deliverables/software-company/tool_migration_matrix.json",
+        "rust_ext/src/daemon/route_matrix.rs",
+        "tests/test_route_matrix_generation.py"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/daemon/task_prompt/**",
+        "server/tools/**",
+        "cli/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "add_generator_emit_and_check",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_route_matrix_generation.py"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "generate_json_and_rust_mirror",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_route_matrix_generation.py"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "reconcile_three_route_domains",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_route_matrix_generation.py"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_generation_and_baseline",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_route_matrix_generation.py"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_route_matrix_generation.py"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/daemon/task_prompt/**",
+            "server/tools/**",
+            "cli/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/gen_route_matrix.py --check",
+            "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_route_matrix_generation.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/gen_route_matrix.py --check",
+            "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_route_matrix_generation.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/gen_route_matrix.py --check",
+            "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_route_matrix_generation.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run C:\\Python314\\python.exe scripts/gen_route_matrix.py --check",
+        "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_route_matrix_generation.py -q",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-07-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP07_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-08",
+      "task_id_placeholder": "${RP08_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-08: MCP HTTP thin client and N+1 route publication",
+      "description": "Implement only MCP HTTP thin client and N+1 route publication. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp08.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP07_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp08",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "server/tools/tools_task_prompt.py",
+        "server/mcp_server.py",
+        "scripts/gen_route_matrix.py",
+        "scripts/verify_route_matrix.py",
+        "deliverables/software-company/tool_migration_matrix.json",
+        "rust_ext/src/daemon/route_matrix.rs",
+        "tests/test_task_prompt_mcp.py",
+        "docs/mcp_tools.md"
+      ],
+      "excluded_path_globs": [
+        "db/**",
+        "rust_ext/resources/role_prompts/**",
+        "rust_ext/src/daemon/task_prompt/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "add_mcp_thin_tool",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "server/tools/tools_task_prompt.py",
+            "server/mcp_server.py",
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_task_prompt_mcp.py",
+            "docs/mcp_tools.md"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "register_mcp_surface",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "server/tools/tools_task_prompt.py",
+            "server/mcp_server.py",
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_task_prompt_mcp.py",
+            "docs/mcp_tools.md"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "regenerate_n_plus_one_matrix",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "server/tools/tools_task_prompt.py",
+            "server/mcp_server.py",
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_task_prompt_mcp.py",
+            "docs/mcp_tools.md"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_mcp_purity_and_docs",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "server/tools/tools_task_prompt.py",
+            "server/mcp_server.py",
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_task_prompt_mcp.py",
+            "docs/mcp_tools.md"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "server/tools/tools_task_prompt.py",
+            "server/mcp_server.py",
+            "scripts/gen_route_matrix.py",
+            "scripts/verify_route_matrix.py",
+            "deliverables/software-company/tool_migration_matrix.json",
+            "rust_ext/src/daemon/route_matrix.rs",
+            "tests/test_task_prompt_mcp.py",
+            "docs/mcp_tools.md"
+          ],
+          "forbidden_paths": [
+            "db/**",
+            "rust_ext/resources/role_prompts/**",
+            "rust_ext/src/daemon/task_prompt/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_mcp.py -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_mcp.py -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_mcp.py -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_prompt_mcp.py -q",
+        "tokenslim run C:\\Python314\\python.exe scripts/verify_route_matrix.py",
+        "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-08-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP08_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-09",
+      "task_id_placeholder": "${RP09_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-09: Skill and documentation cutover",
+      "description": "Implement only Skill and documentation cutover. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp09.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP08_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp09",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        ".agents/skills/cw-task-loop/**",
+        "Callwarden 无人值守循环启动模板：*",
+        "AGENTS.md",
+        "docs/agent-usage-guide.md",
+        "scripts/validate_template_compliance.py",
+        "tests/test_role_prompt_skill.py"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/**",
+        "rust_ext/resources/**",
+        "cli/**",
+        "server/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "cutover_task_loop_skill",
+          "owner_role": "executor",
+          "allowed_paths": [
+            ".agents/skills/cw-task-loop/**",
+            "Callwarden 无人值守循环启动模板：*",
+            "AGENTS.md",
+            "docs/agent-usage-guide.md",
+            "scripts/validate_template_compliance.py",
+            "tests/test_role_prompt_skill.py"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "retire_client_template_bodies",
+          "owner_role": "executor",
+          "allowed_paths": [
+            ".agents/skills/cw-task-loop/**",
+            "Callwarden 无人值守循环启动模板：*",
+            "AGENTS.md",
+            "docs/agent-usage-guide.md",
+            "scripts/validate_template_compliance.py",
+            "tests/test_role_prompt_skill.py"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "update_shared_docs_and_validator",
+          "owner_role": "executor",
+          "allowed_paths": [
+            ".agents/skills/cw-task-loop/**",
+            "Callwarden 无人值守循环启动模板：*",
+            "AGENTS.md",
+            "docs/agent-usage-guide.md",
+            "scripts/validate_template_compliance.py",
+            "tests/test_role_prompt_skill.py"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "verify_template_and_skill_contract",
+          "owner_role": "executor",
+          "allowed_paths": [
+            ".agents/skills/cw-task-loop/**",
+            "Callwarden 无人值守循环启动模板：*",
+            "AGENTS.md",
+            "docs/agent-usage-guide.md",
+            "scripts/validate_template_compliance.py",
+            "tests/test_role_prompt_skill.py"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            ".agents/skills/cw-task-loop/**",
+            "Callwarden 无人值守循环启动模板：*",
+            "AGENTS.md",
+            "docs/agent-usage-guide.md",
+            "scripts/validate_template_compliance.py",
+            "tests/test_role_prompt_skill.py"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/**",
+            "rust_ext/resources/**",
+            "cli/**",
+            "server/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/validate_template_compliance.py --self-test",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_skill.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/validate_template_compliance.py --self-test",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_skill.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run C:\\Python314\\python.exe scripts/validate_template_compliance.py --self-test",
+            "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_skill.py -q",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run C:\\Python314\\python.exe scripts/validate_template_compliance.py --self-test",
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_role_prompt_skill.py -q",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-09-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP09_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    },
+    {
+      "card_id": "RP-10",
+      "task_id_placeholder": "${RP10_TASK_ID}",
+      "title": "Role Prompt Compiler v1 RP-10: cross-layer E2E security and release gate",
+      "description": "Implement only cross-layer E2E security and release gate. Frozen authority: docs/design/cw-role-prompt-compiler-v1-frozen-spec.md SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-rp10.",
+      "planning_owner": "planner (design-only until planner_governance_v1)",
+      "runtime_owner": "executor",
+      "predecessor": {
+        "task_id_placeholder": "${RP09_TASK_ID}",
+        "required_lifecycle_status": "closed",
+        "required_next_action": "COMPLETE"
+      },
+      "idempotency_key": "role-prompt-v1-rp10",
+      "identity_policy": "legacy_identity_v1",
+      "binding_requirements": {
+        "workspace_id_source": "daemon parent binding",
+        "workspace_instance_id_source": "daemon immutable authority capture",
+        "reject_client_derived_or_synthetic_binding": true,
+        "task_contract_revision": 1,
+        "role_contract_count": 3,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1
+      },
+      "allowed_path_globs": [
+        "tests/test_task_prompt_e2e.py",
+        "rust_ext/tests/role_prompt_e2e.rs",
+        "scripts/check_client_purity.py",
+        "scripts/refresh_shared_runtime.ps1",
+        "docs/evidence/RP-10-*"
+      ],
+      "excluded_path_globs": [
+        "db/**",
+        "docs/evidence/**/historical/**",
+        "rust_ext/src/daemon/task_prompt/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md"
+      ],
+      "forbidden_actions": [
+        "direct SQLite mutation",
+        "generic RPC bypass",
+        "scope expansion",
+        "unbound evidence",
+        "claim before predecessor COMPLETE",
+        "client fallback business logic"
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "action": "run_live_parity_e2e",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "tests/test_task_prompt_e2e.py",
+            "rust_ext/tests/role_prompt_e2e.rs",
+            "scripts/check_client_purity.py",
+            "scripts/refresh_shared_runtime.ps1",
+            "docs/evidence/RP-10-*"
+          ]
+        },
+        {
+          "index": 1,
+          "action": "run_full_regression_and_security",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "tests/test_task_prompt_e2e.py",
+            "rust_ext/tests/role_prompt_e2e.rs",
+            "scripts/check_client_purity.py",
+            "scripts/refresh_shared_runtime.ps1",
+            "docs/evidence/RP-10-*"
+          ]
+        },
+        {
+          "index": 2,
+          "action": "perform_single_controlled_deploy",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "tests/test_task_prompt_e2e.py",
+            "rust_ext/tests/role_prompt_e2e.rs",
+            "scripts/check_client_purity.py",
+            "scripts/refresh_shared_runtime.ps1",
+            "docs/evidence/RP-10-*"
+          ]
+        },
+        {
+          "index": 3,
+          "action": "freeze_release_evidence",
+          "owner_role": "executor",
+          "allowed_paths": [
+            "tests/test_task_prompt_e2e.py",
+            "rust_ext/tests/role_prompt_e2e.rs",
+            "scripts/check_client_purity.py",
+            "scripts/refresh_shared_runtime.ps1",
+            "docs/evidence/RP-10-*"
+          ]
+        }
+      ],
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "tests/test_task_prompt_e2e.py",
+            "rust_ext/tests/role_prompt_e2e.rs",
+            "scripts/check_client_purity.py",
+            "scripts/refresh_shared_runtime.ps1",
+            "docs/evidence/RP-10-*"
+          ],
+          "forbidden_paths": [
+            "db/**",
+            "docs/evidence/**/historical/**",
+            "rust_ext/src/daemon/task_prompt/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run C:\\Python314\\python.exe -m pytest -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, task Contract and immutable evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "task.contract.get",
+            "verdict.submit",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run C:\\Python314\\python.exe -m pytest -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "direct SQLite",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features",
+            "tokenslim run C:\\Python314\\python.exe -m pytest -q",
+            "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+            "tokenslim run git diff --check"
+          ],
+          "required_evidence": [
+            "task-bound diff or read-only review record",
+            "exact command results",
+            "evidence SHA-256",
+            "full commit SHA when code changes"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "acceptance_commands": [
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features",
+        "tokenslim run C:\\Python314\\python.exe -m pytest -q",
+        "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+        "tokenslim run git diff --check"
+      ],
+      "negative_acceptance": [
+        "daemon unavailable never falls back to Python authority",
+        "workspace/Contract/identity mismatch fails closed",
+        "no raw credential or lease token in evidence",
+        "unrelated dirty files are excluded"
+      ],
+      "evidence": {
+        "path": "docs/evidence/RP-10-role-prompt-compiler.json",
+        "sha256_placeholder": "${RP10_EVIDENCE_SHA256}",
+        "required_fields": [
+          "task_id",
+          "step_ids",
+          "contract_hash",
+          "workspace_binding",
+          "commands",
+          "positive_results",
+          "negative_results",
+          "changed_paths",
+          "commit_sha",
+          "deployment_receipt_if_applicable"
+        ]
+      },
+      "rollback": {
+        "strategy": "Disable only the capability or surface introduced by this card; preserve append-only task/evidence/verdict history and retain daemon-authoritative fail-closed behavior.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Release the next card only after this card is closed and task.next_action returns COMPLETE.",
+      "parent_task_id": "T-1788668721548-b8c6f4dc"
+    }
+  ],
+  "release_order": [
+    "T-1788668721548-b8c6f4dc",
+    "T-1788668722815-04496bb0",
+    "${RP01_TASK_ID}",
+    "${RP02_TASK_ID}",
+    "${RP03_TASK_ID}",
+    "${RP04_TASK_ID}",
+    "${RP05_TASK_ID}",
+    "${RP06_TASK_ID}",
+    "${RP07_TASK_ID}",
+    "${RP08_TASK_ID}",
+    "${RP09_TASK_ID}",
+    "${RP10_TASK_ID}"
+  ],
+  "global_acceptance": [
+    "all cards closed in release order",
+    "single production RPC task.prompt.compile",
+    "CLI/MCP/Skill remain HTTP thin clients",
+    "deterministic bundle hashes",
+    "no-write/no-secret/full regression gates pass",
+    "fresh runtime receipt matches live PID, binary SHA-256 and git commit"
+  ],
+  "freeze_record": {
+    "frozen_at": "2026-09-06T13:10:00+08:00",
+    "frozen_by_task": "T-1788668722815-04496bb0",
+    "frozen_by_step": "S-1788668722816-0452034c (freeze_task_manifest)",
+    "resolved_task_ids": {
+      "feature_parent": "T-1788668721548-b8c6f4dc",
+      "rp00": "T-1788668722815-04496bb0",
+      "gate1b_predecessor": "T-1788583773351-2da3bb54"
+    },
+    "still_placeholder": [
+      "RP-01..RP-10 task_id placeholders (released when each predecessor card closes)",
+      "RP-00..RP-10 evidence sha256 placeholders (filled by each card at closure)"
+    ],
+    "rule": "placeholders are resolved only from daemon-returned task ids at their own release time; no client synthesis"
+  }
+}

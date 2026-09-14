@@ -12,7 +12,7 @@
 //! 所有写操作经 daemon 权威路径（调用方负责 SerializationPoint 串行化），
 //! 本模块只操作 workspace codegraph DB（rusqlite 写连接，由调用方传入）。
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 
 use super::dispatch::{get_int_param_or, get_str_param, get_str_param_or, require_str_param, DaemonRpcError};
@@ -22,6 +22,51 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+/// 生成 Assignment 唯一标识（对齐 Python `ASG-<uuid4.hex[:16]>` 格式）。
+///
+/// `task_assignments.assignment_id` 为 `TEXT NOT NULL UNIQUE`（db/schema.py:1629），
+/// 且文档/CLI/MCP 三面对外契约为 `ASG-xxx`。Rust 侧无 uuid crate，改用
+/// OS CSPRNG 8 byte → 16 hex，熵特征与 Python `uuid4` 等价（先例见
+/// `task_loop/role_worker.rs` 的 credential 签发）。
+fn gen_assignment_id() -> Result<String, DaemonRpcError> {
+    let mut entropy = [0_u8; 8];
+    getrandom::fill(&mut entropy).map_err(|e| {
+        DaemonRpcError::internal_error(format!("OS CSPRNG 生成 assignment_id 失败: {e}"))
+    })?;
+    Ok(format!("ASG-{}", hex::encode(entropy)))
+}
+
+/// 生成 Action 唯一标识（对齐 Python 侧 `ACT-…` 语义与 `ASG-` 熵形）。
+///
+/// `action_identities.action_id` 为 `TEXT NOT NULL UNIQUE`（db/schema.py:1549，
+/// 语义注释 `ACT-<uuid>`）。Python 权威实现 `db/db_task_identity.py:170-203` 由
+/// 调用方提供 `action_id`（幂等/去重依赖其 UNIQUE 约束），故 Rust 侧**优先采用入参**，
+/// 入参为空时才回退到本函数生成，格式与 `gen_assignment_id` 同源（OS CSPRNG 8B → 16 hex）。
+/// 缺陷背景见 backlog §W20 F2（C-20 承接）：handler 此前完全未提供该列，
+/// 导致 INSERT 恒 `NOT NULL constraint failed`。
+fn gen_action_id() -> Result<String, DaemonRpcError> {
+    let mut entropy = [0_u8; 8];
+    getrandom::fill(&mut entropy).map_err(|e| {
+        DaemonRpcError::internal_error(format!("OS CSPRNG 生成 action_id 失败: {e}"))
+    })?;
+    Ok(format!("ACT-{}", hex::encode(entropy)))
+}
+
+/// 生成 Attestation 撤销记录唯一标识（对齐 Python `REV-{uuid4().hex[:16]}`）。
+///
+/// `attestation_revocation_records.revocation_id` 为 `TEXT NOT NULL UNIQUE`
+/// （db/schema.py:1592，语义注释 `REV-<uuid>`）。Python 权威实现
+/// `db/db_task_identity.py:609` 为内部生成、不接受调用方入参，故 Rust 侧同样
+/// 每次调用新生成（无 uuid crate，沿用 OS CSPRNG 8B → 16 hex）。
+/// 缺陷背景见 backlog §W20 F3（C-20 承接）。
+fn gen_revocation_id() -> Result<String, DaemonRpcError> {
+    let mut entropy = [0_u8; 8];
+    getrandom::fill(&mut entropy).map_err(|e| {
+        DaemonRpcError::internal_error(format!("OS CSPRNG 生成 revocation_id 失败: {e}"))
+    })?;
+    Ok(format!("REV-{}", hex::encode(entropy)))
 }
 
 /// `admin.gc_archive_import` —— 导入归档记录（archived_files 写入）。
@@ -121,7 +166,7 @@ pub fn handle_gc_audit_get(
     let rows = conn
         .prepare(
             "SELECT id, task_id, step_id, file_path, hash_before, hash_after, diff, author, timestamp
-             FROM change_audit WHERE id = ?1 AND task_id IN (SELECT id FROM tasks WHERE workspace_id = ?2)
+             FROM change_audit WHERE id = ?1 AND task_id IN (SELECT task_id FROM task_workspace_bindings WHERE workspace_id = ?2)
              LIMIT 1",
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("gc_audit_get prepare: {e}")))?
@@ -158,8 +203,8 @@ pub fn handle_gc_audit_list(
         .prepare(
             "SELECT ca.id, ca.task_id, ca.file_path, ca.author, ca.timestamp
              FROM change_audit ca
-             JOIN tasks t ON t.id = ca.task_id
-             WHERE t.workspace_id = ?1
+             JOIN task_workspace_bindings b ON b.task_id = ca.task_id
+             WHERE b.workspace_id = ?1
              ORDER BY ca.timestamp DESC LIMIT ?2",
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("gc_audit_list prepare: {e}")))?
@@ -549,18 +594,35 @@ pub fn handle_assignment_create(
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
     let task_id = require_str_param(params, "task_id")?;
+    // C-17（本卡实测发现）：路由传入的 `workspace_id` 是 daemon registry 的代理 id
+    // （`daemon_workspaces.workspace_id`，本实例量级 36/207），与 task DB
+    // `workspaces.id`（本例 1..21）不是同一命名空间；而 `task_assignments` 带
+    // `FOREIGN KEY (workspace_id) REFERENCES workspaces(id)`（db/schema.py:1638），
+    // 照搬会让 INSERT 恒 FK 失败。权威取值与 claim/report 补偿写同源：不可变
+    // `task_workspace_bindings`（cw-role-handoff-task-loop.md §8.1.1）。
+    let _ = workspace_id;
+    let workspace_id = crate::daemon::task_collab::task_bound_workspace_id(conn, task_id, None)?;
     let role = get_str_param_or(params, "role", "implementer");
     let agent_id = require_str_param(params, "agent_id")?;
     let session_id = get_str_param_or(params, "session_id", "");
     let model_id = get_str_param_or(params, "model_id", "");
     let now = now_ts();
+    let assignment_id = gen_assignment_id()?;
     conn.execute(
-        "INSERT INTO task_assignments (workspace_id, task_id, role, agent_id, session_id, model_id, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7)",
-        rusqlite::params![workspace_id, task_id, role, agent_id, session_id, model_id, now],
+        "INSERT INTO task_assignments (workspace_id, assignment_id, task_id, role, agent_id, session_id, model_id, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8)",
+        rusqlite::params![
+            workspace_id,
+            assignment_id,
+            task_id,
+            role,
+            agent_id,
+            session_id,
+            model_id,
+            now
+        ],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("assignment_create: {e}")))?;
-    let assignment_id = conn.last_insert_rowid();
     Ok(json!({
         "ok": true,
         "assignment_id": assignment_id,
@@ -573,30 +635,56 @@ pub fn handle_assignment_create(
     }))
 }
 
-/// `admin.assignment_revoke` —— 撤销 Assignment。
+/// `admin.assignment_revoke` —— 撤销 Assignment（append 语义，不删除记录）。
+///
+/// 契约单源（T-1789340885245-071cb9b4 step0 裁决 D1-D5）：入参以 `assignment_id`
+/// 为准，与 MCP tool schema / `docs/mcp_tools.md` / `docs/cli_reference.md` /
+/// CLI `_METHOD_MAP` / Python `db.revoke_assignment` 五面一致；撤销条件与返回体
+/// 逐字对齐 `db/db_task_leases.py:309-322`。不保留 `task_id` 回退（会产生
+/// 二义性与误撤销风险），亦不提供 `assignment_id → task_id` 反查。
 pub fn handle_assignment_revoke(
     conn: &Connection,
     workspace_id: i64,
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
-    let task_id = require_str_param(params, "task_id")?;
-    let role = get_str_param_or(params, "role", "implementer");
-    let reason = get_str_param_or(params, "reason", "");
+    let assignment_id = require_str_param(params, "assignment_id")?;
+    let _ = workspace_id;
+    // C-17：同上，调用方 workspace_id 是 registry 代理 id，不能用于 task DB 作用域；
+    // 且 `task_assignments.workspace_id` 由创建侧写入的是权威 `workspaces.id`，
+    // 用代理 id 过滤会把合法撤销恒判为 not found。`assignment_id` 全局 UNIQUE
+    // （db/schema.py:1629），先定位该行所属 task，再按不可变 binding 解析权威 id。
+    let task_id: Option<String> = conn
+        .query_row(
+            "SELECT task_id FROM task_assignments WHERE assignment_id = ?1",
+            rusqlite::params![assignment_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("assignment_revoke lookup: {e}")))?;
+    let workspace_id = match task_id {
+        Some(task_id) => crate::daemon::task_collab::task_bound_workspace_id(conn, &task_id, None)?,
+        None => {
+            return Err(DaemonRpcError::new(
+                "assignment_not_found",
+                format!("assignment_id={assignment_id} 不存在或已撤销"),
+            ))
+        }
+    };
     let now = now_ts();
     let changed = conn
         .execute(
             "UPDATE task_assignments SET status = 'revoked', revoked_at = ?1
-             WHERE workspace_id = ?2 AND task_id = ?3 AND role = ?4 AND status = 'active'",
-            rusqlite::params![now, workspace_id, task_id, role],
+             WHERE workspace_id = ?2 AND assignment_id = ?3 AND status = 'active'",
+            rusqlite::params![now, workspace_id, assignment_id],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("assignment_revoke: {e}")))?;
     if changed == 0 {
         return Err(DaemonRpcError::new(
             "assignment_not_found",
-            format!("task {task_id} 角色 {role} 无 active assignment"),
+            format!("assignment_id={assignment_id} 不存在或已撤销"),
         ));
     }
-    Ok(json!({ "ok": true, "task_id": task_id, "role": role, "reason": reason }))
+    Ok(json!({ "ok": true, "assignment_id": assignment_id, "revoked_at": now }))
 }
 
 /// `admin.record_action_identity` —— 记录动作身份（Governance 审计）。
@@ -613,12 +701,23 @@ pub fn handle_record_action_identity(
     let session_id = get_str_param_or(params, "session_id", "");
     let model_id = get_str_param_or(params, "model_id", "");
     let role = get_str_param_or(params, "role", "");
+    // C-20（§W20 F2）：action_identities.action_id 为 NOT NULL UNIQUE。
+    // Python 权威实现（db/db_task_identity.py:170-203）由调用方提供 action_id
+    // （UNIQUE 冲突 → ERR_IDENTITY_ACTION_DUPLICATE），故优先采用入参；
+    // 入参为空时回退 Rust 生成 ACT-<hex16>（与 gen_assignment_id 同源熵形）。
+    let action_id_param = get_str_param_or(params, "action_id", "");
+    let action_id = if action_id_param.trim().is_empty() {
+        gen_action_id()?
+    } else {
+        action_id_param
+    };
     let now = now_ts();
     conn.execute(
-        "INSERT INTO action_identities (workspace_id, action_type, task_id, contract_id, contract_revision, agent_id, session_id, model_id, role, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO action_identities (workspace_id, action_id, action_type, task_id, contract_id, contract_revision, agent_id, session_id, model_id, role, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             workspace_id,
+            action_id,
             action_type,
             task_id,
             contract_id,
@@ -651,12 +750,17 @@ pub fn handle_register_attestation_revocation(
     }
     let revocation_reason = get_str_param_or(params, "revocation_reason", "");
     let initiating_actor = get_str_param_or(params, "initiating_actor", "");
+    // C-20（§W20 F3）：attestation_revocation_records.revocation_id 为 NOT NULL UNIQUE。
+    // Python 权威实现（db/db_task_identity.py:609）为内部生成 `REV-{uuid4().hex[:16]}`、
+    // 不接受调用方入参，故 Rust 侧同样每次调用新生成（无 uuid crate → OS CSPRNG 8B/16 hex）。
+    let revocation_id = gen_revocation_id()?;
     let now = now_ts();
     conn.execute(
-        "INSERT INTO attestation_revocation_records (workspace_id, issuer, signing_key_id, revocation_mode, revocation_reason, initiating_actor, revoked_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO attestation_revocation_records (workspace_id, revocation_id, issuer, signing_key_id, revocation_mode, revocation_reason, initiating_actor, revoked_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             workspace_id,
+            revocation_id,
             issuer,
             signing_key_id,
             revocation_mode,

@@ -34,14 +34,6 @@ name = "cw-client"
 path = "src/bin/cw_client.rs"
 
 [[bin]]
-# Phase 5-2 Slice 6: cw-agent binary（文件监控 + session 管理）
-# 依赖 callwarden_core lib（daemon::client::AgentSession + watcher）
-# 跨平台编译：Windows 上 watcher 循环被 #[cfg(not(unix))] 替换为平台提示
-# 对齐 Python cli/main.py:run_agent_mode (L12023+)
-name = "cw-agent"
-path = "src/bin/cw_agent.rs"
-
-[[bin]]
 # 共存契约子任务2：cw-bridge（Windows 侧受限 bridge）
 # 监听 loopback TCP 供 WSL 客户端访问，转发 JSON-RPC 到当前用户 SID 的 Named Pipe。
 # Windows-only；非 Windows 平台打印错误退出。不打开 SQLite、不实现任务写逻辑。
@@ -119,6 +111,10 @@ thiserror = "1.0"
 base64 = "0.22"
 # G8 daemon: hex 用于解码客户端传来的 canonical_bytes_hex（agent_protocol.py 小文件默认路径）
 hex = "0.4"
+# Q9 大文件优化（2026-09-17）：flate2 用于解压客户端 gzip 压缩后内联传输的
+# canonical_bytes_gz_b64——代码文件 gzip 压缩率高（典型 3-5x），配合 64MiB body
+# 上限可覆盖数十 MB 源码，同时大幅降低网络/内存开销
+flate2 = "1.0"
 # 1D1 task-domain operation store: Unicode NFC 规范化（operation-params-c14n/v1）
 unicode-normalization = "0.1.25"
 # G6 CAS GC: fs2 提供跨平台文件锁（lock_exclusive），用于 CasStore::gc 和 gc_unreferenced
@@ -127,7 +123,6 @@ fs2 = "0.4"
 # P0-L step1：getrandom 提供 OS CSPRNG（role worker credential 签发），
 # 安全约束不得降级为 wall clock / PID / 可观察 hash 等弱熵源。
 getrandom = "0.3"
-
 # Phase 6-1 P2/P3: regex 用于 cross_layer_impact 正则提取 + once_cell 缓存编译后正则
 regex = "1.11"
 once_cell = "1.20"
@@ -141,9 +136,20 @@ clap = { version = "4", features = ["derive"] }
 
 # H1: HTTP MVP transport（frozen: axum 0.8.x + hyper 1.x + tokio 1.x, HTTP/1.1 only）
 # 仅用于 dev_loopback_unauthenticated 开发期 overlay；不启用 HTTP/2、WS、SSE、压缩。
-axum = "0.8"
+# Q10（2026-09-17）：multipart feature 用于 raw-gz-body 传输——二进制 payload
+# 与 JSON 控制 part 同一请求内到达，消除 base64 税（1.33x 膨胀 + 大字符串
+# JSON 编解码）。mime / rust-multipart-rfc7578_2 已在 registry cache。
+axum = { version = "0.8", features = ["multipart"] }
 hyper = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+
+# RP-01 build-time hard gate (Role Prompt Compiler v1, frozen spec §7.4/§11.1):
+# build.rs + integration tests reuse the sole validator core via #[path] include,
+# so build-dependencies mirror the subset the core needs. No bypass feature exists.
+[build-dependencies]
+serde_json = { version = "1.0", features = ["preserve_order"] }
+sha2 = "0.10"
+hex = "0.4"
 
 # R7 cw_daemon binary：signal-hook（SIGTERM/SIGINT 优雅关闭）
 # Linux-only 依赖，避免 Windows/macOS 编译时引入不必要的包

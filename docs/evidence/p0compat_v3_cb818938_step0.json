@@ -1,0 +1,20 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1788963103216-cb818938",
+  "step_index": 0,
+  "action": "port_rust_handler",
+  "changed_files": [
+    "rust_ext/src/daemon/query_compat_handlers.rs",
+    "rust_ext/src/daemon/snapshot_state.rs",
+    "rust_ext/src/daemon/dispatch.rs",
+    "rust_ext/src/daemon/http_server.rs"
+  ],
+  "summary": "8 handler 落 query_compat_handlers.rs（get_symbol_history/get_recent_changes/get_impact/get_comment_from_version/get_issue_summary/find_issues/get_test_coverage/export_module_graph，复刻 db_query/db_comment/call_chain/issues/coverage 语义，含 8 语言缺陷规则表）；snapshot_state.rs 加分发 arm；dispatch.rs CONVERGENCE_RPC_METHODS 加 8 方法（漏加会 method_not_found）；http_server.rs registry 8 行 rust_native + COMPAT_ROUTE_WHITELIST 摘除 8 条目",
+  "verification": {
+    "rust_build": "cargo build --bin cw-daemon Finished (MSVC env, CARGO_INCREMENTAL=0)",
+    "pytest": "21/21 PASS (tests/test_mcp_compat_tools_query_http_rpc.py) + 15/15 回归 (identity-lease-small + assignment_show)",
+    "capabilities_endpoint": "8 methods backend=rust_native, status=available"
+  },
+  "created_at": "2026-09-10T00:19:17+0800",
+  "request_id": "req-evd-b3e18b06"
+}

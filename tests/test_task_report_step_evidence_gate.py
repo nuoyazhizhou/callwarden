@@ -19,14 +19,27 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.db.db import CodeGraphDB  # noqa: E402
-from callwarden.server.stage_toggle_migration import ensure_stage_toggle_schema  # noqa: E402
+
+
+# Stage_Toggle 存储 schema 现由 Rust daemon 权威创建（server/stage_toggle_migration.py
+# 仅保留迁移 RPC，无 SQLite 权威）；测试 helper 内联同一 DDL 模拟 daemon 配置存储。
+_STAGE_TOGGLE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS stage_toggles (
+    stage       TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 0,
+    actor       TEXT NOT NULL DEFAULT '',
+    changed_at  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (stage, scope_key)
+)
+"""
 
 
 def _set_p1_enabled(store_path):
     """写入 P1 Stage_Toggle（global scope enabled），使 Evidence Gate 评估 P1 条款。"""
     conn = sqlite3.connect(store_path)
     try:
-        ensure_stage_toggle_schema(conn)
+        conn.execute(_STAGE_TOGGLE_SCHEMA)
         conn.execute(
             "INSERT OR REPLACE INTO stage_toggles (stage, scope_key, enabled, actor, changed_at) "
             "VALUES ('P1', 'global', 1, 'test', ?)",

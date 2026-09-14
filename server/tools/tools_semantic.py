@@ -349,21 +349,20 @@ def _h_get_project_dependencies(ctx: CompatCallContext) -> Any:
     )
 
 
-# 语义/外部符号组只读白名单（5 个）：跳过 embed_symbols / embed_single_symbol
+# 语义/外部符号组只读白名单（原 5 个）：跳过 embed_symbols / embed_single_symbol
 # （index_write）与 import_codeowners / import_git_blame / import_project_dependencies /
 # prune_external_symbols / gc_*（governance_write，不接入 worker）。
-_SEMANTIC_READ_ONLY_METHODS: Dict[str, Any] = {
-    "semantic_search": _h_semantic_search,
-    "find_similar_functions": _h_find_similar_functions,
-    "get_symbol_commit_history": _h_get_symbol_commit_history,
-    "parse_codeowners": _h_parse_codeowners,
-    "get_project_dependencies": _h_get_project_dependencies,
-}
+# P0-COMPAT-v3（T-1788963104879-2e9e6270）：剩余 5 个只读方法
+# （semantic_search / find_similar_functions / get_symbol_commit_history /
+# parse_codeowners / get_project_dependencies）全部迁移 rust_native，
+# compat worker 白名单清空（空 dict 条件注册，退役后 handler 函数保留供追溯）。
+_SEMANTIC_READ_ONLY_METHODS: Dict[str, Any] = {}
 
-# 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _SEMANTIC_READ_ONLY_METHODS,
-    workspace_scope=_SEMANTIC_COMPAT_SCOPE,
-    description="H4C-2 第二批语义/外部符号组只读工具（5 个，T-1786747295213-64204cce 步骤#1）",
-)
+# 模块级注册：worker 装配 import 本模块时执行。P0-COMPAT-v3 起白名单为空，
+# 仅在仍有残留条目时注册（空 dict 直接跳过，避免注册空集合）。
+if _SEMANTIC_READ_ONLY_METHODS:
+    register_compat_routes(
+        _SEMANTIC_READ_ONLY_METHODS,
+        workspace_scope=_SEMANTIC_COMPAT_SCOPE,
+        description="H4C-2 第二批语义/外部符号组只读工具（P0-COMPAT-v3 后全部 rust_native）",
+    )

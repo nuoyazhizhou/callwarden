@@ -1,0 +1,70 @@
+{
+  "schema_version": "rp_evidence_v1",
+  "card_id": "RP-05",
+  "task_id": "T-1788699893336-781258c0",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "title": "Role Prompt Compiler v1 RP-05: daemon RPC and capability publication",
+  "frozen_authority": {
+    "spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+  },
+  "predecessor": {
+    "task_id": "T-1788696869654-76a02598",
+    "lifecycle_status": "closed",
+    "next_action": "COMPLETE"
+  },
+  "step_ids": [
+    "S-1788699893336-781c60b8"
+  ],
+  "contract_hash": "captured-from-daemon-at-verdict-time",
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "source": "daemon immutable authority capture (client-derived values rejected)"
+  },
+  "commands": [
+    {
+      "cmd": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features --lib task_prompt_rpc",
+      "result": "test result: ok. 10 passed; 0 failed"
+    },
+    {
+      "cmd": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features --lib task_prompt",
+      "result": "test result: ok. 65 passed; 0 failed (9 context + 46 renderer + 10 rpc; no regression)"
+    },
+    {
+      "cmd": "cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+      "result": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.39s; no errors, no task_prompt unused warnings"
+    },
+    {
+      "cmd": "git diff --check",
+      "result": "clean"
+    }
+  ],
+  "positive_results": [
+    "task.prompt.compile strict request schema per spec 4.1: only task_id (required non-empty string) + optional expected_workspace_instance_id accepted; unknown/forbidden fields (role/mode/format/context_profile/preview_role/lease_token/workspace_id) fail closed with E_TASK_PROMPT_TASK_ID_REQUIRED",
+    "workspace self-resolved from daemon authority chain: tasks existence -> task_workspace_bindings.workspace_capture_id -> workspace_authority_captures.workspace_instance_id; client never supplies workspace; task-not-found -> E_TASK_PROMPT_TASK_NOT_FOUND, binding/capture unresolvable -> E_TASK_PROMPT_AUTHORITY_UNAVAILABLE (spec 10.2 error-code ordering)",
+    "spec 4.2 workspace guard: expected_workspace_instance_id mismatch -> E_TASK_PROMPT_AUTHORITY_MISMATCH (retry: after_authority_refresh); match passes; guard value never enters context/prompt/bundle hashes",
+    "READY/CLAIM happy round trip: bundle role_prompt_bundle_v1 with routing READY/CLAIM, authorization.valid_for_claim=false and mutation_recheck_required=true, context_hash/prompt.sha256/bundle_hash in lowercase sha256:<64-hex> form; untrusted task title/description only inside segment-3 CW_UNTRUSTED_TASK_DATA canonical JSON block with </& escaped (8.2); no template interpolation (8.1)",
+    "zero-write: compile leaves tasks/task_steps/task_leases/task_events/task_workspace_bindings/task_contract_revisions/role_contract_revisions/task_verdict_events row counts unchanged",
+    "same-snapshot determinism: two compiles yield identical context_hash, prompt.sha256, bundle_hash and prompt.text (generated_at display-only excluded per 9.7)",
+    "capability role_prompt_compiler_v1 projection (11.3): name, schema_version role_prompt_capability_v1, manifest_sha256 and compiler_policy_sha256 from build-generated constants in normalized lowercase sha256: form, enabled=true; wired into health handler as pass-through field; capability disabled path fail-closed (E_TASK_PROMPT_TEMPLATE_INVALID) before any authority read",
+    "dispatch thin registration: exactly one method arm + one trait method delegating into domain compile inside a single read-only with_conn closure; dispatch.rs gains no route/template business logic; method not added to ADMIN_ONLY_METHODS or PROTECTED_MUTATION_METHODS"
+  ],
+  "negative_results": [
+    "daemon unavailable / task_collab_store absent -> method_not_found('task.prompt.compile'); no Python authority fallback (no cli/server changes)",
+    "unknown request fields and malformed task_id rejected before any DB read (fail closed)",
+    "no raw credential or lease token in this evidence; reason codes carry category only",
+    "unrelated dirty working-tree files (parallel sessions) excluded from the whitelist commit; staged diff of dispatch.rs verified to contain only the three thin-registration edits"
+  ],
+  "changed_paths": [
+    "rust_ext/src/daemon/task_prompt/handler.rs (new, 293 lines)",
+    "rust_ext/src/daemon/task_prompt/rpc_tests.rs (new, 409 lines)",
+    "rust_ext/src/daemon/task_prompt/mod.rs (module declaration: pub mod handler; + mod rpc_tests;)",
+    "rust_ext/src/daemon/dispatch.rs (26 lines: trait method handle_task_prompt_compile, match arm, health capability pass-through)"
+  ],
+  "commit_sha": "72cc047671a3580fa1478abb0c59599b3aa5d78b",
+  "deployment_receipt_if_applicable": null,
+  "planner_contract_extension_note": "task_prompt/mod.rs is outside card globs but required for the handler submodule to compile; registered per RP-02/03/04 precedent with rationale in the task description. capability_control.rs (in globs) intentionally untouched: task.prompt.compile is read-only and CapabilityMutationGate guards public mutations only.",
+  "retry_class_note": "spec 10.2 retry_class wire field is carried by the shared error transport layer; domain errors emitted by this card use the in-table stable codes (TASK_ID_REQUIRED never / TASK_NOT_FOUND + AUTHORITY_UNAVAILABLE + CONTRACT_UNRESOLVED-family after_authority_change / AUTHORITY_MISMATCH after_authority_refresh semantics documented in code); wire-shape serialization of retry_class remains with the transport layer unchanged in this card to avoid a global error-shape change.",
+  "created_at": "2026-09-06T21:22:00+08:00"
+}

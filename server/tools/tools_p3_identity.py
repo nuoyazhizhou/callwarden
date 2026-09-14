@@ -327,22 +327,22 @@ def _h_list_attestation_revocations(ctx: CompatCallContext) -> Any:
         )
 
 
-# p3 只读白名单（2 个；get_action_identity 已 MCP-010、check_action_identity 已 MCP-011、
-# check_session_separation 已 MCP-012 迁移 rust_native，移除 compat 注册）：写语义工具
-# （record_action_identity / register_attestation_revocation，governance_write）不接入，
-# fail-closed。
-_P3_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_attestation_validity": _h_get_attestation_validity,
-    "list_attestation_revocations": _h_list_attestation_revocations,
-}
+# p3 只读白名单（0 个）：get_action_identity 已 MCP-010、check_action_identity 已
+# MCP-011、check_session_separation 已 MCP-012、get_attestation_validity /
+# list_attestation_revocations 已 P0-COMPAT-v3（T-1788963088148-495d7208）迁移
+# rust_native，移除 compat 注册：写语义工具（record_action_identity /
+# register_attestation_revocation，governance_write）不接入，fail-closed。
+_P3_READ_ONLY_METHODS: Dict[str, Any] = {}
 
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
 # 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _P3_READ_ONLY_METHODS,
-    workspace_scope=_P3_COMPAT_SCOPE,
-    description="H4C-2 第三批 p3 身份/证明组只读工具（5 个，T-1786747295227-b876fddf 步骤#1）",
-)
+# 全部条目退役后不再注册（register_compat_routes 空 dict 会 fail-closed）。
+if _P3_READ_ONLY_METHODS:
+    register_compat_routes(
+        _P3_READ_ONLY_METHODS,
+        workspace_scope=_P3_COMPAT_SCOPE,
+        description="H4C-2 第三批 p3 身份/证明组只读工具（5 个，T-1786747295227-b876fddf 步骤#1）",
+    )
 
 
 def _p3_resolve_identity_arg(db: CodeGraphDB, identity: str):

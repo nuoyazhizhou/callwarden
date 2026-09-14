@@ -52,7 +52,22 @@ $TargetDir = [IO.Path]::GetFullPath($TargetDir)
 function Info([string]$Message) { Write-Host "[runtime-refresh] $Message" -ForegroundColor Cyan }
 function Digest([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    # Some supervisor-launched Windows PowerShell sessions do not auto-load
+    # Microsoft.PowerShell.Utility, so Get-FileHash is unavailable exactly
+    # when a controlled runtime switch needs its receipt.  Keep the cmdlet
+    # fast path, but make the receipt independent of module autoloading.
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
 }
 
 # Set-MsvcBuildEnv — 等价 scripts/msvc-env.sh：在干净 PowerShell 会话下注入 MSVC 工具集
@@ -552,14 +567,17 @@ try {
     Info "先构建新 runtime，不停止现有 MCP/daemon"
     Set-MsvcBuildEnv
     $cargoArgs = @("build", "--manifest-path", $RustManifest, "--target-dir", $TargetDir,
-        "--lib", "--bin", "cw-daemon", "--bin", "cw", "--bin", "cw-client", "--bin", "cw-agent", "--bin", "cw-bridge")
+        "--lib", "--bin", "cw-daemon", "--bin", "cw", "--bin", "cw-client", "--bin", "cw-bridge")
     if ($Configuration -eq "release") { $cargoArgs += "--release" }
     elseif ($Configuration -ne "debug") { $cargoArgs += @("--profile", $Configuration) }
     $buildOutput = @(& cargo @cargoArgs 2>&1); $buildCode = $LASTEXITCODE
     $buildOutput | Set-Content -LiteralPath $buildLog -Encoding utf8
     if ($buildCode -ne 0) { throw "cargo build 失败，exit=$buildCode；详见 $buildLog" }
 
-    $names = @("cw-daemon.exe", "cw.exe", "cw-client.exe", "cw-agent.exe", "cw-bridge.exe")
+    # Q9（2026-09-17）：第二套 Rust agent（rust_ext/src/bin/cw_agent.rs）已移除——
+    # 生产 cw-agent 是 Python（callwarden.cli.agent:main + PyInstaller），rust_ext
+    # 那套直连 UDS/Named Pipe 的并行实现从未被任何部署链引用。
+    $names = @("cw-daemon.exe", "cw.exe", "cw-client.exe", "cw-bridge.exe")
     $built = @()
     foreach ($name in $names) {
         $source = Join-Path $buildDir $name

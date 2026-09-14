@@ -1,0 +1,56 @@
+{
+  "task_id": "T-1788425319705-505b7f04",
+  "task_contract": {
+    "revision": 2,
+    "hash": "sha256:974eef52664fc4997971c54e6248288cc11970f564a1e20d45df3351b4a8e4d4"
+  },
+  "scope": "thin-client task-write error/lease contract and next-action runtime lease-role projection",
+  "source_files": {
+    "cli/main.py": "sha256:3EC63B2504E8DFF30F63BC26D665844ABE9D8AFA5CFCDE051F8C55D1EBE80E26",
+    "rust_ext/src/daemon/task_loop/next_action.rs": "sha256:75E081289975A2495CF9D347647FBF03322D97EDC25108B0C3994E85163F26A3",
+    "rust_ext/src/daemon/task_loop/next_action_test.rs": "sha256:459CEEE44CCDEE225413C41ADD2AC9671F3372538E0EF6A5E0520942D5C6697E",
+    "tests/test_task_write_client_contract.py": "sha256:F44B7DCB70EFB348E373ED75C4D3C5C6D7C028DB4A3360439386C2FFF694AB42"
+  },
+  "verification": [
+    {
+      "kind": "focused_python",
+      "command": "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_write_client_contract.py -q",
+      "result": "passed",
+      "detail": "3 passed: rejected task.report and contract-lookup failure each exit 2; lease JSON exposes lease_token and token compatibility alias."
+    },
+    {
+      "kind": "focused_rust",
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml task_loop::next_action_test --lib",
+      "result": "passed",
+      "detail": "22 passed, including executor governance role to implementer runtime lease-role projection."
+    },
+    {
+      "kind": "release_runtime",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\refresh_shared_runtime.ps1 -TaskId T-1788425319705-505b7f04 -Configuration release",
+      "result": "passed",
+      "receipt_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260903-211533-293a1cbee415-ff82089a.json",
+      "receipt_hash": "sha256:4AB1DD42C5BF7ACAD13103428441620CC2EC320DEE589764C006C82565B25731"
+    },
+    {
+      "kind": "live_daemon_round_trip",
+      "result": "passed",
+      "observations": [
+        "daemon status resolved canonical task binding: task DB workspace 1 and instance 4baea3ff12c2ea5c",
+        "task next-action returned authorization.acting_role=executor and authorization.lease_role=implementer",
+        "task report against a non-existent task printed task_not_found and exited with code 2",
+        "lease acquire JSON provided both lease_token and token with equal values; the temporary implementer lease was released before this evidence was written"
+      ]
+    },
+    {
+      "kind": "scope_hygiene",
+      "result": "passed_with_baseline_note",
+      "detail": "git diff --check for all four changed implementation/test files passed. rustfmt --check reports pre-existing full-file formatting drift in next_action.rs and next_action_test.rs; no broad formatting rewrite was made."
+    }
+  ],
+  "secrets": {
+    "raw_lease_token_logged": false,
+    "raw_lease_token_persisted": false
+  },
+  "deployment_precondition_note": "The TokenSlim-wrapped PowerShell environment lacks Get-FileHash and produced a failed release receipt. The mandated native PowerShell refresh was rerun successfully; only its successful receipt is relied on above.",
+  "baseline_git_head_before_task_commit": "293a1cbee4159171ca3352fc42d574416972f970"
+}

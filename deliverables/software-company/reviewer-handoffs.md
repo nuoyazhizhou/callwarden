@@ -1915,3 +1915,33 @@ Handoff:
     role: reviewer
   persistence: reviewer Verdict Ledger V-0004c3ce380e569a766ce445/event_id=555 已持久化；Reviewer→Adjudicator handoff 未持久化；释放后的 Reviewer lease L-ec823e913a4853ad 状态为 released；authority projection=governance_blocked/unverified；未执行 apply/close/supersede。
 ```
+
+## T-1788447967354-616aa470 (reviewer blocked, 2026-09-04, r1)
+
+```text
+Handoff:
+  task_id: T-1788447967354-616aa470
+  step_id: S-1788447967355-617a8098
+  from_role: reviewer
+  outcome: reviewer_blocked
+  next_role: executor
+  next_action: 补齐并由 daemon 持久化当前精确 task/step 的 task-bound review snapshot、有效 inbound Executor→Reviewer handoff 与可验证 view manifest；以当前 HEAD 701ee4e 重新部署并生成与 receipt/git_head 对齐的 runtime provenance 后重新派工复审
+  reason: |
+    1. 独立复核的精确 next-action 为 lifecycle_status=review、workflow_status=review_pending、decision=READY、action=REVIEW、required_role=reviewer、next_action=review_current_step；当前 assignment=A-7eb080c4e9d00337ed70e3f6，绑定 step_id=S-1788447967355-617a8098，task/step 绑定一致。Reviewer lease 已以本窗口独立 identity 获取；Executor assignment 的 holder 为不同 agent/session/model，独立性满足。
+    2. 代码与测试证据通过独立核验：当前 recovery source/test 文件哈希与 step3 evidence 一致；独立运行 `tokenslim run cargo test --manifest-path C:/git_work/callwarden/rust_ext/Cargo.toml lease_recover --lib` 为 3 passed / 0 failed，覆盖原子清理、健康 active 拒绝与 raw secret 字段拒绝。step3 evidence hash 为 sha256:dc35d6b88b7cbb5f12549a9ffbb6ffc37dba0a3e34884556de5e220a412efd78。
+    3. 既有 HTTP E2E/receipt 记录了 expired lease→expired、paired assignment→stale、same-holder claim→claim_released、幂等 replay、健康 active 拒绝和 no-raw-token；receipt hash 为 sha256:8b9cdbffe14829ac2c04947239c52c21c7ff1d5706fab76df46570762a37a00d，当前 live daemon health/ping 通过（PID=31324，git_commit=701ee4e3194c8161831cbd9705b9313054018563，binary sha256=4c2af66ed499eb3572eb5e8f9d76da09b99e27fda708a04f00501601970ea134）。但该 receipt 的 git_head 仍为 0e34781d349c955a5a5c3ee8abb7e962d7efdda1；当前 HEAD 701ee4e 为 ledger-only 后继，未有与当前 HEAD 对齐的新部署 receipt，故 provenance 不能直接宣称已绑定当前 HEAD。
+    4. 权威 governance-projection 与 next-action 均明确 `review_input_snapshot`/snapshot 为 no_snapshot 或 not_evaluated，`inbound_handoff` 为 no_handoff，`verdicts=[]`；Task Contract TC-T-1788447967354-616aa470 revision=1 hash=sha256:41eb5bf899d9628c10bc88ee62c41084ef96e8b1c905b03de38f91b42f3db0be，Reviewer Role Contract rcl-T-1788447967354-616aa470-reviewer revision=1 hash=sha256:731c30d90fb3867cd1930c5c8efae8e9c5603bf7bd4644d0c7aafa07867df6f1 均可读，但没有合法 task-bound snapshot_id/view manifest 可供 verdict.submit。
+    5. 因 snapshot/manifest 缺失且 inbound handoff 未持久化，不能用 evidence hash、runtime receipt hash、daemon fingerprint 或字符串 no_snapshot 冒充 Verdict Ledger 所需 provenance；本轮未调用 lease.recover，未伪造 verdict/request_id，未修改代码、历史 evidence、任务状态或 SQLite，未执行 apply/close/supersede。由于 Reviewer 不能自行发布 review snapshot 或补写 Executor handoff，结论为 BLOCKED，不能交 Adjudicator。
+  independence_requirement: not_required
+  request_id: unavailable（缺少合法 task-bound snapshot/view_manifest，未提交伪造 mutation）
+  report_request_id: unavailable（仅追加本地审查报告，daemon 未持久化 reviewer verdict/handoff）
+  evidence_path: C:\git_work\callwarden\docs\evidence\T-1788447967354-616aa470-step3-daemon-roundtrip.json
+  evidence_hash: sha256:dc35d6b88b7cbb5f12549a9ffbb6ffc37dba0a3e34884556de5e220a412efd78
+  identity:
+    agent_id: reviewer-wb-186loop
+    agent_instance_id: inst-reviewer-wb-186loop
+    session_id: sess-reviewer-wb-186loop
+    model_id: workbuddy
+    role: reviewer
+  persistence: reviewer verdict/handoff 未持久化；authority projection 仍为 review_pending、review.state=pending、verdicts=[]、review_input_snapshot=no_snapshot、inbound_handoff=no_handoff。Reviewer lease 将立即释放并复核为 released。未执行 apply/close/supersede。
+```

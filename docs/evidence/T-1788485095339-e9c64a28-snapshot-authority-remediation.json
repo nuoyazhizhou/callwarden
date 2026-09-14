@@ -1,0 +1,110 @@
+{
+  "task_id": "T-1788485095339-e9c64a28",
+  "remediation_step_id": "S-773f2afd8369e7ef0836018a",
+  "source_verdict_id": "V-a0ea7b6d41b7dfc1e7649b1e",
+  "source_handoff_event_id": "he-3b41bc53ba5cab7090e4f9d8",
+  "purpose": "Require task.report review snapshots to match the daemon-published snapshot of the task immutable workspace binding, and expose daemon-required remediation step selection through the thin CLI.",
+  "implemented": {
+    "daemon": [
+      "task.report resolves task_workspace_bindings to workspace_authority_captures and reads the bound registry workspace by immutable workspace_instance_id",
+      "missing registry authority or daemon-published snapshot fails closed with E_TASK_REPORT_SNAPSHOT_AUTHORITY_UNAVAILABLE",
+      "mismatching supplied snapshot fails before task, step, event, or assignment transition with E_TASK_REPORT_SNAPSHOT_MISMATCH"
+    ],
+    "cli": [
+      "cw task next accepts --remediation-step-id and forwards it unchanged as task.claim.remediation_step_id",
+      "normal claims omit the field rather than fabricating a step id"
+    ]
+  },
+  "validation": [
+    {
+      "command": "tokenslim run cargo test -p callwarden-core daemon::task_collab::tests::core::test_task_report_persists_snapshot_for_governance_projection --lib --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "tokenslim run cargo test -p callwarden-core daemon::task_collab::tests::core::test_task_report_rejects_snapshot_from_other_workspace_before_state_transition --lib --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_cli_task_next_remediation.py tests/test_task_report_snapshot_authority.py -q",
+      "result": "4 passed"
+    },
+    {
+      "command": "tokenslim run cargo check -p callwarden-core --lib",
+      "result": "passed with pre-existing warnings"
+    }
+  ],
+  "deployment": {
+    "status": "passed",
+    "runtime_receipt": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260904-122233-4baf35dca6b2-4f1d91e6.json",
+    "git_head": "4baf35dca6b2a123345f9998ae1525082f22d443",
+    "daemon_pid": 41816,
+    "daemon_sha256": "9adcbd2eca0b64720230aeb07ab86721817cb2377e5f7b2f015ba68c1d996625",
+    "workspace_authority": {
+      "task_db_workspace_id": 1,
+      "registry_workspace_id": 1193,
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "status": "active"
+    }
+  },
+  "scope_note": "The CLI adapter is required to make the daemon-created same-task fix_defect step claimable; no SQLite direct access or task-state bypass was used.",
+  "change_audit_scope": {
+    "reported_step_target_file": "rust_ext/src/daemon/workspace.rs; rust_ext/src/daemon/task_collab_lifecycle.rs; tests",
+    "reported_paths": [
+      "rust_ext/src/daemon/workspace.rs",
+      "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "tests"
+    ],
+    "note": "The durable change audit is limited to the remediation step's immutable target_file whitelist. The next_action recovery commits below are separately enumerated as supporting governance-recovery provenance, not misrepresented as whitelisted change-audit rows."
+  },
+  "follow_up_remediation": {
+    "commits": [
+      {
+        "commit": "b6d4784767f85e00e210265161807270635fb19d",
+        "purpose": "Filter task.next_action active-lease lookup by the immutable task workspace binding so historical workspace rows cannot block the current task."
+      },
+      {
+        "commit": "ecf61b20d723d4835bd22d916e7da7b803030f71",
+        "purpose": "Treat in_progress as holder evidence only when its durable assignment is claimed and heartbeat-fresh; queued, absent, or stale assignments return READY/CLAIM for the existing atomic takeover path."
+      }
+    ],
+    "validation": [
+      {
+        "command": "tokenslim run cargo test daemon::task_loop::next_action_test --lib --quiet",
+        "result": "26 passed, including cross-workspace lease isolation plus orphan/fresh/stale assignment projection cases (re-run after final deployment candidate)"
+      },
+      {
+        "command": "tokenslim run cargo check --bin cw-daemon",
+        "result": "passed with existing repository warnings"
+      },
+      {
+        "command": "cw task next-action T-1788485095339-e9c64a28 --workspace-instance-id 4baea3ff12c2ea5c --json",
+        "result": "after ecf61b2 deployment: READY/CLAIM for daemon-issued remediation step S-773f2afd8369e7ef0836018a"
+      }
+    ],
+    "deployments": [
+      {
+        "commit": "b6d4784767f85e00e210265161807270635fb19d",
+        "receipt": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260904-223325-b6d4784767f8-b594e674.json",
+        "receipt_sha256": "AFEA5212ABA6BFEA7A9F646B44876BEF53BE39CD91C9D52762F4BDD4C05D1F30"
+      },
+      {
+        "commit": "ecf61b20d723d4835bd22d916e7da7b803030f71",
+        "receipt": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260904-224625-ecf61b20d723-a0cdf70d.json",
+        "receipt_sha256": "B42082E05522F49D2A7D69A38F267AFB45C14E6EBAD5F5C9EE1E03EE39054331",
+        "live_daemon": {
+          "pid": 30476,
+          "git_commit": "ecf61b20d723d4835bd22d916e7da7b803030f71",
+          "worker_status": "healthy"
+        }
+      }
+    ],
+    "authority_round_trip": {
+      "task_db_workspace_id": 1,
+      "registry_workspace_id": 1193,
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "status": "active",
+      "remediation_step_id": "S-773f2afd8369e7ef0836018a",
+      "claim_result": "claimed by registered executor identity after stale assignment projection recovery"
+    }
+  }
+}

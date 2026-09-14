@@ -1,0 +1,95 @@
+{
+  "evidence_id": "workspace-authority-reconciliation-v2-e2e",
+  "task_id": "T-1788382908707-bbdd0cfc",
+  "parent_task": "T-1788346430756-8c900ec0",
+  "generated_at_utc": "2026-09-02T22:35:00Z",
+  "title": "Durable workspace authority reconciliation across daemon restart — runtime + E2E + lifecycle evidence",
+
+  "runtime": {
+    "daemon_pid": 3744,
+    "endpoint": "http://127.0.0.1:7292",
+    "git_commit": "f6fdafd61bd33b2fbc670ffbded4af39cc5de625",
+    "daemon_binary_sha256": "8bd47619e2081fdc59dc302b0ee56c5c9937014ce4f916f6cc8009c0db64ed67",
+    "runtime_current_sha256": "8bd47619e2081fdc59dc302b0ee56c5c9937014ce4f916f6cc8009c0db64ed67",
+    "target_release_sha256": "8bd47619e2081fdc59dc302b0ee56c5c9937014ce4f916f6cc8009c0db64ed67",
+    "deploy_closed_loop": "runtime/current == target/release == manifest.daemon_binary_sha256",
+    "schema_version": 60,
+    "worker_status": "healthy"
+  },
+
+  "fix_summary": {
+    "file": "rust_ext/src/daemon/workspace_reconciliation.rs",
+    "root_cause": "resolve_status_authority numeric-key path depended on workspace_reconciliation_aliases.registry_workspace_id, an autoincrement id that drifts on every fresh daemon restart (144->156->158->161->170->175 observed). After drift the alias row was stale and workspace.status returned task_db_workspace_id=null.",
+    "fix": "resolve_status_authority now records resolved_instance on both numeric-key and instance-key paths, then persistently cross-references the task-DB side via task_db_capture_by_instance + alias_by_instance (both keyed by the stable workspace_instance_id), immune to numeric id drift.",
+    "unit_tests": {
+      "command": "cargo test --release workspace_reconciliation",
+      "result": "7 passed; 0 failed",
+      "notable": ["status_numeric_key_resolves_task_db_via_instance_after_id_drift", "status_registry_only_orphan_returns_partial_no_synthetic"]
+    }
+  },
+
+  "e2e_gate": {
+    "script": "tests/e2e_workspace_authority_reconciliation_v2.py",
+    "mode": "fresh client process against freshly restarted daemon (PID 3744)",
+    "runs": [
+      {"registry_numeric_id": 161, "result": "AUTH/READ/WRITE/NEG/MULTI ALL PASS"},
+      {"registry_numeric_id": 170, "result": "AUTH/READ/WRITE/NEG/MULTI ALL PASS"},
+      {"registry_numeric_id": 175, "result": "AUTH/READ/WRITE/NEG/MULTI ALL PASS"}
+    ],
+    "registry_id_drift_sequence": [144, 156, 158, 161, 170, 175],
+    "final_run_checks": [
+      "AUTH status(175) -> registry(id=175,inst=4baea3ff12c2ea5c) task_db(id=1,inst=4baea3ff12c2ea5c)",
+      "READ status(4baea3ff12c2ea5c) -> unified registry+task_db instance 4baea3ff12c2ea5c (registry_id=175, task_db_id=1)",
+      "WRITE task.create(1,ws-1) -> task T-1788389626135-c1c7fe34, exactly 1 workspace binding",
+      "NEG registry-only create(e193730e635b1ae1) -> fail-closed (no partial task row)",
+      "NEG cross-project/unknown-instance create -> fail-closed",
+      "NEG stale registry id 144 + legacy instance ws-1 -> fail-closed (no partial rows)",
+      "MULTI TokenSlim instance (8f6a68ab29926f5f) cannot be task-bound (no cross-project bind)"
+    ],
+    "all_passed": true
+  },
+
+  "lifecycle_proof": {
+    "goal": "new task must genuinely prove claim -> report -> persisted Reviewer verdict (task-show alone insufficient)",
+    "probe_task_id": "T-1788389592438-e9549dfc",
+    "carrier": {"workspace_id": 1, "workspace_instance_id": "ws-1"},
+    "sequence": [
+      "task.create with A' three-role role_contracts + identity_policy=legacy_identity_v1 (same params as CLI task create)",
+      "executor agent.register + task.claim (step S-1788389592440-e96d6b34) + task.report -> lifecycle review",
+      "reviewer agent.register (distinct instance/session, role independence enforced)",
+      "get_role_view(reviewer) -> view_manifest_hash d506e0698e0166d5aa344a9b22d72ac576928ce46327ab594dd6f13fee4ea5a8",
+      "lease.acquire(reviewer) -> L-96d520902ff98021 fencing_counter=1",
+      "verdict.submit blind_first_pass/pass with authoritative new-schema role contract (rcl-...-reviewer rev 1)",
+      "persistence verified: row in task_verdict_events with verdict_id, phase, overall, snapshot_id, step_id",
+      "lease.release"
+    ],
+    "verdict_id": "V-944c7cae2f965ff8d7d56d12",
+    "persisted_row": ["V-944c7cae2f965ff8d7d56d12", "T-1788389592438-e9549dfc", "blind_first_pass", "pass", "f474570cd364a8f0", "S-1788389592440-e96d6b34"],
+    "snapshot_id": "f474570cd364a8f0",
+    "snapshot_provenance": "real workspace snapshot from registry.db row eb81cf5375f5446e (git remote git@github.com:nuoyazhizhou/callwarden.git, head 4ae1447b); verdict.submit requires non-empty snapshot_id and persists the caller-provided reference",
+    "transcript_file": "_e2e_lifecycle_full_9f996de9.json",
+    "result": "PASS"
+  },
+
+  "governance_findings": [
+    {
+      "severity": "advisory",
+      "finding": "verdict.submit hard-requires non-empty snapshot_id; task.report accepts a caller-provided snapshot_id but bare task.create+claim+report leaves task_events.snapshot_id empty (no_snapshot), blocking verdicts unless the caller supplies a real workspace snapshot reference."
+    },
+    {
+      "severity": "advisory",
+      "finding": "bare task.create RPC WITHOUT role_contracts+identity_policy produces a task with zero contracts (cannot be claimed by contract tasks' fail-closed gate). CLI task create always passes the A' three-role template; raw RPC callers must do the same."
+    },
+    {
+      "severity": "advisory",
+      "finding": "role_contract_hash authority: when role_contract_lineages exist, the authoritative hash is role_contract_revisions.role_contract_hash; a legacy 17-field reconstructed payload hash fails E_ROLE_CONTRACT_HASH_MISMATCH."
+    }
+  ],
+
+  "forbidden_respected": [
+    "no direct SQLite writes (all reads read-only; all writes via daemon RPC)",
+    "no identity/lease/binding forgery (identities registered via agent.register; lease acquired/released via lease.acquire/release)",
+    "no task.apply / task.close / task.supersede executed (probe task left in review_pending for adjudication path; remediation task handed to independent Reviewer)",
+    "no historical task/event/evidence modification"
+  ]
+}

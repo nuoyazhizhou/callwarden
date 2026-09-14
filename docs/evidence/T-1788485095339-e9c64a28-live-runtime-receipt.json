@@ -1,0 +1,50 @@
+{
+  "task_id": "T-1788485095339-e9c64a28",
+  "kind": "append_only_live_runtime_receipt",
+  "date": "2026-09-04",
+  "source_commits": [
+    "d20ef9d1b086bc0475b152ee325bb2b73dda4898",
+    "6d6eb35ad063ce8cdacd513cbeca1c0b40b9eb60",
+    "5b72b13c1af29cc7f91fe6bbe7555be131d1ab27"
+  ],
+  "runtime_receipt": {
+    "path": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260904-114749-5b72b13c1af2-d04122d0.json",
+    "daemon_git_commit": "5b72b13c1af29cc7f91fe6bbe7555be131d1ab27",
+    "daemon_pid": 8072,
+    "endpoint": "http://127.0.0.1:4049",
+    "health": "healthy"
+  },
+  "authority_tuple": {
+    "registry_workspace_id": 1193,
+    "registry_instance_id": "4baea3ff12c2ea5c",
+    "task_db_workspace_id": 1,
+    "task_db_instance_id": "4baea3ff12c2ea5c",
+    "client_view_root": "C:\\git_work\\callwarden",
+    "status": "active"
+  },
+  "executor_reports": [
+    {
+      "step_id": "S-1788485095341-e9f0bfb0",
+      "request_id": "req-9ce4bcf8fa41",
+      "result": "success"
+    },
+    {
+      "step_id": "S-1788485095342-e9f3f658",
+      "request_id": "req-31aad54ea0ac",
+      "result": "success"
+    },
+    {
+      "step_id": "S-1788485095342-e9f4c7b8",
+      "request_id": "req-a169fd57e31f",
+      "result": "success"
+    }
+  ],
+  "review_input": {
+    "lifecycle_status": "review",
+    "workflow_status": "review_pending",
+    "snapshot_id": "daa02801adf4d5c1",
+    "report_evidence_path": "docs/evidence/T-1788485095339-e9c64a28-workspace-authority-recovery.json",
+    "verification": "daemon task.governance-projection --json"
+  },
+  "result": "The fresh deployed daemon preserved the immutable task authority tuple and accepted three snapshot-backed reports. The task entered review with a non-empty daemon review_input_snapshot; no no_snapshot review state was created."
+}

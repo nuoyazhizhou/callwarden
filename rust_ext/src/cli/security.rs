@@ -2467,7 +2467,7 @@ fn query_active_rotation_keys(conn: &Connection) -> Result<Vec<(String, Vec<u8>)
     Ok(rows)
 }
 
-fn active_audit_key(conn: &Connection) -> Result<(String, Option<Vec<u8>>, String), String> {
+pub fn active_audit_key(conn: &Connection) -> Result<(String, Option<Vec<u8>>, String), String> {
     let active = query_active_rotation_keys(conn)?;
     if active.len() > 1 {
         return Err("multiple active audit keys; audit operation fails closed".to_string());

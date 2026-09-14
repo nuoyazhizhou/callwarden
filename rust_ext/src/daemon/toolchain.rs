@@ -91,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_resolved_edges_caller ON resolved_edges(caller_sy
 CREATE INDEX IF NOT EXISTS idx_resolved_edges_callee ON resolved_edges(callee_symbol_id);
 "#;
 
-fn now_ts() -> f64 {
+pub(crate) fn now_ts() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
@@ -1029,7 +1029,7 @@ fn build_context_row_to_json(row: &Row<'_>) -> rusqlite::Result<Value> {
     Ok(Value::Object(m))
 }
 
-fn build_context_to_json(
+pub(crate) fn build_context_to_json(
     workspace_id: i64,
     build_context_hash: &str,
     name: &str,

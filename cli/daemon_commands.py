@@ -10,7 +10,6 @@ import sys
 from typing import Any, Dict, Optional, Sequence
 
 from callwarden.config import (
-    DAEMON_REGISTRY_DB,
     DAEMON_SOCKET_PATH,
     get_daemon_mode,
     is_daemon_available,
@@ -23,30 +22,28 @@ from callwarden.server.daemon_client import (
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.daemon_autostart import resolve_http_endpoint_and_manifest
-from callwarden.server.daemon_server import (
-    EnterpriseDaemonServer,
-    EnterpriseDaemonService,
-)
+# G1（2026-09-09）：`cw daemon serve` 影子 server 下线——EnterpriseDaemonServer/
+# Service 的 CLI 启动入口已摘除；daemon_server.py 模块保留（SRV-019 白名单退休 +
+# 测试直连 import），但用户不再有可达入口启动 Python 影子 daemon。
+# Rust 原生 daemon 为唯一权威：cw-daemon.exe（启动模板见 docs/role-loop-templates/）。
 
 
 def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     """构造 daemon/client 共用的 argparse parser。
 
     Args:
-        include_serve: 是否注册 `serve` 子命令。`cw daemon` 含 serve，
-            `cw-client` 不含（纯 client 视角，禁止启动 daemon 本身）。
+        include_serve: 兼容参数（历史语义：是否注册 `serve` 子命令）。
+            G1（2026-09-09）`cw daemon serve` 影子 server 已下线，serve 子命令
+            不再注册；参数仅为 cw-client 调用点兼容保留，无行为差异。
     """
     parser = argparse.ArgumentParser(
-        prog="cw daemon", description="Enterprise daemon UDS 管理与查询"
+        prog="cw daemon",
+        description="daemon 管理与查询（Rust 原生 daemon 客户端；"
+                    "serve 子命令已下线，daemon 启动见 cw-daemon.exe）",
     )
     parser.add_argument("--socket", default=DAEMON_SOCKET_PATH,
                         help="UDS 路径（默认 CW_DAEMON_SOCKET）")
     sub = parser.add_subparsers(dest="action", required=True)
-
-    if include_serve:
-        serve = sub.add_parser("serve", help="前台启动 daemon")
-        serve.add_argument("--registry", default=DAEMON_REGISTRY_DB)
-        serve.add_argument("--workers", type=int, default=16)
 
     sub.add_parser("ping", help="检查 daemon 与 peer credential")
 
@@ -512,22 +509,14 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         return 0
 
     if args.action == "serve":
-        if not include_serve:
-            # argparse 已在 _parser(include_serve=False) 时拒绝 serve，
-            # 此分支理论上不可达，保险起见显式报错
-            print("ERROR: 'serve' is not available in client mode.",
-                  file=__import__("sys").stderr)
-            return 2
-        service = EnterpriseDaemonService(args.registry)
-        server = EnterpriseDaemonServer(
-            args.socket, service, max_workers=max(1, args.workers)
-        )
-        print(f"Call Warden Enterprise daemon listening: {args.socket}")
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            server.shutdown()
-        return 0
+        # G1（2026-09-09）：serve 已下线，argparse 不再注册该子命令，此分支
+        # 理论不可达（parse_args 报 invalid choice）；保留 fail-closed 提示，
+        # 防止未来 include_serve 语义复用时静默复活影子 server。
+        print("ERROR: 'cw daemon serve' 已下线（G1，2026-09-09）——Python 影子 "
+              "server 不再提供启动入口；Rust 原生 daemon 为唯一权威，启动方式见 "
+              "docs/role-loop-templates/ 与 cw-daemon.exe。",
+              file=sys.stderr)
+        return 2
 
     # CLI-01 (A′ 恢复)：health / manifest / capability 诊断链路 Rust daemon 化。
     # Python 仅作 HTTP thin shell + 格式化；Rust daemon 为 health/capability 权威；

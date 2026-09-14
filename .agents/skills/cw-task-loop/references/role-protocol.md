@@ -326,6 +326,29 @@ evidence、ledger 或模板。使用完必须执行（`--token` 必填，identit
 
 无法取得唯一 reviewer lease 时 fail-closed，不借用其他角色身份。
 
+### Reviewer verdict 提交（task-bound provenance）
+
+`cw collab verdict` 经统一权威路由 `route_rpc(..., 'GOVERNANCE_WRITE')`（HTTP authority face，
+与 `cw lease` / `cw task` 写命令面同一真相源）提交，不再走本地 Unix 传输面。以下参数缺一即
+daemon fail-closed；`--view-manifest-hash` 虽在 CLI 为可选，但 daemon 强制非空（缺失/空白在写入前拒绝）：
+
+```powershell
+& C:\Python314\python.exe C:/git_work/callwarden/cw.py collab verdict `
+  --task-id <task_id> --step-id <step_id> `
+  --contract-id <id> --contract-hash <hash> --contract-revision <n> `
+  --role-contract-id <id> --role-contract-hash <hash> --role-contract-revision <n> `
+  --snapshot-id <snapshot_id> --view-manifest-hash <hash> --request-id <id> `
+  --phase blind_first_pass --overall <pass|block> `
+  --attestation "<attestation text>" `
+  --agent-id <registered-reviewer-agent> --agent-instance-id <registered-reviewer-instance> `
+  --session-id "$env:CW_AGENT_SESSION_ID" --model-id workbuddy --role reviewer `
+  --lease-token <reviewer lease token> --fencing-counter <n>
+```
+
+`--request-id` 必须在同任务内唯一（幂等键，重复提交同一 id 视为覆盖）；`--findings` /
+`--clause-results` 为 JSON 数组字符串。daemon 不可达时输出 `E_GOVERNANCE_WRITE_DEGRADED`
+Structured_Reason 并以非零 RC 退出（无本地 SQLite 回退、无静默降级）。
+
 ### Adjudicator 的受保护收尾
 
 Adjudicator 的 `apply`/`close` 使用** reviewer lease（不是 adjudicator lease）**，并携带真实

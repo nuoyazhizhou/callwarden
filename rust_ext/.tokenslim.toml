@@ -49,3 +49,9 @@ enable_nested_aliases = true
 [token_optimizer.presets.ai.paths]
 min_footer_token_uses = 2
 enable_nested_aliases = true
+
+[debug.audit]
+# 仅在本项目工作区保存经脱敏的压缩前后 JSONL 审计数据；默认关闭。
+enabled = true
+# 相对于 `.tokenslim.toml` 所在工作区目录。
+path = ".tokenslim/audit/compression.jsonl"

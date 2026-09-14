@@ -1,0 +1,1348 @@
+{
+  "schema_version": "cw.role_prompt_gate_task_manifest.v1",
+  "manifest_id": "role-prompt-v1-gate-task-manifest",
+  "status": "DRAFT_FOR_INDEPENDENT_REVIEW",
+  "generated_at": "2026-09-01",
+  "authorization_state": {
+    "review_vehicle_creation": "bootstrap_only",
+    "gate_task_creation": false,
+    "governance_mutation": false,
+    "production_implementation": false,
+    "rule": "Only the exact dedicated review vehicle may be created before promotion PASS. GATE-1A/GATE-1B, the feature parent, RP-00 and every governance mutation remain forbidden until their release-order predecessor is satisfied."
+  },
+  "authority_note": "This manifest is a Planner design artifact. A task-bound independent Reviewer PASS must bind the exact manifest SHA-256 before any card may be created or executed.",
+  "source": {
+    "frozen_spec_path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "frozen_spec_status": "RP-00_CANDIDATE",
+    "planning_anchor_task_id": "T-1787203926824-9f873bfc",
+    "normative_sections": [
+      "13.1 Gate order",
+      "13.2 GATE-0 legacy Epic binding attestation",
+      "13.3 GATE-1A parent-aware governed task.create daemon",
+      "13.4 GATE-1B parent-aware governed task.create CLI"
+    ]
+  },
+  "artifact_relationships": {
+    "this_manifest": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+    "purpose": "Pre-RP-00 Gate review, legacy Epic attestation, and parent-aware governed task.create enablement only.",
+    "successor_feature_manifest": "deliverables/software-company/role-prompt-v1-task-manifest.json",
+    "successor_scope": "The successor manifest owns RP-00 through RP-10 and is not interchangeable with this Gate manifest.",
+    "candidate_adoption_rule": "RP-00 must byte-exact adopt frozen spec SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. If any byte changes, RP-00 must create a new candidate, append an explicit supersession/resolution record, regenerate all dependent manifests, and obtain a new independent review; silent hash substitution is forbidden."
+  },
+  "legacy_template_alias_registry": {
+    "executor": {
+      "template_id": "cw.aprime.executor.startup.v1",
+      "source_declared_template_id": "cw.aprime.executor-planner.startup.v1",
+      "legacy_alias_mismatch": true,
+      "content_sha256": "sha256:59a459f7786097c671d48fbeec6e361c12d7a95bdec4e3722169d68d5d6a73f6",
+      "rule": "This is the only accepted legacy alias mismatch. Role Contracts keep the authority-bound primary template ID; this registry records the byte-source declaration mismatch without rewriting the Role Contract or historical asset."
+    }
+  },
+  "role_contract_payload_projection": {
+    "purpose": "The role_contracts blocks in this manifest are structured planning records. Before cw task create, the controller MUST project each block to the daemon's current legacy Role Contract payload and MUST NOT pass the manifest object through unchanged.",
+    "allowed_fields": [
+      "role",
+      "skill_id",
+      "skill_version",
+      "prompt_template_id",
+      "prompt_hash",
+      "allowed_paths",
+      "forbidden_paths",
+      "commands",
+      "acceptance_checks",
+      "required_evidence",
+      "handoff_to",
+      "independence"
+    ],
+    "list_field_encoding": "Join array items in their declared order with semicolon+space before passing --role-contracts; scalar strings remain byte-exact.",
+    "unknown_field_policy": "fail_closed",
+    "alias_metadata_rule": "legacy_template_alias_registry is top-level planning metadata and is never embedded in or forwarded as a Role Contract field.",
+    "verification": "Read back all three current Role Contracts and verify the projected field values, role count, revisions and hashes before claim."
+  },
+  "promotion_gate": {
+    "required_review_outcome": "reviewer_pass",
+    "required_review_binding": [
+      "review_vehicle_task_id",
+      "review_vehicle_step_id",
+      "manifest_path",
+      "manifest_sha256",
+      "frozen_spec_path",
+      "frozen_spec_sha256",
+      "task_contract_id",
+      "task_contract_revision",
+      "task_contract_hash",
+      "reviewer_role_contract_id",
+      "reviewer_role_contract_revision",
+      "reviewer_role_contract_hash",
+      "snapshot_id",
+      "view_manifest_hash",
+      "reviewer_agent_id",
+      "reviewer_agent_instance_id",
+      "reviewer_session_id",
+      "reviewer_lease_id",
+      "reviewer_fencing_counter",
+      "verdict_id",
+      "request_id",
+      "evidence_path",
+      "evidence_sha256"
+    ],
+    "post_pass_effect": "The dedicated review vehicle's daemon-authoritative initial Reviewer PASS may authorize GATE-0 only. GATE-1A additionally requires the reviewed GATE-0 receipt amendment and review-vehicle closure. This file is not edited to flip authorization_state; release eligibility is proven by daemon receipts.",
+    "forbidden_shortcuts": [
+      "chat-only PASS",
+      "local SQLite mutation",
+      "generic RPC bypass",
+      "reuse of another role session or lease",
+      "creating GATE-1A or GATE-1B before predecessor closure"
+    ]
+  },
+  "global_invariants": [
+    "Execution order is dedicated review vehicle to initial manifest PASS, GATE-0 daemon receipt status=attested, receipt amendment plus review-vehicle COMPLETE, GATE-1A COMPLETE_CONFIRMED, GATE-1B COMPLETE_CONFIRMED.",
+    "All workspace, binding, capture, task, identity, lease and fencing values are resolved from the live daemon at execution time.",
+    "No client path hash, cwd-derived workspace instance, synthetic ws-1 value or direct SQLite write may satisfy an authority field.",
+    "GATE-1A and GATE-1B are independent root bootstrap tasks and are not parented under the legacy Epic.",
+    "Each development card has one primary ownership domain, at most four steps and a separate independent Reviewer and Adjudicator.",
+    "Historical task events, contracts, evidence, verdicts and bindings are append-only.",
+    "Raw lease tokens and credentials are never persisted in this manifest, evidence, logs or command receipts.",
+    "The Prompt Compiler feature parent and RP-00 task may be created only after GATE-1B is deployed and COMPLETE_CONFIRMED."
+  ],
+  "task_finalization_protocol": {
+    "protocol_id": "adjudicator_holder_finalization_v1",
+    "applies_to": [
+      "GATE-MANIFEST-REVIEW-VEHICLE post_reveal_amendment finalization",
+      "GATE-1A Reviewer PASS finalization",
+      "GATE-1B Reviewer PASS finalization"
+    ],
+    "sequence": [
+      "Independent Reviewer submits the effective PASS or post_reveal_amendment while holding the Reviewer-owned reviewer lease.",
+      "Reviewer releases that lease and verifies through lease.status that the Reviewer-owned active lease is gone.",
+      "Adjudicator independently verifies the verdict, findings, evidence and release receipt.",
+      "Adjudicator acquires a fresh lease with lease role=reviewer and holder agent_id/session_id/model_id equal to the Adjudicator's own registered coordinates; the raw token remains memory-only.",
+      "Adjudicator calls task.apply and task.close with role=adjudicator plus its holder-matching finalizer token and fencing counter.",
+      "Adjudicator releases the finalizer lease, verifies task.next_action=COMPLETE, and records acquire/apply/close/release/COMPLETE provenance without any raw token."
+    ],
+    "invariants": [
+      "Reviewer and Adjudicator never share or transfer a raw lease token.",
+      "Reviewer-owned and Adjudicator-owned leases are distinct rows with monotonically increasing fencing counters.",
+      "task.apply/task.close use the same agent_id/session_id/model_id stored on the active finalizer lease.",
+      "A missing release, acquire, holder match, fencing value or COMPLETE projection fails closed."
+    ]
+  },
+  "runtime_value_contract": {
+    "placeholder_syntax": "${NAME}",
+    "resolution_time": "immediately before the protected operation",
+    "required_sources": {
+      "DAEMON_WORKSPACE_ID": "live daemon workspace authority",
+      "DAEMON_WORKSPACE_INSTANCE_ID": "live daemon workspace authority capture",
+      "MANIFEST_SHA256": "SHA-256 of this exact UTF-8 manifest after all Planner edits are complete",
+      "REVIEW_VEHICLE_TASK_ID": "daemon-generated task ID from the dedicated review-vehicle task.create response",
+      "REVIEW_VEHICLE_STEP_ID": "daemon-generated step ID from the dedicated review vehicle",
+      "REVIEW_VEHICLE_SNAPSHOT_ID": "result.snapshot_id from C:/Python314/python.exe C:/git_work/callwarden/cw.py collab publish --workspace C:/git_work/callwarden --json; the same daemon-returned value is bound to task.report",
+      "VIEW_MANIFEST_HASH": "result.view_manifest_hash from the supported MCP tool get_role_view(task_id=REVIEW_VEHICLE_TASK_ID, role=reviewer), which routes to daemon role_view.get/get_role_view; task.governance_projection.get does not supply this value. If that MCP tool is unavailable, fail closed rather than inventing a generic RPC or derived hash.",
+      "INITIAL_REVIEW_VERDICT_ID": "daemon verdict ID from the review vehicle's initial manifest PASS",
+      "REVIEWER_LEASE_TOKEN": "active reviewer lease for REVIEW_VEHICLE_TASK_ID; secret in memory only",
+      "REVIEWER_LEASE_ID": "daemon lease response",
+      "REVIEWER_FENCING_COUNTER": "daemon lease response",
+      "FINALIZER_LEASE_TOKEN": "per-task fresh reviewer-role lease acquired under the Adjudicator's own holder coordinates after the Reviewer releases its lease; secret in memory only",
+      "FINALIZER_LEASE_ID": "daemon lease response for the current task's Adjudicator-owned reviewer-role finalization lease",
+      "FINALIZER_FENCING_COUNTER": "daemon lease response for the current task's Adjudicator-owned reviewer-role finalization lease",
+      "ADJUDICATOR_AGENT_ID": "active registered adjudicator",
+      "ADJUDICATOR_AGENT_INSTANCE_ID": "matching registered adjudicator instance",
+      "ADJUDICATOR_SESSION_ID": "matching registered adjudicator session",
+      "ADJUDICATOR_MODEL_ID": "matching registered adjudicator model",
+      "GATE0_INPUT_EVIDENCE_SHA256": "SHA-256 of the immutable pre-operation GATE-0 input evidence file",
+      "GATE0_RECEIPT_SHA256": "SHA-256 of the immutable post-operation GATE-0 receipt file",
+      "GATE0_FINALIZATION_RECEIPT_SHA256": "SHA-256 of the immutable post-amendment/apply/close/lease-release finalization receipt",
+      "GATE1A_TASK_ID": "daemon-generated task ID from GATE-1A task.create response",
+      "GATE1B_TASK_ID": "daemon-generated task ID from GATE-1B task.create response"
+    },
+    "fail_closed_if_missing": true
+  },
+  "validation_environment": {
+    "preflight": "Run tokenslim workspace --format llm in the current checkout before any acceptance command.",
+    "command_policy": "Build, test and VCS commands run through tokenslim run exactly as frozen in each card.",
+    "windows_python": "C:\\Python314\\python.exe must resolve in the current session and import the checkout under review; failure is an environment blocker, not a test PASS or a reason to substitute another interpreter silently.",
+    "python_checkout_import_preflight": "tokenslim run C:\\Python314\\python.exe -c \"import pathlib, callwarden; root=pathlib.Path.cwd().resolve(); module=pathlib.Path(callwarden.__file__).resolve(); assert module.is_relative_to(root), f'{module} is outside {root}'\"",
+    "python_checkout_import_assertion": "callwarden.__file__ resolves inside the current checkout; an installed package outside the checkout is a hard environment failure.",
+    "rust_toolchain": "The tokenslim-routed cargo command must have the repository's MSVC/SDK environment. Missing toolchain setup is an environment blocker and must not be reported as an implementation failure.",
+    "substitution_rule": "Any command, interpreter, test filter or environment substitution requires a Planner manifest revision and a new independent review."
+  },
+  "review_vehicle": {
+    "vehicle_id": "GATE-MANIFEST-REVIEW-VEHICLE",
+    "is_gate_card": false,
+    "purpose": "Provide the task/step/Contract/snapshot/verdict/lease carrier required to review this manifest before any Gate card is created or any legacy authority mutation is attempted.",
+    "creation_timing": "After the draft manifest bytes are frozen and MANIFEST_SHA256 is computed, but before the promotion Reviewer PASS.",
+    "bootstrap_rule": "This support task is created under the existing governed root task.create path. It is not authorized to implement a Gate, change the legacy Epic, or modify this manifest; its sole output is immutable review input and daemon verdict provenance.",
+    "task_id_placeholder": "${REVIEW_VEHICLE_TASK_ID}",
+    "idempotency_key": "role-prompt-v1-gate-manifest-review-vehicle",
+    "creation_request": {
+      "supported_entrypoint": "cw task create",
+      "task_id_source": "daemon-generated",
+      "title": "Role Prompt v1 Gate manifest independent review vehicle",
+      "root_task": true,
+      "parent_id_must_be_absent": true,
+      "identity_policy": "legacy_identity_v1",
+      "workspace_binding": "daemon current immutable workspace authority; exactly one binding/capture must be returned and read back",
+      "precreation_dedup": "Fail if an existing task description contains idempotency key role-prompt-v1-gate-manifest-review-vehicle.",
+      "description": "Create the task-bound independent review carrier for deliverables/software-company/role-prompt-v1-gate-task-manifest.json at SHA-256 ${MANIFEST_SHA256} and frozen spec SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. This task may only freeze review input, reach review, receive independent verdicts, act as the bound reviewer-lease anchor for GATE-0, and close after the GATE-0 receipt amendment. Idempotency key: role-prompt-v1-gate-manifest-review-vehicle.",
+      "steps": [
+        {
+          "action": "freeze_gate_manifest_review_input",
+          "target_file": "docs/evidence/role-prompt-v1-gate-manifest-review-input.json",
+          "target_symbol": "Gate manifest review input",
+          "check_items": [
+            "manifest SHA-256 equals ${MANIFEST_SHA256}",
+            "frozen spec SHA-256 equals 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+            "JSON duplicate-key and structural validation passes",
+            "review vehicle task/step/Contract/binding/capture/snapshot IDs are daemon-returned",
+            "input contains no credential or raw lease token"
+          ]
+        }
+      ]
+    },
+    "role_contracts": [
+      {
+        "role": "executor",
+        "skill_id": "cw-executor-senior-engineer",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.executor.startup.v1",
+        "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+        "allowed_paths": [
+          "docs/evidence/role-prompt-v1-gate-manifest-review-input.json"
+        ],
+        "forbidden_paths": [
+          "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+          "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+          "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+          "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+          "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+          "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+          "docs/evidence/RP-00-r4-review-findings-disposition.md",
+          "rust_ext/src/**",
+          "rust_ext/resources/**",
+          "cli/**",
+          "server/**",
+          "db/**"
+        ],
+        "commands": [
+          "task.next_action",
+          "task.claim",
+          "snapshot.publish",
+          "task.report",
+          "task.handoff"
+        ],
+        "acceptance_checks": [
+          "review input file is immutable and hashable",
+          "task reaches review with exact report request and snapshot",
+          "no production or frozen design file is modified"
+        ],
+        "required_evidence": [
+          "manifest and frozen spec hashes",
+          "task/step/Contract/Role Contract/binding/capture identifiers",
+          "snapshot identifier",
+          "static validation output"
+        ],
+        "handoff_to": "reviewer",
+        "independence": "required"
+      },
+      {
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+        "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+        "allowed_paths": [
+          "read-only manifest, frozen spec, source anchors and task evidence"
+        ],
+        "forbidden_paths": [
+          "all file edits",
+          "Gate execution before initial PASS",
+          "task.apply",
+          "task.close"
+        ],
+        "commands": [
+          "task.next_action",
+          "task.governance_projection.get",
+          "get_role_view",
+          "task.contract.get",
+          "verdict.submit",
+          "task.handoff",
+          "lease.status",
+          "lease.acquire",
+          "lease.release"
+        ],
+        "acceptance_checks": [
+          "independent source/hash/schema/Contract/route review",
+          "initial PASS binds exact manifest and frozen spec hashes",
+          "post-operation amendment binds the immutable GATE-0 receipt hash",
+          "Reviewer-owned Gate lease is released immediately after the amendment and before task.apply"
+        ],
+        "required_evidence": [
+          "initial review verdict and findings",
+          "post-operation amendment verdict",
+          "Reviewer-owned Gate lease acquisition and release receipts without raw token"
+        ],
+        "handoff_to": "adjudicator",
+        "independence": "required"
+      },
+      {
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+        "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+        "allowed_paths": [
+          "read-only final review, GATE-0 protected attestation, and review-vehicle finalization"
+        ],
+        "forbidden_paths": [
+          "file edits",
+          "local SQLite fallback",
+          "historical verdict rewrite",
+          "legacy Epic lifecycle mutation"
+        ],
+        "commands": [
+          "task.next_action",
+          "task.attest_legacy_workspace_binding",
+          "task.apply",
+          "task.close",
+          "task.handoff",
+          "lease.status",
+          "lease.acquire",
+          "lease.release"
+        ],
+        "acceptance_checks": [
+          "initial Reviewer PASS is effective",
+          "GATE-0 receipt and Reviewer amendment are effective",
+          "Reviewer-owned Gate lease is released before finalization",
+          "Adjudicator acquires its own fresh reviewer-role lease, then applies and closes the review vehicle",
+          "Adjudicator releases the finalizer lease",
+          "review vehicle next-action is COMPLETE"
+        ],
+        "required_evidence": [
+          "GATE-0 operation and readback receipt",
+          "review amendment verdict",
+          "apply/close/COMPLETE receipts",
+          "both lease/fencing provenances and release receipts without raw token"
+        ],
+        "handoff_to": "complete",
+        "independence": "required"
+      }
+    ],
+    "contract_requirements": {
+      "task_contract_revision": 1,
+      "identity_policy": "legacy_identity_v1",
+      "role_contract_count": 3,
+      "step_count": 1,
+      "step_binding_count": 1,
+      "workspace_binding_count": 1,
+      "workspace_capture_count": 1,
+      "source": "task.create"
+    },
+    "allowed_path_globs": [
+      "docs/evidence/role-prompt-v1-gate-manifest-review-input.json"
+    ],
+    "excluded_path_globs": [
+      "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+      "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+      "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+      "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+      "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+      "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+      "docs/evidence/RP-00-r4-review-findings-disposition.md",
+      "rust_ext/src/**",
+      "rust_ext/resources/**",
+      "cli/**",
+      "server/**",
+      "db/**"
+    ],
+    "finalization_protocol_ref": "task_finalization_protocol.adjudicator_holder_finalization_v1",
+    "lifecycle": [
+      "Planner creates this exact root support task only after computing MANIFEST_SHA256; no Gate card is created.",
+      "Executor claims the sole step, writes the immutable review-input evidence, resolves REVIEW_VEHICLE_SNAPSHOT_ID from daemon authority, and reports the task to review.",
+      "Independent Reviewer acquires a reviewer lease, submits the initial manifest verdict bound to MANIFEST_SHA256 and the frozen spec hash, then releases that lease.",
+      "If initial verdict is BLOCKED, no Gate action occurs; Planner revises the manifest and a new hash/review cycle is required.",
+      "If initial verdict is PASS, the same task becomes the only permitted GATE-0 anchor. Reviewer later acquires a fresh reviewer lease for GATE-0; no raw token is persisted or sent through chat.",
+      "After GATE-0, Reviewer submits a post_reveal_amendment referencing INITIAL_REVIEW_VERDICT_ID and GATE0_RECEIPT_SHA256, then releases and verifies release of the Gate lease. Adjudicator acquires a separate fresh reviewer-role lease under its own holder identity, applies/closes this review vehicle with that lease, releases it, and the mechanical controller freezes GATE0_FINALIZATION_RECEIPT_SHA256 without editing the input or operation receipt.",
+      "GATE-1A remains forbidden until the review vehicle is COMPLETE and the GATE-0 receipt amendment is effective."
+    ],
+    "verdict_binding": {
+      "initial_phase": "blind_first_pass",
+      "initial_verdict_id": "${INITIAL_REVIEW_VERDICT_ID}",
+      "task_id": "${REVIEW_VEHICLE_TASK_ID}",
+      "step_id": "${REVIEW_VEHICLE_STEP_ID}",
+      "snapshot_id": "${REVIEW_VEHICLE_SNAPSHOT_ID}",
+      "view_manifest_hash": "${VIEW_MANIFEST_HASH}",
+      "required_hashes": [
+        "${MANIFEST_SHA256}",
+        "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+      ],
+      "required_submit_fields": [
+        "task_id",
+        "step_id",
+        "contract_id",
+        "contract_revision",
+        "contract_hash",
+        "role_contract_id",
+        "role_contract_revision",
+        "role_contract_hash",
+        "snapshot_id",
+        "view_manifest_hash",
+        "request_id",
+        "phase",
+        "overall",
+        "attestation",
+        "clause_results",
+        "findings",
+        "identity",
+        "lease_token",
+        "fencing_counter"
+      ],
+      "post_gate_phase": "post_reveal_amendment",
+      "post_gate_amendment_ref": "${INITIAL_REVIEW_VERDICT_ID}",
+      "post_gate_receipt_hash": "${GATE0_RECEIPT_SHA256}"
+    },
+    "rollback": {
+      "strategy": "If review fails, preserve the task, report, verdict and evidence append-only; revise the manifest to a new hash and use normal same-task remediation or a newly reviewed vehicle only when the current task cannot represent the new input.",
+      "data_rewrite": false
+    }
+  },
+  "cards": [
+    {
+      "card_id": "GATE-0",
+      "card_kind": "protected_governance_operation",
+      "title": "Role Prompt v1 GATE-0：legacy Epic immutable workspace binding attestation",
+      "owner_role": "adjudicator",
+      "supporting_role": "reviewer",
+      "task_creation": {
+        "required": false,
+        "reason": "The protected operation is append-only on the legacy Epic and reuses the dedicated review vehicle's immutable binding and fresh reviewer lease. The review vehicle is defined separately and is not a Gate card."
+      },
+      "closure": {
+        "kind": "operation_receipt",
+        "status_name": "attested",
+        "does_not_close_target_task": true,
+        "required_for_successor": true,
+        "interpretation": "GATE-0 is closed by the daemon operation-ledger receipt whose response status is exactly attested, followed by independent receipt verification. It does not invent a task lifecycle state and does not close the legacy Epic."
+      },
+      "target": {
+        "legacy_task_id": "T-1787203926824-9f873bfc",
+        "anchor_task_id": "${REVIEW_VEHICLE_TASK_ID}",
+        "anchor_semantics": "This is the dedicated bound review vehicle used as the reviewer-lease anchor; it is distinct from source.planning_anchor_task_id, which names the legacy Epic planning thread.",
+        "workspace_id": "${DAEMON_WORKSPACE_ID}",
+        "workspace_instance_id": "${DAEMON_WORKSPACE_INSTANCE_ID}"
+      },
+      "idempotency": {
+        "request_id": "role-prompt-v1-gate0-epic-binding-attestation",
+        "same_request_replay": "must return the same semantic receipt with no duplicate binding, capture or event",
+        "different_request_after_success": "must return deterministic error E_LEGACY_BIND_ALREADY_BOUND; one operation-ledger error record is allowed, but no additional task_workspace_binding, workspace_authority_capture or legacy_workspace_binding_attested task_event row may be created"
+      },
+      "preconditions": [
+        "The dedicated review vehicle has an effective initial Reviewer PASS bound to MANIFEST_SHA256 and the frozen spec hash.",
+        "The legacy target exists and has no task_workspace_binding.",
+        "REVIEW_VEHICLE_TASK_ID exists, remains in review, and has exactly one immutable workspace binding and authority capture.",
+        "The anchor workspace ID and instance ID exactly match the requested workspace.",
+        "A fresh reviewer lease is active on REVIEW_VEHICLE_TASK_ID and its holder is an active registered Reviewer.",
+        "Reviewer and Adjudicator agent ID, agent instance ID and session ID are all distinct.",
+        "The Adjudicator identity is active, registered and matches the request identity exactly.",
+        "The non-lease input facts are prepared before lease acquisition. After the fresh Gate reviewer lease is acquired, a non-governance mechanical evidence writer freezes the complete immutable input artifact, including lease_id and fencing_counter but never the raw token, and computes GATE0_INPUT_EVIDENCE_SHA256 before attestation."
+      ],
+      "steps": [
+        {
+          "index": 0,
+          "owner_role": "reviewer",
+          "action": "preflight_and_lease",
+          "result": "Verify the effective initial manifest PASS and exact review-vehicle binding/capture; acquire a fresh unique reviewer lease on REVIEW_VEHICLE_TASK_ID; then require the mechanical evidence writer to freeze and hash the complete immutable input artifact before attestation."
+        },
+        {
+          "index": 1,
+          "owner_role": "adjudicator",
+          "action": "attest",
+          "result": "Invoke task.attest_legacy_workspace_binding with exact daemon values, evidence hash, reviewer lease token and fencing counter."
+        },
+        {
+          "index": 2,
+          "owner_role": "adjudicator",
+          "action": "idempotency_and_readback",
+          "result": "Replay the same request, require E_LEGACY_BIND_ALREADY_BOUND for a different request ID, read back binding/capture/next-action/governance projection, and freeze the immutable post-operation receipt."
+        },
+        {
+          "index": 3,
+          "owner_role": "reviewer",
+          "finalizer_role": "adjudicator",
+          "action": "amend_release_then_adjudicator_finalize",
+          "result": "Independently verify GATE0_RECEIPT_SHA256 and submit a post_reveal_amendment referencing INITIAL_REVIEW_VERDICT_ID; Reviewer releases and verifies release of the Gate lease. Adjudicator then acquires a fresh reviewer-role lease whose holder agent/session/model are the Adjudicator's own, keeps role=adjudicator on task.apply/task.close, uses the holder-matching token and fencing counter, releases the finalizer lease, and only then permits the mechanical writer to freeze the finalization receipt."
+        }
+      ],
+      "operation": {
+        "rpc_method": "task.attest_legacy_workspace_binding",
+        "cli_program": "C:/Python314/python.exe",
+        "cli_argv": [
+          "C:/git_work/callwarden/cw.py",
+          "task",
+          "attest-legacy-workspace-binding",
+          "T-1787203926824-9f873bfc",
+          "${REVIEW_VEHICLE_TASK_ID}",
+          "--workspace-id",
+          "${DAEMON_WORKSPACE_ID}",
+          "--workspace-instance-id",
+          "${DAEMON_WORKSPACE_INSTANCE_ID}",
+          "--request-id",
+          "role-prompt-v1-gate0-epic-binding-attestation",
+          "--evidence-path",
+          "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+          "--evidence-hash",
+          "${GATE0_INPUT_EVIDENCE_SHA256}",
+          "--lease-token",
+          "${REVIEWER_LEASE_TOKEN}",
+          "--fencing-counter",
+          "${REVIEWER_FENCING_COUNTER}",
+          "--agent-id",
+          "${ADJUDICATOR_AGENT_ID}",
+          "--agent-instance-id",
+          "${ADJUDICATOR_AGENT_INSTANCE_ID}",
+          "--session-id",
+          "${ADJUDICATOR_SESSION_ID}",
+          "--model-id",
+          "${ADJUDICATOR_MODEL_ID}",
+          "--role",
+          "adjudicator"
+        ],
+        "secret_runtime_values": [
+          "REVIEWER_LEASE_TOKEN"
+        ],
+        "persist_rendered_command": false
+      },
+      "finalization_secret_runtime_values": [
+        "FINALIZER_LEASE_TOKEN"
+      ],
+      "allowed_path_globs": [
+        "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+        "docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json",
+        "docs/evidence/role-prompt-v1-gate0-binding-attestation-finalization.json"
+      ],
+      "excluded_path_globs": [
+        "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md",
+        "rust_ext/src/**",
+        "rust_ext/resources/**",
+        "cli/**",
+        "server/**",
+        "db/**"
+      ],
+      "allowed_actions": [
+        "read daemon authority and task projections",
+        "freeze the immutable input evidence under docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+        "write the separate immutable receipt under docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json after the operation",
+        "write the separate immutable finalization receipt under docs/evidence/role-prompt-v1-gate0-binding-attestation-finalization.json after amendment, both lease releases, apply and close",
+        "acquire and release the Reviewer-owned Gate lease",
+        "after Reviewer release, acquire and release a separate Adjudicator-owned reviewer-role finalization lease",
+        "invoke task.attest_legacy_workspace_binding once plus required idempotency probes",
+        "submit the review vehicle post_reveal_amendment and finalize only that review vehicle"
+      ],
+      "forbidden_actions": [
+        "production source edits",
+        "direct SQLite or generic RPC mutation",
+        "client-derived workspace instance",
+        "synthetic workspace ID",
+        "stale, borrowed or fabricated lease",
+        "persisting raw lease token",
+        "closing or changing the lifecycle of the legacy Epic",
+        "creating GATE-1A before the exact status=attested receipt is independently verified"
+      ],
+      "acceptance": {
+        "readback_commands": [
+          [
+            "C:/Python314/python.exe",
+            "C:/git_work/callwarden/cw.py",
+            "task",
+            "next-action",
+            "T-1787203926824-9f873bfc",
+            "--workspace-instance-id",
+            "${DAEMON_WORKSPACE_INSTANCE_ID}",
+            "--json"
+          ],
+          [
+            "C:/Python314/python.exe",
+            "C:/git_work/callwarden/cw.py",
+            "task",
+            "governance-projection",
+            "T-1787203926824-9f873bfc",
+            "--json"
+          ]
+        ],
+        "assertions": [
+          "next-action no longer returns E_WORKSPACE_AUTHORITY_UNAVAILABLE",
+          "exactly one binding and one referenced capture are readable for the legacy task",
+          "binding workspace ID and capture workspace instance ID match the anchor",
+          "same request replay creates no duplicate event, binding or capture",
+          "different request after success returns exact error E_LEGACY_BIND_ALREADY_BOUND",
+          "the different-request probe may add one operation-ledger error result but creates no duplicate binding, capture or task event",
+          "post_reveal_amendment references INITIAL_REVIEW_VERDICT_ID and GATE0_RECEIPT_SHA256",
+          "review vehicle is applied, closed and projects COMPLETE without changing the legacy Epic lifecycle",
+          "Reviewer-owned Gate lease is released after the amendment and before task.apply",
+          "Adjudicator owns the fresh reviewer-role lease used for task.apply/task.close, and releases it after close",
+          "GATE0_FINALIZATION_RECEIPT_SHA256 references the immutable input and operation receipt hashes without modifying either artifact"
+        ]
+      },
+      "evidence": {
+        "immutability_rule": "The input artifact is frozen after the Reviewer-owned Gate lease is acquired and before attestation, then never edited. The operation receipt is hashed before the Reviewer amendment and never edited. Amendment, both lease releases, Adjudicator-owned finalizer lease provenance, apply and close facts go only into a third finalization receipt, preventing both self-invalidating hashes and amendment self-reference.",
+        "evidence_writer": {
+          "kind": "mechanical_controller",
+          "authority": "none",
+          "rule": "It may serialize already returned daemon values into the three whitelisted evidence paths, but it may not decide PASS/BLOCKED, acquire a governance role, mutate task authority, infer missing values or edit an artifact after hashing."
+        },
+        "runtime_bindings": {
+          "reviewer_lease_id": "${REVIEWER_LEASE_ID}",
+          "reviewer_fencing_counter": "${REVIEWER_FENCING_COUNTER}",
+          "adjudicator_finalizer_lease_id": "${FINALIZER_LEASE_ID}",
+          "adjudicator_finalizer_fencing_counter": "${FINALIZER_FENCING_COUNTER}",
+          "workspace_id": "${DAEMON_WORKSPACE_ID}",
+          "workspace_instance_id": "${DAEMON_WORKSPACE_INSTANCE_ID}"
+        },
+        "input_artifact": {
+          "path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+          "sha256": "${GATE0_INPUT_EVIDENCE_SHA256}",
+          "required_fields": [
+            "manifest_path",
+            "manifest_sha256",
+            "frozen_spec_path",
+            "frozen_spec_sha256",
+            "legacy_task_id",
+            "review_vehicle_task_id",
+            "review_vehicle_step_id",
+            "initial_review_verdict_id",
+            "workspace_id",
+            "workspace_instance_id",
+            "anchor_binding_id",
+            "anchor_capture_id",
+            "request_id",
+            "reviewer_lease_id",
+            "reviewer_fencing_counter",
+            "adjudicator_identity"
+          ]
+        },
+        "receipt_artifact": {
+          "path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json",
+          "sha256": "${GATE0_RECEIPT_SHA256}",
+          "required_fields": [
+            "input_evidence_path",
+            "input_evidence_sha256",
+            "operation_response_hash",
+            "same_request_replay_hash",
+            "already_bound_error_code",
+            "already_bound_probe_hash",
+            "operation_ledger_error_record_count",
+            "binding_capture_event_row_counts",
+            "readback_hashes"
+          ]
+        },
+        "finalization_artifact": {
+          "path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-finalization.json",
+          "sha256": "${GATE0_FINALIZATION_RECEIPT_SHA256}",
+          "required_fields": [
+            "input_evidence_path",
+            "input_evidence_sha256",
+            "operation_receipt_path",
+            "operation_receipt_sha256",
+            "post_reveal_amendment_verdict_id",
+            "reviewer_gate_lease_release_receipt_hash",
+            "adjudicator_finalizer_lease_id",
+            "adjudicator_finalizer_fencing_counter",
+            "review_vehicle_apply_receipt_hash",
+            "review_vehicle_close_receipt_hash",
+            "review_vehicle_complete_projection_hash",
+            "adjudicator_finalizer_lease_release_receipt_hash"
+          ]
+        },
+        "forbidden_fields": [
+          "reviewer_lease_token",
+          "finalizer_lease_token",
+          "credential",
+          "authorization_header",
+          "cookie",
+          "session_store_secret"
+        ]
+      },
+      "rollback": {
+        "strategy": "No destructive rollback. The attestation is append-only. A false or mismatched result is corrected by a separately authorized append-only governance action.",
+        "automatic_rollback": false
+      },
+      "successor_rule": "GATE-1A may be created only after the daemon returns status=attested, the immutable operation receipt hash is bound by the review vehicle's post_reveal_amendment, the Reviewer-owned Gate lease is released, the Adjudicator-owned reviewer-role finalization lease is used for apply/close and released, the review vehicle is COMPLETE, and GATE0_FINALIZATION_RECEIPT_SHA256 is frozen."
+    },
+    {
+      "card_id": "GATE-1A",
+      "card_kind": "root_bootstrap_task",
+      "title": "Role Prompt v1 GATE-1A：parent-aware governed task.create daemon hardening",
+      "owner_role": "executor",
+      "task_id_placeholder": "${GATE1A_TASK_ID}",
+      "parent_id": null,
+      "idempotency_key": "role-prompt-v1-gate1a-parent-aware-create-daemon",
+      "predecessors": [
+        {
+          "card_id": "GATE-0",
+          "required_status": "daemon operation receipt status=attested; effective post_reveal_amendment; dedicated review vehicle COMPLETE; GATE0_FINALIZATION_RECEIPT_SHA256 frozen",
+          "proof": "independently reviewed operation receipt, amendment verdict, holder-correct apply/close receipts, both lease-release receipts, COMPLETE projection and immutable finalization receipt"
+        }
+      ],
+      "creation_request": {
+        "supported_entrypoint": "cw task create",
+        "task_id_source": "daemon-generated",
+        "title": "Role Prompt v1 GATE-1A：parent-aware governed task.create daemon hardening",
+        "root_task": true,
+        "parent_id_must_be_absent": true,
+        "identity_policy": "legacy_identity_v1",
+        "identity_policy_reason": "The currently supported cw task create CLI explicitly emits legacy_identity_v1. This is an explicit bootstrap policy, not an implicit historical exception.",
+        "workspace_binding": "daemon current immutable workspace authority; exactly one binding/capture must be returned and read back",
+        "precreation_dedup": "Fail if an existing task description contains idempotency key role-prompt-v1-gate1a-parent-aware-create-daemon.",
+        "description": "Implement the parent_id-nonempty branch of the existing Rust task.create domain. Validate parent existence, its unique immutable binding/capture, expected workspace exact match, complete Role Contracts, Task Contract envelope, identity policy, steps and events in one transaction. Preserve parent_id absent/normalized-empty root-create request validation, transaction, response schema, event and error semantics bit-for-bit. Source authority is frozen spec SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-gate1a-parent-aware-create-daemon.",
+        "steps": [
+          {
+            "action": "implement_parent_branch",
+            "target_file": "rust_ext/src/daemon/task_collab.rs+rust_ext/src/daemon/task_collab_shared.rs",
+            "target_symbol": "TaskCollabStore::handle_task_create parent-aware transaction",
+            "check_items": [
+              "parent existence and unique binding/capture",
+              "workspace exact match",
+              "Contract and identity policy fail closed",
+              "root branch parity"
+            ]
+          },
+          {
+            "action": "add_gate_tests",
+            "target_file": "rust_ext/src/daemon/task_collab_tests_parent_create.rs+rust_ext/src/daemon/task_collab_tests.rs",
+            "target_symbol": "parent_create test module",
+            "check_items": [
+              "eight frozen test functions exist",
+              "positive and negative matrix passes",
+              "transaction rollback leaves no partial rows"
+            ]
+          },
+          {
+            "action": "register_thin_dispatch",
+            "target_file": "rust_ext/src/daemon/dispatch.rs",
+            "target_symbol": "task.create strict field registration",
+            "check_items": [
+              "dispatch contains no parent business logic",
+              "unknown field is rejected only under the frozen request contract"
+            ]
+          },
+          {
+            "action": "verify_and_report",
+            "target_file": "docs/evidence/role-prompt-v1-gate1a-parent-create-daemon.json",
+            "target_symbol": "GATE-1A evidence manifest",
+            "check_items": [
+              "focused tests",
+              "cargo check",
+              "isolated daemon round-trip",
+              "git diff check"
+            ]
+          }
+        ]
+      },
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "rust_ext/src/daemon/task_collab.rs",
+            "rust_ext/src/daemon/task_collab_shared.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_collab_tests.rs",
+            "rust_ext/src/daemon/task_collab_tests_parent_create.rs",
+            "docs/evidence/role-prompt-v1-gate1a-parent-create-daemon.json"
+          ],
+          "forbidden_paths": [
+            "cli/**",
+            "server/**",
+            "db/**",
+            "rust_ext/src/daemon/task_prompt/**",
+            "rust_ext/resources/role_prompts/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md",
+            "deliverables/software-company/role-prompt-v1-gate-task-manifest.json"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "all focused tests green",
+            "cargo check green",
+            "root create parity proven",
+            "no partial transaction rows",
+            "task-bound evidence hash persisted"
+          ],
+          "required_evidence": [
+            "implementation diff",
+            "positive and negative test logs",
+            "isolated daemon request/response fixtures",
+            "DB rollback row counts",
+            "commit full SHA"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository and task evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "get_role_view",
+            "task.contract.get",
+          "verdict.submit",
+          "task.handoff",
+          "lease.status",
+          "lease.acquire",
+          "lease.release"
+          ],
+          "acceptance_checks": [
+            "independent diff and test review",
+            "root branch parity",
+            "parent branch transaction atomicity",
+            "scope and evidence hash verification",
+            "after effective PASS, release the Reviewer-owned lease and verify release before Adjudicator finalization"
+          ],
+          "required_evidence": [
+            "review findings or reviewer_pass verdict",
+            "review snapshot",
+            "lease release receipt"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "local SQLite fallback",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "independent final review",
+            "Reviewer-owned lease release is verified",
+            "acquire a fresh reviewer-role lease under the Adjudicator's own holder coordinates",
+            "apply then close with the holder-matching finalizer token and fencing counter",
+            "release the finalizer lease",
+            "next-action COMPLETE"
+          ],
+          "required_evidence": [
+            "final review record",
+            "Reviewer lease release receipt",
+            "Adjudicator finalizer lease acquire/release and fencing provenance without raw token",
+            "apply/close/COMPLETE receipts"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "contract_requirements": {
+        "task_contract_revision": 1,
+        "identity_policy": "legacy_identity_v1",
+        "role_contract_count": 3,
+        "step_count": 4,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1,
+        "source": "task.create",
+        "allowed_paths_must_match_executor_role_contract": true,
+        "excluded_paths_must_match_executor_role_contract": true
+      },
+      "allowed_path_globs": [
+        "rust_ext/src/daemon/task_collab.rs",
+        "rust_ext/src/daemon/task_collab_shared.rs",
+        "rust_ext/src/daemon/dispatch.rs",
+        "rust_ext/src/daemon/task_collab_tests.rs",
+        "rust_ext/src/daemon/task_collab_tests_parent_create.rs",
+        "docs/evidence/role-prompt-v1-gate1a-parent-create-daemon.json"
+      ],
+      "excluded_path_globs": [
+        "cli/**",
+        "server/**",
+        "db/**",
+        "rust_ext/src/daemon/task_prompt/**",
+        "rust_ext/resources/role_prompts/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md",
+        "deliverables/software-company/role-prompt-v1-gate-task-manifest.json"
+      ],
+      "finalization_protocol_ref": "task_finalization_protocol.adjudicator_holder_finalization_v1",
+      "lifecycle": [
+        "Executor claims the governed step set, implements only the frozen daemon scope, publishes the daemon snapshot, reports all four steps and hands off exact task/step/evidence provenance.",
+        "Independent Reviewer acquires its own reviewer lease, verifies source/tests/transaction rollback/evidence and submits PASS or BLOCKED.",
+        "On PASS, Reviewer releases its lease and verifies through lease.status that the Reviewer-owned active lease is gone.",
+        "Adjudicator follows task_finalization_protocol.adjudicator_holder_finalization_v1: independent final review, own reviewer-role lease, holder-matching apply/close, finalizer release and task.next_action=COMPLETE."
+      ],
+      "forbidden_actions": [
+        "modify Python clients",
+        "introduce a second task creation domain",
+        "use task.create_subtask as governed create",
+        "direct SQLite mutation",
+        "reparent historical tasks",
+        "change root-create behavior",
+        "implement Prompt Compiler production code",
+        "deploy shared runtime in this card"
+      ],
+      "frozen_test_module": {
+        "path": "rust_ext/src/daemon/task_collab_tests_parent_create.rs",
+        "registration_path": "rust_ext/src/daemon/task_collab_tests.rs",
+        "module_name": "parent_create",
+        "test_functions": [
+          "parent_aware_task_create_root_request_response_error_parity",
+          "parent_aware_task_create_governed_parent_success",
+          "parent_aware_task_create_rejects_missing_or_unbound_parent",
+          "parent_aware_task_create_rejects_workspace_mismatch",
+          "parent_aware_task_create_rejects_missing_contract_or_role_contract",
+          "parent_aware_task_create_rejects_unresolved_identity_policy",
+          "parent_aware_task_create_rejects_unknown_field",
+          "parent_aware_task_create_rolls_back_all_rows_on_failure"
+        ]
+      },
+      "acceptance_commands": [
+        "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-features parent_aware_task_create_",
+        "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+        "tokenslim run git diff --check"
+      ],
+      "required_evidence": [
+        "root-create golden request/response/error parity",
+        "governed parent success with inherited exact workspace",
+        "unknown parent rejection",
+        "unbound parent rejection",
+        "workspace mismatch rejection",
+        "missing Role Contract and Task Contract rejection",
+        "identity policy unresolved rejection",
+        "unknown field rejection",
+        "transaction rollback with zero partial child/binding/Contract/step/event rows",
+        "isolated daemon round-trip",
+        "full commit SHA and task commit ledger entry",
+        "effective Reviewer verdict and Reviewer-owned lease release receipt",
+        "Adjudicator-owned finalizer lease acquire/release, apply/close and COMPLETE receipts without raw token"
+      ],
+      "deployment_policy": {
+        "shared_runtime_deploy": false,
+        "verification_runtime": "isolated temporary daemon",
+        "reason": "GATE-1B will deploy the combined GATE-1A and GATE-1B implementation once."
+      },
+      "rollback": {
+        "strategy": "Disable the parent-aware branch/capability. Preserve root task.create behavior and all historical tasks. Do not migrate or reparent existing tasks.",
+        "data_rewrite": false
+      },
+      "successor_rule": "GATE-1B may be created only after this task reaches task.next-action COMPLETE and the exact commit/evidence are independently verified."
+    },
+    {
+      "card_id": "GATE-1B",
+      "card_kind": "root_bootstrap_task",
+      "title": "Role Prompt v1 GATE-1B：parent-aware governed task.create CLI parity",
+      "owner_role": "executor",
+      "task_id_placeholder": "${GATE1B_TASK_ID}",
+      "parent_id": null,
+      "idempotency_key": "role-prompt-v1-gate1b-parent-aware-create-cli",
+      "predecessors": [
+        {
+          "card_id": "GATE-1A",
+          "required_status": "COMPLETE_CONFIRMED",
+          "task_id": "${GATE1A_TASK_ID}",
+          "proof": "daemon task.next-action COMPLETE plus independent review/adjudication receipts"
+        }
+      ],
+      "creation_request": {
+        "supported_entrypoint": "cw task create",
+        "task_id_source": "daemon-generated",
+        "title": "Role Prompt v1 GATE-1B：parent-aware governed task.create CLI parity",
+        "root_task": true,
+        "parent_id_must_be_absent": true,
+        "identity_policy": "legacy_identity_v1",
+        "identity_policy_reason": "The bootstrap task itself uses the current explicit legacy CLI path. Its implementation adds explicit policy/envelope support for later parent-aware tasks.",
+        "workspace_binding": "daemon current immutable workspace authority; exactly one binding/capture must be returned and read back",
+        "precreation_dedup": "Fail if an existing task description contains idempotency key role-prompt-v1-gate1b-parent-aware-create-cli.",
+        "description": "Add thin CLI support for parent-aware governed task.create after GATE-1A is COMPLETE_CONFIRMED. The CLI must pass parent_id, expected workspace guard, explicit identity policy, Role Contracts and Task Contract envelope to the existing daemon method, preserve daemon responses/errors byte-for-byte at the adapter boundary, and never derive active/synthetic workspace or fall back to SQLite. Any request carrying parent_id or the new governance envelope fields is daemon-only and must fail closed when daemon authority is unavailable. A root request without those new fields retains its pre-Gate compatibility behavior and is regression-tested but not redesigned in this card. Source authority is frozen spec SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7. Idempotency key: role-prompt-v1-gate1b-parent-aware-create-cli.",
+        "steps": [
+          {
+            "action": "implement_cli_surface",
+            "target_file": "cli/main.py+server/daemon_client.py+i18n/en_US.json+i18n/zh_CN.json",
+            "target_symbol": "cw task create parent-aware thin adapter",
+            "check_items": [
+              "all governance fields are explicit",
+              "format and values are passed unchanged",
+              "no client workspace inference",
+              "parent-aware and governed-envelope requests have no local fallback",
+              "root requests without new fields retain pre-Gate compatibility behavior"
+            ]
+          },
+          {
+            "action": "add_cli_contract_tests",
+            "target_file": "tests/test_task_create_parent_governance.py",
+            "target_symbol": "parent-aware CLI fixtures",
+            "check_items": [
+              "byte-level success request fixture",
+              "daemon error parity",
+              "daemon unavailable fail closed",
+              "unknown field and missing Contract negative cases"
+            ]
+          },
+          {
+            "action": "update_cli_documentation",
+            "target_file": "docs/cli_reference.md",
+            "target_symbol": "task create parent-aware contract",
+            "check_items": [
+              "root create compatibility documented",
+              "parent-aware fields documented",
+              "no SQL or active workspace workaround documented"
+            ]
+          },
+          {
+            "action": "verify_deploy_and_report",
+            "target_file": "docs/evidence/role-prompt-v1-gate1b-parent-create-cli.json",
+            "target_symbol": "GATE-1B evidence and combined Gate release receipt",
+            "check_items": [
+              "pytest focused matrix",
+              "client purity",
+              "combined controlled runtime deployment",
+              "live health and binary fingerprint"
+            ]
+          }
+        ]
+      },
+      "role_contracts": [
+        {
+          "role": "executor",
+          "skill_id": "cw-executor-senior-engineer",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.executor.startup.v1",
+          "prompt_hash": "59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+          "allowed_paths": [
+            "cli/main.py",
+            "server/daemon_client.py",
+            "i18n/en_US.json",
+            "i18n/zh_CN.json",
+            "tests/test_task_create_parent_governance.py",
+            "docs/cli_reference.md",
+            "docs/evidence/role-prompt-v1-gate1b-parent-create-cli.json"
+          ],
+          "forbidden_paths": [
+            "rust_ext/src/daemon/task_collab.rs",
+            "rust_ext/src/daemon/task_collab_shared.rs",
+            "rust_ext/src/daemon/dispatch.rs",
+            "rust_ext/src/daemon/task_prompt/**",
+            "rust_ext/resources/role_prompts/**",
+            "db/**",
+            "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+            "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+            "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+            "docs/evidence/RP-00-r4-review-findings-disposition.md",
+            "deliverables/software-company/role-prompt-v1-gate-task-manifest.json"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.claim",
+            "snapshot.publish",
+            "task.report",
+            "task.handoff"
+          ],
+          "acceptance_checks": [
+            "focused pytest green",
+            "client purity green",
+            "daemon errors unchanged",
+            "no fallback or workspace derive",
+            "controlled deployment receipt is current"
+          ],
+          "required_evidence": [
+            "CLI parser and request fixtures",
+            "negative transport/error fixtures",
+            "client purity output",
+            "runtime receipt with PID and binary fingerprint",
+            "commit full SHA"
+          ],
+          "handoff_to": "reviewer",
+          "independence": "required"
+        },
+        {
+          "role": "reviewer",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+          "prompt_hash": "6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+          "allowed_paths": [
+            "read-only repository, runtime receipt and task evidence"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "plan edits",
+            "task.apply",
+            "task.close"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.governance_projection.get",
+            "get_role_view",
+            "task.contract.get",
+          "verdict.submit",
+          "task.handoff",
+          "lease.status",
+          "lease.acquire",
+          "lease.release"
+          ],
+          "acceptance_checks": [
+            "independent CLI/MCP boundary review",
+            "GATE-1A daemon semantics unchanged",
+            "no workspace derive or DB fallback",
+            "runtime receipt matches live PID and binary",
+            "after effective PASS, release the Reviewer-owned lease and verify release before Adjudicator finalization"
+          ],
+          "required_evidence": [
+            "review findings or reviewer_pass verdict",
+            "request/response fixture hashes",
+            "runtime provenance",
+            "lease release receipt"
+          ],
+          "handoff_to": "adjudicator",
+          "independence": "required"
+        },
+        {
+          "role": "adjudicator",
+          "skill_id": "none",
+          "skill_version": "",
+          "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+          "prompt_hash": "42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+          "allowed_paths": [
+            "read-only final review and protected task finalization"
+          ],
+          "forbidden_paths": [
+            "production edits",
+            "local SQLite fallback",
+            "historical verdict rewrite"
+          ],
+          "commands": [
+            "task.next_action",
+            "task.apply",
+            "task.close",
+            "task.handoff",
+            "lease.status",
+            "lease.acquire",
+            "lease.release"
+          ],
+          "acceptance_checks": [
+            "independent final review",
+            "Reviewer-owned lease release is verified",
+            "acquire a fresh reviewer-role lease under the Adjudicator's own holder coordinates",
+            "apply then close with the holder-matching finalizer token and fencing counter",
+            "release the finalizer lease",
+            "next-action COMPLETE",
+            "live daemon contains combined GATE-1A/GATE-1B implementation"
+          ],
+          "required_evidence": [
+            "final review record",
+            "Reviewer lease release receipt",
+            "Adjudicator finalizer lease acquire/release and fencing provenance without raw token",
+            "apply/close/COMPLETE receipts",
+            "current successful runtime receipt"
+          ],
+          "handoff_to": "complete",
+          "independence": "required"
+        }
+      ],
+      "contract_requirements": {
+        "task_contract_revision": 1,
+        "identity_policy": "legacy_identity_v1",
+        "role_contract_count": 3,
+        "step_count": 4,
+        "step_binding_count": 4,
+        "workspace_binding_count": 1,
+        "workspace_capture_count": 1,
+        "source": "task.create",
+        "allowed_paths_must_match_executor_role_contract": true,
+        "excluded_paths_must_match_executor_role_contract": true
+      },
+      "allowed_path_globs": [
+        "cli/main.py",
+        "server/daemon_client.py",
+        "i18n/en_US.json",
+        "i18n/zh_CN.json",
+        "tests/test_task_create_parent_governance.py",
+        "docs/cli_reference.md",
+        "docs/evidence/role-prompt-v1-gate1b-parent-create-cli.json"
+      ],
+      "excluded_path_globs": [
+        "rust_ext/src/daemon/task_collab.rs",
+        "rust_ext/src/daemon/task_collab_shared.rs",
+        "rust_ext/src/daemon/dispatch.rs",
+        "rust_ext/src/daemon/task_prompt/**",
+        "rust_ext/resources/role_prompts/**",
+        "db/**",
+        "docs/design/cw-role-prompt-compiler-v1-implementation-plan.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r2.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r3.md",
+        "docs/design/cw-role-prompt-compiler-v1-plan-amendment-r4.md",
+        "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+        "docs/evidence/RP-00-r4-review-findings-disposition.md",
+        "deliverables/software-company/role-prompt-v1-gate-task-manifest.json"
+      ],
+      "finalization_protocol_ref": "task_finalization_protocol.adjudicator_holder_finalization_v1",
+      "lifecycle": [
+        "Executor claims the governed step set, implements only the frozen thin-client scope, publishes the daemon snapshot, runs source checks, performs the controlled shared-runtime deployment, reports all four steps and hands off exact task/step/evidence provenance.",
+        "Independent Reviewer acquires its own reviewer lease, verifies CLI/HTTP boundary behavior, deployment receipt, live health, binary identity and task evidence, then submits PASS or BLOCKED.",
+        "On PASS, Reviewer releases its lease and verifies through lease.status that the Reviewer-owned active lease is gone.",
+        "Adjudicator follows task_finalization_protocol.adjudicator_holder_finalization_v1: independent final review, own reviewer-role lease, holder-matching apply/close, finalizer release and task.next_action=COMPLETE."
+      ],
+      "forbidden_actions": [
+        "modify Rust task.create business logic",
+        "modify Rust dispatch registration or routing",
+        "derive workspace from cwd or project root",
+        "select active workspace",
+        "synthesize ws-1 or another workspace instance",
+        "fallback to local SQLite or PyO3 authority",
+        "remove or redesign legacy root-create fallback behavior in this card",
+        "modify existing created tasks",
+        "implement Prompt Compiler production code",
+        "create the Prompt Compiler feature parent before this card is COMPLETE_CONFIRMED"
+      ],
+      "acceptance_commands": [
+        "tokenslim run C:\\Python314\\python.exe -m pytest tests/test_task_create_parent_governance.py -q",
+        "tokenslim run C:\\Python314\\python.exe scripts/check_client_purity.py",
+        "tokenslim run git diff --check"
+      ],
+      "required_evidence": [
+        "CLI argument to HTTP request byte-level fixture",
+        "parent-aware success fixture",
+        "root-create compatibility fixture",
+        "unknown parent error parity",
+        "workspace mismatch error parity",
+        "missing Contract and unresolved policy error parity",
+        "daemon unavailable no-fallback fixture",
+        "client purity zero new violations",
+        "combined GATE-1A/GATE-1B controlled runtime receipt",
+        "live health PID and binary fingerprint",
+        "full commit SHA and task commit ledger entry",
+        "effective Reviewer verdict and Reviewer-owned lease release receipt",
+        "Adjudicator-owned finalizer lease acquire/release, apply/close and COMPLETE receipts without raw token"
+      ],
+      "deployment_policy": {
+        "shared_runtime_deploy": true,
+        "deploy_once_after_source_tests": true,
+        "command_template": ".\\scripts\\refresh_shared_runtime.ps1 -TaskId ${GATE1B_TASK_ID} -Configuration release",
+        "receipt_must_match_live_pid_and_binary": true,
+        "receipt_source": "scripts/refresh_shared_runtime.ps1 writes an atomic JSON receipt under the user runtime evidence directory; no script change is required by this card.",
+        "receipt_field_map": {
+          "deployment_status": "receipt.status",
+          "deployment_source_head": "receipt.git_head, captured by git -C RepoRoot rev-parse HEAD before build",
+          "built_daemon_sha256": "receipt.daemon_runtime.expected_sha256",
+          "runtime_current_daemon_sha256": "receipt.daemon_runtime.sha256",
+          "runtime_current_daemon_pid": "receipt.daemon_runtime.pid",
+          "runtime_current_daemon_path": "receipt.daemon_runtime.executable",
+          "post_deploy_health_git_commit": "fresh live daemon /health.git_commit read after deployment",
+          "post_deploy_health_pid": "fresh live daemon /health.pid read after deployment"
+        },
+        "receipt_assertions": [
+          "receipt.status == \"passed\"",
+          "live health.git_commit equals the exact deployment source HEAD recorded by the receipt",
+          "runtime/current cw-daemon binary SHA-256 equals the built target/release cw-daemon SHA-256 recorded by the receipt",
+          "live PID and binary fingerprint match the post-deploy health response, not a pre-existing daemon"
+        ],
+        "reason": "The deployed parent-aware create capability is required to create the Prompt Compiler feature parent and RP-00 under the legacy Epic."
+      },
+      "rollback": {
+        "strategy": "Remove or disable the CLI parent-aware arguments and disable the daemon parent-aware branch. Preserve root task.create and all already-created tasks. Never fall back to local DB.",
+        "data_rewrite": false
+      },
+      "successor_rule": "Only after this task is COMPLETE_CONFIRMED and the deployed runtime receipt is independently verified may the Prompt Compiler feature parent be created under T-1787203926824-9f873bfc."
+    }
+  ],
+  "release_order": [
+    {
+      "order": 0,
+      "requirement": "Create the exact dedicated review vehicle, report its sole step with daemon authority/snapshot, and obtain an effective initial Reviewer PASS binding this manifest hash and frozen spec hash."
+    },
+    {
+      "order": 1,
+      "card_id": "GATE-0",
+      "required_result": "daemon operation receipt status=attested and immutable receipt artifact"
+    },
+    {
+      "order": 2,
+      "requirement": "Reviewer submits the review vehicle post_reveal_amendment bound to the GATE-0 operation receipt and releases the Reviewer-owned Gate lease; Adjudicator acquires a fresh reviewer-role finalization lease under its own holder identity, applies/closes, releases that lease; review vehicle next-action is COMPLETE; the separate finalization receipt is frozen."
+    },
+    {
+      "order": 3,
+      "card_id": "GATE-1A",
+      "required_result": "COMPLETE_CONFIRMED"
+    },
+    {
+      "order": 4,
+      "card_id": "GATE-1B",
+      "required_result": "COMPLETE_CONFIRMED"
+    },
+    {
+      "order": 5,
+      "requirement": "Create the Prompt Compiler feature parent under T-1787203926824-9f873bfc with the new parent-aware governed create path, then create RP-00."
+    }
+  ],
+  "manifest_acceptance": [
+    "JSON parses as UTF-8 with no duplicate object keys.",
+    "The frozen spec hash matches the current candidate file.",
+    "The dedicated review vehicle is a root support task with one step, explicit policy, three Role Contracts, exact binding/snapshot/view-manifest requirements, and a complete initial-verdict/GATE-0-amendment/holder-correct-finalization lifecycle.",
+    "Exactly three cards exist in order GATE-0, GATE-1A, GATE-1B.",
+    "Every runtime authority value is daemon-resolved and no synthetic workspace literal is used.",
+    "GATE-0 uses the review vehicle as its only anchor and contains no persisted raw lease token.",
+    "GATE-0 immutable input evidence, immutable operation receipt, and immutable finalization receipt are three separate one-way-linked artifacts with no self-invalidating update.",
+    "The GATE-0 input is frozen after Reviewer lease acquisition and before attestation; the Reviewer-owned Gate lease and Adjudicator-owned reviewer-role finalization lease are distinct, holder-matching and separately released.",
+    "The different-request GATE-0 probe requires exact error E_LEGACY_BIND_ALREADY_BOUND and permits no duplicate binding, capture or task event.",
+    "GATE-1A and GATE-1B are root tasks with explicit identity policy, three Role Contracts and four steps.",
+    "Allowed and excluded paths do not overlap within a development card.",
+    "The executor legacy template alias mismatch is recorded once in legacy_template_alias_registry, is excluded from the daemon Role Contract payload, and all Executor contracts retain the authority-bound primary ID.",
+    "Every structured Role Contract is fail-closed projected through role_contract_payload_projection before task.create; no unknown planning field reaches the daemon.",
+    "GATE-1B parent-aware requests are daemon-only while legacy root requests remain outside this card's redesign scope.",
+    "All acceptance commands and referenced existing parent directories are valid at review time.",
+    "RP-00 either byte-exact adopts the candidate frozen spec or performs explicit supersession and full re-review.",
+    "No card implements Role Prompt Compiler production behavior.",
+    "An independent Reviewer confirms scope, ordering, contracts, tests, evidence and rollback before execution."
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "task_id": "T-1788963105720-60bfc80c",
+  "step_index": 0,
+  "action": "port_rust_handler",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_security",
+  "methods": [
+    "list_branches",
+    "merge_preview",
+    "get_edit_history",
+    "find_shared_symbols",
+    "cross_repo_impact",
+    "cross_repo_summary",
+    "lsp_hover",
+    "lsp_definition",
+    "lsp_references",
+    "lsp_diagnostics",
+    "lsp_completion",
+    "lsp_check_available",
+    "rule_candidate_list",
+    "rule_list",
+    "get_applicable_rules"
+  ],
+  "python_truth_source": {
+    "note": "compat worker 同款 _bind_readonly_db 绑定直调 _h_* 取基线（callwarden.db）",
+    "list_branches_rows": 11,
+    "find_shared_symbols_total": 1768,
+    "cross_repo_summary": {
+      "total_repos": 11,
+      "total_cross_deps": 0,
+      "total_shared_symbols": 1768
+    },
+    "cross_repo_impact_real_hash": {
+      "source_workspace": "TokenSlim",
+      "local_impacted_count": 0,
+      "risk_level": "low"
+    },
+    "merge_preview": {
+      "affected_symbols": 0,
+      "risk_level": "low"
+    },
+    "lsp_all": "available=False 空结构（本机 4 个 LSP 服务器均未安装）",
+    "rules_all": "空表 → count 0"
+  },
+  "rust_live": {
+    "daemon_git_commit": "449e91fbe6cf70876663e96fbc260ca788466f",
+    "snapshot": {
+      "generation": 1,
+      "symbol_count": 128398,
+      "snapshot_id": "104d2153152fc10e"
+    },
+    "parity": "17 组参数逐字段 EQ（含 find_shared 1768 对、cross_repo_summary 全字段、真实 hash cross_repo_impact 全 EQ 且 local_impacted_count 同为 0）",
+    "rust_unit_tests": {
+      "suite": "tests/test_mcp_compat_tools_security_http_rpc.py",
+      "passed": 21,
+      "failed": 0
+    }
+  },
+  "declared_deviation": [
+    "merge_preview/cross_repo_impact 的 blast_radius：Python worker 通道因 _bind_readonly_db(object.__new__) 缺 GraphStore 懒加载属性恒异常跳过（local_impacted_count 恒 0、impact_layers 恒空）；Rust 实现完整 SQL BFS + cross_layer 正则（行为改进，与 tools_task 卡 bootstrap_status 先例同款）",
+    "lsp_hover/definition/references/diagnostics/completion：Rust 不实现 LSP 子进程客户端，恒返回 available=False 空结构——与「LSP 未安装」环境（本机实测）行为逐字段一致；lsp_check_available 保留 where/which 实测探测",
+    "get_edit_history 的绝对路径解析用 workspace_root 前缀剥离近似 os.path.relpath（本基线仅覆盖相对路径/空路径，表空行为一致）"
+  ]
+}

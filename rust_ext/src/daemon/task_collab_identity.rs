@@ -531,4 +531,228 @@ impl TaskCollabStore {
         candidates[0].1.to_string()
     }
 
+    // P0-COMPAT-v3（T-1788963088148-495d7208）：get_attestation_validity 迁移
+    // rust_native。语义与 Python db_task_identity.derive_attestation_validity 一致：
+    // 查 attestation_revocation_records（workspace_id + issuer + signing_key_id，
+    // ORDER BY revoked_at ASC），compromised 一律 invalid（忽略 issuance_time），
+    // rotated 仅 issuance_time > revoked_at 判 invalid；无命中 → "valid"。
+    pub fn handle_get_attestation_validity(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let issuer = params
+            .get("issuer")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let signing_key_id = params
+            .get("signing_key_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let issuance_time = params
+            .get("issuance_time")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT revocation_mode, revoked_at FROM attestation_revocation_records \
+                 WHERE workspace_id = ? AND issuer = ? AND signing_key_id = ? \
+                 ORDER BY revoked_at ASC",
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询 attestation_revocation_records 失败: {e}"))
+            })?;
+        let rows = stmt
+            .query_map(params![workspace_id, issuer, signing_key_id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+            })
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("遍历 attestation_revocation_records 失败: {e}"))
+            })?;
+        let mut validity = "valid".to_string();
+        for row in rows {
+            let (mode, revoked_at) = row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("读取撤销记录失败: {e}"))
+            })?;
+            if mode == "compromised" {
+                // Req 10.14：compromised 忽略签发时间，全部判 invalid
+                validity = "invalid".to_string();
+                break;
+            } else if mode == "rotated" && issuance_time > revoked_at {
+                // Req 10.15：rotated 仅签发时间晚于撤销时间判 invalid（历史账本保持 valid）
+                validity = "invalid".to_string();
+                break;
+            }
+        }
+        let mut result = Map::new();
+        result.insert("validity".to_string(), Value::String(validity));
+        Ok(Value::Object(result))
+    }
+
+    // P0-COMPAT-v3（T-1788963088148-495d7208）：list_attestation_revocations 迁移
+    // rust_native。语义与 Python db_task_identity.list_attestation_revocations 一致：
+    // 按 workspace_id 查 attestation_revocation_records 全行（可按 issuer /
+    // signing_key_id 可选过滤），ORDER BY revoked_at ASC，返回 {"items", "count"}。
+    pub fn handle_list_attestation_revocations(
+        &self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id: i64 = params
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let issuer = params
+            .get("issuer")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let signing_key_id = params
+            .get("signing_key_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let conn = self.conn.lock().unwrap();
+        // rusqlite 动态 WHERE 组合按 issuer/signing_key_id 过滤分支实现
+        // （query_attestation_revocations helper 保持与 Python SQL 语义逐分支一致）。
+        let items = Self::query_attestation_revocations(
+            &conn, workspace_id, &issuer, &signing_key_id,
+        )?;
+        let count = items.len();
+        let mut result = Map::new();
+        result.insert("items".to_string(), Value::Array(items));
+        result.insert(
+            "count".to_string(),
+            Value::Number(serde_json::Number::from(count as i64)),
+        );
+        Ok(Value::Object(result))
+    }
+
+    /// 按 issuer / signing_key_id 过滤组合查询撤销账本（helper，保持 SQL 语义）。
+    fn query_attestation_revocations(
+        conn: &Connection,
+        workspace_id: i64,
+        issuer: &str,
+        signing_key_id: &str,
+    ) -> Result<Vec<Value>, DaemonRpcError> {
+        let map_row = |r: &rusqlite::Row| -> rusqlite::Result<Value> {
+            let mut m = Map::new();
+            m.insert("id".to_string(), Value::Number(r.get::<_, i64>(0)?.into()));
+            m.insert(
+                "workspace_id".to_string(),
+                Value::Number(r.get::<_, i64>(1)?.into()),
+            );
+            m.insert(
+                "revocation_id".to_string(),
+                Value::String(r.get::<_, String>(2)?),
+            );
+            m.insert("issuer".to_string(), Value::String(r.get::<_, String>(3)?));
+            m.insert(
+                "signing_key_id".to_string(),
+                Value::String(r.get::<_, String>(4)?),
+            );
+            m.insert(
+                "revocation_mode".to_string(),
+                Value::String(r.get::<_, String>(5)?),
+            );
+            m.insert(
+                "revocation_reason".to_string(),
+                Value::String(r.get::<_, String>(6)?),
+            );
+            m.insert(
+                "initiating_actor".to_string(),
+                Value::String(r.get::<_, String>(7)?),
+            );
+            m.insert(
+                "revoked_at".to_string(),
+                Value::Number(
+                    serde_json::Number::from_f64(r.get::<_, f64>(8)?)
+                        .unwrap_or(serde_json::Number::from(0)),
+                ),
+            );
+            Ok(Value::Object(m))
+        };
+        let mut items = Vec::new();
+        if !issuer.is_empty() && !signing_key_id.is_empty() {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, revocation_id, issuer, signing_key_id, \
+                     revocation_mode, revocation_reason, initiating_actor, revoked_at \
+                     FROM attestation_revocation_records \
+                     WHERE workspace_id = ? AND issuer = ? AND signing_key_id = ? \
+                     ORDER BY revoked_at ASC",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询撤销账本失败: {e}")))?;
+            let rows = stmt
+                .query_map(params![workspace_id, issuer, signing_key_id], map_row)
+                .map_err(|e| DaemonRpcError::internal_error(format!("遍历撤销账本失败: {e}")))?;
+            for row in rows {
+                items.push(row.map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取撤销记录失败: {e}"))
+                })?);
+            }
+        } else if !issuer.is_empty() {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, revocation_id, issuer, signing_key_id, \
+                     revocation_mode, revocation_reason, initiating_actor, revoked_at \
+                     FROM attestation_revocation_records \
+                     WHERE workspace_id = ? AND issuer = ? ORDER BY revoked_at ASC",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询撤销账本失败: {e}")))?;
+            let rows = stmt
+                .query_map(params![workspace_id, issuer], map_row)
+                .map_err(|e| DaemonRpcError::internal_error(format!("遍历撤销账本失败: {e}")))?;
+            for row in rows {
+                items.push(row.map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取撤销记录失败: {e}"))
+                })?);
+            }
+        } else if !signing_key_id.is_empty() {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, revocation_id, issuer, signing_key_id, \
+                     revocation_mode, revocation_reason, initiating_actor, revoked_at \
+                     FROM attestation_revocation_records \
+                     WHERE workspace_id = ? AND signing_key_id = ? ORDER BY revoked_at ASC",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询撤销账本失败: {e}")))?;
+            let rows = stmt
+                .query_map(params![workspace_id, signing_key_id], map_row)
+                .map_err(|e| DaemonRpcError::internal_error(format!("遍历撤销账本失败: {e}")))?;
+            for row in rows {
+                items.push(row.map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取撤销记录失败: {e}"))
+                })?);
+            }
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, workspace_id, revocation_id, issuer, signing_key_id, \
+                     revocation_mode, revocation_reason, initiating_actor, revoked_at \
+                     FROM attestation_revocation_records \
+                     WHERE workspace_id = ? ORDER BY revoked_at ASC",
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("查询撤销账本失败: {e}")))?;
+            let rows = stmt
+                .query_map(params![workspace_id], map_row)
+                .map_err(|e| DaemonRpcError::internal_error(format!("遍历撤销账本失败: {e}")))?;
+            for row in rows {
+                items.push(row.map_err(|e| {
+                    DaemonRpcError::internal_error(format!("读取撤销记录失败: {e}"))
+                })?);
+            }
+        }
+        Ok(items)
+    }
+
 }

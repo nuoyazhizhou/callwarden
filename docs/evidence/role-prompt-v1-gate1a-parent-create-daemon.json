@@ -1,0 +1,153 @@
+{
+  "schema": "cw.role_prompt_gate1a_parent_create_daemon_evidence.v1",
+  "card": "GATE-1A",
+  "title": "Role Prompt v1 GATE-1A: parent-aware governed task.create daemon hardening — acceptance evidence",
+  "task_id": "T-1788320863860-cacb9950",
+  "step_id": "S-1788320863884-cc3e2ed8",
+  "step": "verify_and_report",
+  "frozen_spec_ref": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md §13.3",
+  "frozen_spec_sha256": "95298729f3357cdbe76d8f8e91f12067b54d2661d6e80abff561a2e2a8c86cb7",
+  "generated_at": "2026-09-02T06:12:00+08:00",
+  "generated_by": {
+    "role": "executor",
+    "agent_id": "executor-workbuddy-v1-cur",
+    "session_id": "sess-workbuddy-cw-20260822-0320",
+    "model_id": "workbuddy-senior-developer-v1",
+    "identity_policy": "legacy_identity_v1"
+  },
+  "evidence_manifest": {
+    "task_id": "T-1788320863860-cacb9950",
+    "step_id": "S-1788320863884-cc3e2ed8",
+    "step": "verify_and_report",
+    "scope": "GATE-1A：parent-aware governed task.create daemon hardening 完整验收（frozen spec §13.3）。实现 parent 分支（parent 存在 / 唯一 binding+capture / workspace exact match / Role Contract 必携 / unknown-field 拒绝 / 整事务 rollback），root 分支 bit-for-bit parity，dispatch 层薄注册。",
+    "acceptance_clauses": {
+      "frozen_tests_green": "8/8 parent_aware_task_create_* tests pass（task_collab_tests_parent_create.rs，module parent_create）",
+      "dispatch_thin_green": "1/1 test_task_create_strict_field_registration_is_thin_and_frozen pass（dispatch.rs 薄注册）",
+      "cargo_check_green": "cargo check --no-default-features exit 0",
+      "root_create_parity": "root create（无 parent_id）经 isolated daemon round-trip 成功，返回 governance projection + binding/capture 自动落库",
+      "no_partial_transaction_rows": "D/E/F/G negative cases 均整事务 rollback，task/contract/binding/capture 表零残留",
+      "evidence_hash_persisted": "本 evidence 文件 sha256 经 task.report evidence-hash 参数持久化"
+    }
+  },
+  "verification": {
+    "focused_tests": {
+      "command": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features parent_aware_task_create_ --lib",
+      "result": "8 passed; 0 failed; 0 ignored; 1637 filtered out; finished in 1.12s",
+      "tests": [
+        "parent_aware_task_create_root_request_response_error_parity",
+        "parent_aware_task_create_governed_parent_success",
+        "parent_aware_task_create_rejects_missing_or_unbound_parent",
+        "parent_aware_task_create_rejects_workspace_mismatch",
+        "parent_aware_task_create_rejects_missing_contract_or_role_contract",
+        "parent_aware_task_create_rejects_unresolved_identity_policy",
+        "parent_aware_task_create_rejects_unknown_field",
+        "parent_aware_task_create_rolls_back_all_rows_on_failure"
+      ]
+    },
+    "dispatch_thin_test": {
+      "command": "cargo test --manifest-path rust_ext/Cargo.toml --no-default-features task_create_strict_field_registration --lib",
+      "result": "1 passed; 0 failed; 1644 filtered out; finished in 0.01s",
+      "test": "test_task_create_strict_field_registration_is_thin_and_frozen"
+    },
+    "cargo_check": {
+      "command": "cargo check --manifest-path rust_ext/Cargo.toml --no-default-features",
+      "result": "exit 0（warnings only，无 error；Finished dev profile in 29.15s）",
+      "note": "首轮 check 曾因 debug 增量编译缓存损坏（rustc rmeta encoder panic，exit 101）失败；经 CARGO_INCREMENTAL=0 全量 check 复跑 exit 0，确认非代码问题。提交 HEAD 上 GATE-1A 改动 check 通过。"
+    },
+    "git_diff_check": {
+      "command": "git diff --check",
+      "result": "exit 0，无 whitespace error"
+    }
+  },
+  "isolated_daemon_roundtrip": {
+    "endpoint": "http://127.0.0.1:18211",
+    "daemon": {
+      "pid": 21468,
+      "binary": "rust_ext/target/debug/cw-daemon.exe（含 GATE-1A 未提交工作树改动，git_commit=9855da6 为 debug 构建时 HEAD）",
+      "security_profile": "dev_loopback_unauthenticated",
+      "schema_version": 60
+    },
+    "isolation": {
+      "registry_db": "C:/Users/wanpi/AppData/Local/Temp/gate1a_rt/registry.db",
+      "task_db": "C:/Users/wanpi/AppData/Local/Temp/gate1a_rt/task.db",
+      "fixture_note": "隔离 task-DB 预置 workspaces id=1（root_path=c:/git_work/callwarden, runtime_policy=self_bootstrap）；workspace_capture c14n 规则行由 migration-v52-to-v53 就绪；capture 链为空 → daemon bind_task_to_workspace 自动追加首条 capture（registry instance 配对校验在无历史 capture 时跳过）"
+    },
+    "steps": [
+      {
+        "id": "A_workspace_register",
+        "expect": "ok",
+        "actual": "ok",
+        "result": "workspace.register(client_view_root=c:/git_work/callwarden) -> registry daemon_workspaces 行（instance=4baea3ff12c2ea5c，host_real_root=\\\\?\\C:\\git_work\\callwarden）"
+      },
+      {
+        "id": "B_root_create",
+        "expect": "root create（无 parent_id）成功，root parity 基线",
+        "actual": "ok",
+        "result": "task T-1788328850758-631017b4 created open；governance projection ok（contract TC-… 3 role lineage）；workspace_id=1；binding tb-T-…-4baea3ff12c2ea5c；capture wc-4baea3ff12c2ea5c-1662994128 自动追加（rev 1）"
+      },
+      {
+        "id": "C_governed_parent_create",
+        "expect": "child 带 parent_id + role_contracts 成功，parent 落库正确",
+        "actual": "ok",
+        "result": "task T-1788328850983-707b420c created under parent T-1788328850758-631017b4；parent_id 落库正确；binding/capture 自动追加（capture rev 2 supersedes rev 1）"
+      },
+      {
+        "id": "D_unknown_parent",
+        "expect": "E_TASK_PARENT_NOT_FOUND",
+        "actual": "E_TASK_PARENT_NOT_FOUND",
+        "result": "parent T-NO-SUCH-PARENT-ROUNDTRIP 不存在 → 拒绝，零残留"
+      },
+      {
+        "id": "E_workspace_mismatch",
+        "expect": "E_WORKSPACE_AUTHORITY_MISMATCH",
+        "actual": "E_WORKSPACE_AUTHORITY_MISMATCH",
+        "result": "parent capture instance=4baea3ff12c2ea5c，child 请求 ws-999999 → 拒绝，零残留"
+      },
+      {
+        "id": "F_unknown_field",
+        "expect": "E_TASK_CREATE_UNKNOWN_FIELD",
+        "actual": "E_TASK_CREATE_UNKNOWN_FIELD",
+        "result": "some_unknown_field 不在 frozen request contract（11 字段白名单）→ 拒绝，零残留"
+      },
+      {
+        "id": "G_missing_role_contracts",
+        "expect": "E_TASK_PARENT_CONTRACT_REQUIRED",
+        "actual": "E_TASK_PARENT_CONTRACT_REQUIRED",
+        "result": "parent-aware 但 role_contracts 空 → 拒绝，零残留"
+      }
+    ],
+    "roundtrip_results_json": "C:/Users/wanpi/AppData/Local/Temp/gate1a_rt/roundtrip_results.json"
+  },
+  "db_rollback_row_counts": {
+    "isolation_db": "C:/Users/wanpi/AppData/Local/Temp/gate1a_rt/task.db",
+    "tasks_total": 2,
+    "tasks_expected": "B_root_create + C_governed_parent_create 恰 2 条",
+    "negative_residue_count": 0,
+    "negative_cases": ["D_unknown_parent", "E_workspace_mismatch", "F_unknown_field", "G_missing_role_contracts"],
+    "task_workspace_bindings": 2,
+    "workspace_authority_captures": 2,
+    "capture_chain": "wc-4baea3ff12c2ea5c-1662994128 (rev1) -> wc-4baea3ff12c2ea5c-1888028928 (rev2, supersedes rev1)",
+    "role_contracts": 6,
+    "role_contract_lineages": 6,
+    "task_contract_revisions": 2,
+    "conclusion": "positive 恰落库、negative 全部整事务 rollback 零残留 → no partial transaction rows 达成"
+  },
+  "implementation_diff": {
+    "commit_short": "fd3ed03",
+    "commit_full_sha": "fd3ed0376f6d8d3e7ee24ecb70eca463e101e22f",
+    "files_changed": 5,
+    "insertions": 697,
+    "deletions": 1,
+    "files": [
+      "rust_ext/src/daemon/task_collab.rs（handler：parent-aware 分支门 + unknown-field 拒绝 + role_contracts 必携 + 事务内 parent 校验）",
+      "rust_ext/src/daemon/task_collab_shared.rs（TASK_CREATE_FROZEN_FIELDS 单例 + reject_unknown_create_fields + validate_parent_for_child_create）",
+      "rust_ext/src/daemon/dispatch.rs（薄注册 TASK_CREATE_STRICT_FIELDS，零 parent 业务逻辑）",
+      "rust_ext/src/daemon/task_collab_tests.rs（注册 module parent_create）",
+      "rust_ext/src/daemon/task_collab_tests_parent_create.rs（8 个冻结测试，sha256=4b768f311e9414be361e5045d9b9a079f5b26eb2030135568a06c2748fc45339）"
+    ]
+  },
+  "authority_note": "本 evidence 为 task-bound evidence manifest：roundtrip 在含 GATE-1A 改动的 debug daemon 隔离实例（独立 registry/task DB）完成，不触碰权威库；commit full SHA 取实现提交 fd3ed03…；frozen spec sha256=95298729… 与代码内引用一致；committed_head_file_hashes 采用两段式：本文件 sha256 在提交后回填（GATE-0 finalization 同款 BR-02 语义）",
+  "committed_head_file_hashes": {
+    "docs/evidence/role-prompt-v1-gate1a-parent-create-daemon.json": "95a290db763502ae773030a0a352032fdcb82ac12302091bc651bcb445745d32"
+  }
+}

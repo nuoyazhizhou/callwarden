@@ -1,4 +1,8 @@
 {
+    "cli_task_create_parent_id": "父任务 ID；须显式提供 daemon workspace 配对与合同",
+    "cli_task_create_identity_policy": "显式 daemon 身份策略；治理创建不推断默认策略",
+    "cli_task_create_contract_envelope": "Task Contract JSON envelope，原样传给 daemon",
+    "cli_task_create_task_id": "与所提供 Task Contract envelope 一致的显式任务 ID",
     "lang_name": "中文",
     "app": {
         "name": "代码知识图谱",

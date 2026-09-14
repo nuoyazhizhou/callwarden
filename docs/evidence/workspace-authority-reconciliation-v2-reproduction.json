@@ -1,0 +1,87 @@
+{
+  "task_id": "T-1788382908707-bbdd0cfc",
+  "step_id": "S-1788382908712-bc34c604",
+  "kind": "pre_fix_reproduction_matrix",
+  "title": "Durable workspace authority reconciliation — pre-fix reproduction (T-1788346430756 closed with incomplete validation)",
+  "captured_from": {
+    "daemon_pid": 10120,
+    "binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+    "binary_sha256_prefix": "10cc6edc",
+    "git_commit": "4ae1447bbd9a0de8c30d404152583ad9440abd8b",
+    "registry_db_path": "C:/Users/wanpi/.callwarden/registry.db",
+    "task_db_path": "C:/Users/wanpi/.callwarden/callwarden.db"
+  },
+  "stable_facts": {
+    "callwarden_instance_id": "4baea3ff12c2ea5c",
+    "registry_numeric_id_at_capture": 156,
+    "task_db_workspace_id_for_instance": 1,
+    "prior_alias_registry_id": 144,
+    "note": "registry autoincrement drifts across fresh restart (144 -> 156 observed); instance id is the only stable cross-DB key"
+  },
+  "reproduction": {
+    "status_instance_key": {
+      "input": "4baea3ff12c2ea5c",
+      "output": {
+        "registry_workspace_id": 156,
+        "registry_instance_id": "4baea3ff12c2ea5c",
+        "task_db_workspace_id": 1,
+        "task_db_instance_id": "4baea3ff12c2ea5c",
+        "status": "active"
+      },
+      "verdict": "PASS (instance-key path resolves task-DB via workspace_authority_captures)"
+    },
+    "status_numeric_key_pre_fix": {
+      "input": "156",
+      "output": {
+        "registry_workspace_id": 156,
+        "registry_instance_id": "4baea3ff12c2ea5c",
+        "task_db_workspace_id": null,
+        "task_db_instance_id": null,
+        "status": "active"
+      },
+      "verdict": "FAIL — task_db_workspace_id/task_db_instance_id null after restart (registry id drift broke the alias lookup)"
+    },
+    "status_legacy_ws1": {
+      "input": "ws-1",
+      "output": {
+        "registry_workspace_id": null,
+        "task_db_workspace_id": 1,
+        "task_db_instance_id": "ws-1"
+      },
+      "verdict": "partial — task-DB-only historical binding surfaced (registry side absent; acceptable for read)"
+    },
+    "status_taskdb_id_1": {
+      "input": "1",
+      "output": {
+        "registry_workspace_id": 1,
+        "registry_instance_id": "00f5fd3e74504661",
+        "task_db_workspace_id": 1,
+        "task_db_instance_id": "ws-1"
+      },
+      "verdict": "partial — numeric collision between registry id=1 (instance 00f5..) and task-DB id=1 (instance ws-1); different instances (phantom overlap, not a runtime authority)"
+    }
+  },
+  "root_cause": {
+    "location": "rust_ext/src/daemon/workspace_reconciliation.rs::resolve_status_authority",
+    "numeric_key_path": [
+      "task_db_capture_by_id(156) -> None (no task-DB capture row with workspace_id=156)",
+      "alias_by_any_id(156) -> None (workspace_reconciliation_aliases stores registry_workspace_id=144, now stale after drift to 156)"
+    ],
+    "instance_key_path": [
+      "task_db_capture_by_instance('4baea3ff12c2ea5c') -> (1, '4baea3ff12c2ea5c')  // persistent capture"
+    ],
+    "summary": "The numeric-key status path never cross-references the STABLE instance id, so a drifted registry numeric id yields a null task-DB side. The prior task only validated the instance-key path, leaving the numeric-key path broken across restart."
+  },
+  "fix_plan": {
+    "file": "rust_ext/src/daemon/workspace_reconciliation.rs",
+    "change": "In resolve_status_authority, after resolving the registry instance (numeric or instance key), always re-resolve the task-DB side via task_db_capture_by_instance(instance) and alias_by_instance(instance). This makes the unified view durable across registry numeric-id drift and daemon restart.",
+    "added_helper": "alias_by_instance(conn, instance)",
+    "added_test": "status_numeric_key_resolves_task_db_via_instance_after_id_drift"
+  },
+  "negative_matrix_preconditions": {
+    "registry_only_orphan": "workspace registered with no task-DB capture -> task.create must fail-closed (E_WORKSPACE_AUTHORITY_MISMATCH), no partial rows",
+    "cross_project_or_unknown_instance": "task.create with an instance absent from task-DB captures and workspaces -> fail-closed",
+    "stale_registry_id": "task.create with stale numeric id + valid instance -> deterministically reconciled to task_db id via alias (by design)",
+    "historical_ws1": "task.create with instance ws-1 -> audited reconciliation to task_db id=1 (no synthetic inference)"
+  }
+}

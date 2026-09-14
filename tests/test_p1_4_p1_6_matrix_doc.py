@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_p1_4_g29_title_restricted_to_frontier_budget():
     """P1-4: G29 标题已收紧为「Frontier budget」，明确范围。"""
-    matrix = ROOT / "_feature_matrix.md"
+    matrix = ROOT / "docs" / "design" / "_feature_matrix.md"
     content = matrix.read_text(encoding="utf-8")
 
     # 找到 G29 行
@@ -52,7 +52,7 @@ def test_p1_4_g29_title_restricted_to_frontier_budget():
 
 def test_p1_4_g29_status_is_yellow_reaudit():
     """P1-4: G29 状态为 🟡 复审整改（批次33）。"""
-    matrix = ROOT / "_feature_matrix.md"
+    matrix = ROOT / "docs" / "design" / "_feature_matrix.md"
     content = matrix.read_text(encoding="utf-8")
 
     lines = content.splitlines()
@@ -65,7 +65,7 @@ def test_p1_4_g29_status_is_yellow_reaudit():
 
 def test_p1_4_g28_status_downgraded_to_yellow():
     """P1-4: G28 状态从 ✅ 降级为 🟡（SnapshotManagerService budget 接入残缺）。"""
-    matrix = ROOT / "_feature_matrix.md"
+    matrix = ROOT / "docs" / "design" / "_feature_matrix.md"
     content = matrix.read_text(encoding="utf-8")
 
     lines = content.splitlines()
@@ -145,7 +145,7 @@ def test_p1_4_implementation_status_mentions_visit_node_missing():
 
 def test_p1_6_g13_status_mentions_p1_6_remediation():
     """P1-6: G13 添加 P1-6 复审整改标注。"""
-    matrix = ROOT / "_feature_matrix.md"
+    matrix = ROOT / "docs" / "design" / "_feature_matrix.md"
     content = matrix.read_text(encoding="utf-8")
 
     lines = content.splitlines()
@@ -158,7 +158,7 @@ def test_p1_6_g13_status_mentions_p1_6_remediation():
 
 def test_p1_6_g14_status_mentions_p1_6_remediation():
     """P1-6: G14 添加 P1-6 复审整改标注。"""
-    matrix = ROOT / "_feature_matrix.md"
+    matrix = ROOT / "docs" / "design" / "_feature_matrix.md"
     content = matrix.read_text(encoding="utf-8")
 
     lines = content.splitlines()
@@ -169,7 +169,7 @@ def test_p1_6_g14_status_mentions_p1_6_remediation():
 
 def test_p1_6_g15_status_mentions_p1_6_remediation():
     """P1-6: G15 添加 P1-6 复审整改标注。"""
-    matrix = ROOT / "_feature_matrix.md"
+    matrix = ROOT / "docs" / "design" / "_feature_matrix.md"
     content = matrix.read_text(encoding="utf-8")
 
     lines = content.splitlines()

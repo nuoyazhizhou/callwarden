@@ -945,8 +945,31 @@ impl TaskCollabStore {
 ///
 /// 历史任务可能没有不可变 binding/合同，不能为了“补数据”伪造治理记录；
 /// 这类节点仍返回生命周期状态，并明确标为 governance_blocked 及原因。
+///
+/// 例外（终态短路）：`closed` / `reverted` 是终态，其只读投影不依赖
+/// binding/capture 与合同——已终结的任务被标为 `governance_blocked` 会误导
+/// 消费者（看起来像“待处置的坏卡”）。终态直接返回 `completed` / `reverted`，
+/// 与 `next_action.rs` 的终态短路保持一致。
 
 pub(crate) fn tree_governance_projection(conn: &Connection, task_id: &str, task_status: &str) -> Value {
+    // 终态短路：先于 binding 查询，避免无 binding 的历史终态卡被误标。
+    if task_status == "closed" || task_status == "reverted" {
+        let next_role = if task_status == "reverted" { "reverted" } else { "complete" };
+        let workflow_status = if task_status == "reverted" { "reverted" } else { "completed" };
+        return serde_json::json!({
+            "task_id": task_id,
+            "lifecycle_status": task_status,
+            "workflow_status": workflow_status,
+            "current_role": Value::Null,
+            "next_role": next_role,
+            "next_action": "finalize",
+            "review": {"state": "not_in_review"},
+            "blocking_reasons": Vec::<Value>::new(),
+            "decision": "COMPLETE",
+            "action": "NONE",
+        });
+    }
+
     let instance: Option<String> = conn
         .query_row(
             "SELECT c.workspace_instance_id

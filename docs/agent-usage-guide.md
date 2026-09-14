@@ -83,6 +83,21 @@ Call Warden 提供任务/步骤/审计状态机，用于编排复杂工作：
 3. **报告步骤**：`cw task report <step_id> --status done --summary "..."`
 4. **大任务拆分**：涉及 3+ 文件或 5+ 步骤时，用 `cw task split` 拆为父子任务树
 
+### 角色提示词由 daemon 编译（RP-09 cutover）
+
+角色提示词（production prompt）的唯一来源是 daemon 编译的 Role Prompt Bundle：RPC `task.prompt.compile`，
+capability `role_prompt_compiler_v1`。客户端模板正文不再是 production prompt 来源。
+
+- **CLI**：`cw task prompt <task_id> --format llm|card|json`（默认 `llm`；`--format` 只改变本地展示，
+  不发送给 daemon、不进入任何 hash）。
+- **MCP**：`task_get_role_prompt(task_id)`，不接受 role、format、workspace、credential 或 lease 参数。
+- **输出纪律**：逐字输出 `prompt.text` 与 bundle 结构化字段（`routing`、`authority`、`template`、
+  `contract`、`hashes`）；字段缺失显示占位符，不得本地补造或本地渲染 production prompt。
+- **受保护回退**：capability 未声明时，只有已取得 **daemon 返回的 exact workspace instance ID** 才允许
+  回落到只读 `cw task next-action <task_id> --workspace-instance-id <instance-id> --json`；否则显示
+  capability/authority unavailable 并 fail closed。禁止客户端 derive workspace（如
+  `derive_workspace_instance_id`）或回落 Python Prompt Compiler / SQLite / PyO3 authority。
+
 ### 任务 reopen 机制
 
 任务状态机支持 `review`/`applied`/`closed` → `in_progress` 的回退（reopen）：

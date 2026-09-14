@@ -1,0 +1,61 @@
+{
+  "task_id": "T-1788447967354-616aa470",
+  "step_id": "S-1788447967355-617a3e30",
+  "step_index": 1,
+  "action": "wire_recovery_rpc",
+  "status": "completed",
+  "scope": [
+    "rust_ext/src/daemon/task_loop/lifecycle_lease.rs",
+    "rust_ext/src/daemon/task_collab.rs",
+    "rust_ext/src/daemon/dispatch.rs"
+  ],
+  "implementation": {
+    "rpc_method": "lease.recover",
+    "protected_mutation": true,
+    "authorization": "transport-owner-matched registered planner or adjudicator",
+    "authority": "immutable task workspace binding and capture",
+    "transaction": "BEGIN IMMEDIATE with bounded lock-acquisition retry; lease and assignment event share one transaction",
+    "recovery_eligibility": [
+      "lease_expired",
+      "holder_registration_missing",
+      "holder_registration_inactive",
+      "holder_heartbeat_stale"
+    ],
+    "healthy_active_lease": "rejected and left unchanged",
+    "assignment_projection": "append-only assignment_stale event and compatible physical projection update",
+    "raw_token": "top-level token, lease_token, credential, role_worker_auth, role_worker_credential and fencing_counter rejected"
+  },
+  "verification": {
+    "cargo_check": {
+      "command": "tokenslim run cargo check --manifest-path rust_ext/Cargo.toml",
+      "status": "passed"
+    },
+    "dispatch_projection_regression": {
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml test_task_next_action_ --lib",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "note": "Updated stale test fixtures to provide the now-required explicit workspace_instance_id."
+    },
+    "diff_check": {
+      "command": "git diff --check -- rust_ext/src/daemon/task_loop/lifecycle_lease.rs rust_ext/src/daemon/task_collab.rs rust_ext/src/daemon/dispatch.rs",
+      "status": "passed"
+    },
+    "fresh_runtime": {
+      "command": ".\\scripts\\refresh_shared_runtime.ps1 -TaskId T-1788447967354-616aa470 -Configuration release",
+      "status": "passed",
+      "receipt": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260903-233132-0e12fd8b51c8-e2f822f0.json",
+      "note": "Fresh runtime was started from the current source tree; HTTP positive/negative round-trip is reserved for step 3."
+    }
+  },
+  "source_sha256": {
+    "rust_ext/src/daemon/task_loop/lifecycle_lease.rs": "993E40463645826038C383635C6DD764088940797F82B25CA4417F3D7C62336D",
+    "rust_ext/src/daemon/task_collab.rs": "75804B5B22A022AE5D33B9B7F60A5870E61130A68F56C92F7636257009260026",
+    "rust_ext/src/daemon/dispatch.rs": "5DC9F6A31B3DB614DFE771019147E4D5BF5B4DB2D9C7BA1A36B0E3A4157E888C"
+  },
+  "notes": [
+    "Authorization is checked before operation-ledger dedupe so replay cannot disclose a prior response to an unauthorized peer.",
+    "The route does not accept or persist raw lease credentials and does not modify historical task state.",
+    "No task apply, close, supersede, direct SQLite mutation, or generic RPC bypass was used."
+  ]
+}

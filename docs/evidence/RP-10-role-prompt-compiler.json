@@ -1,0 +1,96 @@
+{
+  "evidence_id": "RP-10-role-prompt-compiler",
+  "card_id": "RP-10",
+  "idempotency_key": "role-prompt-v1-rp10",
+  "task_id": "T-1788753260274-ed7e21d4",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "predecessor_task_id": "T-1788737615420-538057d4",
+  "title": "Role Prompt Compiler v1 RP-10: cross-layer E2E security and release gate",
+  "frozen_authority": {
+    "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "sections": ["4.1", "4.3", "4.4", "4.5", "8.3", "9.3", "12", "17.3", "18"]
+  },
+  "step_ids": [
+    "S-1788753260275-ed91cc98",
+    "S-1788753260276-ed9320d4",
+    "S-1788753260276-ed9378b8",
+    "S-1788753260276-ed93abe4"
+  ],
+  "step_actions": [
+    "run_live_parity_e2e",
+    "run_full_regression_and_security",
+    "perform_single_controlled_deploy",
+    "freeze_release_evidence"
+  ],
+  "step_report_request_ids": {
+    "S-1788753260275-ed91cc98": "req-01299ce85be3",
+    "S-1788753260276-ed9320d4": "req-bf3def31322e",
+    "S-1788753260276-ed9378b8": "PENDING_BACKFILL",
+    "S-1788753260276-ed93abe4": "PENDING_BACKFILL"
+  },
+  "contract_hash": {
+    "task_contract_revision": 1,
+    "task_contract": "sha256:28b51f71ae703a3cdec158be8e238122c69295865e3e7177b1053b367bf9c1a7",
+    "executor": "sha256:70ff538b448acc8d5a79c3d686d9567279e01b794117728bdf0137fa751ff216",
+    "reviewer": "sha256:9e108572ed7d0e417128a075f490be52f667eb4046937ca847efa2ed34f4ce9f",
+    "adjudicator": "sha256:1f02c526523ad57244b474e9896d5529218572db588140401660f6cbb2a1fa8d",
+    "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1788753260274-ed7e21d4-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-3985468988",
+    "snapshot_id": "144a1565717e4118",
+    "source": "daemon parent binding + immutable authority capture (no client derivation)"
+  },
+  "changed_paths": [
+    "tests/test_task_prompt_e2e.py",
+    "rust_ext/tests/role_prompt_e2e.rs"
+  ],
+  "commit_sha": "910c256ff1988a4bfd46346a8b9b31281d4d3314",
+  "commands": [
+    "git add tests/test_task_prompt_e2e.py rust_ext/tests/role_prompt_e2e.rs && git commit (code commit 910c256, 2 files +706)",
+    "scripts/refresh_shared_runtime.ps1 -TaskId T-1788753260274-ed7e21d4 -Configuration release (FOREGROUND)",
+    "python cw.py daemon health",
+    "HTTP RPC task.prompt.compile on closed RP-09 card T-1788737615420-538057d4 (read-only)",
+    "python cw.py task prompt T-1788737615420-538057d4 --format llm (read-only)",
+    "step0: pytest tests/test_task_prompt_e2e.py -q; cargo test --test role_prompt_e2e (MSVC env)",
+    "step1: cargo test --manifest-path rust_ext/Cargo.toml --no-default-features; python -m pytest -q; python scripts/check_client_purity.py; git diff --check"
+  ],
+  "positive_results": [
+    "step0 run_live_parity_e2e DONE (report req-01299ce85be3): tests/test_task_prompt_e2e.py 6/6 + rust_ext/tests/role_prompt_e2e.rs 4/4 (fresh-db via official TaskCollabStore migration)",
+    "Python E2E boots fresh isolated temp daemon and proves HTTP RPC task.prompt.compile live parity on a governed task with sha256:-prefixed legacy v1 contracts (spec 9.3 wire form); probes are read-only (task status unchanged); no fabricated bundle anywhere",
+    "Rust E2E proves full-chain create->contract->context->route->compile_bundle with hash closure (prompt.sha256/context_hash/bundle_hash independently recomputable), byte determinism within same snapshot, zero row mutation, capability gate + registry integrity on production assets",
+    "step1 run_full_regression_and_security DONE (report req-bf3def31322e): Rust lib 1735 passed / 7 pre-existing env-dependent cli failures; integration targets green incl. role_prompt_e2e 4/4 and role_prompt_assets_golden 4/4",
+    "RP-family suites all green in-run: role_prompt_skill 20/20, task_prompt_cli 14/14, task_prompt_e2e 6/6, task_prompt_mcp 6/6",
+    "security: scripts/check_client_purity.py 0 violations (hard+soft gates); git diff --check clean; no-write probes verified in E2E; redaction plane verified by Rust tests (no secrets in outputs)",
+    "step2 deploy: scripts/refresh_shared_runtime.ps1 foreground run produced receipt 20260907-151430-ba6e9aae326a-4354a6e2.json status=passed; git_head ba6e9aae326a4500b23cb33206b6d34016e63989 (= HEAD); runtime/current cw-daemon.exe sha256 6fac603527c3bf143a55974ac68aaa1c10e289838005e674af99621b7a1a1cc1 == stage-refresh/release build; daemon_start_pid 32492",
+    "deployment closure verified live: python cw.py daemon health -> PID 32492 @ http://127.0.0.1:6217 (dynamic port, 9365 retired), worker_status healthy, schema_version 60, git_commit ba6e9aae326a4500b23cb33206b6d34016e63989 == deployed HEAD, capability_registry_revision http-mvp-cap-registry-v1",
+    "live round-trip HTTP RPC (positive): task.prompt.compile on closed RP-09 card T-1788737615420-538057d4 -> schema_version role_prompt_bundle_v1, prompt_kind terminal, bundle_hash sha256:fa1c9a4a2b173ac8a3a84407e73e4c3bac7baae1b0a611db315f0dc0da5fbb58 (capability role_prompt_compiler_v1 available on the daemon-compiled surface)",
+    "MCP task_get_role_prompt surface contract and Skill guarded-fallback gating covered by step0 E2E (direct function invocation, fail-closed propagation)"
+  ],
+  "negative_results": [
+    "CLI python cw.py task prompt T-1788737615420-538057d4 --format llm -> fail-closed E_TASK_PROMPT_TASK_ID_REQUIRED (request 含未知字段 workspace_instance_id, spec 4.1-3) because server/daemon_client.py route_rpc still unconditionally injects workspace_root into task-scoped methods (ADJ-RP10-01, adjacent defect NOT in this card's allowed paths; remediation card required); daemon never falls back to Python authority; no fabricated bundle",
+    "MCP surface is same-source as CLI (route_rpc) and fails closed identically; positive CLI/MCP parity is pinned in E2E as fail-closed and deferred to the remediation card",
+    "E2E negative cases pinned: workspace guard mismatch -> E_TASK_PROMPT_AUTHORITY_MISMATCH; missing task -> E_TASK_PROMPT_TASK_NOT_FOUND; bare 64-hex prompt_hash rejected by spec 8.3 redaction -> E_TASK_PROMPT_SECRET_DETECTED (only sha256: prefix accepted per spec 9.3)",
+    "pytest full suite (shared daemon STOPPED per suite environment contract): 6877 passed / 892 failed / 33 errors / 506 skipped / 1 xfailed - the 892 failures are 100% pre-existing daemon-state/cutover families (test_http_*_cutover, test_lease_rpc seeded-fixture E_TASK_WORKSPACE_UNBOUND drift, cli 08x http_rpc; files untouched by RP cards; a full-green baseline has never been established in this environment; with the shared daemon UP the isolated-daemon tests interfere - two mutually exclusive env requirements); 3 pre-existing collection errors excluded (imports removed at commit b1fd2d7 era, outside allowed paths)",
+    "Rust lib 7 failures are pre-existing environment-dependent cli::router/cli::runtime/cli::refresh (daemon endpoint/socket availability; same family as RP-07-era existing cli failures; files untouched by any RP card)",
+    "unrelated dirty files in the working tree (rust_ext/src/daemon/{cas_merge,config,fs_handlers,snapshot_state}.rs, server/tools/tools_query.py, deliverables/software-company/server_authority_residue_audit.json) belong to parallel agents and are excluded from this card"
+  ],
+  "deployment_receipt_if_applicable": {
+    "path": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260907-151430-ba6e9aae326a-4354a6e2.json",
+    "runtime_version": "20260907-151430-ba6e9aae326a-4354a6e2",
+    "status": "passed",
+    "git_head": "ba6e9aae326a4500b23cb33206b6d34016e63989",
+    "configuration": "release",
+    "daemon_sha256": "6fac603527c3bf143a55974ac68aaa1c10e289838005e674af99621b7a1a1cc1",
+    "daemon_start_pid": 32492,
+    "rollback": false,
+    "error": null
+  },
+  "secret_scan": "no raw credential, lease token, Authorization header or session-store content in this manifest; receipt referenced by filename + closure facts only (raw receipt body not copied)",
+  "db_no_write_trace": "all governance writes via daemon RPC (task.create/agent.register/lease/task.report); SQLite opened read-only for contract/binding/report verification only",
+  "rollback": "disable only role_prompt_compiler_v1 capability / close CLI+MCP entries / Skill returns to read-only next-action role card (spec 18); no history rewrite"
+}

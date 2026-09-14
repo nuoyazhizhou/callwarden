@@ -1069,7 +1069,10 @@ def ensure_http_daemon(
     """
     if window is None:
         window = DEFAULT_WAIT_WINDOW
-    deadline = time.monotonic()
+    # CR15（client_convergence_codereview_20260909 §5.8）：deadline 必须包含
+    # window——否则首轮探针失败后 now >= deadline 立即成立，等待窗口退化为
+    # 单次探针，退避逻辑成死代码。
+    deadline = time.monotonic() + window
     backoff = BACKOFF_BASE
 
     def _ready(ep: str) -> bool:

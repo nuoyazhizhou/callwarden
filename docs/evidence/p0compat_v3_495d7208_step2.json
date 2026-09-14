@@ -1,0 +1,18 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1788963088148-495d7208",
+  "step_index": 2,
+  "action": "fixture_matrix",
+  "changed_files": [
+    "tests/test_mcp_compat_identity-lease-small_http_rpc.py",
+    "tests/test_mcp_assignment_show_http_rpc.py"
+  ],
+  "summary": "新增 10 用例（success/invalid/unavailable/退役断言）；MCP-015 先例 unavailable 断言放宽为异常类型；两文件合计 15/15 PASS（venv_test + live daemon endpoint 动态发现）",
+  "verification": {
+    "rust_build": "cargo build --bin cw-daemon Finished (CARGO_INCREMENTAL=0, unset INCLUDE)",
+    "pytest": "15/15 PASS (tests/test_mcp_compat_identity-lease-small_http_rpc.py + test_mcp_assignment_show_http_rpc.py)",
+    "capabilities_endpoint": "3 methods backend=rust_native, status=available"
+  },
+  "created_at": "2026-09-09T23:20:04+0800",
+  "request_id": "req-evd-c0c625fd"
+}

@@ -256,8 +256,10 @@ pub(crate) fn module_path_from_rel(rel_path: &str, language: &str) -> String {
 
 /// 确保 CodeGraph DB 中有对应 workspace_id 的 workspaces 行。
 ///
-/// INSERT OR IGNORE：若 workspace_id 已存在则跳过（不覆盖 name/root_path，
-/// 避免与 CLI `cw --workspace` 注册的 workspace 冲突）。
+/// （已废弃：registry 的 workspace_id 与权威单库自增 id 是两个 ID 空间，
+/// 现统一走 [`super::fs_handlers::ensure_workspace_row_by_root`] 按
+/// root_path 业务键映射。此函数仅保留给历史测试引用。）
+#[allow(dead_code)]
 fn ensure_workspace_row(
     codegraph_conn: &Connection,
     workspace_id: i64,
@@ -1159,7 +1161,9 @@ fn merge_cas_to_codegraph_impl(
     cas_conn: &Connection,
     codegraph_conn: &Connection,
     cas_key: &str,
-    workspace_id: i64,
+    // 历史 caller 仍传 registry workspace_id，但单库时代权威 id 由
+    // ensure_workspace_row_by_root(root_path) 映射得出，此参数仅保签名兼容
+    _workspace_id: i64,
     rel_path: &str,
     abs_path: &str,
     content_hash: &str,
@@ -1183,7 +1187,8 @@ fn merge_cas_to_codegraph_impl(
         Ok(None) => {
             return Ok(MergeResult {
                 cas_key: cas_key.to_string(),
-                workspace_id,
+                // CAS 未命中时未发生任何写库，元数据沿用 caller 传入的 registry id
+                workspace_id: _workspace_id,
                 file_instance_id: 0,
                 symbols_inserted: 0,
                 calls_inserted: 0,
@@ -1269,10 +1274,15 @@ fn merge_cas_to_codegraph_impl(
         return Err(format!("BEGIN IMMEDIATE 失败: {}", e));
     }
 
-    let inner = || -> Result<(i64, usize, usize, String), String> {
-        // 4. 确保 workspace 行
-        ensure_workspace_row(codegraph_conn, workspace_id, workspace_root_path)
-            .map_err(|e| format!("ensure_workspace_row 失败: {}", e))?;
+    let inner = || -> Result<(i64, i64, usize, usize, String), String> {
+        // 4. 确保 workspace 行——按 root_path 业务键映射权威库行，
+        //    禁止把 registry 的 workspace_id 直插权威库（ID 空间不相干，
+        //    撞行时 file_instances 会错挂到别的 workspace）。
+        let workspace_id = super::fs_handlers::ensure_workspace_row_by_root(
+            codegraph_conn,
+            std::path::Path::new(workspace_root_path),
+        )
+        .map_err(|e| format!("ensure_workspace_row 失败: {}", e))?;
 
         // 5. UPSERT file_contents + file_instances
         let file_instance_id = upsert_file_records(
@@ -1351,6 +1361,7 @@ fn merge_cas_to_codegraph_impl(
         };
 
         Ok((
+            workspace_id,
             file_instance_id,
             sym_count,
             call_count,
@@ -1359,14 +1370,14 @@ fn merge_cas_to_codegraph_impl(
     };
 
     match inner() {
-        Ok((file_instance_id, sym_count, call_count, merge_status)) => {
+        Ok((ws_id, file_instance_id, sym_count, call_count, merge_status)) => {
             if let Err(e) = codegraph_conn.execute_batch("COMMIT") {
                 let _ = codegraph_conn.execute_batch("ROLLBACK");
                 return Err(format!("COMMIT 失败: {}", e));
             }
             Ok(MergeResult {
                 cas_key: cas_key.to_string(),
-                workspace_id,
+                workspace_id: ws_id,
                 file_instance_id,
                 symbols_inserted: sym_count,
                 calls_inserted: call_count,
@@ -1798,16 +1809,26 @@ mod tests {
         .expect("merge should succeed");
 
         assert_eq!(result.merge_status, "merged");
-        assert_eq!(result.workspace_id, 42);
+        // 单库时代：权威 id 由 root_path 映射得出，不再等于 caller 传入的 registry id
+        let ws_id: i64 = cg_conn
+            .query_row(
+                "SELECT id FROM workspaces WHERE root_path = '/app'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(result.workspace_id, ws_id);
         assert!(result.file_instance_id > 0);
         assert_eq!(result.symbols_inserted, 2);
         assert_eq!(result.calls_inserted, 1);
 
-        // 校验 workspaces 行
+        // 校验 workspaces 行（root_path 业务键唯一）
         let ws_count: i64 = cg_conn
-            .query_row("SELECT COUNT(*) FROM workspaces WHERE id = 42", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM workspaces WHERE root_path = '/app'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(ws_count, 1);
 
@@ -1825,8 +1846,8 @@ mod tests {
         let (fi_id, status, total_lines): (i64, String, i64) = cg_conn
             .query_row(
                 "SELECT id, status, total_lines FROM file_instances \
-                 WHERE workspace_id = 42 AND rel_path = 'src/main.rs'",
-                [],
+                 WHERE workspace_id = ?1 AND rel_path = 'src/main.rs'",
+                params![result.workspace_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
@@ -1947,8 +1968,8 @@ mod tests {
         let manifest_count: i64 = cg_conn
             .query_row(
                 "SELECT COUNT(*) FROM workspace_manifests \
-                 WHERE workspace_id = 42 AND rel_path = 'src/main.rs'",
-                [],
+                 WHERE workspace_id = ?1 AND rel_path = 'src/main.rs'",
+                params![result.workspace_id],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1958,8 +1979,8 @@ mod tests {
         let (m_cas_key, m_content_hash, m_is_dirty): (String, String, i64) = cg_conn
             .query_row(
                 "SELECT cas_key, content_hash, is_dirty FROM workspace_manifests \
-                 WHERE workspace_id = 42 AND rel_path = 'src/main.rs'",
-                [],
+                 WHERE workspace_id = ?1 AND rel_path = 'src/main.rs'",
+                params![result.workspace_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
@@ -3048,13 +3069,15 @@ mod tests {
             "门槛 2: callee 应指向 src/b.rs 的 helper"
         );
 
-        // 5g. workspace 行存在
+        // 5g. workspace 行存在（按 root_path 业务键，权威 id ≠ registry id）
         let ws_count: i64 = cg_conn
-            .query_row("SELECT COUNT(*) FROM workspaces WHERE id = 42", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM workspaces WHERE root_path = '/app'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(ws_count, 1, "门槛 2: workspace 42 应存在");
+        assert_eq!(ws_count, 1, "门槛 2: root /app 的 workspace 行应存在");
     }
 
     /// 门槛 2 E2E：fresh DB schema 初始化幂等性（多次调用不报错）

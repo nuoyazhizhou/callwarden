@@ -287,16 +287,17 @@ def _h_assignment_show(ctx: CompatCallContext) -> Any:
         return {"status": "none", "error": str(e)}
 
 
-# p4 只读白名单（1 个）：lease_* 5 个为 rust_native 不走 worker；
+# p4 只读白名单（0 个）：lease_* 5 个为 rust_native 不走 worker；
+# assignment_show 已 P0-COMPAT-v3（T-1788963088148-495d7208）迁移 rust_native；
 # assignment_create / assignment_revoke（governance_write）不接入，fail-closed。
-_P4_READ_ONLY_METHODS: Dict[str, Any] = {
-    "assignment_show": _h_assignment_show,
-}
+_P4_READ_ONLY_METHODS: Dict[str, Any] = {}
 
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
 # 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _P4_READ_ONLY_METHODS,
-    workspace_scope=_P4_COMPAT_SCOPE,
-    description="H4C-2 第三批 p4 assignment_show 只读工具（1 个，T-1786747295227-b876fddf 步骤#1）",
-)
+# 全部条目退役后不再注册（register_compat_routes 空 dict 会 fail-closed）。
+if _P4_READ_ONLY_METHODS:
+    register_compat_routes(
+        _P4_READ_ONLY_METHODS,
+        workspace_scope=_P4_COMPAT_SCOPE,
+        description="H4C-2 第三批 p4 assignment_show 只读工具（1 个，T-1786747295227-b876fddf 步骤#1）",
+    )

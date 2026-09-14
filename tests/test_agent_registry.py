@@ -130,3 +130,79 @@ def test_family_uniqueness():
 
     # 确保至少有一定数量的不同家族
     assert len(families) >= 15, f"家族种类数不足，当前: {len(families)}"
+
+
+# ============================================
+# ~ 路径展开回归测试（字面 ~ 目录残留 bug）
+# ============================================
+
+
+def test_expand_tilde_falls_back_to_home_when_expanduser_fails(monkeypatch):
+    """os.path.expanduser 静默返回 '~...'（Windows 环境变量缺失）时，
+    expand_tilde 必须兜底到真实主目录，绝不能返回 CWD 下的字面 ~ 路径"""
+    from callwarden.config import USER_HOME, expand_tilde
+
+    # 模拟 ntpath.expanduser 在 USERPROFILE/HOME 缺失时原样返回输入
+    monkeypatch.setattr(os.path, "expanduser", lambda p: p)
+
+    result = expand_tilde("~/.claude.json")
+    expected = os.path.join(USER_HOME, ".claude.json")
+    assert result == expected
+    assert os.path.isabs(result), "展开结果必须是绝对路径"
+    assert not result.startswith("~"), "不允许以字面 ~ 相对路径返回"
+    # 展开后的绝对路径里不能出现名为 ~ 的目录组件
+    assert "~" not in result.split(os.sep), f"结果含字面 ~ 目录组件: {result}"
+    # 不落到当前目录（复现 bug 的位置是 CWD\~）
+    cwd_literal = os.path.join(os.getcwd(), "~")
+    assert not result.startswith(cwd_literal), "不得展开到 CWD\\~"
+
+
+def test_global_mcp_path_no_literal_tilde_with_stripped_env(monkeypatch):
+    """install-agent --global 的路径解析：即使环境变量被裁剪导致 expanduser
+    失效，_global_mcp_path 也必须返回主目录下的绝对路径"""
+    from callwarden.config import USER_HOME
+    from callwarden.cli.main import _global_mcp_path
+
+    # 裁剪主目录相关环境变量，模拟异常子进程环境
+    for key in ("USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH"):
+        monkeypatch.delenv(key, raising=False)
+
+    spec = {"global_mcp_relpath": "~/.mcp.json",
+            "global_mcp_relpath_win": "~/.mcp.json"}
+    result = _global_mcp_path(spec)
+    assert result == os.path.join(USER_HOME, ".mcp.json")
+    assert os.path.isabs(result)
+    assert "~" not in result.split(os.sep), f"结果含字面 ~ 目录组件: {result}"
+    assert not result.startswith(os.path.join(os.getcwd(), "~"))
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="仅 Windows 下 ntpath.expanduser 会静默不展开")
+def test_config_import_fails_closed_without_home_env(tmp_path):
+    """fail-closed：子进程环境同时缺失 USERPROFILE/HOME/HOMEDRIVE/HOMEPATH 时，
+    导入 callwarden.config 应报错而不是在 CWD 下创建字面 ~ 目录"""
+    import subprocess
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pkg_parent = os.path.dirname(repo_root)
+    env = {k: v for k, v in os.environ.items()}
+    for key in ("USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH"):
+        env.pop(key, None)
+    env["PYTHONPATH"] = pkg_parent + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONUTF8"] = "1"
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "import callwarden.config"],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert proc.returncode != 0, "环境异常时应 fail-closed，而不是静默落盘"
+    assert "USERPROFILE" in (proc.stderr or ""), "应报出主目录环境变量缺失"
+    assert not os.path.exists(os.path.join(str(tmp_path), "~")), \
+        "不得在 CWD 下创建字面 ~ 目录"
+    assert not os.path.exists(os.path.join(str(tmp_path), ".callwarden")), \
+        "不得在 CWD 下创建 .callwarden 数据目录"

@@ -1,0 +1,95 @@
+{
+  "schema_version": "role_prompt_assets_v1",
+  "compiler_policy": {
+    "path": "compiler_policy.md",
+    "content_sha256": "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d"
+  },
+  "templates": [
+    {
+      "template_id": "cw.aprime.executor.startup.v1",
+      "kind": "role",
+      "role": "executor",
+      "routes": [],
+      "path": "legacy/executor_planner_startup_v1.md",
+      "content_sha256": "sha256:59a459f7786097c671d48fbeec6e361c12d7a95bdec4e3722169d68d5d6a73f6",
+      "source_declared_template_id": "cw.aprime.executor-planner.startup.v1",
+      "legacy_alias_mismatch": true
+    },
+    {
+      "template_id": "cw.aprime.reviewer.startup.v1",
+      "kind": "role",
+      "role": "reviewer",
+      "routes": [],
+      "path": "legacy/reviewer_startup_v1.md",
+      "content_sha256": "sha256:6415033d8f134392de16fca130bfb762cb6c70d9f466c770ec18a20fc4ce139e"
+    },
+    {
+      "template_id": "cw.aprime.adjudicator.startup.v1",
+      "kind": "role",
+      "role": "adjudicator",
+      "routes": [],
+      "path": "legacy/adjudicator_startup_v1.md",
+      "content_sha256": "sha256:42a5f1defa81008b009058c1baf5d1a14b3ef4521e291b7b55c19bb473a77c3e"
+    },
+    {
+      "template_id": "cw.aprime.executor.startup.v4",
+      "kind": "role",
+      "role": "executor",
+      "routes": [
+        "READY/CLAIM",
+        "READY/REVISE"
+      ],
+      "path": "current/executor_v4.md",
+      "content_sha256": "sha256:5f22f9bef05ec51a998311bdf4485315eb8fe1f4a092d01fd2e6bd86cc4a8164"
+    },
+    {
+      "template_id": "cw.aprime.reviewer.startup.v4",
+      "kind": "role",
+      "role": "reviewer",
+      "routes": [
+        "READY/REVIEW"
+      ],
+      "path": "current/reviewer_v4.md",
+      "content_sha256": "sha256:3adafdad4369812a02376ce09782bf57f2ab192e3455ee24d7c9f51b64d90814"
+    },
+    {
+      "template_id": "cw.aprime.adjudicator.startup.v4",
+      "kind": "role",
+      "role": "adjudicator",
+      "routes": [
+        "READY/ADJUDICATE"
+      ],
+      "path": "current/adjudicator_v4.md",
+      "content_sha256": "sha256:ec62b2bd7988018527ae181ad40c0d13db50879f452d782680df11a63ffcd32c"
+    },
+    {
+      "template_id": "cw.aprime.planner.startup.v1",
+      "kind": "role",
+      "role": "planner",
+      "routes": [],
+      "path": "current/planner_v1.md",
+      "content_sha256": "sha256:73e74e2c615a6a6a7da1ae2a329bb6e0e18a0071ec51bf593d15308f75237539"
+    },
+    {
+      "template_id": "cw.system.blocked_recovery.v1",
+      "kind": "system",
+      "routes": [],
+      "path": "system/blocked_recovery.md",
+      "content_sha256": "sha256:80805d678832126ca1c5cad76cc474b0b896e9431182ffdea9f023078b9c3b85"
+    },
+    {
+      "template_id": "cw.system.waiting.v1",
+      "kind": "system",
+      "routes": [],
+      "path": "system/waiting.md",
+      "content_sha256": "sha256:56874c7329c9c62bac92ddd4be9720a04417a585f904de1d484f8abc7653f56b"
+    },
+    {
+      "template_id": "cw.system.terminal.v1",
+      "kind": "system",
+      "routes": [],
+      "path": "system/terminal.md",
+      "content_sha256": "sha256:450a850620529dd9a2fa1b1f6e791a6a2f4de6cfcac2d1affbe4473142d6257a"
+    }
+  ]
+}

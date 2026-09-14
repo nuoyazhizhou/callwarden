@@ -1222,6 +1222,9 @@ impl TaskCollabStore {
             .get("role")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 role"))?;
+        // 存储侧归一（C-24）：runtime role 映射到治理角色后再落库/查找，
+        // 保证 acquire/extend/release 三方与 fencing 聚合键一致。
+        let role = canonical_claim_role(role);
         let ttl = params
             .get("ttl_seconds")
             .and_then(|v| v.as_f64())
@@ -1258,12 +1261,21 @@ impl TaskCollabStore {
             task_bound_workspace_id(&tx, task_id, optional_workspace_id_param(params))?;
 
         // 1. 原子比较当前 active lease（Req 11.2）
+        // 查找侧变体集（C-24）：历史行可能以 runtime role（如 implementer）落库，
+        // 治理角色查询须命中其变体集，否则 acquire 会误判无持有者。
+        let (role_sql, role_params) = role_in_match(role);
+        let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+        for v in &role_params {
+            lookup_params.push(v);
+        }
         let active: Option<(i64, String, i64, f64, String, String, String)> = tx
             .query_row(
-                "SELECT id, lease_id, fencing_counter, expires_at, agent_id, session_id, model_id FROM task_leases
-                 WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active'
-                 ORDER BY id ASC LIMIT 1",
-                params![workspace_id, task_id, role],
+                &format!(
+                    "SELECT id, lease_id, fencing_counter, expires_at, agent_id, session_id, model_id FROM task_leases
+                     WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active'
+                     ORDER BY id ASC LIMIT 1"
+                ),
+                rusqlite::params_from_iter(lookup_params),
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
             .optional()
@@ -1344,16 +1356,25 @@ impl TaskCollabStore {
         }
 
         // 2. 单调递增 fencing counter（Req 11.3）：该 task+role 全历史 MAX + 1
-        let fencing_counter: i64 =
+        // 变体集聚合（C-24）：历史 implementer/planner 行的 counter 也必须计入。
+        let fencing_counter: i64 = {
+            let (fsql, fparams) = role_in_match(role);
+            let mut fargs: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+            for v in &fparams {
+                fargs.push(v);
+            }
             tx.query_row(
-                "SELECT COALESCE(MAX(fencing_counter), 0) FROM task_leases
-                 WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3",
-                params![workspace_id, task_id, role],
+                &format!(
+                    "SELECT COALESCE(MAX(fencing_counter), 0) FROM task_leases
+                     WHERE workspace_id = ?1 AND task_id = ?2 AND {fsql}"
+                ),
+                rusqlite::params_from_iter(fargs),
                 |r| r.get::<_, i64>(0),
             )
             .map_err(|e| {
                 DaemonRpcError::internal_error(format!("查询 fencing counter 失败: {}", e))
-            })? + 1;
+            })? + 1
+        };
 
         // 3. 插入新 lease（唯一索引 idx_task_leases_active_unique 防双活；冲突 → E_LEASE_ALREADY_ACTIVE）
         tx.execute(
@@ -1451,6 +1472,9 @@ impl TaskCollabStore {
             .get("role")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 role"))?;
+        // 存储侧归一（C-24）：runtime role 映射到治理角色后再落库/查找，
+        // 保证 acquire/extend/release 三方与 fencing 聚合键一致。
+        let role = canonical_claim_role(role);
         let token = params
             .get("token")
             .and_then(|v| v.as_str())
@@ -1479,14 +1503,22 @@ impl TaskCollabStore {
         let workspace_id =
             task_bound_workspace_id(&tx, task_id, optional_workspace_id_param(params))?;
 
+        // 查找侧变体集（C-24）：命中以 runtime role 落库的历史 active 行。
+        let (role_sql, role_params) = role_in_match(role);
+        let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+        for v in &role_params {
+            lookup_params.push(v);
+        }
         let active: Option<(String, String, i64, f64, String, String, String)> = tx
             .query_row(
-                "SELECT lease_id, token_hash, fencing_counter, expires_at,
-                        agent_id, session_id, model_id
-                 FROM task_leases
-                 WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active'
-                 ORDER BY id ASC LIMIT 1",
-                params![workspace_id, task_id, role],
+                &format!(
+                    "SELECT lease_id, token_hash, fencing_counter, expires_at,
+                            agent_id, session_id, model_id
+                     FROM task_leases
+                     WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active'
+                     ORDER BY id ASC LIMIT 1"
+                ),
+                rusqlite::params_from_iter(lookup_params),
                 |r| {
                     Ok((
                         r.get(0)?,
@@ -1563,12 +1595,23 @@ impl TaskCollabStore {
 
         // 幂等续租：不递增 counter，不创建新 lease（Req 11.5）
         let new_expires = now + ttl;
-        tx.execute(
-            "UPDATE task_leases SET renewed_at = ?1, expires_at = ?2
-             WHERE workspace_id = ?3 AND task_id = ?4 AND role = ?5 AND status = 'active'",
-            params![now, new_expires, workspace_id, task_id, role],
-        )
-        .map_err(|e| DaemonRpcError::internal_error(format!("renew 续期失败: {}", e)))?;
+        {
+            // 变体集（C-24）：UPDATE 须与上面的查找同集，否则历史行续期 0 行。
+            let (rsql, rparams) = role_in_match(role);
+            let mut rargs: Vec<&dyn rusqlite::ToSql> =
+                vec![&now, &new_expires, &workspace_id, &task_id];
+            for v in &rparams {
+                rargs.push(v);
+            }
+            tx.execute(
+                &format!(
+                    "UPDATE task_leases SET renewed_at = ?1, expires_at = ?2
+                     WHERE workspace_id = ?3 AND task_id = ?4 AND {rsql} AND status = 'active'"
+                ),
+                rusqlite::params_from_iter(rargs),
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("renew 续期失败: {}", e)))?;
+        }
 
         // 事件 actor 取 lease holder（对齐 Python renew）
         let actor = Self::holder_identity(&holder_agent, &holder_session, &holder_model, role);
@@ -1630,6 +1673,9 @@ impl TaskCollabStore {
             .get("role")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 role"))?;
+        // 存储侧归一（C-24）：runtime role 映射到治理角色后再落库/查找，
+        // 保证 acquire/extend/release 三方与 fencing 聚合键一致。
+        let role = canonical_claim_role(role);
         let token = params
             .get("token")
             .and_then(|v| v.as_str())
@@ -1649,15 +1695,22 @@ impl TaskCollabStore {
         let workspace_id =
             task_bound_workspace_id(&tx, task_id, optional_workspace_id_param(params))?;
 
-        // 1. 查 active lease
+        // 1. 查 active lease（变体集，C-24）
+        let (role_sql, role_params) = role_in_match(role);
+        let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+        for v in &role_params {
+            lookup_params.push(v);
+        }
         let active: Option<(i64, String, String, i64, String, String, String)> = tx
             .query_row(
-                "SELECT id, lease_id, token_hash, fencing_counter,
-                        agent_id, session_id, model_id
-                 FROM task_leases
-                 WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3 AND status = 'active'
-                 ORDER BY id ASC LIMIT 1",
-                params![workspace_id, task_id, role],
+                &format!(
+                    "SELECT id, lease_id, token_hash, fencing_counter,
+                            agent_id, session_id, model_id
+                     FROM task_leases
+                     WHERE workspace_id = ?1 AND task_id = ?2 AND {role_sql} AND status = 'active'
+                     ORDER BY id ASC LIMIT 1"
+                ),
+                rusqlite::params_from_iter(lookup_params),
                 |r| {
                     Ok((
                         r.get(0)?,
@@ -1747,13 +1800,21 @@ impl TaskCollabStore {
         }
 
         // 2. 无 active lease → 幂等分支（Req 11.7）：最近历史 lease 已 released 且 token 匹配视为已释放
+        // 历史行变体集（C-24）：最近历史 lease 可能以 runtime role 落库。
+        let (hist_sql, hist_params) = role_in_match(role);
+        let mut hist_args: Vec<&dyn rusqlite::ToSql> = vec![&workspace_id, &task_id];
+        for v in &hist_params {
+            hist_args.push(v);
+        }
         let hist: Option<(String, String, i64, String, f64)> = tx
             .query_row(
-                "SELECT lease_id, token_hash, fencing_counter, status, COALESCE(released_at, 0)
-                 FROM task_leases
-                 WHERE workspace_id = ?1 AND task_id = ?2 AND role = ?3
-                 ORDER BY id DESC LIMIT 1",
-                params![workspace_id, task_id, role],
+                &format!(
+                    "SELECT lease_id, token_hash, fencing_counter, status, COALESCE(released_at, 0)
+                     FROM task_leases
+                     WHERE workspace_id = ?1 AND task_id = ?2 AND {hist_sql}
+                     ORDER BY id DESC LIMIT 1"
+                ),
+                rusqlite::params_from_iter(hist_args),
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()
@@ -1804,20 +1865,42 @@ impl TaskCollabStore {
             .get("task_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
-        let role = params.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        // 查找侧归一（C-24）：role 可能是 runtime 名称（如 independent_reviewer），
+        // 归一到治理角色后按变体集匹配；为空时不过滤（保持原语义）。
+        let role = canonical_claim_role(
+            params.get("role").and_then(|v| v.as_str()).unwrap_or(""),
+        );
 
         let conn = self.conn.lock().unwrap();
         let workspace_id =
             task_bound_workspace_id(&conn, task_id, optional_workspace_id_param(params))?;
 
+        let mut status_sql = String::from(
+            "SELECT status, lease_id, task_id, role, agent_id, session_id, model_id,
+                    token_hash, fencing_counter, acquired_at, expires_at, renewed_at, released_at
+             FROM task_leases
+             WHERE workspace_id = ?1 AND task_id = ?2",
+        );
+        let mut status_args: Vec<Box<dyn rusqlite::ToSql>> = vec![
+            Box::new(workspace_id),
+            Box::new(task_id.to_string()),
+        ];
+        if !role.is_empty() {
+            let (rsql, rparams) = role_in_match(role);
+            status_sql.push_str(&format!(" AND {rsql}"));
+            for v in rparams {
+                status_args.push(Box::new(v));
+            }
+        }
+        status_sql.push_str(" ORDER BY (status = 'active') DESC, id DESC LIMIT 1");
+        let status_arg_refs: Vec<&dyn rusqlite::ToSql> = status_args
+            .iter()
+            .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
+            .collect();
         let row: Option<(String, String, String, String, String, String, String, String, i64, f64, f64, Option<f64>, Option<f64>)> = conn
             .query_row(
-                "SELECT status, lease_id, task_id, role, agent_id, session_id, model_id,
-                        token_hash, fencing_counter, acquired_at, expires_at, renewed_at, released_at
-                 FROM task_leases
-                 WHERE workspace_id = ?1 AND task_id = ?2 AND (?3 = '' OR role = ?3)
-                 ORDER BY (status = 'active') DESC, id DESC LIMIT 1",
-                params![workspace_id, task_id, role],
+                &status_sql,
+                rusqlite::params_from_iter(status_arg_refs.iter().copied()),
                 |r| {
                     Ok((
                         r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
@@ -1900,7 +1983,10 @@ impl TaskCollabStore {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let task_id = params.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
-        let role = params.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        // 查找侧归一（C-24）：role 可能是 runtime 名称，事件表按落库角色记录。
+        let role = canonical_claim_role(
+            params.get("role").and_then(|v| v.as_str()).unwrap_or(""),
+        );
 
         let conn = self.conn.lock().unwrap();
         // workspace authority fail-closed：有 task_id 时从不可变 binding 解析；
@@ -1923,8 +2009,11 @@ impl TaskCollabStore {
             args.push(Box::new(task_id.to_string()));
         }
         if !role.is_empty() {
-            sql.push_str(" AND role = ?3");
-            args.push(Box::new(role.to_string()));
+            let (rsql, rparams) = role_in_match(role);
+            sql.push_str(&format!(" AND {rsql}"));
+            for v in rparams {
+                args.push(Box::new(v));
+            }
         }
         sql.push_str(" ORDER BY id ASC");
 
@@ -1995,4 +2084,125 @@ impl TaskCollabStore {
         }
         Ok(Value::Array(events))
     }
+
+// P0-COMPAT-v3（T-1788963088148-495d7208）：assignment_show 迁移 rust_native。
+// 语义与 Python db_task_leases.get_assignment 一致：查 task_assignments
+// （workspace_id + task_id + status='active'，role 非空时追加过滤），
+// ORDER BY id DESC LIMIT 1；无命中返回 {"status": "none", task_id, role}。
+//
+// workspace authority（C-16）：数值 `workspace_id` 只来自不可变
+// `task_workspace_bindings`，由 `task_bound_workspace_id` 解析。调用侧
+// `route_rpc` 对 task-scoped 请求刻意不注入 workspace（门禁 A 跳过
+// instance/root，门禁 B 只对 `task.`/`lease.` 前缀注入数值 id），因此本 handler
+// 必须自己解析；旧实现回落到常量 0 与 binding 命名空间不同源，恒不命中
+// → 恒返 none，使 positive 分支对 CLI/MCP 调用方整体不可达。
+pub fn handle_assignment_show(
+    &self,
+    _peer: PeerCredential,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let task_id = params
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let role = params
+        .get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // C-16：task_id 必填（CLI 恒传）。空 / 纯空白 task_id 都无从解析 binding，必须在
+    // 取 conn 之前 fail-closed，禁止带着无效 task_id 去查 binding。空白判定与调用侧
+    // `_is_task_scoped_authority_request`（`value.strip()`）保持同一口径。
+    if task_id.is_empty() {
+        return Err(DaemonRpcError::invalid_params(
+            "assignment_show 需要非空 task_id（workspace 由不可变 task_workspace_bindings 解析）",
+        ));
+    }
+
+    let conn = self.conn.lock().unwrap();
+    // C-16：缺省 workspace 由不可变 binding 解析；显式传入则由 resolver 做一致性
+    // 校验（无 binding → E_TASK_WORKSPACE_UNBOUND；显式不一致 →
+    // E_WORKSPACE_AUTHORITY_MISMATCH）。绝不回落到 legacy active workspace 或常量。
+    let workspace_id =
+        task_bound_workspace_id(&conn, &task_id, optional_workspace_id_param(params))?;
+    let map_row = |r: &rusqlite::Row| -> rusqlite::Result<Value> {
+        let mut m = Map::new();
+        m.insert("id".to_string(), Value::Number(r.get::<_, i64>(0)?.into()));
+        m.insert(
+            "workspace_id".to_string(),
+            Value::Number(r.get::<_, i64>(1)?.into()),
+        );
+        m.insert(
+            "assignment_id".to_string(),
+            Value::String(r.get::<_, String>(2)?),
+        );
+        m.insert("task_id".to_string(), Value::String(r.get::<_, String>(3)?));
+        m.insert("role".to_string(), Value::String(r.get::<_, String>(4)?));
+        m.insert("agent_id".to_string(), Value::String(r.get::<_, String>(5)?));
+        m.insert(
+            "session_id".to_string(),
+            Value::String(r.get::<_, String>(6)?),
+        );
+        m.insert("model_id".to_string(), Value::String(r.get::<_, String>(7)?));
+        m.insert("status".to_string(), Value::String(r.get::<_, String>(8)?));
+        m.insert(
+            "created_at".to_string(),
+            Value::Number(
+                serde_json::Number::from_f64(r.get::<_, f64>(9)?)
+                    .unwrap_or(serde_json::Number::from(0)),
+            ),
+        );
+        let revoked_at: Option<f64> = r.get(10)?;
+        m.insert(
+            "revoked_at".to_string(),
+            match revoked_at {
+                Some(v) => Value::Number(
+                    serde_json::Number::from_f64(v)
+                        .unwrap_or(serde_json::Number::from(0)),
+                ),
+                None => Value::Null,
+            },
+        );
+        Ok(Value::Object(m))
+    };
+
+    let found = if !role.is_empty() {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, assignment_id, task_id, role, agent_id, \
+                 session_id, model_id, status, created_at, revoked_at \
+                 FROM task_assignments \
+                 WHERE workspace_id = ? AND task_id = ? AND role = ? AND status = 'active' \
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_assignments 失败: {e}")))?;
+        stmt.query_row(params![workspace_id, task_id, role], map_row).optional()
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, assignment_id, task_id, role, agent_id, \
+                 session_id, model_id, status, created_at, revoked_at \
+                 FROM task_assignments \
+                 WHERE workspace_id = ? AND task_id = ? AND status = 'active' \
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("查询 task_assignments 失败: {e}")))?;
+        stmt.query_row(params![workspace_id, task_id], map_row).optional()
+    }
+    .map_err(|e| DaemonRpcError::internal_error(format!("读取 assignment 失败: {e}")))?;
+
+    match found {
+        Some(v) => Ok(v),
+        None => {
+            let mut m = Map::new();
+            m.insert("status".to_string(), Value::String("none".to_string()));
+            m.insert("task_id".to_string(), Value::String(task_id));
+            m.insert("role".to_string(), Value::String(role));
+            Ok(Value::Object(m))
+        }
+    }
+}
 }

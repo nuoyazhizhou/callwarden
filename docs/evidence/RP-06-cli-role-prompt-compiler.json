@@ -1,0 +1,95 @@
+{
+  "schema_version": "role_prompt_compiler_evidence_v1",
+  "task_id": "T-1788726774416-354c5a00",
+  "card_id": "RP-06-cli",
+  "idempotency_key": "role-prompt-v1-rp06-cli",
+  "title": "Role Prompt Compiler v1 RP-06-cli: CLI HTTP thin client (variant key rebuild)",
+  "frozen_spec": {
+    "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+  },
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "predecessor_task_id": "T-1788710667638-0e8eb8b8",
+  "predecessor_status": "closed/COMPLETE",
+  "key_deviation_provenance": {
+    "original_key": "role-prompt-v1-rp06",
+    "consumed_by": "T-1788701744712-86b22b34 (2026-09-06 compiler_policy_id alignment card)",
+    "deviation_registered_in": [
+      "RP-08 card description (T-1788710667638-0e8eb8b8)",
+      "RP-08 executor handoff reason",
+      "RP-08 adjudicator acceptance reason"
+    ],
+    "variant_key": "role-prompt-v1-rp06-cli"
+  },
+  "step_ids": [
+    "S-1788726774429-361d3a44",
+    "S-1788726774430-362f0a08",
+    "S-1788726774431-36321040",
+    "S-1788726774431-3632f078"
+  ],
+  "step_report_request_ids": [
+    "req-2f645f8dc545",
+    "req-2a1767ec3823",
+    "req-0c162da34fc0",
+    "req-6a0c88cfb9ad"
+  ],
+  "contract": {
+    "task_contract_id": "TC-T-1788726774416-354c5a00",
+    "task_contract_revision": 1,
+    "task_contract_hash": "sha256:5a8c4b19748067bc43ca0aa421a01c3ff240743e905d80210fa5cc4f1be2c8a6",
+    "executor_role_contract_id": "rcr-T-1788726774416-354c5a00-executor-r1",
+    "executor_role_contract_hash": "sha256:ec7de7f4ae490dd14f224692b602108b87529d654cc782e19ccf8c58804d4ef0",
+    "reviewer_role_contract_id": "rcr-T-1788726774416-354c5a00-reviewer-r1",
+    "reviewer_role_contract_hash": "sha256:e8cb00aca9981e19c0ac5dce923c982dab2686c133da88479e672d2565d27df6",
+    "adjudicator_role_contract_id": "rcr-T-1788726774416-354c5a00-adjudicator-r1",
+    "adjudicator_role_contract_hash": "sha256:c960641ff6565c305d2d3c2f28e4887504bb232ce8f79bd213d45a309429f8d5"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1788726774416-354c5a00-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-905501224",
+    "source": "daemon parent binding (reject_client_derived_or_synthetic_binding)"
+  },
+  "identity_policy": "legacy_identity_v1",
+  "identities": {
+    "executor": "executor-wb-rp06cli-01 / inst-executor-rp06cli",
+    "reviewer": "reviewer-wb-rp06cli-01 / inst-reviewer-rp06cli",
+    "adjudicator": "adjudicator-wb-rp06cli-01 / inst-adjudicator-rp06cli"
+  },
+  "commands": [
+    "python -m pytest tests/test_task_prompt_cli.py -q",
+    "python scripts/check_client_purity.py",
+    "git diff --check"
+  ],
+  "positive_results": [
+    "pytest tests/test_task_prompt_cli.py: 14 passed (mock route_rpc; live RPC deferred to RP-10 post-deployment, runtime daemon remains old build 974bddcf)",
+    "check_client_purity.py: hard gate (server/tools + cw.py) and soft gate (cli/) both 0 violations",
+    "git diff --check: clean",
+    "cw task prompt --help smoke test: parser registered with --format {llm,card,json} default llm and --expected-workspace-instance-id",
+    "spec 4.3 conformance: --format never sent to daemon (params asserted == {task_id}); llm prints bundle.prompt.text verbatim; card projects bundle fields verbatim with em-dash placeholders for missing fields; json prints exact bundle",
+    "spec 4.1 conformance: optional expected_workspace_instance_id passthrough only when explicitly provided; no workspace derivation (runtime monkeypatch + AST import assertion on derive_workspace_instance_id/detect_project_root)",
+    "fail-closed verified: daemon unavailable -> structured E_DAEMON_UNAVAILABLE for all 3 formats; remote business error (E_TASK_PROMPT_AUTHORITY_MISMATCH) passthrough; non-object bundle fail-closed; invalid format structured error without RPC"
+  ],
+  "negative_results": [
+    "no local template rendering or bundle rebuild in client (spec section 3 layering: CLI owns display only)",
+    "no sqlite3/get_db/db-module imports in cli/task_prompt.py (purity AST assertion)",
+    "legacy derive_workspace_instance_id fallback of task next-action NOT reused or spread",
+    "no scope expansion: exactly the 4 manifest allowed-path files changed in the code commit",
+    "no raw credential or lease token in evidence"
+  ],
+  "changed_paths": [
+    "cli/task_prompt.py",
+    "cli/main.py",
+    "tests/test_task_prompt_cli.py",
+    "docs/cli_reference.md",
+    "docs/evidence/RP-06-cli-role-prompt-compiler.json"
+  ],
+  "commit_sha": "025c1533f262a4df47f0a10b2e282630ff3d6dfb",
+  "commit_file_scope_verified": "git show --name-only 025c1533 = exactly the 4 code/doc whitelist files (evidence committed separately)",
+  "deployment_receipt_if_applicable": null,
+  "notes": [
+    "Live HTTP round-trip requires a daemon build containing RP-05 (current shared runtime 974bddcf); per spec section 17.3 RP-05..RP-09 use isolated temporary daemon testing and the shared deploy happens once at RP-10.",
+    "cli/main.py registration is thin-only per frozen spec (parser + one dispatch branch delegating to cli/task_prompt.py run_task_prompt)."
+  ]
+}

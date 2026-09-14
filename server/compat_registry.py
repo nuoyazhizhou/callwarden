@@ -204,78 +204,19 @@ def get_compat_registry() -> CompatRegistry:
 # gen_route_matrix.py 维护）；`register_compat_routes` 的批量注册会确认这些
 # 方法（幂等），两端对齐门 validate_against_rust_route 覆盖全部 79 项。
 RUST_COMPAT_ROUTE: Dict[str, str] = {
+    # P0-COMPAT-v3（T-1788963106520-907544c8）：tools_summary 组 19 个只读方法
+    # （get_summary / project_brief / repo_map / test_impact_selection / who_to_ask /
+    # get_ownership_map / guardrail_scan / guardrail_check_edit / guardrail_list_rules /
+    # blast_radius / ask_codebase / get_token_savings_report /
+    # get_vulnerability_blast_radius / get_clone_aware_impact / review_readiness /
+    # cross_layer_impact / evolution_frequency / hotspot_evolution / defect_learn）
+    # 已迁移 rust_native，从 compat 路由表移除。
     # 内部 worker 方法（非 MCP 工具，不在 239 矩阵内；H4C-1 默认注册）
     # INT-001（T-1787322971676-e9aae4d4）：stats_top_files 已迁移 rust_native，移除。
-    "ask_codebase": READ_ONLY,
-    "assignment_show": READ_ONLY,
-    "audit_verify_chain": READ_ONLY,
-    "blast_radius": READ_ONLY,
-    "bootstrap_status": READ_ONLY,
-    "check_action_identity": READ_ONLY,
-    "check_session_separation": READ_ONLY,
-    "cross_layer_impact": READ_ONLY,
-    "cross_repo_impact": READ_ONLY,
-    "cross_repo_summary": READ_ONLY,
-    "defect_learn": READ_ONLY,
-    "detect_cycle": READ_ONLY,
-    "evolution_frequency": READ_ONLY,
-    "export_module_graph": READ_ONLY,
-    "find_evidence": READ_ONLY,
-    "find_issues": READ_ONLY,
-    "find_shared_symbols": READ_ONLY,
-    "find_similar_functions": READ_ONLY,
-    "get_action_identity": READ_ONLY,
-    "get_applicable_rules": READ_ONLY,
-    "get_artifact_freshness": READ_ONLY,
-    "get_attestation_validity": READ_ONLY,
-    "get_clone_aware_impact": READ_ONLY,
-    "get_clone_group_detail": READ_ONLY,
-    "get_comment_from_version": READ_ONLY,
-    "get_dependency_edges": READ_ONLY,
-    "get_edit_history": READ_ONLY,
-    "get_freshness_status": READ_ONLY,
-    "get_gate_decision": READ_ONLY,
-    "get_impact": READ_ONLY,
-    "get_interface_providers": READ_ONLY,
-    "get_issue_summary": READ_ONLY,
-    "get_ownership_map": READ_ONLY,
-    "get_project_dependencies": READ_ONLY,
-    "get_recent_changes": READ_ONLY,
+    # P0-COMPAT-v3（T-1788963104879-2e9e6270）：tools_semantic 组 5 个只读方法
+    # （find_similar_functions / get_project_dependencies / get_symbol_commit_history /
+    # parse_codeowners / semantic_search）已迁移 rust_native，从 compat 路由表移除。
     # MCP-001（T-1787321708699-da5d8224）：get_role_view 迁移 rust_native，移除 compat 注册
-    "get_summary": READ_ONLY,
-    "get_symbol_change_tasks": READ_ONLY,
-    "get_symbol_commit_history": READ_ONLY,
-    "get_symbol_history": READ_ONLY,
-    "get_test_coverage": READ_ONLY,
-    "get_token_savings_report": READ_ONLY,
-    "get_vulnerability_blast_radius": READ_ONLY,
-    "guardrail_check_edit": READ_ONLY,
-    "guardrail_list_rules": READ_ONLY,
-    "guardrail_scan": READ_ONLY,
-    "hotspot_evolution": READ_ONLY,
-    "list_attestation_revocations": READ_ONLY,
-    "list_audit_signing_keys": READ_ONLY,
-    "list_branches": READ_ONLY,
-    "list_clone_groups": READ_ONLY,
-    "list_clones": READ_ONLY,
-    "lsp_check_available": READ_ONLY,
-    "lsp_completion": READ_ONLY,
-    "lsp_definition": READ_ONLY,
-    "lsp_diagnostics": READ_ONLY,
-    "lsp_hover": READ_ONLY,
-    "lsp_references": READ_ONLY,
-    "merge_preview": READ_ONLY,
-    "parse_codeowners": READ_ONLY,
-    "project_brief": READ_ONLY,
-    "repo_map": READ_ONLY,
-    "review_readiness": READ_ONLY,
-    "rule_candidate_list": READ_ONLY,
-    "rule_list": READ_ONLY,
-    "semantic_search": READ_ONLY,
-    "task_plan_template": READ_ONLY,
-    "test_impact_selection": READ_ONLY,
-    "validate_revision_dependencies": READ_ONLY,
-    "who_to_ask": READ_ONLY,
 }
 
 

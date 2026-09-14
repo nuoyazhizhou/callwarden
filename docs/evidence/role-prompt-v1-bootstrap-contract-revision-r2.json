@@ -1,0 +1,65 @@
+{
+  "schema_version": "role_prompt_v1_bootstrap_contract_revision_evidence/v1",
+  "task_id": "T-1788421906365-956ab790",
+  "correction_kind": "planning_transcription_and_provenance_anchor",
+  "previous_contract": {
+    "contract_id": "TC-T-1788421906365-956ab790",
+    "revision": 1,
+    "hash": "sha256:ef3c4a867fd4f72393163a25703e28cd3cb6ff407cb9eda34c250de0e242d386"
+  },
+  "immutable_workspace_binding": {
+    "task_db_workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "input_hash_verification": [
+    {
+      "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+      "expected_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+      "actual_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+      "result": "match"
+    },
+    {
+      "path": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+      "expected_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+      "actual_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+      "result": "match"
+    },
+    {
+      "path": "deliverables/software-company/role-prompt-v1-task-manifest.json",
+      "revision_1_expected_sha256": "DAC53103AD9B23B5B331C9E30D0F5DE4AEF868DA2364C3D2F919E361B1CFD3D1",
+      "actual_sha256": "DAC53103AD9B23B5B331C9E30D1421DC1C768DAB17F9E7B735F792CA29A52CCA",
+      "revision_2_expected_sha256": "DAC53103AD9B23B5B331C9E30D1421DC1C768DAB17F9E7B735F792CA29A52CCA",
+      "result": "revision_1_transcription_error; revision_2_correction_required"
+    }
+  ],
+  "git_provenance": {
+    "active_anchor_commit": "10a727d812f1eaabb8842fec89a09d06820f23a5",
+    "active_anchor_contains_all_three_inputs": true,
+    "historical_sibling_commit": "997780da1c17eba88e98c38493108394410dba88",
+    "historical_sibling_contains_three_inputs": true,
+    "historical_sibling_is_head_ancestor": false,
+    "correction": "Use active_anchor_commit for all forward provenance. Preserve the historical sibling and original receipt unchanged."
+  },
+  "semantic_sanity_checks": {
+    "successor_manifest_status": "PLANNER_CANDIDATE_NOT_IMPORTABLE",
+    "successor_manifest_frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "successor_manifest_gate_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+    "successor_manifest_card_count": 11
+  },
+  "scope_guard": {
+    "permitted": [
+      "append Task Contract revision 2",
+      "append correction evidence",
+      "allow Executor to continue existing step 1 and step 2 after revision"
+    ],
+    "forbidden": [
+      "rewrite revision 1",
+      "rewrite original bootstrap receipt",
+      "modify any frozen input bytes",
+      "GATE-0/GATE-1A/GATE-1B",
+      "Prompt Compiler production code",
+      "task rebind/supersede/apply/close",
+      "SQLite or generic-RPC fallback"
+    ]
+  }
+}

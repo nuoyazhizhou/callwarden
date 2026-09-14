@@ -4,10 +4,9 @@
 
 # ------------------------------------------
 # 不入库的文档（内部分析报告、AI 对话记录等）
+# 注：功能差距分析报告 / 200 仓库交叉对比分析 于 2026-09-09 归档至
+# deliverables/product-strategy/ 并纳入版本管理（不再忽略）
 # ------------------------------------------
-callwarden_USER_GUIDE.md
-callwarden 功能差距分析报告.md
-callwarden 与 200 个仓库的交叉对比分析.md
 docs/history/
 prompts/
 配置自检码.md
@@ -235,3 +234,9 @@ scripts/.aprime_review_progress.json
 # 根目录与 deliverables/software-company 重复的 P0-L 拆分文档（保留 deliverables 版）
 /p0l_v3_sequential_microtask_breakdown.md
 /p0l_v3_sequential_microtask_manifest.json
+
+# === 2026-09-09 triage: S5 回归闭合证据（大日志/记录物理保留不入库，自根目录归档）===
+docs/evidence/s5-regression-closure-20260909/
+
+# === 2026-09-09 根目录清理暂存区（待确认后删除的项先物理移入此处）===
+/.temp/

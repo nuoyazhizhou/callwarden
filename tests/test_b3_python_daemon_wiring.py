@@ -446,7 +446,7 @@ class TestFeatureMatrixStatusUpdate:
 
     @pytest.fixture
     def matrix_content(self):
-        with open(os.path.join(ROOT, "_feature_matrix.md"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "docs", "design", "_feature_matrix.md"), encoding="utf-8") as f:
             return f.read()
 
     @pytest.mark.parametrize("gid,expected_keyword", [

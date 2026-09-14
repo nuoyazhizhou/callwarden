@@ -1,0 +1,16 @@
+{
+  "task_id": "T-1788963104058-fdb2e848",
+  "step": "S-1788963104059-fdbca220 (step2 fixture_matrix)",
+  "new_suite": "tests/test_mcp_compat_tools_task_http_rpc.py（23 用例：success 13 + invalid 3 + unavailable 8 fail-closed + 退役断言 2 → 实际 24 通过）",
+  "legacy_suite_repair": {
+    "scope": "8 个 MCP-070 时代（2026-08-26 commit 41c8ce7）逐方法套件——自诞生即红（对着未落地的契约编写，且未传 workspace_instance_id）",
+    "fixes": [
+      "全部 _call 注入 CANONICAL_INSTANCE workspace 绑定",
+      "task_plan_template：dict{'template'} 包装断言 → 裸字符串（Python compat 真相源语义）",
+      "get_clone_group_detail 缺 group_id：异常断言 → {'error': 'group not found: 0'}（Python 平价）"
+    ]
+  },
+  "handler_fix": "audit_verify_chain limit=0 → 零计数 dict（Python SQL LIMIT 0 平价）；limit<0 → invalid_params（负 LIMIT=无上限，fail-closed 拒绝复刻）",
+  "regression": "11 套件 113 passed / 2 skipped / 0 failed（含 tools_query、identity-lease-small 前卡回归）",
+  "live_daemon": "PID 48576, snapshot.publish gen=1 128398 symbols"
+}

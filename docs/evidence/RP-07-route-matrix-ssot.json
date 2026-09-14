@@ -1,0 +1,77 @@
+{
+  "schema_version": "rp_evidence_v1",
+  "card_id": "RP-07",
+  "task_id": "T-1788703546980-263dff6c",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "title": "Role Prompt Compiler v1 RP-07: route matrix SSOT reconciliation",
+  "frozen_authority": {
+    "spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "spec_section": "12 MCP route matrix SSOT reconciliation"
+  },
+  "predecessor": {
+    "task_id": "T-1788701744712-86b22b34",
+    "lifecycle_status": "closed",
+    "reviewer_verdict": "V-b787203fc2a372cf816ce7c3 (pass)"
+  },
+  "step_ids": [
+    "S-1788703546981-2649e520",
+    "S-1788703546981-264a63b0",
+    "S-1788703546981-264a8994",
+    "S-1788703546981-264aa550"
+  ],
+  "planner_precheck_facts": {
+    "T_mcp_registrations": 242,
+    "M_matrix_before": 241,
+    "M_residuals": ["final_zero_python_authority_audit (Gate RPC)", "task_cascade_close (CLI/coordinator RPC, remains in D)"],
+    "generator_source_drift": "ROUTE_OVERRIDES get_role_view was python_compat/get_role_view/P0-compat/transition, behind matrix JSON and Rust mirror (rust_native/role_view.get/MCP-001/migrated)",
+    "rust_mirror_zombies": ["stats_top_files (INT-001)", "task_steps_bootstrap_legacy", "task_step_bind_role_contract (only compat_registry route aliases, not MCP registrations)"],
+    "verifier_hardcoded_total": "EXPECTED_TOTAL=239 failed against M=241 (gate 7 violation, fixed by source-derived N)",
+    "new_rpc_already_in_D": ["task.assignment.status", "task.assignment.heartbeat", "task.governance_projection.get"]
+  },
+  "changes": [
+    {
+      "file": "scripts/gen_route_matrix.py",
+      "change": "generator is now sole SSOT: ROUTE_OVERRIDES get_role_view drift repaired; +task_assignment_status/task_assignment_heartbeat/task_governance_projection overrides; new --emit-rust (writes TOOL_ROUTES entries between BEGIN/END GENERATED ROUTE ENTRIES markers, hand-authored header/footer preserved) and --check (in-memory generation vs disk JSON ignoring generated_at + vs Rust mirror entries byte-drift, writes nothing)"
+    },
+    {
+      "file": "deliverables/software-company/tool_migration_matrix.json",
+      "change": "regenerated via --emit-json: N=242; 2 non-MCP residuals removed via MCP source extraction; get_role_view reconciled; 3 new governance tools added"
+    },
+    {
+      "file": "rust_ext/src/daemon/route_matrix.rs",
+      "change": "marker region inserted around TOOL_ROUTES; entries regenerated via --emit-rust (242 entries); 3 zombie entries removed (mirror == generate(M)); hand-authored header (enums/struct/ToolRegistry/validate) untouched; doc comment updated (no hardcoded 239)"
+    },
+    {
+      "file": "scripts/verify_route_matrix.py",
+      "change": "rewritten as read-only semantic verifier: EXPECTED_TOTAL removed, N derived from generator/source; gates: names(T)==tool_names(M), mirror==generate(M) semantics, rpc_method(M[native|task]) subset of D, python_compat M->RUST_COMPAT_ROUTE (error level), thin-shell registration, field validity; compat endpoint drift recorded as explicit KNOWN_DRIFT register (see known_drift_register)"
+    },
+    {
+      "file": "tests/test_route_matrix_generation.py",
+      "change": "new pytest file, 13 tests: --check green, verifier green, JSON idempotent regeneration, T==M, mirror names==M, get_role_view shape, residuals absent, 3 new tools routed, N=242 acceptance record, single-source discipline (no hardcoded totals in verifier code body)"
+    }
+  ],
+  "known_drift_register": {
+    "description": "17 pre-existing compat-domain three-way drifts, explicitly recorded, NOT fabricated green and NOT label-tampered; repair belongs to daemon compat domain (http_server.rs COMPAT_ROUTE_WHITELIST / compat_registry.py) which are excluded paths of this card; routed to a future daemon compat task",
+    "whitelist_only_gaps_8": ["detect_cycle", "get_artifact_freshness", "get_dependency_edges", "get_interface_providers", "validate_revision_dependencies", "check_action_identity", "check_session_separation", "get_action_identity"],
+    "unrouted_zombie_python_compat_9": ["get_call_heatmap", "get_comment_coverage", "get_deepest_functions", "get_orphan_symbols", "get_top_callers", "get_toolchain", "get_workspace_toolchains", "list_toolchains", "find_uncovered_functions"],
+    "nature": "8 tools: RUST_COMPAT_ROUTE present, COMPAT_ROUTE_WHITELIST missing (route works via daemon internal adapter, HTTP whitelist endpoint stale); 9 tools: no worker route and no whitelist entry (tool currently unrouted/fail-closed, pre-existing defect unrelated to this card)"
+  },
+  "commands": [
+    {"cmd": "python scripts/gen_route_matrix.py --check", "result": "CHECK OK: matrix JSON (242 tools) and Rust mirror entries consistent with in-memory generation"},
+    {"cmd": "python scripts/verify_route_matrix.py", "result": "exit 0; N=242 (source-derived); gates green; 17 KNOWN_DRIFT registered"},
+    {"cmd": ".venv_test/Scripts/python.exe -m pytest tests/test_route_matrix_generation.py -q", "result": "13 passed"},
+    {"cmd": "cargo test --lib route_matrix", "result": "4 passed; 0 failed (incl. TOOL_ROUTES.len()==242 and validate_coverage(242) assertions in hand-authored region)"},
+    {"cmd": "cargo test --lib (full regression)", "result": "1736 passed; 6 failed - all 6 failures in cli::router/cli::runtime/cli::refresh (card-excluded domain; test names indicate local daemon-socket environment sensitivity: test_d4_4_enterprise_windows_unavailable, test_d4_7_auto_windows_local, auto_mode_uses_local_when_socket_is_missing, enterprise_mode_is_fail_closed_when_socket_is_missing, history_failure_rolls_back_current_graph_update, full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files); pre-existing, unrelated to route_matrix changes (task_prompt 65/65 and route_matrix 4/4 green; no route-matrix consumer test failed)"},
+    {"cmd": "git diff --check", "result": "clean"}
+  ],
+  "n_baseline": {
+    "this_round": 242,
+    "note": "spec section 12: numbers are acceptance-record only; production verifier computes N from source, no constants"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "scope_discipline": "only card-glob files touched; task_prompt domain / server/tools / cli / frozen spec / http_server.rs / compat_registry.py untouched"
+}

@@ -1031,30 +1031,14 @@ def _h_get_applicable_rules(ctx: CompatCallContext) -> Any:
 # 与高风险核验项（diff_callers / diff_callees / compare_snapshots）不接入，fail-closed。
 # 规则查询工具（rule_candidate_list / rule_list / get_applicable_rules）纯 SELECT
 # 只读，本整改（T-1786747295227-49c90d68）接入 worker。
-_SECURITY_READ_ONLY_METHODS: Dict[str, Any] = {
-    "list_branches": _h_list_branches,
-    "merge_preview": _h_merge_preview,
-    "get_edit_history": _h_get_edit_history,
-    "find_shared_symbols": _h_find_shared_symbols,
-    "cross_repo_impact": _h_cross_repo_impact,
-    "cross_repo_summary": _h_cross_repo_summary,
-    "lsp_hover": _h_lsp_hover,
-    "lsp_definition": _h_lsp_definition,
-    "lsp_references": _h_lsp_references,
-    "lsp_diagnostics": _h_lsp_diagnostics,
-    "lsp_completion": _h_lsp_completion,
-    "lsp_check_available": _h_lsp_check_available,
-    "rule_candidate_list": _h_rule_candidate_list,
-    "rule_list": _h_rule_list,
-    "get_applicable_rules": _h_get_applicable_rules,
-}
-
+_SECURITY_READ_ONLY_METHODS: Dict[str, Any] = {}
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-# W4-4（T-1786886251769-22b94ee8-sub-4）：diff_branches 迁移 rust_native，
-# 从本注册表移除（15 个，16->15）。
-register_compat_routes(
-    _SECURITY_READ_ONLY_METHODS,
-    workspace_scope=_SECURITY_COMPAT_SCOPE,
-    description="H4C-2 第三批分支/编辑历史/跨仓库/LSP/规则查询组只读工具（15 个，T-1786747295227-49c90d68 整改；get_edit_stats 已 W2-3 T-1786840097331-fd01a3f8 迁移 rust_native；diff_branches 已 W4-4 T-1786886251769-22b94ee8-sub-4 迁移 rust_native）",
-)
+# 同步 RUST_COMPAT_ROUTE。P0-COMPAT-v3（T-1788963105720-60bfc80c）后 15 个只读
+# 方法全部 rust_native，白名单清空（handler 函数保留供追溯），空 dict 跳过注册。
+# W4-4（T-1786886251769-22b94ee8-sub-4）：diff_branches 迁移 rust_native（16->15）。
+if _SECURITY_READ_ONLY_METHODS:
+    register_compat_routes(
+        _SECURITY_READ_ONLY_METHODS,
+        workspace_scope=_SECURITY_COMPAT_SCOPE,
+        description="H4C-2 第三批分支/编辑历史/跨仓库/LSP/规则查询组只读工具（P0-COMPAT-v3 后全部 rust_native）",
+    )

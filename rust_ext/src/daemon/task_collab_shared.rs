@@ -334,6 +334,31 @@ pub(crate) fn canonical_claim_role(role: &str) -> &str {
     }
 }
 
+/// 为治理角色列出 task_leases 中可能出现的全部等价角色名（治理角色本身 +
+/// runtime 别名）。历史行可能以 runtime 名称（implementer/independent_reviewer
+/// 等）落库；C-24 存储侧归一后新行恒为治理角色。查找侧按此变体集匹配，
+/// 同时兼容新旧。
+pub(crate) fn runtime_role_variants(canonical: &str) -> Vec<String> {
+    let variants: &[&str] = match canonical {
+        "executor" => &["executor", "planner", "implementer", "tester", "evidence"],
+        "reviewer" => &["reviewer", "independent_reviewer"],
+        "adjudicator" => &["adjudicator"],
+        _ => std::slice::from_ref(&canonical),
+    };
+    variants.iter().map(|s| (*s).to_string()).collect()
+}
+
+/// 生成 task_leases 的 role 兼容匹配片段与参数（C-24）。
+/// 返回 `("role IN (?, ?, …)", variants)`；单变体时退化为 `role IN (?)`。
+pub(crate) fn role_in_match(canonical: &str) -> (String, Vec<String>) {
+    let variants = runtime_role_variants(canonical);
+    let placeholders = (0..variants.len())
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    (format!("role IN ({placeholders})"), variants)
+}
+
 pub(crate) fn rand_val() -> u32 {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -533,4 +558,190 @@ pub(crate) fn authoritative_now_text() -> String {
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
     format!("{}", ts)
+}
+
+// ============================================================================
+// GATE-1A：parent-aware governed task.create daemon hardening
+// （docs/design/cw-role-prompt-compiler-v1-frozen-spec.md §13.3，frozen spec
+//  SHA-256 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7）。
+// 仅承载纯校验 helper；不承载 RPC handler。
+// ============================================================================
+
+/// task.create frozen request contract 字段集合。
+///
+/// parent-aware 分支（parent_id 非空）启用严格字段校验：白名单之外的顶层字段
+/// 一律拒绝（`E_TASK_CREATE_UNKNOWN_FIELD`）。root 分支（parent_id 缺失或
+/// 规范化空）保持 Gate 前行为 bit-for-bit，**不**启用此检查。
+pub(crate) const TASK_CREATE_FROZEN_FIELDS: &[&str] = &[
+    "title",
+    "description",
+    "parent_id",
+    "workspace_id",
+    "workspace_instance_id",
+    "steps",
+    "role_contracts",
+    "task_id",
+    "task_contract_envelope",
+    "identity_policy",
+    "request_id",
+];
+
+/// GATE-1A：parent-aware 分支必须携带完整 Role Contracts（受治理 child 不允许裸建）。
+pub(crate) const ERR_TASK_PARENT_CONTRACT_REQUIRED: &str = "E_TASK_PARENT_CONTRACT_REQUIRED";
+
+/// GATE-1A：parent-aware 分支的未知字段拒绝（frozen request contract）。
+pub(crate) fn reject_unknown_create_fields(
+    params: &Value,
+) -> Result<(), DaemonRpcError> {
+    let Some(object) = params.as_object() else {
+        return Ok(());
+    };
+    let mut unknown: Vec<&str> = object
+        .keys()
+        .filter(|key| !TASK_CREATE_FROZEN_FIELDS.contains(&key.as_str()))
+        .map(|key| key.as_str())
+        .collect();
+    unknown.sort();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(DaemonRpcError::new(
+        "E_TASK_CREATE_UNKNOWN_FIELD",
+        format!(
+            "task.create parent-aware 请求包含未知字段: {}；frozen request contract 仅允许 {}",
+            unknown.join(", "),
+            TASK_CREATE_FROZEN_FIELDS.join(", ")
+        ),
+    ))
+}
+
+/// GATE-1A：parent 存在性与权威 binding/capture 校验（parent 分支）。
+///
+/// 在同一事务内读取（调用方持有事务写锁）：
+/// - parent 任务必须存在（`E_TASK_PARENT_NOT_FOUND`）；
+/// - parent 必须有**恰好一条**不可变 binding（`E_TASK_PARENT_UNBOUND` /
+///   `E_TASK_PARENT_AMBIGUOUS_BINDING`），且该 binding 引用的 capture 必须存在
+///   （`E_TASK_PARENT_CAPTURE_MISSING`）；
+/// - child 请求的 workspace_id / workspace_instance_id 必须与 parent binding 的
+///   workspace 及 capture 的 instance **精确一致**
+///   （`E_WORKSPACE_AUTHORITY_MISMATCH`）。
+///
+/// 任何缺口由调用方整事务 rollback，不留部分行。
+pub(crate) fn validate_parent_for_child_create(
+    tx: &Transaction<'_>,
+    parent_id: &str,
+    requested_workspace_id: i64,
+    requested_workspace_instance_id: &str,
+    created_by: &str,
+) -> Result<(), DaemonRpcError> {
+    // 1. parent 存在。
+    let parent_exists: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE id = ?1",
+            params![parent_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("parent 存在性校验失败: {}", e))
+        })?;
+    if parent_exists == 0 {
+        return Err(DaemonRpcError::new(
+            "E_TASK_PARENT_NOT_FOUND",
+            format!("task.create parent-aware：parent task {} 不存在", parent_id),
+        ));
+    }
+
+    // 2. parent 唯一 binding（不可变 task→workspace 绑定必须恰好一条）。
+    let mut stmt = tx
+        .prepare(
+            "SELECT workspace_id, workspace_binding_id, workspace_capture_id \
+             FROM task_workspace_bindings WHERE task_id = ?1",
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("parent binding 查询准备失败: {}", e))
+        })?;
+    let rows: Vec<(i64, String, String)> = stmt
+        .query_map(params![parent_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("parent binding 读取失败: {}", e))
+        })?
+        .collect::<Result<_, _>>()
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("parent binding 行解析失败: {}", e))
+        })?;
+    if rows.is_empty() {
+        return Err(DaemonRpcError::new(
+            "E_TASK_PARENT_UNBOUND",
+            format!(
+                "task.create parent-aware：parent task {} 无不可变 workspace binding；\
+                 必须先 attest 或绑定后才能创建 child",
+                parent_id
+            ),
+        ));
+    }
+    if rows.len() > 1 {
+        return Err(DaemonRpcError::new(
+            "E_TASK_PARENT_AMBIGUOUS_BINDING",
+            format!(
+                "task.create parent-aware：parent task {} 存在 {} 条 binding，权威绑定必须唯一",
+                parent_id,
+                rows.len()
+            ),
+        ));
+    }
+    let (parent_workspace_id, _binding_id, capture_id) = &rows[0];
+
+    // 3. child workspace 与 parent binding workspace 精确一致。
+    if *parent_workspace_id != requested_workspace_id {
+        return Err(DaemonRpcError::new(
+            "E_WORKSPACE_AUTHORITY_MISMATCH",
+            format!(
+                "task.create parent-aware：parent task {} 绑定 workspace={}，\
+                 child 请求 workspace={} 不一致",
+                parent_id, parent_workspace_id, requested_workspace_id
+            ),
+        ));
+    }
+
+    // 4. capture 必须存在，且其 instance 与 child 请求精确一致。
+    let parent_instance: Option<String> = tx
+        .query_row(
+            "SELECT workspace_instance_id FROM workspace_authority_captures \
+             WHERE workspace_capture_id = ?1",
+            params![capture_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("parent capture 读取失败: {}", e))
+        })?;
+    let parent_instance = parent_instance.ok_or_else(|| {
+        DaemonRpcError::new(
+            "E_TASK_PARENT_CAPTURE_MISSING",
+            format!(
+                "task.create parent-aware：parent task {} 的 capture {} 不存在",
+                parent_id, capture_id
+            ),
+        )
+    })?;
+    if parent_instance != requested_workspace_instance_id {
+        // T-1788595874892-c9b82244：legacy parent capture（ws-<digits>）→ canonical child
+        // 的**有界**权威等价桥。仅当 daemon 持久 registry、两侧不可变 capture 与
+        // root/owner 溯源全部证明同一 authority 才放行；任一缺口 fail-closed（同一
+        // E_WORKSPACE_AUTHORITY_MISMATCH）。证明成立时在同一事务 append-only 写
+        // 等价 provenance；不改历史 binding/capture、不传播 legacy instance、不放松
+        // exact numeric workspace rejection（数字一致已在上方 step 3 强制）。
+        crate::daemon::workspace_reconciliation::prove_parent_canonical_equivalence(
+            tx,
+            *parent_workspace_id,
+            capture_id,
+            &parent_instance,
+            requested_workspace_id,
+            requested_workspace_instance_id,
+            created_by,
+        )?;
+    }
+    Ok(())
 }

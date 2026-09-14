@@ -167,7 +167,7 @@ class TestL2FeatureMatrixHonest:
 
     @pytest.fixture(scope="class")
     def matrix_source(self) -> str:
-        return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
+        return (ROOT / "docs" / "design" / "_feature_matrix.md").read_text(encoding="utf-8")
 
     def test_l2_status_is_partial(self, matrix_source: str):
         """L2 状态必须从 ❌ 改为 🟡 部分完成（二轮评审补全）。"""

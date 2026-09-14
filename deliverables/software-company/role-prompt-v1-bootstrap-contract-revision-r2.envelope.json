@@ -1,0 +1,38 @@
+{
+  "contract_id": "TC-T-1788421906365-956ab790",
+  "revision": 2,
+  "supersedes_revision": 1,
+  "supersedes_contract_hash": "sha256:ef3c4a867fd4f72393163a25703e28cd3cb6ff407cb9eda34c250de0e242d386",
+  "profile": "design",
+  "objective": "Role Prompt v1 bootstrap-only provenance correction: retain the three already committed candidate input bytes and correct the successor feature manifest SHA-256 expectation to DAC53103AD9B23B5B331C9E30D1421DC1C768DAB17F9E7B735F792CA29A52CCA. The correction neither authorizes GATE-0/GATE-1A/GATE-1B nor changes Prompt Compiler production scope.",
+  "source_provenance": "Append-only correction for T-1788421906365-956ab790. Revision 1 transcribed successor manifest SHA-256 as DAC53103AD9B23B5B331C9E30D0F5DE4AEF868DA2364C3D2F919E361B1CFD3D1. Read-only verification proved that the committed immutable bytes at 10a727d812f1eaabb8842fec89a09d06820f23a5 hash to DAC53103AD9B23B5B331C9E30D1421DC1C768DAB17F9E7B735F792CA29A52CCA and are internally consistent with frozen spec 95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7, Gate manifest 0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947, and 11 RP cards. Commit 997780da1c17eba88e98c38493108394410dba88 is a same-parent sibling rather than a current-HEAD ancestor; 10a727d812f1eaabb8842fec89a09d06820f23a5 is the retained Git provenance anchor. See docs/evidence/role-prompt-v1-bootstrap-contract-revision-r2.json.",
+  "interfaces": [
+    "daemon task.contract_revise",
+    "Git SHA-256 provenance verification"
+  ],
+  "allowed_edit_scope": [
+    "docs/evidence/role-prompt-v1-bootstrap-contract-revision-r2.json",
+    "deliverables/software-company/role-prompt-v1-bootstrap-contract-revision-r2.envelope.json",
+    "docs/evidence/role-prompt-v1-bootstrap-input-provenance.json"
+  ],
+  "acceptance_clauses": [
+    "Daemon appends revision 2 to the same Task Contract lineage and preserves revision 1 unchanged.",
+    "The corrected successor manifest SHA-256 equals the committed bytes at 10a727d812f1eaabb8842fec89a09d06820f23a5.",
+    "Frozen spec and Gate manifest SHA-256 values remain unchanged.",
+    "No GATE-0/GATE-1A/GATE-1B action, Prompt Compiler production code change, task rebind, supersede, apply, or close occurs in this correction."
+  ],
+  "risks": [
+    "Treating the current disk bytes as authoritative without an append-only Contract revision would sever the frozen input contract.",
+    "Using sibling commit 997780da1c17eba88e98c38493108394410dba88 as the active provenance anchor would leave the receipt outside the current HEAD ancestry."
+  ],
+  "rollback": [
+    "Do not mutate or delete revision 1, the original receipt, or any frozen input bytes.",
+    "If revision 2 is proven incorrect, append a later Contract revision with new task-bound evidence; do not rewrite this revision."
+  ],
+  "dependencies": [
+    "Immutable workspace binding 1 / 4baea3ff12c2ea5c",
+    "Active independent reviewer lease with current fencing counter",
+    "Registered adjudicator identity distinct from the reviewer"
+  ],
+  "identity_policy": "legacy_identity_v1"
+}

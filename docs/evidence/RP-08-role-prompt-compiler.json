@@ -1,0 +1,88 @@
+{
+  "task_id": "T-1788710667638-0e8eb8b8",
+  "card": "RP-08: MCP HTTP thin client and N+1 route publication",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "frozen_spec": {
+    "path": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+  },
+  "idempotency_key": "role-prompt-v1-rp08",
+  "predecessor": {
+    "task_id": "T-1788703546980-263dff6c",
+    "lifecycle_status": "closed",
+    "next_action": "COMPLETE"
+  },
+  "workspace_binding": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "step_ids": [
+    "S-1788710667640-0eabde70",
+    "S-1788710667640-0eace554",
+    "S-1788710667640-0ead3950",
+    "S-1788710667640-0ead7dac"
+  ],
+  "commands": [
+    {
+      "cmd": "python -m pytest tests/test_task_prompt_mcp.py -q",
+      "result": "6 passed; 0 failed"
+    },
+    {
+      "cmd": "python -m pytest tests/test_task_prompt_mcp.py tests/test_route_matrix_generation.py -q",
+      "result": "19 passed; 0 failed"
+    },
+    {
+      "cmd": "python scripts/verify_route_matrix.py",
+      "result": "exit 0; N=243 source-derived; names(T)==names(M)==mirror; 17 pre-existing compat-domain KNOWN_DRIFT registered (unchanged from RP-07, excluded paths)"
+    },
+    {
+      "cmd": "python scripts/gen_route_matrix.py --check",
+      "result": "OK: matrix JSON (243 tools) + Rust mirror entries + in-memory generation all consistent"
+    },
+    {
+      "cmd": "python scripts/check_client_purity.py",
+      "result": "0 violations; server/tools (14 files incl. new tools_task_prompt.py) + cw.py + cli/ clean"
+    },
+    {
+      "cmd": "cargo test --lib route_matrix",
+      "result": "4 passed; 0 failed (incl. TOOL_ROUTES.len()==243 + validate_coverage(243) + json array len Some(243))"
+    },
+    {
+      "cmd": "git diff --check",
+      "result": "clean"
+    }
+  ],
+  "positive_results": [
+    "task_get_role_prompt(task_id: str) thin MCP tool created: sole parameter task_id per spec section 4.4; forwards exact RPC task.prompt.compile via route_rpc READ_ONLY path; no role/format/workspace/credential/lease params; no blind get_role_view reuse (AST call-level test)",
+    "fail-closed verified: DaemonUnavailableError propagates from route_rpc, no local template/SQLite/workspace-derivation fallback; route_rpc task-scoped discriminator (task_id present) prevents workspace injection, so no daemon_client.py change needed",
+    "registration: server/tools/__init__.py _MODULES + tools_task_prompt (single line); FastMCP register surface verified by test (exactly one tool registered by module)",
+    "N+1 route publication: matrix JSON regenerated N=243; Rust mirror regenerated (243 entries) between BEGIN/END GENERATED markers; --check green; hand-authored assertions updated 242->243",
+    "docs/mcp_tools.md: task_get_role_prompt detailed entry + route summary table row added",
+    "purity HARD gate green with new module included (14 server/tools files)"
+  ],
+  "negative_results": [
+    "daemon unavailable never falls back to Python authority: unit test asserts DaemonUnavailableError propagation with mocked failing route",
+    "workspace/Contract/identity mismatch fails closed: task.prompt.compile params contain only task_id (RP-05 handler fail-closed on unknown fields); no client-side workspace derivation introduced",
+    "no raw credential or lease token in evidence",
+    "live RPC probe NOT performed: daemon runtime is old build 974bddcf (RP-05/RP-08 handler not deployed); mocked unit tests only, live round-trip deferred to post-deployment verification per card scope"
+  ],
+  "changed_paths": [
+    "server/tools/tools_task_prompt.py (new)",
+    "server/tools/__init__.py",
+    "tests/test_task_prompt_mcp.py (new)",
+    "tests/test_route_matrix_generation.py (N baseline 242->243, card-authorized)",
+    "scripts/gen_route_matrix.py (TOOL_MODULES + ROUTE_OVERRIDES task_get_role_prompt)",
+    "deliverables/software-company/tool_migration_matrix.json (N=243 regenerated)",
+    "rust_ext/src/daemon/route_matrix.rs (mirror regenerated + assertions 243)",
+    "docs/mcp_tools.md"
+  ],
+  "governance_notes": {
+    "manifest_allowed_paths_gaps_authorized": [
+      "server/tools/__init__.py (sole registration surface via _MODULES; manifest omission)",
+      "tests/test_route_matrix_generation.py (N-baseline acceptance record must track N+1; T-domain extraction already SSOT via gen.TOOL_MODULES)"
+    ],
+    "manifest_rp06_key_deviation": "manifest RP-06 idempotency key role-prompt-v1-rp06 was consumed by 2026-09-06 compiler_policy_id alignment card T-1788701744712-86b22b34; manifest RP-06 CLI HTTP thin client card remains UNIMPLEMENTED and must be re-created under a variant key (role-prompt-v1-rp06-cli)"
+  },
+  "commit_sha": "c0184b5e29acb1cd06a2bb741bab1aef044fcf21",
+  "deployment_receipt_if_applicable": "not applicable (no daemon deployment in this card; runtime daemon remains 974bddcf until next refresh_shared_runtime.ps1 run)"
+}

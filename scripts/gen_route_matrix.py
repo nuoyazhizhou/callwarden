@@ -7,6 +7,10 @@ MCP 工具的**单一真相源**；本脚本只做读取与派生，不修改矩
 输出（写入仓库对应位置）：
 - `--emit-json`           刷新/校验矩阵 JSON（工具名集合来自本文件 TOOL_MODULES 提取，
                           路由元数据来自 ROUTE_OVERRIDES；二者合并后写回 JSON）。
+- `--emit-rust`           把 TOOL_ROUTES 条目段写回 route_matrix.rs 生成区间
+                          （BEGIN/END GENERATED ROUTE ENTRIES marker 之间）。
+- `--check`               只读自检：内存生成结果 vs 磁盘矩阵 JSON + Rust mirror
+                          条目段 byte-drift 比较，不写任何文件；退出码 0/1。
 - `--emit-dispatch`       打印 dispatch.rs 分支声明清单（人工核对/生成代码片段）。
 - `--emit-registry`       打印 capability registry 行清单。
 - `--emit-whitelist`      打印 COMPAT_ROUTE_WHITELIST 条目清单。
@@ -45,6 +49,7 @@ TOOL_MODULES: List[str] = [
     "tools_p2_graph",
     "tools_p3_identity",
     "tools_p4_lease",
+    "tools_task_prompt",
 ]
 
 
@@ -186,18 +191,18 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "export_module_graph": {"rpc_method": "export_module_graph", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "find_issues": {"rpc_method": "find_issues", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "get_call_chain_down": {"rpc_method": "query.call_chain_down", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "get_call_heatmap": {"rpc_method": "get_call_heatmap", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_call_heatmap": {"rpc_method": "get_call_heatmap", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "get_callees": {"rpc_method": "query.callees", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_callers": {"rpc_method": "query.callers", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "get_comment_coverage": {"rpc_method": "get_comment_coverage", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_comment_coverage": {"rpc_method": "get_comment_coverage", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "get_comment_from_version": {"rpc_method": "get_comment_from_version", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_deepest_functions": {"rpc_method": "get_deepest_functions", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_deepest_functions": {"rpc_method": "get_deepest_functions", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "get_file_history": {"rpc_method": "query.file_history", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_file_symbols": {"rpc_method": "query.file", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_impact": {"rpc_method": "get_impact", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "get_issue_summary": {"rpc_method": "get_issue_summary", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "get_module_call_stats": {"rpc_method": "query.module_call_stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "get_orphan_symbols": {"rpc_method": "get_orphan_symbols", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_orphan_symbols": {"rpc_method": "get_orphan_symbols", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "get_recent_changes": {"rpc_method": "get_recent_changes", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "get_semgrep_findings": {"rpc_method": "query.semgrep_findings", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_semgrep_stats": {"rpc_method": "query.semgrep_stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
@@ -206,7 +211,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "get_symbol_history": {"rpc_method": "get_symbol_history", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "get_symbol_location": {"rpc_method": "query.symbol_location", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_test_coverage": {"rpc_method": "get_test_coverage", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_top_callers": {"rpc_method": "get_top_callers", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_top_callers": {"rpc_method": "get_top_callers", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "get_topological_order": {"rpc_method": "query.topological_order", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_uncommented_symbols": {"rpc_method": "query.uncommented_symbols", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "restore_all_comments": {"rpc_method": "edit.restore_all_comments", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
@@ -247,7 +252,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     # ============ tools_semantic（19） ============
     "embed_single_symbol": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "embed_single"},
     "embed_symbols": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "embed"},
-    "find_similar_functions": {"rpc_method": "find_similar_functions", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "find_similar_functions": {"rpc_method": "find_similar_functions", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "gc_archive_import": {"rpc_method": "admin.gc_archive_import", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "gc_archive_inspect": {"rpc_method": "admin.gc_archive_inspect", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-admin", "status": "migrated"},
     "gc_archive_list": {"rpc_method": "admin.gc_archive_list", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-admin", "status": "migrated"},
@@ -256,32 +261,32 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "gc_policy_get": {"rpc_method": "admin.gc_policy_get", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-admin", "status": "migrated"},
     "gc_policy_set": {"rpc_method": "admin.gc_policy_set", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "gc_retention": {"rpc_method": "admin.gc_retention", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-admin", "status": "migrated"},
-    "get_project_dependencies": {"rpc_method": "get_project_dependencies", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_symbol_commit_history": {"rpc_method": "get_symbol_commit_history", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_project_dependencies": {"rpc_method": "get_project_dependencies", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "get_symbol_commit_history": {"rpc_method": "get_symbol_commit_history", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "import_codeowners": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "codeowners"},
     "import_git_blame": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "git_blame"},
     "import_project_dependencies": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "project_deps"},
-    "parse_codeowners": {"rpc_method": "parse_codeowners", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "parse_codeowners": {"rpc_method": "parse_codeowners", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "prune_external_symbols": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "prune_external"},
-    "semantic_search": {"rpc_method": "semantic_search", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "semantic_search": {"rpc_method": "semantic_search", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
 
     # ============ tools_task（52） ============
-    "audit_verify_chain": {"rpc_method": "audit_verify_chain", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "bootstrap_status": {"rpc_method": "bootstrap_status", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "audit_verify_chain": {"rpc_method": "audit_verify_chain", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "bootstrap_status": {"rpc_method": "bootstrap_status", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "cancel_job": {"rpc_method": "task.job_cancel", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated"},
     "cleanup_agent_rule_sync_log": {"rpc_method": "admin.cleanup_rule_sync_log", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "clear_clones": {"rpc_method": "admin.clear_clones", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "detect_clones": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "clone_detect"},
     "detect_clones_async": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "clone_detect"},
     "embed_symbols_async": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "embed"},
-    "get_clone_group_detail": {"rpc_method": "get_clone_group_detail", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_clone_group_detail": {"rpc_method": "get_clone_group_detail", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "get_clone_group_stats": {"rpc_method": "task.clone_group_stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_clone_stats": {"rpc_method": "task.clone_stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_commit_tasks": {"rpc_method": "query.commit_tasks", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_defect_correlation": {"rpc_method": "query.get_defect_correlation", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_job_stats": {"rpc_method": "task.job_stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_job_status": {"rpc_method": "task.job_status", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "get_symbol_change_tasks": {"rpc_method": "get_symbol_change_tasks", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_symbol_change_tasks": {"rpc_method": "get_symbol_change_tasks", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "get_symbol_issues": {"rpc_method": "query.issues", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_task_commits": {"rpc_method": "task.get_commits", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
     "get_task_symbol_changes": {"rpc_method": "task.get_symbol_changes", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
@@ -290,9 +295,9 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "get_test_stability": {"rpc_method": "query.tests", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_tested_functions": {"rpc_method": "query.tests", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "link_edit_audit_symbols": {"rpc_method": "task.link_edit_audit_symbols", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
-    "list_audit_signing_keys": {"rpc_method": "list_audit_signing_keys", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "list_clone_groups": {"rpc_method": "list_clone_groups", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "list_clones": {"rpc_method": "list_clones", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "list_audit_signing_keys": {"rpc_method": "list_audit_signing_keys", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "list_clone_groups": {"rpc_method": "list_clone_groups", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "list_clones": {"rpc_method": "list_clones", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "list_jobs": {"rpc_method": "task.list_jobs", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "record_task_symbol_change": {"rpc_method": "task.record_symbol_change", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
     "rotate_audit_signing_key": {"rpc_method": "admin.audit_rotate_key", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
@@ -307,72 +312,76 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "task_create_subtask": {"rpc_method": "task.create_subtask", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
     "task_list": {"rpc_method": "task.list", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
     "task_next_step": {"rpc_method": "task.claim", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
-    "task_plan_template": {"rpc_method": "task_plan_template", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "task_plan_template": {"rpc_method": "task_plan_template", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "task_quality_findings": {"rpc_method": "task.quality_findings", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
     "task_report_step": {"rpc_method": "task.report", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
     "task_resolve_block": {"rpc_method": "task.reopen", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
     "task_resolve_quality_finding": {"rpc_method": "task.resolve_quality_finding", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
     "task_rollback": {"rpc_method": "task.rollback", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
     "task_split": {"rpc_method": "task.split", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
+    "task_assignment_status": {"rpc_method": "task.assignment.status", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
+    "task_get_role_prompt": {"rpc_method": "task.prompt.compile", "backend": "rust_native", "op": "READ_ONLY", "batch": "RP-08", "status": "migrated"},
+    "task_assignment_heartbeat": {"rpc_method": "task.assignment.heartbeat", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
+    "task_governance_projection": {"rpc_method": "task.governance_projection.get", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
     "task_status": {"rpc_method": "task.status", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
     "task_status_tree": {"rpc_method": "task.status_tree", "backend": "task_rpc", "op": "READ_ONLY", "batch": "existing-task", "status": "stable"},
     "wait_for_job": {"rpc_method": "task.wait_for_job", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "work_next_job": {"rpc_method": "task.work_next", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "existing-task", "status": "stable"},
 
     # ============ tools_summary（31） ============
-    "ask_codebase": {"rpc_method": "ask_codebase", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "blast_radius": {"rpc_method": "blast_radius", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "ask_codebase": {"rpc_method": "ask_codebase", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "blast_radius": {"rpc_method": "blast_radius", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "churn_analysis": {"rpc_method": "query.churn_analysis", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "cross_layer_impact": {"rpc_method": "cross_layer_impact", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "cross_layer_impact": {"rpc_method": "cross_layer_impact", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "defect_correlation": {"rpc_method": "query.defect_correlation", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "defect_learn": {"rpc_method": "defect_learn", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "defect_learn": {"rpc_method": "defect_learn", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "defect_search": {"rpc_method": "query.defect_search", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "defect_stats": {"rpc_method": "defect.stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "defect_suggest_fix": {"rpc_method": "query.defect_suggest_fix", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "diff_to_symbol": {"rpc_method": "query.diff_to_symbol", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "evolution_frequency": {"rpc_method": "evolution_frequency", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "find_uncovered_functions": {"rpc_method": "find_uncovered_functions", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "evolution_frequency": {"rpc_method": "evolution_frequency", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "find_uncovered_functions": {"rpc_method": "find_uncovered_functions", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "generate_summary": {"rpc_method": "summary.generate", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
-    "get_clone_aware_impact": {"rpc_method": "get_clone_aware_impact", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_clone_aware_impact": {"rpc_method": "get_clone_aware_impact", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "get_coverage_for_symbol": {"rpc_method": "query.coverage_for_symbol", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "get_ownership_map": {"rpc_method": "get_ownership_map", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_summary": {"rpc_method": "get_summary", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_token_savings_report": {"rpc_method": "get_token_savings_report", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_vulnerability_blast_radius": {"rpc_method": "get_vulnerability_blast_radius", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_ownership_map": {"rpc_method": "get_ownership_map", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "get_summary": {"rpc_method": "get_summary", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "get_token_savings_report": {"rpc_method": "get_token_savings_report", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "get_vulnerability_blast_radius": {"rpc_method": "get_vulnerability_blast_radius", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "guardrail_add_rule": {"rpc_method": "guardrail.add_rule", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
-    "guardrail_check_edit": {"rpc_method": "guardrail_check_edit", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "guardrail_list_rules": {"rpc_method": "guardrail_list_rules", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "guardrail_scan": {"rpc_method": "guardrail_scan", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "hotspot_evolution": {"rpc_method": "hotspot_evolution", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "guardrail_check_edit": {"rpc_method": "guardrail_check_edit", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "guardrail_list_rules": {"rpc_method": "guardrail_list_rules", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "guardrail_scan": {"rpc_method": "guardrail_scan", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "hotspot_evolution": {"rpc_method": "hotspot_evolution", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "import_coverage": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "coverage"},
-    "project_brief": {"rpc_method": "project_brief", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "project_brief": {"rpc_method": "project_brief", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
     "record_token_savings": {"rpc_method": "edit.record_token_savings", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
-    "repo_map": {"rpc_method": "repo_map", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "review_readiness": {"rpc_method": "review_readiness", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "test_impact_selection": {"rpc_method": "test_impact_selection", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "who_to_ask": {"rpc_method": "who_to_ask", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "repo_map": {"rpc_method": "repo_map", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "review_readiness": {"rpc_method": "review_readiness", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "test_impact_selection": {"rpc_method": "test_impact_selection", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
+    "who_to_ask": {"rpc_method": "who_to_ask", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3transitionmigrated"},
 
     # ============ tools_security（36） ============
     "compare_snapshots": {"rpc_method": "admin.snapshot_compare", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-admin", "status": "migrated"},
-    "cross_repo_impact": {"rpc_method": "cross_repo_impact", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "cross_repo_summary": {"rpc_method": "cross_repo_summary", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "cross_repo_impact": {"rpc_method": "cross_repo_impact", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "cross_repo_summary": {"rpc_method": "cross_repo_summary", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "detect_cross_repo_deps": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "cross_repo_deps"},
     "diff_branches": {"rpc_method": "query.diff_branches", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "diff_callees": {"rpc_method": "query.diff_callees", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-edit", "status": "migrated"},
     "diff_callers": {"rpc_method": "query.diff_callers", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-edit", "status": "migrated"},
     "extract_rule_candidates_from_quality_findings": {"rpc_method": "rule.extract_candidates", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
-    "find_shared_symbols": {"rpc_method": "find_shared_symbols", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_applicable_rules": {"rpc_method": "get_applicable_rules", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_edit_history": {"rpc_method": "get_edit_history", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "find_shared_symbols": {"rpc_method": "find_shared_symbols", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "get_applicable_rules": {"rpc_method": "get_applicable_rules", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "get_edit_history": {"rpc_method": "get_edit_history", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "get_edit_stats": {"rpc_method": "edit.stats", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "list_branches": {"rpc_method": "list_branches", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "lsp_check_available": {"rpc_method": "lsp_check_available", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "lsp_completion": {"rpc_method": "lsp_completion", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "lsp_definition": {"rpc_method": "lsp_definition", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "lsp_diagnostics": {"rpc_method": "lsp_diagnostics", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "lsp_hover": {"rpc_method": "lsp_hover", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "lsp_references": {"rpc_method": "lsp_references", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "merge_preview": {"rpc_method": "merge_preview", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "list_branches": {"rpc_method": "list_branches", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "lsp_check_available": {"rpc_method": "lsp_check_available", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "lsp_completion": {"rpc_method": "lsp_completion", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "lsp_definition": {"rpc_method": "lsp_definition", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "lsp_diagnostics": {"rpc_method": "lsp_diagnostics", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "lsp_hover": {"rpc_method": "lsp_hover", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "lsp_references": {"rpc_method": "lsp_references", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
+    "merge_preview": {"rpc_method": "merge_preview", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "propose_edit": {"rpc_method": "edit.propose", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "propose_range_patch": {"rpc_method": "edit.propose_range_patch", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "propose_symbol_id_patch": {"rpc_method": "edit.propose_symbol_id_patch", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
@@ -382,10 +391,10 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "revert_edit": {"rpc_method": "edit.revert", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "rule_candidate_accept": {"rpc_method": "rule.candidate_accept", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "rule_candidate_create": {"rpc_method": "rule.candidate_create", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
-    "rule_candidate_list": {"rpc_method": "rule_candidate_list", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "rule_candidate_list": {"rpc_method": "rule_candidate_list", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "rule_candidate_reject": {"rpc_method": "rule.candidate_reject", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "rule_insert_agents_md_block": {"rpc_method": "rule.insert_agents_md_block", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
-    "rule_list": {"rpc_method": "rule_list", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "rule_list": {"rpc_method": "rule_list", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "rule_sync_agents_md": {"rpc_method": "rule.sync_agents_md", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "run_check_gate": {"rpc_method": "gate.run_check", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-edit", "status": "migrated"},
     "switch_branch": {"rpc_method": "admin.branch_switch", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
@@ -396,37 +405,37 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "get_build_context": {"rpc_method": "build_context.get", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "get_metrics": {"rpc_method": "admin.metrics_get", "backend": "rust_native", "op": "READ_ONLY", "batch": "T02-admin", "status": "migrated"},
     "get_resolved_edges": {"rpc_method": "build_context.resolved_edges", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "get_toolchain": {"rpc_method": "get_toolchain", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_workspace_toolchains": {"rpc_method": "get_workspace_toolchains", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "get_toolchain": {"rpc_method": "get_toolchain", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
+    "get_workspace_toolchains": {"rpc_method": "get_workspace_toolchains", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
     "list_build_contexts": {"rpc_method": "build_context.list", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
-    "list_toolchains": {"rpc_method": "list_toolchains", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "list_toolchains": {"rpc_method": "list_toolchains", "backend": "rust_native", "op": "READ_ONLY", "batch": "S2", "status": "migrated"},
 
     # ============ tools_collab（8） ============
     "append_evidence": {"rpc_method": "evidence.append", "backend": "rust_native", "op": "GOVERNANCE_WRITE", "batch": "existing-native", "status": "stable"},
-    "find_evidence": {"rpc_method": "find_evidence", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_freshness_status": {"rpc_method": "get_freshness_status", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_gate_decision": {"rpc_method": "get_gate_decision", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_role_view": {"rpc_method": "get_role_view", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "find_evidence": {"rpc_method": "find_evidence", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-002", "status": "migrated"},
+    "get_freshness_status": {"rpc_method": "get_freshness_status", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-003", "status": "migrated"},
+    "get_gate_decision": {"rpc_method": "get_gate_decision", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-004", "status": "migrated"},
+    "get_role_view": {"rpc_method": "role_view.get", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-001", "status": "migrated"},
     "submit_verdict": {"rpc_method": "verdict.submit", "backend": "rust_native", "op": "GOVERNANCE_WRITE", "batch": "existing-native", "status": "stable"},
     "task_remediation_create": {"rpc_method": "task.remediation.create", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "existing-native", "status": "stable"},
     "task_step_resolve": {"rpc_method": "task.step.resolve", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "existing-native", "status": "stable"},
 
     # ============ tools_p2_graph（10） ============
     "build_hard_dependency_edges": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "hard_dep_edges"},
-    "detect_cycle": {"rpc_method": "detect_cycle", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_artifact_freshness": {"rpc_method": "get_artifact_freshness", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_dependency_edges": {"rpc_method": "get_dependency_edges", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_interface_providers": {"rpc_method": "get_interface_providers", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "detect_cycle": {"rpc_method": "detect_cycle", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-007", "status": "migrated"},
+    "get_artifact_freshness": {"rpc_method": "get_artifact_freshness", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-005", "status": "migrated"},
+    "get_dependency_edges": {"rpc_method": "get_dependency_edges", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-009", "status": "migrated"},
+    "get_interface_providers": {"rpc_method": "get_interface_providers", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-006", "status": "migrated"},
     "import_envelope_dependencies": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "envelope_deps"},
     "publish_interface": {"rpc_method": "admin.publish_interface", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "record_artifact_identity": {"rpc_method": "admin.record_artifact_identity", "backend": "rust_native", "op": "GOVERNANCE_WRITE", "batch": "T02-admin", "status": "migrated"},
     "select_interface_provider": {"rpc_method": "admin.select_interface_provider", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
-    "validate_revision_dependencies": {"rpc_method": "validate_revision_dependencies", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "validate_revision_dependencies": {"rpc_method": "validate_revision_dependencies", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-008", "status": "migrated"},
 
     # ============ tools_p3_identity（7） ============
-    "check_action_identity": {"rpc_method": "check_action_identity", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "check_session_separation": {"rpc_method": "check_session_separation", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
-    "get_action_identity": {"rpc_method": "get_action_identity", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
+    "check_action_identity": {"rpc_method": "check_action_identity", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-011", "status": "migrated"},
+    "check_session_separation": {"rpc_method": "check_session_separation", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-012", "status": "migrated"},
+    "get_action_identity": {"rpc_method": "get_action_identity", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-010", "status": "migrated"},
     "get_attestation_validity": {"rpc_method": "get_attestation_validity", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "list_attestation_revocations": {"rpc_method": "list_attestation_revocations", "backend": "python_compat", "op": "READ_ONLY", "batch": "P0-compat", "status": "transition"},
     "record_action_identity": {"rpc_method": "admin.record_action_identity", "backend": "rust_native", "op": "GOVERNANCE_WRITE", "batch": "T02-admin", "status": "migrated"},
@@ -555,6 +564,120 @@ def emit_shell_skeleton(matrix: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# 4b. Rust mirror 生成（RP-07 SSOT：route_matrix.rs 条目段由本脚本独占生成）
+# ---------------------------------------------------------------------------
+_RUST_PATH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "route_matrix.rs")
+_RUST_BEGIN = "// BEGIN GENERATED ROUTE ENTRIES (gen_route_matrix.py --emit-rust; DO NOT EDIT)"
+_RUST_END = "// END GENERATED ROUTE ENTRIES"
+
+_BACKEND_RUST = {
+    "rust_native": "RustNative",
+    "task_rpc": "TaskRpc",
+    "python_compat": "PythonCompat",
+    "declared_unavailable": "DeclaredUnavailable",
+}
+_OP_RUST = {
+    "READ_ONLY": "ReadOnly",
+    "PROTECTED_MUTATION": "ProtectedMutation",
+    "GOVERNANCE_WRITE": "GovernanceWrite",
+}
+
+
+def emit_rust_entries(matrix: Dict[str, Any]) -> str:
+    """生成 route_matrix.rs 的 TOOL_ROUTES 条目段（不含 marker 行）。
+
+    排序与矩阵 JSON 一致（module, name）；条目格式与 ToolRoute struct 字段
+    一致。python_compat 条目的 rpc_method = 工具名（compat 直达路由）。
+    """
+    lines: List[str] = []
+    for t in matrix["tools"]:
+        backend = _BACKEND_RUST[t["target_backend"]]
+        op = _OP_RUST[t["op_class"]]
+        lines.append(
+            f'    ToolRoute {{ name: "{t["name"]}", module: "{t["module"]}", '
+            f'target_backend: Backend::{backend}, rpc_method: "{t["rpc_method"]}", '
+            f'op_class: OpClass::{op}, batch: "{t["batch"]}", status: "{t["status"]}" }},'
+        )
+    return "\n".join(lines)
+
+
+def _read_rust_sections() -> Tuple[str, str, str]:
+    """读 route_matrix.rs，返回 (header, generated 段, footer)。
+
+    header = 文件头到 BEGIN marker（含）；generated 段 = marker 之间；
+    footer = END marker 之后（含）。marker 缺失时报错退出。
+    """
+    with open(_RUST_PATH, "r", encoding="utf-8") as fh:
+        src = fh.read()
+    b = src.find(_RUST_BEGIN)
+    e = src.find(_RUST_END)
+    if b < 0 or e < 0 or e < b:
+        raise SystemExit(
+            f"{_RUST_PATH} 缺少生成区间 marker（{_RUST_BEGIN} / {_RUST_END}）；"
+            f"请先在 TOOL_ROUTES 条目两侧手工插入 marker 后重试"
+        )
+    header = src[: b + len(_RUST_BEGIN)]
+    generated = src[b + len(_RUST_BEGIN) : e]
+    footer = src[e:]
+    return header, generated, footer
+
+
+def emit_rust(matrix: Dict[str, Any]) -> str:
+    """把生成的条目段写入 route_matrix.rs marker 区间（header/footer 不动）。"""
+    header, _, footer = _read_rust_sections()
+    body = emit_rust_entries(matrix)
+    with open(_RUST_PATH, "w", encoding="utf-8", newline="") as fh:
+        fh.write(header + "\n" + body + "\n" + footer)
+    return f"已写回 Rust mirror 条目段: {_RUST_PATH}（{matrix['total_tools']} 条目）"
+
+
+def check_outputs(matrix: Dict[str, Any]) -> int:
+    """--check：比较内存生成结果与磁盘产物，不写任何文件。退出码 0/1。"""
+    errors: List[str] = []
+
+    disk = load_matrix()
+    a = {k: v for k, v in matrix.items() if k != "generated_at"}
+    b = {k: v for k, v in disk.items() if k != "generated_at"}
+    if a != b:
+        # 给出首条差异定位，便于人工排查。
+        names_mem = {t["name"] for t in matrix["tools"]}
+        names_disk = {t["name"] for t in disk["tools"]}
+        if names_mem != names_disk:
+            errors.append(
+                f"工具名集合漂移: 仅内存={sorted(names_mem - names_disk)} "
+                f"仅磁盘={sorted(names_disk - names_mem)}"
+            )
+        else:
+            for tm, td in zip(matrix["tools"], disk["tools"]):
+                if tm != td:
+                    errors.append(f"条目漂移: {tm.get('name')}: {tm} != {td}")
+                    break
+            else:
+                errors.append("矩阵 JSON 与内存生成不一致（字段级）")
+
+    _, generated, _ = _read_rust_sections()
+    expected_rust = "\n" + emit_rust_entries(matrix) + "\n"
+    if generated.strip("\n") != expected_rust.strip("\n"):
+        mem_names = {t["name"] for t in matrix["tools"]}
+        rs_names = set(re.findall(r'ToolRoute \{ name: "(\w+)"', generated))
+        if mem_names != rs_names:
+            errors.append(
+                f"Rust mirror 工具名漂移: 仅内存={sorted(mem_names - rs_names)} "
+                f"仅 mirror={sorted(rs_names - mem_names)}"
+            )
+        else:
+            errors.append("Rust mirror 条目段与内存生成不一致（字节级）")
+
+    if errors:
+        print("CHECK FAILED:")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+    print(f"CHECK OK: 矩阵 JSON（{matrix['total_tools']} 工具）与 Rust mirror 条目段均与内存生成一致")
+    return 0
+
+
 def emit_report(matrix: Dict[str, Any]) -> str:
     """输出迁移核对报告。"""
     by_backend: Dict[str, int] = {}
@@ -586,6 +709,12 @@ def main() -> int:
         save_matrix(matrix)
         print(f"已写回矩阵: {_MATRIX_PATH}（{matrix['total_tools']} 工具）")
         return 0
+    if "--emit-rust" in args:
+        matrix = build_matrix()
+        print(emit_rust(matrix))
+        return 0
+    if "--check" in args:
+        return check_outputs(build_matrix())
     matrix = load_matrix()
     if "--emit-dispatch" in args:
         print(emit_dispatch_manifest(matrix))

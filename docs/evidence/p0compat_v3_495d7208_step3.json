@@ -1,0 +1,18 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1788963088148-495d7208",
+  "step_index": 3,
+  "action": "matrix_verify",
+  "changed_files": [
+    "deliverables/software-company/tool_migration_matrix.json",
+    "scripts/gen_route_matrix.py"
+  ],
+  "summary": "ROUTE_OVERRIDES 3 条目 backend→rust_native/batch→P0-COMPAT-v3/status→migrated；--emit-json 重刷矩阵；/capabilities 权威端点核验 3 方法 rust_native",
+  "verification": {
+    "rust_build": "cargo build --bin cw-daemon Finished (CARGO_INCREMENTAL=0, unset INCLUDE)",
+    "pytest": "15/15 PASS (tests/test_mcp_compat_identity-lease-small_http_rpc.py + test_mcp_assignment_show_http_rpc.py)",
+    "capabilities_endpoint": "3 methods backend=rust_native, status=available"
+  },
+  "created_at": "2026-09-09T23:20:04+0800",
+  "request_id": "req-evd-4fb7a846"
+}

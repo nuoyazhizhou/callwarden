@@ -1,0 +1,85 @@
+{
+  "schema": "cw.role_prompt_v1.order5.creation.evidence.v1",
+  "record_kind": "planner_governed_task_creation_receipt",
+  "created_at": "2026-09-06T12:35:00+08:00",
+  "release_order": 5,
+  "authority": {
+    "gate_manifest": "deliverables/software-company/role-prompt-v1-gate-task-manifest.json",
+    "gate_manifest_sha256": "0DF148FD18C365EE2F84A50F8427973960D969A70DBD5CAC17BFD190CBA2F947",
+    "frozen_spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "frozen_spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7",
+    "precondition": "GATE-1B COMPLETE_CONFIRMED; shared runtime deployed (receipt 20260906-113927); daemon health pid=42288 git_commit=974bddcf4fa7be286bdf24f2e244794abe292629 worker_status=healthy",
+    "endpoint": "http://127.0.0.1:9365"
+  },
+  "workspace_authority_resolved_live": {
+    "command": "cw.py daemon status 4baea3ff12c2ea5c",
+    "task_db_workspace_id": 1,
+    "task_db_instance_id": "4baea3ff12c2ea5c",
+    "registry_instance_id": "4baea3ff12c2ea5c",
+    "status": "active",
+    "note": "values passed explicitly to governed create; no client derivation, no ws-1 propagation"
+  },
+  "entrypoint": "cw task create --parent-id ... --workspace-id 1 --workspace-instance-id 4baea3ff12c2ea5c --identity-policy legacy_identity_v1 --role-contracts <projected payload>",
+  "precreation_dedup": {
+    "method": "read-only sqlite verification (tasks.description/title LIKE idempotency key) + legacy Epic subtree readback",
+    "role-prompt-v1-feature-parent": 0,
+    "role-prompt-v1-rp00": 0
+  },
+  "role_contract_projection": {
+    "rule": "structured manifest blocks projected to legacy payload allowed fields only; array items joined with '; '; unknown fields dropped (fail_closed)",
+    "count_per_task": 3,
+    "roles": ["executor", "reviewer", "adjudicator"]
+  },
+  "feature_parent": {
+    "title": "Role Prompt Compiler v1：task-id-first daemon prompt authority",
+    "task_id": "T-1788668721548-b8c6f4dc",
+    "parent_id": "T-1787203926824-9f873bfc",
+    "idempotency_key": "role-prompt-v1-feature-parent",
+    "workspace_binding_id": "tb-T-1788668721548-b8c6f4dc-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-3100672856",
+    "assignment_id": "A-00963e9f6fd02d8ad9cd51d7",
+    "step_count": 0,
+    "readback": {
+      "lifecycle_status": "open",
+      "workflow_status": "governance_blocked",
+      "identity_policy": "legacy_identity_v1",
+      "identity_policy_status": "declared",
+      "interpretation": "container with no steps; governance_blocked (no pending steps) is expected"
+    }
+  },
+  "rp00": {
+    "title": "Role Prompt Compiler v1 RP-00: merged frozen spec and machine planning artifacts",
+    "task_id": "T-1788668722815-04496bb0",
+    "parent_id": "T-1788668721548-b8c6f4dc",
+    "idempotency_key": "role-prompt-v1-rp00",
+    "workspace_binding_id": "tb-T-1788668722815-04496bb0-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-72314460",
+    "assignment_id": "A-6409e18809aef7144b6cbdf9",
+    "step_count": 4,
+    "first_step_id": "S-1788668722816-0450b3c0",
+    "task_contract": {
+      "id": "TC-T-1788668722815-04496bb0",
+      "revision": 1,
+      "hash": "sha256:898d860ef6ac82fb02e7d9cdd3916f96289c0a402ab24e2c4ce82b45850e8681"
+    },
+    "executor_role_contract": {
+      "id": "rcl-T-1788668722815-04496bb0-executor",
+      "revision_id": "rcr-T-1788668722815-04496bb0-executor-r1",
+      "revision": 1,
+      "hash": "sha256:a17221d1a064c302188ac7bc5a804e28e647553b12133f543020e8423122c2d0"
+    },
+    "next_action_readback": {
+      "decision": "READY",
+      "action": "CLAIM",
+      "required_role": "executor",
+      "lease_required": true,
+      "fencing_required": true
+    }
+  },
+  "driver_script": "_order5_create_parent_rp00.py (untracked mechanical executor; values serialized from daemon-resolved authority only)",
+  "disclosures": [
+    "Leftover bridge live probe task T-1788664683905-a275c53c (open, 0 steps, governance_blocked, title marked supersede candidate) remains under the legacy Epic; supersede deferred until a reviewer-lease anchor is available.",
+    "Successor manifest placeholder values (ROLE_PROMPT_V1_PARENT_TASK_ID / RP00_TASK_ID) are recorded here and NOT written back into the manifest file; manifest freeze is RP-00 step freeze_task_manifest scope.",
+    "No raw lease token or credential recorded in this evidence."
+  ]
+}

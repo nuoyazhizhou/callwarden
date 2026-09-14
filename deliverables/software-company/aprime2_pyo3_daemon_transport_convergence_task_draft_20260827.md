@@ -284,3 +284,41 @@ A″ parent 与 A″-G0 任务描述必须显式写入 `visibility_only_until_re
 | A″-01…37 | 仍不创建也不领取，直到 G0 applied 与 R1 execution gates 全部满足 | 不以 parent `open`、子卡 `open`、聊天 PASS 或文本 handoff 推断授权 |
 
 这不是对 P0-K scope 的回退或修订；而是如实承认 `task.create` 的当前 envelope policy gap，并阻止它成为外部身份绑定、legacy 隐式降级或无 contract 预建卡的旁路。
+
+
+## 修订记录 A″-R3（2026-09-08）：A″ parent step0 governance 记录（role_worker executor 执行）
+
+**记录人/角色**：role worker `cw-executor-p0j-v1`（sess-executor-20260908-01），经 daemon `task.claim` 领取 A″ parent step0（S-1787800317654-af22fb0c，action=`govern_visibility_and_release_boundary`，assignment `A-90583e2c47263186dcd5d39b`）。
+
+### R3.1 A″ parent 可见性状态（visibility-only boundary）
+
+- A″ parent 实际 task id：`T-1787800241076-0a1c1824`（本文件为其 `allowed_edit_scope` 内目标）；状态 `in_progress`（仅因 step0 被本 executor 领取，非实现授权）。
+- 唯一初始 child：`T-1787800241077-e7fd7231`（A″-G0 静态清单 Gate，`open`/`queued`）。
+- A″-01…A″-37 任何实现 microtask：**未创建、未领取**（tasks 表实测 A″ parent 子任务仅 1 项 = G0；`A″-NN` 标题无实现卡记录）。
+- A″ parent 与 A″-G0 均只允许静态 inventory/governance 记录；`task.create` 后未发生任何 production source/route/schema/DB mutation、matrix 状态更新、runtime refresh/deploy。
+
+### R3.2 role_worker_v1 bootstrap claim barrier 现状
+
+两张卡的 Task Contract 均已由独立 Reviewer/Adjudicator 通过 append-only 路径升级到 **revision 2**（`identity_policy=role_worker_v1`），claim barrier 已满足：
+
+| Task | TC contract_id | rev2 hash | repair_provenance |
+|---|---|---|---|
+| A″ parent | TC-T-1787800241076-0a1c1824 | `sha256:491cf1da36614a848701224967cd69182f362ca32433a18d5f72927e9aaa1f16` | identity_policy_role_worker_v1_upgrade（supersedes rev1 `245996d0…`） |
+| A″-G0 | TC-T-1787800241077-e7fd7231 | `sha256:5c08d275f2f9971f351776fc3adda2ee6899263afe5914abc76f8db10d82021b` | identity_policy_role_worker_v1_upgrade（supersedes rev1 `16745cd8…`） |
+
+- executor 角色 lineage/revision：`rcl-T-1787800241076-0a1c1824-executor` / `rcr-…-executor-r1`（hash `sha256:98d07e48…`），claim 时 `contract_claim`（skill_id=`none`、skill_version=`aprime2-client-boundary-g0-v1`、prompt_hash=`643b65dc…`）与冻结合同一致。
+- 本次 step0 按 role_worker executor 身份执行，只读核验 + 追加本记录；未借用 reviewer/adjudicator credential，未直接 SQLite/CAS 写入。
+
+### R3.3 implementation release gates 实测快照（只读，2026-09-08）
+
+| Release gate | 要求 | 当前实测 | 结论 |
+|---|---|---|---|
+| P0-K closed | closed | `T-1787407700109-f5562c60`（P0-K…）status=`closed` | 已满足（仅作记录，独立 disposition 以正式 evidence 为准） |
+| A′ 闭环 | A′ 及必要 descendant closed | `T-1787293451688-c14b1e44`（A′）status=`closed` | 记录为已满足 |
+| 总父/route root | active | `T-1787203926824-9f873bfc` status=`in_progress` | active（根任务尚未整体 closed，不影响 A″ 可见性） |
+| 旧 S3 独立 disposition | append-only disposition 完成 | `T-1787203937208-0a795c68` status=`open` | **未满足** → A″-01…37 保持 blocked |
+| migration matrix `python_compat=0` | 0 | 本步骤未重跑矩阵（属 G0/matrix 独立核验范围） | 待独立验证 |
+| live/runtime convergence | 独立验证 | 本步骤未做 runtime 抓取（属 A″-G0 step0/preflight 范围） | 待独立验证 |
+| G0 applied | 独立 review + adjudication + applied | A″-G0 仍 `open/queued` | 未满足 → 不释放实现卡 |
+
+**结论**：A″ parent 保持 visibility-only；A″-01…A″-37 的创建/领取仍被 R1 release gates（尤其旧 S3 独立 disposition、matrix 清零、runtime 收敛、G0 applied）阻塞。本记录不授予任何实现权限。

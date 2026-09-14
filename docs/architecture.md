@@ -885,7 +885,7 @@ Schema 中为所有高频查询字段创建索引：
 
 ### 6. 查询路径设计决策（GraphStore vs SQL 路由）
 
-> 对应 [_feature_matrix.md F20](../_feature_matrix.md) 设计决策项。
+> 对应 [_feature_matrix.md F20](../design/_feature_matrix.md) 设计决策项。
 
 Call Warden 同时维护两套查询路径：**Rust GraphStore（CSR 内存索引）** 和 **SQLite SQL**。`DaemonClient` 按查询类型选择最优路径（详见 [server/daemon_client.py](../server/daemon_client.py) `_remote_query` / `_sql_fallback_*`）。
 

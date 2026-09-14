@@ -1,4 +1,8 @@
 {
+    "cli_task_create_parent_id": "Parent task ID; requires explicit daemon workspace pair and contracts",
+    "cli_task_create_identity_policy": "Explicit daemon identity policy (no inferred default for governed create)",
+    "cli_task_create_contract_envelope": "Task Contract JSON envelope, forwarded unchanged to the daemon",
+    "cli_task_create_task_id": "Explicit task ID matching the supplied Task Contract envelope",
     "lang_name": "English",
     "app": {
         "name": "Code Graph",

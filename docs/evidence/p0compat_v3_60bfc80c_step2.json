@@ -1,0 +1,19 @@
+{
+  "task_id": "T-1788963105720-60bfc80c",
+  "step_index": 2,
+  "action": "fixture_matrix",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_security",
+  "new_suite": {
+    "file": "tests/test_mcp_compat_tools_security_http_rpc.py",
+    "cases": "21 用例：15 方法 live 直连（success/empty/missing-resource fail-soft/unknown workspace fail-closed）+ Python 退役断言"
+  },
+  "stale_suite_repairs": {
+    "files": 15,
+    "fix": "全部缺 workspace_instance_id（MCP-070 同款）→ _call 辅助注入 CANONICAL_INSTANCE；lsp_definition/references/completion 旧断言含真相源不存在的 file_path/line 回显字段 → 对齐 db_lsp 实际返回形状"
+  },
+  "regression": {
+    "scope": "compat_* 全集 + 15 方法套件 + who_to_ask/semantic_search",
+    "result": "188 passed / 1 skipped / 0 failed"
+  }
+}

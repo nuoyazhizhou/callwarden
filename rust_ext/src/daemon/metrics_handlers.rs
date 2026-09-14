@@ -102,52 +102,19 @@ pub fn handle_status(
 }
 
 /// `query.metrics_summary` —— 代码度量摘要。
+///
+/// 复用 `query_compat_handlers::summary_metrics_summary`（复刻
+/// db_metrics.get_code_metrics_summary 的 8 字段 legacy 契约），与 `project_brief`
+/// 及 Python 客户端 `_handle_metrics` 的渲染契约保持一致。此前本函数返回
+/// symbols/calls/files/commented_symbols/functions/avg_depth 的 7 字段私有结构，
+/// 导致 `cw metrics`（RpcDBProxy → query.metrics_summary）渲染时 KeyError。
 pub fn handle_metrics_summary(
     conn: &Connection,
     workspace_id: i64,
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
     let _ = params;
-    let symbols = scalar_i64(
-        conn,
-        "SELECT COUNT(*) FROM symbols s JOIN file_instances fi ON fi.id = s.file_instance_id WHERE fi.workspace_id = ?1",
-        workspace_id,
-    )?;
-    let calls = scalar_i64(
-        conn,
-        "SELECT COUNT(*) FROM calls c JOIN symbols s ON s.id = c.caller_id JOIN file_instances fi ON fi.id = s.file_instance_id WHERE fi.workspace_id = ?1",
-        workspace_id,
-    )?;
-    let files = scalar_i64(
-        conn,
-        "SELECT COUNT(*) FROM file_instances WHERE workspace_id = ?1 AND status != 'archived'",
-        workspace_id,
-    )?;
-    let commented = scalar_i64(
-        conn,
-        "SELECT COUNT(DISTINCT s.symbol_hash) FROM symbols s JOIN file_instances fi ON fi.id = s.file_instance_id WHERE fi.workspace_id = ?1 AND s.has_comment = 1",
-        workspace_id,
-    )?;
-    let functions = scalar_i64(
-        conn,
-        "SELECT COUNT(*) FROM symbols s JOIN file_instances fi ON fi.id = s.file_instance_id WHERE fi.workspace_id = ?1 AND s.kind IN ('fn','test_fn','func','function','method')",
-        workspace_id,
-    )?;
-    let avg_depth = scalar_f64(
-        conn,
-        "SELECT AVG(s.depth) FROM symbols s JOIN file_instances fi ON fi.id = s.file_instance_id WHERE fi.workspace_id = ?1 AND s.depth >= 0",
-        workspace_id,
-    )?;
-    let comment_rate = if symbols > 0 { commented as f64 / symbols as f64 } else { 0.0 };
-    Ok(json!({
-        "symbols": symbols,
-        "calls": calls,
-        "files": files,
-        "commented_symbols": commented,
-        "functions": functions,
-        "avg_depth": avg_depth,
-        "comment_coverage": (comment_rate * 10000.0).round() / 10000.0,
-    }))
+    super::query_compat_handlers::summary_metrics_summary(conn, workspace_id)
 }
 
 /// `query.complexity_hotspots` —— 复杂度热点（行跨度 Top N）。
@@ -501,12 +468,6 @@ fn scalar_i64_pair(
         .map_err(|e| DaemonRpcError::internal_error(format!("scalar query: {e}")))
 }
 
-/// 辅助：查询单个 f64 标量。
-fn scalar_f64(conn: &Connection, sql: &str, workspace_id: i64) -> Result<f64, DaemonRpcError> {
-    conn.query_row(sql, rusqlite::params![workspace_id], |row| row.get::<_, f64>(0))
-        .map_err(|e| DaemonRpcError::internal_error(format!("scalar f64 query: {e}")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,5 +591,42 @@ mod tests {
         .unwrap();
         assert_eq!(result["rolled_back"], false);
         assert_eq!(result["reason"], "db_open_failed");
+    }
+
+    /// 空 workspace（表存在但零行）不得返回 internal_error，须返回全零的 8 字段契约。
+    ///
+    /// 回归依据：旧实现内联 `SELECT AVG(s.depth)`，无匹配行时 AVG 返回 NULL，
+    /// `scalar_f64` 把 NULL 转 f64 失败 → `internal_error`，即任何空 workspace 上
+    /// `cw metrics`（RpcDBProxy → query.metrics_summary）必崩。本用例锁定
+    /// 「空 workspace 返回全零 8 字段」这一修复后行为。
+    #[test]
+    fn test_metrics_summary_empty_workspace_returns_zeroed_contract() {
+        let (conn, _path) = tmp_db("metrics_summary_empty");
+        conn.execute_batch(
+            "CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, \
+                status TEXT, total_lines INTEGER, rel_path TEXT); \
+             CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, \
+                kind TEXT, has_comment INTEGER, symbol_hash TEXT); \
+             CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT); \
+             CREATE TABLE calls (caller_id INTEGER, callee_id INTEGER);",
+        )
+        .unwrap();
+
+        let result = handle_metrics_summary(&conn, 1, &json!({}))
+            .expect("空 workspace 不得返回 internal_error");
+
+        assert_eq!(result["file_count"], 0);
+        assert_eq!(result["function_count"], 0);
+        assert_eq!(result["total_lines"], 0);
+        assert_eq!(result["total_calls"], 0);
+        assert_eq!(result["avg_complexity"], 0.0);
+        assert_eq!(result["max_complexity"], 0);
+        assert_eq!(result["comment_coverage"], 0.0);
+        let dist = result["complexity_distribution"].as_object().unwrap();
+        assert_eq!(dist.len(), 4);
+        assert!(dist.values().all(|v| v.as_i64() == Some(0)));
+
+        // 8 字段 legacy 契约：缺失或改名即契约破坏（单一真相源 = summary_metrics_summary）。
+        assert_eq!(result.as_object().unwrap().len(), 8);
     }
 }

@@ -1,0 +1,46 @@
+{
+  "task_id": "T-1788963104879-2e9e6270",
+  "step_index": 2,
+  "action": "fixture_matrix",
+  "batch": "P0-COMPAT-v3",
+  "module": "tools_semantic",
+  "new_suite": {
+    "file": "tests/test_mcp_compat_tools_semantic_http_rpc.py",
+    "cases": "rust_native 5 方法 HTTP RPC 直连（live daemon）：success/empty/unknown instance fail-closed/退役断言（tools_semantic 白名单为空 + RUST_COMPAT_ROUTE 5 条目摘除）"
+  },
+  "stale_suite_repairs": [
+    {
+      "files": [
+        "tests/test_mcp_semantic_search_http_rpc.py",
+        "tests/test_mcp_find_similar_functions_http_rpc.py",
+        "tests/test_mcp_get_project_dependencies_http_rpc.py",
+        "tests/test_mcp_get_symbol_commit_history_http_rpc.py",
+        "tests/test_mcp_parse_codeowners_http_rpc.py"
+      ],
+      "fix": "注入 CANONICAL_INSTANCE=4baea3ff12c2ea5c；unknown instance 期望改 workspace_not_found fail-closed（不静默空返回）；E_HTTP_DAEMON_UNAVAILABLE 消息钉死断言放宽（本机代理把不可达端口拦成 502/503）"
+    },
+    {
+      "files": [
+        "tests/test_mcp_who_to_ask_http_rpc.py"
+      ],
+      "fix": "P0-H「禁止回退 workspace 1」硬化后裸 client 直调缺 workspace 解析：补 workspace_id=1（root c:/git_work/callwarden 对应行）+ 502 消息断言放宽；6 用例全绿"
+    },
+    {
+      "files": [
+        "tests/test_mcp_test_impact_selection_http_rpc.py",
+        "tests/test_mcp_validate_revision_dependencies_http_rpc.py",
+        "tests/test_mcp_list_attestation_revocations_http_rpc.py"
+      ],
+      "fix": "仅 daemon_unavailable_fail_closed 用例：本机 HTTP 代理把 127.0.0.1:9 拦成 502/503，异常类型（DaemonUnavailableError）即 fail-closed 证据，放宽消息钉死断言"
+    }
+  ],
+  "daemon_env_incident": {
+    "what": "前一晚重启 daemon 漏带 PYTHONPATH=C:/git_work → compat worker ModuleNotFoundError('callwarden') → E_COMPAT_WORKER_UNAVAILABLE，所有 python_compat 方法套件红",
+    "fix": "daemon 重启命令补 PYTHONPATH=C:/git_work CW_COMPAT_PYTHON=.venv_test/Scripts/python.exe；另把 daemon_wb_migration.json snapshot_cache_capacity 2→32（ wild-run 中 temp workspace snapshot 发布挤占容量=2 的缓存导致顺序依赖失败）"
+  },
+  "regression": {
+    "scope": "test_mcp_compat_*.py 全集 + 本卡 5 方法套件 + 修复的 6 个套件",
+    "result": "140 passed / 0 failed",
+    "note": "wildcard 全量（test_mcp_[a-z]*.py）存在 ~121 个与本卡无关的陈旧套件失败（query/summary 族 workspace 注入缺口 + 502 消息钉死 + server_full 契约漂移 + WAL CLI 本地模式漂移），已登记为独立积压，不在本卡范围"
+  }
+}

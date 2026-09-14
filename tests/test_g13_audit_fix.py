@@ -303,124 +303,153 @@ class TestG13DaemonServerHandleConnectionInstrumentation:
 
 
 # ============================================================
-# 3. cli/daemon_commands.py — --local / RPC 优先
+# 3. cli/daemon_commands.py — daemon RPC 权威 + --from-file 离线检视
 # ============================================================
 
 
 class TestG13CliMetricsCommand:
-    """验证 CLI daemon metrics 子命令的参数和行为"""
+    """验证 CLI daemon metrics 子命令的参数和行为（CLI-004 整改后）
 
-    def test_metrics_cmd_has_local_arg(self):
-        """metrics 子命令应有 --local 参数"""
+    metrics 仅经 daemon RPC 获取（Rust daemon 为唯一 authority），无本地
+    SQLite 降级：--local / --reset 已退役；--from-file 仅作显式离线快照
+    检视（读取 daemon 产出的 JSON，不涉及本地 DB）。
+    """
+
+    def test_metrics_cmd_retired_local_and_reset_flags_rejected(self, capsys):
+        """metrics 子命令已退役 --local / --reset（CLI-004：无本地降级）"""
         from callwarden.cli.daemon_commands import _parser
         parser = _parser(include_serve=False)
-        # 解析 metrics --local
-        args = parser.parse_args(["metrics", "--local"])
-        assert args.action == "metrics"
-        assert args.local is True
+        with pytest.raises(SystemExit):
+            parser.parse_args(["metrics", "--local"])
+        with pytest.raises(SystemExit):
+            parser.parse_args(["metrics", "--reset"])
+        capsys.readouterr()  # 吞掉 argparse 的 usage 输出
 
-    def test_metrics_cmd_default_local_false(self):
-        """metrics 子命令默认 --local=False（走 RPC）"""
-        from callwarden.cli.daemon_commands import _parser
-        parser = _parser(include_serve=False)
-        args = parser.parse_args(["metrics"])
-        assert args.local is False, \
-            "默认应 --local=False（走 RPC），G13 修复核心"
-
-    def test_metrics_cmd_has_format_and_name_and_reset(self):
-        """metrics 子命令应保留 --format / --name / --reset 参数"""
+    def test_metrics_cmd_has_format_and_name_and_from_file(self):
+        """metrics 子命令应提供 --format / --name / --from-file 参数"""
         from callwarden.cli.daemon_commands import _parser
         parser = _parser(include_serve=False)
         args = parser.parse_args([
             "metrics", "--format", "prometheus",
-            "--name", "requests_total", "--reset",
+            "--name", "requests_total", "--from-file", "snap.json",
         ])
+        assert args.action == "metrics"
         assert args.format == "prometheus"
         assert args.name == "requests_total"
-        assert args.reset is True
+        assert args.from_file == "snap.json"
 
-    def test_metrics_cmd_local_with_reset_returns_0(self, capsys):
-        """--local --reset 应重置本进程指标并返回 0"""
-        from callwarden.cli.daemon_commands import run_daemon_command
-        from callwarden.server.metrics import get_metrics_collector
-        # 先记录一些指标
-        collector = get_metrics_collector()
-        collector.increment("requests_total", labels={
-                            "method": "test", "status": "ok"})
-        # 重置
-        rc = run_daemon_command(["metrics", "--local", "--reset"])
-        assert rc == 0
-        # 验证已重置
-        out = capsys.readouterr().out
-        assert "reset" in out
+    @staticmethod
+    def _write_snapshot(tmp_path) -> str:
+        """构造一个 daemon dump 形态的 metrics JSON 快照文件。"""
+        import json as _json
+        snap = {
+            "timestamp": 1.0,
+            "uptime": 2.0,
+            "pid": 1,
+            "dumped_at": 1.0,
+            "counters": {
+                "requests_total": {"help": "Total requests", "values": {}},
+            },
+            "gauges": {},
+            "histograms": {},
+        }
+        path = tmp_path / "metrics_snapshot.json"
+        path.write_text(_json.dumps(snap), encoding="utf-8")
+        return str(path)
 
-    def test_metrics_cmd_local_json_returns_0(self, capsys):
-        """--local --format json 应返回 JSON 格式指标"""
+    def test_metrics_cmd_rpc_unreachable_fails_closed(self, capsys, tmp_path):
+        """daemon RPC 不可达应 fail-closed（rc=2 + ERROR），无本地降级"""
         from callwarden.cli.daemon_commands import run_daemon_command
-        rc = run_daemon_command(["metrics", "--local", "--format", "json"])
+        missing = tmp_path / "missing.sock"
+        rc = run_daemon_command([
+            "--socket", str(missing), "metrics", "--format", "json",
+        ])
+        assert rc == 2, "daemon 不可达时 metrics 应 fail-closed（rc=2）"
+        err = capsys.readouterr().err
+        assert "ERROR" in err
+        assert "metrics 仅经 daemon 获取" in err, \
+            "错误信息应说明无本地降级路径"
+        assert "无本地 SQLite 降级" in err
+
+    def test_metrics_cmd_from_file_json_returns_0(self, capsys, tmp_path):
+        """--from-file --format json 应返回 JSON 格式指标（rc=0）"""
+        from callwarden.cli.daemon_commands import run_daemon_command
+        snapshot_path = self._write_snapshot(tmp_path)
+        rc = run_daemon_command(["metrics", "--from-file", snapshot_path])
         assert rc == 0
         out = capsys.readouterr().out
         assert "uptime" in out
         assert "counters" in out
 
-    def test_metrics_cmd_local_prometheus_returns_0(self, capsys):
-        """--local --format prometheus 应返回 Prometheus 文本"""
+    def test_metrics_cmd_from_file_name_filter_returns_0(self, capsys, tmp_path):
+        """--from-file --name 应仅输出指定指标（found=true）"""
+        import json as _json
         from callwarden.cli.daemon_commands import run_daemon_command
-        rc = run_daemon_command(
-            ["metrics", "--local", "--format", "prometheus"])
+        snapshot_path = self._write_snapshot(tmp_path)
+        rc = run_daemon_command([
+            "metrics", "--from-file", snapshot_path, "--name", "requests_total",
+        ])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "# TYPE" in out
+        data = _json.loads(out)
+        assert data.get("found") is True
+        assert "requests_total" in data.get("counters", {})
 
-    def test_metrics_cmd_reset_without_local_returns_error(self, capsys):
-        """--reset 不带 --local 应返回 exit code 2（不能重置远端 daemon 指标）"""
+    def test_metrics_cmd_from_file_prometheus_rejected(self, capsys, tmp_path):
+        """--from-file 不支持 prometheus 格式（rc=2 + 明确错误）"""
         from callwarden.cli.daemon_commands import run_daemon_command
-        rc = run_daemon_command(["metrics", "--reset"])
-        assert rc == 2, \
-            "--reset 不带 --local 应返回 exit code 2"
+        snapshot_path = self._write_snapshot(tmp_path)
+        rc = run_daemon_command([
+            "metrics", "--from-file", snapshot_path, "--format", "prometheus",
+        ])
+        assert rc == 2
         err = capsys.readouterr().err
-        assert "--reset 仅支持 --local" in err or "仅 --local 模式" in err
+        assert "--from-file 不支持 prometheus 格式" in err
 
-    def test_metrics_cmd_default_rpc_fallback_to_local(self, capsys):
-        """默认走 RPC，连不上 daemon 时降级 --local（打印 WARNING）"""
+    def test_metrics_cmd_missing_from_file_returns_2(self, capsys, tmp_path):
+        """快照文件不存在/损坏应返回 rc=2 + 明确错误"""
         from callwarden.cli.daemon_commands import run_daemon_command
-        # 不启动 daemon，直接调用，应降级 --local 并打印 WARNING
-        rc = run_daemon_command(["metrics", "--format", "json"])
-        assert rc == 0
+        rc = run_daemon_command([
+            "metrics", "--from-file", str(tmp_path / "nope.json"),
+        ])
+        assert rc == 2
         err = capsys.readouterr().err
-        assert "WARNING" in err or "降级" in err
+        assert "快照文件不存在或损坏" in err
 
 
 # ============================================================
-# 4. server/mcp_server.py — get_metrics source 参数
+# 4. server/tools/tools_rules.py — get_metrics source 参数
 # ============================================================
 
 
 class TestG13McpGetMetricsSource:
-    """验证 MCP get_metrics 工具的 source 参数"""
+    """验证 MCP get_metrics 工具的 source 参数
+
+    T03 拆分后 get_metrics 定义/文档位于 server/tools/tools_rules.py
+    （mcp_server.py 仅作工具注册聚合，不再承载工具定义）。
+    """
+
+    @staticmethod
+    def _tools_rules_source() -> str:
+        src_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "server", "tools", "tools_rules.py"
+        )
+        with open(src_path, "r", encoding="utf-8") as f:
+            return f.read()
 
     def test_get_metrics_signature_has_source(self):
         """get_metrics 函数签名应包含 source 参数"""
-        import inspect
-        from callwarden.server.mcp_server import create_mcp_server
-        mcp = create_mcp_server()
-        # 通过 mcp._tool_manager 查找 get_metrics 工具
-        # 不同版本的 fastmcp API 不同，这里用工具名匹配
-        # 直接读取 mcp_server.py 源码验证
-        src_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "server", "mcp_server.py"
-        )
-        with open(src_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        # 检查 get_metrics 定义包含 source 参数
+        content = self._tools_rules_source()
+        assert "def get_metrics(" in content, \
+            "get_metrics 定义应存在于 tools_rules.py"
         assert "source: str = \"auto\"" in content, \
             "get_metrics 应包含 source: str = 'auto' 参数"
 
     def test_get_metrics_source_local_returns_local_data(self):
         """source=local 应返回本进程指标（不尝试 RPC）"""
         # 直接调用 get_metrics 函数（绕过 MCP 协议层）
-        # 由于 get_metrics 是闭包在 create_mcp_server 内部，我们用脚本模拟
+        # 由于 get_metrics 是闭包在 register(mcp) 内部，我们用脚本模拟
         from callwarden.server.metrics import reset_metrics_collector, get_metrics_collector
         reset_metrics_collector()
         collector = get_metrics_collector()
@@ -428,33 +457,23 @@ class TestG13McpGetMetricsSource:
                             "method": "test_local", "status": "ok"})
         # 通过导入源码并执行 get_metrics 函数
         # 实际上 get_metrics 是闭包，我们通过解析源码 + 静态检查代替
-        # 这里改用 cli/daemon_commands.py 的 --local 路径间接验证
-        # （因为 cli --local 用的就是同一个 collector）
+        # 这里改用 cli/daemon_commands.py 的 --from-file 路径间接验证
+        # （因为本地 MetricsCollector.to_json 与快照文件同构）
         data = collector.to_json()
         assert "counters" in data
         assert "requests_total" in data["counters"]
 
     def test_get_metrics_source_in_doc_string(self):
         """get_metrics 文档字符串应描述 source 参数的取值"""
-        src_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "server", "mcp_server.py"
-        )
-        with open(src_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = self._tools_rules_source()
         # 文档字符串应提及 source 参数和 auto/rpc/local 三个取值
         assert '"auto"' in content and '"rpc"' in content and '"local"' in content, \
             "get_metrics 文档应描述 source 的 auto/rpc/local 三个取值"
 
     def test_get_metrics_includes_g13_comment(self):
-        """mcp_server.py 应包含 G13 注释"""
-        src_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "server", "mcp_server.py"
-        )
-        with open(src_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        assert "G13" in content, "mcp_server.py 应包含 G13 注释"
+        """tools_rules.py 应包含 G13 注释"""
+        content = self._tools_rules_source()
+        assert "G13" in content, "tools_rules.py 应包含 G13 注释"
 
 
 # ============================================================
@@ -469,7 +488,7 @@ class TestG13FeatureMatrixStatus:
         """G13 条目状态应更新为 ✅ 已修复或 🟡 复审整改"""
         matrix_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "_feature_matrix.md"
+            "docs", "design", "_feature_matrix.md"
         )
         with open(matrix_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -487,7 +506,7 @@ class TestG13FeatureMatrixStatus:
         """G13 描述应提及 measure_rpc"""
         matrix_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "_feature_matrix.md"
+            "docs", "design", "_feature_matrix.md"
         )
         with open(matrix_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -506,7 +525,7 @@ class TestG13FeatureMatrixStatus:
         """G13 条目不应标记为 ❌ 声明不成立"""
         matrix_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "_feature_matrix.md"
+            "docs", "design", "_feature_matrix.md"
         )
         with open(matrix_path, "r", encoding="utf-8") as f:
             content = f.read()

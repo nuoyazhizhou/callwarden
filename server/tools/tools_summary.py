@@ -688,32 +688,19 @@ def _h_defect_learn(ctx: CompatCallContext) -> Any:
 # 保持 python_compat（W4-2 决策，见 ledger §9.23）。
 # find_uncovered_functions 已 S2 迁移 rust_native
 # （T-1787209948470-a59bcf9c#S2-query-compat-batch1），从本白名单移除。
-_SUMMARY_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_summary": _h_get_summary,
-    "project_brief": _h_project_brief,
-    "repo_map": _h_repo_map,
-    "test_impact_selection": _h_test_impact_selection,
-    "who_to_ask": _h_who_to_ask,
-    "get_ownership_map": _h_get_ownership_map,
-    "guardrail_scan": _h_guardrail_scan,
-    "guardrail_check_edit": _h_guardrail_check_edit,
-    "guardrail_list_rules": _h_guardrail_list_rules,
-    "blast_radius": _h_blast_radius,
-    "ask_codebase": _h_ask_codebase,
-    "get_token_savings_report": _h_get_token_savings_report,
-    "get_vulnerability_blast_radius": _h_get_vulnerability_blast_radius,
-    "get_clone_aware_impact": _h_get_clone_aware_impact,
-    "review_readiness": _h_review_readiness,
-    "cross_layer_impact": _h_cross_layer_impact,
-    "evolution_frequency": _h_evolution_frequency,
-    "hotspot_evolution": _h_hotspot_evolution,
-    "defect_learn": _h_defect_learn,
-}
+# P0-COMPAT-v3（T-1788963106520-907544c8，2026-09-10）：原 19 项只读白名单
+# 已全部迁移 rust_native，本 dict 清空；_h_* handler 保留作为 Python 真相源
+# 参照（与 tools_security.py 同款退役姿势）。写面语义说明：
+# - guardrail_scan / guardrail_list_rules / defect_learn 在 worker mode=ro
+#   连接上 fail-closed（Rust 侧同语义）。
+_SUMMARY_READ_ONLY_METHODS: Dict[str, Any] = {}
 
 # 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
 # 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _SUMMARY_READ_ONLY_METHODS,
-    workspace_scope=_SUMMARY_COMPAT_SCOPE,
-    description="H4C-2 第二批摘要/演化/护栏/缺陷组只读工具（20 个，T-1786747295213-64204cce 步骤#0；defect_stats 已 W2-3 迁移 rust_native；get_coverage_for_symbol / diff_to_symbol 已 W4-2 迁移 rust_native，T-1786886251769-22b94ee8-sub-2；defect_correlation / churn_analysis / defect_search / defect_suggest_fix 已 W4-3 迁移 rust_native，T-1786886251769-22b94ee8-sub-3）",
-)
+# P0-COMPAT-v3 起白名单为空 → 不再注册（条件守卫，与 tools_security.py 同款）。
+if _SUMMARY_READ_ONLY_METHODS:
+    register_compat_routes(
+        _SUMMARY_READ_ONLY_METHODS,
+        workspace_scope=_SUMMARY_COMPAT_SCOPE,
+        description="H4C-2 第二批摘要/演化/护栏/缺陷组只读工具（20 个，T-1786747295213-64204cce 步骤#0；defect_stats 已 W2-3 迁移 rust_native；get_coverage_for_symbol / diff_to_symbol 已 W4-2 迁移 rust_native，T-1786886251769-22b94ee8-sub-2；defect_correlation / churn_analysis / defect_search / defect_suggest_fix 已 W4-3 迁移 rust_native，T-1786886251769-22b94ee8-sub-3）",
+    )

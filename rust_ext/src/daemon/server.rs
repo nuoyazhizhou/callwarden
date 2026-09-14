@@ -1693,3 +1693,45 @@ where
         })
         .expect("spawn cw-http-mvp thread")
 }
+
+/// CR10（client_convergence_codereview_20260909 §八）：使用已预绑定的 listener
+/// 启动 HTTP MVP accept loop。
+///
+/// manifest 已在 daemon 主流程早期经 `bind_http` 同步发布（新 PID/endpoint），
+/// 本函数只接管 accept 循环——重启动步骤（recovery / snapshot 恢复 /
+/// TaskCollabStore）不再推迟 manifest 可见性。
+pub fn spawn_http_transport_prebound<S>(
+    bound: super::http_server::BoundHttp,
+    state: Arc<TokioMutex<S>>,
+    sp: Arc<SerializationPoint>,
+    config: HttpServerConfig,
+) -> std::thread::JoinHandle<()>
+where
+    S: DaemonStateExt + Send + Sync + 'static,
+{
+    thread::Builder::new()
+        .name("cw-http-mvp".to_string())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("[cw_daemon] [ERROR] HTTP MVP tokio runtime init failed: {}", e);
+                    return;
+                }
+            };
+            rt.block_on(async {
+                match super::http_server::serve_prebound(bound, state, sp, config).await {
+                    Ok(addr) => eprintln!(
+                        "[cw_daemon] [INFO] HTTP MVP listener bound at http://{}",
+                        addr
+                    ),
+                    Err(e) => eprintln!("[cw_daemon] [ERROR] HTTP MVP serve failed: {:?}", e),
+                }
+            });
+        })
+        .expect("spawn cw-http-mvp thread")
+}

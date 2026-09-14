@@ -25,10 +25,13 @@ from callwarden.cli.main import run_client_mode
 # _parser(include_serve=...) 参数化构造
 # ----------------------------------------------------------------------
 
-def test_parser_with_serve_includes_serve_subcommand():
-    """_parser(include_serve=True) 注册 serve 子命令。"""
-    parser = _parser(include_serve=True)
-    assert _has_subcommand(parser, "serve"), "include_serve=True 必须注册 serve"
+def test_parser_serve_subcommand_retired_regardless_of_include_serve():
+    """G1（2026-09-09）：serve 子命令已下线，include_serve 任何取值均不注册。"""
+    for flag in (True, False):
+        parser = _parser(include_serve=flag)
+        assert not _has_subcommand(parser, "serve"), (
+            f"include_serve={flag} 不得注册 serve（影子 server 已下线）"
+        )
 
 
 def test_parser_without_serve_excludes_serve_subcommand():
@@ -63,12 +66,12 @@ def test_run_daemon_command_accepts_include_serve_kwarg():
     assert sig.parameters["include_serve"].default is True, "include_serve 默认应为 True"
 
 
-def test_run_daemon_command_serve_rejected_when_include_serve_false():
-    """run_daemon_command(argv=['serve'], include_serve=False) 应被 argparse 拒绝。"""
-    # argparse 拒绝未注册的子命令，会 SystemExit(2)
-    with pytest.raises(SystemExit) as exc_info:
-        run_daemon_command(["serve"], include_serve=False)
-    assert exc_info.value.code == 2
+def test_run_daemon_command_serve_rejected_regardless_of_include_serve():
+    """G1：`cw daemon serve` 一律被拒绝（argparse invalid choice → SystemExit 2）。"""
+    for kwargs in ({}, {"include_serve": False}, {"include_serve": True}):
+        with pytest.raises(SystemExit) as exc_info:
+            run_daemon_command(["serve"], **kwargs)
+        assert exc_info.value.code == 2
 
 
 def test_daemon_status_sends_numeric_workspace_id_as_numeric_key(monkeypatch, capsys):

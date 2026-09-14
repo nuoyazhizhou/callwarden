@@ -1,0 +1,9 @@
+{
+  "task_id": "T-1788963104058-fdb2e848",
+  "step": "S-1788963104059-fdbc6e90 (step1 thin_python_client / Python retirement)",
+  "changes": {
+    "server/tools/tools_task.py": "_TASK_READ_ONLY_METHODS 清空为 {} + 空 dict 条件注册（handler 函数保留供追溯）",
+    "server/compat_registry.py": "RUST_COMPAT_ROUTE 摘除 8 行（audit_verify_chain/bootstrap_status/get_clone_group_detail/get_symbol_change_tasks/list_audit_signing_keys/list_clone_groups/list_clones/task_plan_template）"
+  },
+  "verification": "ast.parse 两文件 syntax OK；python -c import 校验 RUST_COMPAT_ROUTE 不含 8 方法"
+}

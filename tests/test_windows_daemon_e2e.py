@@ -37,15 +37,24 @@ requires_binaries = pytest.mark.skipif(
 
 
 def _client(pipe: str, args: list, timeout: int = 30) -> dict:
-    """调用真实 cw-client.exe（Named Pipe 客户端），返回结构化结果。"""
-    result = subprocess.run(
-        [_CLIENT_BIN, "--socket", pipe, "--timeout", str(timeout)] + args,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout + 15,
-    )
+    """调用真实 cw-client.exe（Named Pipe 客户端），返回结构化结果。
+
+    daemon 冷启动预热期（管道已绑定但 worker 池未就绪，约 50–89s）内，
+    客户端能连上管道却收不到应答，其自身 --timeout 不生效会挂起；此时
+    subprocess 超时后必须吞掉 TimeoutExpired 返回哨兵，让 _wait_daemon
+    继续轮询，而不是让整个 fixture 崩出。
+    """
+    try:
+        result = subprocess.run(
+            [_CLIENT_BIN, "--socket", pipe, "--timeout", str(timeout)] + args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout + 10,
+        )
+    except subprocess.TimeoutExpired:
+        return {"code": -1, "json": {}, "stdout": "", "stderr": "client subprocess timeout"}
     parsed = {}
     try:
         parsed = json.loads(result.stdout)
@@ -108,8 +117,8 @@ def ensure_fresh_binaries():
         pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN} / {_CLIENT_BIN}")
 
 
-def _spawn_daemon(config_path: str, log_dir: str, name: str):
-    """启动真实 cw-daemon.exe，日志落盘。"""
+def _spawn_daemon(config_path: str, log_dir: str, name: str, env: dict = None):
+    """启动真实 cw-daemon.exe，日志落盘。env=None 时继承当前进程环境。"""
     log = open(os.path.join(log_dir, f"{name}.log"), "w", encoding="utf-8")
     proc = subprocess.Popen(
         [_DAEMON_BIN, "--config", config_path],
@@ -117,12 +126,22 @@ def _spawn_daemon(config_path: str, log_dir: str, name: str):
         stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
+        env=env,
     )
     return proc
 
 
-def _wait_daemon(pipe: str, proc, timeout: float = 40.0) -> bool:
-    """轮询等待 daemon 管道可用（真实 Named Pipe ping）。"""
+def _wait_daemon(pipe: str, proc, timeout: float = 150.0) -> bool:
+    """轮询等待 daemon 管道可用（真实 Named Pipe ping）。
+
+    timeout 默认 150s 的依据（2026-09-16 干净单写机实测，见 step3 证据）：
+    daemon 冷启动存在两段 ~24s 空耗（空 registry 下 recover_all_workspaces
+    与 state_factory 各 ~24s，疑似新建 SQLite 被 Defender 扫描卡顿），
+    命名管道在 ~50s 才绑定，worker 池预热到首次成功应答需 ~89s
+    （50–89s 期间日志持续 "worker pool full, rejecting connection"）。
+    旧默认 40s 短于真实就绪时间导致恒假失败；~90s 实测在边缘（88.99s/90.57s）
+    不稳健，故取 150s 留足裕度。命名管道 transport 本身工作正常。
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -132,6 +151,60 @@ def _wait_daemon(pipe: str, proc, timeout: float = 40.0) -> bool:
             return True
         time.sleep(0.5)
     return False
+
+
+def _seed_task_workspace(pipe: str, task_db: str, ws_root: str, name: str) -> dict:
+    """注册 workspace 并在 task-DB workspaces 表播种对应行，返回 task.create/report 绑定配对。
+
+    BR-01/BR-02 上线后的现行权威契约（task_collab_shared.rs:required_workspace_id_param、
+    task_collab.rs:bind_task_to_workspace）：task.create 的 workspace_id 必须是整数 > 0
+    且在 task-DB ``workspaces`` 表存在同名行，workspace_instance_id 必须非空；
+    daemon 在 create 同一事务内自动建 workspace_authority_captures + task_workspace_bindings。
+    旧测试传字符串 ws-id（ws-v46/ws-cli/ws-proc/ws-shared）或缺 workspace_id，属于
+    陈旧断言。本函数对齐 tests/test_task_prompt_e2e.py 的经证实范式：
+    workspace.register 返回 registry 整数 workspace_id（daemon_workspaces 自增 id）
+    + workspace_instance_id，把该整数 id 同步插入 task-DB workspaces 表（is_active=1），
+    使 registry 与 task-DB 的 id/instance 两侧一致
+    （resolve_workspace_pair_from_daemon 的 workspace.status 双向一致性校验要求）。
+
+    另带 git provenance 注册（git_remote_url + git_head_commit_sha 非空），使 registry
+    写入 daemon 发布的 snapshot_id；task.report 的 validate_report_snapshot_authority
+    要求该 snapshot_id 非空且与 report 传入值逐字一致（否则 E_TASK_REPORT_SNAPSHOT_REQUIRED
+    / E_TASK_REPORT_SNAPSHOT_MISMATCH）。canonicalization_rule_sets 的 workspace_capture
+    rule row 由 daemon 启动时迁移播种，无需测试干预；但前提是 task-DB 由 daemon 自建
+    （Python CodeGraphDB 建库不经 v52→v53 迁移，缺该 row → E_WORKSPACE_AUTHORITY_MISMATCH）。
+    ws_root 必须是存在且属当前用户的目录（validate_owned_path 校验）。
+    """
+    import sqlite3
+
+    reg = _client(pipe, ["rpc", "workspace.register", json.dumps({
+        "name": name, "client_view_root": ws_root, "description": "windows daemon e2e",
+        "git_remote_url": "https://github.com/callwarden/windows-e2e.git",
+        "git_head_commit_sha": "e2e0" * 10,
+    })])
+    assert reg["code"] == 0, reg
+    ws_id = reg["json"].get("workspace_id")
+    ws_inst = reg["json"].get("workspace_instance_id")
+    snapshot_id = reg["json"].get("snapshot_id")
+    assert isinstance(ws_id, int) and ws_id > 0, reg
+    assert isinstance(ws_inst, str) and ws_inst.strip(), reg
+    assert isinstance(snapshot_id, str) and snapshot_id.strip(), reg
+
+    conn = sqlite3.connect(task_db)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO workspaces (id, name, root_path, created_at, is_active) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (ws_id, name, ws_root, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "workspace_id": ws_id,
+        "workspace_instance_id": ws_inst,
+        "snapshot_id": snapshot_id,
+    }
 
 
 def _run_as_other_user(user: str, password: str, cmd: list, out_path: str, timeout: float = 60.0) -> dict:
@@ -260,7 +333,19 @@ def daemon():
             except Exception:
                 pass
             pytest.fail(f"daemon 未在超时内响应，日志：\n{log}")
-        yield {"pipe": pipe, "config_path": config_path, "tmp": tmp, "procs": procs, "restart": None}
+        # 播种一个模块级共享 workspace（BR-01/BR-02 契约），供本模块所有
+        # task.create 测试复用同一 (workspace_id, workspace_instance_id) 配对；
+        # 同 workspace 的 capture 链只确立一次，后续 create 均命中已确立 instance。
+        ws_root = os.path.join(tmp, "ws_root")
+        os.makedirs(ws_root, exist_ok=True)
+        ws = _seed_task_workspace(pipe, config["task_db_path"], ws_root, "e2e-module-ws")
+        yield {
+            "pipe": pipe, "config_path": config_path, "tmp": tmp, "procs": procs,
+            "restart": None,
+            "workspace_id": ws["workspace_id"],
+            "workspace_instance_id": ws["workspace_instance_id"],
+            "snapshot_id": ws["snapshot_id"],
+        }
     finally:
         for p in procs:
             if p.poll() is None:
@@ -287,6 +372,17 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
     import sqlite3
 
     from callwarden.db import CodeGraphDB
+    from callwarden.config import _get_windows_user_sid
+
+    # stale 修复（A 类：测试侧缺陷，环境根因 B 类）：本测试自建 daemon 占用默认管道，
+    # 但旧版缺少占用检测——当本机已有一个真实 cw-daemon 常驻（如 PID 21012）持有
+    # `\\.\pipe\callwarden-<sid>` 时，新建 daemon 无法绑定该管道，`_wait_daemon` 会
+    # ping 到**已存在的** daemon（返回 ok），后续断言便打到错误的 daemon/task_db 上
+    # （表现为 `schema_version=46 未升级`）。模块级 `daemon` fixture（本文件 L241-243）
+    # 与 identity 测试（L384-385）均已有相同占用检测；此处补齐，保持一致。
+    pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
+    if _client(pipe, ["ping"], timeout=5)["code"] == 0:
+        pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过 v46 迁移 E2E")
 
     tmp = tempfile.mkdtemp(prefix="cw_e2e_v46_")
     procs = []
@@ -313,12 +409,13 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f)
 
-        from callwarden.config import _get_windows_user_sid
-
-        pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
         proc = _spawn_daemon(config_path, tmp, "v46")
         procs.append(proc)
         assert _wait_daemon(pipe, proc), "v46 库 daemon 未响应"
+
+        # 2b. 播种 workspace（迁移后的库已具备现行 schema 的 workspaces 表），
+        # 使 task.create 满足 BR-01/BR-02 显式整数 workspace_id + instance 契约。
+        ws = _seed_task_workspace(pipe, task_db, tmp, "e2e-v46-ws")
 
         # 3. 校验实际 schema version == 当前权威版本（读真实 schema_version 表）
         from callwarden.db.schema import SCHEMA_VERSION
@@ -328,7 +425,11 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
         assert v == SCHEMA_VERSION, f"v46 库未升级到 {SCHEMA_VERSION}: schema_version={v}"
 
         # 4. 完整 task RPC 通过 Named Pipe 可用（创建 → 抢占 → 状态）
-        r = _client(pipe, ["rpc", "task.create", json.dumps({"title": "v46 升级任务", "workspace_id": "ws-v46"})])
+        r = _client(pipe, ["rpc", "task.create", json.dumps({
+            "title": "v46 升级任务",
+            "workspace_id": ws["workspace_id"],
+            "workspace_instance_id": ws["workspace_instance_id"],
+        })])
         assert r["code"] == 0, r
         task_id = r["json"].get("task_id")
         assert task_id, r
@@ -362,17 +463,23 @@ def test_task_report_identity_writeback_via_named_pipe():
     """
     import sqlite3
 
-    from callwarden.db import CodeGraphDB
     from callwarden.config import _get_windows_user_sid
 
     tmp = tempfile.mkdtemp(prefix="cw_e2e_identity_")
     proc = None
+    # stale 修复（A 类：测试侧缺陷）：旧版 finally 块**无条件**断言 action_identities
+    # 行，但上面的默认管道占用分支会先 `pytest.skip`；`finally` 先于 Skip 异常传播执行，
+    # 其 AssertionError 会**替换**掉 Skip，使「应跳过」变成「失败」
+    # （实测 `None != (...)`）。用 completed 标记：仅当测试体真正跑完（含 daemon 写回）
+    # 才在 finally 里核对持久化，Skip/异常路径不再误断言。
+    completed = False
     try:
         task_db = os.path.join(tmp, "callwarden.db")
-        # TaskCollabStore 只负责 daemon 事务；先用权威 Python schema 建立一个
-        # workspace，使 identity 能绑定到真实 workspace_id，而不是绕过门禁。
-        db = CodeGraphDB(db_path=task_db)
-        db.close()
+        # task-DB 由 daemon 自建（配置注入 task_db_path）：daemon 启动时走 v52→v53
+        # 迁移，幂等播种 canonicalization_rule_sets 的 workspace_capture rule row
+        # （seed_workspace_capture_rule）。旧版用 Python CodeGraphDB 建库，Python
+        # schema 不经该迁移 → bind_task_to_workspace 读 rule row 时
+        # E_WORKSPACE_AUTHORITY_MISMATCH（capability 未就绪）。
 
         config = _daemon_config(tmp)
         config["task_db_path"] = task_db
@@ -387,6 +494,11 @@ def test_task_report_identity_writeback_via_named_pipe():
         proc = _spawn_daemon(config_path, tmp, "identity")
         assert _wait_daemon(pipe, proc), "identity daemon 未响应"
 
+        # BR-01/BR-02：task.create 需显式整数 workspace_id + 非空 instance，
+        # 且 task-DB workspaces 表需存在对应行（旧版缺此播种 → 旧断言建在绕过门禁的
+        # 假设上）。播种后 identity 才能绑定到真实 workspace_id。
+        ws = _seed_task_workspace(pipe, task_db, tmp, "e2e-identity-ws")
+
         task_id = "T-WINDOWS-IDENTITY-E2E"
         identity = {
             "agent_id": "agent-windows-e2e",
@@ -398,6 +510,8 @@ def test_task_report_identity_writeback_via_named_pipe():
         result = _client(pipe, ["rpc", "task.create", json.dumps({
             "task_id": task_id,
             "title": "Windows identity writeback",
+            "workspace_id": ws["workspace_id"],
+            "workspace_instance_id": ws["workspace_instance_id"],
         })])
         assert result["code"] == 0, result
 
@@ -412,6 +526,7 @@ def test_task_report_identity_writeback_via_named_pipe():
             "summary": "identity persisted",
             "agent_session_id": identity["session_id"],
             "identity": identity,
+            "snapshot_id": ws["snapshot_id"],
         })])
         assert result["code"] == 0, result
         assert result["json"].get("status") == "review", result
@@ -425,6 +540,8 @@ def test_task_report_identity_writeback_via_named_pipe():
             and event.get("agent_session_id") == identity["session_id"]
             for event in events
         ), result
+        # 测试体全部通过后才在 finally 里核对持久化（避免覆盖 Skip）
+        completed = True
     finally:
         if proc is not None and proc.poll() is None:
             proc.terminate()
@@ -432,7 +549,7 @@ def test_task_report_identity_writeback_via_named_pipe():
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        if os.path.exists(os.path.join(tmp, "callwarden.db")):
+        if completed and os.path.exists(os.path.join(tmp, "callwarden.db")):
             conn = sqlite3.connect(os.path.join(tmp, "callwarden.db"))
             try:
                 row = conn.execute(
@@ -481,13 +598,48 @@ def test_task_db_shared_with_real_cw_cli():
             json.dump(config, f)
 
         pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
-        proc = _spawn_daemon(config_path, tmp, "cli")
+        # stale 修复（A 类：测试侧缺陷，环境根因 B 类）：与 v46 测试同因——本测试自建
+        # daemon 占用默认管道，但缺占用检测。本机已有常驻 cw-daemon 时，`_wait_daemon`
+        # 会 ping 到**已存在的** daemon，task.create 便打到错误的 daemon/真实任务库上，
+        # 暴露为 `E_TASK_WORKSPACE_UNBOUND: workspace_id 无法解析为整数: ws-cli`。
+        # 补齐与模块 fixture（L241-243）、identity 测试（L384-385）一致的占用检测。
+        if _client(pipe, ["ping"], timeout=5)["code"] == 0:
+            pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过 CLI 共享库 E2E")
+        # daemon 与 CLI 共用同一 fake_home：daemon 的 HTTP manifest 固定写
+        # USERPROFILE/.callwarden（见 test_http_daemon_release_acceptance._wait_manifest），
+        # CLI 发现路径只认 manifest（E_HTTP_MANIFEST_MISSING，fail-closed 不回退
+        # Named Pipe/UDS/SQLite）。旧版 daemon 继承真实 USERPROFILE → manifest 落
+        # 真实 home，而 CLI 的 USERPROFILE=fake_home 找不到 → `cw task show` 必败。
+        # 让 daemon 也以 fake_home 启动，manifest 与 task_db 同落 fake_home/.callwarden。
+        daemon_env = dict(os.environ)
+        daemon_env["USERPROFILE"] = fake_home
+        daemon_env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+        # registry 隔离（探针实证）：workspace.list/status/inject 读 daemon 的
+        # 权威 registry，其默认路径由 Windows CSIDL 真实 profile 解析（忽略
+        # USERPROFILE 环境变量）→ 会泄漏真实 registry 的同名 repo-root workspace
+        # （active 行 instance 与 seed 不同 → resolve matches=0 或撞库）。只有
+        # 显式 CW_DAEMON_REGISTRY_DB env 能让 list 只返回本测试 seed 的 workspace。
+        daemon_env["CW_DAEMON_REGISTRY_DB"] = config["registry_db_path"]
+        proc = _spawn_daemon(config_path, tmp, "cli", env=daemon_env)
         procs.append(proc)
         assert _wait_daemon(pipe, proc), "daemon 未响应"
 
-        # CLI 子进程环境：USERPROFILE 指向 fake_home，使 config.py:DB_PATH 落到 task_db
+        # 播种 workspace：client_view_root 必须取 _REPO_ROOT，因为 CLI 子进程的
+        # config.PROJECT_ROOT == _REPO_ROOT（cw.py 自举 C:/git_work 到 sys.path，
+        # callwarden 包根 = 仓库根），resolve_workspace_pair_from_daemon 按
+        # _norm_root(client_view_root) == _norm_root(PROJECT_ROOT) 匹配本 workspace，
+        # 并要求 workspace.status 的 registry/task-DB 两侧 id+instance 一致——
+        # _seed_task_workspace 用 registry 返回的整数 id 同写 task-DB workspaces 表，
+        # 天然满足该一致性。task_db 尚未落盘（daemon 首次访问时创建），故先确保
+        # 父目录存在。
+        os.makedirs(os.path.dirname(task_db), exist_ok=True)
+        ws = _seed_task_workspace(pipe, task_db, _REPO_ROOT, "e2e-cli-ws")
+
+        # CLI 子进程环境：USERPROFILE 指向 fake_home，使 config.py:DB_PATH 落到 task_db；
+        # 跳过 auto-setup（否则首次进入新 home 会触发 MCP 配置安装，污染输出且耗时）。
         cli_env = dict(os.environ)
         cli_env["USERPROFILE"] = fake_home
+        cli_env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
         cli_env["PYTHONPATH"] = _REPO_ROOT
 
         def _cw_cli(args: list) -> subprocess.CompletedProcess:
@@ -504,7 +656,11 @@ def test_task_db_shared_with_real_cw_cli():
         # 1. daemon RPC 创建任务
         r = _client(
             pipe,
-            ["rpc", "task.create", json.dumps({"title": "P2 CLI 共享 daemon 侧", "workspace_id": "ws-cli"})],
+            ["rpc", "task.create", json.dumps({
+                "title": "P2 CLI 共享 daemon 侧",
+                "workspace_id": ws["workspace_id"],
+                "workspace_instance_id": ws["workspace_instance_id"],
+            })],
         )
         assert r["code"] == 0, r
         task_id_d = r["json"].get("task_id")
@@ -559,7 +715,12 @@ def test_task_lifecycle_via_named_pipe(daemon):
     # 1. task.create（真实 RPC 写 registry/task 表）
     r = _client(
         pipe,
-        ["rpc", "task.create", json.dumps({"title": "E2E 进程级任务", "description": "真实 Named Pipe", "workspace_id": "ws-proc"})],
+        ["rpc", "task.create", json.dumps({
+            "title": "E2E 进程级任务",
+            "description": "真实 Named Pipe",
+            "workspace_id": daemon["workspace_id"],
+            "workspace_instance_id": daemon["workspace_instance_id"],
+        })],
     )
     assert r["code"] == 0, r
     task_id = r["json"].get("task_id")
@@ -577,10 +738,14 @@ def test_task_lifecycle_via_named_pipe(daemon):
     assert r["code"] == 1, r
     assert "task_conflict" in r["stderr"], r
 
-    # 4. task.report（owner agent-A 完成 → review）
+    # 4. task.report（owner agent-A 完成 → review；snapshot_id 来自 fixture
+    # 注册 workspace 时的 daemon 发布值，validate_report_snapshot_authority 要求逐字一致）
     r = _client(
         pipe,
-        ["rpc", "task.report", json.dumps({"task_id": task_id, "agent_session_id": "agent-A", "summary": "完成"})],
+        ["rpc", "task.report", json.dumps({
+            "task_id": task_id, "agent_session_id": "agent-A", "summary": "完成",
+            "snapshot_id": daemon["snapshot_id"],
+        })],
     )
     assert r["code"] == 0, r
     assert r["json"].get("status") == "review", r
@@ -602,7 +767,11 @@ def test_task_lifecycle_via_named_pipe(daemon):
 def test_daemon_restart_preserves_task(daemon):
     """重启恢复：task 状态持久化在 registry DB，daemon 重启后 task.status 仍可读。"""
     pipe = daemon["pipe"]
-    r = _client(pipe, ["rpc", "task.create", json.dumps({"title": "restart-check", "workspace_id": "ws-proc"})])
+    r = _client(pipe, ["rpc", "task.create", json.dumps({
+        "title": "restart-check",
+        "workspace_id": daemon["workspace_id"],
+        "workspace_instance_id": daemon["workspace_instance_id"],
+    })])
     assert r["code"] == 0, r
     task_id = r["json"]["task_id"]
 
@@ -653,7 +822,11 @@ def test_task_db_shared_with_python_cli(daemon):
     pipe = daemon["pipe"]
 
     # 1. daemon RPC 创建任务
-    r = _client(pipe, ["rpc", "task.create", json.dumps({"title": "P0 共享库 daemon 侧", "workspace_id": "ws-shared"})])
+    r = _client(pipe, ["rpc", "task.create", json.dumps({
+        "title": "P0 共享库 daemon 侧",
+        "workspace_id": daemon["workspace_id"],
+        "workspace_instance_id": daemon["workspace_instance_id"],
+    })])
     assert r["code"] == 0, r
     task_id_d = r["json"].get("task_id")
     assert task_id_d, r

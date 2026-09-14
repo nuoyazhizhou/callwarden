@@ -1,0 +1,388 @@
+{
+  "schema": "cw.role_prompt_v1_bootstrap_recovery_finalization.v1",
+  "card": "ROLE-PROMPT-V1-BOOTSTRAP-RECOVERY-FINALIZATION",
+  "title": "Role Prompt v1 bootstrap recovery provenance finalization receipt",
+  "append_only": true,
+  "append_only_semantics": "本 receipt 只追加绑定事实，不修改任何历史 evidence、不修改 planning source 字节、不执行 task.supersede。supersede 结果由 Adjudicator 以真实 reviewer lease/fencing 调用 daemon task.supersede 后，以 daemon event/readback 与 Adjudicator handoff 为证据；Adjudicator 不编辑本文件，其结论记入独立 Adjudicator 交接记录。",
+  "task_binding": {
+    "task_id": "T-1788339177806-d7198e98",
+    "task_title": "Role Prompt v1 bootstrap recovery provenance finalization and v1 vehicle supersession",
+    "step_ids": {
+      "step0_freeze_bootstrap_recovery_provenance": "S-1788339177807-d723f89c",
+      "step1_write_append_only_finalization_receipt": "S-1788339177807-d724ce48",
+      "step2_validate_and_report_for_independent_review": "S-1788339177807-d724fd28"
+    },
+    "task_contract": {
+      "contract_id": "TC-T-1788339177806-d7198e98",
+      "revision": 1,
+      "hash": "sha256:72d03ec033b901a745eda549ef3a056c9d7395cb8c82dd223ab5d6b14a073236"
+    },
+    "executor_role_contract": {
+      "id": "rcl-T-1788339177806-d7198e98-executor",
+      "revision_id": "rcr-T-1788339177806-d7198e98-executor-r1",
+      "hash": "sha256:0d49f4129e08154c7c73540bbbb7f5b930317b9d5add0c4870d06448e7348dec",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "skill_id": "cw-executor-senior-engineer",
+      "skill_version": "v1",
+      "handoff_to": "reviewer"
+    },
+    "workspace": {
+      "workspace_id": 1,
+      "workspace_instance_id": "ws-1",
+      "workspace_binding_id": "tb-T-1788339177806-d7198e98-ws-1",
+      "workspace_capture_id": "wc-ws-1-3609283044"
+    },
+    "assignment_id": "A-8136fc0b57a2b93329795aff",
+    "executor_identity": {
+      "agent_id": "exec-recover-br01-20260901",
+      "agent_instance_id": "inst-exec-bc045fae",
+      "session_id": "sess-exec-bc045fae",
+      "model_id": "recovery-agent",
+      "registered_role": "executor",
+      "runtime_role": "implementer"
+    },
+    "allowed_paths": [
+      "deliverables/software-company/role-prompt-v1-bootstrap-recovery-work-order.json; docs/design/cw-role-prompt-compiler-v1-bootstrap-recovery-amendment.md; docs/evidence/role-prompt-v1-bootstrap-recovery-finalization.json; cw_task_commit_ledger.json"
+    ],
+    "forbidden_paths": [
+      "rust_ext/**; cli/**; server/**; db/**; any historical evidence rewrite; task.claim/reopen/close of T-1788253722521-3b2f8420; task.supersede"
+    ]
+  },
+  "planning_sources_frozen_unchanged": {
+    "deliverables/software-company/role-prompt-v1-bootstrap-recovery-work-order.json": {
+      "sha256": "bf78e5b06dc8dc5340b062f9eb9f64481dd13ec103500a4c5162974670a2756f",
+      "sha256_uppercase": "BF78E5B06DC8DC5340B062F9EB9F64481DD13EC103500A4C5162974670A2756F",
+      "expected_sha256": "BF78E5B06DC8DC5340B062F9EB9F64481DD13EC103500A4C5162974670A2756F",
+      "match": true,
+      "size_bytes": 8741,
+      "git_index_blob": "70f459d969c3d56d18776ff24fdd16be29d6aeac",
+      "change": "added_unchanged",
+      "bytes_modified": false
+    },
+    "docs/design/cw-role-prompt-compiler-v1-bootstrap-recovery-amendment.md": {
+      "sha256": "c2e390ebe35890fb6a89fdc27876ab05255d6ffc6a7a3b0e0c519986d9fcbe45",
+      "sha256_uppercase": "C2E390EBE35890FB6A89FDC27876AB05255D6FFC6A7A3B0E0C519986D9FCBE45",
+      "expected_sha256": "C2E390EBE35890FB6A89FDC27876AB05255D6FFC6A7A3B0E0C519986D9FCBE45",
+      "match": true,
+      "size_bytes": 10103,
+      "git_index_blob": "4e9e8877368d443d54c5e75d1a9cb760bb0a177d",
+      "change": "added_unchanged",
+      "bytes_modified": false
+    }
+  },
+  "br_bindings": {
+    "BR-01": {
+      "idempotency_key": "role-prompt-v1-bootstrap-br01-daemon-binding",
+      "title": "Bootstrap BR-01: daemon strict task.create workspace binding and provenance readback",
+      "predecessor": "T-1787850432491-f42a2b8c_COMPLETE_OR_DAEMON_CONFIRMED_NONOVERLAP",
+      "predecessor_task_status": "closed",
+      "predecessor_task_id": "T-1787850432491-f42a2b8c",
+      "implementation_commit": "9e06fcdc2f1fc8e62dd85e6f83a692d975036e53",
+      "evidence_backfill_commit": "f1a819597b5d4a7b659857e086a661bc3b728a3a",
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br01-daemon.json",
+      "evidence_sha256": "5a061a630af6983dcd2c62f3199a2dc098ce7d534706b1caa02133de92eb9175",
+      "code_change": true
+    },
+    "BR-02": {
+      "idempotency_key": "role-prompt-v1-bootstrap-br02-python-client",
+      "title": "Bootstrap BR-02: Python cw task.create daemon binding parity",
+      "predecessor": "BR-01_COMPLETE_AND_DEPLOYED",
+      "implementation_commit": "ca8c2fb3c5f5b54818877017ce177f7d2c742645",
+      "evidence_backfill_commit": "7620547d70cd654de98766b29bf9fa9f3f084d5b",
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br02-python-client.json",
+      "evidence_sha256": "bb736804aa9b905188efbc6364c04b138f2b231109e8c56c861463cd8d8f9346",
+      "code_change": true
+    },
+    "BR-03": {
+      "idempotency_key": "role-prompt-v1-bootstrap-br03-rust-cli",
+      "title": "Bootstrap BR-03: runtime Rust cw task.create daemon binding parity",
+      "predecessor": "BR-02_COMPLETE",
+      "implementation_commit": "0dadb0c1c6730a9d6bc594de669d80a4c62843c4",
+      "evidence_backfill_commit": "525cc9699ab2704310caf98e6631de3da99a4c30",
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br03-rust-cli.json",
+      "evidence_sha256": "1bb95fe76bbad552c3bc12021182749831b82bc5973c5943a2c85174601f4ff9",
+      "code_change": true
+    },
+    "BR-04": {
+      "idempotency_key": "role-prompt-v1-gate-manifest-review-vehicle-v2",
+      "title": "Bootstrap BR-04: create correctly bound Role Prompt Gate review vehicle v2",
+      "predecessor": "BR-01_BR-02_BR-03_COMPLETE_AND_DEPLOYED",
+      "code_change": false,
+      "commit_hash": "525cc9699ab2704310caf98e6631de3da99a4c30",
+      "commit_hash_semantics": "BR-04 为纯治理卡（code_change=false），无实现 commit；commit_hash 指向验证执行时仓库 HEAD（BR-03 evidence 提交 525cc96），作为 review vehicle 创建动作的可复现锚点。",
+      "vehicle_task_id": "T-1788315869918-0cb69b10",
+      "vehicle_step_id": "S-1788315869920-0cc7e988",
+      "evidence_path": "docs/evidence/role-prompt-v1-bootstrap-br04-gate-review-vehicle.json",
+      "evidence_sha256": "96804e04d4c01672c3ece860a4b78d3901352e944c3ded100d3099f22b0acf20"
+    }
+  },
+  "gate0_binding": {
+    "card": "GATE-0",
+    "title": "Role Prompt v1 GATE-0: legacy Epic binding attestation",
+    "legacy_task_id": "T-1787203926824-9f873bfc",
+    "anchor_task_id": "T-1788315869918-0cb69b10",
+    "rpc_method": "task.attest_legacy_workspace_binding",
+    "request_id": "role-prompt-v1-gate0-epic-binding-attestation",
+    "input_evidence_path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-input.json",
+    "input_evidence_sha256": "26461d369ee3fe7bd3bdb6bc0e966f36e3f95579e1d5310e676fad1e11d9d72a",
+    "operation_receipt_path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-receipt.json",
+    "operation_receipt_sha256": "82d68488156dd0094d9db3a4fd1120311ebe31adfad59ccb252f280717d04073",
+    "finalization_receipt_path": "docs/evidence/role-prompt-v1-gate0-binding-attestation-finalization.json",
+    "finalization_receipt_sha256": "ffc84eca4749de3c1d2cc482930f55caf1f3dc17911fb5ef96b27f3d0d24bf9f",
+    "workspace_id": 1,
+    "workspace_instance_id": "ws-1",
+    "response_status": "attested",
+    "note": "GATE-0 receipt/finalization 已存在且未被本次任务修改；本 receipt 只绑定其路径与 sha256，作为 bootstrap recovery 的下游 provenance。"
+  },
+  "task_ids_bound": {
+    "finalization_task": "T-1788339177806-d7198e98",
+    "v1_vehicle_supersede_source": "T-1788253722521-3b2f8420",
+    "v2_vehicle_supersede_target": "T-1788315869918-0cb69b10",
+    "br01_ownership_predecessor": "T-1787850432491-f42a2b8c",
+    "gate0_legacy_epic": "T-1787203926824-9f873bfc",
+    "br03_e2e_artifacts_open": [
+      "T-1788313776829-b6daac60",
+      "T-1788313784235-70448f30",
+      "T-1788313854785-dd64cebc"
+    ]
+  },
+  "daemon_readback": {
+    "captured_via": [
+      "cw task next-action <task_id> --workspace-instance-id <instance> --json",
+      "cw daemon health",
+      "cw daemon manifest",
+      "cw daemon list"
+    ],
+    "pre_claim_gate_readback": {
+      "captured_at_phase": "step0 claim 之前（三项前置门禁核验点）",
+      "task_id": "T-1788339177806-d7198e98",
+      "lifecycle_status": "open",
+      "workflow_status": "queued",
+      "decision": "READY",
+      "action": "CLAIM",
+      "required_role": "executor",
+      "step_id": "S-1788339177807-d723f89c",
+      "task_contract": {
+        "id": "TC-T-1788339177806-d7198e98",
+        "revision": 1,
+        "hash": "sha256:72d03ec033b901a745eda549ef3a056c9d7395cb8c82dd223ab5d6b14a073236"
+      },
+      "role_contract": {
+        "id": "rcl-T-1788339177806-d7198e98-executor",
+        "revision_id": "rcr-T-1788339177806-d7198e98-executor-r1",
+        "revision": 1,
+        "hash": "sha256:0d49f4129e08154c7c73540bbbb7f5b930317b9d5add0c4870d06448e7348dec",
+        "skill_id": "cw-executor-senior-engineer",
+        "handoff_to": "reviewer"
+      },
+      "authorization": {
+        "acting_role": "executor",
+        "lease_role": "executor",
+        "lease_required": true,
+        "fencing_required": true
+      },
+      "workspace_id": 1,
+      "workspace_instance_id": "ws-1",
+      "workspace_binding_id": "tb-T-1788339177806-d7198e98-ws-1",
+      "workspace_capture_id": "wc-ws-1-3609283044",
+      "assignment_id": "A-bb6f74901f9f67a72fbb265a",
+      "identity_policy": "legacy_identity_v1",
+      "identity_policy_status": "declared",
+      "blocking_conditions": [],
+      "blocking_reasons": [],
+      "evaluated_at": "1788339625.145623"
+    },
+    "current_task": {
+      "captured_at_phase": "step1 claim 之后、step1 写入 receipt 时",
+      "task_id": "T-1788339177806-d7198e98",
+      "lifecycle_status": "in_progress",
+      "workflow_status": "execution_in_progress",
+      "decision": "READY",
+      "action": "CLAIM",
+      "step_id": "S-1788339177807-d724ce48",
+      "current_role": "executor",
+      "next_role": "executor",
+      "task_contract": {
+        "id": "TC-T-1788339177806-d7198e98",
+        "revision": 1,
+        "hash": "sha256:72d03ec033b901a745eda549ef3a056c9d7395cb8c82dd223ab5d6b14a073236"
+      },
+      "role_contract": {
+        "id": "rcl-T-1788339177806-d7198e98-executor",
+        "revision_id": "rcr-T-1788339177806-d7198e98-executor-r1",
+        "hash": "sha256:0d49f4129e08154c7c73540bbbb7f5b930317b9d5add0c4870d06448e7348dec",
+        "skill_id": "cw-executor-senior-engineer",
+        "handoff_to": "reviewer"
+      },
+      "workspace_id": 1,
+      "workspace_instance_id": "ws-1",
+      "workspace_binding_id": "tb-T-1788339177806-d7198e98-ws-1",
+      "workspace_capture_id": "wc-ws-1-3609283044",
+      "assignment_id": "A-8136fc0b57a2b93329795aff",
+      "blocking_reasons": [],
+      "source_task_contract_hash": "sha256:72d03ec033b901a745eda549ef3a056c9d7395cb8c82dd223ab5d6b14a073236",
+      "evaluated_at": "1788340314.074944"
+    },
+    "v1_vehicle": {
+      "task_id": "T-1788253722521-3b2f8420",
+      "lifecycle_status": "open",
+      "workflow_status": "queued",
+      "decision": "READY",
+      "action": "CLAIM",
+      "step_id": "S-1788253727027-47bec72c",
+      "task_contract": {
+        "id": "TC-T-1788253722521-3b2f8420",
+        "revision": 1,
+        "hash": "sha256:dff6148524fbb96cc4f34b9267f4b503bb7c162bbfe9c7258c11496e058964e5"
+      },
+      "role_contract_hash": "sha256:ee8ce769d8166f2d3b298677708583d27263e7537aea37706f2c63402ca4779f",
+      "workspace_id": 10,
+      "workspace_instance_id": "ws-10",
+      "workspace_binding_id": "tb-T-1788253722521-3b2f8420-ws-10",
+      "workspace_capture_id": "wc-ws-10-1200792964",
+      "mutation_performed_by_this_task": [],
+      "append_only_preserved": true
+    },
+    "v2_vehicle": {
+      "task_id": "T-1788315869918-0cb69b10",
+      "lifecycle_status": "closed",
+      "workflow_status": "completed",
+      "decision": "COMPLETE",
+      "action": "NONE",
+      "next_role": "complete",
+      "task_contract_id": "TC-T-1788315869918-0cb69b10",
+      "task_contract_revision": 1,
+      "task_contract_hash": "sha256:a9a40840369acb44de0dfa150db54adbbaccdbdc2d162aeec7cdbfdcff50cabf",
+      "step_id": "S-1788315869920-0cc7e988",
+      "step_status": "done",
+      "workspace_id": 1,
+      "workspace_instance_id": "ws-1",
+      "workspace_binding_id": "tb-T-1788315869918-0cb69b10-ws-1",
+      "workspace_capture_id": "wc-ws-1-214138640",
+      "closed_at": 1788317639.3852534
+    },
+    "daemon_health": {
+      "security_profile": "dev_loopback_unauthenticated",
+      "endpoint": "http://127.0.0.1:7292",
+      "pid": 13632,
+      "git_commit": "b77de500d10885644eae6d1c9429f5f846e7b529",
+      "schema_version": 60,
+      "worker_status": "healthy",
+      "capability_registry_revision": "http-mvp-cap-registry-v1"
+    },
+    "daemon_manifest": {
+      "manifest_id": "manifest-1788338002265191000",
+      "manifest_hash": "c8d4476d990ca2aa299487c3e75f9cb0efc30c0c2b8eb5f54d028325a4a9ff92",
+      "manifest_version": "callwarden-http-manifest/v1",
+      "daemon_executable": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+      "daemon_binary_sha256": "573543e2902107495af3c9b3e75a2c1c7fa4c435c6e83a2e570015e27edf49f9",
+      "git_commit": "b77de500d10885644eae6d1c9429f5f846e7b529",
+      "endpoint": "http://127.0.0.1:7292",
+      "pid": 13632,
+      "process_start_time": "1788338002",
+      "schema_version": 60,
+      "worker_status": "healthy",
+      "capability_registry_revision": "http-mvp-cap-registry-v1"
+    },
+    "live_workspace_registry_entry_for_callwarden": {
+      "workspace_id": 1101,
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "client_view_root": "C:\\git_work\\callwarden",
+      "host_real_root": "\\\\?\\C:\\git_work\\callwarden",
+      "status": "active",
+      "registered_at": 1788338130.9287958,
+      "registry_size": 70
+    }
+  },
+  "supersede_request": {
+    "state": "requested_pending_adjudicator_daemon_event",
+    "rpc_method": "task.supersede",
+    "source_task_id": "T-1788253722521-3b2f8420",
+    "target_task_id": "T-1788315869918-0cb69b10",
+    "source": "v1",
+    "target": "T-1788315869918-0cb69b10",
+    "reserved_for": "adjudicator",
+    "required_guard": "真实 reviewer lease + fencing counter，经 daemon task.supersede 执行",
+    "executor_actions_performed": [],
+    "executor_actions_forbidden": [
+      "task.supersede",
+      "task.claim of T-1788253722521-3b2f8420",
+      "task.reopen of T-1788253722521-3b2f8420",
+      "step edit of S-1788253727027-47bec72c",
+      "task.close of T-1788253722521-3b2f8420"
+    ],
+    "v1_append_only_verified": {
+      "task_status_unchanged": "open",
+      "step_status_unchanged": "pending",
+      "task_contract_revision_unchanged": 1,
+      "workspace_binding_unchanged": "tb-T-1788253722521-3b2f8420-ws-10"
+    },
+    "result_evidence": "等待 adjudicator daemon event/readback 与 Adjudicator handoff；本 receipt 不填写 supersede 结果，Adjudicator 亦不编辑本文件。"
+  },
+  "commit_binding": {
+    "method": "多段式提交绑定（沿用 BR-01/BR-02/BR-03 与 GATE-0/GATE-1A finalization 的两段式语义，并显式补记 backfill commit）",
+    "base_commit_before_finalization": "b77de500d10885644eae6d1c9429f5f846e7b529",
+    "finalization_commit": "1373f7861b5b0998d7e8c94630f121d10e72605e",
+    "finalization_commit_semantics": "提交后回填：承载两份 planning source（原样入 Git）+ 本 receipt 的 task-bound 白名单 commit。",
+    "backfill_commit": "b8dceb8bc733f5d790c915924b1799bb34209950",
+    "backfill_commit_semantics": "紧随 finalization_commit 之后的回填 commit：仅把 finalization_commit、pre_backfill_sha256 与 backfill_commit 写入本文件，不改其它内容。",
+    "pre_backfill_sha256": "bf3de20bc56338352a40448d93ff0497fd59e23966b646f8c79199e398915d92",
+    "pre_backfill_git_blob": "62e4b183d13eaae19bf839311ee67cf0b1dff309",
+    "two_stage_note": "两段式回填：pre_backfill_sha256 与 pre_backfill_git_blob 绑定 commit 1373f78 中承载的 receipt 内容；本文件回填后的 sha256 由 cw_task_commit_ledger.json 的 task 条目（backfilled_receipt_sha256）与 step2 report 记录。沿用 BR-01/BR-02/BR-03 与 GATE-0/GATE-1A 语义。",
+    "hash_refresh_commit_note": "backfill_commit 的 hash 需在其自身创建后才能写入，因此另有一个只刷新 hash 的收尾 commit（git log --grep=T-1788339177806-d7198e98 可完整枚举）。本文件最终落盘内容的 sha256 由 cw_task_commit_ledger.json 的 task 条目 backfilled_receipt_sha256 绑定；pre_backfill_sha256 绑定 finalization_commit 中承载的 receipt 内容。",
+    "committed_paths_whitelist": [
+      "deliverables/software-company/role-prompt-v1-bootstrap-recovery-work-order.json",
+      "docs/design/cw-role-prompt-compiler-v1-bootstrap-recovery-amendment.md",
+      "docs/evidence/role-prompt-v1-bootstrap-recovery-finalization.json",
+      "cw_task_commit_ledger.json"
+    ]
+  },
+  "verified_facts": [
+    "两份 planning source 的 SHA-256 与本任务声明值逐字节精确匹配（BF78E5B0…A2756F / C2E390EB…CBE45）。",
+    "两份 planning source 以 git add 原样进入 index，blob 为 70f459d969c3d56d18776ff24fdd16be29d6aeac / 4e9e8877368d443d54c5e75d1a9cb760bb0a177d，未修改任何字节。",
+    "daemon 在领取前对本任务返回 decision=READY / action=CLAIM，workspace_id=1、workspace_instance_id=ws-1、Task Contract hash=sha256:72d03ec033b901a745eda549ef3a056c9d7395cb8c82dd223ab5d6b14a073236，三项前置门禁全部成立后才 claim。",
+    "BR-01/BR-02/BR-03 的实现与 evidence 回填 commit 均可在仓库中解析，BR-04 vehicle T-1788315869918-0cb69b10 已 closed（closed_at=1788317639.3852534）。",
+    "v1 vehicle T-1788253722521-3b2f8420 的 lifecycle/workflow、step pending、Contract rev1、ws-10 binding 在本次任务期间保持不变（append-only 未被破坏）。",
+    "daemon health.git_commit 与 daemon manifest.git_commit 均等于本次任务执行时的仓库 HEAD b77de500d10885644eae6d1c9429f5f846e7b529，无 daemon 部署漂移。",
+    "GATE-0 的 input/receipt/finalization 三份证据存在且未被本次任务修改，其 sha256 已绑定。"
+  ],
+  "unresolved_carryover": [
+    {
+      "id": "U-1",
+      "statement": "本任务自身绑定 workspace_id=1 / workspace_instance_id=ws-1，但 cw daemon list 的实时注册表中不存在 workspace 1（cw daemon status 1 → workspace_not_found: 1）；C:\\git_work\\callwarden 的实时权威为 workspace_id=1101 / workspace_instance_id=4baea3ff12c2ea5c。planning source 声明的 expected_workspace_instance_id=4baea3ff12c2ea5c 与实时注册表一致，与本任务的 ws-1 phantom binding 不一致。",
+      "why_unresolved": "禁止修改 task binding / workspace binding；planning source 字节不可改。",
+      "owner": "planner / 治理维护路径（重新 attestation 到 4baea3ff12c2ea5c）",
+      "blocking_this_task": false
+    },
+    {
+      "id": "U-2",
+      "statement": "runtime 部署二进制与 rust_ext/target/release 二进制 hash 漂移：runtime/current/cw-daemon.exe=573543e2902107495af3c9b3e75a2c1c7fa4c435c6e83a2e570015e27edf49f9，rust_ext/target/release/cw-daemon.exe=b5abbec412d9499116aa7015fe9ad31c3098b068a6904c48aa783e635d6528cd。",
+      "why_unresolved": "本次任务不改动 daemon 代码、不执行部署；漂移先于本任务存在。",
+      "owner": "planner / 治理维护路径",
+      "blocking_this_task": false
+    },
+    {
+      "id": "U-3",
+      "statement": "BR-03 e2e 产物任务 T-1788313776829-b6daac60 / T-1788313784235-70448f30 / T-1788313854785-dd64cebc 仍为 open，属测试残留 artifact，不代表 BR-03 实现未完成（BR-03 evidence 的 7 条 acceptance 全 PASS）。",
+      "why_unresolved": "关闭这些卡超出本任务白名单与权限。",
+      "owner": "planner / 治理维护路径",
+      "blocking_this_task": false
+    },
+    {
+      "id": "U-4",
+      "statement": "step0 的 target_file 以 '+' 连接两路径，而 daemon 步骤白名单切分器只识别 ','/';'，导致单文件路径 task.report --changes-json 无法通过 E_CHANGE_PATH_NOT_ALLOWED；step0 的变更归属改由本 receipt + task-bound 白名单 commit 表达。",
+      "why_unresolved": "禁止修改 daemon/CLI。",
+      "owner": "planner / 治理维护路径",
+      "blocking_this_task": false
+    },
+    {
+      "id": "U-5",
+      "statement": "v1 vehicle supersede 尚未执行：本 receipt 只记录请求、source/target 与“等待 adjudicator daemon event”，实际结果以 daemon event/readback 与 Adjudicator handoff 为准。",
+      "why_unresolved": "task.supersede 为 Adjudicator 专属受保护写。",
+      "owner": "adjudicator",
+      "blocking_this_task": false
+    }
+  ],
+  "authority_note": "所有 task/contract/lease/assignment 标识均取自 daemon 权威 readback（cw task next-action --json、cw daemon health、cw daemon manifest、cw daemon list）；workspace binding/capture 与任务状态同时以 只读方式交叉核对 ~/.callwarden/callwarden.db 的 task_workspace_bindings / tasks / task_steps / task_contract_revisions（未做任何写操作）。planning source 的 SHA-256 由 sha256sum 直接计算，git blob 由 git rev-parse :0:<path> 取得。daemon_readback_sha256 为 daemon_readback 对象的规范化 sha256（json.dumps(sort_keys=True, ensure_ascii=False, separators=(',',':'))）。无 lease token、无密钥写入本文件。本任务不修改 rust_ext/**、cli/**、server/**、db/**，不修改任何历史 evidence，不执行 task.supersede。",
+  "daemon_readback_sha256": "sha256:671e66957f2d9ff93ab0f3a79b464022fe47581174cb6cc4b4b6b9158399b0d1"
+}

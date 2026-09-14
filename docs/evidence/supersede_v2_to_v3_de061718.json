@@ -1,0 +1,13 @@
+{
+  "kind": "supersede_evidence",
+  "superseded_task": "T-1788962308958-de061718",
+  "superseding_task": "T-1788963104879-2e9e6270",
+  "batch": "P0-COMPAT-v2 → P0-COMPAT-v3",
+  "reason": "v2 开卡缺陷收尾：CLI governed 通道（显式 --identity-policy）跳过缺省三角色合同模板，daemon 空 role_contracts 裸建 → 无 task_contract_revisions/role_contract_lineages → next_action 规则 4 governance_blocked。由 v3 批次同名卡（带完整合同 bootstrap）替代，覆盖方法集不变。",
+  "verification": {
+    "v2_card": "task_contract_revisions=0, role_contract_lineages=0 → governance_blocked",
+    "v3_card": "task_contract_revisions=1, role_contract_lineages=3, step_bindings=4 → queued/READY"
+  },
+  "created_at": "2026-09-09T22:16:17+0800",
+  "request_id": "req-sup-v2-a8d9c4b9"
+}

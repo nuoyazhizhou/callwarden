@@ -478,7 +478,11 @@ def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
     - active_workspace 注入 ctx.workspace_id，db 层查询基于
       `_get_active_workspace_id()` 过滤，不查询 active workspace；
     - workspace_root 从 ctx.conn 对应库的 workspaces 表解析（get_file_history 等
-      方法依赖 os.path.relpath(file_path, self.workspace_root)）。
+      方法依赖 os.path.relpath(file_path, self.workspace_root)）；
+    - 2026-09-05 兼容：HTTP 薄客户端只注入 workspace_instance_id（字符串），
+      daemon registry 的数字 id 与权威库数字 id 是两个 ID 空间。当
+      ctx.workspace_id 缺失/在权威库无对应行时，按参数 workspace_root 的
+      规范化形式（反斜杠→正斜杠、盘符小写）回退解析权威数字 id。
     """
     db = object.__new__(CodeGraphDB)
     db.conn = ctx.conn
@@ -494,6 +498,22 @@ def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
                 db.workspace_root = row["root_path"]
         except Exception:
             db.workspace_root = None
+    if db.active_workspace is None:
+        root = ctx.params.get("workspace_root") or ctx.params.get("workspace")
+        if root:
+            norm = str(root).replace("\\", "/")
+            if len(norm) >= 2 and norm[1] == ":":
+                norm = norm[0].lower() + norm[1:]
+            try:
+                row = ctx.conn.execute(
+                    "SELECT id, root_path FROM workspaces WHERE root_path = ?",
+                    (norm,),
+                ).fetchone()
+                if row is not None:
+                    db.active_workspace = {"id": row["id"]}
+                    db.workspace_root = row["root_path"]
+            except Exception:
+                pass
     return db
 
 
@@ -558,25 +578,15 @@ def _h_export_module_graph(ctx: CompatCallContext) -> Any:
 # get_comment_coverage / get_call_heatmap 已 S2 迁移 rust_native
 # （T-1787209948470-a59bcf9c#S2-query-compat-batch1），工具层函数体在 HTTP
 # 模式直连 daemon RPC（route_rpc），见各定义处。
-_SYMBOL_READ_ONLY_METHODS: Dict[str, Any] = {
-    "get_symbol_history": _h_get_symbol_history,
-    "get_recent_changes": _h_get_recent_changes,
-    "get_impact": _h_get_impact,
-    "get_comment_from_version": _h_get_comment_from_version,
-    "get_issue_summary": _h_get_issue_summary,
-    "find_issues": _h_find_issues,
-    "get_test_coverage": _h_get_test_coverage,
-    "export_module_graph": _h_export_module_graph,
-}
+# P0-COMPAT-v3（T-1788963103216-cb818938）：8 个只读方法全部迁移 rust_native，
+# compat worker 白名单清空（空 dict 条件注册，退役后 handler 函数保留供追溯）。
+_SYMBOL_READ_ONLY_METHODS: Dict[str, Any] = {}
 
-# 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _SYMBOL_READ_ONLY_METHODS,
-    workspace_scope=_SYMBOL_COMPAT_SCOPE,
-    description="H4C-2 符号组只读工具（13 个，T-1786716190783-ba187c88 步骤#0；"
-                "3 个 stats 已 W2-1 迁移 rust_native，get_semgrep_findings "
-                "已 W3-3 迁移 rust_native，get_file_history 已 W4-1 迁移 rust_native，"
-                "get_top_callers/get_orphan_symbols/get_deepest_functions/"
-                "get_comment_coverage/get_call_heatmap 已 S2 迁移 rust_native）",
-)
+# 模块级注册：worker 装配 import 本模块时执行。P0-COMPAT-v3 起白名单为空，
+# 仅在仍有残留条目时注册（空 dict 直接跳过，避免注册空集合）。
+if _SYMBOL_READ_ONLY_METHODS:
+    register_compat_routes(
+        _SYMBOL_READ_ONLY_METHODS,
+        workspace_scope=_SYMBOL_COMPAT_SCOPE,
+        description="H4C-2 符号组只读工具（P0-COMPAT-v3 后全部 rust_native）",
+    )

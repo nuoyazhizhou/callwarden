@@ -1,0 +1,59 @@
+{
+  "evidence_id": "RP-02-role-prompt-compiler",
+  "card_id": "RP-02",
+  "task_id": "T-1788682521002-a852a710",
+  "parent_task_id": "T-1788668721548-b8c6f4dc",
+  "created_at": "2026-09-06T16:45:00+08:00",
+  "frozen_authority": {
+    "spec": "docs/design/cw-role-prompt-compiler-v1-frozen-spec.md",
+    "spec_sha256": "95298729F3357CDBE76D8F8E91F12067B54D2661D6E80ABFF561A2E2A8C86CB7"
+  },
+  "prerequisite": {
+    "SR-02": {
+      "task_id": "T-1788680451232-c06332f4",
+      "summary": "role-prompt validator per-template route mandate removed (Option B, user-adjudicated); frozen §7.3 tree made representable",
+      "code_commit": "bcc6015810b8a9cade911e8a2dbd778523db7cf6"
+    }
+  },
+  "deliverables": {
+    "assets_root": "rust_ext/resources/role_prompts/v1/",
+    "manifest": {
+      "path": "rust_ext/resources/role_prompts/v1/manifest.json",
+      "schema_version": "role_prompt_assets_v1",
+      "sha256": "277560df40e0cf7f5b28309d878755824cec54114b0ac6a510b5f20717067cbc",
+      "template_count": 10,
+      "role_count": 7,
+      "system_count": 3
+    },
+    "compiler_policy": "rust_ext/resources/role_prompts/v1/compiler_policy.md (template id cw.compiler.policy.v1)",
+    "legacy_assets": {
+      "executor": {"path": "legacy/executor_planner_startup_v1.md", "sha256": "59a459f7786097c671d48fbeec6e361c12d7a95bdec4e3722169d68d5d6a73f6", "alias_exception": true},
+      "reviewer": {"path": "legacy/reviewer_startup_v1.md", "sha256": "6415033d8f134392de16fca130bfb762cb6c70d9f466c770ec18a20fc4ce139e"},
+      "adjudicator": {"path": "legacy/adjudicator_startup_v1.md", "sha256": "42a5f1defa81008b009058c1baf5d1a14b3ef4521e291b7b55c19bb473a77c3e"}
+    },
+    "current_assets": [
+      "current/executor_v4.md (cw.aprime.executor.startup.v4, routes CLAIM+REVISE)",
+      "current/reviewer_v4.md (cw.aprime.reviewer.startup.v4, routes REVIEW)",
+      "current/adjudicator_v4.md (cw.aprime.adjudicator.startup.v4, routes ADJUDICATE)",
+      "current/planner_v1.md (cw.aprime.planner.startup.v1, routeless per SR-02 Option B)"
+    ],
+    "system_assets": [
+      "system/blocked_recovery.md (cw.system.blocked_recovery.v1)",
+      "system/waiting.md (cw.system.waiting.v1)",
+      "system/terminal.md (cw.system.terminal.v1)"
+    ],
+    "goldens": "rust_ext/tests/role_prompt_assets_golden.rs (4 tests)"
+  },
+  "verification": {
+    "cargo_test_role_prompt_assets": "golden suite 4/4 passed (prod tree fail-closed validation, frozen legacy byte probes, alias exception exactness, no undeclared strays)",
+    "cargo_test_role_prompt_validator": "non-regression: negative 20 + positive 7 all passed",
+    "build_gate": "ACTIVE: ROLE_PROMPTS_MANIFEST_PRESENT=true; cargo check green with CARGO_INCREMENTAL=0 (rustc 1.93.1 incremental ICE is a known compiler bug, unrelated)",
+    "git_diff_check": "clean"
+  },
+  "code_commit": "ef7cccf73bfd7ae443f6b7b5e4361a04348df9aa",
+  "identity": {
+    "executor": "executor-wb-rp02-01",
+    "reviewer": "reviewer-wb-rp02-01",
+    "adjudicator": "adjudicator-wb-rp02-01"
+  }
+}

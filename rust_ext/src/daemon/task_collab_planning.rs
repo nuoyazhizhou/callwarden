@@ -2,6 +2,7 @@
 //! 保留原有步骤解析、事务和治理投影语义。
 
 use super::*;
+use crate::daemon::task_prompt::redaction::normalize_bare_sha256_refs;
 use crate::daemon::task_loop::task_contract_bootstrap::{
     bootstrap_task_governance_contracts, BootstrapInput,
 };
@@ -58,6 +59,49 @@ fn default_trio_role_contracts() -> Vec<Value> {
     .as_array()
     .cloned()
     .unwrap_or_default()
+}
+
+/// Generate a collision-free child task id inside the split transaction.
+///
+/// The historical `<parent>-sub-<index>` shape is retained when available so
+/// existing callers and projections remain stable.  A repeated split or a
+/// previously imported child must not abort the whole batch merely because
+/// that compatibility id already exists; in that case append fresh daemon
+/// entropy and check the database again before inserting.
+fn next_split_child_id(
+    tx: &rusqlite::Transaction<'_>,
+    parent_task_id: &str,
+    child_index: usize,
+) -> Result<String, DaemonRpcError> {
+    let base = format!("{parent_task_id}-sub-{child_index}");
+    let mut candidate = base.clone();
+    for attempt in 0..32u32 {
+        let exists: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE id = ?1",
+                params![candidate],
+                |row| row.get(0),
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!(
+                    "检查 split 子任务 ID 是否冲突失败: {}",
+                    e
+                ))
+            })?;
+        if exists == 0 {
+            return Ok(candidate);
+        }
+
+        // Keep the collision suffix opaque and daemon-generated.  Include the
+        // attempt number so even an extremely coarse clock cannot repeat the
+        // same candidate indefinitely.
+        candidate = format!("{base}-{:08x}-{attempt}", rand_val());
+    }
+
+    Err(DaemonRpcError::internal_error(format!(
+        "无法为父任务 {} 生成唯一 split 子任务 ID",
+        parent_task_id
+    )))
 }
 
 impl TaskCollabStore {
@@ -140,13 +184,13 @@ impl TaskCollabStore {
                 let st_title = sub_def
                     .get("title")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("subtask")
-                    .to_string();
+                    .map(normalize_bare_sha256_refs)
+                    .unwrap_or_else(|| "subtask".to_string());
                 let st_desc = sub_def
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                    .map(normalize_bare_sha256_refs)
+                    .unwrap_or_default();
                 let steps = match sub_def.get("steps") {
                     None => Vec::new(),
                     Some(value) => value
@@ -175,7 +219,7 @@ impl TaskCollabStore {
         }
 
         for (idx, (st_title, st_desc, steps)) in subtask_defs.into_iter().enumerate() {
-            let sub_id = format!("{}-sub-{}", task_id, idx + 1);
+            let sub_id = next_split_child_id(&tx, task_id, idx + 1)?;
 
             tx.execute(
                 "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
@@ -287,7 +331,8 @@ impl TaskCollabStore {
         let title = params
             .get("title")
             .and_then(|v| v.as_str())
-            .unwrap_or("Root Plan Task");
+            .map(normalize_bare_sha256_refs)
+            .unwrap_or_else(|| "Root Plan Task".to_string());
         let plan_file = params
             .get("plan_file")
             .and_then(|v| v.as_str())
@@ -476,11 +521,13 @@ impl TaskCollabStore {
         let title = params
             .get("title")
             .and_then(|v| v.as_str())
-            .unwrap_or("subtask");
+            .map(normalize_bare_sha256_refs)
+            .unwrap_or_else(|| "subtask".to_string());
         let description = params
             .get("description")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .map(normalize_bare_sha256_refs)
+            .unwrap_or_default();
         let steps = match params.get("steps") {
             None => &[][..],
             Some(value) => value

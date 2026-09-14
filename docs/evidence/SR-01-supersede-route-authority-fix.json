@@ -1,0 +1,61 @@
+{
+  "evidence_id": "SR-01-supersede-route-authority-fix",
+  "task_id": "T-1788675318818-c4b18cfc",
+  "idempotency_key": "sr01-supersede-route-authority",
+  "workspace": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c"
+  },
+  "defect": {
+    "symptom": "cw.py task supersede T-1788671453544-d0625554 T-1788673904079-5fa6fb84 failed with E_WORKSPACE_AUTHORITY_MISMATCH (binding ws-1 vs request ws-10)",
+    "root_cause": "route_task_write/route_task_read (server/daemon_client.py) unconditionally call _inject_workspace_id, which resolves the legacy ACTIVE workspace (ws-10 on the shared multi-project daemon) instead of the immutable task_workspace_bindings row (ws-1). _is_task_scoped_authority_request only recognized task_id, while task.supersede carries superseded_id/superseding_id and task.superseded_by historically superseded_id, so the supersede family never hit the task-scoped skip in route_rpc and the wrong numeric workspace reached the daemon.",
+    "impact": [
+      "task.supersede: daemon fail-closed E_WORKSPACE_AUTHORITY_MISMATCH (governance mutation blocked)",
+      "task.superseded_by: silent wrong-workspace filtered projection (relations invisible)"
+    ],
+    "discovered": "2026-09-06 during RP-01 supersede cleanup (evidence docs/evidence/role-prompt-v1-rp01-creation-supersede.json)"
+  },
+  "fix": {
+    "commit_sha": "37dfa370143e54bb936709c356261150170a6745",
+    "files": [
+      "server/daemon_client.py",
+      "tests/test_task_supersede_route_authority.py"
+    ],
+    "changes": [
+      "_is_task_scoped_authority_request: recognize non-blank superseded_id alongside task_id (task_id behavior unchanged)",
+      "route_task_write: skip _inject_workspace_id for TASK_SUPERSEDE_ROUTE_POLICY methods when the request is task-scoped",
+      "route_task_read: same conditional skip with SR-01 rationale",
+      "explicitly supplied workspace_id is forwarded untouched (daemon fails closed on binding mismatch)"
+    ],
+    "authority_model": "daemon resolves an omitted numeric workspace_id from the immutable task_workspace_bindings and rejects an explicit mismatch (task_bound_workspace_id, fail-closed); client no longer preempts with the legacy active workspace"
+  },
+  "verification": {
+    "pytest_new_suite": {
+      "command": ".venv_test/Scripts/python.exe -m pytest tests/test_task_supersede_route_authority.py -q (PYTHONPATH=C:/git_work)",
+      "result": "12 passed"
+    },
+    "pytest_regression": {
+      "command": ".venv_test/Scripts/python.exe -m pytest tests/test_task_supersede_route_authority.py tests/test_task_supersede_cli.py tests/test_task_supersede.py tests/test_task_supersede_daemon.py -q",
+      "result": "20 passed, 8 skipped (pre-existing skips), 0 failed"
+    },
+    "py_compile": {
+      "command": "python -m py_compile server/daemon_client.py",
+      "result": "green"
+    },
+    "git_diff_check": {
+      "command": "git diff --check",
+      "result": "clean"
+    },
+    "whitelist_commit": "git reset; git add server/daemon_client.py tests/test_task_supersede_route_authority.py; commit only task-whitelisted paths (parallel-agent shared worktree preserved)"
+  },
+  "regression_matrix": {
+    "discriminator": "superseded_id matches; blank/whitespace/non-string never match; task_id unchanged",
+    "injection_skip": "task.supersede / task.superseded_by task-scoped requests carry no injected workspace_id",
+    "pass_through": "explicit workspace_id forwarded untouched for daemon-side consistency check",
+    "non_regression": "task.claim / task.list / discriminator-less supersede still receive the injected active workspace"
+  },
+  "followups": [
+    "post-closure: retry supersede T-1788671453544-d0625554 -> T-1788673904079-5fa6fb84 via fixed CLI (requires source-task reviewer lease credential)",
+    "daemon binary redeployment not required for this fix (client-side routing only); running daemon unaffected"
+  ]
+}

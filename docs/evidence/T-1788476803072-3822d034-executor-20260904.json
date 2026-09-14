@@ -1,0 +1,64 @@
+{
+  "schema": "callwarden.task-evidence/v1",
+  "task_id": "T-1788476803072-3822d034",
+  "role": "executor",
+  "identity": {
+    "agent_id": "executor-workbuddy-v1-cur",
+    "agent_instance_id": "",
+    "session_id": "b8b7e563-0c07-470b-bb6c-422c591a0666",
+    "model_id": "workbuddy",
+    "role": "executor"
+  },
+  "contract": {
+    "task_contract_id": "TC-T-1788476803072-3822d034",
+    "task_contract_revision": 1,
+    "task_contract_hash": "sha256:53fbe1f5ab31673fed2fba188a5196b24b8b730b55b2e9cdf05b91442751be3d",
+    "role_contract_id": "rcl-T-1788476803072-3822d034-executor",
+    "role_contract_revision_id": "rcr-T-1788476803072-3822d034-executor-r1",
+    "role_contract_hash": "sha256:2ea2a4c431caacf14557b3fff0e391320ce1275324bacf08ba4a4eb4012f12ac",
+    "identity_policy": "legacy_identity_v1"
+  },
+  "steps": [
+    {"step_id": "S-1788476803075-3857645c", "action": "implement", "target_file": "server/daemon_client.py"},
+    {"action": "test", "target_file": "tests/test_task_create_workspace_binding.py"},
+    {"action": "verify", "target_file": "server/daemon_client.py"}
+  ],
+  "implementation": {
+    "summary": "Resolve task-creation workspace authority from the current project root by daemon workspace.list plus workspace.status reconciliation.",
+    "rules": [
+      "Only active registry rows matching the normalized current project root are candidates.",
+      "A candidate is accepted only when registry and task-DB instance IDs equal the registry instance ID.",
+      "The returned numeric ID is task_db_workspace_id, never the registry numeric ID.",
+      "Zero, multiple, malformed, unavailable, or mismatched candidates fail closed.",
+      "No numeric workspace ID or ws-{id} instance ID is inferred or synthesized."
+    ],
+    "source_sha256": {
+      "server/daemon_client.py": "49C82CBDA0B04D413665573777B1F19BD2C5D008648AECB45ACDE14EAAD7FE88",
+      "tests/test_task_create_workspace_binding.py": "EEA8767AE8E409214FA5ECA8BB56A7506D0AA39588CEE71ED755A603FEA90236"
+    }
+  },
+  "verification": {
+    "focused_command": "tokenslim run pytest tests/test_task_create_workspace_binding.py -q",
+    "focused_result": "14 passed",
+    "negative_coverage": [
+      "missing current root",
+      "registry/task-DB instance mismatch",
+      "multiple canonical candidates"
+    ],
+    "diff_check": "git diff --check passed",
+    "live_probe": {
+      "method": "resolve_workspace_pair_from_daemon",
+      "project_root": "C:\\git_work\\callwarden",
+      "result": {"workspace_id": 1, "workspace_instance_id": "4baea3ff12c2ea5c"}
+    }
+  },
+  "daemon_round_trip": {
+    "preflight": {"decision": "READY", "action": "CLAIM", "step_id": "S-1788476803075-3857645c"},
+    "assignment_id": "A-659a8b1dc3ea2c4db661c592",
+    "claimed_session_id": "b8b7e563-0c07-470b-bb6c-422c591a0666",
+    "claimed_model_id": "workbuddy",
+    "readback": "task assignment status=claimed; lifecycle_status=in_progress; workflow_status=execution_in_progress"
+  },
+  "baseline_head": "701ee4e3194c8161831cbd9705b9313054018563",
+  "created_at": "2026-09-04"
+}

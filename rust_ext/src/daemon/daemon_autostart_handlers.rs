@@ -108,10 +108,13 @@ pub fn handle_try_connect_unix(params: &Value) -> Result<Value, DaemonRpcError> 
 
     #[cfg(unix)]
     {
-        use std::os::unix::net::{SocketAddr as UnixSockAddr, UnixStream};
-        let result = UnixSockAddr::from_path(std::path::Path::new(endpoint))
-            .ok()
-            .and_then(|addr| UnixStream::connect_timeout(&addr, timeout).ok());
+        use std::os::unix::net::UnixStream;
+        // 修正：std 无 `SocketAddr::from_path`（等价 API 为 `from_pathname`，且返回
+        // io::Result），亦无 `UnixStream::connect_timeout`（E0599，仅 TcpStream 有）。
+        // UDS connect 是本地操作（ENOENT/ECONNREFUSED 立即返回），不存在网络级等待，
+        // 因此直接按路径连接；`timeout` 仍按 RPC 契约接收，但不参与本路径的执行。
+        let _ = timeout;
+        let result = UnixStream::connect(endpoint).ok();
         let connectable = result.is_some();
         drop(result);
         Ok(json!({

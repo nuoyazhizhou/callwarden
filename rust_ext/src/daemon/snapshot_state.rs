@@ -28,7 +28,7 @@ use serde_json::{json, Map, Value};
 
 use super::dispatch::{
     current_daemon_uid, get_int_param, get_int_param_or, get_str_param, get_str_param_or,
-    require_str_param, DaemonRpcError, DaemonState, DaemonStateExt, PeerCredential,
+    require_str_param, DaemonRpcError, DaemonState, DaemonStateExt, InlinePayload, PeerCredential,
 };
 use super::workspace::{
     normalize_path_key, owned_workspace, owned_workspace_by_id, validate_owned_path,
@@ -271,6 +271,64 @@ impl SnapshotDaemonState {
         Ok((workspace_id, conn))
     }
 
+    /// G4（T-1789022024819-8cb9f614）：workspace_instance_id 模式的主库**写**连接。
+    ///
+    /// 背景：build_context.register / set_active / delete 与 resolved_edges.store /
+    /// replace 的历史实现只有 workspace_id + ToolchainStore（toolchain.db）模式，
+    /// 而 ToolchainStore 在生产 daemon 从未注入（with_toolchain_store 无调用点），
+    /// 写面全部 internal_error，CLI build-context 功能端到端已死；且 CLI resolve
+    /// 的 compute 数据源是主机级单库（symbols/calls），与 toolchain.db 分裂。
+    ///
+    /// one-sqlite-per-host 收敛：写面直接落 codegraph_db（模板缺省 = 主机级单库
+    /// ~/.callwarden/callwarden.db，与 handle_convergence_rpc 的 open_write 同源）。
+    /// workspace_id 经 resolve_true_workspace_id 与读面同源解析。
+    fn open_codegraph_db_write(
+        &self,
+        peer: PeerCredential,
+        workspace_instance_id: &str,
+    ) -> Result<(i64, Connection), DaemonRpcError> {
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let registry_rowid = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 字段缺失或非数值"))?;
+        let client_view_root = workspace
+            .get("client_view_root")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let resolved = if self.base.codegraph_db_path_template.is_empty() {
+            super::config::default_codegraph_db_path()
+        } else {
+            std::path::PathBuf::from(
+                self.base
+                    .codegraph_db_path_template
+                    .replace("{workspace_instance_id}", workspace_instance_id),
+            )
+        };
+        if resolved.as_os_str().is_empty() {
+            return Err(DaemonRpcError::new(
+                "codegraph_db_unconfigured",
+                "daemon 未配置 codegraph_db_path_template 且主目录未知（fail-closed）",
+            ));
+        }
+        let conn = Connection::open_with_flags(
+            resolved.as_path(),
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!("打开主库写连接: {error}"))
+        })?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")
+            .map_err(|error| {
+                DaemonRpcError::internal_error(format!("设置 busy_timeout: {error}"))
+            })?;
+        let workspace_id =
+            resolve_true_workspace_id(resolved.to_string_lossy().as_ref(), client_view_root, registry_rowid);
+        Ok((workspace_id, conn))
+    }
+
     /// W3-1（T-1786861820150-bfe5e805）：校验 params 中的 `workspace_id` 与
     /// workspace_instance_id 解析出的权威 workspace_id 一致，返回权威值。
     ///
@@ -372,23 +430,100 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        self.base.handle_workspace_register(peer, params)
+        // CR7（2026-09-09）：注册收敛前先取 task-DB 权威 capture 偏好。
+        // host_real_root_hash = sha256(normalize_identity_root(canonical root))；
+        // 同 root 的历史分裂行中，task-DB 有权威 capture 绑定的行优先收编，
+        // 保证图谱/快照/任务绑定面连续（capture 查询失败降级为空偏好，
+        // 由 base 走最早注册行兜底，不阻塞注册）。
+        let preferred: Vec<String> = match params.get("client_view_root").and_then(|v| v.as_str())
+        {
+            Some(root) if !root.trim().is_empty() => {
+                match crate::daemon::workspace::validate_owned_path_any(root, peer.uid) {
+                    Ok(real_root) => {
+                        let norm_root =
+                            crate::daemon::workspace::normalize_identity_root(&real_root);
+                        let root_hash = crate::canonicalize::sha256_hex(norm_root.as_bytes());
+                        match self.daemon_state().task_collab_store.as_ref() {
+                            Some(store) => store
+                                .captured_instance_ids_for_root_hash(&root_hash)
+                                .unwrap_or_default(),
+                            None => Vec::new(),
+                        }
+                    }
+                    // 路径校验失败交给 base 走标准报错路径
+                    Err(_) => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        };
+        self.base
+            .handle_workspace_register_preferred(peer, params, &preferred)
     }
 
     fn handle_workspace_list(
         &mut self,
-        peer: PeerCredential,
+        _peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        self.base.handle_workspace_list(peer, params)
+        let _ = params;
+        let store = self
+            .daemon_state()
+            .task_collab_store
+            .as_ref()
+            .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
+        let list = store.list_unified_workspaces()?;
+        Ok(Value::Array(list))
     }
 
     fn handle_workspace_status(
         &mut self,
-        peer: PeerCredential,
+        _peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        self.base.handle_workspace_status(peer, params)
+        // 接受 `workspace_instance_id`（字符串）或 `workspace_id`（数字或字符串）；
+        // CLI 以整数发送 workspace_id，必须以 i64 读取后再转字符串作为统一解析键。
+        let key: String = if let Some(iv) = params
+            .get("workspace_instance_id")
+            .and_then(|v| v.as_str())
+        {
+            if iv.trim().is_empty() {
+                return Err(DaemonRpcError::invalid_params(
+                    "workspace.status 需要 workspace_instance_id 或 workspace_id",
+                ));
+            }
+            iv.to_string()
+        } else if let Some(nv) = params.get("workspace_id") {
+            if let Some(n) = nv.as_i64() {
+                n.to_string()
+            } else if let Some(s) = nv.as_str() {
+                if s.trim().is_empty() {
+                    return Err(DaemonRpcError::invalid_params(
+                        "workspace.status 需要 workspace_instance_id 或 workspace_id",
+                    ));
+                }
+                s.to_string()
+            } else {
+                return Err(DaemonRpcError::invalid_params(
+                    "workspace.status 需要 workspace_instance_id 或 workspace_id",
+                ));
+            }
+        } else {
+            return Err(DaemonRpcError::invalid_params(
+                "workspace.status 需要 workspace_instance_id 或 workspace_id",
+            ));
+        };
+        let store = self
+            .daemon_state()
+            .task_collab_store
+            .as_ref()
+            .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
+        match store.unified_workspace_authority(&key)? {
+            Some(auth) => Ok(serde_json::to_value(auth).unwrap_or(Value::Null)),
+            None => Err(DaemonRpcError::new(
+                "E_WORKSPACE_NOT_FOUND",
+                format!("workspace.status 未找到权威：key={key}"),
+            )),
+        }
     }
 
     fn handle_workspace_recover(
@@ -412,9 +547,10 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
         received_fds: &[i32],
+        inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
         self.base
-            .handle_workspace_file_refresh(peer, params, received_fds)
+            .handle_workspace_file_refresh(peer, params, received_fds, inline_payload)
     }
 
     fn handle_workspace_refresh_plan(
@@ -482,7 +618,9 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
         received_fds: &[i32],
+        inline_payload: Option<InlinePayload<'_>>,
     ) -> Result<Value, DaemonRpcError> {
+        let _ = inline_payload; // Q10：snapshot.publish 不消费 multipart payload
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let build_context_hash = get_str_param_or(params, "build_context_hash", "");
 
@@ -1317,7 +1455,11 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let query = require_str_param(params, "query")?;
-        let kind = get_str_param(params, "kind");
+        // CR16（review §5.9 定性修正）：空字符串 kind 不得作为过滤值——
+        // SymbolKind::from_db_str("") 返回 Unknown，会把全部真实符号
+        // （fn/class/...）滤成 0 命中，表现酷似"store 与建图数据不同源"。
+        // 空/纯空白 kind 一律视为不过滤（与 kind 未传同义）。
+        let kind = get_str_param(params, "kind").filter(|k| !k.trim().is_empty());
         // G12 批次8：修复 limit 字段错配——
         // Python daemon_client.py 传 int（如 `"limit": 50`），
         // 原 get_str_param 只接受字符串，数字被忽略导致始终用默认 20。
@@ -2096,6 +2238,15 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
+        // G4：workspace_instance_id 模式 → 主库写面（ToolchainStore 缺位时的
+        // 端到端可用路径，one-sqlite-per-host 收敛）。
+        if params.get("workspace_instance_id").is_some() {
+            let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+            let (workspace_id, mut conn) =
+                self.open_codegraph_db_write(peer, workspace_instance_id)?;
+            let _ = self.require_bound_workspace_id(params, workspace_id)?;
+            return build_context_register_main_db(&mut conn, workspace_id, params);
+        }
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
@@ -2256,6 +2407,34 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
+        // G4：workspace_instance_id 模式 → 主库写面。
+        if params.get("workspace_instance_id").is_some() {
+            let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+            let build_context_hash = require_str_param(params, "build_context_hash")?;
+            let (workspace_id, mut conn) =
+                self.open_codegraph_db_write(peer, workspace_instance_id)?;
+            let _ = self.require_bound_workspace_id(params, workspace_id)?;
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(|e| DaemonRpcError::internal_error(format!("开启事务: {e}")))?;
+            tx.execute(
+                "UPDATE workspace_build_contexts SET is_active = 0 WHERE workspace_id = ?1",
+                params![workspace_id],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("清 is_active: {e}")))?;
+            let affected = tx
+                .execute(
+                    "UPDATE workspace_build_contexts SET is_active = 1
+                     WHERE workspace_id = ?1 AND build_context_hash = ?2",
+                    params![workspace_id, build_context_hash],
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("set_active: {e}")))?;
+            tx.commit()
+                .map_err(|e| DaemonRpcError::internal_error(format!("提交事务: {e}")))?;
+            let mut m = Map::new();
+            m.insert("ok".to_string(), Value::Bool(affected > 0));
+            return Ok(Value::Object(m));
+        }
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
@@ -2277,6 +2456,24 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
+        // G4：workspace_instance_id 模式 → 主库写面。
+        if params.get("workspace_instance_id").is_some() {
+            let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+            let build_context_hash = require_str_param(params, "build_context_hash")?;
+            let (workspace_id, conn) =
+                self.open_codegraph_db_write(peer, workspace_instance_id)?;
+            let _ = self.require_bound_workspace_id(params, workspace_id)?;
+            let deleted = conn
+                .execute(
+                    "DELETE FROM workspace_build_contexts
+                     WHERE workspace_id = ?1 AND build_context_hash = ?2",
+                    params![workspace_id, build_context_hash],
+                )
+                .map_err(|e| DaemonRpcError::internal_error(format!("delete: {e}")))?;
+            let mut m = Map::new();
+            m.insert("deleted".to_string(), Value::Number(deleted.into()));
+            return Ok(Value::Object(m));
+        }
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
@@ -2365,6 +2562,32 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
+        // G4：workspace_instance_id 模式 → 主库写面（单事务 DELETE+INSERT，
+        // 崩溃不暴露半构建状态，语义复刻 ToolchainStore::replace_resolved_edges）。
+        if params.get("workspace_instance_id").is_some() {
+            let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+            let build_context_hash = require_str_param(params, "build_context_hash")?;
+            let (workspace_id, mut conn) =
+                self.open_codegraph_db_write(peer, workspace_instance_id)?;
+            let _ = self.require_bound_workspace_id(params, workspace_id)?;
+            let edges_arr = params
+                .get("edges")
+                .and_then(Value::as_array)
+                .ok_or_else(|| DaemonRpcError::invalid_params("缺少 edges 数组".to_string()))?;
+            let edges = parse_resolved_edge_inputs(edges_arr)?;
+            let (deleted, inserted) = resolved_edges_store_main_db(
+                &mut conn,
+                workspace_id,
+                &build_context_hash,
+                &edges,
+                true,
+            )
+            .map_err(DaemonRpcError::internal_error)?;
+            let mut result = Map::new();
+            result.insert("deleted".to_string(), Value::Number(deleted.into()));
+            result.insert("inserted".to_string(), Value::Number(inserted.into()));
+            return Ok(Value::Object(result));
+        }
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
@@ -2387,6 +2610,117 @@ impl DaemonStateExt for SnapshotDaemonState {
         Ok(Value::Object(result))
     }
 
+    // ---- G4（T-1789022024819-8cb9f614）：build-context daemon 化新增 RPC ----
+
+    /// `resolved_edges.compute`（READ_ONLY，workspace_instance_id 模式）：
+    /// 在 daemon 内复刻 analyzers/resolved_edges_engine.py 的 5 级解析
+    /// （CAS 优先 / calls 降级），返回 edges 而不落库。
+    fn handle_resolved_edges_compute(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        let _ = self.require_bound_workspace_id(params, workspace_id)?;
+        let mut computed =
+            compute_resolved_edges_impl(&conn, workspace_id, &build_context_hash)
+                .map_err(DaemonRpcError::internal_error)?;
+        // 查看面限流：全量边（大库 178k+）会超 HTTP 消息上限（8MB）；
+        // 完整语义由 resolved_edges.rebuild 承担（edges 不出 daemon）。
+        let limit = get_int_param_or(params, "limit", 1000);
+        if limit < 0 {
+            return Err(DaemonRpcError::invalid_params("limit 不能为负数".to_string()));
+        }
+        let mut truncated = false;
+        if let Some(obj) = computed.as_object_mut() {
+            if let Some(edges) = obj.get_mut("edges").and_then(Value::as_array_mut) {
+                if edges.len() > limit as usize {
+                    edges.truncate(limit as usize);
+                    truncated = true;
+                }
+            }
+            if truncated {
+                obj.insert("truncated".to_string(), Value::Bool(true));
+            }
+        }
+        Ok(computed)
+    }
+
+    /// `resolved_edges.rebuild`（PROTECTED_MUTATION，workspace_instance_id 模式）：
+    /// compute + 单事务 DELETE+INSERT 一体完成——CLI `cw build-context resolve`
+    /// 的下沉入口（旧流程 compute 本地 + store RPC 双程传 178k 边，且 store
+    /// 不清旧，"先清旧再写入"注释与行为不符）。compute fail-closed 时不清旧。
+    fn handle_resolved_edges_rebuild(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let (workspace_id, ro_conn) =
+            self.open_query_connection(peer.clone(), workspace_instance_id)?;
+        let _ = self.require_bound_workspace_id(params, workspace_id)?;
+        let computed = compute_resolved_edges_impl(&ro_conn, workspace_id, &build_context_hash)
+            .map_err(DaemonRpcError::internal_error)?;
+        let source = computed
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("none")
+            .to_string();
+        if let Some(err) = computed.get("error").and_then(Value::as_str) {
+            // compute fail-closed（build_context not found）→ 不动旧缓存
+            let mut m = Map::new();
+            m.insert("error".to_string(), Value::String(err.to_string()));
+            m.insert("source".to_string(), Value::String(source));
+            m.insert("deleted".to_string(), Value::Number(0.into()));
+            m.insert("inserted".to_string(), Value::Number(0.into()));
+            return Ok(Value::Object(m));
+        }
+        let skipped = computed.get("skipped").and_then(Value::as_i64).unwrap_or(0);
+        let edges_arr = computed
+            .get("edges")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let edges = parse_resolved_edge_inputs(&edges_arr)?;
+        let (_, mut w_conn) = self.open_codegraph_db_write(peer, workspace_instance_id)?;
+        let (deleted, inserted) = resolved_edges_store_main_db(
+            &mut w_conn,
+            workspace_id,
+            &build_context_hash,
+            &edges,
+            true,
+        )
+        .map_err(DaemonRpcError::internal_error)?;
+        let mut m = Map::new();
+        m.insert("source".to_string(), Value::String(source));
+        m.insert(
+            "count".to_string(),
+            Value::Number(edges.len().into()),
+        );
+        m.insert("skipped".to_string(), Value::Number(skipped.into()));
+        m.insert("deleted".to_string(), Value::Number(deleted.into()));
+        m.insert("inserted".to_string(), Value::Number(inserted.into()));
+        Ok(Value::Object(m))
+    }
+
+    /// `build_context.import_compile_commands`（READ_ONLY parse-only）：
+    /// 在 daemon 内复刻 analyzers/compile_commands.py 的解析+聚合+路径规范化，
+    /// 返回聚合 build context；注册仍走 build_context.register（写语义不变）。
+    /// CLI 只读文件传 content，不再本地解析。
+    fn handle_build_context_import_compile_commands(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let content = require_str_param(params, "content")?;
+        let workspace_root = get_str_param_or(params, "workspace_root", "");
+        import_compile_commands_parse(content, workspace_root.as_str())
+            .map_err(DaemonRpcError::invalid_params)
+    }
+
     // ---- 收敛架构 RPC（T02 下沉：fs / metrics / job / admin / edit）----
     // 所有 CONVERGENCE_RPC_METHODS 经 dispatch 进入本方法。ACL（owned_workspace）
     // 由 open_query_connection / resolve_convergence_workspace 统一强制。
@@ -2405,21 +2739,38 @@ impl DaemonStateExt for SnapshotDaemonState {
         use super::_mcp_common_handlers as mcp;
         use super::audit_log_handlers as audit;
         use super::query_compat_handlers as query_compat;
+        // C-13：semgrep CLI 专用 handler（CLI-061 产物，本卡接入 dispatch）。
+        use super::semgrep_handlers as semgrep;
 
-        // 解析 workspace codegraph DB 路径（daemon 权威写库，来自模板）。
+        // 解析 workspace codegraph DB 路径（daemon 权威写库）。
+        // 2026-09-05 修正：模板为空时回退**主机级单库** ~/.callwarden/callwarden.db
+        // （与 Python daemon_config.resolve_codegraph_db_path 语义对齐），
+        // 不再 fail-closed——单库多 workspace 是既定设计（库内 workspaces 表 +
+        // file_instances.workspace_id 承载项目维度），per-workspace 模板仅为
+        // 显式注入的隔离测试场景保留。
         let codegraph_db = |state: &Self, ws: &str| -> Result<Option<std::path::PathBuf>, DaemonRpcError> {
-            if state.base.codegraph_db_path_template.is_empty() {
+            let resolved = if state.base.codegraph_db_path_template.is_empty() {
+                super::config::default_codegraph_db_path()
+            } else {
+                std::path::PathBuf::from(
+                    state
+                        .base
+                        .codegraph_db_path_template
+                        .replace("{workspace_instance_id}", ws),
+                )
+            };
+            // 主目录未知（HOME/USERPROFILE 均缺失）→ 空路径，fail-closed
+            if resolved.as_os_str().is_empty() {
                 return Ok(None);
             }
-            Ok(Some(std::path::PathBuf::from(
-                state
-                    .base
-                    .codegraph_db_path_template
-                    .replace("{workspace_instance_id}", ws),
-            )))
+            Ok(Some(resolved))
         };
 
         // 打开 workspace codegraph DB 写连接（admin/edit/job 用）。
+        // C-21（§W20 F4）：其最后一个调用点（edit.*/rule.* 第二路由块，原行 3283）已改走
+        // open_codegraph_db_write（真 workspace_id 解析），本闭包现为 dead code 保留体 ——
+        // 不删除以保持 diff 最小；codegraph_db 闭包仍被 task.job_submit（行 ~3177）使用。
+        #[allow(unused)]
         let open_write = |state: &Self, ws: &str| -> Result<Connection, DaemonRpcError> {
             let db = codegraph_db(state, ws)?.ok_or_else(|| {
                 DaemonRpcError::new(
@@ -2573,6 +2924,257 @@ impl DaemonStateExt for SnapshotDaemonState {
                 }
             }
 
+            // ---- P0-COMPAT-v3（T-1788963103216-cb818938）：tools_query 组（8）----
+            "get_symbol_history" | "get_recent_changes" | "get_impact"
+            | "get_comment_from_version" | "get_issue_summary" | "find_issues"
+            | "get_test_coverage" | "export_module_graph" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "get_symbol_history" => {
+                        query_compat::handle_get_symbol_history(&conn, workspace_id, params)
+                    }
+                    "get_recent_changes" => {
+                        query_compat::handle_get_recent_changes(&conn, workspace_id, params)
+                    }
+                    "get_impact" => query_compat::handle_get_impact(&conn, workspace_id, params),
+                    "get_comment_from_version" => {
+                        query_compat::handle_get_comment_from_version(&conn, workspace_id, params)
+                    }
+                    "get_issue_summary" => {
+                        query_compat::handle_get_issue_summary(&conn, workspace_id, params)
+                    }
+                    "find_issues" => query_compat::handle_find_issues(&conn, workspace_id, params),
+                    "get_test_coverage" => {
+                        query_compat::handle_get_test_coverage(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_export_module_graph(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- P0-COMPAT-v3（T-1788963104058-fdb2e848）：tools_task 组（8）----
+            // 治理面 5 个（get_symbol_change_tasks / audit_verify_chain /
+            // list_audit_signing_keys / bootstrap_status / task_plan_template）
+            // 在主机级单库模型下经快照只读连接访问治理表（W4-1 get_commit_tasks
+            // 同源）；克隆面 3 个（list_clones / list_clone_groups /
+            // get_clone_group_detail）查 clone_pairs / clone_groups。
+            "get_symbol_change_tasks" | "audit_verify_chain"
+            | "list_audit_signing_keys" | "bootstrap_status" | "list_clones"
+            | "list_clone_groups" | "get_clone_group_detail"
+            | "task_plan_template" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "get_symbol_change_tasks" => {
+                        query_compat::handle_get_symbol_change_tasks(
+                            &conn, workspace_id, params,
+                        )
+                    }
+                    "audit_verify_chain" => {
+                        query_compat::handle_audit_verify_chain(&conn, workspace_id, params)
+                    }
+                    "list_audit_signing_keys" => {
+                        query_compat::handle_list_audit_signing_keys(&conn, workspace_id, params)
+                    }
+                    "bootstrap_status" => {
+                        // Q9-VCS（2026-09-17）：优先用 registry 中客户端上报的
+                        // git_head_commit_sha（agent probe_vcs_info 随 refresh
+                        // 上报），daemon 不再自行 spawn git；取不到时回退旧路径
+                        let reported_head = owned_workspace(&self.base.registry, peer.uid, ws)
+                            .ok()
+                            .and_then(|w| {
+                                w.get("git_head_commit_sha")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            })
+                            .unwrap_or_default();
+                        query_compat::handle_bootstrap_status(
+                            &conn,
+                            workspace_id,
+                            params,
+                            &reported_head,
+                        )
+                    }
+                    "list_clones" => {
+                        query_compat::handle_list_clones(&conn, workspace_id, params)
+                    }
+                    "list_clone_groups" => {
+                        query_compat::handle_list_clone_groups(&conn, workspace_id, params)
+                    }
+                    "get_clone_group_detail" => {
+                        query_compat::handle_get_clone_group_detail(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_task_plan_template(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- P0-COMPAT-v3（T-1788963104879-2e9e6270）：tools_semantic 组（5）----
+            // get_symbol_commit_history 查 git_symbol_changes/git_commits；
+            // parse_codeowners / get_project_dependencies 经 workspaces.root_path
+            // 访问真实文件（只读）；semantic_search / find_similar_functions 读
+            // symbol_embeddings（当前库无嵌入 → 空结果，见 handler 文档注释）。
+            "get_symbol_commit_history" | "parse_codeowners"
+            | "get_project_dependencies" | "semantic_search"
+            | "find_similar_functions" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "get_symbol_commit_history" => {
+                        query_compat::handle_get_symbol_commit_history(
+                            &conn, workspace_id, params,
+                        )
+                    }
+                    "parse_codeowners" => {
+                        query_compat::handle_parse_codeowners(&conn, workspace_id, params)
+                    }
+                    "get_project_dependencies" => {
+                        query_compat::handle_get_project_dependencies(
+                            &conn, workspace_id, params,
+                        )
+                    }
+                    "semantic_search" => {
+                        query_compat::handle_semantic_search(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_find_similar_functions(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- P0-COMPAT-v3（T-1788963105720-60bfc80c）：tools_security 组（15）----
+            // list_branches / merge_preview / get_edit_history / find_shared_symbols /
+            // cross_repo_impact / cross_repo_summary 复刻 db_branch / db_edit /
+            // db_cross_repo / db_impact SQL 语义；lsp_* 6 方法 fail-soft 空结构
+            // （LSP 未安装环境行为平价，lsp_check_available 实测 where/which）；
+            // rule_candidate_list / rule_list / get_applicable_rules 复刻
+            // db_agent_rules（scope JSON 反序列化 + fnmatch glob 匹配 + severity 排序）。
+            "list_branches" | "merge_preview" | "get_edit_history"
+            | "find_shared_symbols" | "cross_repo_impact" | "cross_repo_summary"
+            | "lsp_hover" | "lsp_definition" | "lsp_references" | "lsp_diagnostics"
+            | "lsp_completion" | "lsp_check_available" | "rule_candidate_list"
+            | "rule_list" | "get_applicable_rules" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "list_branches" => {
+                        query_compat::handle_list_branches(&conn, workspace_id, params)
+                    }
+                    "merge_preview" => {
+                        query_compat::handle_merge_preview(&conn, workspace_id, params)
+                    }
+                    "get_edit_history" => {
+                        query_compat::handle_get_edit_history(&conn, workspace_id, params)
+                    }
+                    "find_shared_symbols" => {
+                        query_compat::handle_find_shared_symbols(&conn, workspace_id, params)
+                    }
+                    "cross_repo_impact" => {
+                        query_compat::handle_cross_repo_impact(&conn, workspace_id, params)
+                    }
+                    "cross_repo_summary" => {
+                        query_compat::handle_cross_repo_summary(&conn, workspace_id, params)
+                    }
+                    "lsp_hover" => {
+                        query_compat::handle_lsp_hover(&conn, workspace_id, params)
+                    }
+                    "lsp_definition" => {
+                        query_compat::handle_lsp_definition(&conn, workspace_id, params)
+                    }
+                    "lsp_references" => {
+                        query_compat::handle_lsp_references(&conn, workspace_id, params)
+                    }
+                    "lsp_diagnostics" => {
+                        query_compat::handle_lsp_diagnostics(&conn, workspace_id, params)
+                    }
+                    "lsp_completion" => {
+                        query_compat::handle_lsp_completion(&conn, workspace_id, params)
+                    }
+                    "lsp_check_available" => {
+                        query_compat::handle_lsp_check_available(&conn, workspace_id, params)
+                    }
+                    "rule_candidate_list" => {
+                        query_compat::handle_rule_candidate_list(&conn, workspace_id, params)
+                    }
+                    "rule_list" => {
+                        query_compat::handle_rule_list(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_get_applicable_rules(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- P0-COMPAT-v3（T-1788963106520-907544c8）：tools_summary 组（19）----
+            // get_summary / project_brief / repo_map / test_impact_selection /
+            // who_to_ask / get_ownership_map / guardrail_scan / guardrail_check_edit /
+            // guardrail_list_rules / blast_radius / ask_codebase /
+            // get_token_savings_report / get_vulnerability_blast_radius /
+            // get_clone_aware_impact / review_readiness / cross_layer_impact /
+            // evolution_frequency / hotspot_evolution / defect_learn
+            "get_summary" | "project_brief" | "repo_map" | "test_impact_selection"
+            | "who_to_ask" | "get_ownership_map" | "guardrail_scan"
+            | "guardrail_check_edit" | "guardrail_list_rules" | "blast_radius"
+            | "ask_codebase" | "get_token_savings_report"
+            | "get_vulnerability_blast_radius" | "get_clone_aware_impact"
+            | "review_readiness" | "cross_layer_impact" | "evolution_frequency"
+            | "hotspot_evolution" | "defect_learn" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "get_summary" => {
+                        query_compat::handle_summary_get_summary(&conn, workspace_id, params)
+                    }
+                    "project_brief" => {
+                        query_compat::handle_summary_project_brief(&conn, workspace_id, params)
+                    }
+                    "repo_map" => {
+                        query_compat::handle_summary_repo_map(&conn, workspace_id, params)
+                    }
+                    "test_impact_selection" => {
+                        query_compat::handle_summary_test_impact_selection(&conn, workspace_id, params)
+                    }
+                    "who_to_ask" => {
+                        query_compat::handle_summary_who_to_ask(&conn, workspace_id, params)
+                    }
+                    "get_ownership_map" => {
+                        query_compat::handle_summary_ownership_map(&conn, workspace_id, params)
+                    }
+                    "guardrail_scan" => {
+                        query_compat::handle_summary_guardrail_scan(&conn, workspace_id, params)
+                    }
+                    "guardrail_check_edit" => {
+                        query_compat::handle_summary_guardrail_check_edit(&conn, workspace_id, params)
+                    }
+                    "guardrail_list_rules" => {
+                        query_compat::handle_summary_guardrail_list_rules(&conn, workspace_id, params)
+                    }
+                    "blast_radius" => {
+                        query_compat::handle_summary_blast_radius(&conn, workspace_id, params)
+                    }
+                    "ask_codebase" => {
+                        query_compat::handle_summary_ask_codebase(&conn, workspace_id, params)
+                    }
+                    "get_token_savings_report" => {
+                        query_compat::handle_summary_token_savings_report(&conn, workspace_id, params)
+                    }
+                    "get_vulnerability_blast_radius" => {
+                        query_compat::handle_summary_vulnerability_blast_radius(&conn, workspace_id, params)
+                    }
+                    "get_clone_aware_impact" => {
+                        query_compat::handle_summary_clone_aware_impact(&conn, workspace_id, params)
+                    }
+                    "review_readiness" => {
+                        query_compat::handle_summary_review_readiness(&conn, workspace_id, params)
+                    }
+                    "cross_layer_impact" => {
+                        query_compat::handle_summary_cross_layer_impact(&conn, workspace_id, params)
+                    }
+                    "evolution_frequency" => {
+                        query_compat::handle_summary_evolution_frequency(&conn, workspace_id, params)
+                    }
+                    "hotspot_evolution" => {
+                        query_compat::handle_summary_hotspot_evolution(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_summary_defect_learn(&conn, workspace_id, params),
+                }
+            }
+
             // ---- S2（P0-compat 批次 2）：toolchain 组（3，读权威 task DB）----
             "list_toolchains" | "get_toolchain" | "get_workspace_toolchains" => {
                 let conn = self.open_task_db_readonly()?;
@@ -2614,16 +3216,26 @@ impl DaemonStateExt for SnapshotDaemonState {
             | "admin.record_artifact_identity" | "admin.publish_interface"
             | "admin.select_interface_provider" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
-                let workspace = super::workspace::owned_workspace(
-                    &self.base.registry,
-                    peer.uid,
-                    ws,
-                )?;
-                let workspace_id = workspace
-                    .get("workspace_id")
-                    .and_then(Value::as_i64)
-                    .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 缺失".to_string()))?;
-                let conn = open_write(self, ws)?;
+                // C-17（本卡 step0 盘点 + 实测回执）：本路由块原以
+                // `owned_workspace(...).workspace_id` 作为 handler 的 workspace 作用域，但该值
+                // 是 daemon registry 的**代理 ROWID**（`daemon_workspaces.workspace_id`，本机
+                // 实例 = 207；重复 register 会 delete+insert 轮转递增），与物理库
+                // `workspaces.id`（本机 = 1，取值域 {1,2,3,5,6,7,8,9,10,11,17,19,20,21}）
+                // **不是同一命名空间**。后果按 handler 分三类（step0 逐条实测）：
+                //   1. 写带 `FOREIGN KEY (workspace_id) REFERENCES workspaces(id)` 的表 →
+                //      恒 `FOREIGN KEY constraint failed`（gc_archive_import /
+                //      record_artifact_identity）；
+                //   2. 仅作 WHERE 过滤 → 恒不命中、静默返回空/误报（gc_archive_inspect/list、
+                //      gc_retention、snapshot_compare、clear_clones、branch_switch）；
+                //   3. 写**无 FK** 的表 → 静默写入非法 workspace_id、不报错
+                //      （branch_register、publish_interface、select_interface_provider）。
+                // 修法：复用同文件既有、已被 semgrep 写面（`run_semgrep*`）采用的权威解析
+                // `open_codegraph_db_write` —— 内部先 `owned_workspace` 做 ACL，再用
+                // `resolve_true_workspace_id` 按 `client_view_root` 规范化匹配
+                // `workspaces.root_path` 取真 id（与读面 `resolve_true_workspace_id` 同源）。
+                // 一次给 guard 内全部 handler 正确 id；本机两类权威解析（路径面 与 卡 A 的
+                // `task_bound_workspace_id` 绑定面）对本项目均收敛到 `workspaces.id=1`。
+                let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
                 match method {
                     "admin.gc_archive_import" => admin::handle_gc_archive_import(&conn, workspace_id, params),
                     "admin.gc_archive_inspect" => admin::handle_gc_archive_inspect(&conn, workspace_id, params),
@@ -2649,7 +3261,45 @@ impl DaemonStateExt for SnapshotDaemonState {
                 }
             }
 
+            // ---- semgrep CLI（semgrep_handlers，CLI-061 接线；C-13）----
+            // run_semgrep_scan / scan_semgrep_incremental（route_matrix）此前经
+            // T02-job 走 task.job_submit，四个裸方法名从未在 dispatch 落地，
+            // 导致 `cw semgrep scan` 恒 method_not_found（C-13 根因）。
+            // 方法名与 cli/main.py:1207-1212 的 _METHOD_MAP rpc_method 逐字一致。
+            "run_semgrep" | "run_semgrep_and_save" | "scan_semgrep_incremental" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                // 三个写方法落 codegraph 主库：复用 open_codegraph_db_write 的
+                // 真 workspace_id 解析（与读面 resolve_true_workspace_id 同源）。
+                let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
+                match method {
+                    "run_semgrep" => semgrep::handle_run_semgrep(&conn, workspace_id, params),
+                    "run_semgrep_and_save" => {
+                        semgrep::handle_run_semgrep_and_save(&conn, workspace_id, params)
+                    }
+                    _ => semgrep::handle_scan_semgrep_incremental(&conn, workspace_id, params),
+                }
+            }
+            "get_semgrep_summary" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                semgrep::handle_get_semgrep_summary(&conn, workspace_id, params)
+            }
+
             // ---- 编辑/提案/规则写面（edit_handlers）----
+            // C-21（§W20 F4，本卡 step0 盘点）：本路由块原以 `owned_workspace(...).workspace_id`
+            // （daemon registry **代理 ROWID**，本机 = 207）作为 handler 的 workspace 作用域，
+            // 并以 `open_write` 打开物理库 —— 与 C-17 admin 块同根因（代理 ROWID 与物理库
+            // `workspaces.id` 不是同一命名空间）。判别力实测（step0）：
+            //   类 1（FK 写失败）×3：edit.propose / edit.propose_range_patch →
+            //   file_edit_audit、edit.record_token_savings → token_savings_ledger
+            //   （两表 workspace_id 均 FOREIGN KEY → workspaces(id)）；
+            //   类 2（WHERE/查根不命中）×10：edit.revert / edit.propose_symbol_*_patch /
+            //   edit.restore_*_comments / rule.extract_candidates / rule.candidate_reject /
+            //   rule.insert_agents_md_block / rule.sync_agents_md / summary.generate；
+            //   不可判别 ×5（let _ = workspace_id; 或写表无 workspace_id 列）。
+            // 修法：与 admin 块（3215）/ semgrep 写面块（3250）同形，路由层单点改
+            // `open_codegraph_db_write`（内部 owned_workspace ACL + resolve_true_workspace_id
+            // 按 client_view_root 取真 id）；方法名列表 / match 臂与全部 handler 零改动。
             "edit.propose" | "edit.propose_range_patch" | "edit.propose_symbol_id_patch"
             | "edit.propose_symbol_patch" | "edit.revert" | "edit.restore_all_comments"
             | "edit.restore_comment" | "edit.record_token_savings" | "gate.resolve_findings"
@@ -2658,16 +3308,9 @@ impl DaemonStateExt for SnapshotDaemonState {
             | "rule.insert_agents_md_block" | "rule.sync_agents_md" | "guardrail.add_rule"
             | "summary.generate" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
-                let workspace = super::workspace::owned_workspace(
-                    &self.base.registry,
-                    peer.uid,
-                    ws,
-                )?;
-                let workspace_id = workspace
-                    .get("workspace_id")
-                    .and_then(Value::as_i64)
-                    .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 缺失".to_string()))?;
-                let conn = open_write(self, ws)?;
+                // NF2（T-1789436399100-948b9498）：summary.generate 走版本化事务
+                // 重写，需要 &mut Connection（unchecked_transaction），故绑定为 mut。
+                let (workspace_id, mut conn) = self.open_codegraph_db_write(peer, ws)?;
                 match method {
                     "edit.propose" => edit::handle_propose_edit(&conn, workspace_id, params),
                     "edit.propose_range_patch" => edit::handle_propose_range_patch(&conn, workspace_id, params),
@@ -2687,7 +3330,7 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "rule.insert_agents_md_block" => edit::handle_rule_insert_agents_md_block(&conn, workspace_id, params),
                     "rule.sync_agents_md" => edit::handle_rule_sync_agents_md(&conn, workspace_id, params),
                     "guardrail.add_rule" => edit::handle_guardrail_add_rule(&conn, workspace_id, params),
-                    _ => edit::handle_summary_generate(&conn, workspace_id, params),
+                    _ => edit::handle_summary_generate(&mut conn, workspace_id, params),
                 }
             }
 
@@ -2699,6 +3342,924 @@ impl DaemonStateExt for SnapshotDaemonState {
 // ============================================
 // 辅助函数
 // ============================================
+
+// ============================================
+// G4（T-1789022024819-8cb9f614）：resolved_edges 计算引擎（Rust 移植）
+// 真相源：analyzers/resolved_edges_engine.py（5 级解析 + CAS/from_calls 双源）
+// ============================================
+
+/// 主库 resolved_edges 写入（单 IMMEDIATE 事务；delete_first=true 时先清旧，
+/// 语义复刻 ToolchainStore::replace_resolved_edges）。返回 (deleted, inserted)。
+fn resolved_edges_store_main_db(
+    conn: &mut Connection,
+    workspace_id: i64,
+    build_context_hash: &str,
+    edges: &[super::toolchain::ResolvedEdgeInput],
+    delete_first: bool,
+) -> Result<(u64, usize), String> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let mut deleted = 0u64;
+    if delete_first {
+        deleted = tx
+            .execute(
+                "DELETE FROM resolved_edges
+                 WHERE workspace_id = ?1 AND build_context_hash = ?2",
+                params![workspace_id, build_context_hash],
+            )
+            .map_err(|e| e.to_string())? as u64;
+    }
+    let now = super::toolchain::now_ts();
+    let mut inserted = 0usize;
+    for edge in edges {
+        let affected = tx
+            .execute(
+                "INSERT OR IGNORE INTO resolved_edges
+                 (workspace_id, build_context_hash, caller_symbol_id, callee_symbol_id,
+                  callee_name, callee_file, call_line, resolution_method, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    workspace_id,
+                    build_context_hash,
+                    edge.caller_symbol_id,
+                    edge.callee_symbol_id,
+                    edge.callee_name,
+                    edge.callee_file,
+                    edge.call_line,
+                    edge.resolution_method,
+                    now,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        inserted += affected;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok((deleted, inserted))
+}
+
+/// 主库 workspace_build_contexts 注册（instance 模式写面，语义复刻
+/// ToolchainStore::register_build_context：set_active 先清位、INSERT OR REPLACE、
+/// hash 复用 compute_build_context_hash）。
+fn build_context_register_main_db(
+    conn: &mut Connection,
+    workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let name = require_str_param(params, "name")?;
+    let compile_flags: Vec<String> = params
+        .get("compile_flags")
+        .and_then(|v| serde_json::from_value(v.clone()).unwrap_or(None))
+        .unwrap_or_default();
+    let defines: Vec<(String, String)> = params
+        .get("defines")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let include_paths: Vec<String> = params
+        .get("include_paths")
+        .and_then(|v| serde_json::from_value(v.clone()).unwrap_or(None))
+        .unwrap_or_default();
+    let set_active = params
+        .get("set_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let bch = super::toolchain::compute_build_context_hash(
+        &compile_flags,
+        &defines,
+        &include_paths,
+    );
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| DaemonRpcError::internal_error(format!("开启事务: {e}")))?;
+    if set_active {
+        tx.execute(
+            "UPDATE workspace_build_contexts SET is_active = 0 WHERE workspace_id = ?1",
+            params![workspace_id],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("清 is_active: {e}")))?;
+    }
+    let flags_json = serde_json::to_string(&compile_flags).unwrap_or_else(|_| "[]".into());
+    let defines_json = serde_json::to_string(
+        &defines
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect::<Map<_, _>>(),
+    )
+    .unwrap_or_else(|_| "{}".into());
+    let includes_json = serde_json::to_string(&include_paths).unwrap_or_else(|_| "[]".into());
+    let now = super::toolchain::now_ts();
+    tx.execute(
+        "INSERT OR REPLACE INTO workspace_build_contexts
+         (workspace_id, build_context_hash, name, compile_flags, defines,
+          include_paths, is_active, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            workspace_id,
+            bch,
+            name,
+            flags_json,
+            defines_json,
+            includes_json,
+            if set_active { 1 } else { 0 },
+            now,
+        ],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("register: {e}")))?;
+    tx.commit()
+        .map_err(|e| DaemonRpcError::internal_error(format!("提交事务: {e}")))?;
+    Ok(super::toolchain::build_context_to_json(
+        workspace_id,
+        &bch,
+        name,
+        &compile_flags,
+        &defines,
+        &include_paths,
+        set_active,
+        now,
+    ))
+}
+
+/// resolved_edges 计算主入口（READ_ONLY，只操作传入连接）。
+fn compute_resolved_edges_impl(
+    conn: &Connection,
+    workspace_id: i64,
+    build_context_hash: &str,
+) -> Result<Value, String> {
+    let bc_exists: Option<String> = conn
+        .query_row(
+            "SELECT build_context_hash FROM workspace_build_contexts
+             WHERE workspace_id = ?1 AND build_context_hash = ?2",
+            params![workspace_id, build_context_hash],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if bc_exists.is_none() {
+        return Ok(json!({
+            "edges": [], "source": "none", "count": 0, "skipped": 0,
+            "error": "build_context not found"
+        }));
+    }
+    if let Some(result) = compute_from_cas(conn, workspace_id, build_context_hash)? {
+        return Ok(result);
+    }
+    compute_from_calls(conn, workspace_id)
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+            params![name],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+/// CAS 模式：从 cas_raw_calls 解析（workspace_manifests 有 cas_key 才进入）。
+/// cas_raw_calls / cas_symbols 缺表时降级（主机级单库无 CAS 表，实际恒降级）。
+fn compute_from_cas(
+    conn: &Connection,
+    workspace_id: i64,
+    build_context_hash: &str,
+) -> Result<Option<Value>, String> {
+    if !table_exists(conn, "workspace_manifests")? {
+        return Ok(None);
+    }
+    let manifest_rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rel_path, cas_key FROM workspace_manifests
+                 WHERE workspace_id = ?1 AND cas_key IS NOT NULL AND cas_key != ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![workspace_id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    if manifest_rows.is_empty() {
+        return Ok(None);
+    }
+    let cas_to_relpath: HashMap<String, String> = manifest_rows.into_iter().collect();
+    let cas_keys: Vec<&String> = cas_to_relpath.keys().collect();
+    if !table_exists(conn, "cas_raw_calls")? || !table_exists(conn, "cas_symbols")? {
+        return Ok(None);
+    }
+    let placeholders = vec!["?"; cas_keys.len()].join(",");
+    let raw_calls: Vec<(String, Option<i64>, String, Option<i64>)> = {
+        let sql = format!(
+            "SELECT cas_key, caller_local_id, callee_name, call_line
+             FROM cas_raw_calls WHERE cas_key IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params_from_iter(cas_keys.iter()), |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    if raw_calls.is_empty() {
+        return Ok(None);
+    }
+    let caller_map = build_cas_caller_map(conn, workspace_id, &cas_keys, &cas_to_relpath)?;
+    let symbol_index = build_symbol_index(conn, workspace_id)?;
+    let (include_paths, sysroot, tc_dirs) =
+        load_build_context_includes(conn, workspace_id, build_context_hash)?;
+    let search_paths = if include_paths.is_empty() && sysroot.is_empty() && tc_dirs.is_empty() {
+        None
+    } else {
+        Some((include_paths, sysroot, tc_dirs))
+    };
+
+    let mut edges: Vec<Value> = Vec::new();
+    let mut skipped = 0i64;
+    for (cas_key, caller_local_id, callee_name, call_line) in raw_calls {
+        let caller_symbol_id = match caller_local_id
+            .and_then(|lid| caller_map.get(&(cas_key.clone(), lid)).copied())
+        {
+            Some(id) => id,
+            None => {
+                skipped += 1;
+                continue;
+            }
+        };
+        let caller_relpath = cas_to_relpath.get(&cas_key).cloned().unwrap_or_default();
+        let (callee_id, callee_file, method) =
+            resolve_callee(&callee_name, &caller_relpath, &symbol_index, search_paths.as_ref());
+        let call_line_value = match call_line {
+            Some(line) => json!(line),
+            None => Value::Null,
+        };
+        edges.push(json!({
+            "caller_symbol_id": caller_symbol_id,
+            "callee_symbol_id": callee_id,
+            "callee_name": callee_name,
+            "callee_file": callee_file,
+            "call_line": call_line_value,
+            "resolution_method": method,
+        }));
+    }
+    let count = edges.len();
+    Ok(Some(json!({
+        "edges": edges, "source": "cas", "count": count, "skipped": skipped
+    })))
+}
+
+/// caller 映射：(cas_key, caller_local_id) → symbols.id
+/// 路径：cas_symbols.local_qualified_name → symbols.qualified_name；fallback name+start_line。
+fn build_cas_caller_map(
+    conn: &Connection,
+    workspace_id: i64,
+    cas_keys: &[&String],
+    cas_to_relpath: &HashMap<String, String>,
+) -> Result<HashMap<(String, i64), i64>, String> {
+    let placeholders = vec!["?"; cas_keys.len()].join(",");
+    let cas_syms: Vec<(String, Option<i64>, Option<String>, Option<String>, Option<i64>)> = {
+        let sql = format!(
+            "SELECT cas_key, local_symbol_id, local_qualified_name, name, start_line
+             FROM cas_symbols WHERE cas_key IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params_from_iter(cas_keys.iter()), |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+
+    let mut relpath_to_fiid: HashMap<String, i64> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, rel_path FROM file_instances WHERE workspace_id = ?1 AND status != 'archived'")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![workspace_id], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (fi_id, rel_path): (i64, String) = row.map_err(|e| e.to_string())?;
+            relpath_to_fiid.insert(rel_path, fi_id);
+        }
+    }
+
+    let mut qname_index: HashMap<(String, i64), i64> = HashMap::new();
+    let mut name_line_index: HashMap<(String, i64, i64), i64> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.id, s.qualified_name, s.name, s.start_line, s.file_instance_id
+                 FROM symbols s
+                 JOIN file_instances fi ON s.file_instance_id = fi.id
+                 WHERE fi.workspace_id = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![workspace_id], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (s_id, qname, s_name, s_line, fi_id): (i64, Option<String>, Option<String>, Option<i64>, i64) =
+                row.map_err(|e| e.to_string())?;
+            if let Some(qname) = qname {
+                qname_index.insert((qname, fi_id), s_id);
+            }
+            if let (Some(s_name), Some(s_line)) = (s_name, s_line) {
+                name_line_index.insert((s_name, s_line, fi_id), s_id);
+            }
+        }
+    }
+
+    let mut caller_map: HashMap<(String, i64), i64> = HashMap::new();
+    for (cas_key, local_id, local_qname, sym_name, sym_line) in cas_syms {
+        let local_id = match local_id {
+            Some(id) => id,
+            None => continue,
+        };
+        let rel_path = match cas_to_relpath.get(&cas_key) {
+            Some(p) => p.clone(),
+            None => continue,
+        };
+        let fi_id = match relpath_to_fiid.get(&rel_path) {
+            Some(id) => *id,
+            None => continue,
+        };
+        let mut s_id = local_qname.and_then(|q| qname_index.get(&(q, fi_id)).copied());
+        if s_id.is_none() {
+            if let (Some(n), Some(l)) = (sym_name, sym_line) {
+                s_id = name_line_index.get(&(n, l, fi_id)).copied();
+            }
+        }
+        if let Some(s_id) = s_id {
+            caller_map.insert((cas_key, local_id), s_id);
+        }
+    }
+    Ok(caller_map)
+}
+
+/// callee 解析符号索引。
+struct SymbolIndex {
+    qname_map: HashMap<String, i64>,
+    name_index: HashMap<String, Vec<i64>>,
+    file_symbols: HashMap<String, HashMap<String, i64>>,
+    file_for_symbol: HashMap<i64, String>,
+}
+
+fn build_symbol_index(conn: &Connection, workspace_id: i64) -> Result<SymbolIndex, String> {
+    let mut index = SymbolIndex {
+        qname_map: HashMap::new(),
+        name_index: HashMap::new(),
+        file_symbols: HashMap::new(),
+        file_for_symbol: HashMap::new(),
+    };
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.name, s.qualified_name, fi.rel_path
+             FROM symbols s
+             JOIN file_instances fi ON s.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![workspace_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (s_id, s_name, qname, rel_path): (i64, Option<String>, Option<String>, Option<String>) =
+            row.map_err(|e| e.to_string())?;
+        if let Some(qname) = qname {
+            index.qname_map.insert(qname, s_id);
+        }
+        if let Some(s_name_ref) = s_name.as_deref() {
+            index
+                .name_index
+                .entry(s_name_ref.to_string())
+                .or_default()
+                .push(s_id);
+        }
+        if let (Some(rel_path), Some(s_name)) = (rel_path, s_name) {
+            index
+                .file_symbols
+                .entry(rel_path.clone())
+                .or_default()
+                .insert(s_name, s_id);
+            index.file_for_symbol.insert(s_id, rel_path);
+        }
+    }
+    Ok(index)
+}
+
+/// 5 级 callee 解析（exact → simple_name_unique → same_file → include_path/sysroot → unresolved）。
+fn resolve_callee(
+    callee_name: &str,
+    caller_relpath: &str,
+    index: &SymbolIndex,
+    search_paths: Option<&(Vec<String>, String, Vec<String>)>,
+) -> (i64, String, String) {
+    if let Some(sid) = index.qname_map.get(callee_name) {
+        let file = index.file_for_symbol.get(sid).cloned().unwrap_or_default();
+        return (*sid, file, "exact_match".to_string());
+    }
+    let candidates = index.name_index.get(callee_name).cloned().unwrap_or_default();
+    if candidates.len() == 1 {
+        let sid = candidates[0];
+        let file = index.file_for_symbol.get(&sid).cloned().unwrap_or_default();
+        return (sid, file, "simple_name_unique".to_string());
+    }
+    if let Some(fsyms) = index.file_symbols.get(caller_relpath) {
+        if let Some(sid) = fsyms.get(callee_name) {
+            return (*sid, caller_relpath.to_string(), "same_file".to_string());
+        }
+    }
+    if let Some(sp) = search_paths {
+        if candidates.len() > 1 {
+            if let Some(result) = resolve_callee_include_path(&candidates, index, sp) {
+                return result;
+            }
+        }
+    }
+    (0, String::new(), "unresolved".to_string())
+}
+
+/// 第 4 级解析：build_context include_paths / toolchain sysroot+include_dirs 消歧。
+fn resolve_callee_include_path(
+    candidates: &[i64],
+    index: &SymbolIndex,
+    search_paths: &(Vec<String>, String, Vec<String>),
+) -> Option<(i64, String, String)> {
+    let (include_paths, sysroot, tc_dirs) = search_paths;
+    let norm_include_paths: Vec<String> = include_paths
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| norm_search_path(p))
+        .collect();
+    let norm_sysroot = if sysroot.is_empty() {
+        String::new()
+    } else {
+        norm_search_path(sysroot)
+    };
+    let norm_tc_dirs: Vec<String> = tc_dirs
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| norm_search_path(p))
+        .collect();
+
+    let mut include_hits: Vec<i64> = Vec::new();
+    let mut sysroot_hits: Vec<i64> = Vec::new();
+    for sid in candidates {
+        let rel_path = index.file_for_symbol.get(sid).cloned().unwrap_or_default();
+        if rel_path.is_empty() {
+            continue;
+        }
+        let norm_rel = norm_search_path(&rel_path);
+        let mut hit_include = false;
+        for inc in &norm_include_paths {
+            if !inc.is_empty() && norm_rel.starts_with(inc.as_str()) {
+                include_hits.push(*sid);
+                hit_include = true;
+                break;
+            }
+        }
+        if hit_include {
+            continue;
+        }
+        for tc_dir in std::iter::once(&norm_sysroot).chain(norm_tc_dirs.iter()) {
+            if tc_dir.is_empty() {
+                continue;
+            }
+            let basename = tc_dir.rsplit('/').next().unwrap_or(tc_dir.as_str());
+            if !basename.is_empty() && norm_rel.starts_with(basename) {
+                sysroot_hits.push(*sid);
+                break;
+            }
+        }
+    }
+    if include_hits.len() == 1 {
+        let sid = include_hits[0];
+        let file = index.file_for_symbol.get(&sid).cloned().unwrap_or_default();
+        return Some((sid, file, "include_path".to_string()));
+    }
+    if sysroot_hits.len() == 1 {
+        let sid = sysroot_hits[0];
+        let file = index.file_for_symbol.get(&sid).cloned().unwrap_or_default();
+        return Some((sid, file, "sysroot".to_string()));
+    }
+    None
+}
+
+/// 规范化 search path：统一正斜杠 + 去尾部斜杠（len>1 才剥，parity Python rstrip）。
+fn norm_search_path(path: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    let p = path.replace('\\', "/");
+    if p.len() > 1 {
+        p.trim_end_matches('/').to_string()
+    } else {
+        p
+    }
+}
+
+/// build_context include_paths + toolchain sysroot/include_dirs 联表加载。
+fn load_build_context_includes(
+    conn: &Connection,
+    workspace_id: i64,
+    build_context_hash: &str,
+) -> Result<(Vec<String>, String, Vec<String>), String> {
+    let mut include_paths: Vec<String> = Vec::new();
+    if table_exists(conn, "workspace_build_contexts")? {
+        let raw: Option<Option<String>> = conn
+            .query_row(
+                "SELECT include_paths FROM workspace_build_contexts
+                 WHERE workspace_id = ?1 AND build_context_hash = ?2",
+                params![workspace_id, build_context_hash],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(Some(json_text)) = raw {
+            include_paths = serde_json::from_str(&json_text).unwrap_or_default();
+        }
+    }
+    let mut sysroot = String::new();
+    let mut tc_dirs: Vec<String> = Vec::new();
+    if table_exists(conn, "toolchains")? && table_exists(conn, "workspace_toolchains")? {
+        let row: Option<(Option<String>, Option<String>)> = conn
+            .query_row(
+                "SELECT t.sysroot, t.include_dirs FROM toolchains t
+                 JOIN workspace_toolchains wt ON t.id = wt.toolchain_id
+                 WHERE wt.workspace_id = ?1 AND wt.build_context_hash = ?2
+                 ORDER BY t.id LIMIT 1",
+                params![workspace_id, build_context_hash],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((sr, dirs)) = row {
+            sysroot = sr.unwrap_or_default();
+            if let Some(dirs) = dirs {
+                tc_dirs = serde_json::from_str(&dirs).unwrap_or_default();
+            }
+        }
+    }
+    Ok((include_paths, sysroot, tc_dirs))
+}
+
+/// 降级模式：从 calls 表复制（CAS 未发布；resolution_method="from_calls"）。
+fn compute_from_calls(conn: &Connection, workspace_id: i64) -> Result<Value, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.caller_id, c.callee_id, c.callee_name, c.callee_file, c.call_line
+             FROM calls c
+             JOIN symbols s ON c.caller_id = s.id
+             JOIN file_instances fi ON s.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![workspace_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<i64>>(4)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut edges: Vec<Value> = Vec::new();
+    for row in rows {
+        let (caller_id, callee_id, callee_name, callee_file, call_line): (
+            i64,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<i64>,
+        ) = row.map_err(|e| e.to_string())?;
+        edges.push(json!({
+            "caller_symbol_id": caller_id,
+            "callee_symbol_id": callee_id.unwrap_or(0),
+            "callee_name": callee_name,
+            "callee_file": callee_file.unwrap_or_default(),
+            "call_line": match call_line {
+                Some(line) => json!(line),
+                None => Value::Null,
+            },
+            "resolution_method": "from_calls",
+        }));
+    }
+    let count = edges.len();
+    Ok(json!({
+        "edges": edges, "source": "calls_table", "count": count, "skipped": 0
+    }))
+}
+
+// ============================================
+// G4：compile_commands.json 解析引擎（Rust 移植）
+// 真相源：analyzers/compile_commands.py（parse + aggregate + 路径规范化）
+// ============================================
+
+fn import_compile_commands_parse(content: &str, workspace_root: &str) -> Result<Value, String> {
+    let data: Value = serde_json::from_str(content)
+        .map_err(|e| format!("compile_commands.json JSON 解析失败: {e}"))?;
+    let arr = data
+        .as_array()
+        .ok_or_else(|| "compile_commands.json 应为 JSON array".to_string())?;
+
+    let mut defines: Map<String, Value> = Map::new();
+    let mut include_paths: Vec<String> = Vec::new();
+    let mut seen_includes: HashSet<String> = HashSet::new();
+    let mut compile_flags: Vec<String> = Vec::new();
+    let mut seen_flags: HashSet<String> = HashSet::new();
+    let mut compiler_path = String::new();
+    let mut file_count = 0usize;
+    let mut per_file_count = 0usize;
+
+    for item in arr {
+        let file_path = item.get("file").and_then(Value::as_str).unwrap_or("");
+        if file_path.is_empty() {
+            continue;
+        }
+        file_count += 1;
+        let directory = item.get("directory").and_then(Value::as_str).unwrap_or("");
+        let tokens: Vec<String> = match item.get("arguments").and_then(Value::as_array) {
+            Some(a) if !a.is_empty() => a
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .collect(),
+            _ => {
+                let command = item.get("command").and_then(Value::as_str).unwrap_or("");
+                if command.is_empty() {
+                    continue;
+                }
+                // parity：Python shlex.split 失败时退化空格分词；此处统一容错分词
+                shlex_split(command)
+            }
+        };
+        let mut e_compiler = String::new();
+        let mut e_defines: Vec<(String, String)> = Vec::new();
+        let mut e_includes: Vec<String> = Vec::new();
+        let mut e_flags: Vec<String> = Vec::new();
+        parse_compile_tokens(
+            &tokens,
+            &mut e_compiler,
+            &mut e_defines,
+            &mut e_includes,
+            &mut e_flags,
+        );
+        if compiler_path.is_empty() && !e_compiler.is_empty() {
+            compiler_path = e_compiler;
+        }
+        for (k, v) in e_defines {
+            defines.insert(k, Value::String(v));
+        }
+        let base = if directory.is_empty() {
+            workspace_root
+        } else {
+            directory
+        };
+        for p in e_includes {
+            let np = normalize_build_path(&p, base);
+            if seen_includes.insert(np.clone()) {
+                include_paths.push(np);
+            }
+        }
+        for f in e_flags {
+            if seen_flags.insert(f.clone()) {
+                compile_flags.push(f);
+            }
+        }
+        per_file_count += 1;
+    }
+
+    Ok(json!({
+        "defines": Value::Object(defines),
+        "include_paths": include_paths,
+        "compile_flags": compile_flags,
+        "compiler_path": compiler_path,
+        "file_count": file_count,
+        "per_file_count": per_file_count,
+    }))
+}
+
+/// 简易 shlex 分词（单/双引号 + 反斜杠转义；引号不闭合时容错截断）。
+fn shlex_split(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut has_token = false;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                has_token = true;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                has_token = true;
+            }
+            '\\' if !in_single && !in_double => {
+                if let Some(&n) = chars.peek() {
+                    cur.push(n);
+                    chars.next();
+                    has_token = true;
+                }
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if has_token {
+                    out.push(std::mem::take(&mut cur));
+                    has_token = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        out.push(cur);
+    }
+    out
+}
+
+/// 解析编译命令 token 列表（parity Python _parse_tokens）。
+fn parse_compile_tokens(
+    tokens: &[String],
+    compiler: &mut String,
+    defines: &mut Vec<(String, String)>,
+    includes: &mut Vec<String>,
+    flags: &mut Vec<String>,
+) {
+    let len = tokens.len();
+    let mut i = 0usize;
+    while i < len {
+        let tok = &tokens[i];
+        if i == 0 && !tok.starts_with('-') {
+            *compiler = tok.clone();
+            i += 1;
+            continue;
+        }
+        if tok == "-D" {
+            if i + 1 < len {
+                parse_define_token(&tokens[i + 1], defines);
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if let Some(rest) = tok.strip_prefix("-D") {
+            parse_define_token(rest, defines);
+            i += 1;
+        } else if tok == "-I" {
+            if i + 1 < len {
+                includes.push(tokens[i + 1].clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if tok.len() > 2 && tok.starts_with("-I") {
+            includes.push(tok[2..].to_string());
+            i += 1;
+        } else if tok == "-isystem" {
+            if i + 1 < len {
+                includes.push(tokens[i + 1].clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if tok == "-include" {
+            if i + 1 < len {
+                flags.push(format!("-include {}", tokens[i + 1]));
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if tok.starts_with("-std=") {
+            flags.push(tok.clone());
+            i += 1;
+        } else if tok == "-U" {
+            if i + 1 < len {
+                flags.push(format!("-U {}", tokens[i + 1]));
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if tok.len() > 2 && tok.starts_with("-U") {
+            flags.push(tok.clone());
+            i += 1;
+        } else if tok.starts_with('-') {
+            flags.push(tok.clone());
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn parse_define_token(token: &str, defines: &mut Vec<(String, String)>) {
+    match token.split_once('=') {
+        Some((name, value)) => defines.push((name.to_string(), value.to_string())),
+        None => defines.push((token.to_string(), String::new())),
+    }
+}
+
+fn path_is_abs(p: &str) -> bool {
+    let b = p.as_bytes();
+    if p.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+        return true;
+    }
+    p.starts_with('/')
+}
+
+/// 词法 normpath（折叠 //、.、..；parity os.path.normpath 的纯文本语义）。
+fn lexical_normpath(p: &str) -> String {
+    let (prefix, rest): (&str, &str) = if p.len() >= 2
+        && p.as_bytes()[1] == b':'
+        && p.as_bytes()[0].is_ascii_alphabetic()
+    {
+        (&p[..2], &p[2..])
+    } else if let Some(r) = p.strip_prefix("//") {
+        ("//", r)
+    } else if let Some(r) = p.strip_prefix('/') {
+        ("/", r)
+    } else {
+        ("", p)
+    };
+    let mut comps: Vec<&str> = Vec::new();
+    for c in rest.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                if comps.last().map_or(false, |last| *last != "..") {
+                    comps.pop();
+                } else if prefix.is_empty() {
+                    comps.push("..");
+                }
+            }
+            other => comps.push(other),
+        }
+    }
+    if prefix.is_empty() {
+        if comps.is_empty() {
+            ".".to_string()
+        } else {
+            comps.join("/")
+        }
+    } else {
+        format!("{}{}", prefix, comps.join("/"))
+    }
+}
+
+fn normalize_build_path(path: &str, base_dir: &str) -> String {
+    let p = path.replace('\\', "/");
+    if path_is_abs(&p) {
+        lexical_normpath(&p)
+    } else {
+        let base = base_dir.replace('\\', "/");
+        lexical_normpath(&format!("{}/{}", base.trim_end_matches('/'), p))
+    }
+}
 
 fn parse_resolved_edge_inputs(
     edges: &[Value],
@@ -3603,7 +5164,7 @@ fn load_workspace_symbols(
 /// 符号按 qualified_name 对比 symbol_hash，三集合输出 added / removed /
 /// modified / unchanged_count。列表顺序 = 各 workspace SELECT 行序（Python
 /// dict 插入序 = SQLite 行序，无 ORDER BY）。
-fn query_local_diff_branches(
+pub(crate) fn query_local_diff_branches(
     conn: &Connection,
     source_branch: &str,
     target_branch: &str,
@@ -5794,10 +7355,17 @@ fn query_local_build_context_get(
         Err(rusqlite::Error::QueryReturnedNoRows) => {}
         Err(error) => return Err(format!("cannot query build context exact: {error}")),
     }
-    // 前缀匹配（短 hash → 完整 hash）
+    // 前缀匹配（短 hash → 完整 hash）。
+    // G4 修正：此前复用 `=` 精确 SQL 拼 `前缀%` 参数，`=` 不做通配展开，
+    // 短 hash 查询恒 Null（CLI `cw build-context resolve <短hash>` 首查即败）。
+    // 改用 LIKE 语义；多命中返回 Null（fail-closed，parity db_toolchain）。
+    let like_sql = "SELECT workspace_id, build_context_hash, name, compile_flags, defines,
+               include_paths, is_active, created_at
+               FROM workspace_build_contexts
+               WHERE workspace_id = ?1 AND build_context_hash LIKE ?2";
     params[1] = rusqlite::types::Value::Text(format!("{build_context_hash}%"));
     let mut stmt = conn
-        .prepare(sql)
+        .prepare(like_sql)
         .map_err(|error| format!("cannot prepare build context prefix query: {error}"))?;
     let rows = stmt
         .query_map(params_from_iter(params.iter()), build_context_row)
@@ -7649,5 +9217,65 @@ mod tests {
             response["error"]["message"]
         );
         assert_eq!(response["result"]["symbol_count"], 3);
+    }
+
+    // ---- C-13：semgrep CLI RPC 接线回归（dispatch 层不再 method_not_found）----
+
+    /// C-13 根因回归：`semgrep_handlers` 此前从未在 mod.rs 声明 `pub mod`，
+    /// 4 个裸方法名在 daemon 侧恒落 CONVERGENCE_RPC_METHODS 的 method_not_found
+    /// 兜底，`cw semgrep scan` 端到端死亡。
+    /// 本测试在**进程内 dispatch 层**验证方法名已可达：空 params 下 arm 内
+    /// `require_str_param("workspace_instance_id")` 先报 invalid_params，据此证明
+    /// 路由已命中 semgrep arm（若未命中，必为 `method_not_found: 未知方法: <m>`）。
+    #[test]
+    fn test_semgrep_rpc_methods_reach_handler_not_method_not_found() {
+        use crate::daemon::dispatch::{is_convergence_rpc, is_protected_mutation};
+
+        // 方法清单与 cli/main.py `_METHOD_MAP` 的 rpc_method 逐字一致。
+        let methods = [
+            "run_semgrep",
+            "run_semgrep_and_save",
+            "scan_semgrep_incremental",
+            "get_semgrep_summary",
+        ];
+        // 三个写面须经 Protected_Mutation 串行化点；只读汇总不串行化。
+        let write_methods = [
+            "run_semgrep",
+            "run_semgrep_and_save",
+            "scan_semgrep_incremental",
+        ];
+
+        for method in methods {
+            assert!(
+                is_convergence_rpc(method),
+                "{method} 未登记进 CONVERGENCE_RPC_METHODS，dispatch 无法到达"
+            );
+            let mut state = make_state();
+            let peer = make_peer(0);
+            let response = dispatch(&mut state, peer, method, &json!({}), &[]);
+            assert_eq!(response["ok"], false, "{method} 空 params 不应成功");
+            let code = response["error"]["code"].as_str().unwrap_or("");
+            assert_ne!(
+                code, "method_not_found",
+                "{method} 落入 method_not_found 兜底（C-13 回归）：{}",
+                response["error"]["message"]
+            );
+            let message = response["error"]["message"].as_str().unwrap_or("");
+            assert!(
+                message.contains("workspace_instance_id"),
+                "{method} 应命中 semgrep arm 并报缺字段 workspace_instance_id，实际: {message}"
+            );
+        }
+
+        for method in write_methods {
+            assert!(
+                is_protected_mutation(method),
+                "{method} 为 semgrep 写面，须经 Protected_Mutation 串行化点"
+            );
+        }
+        assert!(
+            !is_protected_mutation("get_semgrep_summary"),
+            "get_semgrep_summary 为只读，不应被归类为 Protected_Mutation"
+        );
     }
 }

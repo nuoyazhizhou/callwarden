@@ -160,6 +160,9 @@ pub fn create_listener(
         socket_mode: 0o660,
         accept_timeout: config.accept_timeout,
         socket_group: None,
+        // H1: unix 分支同样必须显式初始化 `http` 字段（ServerConfig 定义见
+        // server.rs:65-85，含 `pub http`）；工厂函数不启用 HTTP overlay，固定 None。
+        http: None,
     };
     let listener = UnixTransportListener::bind(&server_config)?;
     Ok(Box::new(listener))

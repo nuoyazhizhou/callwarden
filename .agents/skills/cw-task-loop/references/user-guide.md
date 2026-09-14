@@ -7,6 +7,19 @@
 - 只读：本入口从不写任务状态。
 - 权威：一切以 `cw task next-action <task-id> --json` 的响应为准，不猜测、不补造。
 
+## 0. Production prompt 来源（RP-09 cutover）
+
+production prompt 的唯一来源是 daemon 编译的 Role Prompt Bundle（RPC `task.prompt.compile`，capability
+`role_prompt_compiler_v1`）：`cw task prompt <task-id> --format llm`（本地展示格式可选 `llm|card|json`，
+默认 `llm`）或 MCP `task_get_role_prompt(task-id)` 取回 bundle 后逐字输出 `prompt.text` 与结构化字段；
+`--format` 只改变本地展示，不发送给 daemon。客户端模板正文不再是 production prompt 来源。
+
+capability 未声明时，只有已取得 **daemon 返回的 exact workspace instance ID** 才回落到只读
+`cw task next-action <task-id> --workspace-instance-id <instance-id> --json` role card；否则显示
+capability/authority unavailable 并 fail closed。禁止客户端 derive workspace（如
+`derive_workspace_instance_id`）、本地渲染 production prompt 或回落 Python Prompt Compiler /
+SQLite / PyO3 authority。
+
 ## 1. 调用方式
 
 ```
@@ -53,7 +66,7 @@ $cw-task-loop <task-id>
 
 规则：每个窗口只保留一个任务角色；不得在同一窗口从 Executor 切换为
 Reviewer/Adjudicator。建议聊天窗口标题包含 `task_id + role + session_id`。
-角色提示词只是 fallback 文本，Task Envelope / Role Contract 始终优先。
+角色提示词（production prompt）由 daemon 编译并逐字输出，Task Envelope / Role Contract 始终优先。
 
 ## 4. 各决策行为指引
 

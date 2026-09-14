@@ -70,6 +70,7 @@ use super::support::*;
         let report_valid_params = serde_json::json!({
             "task_id": "T-TEST-001",
             "summary": "Fixed memory leak",
+            "snapshot_id": "snapshot-test-001",
             "agent_session_id": "session-123"
         });
         let report_res = store
@@ -131,7 +132,8 @@ use super::support::*;
             .unwrap();
         store.handle_task_report(peer.clone(), &serde_json::json!({
             "task_id":"T-REMEDIATION-SCOPE", "step_id":failed_id, "agent_session_id":"executor-session",
-            "identity": executor_identity.clone(), "summary":"capture blocked", "success":false
+            "identity": executor_identity.clone(), "summary":"capture blocked", "success":false,
+            "snapshot_id":"snapshot-remediation-scope"
         })).unwrap();
         let missing = store
             .handle_task_claim(
@@ -210,7 +212,8 @@ use super::support::*;
             .unwrap();
         store.handle_task_report(peer.clone(), &serde_json::json!({
             "task_id":"T-REMEDIATION-EXPLICIT", "step_id":failed_id, "agent_session_id":"executor-session",
-            "identity": ident.clone(), "summary":"capture blocked", "success":false
+            "identity": ident.clone(), "summary":"capture blocked", "success":false,
+            "snapshot_id":"snapshot-remediation-explicit"
         })).unwrap();
         // 模拟历史任务中的 malformed remediation：旧步骤已完成，但 result
         // 不是带 remediation_of_step_id 的结构化 provenance。显式创建入口
@@ -261,7 +264,7 @@ use super::support::*;
                 &serde_json::json!({
                     "task_id":"T-REMEDIATION-EXPLICIT", "step_id":remediation_id,
                     "agent_session_id":"executor-session", "identity": ident.clone(),
-                    "summary":"fixed", "success":true
+                    "summary":"fixed", "success":true, "snapshot_id":"snapshot-remediation-explicit"
                 }),
             )
             .unwrap();
@@ -339,7 +342,8 @@ use super::support::*;
         drop(conn);
         store.handle_task_claim(peer.clone(), &serde_json::json!({"task_id":"T-REMEDIATION-RESOLVE", "agent_session_id":"executor-session", "identity":executor_identity.clone()})).unwrap();
         store.handle_task_report(peer.clone(), &serde_json::json!({
-            "task_id":"T-REMEDIATION-RESOLVE", "step_id":failed_id, "agent_session_id":"executor-session", "identity":executor_identity.clone(), "summary":"failed", "success":false
+            "task_id":"T-REMEDIATION-RESOLVE", "step_id":failed_id, "agent_session_id":"executor-session", "identity":executor_identity.clone(), "summary":"failed", "success":false,
+            "snapshot_id":"snapshot-remediation-resolve"
         })).unwrap();
         let conn = store.conn.lock().unwrap();
         let remediation_id: String = conn.query_row("SELECT id FROM task_steps WHERE task_id='T-REMEDIATION-RESOLVE' AND action='fix_defect'", [], |r| r.get(0)).unwrap();
@@ -348,7 +352,8 @@ use super::support::*;
             "task_id":"T-REMEDIATION-RESOLVE", "agent_session_id":"executor-session", "identity":executor_identity.clone(), "remediation_step_id":remediation_id
         })).unwrap();
         store.handle_task_report(peer.clone(), &serde_json::json!({
-            "task_id":"T-REMEDIATION-RESOLVE", "step_id":remediation_id, "agent_session_id":"executor-session", "identity":executor_identity.clone(), "summary":"fixed", "success":true
+            "task_id":"T-REMEDIATION-RESOLVE", "step_id":remediation_id, "agent_session_id":"executor-session", "identity":executor_identity.clone(), "summary":"fixed", "success":true,
+            "snapshot_id":"snapshot-remediation-resolve"
         })).unwrap();
         let ident = executor_identity.clone();
         let lease = store.handle_lease_acquire(peer.clone(), &serde_json::json!({
@@ -1032,7 +1037,7 @@ use super::support::*;
         let report = store.handle_task_report(peer.clone(), &serde_json::json!({
             "task_id":"T-THREAD-REVISE", "step_id":remediation_one,
             "agent_session_id":"executor-session", "identity":executor_identity,
-            "summary":"first revision done", "success":true
+            "summary":"first revision done", "success":true, "snapshot_id":"snapshot-thread-revise"
         })).unwrap();
         assert_eq!(report["status"], "review");
 
@@ -1632,6 +1637,7 @@ use super::support::*;
                     "step_id": step_id,
                     "summary": "done",
                     "success": true,
+                    "snapshot_id": "snapshot-identity-001",
                     "identity": {
                         "agent_id": "agent-identity",
                         "session_id": "session-identity",
@@ -1677,16 +1683,32 @@ use super::support::*;
 
     #[test]
     fn test_task_report_persists_snapshot_for_governance_projection() {
-        let (_dir, db_path) = temp_db();
-        let store = TaskCollabStore::new(&db_path).unwrap();
+        let (dir, db_path) = temp_db();
+        let registry_path = dir.path().join("registry.db");
+        let registry = WorkspaceRegistry::open(registry_path.to_str().unwrap()).unwrap();
+        let registered = registry
+            .register_workspace(
+                1000,
+                "/tmp/test-ws",
+                "/tmp/test-ws",
+                "https://example.invalid/report-snapshot.git",
+                "report-snapshot-head",
+                "test-toolchain",
+            )
+            .unwrap();
+        let workspace_instance_id = registered["workspace_instance_id"].as_str().unwrap();
+        let snapshot_id = registered["snapshot_id"].as_str().unwrap();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_registry_db_path_for_tests(&registry_path);
         let peer = PeerCredential::new_unix(1000, 1000, 1234);
-        seed_workspace(&store);
+        seed_workspace_for_instance(&store, workspace_instance_id);
 
         store
             .handle_task_create(
                 peer.clone(),
                 &serde_json::json!({
-                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "workspace_id": 1, "workspace_instance_id": workspace_instance_id,
                     "task_id": "T-REPORT-SNAPSHOT-001",
                     "title": "report snapshot binding",
                     "steps": [{"action": "implement", "target_file": "a.rs"}]
@@ -1715,7 +1737,7 @@ use super::support::*;
                     "task_id": "T-REPORT-SNAPSHOT-001",
                     "step_id": step_id,
                     "summary": "reported with authoritative snapshot",
-                    "snapshot_id": "snapshot-report-001",
+                    "snapshot_id": snapshot_id,
                     "evidence_path": "deliverables/report.md",
                     "success": true
                 }),
@@ -1730,12 +1752,117 @@ use super::support::*;
             .unwrap();
         assert_eq!(
             projection["review_input_snapshot"]["snapshot_id"],
-            "snapshot-report-001"
+            snapshot_id
         );
         assert_eq!(
             projection["review_input_snapshot"]["evidence_path"],
             "deliverables/report.md"
         );
+    }
+
+    #[test]
+    fn test_task_report_rejects_snapshot_from_other_workspace_before_state_transition() {
+        let (dir, db_path) = temp_db();
+        let registry_path = dir.path().join("registry.db");
+        let registry = WorkspaceRegistry::open(registry_path.to_str().unwrap()).unwrap();
+        let bound = registry
+            .register_workspace(
+                1000, "/tmp/test-ws", "/tmp/test-ws", "https://example.invalid/bound.git",
+                "bound-head", "test-toolchain",
+            )
+            .unwrap();
+        let other = registry
+            .register_workspace(
+                1000, "/tmp/other-ws", "/tmp/other-ws", "https://example.invalid/other.git",
+                "other-head", "test-toolchain",
+            )
+            .unwrap();
+        let workspace_instance_id = bound["workspace_instance_id"].as_str().unwrap();
+        let other_snapshot_id = other["snapshot_id"].as_str().unwrap();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_registry_db_path_for_tests(&registry_path);
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace_for_instance(&store, workspace_instance_id);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": workspace_instance_id,
+                    "task_id": "T-REPORT-SNAPSHOT-MISMATCH-001",
+                    "title": "reject cross-workspace snapshot",
+                }),
+            )
+            .unwrap();
+        store
+            .handle_task_claim(
+                peer.clone(),
+                &serde_json::json!({"task_id": "T-REPORT-SNAPSHOT-MISMATCH-001"}),
+            )
+            .unwrap();
+        let error = store
+            .handle_task_report(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-REPORT-SNAPSHOT-MISMATCH-001",
+                    "summary": "must not report",
+                    "snapshot_id": other_snapshot_id,
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "E_TASK_REPORT_SNAPSHOT_MISMATCH");
+        let conn = store.conn.lock().unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE id = 'T-REPORT-SNAPSHOT-MISMATCH-001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "in_progress");
+    }
+
+    #[test]
+    fn test_task_report_rejects_missing_snapshot_before_state_transition() {
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-REPORT-NO-SNAPSHOT-001", "title": "snapshot preflight"
+                }),
+            )
+            .unwrap();
+        store
+            .handle_task_claim(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-REPORT-NO-SNAPSHOT-001", "agent_session_id": "snapshot-owner"
+                }),
+            )
+            .unwrap();
+        let error = store
+            .handle_task_report(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-REPORT-NO-SNAPSHOT-001", "agent_session_id": "snapshot-owner"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "E_TASK_REPORT_SNAPSHOT_REQUIRED");
+        let conn = store.conn.lock().unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE id = 'T-REPORT-NO-SNAPSHOT-001'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "in_progress");
     }
 
     // ============================================================

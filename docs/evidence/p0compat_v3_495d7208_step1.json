@@ -1,0 +1,19 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1788963088148-495d7208",
+  "step_index": 1,
+  "action": "thin_python_client",
+  "changed_files": [
+    "server/tools/tools_p3_identity.py",
+    "server/tools/tools_p4_lease.py",
+    "server/compat_registry.py"
+  ],
+  "summary": "_P3_READ_ONLY_METHODS/_P4_READ_ONLY_METHODS 摘除 3 条目并改为空 dict 条件注册；RUST_COMPAT_ROUTE 摘除 3 行（两端对齐）",
+  "verification": {
+    "rust_build": "cargo build --bin cw-daemon Finished (CARGO_INCREMENTAL=0, unset INCLUDE)",
+    "pytest": "15/15 PASS (tests/test_mcp_compat_identity-lease-small_http_rpc.py + test_mcp_assignment_show_http_rpc.py)",
+    "capabilities_endpoint": "3 methods backend=rust_native, status=available"
+  },
+  "created_at": "2026-09-09T23:20:04+0800",
+  "request_id": "req-evd-64c52634"
+}

@@ -1,0 +1,29 @@
+{
+  "task_id": "T-1788446981877-ee71e784",
+  "step_id": "S-1788446981883-eecd0164",
+  "step": "implement_unique_child_id_generation",
+  "status": "implemented",
+  "change": {
+    "file": "rust_ext/src/daemon/task_collab_planning.rs",
+    "sha256": "960512714F23E30C8FB5F4BE4A703100FF40ACA654349EE87628630C0B6570A8",
+    "summary": "Retain compatibility child IDs when free; on collision generate and recheck an opaque daemon suffix inside the split transaction."
+  },
+  "validation": [
+    {
+      "command": "tokenslim run cargo test --manifest-path rust_ext/Cargo.toml task_collab_tests_core::test_task_split_plan_file_persists_child_steps --lib",
+      "result": "cargo completed successfully; filter matched 0 tests, compilation completed with existing warnings"
+    },
+    {
+      "command": "git diff --check -- rust_ext/src/daemon/task_collab_planning.rs",
+      "result": "passed"
+    }
+  ],
+  "scope": {
+    "allowed": ["rust_ext/src/daemon/task_collab_planning.rs"],
+    "excluded": ["other production modules", "historical task state", "direct SQLite mutation"]
+  },
+  "notes": [
+    "The original task.split attempt returned UNIQUE constraint failed and rolled back; no child task was created by that attempt.",
+    "A dedicated collision/rollback test is the next step and has not yet been reported."
+  ]
+}

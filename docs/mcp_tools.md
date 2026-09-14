@@ -1,23 +1,18 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 237 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 243 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
-> **HTTP MVP 路由状态（H4B-N/C/I/E 收口）**：237 个公开工具的 backend 归类由 H0 冻结的
-> capability registry（`.trae-cn/evidence/http-daemon-capability-matrix.json`）唯一真相源决定：
-> **python_compat 193 / rust_native 44 / legacy_local 0**。HTTP 模式下：
-> - Rust `compat_route`（`rust_ext/src/daemon/http_server.rs`）将 107 个 read_only
->   python_compat 方法路由到 H3 compat worker（第一批 H4C-1 默认 2 + H4C-2 符号组 17 +
->   H4C-3 任务组 16 + H4C 第二批 compat read/index/governance 72，见
->   `COMPAT_ROUTE_WHITELIST`）；
->   两端一致性由 `server/compat_registry.py` 的 `RUST_COMPAT_ROUTE` /
->   `validate_against_rust_route` 对齐门保证；
-> - 44 个 `rust_native` 方法走 Rust daemon dispatch（真实 RPC，如 `query.issues` /
->   `query.tests`、`lease.*` 等）；
-> - 其余 python_compat 方法在 HTTP 模式统一 fail-closed：返回结构化
->   `E_HTTP_COMPAT_UNSUPPORTED`（含 `tool` / `backend=python_compat` 与中文 message），
->   不构造 CodeGraphDB，不得在 HTTP 失败时回退 SQLite、Named Pipe 或 UDS；
-> - `legacy_local` 方法仅 Legacy Baseline（stdio MCP/CLI）可用，HTTP 不可达。
-> `available` 必须由真实 route evidence 证明，不能从静态注册数推导。
+> **HTTP 路由状态（2026-09-09 收敛审查后刷新，权威核对：`scripts/verify_route_matrix.py` 三向一致）**：
+> 243 个公开工具的调用链为 **243/243 工具壳 route_rpc → HTTP → rust daemon**，HTTP fail-closed
+> 仅对未知方法生效。当前 backend 目标态（`deliverables/software-company/tool_migration_matrix.json`）：
+> **rust_native 142 / task_rpc 43 / python_compat 58**。HTTP 模式下：
+> - 185 个方法（rust_native + task_rpc）走 Rust daemon dispatch 原生执行（无 Python 业务逻辑）；
+> - 58 个 read_only python_compat 方法由 `COMPAT_ROUTE_WHITELIST`（http_server.rs，与
+>   `compat_registry.py RUST_COMPAT_ROUTE` 镜像严格 58=58 对齐）路由到 H3 compat worker
+>   （Python 仍执行业务逻辑，迁移承接卡 T-1787293451688-c14b1e44 分期清零中）；
+> - 未知方法 fail-closed：返回结构化 `E_HTTP_COMPAT_UNSUPPORTED`，不构造 CodeGraphDB，
+>   不得在 HTTP 失败时回退 SQLite、Named Pipe 或 UDS；
+> - `legacy_local` 为 0。`available` 必须由真实 route evidence 证明，不能从静态注册数推导。
 
 ## MCP 协议简介
 
@@ -616,6 +611,17 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 - **返回**：`list`（兼容本地模式）或 daemon `{tasks: [...]}`；每条任务包含
   `lifecycle_status`、`workflow_status`、`review`、`blocking_reasons` 和
   `governance` 投影。
+
+### `task_get_role_prompt`
+编译指定任务的 Role Prompt Bundle（Role Prompt Compiler v1，RP-08）。
+- **参数**：`task_id: str`（唯一参数；不接受 role/format/workspace/credential/lease，
+  不复用 blind `get_role_view`，spec §4.4）
+- **返回**：RolePromptBundle（`schema_version=role_prompt_bundle_v1`，含
+  prompt/bundle hash、template 引用与 next_action 投影），由 daemon RPC
+  `task.prompt.compile` 权威编译（§6 状态机路由 + §8 渲染 + §9 canonical/hash）
+- **权威性**：MCP 侧仅 HTTP 薄透传（fail-closed，无本地模板/SQLite/_workspace 推导
+  fallback）；workspace authority 由 daemon 侧 binding/capture 两跳自解析，guard
+  mismatch 返回 `E_TASK_PROMPT_AUTHORITY_MISMATCH`。
 
 ### `task_status`
 获取任务详情和所有步骤。
@@ -1886,6 +1892,7 @@ G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时�
 | 工具 | 参数 | 返回 |
 |------|------|------|
 | `get_role_view` | `task_id`, `role`(可选) | Role_View dict（含 view_type/view_version/Contract_Hash），envelope 取自最新契约 revision |
+| `task_get_role_prompt` | `task_id` | RolePromptBundle dict（`role_prompt_bundle_v1`；daemon `task.prompt.compile` 权威编译，MCP 薄透传，RP-08） |
 | `find_evidence` | `task_id`(可选), `contract_id`(可选), `verifier`(可选), `limit` | `{"items": [...], "count": N}`（task_evidence_events 真实记录） |
 | `get_freshness_status` | `evidence_id`(可选), `task_id`(可选) | `{"items": [{"evidence_id": ..., "status": ...}]}`（derive_freshness 派生） |
 | `get_gate_decision` | `task_id`(可选), `gate_id`(可选), `limit` | `{"items": [...], "count": N}`（task_gate_decisions 真实记录） |
@@ -2316,7 +2323,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ## 工具设计原则与优化方向
 
-> 对应 [_feature_matrix.md L10 + L16](../_feature_matrix.md) 设计方向项。
+> 对应 [_feature_matrix.md L10 + L16](../design/_feature_matrix.md) 设计方向项。
 >
 > 来源：D3（Phase 2 收口/增量架构/Daemon 讨论）+ WL1（工具层讨论）。
 

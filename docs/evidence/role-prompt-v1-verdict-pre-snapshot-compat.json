@@ -1,0 +1,46 @@
+{
+  "task_id": "T-1788665370580-83851bf0",
+  "parent_id": "T-1787203926824-9f873bfc",
+  "idempotency_key": "role-prompt-v1-verdict-pre-snapshot-compat",
+  "steps": {
+    "S-1788665370583-83a8c85c": "implement_verdict_pre_snapshot_compat",
+    "S-1788665370583-83a9ca2c": "verify_verdict_pre_snapshot_regressions",
+    "S-1788665370584-83b7f908": "deploy_and_record_pre_snapshot_compat_evidence"
+  },
+  "gap": "verdict.submit hard-required non-empty snapshot_id, but bootstrap task T-1788421906365-956ab790 predates the snapshot provenance mechanism (its entire task_events history has zero non-empty snapshot rows), wedging the review loop with no honest verdict possible.",
+  "implementation": {
+    "commit": "974bddcf4fa7be286bdf24f2e244794abe292629",
+    "files": [
+      "rust_ext/src/daemon/task_collab_verdict.rs",
+      "rust_ext/src/daemon/task_collab_tests.rs",
+      "rust_ext/src/daemon/task_collab_tests_verdict_compat.rs"
+    ],
+    "semantics": "Empty snapshot_id accepted ONLY after in-transaction proof that task_events contains zero non-empty snapshot_id rows for the task (pre-snapshot era); the absence is persisted auditable in the verdict row. If any non-empty snapshot exists in history, empty snapshot is rejected invalid_params (fail-closed). No snapshot synthesis ever (matches report-path discipline)."
+  },
+  "regressions": {
+    "new_tests": 2,
+    "cases": [
+      "verdict_submit_pre_snapshot_era_accepts_empty_snapshot (positive; verdict row snapshot_id stored empty)",
+      "verdict_submit_rejects_empty_snapshot_when_history_has_snapshot (negative invalid_params + zero rows; then consistent non-empty snapshot path succeeds and stores snap value)"
+    ],
+    "matrix": "task_collab::tests 144 passed, 0 failed"
+  },
+  "deployment": {
+    "receipt": "C:/Users/wanpi/.callwarden/runtime/evidence/20260906-113927-974bddcf4fa7-f8c70e7f.json",
+    "closure_checks": {
+      "daemon_health_git_commit": "974bddcf4fa7be286bdf24f2e244794abe292629 (== deployed HEAD)",
+      "cw_daemon_sha256_match": "94a2c2624de8566c...",
+      "daemon_pid_after_restart": 42288
+    }
+  },
+  "live_verification": {
+    "blocked_before": "verdict.submit on T-1788421906365-956ab790 with empty snapshot returned invalid_params 缺少 snapshot_id on old runtime",
+    "unblocked_after": "verdict.submit succeeded on deployed runtime: verdict V-f97d42b9dda86e40a7ac1d6d (blind_first_pass, overall=pass, snapshot_id empty auditable), unblocking the bootstrap review loop"
+  },
+  "operational_disclosures": [
+    "Reviewer warn finding on the bootstrap task recorded in verdict V-f97d42b9: receipt commit_sha points to superseded sibling commit 997780da; frozen blobs byte-identical across 997780da/10a727d, materially harmless.",
+    "No credentials, tokens, or lease material in this evidence file."
+  ],
+  "recorded_at": "2026-09-06T11:45:00+08:00",
+  "recorded_by": "executor-wb-gate1b-fix-01 / sess-executor-wb-gate1b-fix-20260906"
+}

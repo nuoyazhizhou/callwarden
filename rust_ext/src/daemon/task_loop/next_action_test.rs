@@ -18,6 +18,7 @@ use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 
 use crate::sqlite_query::migrate_connection;
+use crate::daemon::assignment_queue::{claim_assignment, queue_assignment};
 use super::claim::{claim_step, ClaimStepInput, LedgerKey as ClaimLedgerKey};
 use super::contract_set::{
     set_task_contract, ContractPayload, LedgerKey as ContractLedgerKey, SetContractInput,
@@ -167,12 +168,33 @@ fn setup_lease(
     model: &str,
     expires_at: f64,
 ) {
+    setup_lease_in_workspace(
+        conn, 1, lease_id, role, token, counter, agent, session, model, expires_at,
+    );
+}
+
+/// 插入一个可指定 workspace 的 active lease，用于验证历史 workspace 绝不污染
+/// 当前 task binding 的派工投影。
+#[allow(clippy::too_many_arguments)]
+fn setup_lease_in_workspace(
+    conn: &Connection,
+    workspace_id: i64,
+    lease_id: &str,
+    role: &str,
+    token: &str,
+    counter: i64,
+    agent: &str,
+    session: &str,
+    model: &str,
+    expires_at: f64,
+) {
     conn.execute(
         "INSERT INTO task_leases \
          (workspace_id, lease_id, task_id, role, agent_id, session_id, model_id, token_hash, \
           fencing_counter, acquired_at, expires_at, status) \
-         VALUES (1, ?1, 't-1', ?2, ?3, ?4, ?5, ?6, ?7, 0.0, ?8, 'active')",
+         VALUES (?1, ?2, 't-1', ?3, ?4, ?5, ?6, ?7, ?8, 0.0, ?9, 'active')",
         rusqlite::params![
+            workspace_id,
             lease_id,
             role,
             agent,
@@ -265,6 +287,11 @@ fn unclaimed_executor_step_ready_claim() {
     assert_eq!(resp["decision"], serde_json::json!("READY"));
     assert_eq!(resp["action"], serde_json::json!("CLAIM"));
     assert_eq!(resp["required_role"], serde_json::json!("executor"));
+    assert_eq!(
+        resp["authorization"]["lease_role"],
+        serde_json::json!("implementer"),
+        "executor governance work must advertise the concrete runtime lease role"
+    );
     assert_eq!(resp["lifecycle_status"], serde_json::json!("open"));
     assert_eq!(resp["workflow_status"], serde_json::json!("queued"));
     assert_eq!(resp["review"]["state"], serde_json::json!("not_in_review"));
@@ -302,6 +329,128 @@ fn active_lease_yields_waiting_without_token() {
     assert_eq!(resp["next_session"], serde_json::Value::Null);
     let body = serde_json::to_string(&resp).unwrap();
     assert!(!body.contains("token-1"), "不得泄露 lease token");
+}
+
+#[test]
+fn active_lease_from_another_workspace_does_not_block_bound_task() {
+    // task t-1 的不可变 binding 是 workspace=1。历史/错误 workspace=2 的
+    // 同 task lease 只能保留作审计，不能让当前 executor 投影变成 WAITING。
+    let mut conn = fresh_db();
+    conn.execute(
+        "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (2, 'ws-2', '/tmp/ws-2', 0.0)",
+        [],
+    )
+    .unwrap();
+    setup_task(&mut conn, "t-1");
+    let rcr = setup_contract(&mut conn, "t-1", "implementer");
+    setup_task_contract(&conn, "t-1", "tc-t-1");
+    setup_step(&conn, "t-1", 1, "implement", "pending");
+    setup_binding(&mut conn, "t-1", "1", &rcr, "req-c-cross-workspace");
+    setup_lease_in_workspace(
+        &conn,
+        2,
+        "L-history-ws-2",
+        "executor",
+        "token-history-ws-2",
+        1,
+        "agent-history",
+        "sess-history",
+        "model-history",
+        1e18,
+    );
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["decision"], serde_json::json!("READY"));
+    assert_eq!(resp["action"], serde_json::json!("CLAIM"));
+    assert_eq!(resp["required_role"], serde_json::json!("executor"));
+}
+
+fn setup_claimed_assignment(
+    conn: &mut Connection,
+    step_id: &str,
+    role: &str,
+    heartbeat_at: f64,
+) {
+    let tx = conn.unchecked_transaction().unwrap();
+    queue_assignment(
+        &tx,
+        "t-1",
+        Some(step_id),
+        role,
+        "test-assignment",
+        None,
+        "test-actor",
+        "test-session",
+        1,
+        heartbeat_at,
+    )
+    .unwrap();
+    claim_assignment(
+        &tx,
+        "t-1",
+        Some(step_id),
+        role,
+        "test-agent",
+        "test-session",
+        "test-model",
+        "test-assignment",
+        "test-actor",
+        false,
+        2,
+        heartbeat_at,
+    )
+    .unwrap();
+    tx.commit().unwrap();
+}
+
+#[test]
+fn orphaned_in_progress_step_without_claimed_assignment_is_ready_to_reclaim() {
+    // 一次中断可能只留下 step=in_progress。没有 durable claimed assignment 不能
+    // 伪装成 holder，next-action 必须允许 task.claim 的原子恢复路径继续推进。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let rcr = setup_contract(&mut conn, "t-1", "implementer");
+    setup_task_contract(&conn, "t-1", "tc-t-1");
+    setup_step(&conn, "t-1", 1, "implement", "in_progress");
+    setup_binding(&mut conn, "t-1", "1", &rcr, "req-c-orphan-step");
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["decision"], serde_json::json!("READY"));
+    assert_eq!(resp["action"], serde_json::json!("CLAIM"));
+}
+
+#[test]
+fn fresh_claimed_assignment_keeps_in_progress_step_waiting() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let rcr = setup_contract(&mut conn, "t-1", "implementer");
+    setup_task_contract(&conn, "t-1", "tc-t-1");
+    setup_step(&conn, "t-1", 1, "implement", "in_progress");
+    setup_binding(&mut conn, "t-1", "1", &rcr, "req-c-fresh-assignment");
+    setup_claimed_assignment(&mut conn, "1", "executor", 1e18);
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["decision"], serde_json::json!("WAITING"));
+    assert_eq!(resp["action"], serde_json::json!("WAIT"));
+}
+
+#[test]
+fn stale_claimed_assignment_is_ready_for_atomic_takeover() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let rcr = setup_contract(&mut conn, "t-1", "implementer");
+    setup_task_contract(&conn, "t-1", "tc-t-1");
+    setup_step(&conn, "t-1", 1, "implement", "in_progress");
+    setup_binding(&mut conn, "t-1", "1", &rcr, "req-c-stale-assignment");
+    setup_claimed_assignment(&mut conn, "1", "executor", 0.0);
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["decision"], serde_json::json!("READY"));
+    assert_eq!(resp["action"], serde_json::json!("CLAIM"));
 }
 
 #[test]
@@ -471,6 +620,54 @@ fn reviewer_blocked_yields_revise_with_readonly_hint() {
 }
 
 #[test]
+fn completed_provenance_bound_remediation_returns_to_reviewer() {
+    let mut conn = fresh_db();
+    let base = setup_review_base(&mut conn);
+    let verdict_id = enter_review_with_verdict(&mut conn, &base, "block");
+
+    conn.execute(
+        "INSERT INTO task_steps (id, task_id, step_index, action, target_file, status, result, created_at, completed_at)
+         VALUES ('S-remediation-1', 't-1', 2, 'fix_defect', 'src/', 'done', ?1, 10.0, 10.0)",
+        [serde_json::json!({"source_verdict_id": verdict_id}).to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO task_events
+         (task_id, from_status, to_status, reason_code, reason, actor_identity,
+          agent_session_id, role, monotonic_seq, authoritative_timestamp, request_id, step_id)
+         VALUES ('t-1', 'in_progress', 'review', 'reported', 'remediation complete',
+                 'executor-1', 'executor-session-1', 'implementer', 20, 20.0,
+                 'report-remediation-1', 'S-remediation-1')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO task_events
+         (task_id, from_status, to_status, reason_code, reason, actor_identity,
+          agent_session_id, role, monotonic_seq, authoritative_timestamp)
+         VALUES ('t-1', 'review', 'review', 'handoff_structured', ?1,
+                 'executor-1', 'executor-session-1', 'executor', 21, 21.0)",
+        [serde_json::json!({
+            "from_role": "executor",
+            "outcome": "executor_ready_for_review",
+            "next_role": "reviewer",
+            "step_id": "S-remediation-1",
+            "report_request_id": "report-remediation-1"
+        })
+        .to_string()],
+    )
+    .unwrap();
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-1").expect("evaluate 应成功");
+
+    assert_eq!(resp["decision"], serde_json::json!("READY"));
+    assert_eq!(resp["action"], serde_json::json!("REVIEW"));
+    assert_eq!(resp["required_role"], serde_json::json!("reviewer"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("review_pending"));
+    assert_eq!(resp["review"]["state"], serde_json::json!("pending"));
+}
+
+#[test]
 fn reviewer_pass_yields_adjudicate_with_reviewer_lease_role() {
     let mut conn = fresh_db();
     let base = setup_review_base(&mut conn);
@@ -514,6 +711,67 @@ fn closed_task_complete_none() {
     assert_eq!(resp["routing"]["next_role"], serde_json::json!("complete"));
     assert_eq!(resp["next_session"], serde_json::Value::Null);
     assert!(resp.get("from_role").is_none());
+}
+
+#[test]
+fn closed_without_contract_or_binding_is_terminal_complete() {
+    // GOV-FIX-04 回归：终态短路必须先于规则 1/3/4。
+    // 历史 closed 卡：
+    //   - 有 binding 缺合同 → 过去报 governance_blocked（见 6 张 P0-COMPAT-v2）；
+    //   - 无 binding → 过去直接抛 E_WORKSPACE_AUTHORITY_UNAVAILABLE。
+    // 两者都必须投影为 completed。
+    let conn = fresh_db();
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+         VALUES ('t-terminal', 'historic closed', '', 'test', 'closed', 1.0, 1.0, '')",
+        [],
+    )
+    .unwrap();
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-terminal")
+        .expect("终态必须成功投影（不解析合同/binding）");
+    assert_eq!(resp["decision"], serde_json::json!("COMPLETE"));
+    assert_eq!(resp["action"], serde_json::json!("NONE"));
+    assert_eq!(resp["lifecycle_status"], serde_json::json!("closed"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("completed"));
+    assert_eq!(resp["routing"]["next_role"], serde_json::json!("complete"));
+    assert_eq!(resp["next_session"], serde_json::Value::Null);
+}
+
+#[test]
+fn reverted_without_contract_or_binding_is_terminal() {
+    // GOV-FIX-04：`reverted` 同为终态，同样短路；workflow_status 保留 reverted 语义。
+    let conn = fresh_db();
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+         VALUES ('t-reverted', 'historic reverted', '', 'test', 'reverted', 1.0, 1.0, '')",
+        [],
+    )
+    .unwrap();
+
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-reverted")
+        .expect("终态必须成功投影（不解析合同/binding）");
+    assert_eq!(resp["decision"], serde_json::json!("COMPLETE"));
+    assert_eq!(resp["action"], serde_json::json!("NONE"));
+    assert_eq!(resp["lifecycle_status"], serde_json::json!("reverted"));
+    assert_eq!(resp["workflow_status"], serde_json::json!("reverted"));
+    assert_eq!(resp["routing"]["next_role"], serde_json::json!("reverted"));
+}
+
+#[test]
+fn non_terminal_without_binding_still_fails_closed() {
+    // 不扩大化：非终态缺 binding 仍必须 fail-closed（终态短路不得放宽在线卡门禁）。
+    let conn = fresh_db();
+    conn.execute(
+        "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+         VALUES ('t-open', 'historic open', '', 'test', 'open', 1.0, 1.0, '')",
+        [],
+    )
+    .unwrap();
+
+    let err = evaluate_next_action(&conn, "ws-inst-1", "t-open")
+        .expect_err("非终态缺 binding 必须 fail-closed");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_UNAVAILABLE);
 }
 
 #[test]
