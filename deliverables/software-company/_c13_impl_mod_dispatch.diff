@@ -1,0 +1,48 @@
+diff --git a/rust_ext/src/daemon/dispatch.rs b/rust_ext/src/daemon/dispatch.rs
+index 890bdf0..f5e62bf 100644
+--- a/rust_ext/src/daemon/dispatch.rs
++++ b/rust_ext/src/daemon/dispatch.rs
+@@ -2381,6 +2381,12 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
+     "admin.record_artifact_identity",
+     "admin.publish_interface",
+     "admin.select_interface_provider",
++    // semgrep CLI 写面（C-13）：run_semgrep / run_semgrep_and_save /
++    // scan_semgrep_incremental 均可能改动工作区或落库，与 cw semgrep 的
++    // PROTECTED_MUTATION 分类一致，统一经唯一串行化点。
++    "run_semgrep",
++    "run_semgrep_and_save",
++    "scan_semgrep_incremental",
+     // 编辑/提案/规则写面
+     "edit.propose",
+     "edit.propose_range_patch",
+@@ -2549,6 +2555,13 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
+     "admin.record_artifact_identity",
+     "admin.publish_interface",
+     "admin.select_interface_provider",
++    // semgrep CLI 面（C-13：CLI-061 semgrep_handlers 接线，4 方法）
++    // run_semgrep / run_semgrep_and_save / scan_semgrep_incremental 为写（经串行化点），
++    // get_semgrep_summary 为只读；方法名与 cli/main.py:1207-1212 _METHOD_MAP 逐字一致。
++    "run_semgrep",
++    "get_semgrep_summary",
++    "run_semgrep_and_save",
++    "scan_semgrep_incremental",
+     // 编辑/提案/规则写面（T02-edit，19 写 + 2 读）
+     "edit.propose",
+     "edit.propose_range_patch",
+diff --git a/rust_ext/src/daemon/mod.rs b/rust_ext/src/daemon/mod.rs
+index efd7039..667d640 100644
+--- a/rust_ext/src/daemon/mod.rs
++++ b/rust_ext/src/daemon/mod.rs
+@@ -235,6 +235,12 @@ pub mod admin_handlers;
+ /// 对应 61 个拒止工具中的编辑/规则写面（T02-edit 批次，经 CAS + SerializationPoint）。
+ pub mod edit_handlers;
+ 
++/// 3.20: semgrep CLI 专用 handler（run_semgrep / run_semgrep_and_save /
++/// scan_semgrep_incremental / get_semgrep_summary）。
++/// CLI-061（T-1787322798303-8bd1779c）产物；本模块此前从未声明，导致文件虽在仓库
++/// 但从未参与编译，四个方法在 daemon 侧始终 method_not_found（C-13）。
++pub mod semgrep_handlers;
++
+ /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
+ /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
+ /// 更新 schema 时记得同步修改。

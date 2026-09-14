@@ -1,0 +1,109 @@
+diff --git a/rust_ext/src/daemon/snapshot_state.rs b/rust_ext/src/daemon/snapshot_state.rs
+index 7e0debb..dc87f58 100644
+--- a/rust_ext/src/daemon/snapshot_state.rs
++++ b/rust_ext/src/daemon/snapshot_state.rs
+@@ -2736,6 +2736,8 @@ impl DaemonStateExt for SnapshotDaemonState {
+         use super::_mcp_common_handlers as mcp;
+         use super::audit_log_handlers as audit;
+         use super::query_compat_handlers as query_compat;
++        // C-13：semgrep CLI 专用 handler（CLI-061 产物，本卡接入 dispatch）。
++        use super::semgrep_handlers as semgrep;
+ 
+         // 解析 workspace codegraph DB 路径（daemon 权威写库）。
+         // 2026-09-05 修正：模板为空时回退**主机级单库** ~/.callwarden/callwarden.db
+@@ -3226,6 +3228,30 @@ impl DaemonStateExt for SnapshotDaemonState {
+                 }
+             }
+ 
++            // ---- semgrep CLI（semgrep_handlers，CLI-061 接线；C-13）----
++            // run_semgrep_scan / scan_semgrep_incremental（route_matrix）此前经
++            // T02-job 走 task.job_submit，四个裸方法名从未在 dispatch 落地，
++            // 导致 `cw semgrep scan` 恒 method_not_found（C-13 根因）。
++            // 方法名与 cli/main.py:1207-1212 的 _METHOD_MAP rpc_method 逐字一致。
++            "run_semgrep" | "run_semgrep_and_save" | "scan_semgrep_incremental" => {
++                let ws = require_str_param(params, "workspace_instance_id")?;
++                // 三个写方法落 codegraph 主库：复用 open_codegraph_db_write 的
++                // 真 workspace_id 解析（与读面 resolve_true_workspace_id 同源）。
++                let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
++                match method {
++                    "run_semgrep" => semgrep::handle_run_semgrep(&conn, workspace_id, params),
++                    "run_semgrep_and_save" => {
++                        semgrep::handle_run_semgrep_and_save(&conn, workspace_id, params)
++                    }
++                    _ => semgrep::handle_scan_semgrep_incremental(&conn, workspace_id, params),
++                }
++            }
++            "get_semgrep_summary" => {
++                let ws = require_str_param(params, "workspace_instance_id")?;
++                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
++                semgrep::handle_get_semgrep_summary(&conn, workspace_id, params)
++            }
++
+             // ---- 编辑/提案/规则写面（edit_handlers）----
+             "edit.propose" | "edit.propose_range_patch" | "edit.propose_symbol_id_patch"
+             | "edit.propose_symbol_patch" | "edit.revert" | "edit.restore_all_comments"
+@@ -9152,4 +9178,64 @@ mod tests {
+         );
+         assert_eq!(response["result"]["symbol_count"], 3);
+     }
++
++    // ---- C-13：semgrep CLI RPC 接线回归（dispatch 层不再 method_not_found）----
++
++    /// C-13 根因回归：`semgrep_handlers` 此前从未在 mod.rs 声明 `pub mod`，
++    /// 4 个裸方法名在 daemon 侧恒落 CONVERGENCE_RPC_METHODS 的 method_not_found
++    /// 兜底，`cw semgrep scan` 端到端死亡。
++    /// 本测试在**进程内 dispatch 层**验证方法名已可达：空 params 下 arm 内
++    /// `require_str_param("workspace_instance_id")` 先报 invalid_params，据此证明
++    /// 路由已命中 semgrep arm（若未命中，必为 `method_not_found: 未知方法: <m>`）。
++    #[test]
++    fn test_semgrep_rpc_methods_reach_handler_not_method_not_found() {
++        use crate::daemon::dispatch::{is_convergence_rpc, is_protected_mutation};
++
++        // 方法清单与 cli/main.py `_METHOD_MAP` 的 rpc_method 逐字一致。
++        let methods = [
++            "run_semgrep",
++            "run_semgrep_and_save",
++            "scan_semgrep_incremental",
++            "get_semgrep_summary",
++        ];
++        // 三个写面须经 Protected_Mutation 串行化点；只读汇总不串行化。
++        let write_methods = [
++            "run_semgrep",
++            "run_semgrep_and_save",
++            "scan_semgrep_incremental",
++        ];
++
++        for method in methods {
++            assert!(
++                is_convergence_rpc(method),
++                "{method} 未登记进 CONVERGENCE_RPC_METHODS，dispatch 无法到达"
++            );
++            let mut state = make_state();
++            let peer = make_peer(0);
++            let response = dispatch(&mut state, peer, method, &json!({}), &[]);
++            assert_eq!(response["ok"], false, "{method} 空 params 不应成功");
++            let code = response["error"]["code"].as_str().unwrap_or("");
++            assert_ne!(
++                code, "method_not_found",
++                "{method} 落入 method_not_found 兜底（C-13 回归）：{}",
++                response["error"]["message"]
++            );
++            let message = response["error"]["message"].as_str().unwrap_or("");
++            assert!(
++                message.contains("workspace_instance_id"),
++                "{method} 应命中 semgrep arm 并报缺字段 workspace_instance_id，实际: {message}"
++            );
++        }
++
++        for method in write_methods {
++            assert!(
++                is_protected_mutation(method),
++                "{method} 为 semgrep 写面，须经 Protected_Mutation 串行化点"
++            );
++        }
++        assert!(
++            !is_protected_mutation("get_semgrep_summary"),
++            "get_semgrep_summary 为只读，不应被归类为 Protected_Mutation"
++        );
++    }
+ }
