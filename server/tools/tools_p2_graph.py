@@ -70,7 +70,7 @@ def register(mcp: FastMCP) -> None:
         artifact_ref: str,
         artifact_hash: str = "",
         workspace_snapshot_id: str = "",
-    ) -> str:
+    ) -> dict:
         """记录 artifact identity（provider 产出 artifact 时调用，Req 9.3）。
 
         Args:
@@ -80,7 +80,7 @@ def register(mcp: FastMCP) -> None:
             workspace_snapshot_id: 产出时绑定的工作区快照
 
         Returns:
-            artifact_id（ART-<uuid>）
+            记录结果（artifact_id / produced_at 等）
         """
         return _route('admin.record_artifact_identity', {"workspace_id": workspace_id, "task_id": task_id, "contract_id": contract_id, "contract_revision": contract_revision, "artifact_type": artifact_type, "artifact_ref": artifact_ref, "artifact_hash": artifact_hash, "workspace_snapshot_id": workspace_snapshot_id}, 'GOVERNANCE_WRITE')
 
@@ -106,11 +106,11 @@ def register(mcp: FastMCP) -> None:
         interface_name: str,
         version: str,
         interface_hash: str = "",
-    ) -> str:
+    ) -> dict:
         """发布 interface identity（provider 声明 provides_interface，Req 9.4）。
 
         Returns:
-            interface_id（IF-<uuid>）
+            发布结果（ok / interface_id / interface_name / version）
         """
         return _route('admin.publish_interface', {"workspace_id": workspace_id, "task_id": task_id, "contract_id": contract_id, "contract_revision": contract_revision, "interface_name": interface_name, "version": version, "interface_hash": interface_hash}, 'PROTECTED_MUTATION')
 

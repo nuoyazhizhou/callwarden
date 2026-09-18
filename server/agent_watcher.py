@@ -395,7 +395,15 @@ class AgentWatcher:
         content_hash: Optional[str],
     ) -> Dict[str, Any]:
         """实际调用 send_refresh_to_daemon（抽出以便重试复用）。"""
-        from callwarden.server.agent_protocol import send_refresh_to_daemon
+        from callwarden.server.agent_protocol import (
+            send_refresh_to_daemon, probe_vcs_info,
+        )
+        # client 侧 VCS 探测（mtime 缓存，失败降级 vcs_kind=none 不阻断）
+        vcs_info = None
+        try:
+            vcs_info = probe_vcs_info(self.watch_dir)
+        except Exception as e:
+            logger.debug("VCS 探测失败（降级 none）：%s", e)
         return send_refresh_to_daemon(
             daemon_rpc_client=self.daemon_rpc_client,
             agent_session=self.agent_session,
@@ -404,6 +412,7 @@ class AgentWatcher:
             abs_path=abs_path,
             canonical_bytes=canonical_bytes,
             content_hash=content_hash,
+            vcs_info=vcs_info,
         )
 
     def _reconnect(self) -> bool:
