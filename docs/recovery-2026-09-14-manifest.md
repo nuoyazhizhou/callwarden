@@ -105,3 +105,56 @@ git log --stat 2b97894c772fc60a5d1b598b38a97b6a0b28fcfe
 git diff 2b97894c772fc60a5d1b598b38a97b6a0b28fcfe HEAD --stat
 git ls-tree -r --name-only 30e49319df5d2998eba66b60637a58a6ffe330ab | wc -l
 ```
+
+## 带真实文件改动的重建（2026-09-18 第二轮）
+
+`recovery/rebuilt-0911-0914` 的 74 个提交共用一棵树（`git show` 无 diff），
+只能看 message。第二轮按"日志 commit + 文件变化 + 未提交文件比对"重建：
+
+- **分支 `recovery/master-rebuilt-0911-0914`**（tip `0bea95e4`，935 可达提交）：
+  - 链根 `9855da6`（09-02，09-11 12:11 被"对象库灾难恢复"提交重建且存活，
+    `merge-base(master, 9855da6) = e064853`，与 master 共享祖先）。
+  - reflog 的 71 条 commit 条目中 `new==9855da6` 那条是重建锚点本身（跳过），
+    其余 70 条 + 1 个 09-14 19:12 收尾提交 = **71 个重建提交**，
+    与丢失的 72 个提交对象一一对应（锚点已存活，故重建 71 而非 72）。
+  - **归因方法**：09-11 12:16 ~ 09-14 19:12 窗口内 281 个未提交文件按
+    **mtime 6 小时窗口**归因到具体提交（100% 可归因），取工作区内容
+    增量入树 → 前 70 个提交**带真实 diff**（898/935 提交非空）。
+  - 末提交树 = **09-14 真实工作树**（快照树 + 全部 mtime ≤ 19:12 的磁盘文件
+    覆盖），吸收无法按 mtime 归因的改动（重命名 42 / 旧 mtime / 当时未暂存）。
+  - 验证：`9855da6 -> 链尖` 671 文件变更（真值 664，偏差 <1.1%），
+    链引用 10330 个对象**0 个不可访问**；975/1046 未提交条目已入史。
+  - **局限**：单提交的文件归属是 mtime 启发式（提交时刻未落盘的改动
+    全部沉到末提交）；reflog 时间戳是"09-11 恢复重建"时刻而非原始提交时刻
+    （前 6 条 GOV-FIX 尤其明显）。message 与作者保真。
+
+- **分支 `recovery/master-candidate`**（tip `5493fe08`，944 可达提交）：
+  在上一分支基础上接续 master 侧工作，**是 master 的超集**：
+  1. `e62dedd` replay master `e5f94b0`：仅 `grep.rs` 移除 `build` 硬编码跳过
+     （`db_build.py`/`fs_handlers.rs` 的同等改动 09-14 工作线已含，逐行确认）。
+  2. `2283220` replay master `401e342`：两份恢复文档。
+  3. `446063b`..`e69d79a` post-09-14 积压分批收口（B1..B6，真实工作量：
+     M=19 / A=56 / D=14，其中 14 个 D 是 bench/perf 产物按 ignore 契约出库）。
+  4. `5493fe0` 收口：CRLF 归一化 + 补 master 独有的 `artifact/overview.md`、
+     `artifacts/epic_subtree.md`、`artifacts/overview.md`（工作线未含）。
+  - 验证：候选树 vs 工作区仅剩上述 3 个 skip-worktree 文件的 D（本来就不在磁盘）；
+    `master -> 候选` 剩余 51 个 D = 14 个 ignore 契约 + 37 个工作线目录整理
+    （root → `docs/design/`、`archive/role-loop/templates/legacy/`，
+    32/36 同名内容完全相同，候选侧为新位置）。
+  - `.gitignore` 已接管 `rust_ext/target-nf1/`（2.0GB）、`target-stage/`（25MB）、
+    `*.pyd.*.rollback`、`Temp/`，故积压不含构建旁路产物。
+
+### 激活方式（移动 master，需人工确认后执行）
+
+```
+# 1) 先看一眼候选历史
+git log --oneline recovery/master-candidate | head -40
+git diff --stat master recovery/master-candidate | tail -5
+# 2) 移动 master 并重置索引（不动工作区；skip-worktree 的 3 个文件不会被动）
+git reset --mixed recovery/master-candidate
+# 3) 验证：status 应只剩 3 个 skip-worktree 的 D + 忽略项
+git status --short
+# 回退（万一）：master 旧 tip 仍在 reflog
+git reset --mixed 401e34275a80
+```
+
