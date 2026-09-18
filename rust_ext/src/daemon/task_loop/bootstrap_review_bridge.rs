@@ -367,7 +367,7 @@ pub fn bootstrap_reviewer_pass(
     let lease_id = format!("brtl-{}-r1", input.task_id);
     let max_fencing: i64 = tx
         .query_row(
-            "SELECT COALESCE(MAX(fencing_counter),0) FROM task_leases WHERE workspace_id=?1 AND task_id=?2 AND role='reviewer'",
+            "SELECT COALESCE(MAX(fencing_counter),0) FROM task_leases WHERE workspace_id=?1 AND task_id=?2 AND role IN ('reviewer','independent_reviewer')",
             params![bound_workspace, &input.task_id],
             |r| r.get(0),
         )
@@ -376,7 +376,7 @@ pub fn bootstrap_reviewer_pass(
     // 先回收同 (workspace_id,task_id,role) 的既有 reviewer lease（含历史过期未释放的），
     // 避免 task_leases 唯一约束冲突。bootstrap 专用 lease 为幂等签发，旧 lease 一律回收后重签。
     tx.execute(
-        "DELETE FROM task_leases WHERE workspace_id=?1 AND task_id=?2 AND role='reviewer'",
+        "DELETE FROM task_leases WHERE workspace_id=?1 AND task_id=?2 AND role IN ('reviewer','independent_reviewer')",
         params![bound_workspace, &input.task_id],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("bootstrap reviewer lease 回收失败: {e}")))?;

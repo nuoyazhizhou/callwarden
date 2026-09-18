@@ -235,7 +235,7 @@ pub fn handle_resolve_gate_findings(
     let changed = conn
         .execute(
             "UPDATE task_gate_decisions SET reason = ?1, decision_time = ?2
-             WHERE decision_id = ?3 AND task_id IN (SELECT id FROM tasks WHERE workspace_id = ?4)",
+             WHERE decision_id = ?3 AND task_id IN (SELECT task_id FROM task_workspace_bindings WHERE workspace_id = ?4)",
             rusqlite::params![resolution, now, gate_id, workspace_id],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("resolve_gate_findings: {e}")))?;
@@ -573,8 +573,16 @@ pub fn handle_guardrail_add_rule(
 }
 
 /// `summary.generate` —— 生成符号摘要（symbol_summaries 写入）。
+///
+/// NF2（T-1789436399100-948b9498）修复：原实现对 symbol_summaries 使用
+/// `ON CONFLICT(symbol_hash) DO UPDATE`，但该表 schema 无任何 PRIMARY KEY/
+/// UNIQUE 约束（仅非唯一索引 idx_summaries_hash）→ 真 prepare 失败，自上线起
+/// 恒 internal_error。按 db/db_summary.py generate_summary L56-76 的版本化
+/// 语义重写：UPDATE is_current=0 → version=MAX+1 → INSERT（加 UNIQUE 会破坏
+/// Python 侧多版本设计，已裁决排除）；整批写入包在 unchecked_transaction 中
+/// 保证原子性（daemon 先例：task_collab.rs）。
 pub fn handle_summary_generate(
-    conn: &Connection,
+    conn: &mut Connection,
     workspace_id: i64,
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
@@ -602,21 +610,45 @@ pub fn handle_summary_generate(
         .map_err(|e| DaemonRpcError::internal_error(format!("summary query: {e}")))?
         .collect::<Result<Vec<_>, rusqlite::Error>>()
         .map_err(|e| DaemonRpcError::internal_error(format!("summary collect: {e}")))?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| DaemonRpcError::internal_error(format!("summary 开启事务失败: {e}")))?;
     for (symbol_hash, name, signature) in rows {
         let summary = if signature.is_empty() {
             format!("{name}：函数符号（未解析签名）")
         } else {
             format!("{name}：{signature}")
         };
-        conn.execute(
-            "INSERT INTO symbol_summaries (symbol_hash, summary, model, version, is_current, created_at)
-             VALUES (?1, ?2, 'rule-based', 1, 1, ?3)
-             ON CONFLICT(symbol_hash) DO UPDATE SET summary = excluded.summary, is_current = 1, created_at = excluded.created_at",
-            rusqlite::params![symbol_hash, summary, now],
+        // 旧摘要标记为非当前（与 db/db_summary.py L57-60 同序）
+        tx.execute(
+            "UPDATE symbol_summaries SET is_current = 0 WHERE symbol_hash = ?1",
+            rusqlite::params![symbol_hash],
         )
-        .map_err(|e| DaemonRpcError::internal_error(format!("symbol_summaries upsert: {e}")))?;
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("symbol_summaries 版本化更新失败: {e}"))
+        })?;
+        // 下一版本号：空集时 MAX 为 NULL，COALESCE 到 0（与 Python `or 0` 等价）
+        let next_version: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM symbol_summaries WHERE symbol_hash = ?1",
+                rusqlite::params![symbol_hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("symbol_summaries 版本号查询失败: {e}"))
+            })?
+            + 1;
+        // 插入新版本摘要（is_current=1；id 由 AUTOINCREMENT 自动生成，不显式指定）
+        tx.execute(
+            "INSERT INTO symbol_summaries (symbol_hash, summary, model, version, is_current, created_at)
+             VALUES (?1, ?2, 'rule-based', ?3, 1, ?4)",
+            rusqlite::params![symbol_hash, summary, next_version, now],
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("symbol_summaries 插入失败: {e}")))?;
         generated += 1;
     }
+    tx.commit()
+        .map_err(|e| DaemonRpcError::internal_error(format!("summary 事务提交失败: {e}")))?;
     Ok(json!({ "ok": true, "summaries_generated": generated }))
 }
 

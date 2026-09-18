@@ -363,6 +363,32 @@ fn workspace_root(conn: &rusqlite::Connection, workspace_id: i64) -> Result<Path
     .map_err(|e| format!("查询 workspace root 失败: {e}"))
 }
 
+/// Q9-VCS 守卫（2026-09-17）：校验 workspace 根存在且是 git 仓库。
+///
+/// job_runner 的 git_history / git_blame 属「历史内容导入」（读取真实
+/// commit/作者/时间线，而非单个版本号），语义上不能被客户端上报的
+/// `head_sha` 替代，故仍由 daemon 执行；但执行前须校验前置条件，避免在
+/// 不存在或非 git 的目录里盲目 spawn git、产生误导性的 `git log 失败`。
+///
+/// - 根不存在或非目录 → 明确错误（fail-closed，不降级）
+/// - 无 `.git`（目录，或 worktree 的 gitdir 指针文件）→ 明确「非 git 仓库」
+/// 返回 git 工作目录（即 root 本身）。
+fn ensure_git_repo(root: &Path) -> Result<PathBuf, String> {
+    if !root.is_dir() {
+        return Err(format!(
+            "workspace 根目录不存在或不是目录: {}",
+            root.display()
+        ));
+    }
+    if !root.join(".git").exists() {
+        return Err(format!(
+            "workspace 不是 git 仓库（缺少 .git）: {} —— 跳过 git 历史导入",
+            root.display()
+        ));
+    }
+    Ok(root.to_path_buf())
+}
+
 /// semgrep 扫描：`semgrep --json --config p/default <paths>` → semgrep_findings。
 fn exec_semgrep(ctx: &JobContext) -> Result<Value, String> {
     let mut conn = open_db(ctx)?;
@@ -619,6 +645,9 @@ fn exec_embed(ctx: &JobContext) -> Result<Value, String> {
 fn exec_git_history(ctx: &JobContext) -> Result<Value, String> {
     let mut conn = open_db(ctx)?;
     let root = workspace_root(&conn, ctx.workspace_id)?;
+    // Q9-VCS 守卫（2026-09-17）：历史内容导入仍留 daemon（语义为「历史内容」
+    // 非版本号，不能由客户端 head_sha 替代），但须先校验是 git 仓库
+    ensure_git_repo(&root)?;
     let max_commits = get_int_param_or(&ctx.params, "max_commits", 100);
     let output = std::process::Command::new("git")
         .args(["log", "--format=%H|%an|%ae|%at|%s", "--name-status", "-n"])
@@ -693,6 +722,8 @@ fn exec_git_history(ctx: &JobContext) -> Result<Value, String> {
 fn exec_git_blame(ctx: &JobContext) -> Result<Value, String> {
     let conn = open_db(ctx)?;
     let root = workspace_root(&conn, ctx.workspace_id)?;
+    // Q9-VCS 守卫（2026-09-17）：blame 同属历史内容导入，仍留 daemon，但须先校验
+    ensure_git_repo(&root)?;
     let mut stmt = conn
         .prepare("SELECT id, rel_path FROM file_instances WHERE workspace_id = ?1 AND status != 'archived'")
         .map_err(|e| format!("blame prepare: {e}"))?;
@@ -1116,5 +1147,40 @@ mod tests {
         assert!(codeowners_match("src/*", "src/a.rs"));
         assert!(!codeowners_match("src/", "tests/a.rs"));
         assert!(codeowners_match("README.md", "README.md"));
+    }
+
+    // ---- Q9-VCS 守卫（2026-09-17）----
+
+    #[test]
+    fn test_ensure_git_repo_rejects_missing_dir() {
+        let bogus = Path::new("/no/such/dir/cw-q9-xyz");
+        let err = ensure_git_repo(bogus).unwrap_err();
+        assert!(
+            err.contains("不存在或不是目录"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_ensure_git_repo_rejects_non_git_dir() {
+        let dir = std::env::temp_dir().join("cw_q9_nogit_dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = ensure_git_repo(&dir).unwrap_err();
+        assert!(err.contains("不是 git 仓库"), "unexpected error: {err}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_ensure_git_repo_accepts_real_git_root() {
+        // 从 crate 根向上找到真正的 git 仓库根（.git 所在）；本仓库必然在
+        // git 仓库内，保证测试可复现且不依赖外部 fixture
+        let mut cur = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+        while !cur.join(".git").exists() {
+            if !cur.pop() {
+                break;
+            }
+        }
+        assert!(cur.join(".git").exists(), "测试环境不在 git 仓库内");
+        assert!(ensure_git_repo(&cur).is_ok());
     }
 }

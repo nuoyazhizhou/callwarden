@@ -33,6 +33,7 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::daemon::dispatch::DaemonRpcError;
+use crate::daemon::task_collab::{canonical_claim_role, role_in_match};
 use super::claim::read_current_binding;
 use super::executor::TaskMutationExecutor;
 use super::types::{
@@ -685,14 +686,25 @@ fn check_lease(
     session_id: &str,
     model_id: &str,
 ) -> Result<(), HandoffDomainError> {
+    // 查找侧归一（C-24）：identity 的 acting_role 可能是 runtime 名称
+    // （implementer 等），归一到治理角色后再查 task_leases，兼容历史落库行。
+    let role = canonical_claim_role(role);
+    // 查找侧变体集（C-24）：历史行可能以 runtime role（如 independent_reviewer）落库。
+    let (role_sql, role_params) = role_in_match(role);
+    let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&task_id];
+    for v in &role_params {
+        lookup_params.push(v);
+    }
     let now = now_unix();
     let row: Option<(String, String, i64, f64, String, String, String)> = tx
         .query_row(
-            "SELECT lease_id, token_hash, fencing_counter, expires_at, agent_id, session_id, model_id \
-             FROM task_leases \
-             WHERE task_id = ?1 AND role = ?2 AND status = 'active' \
-             ORDER BY id ASC LIMIT 1",
-            rusqlite::params![task_id, role],
+            &format!(
+                "SELECT lease_id, token_hash, fencing_counter, expires_at, agent_id, session_id, model_id \
+                 FROM task_leases \
+                 WHERE task_id = ?1 AND {role_sql} AND status = 'active' \
+                 ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(lookup_params),
             |row| {
                 Ok((
                     row.get(0)?,

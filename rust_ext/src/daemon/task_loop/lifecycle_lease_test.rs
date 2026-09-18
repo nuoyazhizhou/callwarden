@@ -628,3 +628,134 @@ fn close_rejects_leaf_task_without_steps() {
     .unwrap_err();
     assert_eq!(err.code, ERR_NO_STEPS);
 }
+
+// ============================================================================
+// C-24：canonical_claim_role 归一化（存储侧 + 查找侧 + recover 白名单）
+// ============================================================================
+
+/// 存储侧归一：runtime role 落库时统一映射到治理角色，fencing 序列按治理角色
+/// 单调递增（implementer 与 executor 共享同一条序列，不再各算一条）。
+#[test]
+fn c24_acquire_canonicalizes_runtime_role_for_storage() {
+    let mut conn = fresh_db();
+    new_task(&mut conn, "t-c24-a");
+
+    // implementer -> executor
+    let (tok1, c1) = acquire_impl(&mut conn, "t-c24-a", "implementer", "a");
+    let stored: String = conn
+        .query_row(
+            "SELECT role FROM task_leases WHERE task_id = 't-c24-a' AND status = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, "executor", "implementer 落库须归一为 executor");
+
+    // 释放后以 planner 再取（planner -> executor），fencing 应续在 executor 序列上
+    lease_release(
+        &mut conn,
+        &frozen(),
+        &key("lease.release", "req-rel-c24-a"),
+        &ReleaseInput {
+            task_id: "t-c24-a".to_string(),
+            role: "planner".to_string(),
+            token: tok1,
+            identity: Some(identity("planner")),
+        },
+    )
+    .expect("以 planner 释放 executor-role lease 应成功（双向归一）");
+
+    let (_tok2, c2) = acquire_impl(&mut conn, "t-c24-a", "planner", "b");
+    assert_eq!(c2, c1 + 1, "fencing 序列按治理角色连续递增");
+
+    // independent_reviewer -> reviewer
+    new_task(&mut conn, "t-c24-b");
+    acquire_impl(&mut conn, "t-c24-b", "independent_reviewer", "a");
+    let stored_b: String = conn
+        .query_row(
+            "SELECT role FROM task_leases WHERE task_id = 't-c24-b' AND status = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_b, "reviewer", "independent_reviewer 落库须归一为 reviewer");
+}
+
+/// 查找侧归一：历史以 runtime role 落库的 lease（升级前数据）仍可被治理角色
+/// 名称定位并释放——不再 E_LEASE_NOT_FOUND。
+#[test]
+fn c24_lookup_side_canonicalization_finds_legacy_runtime_role_lease() {
+    let mut conn = fresh_db();
+    new_task(&mut conn, "t-c24-c");
+    let (token, counter) = acquire_impl(&mut conn, "t-c24-c", "implementer", "a");
+
+    // 模拟历史行：把落库的 executor 改回 runtime 名称（= 升级前的存储形态）。
+    conn.execute(
+        "UPDATE task_leases SET role = 'implementer' WHERE task_id = 't-c24-c'",
+        [],
+    )
+    .unwrap();
+
+    // 以治理角色 executor 查找并释放（查找侧归一后应命中 implementer 行）。
+    lease_release(
+        &mut conn,
+        &frozen(),
+        &key("lease.release", "req-rel-c24-c"),
+        &ReleaseInput {
+            task_id: "t-c24-c".to_string(),
+            role: "executor".to_string(),
+            token,
+            identity: Some(identity("executor")),
+        },
+    )
+    .expect("executor 名称须能释放历史 implementer lease");
+
+    let active: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task_leases WHERE task_id = 't-c24-c' AND status = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 0, "历史 lease 应已被释放");
+    let _ = counter;
+}
+
+/// recover 白名单：历史 runtime-role lease 经归一后可走 executor 通道恢复
+/// （修复前 role=implementer 报 invalid_params，role=executor 报 E_LEASE_NOT_FOUND）。
+#[test]
+fn c24_recover_accepts_legacy_runtime_role_via_canonical_channel() {
+    use super::lifecycle_lease::recover_orphaned_lease_for_task;
+
+    let mut conn = fresh_db();
+    new_task(&mut conn, "t-c24-d");
+    let _ = acquire_impl(&mut conn, "t-c24-d", "implementer", "a");
+
+    // 模拟历史行 + holder 未注册（holder_registration_missing 分支）。
+    conn.execute(
+        "UPDATE task_leases SET role = 'implementer' WHERE task_id = 't-c24-d'",
+        [],
+    )
+    .unwrap();
+
+    let now = now_unix_test();
+    let tx = conn.transaction().unwrap();
+    let result = recover_orphaned_lease_for_task(
+        &tx,
+        1,
+        "t-c24-d",
+        "executor",
+        &identity("adjudicator"),
+        now,
+    );
+    match result {
+        Ok((lease_id, fencing, reason)) => {
+            assert!(!lease_id.is_empty(), "应回收并返回 lease_id");
+            assert!(fencing >= 1);
+            assert!(!reason.is_empty(), "应给出回收原因");
+        }
+        Err(err) => {
+            panic!("recover 历史 implementer lease 不应失败: {err:?}");
+        }
+    }
+}

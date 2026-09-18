@@ -79,7 +79,7 @@ pub fn handle_daemon_handle_refresh<S: DaemonStateExt>(
     params: &Value,
     received_fds: &[i32],
 ) -> Result<Value, DaemonRpcError> {
-    state.handle_workspace_file_refresh(peer, params, received_fds)
+    state.handle_workspace_file_refresh(peer, params, received_fds, None)
 }
 
 #[cfg(test)]
