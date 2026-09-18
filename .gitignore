@@ -240,3 +240,14 @@ docs/evidence/s5-regression-closure-20260909/
 
 # === 2026-09-09 根目录清理暂存区（待确认后删除的项先物理移入此处）===
 /.temp/
+
+# === 2026-09-18 triage: Rust 构建旁路产物（可重新生成，体积巨大，不入库）===
+rust_ext/target-nf1/
+rust_ext/target-stage/
+rust_ext/target-*/
+# PyO3 扩展回滚备份（每次 build 产生，可重新生成）
+*.pyd.rollback
+*.pyd.*.rollback
+*.rollback
+# 诊断脚本暂存区（灾难恢复/取证脚本，物理保留不入库）
+Temp/
