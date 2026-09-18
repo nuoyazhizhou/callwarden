@@ -1,0 +1,52 @@
+{
+  "task_id": "T-1789397153261-f23f38b8",
+  "reviewer": "reviewer-wb-c22-01",
+  "reviewer_instance": "inst-rev-wb-c22-01",
+  "session": "sess-rev-wb-c22-20260915",
+  "generated_at": "2026-09-15T07:51:01+08:00",
+  "title": "C-22 reviewer 独立复核证据（blind_first_pass）",
+  "independent_checks": [
+    {
+      "leg": "validation_test_rerun",
+      "command": "PYTHONPATH=C:/git_work .venv_test/Scripts/python.exe -m pytest tests/test_c_bucket_template_target_file_whitelist.py -q",
+      "result": "6 passed（6/6 全绿，reviewer 独立复跑，非转引 executor 输出）"
+    },
+    {
+      "leg": "idempotent_regression_rerun",
+      "command": "CW_DAEMON_ENDPOINT=http://127.0.0.1:8535 PYTHONPATH=C:/git_work C:/Python314/python.exe deliverables/software-company/create_c_bucket_remediation_tasks.py",
+      "result": "exists=12 non_exists=0 total=12（幂等范式未破坏，reviewer 独立复跑）"
+    },
+    {
+      "leg": "commit_scope_check",
+      "commit": "6986826",
+      "result": "6 文件（模板脚本 + 新校验测试 + c22 inventory + step1/2/3 证据 JSON）全部位于本卡 tests/deliverables/docs 边界内；rust_ext/**、server/**、db/** 零触碰；git diff 6986826~1 6986826 --check clean",
+      "forbidden_paths": "无触碰"
+    },
+    {
+      "leg": "fix_content_sha256_verification",
+      "result": "工作树 deliverables/software-company/create_c_bucket_remediation_tasks.py sha256 = 8bf8b433c65f7d6c475150f79633ad066a761eb155c400f80b3c1a039d42252f，与 step1 证据申报值逐字一致",
+      "expect": "8bf8b433c65f7d6c475150f79633ad066a761eb155c400f80b3c1a039d42252f"
+    },
+    {
+      "leg": "no_deploy_claim_verification",
+      "result": "daemon health git_commit=b7fa16f135eaa0f3512a458758c0d75110a4bc38（C-21 部署态），本卡未变更 runtime；tests/deliverables-only 卡不触发部署门禁——executor 未部署披露与 daemon 实态自洽",
+      "note": "HEAD 已前进至 6986826 而 daemon 仍 b7fa16f 属预期（无产品代码改动无需部署），非漂移"
+    },
+    {
+      "leg": "fix_correctness_review",
+      "result": "11 处修复逐一核对 step1 证据 JSON：9 处 target_file 与 c22_remediation_inventory.md §2 映射及台账/产物名实存核查一致（C-03 三 rust 文件与台账 scope 逐字对应）；docstring 语义注记（target_file 文件级全等 vs executor_allowed 可目录前缀）准确；step2 测试的 executor_allowed 字面锚范围修正处理正确（首跑 1F 为测试自身范围 bug 的披露诚实、处置得当）"
+    }
+  ],
+  "contract_triple_used": {
+    "task_contract": "TC-T-1789397153261-f23f38b8 rev1 sha256:418e50e6b22e932591dd7c31236502087e54845de35635eab3dcd3a7d990333e",
+    "role_contract": "rcl-T-1789397153261-f23f38b8-reviewer (rcr-…-r1) rev1 sha256:3f691024970453f94a17d7ddc7a5845db2eaf19f1d25af9b8c9000272a6f8863",
+    "view_manifest_hash": "89c7c5c6e5f16c2ea510fe4bc68247286c23cc4ccd6f254f73ec7c5487d9a681",
+    "snapshot_id": "dfcac6f16b827a30"
+  },
+  "findings": [],
+  "overall": "pass",
+  "honest_disclosures": [
+    "reviewer 会话与 executor 会话互异（sess-rev-wb-c22-20260915 vs sess-exec-wb-c22-20260915）；核验均为 reviewer 独立复跑，非转引",
+    "本卡无部署门禁腿（tests-only），以 daemon 实态 + git 核验替代部署回执核验"
+  ]
+}

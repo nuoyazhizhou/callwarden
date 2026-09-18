@@ -1,0 +1,54 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "card": "C-20",
+  "role": "adjudicator",
+  "adjudicator_identity": {
+    "agent_id": "adjudicator-wb-c20-01",
+    "agent_instance_id": "inst-adj-wb-c20-01",
+    "session_id": "sess-adj-wb-c20-20260915",
+    "model_id": "deepseek-v4-flash",
+    "lease_id": "L-3d90cdf0001bdaf5",
+    "fencing_counter": 1
+  },
+  "adjudicated_at": "2026-09-15T04:57:00+08:00",
+  "outcome": "adjudicator_accepted",
+  "independence_requirement": "not_applicable",
+  "checks": [
+    {
+      "id": "A1",
+      "kind": "role_independence",
+      "title": "三角色独立性",
+      "result": "pass",
+      "detail": "executor-wb-c20-01 / inst-exec-wb-c20-01 / sess-exec-wb-c20-20260915；reviewer-wb-c20-01 / inst-rev-wb-c20-01 / sess-rev-wb-c20-20260915；adjudicator-wb-c20-01 / inst-adj-wb-c20-01 / sess-adj-wb-c20-20260915 —— agent_id、agent_instance_id、session_id 三元组两两互不相同。全链未出现 E_ROLE_INDEPENDENCE_VIOLATION。"
+    },
+    {
+      "id": "A2",
+      "kind": "ledger_check",
+      "title": "Verdict Ledger 落账与 step 绑定",
+      "result": "pass",
+      "detail": "task_verdict_events id=637 / verdict_id=V-0c82595367c1f79caa180eb8：task_id、contract_id=TC-T-1789397153198-ee7baf18/rev1/hash sha256:0b8258…、phase=blind_first_pass、view_manifest_hash=756730520fa4455316356f82b71e9de280accfc92b97475daf5754e250237aaf、snapshot_id=dfcac6f16b827a30、step_id=S-1789397153199-ee90d848 均齐备。step_id 与后续 handoff 的 --step-id 全等。"
+    },
+    {
+      "id": "A3",
+      "kind": "constraint_check",
+      "title": "合同三元组一致性",
+      "result": "pass",
+      "detail": "verdict 提交时 task_contract / role_contract 三元组来自 cw task next-action 权威投影原样取值，daemon 事务内精确绑定校验通过（未触发 E_TASK_CONTRACT_BINDING_INVALID / E_ROLE_CONTRACT_BINDING_INVALID）。"
+    },
+    {
+      "id": "A4",
+      "kind": "scope_check",
+      "title": "改动范围与 forbidden 路径",
+      "result": "pass",
+      "detail": "commit 878e9242 改动面：deliverables/software-company/c20_remediation_inventory.md、rust_ext/src/daemon/admin_handlers.rs、tests/test_c17_admin_route_workspace_authority.py、docs/evidence/*。db/schema.py 零触碰，无 forbidden 路径。"
+    },
+    {
+      "id": "A5",
+      "kind": "residual_risk_adjudication",
+      "title": "残留风险裁定",
+      "result": "accepted",
+      "detail": "三处披露均不影响本次验收：(1) 部署脚本 safe-delete fail-closed 仅使旧版本目录未清理，回执 status=passed 且三方 sha256 一致；(2) 生产为只读核查，未做合成写 probe —— 生产生效性由「结构事实 + 隔离环境 A/B（含 reviewer 独立反证）」共同支撑，记为已知限制而非阻塞项；(3) cargo test 6 条失败为 Windows is_daemon_available 忽略 socket_path 的陈旧断言，失败集为 C-13 归档基线真子集，零新增，不在本卡范围。"
+    }
+  ],
+  "conclusion": "C-20（§W20 F2+F3）A′ 环三角色齐备、独立性成立、verdict 已落账且 step 绑定一致、合同三元组一致、范围合规、残留风险已裁定接受。裁定 adjudicator_accepted，允许 apply + close。"
+}

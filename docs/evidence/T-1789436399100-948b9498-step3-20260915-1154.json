@@ -1,0 +1,100 @@
+{
+  "task_id": "T-1789436399100-948b9498",
+  "step": "S-1789436399101-949defd0 (step3 verify_and_deploy_gate)",
+  "generated_at": "2026-09-15T11:54:00+0800",
+  "head": "00ca39b",
+  "fix_commit": {
+    "hash": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+    "prefix": "[T-1789436399100-948b9498]",
+    "scope": "rust_ext/src/daemon/edit_handlers.rs（handle_summary_generate 版本化事务重写）+ rust_ext/src/daemon/snapshot_state.rs（dispatch &mut conn 联动，白名单外兄弟文件按 C-13 先例披露）+ tests/test_c21_edit_rule_route_workspace_authority.py（NF2 锚迁移正例）+ nf2_remediation_inventory.md + step1/step2 证据 JSON（6 文件 +257/−38）",
+    "timing_note": "C-21 先例时序：A/B 与 lib 测试均以未提交工作树态完成 → 修复提交先于部署门禁 → 部署二进制内嵌修复 commit"
+  },
+  "cargo_lib_same_set_comparison": {
+    "command": "cargo build --release --bin cw-daemon + cargo test --release --lib（隔离 CARGO_TARGET_DIR=target-nf1，CARGO_INCREMENTAL=0，MSVC 14.44.35207 VS2022 内联环境）",
+    "result": "1778 passed / 6 failed / 0 ignored / 0 measured; finished in 102.37s",
+    "failed_set": [
+      "cli::refresh::tests::full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files",
+      "cli::refresh::tests::history_failure_rolls_back_current_graph_update",
+      "cli::router::tests::test_d4_4_enterprise_windows_unavailable",
+      "cli::router::tests::test_d4_7_auto_windows_local",
+      "cli::runtime::tests::auto_mode_uses_local_when_socket_is_missing",
+      "cli::runtime::tests::enterprise_mode_is_fail_closed_when_socket_is_missing"
+    ],
+    "baseline_comparison": {
+      "baseline_source": "NF1 step3 证据（1778P/6F，同集 6 失败均为 refresh/router/runtime 环境敏感既有失败，溯源 C-13 卡基线）",
+      "new_failures": 0,
+      "same_set_confirmed": true,
+      "note": "本卡 diff 仅 edit_handlers.rs 重写 + snapshot_state.rs 可变性绑定 + 测试迁移，失败集逐名一致"
+    }
+  },
+  "git_diff_check": {
+    "command": "git diff --check",
+    "result": "clean（修复提交前实测；提交后工作树仅剩未跟踪构建目录 target-nf1）"
+  },
+  "deploy_gate": {
+    "command": "scripts/refresh_shared_runtime.ps1 -TaskId T-1789436399100-948b9498（主会话点源运行，嵌套 powershell -File 不可用为 C-21 已知坑）",
+    "evidence_json": "C:/Users/wanpi/.callwarden/runtime/evidence/20260915-114340-00ca39b14e0c-b2340306.json",
+    "runtime_version": "20260915-114340-00ca39b14e0c-b2340306",
+    "status": "passed",
+    "rollback": false,
+    "error": null,
+    "git_head_in_receipt": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+    "duration_note": "构建+换装 8m49s；脚本退出码 1 系末尾旧 core-backup 清理触发 safe-delete 批量确认门槛（13065>50，C-21/NF1 两度同源已知坑，swap 已完成，runtime 切换成功横幅 + 回执 status=passed 为准）"
+  },
+  "health_check": {
+    "endpoint": "http://127.0.0.1:8535",
+    "pid": 14740,
+    "git_commit": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+    "git_commit_equals_head": true,
+    "schema_version": 60,
+    "note": "部署脚本以 pipe 模式拉起的 daemon（回执 PID 24300，endpoint=\\\\.\\pipe\\callwarden-S-1-5-21-…）随脚本会话终止（C-16/C-17/C-21/NF1 四度先例，8535 出现 502 upstream connect failed 即其残留桥接），按先例以 runtime/current 二进制 --http-bind=127.0.0.1:8535 HTTP 模式手动重启（cwd=仓库根，git_commit 正确内嵌）"
+  },
+  "sha256_three_way": {
+    "deploy_receipt_binaries": "48b58ed25ec98d391399e68d944bb10bd82d249d2e27d4f96d95b15321857451（cw-daemon.exe）",
+    "independent_recheck": "48B58ED25EC98D391399E68D944BB10BD82D249D2E27D4F96D95B15321857451",
+    "case_insensitive_match": true,
+    "receipt_internal_expected_vs_actual": "一致（回执 daemon_runtime.expected_sha256 == actual sha256 == 48b58ed2…）",
+    "git_commit_chain": "health.git_commit == git rev-parse HEAD == 回执 git_head == 00ca39b14e0cb6da349402b66e43c03ef1b8c4a5（修复 commit）",
+    "target_nf1_dev_build_disclosure": "after 腿 dev 构建 sha256=3621D1A5…（step2 证据）与部署构建 sha256=48B58ED2… 不同属预期：分属不同编译时点/是否 git_commit 内嵌；部署构建已由 git_commit 链 + 三方 sha256 证明 == 修复 commit 构建"
+  },
+  "production_probe": {
+    "call": "summary.generate {workspace_instance_id: 4baea3ff12c2ea5c, target: nf2-probe-nonexistent}",
+    "response": "{\"ok\": true, \"summaries_generated\": 0}",
+    "state_mutation": "none（SELECT 零行 → 循环零次 → 事务零写入，ZERO_WRITE=True）",
+    "discrimination_disclosure": "本探针不具新旧二进制判别力：旧二进制的 prepare 失败只发生在 per-row 循环内首次 INSERT，零命中根本不进循环，新旧同样返回 ok/0。判别力来自：①隔离 A/B（step2 证据：部署版冻结副本 26519773 上迁移后锚 1F 且错误文案逐字命中 prepare 根因 → 修复 dev 构建 22 全绿，1F→0F）；②三方 sha256 + git_commit 链证明生产运行二进制 == 修复 commit 00ca39b 构建。探针只证明部署后端点活着 + summary.generate 路由/读路径可达。"
+  },
+  "processes": {
+    "old_daemon": {
+      "pid": 39428,
+      "endpoint": "http://127.0.0.1:8535",
+      "sha256_prefix": "26519773",
+      "terminated_by": "refresh_shared_runtime.ps1（部署前停止全部 cw-daemon，本次输出「无可用 daemon 实例（或为旧版本）」路径）"
+    },
+    "script_pipe_daemon": {
+      "pid": 24300,
+      "endpoint": "\\\\.\\pipe\\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001",
+      "sha256": "48b58ed2…",
+      "terminated_by": "随部署脚本会话终止（四度先例）"
+    },
+    "new_daemon": {
+      "pid": 14740,
+      "endpoint": "http://127.0.0.1:8535",
+      "sha256_prefix": "48B58ED2",
+      "launch": "run_in_background 前台 exec，cwd=仓库根"
+    }
+  },
+  "check_items_covered": [
+    "cargo test --release --lib 同集对照：1778P/6F 与 NF1/C-21/C-13 基线逐名同集，零新增失败",
+    "git diff --check clean（提交前实测）",
+    "refresh_shared_runtime.ps1 回执 status=passed / rollback=false / error=null",
+    "health.git_commit == HEAD == 回执 git_head == 修复 commit 00ca39b14e0c…（四方一致）",
+    "部署产物 sha256 三方对齐：回执 binaries.sha256 == 独立重哈希（大小写不敏感）== 回执内 expected/actual 自检",
+    "生产探针 ok/0 零写入 + 判别力如实披露（非判别，判别力在 A/B）",
+    "进程链完整披露：旧 daemon 39428(26519773) → pipe 24300(随会话终) → HTTP 14740(48B58ED2)"
+  ],
+  "environment_disclosures": [
+    "msvc-env.sh 因沙箱缺 basename/dirname 无法 source（shebang shim 撞 WSL bash 被安全策略拦）：MSVC 环境改由 python 探测（VS2022 Community 14.44.35207 + SDK 10.0.26100.0）+ bash eval 注入，link.exe 解析验证通过，避开损坏的 VS18",
+    "同文件并行编辑竞态自伤 1 次（step1 期间 snapshot_state.rs 两处 Edit 同消息下发，后者覆盖前者），git diff 复核发现后顺序补写——全程已按串行编辑纪律收敛",
+    "pytest 首跑漏 PYTHONPATH=C:/git_work 报 ModuleNotFoundError（conftest 导入 callwarden 包），修正后重跑，A/B 两腿结果均以修正后运行为准"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "task_id": "T-1789392878852-bb9bef18",
+  "card": "C-19 (backlog §W20 F1)",
+  "generated_at": "2026-09-14T21:30:00+08:00",
+  "executor": {
+    "agent_id": "executor-wb-c19-01",
+    "agent_instance_id": "inst-exec-wb-c19-01",
+    "session_id": "sess-exec-wb-c19-20260914",
+    "lease_id": "L-14cf4611a5fceb31",
+    "fencing_counter": 1
+  },
+  "environment": {
+    "head": "a6ecd28283ef001415aff6b98a4ca9a8e6f9d94a",
+    "daemon_endpoint": "http://127.0.0.1:8950",
+    "daemon_binary_sha256": "c9c3a5dba14488f6c81df59f6a4b4a4157983b756057243f4eb52d84866810d0",
+    "daemon_git_commit": "a6ecd28283ef001415aff6b98a4ca9a8e6f9d94a",
+    "snapshot_id": "dfcac6f16b827a30"
+  },
+  "files": [
+    {
+      "file_path": "deliverables/software-company/T-1789392878852-bb9bef18-inventory.md",
+      "sha256": "754e03b70474513a6882dbd616f3c13a4c259c5e19972de0fc217201af8cf61a",
+      "role": "step0 复核文档（缺陷现场/PRAGMA 实证/F1 锚范围/同型扫描/修法定型/A-B 计划）"
+    }
+  ],
+  "prefix_probe": {
+    "method": "admin.gc_audit_list",
+    "params": {"workspace_instance_id": "4baea3ff12c2ea5c", "limit": 5},
+    "result": "DaemonRemoteError internal_error: gc_audit_list prepare: no such column: t.workspace_id",
+    "timestamp": "2026-09-14T21:24:00+08:00",
+    "note": "只读 prepare 失败，无写入副作用；部署后同调用复跑作对照"
+  },
+  "schema_evidence": {
+    "tasks_columns": ["id", "title", "description", "creator", "status", "created_at", "updated_at", "applied_at", "closed_at", "parent_id", "depth", "sort_order"],
+    "tasks_has_workspace_id": false,
+    "task_workspace_bindings_columns": ["task_id", "workspace_id", "workspace_binding_id", "workspace_capture_id", "created_by", "authoritative_created_at"],
+    "change_audit_rows_total": 3620,
+    "change_audit_rows_ws1_bound": 1722
+  },
+  "scope_scan": {
+    "rust_tasks_workspace_id_refs": ["rust_ext/src/daemon/admin_handlers.rs:138 (gc_audit_get 子查询)", "rust_ext/src/daemon/admin_handlers.rs:173-176 (gc_audit_list JOIN+WHERE)"],
+    "db_server_refs": [],
+    "python_db_gc_note": "db/db_gc.py gc_audit_get/gc_audit_list 查询 gc_runs 表（另一套 GC 运行审计），与本缺陷无关，不改",
+    "c17_anchor_migration_scope": "仅 test_gc_audit_get_f1_known_defect_still_fails（L531-536）；F2/F3 锚（L539-558）本卡禁碰，属 C-20"
+  }
+}

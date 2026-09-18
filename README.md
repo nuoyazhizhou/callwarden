@@ -23,9 +23,9 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **Git 集成**：commit 历史 + 符号级变更追踪
 - **分支感知**：独立工作区方案 + 差异对比 + 合并预览
 - **Java GC 机制**：.gitignore/.callwardenignore 解析 + 归档/复活/清除
-- **P2 依赖图与环检测**：四类依赖（requires_existing/artifact/provides_interface/requires_interface）+ artifact freshness + interface identity + 硬依赖图环检测 + provider 选择
-- **P3 Agent 身份审计**：action 身份记录（agent/session/model/role）+ daemon 签发 Attestation 校验 + 撤销账本（Revocation_Mode 必填：compromised/rotated，invalid 查询时派生）+ 独立审核证明与 apply session 分离 + CLI/MCP 工具
-- **P4 Assignment 与安全 Lease**：assignment 绑定 task+role+holder Identity + Lease（token hash 落库、权威时钟有效期、单调 fencing counter）+ acquire/renew/release 幂等 + protected mutation 校验（过期/token 不匹配/旧 counter 写入前拒绝）+ 审计事件账本 + CLI/MCP 工具
+- **依赖图与环检测**：四类依赖（requires_existing/artifact/provides_interface/requires_interface）+ artifact freshness + interface identity + 硬依赖图环检测 + provider 选择
+- **Agent 身份审计**：action 身份记录（agent/session/model/role）+ daemon 签发 Attestation 校验 + 撤销账本（Revocation_Mode 必填：compromised/rotated，invalid 查询时派生）+ 独立审核证明与 apply session 分离 + CLI/MCP 工具
+- **Assignment 与安全 Lease**：assignment 绑定 task+role+holder Identity + Lease（token hash 落库、权威时钟有效期、单调 fencing counter）+ acquire/renew/release 幂等 + protected mutation 校验（过期/token 不匹配/旧 counter 写入前拒绝）+ 审计事件账本 + CLI/MCP 工具
 - **237 MCP 工具 + 145+ CLI 命令**
 
 ## 快速开始

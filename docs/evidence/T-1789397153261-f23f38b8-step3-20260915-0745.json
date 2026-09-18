@@ -1,0 +1,57 @@
+{
+  "task_id": "T-1789397153261-f23f38b8",
+  "step_id": "S-1789397153262-f24cbe70",
+  "step": "verify",
+  "generated_at": "2026-09-15T07:45:30+08:00",
+  "title": "step3 verify：幂等回归全量 exists 零 created + 未部署披露 + git diff --check clean",
+  "idempotent_regression": {
+    "command": "CW_DAEMON_ENDPOINT=http://127.0.0.1:8535 PYTHONPATH=C:/git_work C:/Python314/python.exe deliverables/software-company/create_c_bucket_remediation_tasks.py",
+    "daemon_health_receipt": {
+      "endpoint": "http://127.0.0.1:8535",
+      "pid": 25756,
+      "git_commit": "b7fa16f135eaa0f3512a458758c0d75110a4bc38",
+      "schema_version": 60,
+      "worker_status": "healthy",
+      "security_profile": "dev_loopback_unauthenticated"
+    },
+    "result": "12 张卡全部 result=exists、created=0",
+    "cards_checked": [
+      "C-03（rust_ext unix/Linux target 编译阻断）",
+      "C-04..C-07（cli/main.py i18n 遮蔽与 RPC 契约）",
+      "C-08..C-09（server/ 授权清单与错误 code 契约）",
+      "C-13（semgrep_handlers 编译接线与 RPC route）",
+      "C-14..C-15（assignment create/revoke 契约一致性）",
+      "C-16（assignment_show workspace 权威解析）",
+      "C-17（admin 路由 workspace 命名空间盘点与收口）",
+      "C-18（MCP-015 陈旧断言修复与 W3 harness 收敛）",
+      "C-19（gc_audit 列引用修复 §W20 F1）",
+      "C-20（record_action_identity/register_attestation_revocation 列修复 §W20 F2+F3）",
+      "C-21（edit.*/gate.*/rule.* 第二路由块收口 §W20 F4）",
+      "C-22（本卡 §W20 F5）"
+    ],
+    "conclusion": "target_file 全量文件级化重构未破坏幂等范式（task.list 按 title 判重 → exists，零重复创建）"
+  },
+  "no_deploy_disclosure": {
+    "deployed": false,
+    "reason": "本卡 tests+deliverables-only：改动仅 deliverables/software-company/create_c_bucket_remediation_tasks.py（模板脚本）、tests/test_c_bucket_template_target_file_whitelist.py（新增校验测试）、deliverables/software-company/c22_remediation_inventory.md（step0 盘点）、docs/evidence/T-1789397153261-f23f38b8-step{1,2,3}-*.json（证据）；rust_ext/**、server/**、db/** 零触碰，无产品代码改动 → 不触发部署门禁",
+    "live_daemon_state": "与 C-21 部署态一致（endpoint 8535 / PID 25756 / 二进制 sha256 4EA587D3… / git_commit b7fa16f135ea…，daemon health 回执见上），本卡未变更 runtime",
+    "daemon_side_note": "daemon 侧「目录前缀匹配」为可选项，不属本卡 scope（若未来需要另立产品代码卡，见 c22_remediation_inventory.md §5）"
+  },
+  "git_diff_check": "clean（git diff --check 无输出）",
+  "commit_plan": {
+    "prefix": "[T-1789397153261-f23f38b8]（本卡自身 task_id，严禁复用 C-17..C-21 或 PYT 卡 id）",
+    "whitelist": [
+      "deliverables/software-company/create_c_bucket_remediation_tasks.py",
+      "deliverables/software-company/c22_remediation_inventory.md",
+      "tests/test_c_bucket_template_target_file_whitelist.py",
+      "docs/evidence/T-1789397153261-f23f38b8-step1-20260915-0735.json",
+      "docs/evidence/T-1789397153261-f23f38b8-step2-20260915-0742.json",
+      "docs/evidence/T-1789397153261-f23f38b8-step3-20260915-0745.json"
+    ],
+    "excluded": "rust_ext/target-c19/、target-c20/、target-c21/（未跟踪隔离构建产物，不入库；清理决策待用户）；台账与治理文档分开提交（台账在 A′ 闭环后单独 commit）"
+  },
+  "honest_disclosures": [
+    "step2 report 曾误传占位符 evidence-hash（req-2e786f171ea9，事件 9058），已按 C-21 先例同参数重报补登真值（req-3824e3e7b4aa，事件 9061，latest reported event 权威）；本 step3 的 evidence-path/hash 一次到位",
+    "幂等回归输出 1506 字节全文由脚本 stdout 直接留证于本 JSON（cards_checked 逐卡 exists）"
+  ]
+}

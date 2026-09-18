@@ -1,0 +1,83 @@
+{
+  "task_id": "T-1789397153231-f07a8d84",
+  "card": "C-21",
+  "step": 3,
+  "action": "build_and_verify",
+  "target_file": "rust_ext/src/daemon/snapshot_state.rs",
+  "step_id": "S-1789397153232-f08981a4",
+  "snapshot_id": "dfcac6f16b827a30",
+  "git_head": "15c18a8c58ec78ce16c009ccd99866473223fc02",
+  "reported_at": "2026-09-15T07:12:00+08:00",
+  "cargo_build": {
+    "target_dir": "rust_ext/target-c21（隔离 CARGO_TARGET_DIR，CARGO_INCREMENTAL=0）",
+    "profile": "release",
+    "errors": 0,
+    "warnings": 180,
+    "warnings_note": "与既有基线同源（未引入新增警告；本卡 diff 19+/10- 仅路由块改写）",
+    "duration": "9m36s",
+    "binary": "rust_ext/target-c21/release/cw-daemon.exe",
+    "binary_sha256": "44117CBDFF26F4224689E310F8AEE5F54977083FBC0002AA8B478F69F458842B",
+    "sha256_reverified_at_report_time": true
+  },
+  "cargo_test": {
+    "command": "cargo test --release --lib（隔离 target-c21）",
+    "result": "1778 passed / 6 failed / 0 ignored / 0 measured",
+    "duration": "90.21s",
+    "failed_set": [
+      "cli::refresh::tests::full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files",
+      "cli::refresh::tests::history_failure_rolls_back_current_graph_update",
+      "cli::router::tests::test_d4_4_enterprise_windows_unavailable",
+      "cli::router::tests::test_d4_7_auto_windows_local",
+      "cli::runtime::tests::auto_mode_uses_local_when_socket_is_missing",
+      "cli::runtime::tests::enterprise_mode_is_fail_closed_when_socket_is_missing"
+    ],
+    "baseline_comparison": {
+      "baseline_source": "C-13 卡基线（同集 6 失败，均为与本卡无关的 refresh/router/runtime 环境敏感测试）",
+      "new_failures": 0,
+      "same_set_confirmed": true
+    }
+  },
+  "c21_matrix_rerun": {
+    "binary": "rust_ext/target-c21/release/cw-daemon.exe",
+    "binary_sha256": "44117CBDFF26F4224689E310F8AEE5F54977083FBC0002AA8B478F69F458842B",
+    "junitxml": "C:/Users/wanpi/AppData/Local/Temp/c21_step3_junit.xml",
+    "result": { "tests": 22, "failures": 0, "errors": 0, "skipped_xfail": 2, "exit_code": 0 },
+    "note": "step2 after 腿结论在报告前时点复跑确认（权威计数 = junitxml 落盘值）"
+  },
+  "c17_matrix_rerun": {
+    "binary": "rust_ext/target-c21/release/cw-daemon.exe",
+    "junitxml": "C:/Users/wanpi/AppData/Local/Temp/c17_step3_junit.xml",
+    "result": { "tests": 22, "failures": 0, "errors": 0, "skipped": 0, "exit_code": 0 },
+    "note": "admin 块（第一路由块，C-19 已修）在新二进制下 22/22 全绿 —— 本卡第二路由块改动未波及 admin 路由"
+  },
+  "prefix_baseline_discrimination_pointer": {
+    "before_binary_sha256": "BD3AD67122A68A2B77E3CA15647587F2BE3F736447F2D1E20D509A68289175C8",
+    "before_result": { "tests": 22, "failures": 10, "errors": 0, "skipped_xfail": 2, "exit_code": 1 },
+    "evidence": "step2 证据 JSON ab_legs[0] + C:/Users/wanpi/AppData/Local/Temp/c21_before_junit.xml（失败集 = 10 个严格判别锚，错误签名逐一吻合预测）",
+    "conclusion": "CW_DAEMON_BIN 指向修复前二进制时新矩阵如实失败 → 矩阵对路由缺陷具判别力；修复后同矩阵全绿"
+  },
+  "working_tree_state": {
+    "modified": ["rust_ext/src/daemon/snapshot_state.rs（19+/10-，路由层单文件单点修复）"],
+    "untracked_new": [
+      "tests/test_c21_edit_rule_route_workspace_authority.py",
+      "deliverables/software-company/c21_remediation_inventory.md",
+      "docs/evidence/T-1789397153231-f07a8d84-step0-20260915-0542.json",
+      "docs/evidence/T-1789397153231-f07a8d84-step1-20260915-0550.json",
+      "docs/evidence/T-1789397153231-f07a8d84-step2-20260915-0620.json",
+      "docs/evidence/T-1789397153231-f07a8d84-step3-20260915-0712.json"
+    ]
+  },
+  "check_items_covered": [
+    "cargo build 零 error（隔离 CARGO_TARGET_DIR=target-c21，release，CARGO_INCREMENTAL=0）",
+    "cargo test --release --lib（含 task_collab lib 套件）1778 passed / 6 failed，失败集与 C-13 基线同集，零新增失败",
+    "tests/test_c21_edit_rule_route_workspace_authority.py pytest 全绿（junitxml 22/0/0/2，exit=0，二进制 sha256 44117CBD…42B）",
+    "C-17 测试文件（admin 块）22/22 全绿不受影响（junitxml 22/0/0/0，exit=0）",
+    "二进制 sha256 记录（target-c21 产物 44117CBDFF26F4224689E310F8AEE5F54977083FBC0002AA8B478F69F458842B，报告时点复核一致）",
+    "修复前基线同集对照：CW_DAEMON_BIN 指向修复前二进制（BD3AD671…75C8）时新矩阵如实失败（10F/10P/2xfail），证明判别力；对照输出留证据（step2 junitxml + 证据 JSON）"
+  ],
+  "environment_disclosures": [
+    "构建命令未走 scripts/msvc-env.sh（coreutils 缺失扩展至 basename/tail，脚本 L46/L68 basename 不可用）→ Python 探测版本后 bash 内联 export PATH/LIB/INCLUDE 等价复刻 MSVC 环境（未改脚本本身）",
+    "pytest 计数一律以 --junitxml 落盘值为权威（本环境控制台最终计数行在管道/重定向下缺失）",
+    "cargo test 退出码非 0 系基线内 6 个既有失败所致，非本卡引入"
+  ]
+}

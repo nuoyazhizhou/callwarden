@@ -1,0 +1,43 @@
+{
+  "task_id": "T-1789397153231-f07a8d84",
+  "card": "C-21",
+  "step": 1,
+  "action": "implement",
+  "target_file": "rust_ext/src/daemon/snapshot_state.rs",
+  "snapshot_id": "dfcac6f16b827a30",
+  "git_head_before": "15c18a8c58ec78ce16c009ccd99866473223fc02",
+  "reported_at": "2026-09-15T05:50:00+08:00",
+  "fix_summary": "第二路由块（edit.*/gate.*/rule.* 19 方法）路由层单点收口：owned_workspace 代理 ROWID + open_write 改为 open_codegraph_db_write(peer, ws) 取 (真 workspace_id, conn)，与 admin 块（行 3215）/ semgrep 写面块（行 3250）逐字同形。",
+  "diff_stat": "1 file changed, 19 insertions(+), 10 deletions(-)",
+  "invariants_verified": [
+    "方法名列表 / match 臂零改动（19 个方法名逐字未动，diff 中臂头行全部为上下文行）",
+    "19 个 handler 调用零改动（除 workspace_id 取值来源外，match 体逐字未动）",
+    "admin 路由块（3186-3239）零触碰",
+    "semgrep 块（3246-3263）零触碰",
+    "task.job_submit（3166-3179）零触碰（第三处同型，只登记不修）",
+    "db/** 零触碰",
+    "handler 层（edit_handlers.rs）零触碰"
+  ],
+  "side_effect_handling": "open_write 闭包（原行 2767-2777）失去唯一调用点后变为 dead code：加 #[allow(unused)] + C-21 注释保留（不删除，保持 diff 最小；codegraph_db 闭包仍被 task.job_submit 使用）",
+  "verification": [
+    {
+      "id": "V1",
+      "kind": "diff_check",
+      "result": "pass",
+      "detail": "git diff --check RC=0（无空白错误）"
+    },
+    {
+      "id": "V2",
+      "kind": "diff_scope",
+      "result": "pass",
+      "detail": "git diff --stat = 1 file changed, 19 insertions(+), 10 deletions(-)，仅 snapshot_state.rs；无其它文件被改"
+    },
+    {
+      "id": "V3",
+      "kind": "structure_review",
+      "result": "pass",
+      "detail": "替换后的块体与 admin 块/semgrep 块形态逐字一致（let ws = require_str_param(...)?; let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;），conn 所有权交给 match 体，各 handler 以 &conn 借用 —— 与修复前调用形态一致"
+    }
+  ],
+  "evidence_of_no_code_change_outside_scope": "git status --porcelain 仅 snapshot_state.rs 一处 modified（step0 的 deliverables 文档为新增未跟踪，属 step0 产出）"
+}

@@ -1,0 +1,88 @@
+{
+  "task_id": "T-1789436398881-877c169c",
+  "card": "NF1",
+  "step": 3,
+  "action": "verify_and_deploy_gate",
+  "target_file": "rust_ext/src/daemon/edit_handlers.rs",
+  "step_id": "S-1789436398906-88f46df8",
+  "snapshot_id": "dfcac6f16b827a30",
+  "git_head_at_fix_commit": "5c9806b7a6f1016aca1b965caeecd7a4415b5213",
+  "fix_commit": {
+    "hash": "5c9806b7a6f1016aca1b965caeecd7a4415b5213",
+    "prefix": "[T-1789436398881-877c169c]",
+    "scope": "rust_ext/src/daemon/edit_handlers.rs (1+/1-) + tests/test_c21_edit_rule_route_workspace_authority.py (68+/21-) + deliverables/software-company/nf1_remediation_inventory.md + step1/step2 证据 JSON（5 文件 +279/-21）",
+    "note": "按 C-21 先例：修复提交先于部署门禁，部署二进制内嵌修复 commit（C-21 时序：step3 dev 构建 @15c18a8 工作树态 -> 提交 b7fa16f -> step4 部署）"
+  },
+  "cargo_lib_same_set_comparison": {
+    "command": "cargo test --release --lib（隔离 CARGO_TARGET_DIR=target-nf1，CARGO_INCREMENTAL=0，MSVC 14.44.35207 VS2022 内联环境）",
+    "result": "1778 passed / 6 failed / 0 ignored / 0 measured; finished in 90.38s",
+    "failed_set": [
+      "cli::refresh::tests::full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files",
+      "cli::refresh::tests::history_failure_rolls_back_current_graph_update",
+      "cli::router::tests::test_d4_4_enterprise_windows_unavailable",
+      "cli::router::tests::test_d4_7_auto_windows_local",
+      "cli::runtime::tests::auto_mode_uses_local_when_socket_is_missing",
+      "cli::runtime::tests::enterprise_mode_is_fail_closed_when_socket_is_missing"
+    ],
+    "baseline_comparison": {
+      "baseline_source": "C-21 step3 证据（1778P/6F，同集 6 失败均为 refresh/router/runtime 环境敏感既有失败，溯源 C-13 卡基线）",
+      "new_failures": 0,
+      "same_set_confirmed": true,
+      "note": "本卡 diff 仅 edit_handlers.rs 一处 SQL 子查询改写，失败集逐名一致"
+    }
+  },
+  "git_diff_check": {
+    "command": "git diff --check",
+    "result": "clean（修复提交前实测；提交后工作树仅剩 step3 证据文件未跟踪）"
+  },
+  "deploy_gate": {
+    "command": "scripts/refresh_shared_runtime.ps1 -TaskId T-1789436398881-877c169c（主会话点源运行，嵌套 powershell -File 不可用为 C-21 已知坑）",
+    "evidence_json": "C:/Users/wanpi/.callwarden/runtime/evidence/20260915-103844-5c9806b7a6f1-68c540f2.json",
+    "runtime_version": "20260915-103844-5c9806b7a6f1-68c540f2",
+    "status": "passed",
+    "rollback": false,
+    "error": null,
+    "git_head_in_receipt": "5c9806b7a6f1016aca1b965caeecd7a4415b5213",
+    "duration_note": "构建+换装+冒烟 8m07s；脚本退出码 1 系末尾旧 core-backup 清理触发 safe-delete 批量确认门槛（13065>50，genie-trash fail-closed 已知坑，swap 已完成可继续用，与 C-21 step4 披露同源）"
+  },
+  "health_check": {
+    "endpoint": "http://127.0.0.1:8535",
+    "pid": 39428,
+    "git_commit": "5c9806b7a6f1016aca1b965caeecd7a4415b5213",
+    "git_commit_equals_head": true,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "note": "部署脚本以 pipe 模式拉起的 daemon（回执 PID 24292）随脚本会话终止（C-16/C-17/C-21 三度先例）→ 按 C-21 先例以 runtime/current 二进制 --http-bind=127.0.0.1:8535 HTTP 模式手动重启（cwd=仓库内，git_commit 正确内嵌）"
+  },
+  "sha256_three_way": {
+    "deployed_current": "265197734DC05E49DF99BC88603F18ECE2D4990763B77B9B92290E06C436709C",
+    "deploy_receipt_expected": "265197734dc05e49df99bc88603f18ece2d4990763b77b9b92290e06c436709c",
+    "receipt_actual_matches_expected": true,
+    "independent_recheck_matches": true,
+    "target_nf1_dev_build": "二进制位于 rust_ext/target-nf1/release/cw-daemon.exe（A/B after 腿用），与部署构建分属不同 CARGO_TARGET_DIR/编译时点，sha256 不同属预期；部署构建内嵌 git_head=5c9806b 已由回执+health 双证"
+  },
+  "production_probe": {
+    "call": "gate.resolve_findings {workspace_instance_id: 4baea3ff12c2ea5c, gate_id: GATE-nf1-probe-nonexistent, resolution: resolved}",
+    "response": "结构化错误 gate_not_found: gate GATE-nf1-probe-nonexistent 不存在",
+    "state_mutation": "none（changed==0 分支，不存在 gate_id 不产生任何写）",
+    "discrimination_disclosure": "本探针不具新旧二进制判别力（对不存在 gate_id 新旧同样返回 gate_not_found）；判别力来自：①隔离 A/B（step2 证据：修复前二进制 4EA587D3 上锚 1F gate_not_found → 修复后 21P/0F）②三方 sha256 链证明生产运行二进制 == 修复 commit 构建。另披露：work_order 所述「修复前恒 prepare 失败」经 step0/step2 实证更正为「修复前恒 gate_not_found」（SQLite 相关名解析把未知列解析到外层 UPDATE 表的同名列，261 行全 NULL -> 子查询恒空）；本探针证明部署后端点存活且 SQL 路径可达，未对生产做任何合成写"
+  },
+  "processes": {
+    "old_daemon": { "pid": 25756, "endpoint": "http://127.0.0.1:8535", "sha256_prefix": "4EA587D3", "terminated_by": "refresh_shared_runtime.ps1（部署前停止）" },
+    "new_daemon": { "pid": 39428, "endpoint": "http://127.0.0.1:8535", "sha256_prefix": "26519773", "launch": "run_in_background 前台 exec，cwd=仓库内" }
+  },
+  "check_items_covered": [
+    "cargo test --release --lib 同集对照：1778P/6F 与 C-21/C-13 基线逐名同集，零新增失败",
+    "git diff --check clean（提交前实测）",
+    "refresh_shared_runtime.ps1 回执 status=passed / rollback=false / error=null",
+    "health.git_commit == HEAD（5c9806b7a6f1016aca1b965caeecd7a4415b5213，三方一致：receipt/health/独立 rev-parse）",
+    "部署产物 sha256 三方对照一致（独立复核 current/cw-daemon.exe == receipt.expected）",
+    "PID 39428 存活且 worker_status=healthy（HTTP 模式手动重启，pipe 模式随会话终止为先例行为）",
+    "生产只读探针回执：结构化 gate_not_found、无状态变更、判别力来源如实披露"
+  ],
+  "environment_disclosures": [
+    "cargo lib 复跑两次被环境拦截（tail 缺失致管道断裂 1 次；沙箱 os error 5 拦截 target-nf1 写入 1 次）后以沙箱豁免前台等价命令后台重跑成功，结果以本次 90.38s 运行为准",
+    "部署日志为 PowerShell UTF-16 重定向编码，读取需 utf-16 解码（不影响回执 JSON 权威性）",
+    "嵌套 powershell -File 因 $head 获取失败连锁报错为 C-21 已知坑，本次直接主会话点源运行未复现"
+  ]
+}

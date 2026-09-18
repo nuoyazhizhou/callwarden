@@ -1,0 +1,89 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "card": "C-20",
+  "title": "C-20 承接：admin.record_action_identity/register_attestation_revocation 缺 NOT NULL UNIQUE 列修复（§W20 F2+F3）",
+  "parent_id": "T-1788871227327-45c94bd8",
+  "backlog_section": "§W20 F2+F3",
+  "snapshot_id": "dfcac6f16b827a30",
+  "workspace_instance_id": "4baea3ff12c2ea5c",
+  "scan_head": "e07fbec",
+  "steps": [
+    {
+      "step_index": 0,
+      "step_id": "S-1789397153199-ee8e5ac8",
+      "action": "adjudicate",
+      "target_file": "deliverables/software-company/c20_remediation_inventory.md",
+      "status": "done",
+      "artifacts": [
+        "deliverables/software-company/c20_remediation_inventory.md"
+      ],
+      "findings": {
+        "f2_insert": {
+          "file": "rust_ext/src/daemon/admin_handlers.rs",
+          "line": 675,
+          "handler": "handle_record_action_identity (admin_handlers.rs:660)",
+          "missing_column": "action_id",
+          "columns_present": [
+            "workspace_id", "action_type", "task_id", "contract_id", "contract_revision",
+            "agent_id", "session_id", "model_id", "role", "recorded_at"
+          ]
+        },
+        "f3_insert": {
+          "file": "rust_ext/src/daemon/admin_handlers.rs",
+          "line": 713,
+          "handler": "handle_register_attestation_revocation (admin_handlers.rs:695)",
+          "missing_column": "revocation_id",
+          "columns_present": [
+            "workspace_id", "issuer", "signing_key_id", "revocation_mode",
+            "revocation_reason", "initiating_actor", "revoked_at"
+          ]
+        },
+        "schema_evidence": [
+          "db/schema.py:1546 CREATE TABLE action_identities",
+          "db/schema.py:1549 action_id TEXT NOT NULL UNIQUE -- ACT-<uuid>",
+          "db/schema.py:1589 CREATE TABLE attestation_revocation_records",
+          "db/schema.py:1592 revocation_id TEXT NOT NULL UNIQUE -- REV-<uuid>"
+        ],
+        "id_generation_precedents": [
+          "rust: admin_handlers.rs:33-39 gen_assignment_id() -> ASG-<hex16> (getrandom 8B -> hex, no uuid crate)",
+          "python: db/db_task_identity.py:609 revocation_id = REV-{uuid4().hex[:16]} (internal generation)",
+          "python: db/db_task_identity.py:170-203 record_action_identity takes action_id from caller; UNIQUE conflict -> ERR_IDENTITY_ACTION_DUPLICATE",
+          "python callers: db/db_tasks.py:1705/2561/2826/2986 -> ACT-report-<step_id>-<ms> / ACT-apply-<task_id>-<ms> / ACT-close-... / ACT-reopen-..."
+        ],
+        "anchor_migration_scope": {
+          "file": "tests/test_c17_admin_route_workspace_authority.py",
+          "f2_anchor": "test_record_action_identity_f2_known_defect_still_fails (:627)",
+          "f3_anchor": "test_register_attestation_revocation_f3_known_defect_still_fails (:638)",
+          "forbidden": "C-19 migrated F1 positives/negatives must stay green and untouched"
+        },
+        "same_type_scan": {
+          "inserts_parsed": 364,
+          "not_null_unique_hits": 9,
+          "production_defects": [
+            "admin_handlers.rs:675 action_identities.action_id (F2)",
+            "admin_handlers.rs:713 attestation_revocation_records.revocation_id (F3)"
+          ],
+          "false_positives": [
+            "workspace_reconciliation.rs:596 (test fixture INSERT INTO workspaces (id))",
+            "job_executor_handlers.rs:212 (in-test CREATE TABLE workspaces (id INTEGER PRIMARY KEY))",
+            "query_compat_handlers.rs:3353 (temp_db())",
+            "cli/runtime.rs:500 x2 (in-test table with is_active)"
+          ],
+          "conclusion": "F2/F3 are the only production write-path defects of this shape in rust_ext/src"
+        }
+      },
+      "fix_design": {
+        "action_id": "prefer caller-supplied param 'action_id' (align python contract); if empty -> generate ACT-<hex16> via getrandom+hex",
+        "revocation_id": "generate REV-<hex16> internally (mirror db_task_identity.py:609)",
+        "column_order": "match python authoritative column order (action_id right after workspace_id)",
+        "return_body": "record_action_identity returns action_id; register_attestation_revocation returns revocation_id",
+        "no_touch": ["db/**", "schema", "other admin handlers", "snapshot_state.rs routing"]
+      },
+      "code_changed": false
+    }
+  ],
+  "disclosures": [
+    "step0 is read-only: no code changed in this step",
+    "line numbers are measured at HEAD e07fbec (not copied from card/backlog)"
+  ]
+}

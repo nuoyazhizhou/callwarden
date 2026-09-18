@@ -1,0 +1,36 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "step_id": "S-1789397153199-ee9005bc",
+  "step_index": 1,
+  "step_kind": "implement",
+  "generated_at_local": "20260915-0400",
+  "head_commit": "e07fbecbba96a0ef05caa8517bd0f034e4ad8ed0",
+  "code_changed": true,
+  "changed_file": "rust_ext/src/daemon/admin_handlers.rs",
+  "hash_before": "8b96789224a1da9d9e8745606d6423f91e27936b2e12c265a41cf5dfe2d6163a",
+  "hash_after": "1e7dff7d734668027ded68a80265cff1c5bb279feda7795939543bfba239e94c",
+  "diffstat": "rust_ext/src/daemon/admin_handlers.rs | 55 ++++++++++++++++++++++++++++++++---\n 1 file changed, 51 insertions(+), 4 deletions(-)",
+  "diff": "diff --git a/rust_ext/src/daemon/admin_handlers.rs b/rust_ext/src/daemon/admin_handlers.rs\nindex 4a49bf3..c6bf094 100644\n--- a/rust_ext/src/daemon/admin_handlers.rs\n+++ b/rust_ext/src/daemon/admin_handlers.rs\n@@ -38,6 +38,37 @@ fn gen_assignment_id() -> Result<String, DaemonRpcError> {\n     Ok(format!(\"ASG-{}\", hex::encode(entropy)))\n }\n \n+/// 生成 Action 唯一标识（对齐 Python 侧 `ACT-…` 语义与 `ASG-` 熵形）。\n+///\n+/// `action_identities.action_id` 为 `TEXT NOT NULL UNIQUE`（db/schema.py:1549，\n+/// 语义注释 `ACT-<uuid>`）。Python 权威实现 `db/db_task_identity.py:170-203` 由\n+/// 调用方提供 `action_id`（幂等/去重依赖其 UNIQUE 约束），故 Rust 侧**优先采用入参**，\n+/// 入参为空时才回退到本函数生成，格式与 `gen_assignment_id` 同源（OS CSPRNG 8B → 16 hex）。\n+/// 缺陷背景见 backlog §W20 F2（C-20 承接）：handler 此前完全未提供该列，\n+/// 导致 INSERT 恒 `NOT NULL constraint failed`。\n+fn gen_action_id() -> Result<String, DaemonRpcError> {\n+    let mut entropy = [0_u8; 8];\n+    getrandom::fill(&mut entropy).map_err(|e| {\n+        DaemonRpcError::internal_error(format!(\"OS CSPRNG 生成 action_id 失败: {e}\"))\n+    })?;\n+    Ok(format!(\"ACT-{}\", hex::encode(entropy)))\n+}\n+\n+/// 生成 Attestation 撤销记录唯一标识（对齐 Python `REV-{uuid4().hex[:16]}`）。\n+///\n+/// `attestation_revocation_records.revocation_id` 为 `TEXT NOT NULL UNIQUE`\n+/// （db/schema.py:1592，语义注释 `REV-<uuid>`）。Python 权威实现\n+/// `db/db_task_identity.py:609` 为内部生成、不接受调用方入参，故 Rust 侧同样\n+/// 每次调用新生成（无 uuid crate，沿用 OS CSPRNG 8B → 16 hex）。\n+/// 缺陷背景见 backlog §W20 F3（C-20 承接）。\n+fn gen_revocation_id() -> Result<String, DaemonRpcError> {\n+    let mut entropy = [0_u8; 8];\n+    getrandom::fill(&mut entropy).map_err(|e| {\n+        DaemonRpcError::internal_error(format!(\"OS CSPRNG 生成 revocation_id 失败: {e}\"))\n+    })?;\n+    Ok(format!(\"REV-{}\", hex::encode(entropy)))\n+}\n+\n /// `admin.gc_archive_import` —— 导入归档记录（archived_files 写入）。\n pub fn handle_gc_archive_import(\n     conn: &Connection,\n@@ -670,12 +701,23 @@ pub fn handle_record_action_identity(\n     let session_id = get_str_param_or(params, \"session_id\", \"\");\n     let model_id = get_str_param_or(params, \"model_id\", \"\");\n     let role = get_str_param_or(params, \"role\", \"\");\n+    // C-20（§W20 F2）：action_identities.action_id 为 NOT NULL UNIQUE。\n+    // Python 权威实现（db/db_task_identity.py:170-203）由调用方提供 action_id\n+    // （UNIQUE 冲突 → ERR_IDENTITY_ACTION_DUPLICATE），故优先采用入参；\n+    // 入参为空时回退 Rust 生成 ACT-<hex16>（与 gen_assignment_id 同源熵形）。\n+    let action_id_param = get_str_param_or(params, \"action_id\", \"\");\n+    let action_id = if action_id_param.trim().is_empty() {\n+        gen_action_id()?\n+    } else {\n+        action_id_param\n+    };\n     let now = now_ts();\n     conn.execute(\n-        \"INSERT INTO action_identities (workspace_id, action_type, task_id, contract_id, contract_revision, agent_id, session_id, model_id, role, recorded_at)\n-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)\",\n+        \"INSERT INTO action_identities (workspace_id, action_id, action_type, task_id, contract_id, contract_revision, agent_id, session_id, model_id, role, recorded_at)\n+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)\",\n         rusqlite::params![\n             workspace_id,\n+            action_id,\n             action_type,\n             task_id,\n             contract_id,\n@@ -708,12 +750,17 @@ pub fn handle_register_attestation_revocation(\n     }\n     let revocation_reason = get_str_param_or(params, \"revocation_reason\", \"\");\n     let initiating_actor = get_str_param_or(params, \"initiating_actor\", \"\");\n+    // C-20（§W20 F3）：attestation_revocation_records.revocation_id 为 NOT NULL UNIQUE。\n+    // Python 权威实现（db/db_task_identity.py:609）为内部生成 `REV-{uuid4().hex[:16]}`、\n+    // 不接受调用方入参，故 Rust 侧同样每次调用新生成（无 uuid crate → OS CSPRNG 8B/16 hex）。\n+    let revocation_id = gen_revocation_id()?;\n     let now = now_ts();\n     conn.execute(\n-        \"INSERT INTO attestation_revocation_records (workspace_id, issuer, signing_key_id, revocation_mode, revocation_reason, initiating_actor, revoked_at)\n-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)\",\n+        \"INSERT INTO attestation_revocation_records (workspace_id, revocation_id, issuer, signing_key_id, revocation_mode, revocation_reason, initiating_actor, revoked_at)\n+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)\",\n         rusqlite::params![\n             workspace_id,\n+            revocation_id,\n             issuer,\n             signing_key_id,\n             revocation_mode,\n",
+  "fix_design": {
+    "f2_record_action_identity": {
+      "defect": "INSERT INTO action_identities 缺 action_id 列（schema.py:1549 TEXT NOT NULL UNIQUE，语义 ACT-<uuid>）→ 恒 NOT NULL constraint failed",
+      "fix": "新增 fn gen_action_id()（OS CSPRNG 8B → hex16，前缀 ACT-，对齐 gen_assignment_id 先例）；handler 优先采用入参 action_id（对齐 Python db/db_task_identity.py:170-203，UNIQUE 冲突即报错），入参为空时回退生成；SQL 列与 params 同步补列（?1..?11）"
+    },
+    "f3_register_attestation_revocation": {
+      "defect": "INSERT INTO attestation_revocation_records 缺 revocation_id 列（schema.py:1592 TEXT NOT NULL UNIQUE，语义 REV-<uuid>）→ 恒 NOT NULL constraint failed",
+      "fix": "新增 fn gen_revocation_id()（同熵形，前缀 REV-，镜像 Python db/db_task_identity.py:609 内部生成、不接受入参）；SQL 列与 params 同步补列（?1..?8）"
+    }
+  },
+  "id_generation_precedent": {
+    "source": "rust_ext/src/daemon/admin_handlers.rs::gen_assignment_id()（卡 A 先例，ASG-<hex16>）",
+    "entropy": "getrandom::fill 8 bytes → hex::encode（Rust 侧无 uuid crate）"
+  },
+  "schema_untouched": true,
+  "db_python_untouched": true,
+  "other_admin_handlers_untouched": true,
+  "cargo_check": {
+    "command": "cargo check --all-targets（msvc_env_c20.sh + CARGO_INCREMENTAL=0）",
+    "errors": 0,
+    "warnings": "仅既有 warning，无新增"
+  }
+}

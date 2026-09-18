@@ -1,0 +1,79 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "step_id": "S-1789397153199-ee90a328",
+  "step_index": 3,
+  "step_kind": "test",
+  "generated_at_local": "20260915-0426",
+  "code_changed": false,
+  "cargo_build_release": {
+    "command": "cargo build --release --bin cw-daemon（CARGO_TARGET_DIR=target-c20，msvc_env_c20.sh，CARGO_INCREMENTAL=0）",
+    "result": "Finished `release` profile [optimized] target(s) in 12m 02s",
+    "errors": 0,
+    "warnings": "180 条既有 warning（与 C-20 改动无关，未新增）",
+    "binary": {
+      "path": "rust_ext/target-c20/release/cw-daemon.exe",
+      "sha256": "367aea97f0739c3d311ca5c917a8eaf09a0a1d3a01f09b0b51a2118ba5c3c1af"
+    }
+  },
+  "cargo_test": {
+    "command": "cargo test --release --lib（CARGO_TARGET_DIR=target-c20）",
+    "summary": {
+      "passed": 1778,
+      "failed": 6,
+      "verdict": "FAILED"
+    },
+    "failed_tests": [
+      "cli::refresh::tests::full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files",
+      "cli::refresh::tests::history_failure_rolls_back_current_graph_update",
+      "cli::router::tests::test_d4_4_enterprise_windows_unavailable",
+      "cli::router::tests::test_d4_7_auto_windows_local",
+      "cli::runtime::tests::auto_mode_uses_local_when_socket_is_missing",
+      "cli::runtime::tests::enterprise_mode_is_fail_closed_when_socket_is_missing"
+    ]
+  },
+  "baseline_same_set": {
+    "source": "deliverables/software-company/_c13_cargo_test.log（C-13 阶段本地归档，`.gitignore` 忽略 *.log 故未入库；profile=test/debug）",
+    "profile_note": "基线为 `cargo test --lib`（test profile，1783 tests）；本次为 `cargo test --release --lib`（release profile，1784 tests）；profile 不同，仅用于失败集包含关系对照",
+    "summary": {
+      "passed": 1776,
+      "failed": 7,
+      "verdict": "FAILED"
+    },
+    "failed_tests": [
+      "cli::refresh::tests::full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files",
+      "cli::refresh::tests::history_failure_rolls_back_current_graph_update",
+      "cli::router::tests::test_d4_4_enterprise_windows_unavailable",
+      "cli::router::tests::test_d4_7_auto_windows_local",
+      "cli::router::tests::test_d5_1_env_override",
+      "cli::runtime::tests::auto_mode_uses_local_when_socket_is_missing",
+      "cli::runtime::tests::enterprise_mode_is_fail_closed_when_socket_is_missing"
+    ]
+  },
+  "comparison": {
+    "new_failures_vs_baseline": [],
+    "no_new_failures": true,
+    "failures_disappeared_vs_baseline": [
+      "cli::router::tests::test_d5_1_env_override"
+    ],
+    "conclusion": "当前 6 个失败全部属于 C-13 归档基线失败集（7 个）的子集，零新增失败；且 `cli::router::tests::test_d5_1_env_override` 相对基线已转绿"
+  },
+  "failure_root_cause_analysis": {
+    "cli::runtime::tests::enterprise_mode_is_fail_closed_when_socket_is_missing": "Windows 下 `is_daemon_available`（src/cli/router.rs:146-157）**忽略入参 socket_path**，固定探测命名管道 `\\\\.\\pipe\\callwarden-<sid>`；治理 daemon 在线（127.0.0.1:8950）→ 恒返回 true → 断言「无 socket 应 fail-closed」失效。属 CLI/MCP→daemon RPC cutover 后的陈旧断言（A 桶），与 C-20 改动无关。",
+    "cli::runtime::tests::auto_mode_uses_local_when_socket_is_missing": "同上（Auto 模式因管道可用而选 Enterprise，断言期望 Local）。",
+    "cli::router::tests::test_d4_4_enterprise_windows_unavailable": "同上（`route_command` 返回 Enterprise，断言期望 Unavailable）。",
+    "cli::router::tests::test_d4_7_auto_windows_local": "同上（返回 Enterprise，断言期望 Local）。",
+    "cli::refresh::tests::history_failure_rolls_back_current_graph_update": "src/cli/refresh.rs:776 `QueryReturnedNoRows`，与 admin_handlers 的 INSERT 改动无调用关系；基线即失败。",
+    "cli::refresh::tests::full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files": "src/cli/refresh.rs:820 断言 left=2/right=0，属 graph refresh 域；基线即失败。",
+    "c20_diff_reachability": "C-20 仅改 `rust_ext/src/daemon/admin_handlers.rs` 内 `handle_record_action_identity` / `handle_register_attestation_revocation` 两个 handler 及新增两个私有 id 生成函数；`cli::runtime` / `cli::router` / `cli::refresh` 三个模块均未触及、亦不调用上述 handler。"
+  },
+  "pytest_ab_recap": {
+    "before_binary_sha256": "79a2468f9e5b75dbf9c0cd22929867f88e4c031faeedcc4676d10de98a9467f5",
+    "before_result": "3 failed, 19 passed（失败即三个 C-20 新正例）",
+    "after_binary_sha256": "367aea97f0739c3d311ca5c917a8eaf09a0a1d3a01f09b0b51a2118ba5c3c1af",
+    "after_result": "22 passed"
+  },
+  "git_diff_check": "clean（rc=0，无输出）",
+  "finished_lines": [
+    "    Finished `release` profile [optimized] target(s) in 9m 56s"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "task_id": "T-1789397153231-f07a8d84",
+  "card": "C-21",
+  "step": 4,
+  "action": "release_verify",
+  "target_file": "rust_ext/src/daemon/snapshot_state.rs",
+  "step_id": "S-1789397153232-f08b46c4",
+  "snapshot_id": "dfcac6f16b827a30",
+  "git_head": "b7fa16f135eaa0f3512a458758c0d75110a4bc38",
+  "reported_at": "2026-09-15T07:00:00+08:00",
+  "deploy_receipt": {
+    "evidence_json": "C:/Users/wanpi/.callwarden/runtime/evidence/20260915-064441-b7fa16f135ea-f4b242d1.json",
+    "runtime_version": "20260915-064441-b7fa16f135ea-f4b242d1",
+    "status": "passed",
+    "rollback": false,
+    "error": null,
+    "git_head_in_receipt": "b7fa16f135eaa0f3512a458758c0d75110a4bc38",
+    "duration": "9m17s (22:44:41Z → 22:53:58Z)"
+  },
+  "health_check": {
+    "endpoint": "http://127.0.0.1:8535",
+    "pid": 25756,
+    "git_commit": "b7fa16f135eaa0f3512a458758c0d75110a4bc38",
+    "git_commit_equals_head": true,
+    "schema_version": 60,
+    "worker_status": "healthy",
+    "note": "端点以 health 回执为准（旧 HTTP 端点 8950 随 PID 41792 退役；部署脚本本次以 pipe 模式拉起的 PID 41880 随脚本会话终止，已按 C-16/C-17 先例以 current 二进制手动 HTTP 模式重启）"
+  },
+  "sha256_three_way": {
+    "deployed_current": "4EA587D395B1DC68EF08F73F95C277C66D44ABF13E7F7EA8AE5274A26F6EFB9A",
+    "deploy_receipt_expected": "4EA587D395B1DC68EF08F73F95C277C66D44ABF13E7F7EA8AE5274A26F6EFB9A",
+    "receipt_actual_matches_expected": true,
+    "independent_recheck_matches": true,
+    "target_c21_dev_build": "44117CBDFF26F4224689E310F8AEE5F54977083FBC0002AA8B478F69F458842B",
+    "dev_vs_deployed_differs_note": "target-c21 开发构建（HEAD=15c18a8 工作树态）与部署构建（HEAD=b7fa16f）嵌入 git_commit 不同 → sha256 必然不同，预期内；两者源码同一棵工作树（工作树在 dev 构建后未再改动 snapshot_state.rs，b7fa16f 即其提交）"
+  },
+  "processes": {
+    "old_daemon": { "pid": 41792, "endpoint": "http://127.0.0.1:8950", "sha256_prefix": "BD3AD671", "terminated_by": "refresh_shared_runtime.ps1（部署前停止）" },
+    "new_daemon": { "pid": 25756, "endpoint": "http://127.0.0.1:8535", "sha256_prefix": "4EA587D3", "launch": "run_in_background 前台 exec，cwd=仓库内" }
+  },
+  "check_items_covered": [
+    "refresh_shared_runtime.ps1 -TaskId T-1789397153231-f07a8d84 回执 status=passed / rollback=false / error=null",
+    "health.git_commit == HEAD（b7fa16f135eaa0f3512a458758c0d75110a4bc38，三方一致：receipt/health/独立 rev-parse）",
+    "部署产物 sha256 三方对照一致（独立复核 current/cw-daemon.exe == receipt.expected == receipt.actual）",
+    "PID 25756 存活且 worker_status=healthy",
+    "修复前二进制（BD3AD671）保留于 runtime/previous-20260915-065249/ 供 reviewer 反证复跑"
+  ],
+  "environment_disclosures": [
+    "脚本末尾旧 core-backup 清理因 genie-trash fail-closed 退出码 1（已知坑：swap 已完成可继续用；部署本体证据 JSON status=passed）",
+    "部署脚本本次以 named-pipe 模式拉起 daemon（PID 41880）且随脚本会话终止 → 按先例以 current 二进制 HTTP 模式手动重启（新端点 8535 已由 health 回执确认）",
+    "嵌套 powershell -File 首次运行因 $head 获取失败连锁报错（Substring 越界）→ 主会话点源运行成功；嵌套环境 git 可用性问题未深究（主会话点源即恢复）"
+  ]
+}

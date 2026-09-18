@@ -1,0 +1,38 @@
+{
+  "task_id": "T-1789436399100-948b9498",
+  "step": "S-1789436399101-949d95f8 (step1 implement)",
+  "generated_at": "2026-09-15T11:26:30+0800",
+  "head": "1930892",
+  "fix": {
+    "files": [
+      "rust_ext/src/daemon/edit_handlers.rs (handle_summary_generate L575-621 重写)",
+      "rust_ext/src/daemon/snapshot_state.rs (edit 路由块 conn 绑定 mut + &mut conn 传参)"
+    ],
+    "before": "per-row INSERT ... ON CONFLICT(symbol_hash) DO UPDATE（symbol_summaries 无任何 PRIMARY KEY/UNIQUE 约束 → 真 prepare 失败 → 恒 internal_error）",
+    "after": "整批 unchecked_transaction 包裹；per-row 三步版本化写：UPDATE symbol_summaries SET is_current=0 WHERE symbol_hash=?1 → SELECT COALESCE(MAX(version),0)（空集 NULL→0，与 Python `or 0` 等价）→ INSERT (..., version=next, is_current=1, ...)；tx.commit() 原子提交",
+    "basis": "db/db_summary.py generate_summary L56-76 版本化语义（卡 D 裁决维持）；B 选项（加 UNIQUE 约束）排除——symbol_summaries 设计为每符号多版本（_migrate_v5_to_v6 docstring），UNIQUE 会破坏 Python 侧多版本写",
+    "signature_change": "conn: &Connection → &mut Connection（unchecked_transaction 要求；daemon 先例 task_collab.rs L897/L2792/L3114/L3294）；全库扫描确认 handle_summary_generate 唯一调用点为 snapshot_state.rs edit 路由块 fallthrough 臂",
+    "python_semantics_order_preserved": true,
+    "read_query_untouched": "symbols/file_instances JOIN + kind 过滤 + LIMIT 200 的 SELECT 原样保留",
+    "routing_layer_untouched": "除 conn 可变性绑定外，方法名列表/match 臂/ACL 门禁零改动",
+    "db_schema_untouched": true,
+    "same_type_scan": "全库 ON CONFLICT 写点复查：唯一坏点即本处；job_runner.rs symbol_embeddings upsert 有 PRIMARY KEY 合法保留"
+  },
+  "post_fix_verification": {
+    "cargo_check": {
+      "command": "cargo check --all-targets (CARGO_TARGET_DIR=target-nf1, CARGO_INCREMENTAL=0)",
+      "result": "Finished dev profile in 30.53s, exit 0, zero errors",
+      "iteration_note": "首轮 E0277 ×2：query_row 闭包 |row| row.get(0) 类型推断落空（默认 ()），闭包内显式标注 get::<_, i64>(0) 后通过",
+      "toolchain_note": "MSVC 14.44.35207 @ VS2022 Community + SDK 10.0.26100.0（内联 PATH/LIB/INCLUDE 注入绕行 scripts/msvc-env.sh 的 coreutils basename 缺失坑：沙箱无 basename 且 shebang 解析撞 WSL bash 被安全策略拦；避开损坏的 VS18 14.50）"
+    },
+    "git_diff_check": "clean（提交前实测，3 文件 +83/−38）",
+    "anchor_migration": "tests/test_c21_edit_rule_route_workspace_authority.py：NF2 锚 xfail(strict) 移除 → test_summary_generate_nf2_fixed 正例；两次 summary.generate 调用构造多版本断言（v1 is_current 压 0 + v2 version=2/is_current=1）",
+    "files_touched_total": 3
+  },
+  "release_build_in_progress": "cargo build --release --bin cw-daemon + cargo test --release --lib（同隔离 target-nf1；产物供 step2 after 腿与 step3 lib 同集对照；结果记入 step2/step3 证据）",
+  "disclosures": [
+    "step0 已 report（req-e5658e2986d3，role=executor，lease L-2a291d0389ca013c fencing=1，snapshot dfcac6f16b827a30）",
+    "同文件并行编辑竞态自伤 1 次：snapshot_state.rs 两处 Edit 同消息并行下发，后者覆盖前者（注释+mut 绑定丢失），复核 git diff 发现后顺序补写；教训与工作记忆『同文件并行 Edit 会互相覆盖』一致，已按纪律收敛为串行",
+    "脚本环境坑（新增记录）：沙箱 bash 无 basename/dirname/mkdir，scripts/msvc-env.sh 无法 source；MSVC 环境改由 python 探测 + eval 注入等价获得（link.exe 解析验证 = VS2022 14.44.35207）"
+  ]
+}

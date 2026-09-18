@@ -1,0 +1,96 @@
+{
+  "task_id": "T-1789397153231-f07a8d84",
+  "card": "C-21",
+  "step": 2,
+  "action": "test",
+  "target_file": "tests/test_c21_edit_rule_route_workspace_authority.py",
+  "step_id": "S-1789397153232-f0893fa0",
+  "snapshot_id": "dfcac6f16b827a30",
+  "git_head": "15c18a8c58ec78ce16c009ccd99866473223fc02",
+  "reported_at": "2026-09-15T06:20:00+08:00",
+  "test_file_summary": "新隔离矩阵 22 测试：复用 C-17 夹具范式（registry dummy 行占 ROWID=1 复现「代理≠真 id」；USERPROFILE 隔离；Windows HTTP 合成 peer uid=4294967295；--http-bind=127.0.0.1:0 + manifest 发现；CW_DAEMON_BIN 显式二进制选择）。ROOT 改用 tmp_path_factory 可写目录（insert_agents_md_block / sync_agents_md 会向 root 写文件）。",
+  "matrix_composition": {
+    "acl_negatives": 2,
+    "strict_discriminating_positives": 10,
+    "non_discriminating_connectivity_positives": 7,
+    "fail_closed_negatives": 2,
+    "known_defect_anchors_xfail_strict": 2
+  },
+  "ab_legs": [
+    {
+      "leg": "before",
+      "binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+      "binary_sha256": "BD3AD67122A68A2B77E3CA15647587F2BE3F736447F2D1E20D509A68289175C8",
+      "note": "部署态二进制（C-19+C-20，无本卡修复）",
+      "junitxml": "C:/Users/wanpi/AppData/Local/Temp/c21_before_junit.xml",
+      "result": {
+        "tests": 22,
+        "failures": 10,
+        "errors": 0,
+        "skipped_xfail": 2,
+        "exit_code": 1
+      },
+      "failed_set": [
+        "test_edit_propose_writes_real_id_fk (FOREIGN KEY constraint failed: file_edit_audit)",
+        "test_edit_propose_range_patch_writes_real_id_fk (FOREIGN KEY constraint failed: file_edit_audit)",
+        "test_edit_record_token_savings_writes_real_id_fk (FOREIGN KEY constraint failed: token_savings_ledger)",
+        "test_edit_revert_hits_real_id_row (edit_not_found：WHERE workspace_id=代理2 不命中)",
+        "test_edit_propose_symbol_id_patch_resolves_symbol (symbol_not_found)",
+        "test_edit_propose_symbol_patch_resolves_symbol (symbol_not_found)",
+        "test_edit_restore_all_comments_restores_archived (restored=0)",
+        "test_rule_extract_candidates_extracts_from_real_scope (candidates_extracted=0)",
+        "test_rule_insert_agents_md_block_writes_root_file (查询 workspace root 失败: Query returned no rows)",
+        "test_rule_sync_agents_md_uses_real_root (查询 workspace root 失败: Query returned no rows)"
+      ],
+      "passed_set_note": "ACL×2 + fail-closed 负例×2 + 不可判别正例×7（restore_comment / candidate_create / candidate_accept / candidate_reject / gate.run_check / guardrail.add_rule / seed_bootstrap）共 10 项全过 —— 与「SQL 不消费 workspace_id」机械判定一致",
+      "xfail_set": ["test_summary_generate_nf2_known_defect", "test_gate_resolve_findings_nf1_known_defect"]
+    },
+    {
+      "leg": "after",
+      "binary": "C:/git_work/callwarden/rust_ext/target-c21/release/cw-daemon.exe",
+      "binary_sha256": "44117CBDFF26F4224689E310F8AEE5F54977083FBC0002AA8B478F69F458842B",
+      "note": "隔离 CARGO_TARGET_DIR=target-c21 release 构建（CARGO_INCREMENTAL=0，9m36s，零 error；180 条 warning 与既有基线同源）",
+      "junitxml": "C:/Users/wanpi/AppData/Local/Temp/c21_after_junit.xml",
+      "result": {
+        "tests": 22,
+        "failures": 0,
+        "errors": 0,
+        "skipped_xfail": 2,
+        "exit_code": 0
+      },
+      "all_discriminating_anchors_green": true
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF2",
+      "discovered_in": "step2 after 腿",
+      "handler": "summary.generate (edit_handlers.rs:576 handle_summary_generate)",
+      "mechanism": "upsert `ON CONFLICT(symbol_hash) DO UPDATE`（edit_handlers.rs:612-614）在权威 schema（db/schema.py symbol_summaries）上无匹配 PRIMARY KEY/UNIQUE 约束（仅非唯一索引 idx_summaries_hash）→ workspace 存在函数符号时恒 internal_error: symbol_summaries upsert: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint",
+      "masking_history": "修复前被路由缺陷双重掩盖（代理 id WHERE 恒空 → 从不触达 upsert，静默返回 generated=0）；路由修复后真实暴露 —— summary.generate 自上线起从未端到端可用",
+      "disposition": "本卡只登记不修（edit_handlers.rs / db/** 均不在本卡 allowed_paths）；测试以 xfail(strict) 正例体锚记录；修法二选一：DDL 加 UNIQUE 索引或 handler 改显式 upsert 语义；待独立缺陷卡承接"
+    },
+    {
+      "id": "NF1",
+      "discovered_in": "step0（本文件补充 A/B 实证）",
+      "handler": "gate.resolve_findings (edit_handlers.rs:227 handle_resolve_gate_findings)",
+      "mechanism": "SQL `task_id IN (SELECT id FROM tasks WHERE workspace_id = ?)` 引用不存在的 tasks.workspace_id 列 → prepare 恒失败；两腿实测均恒错（与代理/真 id 取值无关）",
+      "disposition": "与 NF2 同款 xfail(strict) 正例体锚；待独立缺陷卡承接"
+    }
+  ],
+  "classification_revisions_vs_step0": [
+    "edit.restore_comment / rule.candidate_reject：step0 按 handler 家族静态归入类 2；机械复验确认 SQL 不消费 workspace_id（let _ = workspace_id / let _ = (workspace_id, reason)），新旧实现均通过 → 归入不可判别（5 → 7）",
+    "summary.generate：由类 2 判别锚改列 NF2 已知缺陷锚（修复后到达 upsert 即报错，无法作为路由修复正例）",
+    "严格判别集 13 → 10；不可判别集 5 → 7；已知缺陷锚 +1（NF1 既有 + NF2 新发现）"
+  ],
+  "check_items_covered": [
+    "夹具复用 C-17 范式：registry 先插 dummy 行占 ROWID=1 复现「代理≠真 id」（断言 real ROWID==2）；USERPROFILE 隔离；HTTP 合成 peer uid=4294967295（Windows）— 实现于 _seed_registry/_spawn_isolated_daemon",
+    "写面正例（≥ edit.propose / edit.revert / rule.candidate_create / guardrail.add_rule 各 1）：全部实现且含只读读回校验；其中 edit.propose/edit.revert 为严格判别（before 恒失败 → after 过 + 落库 workspace_id==1 读回），candidate_create/guardrail.add_rule 如实标注不可判别（SQL 不消费 workspace_id）",
+    "隔离负例：未知 workspace_instance_id → not_found、他主 workspace → forbidden（ACL 不受修复影响）；edit.revert 缺失 id → edit_not_found、未知符号 → symbol_not_found（fail-closed 保持）"
+  ],
+  "environment_disclosures": [
+    "pytest 控制台输出在本环境管道/文件重定向下尾部最终计数行缺失（短摘要行正常）→ 两腿计数一律以 --junitxml 落盘值为权威",
+    "coreutils 缺失扩展至 basename/tail：scripts/msvc-env.sh 无法执行（L46/L68 basename）→ 构建以 Python 探测版本（MSVC 14.44.35207 / SDK 10.0.26100.0）后 bash 内联 export PATH/LIB/INCLUDE 等价复刻（未改脚本本身）",
+    "tests 运行须带 PYTHONPATH=C:/git_work（tests/conftest.py 顶层 import callwarden 先于测试模块 sys.path 注入）"
+  ]
+}

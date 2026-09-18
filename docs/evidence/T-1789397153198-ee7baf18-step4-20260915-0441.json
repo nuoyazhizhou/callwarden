@@ -1,0 +1,122 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "step_id": "S-1789397153199-ee90d848",
+  "step_index": 4,
+  "step_kind": "release_verify",
+  "generated_at_local": "20260915-0441",
+  "head_commit": "878e9242d2fb1a5b5266e5d501bb83b9f5c57fe9",
+  "deploy_gate": {
+    "command": "scripts/refresh_shared_runtime.ps1 -TaskId T-1789397153198-ee7baf18（Configuration=release，TargetDir 缺省=rust_ext/target/stage-refresh）",
+    "receipt_path": "C:\\Users\\wanpi\\.callwarden\\runtime\\evidence\\20260915-042841-878e9242d2fb-78914da5.json",
+    "receipt_status": "passed",
+    "receipt_git_head": "878e9242d2fb1a5b5266e5d501bb83b9f5c57fe9",
+    "git_head_matches_head": true,
+    "rollback": false,
+    "error": null,
+    "runtime_version": "20260915-042841-878e9242d2fb-78914da5",
+    "daemon_start_action": "start",
+    "daemon_start_pid": 26432,
+    "deploy_script_incident": {
+      "symptom": "脚本在末尾旧版本保留数清理（prune）步骤抛 [safe-delete][SAFE_DELETE_FAIL_CLOSED]（genie-trash 失败且拒绝回退删除），PowerShell 进程以非零码结束",
+      "already_completed_before_throw": [
+        "构建（stage-refresh）",
+        "runtime 切换（current 已换新）",
+        "新 daemon 启动（PID 26432）",
+        "证据回执落盘（status=passed / rollback=false / error=null）"
+      ],
+      "impact": "仅旧版本目录保留未清理（versions/ 下多留一份历史版本，磁盘占用）；不影响本次部署正确性",
+      "disclosure": "该 fail-closed 为既有环境问题（genie-trash），非本卡引入；证据回执 status=passed 且 rollback=false"
+    },
+    "daemon_restart_by_hand": {
+      "reason": "脚本以 `--socket \\\\.\\pipe\\callwarden-<sid>` 启动的 PID 26432 随后不再存活（`cw daemon health` 报 E_HTTP_MANIFEST_STALE：manifest PID 26432 已不存活），HTTP 权威面无监听",
+      "action": "以 run_in_background 前台 exec 重新拉起：`C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe --http-bind=127.0.0.1:8950`（cwd=仓库根，保证 git_commit 可解析）",
+      "resulting_pid": 41792,
+      "health": {
+        "endpoint": "http://127.0.0.1:8950",
+        "git_commit": "878e9242d2fb1a5b5266e5d501bb83b9f5c57fe9",
+        "schema_version": 60,
+        "worker_status": "healthy"
+      },
+      "git_commit_matches_head": true
+    }
+  },
+  "three_way_sha256": {
+    "stage_build_output": {
+      "path": "rust_ext/target/stage-refresh/release/cw-daemon.exe",
+      "sha256": "bd3ad67122a68a2b77e3ca15647587f2be3f736447f2d1e20d509a68289175c8"
+    },
+    "runtime_current": {
+      "path": "~/.callwarden/runtime/current/cw-daemon.exe",
+      "sha256": "bd3ad67122a68a2b77e3ca15647587f2be3f736447f2d1e20d509a68289175c8"
+    },
+    "running_process_41792": {
+      "path": "C:\\Users\\wanpi\\.callwarden\\runtime\\current\\cw-daemon.exe",
+      "sha256": "bd3ad67122a68a2b77e3ca15647587f2be3f736447f2d1e20d509a68289175c8"
+    },
+    "all_equal": true
+  },
+  "isolated_matrix_with_deployed_binary": {
+    "command": "PYTHONPATH=C:/git_work CW_DAEMON_BIN=~/.callwarden/runtime/current/cw-daemon.exe .venv_test/Scripts/python.exe -m pytest tests/test_c17_admin_route_workspace_authority.py -v",
+    "result": "============================= 22 passed in 17.09s =============================",
+    "note": "部署同 sha 二进制（bd3ad671…）复跑隔离矩阵，22/22 通过 —— 功能证明"
+  },
+  "production_readonly_check": {
+    "db": "~/.callwarden/callwarden.db（只读连接 mode=ro）",
+    "action_identities_rows": 4718,
+    "attestation_revocation_records_rows": 6,
+    "action_identities_null_or_empty_action_id": 0,
+    "revocation_null_or_empty_revocation_id": 0,
+    "action_identities_latest": [
+      [
+        4722,
+        1,
+        "ACT-daemon-state_transition-T-1789397153198-ee7baf18-1786265403166",
+        "state_transition",
+        1789417638.7374485
+      ],
+      [
+        4721,
+        1,
+        "ACT-daemon-state_transition-T-1789397153198-ee7baf18-1786265403163",
+        "state_transition",
+        1789416700.119192
+      ]
+    ],
+    "revocation_latest": [
+      [
+        6,
+        1,
+        "REV-20fa980c4f0d4ed8",
+        "compromised",
+        1785738506.102734
+      ],
+      [
+        5,
+        1,
+        "REV-fb2b332652254f3f",
+        "rotated",
+        1785736542.8612592
+      ]
+    ],
+    "workspaces_ids": [
+      1,
+      2,
+      3,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      17,
+      19,
+      20,
+      21
+    ],
+    "interpretation": "两表历史行由 Python 权威实现（db/db_task_identity.py）写入，action_id 形态 `ACT-daemon-state_transition-<task>-<ts>`、revocation_id 形态 `REV-<hex16>`（如 REV-20fa980c4f0d4ed8），与 Rust 侧本次生成格式同源；零 NULL/空值。Rust daemon 路由此前恒失败，故两表中不存在由 daemon 路由写入的行。",
+    "no_synthetic_write_probe": true,
+    "no_synthetic_write_probe_reason": "本卡为写路径缺陷修复；生产库不接受合成写入（会污染治理审计链），功能证明改由「部署同 sha 二进制的隔离矩阵 22/22」提供"
+  },
+  "git_diff_check": "clean（rc=0）"
+}

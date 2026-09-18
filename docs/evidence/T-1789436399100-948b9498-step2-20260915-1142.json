@@ -1,0 +1,37 @@
+{
+  "task_id": "T-1789436399100-948b9498",
+  "step": "S-1789436399101-949dc8c0 (step2 test)",
+  "generated_at": "2026-09-15T11:42:00+0800",
+  "head": "1930892",
+  "ab_design": "迁移后测试（NF2 锚 xfail 已移除 → test_summary_generate_nf2_fixed 正例 + 双调用版本化断言）分别对旧/新二进制各跑全量 22 测试矩阵；CW_DAEMON_BIN 显式指定（C-16/C-17 规则），隔离 daemon 夹具自动 spawn，junitxml 计数为准",
+  "before_leg": {
+    "binary": "C:/Users/wanpi/AppData/Local/Temp/nf2_before_bin/cw-daemon.exe（部署版冻结副本）",
+    "binary_sha256": "265197734DC05E49DF99BC88603F18ECE2D4990763B77B9B92290E06C436709C",
+    "binary_identity": "NF1 修复部署版（git_commit 5c9806b，含 NF2 缺陷），即当前生产运行二进制",
+    "junitxml": "C:/Users/wanpi/AppData/Local/Temp/nf2_ab_before.xml",
+    "result": "tests=22 failures=1 errors=0 skipped=0 time=23.008s",
+    "failed_set": [
+      "test_summary_generate_nf2_fixed"
+    ],
+    "failure_message": "internal_error: symbol_summaries upsert: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint",
+    "interpretation": "唯一失败即 NF2 锚，错误文案逐字命中 step0 裁决根因（真 prepare 失败）——缺陷在旧二进制上真实复现"
+  },
+  "after_leg": {
+    "binary": "rust_ext/target-nf1/release/cw-daemon.exe（本卡修复 dev 构建）",
+    "binary_sha256": "3621D1A548A58EBF3FC8085A0258D83E024559F4931CF604016DFDDF59217EE0",
+    "junitxml": "C:/Users/wanpi/AppData/Local/Temp/nf2_ab_after.xml",
+    "result": "tests=22 failures=0 errors=0 skipped=0 time=25.034s",
+    "interpretation": "22 全绿：NF2 锚通过（两次 summary.generate 均成功 + 多版本断言 v1 压 0 / v2 version=2 is_current=1 成立）"
+  },
+  "ab_curve": "1F → 0F，判别力成立",
+  "anchor_migration": {
+    "file": "tests/test_c21_edit_rule_route_workspace_authority.py",
+    "change": "test_summary_generate_nf2_known_defect（xfail strict）→ test_summary_generate_nf2_fixed（正例）：断言 err is None + summaries_generated>=2 + 两行多版本（v1: version=1/is_current=0；v2: version=2/is_current=1，summary 含 c21_fn_a）",
+    "file_header_docstring": "NF2 段同步改写为已承接迁移表述；NF1 锚 docstring 中『NF2 锚保持 xfail』过时表述同步更正"
+  },
+  "tooling_disclosures": [
+    "pytest 解释器 .venv_test/Scripts/python.exe + PYTHONPATH=C:/git_work（conftest 导入 callwarden 包所需；首次漏 PYTHONPATH 报 ModuleNotFoundError 后修正重跑）",
+    "before/after 两腿二进制 sha256 不同属预期：before=部署版冻结副本，after=隔离 dev 构建（与 NF1 step3 target_nf1_dev_build 披露同源）；部署构建的 sha256 三方链在 step3 门禁落地",
+    "同文件并行编辑竞态（step1 期间自伤 1 次）已按串行纪律收敛，本步测试文件编辑全程串行"
+  ]
+}

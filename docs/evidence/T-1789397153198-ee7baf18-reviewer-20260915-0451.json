@@ -1,0 +1,91 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "card": "C-20",
+  "role": "reviewer",
+  "reviewer_identity": {
+    "agent_id": "reviewer-wb-c20-01",
+    "agent_instance_id": "inst-rev-wb-c20-01",
+    "session_id": "sess-rev-wb-c20-20260915",
+    "model_id": "deepseek-v4-flash",
+    "lease_id": "L-4ea5b0d32d52e1f2",
+    "fencing_counter": 1
+  },
+  "independence": {
+    "independence_requirement": "required",
+    "different_agent_from": ["executor-wb-c20-01"],
+    "different_session_from": ["sess-exec-wb-c20-20260915"],
+    "note": "reviewer 身份与 executor 三元组（agent/session/instance）全不相同；lease 在 executor lease 已释放后才取得"
+  },
+  "reviewed_at": "2026-09-15T04:51:24+08:00",
+  "verdict": "reviewer_pass",
+  "authoritative_endpoint": "http://127.0.0.1:8950",
+  "daemon_git_commit": "878e9242d2fb1a5b5266e5d501bb83b9f5c57fe9",
+  "daemon_pid": 41792,
+  "checks": [
+    {
+      "id": "R1",
+      "kind": "structure_code_fact",
+      "title": "schema 约束事实核对",
+      "result": "pass",
+      "detail": "db/schema.py：action_identities.action_id TEXT NOT NULL UNIQUE（紧跟 workspace_id 之后）；attestation_revocation_records.revocation_id TEXT NOT NULL UNIQUE（紧跟 workspace_id 之后）。两列确为 NOT NULL 且 UNIQUE，缺陷前提成立。"
+    },
+    {
+      "id": "R2",
+      "kind": "structure_code_fact",
+      "title": "修复代码事实核对",
+      "result": "pass",
+      "detail": "rust_ext/src/daemon/admin_handlers.rs 新增 gen_action_id()/gen_revocation_id()（getrandom 8B → hex::encode，前缀 ACT-/REV-，与既有 gen_assignment_id 同源熵形，不引入 uuid crate）。handle_record_action_identity：调用方 action_id 入参优先、为空回退生成；INSERT 列清单 11 列 / params 11 个，action_id 位于 workspace_id 之后。handle_register_attestation_revocation：内部生成 revocation_id（镜像 Python db/db_task_identity.py:609 不接受入参的语义）；INSERT 8 列 / params 8 个。列数与占位符数量一致。"
+    },
+    {
+      "id": "R3",
+      "kind": "structure_code_fact",
+      "title": "提交面核对",
+      "result": "pass",
+      "detail": "commit 878e9242d2fb1a5b5266e5d501bb83b9f5c57fe9：7 files changed, 534 insertions(+), 23 deletions(-)。生产代码仅 rust_ext/src/daemon/admin_handlers.rs（+55/-?）；db/schema.py 零触碰（符合「不改 schema」约束）；其余为测试与证据/盘点文档。提交前缀为本卡 task_id。"
+    },
+    {
+      "id": "R4",
+      "kind": "test_quality",
+      "title": "新增断言判别力核对",
+      "result": "pass",
+      "detail": "三条正例均做落库全字段读回 + 形态断言（ACT-/REV- 前缀 + 16 hex + 全字符集）+ workspace_id == WS_ID(1) 锚定；另含调用方 id 优先、UNIQUE 冲突拒绝、两次生成 id 互不相同三条负向/唯一性断言。非「恒真」断言。"
+    },
+    {
+      "id": "R5",
+      "kind": "independent_rerun",
+      "title": "独立复跑（已部署二进制）",
+      "result": "pass",
+      "detail": "CW_DAEMON_BIN=C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe（sha256 bd3ad67122a68a2b77e3ca15647587f2be3f736447f2d1e20d509a68289175c8）运行 tests/test_c17_admin_route_workspace_authority.py → 22 passed / 0 failed。与 executor 声明一致。"
+    },
+    {
+      "id": "R6",
+      "kind": "counter_evidence",
+      "title": "反证（撤掉修复 → 预期失败）",
+      "result": "pass",
+      "detail": "同一测试集改用 C-19 基线二进制 rust_ext/target-c19/release/cw-daemon.exe（含 C-19 修复、不含 C-20 修复）复跑 → 恰好 3 条失败，且失败点即三条新正例：NOT NULL constraint failed: action_identities.action_id / attestation_revocation_records.revocation_id。A/B 判别力由 reviewer 独立复现成立，非仅凭 executor 自述。"
+    },
+    {
+      "id": "R7",
+      "kind": "evidence_integrity",
+      "title": "证据文件哈希核对",
+      "result": "pass",
+      "detail": "step1 sha256 fe2eac573d1c4c96… / step2 e4062d5b15cccdd3… / step3 f6144fbcd8ec570a… / step4 c7c6f2be51bbbdfd… —— 与 executor 上报值逐字一致，重算吻合。"
+    },
+    {
+      "id": "R8",
+      "kind": "scope_check",
+      "title": "范围与路径白名单",
+      "result": "pass",
+      "detail": "改动文件全部落在 reviewer role view 的 allowed_edit_scope.files 内（c20_remediation_inventory.md / admin_handlers.rs / test_c17_admin_route_workspace_authority.py）；无 forbidden 路径；无 schema 变更。"
+    },
+    {
+      "id": "R9",
+      "kind": "residual_risk",
+      "title": "残留风险与披露充分性",
+      "result": "pass_with_disclosure",
+      "detail": "executor 已显式披露三处：(1) 部署脚本旧版本清理步骤抛 [safe-delete][SAFE_DELETE_FAIL_CLOSED]（发生在 build/switch/start/回执之后，回执 status=passed，仅旧版本目录未清理，不影响本次二进制）；(2) 生产核查为只读，未做合成写 probe，故「生产修复生效」为结构+隔离环境双重证据推断而非生产写入实测；(3) cargo test 6 条失败为 Windows is_daemon_available 忽略 socket_path 参数导致的陈旧断言，失败集为 C-13 归档基线的真子集，零新增。三项披露属实且不影响本次判定。"
+    }
+  ],
+  "conclusion": "C-20（§W20 F2+F3）修复经独立复核：缺陷前提真实（schema NOT NULL UNIQUE）、修法与 Python 权威实现语义一致（action_id 入参优先 / revocation_id 内部生成）、判别力由 reviewer 独立 A/B 复现、提交面收敛且前缀合规、证据哈希吻合、残留风险已披露。判定 reviewer_pass。",
+  "reviewer_scope_verdict": "in_scope_acceptable"
+}

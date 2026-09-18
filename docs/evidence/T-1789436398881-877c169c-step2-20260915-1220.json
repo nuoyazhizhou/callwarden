@@ -1,0 +1,38 @@
+{
+  "task_id": "T-1789436398881-877c169c",
+  "step": "S-1789436398906-88f3e8c4 (step2 test)",
+  "generated_at": "2026-09-15T10:17:41+0800",
+  "head": "4f0f765 (worktree, uncommitted test migration)",
+  "test_migration": {
+    "file": "tests/test_c21_edit_rule_route_workspace_authority.py",
+    "method": "atomic script (4 anchors, count==1 guard + in-process post-write verification: py_compile + shape checks)",
+    "changes": [
+      "header NF1 note updated: 已由 NF1 卡承接迁移",
+      "new _seed_gate_decision(): 4-row seed (workspace_authority_captures + tasks + task_workspace_bindings + task_gate_decisions) satisfying daemon-side FK chain",
+      "fixture calls _seed_gate_decision(codegraph_db) after _seed_edit_audit",
+      "NF1 anchor migrated: test_gate_resolve_findings_nf1_known_defect (xfail strict) -> test_gate_resolve_findings_nf1_fixed (positive, with DB-effect assertion reason==resolved)",
+      "NF2 anchor (test_summary_generate_nf2_known_defect) untouched, remains xfail (NF2 card scope)"
+    ],
+    "xfail_count_after": 1
+  },
+  "ab_verification": {
+    "before_leg": {
+      "binary": "target/stage-refresh/release/cw-daemon.exe sha256 4EA587D395B1DC68... (C-21 deployed b7fa16f, pre-fix)",
+      "result": "1 failed / 20 passed / 1 xfailed in 19.63s",
+      "failed": "test_gate_resolve_findings_nf1_fixed: gate_not_found: gate GATE-c21-nf1 不存在",
+      "note": "failure form proves step0-corrected defect shape (correlated name resolution -> always-empty subquery -> gate_not_found), NOT prepare error as C-21 registered"
+    },
+    "after_leg": {
+      "binary": "target-nf1/release/cw-daemon.exe (this fix, release build 11m44s zero errors)",
+      "result": "21 passed / 1 xfailed / 0 failed in 16.18s",
+      "note": "NF1 anchor green (seed row hit, reason resolved persisted); other 21 cases zero perturbation"
+    },
+    "discriminating_anchor": "test_gate_resolve_findings_nf1_fixed (1F before -> 0F after)"
+  },
+  "disclosures": [
+    "step0 correction: C-21 registered the defect as prepare-always-fails; A/B实测 proves SQLite correlated name resolution silently resolves the unknown column to outer task_gate_decisions.workspace_id (all NULL) -> subquery always empty -> gate_not_found. Fix direction and discriminating power unchanged; inventory §1/§7 updated with the corrected shape",
+    "step1 report initially carried stale evidence-hash (3b419412) after a step-id typo fix changed the JSON; re-reported with true hash f872a195 (req-219de3b5b885, latest reported event authoritative; C-22 precedent)",
+    "release build for A/B done in isolated CARGO_TARGET_DIR=target-nf1 (11m44s); deploy gate still runs its own build in step3",
+    "cargo test --release --lib same-set comparison running in background; result to be attached in step3 evidence if still pending"
+  ]
+}

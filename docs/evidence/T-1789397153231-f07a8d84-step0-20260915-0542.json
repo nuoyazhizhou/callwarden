@@ -1,0 +1,55 @@
+{
+  "task_id": "T-1789397153231-f07a8d84",
+  "card": "C-21",
+  "step": 0,
+  "step_id": "S-1789397153232-f087d264",
+  "action": "adjudicate",
+  "target_file": "deliverables/software-company/c21_remediation_inventory.md",
+  "snapshot_id": "dfcac6f16b827a30",
+  "git_head": "15c18a8c58ec78ce16c009ccd99866473223fc02",
+  "reported_at": "2026-09-15T05:42:00+08:00",
+  "check_items": [
+    {
+      "id": 1,
+      "item": "在本 HEAD 枚举第二路由块全部方法：方法名逐字清单 + 实测行号 + 读写性质",
+      "result": "done",
+      "detail": "实测 19 方法（行 3266-3305，臂头 3266-3272 + 块体 3273-3305）。清单与读写性质见 c21_remediation_inventory.md §1 表格（逐条 handler 名 + edit_handlers.rs 实测行号 + workspace_id 用法）。未照抄卡描述行号（卡描述 3262 邻域 → 实测 3266-3305）。"
+    },
+    {
+      "id": 2,
+      "item": "对照 C-17 admin 块收口形态与紧邻 semgrep 块 open_codegraph_db_write 正确形态，逐方法判定缺陷",
+      "result": "done",
+      "detail": "admin 块收口锚 = 行 3215；semgrep 写面锚 = 行 3250；semgrep 读面锚 = 行 3261。第二路由块（3273-3283）为全文件唯一残留「owned_workspace 代理 ROWID + open_write」组合。判别力分布：类 1（FK 写失败）×3（edit.propose / edit.propose_range_patch → file_edit_audit；edit.record_token_savings → token_savings_ledger，两表 workspace_id 均有 FK→workspaces(id)）；类 2（WHERE/查根不命中）×10；不可判别 ×5（gate.run_check / rule.seed_bootstrap / rule.candidate_accept / rule.candidate_create / guardrail.add_rule —— 源码 let _ = workspace_id; 或写表无 workspace_id 列）。"
+    },
+    {
+      "id": 3,
+      "item": "同型扫描：确认是否存在第三路由块",
+      "result": "done",
+      "detail": "全文件实测：owned_workspace( 45 处，其中取 .workspace_id 作 handler 作用域仅 3 处（3168 task.job_submit / 3274 本卡目标 / 3210 起 admin 块注释）；open_write( 调用点全文件仅 1 处 = 行 3283。第三处同型 = task.job_submit（行 3166-3179，代理 ROWID 传入 rpc_job_submit）——只登记为后续卡候选，本卡不修（验收条款要求其它路由块零触碰）。"
+    },
+    {
+      "id": 4,
+      "item": "复核 edit/rule handler 对 conn 的用法（零 handler 改动可行性）",
+      "result": "done",
+      "detail": "19 个 handler 签名统一 (conn: &Connection, workspace_id: i64, params: &Value)；open_codegraph_db_write 返回拥有所有权的 Connection，路由层以 &conn 传入即可 → 签名完全兼容，handler 层零改动可行。open_write 与 open_codegraph_db_write 解析同一物理库（codegraph_db 模板同源），唯一差异是 workspace_id 取值。"
+    },
+    {
+      "id": 5,
+      "item": "本 step 不改任何代码，产出落 deliverables 证据文档",
+      "result": "done",
+      "detail": "产出 deliverables/software-company/c21_remediation_inventory.md（本 step 零代码改动，git status 未见 snapshot_state.rs 修改）。"
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF1",
+      "title": "gate.resolve_findings 引用不存在的列 tasks.workspace_id",
+      "severity": "P1",
+      "detail": "edit_handlers.rs:227 handle_resolve_gate_findings SQL 含 task_id IN (SELECT id FROM tasks WHERE workspace_id = ?4)，而 db/schema.py 的 tasks 表无 workspace_id 列（实测列集 id/title/description/creator/status/created_at/updated_at/applied_at/closed_at/parent_id/depth/sort_order）→ prepare 恒失败。与 §W20 F1 同源（C-19 已修 admin.gc_audit_get/list 同一错误模式，但 gate.resolve_findings 不在 C-19 范围）。与本卡代理 id 缺陷无关：路由层收口修不好它（换真 id 后 SQL 仍 prepare 失败）。本卡只登记不改（验收硬约束 handler 层零改动）；step2 隔离矩阵将该法如实标注为 known-defect 锚（保持红），不伪装为绿。建议后续承接卡按 C-19 同款修法（task_workspace_bindings join）处理。"
+    }
+  ],
+  "side_effects_registered": [
+    "open_write 闭包（行 2767-2777）在移除其唯一调用点（行 3283）后变为未使用 → 预加 #[allow(unused)] + C-21 注释（不删除闭包，保持 diff 最小；codegraph_db 闭包仍被行 3177 task.job_submit 使用，不受影响）"
+  ],
+  "code_changes": []
+}

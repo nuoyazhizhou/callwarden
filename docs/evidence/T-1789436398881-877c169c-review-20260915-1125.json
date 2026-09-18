@@ -1,0 +1,54 @@
+{
+  "task_id": "T-1789436398881-877c169c",
+  "card": "NF1",
+  "review_type": "reviewer_independent_verification",
+  "reviewer": "reviewer-wb-nf1-01",
+  "session": "sess-rev-nf1-20260915",
+  "reported_at": "2026-09-15T11:25:00+08:00",
+  "executor_handoff_reference": {
+    "request_id": "req-handoff-exec-nf1-02",
+    "assignment_id": "A-915edc1183c611ce970f3415",
+    "evidence": "docs/evidence/T-1789436398881-877c169c-step3-20260915-1050.json",
+    "evidence_hash": "sha256:661e2672e628b034190d6eb7b2e36877ca3776e2d4b5725a34beaf3ab9534533"
+  },
+  "independent_checks": [
+    {
+      "check": "隔离矩阵对部署二进制独立复跑",
+      "command": "CW_DAEMON_BIN=C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe pytest tests/test_c21_edit_rule_route_workspace_authority.py --junitxml（reviewer 自有会话独立发起）",
+      "junitxml": "C:/Users/wanpi/AppData/Local/Temp/nf1_review_junit.xml",
+      "result": {"tests": 22, "failures": 0, "errors": 0, "skipped_xfail": 1, "console": "21 passed, 1 xfailed in 28.37s"},
+      "conclusion": "NF1 锚（test_gate_resolve_findings_nf1_fixed）在生产二进制上绿；NF2 锚保持 xfail 属 NF2 卡进度，符合预期"
+    },
+    {
+      "check": "修复 commit 内容独立核验",
+      "command": "git show 5c9806b -- rust_ext/src/daemon/edit_handlers.rs",
+      "observed_diff": "- WHERE decision_id = ?3 AND task_id IN (SELECT id FROM tasks WHERE workspace_id = ?4)  ->  + WHERE decision_id = ?3 AND task_id IN (SELECT task_id FROM task_workspace_bindings WHERE workspace_id = ?4)",
+      "conclusion": "与 C-19 handle_gc_audit_get 修复同款、单点 1+/1-，handler 其余逻辑（changed==0 -> gate_not_found 分支）零改动；commit 范围 5 文件 +279/-21 全部在卡白名单内（edit_handlers.rs / c21 测试文件 / nf1 清单 / step1+2 证据）"
+    },
+    {
+      "check": "部署闭环三方独立复核",
+      "health": {"endpoint": "http://127.0.0.1:8535", "pid": 39428, "git_commit": "5c9806b7a6f1016aca1b965caeecd7a4415b5213", "git_commit_equals_head": true, "worker_status": "healthy"},
+      "sha256": {"receipt_expected": "265197734dc05e49df99bc88603f18ece2d4990763b77b9b92290e06c436709c", "independent_recheck": "265197734DC05E49DF99BC88603F18ECE2D4990763B77B9B92290E06C436709C", "match": true},
+      "deploy_receipt": {"file": "C:/Users/wanpi/.callwarden/runtime/evidence/20260915-103844-5c9806b7a6f1-68c540f2.json", "status": "passed", "rollback": false, "error": null},
+      "conclusion": "部署二进制 == 修复 commit 构建 == 生产运行实例，三方一致"
+    },
+    {
+      "check": "A/B 判别链复核（step2 证据引用）",
+      "before_leg": {"binary": "target/stage-refresh release 4EA587D3…（C-21 部署版=修复前）", "result": "1F/20P/1xf，NF1 锚失败签名 gate_not_found: gate GATE-c21-nf1 不存在"},
+      "after_leg": {"binary": "target-nf1 release（修复版）", "result": "21P/1xf/0F"},
+      "conclusion": "1F→0F 判别锚成立；行为曲线与 step0 更正后的根因（SQLite 相关名解析 -> 子查询恒空 -> 恒 gate_not_found）自洽"
+    },
+    {
+      "check": "生产探针披露复核",
+      "observation": "gate.resolve_findings(不存在 gate_id) 返回结构化 gate_not_found 无状态变更",
+      "conclusion": "探针判别力披露如实（新旧二进制对不存在 id 同响应，判别力来自 A/B + sha256 链）；无合成写，in_scope_acceptable"
+    }
+  ],
+  "disclosures": [
+    "work_order 所述「修复前恒 prepare 失败」已经 step0/step2 A/B 实证更正为「修复前恒 gate_not_found」（SQLite 相关名解析把未知列 tasks.workspace_id 解析到外层 UPDATE 表 task_gate_decisions 的 schema 保留列，261 行全 NULL -> 子查询恒空）；修复方向（bindings 子查询）不受影响，inventory §1/§7 已同步更正并披露",
+    "step1 曾因证据 JSON step-id 笔误（88f3e8c4 -> 88c0133c）修正后重报（req-219de3b5b885），事件流留痕完整",
+    "tester 角色 lease（10:31 取，TTL 3600s）token 未随会话延续，无法主动释放，reviewer 腿推进依赖其自然过期；本证据的全部复核不依赖该 lease"
+  ],
+  "overall": "pass",
+  "conclusion": "NF1 修复正确、部署闭环真实、证据链完整自洽，提请 adjudicator 裁定。"
+}

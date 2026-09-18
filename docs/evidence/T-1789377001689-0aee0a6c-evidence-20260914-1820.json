@@ -1,0 +1,48 @@
+{
+  "task_id": "T-1789377001689-0aee0a6c",
+  "title": "C-18 承接：MCP-015 assignment_show 陈旧断言修复与 W3 harness 基建收敛",
+  "generated_at": "2026-09-14T18:20+08:00",
+  "executor": {
+    "agent_id": "executor-wb-c18-01",
+    "agent_instance_id": "inst-exec-wb-c18-01",
+    "session_id": "sess-exec-wb-c18-20260914",
+    "model_id": "deepseek-v4-flash"
+  },
+  "git": {
+    "base_commit": "96fa721 (recovery: git 对象库清扫事故——以 e064853 为锚重建 b6fbcc0 全部 tracked 内容)",
+    "note": "2026-09-14 17:34-17:38 发生 .git/objects 清扫事故，HEAD 已以单一恢复 commit 96fa721 重建；旧 tip b6fbcc0 保留为分支 recovery/pre-sweep-20260914。本卡全部改动基于恢复后工作树，A/B 基线取 96fa721 版本。",
+    "diff_check": "clean (git diff --check 无输出)"
+  },
+  "deployment_disclosure": {
+    "deployed": false,
+    "reason": "本卡 tests-only：改动全部位于 tests/（_w3_harness.py、test_mcp_assignment_show_http_rpc.py、test_mcp_compat_identity-lease-small_http_rpc.py），无任何产品代码改动（rust_ext/**、server/**、db/** 均未触碰），不触发部署门禁。测试验证使用既有 daemon 二进制。",
+    "daemon_binary_sha256": "c9c3a5dba14488f6c81df59f6a4b4a4157983b756057243f4eb52d84866810d0",
+    "daemon_path": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe",
+    "daemon_health": {"endpoint": "http://127.0.0.1:8950", "pid": 7744, "git_commit": "186582ee2f18dddae41500b4d3556eca267d9a0e", "worker_status": "healthy"}
+  },
+  "ab_evidence": {
+    "method": "单文件回滚 A/B——git show 96fa721:<file> 覆盖三个测试文件 → 跑同集 → cp 还原 → diff -q 三文件一致 + git status 仍为 M",
+    "before": "6 failed / 9 passed（test_mcp_assignment_show_http_rpc.py 4 例失败：no_match / with_role / unknown_workspace / new_client_instance_stable；test_mcp_compat_identity-lease-small_http_rpc.py 2 例失败：test_assignment_show_no_match / test_assignment_show_role_filter）；失败签名 E_TASK_WORKSPACE_UNBOUND（合成 task_id 未绑定）",
+    "after": "16 passed / 0 failed（4+2 例经 well-known 已绑定 task W3_ASSIGN_SHOW_BOUND_TASK=C18 保留原覆盖语义；unknown_workspace 改断 E_WORKSPACE_AUTHORITY_MISMATCH；新增 test_assignment_show_unbound_task_fail_closed 正例断言 E_TASK_WORKSPACE_UNBOUND）",
+    "before_output": "deliverables/software-company/T-1789377001689-0aee0a6c-pytest-before.txt",
+    "after_output": "deliverables/software-company/T-1789377001689-0aee0a6c-pytest-after.txt"
+  },
+  "family_regression": {
+    "scope": "W3 MCP 家族同集对照（tests/test_mcp_*_http_rpc.py，77 文件）",
+    "conclusion": "修复后除与本卡无关的 *_daemon_unavailable_fail_closed 系列（本机注入代理把 127.0.0.1:9 拦成 502 所致的 20 例环境假失败，A/B 已归因为 0 贡献）外，零新增失败。assignment_show 相关两文件 16/16 全绿。",
+    "proxy_note": "跑 pytest 一律 env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy NO_PROXY=127.0.0.1,localhost"
+  },
+  "files": [
+    {"path": "tests/_w3_harness.py", "sha256": "6f7c6c2d6841809155ac2d52b8b92061a6c7ec5fe049d7278a00f1bda9d23908", "note": "追加（未改既有行）W3_ASSIGN_SHOW_BOUND_TASK 常量与 seed_task_workspace_binding()；find_daemon_binary() 收敛为 MSYS 路径感知版本（_to_windows_path/_candidate_exists，选中候选打印路径+sha256）"},
+    {"path": "tests/test_mcp_assignment_show_http_rpc.py", "sha256": "f2dc7a5e73b7edfdb6c74cb2e4457d6e080a60fd14b4c9cca7035aaff0ce575c", "note": "3 例迁移至已绑定 task；unknown_workspace 改断 E_WORKSPACE_AUTHORITY_MISMATCH；新增 UNBOUND 正例"},
+    {"path": "tests/test_mcp_compat_identity-lease-small_http_rpc.py", "sha256": "bbb011b468ec10a092cfbb582f649d32ffc145b83ac922e353da281a0a741ecb", "note": "2 例同迁移"},
+    {"path": "deliverables/software-company/T-1789377001689-0aee0a6c-inventory.md", "sha256": "8d6b0ff812030565873dbafacf1c629d67d52ae16dff7848208374b008f6e25d", "note": "step0 复核文档：4 例失败签名、A/B 反证（基线 6 failed/9 passed vs 修复后 16/16）、逐例陈旧断言判定、W3 家族同类扫描（sibling 文件 2 例补充发现）"}
+  ],
+  "steps_results": {
+    "S-1789377001690-0b04e4d0": "step0 复核完成，见 inventory.md",
+    "S-1789377001690-0b05c954": "harness seed + find_daemon_binary 收敛完成",
+    "S-1789377001690-0b062520": "4 例断言迁移 + UNBOUND 正例完成",
+    "S-1789377001690-0b066b70": "回归 A/B 同集对照完成：基线 6F/9P → 修复后 16P",
+    "S-1789377001690-0b06abe4": "tests-only closure：未部署披露于上；git diff --check clean；commit 前缀将用本卡 task_id"
+  }
+}

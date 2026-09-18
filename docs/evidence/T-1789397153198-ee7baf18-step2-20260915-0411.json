@@ -1,0 +1,41 @@
+{
+  "task_id": "T-1789397153198-ee7baf18",
+  "step_id": "S-1789397153199-ee905d3c",
+  "step_index": 2,
+  "step_kind": "test",
+  "generated_at_local": "20260915-0411",
+  "head_commit": "e07fbecbba96a0ef05caa8517bd0f034e4ad8ed0",
+  "changed_file": "tests/test_c17_admin_route_workspace_authority.py",
+  "hash_before": "10db05a9f36fa0cc6ca896871756f49b50f47654a9400019ade8846dbec6f875",
+  "hash_after": "60275ddfceb56e221209910652ba0f64bb0ff6a139c93e3e765eb6a98b8c13d4",
+  "diffstat": "tests/test_c17_admin_route_workspace_authority.py | 128 ++++++++++++++++++----\n 1 file changed, 109 insertions(+), 19 deletions(-)",
+  "ab_discrimination": {
+    "before_binary": {
+      "path": "rust_ext/target-c19/release/cw-daemon.exe",
+      "sha256": "79a2468f9e5b75dbf9c0cd22929867f88e4c031faeedcc4676d10de98a9467f5",
+      "contains_c19_fix": true,
+      "contains_c20_fix": false,
+      "pytest_summary": "======================== 3 failed, 19 passed in 15.85s ========================",
+      "raw_tail": "============================= test session starts =============================\r\nplatform win32 -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0\r\nrootdir: C:\\git_work\\callwarden\r\nconfigfile: pyproject.toml\r\nplugins: anyio-4.14.2, timeout-2.4.0, xdist-3.8.0\r\ncollected 22 items\r\n\r\ntests\\test_c17_admin_route_workspace_authority.py ...................FFF [100%]\r\n\r\n================================== FAILURES ===================================\r\n_______________ test_record_action_identity_generates_action_id _______________\r\ntests\\test_c17_admin_route_workspace_authority.py:648: in test_record_action_identity_generates_action_id\r\n    assert err is None, f\"C-20 修复后必须成功，实得 {err}\"\r\nE   AssertionError: C-20 修复后必须成功，实得 internal_error: record_action_identity: NOT NULL constraint failed: action_identities.action_id\r\nE   assert DaemonRemoteError('internal_error: record_action_identity: NOT NULL constraint failed: action_identities.action_id') is None\r\n____________ test_record_action_identity_caller_id_and_uniqueness _____________\r\ntests\\test_c17_admin_route_workspace_authority.py:679: in test_record_action_identity_caller_id_and_uniqueness\r\n    assert err is None, f\"显式 action_id 必须原样入列，实得 {err}\"\r\nE   AssertionError: 显式 action_id 必须原样入列，实得 internal_error: record_action_identity: NOT NULL constraint failed: action_identities.action_id\r\nE   assert DaemonRemoteError('internal_error: record_action_identity: NOT NULL constraint failed: action_identities.action_id') is None\r\n________ test_register_attestation_revocation_generates_revocation_id _________\r\ntests\\test_c17_admin_route_workspace_authority.py:713: in test_register_attestation_revocation_generates_revocation_id\r\n    assert err is None, f\"C-20 修复后必须成功，实得 {err}\"\r\nE   AssertionError: C-20 修复后必须成功，实得 internal_error: register_attestation_revocation: NOT NULL constraint failed: attestation_revocation_records.revocation_id\r\nE   assert DaemonRemoteError('internal_error: register_attestation_revocation: NOT NULL constraint failed: attestation_revocation_records.revocation_id') is None\r\n=========================== short test summary info ===========================\r\nFAILED tests/test_c17_admin_route_workspace_authority.py::test_record_action_identity_generates_action_id\r\nFAILED tests/test_c17_admin_route_workspace_authority.py::test_record_action_identity_caller_id_and_uniqueness\r\nFAILED tests/test_c17_admin_route_workspace_authority.py::test_register_attestation_revocation_generates_revocation_id\r\n======================== 3 failed, 19 passed in 15.85s ========================\r\n"
+    },
+    "after_binary": {
+      "path": "rust_ext/target-c20/release/cw-daemon.exe",
+      "sha256": "367aea97f0739c3d311ca5c917a8eaf09a0a1d3a01f09b0b51a2118ba5c3c1af",
+      "contains_c19_fix": true,
+      "contains_c20_fix": true,
+      "pytest_summary": "============================= 22 passed in 14.77s =============================",
+      "raw_tail": "============================= test session starts =============================\r\nplatform win32 -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0\r\nrootdir: C:\\git_work\\callwarden\r\nconfigfile: pyproject.toml\r\nplugins: anyio-4.14.2, timeout-2.4.0, xdist-3.8.0\r\ncollected 22 items\r\n\r\ntests\\test_c17_admin_route_workspace_authority.py ...................... [100%]\r\n\r\n============================= 22 passed in 14.77s =============================\r\n"
+    },
+    "same_test_set": true,
+    "command": "PYTHONPATH=C:/git_work CW_DAEMON_BIN=<bin> .venv_test/Scripts/python.exe -m pytest tests/test_c17_admin_route_workspace_authority.py -v"
+  },
+  "migrated_tests": [
+    "test_record_action_identity_generates_action_id",
+    "test_record_action_identity_caller_id_and_uniqueness",
+    "test_register_attestation_revocation_generates_revocation_id"
+  ],
+  "removed_known_defect_anchors": [
+    "test_record_action_identity_f2_known_defect_still_fails",
+    "test_register_attestation_revocation_f3_known_defect_still_fails"
+  ]
+}

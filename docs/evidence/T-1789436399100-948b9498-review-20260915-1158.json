@@ -1,0 +1,48 @@
+{
+  "task_id": "T-1789436399100-948b9498",
+  "card": "NF2",
+  "reviewer_identity": "reviewer-wb-nf2-01 / inst-rev-wb-nf2-01 / sess-rev-nf2-20260915",
+  "lease_id": "L-64cef23340858bd2",
+  "generated_at": "2026-09-15T11:58:30+0800",
+  "independent_checks": {
+    "deployed_binary_matrix_rerun": {
+      "binary": "C:/Users/wanpi/.callwarden/runtime/current/cw-daemon.exe（CW_DAEMON_BIN 显式指定，隔离夹具 spawn）",
+      "binary_sha256": "48B58ED25EC98D391399E68D944BB10BD82D249D2E27D4F96D95B15321857451",
+      "junitxml": "C:/Users/wanpi/AppData/Local/Temp/nf2_review_matrix.xml",
+      "result": "tests=22 failures=0 errors=0 skipped=0 time=22.656s",
+      "note": "对部署二进制（非 executor 的 dev 构建）独立复跑全矩阵，NF2 锚以正例形态独立转绿"
+    },
+    "git_show_diff_verification": {
+      "commit": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+      "checks": {
+        "ON_CONFLICT_removed_from_handler": "true（handle_summary_generate 函数体内 0 残留）",
+        "unchecked_transaction_present": "true（整批事务，task_collab.rs 先例同款）",
+        "versioned_update_present": "true（UPDATE symbol_summaries SET is_current = 0 WHERE symbol_hash）",
+        "coalesce_max_version_present": "true（SELECT COALESCE(MAX(version), 0)，与 Python `or 0` 语义等价）",
+        "dispatch_mut_conn_present": "true（snapshot_state.rs 唯一调用点 &mut conn，签名 &Connection → &mut Connection 全库扫描仅此一处）",
+        "single_versioned_insert": "true（唯一 INSERT，version 参数化，is_current=1）"
+      },
+      "stat": "6 files +257/−38（edit_handlers.rs + snapshot_state.rs + c21 测试 + nf2 清单 + step1/2 证据）"
+    },
+    "deploy_three_way": {
+      "receipt": "C:/Users/wanpi/.callwarden/runtime/evidence/20260915-114340-00ca39b14e0c-b2340306.json",
+      "receipt_sha256": "48b58ed25ec98d391399e68d944bb10bd82d249d2e27d4f96d95b15321857451",
+      "independent_rehash": "48B58ED25EC98D391399E68D944BB10BD82D249D2E27D4F96D95B15321857451",
+      "health_git_commit": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+      "git_rev_parse_head": "00ca39b14e0cb6da349402b66e43c03ef1b8c4a5",
+      "verdict": "三方 + git_commit 链闭合，部署二进制 == 修复 commit 构建"
+    },
+    "ab_chain_verification": {
+      "before_leg": "部署版冻结副本（26519773，git_commit 5c9806b 含 NF2 缺陷）×迁移后测试 → tests=22 failures=1（唯一失败 NF2 锚，错误文案逐字命中 ON CONFLICT 无匹配 UNIQUE/PK 根因）",
+      "after_leg": "修复 dev 构建（3621D1A5）×迁移后测试 → tests=22 failures=0",
+      "curve": "1F→0F 判别成立；before/after sha 不同属预期（dev vs 部署构建），判别力不受影响"
+    },
+    "probe_disclosure_check": "step3 生产探针 ok/0 零写入 + 非判别披露如实（旧二进制 prepare 失败仅在 per-row 循环内触发，零命中路径新旧同响应）；生产数据无合成写"
+  },
+  "disclosures": [
+    "snapshot_state.rs 不在 step1 白名单（target_file 仅 edit_handlers.rs）——按 C-13 先例处置：changes 只报白名单文件，联动原因（&mut Connection 签名传播，全库唯一调用点）在 step1 证据 files[]/disclosures 留痕；reviewer 判 in_scope_acceptable（单一调用点机械联动，非越权改面）",
+    "executor 侧 step0 存在库存先行披露（step0 evidence 在建卡后、修复前完成，req-e5658e2986d3），流程与 C-21/NF1 卡一致",
+    "NF2 锚迁移后的多版本断言（双调用 v1 压 0/v2 version=2）对旧 upsert 语义本就不可满足（恒单行），无判别力损失"
+  ],
+  "overall": "pass"
+}

@@ -1,0 +1,53 @@
+{
+  "task_id": "T-1789397153231-f07a8d84",
+  "card": "C-21",
+  "reviewer": "reviewer-wb-c21-01",
+  "reviewer_instance": "inst-rev-wb-c21-01",
+  "session": "sess-rev-wb-c21-20260915",
+  "reviewed_at": "2026-09-15T07:15:00+08:00",
+  "git_head": "b7fa16f135eaa0f3512a458758c0d75110a4bc38",
+  "review_scope": "独立复核 executor 交付（commit b7fa16f：snapshot_state.rs 第二路由块修复 19+/10- + 22 测试矩阵 + 证据 step0-4）；以下全部为 reviewer 独立执行，不复用 executor 运行产物。",
+  "independent_checks": [
+    {
+      "check": "部署后二进制复跑 C-21 矩阵（CW_DAEMON_BIN=runtime/current）",
+      "binary_sha256": "4EA587D395B1DC68EF08F73F95C277C66D44ABF13E7F7EA8AE5274A26F6EFB9A",
+      "junitxml": "C:/Users/wanpi/AppData/Local/Temp/c21_review_after_deploy_junit.xml",
+      "result": { "tests": 22, "failures": 0, "errors": 0, "skipped_xfail": 2, "exit_code": 0 },
+      "verdict": "PASS"
+    },
+    {
+      "check": "修复前二进制反证复跑（CW_DAEMON_BIN=runtime/previous-20260915-065249，即部署前基线 BD3AD671）",
+      "binary_sha256": "BD3AD67122A68A2B77E3CA15647587F2BE3F736447F2D1E20D509A68289175C8",
+      "junitxml": "C:/Users/wanpi/AppData/Local/Temp/c21_review_prefix_counter_evidence_junit.xml",
+      "result": { "tests": 22, "failures": 10, "errors": 0, "skipped_xfail": 2, "exit_code": 1 },
+      "failed_set": [
+        "test_edit_propose_writes_real_id_fk",
+        "test_edit_propose_range_patch_writes_real_id_fk",
+        "test_edit_record_token_savings_writes_real_id_fk",
+        "test_edit_revert_hits_real_id_row",
+        "test_edit_propose_symbol_id_patch_resolves_symbol",
+        "test_edit_propose_symbol_patch_resolves_symbol",
+        "test_edit_restore_all_comments_restores_archived",
+        "test_rule_extract_candidates_extracts_from_real_scope",
+        "test_rule_insert_agents_md_block_writes_root_file",
+        "test_rule_sync_agents_md_uses_real_root"
+      ],
+      "failed_set_matches_step2_before_leg": true,
+      "verdict": "判别力独立复现成立（同 10 严格判别锚逐一失败）"
+    },
+    {
+      "check": "部署门禁证据核验",
+      "details": "receipt status=passed / rollback=false；health.git_commit == HEAD == b7fa16f135eaa0f3512a458758c0d75110a4bc38（reviewer 独立 rev-parse + health 复核）；部署产物 sha256 4EA587D3…9A 与 receipt expected/actual 一致（reviewer 独立 hashlib 重算）",
+      "verdict": "PASS"
+    },
+    {
+      "check": "修复范围核验（git show b7fa16f --stat）",
+      "details": "7 文件：snapshot_state.rs（19+/10-）+ 新测试 1 + 清单 1 + 证据 4；无 forbidden 路径（edit_handlers.rs / db/** 未动，NF1/NF2 如实登记为 xfail(strict) 锚未越权修复）",
+      "verdict": "PASS"
+    }
+  ],
+  "conclusion": "in_scope_acceptable：根因在路由层单点修复（非掩盖）；回归证据在干净部署二进制上可复现；修复前二进制反证判别力成立；NF1/NF2 已按纪律登记待独立缺陷卡。提请 adjudicator 裁定。",
+  "environment_disclosures": [
+    "reviewer 复核在部署 swap 后的新 daemon（endpoint 8535, PID 25756）上执行；矩阵本身使用隔离 daemon（CW_DAEMON_BIN 指定二进制），不受生产 daemon 状态影响"
+  ]
+}

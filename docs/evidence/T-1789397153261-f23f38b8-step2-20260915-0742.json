@@ -1,0 +1,40 @@
+{
+  "task_id": "T-1789397153261-f23f38b8",
+  "step_id": "S-1789397153262-f24c99b8",
+  "step": "test",
+  "generated_at": "2026-09-15T07:42:02+08:00",
+  "title": "step2 test：新增校验测试 tests/test_c_bucket_template_target_file_whitelist.py 固化文件级不变量",
+  "summary": "新增 6 用例校验测试并全绿（.venv_test 解释器，6 passed in 0.21s）：固化 build_cards() 全部 step target_file 文件级 token 不变量（复刻 daemon task_collab_lifecycle.rs L285-290 解析语义）、多文件 `;` 拆分逐段文件级、docstring F5 语义注记防回退、C-20/C-21/C-22 三张新卡预声明确定性文件名在列。",
+  "check_items_coverage": [
+    {
+      "check": "import build_cards()：断言每张卡每步 target_file 无目录级 token（不以 `/` 结尾、非现存目录路径）；多文件 token 可按 `;`/`,` 拆为具体文件路径",
+      "tests": [
+        "test_build_cards_loads_with_expected_shape（12 卡 / 55 步 / target_file 非空）",
+        "test_every_step_target_file_token_is_file_level（daemon 语义复刻拆分 + 文件级判定：空 token / 目录值集合 / 尾斜杠 / basename 无扩展名）",
+        "test_multifile_semicolon_joined_tokens_all_file_level（`;`/`,` 多文件逐段文件级，且期望存在多文件先例 C-03/C-04..07）"
+      ]
+    },
+    {
+      "check": "断言 docstring 含 F5 教训注记（防回退）；断言 C-20/C-21/C-22 三张新卡亦满足（预声明文件名在列）",
+      "tests": [
+        "test_docstring_documents_f5_semantics（docstring 含 executor_allowed / 文件级 / E_CHANGE_PATH_NOT_ALLOWED·全等）",
+        "test_new_batch_cards_c20_c21_c22_use_predeclared_names（三卡在列 + step0 预声明名 deliverables/software-company/cNN_remediation_inventory.md + 三卡全 target_file 文件级）"
+      ]
+    },
+    {
+      "check": "pytest 全绿（.venv_test 解释器）",
+      "tests": [
+        "PYTHONPATH=C:/git_work .venv_test/Scripts/python.exe -m pytest tests/test_c_bucket_template_target_file_whitelist.py -v → 6 passed in 0.21s（pytest-9.1.1 / Python 3.14.3，rootdir=c:/git_work/callwarden，configfile=pyproject.toml）"
+      ]
+    }
+  ],
+  "test_design_notes": [
+    "daemon 白名单解析语义在测试内复刻（split([',',';']) → trim → replace('\\\\','/')），注释锚定源码行号 L285-290，daemon 行为变更时测试可感知漂移",
+    "目录级字面值锚只对 step target_file 字段生效：合同 executor_allowed（allowed_paths）允许目录前缀（如 C-03 的 tests/、deliverables/software-company/），是 executor 工作区边界声明、不参与 changes 全等比对，属合法语义——该区分正是 F5 缺陷根因（详见 c22_remediation_inventory.md §1/§4）"
+  ],
+  "honest_disclosures": [
+    "首跑 4 passed / 1 failed：失败为测试自身范围 bug —— 目录级字面值锚误扫全量 JSON dump，命中了 executor_allowed（allowed_paths）中的合法目录前缀（C-03 的 tests/、deliverables/software-company/），并非模板回归；已修正为仅收集 target_file 字段值断言，二跑 6/6 全绿。该失败本身构成 F5 语义区分（target_file 文件级全等 vs executor_allowed 可目录前缀）的实证",
+    "本测试仅固化模板不变量，不改 daemon 行为；本轮未部署 runtime（本卡 tests/deliverables-only，无产品代码改动）",
+    "全量回归对照非本步 scope（本卡无产品代码改动、无 cargo 面）；幂等回归见 step3"
+  ]
+}

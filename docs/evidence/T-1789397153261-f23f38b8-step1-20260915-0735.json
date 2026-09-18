@@ -1,0 +1,125 @@
+{
+  "task_id": "T-1789397153261-f23f38b8",
+  "step_id": "S-1789397153262-f24c6c68",
+  "step": "implement",
+  "generated_at": "2026-09-15T07:35:08+08:00",
+  "title": "step1 implement：build_cards() 全部 step target_file 目录级条目清零（文件级 token 化）+ docstring F5 注记修正",
+  "summary": "对 deliverables/software-company/create_c_bucket_remediation_tasks.py 应用 11 处修复：9 处目录级 step target_file 改文件级 token（`;` 连接多文件）、docstring 非法转义根治、docstring 计数 14→15（补 C-03 runtime/current 条目）。修复后 build_cards() 12 卡 / 55 步全量扫描 0 目录级违规，compile 零 SyntaxWarning。",
+  "method": {
+    "approach": "单次 读-改-写 原子脚本（C:/Users/wanpi/AppData/Local/Temp/c22_fix_target_files.py，报告副本 C:/Users/wanpi/AppData/Local/Temp/c22_fix_target_files_report.json）：每锚点断言 count==1（不唯一即中止、文件不触碰），写回后同进程内即时复验（compile + importlib 加载 build_cards() 全量扫描）",
+    "why": "前一轮对该文件连续 14 次 Edit 出现持久化竞态（多次报成功但内容未落盘），弃用连续 Edit 改原子脚本根治"
+  },
+  "applied_fixes": [
+    "c03_release_verify_runtime_current",
+    "c04_07_test_cli_files",
+    "c13_test",
+    "c14_15_step0_adjudicate",
+    "c14_15_release_verify",
+    "c16_step0_adjudicate",
+    "c17_step0_adjudicate",
+    "c17_release_verify",
+    "c18_release_verify",
+    "docstring_escape",
+    "docstring_count_14_to_15"
+  ],
+  "target_file_fixes_detail": [
+    {
+      "card": "C-03",
+      "step_action": "release_verify",
+      "before": "runtime/current",
+      "after": "rust_ext/src/daemon/transport.rs;rust_ext/src/daemon/http_server.rs;rust_ext/src/daemon/daemon_autostart_handlers.rs",
+      "basis": "cw_task_commit_ledger.json C-03 条目 scope 逐字对应（该卡实际改动的 3 个 rust 文件，fix commit d71d1175f7727f96be8e21025e4b9432adc8acb0）；三文件 Glob 实存"
+    },
+    {
+      "card": "C-04..C-07",
+      "step_action": "test",
+      "before": "tests/",
+      "after": "tests/test_cli_005_http_rpc.py;tests/test_cli_006_http_rpc.py;tests/test_cli_011_http_rpc.py;tests/test_cli_020_http_rpc.py;tests/test_cli_057_http_rpc.py;tests/test_cli_061_http_rpc.py;tests/test_cli_066_http_rpc.py",
+      "basis": "7 个既有 CLI 回归文件 Glob 逐一实存"
+    },
+    {
+      "card": "C-13",
+      "step_action": "test",
+      "before": "tests/",
+      "after": "tests/test_c13_semgrep_dispatch_wiring.py",
+      "basis": "该卡实际新增测试文件，实存"
+    },
+    {
+      "card": "C-14..C-15",
+      "step_action": "adjudicate(step0)",
+      "before": "deliverables/software-company/",
+      "after": "deliverables/software-company/T-1789290073049-6442e268-evidence.md",
+      "basis": "已闭环卡实际产物名，Glob 实存（与证据链逐字对应）"
+    },
+    {
+      "card": "C-14..C-15",
+      "step_action": "release_verify",
+      "before": "rust_ext",
+      "after": "rust_ext/src/daemon/admin_handlers.rs",
+      "basis": "该卡 implement 步声明文件（= 实际改动文件），实存"
+    },
+    {
+      "card": "C-16",
+      "step_action": "adjudicate(step0)",
+      "before": "deliverables/software-company/",
+      "after": "deliverables/software-company/T-1789365537146-bef4c2e4-evidence.md",
+      "basis": "已闭环卡实际产物名，Glob 实存"
+    },
+    {
+      "card": "C-17",
+      "step_action": "adjudicate(step0)",
+      "before": "deliverables/software-company/",
+      "after": "deliverables/software-company/T-1789365537230-c3f02eb4-inventory.md",
+      "basis": "已闭环卡实际产物名，Glob 实存"
+    },
+    {
+      "card": "C-17",
+      "step_action": "release_verify",
+      "before": "rust_ext",
+      "after": "rust_ext/src/daemon/snapshot_state.rs",
+      "basis": "该卡 implement 步声明文件（admin 路由块所在），实存"
+    },
+    {
+      "card": "C-18",
+      "step_action": "release_verify",
+      "before": "deliverables/software-company/",
+      "after": "deliverables/software-company/T-1789377001689-0aee0a6c-inventory.md",
+      "basis": "已闭环卡实际产物名，Glob 实存"
+    }
+  ],
+  "docstring_fixes": [
+    {
+      "fix": "SyntaxWarning 根治",
+      "before": "F5 语义注记中 `\\`→`/` 触发 SyntaxWarning: \"\\`\" invalid escape",
+      "after": "改写为「反斜杠→正斜杠归一后」，docstring 不再含反斜杠字面量"
+    },
+    {
+      "fix": "计数修正",
+      "before": "「14 处目录级 step target_file（tests/ ×4、rust_ext ×4、deliverables/software-company/ ×6）」",
+      "after": "「15 处目录级 step target_file（tests/ ×4、rust_ext ×4、deliverables/software-company/ ×6、runtime/current ×1）」——前值漏计 C-03 的 runtime/current 条目"
+    }
+  ],
+  "verification": {
+    "compile": "compile(src, 'exec') 零 SyntaxWarning / DeprecationWarning",
+    "build_cards_scan": "importlib 按文件路径加载模块成功；build_cards() = 12 cards / 55 steps；目录级违规 0（判据：空 token / 目录值集合命中 / 尾斜杠 / basename 无扩展名，逐 `;`/`,` 拆分段检查）",
+    "diff_stat": "1 file changed, 34 insertions(+), 15 deletions(-)",
+    "git_diff_check": "clean（无输出）",
+    "file_after": {
+      "lines": 1317,
+      "bytes": 84980,
+      "sha256": "8bf8b433c65f7d6c475150f79633ad066a761eb155c400f80b3c1a039d42252f",
+      "crlf": false
+    },
+    "file_before_sha256_prefix": "d53997e45d8ca4fd"
+  },
+  "evidence_chain_alignment": {
+    "c03_scope_source": "cw_task_commit_ledger.json（186 条目版）C-03 条目：scope 含 transport.rs / http_server.rs / daemon_autostart_handlers.rs / tests/test_wsl_local_daemon_e2e.py / 2 个 deliverables 文档；release_verify target 取其中 3 个 rust 文件",
+    "existence_checks": "7 个 CLI 测试文件、6 个 rust 目标文件（transport/http_server/daemon_autostart_handlers/task_collab_lease/admin_handlers/snapshot_state）、4 个已闭环卡 deliverables 产物名，全部 Glob 实存"
+  },
+  "honest_disclosures": [
+    "前一轮 14 次连续 Edit 对本文件出现持久化竞态（多次报成功但内容未落盘，约 8 处丢失；残留 9 处目录级条目）。本 step 弃用连续 Edit，以单次原子脚本重做全部 9 处并即时复验；docstring 两处注记（第六次修订块、contracts() 语义注记）来自前轮已持久化的 Edit，予以保留",
+    "原子脚本首跑因脚本内部元组结构笔误触发锚点唯一性守卫（count=2440≠1），守卫按设计中止且文件未被触碰；修正脚本结构后二跑 11/11 锚点全部 count==1 命中",
+    "本 step 未运行新增校验测试与幂等回归（分别属 step2/step3 scope，后续 step 报告）；本轮未部署 runtime（本卡 tests/deliverables-only，无产品代码改动，不触发部署门禁）",
+    "前轮 Edit 期间 docstring 曾引入的 SyntaxWarning（L56 `\\` 非法转义）已在本 step 根治，修复后 compile 零警告"
+  ]
+}
