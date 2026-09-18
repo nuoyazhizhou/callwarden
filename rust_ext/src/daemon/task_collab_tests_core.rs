@@ -1509,6 +1509,153 @@ use super::support::*;
     }
 
     #[test]
+    fn test_task_split_retries_on_child_id_collision() {
+        // S1：子任务 ID 与既有任务冲突时必须重试生成带不透明后缀的新 ID，
+        // 而不是让整批 split 因 UNIQUE 约束失败（next_split_child_id 的核心契约）。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-COLLIDE-PARENT",
+                    "title": "parent",
+                }),
+            )
+            .unwrap();
+
+        // 预占兼容 ID <parent>-sub-1（模拟历史导入或上一轮 split 残留）
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at, parent_id)
+                 VALUES ('T-COLLIDE-PARENT-sub-1', 'pre-existing', '', 'agent', 'open', 1.0, 1.0, '')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // split 仍须成功，且第一个子任务拿到非冲突的新 ID
+        let split = store
+            .handle_task_split(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-COLLIDE-PARENT",
+                    "subtasks": [
+                        {"title": "first", "steps": [{"action": "implement", "target_file": "a.rs"}]},
+                        {"title": "second", "steps": [{"action": "test", "target_file": "b.rs"}]}
+                    ]
+                }),
+            )
+            .expect("ID 冲突必须重试而非整批失败");
+
+        let subs = split["subtasks"].as_array().unwrap();
+        assert_eq!(split["subtask_count"], 2);
+        let first_id = subs[0].as_str().unwrap();
+        assert_ne!(
+            first_id, "T-COLLIDE-PARENT-sub-1",
+            "冲突 ID 必须被替换为新的不透明 ID"
+        );
+        assert!(
+            first_id.starts_with("T-COLLIDE-PARENT-sub-1-"),
+            "重试 ID 应保留 base 前缀以便人工溯源: {}",
+            first_id
+        );
+        // 第二个子任务无冲突，仍用兼容形状
+        assert_eq!(subs[1].as_str().unwrap(), "T-COLLIDE-PARENT-sub-2");
+
+        // 冲突重试不影响治理事实：binding/合同/步骤全部随新子任务写入
+        let conn = store.conn.lock().unwrap();
+        let bindings: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_workspace_bindings WHERE task_id = ?1",
+                [first_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(bindings, 1, "重试生成的子任务必须继承 workspace binding");
+        let steps: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1",
+                [first_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(steps, 1, "重试生成的子任务必须写入步骤");
+    }
+
+    #[test]
+    fn test_task_split_collision_rollback_leaves_no_partial_children() {
+        // S2：split 中途失败时事务必须整体回滚，不留半成品子任务；
+        // 且失败可重入——修复后同一父任务仍能完整 split（ID 生成对残留幂等）。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-ROLLBACK-PARENT",
+                    "title": "parent",
+                }),
+            )
+            .unwrap();
+
+        // 第一次 split：第二个子任务的 steps 非法 → 整体回滚
+        let err = store
+            .handle_task_split(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-ROLLBACK-PARENT",
+                    "subtasks": [
+                        {"title": "ok", "steps": [{"action": "implement", "target_file": "a.rs"}]},
+                        {"title": "bad", "steps": ["not-an-object"]}
+                    ]
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "invalid_params");
+
+        let conn = store.conn.lock().unwrap();
+        let partial: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE parent_id = 'T-ROLLBACK-PARENT'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(partial, 0, "回滚后不得残留任何子任务");
+        let partial_steps: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_steps WHERE task_id LIKE 'T-ROLLBACK-PARENT-sub-%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(partial_steps, 0, "回滚后不得残留任何子任务步骤");
+        drop(conn);
+
+        // 第二次 split（合法）：ID 生成不得被第一次的中间状态污染
+        let split = store
+            .handle_task_split(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-ROLLBACK-PARENT",
+                    "subtasks": [
+                        {"title": "first", "steps": [{"action": "implement", "target_file": "a.rs"}]}
+                    ]
+                }),
+            )
+            .unwrap();
+        assert_eq!(split["subtask_count"], 1);
+        let sub_id = split["subtasks"].as_array().unwrap()[0].as_str().unwrap();
+        assert_eq!(sub_id, "T-ROLLBACK-PARENT-sub-1", "回滚后 base ID 应重新可用");
+    }
+
+    #[test]
     fn test_task_collab_migrates_v46_db_to_v50() {
         // P1 修复：v46 旧库（无 task_events/agent_registrations、schema_version=46）
         // 打开后必须走官方 migration 升级到 v50 并补齐权威任务表，完整 task RPC 可用
