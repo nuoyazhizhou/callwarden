@@ -154,17 +154,16 @@ git ls-tree -r --name-only 30e49319df5d2998eba66b60637a58a6ffe330ab | wc -l
   - `.gitignore` 已接管 `rust_ext/target-nf1/`（2.0GB）、`target-stage/`（25MB）、
     `*.pyd.*.rollback`、`Temp/`，故积压不含构建旁路产物。
 
-### 激活方式（移动 master，需人工确认后执行）
+### 激活结果（2026-09-18 17:57 执行，用户确认）
 
-```
-# 1) 先看一眼候选历史
-git log --oneline recovery/master-candidate | head -40
-git diff --stat master recovery/master-candidate | tail -5
-# 2) 移动 master 并重置索引（不动工作区；skip-worktree 的 3 个文件不会被动）
-git reset --mixed recovery/master-candidate
-# 3) 验证：status 应只剩 3 个 skip-worktree 的 D + 忽略项
-git status --short
-# 回退（万一）：master 旧 tip 仍在 reflog
-git reset --mixed 401e34275a80
-```
+已执行 `git reset --mixed recovery/master-candidate`，随后提交 manifest 复核修订：
+
+- **master = `50d3d97`**（946 可达提交），HEAD 同步
+- `git status` **完全干净**；3 个 skip-worktree 条目（`artifact/overview.md`、
+  `artifacts/epic_subtree.md`、`artifacts/overview.md`）保持屏蔽，未受影响
+- `git log master` 的 09-11 ~ 09-14 窗口出现 **65 条真实历史**（C-13..C-17、
+  GOV-FIX-05..08、A 桶断言对齐、承接卡建卡回执等），重建目的达成
+- 激活前 index 备份：`.git/index.preactivate-20260918-175757`
+
+回退（万一）：`git reset --mixed 401e34275a80`（旧 tip 仍在 reflog）。
 
