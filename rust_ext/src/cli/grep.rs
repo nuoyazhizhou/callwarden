@@ -25,7 +25,6 @@ const IGNORED_DIRECTORIES: &[&str] = &[
     ".venv",
     "venv",
     "dist",
-    "build",
 ];
 
 /// `cw grep` 的本地查询参数。
