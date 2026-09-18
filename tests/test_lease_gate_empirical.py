@@ -130,7 +130,9 @@ def lease_env():
     )
 
     client = UnixDaemonRpcClient(socket_path=pipe, timeout=10)
-    deadline = time.time() + 40
+    # 150s：daemon 冷启动两段 ~24s 空耗 + worker 池预热，管道绑定 ~50s、
+    # 首次应答 ~89s（详见 step3 证据）；旧 40s 恒假失败。
+    deadline = time.time() + 150
     ready = False
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -147,17 +149,43 @@ def lease_env():
         pytest.fail("daemon 未在超时内响应")
 
     task_db = os.path.join(tmp, "callwarden.db")
+
+    # BR-01/BR-02：task.create 必须显式携带 (workspace_id, workspace_instance_id)
+    # 且 task-DB workspaces 表存在对应行；旧版只插 id=1、无 instance/capture 且
+    # create 不传配对 → E_TASK_WORKSPACE_UNBOUND（陈旧断言）。对齐
+    # tests/test_task_prompt_e2e.py 的经证实范式：workspace.register 返回 registry
+    # 整数 id + instance，把该 id 同插 task-DB workspaces 表（is_active=1），
+    # 使 registry 与 task-DB 两侧 id/instance 一致。
+    ws_root = os.path.join(tmp, "ws_root")
+    os.makedirs(ws_root, exist_ok=True)
+    reg = client.call("workspace.register", {
+        "name": "lease-gate-e2e-ws", "client_view_root": ws_root,
+        "description": "lease gate empirical",
+        "git_remote_url": "https://github.com/callwarden/lease-gate-e2e.git",
+        "git_head_commit_sha": "lgs0" * 10,
+    })
+    ws_id = reg["workspace_id"]
+    ws_inst = reg["workspace_instance_id"]
+    snapshot_id = reg.get("snapshot_id")
+    assert isinstance(ws_id, int) and ws_id > 0, reg
+    assert isinstance(ws_inst, str) and ws_inst.strip(), reg
+    assert isinstance(snapshot_id, str) and snapshot_id.strip(), reg
     conn = sqlite3.connect(task_db)
     try:
         conn.execute(
-            "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'lease-gate-test', '.', ?1)",
-            (time.time(),),
+            "INSERT OR REPLACE INTO workspaces (id, name, root_path, created_at, is_active) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (ws_id, "lease-gate-e2e-ws", ws_root, time.time()),
         )
         conn.commit()
     finally:
         conn.close()
 
-    yield client, tmp, task_db, proc
+    yield client, tmp, task_db, proc, {
+        "workspace_id": ws_id,
+        "workspace_instance_id": ws_inst,
+        "snapshot_id": snapshot_id,
+    }
 
     if proc.poll() is None:
         proc.terminate()
@@ -181,17 +209,72 @@ def _reviewer_identity(tag: str) -> dict:
     }
 
 
-def _prepare_task_review(client, task_id: str, session: str = "session-impl",
+# GATE-1A：parent-aware child.create 必须携带非空 role_contracts（frozen spec
+# §13.3；缺省 → E_TASK_PARENT_CONTRACT_REQUIRED）。insert_role_contracts 仅强制
+# 每项含非空 role，其余字段缺省降级为空串，故最小合法形状为单角色 executor 合同。
+_CHILD_ROLE_CONTRACTS = [
+    {
+        "role": "executor",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.executor.startup.v1",
+        "prompt_hash": "sha256:59A459F7786097C671D48FBEEC6E361C12D7A95BDEC4E3722169D68D5D6A73F6",
+        "allowed_paths": "task-card scoped paths only",
+        "forbidden_paths": "task.apply; task.close; task.supersede",
+        "commands": "task.next_action; task.claim; task.report",
+        "acceptance_checks": "tests; evidence manifest/hash",
+        "required_evidence": "implementation plan; test output",
+        "handoff_to": "reviewer",
+    },
+    {
+        "role": "reviewer",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.reviewer.startup.v1",
+        "prompt_hash": "sha256:6415033D8F134392DE16FCA130BFB762CB6C70D9F466C770EC18A20FC4CE139E",
+        "allowed_paths": "read-only review",
+        "forbidden_paths": "task.apply; task.close",
+        "commands": "task.report; task.handoff",
+        "acceptance_checks": "verdict with findings",
+        "required_evidence": "fresh-run review notes",
+        "handoff_to": "adjudicator",
+    },
+    {
+        "role": "adjudicator",
+        "skill_id": "none",
+        "skill_version": "",
+        "prompt_template_id": "cw.aprime.adjudicator.startup.v1",
+        "prompt_hash": "sha256:42A5F1DEFA81008B009058C1BAF5D1A14B3EF4521E291B7B55C19BB473A77C3E",
+        "allowed_paths": "task.apply; task.close",
+        "forbidden_paths": "scope expansion",
+        "commands": "task.apply; task.close",
+        "acceptance_checks": "final independent review",
+        "required_evidence": "apply/close decision",
+        "handoff_to": "complete",
+    },
+]
+
+
+def _prepare_task_review(lease_env, task_id: str, session: str = "session-impl",
                          steps: list = None) -> dict:
-    """create(open) → claim(in_progress) → report(review)。返回 claim 响应。"""
+    """create(open) → claim(in_progress) → report(review)。返回 claim 响应。
+
+    env 为 lease_env 5 元组；task.create 必须携带 BR-01/BR-02 的显式
+    (workspace_id, workspace_instance_id) 配对（旧版缺此配对 → E_TASK_WORKSPACE_UNBOUND）。
+    """
+    client = lease_env[0]
+    ws = lease_env[4]
     client.call("task.create", {
         "task_id": task_id,
         "title": f"lease-gate-{task_id}",
         "steps": steps if steps is not None else [{"action": "实现", "target_file": "f.py"}],
+        "workspace_id": ws["workspace_id"],
+        "workspace_instance_id": ws["workspace_instance_id"],
     })
     claim = client.call("task.claim", {"task_id": task_id, "agent_session_id": session})
     report_params = {"task_id": task_id, "summary": "done", "agent_session_id": session,
-                     "success": True}
+                     "success": True,
+                     "snapshot_id": ws["snapshot_id"]}
     if claim.get("step_id"):
         report_params["step_id"] = claim["step_id"]
     client.call("task.report", report_params)
@@ -204,9 +287,10 @@ def _acquire_reviewer_lease(client, task_id: str, tag: str) -> dict:
                                 ttl_seconds=3600.0)
 
 
-def _prepare_task_applied(client, task_id: str, tag: str) -> dict:
+def _prepare_task_applied(lease_env, task_id: str, tag: str) -> dict:
     """推进到 applied（review + acquire + apply），返回 acquire 响应。"""
-    _prepare_task_review(client, task_id)
+    client = lease_env[0]
+    _prepare_task_review(lease_env, task_id)
     acq = _acquire_reviewer_lease(client, task_id, tag)
     res = client.task_apply(task_id, reviewer="reviewer", identity=_reviewer_identity(tag),
                             lease_token=acq["token"], fencing_counter=acq["fencing_counter"])
@@ -250,10 +334,10 @@ class TestLeaseGateSuccessPath:
     """合法 reviewer lease 下 apply/close 全链路成功，事件与身份落库。"""
 
     def test_apply_close_full_success_with_lease_identity_events(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-SUCCESS"
         tag = "ok"
-        acq = _prepare_task_applied(client, task_id, tag)
+        acq = _prepare_task_applied(lease_env, task_id, tag)
 
         # close 使用同一有效 lease
         res = client.task_close(task_id, reviewer="reviewer", identity=_reviewer_identity(tag),
@@ -299,26 +383,26 @@ class TestLeaseGateApplyRejections:
     """apply 缺/错凭证全部 fail-closed，状态与事件零改动。"""
 
     def test_apply_rejects_missing_lease_token(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-NO-TOKEN"
         # 不 acquire：无凭证场景
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         _assert_rejected(client, task_db, task_id, "task.apply", {
             "task_id": task_id, "reviewer": "reviewer", "fencing_counter": 1,
         }, "E_LEASE_REQUIRED")
 
     def test_apply_rejects_missing_fencing_counter(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-NO-COUNTER"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         _assert_rejected(client, task_db, task_id, "task.apply", {
             "task_id": task_id, "reviewer": "reviewer", "lease_token": "any-token",
         }, "E_LEASE_REQUIRED")
 
     def test_apply_rejects_partial_lease_token_only(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-PARTIAL"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, "partial")
         _assert_rejected(client, task_db, task_id, "task.apply", {
             "task_id": task_id, "reviewer": "reviewer",
@@ -327,9 +411,9 @@ class TestLeaseGateApplyRejections:
         }, "E_LEASE_REQUIRED")
 
     def test_apply_rejects_wrong_token(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-WRONG-TOKEN"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, "wt")
         _assert_rejected(client, task_db, task_id, "task.apply", {
             "task_id": task_id, "reviewer": "reviewer",
@@ -338,9 +422,9 @@ class TestLeaseGateApplyRejections:
         }, "E_LEASE_TOKEN_MISMATCH")
 
     def test_apply_rejects_stale_fencing_counter(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-STALE"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, "stale")
         _assert_rejected(client, task_db, task_id, "task.apply", {
             "task_id": task_id, "reviewer": "reviewer",
@@ -349,9 +433,9 @@ class TestLeaseGateApplyRejections:
         }, "E_LEASE_FENCING_STALE")
 
     def test_apply_rejects_expired_lease(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-EXPIRED"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, "exp")
         conn = sqlite3.connect(task_db)
         try:
@@ -366,9 +450,9 @@ class TestLeaseGateApplyRejections:
         }, "E_LEASE_EXPIRED")
 
     def test_apply_rejects_wrong_holder_identity(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-AP-HOLDER"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, "holder-a")
         # 持有合法 token/counter，但 identity 与 lease holder 不一致
         _assert_rejected(client, task_db, task_id, "task.apply", {
@@ -387,25 +471,25 @@ class TestLeaseGateCloseRejections:
     """close 缺/错凭证全部 fail-closed，状态与事件零改动。"""
 
     def test_close_rejects_missing_lease_token(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-CL-NO-TOKEN"
-        _prepare_task_applied(client, task_id, "cl-no-token")
+        _prepare_task_applied(lease_env, task_id, "cl-no-token")
         _assert_rejected(client, task_db, task_id, "task.close", {
             "task_id": task_id, "reviewer": "reviewer", "fencing_counter": 1,
         }, "E_LEASE_REQUIRED")
 
     def test_close_rejects_missing_fencing_counter(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-CL-NO-COUNTER"
-        _prepare_task_applied(client, task_id, "cl-no-counter")
+        _prepare_task_applied(lease_env, task_id, "cl-no-counter")
         _assert_rejected(client, task_db, task_id, "task.close", {
             "task_id": task_id, "reviewer": "reviewer", "lease_token": "any-token",
         }, "E_LEASE_REQUIRED")
 
     def test_close_rejects_wrong_token(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-CL-WRONG-TOKEN"
-        acq = _prepare_task_applied(client, task_id, "cl-wt")
+        acq = _prepare_task_applied(lease_env, task_id, "cl-wt")
         _assert_rejected(client, task_db, task_id, "task.close", {
             "task_id": task_id, "reviewer": "reviewer",
             "identity": _reviewer_identity("cl-wt"),
@@ -413,9 +497,9 @@ class TestLeaseGateCloseRejections:
         }, "E_LEASE_TOKEN_MISMATCH")
 
     def test_close_rejects_stale_fencing_counter(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-CL-STALE"
-        acq = _prepare_task_applied(client, task_id, "cl-stale")
+        acq = _prepare_task_applied(lease_env, task_id, "cl-stale")
         _assert_rejected(client, task_db, task_id, "task.close", {
             "task_id": task_id, "reviewer": "reviewer",
             "identity": _reviewer_identity("cl-stale"),
@@ -423,9 +507,9 @@ class TestLeaseGateCloseRejections:
         }, "E_LEASE_FENCING_STALE")
 
     def test_close_rejects_expired_lease(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-CL-EXPIRED"
-        acq = _prepare_task_applied(client, task_id, "cl-exp")
+        acq = _prepare_task_applied(lease_env, task_id, "cl-exp")
         conn = sqlite3.connect(task_db)
         try:
             conn.execute("UPDATE task_leases SET expires_at = 1.0 WHERE task_id = ?", (task_id,))
@@ -439,9 +523,9 @@ class TestLeaseGateCloseRejections:
         }, "E_LEASE_EXPIRED")
 
     def test_close_rejects_wrong_holder_identity(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-CL-HOLDER"
-        acq = _prepare_task_applied(client, task_id, "cl-holder-a")
+        acq = _prepare_task_applied(lease_env, task_id, "cl-holder-a")
         _assert_rejected(client, task_db, task_id, "task.close", {
             "task_id": task_id, "reviewer": "reviewer",
             "identity": _reviewer_identity("cl-holder-b"),
@@ -458,10 +542,10 @@ class TestLeaseGateExtraGates:
     """request_id 重放 / 单 holder 竞争 / 子任务关闸 / 业务错误透传。"""
 
     def test_request_id_replay_no_duplicate_events(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, task_db, _proc, _ws = lease_env
         task_id = "T-GATE-REPLAY"
         tag = "replay"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, tag)
         identity = _reviewer_identity(tag)
         params = {
@@ -489,10 +573,17 @@ class TestLeaseGateExtraGates:
         assert res["status"] == "closed"
 
     def test_single_active_reviewer_holder_competition(self, lease_env):
-        client, _tmp, _task_db, _proc = lease_env
+        client, _tmp, _task_db, _proc, _ws = lease_env
         task_id = "T-GATE-COMPETITION"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq_a = _acquire_reviewer_lease(client, task_id, "comp-a")
+        # holder 必须已注册且心跳新鲜：daemon 的 orphan-lease 回收语义
+        # （task_collab_lease.rs Req 11.2）在 holder_registration_missing /
+        # inactive / heartbeat stale 时于同一事务回收旧 lease 并授予新
+        # lease——竞争测试会退化为"接管"。注册 comp-a 使双活门禁真正触发。
+        ident_a = _reviewer_identity("comp-a")
+        client.call("agent.register", {"agent_id": ident_a["agent_id"],
+                                       "identity": ident_a})
         # 第二个 reviewer acquire 同 task+role → E_LEASE_ACTIVE_EXISTS
         with pytest.raises(DaemonRemoteError) as exc:
             client.lease_acquire(task_id, "reviewer", identity=_reviewer_identity("comp-b"),
@@ -514,14 +605,25 @@ class TestLeaseGateExtraGates:
         assert res["status"] == "applied"
 
     def test_close_keeps_child_gate(self, lease_env):
-        client, _tmp, task_db, _proc = lease_env
+        client, _tmp, _task_db, _proc, ws = lease_env
         parent_id = "T-GATE-PARENT"
         child_id = "T-GATE-CHILD"
         # 父任务（含步骤，推进到 review） + 未关闭子任务
-        _prepare_task_review(client, parent_id)
-        client.call("task.create", {"task_id": child_id, "title": "child",
-                                    "steps": [{"action": "y", "target_file": "g.py"}],
-                                    "parent_id": parent_id})
+        _prepare_task_review(lease_env, parent_id)
+        # GATE-1A：parent-aware child.create 必须与 parent 同 workspace 且携带
+        # 非空 role_contracts（旧版裸建 → E_TASK_PARENT_CONTRACT_REQUIRED）。
+        client.call("task.create", {
+            "task_id": child_id, "title": "child",
+            "steps": [{"action": "y", "target_file": "g.py"}],
+            "parent_id": parent_id,
+            "workspace_id": ws["workspace_id"],
+            "workspace_instance_id": ws["workspace_instance_id"],
+            "role_contracts": _CHILD_ROLE_CONTRACTS,
+            # 带 role_contracts 时 daemon fail-closed 要求显式
+            # identity_policy（task_collab.rs 决策矩阵：envelope 缺失 +
+            # 顶层 legacy_identity_v1 → 注入 generic envelope）。
+            "identity_policy": "legacy_identity_v1",
+        })
         # 父任务 acquire reviewer lease 并 apply
         acq = _acquire_reviewer_lease(client, parent_id, "parent")
         res = client.task_apply(parent_id, reviewer="reviewer",
@@ -543,10 +645,10 @@ class TestLeaseGateExtraGates:
         assert len(client.task_events(parent_id)["events"]) == before_events
 
     def test_apply_close_business_error_not_wrapped_as_connection_failure(self, lease_env):
-        client, _tmp, _task_db, _proc = lease_env
+        client, _tmp, _task_db, _proc, _ws = lease_env
         task_id = "T-GATE-NOTWRAP"
         tag = "nw"
-        _prepare_task_review(client, task_id)
+        _prepare_task_review(lease_env, task_id)
         acq = _acquire_reviewer_lease(client, task_id, tag)
         # 错误 token 是业务结论（E_LEASE_TOKEN_MISMATCH），必须是 DaemonRemoteError，
         # 不得被包装成 DaemonUnavailableError（连接故障），客户端才能区分。
@@ -587,15 +689,25 @@ class TestLeaseGateRoutePolicy:
         monkeypatch.setattr(dc, "get_daemon_mode", lambda: mode)
         monkeypatch.setattr(dc, "get_task_write_policy", lambda: "shared")
         monkeypatch.setattr(dc, "is_daemon_required", lambda: mode == "enterprise")
-        monkeypatch.setattr(dc, "UnixDaemonRpcClient", _fail_client)
-
+        # transport 无关 seam：HTTP 迁移期 route_task_write 默认走
+        # HttpDaemonRpcClient（真实 manifest 端点），只替 UnixDaemonRpcClient
+        # 会命中真实 HTTP 端点（502 / E_HTTP_MANIFEST_MISSING 随环境漂移）。
+        monkeypatch.setattr(dc, "_get_rpc_client_for_route",
+                            lambda *a, **kw: _FakeFailClient())
+        # 显式 workspace_id 使故障落在 route_task_write 的 try 块内：
+        # _inject_workspace_id 在 try 之外，未带 workspace_id 时注入阶段
+        # 即抛原始文案（无 "daemon 连接失败" 包装）。
         with pytest.raises(DaemonUnavailableError) as exc:
-            dc.route_task_write("task.apply", {"task_id": "T-UNAVAIL"}, _fallback)
+            dc.route_task_write("task.apply",
+                                {"task_id": "T-UNAVAIL", "workspace_id": 1},
+                                _fallback)
         assert "daemon 连接失败" in str(exc.value), exc.value
         assert fallback_calls == [], f"{mode} 模式不得静默回退本地 SQLite"
         # 拒绝路径同样 fail-closed
         with pytest.raises(DaemonUnavailableError):
-            dc.route_task_write("task.close", {"task_id": "T-UNAVAIL"}, _fallback)
+            dc.route_task_write("task.close",
+                                {"task_id": "T-UNAVAIL", "workspace_id": 1},
+                                _fallback)
         assert fallback_calls == [], f"{mode} 模式 close 不得回退本地"
 
     def test_enterprise_daemon_unavailable_fail_closed_no_local_fallback(self, monkeypatch):

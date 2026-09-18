@@ -171,6 +171,15 @@ def authority():
 
     tmp = tempfile.mkdtemp(prefix="cw_wsl_authority_e2e_")
     config = _daemon_config(tmp)
+    # 权威库落 fake_home/.callwarden（探针实证）：named-pipe 路由下进程内
+    # MCP 工具（task_next_step 等）经 mcp.daemon_client.inject_workspace_id
+    # 解析权威库，daemon 侧按进程 env 的 USERPROFILE 打开
+    # /.callwarden/callwarden.db；令其与 daemon task DB 同一物理文件，
+    # 否则注入的 workspace_id 在隔离 task-DB 中不存在 →
+    # E_WORKSPACE_AUTHORITY_MISMATCH（registry/task-DB 分裂）。
+    fake_home = os.path.join(tmp, "home")
+    os.makedirs(os.path.join(fake_home, ".callwarden"), exist_ok=True)
+    config["task_db_path"] = os.path.join(fake_home, ".callwarden", "callwarden.db")
     config_path = os.path.join(tmp, "daemon.json")
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f)
@@ -187,20 +196,46 @@ def authority():
     old_mode = os.environ.get("CW_DAEMON_MODE")
     old_endpoint = os.environ.get("CW_DAEMON_ENDPOINT")
     old_manifest = os.environ.get("CW_BRIDGE_MANIFEST")
+    old_home = os.environ.get("USERPROFILE")
+    old_skip_setup = os.environ.get("CALLWARDEN_SKIP_AUTO_SETUP")
+    old_transport = os.environ.get("CW_DAEMON_TRANSPORT")
     try:
         os.environ["CW_DAEMON_MODE"] = "enterprise"
         os.environ["CW_DAEMON_ENDPOINT"] = pipe
         os.environ["CW_BRIDGE_MANIFEST"] = os.path.join(tmp, "bridge.manifest.json")
+        # USERPROFILE 隔离：进程内 MCP route 与 CLI 子进程的 manifest 发现 /
+        # 权威库解析都以 USERPROFILE 为准（daemon 侧权威 registry 由 CSIDL 解析，
+        # 忽略本变量，故 daemon 另需下方 CW_DAEMON_REGISTRY_DB env 显式隔离）。
+        os.environ["USERPROFILE"] = fake_home
+        os.environ["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+        # transport 强制 named-pipe：本测试全拓扑为 Named Pipe（daemon
+        # --config 无 http_bind；CLI --socket pipe；bridge 直连 SID 管道）。
+        # 迁移期 HTTP 默认开启会让进程内 MCP route（create_mcp_server）与
+        # CLI 子进程走 HTTP manifest 发现——CALLWARDEN_DIR 在本模块导入时
+        # 已冻结为真实 HOME，隔离后读不到隔离 manifest（E_HTTP_MANIFEST_MISSING）
+        # 或命中真实 manifest 泄漏真实 workspace。显式 named-pipe：daemon
+        # 不启 HTTP，进程内 route 走 _inject_workspace_id（读 USERPROFILE
+        # 权威库=隔离 task-DB）解析到 seed workspace，CLI 走管道；bridge
+        # 不读本 env（直连 SID 管道）不受影响。
+        os.environ["CW_DAEMON_TRANSPORT"] = "named-pipe"
 
         # 1. 启动隔离 daemon（占默认管道）
+        daemon_env = dict(os.environ)
+        # registry 隔离（探针 v3 实证）：仅 USERPROFILE 不足以隔离 daemon 的
+        # 权威 registry（CSIDL 真实 profile）；显式 CW_DAEMON_REGISTRY_DB env
+        # 才让 workspace.list/status/inject 只见本测试 seed 的 workspace。
+        daemon_env["CW_DAEMON_REGISTRY_DB"] = config["registry_db_path"]
         daemon_proc, daemon_log = _spawn(
-            _DAEMON_BIN, ["--config", config_path], tmp, "daemon"
+            _DAEMON_BIN, ["--config", config_path], tmp, "daemon", env=daemon_env
         )
         procs.append(daemon_proc)
         logs.append(daemon_log)
 
         connected = False
-        deadline = time.time() + 40
+        # 150s：daemon 冷启动存在两段 ~24s 空耗（空 registry 下 recover 与
+        # state_factory 各 ~24s），管道 ~50s 绑定、worker 池预热到首次应答
+        # ~89s（期间持续 "worker pool full"）；旧 40s 恒假失败。详见 step3 证据。
+        deadline = time.time() + 150
         while time.time() < deadline:
             if daemon_proc.poll() is not None:
                 break
@@ -231,6 +266,13 @@ def authority():
             except Exception:
                 pass
             pytest.fail(f"隔离 daemon 未在超时内响应，日志：\n{log_text}")
+
+        # 1b. 播种 workspace（BR-01/BR-02 契约）：daemon 已就绪，经 Windows 侧
+        # cw-client 注册 workspace 并把 registry 整数 id 同写 task-DB workspaces 表，
+        # 供本模块所有 task.create（含经 bridge 的 WSL 侧）复用同一配对。
+        ws_root = os.path.join(tmp, "ws_root")
+        os.makedirs(ws_root, exist_ok=True)
+        ws = _seed_task_workspace(pipe, config["task_db_path"], ws_root, "e2e-wsl-ws")
 
         # 2. 启动 bridge（转发默认管道）
         bridge_env = dict(os.environ)
@@ -277,9 +319,24 @@ def authority():
             "authority_id": hello["authority_id"],
             "task_db_fingerprint": hello["task_db_fingerprint"],
             "task_db": config["task_db_path"],
+            "workspace_id": ws["workspace_id"],
+            "workspace_instance_id": ws["workspace_instance_id"],
+            "snapshot_id": ws["snapshot_id"],
         }
     finally:
         os.environ.pop("CW_DAEMON_MODE", None) if old_mode is None else os.environ.__setitem__("CW_DAEMON_MODE", old_mode)
+        if old_home is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = old_home
+        if old_skip_setup is None:
+            os.environ.pop("CALLWARDEN_SKIP_AUTO_SETUP", None)
+        else:
+            os.environ["CALLWARDEN_SKIP_AUTO_SETUP"] = old_skip_setup
+        if old_transport is None:
+            os.environ.pop("CW_DAEMON_TRANSPORT", None)
+        else:
+            os.environ["CW_DAEMON_TRANSPORT"] = old_transport
         if old_endpoint is None:
             os.environ.pop("CW_DAEMON_ENDPOINT", None)
         else:
@@ -335,6 +392,53 @@ def _spawn_cw_cli(args, env, timeout=60):
     )
 
 
+def _seed_task_workspace(pipe: str, task_db: str, ws_root: str, name: str) -> dict:
+    """注册 workspace 并在 task-DB workspaces 表播种对应行，返回 task.create 绑定配对。
+
+    与 tests/test_windows_daemon_e2e.py 同一逻辑，对齐 BR-01/BR-02 现行权威契约
+    （task_collab_shared.rs:required_workspace_id_param / task_collab.rs:bind_task_to_workspace）：
+    workspace.register（经 Windows 侧 cw-client + 默认管道）返回 registry 整数
+    workspace_id + workspace_instance_id；把该整数 id 同步插入 task-DB workspaces 表
+    （is_active=1）使 registry/task-DB 两侧一致。旧测试传字符串 "ws-cross" 或缺
+    workspace_id，属陈旧断言。ws_root 必须存在且属当前用户（validate_owned_path 校验）。
+    """
+    import sqlite3
+
+    reg = subprocess.run(
+        [_CLIENT_BIN, "--socket", pipe, "--timeout", "15",
+         "rpc", "workspace.register",
+         json.dumps({"name": name, "client_view_root": ws_root,
+                     "description": "wsl authority e2e",
+                     "git_remote_url": "https://github.com/callwarden/wsl-e2e.git",
+                     "git_head_commit_sha": "wsl0" * 10})],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+    )
+    assert reg.returncode == 0, reg
+    parsed = json.loads(reg.stdout)
+    ws_id = parsed.get("workspace_id")
+    ws_inst = parsed.get("workspace_instance_id")
+    snapshot_id = parsed.get("snapshot_id")
+    assert isinstance(ws_id, int) and ws_id > 0, parsed
+    assert isinstance(ws_inst, str) and ws_inst.strip(), parsed
+    assert isinstance(snapshot_id, str) and snapshot_id.strip(), parsed
+
+    conn = sqlite3.connect(task_db)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO workspaces (id, name, root_path, created_at, is_active) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (ws_id, name, ws_root, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "workspace_id": ws_id,
+        "workspace_instance_id": ws_inst,
+        "snapshot_id": snapshot_id,
+    }
+
+
 def test_eight_sources_claim_single_winner_via_bridge(authority):
     """P1：Windows CLI + Windows MCP + WSL client 共 8 个并发源 claim 同一任务。
 
@@ -350,19 +454,22 @@ def test_eight_sources_claim_single_winner_via_bridge(authority):
     pipe = authority["pipe"]
     task_db = authority["task_db"]
 
-    # 1. 真实 MCP 创建主任务
+    # 1. 创建主任务：经 bridge client RPC 的 task.create（原生 RPC 支持
+    # workspace_id + workspace_instance_id，满足 BR-01/BR-02 权威契约）。
+    # 进程内 MCP 工具 task_create 缺少 workspace 参数且返回注解与实际 dict
+    # 不符（fastmcp pydantic 拒绝）——产品缺陷已另立卡，本卡 tests-only
+    # 不碰产品码；claim 阶段仍用 3 个真实 MCP 工具（task_next_step 无此缺陷）。
     mcp = create_mcp_server()
-    create_res, create_text = asyncio.run(mcp.call_tool(
-        "task_create",
+    created = authority["wsl_client"].call(
+        "task.create",
         {"title": "Cross-boundary E2E Task",
          "description": "Windows CLI + MCP + WSL client 并发 claim",
-         "steps": [{"action": "edit", "target_file": "core.py", "target_symbol": "main"}]},
-    ))
-    task_id = _mcp_tool_text(create_res).strip()
-    import re as _re
-    m = _re.search(r"T-[0-9A-Za-z-]+", task_id or "")
-    assert m, f"MCP task_create 未返回合法 task_id: {task_id}"
-    task_id = m.group(0)
+         "steps": [{"action": "edit", "target_file": "core.py", "target_symbol": "main"}],
+         "workspace_id": authority["workspace_id"],
+         "workspace_instance_id": authority["workspace_instance_id"]},
+    )
+    task_id = created.get("task_id")
+    assert task_id, f"task.create 未返回 task_id: {created}"
 
     # 2. 并发抢占：3 真实 CLI + 3 真实 MCP + 2 bridge（WSL 模拟）
     env = os.environ.copy()
@@ -459,11 +566,22 @@ def test_eight_sources_claim_single_winner_via_bridge(authority):
     wsl_db = os.path.join(wsl_home, ".callwarden", "callwarden.db")
     assert not os.path.exists(wsl_db), f"WSL 侧出现了本地 DB 写入（禁止本地 fallback）: {wsl_db}"
 
-    # 8. report（WSL 胜者经 bridge 写回 Windows authority）
+    # 8. report（WSL 胜者经 bridge 写回 Windows authority）；snapshot_id 为
+    #    daemon 发布值，validate_report_snapshot_authority 要求逐字一致。
+    #    必须携带胜者 claimed 的 step_id：task_collab_lifecycle 仅在 step 落
+    #    done 且无 pending/in_progress 残留时才把任务推入 review；缺 step_id
+    #    时步骤保持 pending → 任务停留 in_progress（陈旧断言，r8 实证）。
+    st = authority["wsl_client"].call("task.status", {"task_id": task_id})
+    open_steps = [s for s in st.get("steps", [])
+                  if s.get("status") in ("pending", "in_progress")]
+    assert open_steps, f"胜者 claim 后应有未完成步骤可 report: {st}"
     report = authority["wsl_client"].call(
         "task.report",
         {"task_id": task_id, "summary": "completed by winner",
-         "agent_session_id": winner_session},
+         "agent_session_id": winner_session,
+         "step_id": open_steps[0]["step_id"],
+         "success": True,
+         "snapshot_id": authority["snapshot_id"]},
     )
     assert report.get("status") == "review", report
     status = authority["wsl_client"].call("task.status", {"task_id": task_id})
@@ -481,7 +599,8 @@ def test_wsl_bridge_client_creates_task_in_windows_authority(authority):
     created = wsl.call("task.create", {
         "title": "WSL bridge 创建任务",
         "description": "经 bridge 写入 Windows authority",
-        "workspace_id": "ws-cross",
+        "workspace_id": authority["workspace_id"],
+        "workspace_instance_id": authority["workspace_instance_id"],
     })
     task_id = created.get("task_id")
     assert task_id, created
@@ -525,6 +644,8 @@ def test_request_id_idempotent_after_bridge_restart(authority):
     created = wsl.mutation_call("task.create", {
         "title": "dedup bridge 重启",
         "request_id": request_id,
+        "workspace_id": authority["workspace_id"],
+        "workspace_instance_id": authority["workspace_instance_id"],
     })
     task_id = created["task_id"]
     assert created["status"] == "open", created
@@ -566,6 +687,8 @@ def test_request_id_idempotent_after_bridge_restart(authority):
     retried = wsl2.mutation_call("task.create", {
         "title": "dedup bridge 重启",
         "request_id": request_id,
+        "workspace_id": authority["workspace_id"],
+        "workspace_instance_id": authority["workspace_instance_id"],
     })
     assert retried["task_id"] == task_id, f"同一 request_id 重复创建了不同任务: {retried}"
 

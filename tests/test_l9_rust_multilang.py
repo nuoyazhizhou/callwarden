@@ -323,6 +323,10 @@ def test_elixir_and_hcl_use_rust_path():
 @rust_required
 def test_elixir_python_parser_still_works():
     """测试 7：Elixir 仍能通过 Python parser 正常解析"""
+    pytest.importorskip(
+        "tree_sitter_elixir",
+        reason="可选 grammar 包 tree_sitter_elixir 未安装（Python parser 回退用例），诚实 skip",
+    )
     from callwarden.parsers import ElixirParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ex", delete=False, encoding="utf-8") as f:
@@ -344,6 +348,10 @@ def test_elixir_python_parser_still_works():
 @rust_required
 def test_hcl_python_parser_still_works():
     """测试 8：HCL 仍能通过 Python parser 正常解析"""
+    pytest.importorskip(
+        "tree_sitter_hcl",
+        reason="可选 grammar 包 tree_sitter_hcl 未安装（Python parser 回退用例），诚实 skip",
+    )
     from callwarden.parsers import HclParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".hcl", delete=False, encoding="utf-8") as f:

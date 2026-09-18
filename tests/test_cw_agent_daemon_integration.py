@@ -44,6 +44,8 @@ from callwarden.server.agent_protocol import (
     MSG_REFRESH,
     MSG_PING,
     REFRESH_LARGE_FILE_THRESHOLD,
+    REFRESH_HEX_LIMIT,
+    REFRESH_RAW_LIMIT,
 )
 from callwarden.server.agent_watcher import AgentWatcher
 
@@ -54,9 +56,31 @@ from callwarden.server.agent_watcher import AgentWatcher
 
 
 def _make_mock_daemon_rpc():
-    """构造 mock daemon_rpc_client。"""
-    rpc = MagicMock()
+    """构造 mock daemon_rpc_client（不支持 Q10 multipart）。
+
+    ``spec`` 限定接口为 call / call_with_fd：裸 MagicMock 会自动创建任意属性
+    （supports_multipart 会变成 truthy MagicMock），导致分档判定不可控。
+    spec 化后 ``supports_multipart`` 确定性缺失 → 降级 gz_b64（零回归语义）。
+    """
+    rpc = MagicMock(spec=["call", "call_with_fd"])
     rpc.call.return_value = {"status": "committed", "generation": "gen_test_001"}
+    return rpc
+
+
+def _make_multipart_mock_daemon_rpc():
+    """构造支持 Q10 multipart 的 mock daemon_rpc_client。
+
+    用 ``spec`` 显式限定接口为 call / call_multipart / supports_multipart：
+    MagicMock 会自动创建任意属性（含 call_with_fd），会导致 FD 分支判定
+    在 Linux 上误命中（>16MB 即走 FD）。spec 化后接口确定，分档测试
+    平台无关。生产 HttpDaemonRpcClient 的 ``supports_multipart`` 为类属性。
+    """
+    rpc = MagicMock(spec=["call", "call_multipart", "supports_multipart"])
+    rpc.supports_multipart = True
+    rpc.call.return_value = {"status": "committed", "generation": "gen_test_001"}
+    rpc.call_multipart.return_value = {
+        "status": "committed", "generation": "gen_multipart_001",
+    }
     return rpc
 
 
@@ -268,13 +292,13 @@ class TestSendRefreshSmallFile:
         assert params["canonical_bytes_hex"] == canonical.hex()
         assert response["status"] == "committed"
 
-    def test_small_file_at_threshold_boundary(self, tmp_path):
-        """恰好等于阈值时走 hex 路径。"""
+    def test_small_file_at_hex_boundary(self, tmp_path):
+        """恰好等于 REFRESH_HEX_LIMIT 时走 hex 路径。"""
         rpc = _make_mock_daemon_rpc()
         session = _make_session_with_epoch(ws_id="ws_boundary", epoch=1)
 
-        # 构造恰好等于阈值大小的 canonical_bytes
-        canonical = b"x" * REFRESH_LARGE_FILE_THRESHOLD
+        # 构造恰好等于 hex 上限大小的 canonical_bytes
+        canonical = b"x" * REFRESH_HEX_LIMIT
         content_hash = hashlib.sha256(canonical).hexdigest()
 
         send_refresh_to_daemon(
@@ -287,10 +311,279 @@ class TestSendRefreshSmallFile:
             content_hash=content_hash,
         )
 
-        # 应该走 hex 路径（<= 阈值）
+        # 应该走 hex 路径（<= REFRESH_HEX_LIMIT）
         params = rpc.call.call_args[0][1]
         assert "canonical_bytes_hex" in params
+        assert "canonical_bytes_gz_b64" not in params
         assert "canonical_len" in params
+
+    def test_medium_file_uses_gz_b64_path(self, tmp_path):
+        """超过 REFRESH_HEX_LIMIT（但 < FD 阈值）走 gzip+b64 路径。
+
+        Q9 大文件优化（2026-09-17）：>1MB 的文件 hex 编码膨胀 2x，
+        改用 gzip 压缩 + base64（canonical_bytes_gz_b64），daemon 侧
+        解压后入库。本测试验证压缩体可完整还原为原始 canonical_bytes。
+        """
+        rpc = _make_mock_daemon_rpc()
+        session = _make_session_with_epoch(ws_id="ws_gz", epoch=1)
+
+        canonical = b"pub fn main() { println!(\"hi\"); }\n" * 200_000  # ~9.6MB
+        assert len(canonical) > REFRESH_HEX_LIMIT
+        assert len(canonical) <= REFRESH_LARGE_FILE_THRESHOLD
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_gz",
+            rel_path="medium.rs",
+            abs_path=str(tmp_path / "medium.rs"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        # 走 gz+b64 内联路径（call），未尝试 FD
+        rpc.call.assert_called_once()
+        rpc.call_with_fd.assert_not_called()
+
+        import base64 as _b64
+        import gzip as _gzip
+        params = rpc.call.call_args[0][1]
+        assert "canonical_bytes_hex" not in params
+        # 完整还原校验
+        assert _gzip.decompress(
+            _b64.b64decode(params["canonical_bytes_gz_b64"])
+        ) == canonical
+        assert params["canonical_len"] == len(canonical)
+        assert params["content_hash"] == content_hash
+        # gzip 对重复代码应有显著压缩
+        assert len(params["canonical_bytes_gz_b64"]) < len(canonical)
+
+
+# ============================================
+# 4c. send_refresh_to_daemon: Q10 raw-gz-body multipart 分档（2026-09-17）
+# ============================================
+
+
+class TestSendRefreshMultipartTiers:
+    """Q10：multipart-capable client 的分档选择。
+
+    分档（client 支持 multipart 时，FD 仍优先于 >16MB）：
+    - <= REFRESH_RAW_LIMIT（32MB）：multipart 裸 payload（零编码税）
+    - >  REFRESH_RAW_LIMIT：multipart gzip payload
+    - 旧 daemon（MultipartUnsupportedError）→ 降级 gz_b64 JSON 内联
+    """
+
+    def test_medium_file_uses_raw_multipart(self, tmp_path):
+        """1MB < size <= 32MB：multipart 裸 payload（payload=canonical, gz=False）。"""
+        rpc = _make_multipart_mock_daemon_rpc()
+        session = _make_session_with_epoch(ws_id="ws_raw", epoch=1)
+
+        canonical = b"def f():\n    return 0\n" * 200_000  # ~4MB
+        assert REFRESH_HEX_LIMIT < len(canonical) <= REFRESH_RAW_LIMIT
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        response = send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_raw",
+            rel_path="medium_raw.py",
+            abs_path=str(tmp_path / "medium_raw.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        rpc.call_multipart.assert_called_once()
+        rpc.call.assert_not_called()
+
+        args, kwargs = rpc.call_multipart.call_args
+        assert args[0] == "workspace.file.refresh"
+        params = args[1]
+        assert params["canonical_len"] == len(canonical)
+        assert params["content_hash"] == content_hash
+        # 裸 payload：原样字节，未压缩
+        assert kwargs["payload"] == canonical
+        assert kwargs["gz"] is False
+        assert "canonical_bytes_hex" not in params
+        assert "canonical_bytes_gz_b64" not in params
+        assert response["status"] == "committed"
+
+    def test_huge_file_uses_gz_multipart(self, tmp_path):
+        """> 32MB：multipart gzip payload（解压还原 == canonical）。
+
+        mock 经 spec 限定无 call_with_fd → FD 分支不命中，平台无关地
+        验证 gz multipart 分档（FD 路径由 TestSendRefreshLargeFileMemfd 覆盖）。
+        """
+        rpc = _make_multipart_mock_daemon_rpc()
+        session = _make_session_with_epoch(ws_id="ws_gzq10", epoch=1)
+
+        canonical = b"z" * (REFRESH_RAW_LIMIT + 1)
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_gzq10",
+            rel_path="huge.py",
+            abs_path=str(tmp_path / "huge.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        rpc.call_multipart.assert_called_once()
+        rpc.call.assert_not_called()
+
+        args, kwargs = rpc.call_multipart.call_args
+        params = args[1]
+        assert params["canonical_len"] == len(canonical)
+        # gz payload：须能解压回原样
+        import gzip as _gzip
+        assert _gzip.decompress(kwargs["payload"]) == canonical
+        assert kwargs["gz"] is True
+        # 压缩对高度重复内容应显著缩小
+        assert len(kwargs["payload"]) < len(canonical)
+
+    def test_multipart_unsupported_falls_back_to_gz_b64(self, tmp_path):
+        """旧 daemon（MultipartUnsupportedError）→ 降级 gz_b64 JSON 内联。"""
+        from callwarden.server.daemon_client import MultipartUnsupportedError
+
+        rpc = _make_multipart_mock_daemon_rpc()
+        # 第一次调用（raw multipart）模拟旧 daemon 404
+        rpc.call_multipart.side_effect = MultipartUnsupportedError("old daemon")
+        session = _make_session_with_epoch(ws_id="ws_fallback", epoch=1)
+
+        canonical = b"def g():\n    return 1\n" * 100_000  # ~2MB
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        response = send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_fallback",
+            rel_path="fallback.py",
+            abs_path=str(tmp_path / "fallback.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        rpc.call_multipart.assert_called_once()
+        rpc.call.assert_called_once()
+        params = rpc.call.call_args[0][1]
+        assert "canonical_bytes_gz_b64" in params
+        import base64 as _b64
+        import gzip as _gzip
+        assert _gzip.decompress(
+            _b64.b64decode(params["canonical_bytes_gz_b64"])
+        ) == canonical
+        assert response["status"] == "committed"
+
+    def test_client_without_multipart_flag_uses_gz_b64(self, tmp_path):
+        """无 supports_multipart 标志的 client（mock/UDS）→ gz_b64 内联（零回归）。"""
+        rpc = _make_mock_daemon_rpc()
+        assert getattr(rpc, "supports_multipart", False) is False
+        session = _make_session_with_epoch(ws_id="ws_nomultipart", epoch=1)
+
+        canonical = b"def h():\n    return 2\n" * 100_000  # ~2MB
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_nomultipart",
+            rel_path="no_multipart.py",
+            abs_path=str(tmp_path / "no_multipart.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        rpc.call.assert_called_once()
+        # spec 限定接口无 call_multipart → 确定性未调用
+        assert not getattr(rpc, "call_multipart", MagicMock()).called
+        params = rpc.call.call_args[0][1]
+        assert "canonical_bytes_gz_b64" in params
+
+
+# ============================================
+# 4d. Q10 异步受理（202 + 轮询，2026-09-17）
+# ============================================
+
+
+class TestSendRefreshAsyncAccepted:
+    """daemon 返回 accepted 时，client 按同一 request_id 轮询直至最终结果。"""
+
+    def test_accepted_then_committed(self, tmp_path):
+        """首次 accepted → 轮询 → committed；两次调用复用同一 request_id。"""
+        rpc = _make_multipart_mock_daemon_rpc()
+        rpc.call_multipart.side_effect = [
+            {"status": "accepted", "async": True, "request_id": "rid-1"},
+            {"status": "committed", "generation": "1:1"},
+        ]
+        session = _make_session_with_epoch(ws_id="ws_async", epoch=1)
+
+        canonical = b"def a():\n    return 0\n" * 100_000  # ~2MB
+        response = send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_async",
+            rel_path="async.py",
+            abs_path=str(tmp_path / "async.py"),
+            canonical_bytes=canonical,
+            content_hash=hashlib.sha256(canonical).hexdigest(),
+        )
+
+        assert rpc.call_multipart.call_count == 2
+        # 两次调用须复用同一 request_id（dedup Replay 的 key）
+        rid1 = rpc.call_multipart.call_args_list[0].kwargs.get("request_id")
+        rid2 = rpc.call_multipart.call_args_list[1].kwargs.get("request_id")
+        assert rid1 is not None and rid1 == rid2
+        # 轮询请求不带 payload（dedup 分支不需要重新传输）
+        assert rpc.call_multipart.call_args_list[1].kwargs.get("payload") is None
+        assert response["status"] == "committed"
+
+    def test_in_flight_then_committed(self, tmp_path):
+        """轮询遇 E_REQUEST_IN_FLIGHT → 继续轮询，不当作最终错误。"""
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+
+        rpc = _make_multipart_mock_daemon_rpc()
+        rpc.call_multipart.side_effect = [
+            {"status": "accepted", "async": True, "request_id": "rid-2"},
+            DaemonRemoteError("E_REQUEST_IN_FLIGHT", "still parsing"),
+            {"status": "committed", "generation": "1:2"},
+        ]
+        session = _make_session_with_epoch(ws_id="ws_inflight", epoch=1)
+
+        canonical = b"def b():\n    return 1\n" * 100_000
+        response = send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_inflight",
+            rel_path="inflight.py",
+            abs_path=str(tmp_path / "inflight.py"),
+            canonical_bytes=canonical,
+            content_hash=hashlib.sha256(canonical).hexdigest(),
+        )
+
+        assert rpc.call_multipart.call_count == 3
+        assert response["status"] == "committed"
+
+    def test_sync_response_not_polled(self, tmp_path):
+        """同步结果（非 accepted）直接返回，不发起轮询。"""
+        rpc = _make_multipart_mock_daemon_rpc()
+        rpc.call_multipart.return_value = {"status": "committed", "generation": "9:9"}
+        session = _make_session_with_epoch(ws_id="ws_syncresp", epoch=1)
+
+        canonical = b"def c():\n    return 2\n" * 100_000
+        response = send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_syncresp",
+            rel_path="syncresp.py",
+            abs_path=str(tmp_path / "syncresp.py"),
+            canonical_bytes=canonical,
+            content_hash=hashlib.sha256(canonical).hexdigest(),
+        )
+
+        assert rpc.call_multipart.call_count == 1
+        assert response["status"] == "committed"
 
 
 # ============================================
@@ -423,11 +716,12 @@ class TestSendRefreshLargeFileMemfd:
         assert params["canonical_len"] == len(canonical)
         assert params["content_hash"] == content_hash
 
-    def test_large_file_fallback_to_hex_on_non_unix(self, tmp_path, monkeypatch):
-        """非 AF_UNIX 平台大文件降级到 hex 路径（走 call 而非 call_with_fd）。
+    def test_large_file_fallback_to_gz_b64_on_non_unix(self, tmp_path, monkeypatch):
+        """非 AF_UNIX 平台大文件降级到 gzip+b64 路径（走 call 而非 call_with_fd）。
 
-        Windows/macOS 没有 socket.AF_UNIX，agent 协议降级为 hex 编码
-        通过普通 RPC 传输大文件。
+        Windows/macOS 没有 socket.AF_UNIX，agent 协议降级为 gzip 压缩 + base64
+        编码通过普通 RPC 传输大文件（Q9 优化后压缩率 3-5x，优于原 b64 的 1.33x）。
+        daemon 侧 workspace.rs 降级链明确支持 canonical_bytes_gz_b64。
         """
         # 确保 socket.AF_UNIX 不存在（模拟非 Unix 平台）
         import socket as _socket_mod
@@ -436,9 +730,9 @@ class TestSendRefreshLargeFileMemfd:
 
         rpc = _make_mock_daemon_rpc()
         rpc.call.return_value = {
-            "status": "committed", "generation": "gen_hex_fallback_001",
+            "status": "committed", "generation": "gen_gz_fallback_001",
         }
-        session = _make_session_with_epoch(ws_id="ws_hex_fb", epoch=1)
+        session = _make_session_with_epoch(ws_id="ws_gz_fb", epoch=1)
 
         canonical = b"h" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
         content_hash = hashlib.sha256(canonical).hexdigest()
@@ -446,19 +740,75 @@ class TestSendRefreshLargeFileMemfd:
         send_refresh_to_daemon(
             daemon_rpc_client=rpc,
             agent_session=session,
-            workspace_instance_id="ws_hex_fb",
-            rel_path="hex_fallback.py",
-            abs_path=str(tmp_path / "hex_fallback.py"),
+            workspace_instance_id="ws_gz_fb",
+            rel_path="gz_fallback.py",
+            abs_path=str(tmp_path / "gz_fallback.py"),
             canonical_bytes=canonical,
             content_hash=content_hash,
         )
 
-        # 非 Unix 平台走 hex 降级路径
+        # 非 Unix 平台走 gz+b64 降级路径
         rpc.call.assert_called_once()
         rpc.call_with_fd.assert_not_called()
 
+        import base64 as _b64
+        import gzip as _gzip
         params = rpc.call.call_args[0][1]
-        assert params["canonical_bytes_hex"] == canonical.hex()
+        assert _gzip.decompress(
+            _b64.b64decode(params["canonical_bytes_gz_b64"])
+        ) == canonical
+        assert params["canonical_len"] == len(canonical)
+        assert params["content_hash"] == content_hash
+
+    def test_large_file_http_client_fallback_to_gz_b64(self, tmp_path, monkeypatch):
+        """回归测试（2026-09-17）：HTTP client 无 call_with_fd → gz+b64 降级。
+
+        原实现仅按 socket.AF_UNIX 判定平台能力，但生产 run_agent_mode 传入
+        HttpDaemonRpcClient（HTTP 传输，无 call_with_fd 方法）。Linux 上
+        >16MB 文件会走到 FD 分支并触发 AttributeError，导致大文件刷新
+        静默失败。正确判据是「client 本身是否支持 FD 传递」。
+        Q9 优化后内联降级路径改用 gzip+b64（canonical_bytes_gz_b64）。
+        """
+        import socket as _socket_mod
+        # Linux 平台：AF_UNIX 存在
+        if not hasattr(_socket_mod, "AF_UNIX"):
+            monkeypatch.setattr(_socket_mod, "AF_UNIX", 1, raising=False)
+
+        # 模拟 HttpDaemonRpcClient：只有 call，没有 call_with_fd
+        class _HttpOnlyClient:
+            def __init__(self):
+                self.call = MagicMock(
+                    return_value={"status": "committed", "generation": "gen_http_gz"},
+                )
+
+        rpc = _HttpOnlyClient()
+        session = _make_session_with_epoch(ws_id="ws_http_gz", epoch=1)
+
+        canonical = b"q" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        # 不应抛 AttributeError
+        response = send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_http_gz",
+            rel_path="http_gz.py",
+            abs_path=str(tmp_path / "http_gz.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        # 走 gz+b64 降级路径（call），未尝试 call_with_fd
+        rpc.call.assert_called_once()
+        assert not hasattr(rpc, "call_with_fd")
+        assert response["status"] == "committed"
+
+        import base64 as _b64
+        import gzip as _gzip
+        params = rpc.call.call_args[0][1]
+        assert _gzip.decompress(
+            _b64.b64decode(params["canonical_bytes_gz_b64"])
+        ) == canonical
         assert params["canonical_len"] == len(canonical)
         assert params["content_hash"] == content_hash
 
