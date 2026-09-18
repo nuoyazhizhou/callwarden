@@ -1,0 +1,11 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\git_work\callwarden
+configfile: pyproject.toml
+plugins: anyio-4.14.2, timeout-2.4.0, xdist-3.8.0
+collected 16 items
+
+tests\test_mcp_assignment_show_http_rpc.py ......                        [ 37%]
+tests\test_mcp_compat_identity-lease-small_http_rpc.py ..........        [100%]
+
+============================= 16 passed in 16.47s =============================

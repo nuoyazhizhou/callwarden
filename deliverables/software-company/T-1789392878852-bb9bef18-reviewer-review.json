@@ -1,0 +1,67 @@
+{
+  "task_id": "T-1789392878852-bb9bef18",
+  "card": "C-19 (backlog §W20 F1)",
+  "reviewer": {
+    "agent_id": "reviewer-wb-c19-01",
+    "agent_instance_id": "inst-rev-wb-c19-01",
+    "session_id": "sess-rev-wb-c19-20260914",
+    "role": "reviewer"
+  },
+  "reviewed_at": "2026-09-14T22:35:00+08:00",
+  "commit_under_review": "e2a28530da13432409c16d1f3219435ed74cbfb3",
+  "checks": [
+    {
+      "check": "diff 逐块审读（5 文件 374+/12-）",
+      "result": "pass",
+      "detail": "admin_handlers.rs 恰两处 SQL（get 子查询 tasks->task_workspace_bindings / list JOIN tasks->JOIN bindings），签名/返回结构/参数校验零改动；路由层 snapshot_state.rs 零触碰；禁触路径 db/**、scripts/** 零触碰；F2/F3 known-defect 锚原样保留（L552-571 区段未动）"
+    },
+    {
+      "check": "独立复跑（隔离 daemon 矩阵）",
+      "result": "pass",
+      "detail": "21 passed（4 例新 C-19 测试 + C-17 原 17 例含 F2/F3 锚如实失败语义与 ACL 门禁）；harness 打印二进制 sha256 与部署二进制 1ac3e759…67626 同源（stage-refresh→runtime/current）"
+    },
+    {
+      "check": "A/B 判别力复核",
+      "result": "pass",
+      "detail": "旧二进制 c9c3a5db…d0 同集 4F/17P（新 4 例如实失败 no such column），新二进制 21P——用例判别力成立，非恒真测试"
+    },
+    {
+      "check": "task.completion_review",
+      "result": "pass",
+      "detail": "decision=pass, findings=[]"
+    },
+    {
+      "check": "cw audit verify --limit 3000",
+      "result": "pass",
+      "detail": "Total 3000 / Verified 3000 / Broken 0（daemon 重启后重发布 snapshot dfcac6f16b827a30，确定性 id 与 report 事件一致）"
+    },
+    {
+      "check": "部署门禁核验（产品代码卡）",
+      "result": "pass",
+      "detail": "health.git_commit=e2a2853==HEAD；manifest sha256=1ac3e759bf0cb8b1b8190e547106466b98d3cf182e8ee4deaf0504e68b767626==runtime/current 三方一致；PID 30080；refresh evidence 20260914-222114-e2a28530da13-2bbeac01.json；rollback=false"
+    },
+    {
+      "check": "生产只读 probe 前后对照",
+      "result": "pass",
+      "detail": "修复前 admin.gc_audit_list 恒 prepare 失败（no such column: t.workspace_id，证据 manifest prefix_probe）；部署后同调用返回 5 行（含本卡 change_audit 行），gc_audit_get 全字段返回——修复效果生产实证"
+    }
+  ],
+  "findings": [
+    {
+      "id": "R1_IN_SCOPE_REPORT_PLACEHOLDER_CORRECTED",
+      "severity": "in_scope_acceptable",
+      "description": "step0/step1 首次 report 的 evidence-hash/changes[0].hash_after 误传占位值（sha256:PLACEHOLDER / HASH_PLACEHOLDER），executor 均已在同 step 内以更正报告修复（req-961a57ac2f1c 等，更正文本显式披露前次占位值），最新 report 事件哈希与实物一致；台账链完整可追溯，无证据伪造风险"
+    },
+    {
+      "id": "R2_IN_SCOPE_FOREIGN_WS_NEGATIVE_OMITTED",
+      "severity": "in_scope_acceptable",
+      "description": "外域 workspace 负例未种——task_workspace_bindings 复合 FK（workspace_authority_captures）需第二行 workspaces，与 C-17 夹具判别力断言 n_ws==1 冲突；join-miss 路径已由 unbound 负例覆盖（同一 SQL 分支），种子注释与卡证据已披露"
+    },
+    {
+      "id": "R3_IN_SCOPE_DAEMON_CHILDCRAFT_REAPED",
+      "severity": "in_scope_acceptable",
+      "description": "refresh 脚本启动的 daemon 随前台 PowerShell 会话结束被 job-object 回收，executor 手动 run_in_background 重启并复验 health/sha/git_commit——部署闭环最终态有效；建议后续给 refresh 脚本增加 detach 启动选项"
+    }
+  ],
+  "overall": "PASS"
+}

@@ -1,0 +1,77 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\git_work\callwarden
+configfile: pyproject.toml
+plugins: anyio-4.14.2, timeout-2.4.0, xdist-3.8.0
+collected 15 items
+
+tests\test_mcp_assignment_show_http_rpc.py FFF.F                         [ 33%]
+tests\test_mcp_compat_identity-lease-small_http_rpc.py ....FF....        [100%]
+
+================================== FAILURES ===================================
+________________________ test_assignment_show_no_match ________________________
+tests\test_mcp_assignment_show_http_rpc.py:40: in test_assignment_show_no_match
+    r = c.call("assignment_show", {"workspace_id": 1, "task_id": "NO-SUCH-TASK"})
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2347: in call
+    return self._handle_response(status, raw, rid, url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2382: in _handle_response
+    raise DaemonRemoteError(str(code), str(message))
+E   callwarden.server.daemon_protocol.DaemonRemoteError: E_TASK_WORKSPACE_UNBOUND: task=NO-SUCH-TASK 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作
+_______________________ test_assignment_show_with_role ________________________
+tests\test_mcp_assignment_show_http_rpc.py:49: in test_assignment_show_with_role
+    r = c.call("assignment_show",
+server\daemon_client.py:2347: in call
+    return self._handle_response(status, raw, rid, url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2382: in _handle_response
+    raise DaemonRemoteError(str(code), str(message))
+E   callwarden.server.daemon_protocol.DaemonRemoteError: E_TASK_WORKSPACE_UNBOUND: task=NO-SUCH-TASK 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作
+___________________ test_assignment_show_unknown_workspace ____________________
+tests\test_mcp_assignment_show_http_rpc.py:59: in test_assignment_show_unknown_workspace
+    r = c.call("assignment_show", {"workspace_id": 999999, "task_id": "X"})
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2347: in call
+    return self._handle_response(status, raw, rid, url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2382: in _handle_response
+    raise DaemonRemoteError(str(code), str(message))
+E   callwarden.server.daemon_protocol.DaemonRemoteError: E_TASK_WORKSPACE_UNBOUND: task=X 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作
+_______________ test_assignment_show_new_client_instance_stable _______________
+tests\test_mcp_assignment_show_http_rpc.py:79: in test_assignment_show_new_client_instance_stable
+    r = c2.call("assignment_show", {"workspace_id": 1, "task_id": "X"})
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2347: in call
+    return self._handle_response(status, raw, rid, url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2382: in _handle_response
+    raise DaemonRemoteError(str(code), str(message))
+E   callwarden.server.daemon_protocol.DaemonRemoteError: E_TASK_WORKSPACE_UNBOUND: task=X 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作
+________________________ test_assignment_show_no_match ________________________
+tests\test_mcp_compat_identity-lease-small_http_rpc.py:90: in test_assignment_show_no_match
+    r = c.call("assignment_show", {"workspace_id": 1, "task_id": "NO-SUCH-TASK"})
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2347: in call
+    return self._handle_response(status, raw, rid, url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2382: in _handle_response
+    raise DaemonRemoteError(str(code), str(message))
+E   callwarden.server.daemon_protocol.DaemonRemoteError: E_TASK_WORKSPACE_UNBOUND: task=NO-SUCH-TASK 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作
+______________________ test_assignment_show_role_filter _______________________
+tests\test_mcp_compat_identity-lease-small_http_rpc.py:98: in test_assignment_show_role_filter
+    r = c.call("assignment_show",
+server\daemon_client.py:2347: in call
+    return self._handle_response(status, raw, rid, url)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+server\daemon_client.py:2382: in _handle_response
+    raise DaemonRemoteError(str(code), str(message))
+E   callwarden.server.daemon_protocol.DaemonRemoteError: E_TASK_WORKSPACE_UNBOUND: task=NO-SUCH-TASK 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作
+=========================== short test summary info ===========================
+FAILED tests/test_mcp_assignment_show_http_rpc.py::test_assignment_show_no_match
+FAILED tests/test_mcp_assignment_show_http_rpc.py::test_assignment_show_with_role
+FAILED tests/test_mcp_assignment_show_http_rpc.py::test_assignment_show_unknown_workspace
+FAILED tests/test_mcp_assignment_show_http_rpc.py::test_assignment_show_new_client_instance_stable
+FAILED tests/test_mcp_compat_identity-lease-small_http_rpc.py::test_assignment_show_no_match
+FAILED tests/test_mcp_compat_identity-lease-small_http_rpc.py::test_assignment_show_role_filter
+======================== 6 failed, 9 passed in 17.62s =========================

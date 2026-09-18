@@ -1,0 +1,30 @@
+{
+  "task_id": "T-1789377001689-0aee0a6c",
+  "role": "reviewer",
+  "agent_id": "reviewer-wb-c18-01",
+  "phase": "blind_first_pass",
+  "reviewed_at": "2026-09-14T18:40+08:00",
+  "independent_verification": {
+    "R1_contract": {"contract_id": "TC-T-1789377001689-0aee0a6c", "revision": 1, "contract_hash": "sha256:61466d0defb1352b8cb5ff122190da8f207ab84b87f16a6a2a5651ac172b0c8f", "source": "task_contract_revisions (authoritative DB, read-only)"},
+    "R2_diff_audit": {"files_changed": ["tests/_w3_harness.py", "tests/test_mcp_assignment_show_http_rpc.py", "tests/test_mcp_compat_identity-lease-small_http_rpc.py"], "stat": "165 insertions, 27 deletions", "product_code_touched": false, "note": "diff 逐块审读：harness 为纯追加 seed + find_daemon_binary 重写；主文件 3 例迁移 + unknown_workspace 改断 + UNBOUND 正例；sibling 2 例同迁移。未触碰 rust_ext/**、server/**、db/**。"},
+    "R3_independent_rerun": {"command": "pytest tests/test_mcp_assignment_show_http_rpc.py tests/test_mcp_compat_identity-lease-small_http_rpc.py -q", "result": "16 passed (........ [100%])", "daemon_binary_sha256": "c9c3a5dba14488f6c81df59f6a4b4a4157983b756057243f4eb52d84866810d0"},
+    "R4_ab_baseline": {"method": "git show 96fa721: 覆盖三文件后同集复跑再还原", "baseline": "6 failed / 9 passed（失败条目与 step0 判定表逐条吻合：assignment_show 4 例 + sibling 2 例，签名 E_TASK_WORKSPACE_UNBOUND）", "discriminative_power": "confirmed"},
+    "R5_completion_review": {"rpc": "task.completion_review", "decision": "pass", "findings": []},
+    "R6_audit_chain": {"command": "cw audit verify --limit 3000", "result": "Total: 3000, Verified: 3000, Broken: 0"},
+    "R7_semantics": {"check": "修复后断言语义与 C-16 权威 resolver（task_bound_workspace_id fail-closed）一致：无 binding → E_TASK_WORKSPACE_UNBOUND；workspace 不一致 → E_WORKSPACE_AUTHORITY_MISMATCH；已绑定 + 无 assignment → none（原覆盖保留）", "conclusion": "一致"},
+    "R8_disclosure_check": {"tests_only": true, "deployment_not_triggered": "正确披露", "git_diff_check": "clean"}
+  },
+  "findings": [
+    {
+      "id": "R1_IN_SCOPE_SIBLING_FILE_WHITELIST_GAP",
+      "severity": "in_scope_acceptable",
+      "description": "sibling test_mcp_compat_identity-lease-small_http_rpc.py 不在 step2/step3 target_file 白名单，changes[] 无法入账；执行者按 C-13 卡先例以 evidence manifest files[] + 工作树 diff + result 文本留痕披露，未伪造目录级 file_path。判可接受；建议 C 桶建卡模板 sibling 发现须同步扩白名单。"
+    },
+    {
+      "id": "R2_IN_SCOPE_RESULT_TEXT_HEX_CASE",
+      "severity": "in_scope_acceptable",
+      "description": "step3 result 描述文本中 daemon sha256 末两字符误为大写 'D0'（权威 evidence manifest 内为正确小写 hex）。仅描述文本瑕疵，不影响 hash 校验。"
+    }
+  ],
+  "overall": "pass"
+}
