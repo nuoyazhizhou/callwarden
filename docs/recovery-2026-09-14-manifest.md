@@ -119,28 +119,38 @@ git ls-tree -r --name-only 30e49319df5d2998eba66b60637a58a6ffe330ab | wc -l
     与丢失的 72 个提交对象一一对应（锚点已存活，故重建 71 而非 72）。
   - **归因方法**：09-11 12:16 ~ 09-14 19:12 窗口内 281 个未提交文件按
     **mtime 6 小时窗口**归因到具体提交（100% 可归因），取工作区内容
-    增量入树 → 前 70 个提交**带真实 diff**（898/935 提交非空）。
-  - 末提交树 = **09-14 真实工作树**（快照树 + 全部 mtime ≤ 19:12 的磁盘文件
-    覆盖），吸收无法按 mtime 归因的改动（重命名 42 / 旧 mtime / 当时未暂存）。
+    增量入树（`GIT_INDEX_FILE` 临时索引 + `read-tree` 基树 + `update-index
+    --index-info` stdin 逐行合并 + `write-tree`）。
+  - **质量复核（2026-09-18，`git log --raw` 单次全扫）**：935 提交中
+    **898 个带真实 diff（96.0%）**，37 个空提交（reflog 里本就是空操作或
+    元数据型提交）。末提交树 = **09-14 真实工作树**（快照树 + 全部
+    mtime ≤ 19:12 的磁盘文件覆盖），吸收无法按 mtime 归因的改动
+    （重命名 42 / 旧 mtime / 当时未暂存）。
   - 验证：`9855da6 -> 链尖` 671 文件变更（真值 664，偏差 <1.1%），
     链引用 10330 个对象**0 个不可访问**；975/1046 未提交条目已入史。
   - **局限**：单提交的文件归属是 mtime 启发式（提交时刻未落盘的改动
     全部沉到末提交）；reflog 时间戳是"09-11 恢复重建"时刻而非原始提交时刻
     （前 6 条 GOV-FIX 尤其明显）。message 与作者保真。
 
-- **分支 `recovery/master-candidate`**（tip `5493fe08`，944 可达提交）：
-  在上一分支基础上接续 master 侧工作，**是 master 的超集**：
+- **分支 `recovery/master-candidate`**（tip `4f956707`，945 可达提交）：
+  在上一分支基础上接续 master 侧工作，**是 master 的实质超集**：
   1. `e62dedd` replay master `e5f94b0`：仅 `grep.rs` 移除 `build` 硬编码跳过
      （`db_build.py`/`fs_handlers.rs` 的同等改动 09-14 工作线已含，逐行确认）。
   2. `2283220` replay master `401e342`：两份恢复文档。
   3. `446063b`..`e69d79a` post-09-14 积压分批收口（B1..B6，真实工作量：
-     M=19 / A=56 / D=14，其中 14 个 D 是 bench/perf 产物按 ignore 契约出库）。
+     M=19 / A=57 / D=14，其中 14 个 D 是 bench/perf 产物按 ignore 契约出库）。
   4. `5493fe0` 收口：CRLF 归一化 + 补 master 独有的 `artifact/overview.md`、
      `artifacts/epic_subtree.md`、`artifacts/overview.md`（工作线未含）。
-  - 验证：候选树 vs 工作区仅剩上述 3 个 skip-worktree 文件的 D（本来就不在磁盘）；
-    `master -> 候选` 剩余 51 个 D = 14 个 ignore 契约 + 37 个工作线目录整理
-    （root → `docs/design/`、`archive/role-loop/templates/legacy/`，
-    32/36 同名内容完全相同，候选侧为新位置）。
+  - **超集实证（2026-09-18 复核）**：master 树 1508 文件 vs 候选树 2524 文件。
+    `master -> 候选` 的 51 个 master 独有路径**逐一追查，全部有出处，无一真丢**：
+    | 类别 | 数量 | 去向 |
+    | --- | --- | --- |
+    | 目录重排、内容 sha 完全一致 | 33 | root → `docs/design/` 等，候选侧为新位置 |
+    | v3 角色模板（Adjudicator/Executor/Reviewer） | 3 | 提交 `50ba174` 归档至 `archive/role-loop/templates/legacy/`；归档版比 master 的 08-26 版旧，但 master 原版仍在 master 分支历史 |
+    | `docs/task_create_subtask.py` | 1 | 归档至 `archive/docs-legacy/` |
+    | `tests/_bench_*` / `tests/_perf_*` 报告 | 14 | B4 按 ignore 契约主动出库；**磁盘上 14/14 全在**，且在 `recovery/master-rebuilt-0911-0914` 分支历史里完整保留 |
+    - 另有 328 个"同路径内容不同"属**预期内**：master 在分叉点 `e064853` 之后仅 2 个提交（5 文件变更），而候选含整条 09-11~09-14 工作线 + 09-14 后回积（1412 文件变更）。候选侧即工作线推进后的版本。
+    - 分叉关系：`merge-base(master, 候选) = e064853`；`e064853` 是候选祖先。
   - `.gitignore` 已接管 `rust_ext/target-nf1/`（2.0GB）、`target-stage/`（25MB）、
     `*.pyd.*.rollback`、`Temp/`，故积压不含构建旁路产物。
 
