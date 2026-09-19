@@ -33,6 +33,9 @@ struct SymbolInfo {
     content_hash: String,
     name: String,
     kind: String,
+    /// 符号源码内容（Python 真值源传 s["content"]，与 Python 降级路径保持一致；
+    /// dashboard 圈复杂度等分析器依赖本字段，传空串会导致 max_complexity 恒为 0）
+    content: String,
     qualified_name: String,
     visibility: String,
     start_line: i64,
@@ -100,6 +103,7 @@ fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
 /// - content_hash: str（必填，Python 端补算后传入）
 /// - name: str
 /// - kind: str
+/// - content: str（符号源码；默认 ""，写入 symbol_contents.content）
 /// - qualified_name: str
 /// - visibility: str（默认 "private"）
 /// - start_line: int
@@ -143,6 +147,7 @@ fn extract_symbol_info(dict: &Bound<'_, PyDict>) -> PyResult<SymbolInfo> {
         content_hash: get_str("content_hash")?,
         name: get_str("name")?,
         kind: get_str("kind")?,
+        content: get_str_or("content", "")?,
         qualified_name: get_str("qualified_name")?,
         visibility: get_str_or("visibility", "private")?,
         start_line: get_i64("start_line")?,
@@ -183,18 +188,19 @@ fn batch_save_symbols_inner(
 
     // 1. 批量 INSERT OR IGNORE INTO symbol_contents
     //    用循环 execute 累计 changes（与 Python executemany 行为等价）
-    //    注意：content 字段传 ''（与 Python 一致，symbol_contents.content 不在
-    //    _save_symbols_for_version 中写入，由其他路径补全）
+    //    content 字段写入符号源码（与 Python _save_symbols_for_version 的
+    //    s["content"] 一致；dashboard 圈复杂度/coverage 等分析器依赖此字段）
     result.symbol_contents_inserted = 0;
     for s in symbols {
         let affected = conn.execute(
             "INSERT OR IGNORE INTO symbol_contents \
              (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
-             VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 &s.content_hash,
                 &s.name,
                 &s.kind,
+                &s.content,
                 &s.signature,
                 s.has_comment,
                 &s.comment_content,
