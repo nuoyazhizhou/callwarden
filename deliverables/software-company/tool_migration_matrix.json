@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-09-10T13:09:37",
+  "generated_at": "2026-09-19T11:10:31",
   "total_tools": 243,
   "backends": [
     "rust_native",
@@ -230,21 +230,21 @@
       "name": "get_attestation_validity",
       "module": "tools_p3_identity",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_attestation_validity",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "list_attestation_revocations",
       "module": "tools_p3_identity",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "list_attestation_revocations",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "record_action_identity",
@@ -290,11 +290,11 @@
       "name": "assignment_show",
       "module": "tools_p4_lease",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "assignment_show",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "lease_acquire",
@@ -360,21 +360,21 @@
       "name": "export_module_graph",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "export_module_graph",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "find_issues",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "find_issues",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_call_chain_down",
@@ -430,11 +430,11 @@
       "name": "get_comment_from_version",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_comment_from_version",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_deepest_functions",
@@ -470,21 +470,21 @@
       "name": "get_impact",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_impact",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_issue_summary",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_issue_summary",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_module_call_stats",
@@ -510,11 +510,11 @@
       "name": "get_recent_changes",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_recent_changes",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_semgrep_findings",
@@ -560,11 +560,11 @@
       "name": "get_symbol_history",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_symbol_history",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_symbol_location",
@@ -580,11 +580,11 @@
       "name": "get_test_coverage",
       "module": "tools_query",
       "current_backend": "unknown",
-      "target_backend": "python_compat",
+      "target_backend": "rust_native",
       "rpc_method": "get_test_coverage",
       "op_class": "READ_ONLY",
-      "batch": "P0-compat",
-      "status": "transition"
+      "batch": "P0-COMPAT-v3",
+      "status": "migrated"
     },
     {
       "name": "get_top_callers",
