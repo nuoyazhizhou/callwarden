@@ -104,6 +104,85 @@ fn next_split_child_id(
     )))
 }
 
+/// 校验 split 子任务定义的必填字段（fail-closed）。
+///
+/// 空 title / 空 description 是「空壳卡」的根因（如 T-1788656001859-30369600：
+/// 有任务有步骤但无任何可执行内容，恒 governance_blocked）。task.split 必须
+/// 在创建前整批拒绝，绝不留残缺子任务。校验在事务写入前执行，任一子任务
+/// 不合规即整体回滚（实际上尚未写入，直接返回错误）。
+fn validate_split_subtask_defs(
+    defs: &[(String, String, Vec<Value>)],
+) -> Result<(), DaemonRpcError> {
+    for (idx, (title, desc, _steps)) in defs.iter().enumerate() {
+        if title.trim().is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_TITLE_REQUIRED",
+                format!(
+                    "task.split 子任务 #{} 的 title 为空：拒绝创建空壳子任务（fail-closed）",
+                    idx + 1
+                ),
+            ));
+        }
+        if desc.trim().is_empty() {
+            return Err(DaemonRpcError::new(
+                "E_TASK_DESCRIPTION_REQUIRED",
+                format!(
+                    "task.split 子任务 #{}（title={}）的 description 为空：拒绝创建无验收上下文的子任务（fail-closed）",
+                    idx + 1,
+                    title
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_split_subtask_defs;
+    use serde_json::Value;
+
+    fn def(title: &str, desc: &str) -> (String, String, Vec<Value>) {
+        (title.to_string(), desc.to_string(), Vec::new())
+    }
+
+    #[test]
+    fn test_validate_accepts_nonempty_title_and_desc() {
+        let defs = vec![def("子任务 A", "描述"), def("B", "b")];
+        assert!(validate_split_subtask_defs(&defs).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_title() {
+        let defs = vec![def("", "有描述")];
+        let e = validate_split_subtask_defs(&defs).unwrap_err();
+        assert!(format!("{e}").contains("E_TASK_TITLE_REQUIRED"), "{e}");
+    }
+
+    #[test]
+    fn test_validate_rejects_blank_title() {
+        // trim 后为空同样拒绝
+        let defs = vec![def("   \t ", "有描述")];
+        let e = validate_split_subtask_defs(&defs).unwrap_err();
+        assert!(format!("{e}").contains("E_TASK_TITLE_REQUIRED"), "{e}");
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_description() {
+        let defs = vec![def("有标题", "")];
+        let e = validate_split_subtask_defs(&defs).unwrap_err();
+        assert!(format!("{e}").contains("E_TASK_DESCRIPTION_REQUIRED"), "{e}");
+    }
+
+    #[test]
+    fn test_validate_rejects_whole_batch_on_any_invalid() {
+        // 合法 + 非法混合 → 整批拒绝
+        let defs = vec![def("合法", "合法"), def("", "空标题")];
+        let e = validate_split_subtask_defs(&defs).unwrap_err();
+        assert!(format!("{e}").contains("E_TASK_TITLE_REQUIRED"), "{e}");
+    }
+}
+
 impl TaskCollabStore {
     pub fn handle_task_split(
         &self,
@@ -178,6 +257,8 @@ impl TaskCollabStore {
         let default_role_contracts = default_trio_role_contracts();
 
         // 统一子任务定义：(title, description, steps: Vec<Value>)。
+        // title/description 提取后保留原始值（含空串），由 validate_split_subtask_defs
+        // 在事务写入前统一 fail-closed 校验——绝不静默兜底为 "subtask" 或空串。
         let mut subtask_defs: Vec<(String, String, Vec<Value>)> = Vec::new();
         if let Some(sub_defs) = subtasks_param {
             for sub_def in sub_defs.iter() {
@@ -185,7 +266,7 @@ impl TaskCollabStore {
                     .get("title")
                     .and_then(|v| v.as_str())
                     .map(normalize_bare_sha256_refs)
-                    .unwrap_or_else(|| "subtask".to_string());
+                    .unwrap_or_default();
                 let st_desc = sub_def
                     .get("description")
                     .and_then(|v| v.as_str())
@@ -217,6 +298,9 @@ impl TaskCollabStore {
                 ));
             }
         }
+
+        // fail-closed：空 title / 空 description 的子任务整批拒绝，不留空壳卡。
+        validate_split_subtask_defs(&subtask_defs)?;
 
         for (idx, (st_title, st_desc, steps)) in subtask_defs.into_iter().enumerate() {
             let sub_id = next_split_child_id(&tx, task_id, idx + 1)?;

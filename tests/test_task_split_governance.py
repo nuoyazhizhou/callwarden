@@ -211,3 +211,87 @@ def test_split_no_bypass_no_partial_governance(client):
     ).fetchone()
     assert ev is not None and ev[0] not in ("", None), "split event workspace_id 为空串（修复前缺陷）"
     conn.close()
+
+
+def test_split_rejects_empty_title(client):
+    """fail-closed：空 title 的子任务被拒绝，且不留任何半成品子任务。"""
+    parent = _create_parent(client)
+    with pytest.raises(DaemonRemoteError) as ei:
+        client.call("task.split", {
+            "task_id": parent,
+            "subtasks": [
+                {"title": "", "description": "d", "steps": [
+                    {"action": "port_rust_authority", "target_file": "a.rs"}]},
+            ],
+            "identity_policy": "legacy_identity_v1",
+            "request_id": f"sp-{parent}-{uuid.uuid4().hex[:8]}",
+        })
+    assert "E_TASK_TITLE_REQUIRED" in str(ei.value), str(ei.value)
+    conn = _db()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE parent_id=?", (parent,)
+    ).fetchone()[0]
+    assert n == 0, f"空标题 split 不应创建子任务 (got {n})"
+    conn.close()
+
+
+def test_split_rejects_blank_title(client):
+    """fail-closed：纯空白 title（trim 后为空）同样被拒绝。"""
+    parent = _create_parent(client)
+    with pytest.raises(DaemonRemoteError) as ei:
+        client.call("task.split", {
+            "task_id": parent,
+            "subtasks": [
+                {"title": "   ", "description": "d", "steps": [
+                    {"action": "port_rust_authority", "target_file": "a.rs"}]},
+            ],
+            "identity_policy": "legacy_identity_v1",
+            "request_id": f"sp-{parent}-{uuid.uuid4().hex[:8]}",
+        })
+    assert "E_TASK_TITLE_REQUIRED" in str(ei.value), str(ei.value)
+
+
+def test_split_rejects_empty_description(client):
+    """fail-closed：空 description 的子任务被拒绝（无验收上下文）。"""
+    parent = _create_parent(client)
+    with pytest.raises(DaemonRemoteError) as ei:
+        client.call("task.split", {
+            "task_id": parent,
+            "subtasks": [
+                {"title": "有标题无描述", "description": "", "steps": [
+                    {"action": "port_rust_authority", "target_file": "a.rs"}]},
+            ],
+            "identity_policy": "legacy_identity_v1",
+            "request_id": f"sp-{parent}-{uuid.uuid4().hex[:8]}",
+        })
+    assert "E_TASK_DESCRIPTION_REQUIRED" in str(ei.value), str(ei.value)
+    conn = _db()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE parent_id=?", (parent,)
+    ).fetchone()[0]
+    assert n == 0, f"空描述 split 不应创建子任务 (got {n})"
+    conn.close()
+
+
+def test_split_rejects_whole_batch_on_any_invalid(client):
+    """整批 fail-closed：混合批次中任一子任务违规 → 全部不创建（含合法的那个）。"""
+    parent = _create_parent(client)
+    with pytest.raises(DaemonRemoteError) as ei:
+        client.call("task.split", {
+            "task_id": parent,
+            "subtasks": [
+                {"title": "合法子任务", "description": "合法", "steps": [
+                    {"action": "port_rust_authority", "target_file": "a.rs"}]},
+                {"title": "", "description": "空标题", "steps": [
+                    {"action": "thin_cli_client", "target_file": "b.py"}]},
+            ],
+            "identity_policy": "legacy_identity_v1",
+            "request_id": f"sp-{parent}-{uuid.uuid4().hex[:8]}",
+        })
+    assert "E_TASK_TITLE_REQUIRED" in str(ei.value), str(ei.value)
+    conn = _db()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE parent_id=?", (parent,)
+    ).fetchone()[0]
+    assert n == 0, f"整批拒绝语义：合法子任务也不应被创建 (got {n})"
+    conn.close()
