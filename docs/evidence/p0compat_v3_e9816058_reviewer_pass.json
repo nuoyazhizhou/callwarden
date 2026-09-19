@@ -1,0 +1,80 @@
+{
+  "task_id": "T-1789789687355-e9816058",
+  "review_type": "independent_reviewer_pass",
+  "verdict": "PASS",
+  "reviewed_at": "2026-09-19T16:58+08:00",
+  "reviewer": {
+    "agent_id": "wb-reviewer-e9816058",
+    "session_id": "sess-e9816058-r2",
+    "model_id": "atria-dawn-preview",
+    "role": "reviewer",
+    "agent_instance_id": "inst-e9816058-r2"
+  },
+  "lease_id": "L-130bb9518abd7814",
+  "fencing_counter": 2,
+  "reviewed_commit": "edb83021ff24b330ca4084c8f961ca69f0cfde1b",
+  "scope": {
+    "modules": [
+      "server/tools/tools_query.py",
+      "server/tools/tools_p3_identity.py",
+      "server/tools/tools_p4_lease.py"
+    ],
+    "deleted": [
+      "_bind_readonly_db x3",
+      "_h_* handlers x14 (query 8, p3_identity 5, p4_lease 1)",
+      "_SYMBOL/_P3/_P4_COMPAT_SCOPE x3",
+      "if _X_READ_ONLY_METHODS register guards x3",
+      "_p3_resolve_identity_arg / _p3_identity_mcp_reason (no callers)",
+      "retirement-block-only imports (route_worker_call, server.compat_registry trio, CodeGraphDB, get_db, query +4, p4 +6 incl. Optional)"
+    ],
+    "preserved": [
+      "@mcp.tool() tool function bodies (gate 1: gen_route_matrix name extraction)",
+      "_SYMBOL/_P3/_P4_READ_ONLY_METHODS empty constants (retirement assertions)",
+      "p3 register() live closures"
+    ]
+  },
+  "acceptance_checks": [
+    {
+      "check": "git diff scope: only 3 modules + 4 evidence files, -454/+97",
+      "result": "PASS",
+      "evidence": "git show --stat edb8302"
+    },
+    {
+      "check": "py_compile three modules",
+      "result": "PASS"
+    },
+    {
+      "check": "zero residue: _h_*/_bind_readonly_db/_COMPAT_SCOPE/route_worker_call/compat_registry in the 3 modules",
+      "result": "PASS",
+      "note": "grep hits only in un-migrated modules (collab/p2_graph/security/semantic/summary/task) and explanatory comments"
+    },
+    {
+      "check": "empty constants retained (query:447, p3:189, p4:222)",
+      "result": "PASS"
+    },
+    {
+      "check": "working tree clean",
+      "result": "PASS"
+    },
+    {
+      "check": "tests/test_http_combined_worker_cutover.py",
+      "result": "PASS",
+      "detail": "19 passed"
+    },
+    {
+      "check": "tests/convergence/test_m2_client_purity.py + 3 compat retirement assertion files",
+      "result": "PASS",
+      "detail": "52 passed"
+    },
+    {
+      "check": "scripts/verify_route_matrix.py",
+      "result": "PASS",
+      "detail": "EXIT=0; names(T)==names(M)==mirror=243; http_server whitelist=0; RUST_COMPAT_ROUTE=0"
+    }
+  ],
+  "findings": [],
+  "commands": [
+    "task.next_action; task.contract.get; task.handoff"
+  ],
+  "conclusion": "Scope, diff, tests, evidence, gate and matrix condition independently verified. No findings. Verdict PASS; hand off to adjudicator for apply+close."
+}

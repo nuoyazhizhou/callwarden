@@ -1,0 +1,11 @@
+{
+  "manifest_type": "reviewer_view_manifest",
+  "task_id": "T-1789789687355-e9816058",
+  "reviewed_commit": "edb83021ff24b330ca4084c8f961ca69f0cfde1b",
+  "view_basis": "git ls-tree edb8302 (blob sha = content identity)",
+  "view": [
+    {"path": "server/tools/tools_query.py", "blob": "69471e3835aa4f939fd26e7263b96209ab67d1e8"},
+    {"path": "server/tools/tools_p3_identity.py", "blob": "e17a35509251dc5dfd341af990b547a0a1266d27"},
+    {"path": "server/tools/tools_p4_lease.py", "blob": "3cafd9779fd889725d5b7cfc0b0731728ec63881"}
+  ]
+}
