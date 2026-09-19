@@ -1,0 +1,18 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1789789687355-e9816058",
+  "step_index": 1,
+  "action": "prune_dead_imports",
+  "changed_files": [
+    "server/tools/tools_query.py",
+    "server/tools/tools_p3_identity.py",
+    "server/tools/tools_p4_lease.py"
+  ],
+  "summary": "清三模块退役块独占 import：route_worker_call、server.compat_registry 三件套（SCOPE_WORKSPACE/CompatCallContext/register_compat_routes）、CodeGraphDB、get_db；tools_query 另清 _get_daemon_client/_get_db_path_for_daemon/is_http_transport_enabled/norm_path 与改动前即未用的 import os；tools_p4_lease 另清 H4B-E 时期残留 6 个死 import（_call_daemon_rpc/get_daemon_mode/is_http_transport_enabled/DaemonUnavailableError/UnixDaemonRpcClient/DaemonRemoteError）与未用 Optional；同步修正三模块 docstring 中被删 import 的过期描述",
+  "verification": {
+    "unused_import_check": "AST 扫描三模块：无未用 import（pyflakes 未装，自写 AST 检查器）",
+    "grep_evidence": "删除前符号引用计数确认各 import 仅出现在 import 行/退役块/文档串"
+  },
+  "created_at": "2026-09-19T12:18:25+0800",
+  "request_id": "req-evd-209537da"
+}

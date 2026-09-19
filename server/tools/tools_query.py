@@ -16,7 +16,7 @@ semgrep+guardrail findings，daemon 不可用 fail-closed，local 模式返回 N
 请使用 get_symbol_issues（tools_task.py，内部走 DaemonClient.get_symbol_issues）。
 
 H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查路由归类说明
-- rust_native（H4A 已建路由，走 _get_daemon_client）：get_stats/search_symbols/
+- rust_native（H4A 已建路由，走 route_rpc）：get_stats/search_symbols/
   get_symbol/get_symbol_location/get_file_symbols/get_callers/get_callees/
   get_topological_order/get_call_chain_down/detect_cycles（10 个）
   W2-1（T-1786840097330-dec66710）：get_uncommented_symbols/get_module_call_stats/
@@ -33,25 +33,9 @@ H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查�
 # [L1+L2+L3] 查询类工具（get_stats 属 L1；search_symbols/get_symbol 等
 # [L3] 高级调用链与模块图工具（get_call_chain_down / export_module_graph 等）
 
-import os
 from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
-
-from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from ...db import CodeGraphDB
-from callwarden.server.daemon_client import route_worker_call
-from callwarden.config import is_http_transport_enabled, norm_path
-
-# H4C-2（T-1786716190783-ba187c88 步骤#0）：符号组只读工具接入 compat worker。
-# 注意：必须用顶层 `server.compat_registry` 导入，与 compat_worker.py 保持同一
-# 模块单例；若用 `callwarden.server.compat_registry` 会得到另一个模块对象，
-# 注册将落到错误的 registry 单例（模块单例风险）。
-from server.compat_registry import (  # noqa: E402
-    SCOPE_WORKSPACE,
-    CompatCallContext,
-    register_compat_routes,
-)
 
 from ..daemon_client import route_rpc as _route
 
@@ -454,139 +438,10 @@ def register(mcp: FastMCP) -> None:
         return _route('edit.restore_all_comments', {"preview": preview, "file_filter": file_filter}, 'PROTECTED_MUTATION')
 
 
-# ============================================================
-# H4C-2（T-1786716190783-ba187c88 步骤#0）：符号组只读工具 worker handler
-# ============================================================
-# 接入说明（用户三项决策，见任务描述）：
-# - handler 定义在工具模块内，由 compat_worker.handle_frame 通用派发按 registry
-#   分发；本模块被 worker 装配 import 后模块级注册随之执行；
-# - 轻量只读绑定：object.__new__(CodeGraphDB) 绕过 __init__（含 PRAGMA WAL /
-#   schema 迁移 / workspace 注册等写副作用），注入 ctx.conn（worker 的
-#   mode=ro 只读连接）+ ctx.workspace_id 后复用 db 层查询方法；
-# - workspace_root 从用户级库 workspaces 表解析（get_file_history 依赖）；
-# - 写语义工具不接入（fail-closed）：run_semgrep_scan / scan_semgrep_incremental
-#   （扫描并保存 findings，属写语义，矩阵分类待收尾修正）；
-# - get_uncommented_symbols 已在 H4C-1 默认 registry 注册，跳过避免重复 ValueError。
-
-_SYMBOL_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
-
-
-def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
-    """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
-
-    - ctx.conn 由 compat_worker 用 `file:{db_path}?mode=ro` 打开（read_only 契约）；
-    - active_workspace 注入 ctx.workspace_id，db 层查询基于
-      `_get_active_workspace_id()` 过滤，不查询 active workspace；
-    - workspace_root 从 ctx.conn 对应库的 workspaces 表解析（get_file_history 等
-      方法依赖 os.path.relpath(file_path, self.workspace_root)）；
-    - 2026-09-05 兼容：HTTP 薄客户端只注入 workspace_instance_id（字符串），
-      daemon registry 的数字 id 与权威库数字 id 是两个 ID 空间。当
-      ctx.workspace_id 缺失/在权威库无对应行时，按参数 workspace_root 的
-      规范化形式（反斜杠→正斜杠、盘符小写）回退解析权威数字 id。
-    """
-    db = object.__new__(CodeGraphDB)
-    db.conn = ctx.conn
-    db.active_workspace = {"id": ctx.workspace_id} if ctx.workspace_id else None
-    db.workspace_root = None
-    if ctx.workspace_id is not None:
-        try:
-            row = ctx.conn.execute(
-                "SELECT root_path FROM workspaces WHERE id = ?",
-                (ctx.workspace_id,),
-            ).fetchone()
-            if row is not None:
-                db.workspace_root = row["root_path"]
-        except Exception:
-            db.workspace_root = None
-    if db.active_workspace is None:
-        root = ctx.params.get("workspace_root") or ctx.params.get("workspace")
-        if root:
-            norm = str(root).replace("\\", "/")
-            if len(norm) >= 2 and norm[1] == ":":
-                norm = norm[0].lower() + norm[1:]
-            try:
-                row = ctx.conn.execute(
-                    "SELECT id, root_path FROM workspaces WHERE root_path = ?",
-                    (norm,),
-                ).fetchone()
-                if row is not None:
-                    db.active_workspace = {"id": row["id"]}
-                    db.workspace_root = row["root_path"]
-            except Exception:
-                pass
-    return db
-
-
-def _h_get_symbol_history(ctx: CompatCallContext) -> Any:
-    """worker handler：符号版本历史（只读）"""
-    return _bind_readonly_db(ctx).get_symbol_history(ctx.params.get("qualified_name", ""))
-
-
-def _h_get_recent_changes(ctx: CompatCallContext) -> Any:
-    """worker handler：近期变更（只读）"""
-    return _bind_readonly_db(ctx).get_recent_changes(
-        since=ctx.params.get("since", "1d")
-    )
-
-
-def _h_get_impact(ctx: CompatCallContext) -> Any:
-    """worker handler：影响面分析（只读）"""
-    return _bind_readonly_db(ctx).get_call_chain_up(
-        ctx.params.get("qualified_name", ""),
-        max_depth=ctx.params.get("max_depth", 10),
-    )
-
-
-def _h_get_comment_from_version(ctx: CompatCallContext) -> Any:
-    """worker handler：从历史版本获取注释（只读）"""
-    return _bind_readonly_db(ctx).get_comment_from_version(
-        ctx.params.get("spec", "")
-    )
-
-
-def _h_get_issue_summary(ctx: CompatCallContext) -> Any:
-    """worker handler：缺陷检测汇总（只读）"""
-    return _bind_readonly_db(ctx).get_issue_summary()
-
-
-def _h_find_issues(ctx: CompatCallContext) -> Any:
-    """worker handler：查找代码缺陷（只读）"""
-    return _bind_readonly_db(ctx).get_function_issues(
-        issue_filter=ctx.params.get("issue_type", "") or None,
-        limit=ctx.params.get("limit", 30),
-    )
-
-
-def _h_get_test_coverage(ctx: CompatCallContext) -> Any:
-    """worker handler：测试覆盖率统计（只读）"""
-    return _bind_readonly_db(ctx).get_test_coverage()
-
-
-def _h_export_module_graph(ctx: CompatCallContext) -> Any:
-    """worker handler：导出模块依赖图（只读）"""
-    return _bind_readonly_db(ctx).export_module_graph(
-        format=ctx.params.get("format", "mermaid")
-    )
-
-
-# 符号组只读白名单（8 个）：跳过 run_semgrep_scan / scan_semgrep_incremental
-# （写语义，fail-closed）；get_uncommented_symbols / get_module_call_stats /
-# get_semgrep_stats 已 W2-1 迁移 rust_native（T-1786840097330-dec66710）、
-# get_semgrep_findings 已 W3-3 迁移 rust_native（T-1786861820151-deb64c48）、
-# get_file_history 已 W4-1 迁移 rust_native（T-1786886251769-22b94ee8-sub-1），
-# get_top_callers / get_orphan_symbols / get_deepest_functions /
-# get_comment_coverage / get_call_heatmap 已 S2 迁移 rust_native
-# （T-1787209948470-a59bcf9c#S2-query-compat-batch1），工具层函数体在 HTTP
-# 模式直连 daemon RPC（route_rpc），见各定义处。
-# P0-COMPAT-v3（T-1788963103216-cb818938）：8 个只读方法全部迁移 rust_native，
-# compat worker 白名单清空（空 dict 条件注册，退役后 handler 函数保留供追溯）。
+# 符号组只读白名单：P0-COMPAT-v3（T-1788963103216-cb818938）8 个只读方法全部
+# 迁移 rust_native 后清空。空常量保留供退役断言引用
+# （tests/test_mcp_compat_tools_query_http_rpc.py 断言 == {}）。
+# 退役 handler、_bind_readonly_db、_SYMBOL_COMPAT_SCOPE 与 compat_registry /
+# daemon_client / config / db 旧 import 已于 T-1789789687355-e9816058 清理
+# （矩阵 rust_native、RUST_COMPAT_ROUTE=0、registry 运行时注册数=0）。
 _SYMBOL_READ_ONLY_METHODS: Dict[str, Any] = {}
-
-# 模块级注册：worker 装配 import 本模块时执行。P0-COMPAT-v3 起白名单为空，
-# 仅在仍有残留条目时注册（空 dict 直接跳过，避免注册空集合）。
-if _SYMBOL_READ_ONLY_METHODS:
-    register_compat_routes(
-        _SYMBOL_READ_ONLY_METHODS,
-        workspace_scope=_SYMBOL_COMPAT_SCOPE,
-        description="H4C-2 符号组只读工具（P0-COMPAT-v3 后全部 rust_native）",
-    )

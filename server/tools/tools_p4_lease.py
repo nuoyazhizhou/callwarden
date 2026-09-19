@@ -5,40 +5,22 @@
 H4B-E（T-1786590214634-9e740cdc-h4b-unsupported-error）：governance/unsupported/error cutover
 - dispatch.rs 有真实 lease.* RPC 分支（lease.acquire / lease.extend
   [lease.renew 兼容别名] / lease.release / lease.status / lease.list_events），
-  5 个 lease 工具保留 HTTP 分支（走 _call_daemon_rpc 真名透传）。
+  5 个 lease 工具走 route_rpc 真名透传。
 - dispatch.rs 无任何 p4.* RPC 分支。本模块 3 个 assignment 工具
   （assignment_create/assignment_show/assignment_revoke）曾存在
   `_call_daemon_rpc("p4.xxx", ...)` 伪路由，指向不存在的 RPC——HTTP 模式
-  必抛 method_not_found，违反 fail-closed 契约，已改为 _http_unsupported()
-  结构化 unsupported（不构造 CodeGraphDB，无 SQLite fallback）。
-- 非 HTTP（legacy）模式保持本地 get_db() 执行，公开方法语义不变。
+  必抛 method_not_found，违反 fail-closed 契约，后统一改为 route_rpc
+  （assignment_show 走裸工具名，P0-COMPAT-v3 已迁 rust_native）。
+- 本模块工具全部经 route_rpc（HTTP 模式走 daemon RPC，非 HTTP 模式回落本地
+  执行）；compat worker 只读接入层已随 P0-COMPAT-v3 退役清理
+  （T-1789789687355-e9816058），不构造 CodeGraphDB、无 SQLite fallback。
 """
 
 # P4: Assignment 与安全 Lease 工具（Req 11.1-11.13, 13.4-13.10）
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp.server.fastmcp import FastMCP
-
-from .._mcp_common import _call_daemon_rpc, get_db
-from ...db import CodeGraphDB
-from callwarden.config import get_daemon_mode
-from callwarden.server.daemon_client import route_worker_call
-from callwarden.server.daemon_client import is_http_transport_enabled
-from callwarden.server.daemon_client import (
-    DaemonUnavailableError,
-    UnixDaemonRpcClient,
-)
-from callwarden.server.daemon_protocol import DaemonRemoteError
-
-# H4C-2 第三批（T-1786747295227-b876fddf）：p4 assignment_show 只读工具接入
-# compat worker。注意：必须用顶层 `server.compat_registry` 导入，与
-# compat_worker.py 保持同一模块单例（模块单例风险，见 tools_query.py L41-49 注释）。
-from server.compat_registry import (  # noqa: E402
-    SCOPE_WORKSPACE,
-    CompatCallContext,
-    register_compat_routes,
-)
 
 from ..daemon_client import route_rpc as _route
 
@@ -230,74 +212,11 @@ def register(mcp: FastMCP) -> None:
     return mcp
 
 
-# ---------------------------------------------------------------------------
-# H4C-2 第三批（T-1786747295227-b876fddf）：p4 assignment_show 只读工具接入
-# ---------------------------------------------------------------------------
-# - 接入范围：assignment_show（1 个只读工具，db 层 get_assignment 纯 SELECT）。
-#   lease_* 5 个工具是 rust_native（HTTP 走 _call_daemon_rpc 真名透传，不经
-#   worker），assignment_create / assignment_revoke 是写语义工具
-#   （governance_write）不接入 worker，维持 _http_unsupported fail-closed。
-# - 轻量只读绑定：object.__new__(CodeGraphDB) 绕过 __init__（含 PRAGMA WAL /
-#   schema 迁移 / workspace 注册等写副作用），注入 ctx.conn（worker 的
-#   mode=ro 只读连接）+ ctx.workspace_id 后复用 db 层查询方法。
-_P4_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
-
-
-def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
-    """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
-
-    与 tools_query.py / tools_summary.py / tools_security.py / tools_collab.py /
-    tools_p2_graph.py / tools_p3_identity.py 同款：ctx.conn 由 compat_worker 用
-    `file:{db_path}?mode=ro` 打开（read_only 契约）；active_workspace 注入
-    ctx.workspace_id，db 层查询基于 `_get_active_workspace_id()` 过滤。
-    """
-    db = object.__new__(CodeGraphDB)
-    db.conn = ctx.conn
-    db.active_workspace = {"id": ctx.workspace_id} if ctx.workspace_id else None
-    db.workspace_root = None
-    if ctx.workspace_id is not None:
-        try:
-            row = ctx.conn.execute(
-                "SELECT root_path FROM workspaces WHERE id = ?",
-                (ctx.workspace_id,),
-            ).fetchone()
-            if row is not None:
-                db.workspace_root = row["root_path"]
-        except Exception:
-            db.workspace_root = None
-    return db
-
-
-def _h_assignment_show(ctx: CompatCallContext) -> Any:
-    """worker handler：查询任务当前 active Assignment（只读，db 层纯 SELECT）"""
-    db = _bind_readonly_db(ctx)
-    try:
-        result = db.get_assignment(
-            ctx.params.get("task_id", ""),
-            ctx.params.get("role", ""),
-        )
-        if result is None:
-            return {
-                "status": "none",
-                "task_id": ctx.params.get("task_id", ""),
-                "role": ctx.params.get("role", ""),
-            }
-        return result
-    except Exception as e:
-        return {"status": "none", "error": str(e)}
-
-
-# p4 只读白名单（0 个）：lease_* 5 个为 rust_native 不走 worker；
+# p4 只读白名单：lease_* 5 个为 rust_native 不走 worker；
 # assignment_show 已 P0-COMPAT-v3（T-1788963088148-495d7208）迁移 rust_native；
 # assignment_create / assignment_revoke（governance_write）不接入，fail-closed。
+# 空常量保留供退役断言引用
+# （tests/test_mcp_compat_identity-lease-small_http_rpc.py not-in 断言）。
+# 退役 handler、_bind_readonly_db 与 H4B-E 时期 compat / legacy 旧 import
+# 已于 T-1789789687355-e9816058 清理（全部活工具走 route_rpc，RUST_COMPAT_ROUTE=0）。
 _P4_READ_ONLY_METHODS: Dict[str, Any] = {}
-
-# 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-# 全部条目退役后不再注册（register_compat_routes 空 dict 会 fail-closed）。
-if _P4_READ_ONLY_METHODS:
-    register_compat_routes(
-        _P4_READ_ONLY_METHODS,
-        workspace_scope=_P4_COMPAT_SCOPE,
-        description="H4C-2 第三批 p4 assignment_show 只读工具（1 个，T-1786747295227-b876fddf 步骤#1）",
-    )

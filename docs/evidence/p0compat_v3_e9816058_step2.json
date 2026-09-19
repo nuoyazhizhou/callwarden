@@ -1,0 +1,15 @@
+{
+  "kind": "task_step_evidence",
+  "task_id": "T-1789789687355-e9816058",
+  "step_index": 2,
+  "action": "regression_verify",
+  "changed_files": [],
+  "summary": "Python 侧回归全部保持，无行为变化",
+  "verification": {
+    "pytest_cutover": "tests/test_http_combined_worker_cutover.py 19 passed",
+    "pytest_compat_retire": "tests/convergence/test_m2_client_purity.py + test_mcp_compat_tools_query_http_rpc.py + test_mcp_compat_identity-lease-small_http_rpc.py + test_mcp_assignment_show_http_rpc.py 52 passed",
+    "note": "compat 退役断言（_X_READ_ONLY_METHODS == {} / not-in）全绿；m2 purity 无新违例（三模块活代码无 sqlite3/CodeGraphDB()/get_db() 使用）"
+  },
+  "created_at": "2026-09-19T12:18:25+0800",
+  "request_id": "req-evd-3060f822"
+}
