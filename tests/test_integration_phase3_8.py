@@ -49,7 +49,7 @@ _pyinstall = os.path.join(
 if os.path.isdir(_pyinstall):
     sys.path.insert(0, _pyinstall)
 
-from callwarden.db.db_cas import (
+from callwarden.server.cas_schema import (
     init_cas_schema,
     compute_cas_key_v1,
     cas_lookup,
@@ -122,7 +122,7 @@ def _init_local_registry(cfg: DaemonConfig) -> None:
     ``BackupManager`` / ``RestoreManager`` 的 Python fallback 仍直接复制/恢复
     本地 DB 文件，故此处复用 ``db/db_daemon.init_daemon_schema`` 的本地 DDL。
     """
-    from callwarden.db.db_daemon import init_daemon_schema
+    from callwarden.server.daemon_registry import init_daemon_schema
 
     conn = sqlite3.connect(cfg.registry_db_path)
     try:

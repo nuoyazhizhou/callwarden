@@ -17,7 +17,7 @@ import unittest
 # 确保能导入 db_cas
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from callwarden.db.db_cas import (
+from callwarden.server.cas_schema import (
     init_cas_schema, cas_publish, cas_publish_with_retry, cas_lookup,
     cas_pin, cas_gc, file_generation_seen, file_generation_committed,
     _flock_exclusive, _flock_shared, _flock_unlock, _HAS_FCNTL

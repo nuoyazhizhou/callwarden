@@ -107,7 +107,7 @@ class TestLegacyContainerStrategy:
         service = EnterpriseDaemonService(registry_db=registry_db)
 
         # 注册 workspace 时 client_view_root 可以是任意路径
-        from callwarden.db.db_daemon import register_workspace
+        from callwarden.server.daemon_registry import register_workspace
         with service._registry_conn() as conn:
             ws = register_workspace(
                 conn,
@@ -135,7 +135,7 @@ class TestCrossMountNamespace:
 
     def test_different_paths_same_content(self, tmp_path):
         """不同挂载路径的相同内容应得到相同 CAS key。"""
-        from callwarden.db.db_cas import compute_cas_key_v1
+        from callwarden.server.cas_schema import compute_cas_key_v1
 
         content_hash = hashlib.sha256(b"def bar(): return 1\n").hexdigest()
 
@@ -347,7 +347,7 @@ class TestPathVariation:
 
     def test_same_content_different_paths(self, tmp_path):
         """相同内容在不同路径下 CAS key 相同。"""
-        from callwarden.db.db_cas import compute_cas_key_v1
+        from callwarden.server.cas_schema import compute_cas_key_v1
 
         content_hash = hashlib.sha256(b"def path_test(): pass\n").hexdigest()
 

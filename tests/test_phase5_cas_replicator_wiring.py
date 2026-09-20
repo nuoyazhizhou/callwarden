@@ -90,7 +90,7 @@ class TestCASHitMiss:
 
     def _make_cas_conn(self, tmp_dir):
         """创建独立的 CAS 数据库连接。"""
-        from callwarden.db.db_cas import init_cas_schema
+        from callwarden.server.cas_schema import init_cas_schema
         db_path = os.path.join(tmp_dir, "cas.db")
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -100,7 +100,7 @@ class TestCASHitMiss:
 
     def test_cas_first_publish_then_hit(self, tmp_path):
         """第一次 CAS miss 发布，第二次 CAS hit 且 parse miss=0。"""
-        from callwarden.db.db_cas import compute_cas_key_v1, cas_lookup, cas_publish_with_retry, cas_pin
+        from callwarden.server.cas_schema import compute_cas_key_v1, cas_lookup, cas_publish_with_retry, cas_pin
 
         tmp_dir = str(tmp_path)
         cas_conn = self._make_cas_conn(tmp_dir)
@@ -149,7 +149,7 @@ class TestCASHitMiss:
 
     def test_cas_cross_workspace_dedup(self, tmp_path):
         """验证 CAS key 与 workspace_id / UID / branch 无关。"""
-        from callwarden.db.db_cas import compute_cas_key_v1
+        from callwarden.server.cas_schema import compute_cas_key_v1
 
         content_hash = hashlib.sha256(b"def foo(): pass\n").hexdigest()
         # 不同 workspace，相同内容 → 相同 CAS key
@@ -421,7 +421,7 @@ class TestConcurrentReaders:
 
     def test_concurrent_cas_readers(self, tmp_path):
         """100 个并发 reader 查询 CAS 无锁错误。"""
-        from callwarden.db.db_cas import init_cas_schema, cas_lookup, cas_publish_with_retry
+        from callwarden.server.cas_schema import init_cas_schema, cas_lookup, cas_publish_with_retry
 
         db_path = str(tmp_path / "concurrent.db")
         # 先写入一条 CAS 数据
@@ -432,7 +432,7 @@ class TestConcurrentReaders:
         init_cas_schema(writer)
 
         content_hash = hashlib.sha256(b"concurrent_test").hexdigest()
-        from callwarden.db.db_cas import compute_cas_key_v1
+        from callwarden.server.cas_schema import compute_cas_key_v1
         cas_key = compute_cas_key_v1(
             content_hash, "python", "0.1.0", "0.2.0", "v1", "v1", "v1"
         )
@@ -503,7 +503,7 @@ class TestEnterpriseDaemonServiceResources:
         )
 
         # 先注册一个 workspace
-        from callwarden.db.db_daemon import register_workspace
+        from callwarden.server.daemon_registry import register_workspace
         with service._registry_conn() as conn:
             register_workspace(
                 conn,

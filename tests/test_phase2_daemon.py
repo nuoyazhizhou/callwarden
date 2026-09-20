@@ -12,7 +12,7 @@ import tempfile
 import sqlite3
 import pytest
 
-from callwarden.db.db_daemon import (
+from callwarden.server.daemon_registry import (
     init_daemon_schema,
     register_workspace,
     list_workspaces,
@@ -577,7 +577,7 @@ class TestG1ThreeLayerStorageE2E:
         ws_conn = sqlite3.connect(":memory:")
 
         # ATTACH toolchain.db
-        from callwarden.db.db_toolchain import (
+        from callwarden.server.toolchain_store import (
             attach_toolchain_db,
             detach_toolchain_db,
             is_toolchain_attached,

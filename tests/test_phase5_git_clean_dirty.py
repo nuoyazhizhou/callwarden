@@ -243,7 +243,7 @@ class TestCleanProofAndCASReuse:
 
     def test_same_blob_same_cas_key(self, git_fixture, tmp_path):
         """同一 blob + language + ABI 必须得到同一 CAS key，与路径/UID/branch 无关。"""
-        from callwarden.db.db_cas import compute_cas_key_v1
+        from callwarden.server.cas_schema import compute_cas_key_v1
 
         # 两个不同分支 clone 同一 origin
         ws_a = git_fixture.clone_workspace("ws_a", "product-a")

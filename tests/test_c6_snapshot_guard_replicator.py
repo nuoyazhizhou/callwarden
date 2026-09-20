@@ -151,7 +151,7 @@ class TestDaemonHandleRefreshGenerationProtection:
         from callwarden.server.replicator import (
             daemon_handle_connect, init_session_schema,
         )
-        from callwarden.db.db_cas import init_cas_schema
+        from callwarden.server.cas_schema import init_cas_schema
 
         ws_db = os.path.join(str(tmp_path), "workspace.db")
         cas_db = os.path.join(str(tmp_path), "cas.db")

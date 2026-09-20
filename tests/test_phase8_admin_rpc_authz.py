@@ -56,7 +56,7 @@ def daemon_service(tmp_path):
     # 初始化 registry schema（init_daemon_schema）
     conn = sqlite3.connect(registry_db)
     conn.row_factory = sqlite3.Row
-    from callwarden.db.db_daemon import init_daemon_schema
+    from callwarden.server.daemon_registry import init_daemon_schema
     init_daemon_schema(conn)
     conn.close()
 
@@ -179,7 +179,7 @@ class TestBatch11IsAdminPeer:
         """admin_uids 配置中的 uid 是 admin（Python 端配置扩展）。"""
         from callwarden.server.daemon_server import EnterpriseDaemonService
         from callwarden.server.daemon_config import DaemonConfig
-        from callwarden.db.db_daemon import init_daemon_schema
+        from callwarden.server.daemon_registry import init_daemon_schema
 
         registry_db = str(tmp_path / "sub" / "registry.db")
         data_root = str(tmp_path / "sub")  # 与 registry_db 同目录避免触发 config 重建

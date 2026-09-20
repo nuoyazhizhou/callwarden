@@ -83,7 +83,7 @@ class TestCASSharing:
 
     def test_same_content_same_cas_key(self, tmp_path):
         """相同内容的所有 workspace 得到同一 CAS key。"""
-        from callwarden.db.db_cas import (
+        from callwarden.server.cas_schema import (
             compute_cas_key_v1, init_cas_schema, cas_lookup,
             cas_publish_with_retry, cas_pin,
         )
@@ -137,7 +137,7 @@ class TestCASSharing:
 
     def test_50_workspaces_single_parse(self, tmp_path):
         """50 个 workspace 指向相同 clean commit：只 parse 一次。"""
-        from callwarden.db.db_cas import (
+        from callwarden.server.cas_schema import (
             compute_cas_key_v1, init_cas_schema, cas_lookup,
             cas_publish_with_retry,
         )
@@ -199,7 +199,7 @@ class TestDirtyOverlayIsolation:
 
     def test_dirty_no_new_clean_keys(self, tmp_path):
         """dirty 文件不新增 Global CAS clean key。"""
-        from callwarden.db.db_cas import (
+        from callwarden.server.cas_schema import (
             compute_cas_key_v1, init_cas_schema, cas_lookup,
             cas_publish_with_retry,
         )
