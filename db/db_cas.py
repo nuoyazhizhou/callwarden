@@ -163,10 +163,13 @@ CREATE INDEX IF NOT EXISTS idx_cas_file_cache_state ON cas_file_cache(state);
 
 
 def init_cas_schema(conn: sqlite3.Connection):
-    """初始化 CAS schema。"""
-    conn.executescript(CAS_SCHEMA_DDL)
-    conn.executescript(CAS_INDEX_SQL)
-    conn.commit()
+    """初始化 CAS schema。
+
+    db/ 退休 phase-3：实现已搬迁至 callwarden.server.cas_schema，本函数
+    委托调用以保持过渡期引用兼容。
+    """
+    from callwarden.server.cas_schema import init_cas_schema as _impl
+    _impl(conn)
 
 
 def compute_cas_key_v1(content_hash: str, language: str, parser_version: str,

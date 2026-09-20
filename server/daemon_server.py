@@ -20,7 +20,7 @@ import time
 from contextlib import closing
 from typing import Optional, List, Dict, Any
 
-from callwarden.db.db_daemon import (
+from callwarden.server.daemon_registry import (
     init_daemon_schema,
     register_workspace,
     list_workspaces,
@@ -629,7 +629,7 @@ class EnterpriseDaemonService:
             os.makedirs(ws_dir, exist_ok=True)
 
             # CAS 数据库
-            from callwarden.db.db_cas import init_cas_schema
+            from callwarden.server.cas_schema import init_cas_schema
             cas_db_path = os.path.join(ws_dir, "cas.db")
             cas_conn = sqlite3.connect(cas_db_path, timeout=5.0)
             cas_conn.row_factory = sqlite3.Row
