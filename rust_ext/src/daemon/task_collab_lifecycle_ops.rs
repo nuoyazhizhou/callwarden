@@ -193,12 +193,22 @@ impl TaskCollabStore {
         let now = clock.now_secs() as f64;
 
         // 2. 查找 active lease（同一 task+role 只允许一个 active lease，按获取先后取最早）
+        // C-14：role 按治理角色变体集匹配（canonical_claim_role 归一化后新 lease 恒以
+        // 治理角色落库——如 implementer→executor；历史行可能仍是 runtime 名称）。
+        // 精确字符串匹配会让 implementer 调用方永远查不到 C-24 归一化后的 executor 行。
+        let (role_sql, role_params) = role_in_match(&canonical_claim_role(role));
+        let mut lookup_params: Vec<&dyn rusqlite::ToSql> = vec![&task_id];
+        for v in &role_params {
+            lookup_params.push(v);
+        }
         let lease = conn.query_row(
-            "SELECT lease_id, token_hash, fencing_counter, expires_at, agent_id, session_id, model_id
+            &format!(
+                "SELECT lease_id, token_hash, fencing_counter, expires_at, agent_id, session_id, model_id
              FROM task_leases
-             WHERE task_id = ?1 AND role = ?2 AND status = 'active'
-             ORDER BY id ASC LIMIT 1",
-            params![task_id, role],
+             WHERE task_id = ?1 AND {role_sql} AND status = 'active'
+             ORDER BY id ASC LIMIT 1"
+            ),
+            rusqlite::params_from_iter(lookup_params),
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
