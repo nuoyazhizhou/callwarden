@@ -128,16 +128,16 @@ def scan_hash_databases(callwarden_dir: str = CALLWARDEN_DIR) -> List[Dict[str, 
 
 
 def migrate_single_db(dry_run: bool = True, backup: bool = True) -> Dict[str, Any]:
-    """旧版多库 → 用户级单库迁移（委托 db_migrate 权威实现）。
+    """旧版多库 → 用户级单库迁移（db/ 退休 phase-3：改用本地 server.migrate）。
 
     Args:
         dry_run: True 只报告不写入。
         backup: 迁移前创建备份。
 
     Returns:
-        db_migrate.migrate_to_single_db 的结果 dict。
+        migrate_to_single_db 的结果 dict。
     """
-    from callwarden.db.db_migrate import migrate_to_single_db
+    from callwarden.server.migrate import migrate_to_single_db
 
     return migrate_to_single_db(dry_run=dry_run, backup=backup)
 
