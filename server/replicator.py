@@ -12,6 +12,7 @@ Replicator 是 Coordinator 的一部分，负责：
 daemon crash 后，Replicator 可从 staging log 恢复未应用的 entries 并重新发布。
 """
 
+import hashlib
 import logging
 import sqlite3
 import threading
@@ -118,11 +119,207 @@ def _call_daemon_rpc(method: str, params: Dict[str, Any]) -> Any:
 
     return _rpc(method, params)
 
-# file_generations DDL 从 db_cas.py 导入（K6 去重，避免两处不一致）
-# 延迟导入避免触发 db 包的完整初始化链
-def _get_file_generations_ddl() -> str:
-    from callwarden.db.db_cas import FILE_GENERATIONS_DDL
-    return FILE_GENERATIONS_DDL
+# file_generations DDL（db/ 退休 phase-3：原从 db_cas.py 导入，现本地化）。
+# 规范：cas-gc-protocol.md §4 / watcher-generation-state-machine.md
+FILE_GENERATIONS_DDL = """CREATE TABLE IF NOT EXISTS file_generations (
+    workspace_id INTEGER NOT NULL,
+    rel_path TEXT NOT NULL,
+    latest_session_id TEXT DEFAULT '',
+    latest_session_epoch INTEGER DEFAULT 0,
+    latest_seq INTEGER DEFAULT 0,
+    latest_seen_generation TEXT DEFAULT '',
+    latest_committed_generation TEXT DEFAULT '',
+    PRIMARY KEY (workspace_id, rel_path)
+);"""
+
+
+def _compute_cas_key_v1(content_hash: str, language: str, parser_version: str,
+                        callwarden_version: str, extraction_config_version: str,
+                        abi_version: str, input_abi_version: str) -> str:
+    """计算 CAS key——Rust 优先，回退本地纯 Python 实现（与 db_cas 同语义）。
+
+    db/ 退休 phase-3：不再从 db_cas 导入。Rust ``callwarden_core.compute_cas_key_v1``
+    与 Python 实现语义一致（同序 pipe-join 后 sha256），旧 pyd 缺失时回退本地。
+    """
+    _rust_fn = getattr(_callwarden_core, "compute_cas_key_v1", None) if _callwarden_core else None
+    if _rust_fn is not None:
+        return _rust_fn(content_hash, language, parser_version, callwarden_version,
+                        extraction_config_version, abi_version, input_abi_version)
+    raw = (f"{content_hash}|{language}|{parser_version}|{callwarden_version}|"
+           f"{extraction_config_version}|{abi_version}|{input_abi_version}")
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _python_cas_lookup(conn: sqlite3.Connection, cas_key: str) -> Optional[Dict[str, Any]]:
+    """查询 CAS 是否命中（state='ready'）——本地兼容实现。"""
+    row = conn.execute(
+        "SELECT * FROM cas_file_cache WHERE cas_key = ? AND state = 'ready'",
+        (cas_key,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _python_cas_pin(conn: sqlite3.Connection, cas_key: str, workspace_id: int,
+                    ttl_seconds: float = 3600) -> None:
+    """添加 CAS pending ref（GC 保护窗口）——本地兼容实现。"""
+    now = time.time()
+    conn.execute(
+        "INSERT OR REPLACE INTO cas_pending_refs (cas_key, workspace_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        (cas_key, workspace_id, now + ttl_seconds, now)
+    )
+    conn.commit()
+
+
+def _python_cas_publish(conn: sqlite3.Connection, cas_key: str, content_hash: str,
+                        language: str, parse_result: Dict[str, Any],
+                        parser_version: str = "0.1.0", callwarden_version: str = "0.2.0",
+                        extraction_config_version: str = "v1", abi_version: str = "v1",
+                        input_abi_version: str = "v1") -> None:
+    """CAS 原子发布——四阶段：building → payload → raw calls → ready。
+
+    规范：cas-gc-protocol.md §3。BEGIN IMMEDIATE 事务包裹保证四阶段原子性；
+    崩溃后 building 状态残留由 GC 清理（不变量 C3）。
+    （db/ 退休 phase-3：从 db_cas.cas_publish 搬迁至本地，语义不变。）
+    """
+    now = time.time()
+
+    # BEGIN IMMEDIATE 获取写锁，保证四阶段原子性
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # 阶段 1: 插入 building 状态
+        conn.execute(
+            """INSERT OR IGNORE INTO cas_file_cache
+               (cas_key, content_hash, language, file_size, total_lines,
+                parser_version, callwarden_version, extraction_config_version,
+                abi_version, input_abi_version, state, parsed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'building', ?)""",
+            (cas_key, content_hash, language,
+             parse_result.get("file_size", 0), parse_result.get("total_lines", 0),
+             parser_version, callwarden_version, extraction_config_version,
+             abi_version, input_abi_version, now)
+        )
+
+        # 阶段 2: 写入符号正文（批量 executemany，避免 N 次 INSERT）
+        # 同时预计算 sym_content_hash 供阶段 3 复用，避免重复 SHA-256 计算
+        symbols = parse_result.get("symbols", [])
+        sym_content_rows = []  # [(content_hash, content), ...]
+        sym_hash_map = []      # 预计算的 hash 列表，与 symbols 一一对应
+        for sym in symbols:
+            sym_content = sym.get("content", "")
+            sym_content_hash = hashlib.sha256(sym_content.encode()).hexdigest()
+            sym_content_rows.append((sym_content_hash, sym_content))
+            sym_hash_map.append(sym_content_hash)
+
+        if sym_content_rows:
+            conn.executemany(
+                "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) VALUES (?, ?)",
+                sym_content_rows,
+            )
+
+        # 阶段 3: 写入符号（批量 executemany，复用预计算的 hash）
+        if symbols:
+            sym_rows = [
+                (
+                    cas_key, i, sym_hash_map[i], sym.get("name", ""),
+                    sym.get("qualified_name", ""), sym.get("parent_id"),
+                    sym.get("kind", "function"), sym.get("start_line", 0),
+                    sym.get("end_line", 0), sym.get("start_col", 0),
+                    sym.get("end_col", 0), sym.get("start_byte", 0),
+                    sym.get("end_byte", 0), sym.get("visibility", "private"),
+                    sym.get("signature", ""), int(sym.get("has_comment", False)),
+                    sym.get("depth", -1),
+                )
+                for i, sym in enumerate(symbols)
+            ]
+            conn.executemany(
+                """INSERT OR REPLACE INTO cas_symbols
+                   (cas_key, local_symbol_id, symbol_content_hash, name,
+                    local_qualified_name, lexical_parent_local_id, kind,
+                    start_line, end_line, start_col, end_col, start_byte, end_byte,
+                    visibility, signature, has_comment, depth)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                sym_rows,
+            )
+
+        # 阶段 3b: 写入 raw calls（批量 executemany）
+        raw_calls = parse_result.get("raw_calls", [])
+        if raw_calls:
+            call_rows = [
+                (
+                    cas_key, call.get("caller_id"), call.get("caller_name", ""),
+                    call.get("callee_name", ""), call.get("line", 0),
+                    call.get("ordinal", 0),
+                )
+                for call in raw_calls
+            ]
+            conn.executemany(
+                """INSERT OR IGNORE INTO cas_raw_calls
+                   (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                call_rows,
+            )
+
+        # 阶段 3c: 写入 imports（批量 executemany）
+        imports = parse_result.get("imports", [])
+        if imports:
+            import_rows = [
+                (cas_key, imp.get("path", ""), imp.get("kind", "import"))
+                for imp in imports
+            ]
+            conn.executemany(
+                "INSERT OR IGNORE INTO cas_imports (cas_key, import_path, import_kind) VALUES (?, ?, ?)",
+                import_rows,
+            )
+
+        # 阶段 4: 原子切换 ready
+        conn.execute(
+            "UPDATE cas_file_cache SET state = 'ready' WHERE cas_key = ?",
+            (cas_key,)
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+
+def _python_cas_publish_with_retry(conn: sqlite3.Connection, cas_key: str, content_hash: str,
+                                   language: str, parse_result: Dict[str, Any],
+                                   workspace_id: int = 0, max_retries: int = 3, **kwargs) -> None:
+    """带 busy retry 的 CAS 发布 + pin 包装层（本地兼容实现）。
+
+    规范：cas-gc-protocol.md §3。busy 时重试，已 ready 时只补 pin（不变量 C9）。
+    （db/ 退休 phase-3：从 db_cas.cas_publish_with_retry 搬迁至本地，语义不变。）
+    """
+    for attempt in range(max_retries):
+        try:
+            _python_cas_publish(conn, cas_key, content_hash, language, parse_result, **kwargs)
+            # 发布成功后补 pin（GC 保护窗口）
+            if workspace_id:
+                _python_cas_pin(conn, cas_key, workspace_id)
+            return
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                time.sleep(0.1 * (attempt + 1))
+                # 检查是否已被其他进程发布为 ready
+                row = conn.execute(
+                    "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
+                ).fetchone()
+                if row and row["state"] == "ready":
+                    # 已 ready：只需补 pin
+                    if workspace_id:
+                        _python_cas_pin(conn, cas_key, workspace_id)
+                    return
+                continue
+            raise
+
+
+# 兼容入口别名：保持与既有 db_cas 导入同名，调用处无需改动
+python_cas_lookup = _python_cas_lookup
+python_cas_pin = _python_cas_pin
+python_cas_publish_with_retry = _python_cas_publish_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -152,13 +349,13 @@ CREATE TABLE IF NOT EXISTS workspace_active_session (
 );
 """
 
-# file_generations DDL 从 db_cas.py 延迟导入（K6 去重，避免两处不一致）
+# file_generations DDL 现为本地常量 FILE_GENERATIONS_DDL（db/ 退休 phase-3）
 
 
 def init_session_schema(conn: sqlite3.Connection):
-    """初始化 session 管理 schema（含 file_generations，DDL 从 db_cas.py 共享导入）。"""
+    """初始化 session 管理 schema（含 file_generations 本地 DDL）。"""
     conn.executescript(SESSION_SCHEMA_DDL)
-    conn.executescript(_get_file_generations_ddl())
+    conn.executescript(FILE_GENERATIONS_DDL)
     conn.commit()
 
 
@@ -484,17 +681,8 @@ def _daemon_parse_and_publish(
         return {"content_hash": content_hash, "cas_key": "",
                 "cas_state": "no_cas_conn", "canonicalize_method": canonicalize_method}
 
-    try:
-        from callwarden.db.db_cas import (
-            compute_cas_key_v1,
-            cas_publish_with_retry as python_cas_publish_with_retry,
-            cas_lookup as python_cas_lookup,
-            cas_pin as python_cas_pin,
-        )
-    except ImportError:
-        return {"content_hash": content_hash, "cas_key": "",
-                "cas_state": "cas_module_unavailable",
-                "canonicalize_method": canonicalize_method}
+    # db/ 退休 phase-3：Python 兼容路径已搬迁至本地模块级函数
+    # （_python_cas_* / _compute_cas_key_v1），不再 import callwarden.db.db_cas。
 
     # 企业 daemon 与兼容 server 必须共用 Rust CasStore 的发布协议。
     # 只有旧 wheel、内存数据库或显式 rollback 时才保留 Python 兼容路径。
@@ -516,7 +704,7 @@ def _daemon_parse_and_publish(
     extraction_config_version = "v1"
     abi_version = "v1"
     input_abi_version = "v1"
-    cas_key = compute_cas_key_v1(
+    cas_key = _compute_cas_key_v1(
         content_hash, language, parser_version, callwarden_version,
         extraction_config_version, abi_version, input_abi_version
     )
