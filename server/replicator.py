@@ -682,7 +682,7 @@ def _daemon_parse_and_publish(
                 "cas_state": "no_cas_conn", "canonicalize_method": canonicalize_method}
 
     # db/ 退休 phase-3：Python 兼容路径已搬迁至本地模块级函数
-    # （_python_cas_* / _compute_cas_key_v1），不再 import callwarden.db.db_cas。
+    # （_python_cas_* / _compute_cas_key_v1），不再依赖 db_cas 模块。
 
     # 企业 daemon 与兼容 server 必须共用 Rust CasStore 的发布协议。
     # 只有旧 wheel、内存数据库或显式 rollback 时才保留 Python 兼容路径。
