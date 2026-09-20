@@ -78,9 +78,12 @@ class TestMigratedToolRouting:
         assert "task.job_submit" in src
 
     def test_get_impact_compat_matrix_and_dispatch(self):
-        """get_impact：矩阵仍标 python_compat，但实现已迁 rust_native（两端 compat 白名单清零）。
+        """get_impact：矩阵与实现均已迁 rust_native（两端 compat 白名单清零）。
 
-        stale 修正依据：
+        stale 修正依据（step6 复核，2026-09-20）：
+        - 矩阵 tool_migration_matrix.json 的 get_impact.target_backend 已是 rust_native
+          （status=migrated, batch=P0-COMPAT-v3），本测试旧断言
+          ``t["target_backend"] == "python_compat"`` 与矩阵自相矛盾，属漏改 stale。
         - 旧断言 `'"get_impact", "read_only"' in http_src`（旧 COMPAT_ROUTE_WHITELIST
           元组格式）已失效：白名单已清零（rust_ext/src/daemon/http_server.rs:587-588），
           get_impact 现由 Rust 原生 route_matrix 注册为 rust_native
@@ -90,7 +93,7 @@ class TestMigratedToolRouting:
           属冻结的 KNOWN_DRIFT（tests/convergence/test_m1_route_matrix.py:141-146）。
         """
         t = _matrix_tool("get_impact")
-        assert t["target_backend"] == "python_compat"
+        assert t["target_backend"] == "rust_native"
         assert t["rpc_method"] == "get_impact"
         http_src = open(os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon",
                                      "http_server.rs"), encoding="utf-8").read()

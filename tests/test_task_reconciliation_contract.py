@@ -131,6 +131,13 @@ def test_reconciliation_rejects_unsafe_apply_inputs():
 
 
 def _make_neg_task(rpc) -> str:
+    # stale 修正（step6 复核，2026-09-20）：daemon 现强制 task.create 显式传非空
+    # workspace_instance_id，禁止空实例合成 ws-{id}
+    # （E_TASK_WORKSPACE_INSTANCE_REQUIRED；权威 rust_ext/src/daemon/task_loop/create.rs
+    # 的 fail-closed 校验）。旧调用只传 workspace_id=1，在 daemon 收紧后直接被拒。
+    # instance 从 daemon 权威查询（workspace.status），不硬编码。
+    st = rpc.call("workspace.status", {})
+    inst = st.get("task_db_instance_id") or st.get("workspace_instance_id")
     tid = f"T-RECON-NEG-{uuid.uuid4().hex[:8]}"
     rpc.call("task.create", {
         "task_id": tid, "title": "reconcile negative", "description": "d",
@@ -138,6 +145,7 @@ def _make_neg_task(rpc) -> str:
         "creator": "coordinator-workbuddy-v1",
         "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
         "identity_policy": "legacy_identity_v1", "workspace_id": 1,
+        "workspace_instance_id": inst,
         "request_id": f"mk-{uuid.uuid4().hex[:8]}",
     })
     return tid

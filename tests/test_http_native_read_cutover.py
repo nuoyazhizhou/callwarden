@@ -44,6 +44,7 @@ manifest），属环境/harness 依赖，本文件保持原样不动。
 import inspect
 import json
 import os
+import re
 import subprocess
 import time
 from unittest.mock import MagicMock, patch
@@ -176,9 +177,13 @@ class TestToolsQueryNativeRead:
         """
         seen = _route_recorder(monkeypatch, tools_query, result={"ok": True})
         tools = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
-            result = tools[tool_name](*args, **kwargs)
-            mock_db.assert_not_called()
+        # stale 修正（step6 复核，2026-09-20）：get_db 已从 tools_query 完全移除
+        # （承接卡 C-08/C-09 收敛后 server/tools/tools_query.py 0 处 get_db 引用，
+        # 全部 `return _route(...)`）；旧 `patch(...get_db)` 目标不存在直接 AttributeError。
+        # 「不碰本地 db」的语义改由源码级断言保证：模块根本没有 get_db 可回退。
+        assert not hasattr(tools_query, "get_db"), \
+            "tools_query 不应存在 get_db（本地回退 seam 已移除）"
+        result = tools[tool_name](*args, **kwargs)
         assert result == {"ok": True}
         assert seen["method"] == rpc_method
         assert seen["op"] == "READ_ONLY"
@@ -258,9 +263,9 @@ class TestToolsQueryCompatRouted:
                                               kwargs, rpc_method, expect_params):
         seen = _route_recorder(monkeypatch, tools_query, result={"ok": True})
         tools = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
-            result = tools[tool_name](*args, **kwargs)
-            mock_db.assert_not_called()
+        assert not hasattr(tools_query, "get_db"), \
+            "tools_query 不应存在 get_db（本地回退 seam 已移除）"
+        result = tools[tool_name](*args, **kwargs)
         assert result == {"ok": True}
         assert seen["method"] == rpc_method
         assert seen["op"] == "READ_ONLY"
@@ -279,10 +284,10 @@ class TestToolsQueryCompatRouted:
 
         monkeypatch.setattr(tools_query, "_route", fake_route)
         tools = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
-            with pytest.raises(DaemonRemoteError):
-                tools[tool_name](*args, **kwargs)
-            mock_db.assert_not_called()
+        assert not hasattr(tools_query, "get_db"), \
+            "tools_query 不应存在 get_db（本地回退 seam 已移除）"
+        with pytest.raises(DaemonRemoteError):
+            tools[tool_name](*args, **kwargs)
 
 
 # ============================================================
@@ -324,9 +329,17 @@ class TestToolsWorkspaceRouting:
         """工具经 `_route` 下发对应 RPC 与 op_class，params 逐字透传，不碰本地 db。"""
         seen = _route_recorder(monkeypatch, tools_workspace, result=[{"name": "ws1"}])
         tools = _register_tools(tools_workspace)
-        with patch("callwarden.server.tools.tools_workspace.get_db") as mock_db:
-            result = tools[tool_name](*args, **kwargs)
-            mock_db.assert_not_called()
+        # stale 修正（step6 复核，2026-09-20）：tools_workspace 从 _mcp_common 导入
+        # 了 get_db 但全部工具体已 `return _route(...)`（0 调用点）；旧
+        # `patch(...get_db)` 断言"不被调用"的语义改由源码级检查保证：
+        # get_db 是导入符号，真正的防线是工具体内无 get_db 调用。
+        _src = inspect.getsource(tools_workspace)
+        _body_calls = [l for l in _src.splitlines()
+                       if re.search(r'\bget_db\s*\(', l) and not l.strip().startswith(
+                           ("from", "import"))]
+        assert not _body_calls, \
+            "tools_workspace 工具体内不应调用 get_db（本地回退 seam 已下沉 _route）"
+        result = tools[tool_name](*args, **kwargs)
         assert result == [{"name": "ws1"}]
         assert seen["method"] == rpc_method
         assert seen["op"] == op_class
