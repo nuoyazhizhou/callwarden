@@ -40,6 +40,13 @@ class StdlibMixin:
         if row and row['cnt'] > 0:
             return 0
 
+        # external_symbols(package_name, package_version) 有复合 FK 指向
+        # package_versions；必须先写父行再写子行，否则 FK 违规。
+        self.conn.execute(
+            "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
+            ('stdlib', sys.version.split()[0])
+        )
+
         created = 0
         skipped = 0
 
@@ -66,10 +73,6 @@ class StdlibMixin:
             except (ImportError, Exception):
                 skipped += 1
 
-        self.conn.execute(
-            "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
-            ('stdlib', sys.version.split()[0])
-        )
         self.conn.commit()
         print(t("cli.messages.stdlib_import_done", created=created, skipped=skipped))
         return created
@@ -4014,6 +4017,13 @@ class StdlibMixin:
         if cur.fetchone()['cnt'] > 0:
             return 0
 
+        # external_symbols(package_name, package_version) 有复合 FK 指向
+        # package_versions；必须先写父行再写子行，否则首个 INSERT 即 FK 违规。
+        self.conn.execute(
+            "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
+            (pkg_name, '1.0')
+        )
+
         created = 0
         for module_path, symbol_name, kind, signature in symbols:
             qualified_name = f"{module_path}.{symbol_name}" if module_path else symbol_name
@@ -4044,10 +4054,6 @@ class StdlibMixin:
             )
             created += 1
 
-        self.conn.execute(
-            "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
-            (pkg_name, '1.0')
-        )
         self.conn.commit()
         return created
 
