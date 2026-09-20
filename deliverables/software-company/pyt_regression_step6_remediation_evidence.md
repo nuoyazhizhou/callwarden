@@ -146,3 +146,62 @@ created=0, skipped=65 → 抛异常，退出码 1（缺陷存在）
 - `git diff --check`：EXIT=0（无空白错误/冲突标记）。
 - 本卡提交不含 `rust_ext`/`server`/`db`/`cli` 改动（acceptance ③ 达标）。
 - 3 个被改测试文件均带 stale 依据说明（acceptance ④ 达标）。
+
+---
+
+## 6. A′ 环推进终态与 C-14 阻断（如实记录）
+
+### 6.1 executor 环（已完成）
+
+- step#6（`T-1789293736662-649f0c98`）经 `task.claim`（带 `remediation_step_id`）+ `task.report`
+  成功，`task_steps.status = done`（fencing=6，snapshot `26dc978d98094463`，evidence hash
+  `sha256:5f89b67c…`）。
+- 中途孤儿 lease 处置：首次 claim 缺 `remediation_step_id` 报 `E_REMEDIATION_STEP_REQUIRED`
+  时已 acquire 的 implementer lease 成孤儿；按 daemon 自带 orphan recovery
+  （`ORPHAN_CLAIM_STALE_SECS=900` 心跳过期）自动回收后重领，未人工清库。
+
+### 6.2 step5 resolve 被 C-14 阻断
+
+`task.status` 路由到 `action=REVISE / workflow_status=remediation_in_progress`，
+routing reason「存在 unresolved failed step 且无待领取 remediation，必须 resolve 后继续」
+（`next_action.rs:1542-1558`）。尝试 `task.step.resolve`（failed_step_id=step5，
+remediation_step_id=step6）时**恒报**：
+
+```text
+E_LEASE_NOT_FOUND: task=T-1788871227327-45c94bd8 role=implementer 无 active lease
+```
+
+**根因（源码级）**：`handle_task_step_resolve` 调
+`validate_lease_for_mutation(&tx, task_id, "implementer", …)`
+（`task_collab_lifecycle.rs:1065-1072`），而 `validate_lease_for_mutation` 用**精确字符串**
+`WHERE task_id=? AND role=? AND status='active'`
+（`task_collab_lifecycle_ops.rs:196-201`）。C-24 存储侧归一化后 `lease.acquire` 落库的
+role 恒为治理角色 `executor`（`canonical_claim_role("implementer")=="executor"`，
+实测 `acquire(role=implementer)` 与 `acquire(role=executor)` 落库行均为 `role='executor'`），
+故 `implementer` 字面量永无匹配行。**这不是配置问题，是 daemon 缺陷**，且同卡
+`rust_ext/src/daemon/**` 属本卡 `forbidden_paths`，已登记：
+
+| 项 | 值 |
+|---|---|
+| C-14 承接卡 | `T-1789885106356-61299ee4`（`status=open`，parent `T-1787203926824-9f873bfc`） |
+| 修复方向 | `validate_lease_for_mutation` 的 role 查询改用 `role_in_match`/`runtime_role_variants`（同文件 `write_release` 已有的变体集），兼容历史 implementer 行与新 executor 行 |
+| 验证口径 | `task.step.resolve` 在本卡跑通 → step5 resolved → 任务进 review → verdict/handoff/apply/close |
+
+### 6.3 当前终态
+
+| 项 | 值 |
+|---|---|
+| step#6 | `done`（remediation_of=step5，report 已落库） |
+| step#3/4/5 | 仍 `failed`（step5 待 C-14 修复后 resolve；step3/4 的 remediation 链见下） |
+| 任务状态 | `in_progress` / `remediation_in_progress` / `action=REVISE` / `next_action=revise_current_step` |
+| 环节 | executor 环完成；reviewer/adjudicator 环**被 C-14 阻断**，待 C-14 修复后接续 |
+
+**step3/step4 的 remediation 链说明**：step#4/step#5 的 `result` 为纯文本（无
+`remediation_of_step_id` JSON provenance），daemon 不会为它们派生可领取的 remediation step；
+step#6 是 step#5 的 remediation（JSON provenance 完整）。C-14 修复后先 resolve step5，
+step3/step4 的处理路径（可能需 task 级 verdict/handoff provenance 或新建 remediation step）
+在 reviewer 环一并核验。
+
+**本卡 scope 内能做的已全部做完**：3 个 stale 修复 + C-13/C-14 登记 + 定向复测 21→8。
+剩余环节（resolve → review → apply/close）依赖 C-14 的 `rust_ext/src/daemon/**` 修复，
+不在本卡 `allowed_paths` 内。
