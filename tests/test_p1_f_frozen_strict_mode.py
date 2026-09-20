@@ -26,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "rust_ext" / "target" / "p
 
 
 try:
-    from callwarden.db.rust_parser_facade import ParseMode, RustParserFacade
+    from callwarden.config import ParseMode
+    from callwarden.db.rust_parser_facade import RustParserFacade
     _FACADE_AVAILABLE = True
 except ImportError:
     _FACADE_AVAILABLE = False

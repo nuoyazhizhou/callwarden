@@ -66,13 +66,14 @@ def _enforce_frozen_parse_mode():
     本函数在非 frozen build（源码开发）中是 no-op，不影响开发流程。
     在 frozen build 中，若环境变量配置违反约束，打印明确错误并 exit(2)。
 
-    延迟导入 ParseMode 避免在 cw.py 顶部拉入 db 包链。
+    延迟导入 ParseMode（db/ 退休 phase-3 后已下沉至 callwarden.config，
+    纯配置类不依赖 db 包）。
     """
     if not (getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')):
         return  # 非 frozen build，no-op
 
     try:
-        from callwarden.db.rust_parser_facade import ParseMode
+        from callwarden.config import ParseMode
         ParseMode.validate_for_environment()
     except RuntimeError as e:
         # frozen build 收到非法 CW_PARSE_MODE 或 CW_DISABLE_RUST_PARSE

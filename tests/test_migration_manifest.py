@@ -223,9 +223,16 @@ def test_rust_parser_facade_is_production_entry():
     assert "from callwarden_core import" in content or "import callwarden_core" in content, (
         "rust_parser_facade.py 未导入 callwarden_core，不是 Rust 生产入口"
     )
-    # 必须有 ParseMode 类（manifest 第 9 节回滚配置）
-    assert "class ParseMode" in content, (
-        "rust_parser_facade.py 缺少 ParseMode 类（CW_PARSE_MODE 配置）"
+    # db/ 退休 phase-3：ParseMode 是纯配置类，已下沉至 callwarden.config；
+    # facade 保留重导出供 db/ 内部模块在退休过渡期使用。
+    assert "from callwarden.config import ParseMode" in content, (
+        "rust_parser_facade.py 未从 callwarden.config 重导出 ParseMode"
+    )
+    # ParseMode 类体现在位于 config.py（manifest 第 9 节回滚配置）
+    cfg = _PKG_ROOT / "config.py"
+    cfg_content = cfg.read_text(encoding="utf-8")
+    assert "class ParseMode" in cfg_content, (
+        "config.py 缺少 ParseMode 类（CW_PARSE_MODE 配置）"
     )
 
 
