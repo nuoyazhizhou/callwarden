@@ -295,3 +295,62 @@ def test_split_rejects_whole_batch_on_any_invalid(client):
     ).fetchone()[0]
     assert n == 0, f"整批拒绝语义：合法子任务也不应被创建 (got {n})"
     conn.close()
+
+
+# ---- create_subtask title fail-closed（T-P2-789860416867）----
+# 与 split 同源的空壳卡根因；description 保持可选（MCP 工具默认空串 +
+# 既有调用方不传 description），仅 title 强制非空。
+
+
+def test_create_subtask_rejects_empty_title(client):
+    """空 title 不再静默兜底为 "subtask"，直接 fail-closed 拒绝。"""
+    parent = _create_parent(client)
+    with pytest.raises(DaemonRemoteError) as ei:
+        client.call("task.create_subtask", {
+            "parent_task_id": parent,
+            "title": "",
+            "description": "有描述但标题空",
+        })
+    assert "E_TASK_TITLE_REQUIRED" in str(ei.value), str(ei.value)
+    conn = _db()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE parent_id=?", (parent,)
+    ).fetchone()[0]
+    assert n == 0, f"空 title 不应创建子任务 (got {n})"
+    conn.close()
+
+
+def test_create_subtask_rejects_blank_title(client):
+    """blank title（trim 后为空）同样拒绝，与 split 校验器 trim 语义一致。"""
+    parent = _create_parent(client)
+    with pytest.raises(DaemonRemoteError) as ei:
+        client.call("task.create_subtask", {
+            "parent_task_id": parent,
+            "title": "   \t ",
+            "description": "有描述",
+        })
+    assert "E_TASK_TITLE_REQUIRED" in str(ei.value), str(ei.value)
+    conn = _db()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM tasks WHERE parent_id=?", (parent,)
+    ).fetchone()[0]
+    assert n == 0, f"blank title 不应创建子任务 (got {n})"
+    conn.close()
+
+
+def test_create_subtask_accepts_no_description(client):
+    """回归：description 仍可选（MCP 工具默认空串 + 既有调用方依赖），
+    有 title 无 description 必须正常创建。"""
+    parent = _create_parent(client)
+    r = client.call("task.create_subtask", {
+        "parent_task_id": parent,
+        "title": "无描述子任务",
+    })
+    assert r.get("task_id"), f"合法创建应返回 task_id: {r}"
+    conn = _db()
+    row = conn.execute(
+        "SELECT title, description FROM tasks WHERE id=?", (r["task_id"],)
+    ).fetchone()
+    assert row is not None, "子任务未落库"
+    assert row["title"] == "无描述子任务", row["title"]
+    conn.close()

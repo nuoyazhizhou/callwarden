@@ -137,9 +137,26 @@ fn validate_split_subtask_defs(
     Ok(())
 }
 
+/// 校验 create_subtask 的 title（fail-closed，title-only）。
+///
+/// 与 `validate_split_subtask_defs` 同源（空壳卡根因），但 description
+/// 保持可选：MCP 工具签名 `task_create_subtask(title, description="")`
+/// 默认空串（tools_task.py），既有调用方（test_task_no_steps_fix.py）
+/// 不传 description。强制 description-required 会破坏既有契约，
+/// 需先改工具默认值并审计调用方（见 T-P2-789860416867）。
+fn validate_create_subtask_title(title: &str) -> Result<(), DaemonRpcError> {
+    if title.trim().is_empty() {
+        return Err(DaemonRpcError::new(
+            "E_TASK_TITLE_REQUIRED",
+            "task.create_subtask 的 title 为空：拒绝创建空壳子任务（fail-closed）",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_split_subtask_defs;
+    use super::{validate_create_subtask_title, validate_split_subtask_defs};
     use serde_json::Value;
 
     fn def(title: &str, desc: &str) -> (String, String, Vec<Value>) {
@@ -179,6 +196,24 @@ mod tests {
         // 合法 + 非法混合 → 整批拒绝
         let defs = vec![def("合法", "合法"), def("", "空标题")];
         let e = validate_split_subtask_defs(&defs).unwrap_err();
+        assert!(format!("{e}").contains("E_TASK_TITLE_REQUIRED"), "{e}");
+    }
+
+    #[test]
+    fn test_validate_create_subtask_accepts_nonempty_title() {
+        assert!(validate_create_subtask_title("子任务").is_ok());
+    }
+
+    #[test]
+    fn test_validate_create_subtask_rejects_empty_title() {
+        let e = validate_create_subtask_title("").unwrap_err();
+        assert!(format!("{e}").contains("E_TASK_TITLE_REQUIRED"), "{e}");
+    }
+
+    #[test]
+    fn test_validate_create_subtask_rejects_blank_title() {
+        // trim 后为空同样拒绝（与 split 校验器一致的 trim 语义）
+        let e = validate_create_subtask_title("  \t ").unwrap_err();
         assert!(format!("{e}").contains("E_TASK_TITLE_REQUIRED"), "{e}");
     }
 }
@@ -606,7 +641,9 @@ impl TaskCollabStore {
             .get("title")
             .and_then(|v| v.as_str())
             .map(normalize_bare_sha256_refs)
-            .unwrap_or_else(|| "subtask".to_string());
+            .unwrap_or_default();
+        // P2（T-P2-789860416867）：空 title fail-closed，拒绝空壳子任务
+        validate_create_subtask_title(&title)?;
         let description = params
             .get("description")
             .and_then(|v| v.as_str())
