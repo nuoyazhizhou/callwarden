@@ -1,0 +1,60 @@
+{
+  "card": "T-1788050203568-c849f418",
+  "title": "Workspace-authority-snapshot-binding",
+  "verdict": "FAIL",
+  "failures": [
+    "B6 working tree not clean: ?? docs/evidence/w36-workspace-authority-snapshot-binding.json"
+  ],
+  "checks": {
+    "b1_binding_consistent_and_root": true,
+    "b2_publish_instance_reuse": true,
+    "b3_stats_instance_reuse": true,
+    "b4_list_workspaces_hit": true,
+    "b5_source_authoritative_resolution": true,
+    "b6_working_tree_clean": false
+  },
+  "evidence": {
+    "b1_workspace_status": {
+      "registry_workspace_id": 1193,
+      "registry_instance_id": "4baea3ff12c2ea5c",
+      "task_db_workspace_id": 1,
+      "task_db_instance_id": "4baea3ff12c2ea5c",
+      "client_view_root": "C:\\git_work\\callwarden",
+      "status": "active"
+    },
+    "b1_note": "registry_workspace_id 与 task_db_workspace_id 分属 registry.db / callwarden.db 异库自增序列，不要求相等；权威 join 键 workspace_instance_id 一致，数值桥接由 resolve_true_workspace_id 负责。",
+    "b2_snapshot_publish": {
+      "generation": 6,
+      "symbol_count": 0,
+      "call_count": 0,
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "snapshot_id": "26dc978d98094463"
+    },
+    "b3_snapshot_stats": {
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "generation": 6,
+      "symbol_count": 0,
+      "call_count": 0,
+      "file_count": 1,
+      "build_duration_ms": 3,
+      "last_error": null,
+      "source_db_path": "\\\\?\\C:\\Users\\wanpi\\.callwarden\\codegraph\\4baea3ff12c2ea5c\\codegraph.db",
+      "history_len": 5
+    },
+    "b4_snapshot_list_workspaces_hit": {
+      "workspace_instance_id": "4baea3ff12c2ea5c",
+      "generation": 6,
+      "history_len": 5,
+      "symbol_count": 0,
+      "call_count": 0,
+      "file_count": 1,
+      "build_duration_ms": 3
+    },
+    "b5_source_marks": {
+      "resolve_true_workspace_id": true,
+      "require_bound_workspace_id": true,
+      "owned_workspace_acl": true
+    },
+    "b6_git_porcelain": "?? docs/evidence/w36-workspace-authority-snapshot-binding.json"
+  }
+}
