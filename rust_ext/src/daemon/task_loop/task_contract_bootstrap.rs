@@ -47,6 +47,15 @@ pub const BOOTSTRAP_ROLE_ALLOWLIST: &[&str] = &[
     "T-1788313776829-b6daac60",
     "T-1788313784235-70448f30",
     "T-1788313835206-4e6b0cac",
+    // 2026-09-20 #35 父卡解链：三阶段收尾卡 T-1787203926824-9f873bfc
+    //   24 个子任务全部 closed；task_contract_revisions /
+    //   role_contract_lineages / task_steps / step bindings 全部为 0
+    //   （无 legacy role_contracts 可派生），属于 allowlist 用途一
+    //   （contract_bootstrap role_contract_source=allowlist）+ 用途二
+    //   （steps.bootstrap_legacy 补 pending 步骤）的双重缺失场景。
+    //   验收 ①② 已达成（purity 0 违例 + 243 工具 daemon 路由一致），
+    //   验收 ③ db/ retirement 由 phase-3 生产侧断开 + 收壳推进。
+    "T-1787203926824-9f873bfc",
 ];
 
 #[derive(Debug)]

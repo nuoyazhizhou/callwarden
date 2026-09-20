@@ -1,0 +1,45 @@
+{
+  "evidence_id": "EV-35-db-retire-phase3-governance",
+  "task_id": "T-1787203926824-9f873bfc",
+  "title": "#35 三阶段收尾：验收 1/2 实测 + 3 db retirement 进度",
+  "generated_at": "2026-09-21T07:06:38+08:00",
+  "acceptance_1_purity": {
+    "script": "scripts/check_client_purity.py",
+    "result": "PASS",
+    "hard_gate_files": 14,
+    "soft_gate_files": 10,
+    "violations": 0,
+    "detail": "server/tools + cw.py + cli/ 纯净（0 违例）"
+  },
+  "acceptance_2_route_matrix": {
+    "script": "scripts/verify_route_matrix.py",
+    "result": "PASS",
+    "total_tools": 243,
+    "rust_mirror_entries": 243,
+    "dispatch_branches": 365,
+    "http_whitelist": 0,
+    "compat_rust_route": 0,
+    "detail": "names(T)==names(M)==mirror 语义，dispatch/白名单/compat 三向一致"
+  },
+  "acceptance_3_db_retireable": {
+    "result": "IN_PROGRESS",
+    "production_db_imports": 0,
+    "production_files": [],
+    "tests_files_importing_db": 161,
+    "db_modules_total": 53,
+    "db_modules_real": 50,
+    "db_modules_shell": 3,
+    "db_shell_modules": [
+      "db_cas.py",
+      "db_toolchain.py",
+      "db_daemon.py"
+    ],
+    "detail": "生产侧 0 引用（phase-3 4 文件断开 f46c984..26ffad8 + db_cas 收壳 64cda51）；残余阻断在 tests/（C 类 154 文件以 CodeGraphDB 为内存夹具，server/ 无等价模块可改指）与 scripts/docs/deliverables 非生产目录"
+  },
+  "children": {
+    "total": 24,
+    "closed": 24,
+    "non_closed": 0
+  },
+  "conclusion": "验收 1/2 已达成；3 db/ 可删进行中（生产侧已断开，tests/ 清理由 C 类策略决定。allowlist 扩展后可解链治理闭环）"
+}
