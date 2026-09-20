@@ -17,15 +17,37 @@ pub const ERR_BOOTSTRAP_INVALID: &str = "E_TASK_CONTRACT_BOOTSTRAP_INVALID";
 pub const ERR_BOOTSTRAP_NOT_EMPTY: &str = "E_TASK_CONTRACT_BOOTSTRAP_NOT_EMPTY";
 pub const ERR_BOOTSTRAP_ROLE_SOURCE: &str = "E_TASK_CONTRACT_BOOTSTRAP_ROLE_SOURCE";
 
-/// 受权历史任务 allowlist（role_contracts=0 治理清洗）。
+/// 受权历史任务 allowlist（role_contracts=0 治理清洗 / 无步骤死锁解链）。
 ///
-/// 这些任务三层治理数据（workspace binding / Task Contract / Role Contract /
-/// step binding）全部缺失，且无 legacy role_contracts 可派生。allowlist 模式
-/// 允许以默认三角色模板建立 Role Contract（payload 标注
-/// `source_provenance=allowlist_default_template:v1`，空字段=未证明，不伪造）。
-/// 任何非 allowlist 任务保持 governance_blocked（ERR_BOOTSTRAP_ROLE_SOURCE）。
-/// 仅由用户/治理明确授权；不得由客户端参数扩展。
-pub const BOOTSTRAP_ROLE_ALLOWLIST: &[&str] = &["T-1787203937193-0993d120"];
+/// 用途一（contract_bootstrap role_contract_source=allowlist）：任务三层治理
+/// 数据（workspace binding / Task Contract / Role Contract / step binding）
+/// 全部缺失，且无 legacy role_contracts 可派生。allowlist 模式允许以默认三角色
+/// 模板建立 Role Contract（payload 标注 `source_provenance=
+/// allowlist_default_template:v1`，空字段=未证明，不伪造）。
+///
+/// 用途二（task.steps.bootstrap_legacy 硬门禁）：任务合同链完整（Task Contract
+/// + 三角色 role_contracts is_current=1）但 task_steps=0，所有补步骤入口均被
+/// fail-closed（contract_bootstrap NOT_EMPTY / bridge no_governance_projection），
+/// 形成结构性死锁。allowlist 授权 task.steps.bootstrap_legacy 补建 pending 步骤，
+/// 任务随即进入正常 A′ 环（claim/report → verdict → apply/close）。
+///
+/// 任何非 allowlist 任务保持 governance_blocked（ERR_BOOTSTRAP_ROLE_SOURCE /
+/// E_STEPS_BOOTSTRAP_NOT_ALLOWLISTED）。仅由用户/治理明确授权；不得由客户端
+/// 参数扩展。
+pub const BOOTSTRAP_ROLE_ALLOWLIST: &[&str] = &[
+    "T-1787203937193-0993d120",
+    // 2026-09-20 解链：合同链完整但 task_steps=0 的 governance_blocked 卡。
+    // T-1788050203568-c849f418：workspace-authority-snapshot-binding，
+    //   目标经行为级取证确认已满足（6/6 PASS，
+    //   docs/evidence/w36-workspace-authority-snapshot-binding.json）。
+    // T-1788313776829-b6daac60 / T-1788313784235-70448f30 /
+    // T-1788313835206-4e6b0cac：BR-03 gate 验证时的 e2e 探针任务
+    //   （五键与 role-prompt-v1-bootstrap-br03-rust-cli.json 一致），非待办工作项。
+    "T-1788050203568-c849f418",
+    "T-1788313776829-b6daac60",
+    "T-1788313784235-70448f30",
+    "T-1788313835206-4e6b0cac",
+];
 
 #[derive(Debug)]
 pub struct BootstrapInput {
