@@ -614,7 +614,7 @@ class EnterpriseDaemonService:
             return self._toolchain_conn
         with self._toolchain_lock:
             if self._toolchain_conn is None:
-                from callwarden.db.db_toolchain import open_toolchain_db
+                from callwarden.server.toolchain_store import open_toolchain_db
                 self._toolchain_conn = open_toolchain_db(
                     self._toolchain_db_path)
         return self._toolchain_conn
@@ -1505,7 +1505,7 @@ class EnterpriseDaemonService:
         set_active / delete）已在顶层 dispatch 由 ADMIN_ONLY_METHODS 拦截，
         admin 受信任不再重复 workspace ACL 校验。
         """
-        from callwarden.db import db_toolchain
+        from callwarden.server import toolchain_store as db_toolchain
 
         conn = self._get_toolchain_conn()
 
