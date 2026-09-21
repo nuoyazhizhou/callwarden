@@ -1208,6 +1208,7 @@ use super::support::*;
                         },
                         {
                             "title": "routing",
+                            "description": "routing implementation",
                             "steps": [
                                 {"action": "implement", "target_file": "server/daemon_client.py"}
                             ]
@@ -1260,6 +1261,7 @@ use super::support::*;
         std::fs::write(
             &plan_file,
             r#"## 子任务丙
+tree 回读验证用例。
 - implement @ rust_ext/src/daemon/task_collab.rs
 - test @ tests/test_task_split_steps.py
 - verify @ cli/main.py
@@ -1368,10 +1370,12 @@ use super::support::*;
             r#"# 计划
 
 ## 子任务甲
+plan_file 路径步骤持久化用例甲。
 - implement @ rust_ext/src/daemon/task_collab.rs
 - test @ tests/test_task_split_steps.py
 
 ## 子任务乙
+plan_file 路径步骤持久化用例乙。
 - implement @ server/daemon_client.py
 "#,
         )
@@ -1482,7 +1486,7 @@ use super::support::*;
                     "task_id": "T-PLAN-ROLLBACK",
                     "plan_file": plan_file.to_str().unwrap(),
                     "subtasks": [
-                        {"title": "x", "steps": ["not-an-object"]}
+                        {"title": "x", "description": "rollback-probe", "steps": ["not-an-object"]}
                     ]
                 }),
             )
@@ -1544,8 +1548,8 @@ use super::support::*;
                 &serde_json::json!({
                     "task_id": "T-COLLIDE-PARENT",
                     "subtasks": [
-                        {"title": "first", "steps": [{"action": "implement", "target_file": "a.rs"}]},
-                        {"title": "second", "steps": [{"action": "test", "target_file": "b.rs"}]}
+                        {"title": "first", "description": "collision-first", "steps": [{"action": "implement", "target_file": "a.rs"}]},
+                        {"title": "second", "description": "collision-second", "steps": [{"action": "test", "target_file": "b.rs"}]}
                     ]
                 }),
             )
@@ -1611,8 +1615,8 @@ use super::support::*;
                 &serde_json::json!({
                     "task_id": "T-ROLLBACK-PARENT",
                     "subtasks": [
-                        {"title": "ok", "steps": [{"action": "implement", "target_file": "a.rs"}]},
-                        {"title": "bad", "steps": ["not-an-object"]}
+                        {"title": "ok", "description": "rollback-first", "steps": [{"action": "implement", "target_file": "a.rs"}]},
+                        {"title": "bad", "description": "rollback-bad-step", "steps": ["not-an-object"]}
                     ]
                 }),
             )
@@ -1645,7 +1649,7 @@ use super::support::*;
                 &serde_json::json!({
                     "task_id": "T-ROLLBACK-PARENT",
                     "subtasks": [
-                        {"title": "first", "steps": [{"action": "implement", "target_file": "a.rs"}]}
+                        {"title": "first", "description": "rollback-retry", "steps": [{"action": "implement", "target_file": "a.rs"}]}
                     ]
                 }),
             )
@@ -1653,6 +1657,126 @@ use super::support::*;
         assert_eq!(split["subtask_count"], 1);
         let sub_id = split["subtasks"].as_array().unwrap()[0].as_str().unwrap();
         assert_eq!(sub_id, "T-ROLLBACK-PARENT-sub-1", "回滚后 base ID 应重新可用");
+    }
+
+    #[test]
+    fn test_task_split_round_trip_persists_full_governance() {
+        // step2 round-trip：一次干净 split 后，每个子任务的治理事实必须完整落库
+        // 且可经 store 查询路径回读。对齐 Python E2E
+        // (tests/test_task_split_governance.py::test_split_success_full_governance)
+        // 的断言面，但在 store 层直接验证（无需 live daemon）：
+        //   1) workspace binding 继承
+        //   2) 三角色 legacy Role Contract
+        //   3) Task Contract envelope + identity_policy
+        //   4) step binding 数 == 步骤数
+        //   5) status_tree 回读路径可见子任务与步骤
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_workspace(&store);
+        store
+            .handle_task_create(
+                peer.clone(),
+                &serde_json::json!({ "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "task_id": "T-ROUNDTRIP-PARENT",
+                    "title": "parent",
+                }),
+            )
+            .unwrap();
+
+        let split = store
+            .handle_task_split(
+                peer.clone(),
+                &serde_json::json!({
+                    "task_id": "T-ROUNDTRIP-PARENT",
+                    "identity_policy": "legacy_identity_v1",
+                    "subtasks": [
+                        {"title": "子任务甲", "description": "甲描述",
+                         "steps": [{"action": "implement", "target_file": "a.rs"},
+                                   {"action": "test", "target_file": "b.py"}]},
+                        {"title": "子任务乙", "description": "乙描述",
+                         "steps": [{"action": "verify", "target_file": "c.rs"}]}
+                    ]
+                }),
+            )
+            .unwrap();
+        assert_eq!(split["subtask_count"], 2);
+        let subs = split["subtasks"].as_array().unwrap();
+        assert_eq!(subs.len(), 2);
+
+        let conn = store.conn.lock().unwrap();
+        for sid in subs.iter().filter_map(|v| v.as_str()) {
+            // 1) 不可变 workspace binding 继承自父任务
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM task_workspace_bindings WHERE task_id = ?1",
+                    params![sid],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "{sid} 缺 workspace binding");
+
+            // 2) A' 三角色 legacy Role Contract
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM role_contracts WHERE task_id = ?1",
+                    params![sid],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 3, "{sid} 缺三角色 Role Contract (got {n})");
+
+            // 3) Task Contract envelope 携带 identity_policy
+            let row: Option<String> = conn
+                .query_row(
+                    "SELECT envelope_payload FROM task_contract_revisions \
+                     WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                    params![sid],
+                    |row| row.get(0),
+                )
+                .ok();
+            let payload = row.unwrap_or_else(|| panic!("{sid} 缺 Task Contract"));
+            let env: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(
+                env["identity_policy"], "legacy_identity_v1",
+                "{sid} Task Contract 缺 identity_policy"
+            );
+
+            // 4) step binding 数必须等于步骤数（每个步骤绑定到角色合同）
+            let n_steps: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1",
+                    params![sid],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let n_bind: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM task_step_role_contract_bindings WHERE task_id = ?1",
+                    params![sid],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                n_bind, n_steps,
+                "{sid} step binding {n_bind} != steps {n_steps}"
+            );
+        }
+        drop(conn);
+
+        // 5) round-trip 读路径：status_tree 能回读子任务及其步骤
+        let first_sid = subs[0].as_str().unwrap();
+        let node = store
+            .handle_task_status_tree(
+                peer,
+                &serde_json::json!({"task_id": first_sid}),
+            )
+            .unwrap();
+        assert_eq!(node["lifecycle_status"], "open");
+        let steps = node["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2, "子任务甲应有 2 个步骤");
+        assert_eq!(steps[0]["action"], "implement");
+        assert_eq!(steps[1]["action"], "test");
     }
 
     #[test]
