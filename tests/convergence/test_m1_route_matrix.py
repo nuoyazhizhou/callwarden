@@ -134,16 +134,15 @@ class TestMatrixCoverage:
         # 冻结为空集：任何非空漂移都视为回归（静默新增无路由工具）。
         assert wl_missing == set(), \
             f"KNOWN_DRIFT(wl 缺) 漂移变化: {sorted(wl_missing)}"
-        # 冻结已登记 KNOWN_DRIFT：两端皆缺（matrix 标 python_compat 但无 worker 路由）。
-        # stale 修正：python_compat 路由迁移后，矩阵仍标 python_compat 的行改为
-        # 「本地 SQL 保留执行」（见 server/tools/tools_query.py:25-30 说明），
-        # 该 11 项在 RUST_COMPAT_ROUTE / COMPAT_ROUTE_WHITELIST 两端均无登记。
-        assert both_missing == {
-            "assignment_show", "export_module_graph", "find_issues",
-            "get_attestation_validity", "get_comment_from_version", "get_impact",
-            "get_issue_summary", "get_recent_changes", "get_symbol_history",
-            "get_test_coverage", "list_attestation_revocations",
-        }, f"KNOWN_DRIFT(两端缺) 漂移变化: {sorted(both_missing)}"
+        # 冻结漂移集：矩阵已无 python_compat 行（4135fdb 将最后 11 项 P0-COMPAT-v3
+        # 残留 python_compat/transition 迁 rust_native/migrated），RUST_COMPAT_ROUTE
+        # 与 COMPAT_ROUTE_WHITELIST 均已清零，故两端漂移集均为空。
+        # 时序依据：本断言原先冻结 11 项非空 both_missing（2026-09-13 c3a5b38，
+        # 当时矩阵确实标 python_compat）；2026-09-19 4135fdb 迁移矩阵行但未同步
+        # 本测试，导致 both_missing 实测空集与冻结集不符而失败。
+        # 修正后冻结为空集：任何非空漂移都视为回归（静默新增无路由工具）。
+        assert both_missing == set(), \
+            f"KNOWN_DRIFT(两端缺) 漂移变化: {sorted(both_missing)}"
 
     def test_all_tools_registered_in_mcp_shell(self):
         """每个矩阵工具名仍注册在 server/tools/*.py（MCP 不丢失）。"""
