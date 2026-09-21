@@ -117,3 +117,77 @@ fn bootstrap_allowlist_rejects_non_allowlisted_task() {
     let lineages: i64 = conn.query_row("SELECT COUNT(*) FROM role_contract_lineages", [], |r| r.get(0)).unwrap();
     assert_eq!(lineages, 0, "拒绝路径不得写入 lineage");
 }
+
+#[test]
+fn bootstrap_role_source_rejection_leaves_no_contract_revision() {
+    // 回归：角色源不可解析时，ERR_BOOTSTRAP_ROLE_SOURCE 必须在任何写入之前返回。
+    // 历史 bug：contract_revisions 先落盘、角色循环才失败，配合 reject! 的
+    // 错误路径 commit 留下 task_contract_revisions=1/lineages=0 的半成品。
+    let not_allowlisted = "t-not-allowlisted";
+    let mut conn = fresh_db();
+    seed_task_no_roles(&mut conn, not_allowlisted);
+    let tx = conn.unchecked_transaction().unwrap();
+    let err = bootstrap_task_governance_contracts(&tx, &BootstrapInput {
+        task_id: not_allowlisted.to_string(), envelope: envelope(not_allowlisted), created_by: "adj".to_string(),
+        role_contract_source: "legacy".to_string(),
+    }, 1).unwrap_err();
+    assert_eq!(err.code, super::task_contract_bootstrap::ERR_BOOTSTRAP_ROLE_SOURCE);
+    // 关键断言：contract_revisions 也不得落盘（而非只检查 lineages）
+    let revisions: i64 = conn.query_row("SELECT COUNT(*) FROM task_contract_revisions", [], |r| r.get(0)).unwrap();
+    assert_eq!(revisions, 0, "角色源拒绝路径不得写入任何治理投影，含 contract_revisions");
+}
+
+#[test]
+fn bootstrap_resumes_from_orphan_contract_revision() {
+    // 恢复路径：task_contract_revisions=1 但三表全空（历史半提交孤儿），
+    // 重跑必须补齐三角色 lineage + revision + step binding，而不是 NOT_EMPTY 拒绝。
+    let allowlisted = "T-1787203937193-0993d120";
+    let mut conn = fresh_db();
+    seed_task_no_roles(&mut conn, allowlisted);
+    // 模拟历史 reject! 错误路径 commit 留下的孤儿：只有 contract_revisions
+    conn.execute(
+        "INSERT INTO task_contract_revisions (contract_id,revision,contract_hash,profile,task_id,workspace_id,envelope_payload,created_at,created_by,normalization_version,normalization_rules_hash) VALUES ('tc-orphan',1,'h','code_change',?1,1,'{}',0,'adj','vn','vrh')",
+        [allowlisted]).unwrap();
+    let tx = conn.unchecked_transaction().unwrap();
+    let response = bootstrap_task_governance_contracts(&tx, &BootstrapInput {
+        task_id: allowlisted.to_string(), envelope: envelope(allowlisted), created_by: "adj".to_string(),
+        role_contract_source: "allowlist".to_string(),
+    }, 1).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(response["contract_revision"], serde_json::json!(1));
+    // 恢复后四表一致
+    let revisions: i64 = conn.query_row("SELECT COUNT(*) FROM task_contract_revisions WHERE task_id=?1", [allowlisted], |r| r.get(0)).unwrap();
+    assert_eq!(revisions, 1, "恢复不得重复插入 contract_revisions");
+    for (table, expected) in [
+        ("role_contract_lineages", 3_i64),
+        ("task_step_role_contract_bindings", 1_i64),
+    ] {
+        let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table} WHERE task_id=?1"), [allowlisted], |r| r.get(0)).unwrap();
+        assert_eq!(count, expected, "恢复后 {table} 应为 {expected}");
+    }
+    // role_contract_revisions 无 task_id 列，经 lineage JOIN 计数
+    let role_rev: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM role_contract_revisions r JOIN role_contract_lineages l ON l.role_contract_lineage_id=r.role_contract_lineage_id WHERE l.task_id=?1",
+        [allowlisted], |r| r.get(0)).unwrap();
+    assert_eq!(role_rev, 3, "恢复后 role_contract_revisions 应为 3");
+}
+
+#[test]
+fn bootstrap_rejects_partial_projection_with_lineages_present() {
+    // lineages 已存在时不得当作可恢复孤儿：必须 NOT_EMPTY fail-closed。
+    let allowlisted = "T-1787203937193-0993d120";
+    let mut conn = fresh_db();
+    seed_task_no_roles(&mut conn, allowlisted);
+    conn.execute(
+        "INSERT INTO task_contract_revisions (contract_id,revision,contract_hash,profile,task_id,workspace_id,envelope_payload,created_at,created_by,normalization_version,normalization_rules_hash) VALUES ('tc-orphan',1,'h','code_change',?1,1,'{}',0,'adj','vn','vrh')",
+        [allowlisted]).unwrap();
+    conn.execute(
+        "INSERT INTO role_contract_lineages (role_contract_lineage_id,task_id,workspace_id,role,created_by,authoritative_created_at) VALUES ('rcl-x',?1,1,'executor','adj',0)",
+        [allowlisted]).unwrap();
+    let tx = conn.unchecked_transaction().unwrap();
+    let err = bootstrap_task_governance_contracts(&tx, &BootstrapInput {
+        task_id: allowlisted.to_string(), envelope: envelope(allowlisted), created_by: "adj".to_string(),
+        role_contract_source: "allowlist".to_string(),
+    }, 1).unwrap_err();
+    assert_eq!(err.code, ERR_BOOTSTRAP_NOT_EMPTY);
+}

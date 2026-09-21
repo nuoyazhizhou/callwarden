@@ -169,16 +169,57 @@ fn task_contract_payload(input: &BootstrapInput) -> Result<(String, String, Stri
     Ok((contract_id.to_string(), profile.to_string(), hash, payload_json))
 }
 
-fn no_governance_projection(tx: &Transaction<'_>, task_id: &str) -> Result<(), DaemonRpcError> {
-    for (table, sql) in [
-        ("task_contract_revisions", "SELECT EXISTS(SELECT 1 FROM task_contract_revisions WHERE task_id=?1)"),
-        ("role_contract_lineages", "SELECT EXISTS(SELECT 1 FROM role_contract_lineages WHERE task_id=?1)"),
-        ("role_contract_revisions", "SELECT EXISTS(SELECT 1 FROM role_contract_revisions r JOIN role_contract_lineages l ON l.role_contract_lineage_id=r.role_contract_lineage_id WHERE l.task_id=?1)"),
-        ("task_step_role_contract_bindings", "SELECT EXISTS(SELECT 1 FROM task_step_role_contract_bindings WHERE task_id=?1)"),
-    ] {
-        let exists: bool = tx.query_row(sql, [task_id], |row| row.get(0))
-            .map_err(|e| DaemonRpcError::internal_error(format!("{table} projection 查询失败: {e}")))?;
-        if exists { return Err(deterministic(ERR_BOOTSTRAP_NOT_EMPTY, format!("task {task_id} 已存在 {table}，bootstrap 只允许完全缺失的任务"))); }
+/// 检查治理投影是否可安全 bootstrap。
+///
+/// 返回 `true` 表示检测到"仅 task_contract_revisions 存在、其余三表全空"的
+/// 半成品状态——这是历史调用方在错误路径提交事务（reject! 也会 commit）
+/// 留下的孤儿。此时允许**恢复式重跑**：跳过 contract_revisions 重复插入，
+/// 补齐缺失的 lineages / revisions / bindings。其余任何部分存在仍 fail-closed。
+fn bootstrap_projection_state(tx: &Transaction<'_>, task_id: &str) -> Result<bool, DaemonRpcError> {
+    let contract_revisions: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM task_contract_revisions WHERE task_id=?1", [task_id], |row| row.get(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("task_contract_revisions 计数失败: {e}")))?;
+    let lineages: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM role_contract_lineages WHERE task_id=?1", [task_id], |row| row.get(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("role_contract_lineages 计数失败: {e}")))?;
+    let role_revisions: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM role_contract_revisions r JOIN role_contract_lineages l ON l.role_contract_lineage_id=r.role_contract_lineage_id WHERE l.task_id=?1", [task_id], |row| row.get(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("role_contract_revisions 计数失败: {e}")))?;
+    let bindings: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM task_step_role_contract_bindings WHERE task_id=?1", [task_id], |row| row.get(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("task_step_role_contract_bindings 计数失败: {e}")))?;
+    match (contract_revisions, lineages, role_revisions, bindings) {
+        (0, 0, 0, 0) => Ok(false),
+        // 半成品恢复：只有 contract_revisions 落盘，三角色链全缺。
+        (1, 0, 0, 0) => Ok(true),
+        (_, 0, 0, 0) => Err(deterministic(ERR_BOOTSTRAP_NOT_EMPTY,
+            format!("task {task_id} 存在多个 contract_revisions 但无角色链，状态不可自动恢复，需人工裁定"))),
+        _ => Err(deterministic(ERR_BOOTSTRAP_NOT_EMPTY,
+            format!("task {task_id} 已存在治理投影，bootstrap 只允许完全缺失的任务"))),
+    }
+}
+
+/// 在任何写入之前 fail-closed 校验三角色源是否可解析。
+///
+/// 历史版本把角色 legacy 查询放在 contract_revisions INSERT 之后，
+/// 配合调用方 `reject!` 的错误路径 commit，会留下半成品事务。本函数把
+/// "是否有可用角色源"的判定前移到首个 INSERT 之前：校验失败时事务内
+/// 还没有任何治理写入，commit 也不会产生孤儿投影。
+fn precondition_role_sources(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    allowlisted: bool,
+) -> Result<(), DaemonRpcError> {
+    if allowlisted { return Ok(()); }
+    for role in ["executor", "reviewer", "adjudicator"] {
+        let has_legacy: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM role_contracts WHERE task_id=?1 AND role=?2 AND is_current=1)",
+            params![task_id, role], |row| row.get(0),
+        ).map_err(|e| DaemonRpcError::internal_error(format!("legacy role contract 预检失败: {e}")))?;
+        if !has_legacy {
+            return Err(deterministic(ERR_BOOTSTRAP_ROLE_SOURCE,
+                format!("task 缺少 current legacy role contract: {role}")));
+        }
     }
     Ok(())
 }
@@ -189,22 +230,26 @@ pub fn bootstrap_task_governance_contracts(
     input: &BootstrapInput,
     workspace_id: i64,
 ) -> Result<Value, DaemonRpcError> {
-    no_governance_projection(tx, &input.task_id)?;
+    let resumable = bootstrap_projection_state(tx, &input.task_id)?;
     let task_exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1)", [&input.task_id], |r| r.get(0))
         .map_err(|e| DaemonRpcError::internal_error(format!("task existence 查询失败: {e}")))?;
     if !task_exists { return Err(deterministic(ERR_BOOTSTRAP_INVALID, format!("task {} 不存在", input.task_id))); }
+    let allowlisted = input.role_contract_source == "allowlist"
+        && BOOTSTRAP_ROLE_ALLOWLIST.contains(&input.task_id.as_str());
+    // 角色源预检在任何 INSERT 之前完成，杜绝半成品事务。
+    precondition_role_sources(tx, &input.task_id, allowlisted)?;
     let (contract_id, profile, contract_hash, envelope_payload) = task_contract_payload(input)?;
-    let (normalization_version, normalization_rules_hash) = normalization_rules(tx)?;
-    tx.execute(
-        "INSERT INTO task_contract_revisions (contract_id,revision,contract_hash,profile,task_id,workspace_id,envelope_payload,created_at,created_by,normalization_version,normalization_rules_hash) VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-        params![contract_id, contract_hash, profile, input.task_id, workspace_id, envelope_payload, crate::daemon::task_collab::task_now_ts(), input.created_by, normalization_version, normalization_rules_hash],
-    ).map_err(|e| DaemonRpcError::internal_error(format!("Task Contract revision 写入失败: {e}")))?;
+    if !resumable {
+        let (normalization_version, normalization_rules_hash) = normalization_rules(tx)?;
+        tx.execute(
+            "INSERT INTO task_contract_revisions (contract_id,revision,contract_hash,profile,task_id,workspace_id,envelope_payload,created_at,created_by,normalization_version,normalization_rules_hash) VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![contract_id, contract_hash, profile, input.task_id, workspace_id, envelope_payload, crate::daemon::task_collab::task_now_ts(), input.created_by, normalization_version, normalization_rules_hash],
+        ).map_err(|e| DaemonRpcError::internal_error(format!("Task Contract revision 写入失败: {e}")))?;
+    }
 
     let rules_hash = role_rules_hash(tx)?;
     let mut executor_revision_id = String::new();
     let mut role_result = Vec::new();
-    let allowlisted = input.role_contract_source == "allowlist"
-        && BOOTSTRAP_ROLE_ALLOWLIST.contains(&input.task_id.as_str());
     for role in ["executor", "reviewer", "adjudicator"] {
         let legacy: Option<(String,String,String,String,String,String,String,String,String,String,String)> = tx.query_row(
             "SELECT skill_id,skill_version,prompt_template_id,prompt_hash,allowed_paths,forbidden_paths,commands,acceptance_checks,required_evidence,handoff_to,independence FROM role_contracts WHERE task_id=?1 AND role=?2 AND is_current=1 ORDER BY revision DESC LIMIT 1",
