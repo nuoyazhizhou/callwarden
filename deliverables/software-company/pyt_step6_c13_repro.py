@@ -14,12 +14,12 @@ import tempfile
 
 sys.path.insert(0, "C:/git_work")
 
-from callwarden.db.db import CodeGraphDB  # noqa: E402
 
 
 def main():
     tmp = tempfile.mkdtemp(prefix="cw_c13_")
     db_path = os.path.join(tmp, "t.db")
+    from callwarden.db.db import CodeGraphDB  # db/ 退休验收③ P1-5：懒加载，避免模块级耦合
     db = CodeGraphDB(db_path=db_path, workspace_root=tmp)
     db.register_workspace(name="c13-repro", root_path=tmp)
     try:

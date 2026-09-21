@@ -5,11 +5,15 @@ T03（cw-rust-client-convergence）：Python 层收敛为纯 client 薄壳。
   业务查询/写入全部经 daemon RPC（route_rpc）。
 - `_call_daemon_rpc` 增强 fail-closed：daemon 不可用抛 DaemonUnavailableError，
   绝不回退本地 SQLite/CodeGraphDB。
+
+db/ 退休验收③（P1-1）：本模块不再在**模块级**导入 ``CodeGraphDB``，
+``CodeGraphDB`` 仅在 ``get_db()`` 函数体内懒加载（该函数全仓零调用，
+保留仅为兼容既有 ``patch("...get_db")`` 回退契约断言与外部 API）。
 """
+from __future__ import annotations
+
 import os
 from typing import Any, Dict, Optional
-
-from ..db import CodeGraphDB
 
 
 _db_instance: Optional[CodeGraphDB] = None
@@ -62,6 +66,12 @@ def _get_db_path_for_daemon() -> str:
 def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
     """获取数据库单例（T03：仅保留配置读取能力，不执行业务 SQL）。
 
+    .. deprecated:: db/ 退休验收③
+        本函数**全仓零调用**（AST 核验），保留仅为兼容既有
+        ``patch("...tools_xxx.get_db")`` 的「绝不回落本地」契约断言与外部 API。
+        ``CodeGraphDB`` 在此懒加载，确保 ``import callwarden.server.*`` 不触发
+        db/ 包加载；物理删除 db/（P4）时本函数一并移除。
+
     收敛架构下 Python 是纯 client，业务查询/写入一律经 daemon RPC。
     本函数仅用于：
     - workspace root / db_path 解析（供 daemon snapshot.publish 定位源库）；
@@ -76,6 +86,9 @@ def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
             workspace 上下文），正是“工作区身份混串”的根因之一；现在禁止无身份复用。
     """
     global _db_instance
+    # db/ 退休验收③（P1-1）：懒加载，避免模块级耦合 db/
+    from ..db import CodeGraphDB
+
     if _db_instance is None:
         if workspace and os.path.isdir(workspace):
             _db_instance = CodeGraphDB(workspace_root=workspace)

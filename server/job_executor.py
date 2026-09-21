@@ -40,23 +40,37 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any, Callable, Dict, Optional
 
-from ..db.db_jobs import (
-    init_jobs_schema,
-    submit_job,
-    get_job,
-    mark_job_running,
-    update_job_progress,
-    complete_job,
-    fail_job,
-    is_cancelled,
-    cancel_job,
-    JOB_PENDING,
-    JOB_RUNNING,
-    JOB_COMPLETED,
-    JOB_CANCELLED,
-    JOB_FAILED,
-    Job,
-)
+
+# db/ 退休验收③（P1-3）：db_jobs 不再模块级导入。__getattr__ 服务模块属性访问
+# （如 `job_executor.JOB_PENDING`）；函数内的全局名查找由
+# _ensure_db_jobs_loaded() 在强制入口 start() 中一次性填充模块全局。
+_DB_JOBS_LAZY_NAMES = frozenset({
+    "init_jobs_schema", "submit_job", "get_job", "mark_job_running",
+    "update_job_progress", "complete_job", "fail_job", "is_cancelled",
+    "cancel_job", "JOB_PENDING", "JOB_RUNNING", "JOB_COMPLETED",
+    "JOB_CANCELLED", "JOB_FAILED", "Job",
+})
+
+
+def _ensure_db_jobs_loaded() -> None:
+    """懒加载 db_jobs 并把所需名字填入模块全局（幂等）。
+
+    start() 是 JobExecutor 的强制入口（其余方法在 _started 前直接 raise），
+    在此填充后，函数内的全局名查找即可命中。
+    """
+    g = globals()
+    if "submit_job" in g:
+        return
+    from ..db import db_jobs as _db_jobs
+    for _k in _DB_JOBS_LAZY_NAMES:
+        g[_k] = getattr(_db_jobs, _k)
+
+
+def __getattr__(name: str):
+    if name in _DB_JOBS_LAZY_NAMES:
+        _ensure_db_jobs_loaded()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Handler 签名：(ctx) -> result_summary dict
@@ -231,6 +245,8 @@ class JobExecutor:
             self._conn.execute("PRAGMA temp_store=MEMORY")
         except Exception:
             pass
+        # db/ 退休验收③（P1-3）：填充 db_jobs 懒加载名字到模块全局
+        _ensure_db_jobs_loaded()
         # 确保 jobs schema 存在
         init_jobs_schema(self._conn)
         self._started = True

@@ -17,7 +17,6 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from callwarden.db.db import CodeGraphDB
 
 MATRIX_PATH = PROJECT_ROOT / "deliverables" / "software-company" / "tool_migration_matrix.json"
 OUTPUT_PATH = PROJECT_ROOT / "deliverables" / "software-company" / "aprime_supersede_baseline_manifest.json"
@@ -66,6 +65,7 @@ def main() -> None:
         for item in tools
         if item.get("target_backend") == "python_compat"
     ]
+    from callwarden.db.db import CodeGraphDB  # db/ 退休验收③ P1-5：懒加载，避免模块级耦合
     db = CodeGraphDB()
     try:
         old_original = task_projection(db.conn, OLD_S2_ORIGINAL)

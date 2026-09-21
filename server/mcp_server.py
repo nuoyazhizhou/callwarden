@@ -25,7 +25,6 @@ except ImportError as exc:
     HAS_FASTMCP = False
     _FASTMCP_IMPORT_ERROR = exc
 
-from ..db import CodeGraphDB
 from ..config import PROJECT_ROOT, get_project_db_path
 from ..i18n import t
 

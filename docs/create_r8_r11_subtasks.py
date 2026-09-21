@@ -13,7 +13,6 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db.db import CodeGraphDB
 
 PARENT_ID = "T-1784986236712-736b2331"
 
@@ -78,6 +77,7 @@ tasks_to_mount = [
 
 
 def main():
+    from callwarden.db.db import CodeGraphDB  # db/ 退休验收③ P1-5：懒加载，避免模块级耦合
     db = CodeGraphDB()
     cur = db.conn.execute("SELECT id, title, status FROM tasks WHERE id = ?", (PARENT_ID,))
     parent = cur.fetchone()

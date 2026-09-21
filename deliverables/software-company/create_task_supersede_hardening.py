@@ -14,7 +14,6 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from callwarden.db.db import CodeGraphDB
 
 PARENT_ID = "T-1787203926824-9f873bfc"
 TITLE = "P0-H：task.supersede governance hardening / promotion"
@@ -23,6 +22,7 @@ PLAN_PATH = PROJECT_ROOT / "deliverables" / "software-company" / "task_supersede
 
 def main() -> None:
     description = PLAN_PATH.read_text(encoding="utf-8")
+    from callwarden.db.db import CodeGraphDB  # db/ 退休验收③ P1-5：懒加载，避免模块级耦合
     db = CodeGraphDB()
     try:
         parent = db.conn.execute(

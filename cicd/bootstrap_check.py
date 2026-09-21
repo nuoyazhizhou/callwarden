@@ -32,7 +32,6 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict, Optional
 
-from ..db import CodeGraphDB
 from ..i18n import t
 
 
@@ -171,6 +170,9 @@ def main() -> int:
         0：通过（所有检查项 OK）
         1：失败（有任一检查项未通过或查询异常）
     """
+    # db/ 退休验收③（P1-4）：懒加载，避免模块级耦合 db/
+    from ..db import CodeGraphDB
+
     db = CodeGraphDB()
     try:
         result = run_bootstrap_gate(db)

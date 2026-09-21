@@ -13,7 +13,6 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from callwarden.db.db import CodeGraphDB
 
 TASK_IDS = (
     "T-1787203926824-9f873bfc",
@@ -28,6 +27,7 @@ def row_dict(row):
 
 
 def main() -> None:
+    from callwarden.db.db import CodeGraphDB  # db/ 退休验收③ P1-5：懒加载，避免模块级耦合
     db = CodeGraphDB()
     try:
         print(f"DB={db.db_path}")

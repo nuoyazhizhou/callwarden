@@ -116,7 +116,10 @@ packages = [
     "callwarden.analyzers",
     "callwarden.cicd",
     "callwarden.cli",
-    "callwarden.db",
+    # db/ 退休验收③（路线 B）：db/ 已降级为**仅测试支持层**——生产侧零导入
+    # （tests/convergence/test_db_retire_prod_purity.py 锁定导入期 purity），
+    # 故不进生产 wheel。源码树与 sdist 仍保留 db/ 供测试使用
+    # （MANIFEST.in 的 recursive-include db *.py）。
     "callwarden.i18n",
     "callwarden.parsers",
     "callwarden.server",

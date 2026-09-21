@@ -7,7 +7,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
-from callwarden.db.db import CodeGraphDB
 
 TASK_IDS = [
     "T-1787293818274-1b87b6c4",
@@ -23,6 +22,7 @@ def rows(conn, sql, params=()):
         return [{"query_error": str(exc)}]
 
 def main() -> None:
+    from callwarden.db.db import CodeGraphDB  # db/ 退休验收③ P1-5：懒加载，避免模块级耦合
     db = CodeGraphDB()
     conn = db.conn
     conn.row_factory = __import__('sqlite3').Row

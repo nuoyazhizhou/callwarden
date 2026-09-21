@@ -10,9 +10,6 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db.db import CodeGraphDB
-
-db = CodeGraphDB()
 parent_id = "T-1784677235802-3a116c18"
 
 subtasks = [
@@ -190,16 +187,26 @@ Linux systemd 启动 Rust cw_daemon，但 Rust daemon 路径未接入 merge_cas_
     },
 ]
 
-for st in subtasks:
-    # steps 必须是 dict 列表（db_tasks.task_create 期望 {"action": ...} 形式）
-    step_dicts = [{"action": s} if isinstance(s, str) else s for s in st["steps"]]
-    result = db.task_create(
-        title=st["title"],
-        description=st["description"],
-        parent_id=parent_id,
-        steps=step_dicts,
-    )
-    print(f"  子任务: {st['title'][:40]}... -> {result}")
 
-db.close()
-print("完成")
+def main() -> None:
+    # db/ 退休验收③（P1-5）：懒加载，避免模块级耦合 db/
+    from callwarden.db.db import CodeGraphDB
+
+    db = CodeGraphDB()
+    for st in subtasks:
+        # steps 必须是 dict 列表（db_tasks.task_create 期望 {"action": ...} 形式）
+        step_dicts = [{"action": s} if isinstance(s, str) else s for s in st["steps"]]
+        result = db.task_create(
+            title=st["title"],
+            description=st["description"],
+            parent_id=parent_id,
+            steps=step_dicts,
+        )
+        print(f"  子任务: {st['title'][:40]}... -> {result}")
+
+    db.close()
+    print("完成")
+
+
+if __name__ == "__main__":
+    main()

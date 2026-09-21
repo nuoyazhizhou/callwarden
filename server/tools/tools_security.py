@@ -25,7 +25,6 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from ...db import CodeGraphDB
 from callwarden.server.daemon_client import (
     is_http_transport_enabled,
     route_worker_call,
@@ -805,7 +804,7 @@ def register(mcp: FastMCP) -> None:
 _SECURITY_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
 
 
-def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+def _bind_readonly_db(ctx: CompatCallContext) -> "CodeGraphDB":
     """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
 
     与 tools_query.py / tools_summary.py 同款：ctx.conn 由 compat_worker 用
@@ -813,6 +812,7 @@ def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
     ctx.workspace_id，db 层查询基于 `_get_active_workspace_id()` 过滤；
     workspace_root 从 workspaces 表解析（跨仓库/LSP 等文件路径依赖）。
     """
+    from ...db import CodeGraphDB  # db/ 退休验收③ P1-2：懒加载，避免模块级耦合
     db = object.__new__(CodeGraphDB)
     db.conn = ctx.conn
     db.active_workspace = {"id": ctx.workspace_id} if ctx.workspace_id else None

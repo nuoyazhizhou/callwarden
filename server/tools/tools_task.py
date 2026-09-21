@@ -36,7 +36,6 @@ from callwarden.server.daemon_client import (
 # H4C-3（T-1786716190783-ba187c88 步骤#1）：任务组只读工具接入 compat worker。
 # 必须用顶层 `server.compat_registry` 导入，与 compat_worker.py 保持同一模块
 # 单例（模块单例风险，见 tools_query.py 同款注释）。
-from ...db import CodeGraphDB
 from server.compat_registry import (  # noqa: E402
     SCOPE_WORKSPACE,
     CompatCallContext,
@@ -1082,11 +1081,12 @@ def register(mcp: FastMCP) -> None:
 _TASK_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
 
 
-def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+def _bind_readonly_db(ctx: CompatCallContext) -> "CodeGraphDB":
     """轻量只读绑定（任务组副本）：绕过 CodeGraphDB.__init__，注入 worker 只读连接。
 
     与 tools_query._bind_readonly_db 同款实现；两模块各自持有副本避免循环依赖。
     """
+    from ...db import CodeGraphDB  # db/ 退休验收③ P1-2：懒加载，避免模块级耦合
     db = object.__new__(CodeGraphDB)
     db.conn = ctx.conn
     db.active_workspace = {"id": ctx.workspace_id} if ctx.workspace_id else None

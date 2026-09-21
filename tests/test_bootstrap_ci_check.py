@@ -227,8 +227,10 @@ def test_main_returns_0_on_healthy_db():
         }
         mock_db.close = MagicMock()
 
+        # db/ 退休验收③ P1-4：bootstrap_check 的 CodeGraphDB 改为 main() 内懒加载，
+        # 模块级不再有该属性，patch 目标改为源模块 callwarden.db.CodeGraphDB。
         with patch(
-            "callwarden.cicd.bootstrap_check.CodeGraphDB", return_value=mock_db
+            "callwarden.db.CodeGraphDB", return_value=mock_db
         ):
             exit_code = main()
         assert exit_code == 0
@@ -244,8 +246,9 @@ def test_main_returns_1_on_failed_gate():
     }
     mock_db.close = MagicMock()
 
+    # db/ 退休验收③ P1-4：懒加载后 patch 源模块 callwarden.db.CodeGraphDB
     with patch(
-        "callwarden.cicd.bootstrap_check.CodeGraphDB", return_value=mock_db
+        "callwarden.db.CodeGraphDB", return_value=mock_db
     ):
         exit_code = main()
     assert exit_code == 1
