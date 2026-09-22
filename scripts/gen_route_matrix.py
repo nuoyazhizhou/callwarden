@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """gen_route_matrix.py —— 从工具路由矩阵生成派生物（T01 脚手架）。
 
-设计契约：`deliverables/software-company/tool_migration_matrix.json` 是 239 个
-MCP 工具的**单一真相源**；本脚本只做读取与派生，不修改矩阵内容。
+设计契约：`deliverables/software-company/tool_migration_matrix.json` 是 MCP 工具的
+**单一真相源**；本脚本只做读取与派生，不修改矩阵内容。
 
 输出（写入仓库对应位置）：
 - `--emit-json`           刷新/校验矩阵 JSON（工具名集合来自本文件 TOOL_MODULES 提取，
@@ -27,7 +27,7 @@ import json
 import os
 import re
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MATRIX_PATH = os.path.join(
@@ -458,9 +458,100 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
 BACKENDS = ("rust_native", "task_rpc", "python_compat", "declared_unavailable")
 OP_CLASSES = ("READ_ONLY", "PROTECTED_MUTATION", "GOVERNANCE_WRITE")
 
+# ---------------------------------------------------------------------------
+# 3b. 实际接线证据提取（current_backend 派生用；与 verify_route_matrix 同源）
+# ---------------------------------------------------------------------------
+# current_backend 语义（P1 回填，2026-09-22）：
+#   与 target_backend（声明目标）不同，current_backend 从**实际接线证据**派生，
+#   回答「该工具当前能否被证明已接到声明后端」：
+#     - rust_native/task_rpc：rpc_method 出现在 dispatch.rs（match 分支或
+#       CONVERGENCE_RPC_METHODS 清单）→ current = target；否则 unknown（断线）。
+#     - python_compat：rpc_method 同时在 compat_registry.py RUST_COMPAT_ROUTE
+#       与 http_server.rs COMPAT_ROUTE_WHITELIST 中 → python_compat；
+#       任一缺失 → unknown（zombie：worker 路由或白名单缺）。
+#     - declared_unavailable：原样。
+#   unknown = 无法证明已接线，verify_route_matrix 门禁必须失败（防止
+#   「声明已迁移但实际没接线」的假绿）。证据源与 verifier 完全一致（本节是
+#   唯一实现，verifier 直接 import 本节函数，避免双份拷贝漂移）。
+_DISPATCH_PATH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "dispatch.rs")
+_HTTP_SERVER_PATH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "http_server.rs")
+_COMPAT_REGISTRY_PATH = os.path.join(_REPO_ROOT, "server", "compat_registry.py")
+
+
+def extract_dispatch_methods() -> Set[str]:
+    """提取 dispatch.rs match 分支 method 字面量 + CONVERGENCE_RPC_METHODS 清单。"""
+    if not os.path.exists(_DISPATCH_PATH):
+        return set()
+    with open(_DISPATCH_PATH, "r", encoding="utf-8") as fh:
+        src = fh.read()
+    methods: Set[str] = set()
+    for line in src.splitlines():
+        m = re.search(r'"([a-zA-Z0-9_.]+)"\s*=>', line)
+        if m:
+            methods.add(m.group(1))
+    m2 = re.search(r"CONVERGENCE_RPC_METHODS: &\[&str\] = &\[(.*?)\];", src, re.S)
+    if m2:
+        methods.update(re.findall(r'"([a-zA-Z0-9_.]+)"', m2.group(1)))
+    return methods
+
+
+def extract_compat_whitelist() -> Set[str]:
+    """提取 http_server.rs COMPAT_ROUTE_WHITELIST 条目（method 名）。"""
+    if not os.path.exists(_HTTP_SERVER_PATH):
+        return set()
+    with open(_HTTP_SERVER_PATH, "r", encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(r"COMPAT_ROUTE_WHITELIST: &\[\(&str, &str\)\] = &\[(.*?)\];", src, re.S)
+    if not m:
+        return set()
+    return set(re.findall(r'\("([a-zA-Z0-9_]+)",\s*"[a-z_]+"\)', m.group(1)))
+
+
+def extract_python_compat_routes() -> Set[str]:
+    """提取 compat_registry.py RUST_COMPAT_ROUTE 键。"""
+    if not os.path.exists(_COMPAT_REGISTRY_PATH):
+        return set()
+    with open(_COMPAT_REGISTRY_PATH, "r", encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(r"RUST_COMPAT_ROUTE: Dict\[str, str\] = \{(.*?)\}", src, re.S)
+    if not m:
+        return set()
+    return set(re.findall(r'"([a-zA-Z0-9_]+)"\s*:', m.group(1)))
+
+
+def derive_current_backend(
+    target_backend: str,
+    rpc_method: str,
+    dispatch_methods: Optional[Set[str]] = None,
+    compat_whitelist: Optional[Set[str]] = None,
+    python_compat_routes: Optional[Set[str]] = None,
+) -> str:
+    """从实际接线证据派生 current_backend（语义见上文 3b 节）。
+
+    传入证据集合时直接使用（避免重复 IO）；缺省时现场提取。
+    """
+    if target_backend in ("rust_native", "task_rpc"):
+        dispatch = dispatch_methods if dispatch_methods is not None else extract_dispatch_methods()
+        return target_backend if rpc_method in dispatch else "unknown"
+    if target_backend == "python_compat":
+        wl = compat_whitelist if compat_whitelist is not None else extract_compat_whitelist()
+        py = python_compat_routes if python_compat_routes is not None else extract_python_compat_routes()
+        if rpc_method in py and rpc_method in wl:
+            return "python_compat"
+        return "unknown"
+    if target_backend == "declared_unavailable":
+        return "declared_unavailable"
+    return "unknown"
+
 
 def build_matrix() -> Dict[str, Any]:
-    """构建 239 工具矩阵（工具名集合以实际提取为准，路由元数据以 ROUTE_OVERRIDES 为准）。"""
+    """构建工具矩阵（工具名集合以实际提取为准，路由元数据以 ROUTE_OVERRIDES 为准，
+    current_backend 从实际接线证据派生）。"""
+    # 接线证据一次性提取，供 current_backend 派生复用（避免每工具一次 IO）
+    dispatch_methods = extract_dispatch_methods()
+    compat_whitelist = extract_compat_whitelist()
+    python_compat_routes = extract_python_compat_routes()
+
     tools: List[Dict[str, Any]] = []
     seen: Dict[str, str] = {}
     for module in TOOL_MODULES:
@@ -478,10 +569,17 @@ def build_matrix() -> Dict[str, Any]:
                 raise SystemExit(f"{name}: 非法 backend {backend!r}")
             if op_class not in OP_CLASSES:
                 raise SystemExit(f"{name}: 非法 op_class {op_class!r}")
+            current_backend = derive_current_backend(
+                backend,
+                rpc_method,
+                dispatch_methods,
+                compat_whitelist,
+                python_compat_routes,
+            )
             entry: Dict[str, Any] = {
                 "name": name,
                 "module": module,
-                "current_backend": "unknown",
+                "current_backend": current_backend,
                 "target_backend": backend,
                 "rpc_method": rpc_method,
                 "op_class": op_class,
@@ -681,10 +779,13 @@ def check_outputs(matrix: Dict[str, Any]) -> int:
 def emit_report(matrix: Dict[str, Any]) -> str:
     """输出迁移核对报告。"""
     by_backend: Dict[str, int] = {}
+    by_current: Dict[str, int] = {}
     by_batch: Dict[str, int] = {}
     by_op: Dict[str, int] = {}
     for t in matrix["tools"]:
         by_backend[t["target_backend"]] = by_backend.get(t["target_backend"], 0) + 1
+        cur = t.get("current_backend", "unknown")
+        by_current[cur] = by_current.get(cur, 0) + 1
         by_batch[t["batch"]] = by_batch.get(t["batch"], 0) + 1
         by_op[t["op_class"]] = by_op.get(t["op_class"], 0) + 1
     lines = [
@@ -693,6 +794,12 @@ def emit_report(matrix: Dict[str, Any]) -> str:
     ]
     for backend in BACKENDS:
         lines.append(f"  {backend}: {by_backend.get(backend, 0)}")
+    lines.append("按 current_backend（实际接线证据派生）:")
+    for backend in BACKENDS + ("unknown",):
+        if by_current.get(backend, 0):
+            lines.append(f"  {backend}: {by_current[backend]}")
+    if by_current.get("unknown", 0):
+        lines.append("  ⚠️ unknown = 无法证明已接线，verify 门禁会失败")
     lines.append("按 op_class:")
     for op in OP_CLASSES:
         lines.append(f"  {op}: {by_op.get(op, 0)}")

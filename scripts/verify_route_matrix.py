@@ -15,6 +15,8 @@ SSOT 关系（spec §12）：
 2. Rust mirror 条目 == generate(M)（条目级语义相等）；
 3. rpc_method(M[rust_native|task_rpc]) ⊆ D；
 4. python_compat 行与 Rust whitelist、Python compat registry 三向一致；
+4b. current_backend 必须由生成器从实际接线证据派生，且现场重算一致、
+    不得有 unknown（无法证明已接线的工具 = 断线，error）；
 5. 每个工具 name/module/rpc_method/target_backend/op_class 字段完整合法；
 6. 每个工具名仍注册在 server/tools/<module>.py（MCP 注册不丢失）；
 7. D - rpc_method(M) 不要求为空（超集允许），仅记录计数。
@@ -35,9 +37,11 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "scripts"))
 import gen_route_matrix as gen  # generator 是工具枚举/路由规则的唯一来源
 
 _MATRIX_PATH = gen._MATRIX_PATH
-_DISPATCH_PATH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "dispatch.rs")
-_HTTP_SERVER_PATH = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "http_server.rs")
-_COMPAT_REGISTRY_PATH = os.path.join(_REPO_ROOT, "server", "compat_registry.py")
+# dispatch / http_server / compat_registry 路径与证据提取函数均以 generator 为
+# 唯一实现（避免双份拷贝漂移）；此处保留模块级别名供外部调用兼容。
+_DISPATCH_PATH = gen._DISPATCH_PATH
+_HTTP_SERVER_PATH = gen._HTTP_SERVER_PATH
+_COMPAT_REGISTRY_PATH = gen._COMPAT_REGISTRY_PATH
 
 BACKENDS = gen.BACKENDS
 OP_CLASSES = gen.OP_CLASSES
@@ -48,45 +52,10 @@ def load_matrix() -> Dict[str, Any]:
         return json.load(fh)
 
 
-def extract_dispatch_methods() -> Set[str]:
-    """提取 dispatch.rs match 分支 method 字面量 + CONVERGENCE_RPC_METHODS 清单。"""
-    if not os.path.exists(_DISPATCH_PATH):
-        return set()
-    with open(_DISPATCH_PATH, "r", encoding="utf-8") as fh:
-        src = fh.read()
-    methods: Set[str] = set()
-    for line in src.splitlines():
-        m = re.search(r'"([a-zA-Z0-9_.]+)"\s*=>', line)
-        if m:
-            methods.add(m.group(1))
-    m2 = re.search(r"CONVERGENCE_RPC_METHODS: &\[&str\] = &\[(.*?)\];", src, re.S)
-    if m2:
-        methods.update(re.findall(r'"([a-zA-Z0-9_.]+)"', m2.group(1)))
-    return methods
-
-
-def extract_compat_whitelist() -> Set[str]:
-    """提取 http_server.rs COMPAT_ROUTE_WHITELIST 条目（method 名）。"""
-    if not os.path.exists(_HTTP_SERVER_PATH):
-        return set()
-    with open(_HTTP_SERVER_PATH, "r", encoding="utf-8") as fh:
-        src = fh.read()
-    m = re.search(r"COMPAT_ROUTE_WHITELIST: &\[\(&str, &str\)\] = &\[(.*?)\];", src, re.S)
-    if not m:
-        return set()
-    return set(re.findall(r'\("([a-zA-Z0-9_]+)",\s*"[a-z_]+"\)', m.group(1)))
-
-
-def extract_python_compat_routes() -> Set[str]:
-    """提取 compat_registry.py RUST_COMPAT_ROUTE 键。"""
-    if not os.path.exists(_COMPAT_REGISTRY_PATH):
-        return set()
-    with open(_COMPAT_REGISTRY_PATH, "r", encoding="utf-8") as fh:
-        src = fh.read()
-    m = re.search(r"RUST_COMPAT_ROUTE: Dict\[str, str\] = \{(.*?)\}", src, re.S)
-    if not m:
-        return set()
-    return set(re.findall(r'"([a-zA-Z0-9_]+)"\s*:', m.group(1)))
+# 证据提取的唯一实现在 gen_route_matrix.py（§3b）；此处透传保持本模块调用兼容。
+extract_dispatch_methods = gen.extract_dispatch_methods
+extract_compat_whitelist = gen.extract_compat_whitelist
+extract_python_compat_routes = gen.extract_python_compat_routes
 
 
 def extract_rust_mirror_routes() -> Dict[str, Dict[str, str]]:
@@ -211,6 +180,35 @@ def main() -> int:
                     f"{t['name']}: RUST_COMPAT_ROUTE 有但 COMPAT_ROUTE_WHITELIST 缺"
                 )
 
+    # ---- 门禁 4b：current_backend 活审计（P1 回填，2026-09-22）----
+    # current_backend 必须由生成器从实际接线证据派生（gen §3b）。此处用**同一套
+    # 证据提取**现场重算，与磁盘矩阵逐工具比对：
+    #   - 值必须合法（BACKENDS 或 unknown）；
+    #   - 与现场重算不一致 = 矩阵相对源码已过期（需重新 --emit-json）；
+    #   - 任何 unknown = 无法证明该工具已接到声明后端（断线/zombie）= **error**，
+    #     防止「声明已迁移但实际没接线」的假绿。
+    # 证据集合复用门禁 3/4 已提取的 dispatch_methods / rust_whitelist / py_routes。
+    for t in tools:
+        cur = t.get("current_backend", "unknown")
+        if cur not in BACKENDS and cur != "unknown":
+            errors.append(
+                f"{t['name']}: 非法 current_backend {cur!r}（合法值 {BACKENDS} 或 unknown）"
+            )
+            continue
+        expected = gen.derive_current_backend(
+            t["target_backend"], t["rpc_method"], dispatch_methods, rust_whitelist, py_routes
+        )
+        if cur != expected:
+            errors.append(
+                f"{t['name']}: current_backend={cur!r} 与现场接线证据派生值 "
+                f"{expected!r} 不一致（矩阵已过期，请重新 gen_route_matrix.py --emit-json）"
+            )
+        elif cur == "unknown":
+            errors.append(
+                f"{t['name']}: current_backend=unknown——无法证明已接到声明后端 "
+                f"（target_backend={t['target_backend']}, rpc_method={t['rpc_method']}）"
+            )
+
     # ---- 门禁 6：MCP 注册不丢失（与门禁 1 的 module 级补强） ----
     if t_by_module is not None:
         for t in tools:
@@ -228,6 +226,14 @@ def main() -> int:
     print(f"http_server.rs 白名单 = {len(rust_whitelist)}")
     print(f"compat_registry.py RUST_COMPAT_ROUTE = {len(py_routes)}")
     print()
+    # compat 域三向核对必须**始终显式记账**（即使为 0）——「显式登记」契约在
+    # 0 漂移与 N 漂移两种状态下都成立，避免漂移归零后测试/读者无法区分
+    # 「没核对」与「核对后无漂移」。
+    compat_tools = [t for t in tools if t["target_backend"] == "python_compat"]
+    print(
+        f"compat 域核对: python_compat 工具 = {len(compat_tools)}，"
+        f"KNOWN_DRIFT = {len(known_drift)}"
+    )
     if known_drift:
         print(f"KNOWN_DRIFT（既有 compat 域缺陷，{len(known_drift)} 项，非本卡 scope，已登记）:")
         for d in known_drift:
