@@ -1755,7 +1755,23 @@ fn build_manifest(cfg: &HttpServerConfig, local: &SocketAddr) -> Value {
 /// - Unix：临时文件权限 0600，`rename`（覆盖已存在目标，原子）。
 /// - Windows：临时文件设置 owner-only DACL，`MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`
 ///   原子替换，消除 remove→rename 的缺失窗口（P1-4 修复）。
+///
+/// ## P0-b（single-instance 硬化）：覆盖前拒绝活 daemon 的 manifest
+///
+/// HTTP 动态端口永不冲突 + manifest last-one-wins 覆盖，意味着两个同时
+/// 存活的 daemon 中，#2 的发布会把客户端全部导向 #2，#1 的权威被静默
+/// 分裂。P0-c 的 authority flock 是主防线（见 `single_instance`），此处
+/// 为兜底：磁盘上现有 manifest 若属于一个**活跃的其他 daemon**（PID 存活
+/// 且不等于自己），拒绝覆盖（fail-closed）。
+///
+/// 正常重启路径不受影响：旧 daemon 已死，其残留 manifest 的 PID 探测为
+/// 死亡 ⇒ 允许覆盖。已知局限：PID 复用（旧 daemon 死后 PID 被无关进程
+/// 占用）会触发误拒，错误信息给出恢复指引（先删 manifest 再启动）；
+/// 这与全代码库其他 PID 活性校验（`E_HTTP_MANIFEST_STALE`）的取舍一致。
 fn publish_manifest_atomic(path: &PathBuf, value: &Value) -> Result<(), HttpServerError> {
+    // P0-b：覆盖前确认现有 manifest 不属于一个活跃的其他 daemon
+    refuse_if_manifest_owned_by_live_daemon(path)?;
+
     let json = serde_json::to_vec(value)?;
     let tmp = path.with_extension("tmp");
     {
@@ -1784,6 +1800,49 @@ fn publish_manifest_atomic(path: &PathBuf, value: &Value) -> Result<(), HttpServ
         std::fs::rename(&tmp, path).map_err(|e| HttpServerError::Manifest(e.to_string()))?;
     }
 
+    Ok(())
+}
+
+/// P0-b：若磁盘上的 manifest 属于一个**活跃的其他 daemon**，拒绝覆盖。
+///
+/// 判定规则（逐级放宽，任何不确定都允许覆盖，只在确证冲突时拒绝）：
+/// - manifest 不存在 / 无法解析 / 无 `pid` 字段 ⇒ 允许（首发或旧格式）
+/// - `pid` == 自己 ⇒ 允许（同一 daemon 的预绑定 + worker_status 回写）
+/// - `pid` != 自己且 `pid_alive` ⇒ **拒绝**（活 daemon 持有，权威会分裂）
+/// - `pid` != 自己且已死 ⇒ 允许（正常重启，残留 manifest 来自已死 daemon）
+fn refuse_if_manifest_owned_by_live_daemon(path: &std::path::Path) -> Result<(), HttpServerError> {
+    let existing = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(HttpServerError::Manifest(format!(
+                "读取现有 manifest {} 失败（fail-closed）: {}",
+                path.display(),
+                e
+            )))
+        }
+    };
+    let prev: Value = match serde_json::from_slice(&existing) {
+        Ok(v) => v,
+        // 损坏/半写（例如旧进程在 replace 中途被杀）⇒ 视为残留，允许覆盖
+        Err(_) => return Ok(()),
+    };
+    let prev_pid = match prev.get("pid").and_then(Value::as_u64) {
+        Some(p) => p as u32,
+        None => return Ok(()),
+    };
+    if prev_pid == std::process::id() {
+        return Ok(());
+    }
+    if super::single_instance::pid_alive(prev_pid) {
+        return Err(HttpServerError::Manifest(format!(
+            "manifest {} 当前由活跃 daemon (pid={}) 持有，拒绝覆盖（fail-closed，\
+             避免权威分裂）。请先停止该 daemon；若确认该 PID 是复用的无关进程\
+             且原 daemon 已退出，删除该 manifest 后再启动。",
+            path.display(),
+            prev_pid
+        )));
+    }
     Ok(())
 }
 
@@ -5763,5 +5822,97 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         assert!(got_final, "轮询未在 10s 内拿到最终结果");
+    }
+
+    // ---- P0-b：manifest 覆盖保护（refuse_if_manifest_owned_by_live_daemon）----
+
+    /// 一个保证存活但不是自己的 PID：Unix 用 init(pid 1)，Windows 用 System(pid 4)。
+    fn foreign_live_pid() -> u32 {
+        if cfg!(windows) {
+            4 // Windows NT: System 进程，PID 恒为 4
+        } else {
+            1 // Unix: init/systemd/launchd，PID 恒为 1
+        }
+    }
+
+    #[test]
+    fn test_manifest_publish_allows_missing_manifest() {
+        // 首次发布：无现有 manifest ⇒ 允许
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        refuse_if_manifest_owned_by_live_daemon(&path).unwrap();
+    }
+
+    #[test]
+    fn test_manifest_publish_allows_dead_daemon_manifest() {
+        // 正常重启：残留 manifest 的 PID 已死（4194303 = 2^22-1，不可能存活）⇒ 允许
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({"pid": 4194303u64, "endpoint": "http://127.0.0.1:1"}).to_string(),
+        )
+        .unwrap();
+        refuse_if_manifest_owned_by_live_daemon(&path).unwrap();
+    }
+
+    #[test]
+    fn test_manifest_publish_allows_self_manifest() {
+        // 同一 daemon 的二次回写（CR10 预绑定 + worker_status 回写）⇒ 允许
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({"pid": std::process::id(), "endpoint": "http://127.0.0.1:2"})
+                .to_string(),
+        )
+        .unwrap();
+        refuse_if_manifest_owned_by_live_daemon(&path).unwrap();
+    }
+
+    #[test]
+    fn test_manifest_publish_refuses_live_daemon_manifest() {
+        // 核心 P0-b：现有 manifest 属于活跃的其他 daemon ⇒ 拒绝覆盖
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({"pid": foreign_live_pid(), "endpoint": "http://127.0.0.1:3"})
+                .to_string(),
+        )
+        .unwrap();
+        let r = refuse_if_manifest_owned_by_live_daemon(&path);
+        assert!(r.is_err(), "活跃 daemon 的 manifest 必须拒绝覆盖");
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("拒绝覆盖"), "错误信息应说明拒绝覆盖: {}", msg);
+        assert!(msg.contains("fail-closed"), "错误信息应提示 fail-closed: {}", msg);
+        // 原 manifest 必须未被破坏
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_manifest_publish_allows_corrupt_manifest() {
+        // 半写/损坏的 manifest（旧进程在 replace 中途被杀）⇒ 视为残留，允许
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        std::fs::write(&path, b"{\"pid\": 42, \"endpoint\": \"http").unwrap();
+        refuse_if_manifest_owned_by_live_daemon(&path).unwrap();
+    }
+
+    #[test]
+    fn test_publish_manifest_atomic_refuses_live_owner() {
+        // 端到端：publish_manifest_atomic 也必须应用 P0-b 守卫
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({"pid": foreign_live_pid()}).to_string(),
+        )
+        .unwrap();
+        let manifest = serde_json::json!({"pid": std::process::id()});
+        let r = publish_manifest_atomic(&path, &manifest);
+        assert!(r.is_err(), "publish_manifest_atomic 必须拒绝覆盖活 daemon 的 manifest");
+        // 临时文件不应残留（守卫在写 tmp 之前就拒绝）
+        assert!(!path.with_extension("tmp").exists());
     }
 }

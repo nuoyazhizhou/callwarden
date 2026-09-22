@@ -93,6 +93,11 @@ pub mod stage_toggle;
 /// Daemon server（跨平台：Unix UDS + Windows 命名管道，内部 cfg 分流）
 pub mod server;
 
+/// P0 single-instance 守卫：authority-scoped 跨进程文件锁（fs2 flock），
+/// 防止重复启动导致 UDS 抢占 / manifest 覆盖 / lease-authority 分裂。
+/// 详见模块内文档与 `cw_daemon.rs` 启动序列。
+pub mod single_instance;
+
 /// H1 HTTP MVP transport（Profile v1: dev_loopback_unauthenticated）
 /// 冻结栈：axum 0.8 + hyper 1 + tokio 1，仅 HTTP/1.1，loopback-only
 pub mod http_server;

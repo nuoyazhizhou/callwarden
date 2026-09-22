@@ -223,6 +223,41 @@ mod unix {
             config.registry_db_path.display()
         );
 
+        // P0 single-instance 守卫：在 HTTP 预绑定 / schema 打开 / 任务库打开**之前**
+        // 获取 authority-scoped 跨进程文件锁。
+        //
+        // 必须早于任何可被客户端发现的端点建立（manifest / socket / listener），
+        // 否则抢座半途中客户端已经连上来。拿到锁之前绝不发布 manifest。
+        //
+        // 手动 `cw-daemon serve` 与 Python 自动唤起路径都经过此处，
+        // 是 Python 侧 `daemon_mutex.py`（只管自动唤起）的超集。
+        let _instance_lock = match callwarden_core::daemon::single_instance::acquire_default_instance_lock() {
+            Ok(guard) => {
+                eprintln!(
+                    "[cw_daemon] [INFO] single-instance lock acquired (pid={})",
+                    std::process::id()
+                );
+                guard
+            }
+            Err(callwarden_core::daemon::single_instance::SingleInstanceError::AlreadyRunning { pid, ref endpoint, .. }) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] {}",
+                    callwarden_core::daemon::single_instance::SingleInstanceError::AlreadyRunning {
+                        pid,
+                        endpoint: endpoint.clone(),
+                        lock_path: callwarden_core::daemon::single_instance::instance_lock_path(
+                            &callwarden_core::daemon::http_server::http_authority_id(),
+                        ),
+                    }
+                );
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] single-instance 锁获取失败: {}", e);
+                return 1;
+            }
+        };
+
         // CR10（client_convergence_codereview_20260909 §八）：HTTP 预绑定 + manifest
         // 前移发布。旧流程 manifest 在 recovery / snapshot 恢复 / TaskCollabStore
         // 之后才发布（实测 ~40s），重启后旧 manifest 携带已死 PID，客户端
@@ -2235,6 +2270,41 @@ mod windows {
             config.max_workers,
             config.registry_db_path.display()
         );
+
+        // P0 single-instance 守卫：在 HTTP 预绑定 / schema 打开 / 任务库打开**之前**
+        // 获取 authority-scoped 跨进程文件锁。
+        //
+        // 必须早于任何可被客户端发现的端点建立（manifest / socket / listener），
+        // 否则抢座半途中客户端已经连上来。拿到锁之前绝不发布 manifest。
+        //
+        // 手动 `cw-daemon serve` 与 Python 自动唤起路径都经过此处，
+        // 是 Python 侧 `daemon_mutex.py`（只管自动唤起）的超集。
+        let _instance_lock = match callwarden_core::daemon::single_instance::acquire_default_instance_lock() {
+            Ok(guard) => {
+                eprintln!(
+                    "[cw_daemon] [INFO] single-instance lock acquired (pid={})",
+                    std::process::id()
+                );
+                guard
+            }
+            Err(callwarden_core::daemon::single_instance::SingleInstanceError::AlreadyRunning { pid, ref endpoint, .. }) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] {}",
+                    callwarden_core::daemon::single_instance::SingleInstanceError::AlreadyRunning {
+                        pid,
+                        endpoint: endpoint.clone(),
+                        lock_path: callwarden_core::daemon::single_instance::instance_lock_path(
+                            &callwarden_core::daemon::http_server::http_authority_id(),
+                        ),
+                    }
+                );
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] single-instance 锁获取失败: {}", e);
+                return 1;
+            }
+        };
 
         // CR10（client_convergence_codereview_20260909 §八）：HTTP 预绑定 + manifest
         // 前移发布。旧流程 manifest 在 recovery / snapshot 恢复 / TaskCollabStore

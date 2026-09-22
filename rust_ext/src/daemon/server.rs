@@ -214,6 +214,21 @@ impl Drop for ServerHandle {
 /// 准备 socket 路径：创建父目录 + 清理旧 socket 文件
 ///
 /// 对应 Python EnterpriseDaemonServer._prepare_socket_path
+///
+/// ## P0-a（single-instance 硬化）：删除前必须做活性探针
+///
+/// 旧逻辑对残留 socket 直接 `remove_file`。若另一个**活跃** daemon 正在监听
+/// 该 socket，新 daemon 会"抢座"：客户端随后连接到新 daemon，旧 daemon 的
+/// listener 沦为孤儿——两个 daemon 同时存活但只有新进程持有 socket 路径，
+/// 权威分裂（与 HTTP manifest last-one-wins 属同一类故障）。
+///
+/// 探针 = `UnixStream::connect()` 后立即关闭（drop）。connect 成功说明内核
+/// backlog 里有一个活 listener ⇒ **fail-closed 拒绝启动**；connect 返回
+/// `NotFound` / `ConnectionRefused` 说明残留 socket 来自已死 daemon ⇒ 安全
+/// 清理；其他错误（权限等）同样 fail-closed，不擅自删除。
+///
+/// 探针连接被现有 daemon 的 accept 循环接收后会立即收到 EOF，`handle_connection`
+/// 已对 0 字节读做错误处理，无副作用。
 #[cfg(unix)]
 fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
     if let Some(parent) = socket_path.parent() {
@@ -231,7 +246,32 @@ fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
                 format!("拒绝覆盖非 socket 路径: {}", socket_path.display()),
             ));
         }
-        std::fs::remove_file(socket_path)?;
+        // P0-a：删除前活性探针，拒绝抢座活 daemon 的 socket。
+        match UnixStream::connect(socket_path) {
+            Ok(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "socket {} 已被一个活跃 cw-daemon 占用（connect 探针成功），\
+                     拒绝抢座启动。请先停止现有 daemon。",
+                    socket_path.display()
+                ),
+            )),
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::ConnectionRefused =>
+            {
+                // 残留 socket 无 listener（来自已死 daemon），安全清理
+                std::fs::remove_file(socket_path)?;
+                Ok(())
+            }
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "socket {} 活性探针失败（{}），拒绝抢座启动（fail-closed）",
+                    socket_path.display(),
+                    e
+                ),
+            )),
+        }?;
     }
     Ok(())
 }
@@ -1370,15 +1410,45 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_socket_path_cleans_existing_socket() {
+    fn test_prepare_socket_path_refuses_live_daemon_socket() {
+        // P0-a：活跃 daemon 正在监听时，必须拒绝抢座，而不是删除旧 socket。
         let tmp = tempfile::tempdir().unwrap();
-        let socket_path = tmp.path().join("test.sock");
-        // 先 bind 一个 socket
+        let socket_path = tmp.path().join("live.sock");
+        // 模拟活跃 daemon：listener 存活且在监听
         let _listener = UnixListener::bind(&socket_path).unwrap();
         assert!(socket_path.exists());
-        // prepare_socket_path 应该能清理旧 socket
+
+        let result = prepare_socket_path(&socket_path);
+        assert!(result.is_err(), "活跃 daemon 的 socket 必须拒绝抢座");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert!(
+            err.to_string().contains("拒绝抢座"),
+            "错误信息应提示拒绝抢座: {}",
+            err
+        );
+        // socket 文件必须仍在（活 daemon 的 listener 依赖它，不能被删掉）
+        assert!(socket_path.exists(), "不能删除活跃 daemon 的 socket");
+    }
+
+    #[test]
+    fn test_prepare_socket_path_cleans_stale_socket() {
+        // P0-a：已死 daemon 留下的残留 socket（无 listener）应被安全清理。
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("stale.sock");
+        // 模拟 daemon 崩溃留下的残留 socket：bind 后关闭 fd 但不触发 Drop
+        // 的 unlink（等价于 kill -9 / 崩溃，socket 文件残留在磁盘上）。
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        use std::os::unix::io::IntoRawFd;
+        let fd = listener.into_raw_fd(); // 消费 listener，跳过 Drop 的 unlink
+        unsafe {
+            libc::close(fd);
+        }
+        assert!(socket_path.exists(), "残留 socket 文件应在磁盘上");
+
+        // 探针 connect 得到 ECONNREFUSED ⇒ 判定为残留 ⇒ 安全清理
         prepare_socket_path(&socket_path).unwrap();
-        assert!(!socket_path.exists());
+        assert!(!socket_path.exists(), "残留 socket 应被清理");
     }
 
     #[test]
