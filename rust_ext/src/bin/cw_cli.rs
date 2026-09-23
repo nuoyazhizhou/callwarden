@@ -2006,7 +2006,21 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 ("task.resolve_quality_finding", serde_json::json!({"finding_id": finding_id, "resolution": resolution, "resolved_by": resolved_by}))
             }
             TaskAction::List { status, limit, .. } => {
-                ("task.list", serde_json::json!({"status": status, "limit": limit}))
+                // task.list 是 CLI 唯一不带 task_id 的 task action → daemon 侧走
+                // required_workspace_id_param（E_TASK_WORKSPACE_UNBOUND fail-closed，
+                // 禁止 active workspace / cwd / 客户端 numeric 推导补齐）。
+                // enterprise 路径必须从 --workspace-id 解析显式数字 workspace_id
+                // （对齐 task.create 的 parse_explicit_workspace_id 语义）；
+                // 缺失/非整数 → fail-closed，不回退本地推导。
+                let ws_id = parse_explicit_workspace_id(runtime.workspace_id.as_deref())?
+                    .ok_or_else(|| {
+                        "enterprise task list requires --workspace-id <numeric workspace_id>（daemon 拒绝隐式 workspace 推导）"
+                            .to_string()
+                    })?;
+                (
+                    "task.list",
+                    serde_json::json!({"status": status, "limit": limit, "workspace_id": ws_id}),
+                )
             }
             TaskAction::Show { task_id, .. } | TaskAction::StatusTree { task_id } => {
                 ("task.status", serde_json::json!({"task_id": task_id}))
