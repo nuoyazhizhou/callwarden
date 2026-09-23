@@ -1138,20 +1138,53 @@ fn is_current_user_admin() -> bool {
     }
 }
 
+/// 按 workspace 标识符查询 registry 行（数字主键优先回退，再查 hex instance）。
+///
+/// F-003（2026-09-23）：CLI `--workspace-id` 用户心智与 `workspace list` 输出
+/// 均为**数字主键**，但该函数原先只按 `workspace_instance_id`（hex）查询，
+/// 导致 enterprise query.* 传数字 id 时 100% `workspace_not_found`。
+/// 修复策略（daemon 侧 scheme-agnostic 回退，对齐 one-sqlite-per-host 架构下
+/// registry 数字主键即权威 id 的方向）：
+/// 1. 入参可解析为 i64 → 先查 `get_workspace_by_numeric_id`（数字主键）；
+/// 2. 未命中 → 再查 `get_workspace_status`（hex instance）；
+/// 3. 两者皆空 → fail-closed `workspace_not_found`。
+///
+/// 两条查询返回同样的 12 列 JSON（含 `workspace_instance_id`），
+/// 下游消费方无感知。MCP 侧已注入正确 hex，行为不变。
+fn lookup_workspace_by_identifier(
+    registry: &WorkspaceRegistry,
+    identifier: &str,
+) -> Result<Option<Value>, DaemonRpcError> {
+    // 1. 数字主键回退
+    if let Ok(numeric_id) = identifier.parse::<i64>() {
+        if let Some(ws) = registry
+            .get_workspace_by_numeric_id(numeric_id)
+            .map_err(|e| DaemonRpcError::internal_error(format!("registry 查询失败: {}", e)))?
+        {
+            return Ok(Some(ws));
+        }
+    }
+    // 2. hex instance 查询（原路径）
+    registry
+        .get_workspace_status(identifier)
+        .map_err(|e| DaemonRpcError::internal_error(format!("registry 查询失败: {}", e)))
+}
+
 /// 校验 workspace 属于 peer_uid（对应 Python daemon_server.py:_owned_workspace）
 ///
 /// 返回 workspace JSON（用于后续处理）。错误码：
 /// - workspace_not_found：workspace 不存在
 /// - workspace_forbidden：owner_uid != peer_uid
 /// - workspace_archived：status == "archived"
+///
+/// F-003：`workspace_instance_id` 参数同时接受 hex instance 与数字主键
+/// （`lookup_workspace_by_identifier` 先数字后 hex 回退）。
 pub fn owned_workspace(
     registry: &WorkspaceRegistry,
     peer_uid: u32,
     workspace_instance_id: &str,
 ) -> Result<Value, DaemonRpcError> {
-    let workspace = registry
-        .get_workspace_status(workspace_instance_id)
-        .map_err(|e| DaemonRpcError::internal_error(format!("registry 查询失败: {}", e)))?
+    let workspace = lookup_workspace_by_identifier(registry, workspace_instance_id)?
         .ok_or_else(|| DaemonRpcError::workspace_not_found(workspace_instance_id))?;
 
     let owner_uid = workspace
@@ -1182,9 +1215,7 @@ fn owned_workspace_any_status(
     peer_uid: u32,
     workspace_instance_id: &str,
 ) -> Result<Value, DaemonRpcError> {
-    let workspace = registry
-        .get_workspace_status(workspace_instance_id)
-        .map_err(|e| DaemonRpcError::internal_error(format!("registry 查询失败: {}", e)))?
+    let workspace = lookup_workspace_by_identifier(registry, workspace_instance_id)?
         .ok_or_else(|| DaemonRpcError::workspace_not_found(workspace_instance_id))?;
     let owner_uid = workspace
         .get("owner_uid")
@@ -4248,6 +4279,104 @@ mod tests {
         let status = status.unwrap();
         assert_eq!(status["workspace_instance_id"], instance_id);
         assert_eq!(status["status"], "active");
+    }
+
+    // ---- F-003（2026-09-23）：owned_workspace 数字主键回退 ----
+
+    /// DaemonRpcError 字段私有且无公开 code() 访问器，测试经 Display 断言错误码
+    /// （Display 格式为 "{code}: {message}"）。
+    fn err_code(err: &DaemonRpcError) -> String {
+        format!("{}", err)
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[test]
+    fn test_owned_workspace_resolves_numeric_primary_key() {
+        // CLI --workspace-id 传数字主键时必须能解析（原路径只认 hex instance）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        let instance_id = r["workspace_instance_id"].as_str().unwrap();
+        let numeric_id = r["workspace_id"].as_i64().unwrap();
+
+        // hex instance 路径（原行为，保持不变）
+        let by_instance = owned_workspace(&registry, 1000, instance_id).unwrap();
+        assert_eq!(by_instance["workspace_instance_id"], instance_id);
+
+        // 数字主键路径（F-003 新增回退）
+        let by_numeric = owned_workspace(&registry, 1000, &numeric_id.to_string()).unwrap();
+        assert_eq!(by_numeric["workspace_instance_id"], instance_id);
+        assert_eq!(by_numeric["workspace_id"], numeric_id);
+    }
+
+    #[test]
+    fn test_owned_workspace_numeric_falls_back_to_instance_when_row_missing() {
+        // 数字主键未命中时回退 hex 查询：
+        // 构造一个 workspace_id 很大、但 hex 查得到的行（模拟 registry 里
+        // 数字主键与调用方传入值不一致的边缘场景）。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        let instance_id = r["workspace_instance_id"].as_str().unwrap();
+
+        // 传入一个不存在的数字 → 数字查询落空 → 回退 hex 查询也落空 → not_found
+        let err = owned_workspace(&registry, 1000, "999999").unwrap_err();
+        assert_eq!(err_code(&err), "workspace_not_found");
+
+        // 传入合法 hex 仍正常（回退路径不影响 hex 直查）
+        let ok = owned_workspace(&registry, 1000, instance_id).unwrap();
+        assert_eq!(ok["workspace_instance_id"], instance_id);
+    }
+
+    #[test]
+    fn test_owned_workspace_unknown_identifier_still_not_found() {
+        // 未知 id（既非数字主键也非 hex）仍 fail-closed
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        let err = owned_workspace(&registry, 1000, "deadbeefnotarealinstance").unwrap_err();
+        assert_eq!(err_code(&err), "workspace_not_found");
+    }
+
+    #[test]
+    fn test_owned_workspace_numeric_respects_owner_check() {
+        // 数字主键命中但 owner 不匹配 → workspace_forbidden（F-003 不放松权限）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        let numeric_id = r["workspace_id"].as_i64().unwrap();
+
+        let err = owned_workspace(&registry, 2000, &numeric_id.to_string()).unwrap_err();
+        assert_eq!(err_code(&err), "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_owned_workspace_any_status_resolves_numeric() {
+        // archived 行的幂等路径同样支持数字主键（lifecycle activate/remove）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let r = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        let instance_id = r["workspace_instance_id"].as_str().unwrap();
+        let numeric_id = r["workspace_id"].as_i64().unwrap();
+        registry
+            .update_workspace_status(instance_id, "archived")
+            .unwrap();
+
+        // owned_workspace 会拒绝 archived，但 any_status 路径放行
+        let err = owned_workspace(&registry, 1000, &numeric_id.to_string()).unwrap_err();
+        assert_eq!(err_code(&err), "workspace_archived");
+
+        let any = owned_workspace_any_status(&registry, 1000, &numeric_id.to_string()).unwrap();
+        assert_eq!(any["workspace_instance_id"], instance_id);
+        assert_eq!(any["status"], "archived");
     }
 
     #[test]
