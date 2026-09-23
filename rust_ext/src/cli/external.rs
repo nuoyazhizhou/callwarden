@@ -15,7 +15,7 @@ use regex::Regex;
 use rusqlite::params;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::impact::query_local_impact;
+use super::router::DaemonMode;
 use super::runtime::{CommandResult, RouteUsed, RuntimeOptions};
 use super::security::bootstrap_status;
 use super::stats::query_local_stats;
@@ -108,6 +109,78 @@ fn external_timeout(runtime: &RuntimeOptions, requested_secs: u64) -> Duration {
         requested_secs
     };
     Duration::from_secs(requested.min(3600))
+}
+
+// ===== F-005：enterprise 路由辅助 =====
+
+/// F-005：enterprise 模式下尚无对应 daemon RPC 的命令统一 fail-closed。
+///
+/// 与 `RuntimeOptions::execute_read_with` 配合后的语义：
+/// - enterprise → 显式错误退出码 2，**绝不静默读本地库**；
+/// - auto → daemon 优先，失败后回退本地库并附 warning（保证不劣化）；
+/// - local → 不受影响。
+///
+/// 背景：这批命令曾全部硬编码 `open_local_db()` 且完全忽略 `--mode enterprise`
+/// （P2 审计的 35 个 query_local 缺口 / 缺陷卡 F-005），导致「CLI 纯 client 化、
+/// 强制 daemon 路由」的治理目标在这些命令上完全失效。
+fn enterprise_unsupported(command: &str) -> Result<Value, String> {
+    Err(format!(
+        "命令 '{command}' 尚无对应的 daemon RPC（该查询未下沉 daemon），\
+         enterprise 模式下不可用。请改用 --mode local 直读本地库，\
+         或 --mode auto（daemon 不可用时回退本地）"
+    ))
+}
+
+/// F-005：解析 enterprise 模式必需的 workspace_instance_id（缺失时 fail-closed）。
+fn enterprise_workspace_id(runtime: &RuntimeOptions, command: &str) -> Result<String, String> {
+    match runtime.workspace_id.as_deref() {
+        Some(id) if !id.is_empty() => Ok(id.to_string()),
+        _ => Err(format!(
+            "{command} requires --workspace-id <workspace_instance_id> in enterprise mode"
+        )),
+    }
+}
+
+/// F-005：依赖本地资源的命令（本地 git 二进制 / 子进程 / 本地文件）在 enterprise
+/// 模式下的 fail-closed 守卫。
+///
+/// 与 `enterprise_unsupported` 的区别：这类命令**有意**只能本地执行（daemon 在架构上
+/// 不可能代为执行本地进程），但它们过去同样完全忽略 `--mode enterprise`，导致强制
+/// daemon 路由的语义失效。此处统一在 enterprise 模式显式拒绝，auto 模式仍允许本地
+/// 执行（无 daemon 可优先），local 模式行为不变。
+///
+/// 返回 `None` 表示放行本地路径。
+fn enterprise_local_only(
+    runtime: &RuntimeOptions,
+    command: &str,
+    reason: &str,
+) -> Option<CommandResult> {
+    match runtime.mode {
+        DaemonMode::Enterprise => Some(CommandResult::failure(
+            2,
+            format!(
+                "命令 '{command}' 依赖本地资源（{reason}），daemon 无等价能力；\
+                 enterprise 模式下不可用。请改用 --mode local。"
+            ),
+            RouteUsed::None,
+        )),
+        _ => None,
+    }
+}
+
+/// F-005：尚未下沉 daemon 的**查询类**命令在 enterprise 模式下的 fail-closed 守卫。
+///
+/// 这批命令历史上完全忽略 `--mode enterprise` 并静默读取本地 SQLite（P2 审计的
+/// 35 个 query_local 缺口），使「CLI 纯 client 化、强制 daemon 路由」的治理目标在
+/// 这些命令上失效。本守卫保证 enterprise 模式显式报错退出码 2；local / auto 模式
+/// 行为保持不变（auto 无 daemon 可优先，仍走本地）。
+///
+/// 语义上等价于 `ExecuteReadWith` 的 enterprise 分支返回 `Err`，区别在于本守卫用于
+/// 尚未拆出「查询 → 格式化」两阶段结构的命令，避免大范围重构本地路径。
+///
+/// 返回 `None` 表示放行本地路径。
+fn enterprise_query_denied(runtime: &RuntimeOptions, command: &str) -> Option<CommandResult> {
+    enterprise_local_only(runtime, command, "该查询尚未下沉 daemon，无对应 RPC")
 }
 
 // ===== 1. Semgrep 子命令 =====
@@ -301,92 +374,91 @@ pub fn run_semgrep_scan(
 }
 
 pub fn run_semgrep_list(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
-    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
+    // F-005：enterprise 模式强制走 daemon（query.semgrep_findings），
+    // 不再静默读本地库；auto 模式 daemon 优先失败回退本地；local 模式保持原语义。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws_id = runtime.resolve_local_workspace_id(&conn)?;
 
-    let sql = "
+            let sql = "
         SELECT sf.id, sf.rule_id, sf.severity, sf.message, sf.start_line, sf.end_line, fi.rel_path
         FROM semgrep_findings sf
         LEFT JOIN file_instances fi ON sf.file_instance_id = fi.id
         WHERE fi.workspace_id = ?1 OR sf.file_instance_id IS NULL
         ORDER BY sf.id DESC LIMIT ?2";
 
-    let mut stmt = match conn.prepare(sql) {
-        Ok(s) => s,
-        Err(e) => {
-            return CommandResult::failure(
-                1,
-                format!("query semgrep_findings error: {e}"),
-                RouteUsed::Local,
+            let mut stmt = conn
+                .prepare(sql)
+                .map_err(|e| format!("query semgrep_findings error: {e}"))?;
+
+            let rows = stmt
+                .query_map(params![ws_id, limit as i64], |row| {
+                    Ok(json!({
+                        "id": row.get::<_, i64>(0)?,
+                        "rule_id": row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        "severity": row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        "message": row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        "start_line": row.get::<_, Option<i64>>(4)?.unwrap_or(1),
+                        "end_line": row.get::<_, Option<i64>>(5)?.unwrap_or(1),
+                        "file_path": row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    }))
+                })
+                .map_err(|e| format!("query semgrep_findings rows error: {e}"))?;
+
+            let list: Vec<Value> = rows.filter_map(|x| x.ok()).collect();
+            Ok(json!({ "total": list.len(), "findings": list }))
+        },
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "semgrep list")?;
+            runtime.daemon_call(
+                "query.semgrep_findings",
+                json!({ "workspace_instance_id": workspace_id, "limit": limit }),
             )
-        }
-    };
-
-    let rows = stmt.query_map(params![ws_id, limit as i64], |row| {
-        Ok(json!({
-            "id": row.get::<_, i64>(0)?,
-            "rule_id": row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-            "severity": row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            "message": row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            "start_line": row.get::<_, Option<i64>>(4)?.unwrap_or(1),
-            "end_line": row.get::<_, Option<i64>>(5)?.unwrap_or(1),
-            "file_path": row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-        }))
-    });
-
-    let list: Vec<Value> = match rows {
-        Ok(r) => r.filter_map(|x| x.ok()).collect(),
-        Err(_) => vec![],
-    };
-
-    CommandResult::success_json(
-        &json!({ "total": list.len(), "findings": list }),
-        RouteUsed::Local,
+        },
     )
 }
 
 pub fn run_semgrep_stats(runtime: &RuntimeOptions) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
-    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
+    // F-005：enterprise 模式走 daemon（query.semgrep_stats），不再静默读本地库。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws_id = runtime.resolve_local_workspace_id(&conn)?;
 
-    let sql = "
+            let sql = "
         SELECT severity, COUNT(*)
         FROM semgrep_findings sf
         LEFT JOIN file_instances fi ON sf.file_instance_id = fi.id
         WHERE fi.workspace_id = ?1 OR sf.file_instance_id IS NULL
         GROUP BY severity";
 
-    let mut stmt = match conn.prepare(sql) {
-        Ok(s) => s,
-        Err(_) => {
-            return CommandResult::success_json(&json!({"by_severity": {}}), RouteUsed::Local)
-        }
-    };
+            // 本地库无该表时保持原有的宽容语义：返回空 by_severity
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return Ok(json!({ "by_severity": {} })),
+            };
 
-    let rows = stmt.query_map(params![ws_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    });
+            let rows = stmt
+                .query_map(params![ws_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|e| format!("query semgrep_stats rows error: {e}"))?;
 
-    let mut by_severity = serde_json::Map::new();
-    if let Ok(r) = rows {
-        for item in r.flatten() {
-            by_severity.insert(item.0, json!(item.1));
-        }
-    }
-
-    CommandResult::success_json(&json!({ "by_severity": by_severity }), RouteUsed::Local)
+            let mut by_severity = serde_json::Map::new();
+            for item in rows.flatten() {
+                by_severity.insert(item.0, json!(item.1));
+            }
+            Ok(json!({ "by_severity": by_severity }))
+        },
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "semgrep stats")?;
+            runtime.daemon_call(
+                "query.semgrep_stats",
+                json!({ "workspace_instance_id": workspace_id }),
+            )
+        },
+    )
 }
 
 // ===== 2. Coverage 子命令 =====
@@ -669,16 +741,13 @@ pub fn run_coverage_import(
 }
 
 pub fn run_coverage_fn(runtime: &RuntimeOptions, function_name: &str) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
-    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
+    // F-005：enterprise 模式走 daemon（query.coverage_for_symbol），不再静默读本地库。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws_id = runtime.resolve_local_workspace_id(&conn)?;
 
-    let sql = "
+            let sql = "
         SELECT fi.rel_path, s.name,
                SUM(CASE WHEN cd.hit_count > 0 THEN 1 ELSE 0 END),
                COUNT(cd.id),
@@ -691,52 +760,53 @@ pub fn run_coverage_fn(runtime: &RuntimeOptions, function_name: &str) -> Command
         WHERE fi.workspace_id = ?1 AND (s.name = ?2 OR s.qualified_name = ?2)
         GROUP BY s.id, fi.rel_path, s.name
         ORDER BY s.id DESC LIMIT 10";
-    let mut stmt = match conn.prepare(sql) {
-        Ok(s) => s,
-        Err(_) => {
-            return CommandResult::success_json(
-                &json!({"function": function_name, "found": false}),
-                RouteUsed::Local,
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                // 本地库无该表时保持原有的宽容语义：found=false
+                Err(_) => return Ok(json!({ "function": function_name, "found": false })),
+            };
+
+            let rows = stmt
+                .query_map(params![ws_id, function_name], |row| {
+                    Ok(json!({
+                        "file_path": row.get::<_, String>(0)?,
+                        "symbol_name": row.get::<_, String>(1)?,
+                        "lines_covered": row.get::<_, i64>(2)?,
+                        "lines_total": row.get::<_, i64>(3)?,
+                        "coverage_ratio": row.get::<_, f64>(4)?,
+                    }))
+                })
+                .map_err(|e| format!("query coverage rows error: {e}"))?;
+
+            let records: Vec<Value> = rows.filter_map(|x| x.ok()).collect();
+            Ok(json!({
+                "function": function_name,
+                "found": !records.is_empty(),
+                "coverage_records": records
+            }))
+        },
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "coverage fn")?;
+            runtime.daemon_call(
+                "query.coverage_for_symbol",
+                json!({
+                    "workspace_instance_id": workspace_id,
+                    "qualified_name": function_name,
+                }),
             )
-        }
-    };
-
-    let rows = stmt.query_map(params![ws_id, function_name], |row| {
-        Ok(json!({
-            "file_path": row.get::<_, String>(0)?,
-            "symbol_name": row.get::<_, String>(1)?,
-            "lines_covered": row.get::<_, i64>(2)?,
-            "lines_total": row.get::<_, i64>(3)?,
-            "coverage_ratio": row.get::<_, f64>(4)?,
-        }))
-    });
-
-    let records: Vec<Value> = match rows {
-        Ok(r) => r.filter_map(|x| x.ok()).collect(),
-        Err(_) => vec![],
-    };
-
-    CommandResult::success_json(
-        &json!({
-            "function": function_name,
-            "found": !records.is_empty(),
-            "coverage_records": records
-        }),
-        RouteUsed::Local,
+        },
     )
 }
 
 pub fn run_coverage_uncovered(runtime: &RuntimeOptions) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
-    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
+    // F-005：daemon 无 uncovered 聚合 RPC → enterprise 模式 fail-closed，
+    // 不再静默读本地库；auto 模式回退本地；local 模式保持原语义。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws_id = runtime.resolve_local_workspace_id(&conn)?;
 
-    let sql = "
+            let sql = "
         SELECT s.qualified_name, fi.rel_path
         FROM symbols s
         JOIN file_instances fi ON s.file_instance_id = fi.id
@@ -747,34 +817,27 @@ pub fn run_coverage_uncovered(runtime: &RuntimeOptions) -> CommandResult {
           )
         LIMIT 50";
 
-    let mut stmt = match conn.prepare(sql) {
-        Ok(s) => s,
-        Err(_) => {
-            return CommandResult::success_json(
-                &json!({"uncovered_functions": []}),
-                RouteUsed::Local,
-            )
-        }
-    };
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return Ok(json!({ "uncovered_functions": [] })),
+            };
 
-    let rows = stmt.query_map(params![ws_id], |row| {
-        Ok(json!({
-            "qualified_name": row.get::<_, String>(0)?,
-            "file_path": row.get::<_, String>(1)?,
-        }))
-    });
+            let rows = stmt
+                .query_map(params![ws_id], |row| {
+                    Ok(json!({
+                        "qualified_name": row.get::<_, String>(0)?,
+                        "file_path": row.get::<_, String>(1)?,
+                    }))
+                })
+                .map_err(|e| format!("query uncovered rows error: {e}"))?;
 
-    let uncovered: Vec<Value> = match rows {
-        Ok(r) => r.filter_map(|x| x.ok()).collect(),
-        Err(_) => vec![],
-    };
-
-    CommandResult::success_json(
-        &json!({
-            "total_uncovered": uncovered.len(),
-            "uncovered_functions": uncovered
-        }),
-        RouteUsed::Local,
+            let uncovered: Vec<Value> = rows.filter_map(|x| x.ok()).collect();
+            Ok(json!({
+                "total_uncovered": uncovered.len(),
+                "uncovered_functions": uncovered
+            }))
+        },
+        || enterprise_unsupported("coverage uncovered"),
     )
 }
 
@@ -948,50 +1011,44 @@ pub fn run_git_import(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
 }
 
 pub fn run_git_log(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
-    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
+    // F-005：enterprise 模式走 daemon（query.git_commits），不再静默读本地库。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws_id = runtime.resolve_local_workspace_id(&conn)?;
 
-    let sql = "
+            let sql = "
         SELECT commit_hash, author, email, timestamp, message
         FROM git_commits
         WHERE workspace_id = ?1
         ORDER BY timestamp DESC LIMIT ?2";
 
-    let mut stmt = match conn.prepare(sql) {
-        Ok(s) => s,
-        Err(_) => {
-            return CommandResult::failure(
-                1,
-                "git_commits table not found, run `cw git import` first".to_string(),
-                RouteUsed::Local,
+            let mut stmt = conn.prepare(sql).map_err(|_| {
+                "git_commits table not found, run `cw git import` first".to_string()
+            })?;
+
+            let rows = stmt
+                .query_map(params![ws_id, limit as i64], |row| {
+                    Ok(json!({
+                        "commit_hash": row.get::<_, String>(0)?,
+                        "author": row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        "email": row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        "time": row.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                        "message": row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    }))
+                })
+                .map_err(|e| format!("query git_commits rows error: {e}"))?;
+
+            let commits: Vec<Value> = rows.filter_map(|x| x.ok()).collect();
+            Ok(json!({ "total": commits.len(), "commits": commits }))
+        },
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "git log")?;
+            runtime.daemon_call(
+                "query.git_commits",
+                json!({ "workspace_instance_id": workspace_id, "limit": limit }),
             )
-        }
-    };
-
-    let rows = stmt.query_map(params![ws_id, limit as i64], |row| {
-        Ok(json!({
-            "commit_hash": row.get::<_, String>(0)?,
-            "author": row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-            "email": row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            "time": row.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
-            "message": row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-        }))
-    });
-
-    let commits: Vec<Value> = match rows {
-        Ok(r) => r.filter_map(|x| x.ok()).collect(),
-        Err(_) => vec![],
-    };
-
-    CommandResult::success_json(
-        &json!({ "total": commits.len(), "commits": commits }),
-        RouteUsed::Local,
+        },
     )
 }
 
@@ -1007,6 +1064,11 @@ pub fn run_git_show(runtime: &RuntimeOptions, commit_sha: &str) -> CommandResult
             format!("invalid commit SHA: {commit_sha}"),
             RouteUsed::Local,
         );
+    }
+    // F-005：该命令执行本地 `git show` 子进程，daemon 无等价能力 →
+    // enterprise 模式显式 fail-closed（不再静默跑本地进程）。
+    if let Some(denied) = enterprise_local_only(runtime, "git show", "运行本地 git show 子进程") {
+        return denied;
     }
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
@@ -1040,40 +1102,36 @@ pub fn run_git_show(runtime: &RuntimeOptions, commit_sha: &str) -> CommandResult
 }
 
 pub fn run_git_stats(runtime: &RuntimeOptions) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
-    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
-    };
+    // F-005：enterprise 模式走 daemon（query.git_stats），不再静默读本地库。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws_id = runtime.resolve_local_workspace_id(&conn)?;
 
-    let mut total_commits: i64 = 0;
-    let mut total_authors: i64 = 0;
+            let (total_commits, total_authors) = conn
+                .query_row(
+                    "SELECT COUNT(*), COUNT(DISTINCT email) FROM git_commits WHERE workspace_id = ?1",
+                    params![ws_id],
+                    |row| {
+                        let commits: i64 = row.get(0)?;
+                        let authors: i64 = row.get(1)?;
+                        Ok((commits, authors))
+                    },
+                )
+                .map_err(|error| format!("cannot read git statistics: {error}"))?;
 
-    if let Err(error) = conn.query_row(
-        "SELECT COUNT(*), COUNT(DISTINCT email) FROM git_commits WHERE workspace_id = ?1",
-        params![ws_id],
-        |row| {
-            total_commits = row.get(0)?;
-            total_authors = row.get(1)?;
-            Ok(())
+            Ok(json!({
+                "total_commits": total_commits,
+                "total_authors": total_authors
+            }))
         },
-    ) {
-        return CommandResult::failure(
-            1,
-            format!("cannot read git statistics: {error}"),
-            RouteUsed::Local,
-        );
-    }
-
-    CommandResult::success_json(
-        &json!({
-            "total_commits": total_commits,
-            "total_authors": total_authors
-        }),
-        RouteUsed::Local,
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "git stats")?;
+            runtime.daemon_call(
+                "query.git_stats",
+                json!({ "workspace_instance_id": workspace_id }),
+            )
+        },
     )
 }
 
@@ -1522,6 +1580,10 @@ pub fn run_gc_restore(runtime: &RuntimeOptions, paths: &[PathBuf], force: bool) 
 }
 
 pub fn run_gc_status(runtime: &RuntimeOptions) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "gc status") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -1779,6 +1841,10 @@ fn evolution_cutoff(window: &str) -> f64 {
 }
 
 pub fn run_review_report(runtime: &RuntimeOptions, symbol_hash: &str) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "review") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -1827,14 +1893,13 @@ pub fn run_churn_report(
     module_filter: &str,
     window: &str,
 ) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(conn) => conn,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
-    let workspace_id = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(id) => id,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
+    // F-005：enterprise 模式走 daemon（query.churn_analysis —— module_filter /
+    // time_window 与 daemon 参数名语义对齐），不再静默读本地库；
+    // auto 模式 daemon 优先失败回退本地；local 模式保持原语义。
+    runtime.execute_read_with(
+        || {
+    let conn = runtime.open_local_db()?;
+    let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
     let cutoff = evolution_cutoff(window);
     let mut sql="SELECT gfc.file_instance_id,COALESCE(gfc.lines_added,0),COALESCE(gfc.lines_deleted,0),COALESCE(gc.timestamp,0),fi.rel_path FROM git_file_changes gfc JOIN file_instances fi ON gfc.file_instance_id=fi.id LEFT JOIN git_commits gc ON gfc.commit_hash=gc.commit_hash WHERE fi.workspace_id=?1".to_string();
     if !module_filter.is_empty() {
@@ -1847,16 +1912,7 @@ pub fn run_churn_report(
             " AND gc.timestamp>=?3"
         });
     }
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(stmt) => stmt,
-        Err(error) => {
-            return CommandResult::failure(
-                1,
-                format!("churn query failed: {error}"),
-                RouteUsed::Local,
-            )
-        }
-    };
+    let mut stmt = conn.prepare(&sql).map_err(|error| format!("churn query failed: {error}"))?;
     let mut rows_data: Vec<(i64, i64, i64, f64, String)> = Vec::new();
     if module_filter.is_empty() {
         if cutoff > 0.0 {
@@ -1910,8 +1966,8 @@ pub fn run_churn_report(
     {
         rows_data.extend(rows.flatten());
     }
-    let mut files: HashMap<i64, Value> = HashMap::new();
-    let mut trend: HashMap<String, i64> = HashMap::new();
+    let mut files: BTreeMap<i64, Value> = BTreeMap::new();
+    let mut trend: BTreeMap<String, i64> = BTreeMap::new();
     let mut total = 0_i64;
     for row in rows_data {
         let churn = row.1 + row.2;
@@ -1936,9 +1992,19 @@ pub fn run_churn_report(
         .into_iter()
         .map(|(date, churned_lines)| json!({"date":date,"churned_lines":churned_lines}))
         .collect();
-    CommandResult::success_json(
-        &json!({"module":module_filter,"window":window,"churn_rate":if current==0{0.0}else{total as f64/current as f64},"total_churned_lines":total,"changed_files":top.len(),"total_lines_current":current,"top_churned_files":top,"trend":trend}),
-        RouteUsed::Local,
+    Ok(json!({"module":module_filter,"window":window,"churn_rate":if current==0{0.0}else{total as f64/current as f64},"total_churned_lines":total,"changed_files":top.len(),"total_lines_current":current,"top_churned_files":top,"trend":trend}))
+        },
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "churn")?;
+            runtime.daemon_call(
+                "query.churn_analysis",
+                json!({
+                    "workspace_instance_id": workspace_id,
+                    "module_filter": module_filter,
+                    "time_window": window,
+                }),
+            )
+        },
     )
 }
 
@@ -1948,6 +2014,10 @@ pub fn run_evolution_report(
     window: &str,
     defects: bool,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "evolution") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2043,7 +2113,7 @@ pub fn run_evolution_report(
     };
     let mut report = json!({"qualified_name":qualified_name,"change_count":timestamps.len(),"first_seen":timestamps.first().copied().unwrap_or(0.0),"last_changed":timestamps.last().copied().unwrap_or(0.0),"changers":changers,"timeline":timeline,"intervals":intervals,"avg_interval":avg,"window":window});
     if defects {
-        let mut defect_types = HashMap::new();
+        let mut defect_types = BTreeMap::new();
         let mut defect_count = 0_i64;
         if let Ok(mut defect_stmt)=conn.prepare("SELECT sf.rule_id,COUNT(*) FROM semgrep_findings sf JOIN file_instances fi ON fi.id=sf.file_instance_id WHERE fi.workspace_id=?2 AND sf.symbol_qualified=?1 GROUP BY sf.rule_id") { if let Ok(defect_rows)=defect_stmt.query_map(params![qualified_name, workspace_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))) { for row in defect_rows.flatten(){defect_count+=row.1; defect_types.insert(row.0,row.1);} } }
         report["defect_correlation"] = json!({"qualified_name":qualified_name,"change_count":timestamps.len(),"defect_count":defect_count,"defect_rate":if timestamps.is_empty(){0.0}else{defect_count as f64/timestamps.len() as f64},"defect_types":defect_types});
@@ -2056,6 +2126,10 @@ pub fn run_hotspot_report(
     module_filter: &str,
     limit: usize,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "hotspot") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2124,9 +2198,9 @@ pub fn run_hotspot_report(
         };
         symbol_rows.extend(rows.flatten());
     }
-    let mut change_map = HashMap::new();
+    let mut change_map = BTreeMap::new();
     if let Ok(mut change_stmt)=conn.prepare("SELECT fsv.symbol_hash,COUNT(DISTINCT fsv.file_version_id),COALESCE(MAX(fv.parsed_at),0) FROM file_symbol_versions fsv JOIN file_versions fv ON fsv.file_version_id=fv.id JOIN file_instances fi ON fv.file_instance_id=fi.id WHERE fi.workspace_id=?1 GROUP BY fsv.symbol_hash"){ if let Ok(change_rows)=change_stmt.query_map([workspace_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?,row.get::<_,f64>(2)?))){for row in change_rows.flatten(){change_map.insert(row.0,(row.1,row.2));}} }
-    let mut defect_map = HashMap::new();
+    let mut defect_map = BTreeMap::new();
     if let Ok(mut defect_stmt)=conn.prepare("SELECT sf.symbol_qualified,COUNT(*) FROM semgrep_findings sf JOIN file_instances fi ON fi.id=sf.file_instance_id WHERE fi.workspace_id=?1 AND sf.symbol_qualified!='' GROUP BY sf.symbol_qualified"){if let Ok(defect_rows)=defect_stmt.query_map([workspace_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))){for row in defect_rows.flatten(){defect_map.insert(row.0,row.1);}}}
     let mut raw:Vec<(String,Value,i64,i64,i64)>=symbol_rows.into_iter().map(|row|{let change=change_map.get(&row.0).copied().unwrap_or((0,0.0));let defect=*defect_map.get(&row.1).unwrap_or(&0);let complexity=metric_complexity(&row.5,&metric_language(Some(&row.6)));(row.1.clone(),json!({"qualified_name":row.1,"symbol_hash":row.0,"module_path":row.2,"change_count":change.0,"defect_count":defect,"complexity":complexity,"first_seen":0.0,"last_changed":change.1}),change.0,defect,complexity)}).collect();
     let max_change = raw.iter().map(|row| row.2).max().unwrap_or(1).max(1) as f64;
@@ -2171,7 +2245,7 @@ pub fn run_hotspot_report(
 // ===== 7. 代码度量、负责人和仓库报告 =====
 
 fn metric_python_keyword_count(content: &str, keyword: &str) -> i64 {
-    static KEYWORD_PATTERNS: OnceLock<HashMap<&'static str, Regex>> = OnceLock::new();
+    static KEYWORD_PATTERNS: OnceLock<BTreeMap<&'static str, Regex>> = OnceLock::new();
     let patterns = KEYWORD_PATTERNS.get_or_init(|| {
         [
             "if", "else", "for", "while", "match", "case", "catch", "try", "except", "finally",
@@ -2357,6 +2431,10 @@ fn defect_category(rule_id: &str) -> &str {
 }
 
 pub fn run_metrics_summary(runtime: &RuntimeOptions) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "metrics") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2405,7 +2483,7 @@ pub fn run_metrics_summary(runtime: &RuntimeOptions) -> CommandResult {
         )
         .unwrap_or(0);
 
-    let mut distribution = HashMap::from([
+    let mut distribution = BTreeMap::from([
         ("低 (≤5)".to_string(), 0_i64),
         ("中 (6-10)".to_string(), 0_i64),
         ("高 (11-20)".to_string(), 0_i64),
@@ -2499,6 +2577,10 @@ pub fn run_complexity_report(
     limit: usize,
     module_filter: &str,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "complexity") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2604,6 +2686,10 @@ pub fn run_largest_functions(
     limit: usize,
     module_filter: &str,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "largest-fns") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2670,6 +2756,10 @@ pub fn run_largest_functions(
 }
 
 pub fn run_coupling_report(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "coupling") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2695,8 +2785,8 @@ pub fn run_coupling_report(runtime: &RuntimeOptions, limit: usize) -> CommandRes
             )
         }
     };
-    let mut afferent: HashMap<String, i64> = HashMap::new();
-    let mut efferent: HashMap<String, i64> = HashMap::new();
+    let mut afferent: BTreeMap<String, i64> = BTreeMap::new();
+    let mut efferent: BTreeMap<String, i64> = BTreeMap::new();
     for row in rows.flatten() {
         *efferent.entry(row.0.clone()).or_default() += row.2;
         *afferent.entry(row.1.clone()).or_default() += row.2;
@@ -2719,6 +2809,10 @@ pub fn run_coupling_report(runtime: &RuntimeOptions, limit: usize) -> CommandRes
 }
 
 pub fn run_coupled_functions(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "coupled-fns") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2727,7 +2821,7 @@ pub fn run_coupled_functions(runtime: &RuntimeOptions, limit: usize) -> CommandR
         Ok(id) => id,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
     };
-    let mut fan_in: HashMap<String, i64> = HashMap::new();
+    let mut fan_in: BTreeMap<String, i64> = BTreeMap::new();
     let mut incoming = match conn.prepare("SELECT callee.qualified_name,COUNT(DISTINCT c.caller_id) FROM calls c JOIN symbols caller ON c.caller_id=caller.id JOIN file_instances caller_fi ON caller.file_instance_id=caller_fi.id JOIN symbols callee ON c.callee_id=callee.id JOIN file_instances callee_fi ON callee.file_instance_id=callee_fi.id WHERE caller_fi.workspace_id=?1 AND callee_fi.workspace_id=?1 AND c.callee_id>0 AND callee.qualified_name!='' GROUP BY c.callee_id,callee.qualified_name") { Ok(stmt)=>stmt, Err(error)=>return CommandResult::failure(1, format!("coupled functions fan-in query failed: {error}"), RouteUsed::Local) };
     if let Ok(rows) = incoming.query_map([workspace_id], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
@@ -2753,6 +2847,10 @@ pub fn run_coupled_functions(runtime: &RuntimeOptions, limit: usize) -> CommandR
 }
 
 pub fn run_function_metrics(runtime: &RuntimeOptions, name: &str) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "fn-metrics") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2797,6 +2895,10 @@ pub fn run_function_metrics(runtime: &RuntimeOptions, name: &str) -> CommandResu
 }
 
 pub fn run_who(runtime: &RuntimeOptions, file_path: &str) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "who") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2838,6 +2940,10 @@ pub fn run_who(runtime: &RuntimeOptions, file_path: &str) -> CommandResult {
 }
 
 pub fn run_ownership_map(runtime: &RuntimeOptions) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "ownership-map") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2859,7 +2965,7 @@ pub fn run_ownership_map(runtime: &RuntimeOptions) -> CommandResult {
             )
         }
     };
-    let mut modules: HashMap<String, HashMap<String, i64>> = HashMap::new();
+    let mut modules: BTreeMap<String, BTreeMap<String, i64>> = BTreeMap::new();
     for row in rows.flatten() {
         *modules
             .entry(if row.0.is_empty() {
@@ -2884,6 +2990,10 @@ pub fn run_ownership_map(runtime: &RuntimeOptions) -> CommandResult {
 }
 
 pub fn run_repo_map(runtime: &RuntimeOptions, format: &str) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "map") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(conn) => conn,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2942,6 +3052,10 @@ pub fn run_symbol_history(
     symbol_hash: &str,
     limit: usize,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "symbol-history") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(value) => value,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2960,6 +3074,10 @@ pub fn run_symbol_history(
 }
 
 pub fn run_test_impact(runtime: &RuntimeOptions, qualified_name: &str) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "test-impact") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(value) => value,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -2983,6 +3101,10 @@ pub fn run_vulnerability_blast(
     severity: &str,
     depth: i64,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "vuln-blast") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(value) => value,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -3081,8 +3203,8 @@ pub fn run_vulnerability_blast(
     }
     let mut findings = Vec::new();
     let mut impacted_hashes: HashSet<String> = HashSet::new();
-    let mut impacted_caller_count: HashMap<String, i64> = HashMap::new();
-    let mut summary_by_layer: HashMap<String, i64> = HashMap::new();
+    let mut impacted_caller_count: BTreeMap<String, i64> = BTreeMap::new();
+    let mut summary_by_layer: BTreeMap<String, i64> = BTreeMap::new();
     for row in rows_data {
         let impact = if row.6.is_empty() {
             json!({"total_impacted":0,"by_layer":{}})
@@ -3176,6 +3298,10 @@ pub fn run_vulnerability_blast(
 }
 
 pub fn run_fts(runtime: &RuntimeOptions, action: &str) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "fts") {
+        return denied;
+    }
     let conn = match if action == "rebuild" {
         runtime.open_local_write_db()
     } else {
@@ -3231,6 +3357,10 @@ pub fn run_clone(
     min_lines: usize,
     similarity: f64,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "clone") {
+        return denied;
+    }
     let conn = match if action == "clear" {
         runtime.open_local_write_db()
     } else {
@@ -3363,7 +3493,7 @@ pub fn run_clone(
                 }
             };
             let mut inputs = Vec::new();
-            let mut line_map: HashMap<i64, (i64, i64)> = HashMap::new();
+            let mut line_map: BTreeMap<i64, (i64, i64)> = BTreeMap::new();
             for row in rows.flatten() {
                 let tokens: Vec<String> = row.2.split_whitespace().map(str::to_string).collect();
                 if row.4.saturating_sub(row.3) + 1 < min_lines as i64 {
@@ -3427,6 +3557,10 @@ pub fn run_defect(
     finding: i64,
     commit_hash: &str,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "defect") {
+        return denied;
+    }
     let conn = match if matches!(action, "build" | "learn") {
         runtime.open_local_write_db()
     } else {
@@ -3524,7 +3658,7 @@ pub fn run_defect(
                     RouteUsed::Local,
                 );
             }
-            let mut categories: HashMap<String, i64> = HashMap::new();
+            let mut categories: BTreeMap<String, i64> = BTreeMap::new();
             let mut stmt = match conn.prepare(
                 "SELECT sf.rule_id, MAX(COALESCE(sf.rule_name,'')), MAX(COALESCE(sf.message,'')), MAX(COALESCE(sf.severity,'INFO')), COUNT(*)
                    FROM semgrep_findings sf JOIN file_instances fi ON fi.id=sf.file_instance_id
@@ -3795,6 +3929,10 @@ pub fn run_defect(
 }
 
 pub fn run_comment_coverage(runtime: &RuntimeOptions) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "comment-coverage") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(value) => value,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -3837,15 +3975,12 @@ pub fn run_comment_coverage(runtime: &RuntimeOptions) -> CommandResult {
 }
 
 pub fn run_uncommented(runtime: &RuntimeOptions) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(value) => value,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
-    let ws = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(value) => value,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
-    let mut stmt=match conn.prepare("SELECT s.name,s.qualified_name,fi.rel_path,s.start_line,COALESCE(sc.content,'') FROM symbols s JOIN file_instances fi ON fi.id=s.file_instance_id LEFT JOIN symbol_contents sc ON sc.content_hash=s.symbol_hash WHERE fi.workspace_id=?1 AND s.kind IN ('fn','function','method')"){Ok(value)=>value,Err(error)=>return CommandResult::failure(1,format!("uncommented query failed: {error}"),RouteUsed::Local)};
+    // F-005：enterprise 模式走 daemon（query.uncommented_symbols），不再静默读本地库。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws = runtime.resolve_local_workspace_id(&conn)?;
+    let mut stmt=match conn.prepare("SELECT s.name,s.qualified_name,fi.rel_path,s.start_line,COALESCE(sc.content,'') FROM symbols s JOIN file_instances fi ON fi.id=s.file_instance_id LEFT JOIN symbol_contents sc ON sc.content_hash=s.symbol_hash WHERE fi.workspace_id=?1 AND s.kind IN ('fn','function','method')"){Ok(value)=>value,Err(error)=>return Err(format!("uncommented query failed: {error}"))};
     let rows = match stmt.query_map([ws], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -3857,38 +3992,43 @@ pub fn run_uncommented(runtime: &RuntimeOptions) -> CommandResult {
     }) {
         Ok(value) => value,
         Err(error) => {
-            return CommandResult::failure(
-                1,
-                format!("uncommented rows failed: {error}"),
-                RouteUsed::Local,
-            )
+            return Err(format!("uncommented rows failed: {error}"))
         }
     };
     let symbols:Vec<Value>=rows.flatten().filter_map(|row|{let has_comment=row.4.lines().any(|line|{let s=line.trim_start();s.starts_with("//")||s.starts_with('#')||s.starts_with("/*")||s.starts_with('*')});if has_comment{None}else{Some(json!({"name":row.0,"qualified_name":row.1,"file_path":row.2,"start_line":row.3}))}}).collect();
-    CommandResult::success_json(
-        &json!({"count":symbols.len(),"symbols":symbols}),
-        RouteUsed::Local,
+            Ok(json!({"count":symbols.len(),"symbols":symbols}))
+        },
+        || {
+            let workspace_id = enterprise_workspace_id(runtime, "uncommented")?;
+            runtime.daemon_call(
+                "query.uncommented_symbols",
+                json!({ "workspace_instance_id": workspace_id }),
+            )
+        },
     )
 }
 
 pub fn run_function_issues(runtime: &RuntimeOptions) -> CommandResult {
-    let conn = match runtime.open_local_db() {
-        Ok(value) => value,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
-    let ws = match runtime.resolve_local_workspace_id(&conn) {
-        Ok(value) => value,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
-    let mut stmt=match conn.prepare("SELECT sf.rule_id,sf.severity,sf.message,COALESCE(sf.symbol_qualified,''),fi.rel_path,sf.start_line FROM semgrep_findings sf JOIN file_instances fi ON fi.id=sf.file_instance_id WHERE fi.workspace_id=?1 ORDER BY sf.start_line"){Ok(value)=>value,Err(error)=>return CommandResult::failure(1,format!("function issues query failed: {error}"),RouteUsed::Local)};
-    let rows=match stmt.query_map([ws],|row|Ok(json!({"rule_id":row.get::<_,String>(0)?,"severity":row.get::<_,String>(1)?,"message":row.get::<_,String>(2)?,"symbol_qualified":row.get::<_,String>(3)?,"file_path":row.get::<_,String>(4)?,"start_line":row.get::<_,i64>(5)?}))){Ok(value)=>value,Err(error)=>return CommandResult::failure(1,format!("function issues rows failed: {error}"),RouteUsed::Local)};
-    CommandResult::success_json(
-        &json!({"issues":rows.flatten().collect::<Vec<_>>() }),
-        RouteUsed::Local,
+    // F-005：daemon 的 query.issues 按 qualified_name 精确查询（必填参数），与本命令
+    // 「列出 workspace 全部 issues」的语义不等价 → enterprise 模式 fail-closed，
+    // auto 模式回退本地；local 模式保持原语义。
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let ws = runtime.resolve_local_workspace_id(&conn)?;
+    let mut stmt=match conn.prepare("SELECT sf.rule_id,sf.severity,sf.message,COALESCE(sf.symbol_qualified,''),fi.rel_path,sf.start_line FROM semgrep_findings sf JOIN file_instances fi ON fi.id=sf.file_instance_id WHERE fi.workspace_id=?1 ORDER BY sf.start_line"){Ok(value)=>value,Err(error)=>return Err(format!("function issues query failed: {error}"))};
+    let rows=match stmt.query_map([ws],|row|Ok(json!({"rule_id":row.get::<_,String>(0)?,"severity":row.get::<_,String>(1)?,"message":row.get::<_,String>(2)?,"symbol_qualified":row.get::<_,String>(3)?,"file_path":row.get::<_,String>(4)?,"start_line":row.get::<_,i64>(5)?}))){Ok(value)=>value,Err(error)=>return Err(format!("function issues rows failed: {error}"))};
+            Ok(json!({"issues":rows.flatten().collect::<Vec<_>>() }))
+        },
+        || enterprise_unsupported("function-issues"),
     )
 }
 
 pub fn run_brief(runtime: &RuntimeOptions) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "brief") {
+        return denied;
+    }
     let metrics = run_metrics_summary(runtime);
     if metrics.exit_code != 0 {
         return metrics;
@@ -3902,7 +4042,7 @@ pub fn run_brief(runtime: &RuntimeOptions) -> CommandResult {
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
     };
     let value: Value = serde_json::from_str(&metrics.stdout).unwrap_or_else(|_| json!({}));
-    let mut ext_counts: HashMap<String, i64> = HashMap::new();
+    let mut ext_counts: BTreeMap<String, i64> = BTreeMap::new();
     if let Ok(mut stmt) = conn.prepare(
         "SELECT rel_path FROM file_instances WHERE workspace_id=?1 AND status!='archived' AND rel_path LIKE '%.%'",
     ) {
@@ -3970,6 +4110,10 @@ pub fn run_brief(runtime: &RuntimeOptions) -> CommandResult {
 }
 
 pub fn run_health_report(runtime: &RuntimeOptions) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "health-report") {
+        return denied;
+    }
     let conn = match runtime.open_local_db() {
         Ok(value) => value,
         Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
@@ -4083,8 +4227,8 @@ pub fn run_health_report(runtime: &RuntimeOptions) -> CommandResult {
             )
         }
     };
-    let mut afferent: HashMap<String, i64> = HashMap::new();
-    let mut efferent: HashMap<String, i64> = HashMap::new();
+    let mut afferent: BTreeMap<String, i64> = BTreeMap::new();
+    let mut efferent: BTreeMap<String, i64> = BTreeMap::new();
     for row in coupling_rows.flatten() {
         *efferent.entry(row.0).or_default() += row.2;
         *afferent.entry(row.1).or_default() += row.2;
@@ -4156,6 +4300,10 @@ pub fn run_dashboard(
     top: usize,
     _json: bool,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "dashboard") {
+        return denied;
+    }
     let metrics = run_metrics_summary(runtime);
     if metrics.exit_code != 0 {
         return metrics;
@@ -4196,7 +4344,7 @@ pub fn run_dashboard(
             |row| row.get(0),
         )
         .unwrap_or(0);
-    let mut by_language: HashMap<String, i64> = HashMap::new();
+    let mut by_language: BTreeMap<String, i64> = BTreeMap::new();
     if let Ok(mut stmt) = conn.prepare(
         "SELECT rel_path,COUNT(*) FROM file_instances
          WHERE workspace_id=?1 AND status!='archived' GROUP BY rel_path",
@@ -4431,6 +4579,10 @@ pub fn run_rollback(
     flag: i64,
     reason: &str,
 ) -> CommandResult {
+    // F-005：daemon 尚无对应 RPC → enterprise 模式显式 fail-closed，不再静默读本地库；auto/local 模式行为不变。
+    if let Some(denied) = enterprise_query_denied(runtime, "rollback") {
+        return denied;
+    }
     let conn = match if matches!(action, "register" | "set") {
         runtime.open_local_write_db()
     } else {

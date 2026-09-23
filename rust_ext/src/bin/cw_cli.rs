@@ -2941,11 +2941,15 @@ fn run_tests(
     }
     let Some(qualified_name) = qualified_name else {
         let message = if history {
-            "Error: qualified_name required with --history"
+            "qualified_name required with --history"
         } else {
-            "Error: qualified_name required (or use --build/--import/--history)"
+            "qualified_name required (or use --build/--import/--history)"
         };
-        return text_result(0, message.to_string());
+        return CommandResult::failure(
+            2,
+            format!("Error: {message}"),
+            RouteUsed::None,
+        );
     };
 
     let result = runtime.execute_read_with(
@@ -6292,6 +6296,24 @@ mod tests {
         let result = run_tests(&runtime, None, false, true, false, false, None, "", "", 50);
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("write modes"));
+    }
+
+    #[test]
+    fn tests_missing_qualified_name_exits_nonzero() {
+        let runtime = RuntimeOptions::from_overrides(Some(DaemonMode::Local), None, None, None, 30);
+        let result = run_tests(&runtime, None, false, false, false, false, None, "", "", 50);
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("qualified_name required"));
+        assert!(result.stdout.is_empty(), "错误消息必须走 stderr 而非 stdout");
+    }
+
+    #[test]
+    fn tests_missing_qualified_name_with_history_exits_nonzero() {
+        let runtime = RuntimeOptions::from_overrides(Some(DaemonMode::Local), None, None, None, 30);
+        let result = run_tests(&runtime, None, false, false, false, true, None, "", "", 50);
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("qualified_name required with --history"));
+        assert!(result.stdout.is_empty());
     }
 
     #[test]

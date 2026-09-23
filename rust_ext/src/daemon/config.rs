@@ -86,6 +86,17 @@ pub struct DaemonConfig {
     /// 为空时由 `handle_init_db`/`handle_get_conn` 做 fail-closed 兜底。
     #[serde(default = "default_audit_db_path")]
     pub audit_db_path: PathBuf,
+    /// G1 Layer 2：ToolchainStore 打开的工具链库路径。
+    ///
+    /// CLI local 模式与 daemon enterprise 模式必须读同一个库，否则
+    /// `cw toolchain list --mode enterprise` 与 `--mode local` 列表不一致
+    /// （F-004：生产 daemon 曾因 `with_toolchain_store` 无调用点而 toolchain.*
+    /// 全部 internal_error）。默认即权威单库 `~/.callwarden/callwarden.db`
+    /// （与 CLI `RuntimeOptions::db_path` 默认值一致：toolchain 表由
+    /// `ToolchainStore::open` 在该库内以幂等 DDL 初始化），环境变量
+    /// `CW_DAEMON_TOOLCHAIN_DB` 可显式覆盖。
+    #[serde(default = "default_authority_task_db_path")]
+    pub toolchain_db_path: PathBuf,
 }
 
 /// 默认 Stage_Toggle 配置存储路径（<data_root>/stage_toggle.db）
@@ -171,6 +182,9 @@ impl Default for DaemonConfig {
             task_db_path: default_authority_task_db_path(),
             // SRV-002：默认审计日志 DB 路径 /var/log/callwarden/audit.log
             audit_db_path: default_audit_db_path(),
+            // G1 Layer 2（F-004）：默认即权威单库 ~/.callwarden/callwarden.db
+            // （与 CLI local 默认 --db 同库，保证 local/enterprise 列表一致）
+            toolchain_db_path: default_authority_task_db_path(),
         }
     }
 }
@@ -283,6 +297,12 @@ impl DaemonConfig {
                 self.audit_db_path = PathBuf::from(v);
             }
         }
+        // G1 Layer 2（F-004）：ToolchainStore 库路径
+        if let Ok(v) = std::env::var("CW_DAEMON_TOOLCHAIN_DB") {
+            if !v.is_empty() {
+                self.toolchain_db_path = PathBuf::from(v);
+            }
+        }
         Ok(())
     }
 
@@ -342,6 +362,22 @@ impl DaemonConfig {
         }
     }
 
+    /// G1 Layer 2（F-004）：解析 ToolchainStore 打开的工具链库路径
+    ///
+    /// 优先使用显式注入的 `toolchain_db_path`（`CW_DAEMON_TOOLCHAIN_DB` 或
+    /// 配置 JSON）；为空时兜底权威单库 `~/.callwarden/callwarden.db`
+    /// （与 CLI local 默认 `--db` 一致，保证 enterprise 与 local 模式
+    /// `toolchain.list` 结果相同）。HOME/USERPROFILE 均缺失时 fail-closed：
+    /// 返回空路径，由调用方跳过注入，toolchain.* RPC 由
+    /// `require_toolchain_store` 兜底报 internal_error。
+    pub fn resolve_toolchain_db_path(&self) -> PathBuf {
+        if !self.toolchain_db_path.as_os_str().is_empty() {
+            self.toolchain_db_path.clone()
+        } else {
+            default_authority_task_db_path()
+        }
+    }
+
     /// request_timeout 转换为 Duration（便利方法）
     pub fn request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_secs)
@@ -393,22 +429,36 @@ impl DaemonConfig {
         if !self.stage_toggle_db_path.as_os_str().is_empty() {
             out.push(("stage_toggle", normalize(&self.stage_toggle_db_path)));
         }
+        // G1 Layer 2（F-004）：ToolchainStore 库（默认与权威单库同路径）
+        let toolchain_db = self.resolve_toolchain_db_path();
+        if !toolchain_db.as_os_str().is_empty() {
+            out.push(("toolchain", normalize(&toolchain_db)));
+        }
         out
     }
 
     /// 校验本 daemon 内部存储路径无自冲突。
     ///
     /// 例如 task_db 与 registry 指向同一路径（角色不同但落点相同）属于配置错误。
-    /// 例外：task_db 与 codegraph 允许同路径——默认部署下两者都是权威单库
-    /// `~/.callwarden/callwarden.db` 的不同角色（同一文件同时承载任务协同与
-    /// CodeGraph 数据，与 Python `config.py:DB_PATH` 单库设计一致），属设计而非
-    /// 配置错误。
+    /// 例外：task_db / codegraph / toolchain 允许同路径——默认部署下三者都是
+    /// 权威单库 `~/.callwarden/callwarden.db` 的不同角色（同一文件同时承载
+    /// 任务协同、CodeGraph 与 toolchain 表，与 Python `config.py:DB_PATH`
+    /// 单库设计一致），属设计而非配置错误。
     /// 冲突时返回 `E_AUTHORITY_STORAGE_CONFLICT`。
     pub fn validate_internal_storage(&self) -> Result<(), ConfigError> {
         let paths = self.storage_paths();
-        // task_db 与 codegraph 同路径豁免（同一权威单库的两个角色）
-        let same_authority_db =
-            |a: &str, b: &str| matches!((a, b), ("task_db", "codegraph") | ("codegraph", "task_db"));
+        // 权威单库三角色同路径豁免
+        let same_authority_db = |a: &str, b: &str| {
+            matches!(
+                (a, b),
+                ("task_db", "codegraph")
+                    | ("codegraph", "task_db")
+                    | ("task_db", "toolchain")
+                    | ("toolchain", "task_db")
+                    | ("codegraph", "toolchain")
+                    | ("toolchain", "codegraph")
+            )
+        };
         for i in 0..paths.len() {
             for j in (i + 1)..paths.len() {
                 if paths[i].1 == paths[j].1 && !same_authority_db(paths[i].0, paths[j].0) {
@@ -472,13 +522,14 @@ mod tests {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 
-    const DAEMON_ENV_KEYS: [&str; 6] = [
+    const DAEMON_ENV_KEYS: [&str; 7] = [
         "CW_DAEMON_SOCKET",
         "CW_DAEMON_REGISTRY_DB",
         "CW_DAEMON_DATA_ROOT",
         "CW_DAEMON_WORKERS",
         "CW_DAEMON_CODEGRAPH_DB_TEMPLATE",
         "CW_DAEMON_TASK_DB",
+        "CW_DAEMON_TOOLCHAIN_DB",
     ];
     /// 权威任务库路径依赖的主目录环境变量（测试中一并隔离）
     const HOME_ENV_KEYS: [&str; 2] = ["USERPROFILE", "HOME"];
@@ -558,6 +609,7 @@ mod tests {
             stage_toggle_db_path: PathBuf::from("/tmp/stage_toggle.db"),
             task_db_path: PathBuf::from("/tmp/tasks.db"),
             audit_db_path: PathBuf::from("/tmp/audit.log"),
+            toolchain_db_path: PathBuf::from("/tmp/toolchain.db"),
         };
         let json = serde_json::to_string_pretty(&original).unwrap();
         std::fs::write(&cfg_path, json).unwrap();
@@ -656,6 +708,80 @@ mod tests {
             cfg.resolve_task_db_path(),
             PathBuf::from("/home/user/.callwarden/callwarden.db")
         );
+    }
+
+    #[test]
+    fn test_default_toolchain_db_path_is_authority() {
+        // F-004：默认与权威单库同路径，保证 enterprise 与 local 列表一致
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/e2e");
+        let cfg = DaemonConfig::default();
+        assert_eq!(
+            cfg.toolchain_db_path,
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
+        assert_eq!(
+            cfg.resolve_toolchain_db_path(),
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
+    }
+
+    #[test]
+    fn test_apply_env_overrides_toolchain_db() {
+        let env = IsolatedDaemonEnv::new();
+        env.set(
+            "CW_DAEMON_TOOLCHAIN_DB",
+            "/home/user/.callwarden/toolchain.db",
+        );
+        let mut cfg = DaemonConfig::default();
+        cfg.apply_env_overrides().unwrap();
+        assert_eq!(
+            cfg.toolchain_db_path,
+            PathBuf::from("/home/user/.callwarden/toolchain.db")
+        );
+        assert_eq!(
+            cfg.resolve_toolchain_db_path(),
+            PathBuf::from("/home/user/.callwarden/toolchain.db")
+        );
+    }
+
+    #[test]
+    fn test_resolve_toolchain_db_path_fail_closed_without_home() {
+        // HOME/USERPROFILE 均缺失且未注入 → 空路径（fail-closed）
+        let env = IsolatedDaemonEnv::new();
+        let mut cfg = DaemonConfig::default();
+        cfg.toolchain_db_path = PathBuf::new();
+        assert!(cfg.resolve_toolchain_db_path().as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_old_config_without_toolchain_db_path_still_loads() {
+        // F-004：旧配置 JSON 没有 toolchain_db_path 字段，serde default 落到权威路径
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/e2e");
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("old_daemon_tc.json");
+        std::fs::write(
+            &cfg_path,
+            r#"{"socket_path":"/tmp/x.sock","registry_db_path":"/tmp/reg.db","data_root":"/tmp/d","max_workers":4,"request_timeout_secs":30,"socket_mode":420,"snapshot_cache_capacity":8,"codegraph_db_path_template":"/tmp/cg/{workspace_instance_id}/codegraph.db"}"#,
+        )
+        .unwrap();
+        let loaded = DaemonConfig::load_from_file(&cfg_path).unwrap();
+        assert_eq!(
+            loaded.toolchain_db_path,
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
+    }
+
+    #[test]
+    fn test_validate_internal_storage_allows_toolchain_on_authority_db() {
+        // F-004：默认部署下 toolchain 与 task_db/codegraph 同为权威单库角色，
+        // 同路径不应判冲突
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/cgtest");
+        let cfg = DaemonConfig::default();
+        cfg.validate_internal_storage()
+            .expect("toolchain 与 task_db/codegraph 同为权威单库不应判冲突");
     }
 
     #[test]
@@ -784,6 +910,8 @@ mod tests {
             stage_toggle_db_path: root.join("stage_toggle.db"),
             task_db_path: root.join("tasks.db"),
             audit_db_path: root.join("audit.log"),
+            // G1 Layer 2（F-004）
+            toolchain_db_path: root.join("toolchain.db"),
         }
     }
 
