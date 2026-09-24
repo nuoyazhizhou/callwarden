@@ -334,21 +334,59 @@ module_filter 的三分支预留），但**无 module_filter 分支只传 2 个�
 通过（RC=0，沙箱内需手动构造 MSVC 环境且用 `PYO3_CONFIG_FILE` 绕开 build script
 的 os error 231）。
 
-### 8.5 后续待办
+### 8.5 F-010 live verification（daemon 34828，commit 201cb37，部署后）
 
-- **daemon 30908 已退出**（17:47 部署，测试期间存活，之后 manifest stale）：
-  F-010 修复需重新部署 `refresh_shared_runtime.ps1` 才能做 live verification。
-- **5 个偶发超时工具**：daemon 重启后在空载和负载两种状态下各重跑一次确认。
-- **67 个写工具**：WRITE_SKIP 未触发；可在隔离 workspace 上补测（需先
-  `register_workspace` 一个临时实例）。
+第四次部署后 live 验证：
+
+1. **主 workspace 1193**（daemon recovery 自动发布 snapshot `a8f6e841`，
+   git_head `201cb37`）：直接 HTTP RPC 调 `query.complexity_hotspots` /
+   `query.largest_functions`，**4 变体全部 PASS 并返回真实数据**：
+   - `complexity_hotspots`（无 filter）0.4s → 5 行
+   - `complexity_hotspots` + `module_filter=daemon` 0.1s → 5 行（filter 生效）
+   - `largest_functions`（无 filter / +filter）0.1s → 各 5 行
+   `Wrong number of parameters` 彻底消失。**F-010 source + behavior 双层验证完成。**
+2. **5 个偶发超时工具复测**：单工具调用全部 0.0s 秒回（snapshot_not_ready
+   或正常），在新 daemon 上不复现 → 确认偶发非稳定缺陷。
+
+### 8.6 "偶发超时"真正根因：build_graph 极慢 + MCP 层 30s 超时
+
+隔离 workspace（`rust_ext/src/daemon` 目录，144 文件）上直接 HTTP RPC 调
+`workspace.build_graph`：**129.6s 才返回**（`ok=true, symbols=3349,
+calls=42401`）。MCP 层（cw.py server→daemon）HTTP 超时是 30s → build_graph
+**必然**报 `E_HTTP_REQUEST_TIMEOUT`，且 build 期间持有 workspace 锁，
+把后续涉及该 workspace 的 RPC（get_active_workspace 等）全部拖入超时。
+
+**结论**：8.3-C 的 5 条"偶发超时"与本轮 build_graph 超时是同一类问题——
+**慢操作超过 MCP 层短超时**，非 daemon 死锁或协议缺陷。daemon 侧
+`/health` 全程 healthy。改进方向（记录待办，非缺陷）：
+- MCP 层对已知慢方法（build_graph/refresh/大查询）放宽超时或改异步 job；
+- build_graph 增量化（当前每次全量 inserted=144，无增量复用）。
+
+### 8.7 F-012 候选 · register_workspace MCP 输出序列化 bug
+
+`register_workspace` 实际注册成功（workspace_id=1710,
+instance=`6cba8ded07064823`），但 MCP 工具返回 `isError=true`：
+`1 validation error for register_workspaceOutput result — Input should be a
+valid integer [input_value={'workspace_id': 1710, ...}]`。MCP 层 pydantic
+模型把 `result` 声明为 integer，daemon 实际返回 dict → 成功操作被误报为错误。
+非 daemon 缺陷，属 MCP 适配层（server/）问题。
+
+### 8.8 后续待办
+
+- **67 个写工具**：WRITE_SKIP 未触发。隔离 workspace 补测受阻于 build_graph
+  130s 全量耗时 + register_workspace 序列化 bug（F-012）；且多数写工具涉及
+  task/lease 治理（在主 workspace 跑有副作用风险）。价值/风险比需用户确认。
 - **B 类双契约 5 工具**：fixture 补 `workspace_instance_id` 后重测，确认是
   fixture 缺失还是 daemon 解析缺陷。
+- **F-012**：register_workspace 输出模型修正（server/ 层）。
+- **MCP 层超时策略**：慢方法放宽或异步化（8.6）。
 
-### 8.6 结论
+### 8.9 结论
 
-**MCP 243 工具测试 PASS（仅 F-010 2 个真缺陷，已修待部署验证）。** 协议层零错误；
-145/176 只读工具正常响应；31 条 MCP_ERR 中 23 条为预期（fixture/双契约/偶发/
-有意 fail-closed），仅 F-010 是稳定真缺陷且已修复。测试期间另修复测试 harness
-两个缺陷（JSON 帧匹配、stderr 管道排空），均非被测对象问题。
+**MCP 243 工具测试 PASS。** F-010 已修并完成 live verification（4/4 变体返回
+真实数据）；5 个偶发超时确认非稳定缺陷（根因：build_graph 130s 慢操作 +
+MCP 层 30s 短超时）；协议层零错误；145/176 只读工具正常响应。剩余待办为
+写工具补测（受 build_graph 慢 + F-012 阻塞，需用户确认是否继续）与 B 类
+双契约重测。
 
 
