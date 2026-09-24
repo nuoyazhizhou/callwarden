@@ -2529,14 +2529,55 @@ mod windows {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
+        // G1 Layer 2（F-004）：打开共享 ToolchainStore 并注入每个 worker state。
+        // 默认落点 = 权威单库 ~/.callwarden/callwarden.db（与 CLI local 默认
+        // --db 同库），toolchain 表由 ToolchainStore::open 以幂等 DDL 初始化，
+        // 保证 `cw toolchain list --mode enterprise` 与 --mode local 结果一致。
+        // 解析失败/不可打开时优雅降级（不 panic、不 return 1），toolchain.* RPC
+        // 由 require_toolchain_store fail-closed 兜底。
+        let toolchain_db_path = config.resolve_toolchain_db_path();
+        let shared_toolchain_store = if !toolchain_db_path.as_os_str().is_empty() {
+            match callwarden_core::daemon::toolchain::ToolchainStore::open(
+                &toolchain_db_path.to_string_lossy(),
+            ) {
+                Ok(store) => {
+                    eprintln!(
+                        "[cw_daemon] [INFO] ToolchainStore opened: {}",
+                        toolchain_db_path.display()
+                    );
+                    Some(Arc::new(store))
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] ToolchainStore 打开失败 ({}): {}；\
+                         toolchain.* RPC 将 fail-closed",
+                        toolchain_db_path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            eprintln!(
+                "[cw_daemon] [WARN] toolchain_db_path 未解析（HOME/USERPROFILE 缺失）；\
+                 toolchain.* RPC 将 fail-closed"
+            );
+            None
+        };
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            let state = SnapshotDaemonState::with_registry_and_data_root(
+            let mut state = SnapshotDaemonState::with_registry_and_data_root(
                 registry,
                 Arc::clone(&shared_snapshot_cache),
                 data_root.clone(),
-            )
+            );
+            // G1 Layer 2（F-004）：注入共享 ToolchainStore（缺失时跳过，
+            // toolchain.* RPC 由 require_toolchain_store fail-closed 兜底）
+            if let Some(store) = &shared_toolchain_store {
+                state = state.with_toolchain_store(Arc::clone(store));
+            }
+            let state = state
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
             .with_audit_db_path(audit_db_path.clone())
