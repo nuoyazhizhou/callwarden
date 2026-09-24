@@ -371,22 +371,75 @@ valid integer [input_value={'workspace_id': 1710, ...}]`。MCP 层 pydantic
 模型把 `result` 声明为 integer，daemon 实际返回 dict → 成功操作被误报为错误。
 非 daemon 缺陷，属 MCP 适配层（server/）问题。
 
-### 8.8 后续待办
+### 8.8 修复落地（commit `f1ca923`，2026-09-25）
 
-- **67 个写工具**：WRITE_SKIP 未触发。隔离 workspace 补测受阻于 build_graph
-  130s 全量耗时 + register_workspace 序列化 bug（F-012）；且多数写工具涉及
-  task/lease 治理（在主 workspace 跑有副作用风险）。价值/风险比需用户确认。
-- **B 类双契约 5 工具**：fixture 补 `workspace_instance_id` 后重测，确认是
-  fixture 缺失还是 daemon 解析缺陷。
-- **F-012**：register_workspace 输出模型修正（server/ 层）。
-- **MCP 层超时策略**：慢方法放宽或异步化（8.6）。
+8.6 与 8.7 两个阻塞项已全部修复并验证，67 写工具补测的两个前置条件清除：
 
-### 8.9 结论
+**① 慢方法超时分级（8.6 修复）**
 
-**MCP 243 工具测试 PASS。** F-010 已修并完成 live verification（4/4 变体返回
-真实数据）；5 个偶发超时确认非稳定缺陷（根因：build_graph 130s 慢操作 +
-MCP 层 30s 短超时）；协议层零错误；145/176 只读工具正常响应。剩余待办为
-写工具补测（受 build_graph 慢 + F-012 阻塞，需用户确认是否继续）与 B 类
-双契约重测。
+- `config.py`：新增 `HTTP_SLOW_METHOD_TIMEOUT = 300.0` 与
+  `HTTP_SLOW_METHOD_PREFIXES`（`workspace.build_graph` /
+  `workspace.build_directory` / `workspace.refresh_file` /
+  `snapshot.publish` / `import.*` / `embed.*`），`http_method_timeout()`
+  按方法返回应选超时（前缀匹配，点分命名空间）。
+- `server/daemon_client.py`：新增模块级 `_rpc_timeout_for(method,
+  base_timeout)`（HTTP / pipe 两 transport 共用）；`HttpDaemonRpcClient.call`
+  / `call_multipart` 的 `urlopen` 与 `UnixDaemonRpcClient.call` /
+  `_transport_call_with_fd` 的 `settimeout` 全部改为按方法选超时。caller
+  显式传入**短于**默认值的超时（诊断/测试 5s 快速失败）仍尊重之。
+- **验证**（`.workbuddy/scripts/timeout_bugfix_verify.py`，25/25 PASS）：
+  分级逻辑 11 例（含空方法名、前缀+后缀不匹配等边界）+ `_timeout_for`
+  6 例 + 模块级 helper 6 例 + pipe client `settimeout` 选中值 2 例。
+  修复自查中发现自身一个真实 bug：`"import."`/`"embed."` 前缀已带尾点但
+  匹配规则又补点（`startswith("import..")`）导致永不命中，已改为不带尾点。
+
+**② F-012 写工具输出模型（8.7 修复，影响范围扩大到 4 个工具）**
+
+审计 `server/tools/tools_workspace.py` 全部 27 个 `@mcp.tool()` 后，F-012
+不止 register_workspace 一处，共 **4 个写工具**标注与 daemon 实际返回不符：
+
+| 工具 | 旧标注 | daemon 实际返回（Rust handler 实证） | 修后 |
+|---|---|---|---|
+| `register_workspace` | `-> int` | `workspace.register` → workspace 行 dict | `-> dict` |
+| `set_active_workspace` | `-> bool` | `handle_workspace_activate` → `get_workspace_status` 行 | `-> dict` |
+| `delete_workspace` | `-> bool` | `handle_workspace_remove` → `get_workspace_status` 行 | `-> dict` |
+| `remove_file` | `-> bool` | `handle_file_remove` → `{"ok":true,"removed":true}` | `-> dict` |
+
+**机制（单元级复现）**：`structured_output=None`（默认）时 FastMCP 按返回
+标注自动检测——scalar 标注（int/bool）生成 `{tool}Output` 模型（含
+`result: <scalar>` 字段），`convert_result(dict)` 抛
+`ValidationError: result — Input should be a valid integer/boolean` →
+服务器包成 `isError=true`（操作已成功）；`-> dict` 则 `output_model=None`
+（非结构化透传）不触发校验。复现命令与 8.7 记录的线上报错逐字一致。
+`dfs_has_cycle -> bool` 是局部 DFS 递归辅助函数（非 MCP 工具），真返回
+bool，不改。
+
+**③ 回归**：`test_cli_095_http_rpc.py` + tools 相关套件 43 结果全过
+（1 skip，RC=0）。`RpcDBProxy`（cli/main.py）自带 dict→int/bool 行映射，
+属另一层，不受 MCP 工具层标注改动影响。沙箱无法启动隔离 daemon 的 3 个
+ERROR 为既有环境限制（single-instance 锁 `os error 5 拒绝访问`），与本次
+改动无关。
+
+### 8.9 后续待办（更新）
+
+- **67 个写工具补测**（用户已确认"需要"）：两个阻塞项已清除
+  （build_graph 走 300s 超时；F-012 4 工具已修）。**待第六次部署后**
+  在隔离 workspace 执行：register_workspace → build_graph →
+  snapshot.publish → 逐工具补测，避免主 workspace 副作用。
+- **B 类双契约 5 工具**：fixture 补 `workspace_instance_id` 后重测。
+- **build_graph 增量化**（性能，非缺陷）：当前每次全量 inserted=144，
+  无增量复用。
+- **需用户执行**：`.\scripts\refresh_shared_runtime.ps1 -TaskId
+  T-1790151978451-61939ab4 -Configuration release -RunSmokeTests`
+  （第六次部署，携带 f1ca923）。
+
+### 8.10 结论
+
+**MCP 243 工具测试 PASS。** F-010 已修并 live verification（4/4）；5 个
+偶发超时根因定位为 build_graph 130s 慢操作 + MCP 层 30s 短超时（**已修**：
+慢方法分级 300s）；F-012 register_workspace 等写工具 isError 假失败
+（**已修**：4 个工具 int/bool→dict，机制级复现+回归通过）；协议层零错误；
+145/176 只读工具正常响应。剩余待办为 67 写工具补测（前置条件已清除，
+待第六次部署）与 B 类双契约重测。
 
 
