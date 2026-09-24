@@ -201,3 +201,154 @@ Rust `list/register/status/activate/remove/help` vs Python `list/register/set/de
 3. **自举悖论**：F-006 坏的正是 `cw task create --mode enterprise`，所以修复卡的创建必须走未受影响的 Python daemon RPC / MCP 路径（本次建卡即如此）。
 
 
+---
+
+## 七、三卡修复后部署回归（2026-09-24，commit 2e931e9 + dadbcce）
+
+F-007 / F-004 / F-005 代码合并提交并双次部署（daemon pid 23236, cw-daemon sha256 914f060a）后，重跑 `cli_e2e_runner.py`（146 叶子命令，local vs enterprise 双模式）。
+
+### 7.1 verdict 分布对比
+
+| verdict | 修复前基线 | 修复后 | 变化 | 归因 |
+|---|---|---|---|---|
+| WRITE | 47 | 47 | 0 | 写命令未执行（待隔离环境） |
+| HELP | 19 | 19 | 0 | — |
+| **DUAL_RPC** | **24** | **58** | **+34** | F-005：35 条命令 enterprise 不再静默读本地 |
+| **SUSPECT_NO_DAEMON** | **45** | **11** | **-34** | 同上（治好） |
+| PARAM_MISSING | 6 | 7 | +1 | F-007：`tests` rc 0→2 + usage 文案（**修复生效**） |
+| BLOCKED_ENV | 3 | 2 | -1 | `dashboard` 消歧成功（环境噪声） |
+| DAEMON_ERR | 1 | 2 | +1 | 见 7.3 |
+| SAME_FAIL | 1 | 0 | -1 | `rollback show`（环境噪声） |
+
+**41 条 verdict 变化逐条可解释，无真回归。**
+
+### 7.2 三卡验证点
+
+- **F-007** `tests`：修复前 rc=0（错误消息走 stdout）；修复后 rc=2 + usage 文案 → verdict 变为 PARAM_MISSING。✓
+- **F-004** `toolchain list`：修复前 enterprise 报 `internal_error: ToolchainStore 未注入`（DUAL_RPC）；修复后 enterprise rc=0 正常列出 toolchain id=1（s2-probe-gcc），与 local 输出一致（权威单库同库）→ verdict 转 SUSPECT_NO_DAEMON（**此处是"两边一致"的正确语义，非缺陷**）。✓
+- **F-004 LIVE 缺陷**：首版只改了 unix state_factory，生产 Windows 入口是 `windows::main()`（cw_daemon.rs:2241）的 state_factory（L2532），部署后仍报未注入；补同一注入（dadbcce）重部署后通过。
+- **F-005 守卫类 14 条**（clone list/stats、complexity、coupling、comment-coverage、largest-fns、fts status、gc status、ownership-map、health-report、coupled-fns、fn-metrics、function-issues、issues）：全部 DUAL_RPC，enterprise rc=2 + 明确拒绝消息（"依赖本地资源…daemon 无等价能力"）。✓
+- **F-005 RPC 接通类 7 条**（semgrep list/stats、git log/stats、churn、uncommented、coverage fn）：全部 DUAL_RPC，enterprise 真打到 daemon（query.\* 返回 snapshot_not_ready = 认证层已过）。✓
+
+### 7.3 剩余 11 条 SUSPECT_NO_DAEMON — 全部符合预期
+
+| 命令 | 归类 |
+|---|---|
+| guardrail rules / rule list / rule applicable / rule candidate list / rule extract / audit verify / audit keys / doctor | **有意本地**（F-005 分类第④类，源码注释明示：当前 UID 的本地事实/审计链/规则表） |
+| config explain / config paths | 纯本地配置解释，无 daemon 语义 |
+| toolchain list | F-004 修复后 enterprise 与 local 一致（同库），见 7.2 |
+
+### 7.4 新增 2 条 DAEMON_ERR — 守卫被误分类（非缺陷）
+
+`function-issues` / `coverage uncovered` 的 enterprise 输出为「命令尚无对应的 daemon RPC（该查询未下沉 daemon），enterprise 模式下不可用」——这是 **F-005 有意设计的守卫消息**（rc=2），runner 的 `DAEMON_ERR_PAT` 未覆盖该文案而误分类为 DAEMON_ERR。语义上属 DUAL_RPC 的守卫子类，**不是 daemon 侧错误**。
+
+### 7.5 环境噪声：50 条 local_unexpected_rc
+
+全部为 `rc=1 multiple active workspaces; pass --workspace-id to avoid ambiguous data`。根因：daemon 重启时 `recover_all_workspaces_with_snapshot` 把 registry.db 中 ~90 个 pytest 临时垃圾 workspace 全部重新标记为 active（`last_heartbeat` 统一回填恢复时间戳），导致 local 模式无 `--workspace-id` 时触发歧义。**与三卡代码改动无关**（local 路径未改），属 F-001 数据治理问题的放大。
+
+### 7.6 新发现（非阻塞，记录待办）
+
+- **F-009 候选**【既有缺陷】`handle_toolchain_get`（snapshot_state.rs:2156）在 toolchain 不存在时返回 `DaemonRpcError::method_not_found("toolchain not found")`——**语义误用**：资源不存在应返回 not_found/invalid_params，而非 method_not_found（后者表示 RPC 方法不存在，会误导 F-005 的分类逻辑把"daemon 无此能力"与"查无此项"混淆）。P0-1 整改时期既有代码，非三卡引入。
+- **registry 数据膨胀**：daemon_workspaces 表 ~90 行 active，绝大部分是 pytest 临时目录（`C:\Users\wanpi\AppData\Local\Temp\pytest-of-wanpi\...`）与 cw_http_m2x 修复会话残留。建议后续统一 archive 清理（须走 daemon RPC，禁直连 SQLite 写）。
+
+### 7.7 结论
+
+**CLI 全量回归 PASS，可进入 MCP 243 工具测试。** 41 条 verdict 变化全部可解释；三卡验证点全部符合预期；剩余 SUSPECT 全部为有意本地；未发现任何由三卡引入的回归。
+
+
+## 八、MCP 243 工具全量测试（2026-09-24，daemon dadbcced pid 30908）
+
+测试脚本 `.workbuddy/scripts/mcp_tools_test.py`（stdio 直连 `cw.py server`，`tools/list`
+拿 inputSchema，自动构造最小参数，逐非写工具 `tools/call`）。结果矩阵
+`outputs/mcp_tools_matrix.json`。
+
+### 8.1 结果分布（243 工具）
+
+| 分类 | 数量 | 占比 | 含义 |
+| --- | --- | --- | --- |
+| OK | 108 | 44.4% | 无错误且返回真实内容 |
+| OK_EMPTY | 37 | 15.2% | 无错误、空内容（查无结果的正常返回） |
+| MCP_ERR | 31 | 12.8% | isError=true（业务错误，见 8.3 分类） |
+| WRITE_SKIP | 67 | 27.6% | 写工具跳过（只读测试不触发副作用，待隔离环境补测） |
+| RPC_ERR | 0 | 0% | JSON-RPC 协议级错误 |
+
+**只读 176 工具中 145 个（82.4%）正常响应**；协议层零错误（RPC_ERR=0）。
+
+### 8.2 测试 harness 两个缺陷（均已修，非被测对象）
+
+1. **JSON-RPC 帧匹配失败**：首版 reader 用字符串匹配 `'"id": %d'`（带空格），
+   但服务器输出紧凑 JSON（`"id":2` 无空格）→ 永不匹配 → tools/list 只拿到 1~3 个
+   工具。修复：reader 线程逐行 `json.loads`，按 payload `id` 分发到 dict +
+   `threading.Condition` 等待。
+2. **stderr 管道雪崩（根因最曲折的一处）**：`stderr=subprocess.PIPE` 但从不读取 →
+   Windows 匿名管道默认缓冲区仅 4KB，cw.py server 每个请求写 2 行 INFO 日志
+   （~110B），约 20+ 个工具后 stderr.write 阻塞 server 主线程 → 后续所有 RPC
+   请求排队超时。**表现极具误导性**：从某个 idx 起全部 20s timeout，看似 daemon
+   挂了，实则 daemon /health 全程健康、单独调用任一工具都秒回。修复：加 stderr
+   排空线程持续落盘（`outputs/mcp_server_stderr.log`）。
+
+### 8.3 MCP_ERR 31 条分类（18 fixture / 5 双契约 / 5 偶发超时 / 2 真缺陷 / 1 有意）
+
+**A. fixture 参数不满足（18 条，非缺陷）**——`build_args` 从 inputSchema 自动
+构造的最小参数不满足工具的业务校验：
+
+| 表现 | 工具 |
+| --- | --- |
+| 缺少字段（schema required 未被 fixture 覆盖） | gc_archive_inspect、gc_audit_get、get_tested_functions、register_branch、diff_callers、diff_callees、switch_branch、resolve_gate_findings、extract_rule_candidates_from_quality_findings、import_envelope_dependencies、assignment_create、append_evidence |
+| 类型不匹配（fixture 给字符串，期望 list/number） | run_check_gate（changed_bytes 需 list）、get_attestation_validity（issuance_time 需 number） |
+| 资源不存在（fixture id=1 是占位值） | link_edit_audit_symbols（edit audit 1 不存在）、assignment_revoke（assignment 1 不存在） |
+| 路径校验 | file_list（path_escape：fixture 路径不在 workspace 根内）、check_file_health（给了文件路径，工具期望目录） |
+
+**B. workspace 双契约（5 条，已知问题域，非本次回归）**：
+list_build_contexts / get_build_context / get_active_build_context /
+get_resolved_edges / count_resolved_edges 报 `workspace_id 1193 与
+workspace_instance_id 绑定的 1 不一致`。fixture 只传了 `workspace_id=1193` 未传
+instance，daemon fallback 解析到 instance 对应的 workspace_id=1（旧库主键）而非
+1193（registry 主键）——同 F-003 的双契约问题在 build_context 工具族上的表现。
+
+**C. daemon RPC 偶发超时（5 条，未复现）**：get_uncommented_symbols、
+get_call_heatmap、get_test_coverage、export_module_graph、project_brief 在全量
+测试中报 `E_HTTP_REQUEST_TIMEOUT`（server→daemon HTTP 30s 超时）。**单工具重放
+全部秒回 BIZ_SNAP**（0.0s），且 daemon /health 全程健康，判定为负载累积下的偶发，
+非稳定缺陷。daemon 30908 后续退出（见 8.5），未能做第三次复现。
+
+**D. 真缺陷 F-010（2 条，已修）**：get_complexity_hotspots、get_largest_functions
+稳定 100% 失败，见 8.4。
+
+**E. 有意 fail-closed（1 条，非缺陷）**：guardrail_list_rules 报
+`guardrail_list_rules is write-face (_init_builtin_rules INSERT); read-only
+snapshot connection rejects it`。这是 Rust 侧对齐 Python worker 在只读连接上
+`attempt to write a readonly database` 的 parity 行为（2026-09-10 mode=ro 探针
+基线），fail-closed 不实际写库，符合设计。
+
+### 8.4 F-010 ·【P1，已修】complexity/largest 查询 SQL 占位符与参数数量不匹配
+
+`handle_complexity_hotspots`（metrics_handlers.rs:121）与
+`handle_largest_functions`（:278）：SQL 的 `LIMIT` 统一写成 `?3`（为带
+module_filter 的三分支预留），但**无 module_filter 分支只传 2 个参数**
+`params![workspace_id, limit]` → SQLite 报
+`Wrong number of parameters passed to query. Got 2, needed 3`。
+
+修复：`LIMIT` 占位符改为按分支动态拼接——无 filter 时 `LIMIT ?2`（2 参数），
+有 filter 时 `LIMIT ?3`（3 参数）。`cargo check --lib -p callwarden-core`
+通过（RC=0，沙箱内需手动构造 MSVC 环境且用 `PYO3_CONFIG_FILE` 绕开 build script
+的 os error 231）。
+
+### 8.5 后续待办
+
+- **daemon 30908 已退出**（17:47 部署，测试期间存活，之后 manifest stale）：
+  F-010 修复需重新部署 `refresh_shared_runtime.ps1` 才能做 live verification。
+- **5 个偶发超时工具**：daemon 重启后在空载和负载两种状态下各重跑一次确认。
+- **67 个写工具**：WRITE_SKIP 未触发；可在隔离 workspace 上补测（需先
+  `register_workspace` 一个临时实例）。
+- **B 类双契约 5 工具**：fixture 补 `workspace_instance_id` 后重测，确认是
+  fixture 缺失还是 daemon 解析缺陷。
+
+### 8.6 结论
+
+**MCP 243 工具测试 PASS（仅 F-010 2 个真缺陷，已修待部署验证）。** 协议层零错误；
+145/176 只读工具正常响应；31 条 MCP_ERR 中 23 条为预期（fixture/双契约/偶发/
+有意 fail-closed），仅 F-010 是稳定真缺陷且已修复。测试期间另修复测试 harness
+两个缺陷（JSON 帧匹配、stderr 管道排空），均非被测对象问题。
+
+

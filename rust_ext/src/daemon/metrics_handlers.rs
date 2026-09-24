@@ -132,10 +132,16 @@ pub fn handle_complexity_hotspots(
          WHERE fi.workspace_id = ?1 AND s.kind IN ('fn','test_fn','func','function','method')
            AND s.start_line > 0 AND s.end_line >= s.start_line",
     );
-    if !module_filter.is_empty() {
+    // 占位符编号必须与参数个数一致：无 filter 时 ?1=workspace_id, ?2=limit；
+    // 有 filter 时 ?1=workspace_id, ?2=pattern, ?3=limit。之前统一写 LIMIT ?3
+    // 但无 filter 分支只传 2 个参数 → SQLite 报
+    // "Wrong number of parameters passed to query. Got 2, needed 3"。
+    if module_filter.is_empty() {
+        sql.push_str(" ORDER BY span DESC LIMIT ?2");
+    } else {
         sql.push_str(" AND s.module_path LIKE ?2 ESCAPE '\\'");
+        sql.push_str(" ORDER BY span DESC LIMIT ?3");
     }
-    sql.push_str(" ORDER BY span DESC LIMIT ?3");
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("complexity prepare: {e}")))?;
@@ -289,10 +295,14 @@ pub fn handle_largest_functions(
          WHERE fi.workspace_id = ?1 AND s.kind IN ('fn','test_fn','func','function','method')
            AND s.start_line > 0 AND s.end_line >= s.start_line",
     );
-    if !module_filter.is_empty() {
+    // 占位符编号必须与参数个数一致（同 handle_complexity_hotspots 的修复）：
+    // 之前统一写 LIMIT ?3 但无 filter 分支只传 2 个参数 → SQLite 参数数量不匹配。
+    if module_filter.is_empty() {
+        sql.push_str(" ORDER BY span DESC LIMIT ?2");
+    } else {
         sql.push_str(" AND s.module_path LIKE ?2 ESCAPE '\\'");
+        sql.push_str(" ORDER BY span DESC LIMIT ?3");
     }
-    sql.push_str(" ORDER BY span DESC LIMIT ?3");
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("largest prepare: {e}")))?;
