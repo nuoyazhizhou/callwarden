@@ -281,8 +281,18 @@ function Restore-CoreExtensions([object[]]$Deployed) {
 }
 
 function Verify-AuthorityCli([string]$CwExePath, [string]$VerificationTaskId) {
-    $output = @(& $CwExePath lease status $VerificationTaskId --role implementer 2>&1)
-    $code = $LASTEXITCODE
+    # cw.exe（Rust 二进制）按 UTF-8 输出 stdout/stderr；PowerShell 5.1 默认用
+    # OEM 代码页（中文系统为 GBK/CP936）解码原生命令输出 → 中文与 ✓ 等字符乱码
+    # （历史证据 20260924-101625 的 authority_cli.output 出现 "鉁?"/"宸蹭笉瀛樻椿"）。
+    # 捕获期间临时切换 OutputEncoding 为 UTF-8，事后恢复。
+    $prevEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        $output = @(& $CwExePath lease status $VerificationTaskId --role implementer 2>&1)
+        $code = $LASTEXITCODE
+    } finally {
+        [Console]::OutputEncoding = $prevEncoding
+    }
     $text = $output -join "`n"
     # authority 验证只关心"新部署的 callwarden_core 能否无迁移错误打开权威库"。
     # 迁移/打开类错误必须 fail-closed；业务错误（如 E_TASK_WORKSPACE_UNBOUND：
@@ -396,7 +406,18 @@ function Ensure-DaemonSingleInstance {
     }
     Info "无可用 daemon 实例（或为旧版本），停止全部 cw-daemon 后启动新实例"
     @(Get-AllDaemons) | ForEach-Object { Stop-Owned $_ }
-    $proc = Start-Process -FilePath $DaemonPath -ArgumentList @("--socket", $EndpointValue) -WorkingDirectory $RepoRoot -WindowStyle Hidden -PassThru
+    # H6/CR10：daemon 迁移期默认 transport = http，但 Start-Process 只继承
+    # 机器/用户级环境变量、不继承当前会话的 $env:（CW_DAEMON_TRANSPORT 等
+    # 会话级设置传不进子进程）。daemon 在拿不到 transport 配置时 bind_http
+    # 若失败仅 eprintln 后静默降级为 pipe-only，manifest 停留在旧 PID →
+    # MCP/HTTP 客户端全部 E_HTTP_MANIFEST_STALE。
+    # 直接用 daemon 的 --http-bind 命令行参数显式启用 HTTP loopback transport，
+    # 不依赖环境变量继承；并保留 daemon stderr 以便排障。
+    $daemonLog = Join-Path $EvidenceRoot "cw-daemon.stderr.log"
+    $proc = Start-Process -FilePath $DaemonPath `
+        -ArgumentList @("--socket", $EndpointValue, "--http-bind", "127.0.0.1:6374") `
+        -WorkingDirectory $RepoRoot -WindowStyle Hidden -PassThru `
+        -RedirectStandardError $daemonLog
     return [pscustomobject]@{ action = "start"; pid = $proc.Id }
 }
 
