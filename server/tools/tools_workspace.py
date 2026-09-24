@@ -89,7 +89,7 @@ def register(mcp: FastMCP) -> None:
         return _route('workspace.list', {}, 'READ_ONLY')
 
     @mcp.tool()
-    def register_workspace(name: str, root_path: str, description: str = "") -> int:
+    def register_workspace(name: str, root_path: str, description: str = "") -> dict:
         """注册新工作区
 
         Args:
@@ -97,35 +97,60 @@ def register(mcp: FastMCP) -> None:
             root_path: 工作区根目录绝对路径
             description: 描述
 
+        Returns:
+            daemon workspace.register 的结构化行（workspace_id /
+            workspace_instance_id / snapshot_id / owner_uid / git_remote_url /
+            git_head_commit_sha / client_view_root / host_real_root /
+            toolchain_fingerprint / registered_at / last_active_at / status）。
+
         HTTP 模式（H6，CW_DAEMON_TRANSPORT=http）：SQLite workspaces 表为
         真相源（先 db.register_workspace，name/root_path 重复时幂等返回已有
         id），再经 HttpDaemonRpcClient.workspace_register 同步 daemon 注册表
         （daemon_workspaces 是读面 workspace.list/status 的数据源，必须同步
         否则读面不可见）。daemon 不可用 → DaemonUnavailableError（fail-closed，
         禁止静默回退纯 SQL 造成双表分裂）；重试即自愈（register 两侧幂等）。
+
+        F-012（2026-09-24）：输出模型原标注 ``-> int``（legacy SQLite
+        register_workspace 返回数字 id），但收敛后 route_rpc 原样透传 daemon
+        ``workspace.register`` 的结构化 dict。旧 int 签名使 FastMCP 输出校验
+        失败（isError=True，尽管注册本身成功）——与 build_graph 等三工具
+        bool→dict 放宽（见本文件头注释）同一类漏网。
         """
         return _route('workspace.register', {"name": name, "client_view_root": root_path, "description": description}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def set_active_workspace(workspace_id_or_name: str) -> bool:
+    def set_active_workspace(workspace_id_or_name: str) -> dict:
         """设置活动工作区
 
         Args:
             workspace_id_or_name: 工作区 ID（数字字符串）或名称
 
+        Returns:
+            daemon workspace.activate 后的 workspace 行（status=active，
+            字段同 register_workspace）。
+
         HTTP 模式（H6）：SQLite workspaces 表为真相源（先
         db.set_active_workspace 更新 is_active，workspace 不存在返回 False），
         再经 HttpDaemonRpcClient.workspace_activate 同步 daemon 注册表状态。
         daemon 不可用 → DaemonUnavailableError（fail-closed，不静默成功）。
+
+        F-012（2026-09-24）：输出模型原标注 ``-> bool``（legacy SQLite
+        语义），但 route_rpc 原样透传 daemon ``workspace.activate`` 的结构化
+        行（Rust handle_workspace_activate 返回 get_workspace_status 行）。
+        旧 bool 签名使 FastMCP 输出校验失败——与 register_workspace 同类。
         """
         return _route('workspace.activate', {"workspace_id_or_name": workspace_id_or_name}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def delete_workspace(workspace_id_or_name: str) -> bool:
+    def delete_workspace(workspace_id_or_name: str) -> dict:
         """删除工作区（级联删除所有实例和版本）
 
         Args:
             workspace_id_or_name: 工作区 ID（数字字符串）或名称
+
+        Returns:
+            daemon workspace.remove 后的 workspace 行（status=archived，
+            字段同 register_workspace）。
 
         HTTP 模式（H6）：SQLite workspaces 表为真相源（先硬删，workspace
         不存在返回 False），再经 HttpDaemonRpcClient.workspace_remove 同步
@@ -134,6 +159,11 @@ def register(mcp: FastMCP) -> None:
         （fail-closed）；此时 SQLite 已删、daemon 行保留，重试会因 SQLite
         行不存在返回 False（不重复删），daemon 残留行由后续同 root 注册
         INSERT OR REPLACE 覆盖或 workspace_remove 归档自愈。
+
+        F-012（2026-09-24）：输出模型原标注 ``-> bool``（legacy SQLite
+        语义），但 route_rpc 原样透传 daemon ``workspace.remove`` 的结构化
+        行（Rust handle_workspace_remove 返回 get_workspace_status 行）。
+        旧 bool 签名使 FastMCP 输出校验失败——与 register_workspace 同类。
         """
         return _route('workspace.remove', {"workspace_id_or_name": workspace_id_or_name}, 'PROTECTED_MUTATION')
 
@@ -313,14 +343,20 @@ def register(mcp: FastMCP) -> None:
         return _route('query.status', {}, 'READ_ONLY')
 
     @mcp.tool()
-    def remove_file(file_path: str) -> bool:
+    def remove_file(file_path: str) -> dict:
         """从图谱中移除指定文件（标记为删除，保留历史）
 
         Args:
             file_path: 文件的绝对路径或相对工作区路径
 
         Returns:
-            是否成功移除
+            daemon 结构化结果 ``{"ok": true, "removed": true}``（物理删除
+            + file_instances 行删除 + destructive_operations 审计记录）。
+
+        F-012（2026-09-24）：输出模型原标注 ``-> bool``，但 route_rpc 原样
+        透传 daemon ``workspace.file.remove`` 的结构化 dict（Rust
+        handle_file_remove 返回 json!({"ok": true, "removed": true})）。
+        旧 bool 签名使 FastMCP 输出校验失败——与 register_workspace 同类。
         """
         return _route('workspace.file.remove', {"file_path": file_path}, 'PROTECTED_MUTATION')
 

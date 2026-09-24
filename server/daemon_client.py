@@ -46,6 +46,7 @@ from callwarden.config import (
     HTTP_DEFAULT_TIMEOUT,
     HTTP_MAX_BODY_BYTES,
     HTTP_PROTOCOL_VERSION,
+    HTTP_SLOW_METHOD_TIMEOUT,
     E_HTTP_DAEMON_UNAVAILABLE,
     E_HTTP_MANIFEST_MISSING,
     E_HTTP_MANIFEST_STALE,
@@ -57,6 +58,7 @@ from callwarden.config import (
     get_daemon_mode,
     get_http_authority_id,
     get_task_write_policy,
+    http_method_timeout,
     is_daemon_required,
     is_http_transport_enabled,
 )
@@ -116,6 +118,22 @@ class SharedTaskWriterRequiredError(DaemonUnavailableError):
 def _is_task_write(rpc_method: str) -> bool:
     """判断 RPC 是否会修改权威任务状态或任务归属。"""
     return rpc_method.startswith("task.")
+
+
+def _rpc_timeout_for(method: str, base_timeout: float) -> float:
+    """按 RPC method 与 caller 基准超时选择实际同步超时（秒）。
+
+    HTTP / pipe 两种 transport 共用此规则（build_graph 等慢方法在两种
+    transport 上都会超过默认 30s）：
+
+    - caller 显式传入短于 HTTP_DEFAULT_TIMEOUT 的超时（诊断/测试场景，
+      如 5s 快速失败）→ 尊重之，原样返回；
+    - 其余（默认值或更长）→ 慢方法放宽到 HTTP_SLOW_METHOD_TIMEOUT，
+      快方法保持 base_timeout（通常即 HTTP_DEFAULT_TIMEOUT）。
+    """
+    if base_timeout < HTTP_DEFAULT_TIMEOUT:
+        return base_timeout
+    return http_method_timeout(method)
 
 
 # P0-H（T-1787277487109-758e56d0）：task.supersede 治理路由策略（显式声明，供
@@ -616,7 +634,7 @@ class UnixDaemonRpcClient:
             if conn is None:
                 raise OSError("endpoint 不可连接")
             with conn:
-                conn.settimeout(self.timeout)
+                conn.settimeout(_rpc_timeout_for(method, self.timeout))
                 # 共存契约 §4.2：经 windows-bridge 时注入 bridge_token（生产路径）。
                 # bridge 在请求顶层校验并剥离该字段（cw_bridge.rs validate_token），
                 # 转发给 daemon 的是剥离后的 {id, method, params}。
@@ -1007,7 +1025,7 @@ class UnixDaemonRpcClient:
         request_id = next(self._ids)
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-                conn.settimeout(self.timeout)
+                conn.settimeout(_rpc_timeout_for(method, self.timeout))
                 conn.connect(self.socket_path)
                 send_message_with_fds(conn, {
                     "id": request_id,
@@ -2318,6 +2336,16 @@ class HttpDaemonRpcClient:
         except (ValueError, UnicodeDecodeError) as exc:
             raise DaemonUnavailableError(f"HTTP GET {url} 响应非 JSON: {exc}")
 
+    def _timeout_for(self, method: str) -> float:
+        """按 RPC method 选择同步超时（秒）。
+
+        慢方法（workspace.build_graph 全量索引、import.* 导入、snapshot.publish
+        等）放宽到 HTTP_SLOW_METHOD_TIMEOUT；其余方法保持 HTTP_DEFAULT_TIMEOUT。
+        caller 显式传入短于默认值的超时（诊断/测试场景，如 5s 快速失败）时尊重之；
+        传入默认值或更长超时则按方法分级（慢方法可能要 ~130s，见 config.py 注释）。
+        """
+        return _rpc_timeout_for(method, self._timeout)
+
     # ------------------------------------------------------------------
     # 公开 RPC 调用
     # ------------------------------------------------------------------
@@ -2381,7 +2409,7 @@ class HttpDaemonRpcClient:
                 url, data=body, method="POST",
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:
@@ -2473,7 +2501,7 @@ class HttpDaemonRpcClient:
                 url, data=body, method="POST",
                 headers={"Content-Type": content_type},
             )
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:

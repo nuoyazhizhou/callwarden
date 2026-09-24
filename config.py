@@ -1722,6 +1722,39 @@ HTTP_MANIFEST_SCHEMA_VERSION = "callwarden-http-manifest/v1"
 HTTP_DEFAULT_TIMEOUT = 30.0
 HTTP_MAX_BODY_BYTES = 8 * 1024 * 1024
 
+# 慢方法超时（秒）：build_graph 等全量索引方法在小仓也要 ~130s（144 文件
+# → symbols 3349 / calls 42401），默认 30s 必然 E_HTTP_REQUEST_TIMEOUT；
+# 且 build 期间持有 workspace 锁，会把后续涉及该 workspace 的 RPC 全部
+# 拖入超时。对这类方法放宽到 300s（行为级证据：2026-09-24 隔离 ws 实测
+# build_graph 129.6s）。
+HTTP_SLOW_METHOD_TIMEOUT = 300.0
+
+# 已知慢方法（daemon 侧全量扫描/解析/索引，耗时随仓库规模线性增长）。
+# 匹配规则：method 完全等于下列任一项，或等于「该项 + '.' + 子名」
+# （点分命名空间，前缀本身不带尾点）。
+HTTP_SLOW_METHOD_PREFIXES = (
+    "workspace.build_graph",      # tree-sitter 全量解析 + calls 索引
+    "workspace.build_directory",  # 同上（目录粒度）
+    "workspace.refresh_file",     # 单文件重解析 + 增量索引
+    "snapshot.publish",           # 快照发布（checkpoint + WAL）
+    "import",                     # import.git_history/blame/codeowners/deps/coverage
+    "embed",                      # embed.symbols 等（批量向量化）
+)
+
+# 慢方法判定（供 HttpDaemonRpcClient.call 按方法选超时）
+def http_method_timeout(method: str) -> float:
+    """按 RPC method 名返回应使用的同步超时（秒）。
+
+    慢方法（全量索引/导入/发布）放宽到 HTTP_SLOW_METHOD_TIMEOUT；其余保持
+    HTTP_DEFAULT_TIMEOUT。匹配走前缀（点分命名空间），避免逐个罗列衍生方法。
+    """
+    if not method:
+        return HTTP_DEFAULT_TIMEOUT
+    for prefix in HTTP_SLOW_METHOD_PREFIXES:
+        if method == prefix or method.startswith(prefix + "."):
+            return HTTP_SLOW_METHOD_TIMEOUT
+    return HTTP_DEFAULT_TIMEOUT
+
 # HTTP 层结构化错误码（客户端侧，映射 frozen contract §4.3 / §9）
 E_HTTP_MVP_LOOPBACK_ONLY = "E_HTTP_MVP_LOOPBACK_ONLY"
 E_HTTP_MANIFEST_MISSING = "E_HTTP_MANIFEST_MISSING"
