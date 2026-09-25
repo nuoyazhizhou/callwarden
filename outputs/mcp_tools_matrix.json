@@ -1,0 +1,1656 @@
+{
+  "total": 243,
+  "counters": {
+    "MCP_ERR": 54,
+    "WRITE_SKIP": 67,
+    "OK": 95,
+    "OK_EMPTY": 27
+  },
+  "results": [
+    {
+      "tool": "get_stats",
+      "cls": "MCP_ERR",
+      "args": {},
+      "detail": "Error executing tool get_stats: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "search_symbols",
+      "cls": "MCP_ERR",
+      "args": {
+        "query": "test"
+      },
+      "detail": "Error executing tool search_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_symbol",
+      "cls": "MCP_ERR",
+      "args": {
+        "qualified_name": "main"
+      },
+      "detail": "Error executing tool get_symbol: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_symbol_location",
+      "cls": "MCP_ERR",
+      "args": {
+        "name": "main"
+      },
+      "detail": "Error executing tool get_symbol_location: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_file_symbols",
+      "cls": "MCP_ERR",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "detail": "Error executing tool get_file_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_callers",
+      "cls": "MCP_ERR",
+      "args": {
+        "callee_name": "main"
+      },
+      "detail": "Error executing tool get_callers: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_callees",
+      "cls": "MCP_ERR",
+      "args": {
+        "caller_name": "main"
+      },
+      "detail": "Error executing tool get_callees: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_symbol_history",
+      "cls": "MCP_ERR",
+      "args": {
+        "qualified_name": "main"
+      },
+      "detail": "Error executing tool get_symbol_history: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_file_history",
+      "cls": "MCP_ERR",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "detail": "Error executing tool get_file_history: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_recent_changes",
+      "cls": "MCP_ERR",
+      "args": {
+        "since": ""
+      },
+      "detail": "Error executing tool get_recent_changes: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_topological_order",
+      "cls": "MCP_ERR",
+      "args": {
+        "limit": 1
+      },
+      "detail": "Error executing tool get_topological_order: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_impact",
+      "cls": "MCP_ERR",
+      "args": {
+        "qualified_name": "main"
+      },
+      "detail": "Error executing tool get_impact: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_call_chain_down",
+      "cls": "MCP_ERR",
+      "args": {
+        "qualified_name": "main"
+      },
+      "detail": "Error executing tool get_call_chain_down: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_top_callers",
+      "cls": "MCP_ERR",
+      "args": {
+        "limit": 1
+      },
+      "detail": "Error executing tool get_top_callers: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_orphan_symbols",
+      "cls": "MCP_ERR",
+      "args": {
+        "kind": ""
+      },
+      "detail": "Error executing tool get_orphan_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_deepest_functions",
+      "cls": "MCP_ERR",
+      "args": {
+        "limit": 1
+      },
+      "detail": "Error executing tool get_deepest_functions: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_module_call_stats",
+      "cls": "MCP_ERR",
+      "args": {
+        "limit": 1
+      },
+      "detail": "Error executing tool get_module_call_stats: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "detect_cycles",
+      "cls": "MCP_ERR",
+      "args": {
+        "max_depth": 1
+      },
+      "detail": "Error executing tool detect_cycles: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_comment_from_version",
+      "cls": "MCP_ERR",
+      "args": {
+        "spec": ""
+      },
+      "detail": "Error executing tool get_comment_from_version: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "restore_comment",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_issue_summary",
+      "cls": "MCP_ERR",
+      "args": {},
+      "detail": "Error executing tool get_issue_summary: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "find_issues",
+      "cls": "MCP_ERR",
+      "args": {
+        "issue_type": ""
+      },
+      "detail": "Error executing tool find_issues: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_semgrep_stats",
+      "cls": "MCP_ERR",
+      "args": {},
+      "detail": "Error executing tool get_semgrep_stats: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_semgrep_findings",
+      "cls": "MCP_ERR",
+      "args": {
+        "severity": ""
+      },
+      "detail": "Error executing tool get_semgrep_findings: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "run_semgrep_scan",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "scan_semgrep_incremental",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_comment_coverage",
+      "cls": "MCP_ERR",
+      "args": {
+        "group_by": ""
+      },
+      "detail": "Error executing tool get_comment_coverage: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_uncommented_symbols",
+      "cls": "MCP_ERR",
+      "args": {
+        "kind": ""
+      },
+      "detail": "Error executing tool get_uncommented_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_call_heatmap",
+      "cls": "MCP_ERR",
+      "args": {
+        "group_by": ""
+      },
+      "detail": "Error executing tool get_call_heatmap: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "get_test_coverage",
+      "cls": "MCP_ERR",
+      "args": {},
+      "detail": "Error executing tool get_test_coverage: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "export_module_graph",
+      "cls": "MCP_ERR",
+      "args": {
+        "format": ""
+      },
+      "detail": "Error executing tool export_module_graph: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+    },
+    {
+      "tool": "restore_all_comments",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "build_graph",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "refresh_file",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "list_workspaces",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"workspace_id\": 1193,\n  \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\n  \"snapshot_id\": \"5faeb2790e7b1546\",\n  \"owner_uid\": 4294967295,\n  \"git_remote_url\": \"git@github.com:nuoyazhizhou/callwarden.git"
+    },
+    {
+      "tool": "register_workspace",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "set_active_workspace",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "delete_workspace",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_active_workspace",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"registry_workspace_id\": 1193,\n  \"registry_instance_id\": \"4baea3ff12c2ea5c\",\n  \"task_db_workspace_id\": 1,\n  \"task_db_instance_id\": \"4baea3ff12c2ea5c\",\n  \"client_view_root\": \"C:\\\\git_work\\\\callward"
+    },
+    {
+      "tool": "file_read",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "snippet": "{\n  \"file_path\": \"cw.py\",\n  \"offset\": 0,\n  \"limit\": 200,\n  \"total_lines\": 154,\n  \"content\": \"#!/usr/bin/env python3\\n\\\"\\\"\\\"\\ncw - Call Warden 统一命令行入口\\n\\n使用方式：\\n    cw install [--all] [--lang rust pyth"
+    },
+    {
+      "tool": "file_grep",
+      "cls": "OK",
+      "args": {
+        "pattern": "test"
+      },
+      "snippet": "{\n  \"matches\": [\n    {\n      \"file_path\": \"analyzers/coverage.py\",\n      \"line\": 250,\n      \"text\": \"    def get_test_coverage(self) -> Dict:\"\n    },\n    {\n      \"file_path\": \"analyzers/coverage.py\",\n"
+    },
+    {
+      "tool": "file_list",
+      "cls": "MCP_ERR",
+      "args": {
+        "path": "cw.py"
+      },
+      "detail": "Error executing tool file_list: path_escape: path 不在 workspace 根内"
+    },
+    {
+      "tool": "file_symbol_content",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py",
+        "symbol_name": "main"
+      },
+      "snippet": "{\n  \"qualified_name\": \"cw.main\",\n  \"content\": \"def main():\\n    \\\"\\\"\\\"统一入口：根据第一个参数分发到对应模块\\\"\\\"\\\"\\n    # 修复 Bug T-1783751418408-44eb: Windows GBK 控制台无法输出 Unicode 字符\\n    _ensure_utf8_output()\\n\\n    # P"
+    },
+    {
+      "tool": "import_git_history",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_git_commits",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"id\": 477,\n  \"commit_hash\": \"a75270618cf91c73caf1f7678bf7533e936f34a0\",\n  \"message\": \"test(memfd): rewind descriptors before validation\",\n  \"author\": \"nuoyazhizhou\",\n  \"email\": \"nuoyazhizhou@hotma"
+    },
+    {
+      "tool": "get_commit_changes",
+      "cls": "OK",
+      "args": {
+        "commit_hash": ""
+      },
+      "snippet": "{\n  \"commit\": null,\n  \"file_changes\": []\n}"
+    },
+    {
+      "tool": "get_git_stats",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"commit_count\": 160,\n  \"file_change_count\": 1982,\n  \"change_types\": {\n    \"A\": 478,\n    \"M\": 1504\n  }\n}"
+    },
+    {
+      "tool": "get_status",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\n  \"status\": \"ok\",\n  \"schema_version\": 60,\n  \"symbol_count\": 40161,\n  \"call_count\": 273119,\n  \"file_count\": 2267\n}"
+    },
+    {
+      "tool": "remove_file",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "build_directory",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_symbol_content_by_hash",
+      "cls": "OK_EMPTY",
+      "args": {
+        "content_hash": ""
+      }
+    },
+    {
+      "tool": "get_code_metrics_summary",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"file_count\": 2267,\n  \"function_count\": 34924,\n  \"total_lines\": 1159101,\n  \"total_calls\": 273119,\n  \"avg_complexity\": 4.2,\n  \"max_complexity\": 471,\n  \"complexity_distribution\": {\n    \"低 (≤5)\": 235"
+    },
+    {
+      "tool": "get_complexity_hotspots",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"qualified_name\": \"build.lib.win-amd64-cpython-314.callwarden.server.mcp_server.create_mcp_server\",\n  \"name\": \"create_mcp_server\",\n  \"kind\": \"fn\",\n  \"start_line\": 78,\n  \"end_line\": 4781,\n  \"file_p"
+    },
+    {
+      "tool": "get_coupling_analysis",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"caller_module\": \"build.lib.win-amd64-cpython-314.callwarden.cli.main\",\n  \"callee_module\": \"i18n\",\n  \"call_count\": 1805,\n  \"unique_caller_count\": 84,\n  \"unique_callee_count\": 4\n}"
+    },
+    {
+      "tool": "get_function_metrics",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "get_largest_functions",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"qualified_name\": \"build.lib.win-amd64-cpython-314.callwarden.server.mcp_server.create_mcp_server\",\n  \"name\": \"create_mcp_server\",\n  \"file_path\": \"build/lib.win-amd64-cpython-314/callwarden/server"
+    },
+    {
+      "tool": "get_most_coupled_functions",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"qualified_name\": \"server.daemon_config.DaemonConfig.get\",\n  \"name\": \"get\",\n  \"file_path\": \"server/daemon_config.py\",\n  \"incoming_call_count\": 6231\n}"
+    },
+    {
+      "tool": "get_code_health_check",
+      "cls": "OK",
+      "args": {
+        "severity": ""
+      },
+      "snippet": "{\n  \"severity\": \"\",\n  \"total_issues\": 197336,\n  \"issues\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"LONG_FUNCTIONS\",\n      \"count\": 1685\n    },\n    {\n      \"severity\": \"warning\",\n      \"code\":"
+    },
+    {
+      "tool": "check_file_health",
+      "cls": "MCP_ERR",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "detail": "Error executing tool check_file_health: path_not_found: 不是目录: \\\\?\\C:\\git_work\\callwarden\\cw.py"
+    },
+    {
+      "tool": "semantic_search",
+      "cls": "OK_EMPTY",
+      "args": {
+        "query": "test"
+      }
+    },
+    {
+      "tool": "find_similar_functions",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "embed_symbols",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "embed_single_symbol",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_symbol_commit_history",
+      "cls": "OK_EMPTY",
+      "args": {
+        "symbol_hash": "main"
+      }
+    },
+    {
+      "tool": "parse_codeowners",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "snippet": "{\n  \"pattern\": \"\\\"\\\"\\\"\",\n  \"owners\": []\n}\n{\n  \"pattern\": \"cw\",\n  \"owners\": []\n}\n{\n  \"pattern\": \"使用方式：\",\n  \"owners\": []\n}\n{\n  \"pattern\": \"cw\",\n  \"owners\": []\n}\n{\n  \"pattern\": \"cw\",\n  \"owners\": []\n}\n{\n "
+    },
+    {
+      "tool": "import_codeowners",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "import_git_blame",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_project_dependencies",
+      "cls": "OK",
+      "args": {
+        "languages": []
+      },
+      "snippet": "{}"
+    },
+    {
+      "tool": "import_project_dependencies",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "prune_external_symbols",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "gc_retention",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "gc_policy_get",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"older_than_days\": 1,\n  \"keep_versions\": 3,\n  \"include_external\": false,\n  \"external_stale_days\": 90,\n  \"backup_enabled\": true,\n  \"vacuum_enabled\": false,\n  \"updated_at\": 1790311717.9215736\n}"
+    },
+    {
+      "tool": "gc_policy_set",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "gc_archive_list",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"id\": 151,\n  \"file_instance_id\": 803,\n  \"rel_path\": \"rust_ext/target/debug/build/tree-sitter-scala-02f191245e326615/out/flag_check.c\",\n  \"abs_path\": \"c:/git_work/callwarden/rust_ext/target/debug/b"
+    },
+    {
+      "tool": "gc_archive_inspect",
+      "cls": "MCP_ERR",
+      "args": {
+        "path": "cw.py"
+      },
+      "detail": "Error executing tool gc_archive_inspect: invalid_params: 缺少字段: archive_path"
+    },
+    {
+      "tool": "gc_audit_list",
+      "cls": "OK",
+      "args": {
+        "limit": 1
+      },
+      "snippet": "{\n  \"id\": \"CA-bea1dd583a83a9ac0f5d1c4c\",\n  \"task_id\": \"T-1789529126780-6cf84728\",\n  \"file_path\": \"deliverables/software-company/w3_family_regression_20260916.md\",\n  \"author\": \"executor-wb-w3\",\n  \"time"
+    },
+    {
+      "tool": "gc_audit_get",
+      "cls": "MCP_ERR",
+      "args": {
+        "audit_id": 1
+      },
+      "detail": "Error executing tool gc_audit_get: invalid_params: 缺少字段: audit_id"
+    },
+    {
+      "tool": "gc_archive_import",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_create",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_next_step",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "work_next_job",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"status\": \"in_progress\",\n  \"claimed_by\": \"\",\n  \"next_step_id\": \"S-1790136923628-2832a6c0\",\n  \"next_action\": \"work\",\n  \"remediation_step_id\": null,\n  \"steps"
+    },
+    {
+      "tool": "task_assignment_status",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"assignments\": [\n    {\n      \"assignment_id\": \"A-869f12cebfb0cc46acc3828c\",\n      \"task_id\": \"T-1790136923625-2803e218\",\n      \"step_id\": \"S-1790136923628-"
+    },
+    {
+      "tool": "task_assignment_heartbeat",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_resolve_block",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_report_step",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "record_task_symbol_change",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "link_edit_audit_symbols",
+      "cls": "OK",
+      "args": {
+        "audit_id": 1
+      },
+      "snippet": "{\n  \"success\": false,\n  \"linked\": 0,\n  \"error\": \"edit audit has no task id\"\n}"
+    },
+    {
+      "tool": "get_task_symbol_changes",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"changes\": [\n    {\n      \"file_path\": \"cw.py\",\n      \"symbol_hash\": \"\",\n      \"symbol_hash_before\": \"\",\n      \"change_type\": \"modified\",\n      \"created_at\""
+    },
+    {
+      "tool": "get_symbol_change_tasks",
+      "cls": "OK_EMPTY",
+      "args": {
+        "symbol_hash": "main"
+      }
+    },
+    {
+      "tool": "get_task_commits",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"commits\": []\n}"
+    },
+    {
+      "tool": "get_commit_tasks",
+      "cls": "OK_EMPTY",
+      "args": {
+        "commit_hash": ""
+      }
+    },
+    {
+      "tool": "task_rollback",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_apply",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_close",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_capture_diff",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "audit_verify_chain",
+      "cls": "OK",
+      "args": {
+        "table_name": "main"
+      },
+      "snippet": "{\n  \"table_name\": \"main\",\n  \"total_count\": 0,\n  \"verified_count\": 0,\n  \"broken_count\": 0,\n  \"broken_records\": [],\n  \"security_level\": \"hmac\"\n}"
+    },
+    {
+      "tool": "rotate_audit_signing_key",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "list_audit_signing_keys",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"key_id\": \"key-000001a0d6e4e93f\",\n  \"rotated_at\": 1790311721.279669,\n  \"is_active\": 1\n}"
+    },
+    {
+      "tool": "bootstrap_status",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"db_stale\": true,\n  \"current_head\": \"eb747d53a196926e0eb9a45ded0030102eb83991\",\n  \"active_rules_count\": 3,\n  \"pending_candidates_count\": 5,\n  \"open_findings_count\": 27998,\n  \"blocking_findings_cou"
+    },
+    {
+      "tool": "detect_clones",
+      "cls": "OK",
+      "args": {
+        "file_filter": "cw.py"
+      },
+      "snippet": "{\n  \"total_pairs\": 0,\n  \"type1_pairs\": 0,\n  \"type2_pairs\": 0,\n  \"type3_pairs\": 0,\n  \"scanned_symbols\": 0,\n  \"skipped_symbols\": 0,\n  \"similarity_threshold\": 1.0,\n  \"min_lines\": 5\n}"
+    },
+    {
+      "tool": "list_clones",
+      "cls": "OK_EMPTY",
+      "args": {
+        "clone_type": 1
+      }
+    },
+    {
+      "tool": "get_clone_stats",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"total\": 0,\n  \"type1\": 0,\n  \"type2\": 0,\n  \"type3\": 0,\n  \"affected_files\": 0,\n  \"affected_symbols\": 0\n}"
+    },
+    {
+      "tool": "clear_clones",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_symbol_issues",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "get_test_cases",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "get_tested_functions",
+      "cls": "MCP_ERR",
+      "args": {
+        "test_qualified_name": "main"
+      },
+      "detail": "Error executing tool get_tested_functions: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "tool": "get_test_coverage_summary",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "get_test_stability",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "get_defect_correlation",
+      "cls": "OK",
+      "args": {
+        "qualified_name": "main"
+      },
+      "snippet": "{\n  \"qualified_name\": \"main\",\n  \"change_count\": 0,\n  \"defect_count\": 0,\n  \"defect_rate\": 0.0,\n  \"recent_defects\": []\n}"
+    },
+    {
+      "tool": "detect_clones_async",
+      "cls": "OK",
+      "args": {
+        "file_filter": "cw.py"
+      },
+      "snippet": "{\n  \"job_id\": \"job-000002\",\n  \"status\": \"queued\",\n  \"job_type\": \"clone_detect\"\n}"
+    },
+    {
+      "tool": "get_job_status",
+      "cls": "OK",
+      "args": {
+        "job_id": "1"
+      },
+      "snippet": "{\n  \"error\": \"job not found: 1\"\n}"
+    },
+    {
+      "tool": "cancel_job",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "list_jobs",
+      "cls": "OK_EMPTY",
+      "args": {
+        "job_type": ""
+      }
+    },
+    {
+      "tool": "get_job_stats",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"pending\": 0,\n  \"running\": 0,\n  \"completed\": 0,\n  \"cancelled\": 0,\n  \"failed\": 0,\n  \"total\": 0\n}"
+    },
+    {
+      "tool": "wait_for_job",
+      "cls": "OK",
+      "args": {
+        "job_id": "1"
+      },
+      "snippet": "{\n  \"error\": \"job not found: 1\"\n}"
+    },
+    {
+      "tool": "list_clone_groups",
+      "cls": "OK_EMPTY",
+      "args": {
+        "clone_type": 1
+      }
+    },
+    {
+      "tool": "get_clone_group_detail",
+      "cls": "OK",
+      "args": {
+        "group_id": 1
+      },
+      "snippet": "{\n  \"error\": \"group not found: 1\"\n}"
+    },
+    {
+      "tool": "get_clone_group_stats",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"total_groups\": 0,\n  \"type1\": 0,\n  \"type2\": 0,\n  \"type3\": 0,\n  \"total_members\": 0,\n  \"affected_files\": 0,\n  \"affected_symbols\": 0\n}"
+    },
+    {
+      "tool": "embed_symbols_async",
+      "cls": "OK",
+      "args": {
+        "batch_size": 1
+      },
+      "snippet": "{\n  \"job_id\": \"job-000003\",\n  \"status\": \"queued\",\n  \"job_type\": \"embed\"\n}"
+    },
+    {
+      "tool": "semgrep_scan_async",
+      "cls": "OK",
+      "args": {
+        "config": ""
+      },
+      "snippet": "{\n  \"job_id\": \"job-000004\",\n  \"status\": \"queued\",\n  \"job_type\": \"semgrep_scan\"\n}"
+    },
+    {
+      "tool": "rule_seed_bootstrap",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "cleanup_agent_rule_sync_log",
+      "cls": "OK",
+      "args": {
+        "older_than_days": 1
+      },
+      "snippet": "{\n  \"ok\": true,\n  \"deleted\": 0\n}"
+    },
+    {
+      "tool": "task_create_subtask",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_split",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_status_tree",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"title\": \"P0 单实例守卫部署 + CLI/MCP 双入口 E2E 验收测试矩阵（部署溯源卡）\",\n  \"description\": \"lineage 卡：refresh_shared_runtime.ps1 -TaskId <本卡> 部署 P0 单实例守卫（commit 02a67ce）。部署后 "
+    },
+    {
+      "tool": "task_create_from_plan",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_plan_template",
+      "cls": "OK",
+      "args": {},
+      "snippet": "# {Root task title}\n{Root task description (plain text)}\n\n## {Subtask 1 title}\n{Subtask 1 description (optional)}\n\n- {Step 1 description}\n- {Step 2 description}\n- [ ] {Incomplete step (checkbox format"
+    },
+    {
+      "tool": "task_list",
+      "cls": "OK",
+      "args": {
+        "status_filter": ""
+      },
+      "snippet": "{\n  \"tasks\": [\n    {\n      \"task_id\": \"T-1788313854785-dd64cebc\",\n      \"title\": \"BR-03 e2e B TokenSlim ws-10\",\n      \"description\": \"not cross-bind to callwarden\",\n      \"parent_id\": \"\",\n      \"statu"
+    },
+    {
+      "tool": "task_status",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"title\": \"P0 单实例守卫部署 + CLI/MCP 双入口 E2E 验收测试矩阵（部署溯源卡）\",\n  \"description\": \"lineage 卡：refresh_shared_runtime.ps1 -TaskId <本卡> 部署 P0 单实例守卫（commit 02a67ce）。部署后 "
+    },
+    {
+      "tool": "task_governance_projection",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"status\": \"in_progress\",\n  \"lifecycle_status\": \"in_progress\",\n  \"workflow_status\": \"execution_in_progress\",\n  \"current_role\": \"executor\",\n  \"next_role\": \"e"
+    },
+    {
+      "tool": "task_completion_review",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_quality_findings",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"findings\": []\n}"
+    },
+    {
+      "tool": "task_resolve_quality_finding",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "generate_summary",
+      "cls": "OK",
+      "args": {
+        "qualified_name": "main",
+        "summary": ""
+      },
+      "snippet": "{\n  \"ok\": true,\n  \"summaries_generated\": 200\n}"
+    },
+    {
+      "tool": "get_summary",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "project_brief",
+      "cls": "MCP_ERR",
+      "args": {},
+      "detail": "Error executing tool project_brief: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (project_brief): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+    },
+    {
+      "tool": "repo_map",
+      "cls": "OK",
+      "args": {
+        "format": ""
+      },
+      "snippet": "仓库模块依赖图:\n\n  build.lib.win-amd64-cpython-314.callwarden.cli.main → i18n (1805 次调用)\n  cli.main → server.daemon_config (761 次调用)\n  dist_test.install.callwarden.cli.main → server.daemon_config (700 次调用)\n "
+    },
+    {
+      "tool": "import_coverage",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_coverage_for_symbol",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "find_uncovered_functions",
+      "cls": "OK_EMPTY",
+      "args": {
+        "module_filter": ""
+      }
+    },
+    {
+      "tool": "test_impact_selection",
+      "cls": "OK_EMPTY",
+      "args": {
+        "qualified_name": "main"
+      }
+    },
+    {
+      "tool": "who_to_ask",
+      "cls": "OK_EMPTY",
+      "args": {
+        "file_path": "cw.py"
+      }
+    },
+    {
+      "tool": "get_ownership_map",
+      "cls": "OK_EMPTY",
+      "args": {
+        "module_filter": ""
+      }
+    },
+    {
+      "tool": "guardrail_scan",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "guardrail_check_edit",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "snippet": "{\n  \"decision\": \"warn\",\n  \"findings\": [\n    {\n      \"rule_id\": \"GR-builtin-inc-1\",\n      \"severity\": \"warn\",\n      \"message\": \"函数 _is_entry_point_launch（第 35-46 行）缺少错误处理（无 try/catch/unwrap/expect/?/Re"
+    },
+    {
+      "tool": "guardrail_list_rules",
+      "cls": "MCP_ERR",
+      "args": {
+        "category_filter": ""
+      },
+      "detail": "Error executing tool guardrail_list_rules: internal_error: guardrail_list_rules is write-face (_init_builtin_rules INSERT); read-only snapshot connection rejects it (parity: python worker OperationalError attempt to write a readonly database)"
+    },
+    {
+      "tool": "guardrail_add_rule",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "blast_radius",
+      "cls": "OK",
+      "args": {
+        "symbol_hash": "main"
+      },
+      "snippet": "{\n  \"source_symbol\": \"\",\n  \"source_hash\": \"main\",\n  \"depth\": 3,\n  \"layers\": [],\n  \"total_impacted\": 0,\n  \"by_layer\": {\n    \"code\": 0,\n    \"db\": 0,\n    \"api\": 0,\n    \"config\": 0\n  }\n}"
+    },
+    {
+      "tool": "ask_codebase",
+      "cls": "OK",
+      "args": {
+        "question": ""
+      },
+      "snippet": "{\n  \"question\": \"\",\n  \"seed_functions\": [],\n  \"context_blocks\": [],\n  \"rag_context\": \"\",\n  \"estimated_tokens\": 0,\n  \"truncated\": false,\n  \"metadata\": {\n    \"total_functions_included\": 0,\n    \"has_vect"
+    },
+    {
+      "tool": "record_token_savings",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_token_savings_report",
+      "cls": "OK",
+      "args": {
+        "time_window": ""
+      },
+      "snippet": "{\n  \"time_window\": \"\",\n  \"total_saved\": 0,\n  \"total_operations\": 1,\n  \"avg_savings_pct\": 0.0,\n  \"by_operation\": {\n    \"\": {\n      \"total_saved\": 0,\n      \"op_count\": 1,\n      \"avg_savings_pct\": 0.0\n  "
+    },
+    {
+      "tool": "get_vulnerability_blast_radius",
+      "cls": "OK",
+      "args": {
+        "finding_id": 1
+      },
+      "snippet": "{\n  \"total_findings\": 0,\n  \"total_impacted_symbols\": 0,\n  \"risk_level\": \"none\",\n  \"findings\": [],\n  \"impacted_symbols_summary\": {\n    \"by_layer\": {\n      \"code\": 0,\n      \"db\": 0,\n      \"api\": 0,\n    "
+    },
+    {
+      "tool": "get_clone_aware_impact",
+      "cls": "OK",
+      "args": {
+        "qualified_name": "main"
+      },
+      "snippet": "{\n  \"source_symbol\": \"\",\n  \"error\": \"符号不存在: main\"\n}"
+    },
+    {
+      "tool": "diff_to_symbol",
+      "cls": "OK_EMPTY",
+      "args": {
+        "diff_text": ""
+      }
+    },
+    {
+      "tool": "review_readiness",
+      "cls": "OK",
+      "args": {
+        "symbol_hash": "main"
+      },
+      "snippet": "{\n  \"impact_scope\": \"low\",\n  \"risk_level\": \"low\",\n  \"total_impacted\": 0,\n  \"must_test\": [],\n  \"review_points\": [],\n  \"by_layer\": {\n    \"code\": 0,\n    \"db\": 0,\n    \"api\": 0,\n    \"config\": 0\n  }\n}"
+    },
+    {
+      "tool": "cross_layer_impact",
+      "cls": "OK",
+      "args": {
+        "symbol_hash": "main"
+      },
+      "snippet": "{\n  \"code\": [],\n  \"db\": [],\n  \"api\": [],\n  \"config\": []\n}"
+    },
+    {
+      "tool": "evolution_frequency",
+      "cls": "OK",
+      "args": {
+        "qualified_name": "main"
+      },
+      "snippet": "{\n  \"qualified_name\": \"main\",\n  \"change_count\": 0,\n  \"first_seen\": 0.0,\n  \"last_changed\": 0.0,\n  \"changers\": [],\n  \"timeline\": [],\n  \"intervals\": [],\n  \"avg_interval\": 0.0,\n  \"distribution\": {\n    \"da"
+    },
+    {
+      "tool": "defect_correlation",
+      "cls": "OK",
+      "args": {
+        "symbol_hash": "main"
+      },
+      "snippet": "{\n  \"symbol_hash\": \"main\",\n  \"total_changes\": 0,\n  \"defects_after_change\": 0,\n  \"defect_types\": {},\n  \"findings\": []\n}"
+    },
+    {
+      "tool": "hotspot_evolution",
+      "cls": "OK",
+      "args": {
+        "module_filter": ""
+      },
+      "snippet": "{\n  \"qualified_name\": \"lib::rust_ext::src::daemon::dispatch.now_ts\",\n  \"symbol_hash\": \"d7ef12e3684a2a83e69786975df1c82617b6fb503ba3c04749cf722c0da81dff\",\n  \"module_path\": \"lib::rust_ext::src::daemon::"
+    },
+    {
+      "tool": "churn_analysis",
+      "cls": "OK",
+      "args": {
+        "module_filter": ""
+      },
+      "snippet": "{\n  \"churn_rate\": 0.607,\n  \"total_churned_lines\": 368393,\n  \"changed_files\": 386,\n  \"total_lines_current\": 606859,\n  \"top_churned_files\": [\n    {\n      \"file_instance_id\": 128,\n      \"rel_path\": \"serv"
+    },
+    {
+      "tool": "defect_search",
+      "cls": "OK_EMPTY",
+      "args": {
+        "category": ""
+      }
+    },
+    {
+      "tool": "defect_suggest_fix",
+      "cls": "OK",
+      "args": {
+        "symbol_hash": "main"
+      },
+      "snippet": "{\n  \"pattern_id\": \"\",\n  \"fix_template\": \"\",\n  \"similar_fixes\": [],\n  \"effectiveness_score\": 0.0\n}"
+    },
+    {
+      "tool": "defect_learn",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "defect_stats",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"total_patterns\": 0,\n  \"total_fixes\": 0,\n  \"by_category\": {},\n  \"by_severity\": {},\n  \"avg_effectiveness\": 0.0,\n  \"top_defects\": []\n}"
+    },
+    {
+      "tool": "register_branch",
+      "cls": "MCP_ERR",
+      "args": {
+        "branch_name": "main"
+      },
+      "detail": "Error executing tool register_branch: invalid_params: 缺少字段: name"
+    },
+    {
+      "tool": "list_branches",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"id\": 1,\n  \"name\": \"callwarden\",\n  \"root_path\": \"c:/git_work/callwarden\",\n  \"created_at\": 1784213382.5007255,\n  \"is_active\": 0,\n  \"symbol_count\": 40161\n}\n{\n  \"id\": 2,\n  \"name\": \"test-h9-ws\",\n  \"ro"
+    },
+    {
+      "tool": "diff_branches",
+      "cls": "OK",
+      "args": {
+        "source_branch": "",
+        "target_branch": ""
+      },
+      "snippet": "{\n  \"error\": \"源分支不存在: \"\n}"
+    },
+    {
+      "tool": "diff_callers",
+      "cls": "MCP_ERR",
+      "args": {
+        "left_workspace_id": "4baea3ff12c2ea5c",
+        "right_workspace_id": "4baea3ff12c2ea5c",
+        "qualified_name": "main"
+      },
+      "detail": "Error executing tool diff_callers: invalid_params: 缺少字段: symbol_a"
+    },
+    {
+      "tool": "diff_callees",
+      "cls": "MCP_ERR",
+      "args": {
+        "left_workspace_id": "4baea3ff12c2ea5c",
+        "right_workspace_id": "4baea3ff12c2ea5c",
+        "qualified_name": "main"
+      },
+      "detail": "Error executing tool diff_callees: invalid_params: 缺少字段: symbol_a"
+    },
+    {
+      "tool": "compare_snapshots",
+      "cls": "OK",
+      "args": {
+        "left_workspace_id": "4baea3ff12c2ea5c",
+        "right_workspace_id": "4baea3ff12c2ea5c"
+      },
+      "snippet": "{\n  \"archived_files\": 151,\n  \"active_files\": 2267,\n  \"symbols\": 40161,\n  \"delta_files\": 2116\n}"
+    },
+    {
+      "tool": "switch_branch",
+      "cls": "MCP_ERR",
+      "args": {
+        "branch_name": "main"
+      },
+      "detail": "Error executing tool switch_branch: invalid_params: 缺少字段: name"
+    },
+    {
+      "tool": "merge_preview",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "propose_edit",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "propose_range_patch",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "propose_symbol_patch",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "propose_symbol_id_patch",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "revert_edit",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_edit_history",
+      "cls": "MCP_ERR",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "detail": "Error executing tool get_edit_history: internal_error: security 组 SQL 失败: Invalid column type Integer at index: 0, name: id"
+    },
+    {
+      "tool": "get_edit_stats",
+      "cls": "OK",
+      "args": {
+        "time_window": ""
+      },
+      "snippet": "{\n  \"time_window\": \"\",\n  \"total\": 1,\n  \"by_status\": {\n    \"pending\": 0,\n    \"applied\": 0,\n    \"reverted\": 0,\n    \"failed\": 0,\n    \"proposed\": 1\n  },\n  \"by_operation\": {\n    \"edit\": 1,\n    \"create\": 0,"
+    },
+    {
+      "tool": "detect_cross_repo_deps",
+      "cls": "OK",
+      "args": {
+        "source_workspace": "4baea3ff12c2ea5c"
+      },
+      "snippet": "{\n  \"job_id\": \"job-000005\",\n  \"job_type\": \"cross_repo_deps\",\n  \"status\": \"failed\",\n  \"progress\": 0.0,\n  \"created_at\": 1790361709.3783095,\n  \"error\": \"查询 workspace root 失败: Query returned no rows\"\n}"
+    },
+    {
+      "tool": "find_shared_symbols",
+      "cls": "OK",
+      "args": {
+        "workspace_a": "4baea3ff12c2ea5c"
+      },
+      "snippet": "{\n  \"total_shared\": 0,\n  \"shared_symbols\": []\n}"
+    },
+    {
+      "tool": "cross_repo_impact",
+      "cls": "OK",
+      "args": {
+        "symbol_hash": "main"
+      },
+      "snippet": "{\n  \"source_symbol\": \"\",\n  \"source_workspace\": \"\",\n  \"impacted_repos\": [],\n  \"total_impacted_repos\": 0,\n  \"risk_level\": \"none\"\n}"
+    },
+    {
+      "tool": "cross_repo_summary",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"total_repos\": 18,\n  \"repos\": [\n    {\n      \"id\": 1,\n      \"name\": \"callwarden\",\n      \"root_path\": \"c:/git_work/callwarden\",\n      \"created_at\": 1784213382.5007255,\n      \"symbol_count\": 40161\n  "
+    },
+    {
+      "tool": "lsp_hover",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py",
+        "line": 1,
+        "character": 1
+      },
+      "snippet": "{\n  \"file_path\": \"cw.py\",\n  \"line\": 1,\n  \"character\": 1,\n  \"contents\": \"\",\n  \"available\": false\n}"
+    },
+    {
+      "tool": "lsp_definition",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py",
+        "line": 1,
+        "character": 1
+      },
+      "snippet": "{\n  \"definitions\": [],\n  \"available\": false\n}"
+    },
+    {
+      "tool": "lsp_references",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py",
+        "line": 1,
+        "character": 1
+      },
+      "snippet": "{\n  \"references\": [],\n  \"total\": 0,\n  \"available\": false\n}"
+    },
+    {
+      "tool": "lsp_diagnostics",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py"
+      },
+      "snippet": "{\n  \"file_path\": \"cw.py\",\n  \"diagnostics\": [],\n  \"total\": 0,\n  \"available\": false\n}"
+    },
+    {
+      "tool": "lsp_completion",
+      "cls": "OK",
+      "args": {
+        "file_path": "cw.py",
+        "line": 1,
+        "character": 1
+      },
+      "snippet": "{\n  \"completions\": [],\n  \"total\": 0,\n  \"available\": false\n}"
+    },
+    {
+      "tool": "lsp_check_available",
+      "cls": "OK",
+      "args": {
+        "language": ""
+      },
+      "snippet": "{\n  \"available_servers\": {\n    \"python\": false,\n    \"typescript\": false,\n    \"go\": false,\n    \"rust\": true\n  },\n  \"total_available\": 1\n}"
+    },
+    {
+      "tool": "run_check_gate",
+      "cls": "MCP_ERR",
+      "args": {
+        "task_id": "T-1790136923625-2803e218",
+        "step_id": "1",
+        "changed_files": "cw.py"
+      },
+      "detail": "Error executing tool run_check_gate: 1 validation error for run_check_gateArguments\nchanged_files\n  Input should be a valid list [type=list_type, input_value='cw.py', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/list_type"
+    },
+    {
+      "tool": "resolve_gate_findings",
+      "cls": "MCP_ERR",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "detail": "Error executing tool resolve_gate_findings: invalid_params: 缺少字段: workspace_instance_id"
+    },
+    {
+      "tool": "rule_candidate_create",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "rule_candidate_list",
+      "cls": "OK",
+      "args": {
+        "status": ""
+      },
+      "snippet": "{\n  \"candidates\": [\n    {\n      \"id\": \"ARC-1790142896689-2a7619af\",\n      \"title\": \"自动沉淀: call_chain (warn)\",\n      \"rule_text\": \"在任务执行中重复出现 call_chain 类型问题（8 次）。样例: Symbol attribution missing: target"
+    },
+    {
+      "tool": "rule_candidate_accept",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "rule_candidate_reject",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "rule_list",
+      "cls": "MCP_ERR",
+      "args": {
+        "status": ""
+      },
+      "detail": "Error executing tool rule_list: internal_error: security 组 SQL 失败: Invalid column type Null at index: 0, name: id"
+    },
+    {
+      "tool": "get_applicable_rules",
+      "cls": "OK",
+      "args": {
+        "context": {}
+      },
+      "snippet": "{\n  \"rules\": [],\n  \"count\": 0\n}"
+    },
+    {
+      "tool": "rule_sync_agents_md",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "rule_insert_agents_md_block",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "extract_rule_candidates_from_quality_findings",
+      "cls": "MCP_ERR",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "detail": "Error executing tool extract_rule_candidates_from_quality_findings: invalid_params: 缺少字段: workspace_instance_id"
+    },
+    {
+      "tool": "list_toolchains",
+      "cls": "OK",
+      "args": {},
+      "snippet": "{\n  \"id\": 1,\n  \"name\": \"s2-probe-gcc\",\n  \"compiler_path\": \"/usr/bin/gcc\",\n  \"compiler_type\": \"gcc\",\n  \"version\": \"13.2.0\",\n  \"target_triple\": \"x86_64-pc-windows-msvc\",\n  \"sysroot\": \"\",\n  \"include_dirs"
+    },
+    {
+      "tool": "get_toolchain",
+      "cls": "OK_EMPTY",
+      "args": {
+        "name_or_id": "main"
+      }
+    },
+    {
+      "tool": "get_workspace_toolchains",
+      "cls": "OK_EMPTY",
+      "args": {
+        "workspace_id": 1193
+      }
+    },
+    {
+      "tool": "list_build_contexts",
+      "cls": "MCP_ERR",
+      "args": {
+        "workspace_id": 1193
+      },
+      "detail": "Error executing tool list_build_contexts: invalid_params: workspace_id 1193 与 workspace_instance_id 绑定的 1 不一致"
+    },
+    {
+      "tool": "get_build_context",
+      "cls": "MCP_ERR",
+      "args": {
+        "workspace_id": 1193,
+        "build_context_hash": ""
+      },
+      "detail": "Error executing tool get_build_context: invalid_params: workspace_id 1193 与 workspace_instance_id 绑定的 1 不一致"
+    },
+    {
+      "tool": "get_active_build_context",
+      "cls": "MCP_ERR",
+      "args": {
+        "workspace_id": 1193
+      },
+      "detail": "Error executing tool get_active_build_context: invalid_params: workspace_id 1193 与 workspace_instance_id 绑定的 1 不一致"
+    },
+    {
+      "tool": "get_resolved_edges",
+      "cls": "MCP_ERR",
+      "args": {
+        "workspace_id": 1193,
+        "build_context_hash": ""
+      },
+      "detail": "Error executing tool get_resolved_edges: invalid_params: workspace_id 1193 与 workspace_instance_id 绑定的 1 不一致"
+    },
+    {
+      "tool": "count_resolved_edges",
+      "cls": "MCP_ERR",
+      "args": {
+        "workspace_id": 1193,
+        "build_context_hash": ""
+      },
+      "detail": "Error executing tool count_resolved_edges: invalid_params: workspace_id 1193 与 workspace_instance_id 绑定的 1 不一致"
+    },
+    {
+      "tool": "get_metrics",
+      "cls": "OK",
+      "args": {
+        "format": ""
+      },
+      "snippet": "{\n  \"pid\": 32040,\n  \"uptime_seconds\": 1e-7,\n  \"schema_version\": 60,\n  \"active_jobs\": 5,\n  \"transport\": \"http\"\n}"
+    },
+    {
+      "tool": "get_role_view",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"view_type\": \"implementer\",\n  \"view_version\": \"1.0\",\n  \"stage\": \"blind\",\n  \"view_manifest_hash\": \"5dd850976eebe8d374bc8f3ee17568eefb4aa284796d856615d4ce8b3"
+    },
+    {
+      "tool": "find_evidence",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"items\": [],\n  \"count\": 0\n}"
+    },
+    {
+      "tool": "get_freshness_status",
+      "cls": "OK",
+      "args": {
+        "evidence_id": "1"
+      },
+      "snippet": "{\n  \"items\": [\n    {\n      \"evidence_id\": \"1\",\n      \"status\": \"invalid\"\n    }\n  ]\n}"
+    },
+    {
+      "tool": "get_gate_decision",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"items\": [],\n  \"count\": 0\n}"
+    },
+    {
+      "tool": "submit_verdict",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "append_evidence",
+      "cls": "MCP_ERR",
+      "args": {
+        "task_id": "T-1790136923625-2803e218",
+        "step_id": "1",
+        "evidence_id": "1",
+        "evidence_type": "1",
+        "manifest_path": "cw.py"
+      },
+      "detail": "Error executing tool append_evidence: invalid_params: 缺少 payload_hash"
+    },
+    {
+      "tool": "task_remediation_create",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "task_step_resolve",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "import_envelope_dependencies",
+      "cls": "MCP_ERR",
+      "args": {
+        "workspace_id": 1193,
+        "task_id": "T-1790136923625-2803e218",
+        "contract_id": "1",
+        "contract_revision": 1,
+        "dependencies": []
+      },
+      "detail": "Error executing tool import_envelope_dependencies: invalid_params: 缺少字段: workspace_instance_id"
+    },
+    {
+      "tool": "record_artifact_identity",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_artifact_freshness",
+      "cls": "OK",
+      "args": {
+        "workspace_id": 1193,
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"found\": false\n}"
+    },
+    {
+      "tool": "publish_interface",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_interface_providers",
+      "cls": "OK",
+      "args": {
+        "workspace_id": 1193,
+        "interface_name": "main"
+      },
+      "snippet": "{\n  \"items\": [],\n  \"count\": 0\n}"
+    },
+    {
+      "tool": "select_interface_provider",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "build_hard_dependency_edges",
+      "cls": "OK",
+      "args": {
+        "workspace_id": 1193,
+        "contract_id": "1",
+        "contract_revision": 1
+      },
+      "snippet": "{\n  \"edges_computed\": 0,\n  \"edges_inserted\": 0\n}"
+    },
+    {
+      "tool": "detect_cycle",
+      "cls": "OK",
+      "args": {
+        "workspace_id": 1193
+      },
+      "snippet": "{\n  \"has_cycle\": false,\n  \"cycle_path\": [],\n  \"checked_nodes\": 0\n}"
+    },
+    {
+      "tool": "validate_revision_dependencies",
+      "cls": "OK",
+      "args": {
+        "workspace_id": 1193,
+        "contract_id": "1",
+        "contract_revision": 1
+      },
+      "snippet": "{\n  \"valid\": true,\n  \"errors\": [],\n  \"cycle_path\": [],\n  \"provider_conflicts\": [],\n  \"edges_built\": 0,\n  \"edges_skipped\": 0\n}"
+    },
+    {
+      "tool": "get_dependency_edges",
+      "cls": "OK_EMPTY",
+      "args": {
+        "workspace_id": 1193
+      }
+    },
+    {
+      "tool": "record_action_identity",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "get_action_identity",
+      "cls": "OK_EMPTY",
+      "args": {
+        "action_id": "1"
+      }
+    },
+    {
+      "tool": "check_action_identity",
+      "cls": "OK",
+      "args": {
+        "identity": "1"
+      },
+      "snippet": "{\n  \"valid\": false,\n  \"reason\": {\n    \"code\": \"E_IDENTITY_INCOMPLETE\",\n    \"message_key\": \"error.identity_incomplete\",\n    \"detail\": \"identity 必须是 JSON 对象\"\n  }\n}"
+    },
+    {
+      "tool": "check_session_separation",
+      "cls": "OK",
+      "args": {
+        "reviewer_identity": "1",
+        "implementer_identity": "1"
+      },
+      "snippet": "{\n  \"valid\": false,\n  \"reason\": {\n    \"code\": \"E_IDENTITY_INCOMPLETE\",\n    \"message_key\": \"error.identity_incomplete\",\n    \"detail\": \"reviewer/implementer_identity 必须是 JSON 对象\"\n  }\n}"
+    },
+    {
+      "tool": "get_attestation_validity",
+      "cls": "MCP_ERR",
+      "args": {
+        "issuer": "",
+        "signing_key_id": "1",
+        "issuance_time": ""
+      },
+      "detail": "Error executing tool get_attestation_validity: 1 validation error for get_attestation_validityArguments\nissuance_time\n  Input should be a valid number, unable to parse string as a number [type=float_parsing, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.de"
+    },
+    {
+      "tool": "list_attestation_revocations",
+      "cls": "OK",
+      "args": {
+        "issuer": ""
+      },
+      "snippet": "{\n  \"items\": [],\n  \"count\": 0\n}"
+    },
+    {
+      "tool": "register_attestation_revocation",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "lease_acquire",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "lease_renew",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "lease_release",
+      "cls": "WRITE_SKIP"
+    },
+    {
+      "tool": "lease_status",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"status\": \"none\",\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"role\": \"\"\n}"
+    },
+    {
+      "tool": "lease_list_events",
+      "cls": "OK_EMPTY",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      }
+    },
+    {
+      "tool": "assignment_create",
+      "cls": "MCP_ERR",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "detail": "Error executing tool assignment_create: invalid_params: 缺少字段: workspace_instance_id"
+    },
+    {
+      "tool": "assignment_show",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"status\": \"none\",\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"role\": \"\"\n}"
+    },
+    {
+      "tool": "assignment_revoke",
+      "cls": "MCP_ERR",
+      "args": {
+        "assignment_id": "1"
+      },
+      "detail": "Error executing tool assignment_revoke: assignment_not_found: assignment_id=1 不存在或已撤销"
+    },
+    {
+      "tool": "task_get_role_prompt",
+      "cls": "OK",
+      "args": {
+        "task_id": "T-1790136923625-2803e218"
+      },
+      "snippet": "{\n  \"schema_version\": \"role_prompt_bundle_v1\",\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"prompt_kind\": \"role_work\",\n  \"authority\": {\n    \"workspace_id\": 1,\n    \"workspace_instance_id\": \"4baea3ff12c2"
+    }
+  ]
+}

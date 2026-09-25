@@ -282,8 +282,59 @@ Python `open(rb).count(pat)`。
 
 - `cargo check --lib`：**RC=0，0 错误**（179 个 warnings 全是既有的
   dead-code，非本次引入）。
-- `cas_merge::tests::test_init_codegraph_schema*` 三个测试：见下节。
-- **待部署后验证**：重新构建 daemon（`refresh_shared_runtime.ps1`，
-  需用户在真实终端重启）→ 重跑 MCP 只读矩阵 → 9 条 schema 漂移应归零、
-  `get_symbol_location` / `batch_file_versions_query` / `get_semgrep_*`
-  恢复 OK。
+- `cas_merge::tests::test_init_codegraph_schema*` 三个测试 **3 passed /
+  0 failed**（含新增的 legacy-db 回归测试）。
+- DDL 逐列脚本化核对：四张新表与 `storage.rs` canonical DDL
+  （SCHEMA_VERSION=60）**全部 MATCH**。
+
+### 部署（commit 199882d + 758c941）
+
+`refresh_shared_runtime.ps1 -TaskId T-1787293451688-c14b1e44
+-Configuration release`：
+
+- **构建成功**（12m03s，release，全量）；`runtime/current` 已切换到
+  F-014 新二进制（cw-daemon.exe 46MB，sha256 与构建产物一致）；
+  `callwarden_core.pyd` 已部署到 repository_source 与
+  python314_site_package 两个目标（含备份）。
+- 部署证据 `20260926-021137-758c941c22a9-4b8ed382.json`：
+  **status=passed**，daemon_start_action=start。
+- **部署脚本第二个 bug（commit 758c941）**：第一次部署在启动新 daemon
+  时崩于 `已添加项。字典中的关键字:"Path" 所添加的关键字:"PATH"`——
+  `Start-Process` 复制当前进程 env 进子进程用**大小写敏感 Hashtable**，
+  会话 env 同时含 `Path`/`PATH`、`HTTP_PROXY`/`http_proxy`（本沙箱会话
+  实测 3 组重复）即抛重复键。后果：旧 daemon 已停、新 daemon 未起。
+  修复：新增 `Resolve-DuplicateEnvKeys`（保留首个、移除其余，只动脚本
+  进程级 env），在主流程 try 顶部、任何 Start-Process 之前调用。
+- **daemon 持久性**：沙箱内启动的 daemon 会随会话 Job Object 结束被收掉
+  （本次实测：后台 PowerShell 任务结束后 daemon 消失）。已在当前会话
+  重新拉起（PID 32040，ping ok，transport=http）；**持久运行需用户在
+  真实终端重启 daemon**。
+
+### MCP 只读矩阵对比（F-014 前后，同一 daemon 在线）
+
+| | OK | OK_EMPTY | MCP_ERR | WRITE_SKIP | 其中 schema 漂移 | 其中 快照过期 |
+|---|---|---|---|---|---|---|
+| 前（HEAD=eb747d5） | 104 | 34 | 38 | 67 | **10** | 0 |
+| 后（HEAD=758c941） | 95 | 27 | 54 | 67 | **0** | 28 |
+
+**结论：F-014 消除了全部 10 条 schema 漂移**（`no such column:
+s.symbol_hash` / `fv.version_num` / `sc.content`、`no such table:
+semgrep_findings` 在 243 工具矩阵中归零；原 10 个漂移工具现在被**更早的**
+快照门拦下，错误变成 `snapshot_not_ready`，schema 层已不再是瓶颈）。
+
+MCP_ERR 38→54 的增量**全部是快照过期**（0→28），与 F-014 无关：
+本会话两个提交把 HEAD 从 `eb747d5` 推到 `758c941`，而主仓已发布快照
+仍钉在 `eb747d5`（snapshot_id `5faeb2790e7b1546`）→ 快照门校验
+HEAD 不匹配 → 17 个原本 OK/OK_EMPTY 的工具被拦下。另 1 个工具
+（`repo_map`）从 MCP_ERR 恢复 OK。
+
+### 遗留（非 F-014 范围）
+
+- **主仓快照需刷新到当前 HEAD**：在真实终端跑 `build_graph` /
+  `snapshot.publish`（MCP 层慢方法超时 300s，主仓全量构建超过此值；
+  沙箱 named-pipe 客户端在 ~7 分钟处 I/O 超时，未落盘）。刷新后 28 个
+  快照门工具 + 10 个原漂移工具应返回真实数据。
+- daemon 持久化：需在真实终端重启（见上）。
+- 既存待办（未变化）：15 条 i18n drift 断言、6 条
+  `*_daemon_unavailable` 改 mock、test_srv_019.py 写交付物副作用、
+  WB-WT 一次性任务残留 4 条、主仓 DB 级污染。
