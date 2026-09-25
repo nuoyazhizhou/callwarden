@@ -160,6 +160,79 @@ pub fn init_codegraph_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             has_comment INTEGER DEFAULT 0,\
             comment_content TEXT DEFAULT '',\
             qualified_name TEXT DEFAULT ''\
+         );\
+         /* F-014 修复（2026-09-25）：只读路径补齐 canonical 新表。\
+          * init_codegraph_schema 原本只建 6 张旧表，而 get_symbol_location /\
+          * get_file_symbols / get_symbol_history / get_file_history /\
+          * get_recent_changes / get_issue_summary / find_issues /\
+          * get_semgrep_* / get_uncommented_symbols 等只读查询引用\
+          * file_versions.file_instance_id、fv.version_num、sc.content、\
+          * semgrep_findings 表 → 在 Python 时代旧库上必然报\
+          * no such column / no such table。\
+          * 迁移 initialize_or_migrate 只在写路径（open_codegraph_write）触发，\
+          * 只读路径不经过；此处与 storage.rs canonical DDL（L162-220）\
+          * 保持同一真相源，CREATE IF NOT EXISTS 幂等。 */\
+         CREATE TABLE IF NOT EXISTS file_versions (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            file_instance_id INTEGER NOT NULL,\
+            version_num INTEGER NOT NULL,\
+            content_hash TEXT NOT NULL,\
+            mtime REAL NOT NULL,\
+            total_lines INTEGER DEFAULT 0,\
+            parsed_at REAL NOT NULL,\
+            is_current INTEGER DEFAULT 1,\
+            is_deleted INTEGER DEFAULT 0,\
+            commit_hash TEXT DEFAULT '',\
+            ast_cache BLOB DEFAULT NULL,\
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),\
+            FOREIGN KEY (content_hash) REFERENCES file_contents(content_hash)\
+         );\
+         CREATE TABLE IF NOT EXISTS file_symbol_versions (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            file_version_id INTEGER NOT NULL,\
+            symbol_hash TEXT NOT NULL,\
+            qualified_name TEXT NOT NULL,\
+            start_line INTEGER NOT NULL,\
+            end_line INTEGER NOT NULL,\
+            module_path TEXT DEFAULT '',\
+            depth INTEGER DEFAULT -1,\
+            is_deleted INTEGER DEFAULT 0,\
+            FOREIGN KEY (file_version_id) REFERENCES file_versions(id),\
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)\
+         );\
+         CREATE TABLE IF NOT EXISTS call_versions (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            file_version_id INTEGER NOT NULL,\
+            caller_qualified TEXT NOT NULL,\
+            caller_hash TEXT DEFAULT '',\
+            callee_name TEXT NOT NULL,\
+            callee_module TEXT DEFAULT '',\
+            callee_qualified TEXT DEFAULT '',\
+            callee_file TEXT DEFAULT '',\
+            call_line INTEGER DEFAULT 0,\
+            is_cross_file INTEGER DEFAULT 0,\
+            FOREIGN KEY (file_version_id) REFERENCES file_versions(id)\
+         );\
+         CREATE TABLE IF NOT EXISTS semgrep_findings (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            file_instance_id INTEGER NOT NULL,\
+            content_hash TEXT DEFAULT '',\
+            rule_id TEXT NOT NULL,\
+            rule_name TEXT DEFAULT '',\
+            message TEXT DEFAULT '',\
+            severity TEXT DEFAULT 'INFO',\
+            confidence TEXT DEFAULT 'UNKNOWN',\
+            language TEXT DEFAULT '',\
+            start_line INTEGER DEFAULT 0,\
+            end_line INTEGER DEFAULT 0,\
+            snippet TEXT DEFAULT '',\
+            fix TEXT DEFAULT '',\
+            symbol_id INTEGER DEFAULT 0,\
+            symbol_qualified TEXT DEFAULT '',\
+            scanned_at REAL DEFAULT 0,\
+            scan_id INTEGER DEFAULT 0,\
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),\
+            UNIQUE(content_hash, rule_id, start_line)\
          );",
     )?;
 
@@ -1701,15 +1774,20 @@ mod tests {
         init_codegraph_schema(&cg_conn).expect("init_codegraph_schema 应成功");
 
         // 验证所有业务表都已创建
+        // F-014（2026-09-25）：init_codegraph_schema 除 6 张旧表外还须创建 4 张
+        // canonical 新表（file_versions/file_symbol_versions/call_versions/semgrep_findings），
+        // 否则只读查询（get_symbol_location 等）在新 schema SQL 下撞旧库报
+        // "no such column"/"no such table"。
         let table_count: i64 = cg_conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
-                 ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents')",
+                 ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents',\
+                  'file_versions','file_symbol_versions','call_versions','semgrep_findings')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(table_count, 6, "应有 6 张业务表");
+        assert_eq!(table_count, 10, "应有 10 张业务表（6 旧 + 4 canonical 新表）");
 
         // 验证 FTS5 虚拟表
         let fts_exists: i64 = cg_conn
@@ -1740,8 +1818,71 @@ mod tests {
         // 第二次调用应无操作（CREATE IF NOT EXISTS）
         init_codegraph_schema(&cg_conn).expect("第二次调用应成功（幂等）");
 
-        // 验证仍只有 6 张业务表（没有重复创建）
+        // 验证仍有全部 10 张业务表（没有重复创建，F-014 后含 4 张 canonical 新表）
         let table_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents',\
+                  'file_versions','file_symbol_versions','call_versions','semgrep_findings')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 10);
+    }
+
+    #[test]
+    fn test_init_codegraph_schema_adds_canonical_tables_on_legacy_db() {
+        // F-014 回归测试（2026-09-25）：
+        // Python 时代遗留的 codegraph DB 只含 6 张旧表（无 schema_migrations、
+        // 无 file_versions/file_symbol_versions/call_versions/semgrep_findings）。
+        // 只读路径（cas_merge_query → init_codegraph_schema）在这样的库上被调用时，
+        // 必须补齐 4 张 canonical 新表，否则 get_symbol_location /
+        // batch_file_versions_query / semgrep 查询会报 schema 漂移错误。
+        let cg_conn = Connection::open_in_memory().unwrap();
+
+        // 1. 模拟旧库：先全量建表，再 DROP 掉 4 张 canonical 新表。
+        //    不手抄旧表 DDL（旧表含 is_active / active_task_id / symbol_hash 等
+        //    init_codegraph_schema 建索引时引用的列），直接复用全量 schema 后
+        //    抹去新表，既忠实又不会因 DDL 漂移而失效。
+        init_codegraph_schema(&cg_conn).unwrap();
+        cg_conn
+            .execute_batch(
+                "DROP TABLE file_versions;\
+                 DROP TABLE file_symbol_versions;\
+                 DROP TABLE call_versions;\
+                 DROP TABLE semgrep_findings;",
+            )
+            .unwrap();
+
+        // 确认旧库确实缺 4 张 canonical 新表
+        let missing_before: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('file_versions','file_symbol_versions','call_versions','semgrep_findings')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(missing_before, 0, "模拟旧库不应含 canonical 新表");
+
+        // 2. 只读路径调用 init_codegraph_schema（幂等补齐）
+        init_codegraph_schema(&cg_conn)
+            .expect("init_codegraph_schema 在旧库上应成功补齐 canonical 新表");
+
+        // 3. 4 张 canonical 新表必须全部存在
+        let new_table_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('file_versions','file_symbol_versions','call_versions','semgrep_findings')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_table_count, 4, "旧库上应补齐 4 张 canonical 新表");
+
+        // 4. 旧表仍在（未被破坏）
+        let old_table_count: i64 = cg_conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
                  ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents')",
@@ -1749,7 +1890,29 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(table_count, 6);
+        assert_eq!(old_table_count, 6, "旧表应保留");
+
+        // 5. semgrep_findings 必须含 canonical 定义的关键列（与 storage.rs 对齐）
+        let has_columns: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('semgrep_findings') \
+                 WHERE name IN ('content_hash','rule_id','start_line','symbol_id','scan_id')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_columns, 5, "semgrep_findings 应含 canonical 关键列");
+
+        // 6. 再调一次仍幂等（CREATE IF NOT EXISTS 不报错、不重复）
+        init_codegraph_schema(&cg_conn).expect("第二次调用应幂等成功");
+        let dup_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='semgrep_findings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dup_count, 1, "幂等：表不重复创建");
     }
 
     #[test]
