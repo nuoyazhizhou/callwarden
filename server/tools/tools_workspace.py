@@ -50,13 +50,21 @@ class CodeMetricsSummary(TypedDict):
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
-    def build_graph() -> dict:
+    def build_graph(workspace_instance_id: str = "") -> dict:
         """完整构建代码知识图谱（全量扫描）
+
+        Args:
+            workspace_instance_id: 目标 workspace 的稳定实例 ID（可选）。
+                留空时由 route_rpc 注入当前活动 workspace（多数场景正确）。
+                显式传入可定向构建指定 workspace——多 workspace 环境下必须
+                显式传入，否则会构建活动 workspace（主仓 1145 文件级扫描，
+                隔离 ws 场景将耗时数百秒并误把主仓算作目标）。
 
         Returns:
             daemon 结构化统计（scanned/inserted/unchanged/symbols/calls 等）
         """
-        return _route('workspace.build_graph', {}, 'PROTECTED_MUTATION')
+        params = {"workspace_instance_id": workspace_instance_id} if workspace_instance_id else {}
+        return _route('workspace.build_graph', params, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def refresh_file(file_path: str) -> dict:

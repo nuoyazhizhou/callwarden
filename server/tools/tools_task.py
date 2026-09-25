@@ -80,7 +80,7 @@ def register(mcp: FastMCP) -> None:
             {
                 "title": title,
                 "description": description,
-                "steps": steps,
+                "steps": steps if steps is not None else [],
                 "creator": creator,
                 "workspace_id": workspace_id,
                 "workspace_instance_id": workspace_instance_id,
@@ -216,7 +216,7 @@ def register(mcp: FastMCP) -> None:
         """
         if identity and agent_instance_id and not identity.get("agent_instance_id"):
             identity = {**identity, "agent_instance_id": agent_instance_id}
-        return _route('task.report', {"task_id": task_id, "step_id": step_id, "result": result, "success": success, "changes": changes, "identity": identity, "snapshot_id": snapshot_id}, 'PROTECTED_MUTATION')
+        return _route('task.report', {"task_id": task_id, "step_id": step_id, "result": result, "success": success, "changes": changes if changes is not None else [], "identity": identity, "snapshot_id": snapshot_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def record_task_symbol_change(task_id: str, file_path: str, step_id: str = "",
@@ -999,12 +999,12 @@ def register(mcp: FastMCP) -> None:
         Returns:
             新建子任务信息（task_id / parent_id / status / step_count）
         """
-        return _route('task.create_subtask', {"parent_task_id": parent_task_id, "title": title, "description": description, "steps": steps, "creator": creator}, 'PROTECTED_MUTATION')
+        return _route('task.create_subtask', {"parent_task_id": parent_task_id, "title": title, "description": description, "steps": steps if steps is not None else [], "creator": creator}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_split(task_id: str, subtasks: list) -> list:
         """将大任务拆分为多个子任务"""
-        return _route('task.split', {"task_id": task_id, "subtasks": subtasks}, 'PROTECTED_MUTATION')
+        return _route('task.split', {"task_id": task_id, "subtasks": subtasks if subtasks is not None else []}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_status_tree(task_id: str) -> Optional[dict]:

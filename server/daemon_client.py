@@ -4054,6 +4054,59 @@ def _is_test_mode() -> bool:
     return os.environ.get("CW_TEST_MODE", "") == "1"
 
 
+# F-013（2026-09-25）：workspace.activate / workspace.remove 的 id-or-name
+# 参数路由断裂修复。MCP 工具 set_active_workspace / delete_workspace 与 CLI
+# 只传 workspace_id_or_name（数字字符串或名称），而 Rust handler
+# （handle_workspace_activate / handle_workspace_remove）只 require_str_param
+# "workspace_instance_id"。若 route_rpc 不在此解析，下方 workspace 权威注入
+# 会把当前活动 workspace 的 instance 顶替上去——delete_workspace("1711")
+# 曾因此静默归档主仓 1193（instance 4baea3ff12c2ea5c）而非目标隔离 ws。
+_WS_ID_OR_NAME_METHODS = frozenset({"workspace.activate", "workspace.remove"})
+
+
+def _resolve_ws_instance_by_id_or_name(rpc_client, id_or_name: str) -> str:
+    """把 workspace_id_or_name（数字字符串或名称）解析为 workspace_instance_id。
+
+    匹配规则与 list_workspaces 的兼容映射一致（name 用
+    os.path.basename(client_view_root) 兜底，daemon_workspaces 无 name 列）：
+    - 纯数字 → 精确匹配 daemon_workspaces.workspace_id；
+    - 非数字 → os.path.basename(client_view_root) 精确匹配（名称语义）。
+
+    Args:
+        rpc_client: 已就绪的 RPC client（HTTP 或 pipe），用于调 workspace.list。
+        id_or_name: CLI/MCP 传入的 workspace_id_or_name 原始值。
+
+    Returns:
+        目标 workspace 的 workspace_instance_id。
+
+    Raises:
+        DaemonRemoteError: workspace_not_found（fail-closed，绝不回退活动 ws）。
+    """
+    from callwarden.server.daemon_protocol import DaemonRemoteError
+
+    raw = rpc_client.call("workspace.list", {})
+    rows = raw if isinstance(raw, list) else []
+    key = str(id_or_name).strip()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        instance = row.get("workspace_instance_id")
+        if not instance:
+            continue
+        if key.isdigit():
+            if str(row.get("workspace_id")) == key:
+                return str(instance)
+        else:
+            client_root = row.get("client_view_root") or ""
+            if client_root and os.path.basename(client_root) == key:
+                return str(instance)
+    raise DaemonRemoteError(
+        "workspace_not_found",
+        f"workspace_id_or_name={id_or_name!r} 无法解析为已注册 workspace"
+        "（fail-closed：禁止回退当前活动 workspace）",
+    )
+
+
 def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any:
     """统一薄壳路由（T03 收敛）：参数 → daemon RPC → 结果原样返回。
 
@@ -4088,6 +4141,33 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
         if "request_id" not in params:
             import uuid
             params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"
+
+    # F-013（2026-09-25）：workspace.activate / workspace.remove 的
+    # id-or-name → instance 解析必须在权威注入之前完成，否则注入块会把
+    # 当前活动 workspace 的 instance 顶替为目标（delete_workspace("1711")
+    # 曾因此静默归档主仓 1193）。解析失败 fail-closed，绝不回退活动 ws。
+    if (
+        rpc_method in _WS_ID_OR_NAME_METHODS
+        and "workspace_id_or_name" in params
+        and "workspace_instance_id" not in params
+    ):
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+
+        resolver_client = _get_rpc_client_for_route()
+        try:
+            params["workspace_instance_id"] = _resolve_ws_instance_by_id_or_name(
+                resolver_client, params["workspace_id_or_name"]
+            )
+        except DaemonRemoteError:
+            # workspace_not_found 透传：调用方应看到真实的解析失败
+            raise
+        except Exception as exc:
+            raise DaemonUnavailableError(
+                f"{E_HTTP_DAEMON_UNAVAILABLE}: 解析 workspace_id_or_name 失败 "
+                f"({rpc_method}): {exc}（fail-closed，不回退活动 workspace）"
+            ) from exc
+        # 已定位目标 workspace，移除 daemon 不认的兼容键
+        params.pop("workspace_id_or_name", None)
 
     # workspace 权威注入（HTTP 模式经 _ensure_remote_snapshot，非 HTTP 沿用 _inject_workspace_id）
     if rpc_method not in _NO_WORKSPACE_METHODS:
