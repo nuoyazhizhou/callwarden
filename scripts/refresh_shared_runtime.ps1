@@ -70,6 +70,24 @@ function Digest([string]$Path) {
     }
 }
 
+# Resolve-DuplicateEnvKeys — 会话 env 若同时含仅大小写不同的键（Path/PATH、
+# HTTP_PROXY/http_proxy …），Start-Process 把当前进程 env 复制进子进程时用
+# 大小写敏感 Hashtable，抛 "已添加项。字典中的关键字:'Path' 所添加的关键字:'PATH'"
+# 导致 daemon 启动失败（2026-09-25 F-014 部署实测命中）。保留首个、移除其余，
+# 只动脚本进程级 env，不碰机器/用户级。
+function Resolve-DuplicateEnvKeys {
+    $seen = @{}
+    foreach ($k in [Environment]::GetEnvironmentVariables().Keys) {
+        $key = [string]$k
+        $low = $key.ToLowerInvariant()
+        if ($seen.ContainsKey($low)) {
+            Remove-Item -LiteralPath "Env:$key" -ErrorAction SilentlyContinue
+        } else {
+            $seen[$low] = $true
+        }
+    }
+}
+
 # Set-MsvcBuildEnv — 等价 scripts/msvc-env.sh：在干净 PowerShell 会话下注入 MSVC 工具集
 # + Windows SDK 的 LIB/INCLUDE/PATH，避免 cargo 链接期报 LNK1181: cannot open kernel32.lib。
 # 此前 13:30 部署成功是继承了宿主 LIB；15:39 由干净会话发起时缺少 → cargo build 失败
@@ -575,6 +593,7 @@ New-Item -ItemType Directory -Force -Path $VersionRoot, $EvidenceRoot | Out-Null
 
 try {
     if (-not (Test-Path -LiteralPath $RustManifest -PathType Leaf)) { throw "找不到 Rust manifest: $RustManifest" }
+    Resolve-DuplicateEnvKeys
     $pythonRuntime = Require-WindowsPython314
     $env:PYTHON = $PythonExe
     $env:PYO3_PYTHON = $PythonExe
