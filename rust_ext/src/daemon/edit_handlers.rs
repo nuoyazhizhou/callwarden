@@ -399,21 +399,29 @@ pub fn handle_rule_candidate_accept(
         )
         .map_err(|_| DaemonRpcError::new("candidate_not_found", format!("candidate {candidate_id} 不存在")))?;
     let now = now_ts();
-    conn.execute(
-        "UPDATE agent_rule_candidates SET status = 'accepted', reviewed_at = ?1, reviewer = 'daemon' WHERE id = ?2",
-        rusqlite::params![now, candidate_id],
-    )
-    .map_err(|e| DaemonRpcError::internal_error(format!("candidate accept update: {e}")))?;
+    // id 必须显式写入：与 handle_rule_seed_bootstrap 同根因——agent_rules.id
+    // 是 TEXT PK，SQLite 允许 NULL 且 NULL 互不冲突，不写 id 会落出 NULL id
+    // 行污染 rule_list，且 INSERT OR IGNORE 幂等失效。candidate_id 唯一，
+    // 派生 AR-from-<candidate_id> 作确定性 id，重复 accept 幂等（对齐
+    // Python db_agent_rules.rule_candidate_accept 的幂等返回范式）。
+    let rule_id = format!("AR-from-{candidate_id}");
     let linked_rule_id = conn.execute(
-        "INSERT OR IGNORE INTO agent_rules (title, rule_text, scope_json, severity, status, source_candidate_id, evidence_json, created_at, updated_at, synced_to_agents_md, sync_hash)
-         VALUES (?1, ?2, '{}', ?3, 'active', ?4, '{}', ?5, ?5, 0, '')",
-        rusqlite::params![title, rule_text, severity, candidate_id, now],
+        "INSERT OR IGNORE INTO agent_rules (id, title, rule_text, scope_json, severity, status, source_candidate_id, evidence_json, created_at, updated_at, synced_to_agents_md, sync_hash)
+         VALUES (?1, ?2, ?3, '{}', ?4, 'active', ?5, '{}', ?6, ?6, 0, '')",
+        rusqlite::params![&rule_id, title, rule_text, severity, candidate_id, now],
     );
+    // Python 侧双向绑定：rule_id 回写 candidate.linked_rule_id，使重复
+    // accept 能凭该字段返回原规则而非重建。
+    conn.execute(
+        "UPDATE agent_rule_candidates SET status = 'accepted', reviewed_at = ?1, reviewer = 'daemon', linked_rule_id = ?2 WHERE id = ?3",
+        rusqlite::params![now, &rule_id, candidate_id],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("candidate accept linked_rule_id writeback: {e}")))?;
     let _ = workspace_id;
     Ok(json!({
         "ok": true,
         "candidate_id": candidate_id,
-        "linked_rule_id": linked_rule_id.map(|_| conn.last_insert_rowid()).unwrap_or(0),
+        "linked_rule_id": linked_rule_id.map(|_| rule_id).unwrap_or_default(),
         "status": "accepted",
     }))
 }
@@ -856,5 +864,68 @@ mod tests {
                 "AR-seed-no-todo-in-commit"
             ]
         );
+    }
+
+    /// rule.candidate_accept 必须写确定性 id 且幂等（与 Python
+    /// db_agent_rules.rule_candidate_accept 对齐）。修复前不写 id →
+    /// 重复 accept 落多行 NULL id 规则且 INSERT OR IGNORE 失效。
+    #[test]
+    fn rule_candidate_accept_is_idempotent_and_writes_deterministic_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE agent_rules (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, rule_text TEXT NOT NULL,
+                scope_json TEXT DEFAULT '{}', severity TEXT DEFAULT 'info',
+                status TEXT DEFAULT 'active', source_candidate_id TEXT DEFAULT '',
+                evidence_json TEXT DEFAULT '{}', created_at REAL NOT NULL,
+                updated_at REAL NOT NULL, synced_to_agents_md INTEGER DEFAULT 0,
+                sync_hash TEXT DEFAULT '');
+             CREATE TABLE agent_rule_candidates (
+                id TEXT PRIMARY KEY, title TEXT, rule_text TEXT, scope_json TEXT,
+                severity TEXT, source TEXT, evidence_json TEXT, confidence REAL,
+                status TEXT, created_at REAL, reviewed_at REAL, reviewer TEXT,
+                linked_rule_id TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_rule_candidates (id, title, rule_text, severity, status, created_at)
+             VALUES ('ARC-1', 't', 'r', 'warning', 'pending', 1.0)",
+            [],
+        )
+        .unwrap();
+
+        // 第一次 accept
+        let r1 = handle_rule_candidate_accept(&conn, 1, &json!({"candidate_id": "ARC-1"})).unwrap();
+        assert_eq!(r1["linked_rule_id"], "AR-from-ARC-1");
+        let n1: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_rules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n1, 1);
+
+        // 回写的双向绑定必须落盘（对齐 Python 范式）
+        let linked: String = conn
+            .query_row(
+                "SELECT linked_rule_id FROM agent_rule_candidates WHERE id = 'ARC-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "AR-from-ARC-1");
+
+        // candidate 已 accepted，重复 accept 不再新增规则行（幂等）
+        let r2 = handle_rule_candidate_accept(&conn, 1, &json!({"candidate_id": "ARC-1"})).unwrap();
+        assert_eq!(r2["linked_rule_id"], "AR-from-ARC-1");
+        let n2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_rules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n2, 1);
+
+        // 零 NULL id 行
+        let null_n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_rules WHERE id IS NULL", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(null_n, 0);
     }
 }
