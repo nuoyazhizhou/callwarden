@@ -116,3 +116,41 @@ NULL id 的污染源（写入层根因）：`edit_handlers.rs` 两处 `INSERT OR
 - 主库 3 条 NULL id 规则行（污染数据）现可被安全读取（id=""）；是否清理（`DELETE FROM agent_rules WHERE id IS NULL`）属 data-fix 决策，需按治理路径执行。
 - `guardrail_list_rules` 读路径触发 `_init_builtin_rules` INSERT（写面拒绝）为第三类缺陷，未在本轮范围。
 - 沙箱 daemon（pid 63864，后台任务托管）会话结束即收；**持久化需用户真实终端重启**。
+
+---
+
+## 追加 2（2026-09-26 深夜）：遗留三项收口
+
+commit：`c004d17`（guardrail_list_rules 只读化）。用户已在真实终端执行部署
+（证据 `20260926-232523-58eb1e9afa06-2f672093.json`，status=passed）。
+
+### 1. NULL id 污染行清理（data-fix，已生效）
+
+- `DELETE FROM agent_rules WHERE id IS NULL`：3 行删除（no-todo-in-commit /
+  no-bare-except / no-print-in-lib，rowid 1-3）。
+- RPC `rule.seed_bootstrap` 重 seed：首次 seeded=3，**二次 seeded=0** ——
+  写入层修复（803ab10）的幂等性首次在真实主库成立（修复前 NULL id 互不
+  判冲突，每次调用恒 +3 行）。
+- 落盘核验：3 行 id 全为 `AR-seed-*`（typeof=text），rule_list 读回正常。
+
+### 2. guardrail_list_rules 只读化（code-fix，commit c004d17，待部署）
+
+根因链：读函数首行 `ensure_builtin_guardrail_rules`（Immediate 事务
+INSERT）→ daemon 摘要面只持只读快照连接 → 写被拒 → 恒 fail-closed
+internal_error（2026-09-10 探针实证）。
+
+修复（职责归位）：
+- `list_guardrail_rules` 纯读化；初始化归写面调用点（CLI guardrail rules
+  显式 ensure；scan_guardrails 事务内自带 seed，均不变）。
+- `handle_summary_guardrail_list_rules` 从 stub 改真实只读实现（对齐
+  Python List[Dict]；category 双名兼容；旧库缺表容错空列表）。
+- guardrail_scan 保持写面 fail-closed（INSERT findings 真写面）。
+
+验证：新增 2 测试 + 既有 4 测试全过；release 二进制扫描（新 handler
+文案编入、旧 stub 文案移除）。**生效需重新部署**（当前 daemon 仍为
+58eb1e9 二进制）。
+
+### 3. daemon 持久化（已解决）
+
+用户真实终端部署，daemon（pid 12036，sha256 与证据一致）由部署脚本
+拉起，不随会话回收。
