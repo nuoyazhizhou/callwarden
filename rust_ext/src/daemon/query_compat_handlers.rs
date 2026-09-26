@@ -5809,6 +5809,8 @@ pub fn handle_summary_ownership_map(
 // 首行 _init_builtin_rules 走 INSERT OR IGNORE → OperationalError
 // "attempt to write a readonly database"，MCP 面恒 error。Rust 原生侧按
 // fail-closed 同语义返回内部错误（写面拒绝落只读快照连接，不实际写库）。
+// 2026-09-26 修复：guardrail_list_rules 改纯读真实实现（见下方 handler）；
+// guardrail_scan 保持写面 fail-closed（INSERT findings 是真写面）。
 
 /// guardrail_scan（写面 fail-closed，对齐 Python worker readonly error）。
 pub fn handle_summary_guardrail_scan(
@@ -5824,18 +5826,56 @@ pub fn handle_summary_guardrail_scan(
     ))
 }
 
-/// guardrail_list_rules（写面 fail-closed，同上）。
+/// guardrail_list_rules —— 只读实现（2026-09-26 修复：原为写面 fail-closed
+/// stub）。Python 侧 `guardrail_list_rules`（db_guardrail.py:303）首行
+/// `_init_builtin_rules()` 是写面，只读快照连接必然拒绝；修复后读路径纯读，
+/// builtin 初始化职责归写面调用点（CLI guardrail rules / scan 事务内）。
+/// 返回对齐 Python：List[Dict]，内置规则优先、按创建时间升序。
 pub fn handle_summary_guardrail_list_rules(
-    _conn: &Connection,
+    conn: &Connection,
     _workspace_id: i64,
-    _params: &Value,
+    params: &Value,
 ) -> Result<Value, DaemonRpcError> {
-    Err(DaemonRpcError::internal_error(
-        "guardrail_list_rules is write-face (_init_builtin_rules INSERT); \
-         read-only snapshot connection rejects it \
-         (parity: python worker OperationalError attempt to write a readonly database)"
-            .to_string(),
-    ))
+    let category = get_str_param_or(params, "category", "");
+    let category_filter = get_str_param_or(params, "category_filter", &category);
+    let sql = if category_filter.trim().is_empty() {
+        "SELECT rule_id, category, severity, pattern, action, description, is_builtin, created_at \
+         FROM guardrail_rules ORDER BY is_builtin DESC, created_at ASC"
+    } else {
+        "SELECT rule_id, category, severity, pattern, action, description, is_builtin, created_at \
+         FROM guardrail_rules WHERE category = ?1 ORDER BY is_builtin DESC, created_at ASC"
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        // 旧库缺 guardrail_rules 表：对齐 Python 新库首跑前语义，返回空列表
+        Err(e) if e.to_string().contains("no such table") => return Ok(json!([])),
+        Err(e) => {
+            return Err(DaemonRpcError::internal_error(format!(
+                "guardrail_list_rules prepare: {e}"
+            )))
+        }
+    };
+    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
+        Ok(json!({
+            "rule_id": r.get::<_, String>(0)?,
+            "category": r.get::<_, String>(1)?,
+            "severity": r.get::<_, String>(2)?,
+            "pattern": r.get::<_, String>(3)?,
+            "action": r.get::<_, String>(4)?,
+            "description": r.get::<_, String>(5)?,
+            "is_builtin": r.get::<_, i64>(6)? != 0,
+            "created_at": r.get::<_, f64>(7)?,
+        }))
+    };
+    let rows: Vec<Value> = if category_filter.trim().is_empty() {
+        stmt.query_map([], map_row)
+    } else {
+        stmt.query_map(rusqlite::params![category_filter.trim()], map_row)
+    }
+    .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_list_rules query: {e}")))?
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_list_rules row: {e}")))?;
+    Ok(json!(rows))
 }
 
 /// summary_read_file_normalized —— 复刻 config.read_file_normalized
@@ -7888,5 +7928,80 @@ mod security_row_binding_tests {
         // scope 为空对象 → 视为 global，必须命中（修复前整页 500）
         assert_eq!(res["count"].as_i64(), Some(1));
         assert_eq!(res["rules"][0]["title"], "no-bare-except");
+    }
+
+    /// guardrail_rules 表（列序对齐 storage.rs 主库 DDL）。
+    fn guardrail_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(
+            "CREATE TABLE guardrail_rules (
+                rule_id TEXT PRIMARY KEY, category TEXT NOT NULL, severity TEXT NOT NULL,
+                pattern TEXT NOT NULL, action TEXT NOT NULL, description TEXT DEFAULT '',
+                is_builtin INTEGER DEFAULT 0, created_at REAL NOT NULL);",
+        )
+        .expect("schema");
+        conn
+    }
+
+    /// 修复回归：guardrail_list_rules 从写面 fail-closed stub 改为只读真实
+    /// 实现——只读连接上必须返回规则数组（修复前恒 internal_error）。
+    #[test]
+    fn guardrail_list_rules_reads_builtin_rules_without_write_face() {
+        let conn = guardrail_db();
+        conn.execute(
+            "INSERT INTO guardrail_rules (rule_id, category, severity, pattern, action, description, is_builtin, created_at)
+             VALUES ('GR-db-no-direct-sql', 'db_safety', 'block', 'sqlite3\\\\.connect', 'block', '禁止直连 SQL', 1, 100.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO guardrail_rules (rule_id, category, severity, pattern, action, description, is_builtin, created_at)
+             VALUES ('GR-custom-1', 'db_safety', 'warn', 'SELECT \\*', 'warn', '自定义', 0, 200.0)",
+            [],
+        )
+        .unwrap();
+
+        // 只读连接（模拟快照连接语义）
+        let conn = conn;
+        let res = handle_summary_guardrail_list_rules(&conn, 1, &json!({})).unwrap();
+        let arr = res.as_array().expect("list of rules");
+        assert_eq!(arr.len(), 2);
+        // 内置规则优先（is_builtin DESC），同 builtin 内按 created_at ASC
+        assert_eq!(arr[0]["rule_id"], "GR-db-no-direct-sql");
+        assert_eq!(arr[0]["is_builtin"], true);
+        assert_eq!(arr[1]["is_builtin"], false);
+    }
+
+    /// category 过滤 + 缺表容错（旧库语义返回空列表）。
+    #[test]
+    fn guardrail_list_rules_filters_category_and_tolerates_missing_table() {
+        let conn = guardrail_db();
+        conn.execute(
+            "INSERT INTO guardrail_rules (rule_id, category, severity, pattern, action, is_builtin, created_at)
+             VALUES ('GR-api-1', 'api_compat', 'warn', 'def old_api', 'warn', 1, 1.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO guardrail_rules (rule_id, category, severity, pattern, action, is_builtin, created_at)
+             VALUES ('GR-db-1', 'db_safety', 'block', 'raw sql', 'block', 1, 2.0)",
+            [],
+        )
+        .unwrap();
+
+        let filtered = handle_summary_guardrail_list_rules(
+            &conn,
+            1,
+            &json!({"category_filter": "db_safety"}),
+        )
+        .unwrap();
+        let arr = filtered.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["rule_id"], "GR-db-1");
+
+        // 缺表：对齐 Python 新库首跑前语义，空数组而非错误
+        let bare = Connection::open_in_memory().unwrap();
+        let res = handle_summary_guardrail_list_rules(&bare, 1, &json!({})).unwrap();
+        assert_eq!(res.as_array().unwrap().len(), 0);
     }
 }

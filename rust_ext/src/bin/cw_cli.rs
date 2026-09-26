@@ -49,13 +49,13 @@ use callwarden_core::cli::search::{
 };
 use callwarden_core::cli::security::{
     accept_rule_candidate, applicable_agent_rules, bootstrap_status, cleanup_rule_sync_log,
-    create_rule_candidate, extract_rule_candidates, generate_audit_secret,
-    insert_rule_marker_block, list_agent_rules, list_audit_keys, list_guardrail_rules,
-    list_rule_candidates, reject_rule_candidate, resolve_gate_findings, rotate_audit_key,
-    run_check_gate, scan_guardrails, seed_bootstrap_rules, sync_agent_rules, verify_audit_chain,
-    AgentRule, AuditKeyInfo, AuditRotateResult, AuditVerifyResult, BootstrapStatus,
-    CheckGateResult, GateResolveResult, GuardrailRule, GuardrailScanResult, RuleCandidate,
-    RuleCandidateInput, RuleCleanupResult, RuleSeedResult, RuleSyncResult,
+    create_rule_candidate, ensure_builtin_guardrail_rules, extract_rule_candidates,
+    generate_audit_secret, insert_rule_marker_block, list_agent_rules, list_audit_keys,
+    list_guardrail_rules, list_rule_candidates, reject_rule_candidate, resolve_gate_findings,
+    rotate_audit_key, run_check_gate, scan_guardrails, seed_bootstrap_rules, sync_agent_rules,
+    verify_audit_chain, AgentRule, AuditKeyInfo, AuditRotateResult, AuditVerifyResult,
+    BootstrapStatus, CheckGateResult, GateResolveResult, GuardrailRule, GuardrailScanResult,
+    RuleCandidate, RuleCandidateInput, RuleCleanupResult, RuleSeedResult, RuleSyncResult,
 };
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
@@ -2206,6 +2206,8 @@ fn run_guardrail(runtime: &RuntimeOptions, action: GuardrailAction) -> CommandRe
                 ))
             }
             GuardrailAction::Rules { category } => {
+                // list 纯读化后，builtin 初始化移到写面调用点（本地写连接，幂等）
+                ensure_builtin_guardrail_rules(&mut conn)?;
                 let rules = list_guardrail_rules(&mut conn, &category)?;
                 Ok(format_guardrail_rules(&rules, &category, zh_cn))
             }

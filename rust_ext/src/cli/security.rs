@@ -306,11 +306,11 @@ const BUILTIN_GUARDRAIL_RULES: [(&str, &str, &str, &str, &str, &str); 9] = [
     ),
 ];
 
-pub fn list_guardrail_rules(
-    conn: &mut Connection,
-    category: &str,
-) -> Result<Vec<GuardrailRule>, String> {
-    ensure_builtin_guardrail_rules(conn)?;
+pub fn list_guardrail_rules(conn: &mut Connection, category: &str) -> Result<Vec<GuardrailRule>, String> {
+    // 纯读：不做 builtin 规则初始化（那是写面）。daemon 只读快照连接会因
+    // ensure 的 Immediate 事务 INSERT 拒绝而整页失败（"attempt to write a
+    // readonly database"）。初始化职责归写面调用点：CLI guardrail rules
+    //（open_local_write_db）与 scan_guardrails 事务内（insert_builtin_guardrail_rules）。
     let mut sql =
         "SELECT rule_id,category,severity,pattern,action,description,is_builtin,created_at
                    FROM guardrail_rules"
@@ -1865,7 +1865,11 @@ impl PendingFinding {
     }
 }
 
-fn ensure_builtin_guardrail_rules(conn: &mut Connection) -> Result<(), String> {
+/// 写面 builtin 规则初始化（幂等）。仅限持有写连接的调用点：
+/// CLI `guardrail rules`（open_local_write_db）与 `scan_guardrails` 事务内。
+/// daemon 只读快照连接禁止调用（Immediate 事务 INSERT 会被拒绝）。
+pub fn ensure_builtin_guardrail_rules(conn: &mut Connection) -> Result<(), String> {
+    // list_guardrail_rules 已纯读化，daemon 只读快照连接不再经过此函数。
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("cannot begin builtin guardrail transaction: {error}"))?;
