@@ -3807,8 +3807,10 @@ pub fn handle_get_edit_history(
 }
 
 fn security_edit_row_to_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    // id 列为 INTEGER PRIMARY KEY AUTOINCREMENT（file_edit_audit DDL），
+    // 必须按 i64 读取；按 String 读取在真实库必然报 Invalid column type Integer。
     Ok(json!({
-        "id": r.get::<_, String>(0)?,
+        "id": r.get::<_, i64>(0)?,
         "file_path": r.get::<_, String>(1)?,
         "operation": r.get::<_, String>(2)?,
         "file_hash_before": r.get::<_, Option<String>>(3)?,
@@ -4296,8 +4298,11 @@ fn security_row_to_candidate(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 fn security_row_to_rule(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let scope_json: String = r.get::<_, Option<String>>(3)?.unwrap_or_default();
     let evidence_json: String = r.get::<_, Option<String>>(7)?.unwrap_or_default();
+    // id 列为 TEXT PRIMARY KEY（agent_rules DDL）。历史 seed 路径未写 id，
+    // 遗留行 id 为 NULL；rusqlite 的 String 反序列化拒绝 NULL，
+    // 必须按 Option<String> 读取再降级为空串，否则整页查询 500。
     Ok(json!({
-        "id": r.get::<_, String>(0)?,
+        "id": r.get::<_, Option<String>>(0)?.unwrap_or_default(),
         "title": r.get::<_, String>(1)?,
         "rule_text": r.get::<_, String>(2)?,
         "scope": security_deserialize_json_object(&scope_json),
@@ -7764,5 +7769,124 @@ mod bootstrap_tests {
         let res = handle_bootstrap_status(&conn, 1, &json!({}), "").unwrap();
         assert_eq!(res["current_head"], "");
         assert_eq!(res["db_stale"], false);
+    }
+}
+
+#[cfg(test)]
+mod security_row_binding_tests {
+    use super::*;
+
+    /// 建与主库 DDL 逐字对齐的 file_edit_audit + agent_rules（含 workspaces，
+    /// security_workspace_root 需要）。
+    fn security_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, root_path TEXT);
+             CREATE TABLE file_edit_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER, file_path TEXT NOT NULL, operation TEXT NOT NULL,
+                file_hash_before TEXT DEFAULT '', file_hash_after TEXT DEFAULT '',
+                symbol_hash TEXT DEFAULT '', agent_task_id TEXT DEFAULT '',
+                diff_summary TEXT DEFAULT '', status TEXT DEFAULT 'pending',
+                created_at REAL NOT NULL, applied_at REAL DEFAULT 0,
+                reverted_at REAL DEFAULT 0);
+             CREATE TABLE agent_rules (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, rule_text TEXT NOT NULL,
+                scope_json TEXT DEFAULT '{}', severity TEXT DEFAULT 'info',
+                status TEXT DEFAULT 'active', source_candidate_id TEXT DEFAULT '',
+                evidence_json TEXT DEFAULT '{}', created_at REAL NOT NULL,
+                updated_at REAL NOT NULL, synced_to_agents_md INTEGER DEFAULT 0,
+                sync_hash TEXT DEFAULT '');",
+        )
+        .expect("schema");
+        conn.execute(
+            "INSERT INTO workspaces (id, root_path) VALUES (1, 'C:/git_work/callwarden')",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    /// F-014 回归 B1：file_edit_audit.id 是 INTEGER PRIMARY KEY，行映射按
+    /// String 读取在真实库必然 `Invalid column type Integer`（get_edit_history
+    /// MCP internal_error）。修复后按 i64 读取。
+    #[test]
+    fn get_edit_history_reads_integer_id_without_type_error() {
+        let conn = security_db();
+        conn.execute(
+            "INSERT INTO file_edit_audit (workspace_id, file_path, operation, status, created_at)
+             VALUES (1, 'src/lib.rs', 'edit', 'applied', 100.0)",
+            [],
+        )
+        .unwrap();
+
+        let res = handle_get_edit_history(&conn, 1, &json!({"file_path": "src/lib.rs"})).unwrap();
+        let arr = res.as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        // 修复前：String 读 INTEGER 列直接报错，根本到不了断言
+        assert_eq!(arr[0]["id"].as_i64(), Some(1));
+        assert_eq!(arr[0]["file_path"], "src/lib.rs");
+        assert_eq!(arr[0]["operation"], "edit");
+    }
+
+    /// F-014 回归 B2：agent_rules.id 是 TEXT PRIMARY KEY，但历史 seed
+    /// （edit_handlers::handle_rule_seed_bootstrap 未写 id 列）落出 id=NULL
+    /// 的行；行映射按 String 读 NULL 必然 `Invalid column type Null`
+    /// （rule_list MCP internal_error）。修复后 Option<String> 降级空串。
+    #[test]
+    fn rule_list_tolerates_null_id_rows_from_legacy_seed() {
+        let conn = security_db();
+        // 复刻主仓真实污染数据形态：id IS NULL 的 active 规则
+        conn.execute(
+            "INSERT INTO agent_rules (title, rule_text, scope_json, severity, status,
+                source_candidate_id, evidence_json, created_at, updated_at,
+                synced_to_agents_md, sync_hash)
+             VALUES ('no-print-in-lib', '库代码禁止 print', '{}', 'convention',
+                'active', '', '{}', 100.0, 100.0, 0, '')",
+            [],
+        )
+        .unwrap();
+
+        let res = handle_rule_list(&conn, 1, &json!({"status": "active"})).unwrap();
+        assert_eq!(res["count"].as_i64(), Some(1));
+        let rule = &res["rules"][0];
+        // 修复前：String 读 NULL 列整页 500；修复后降级空串不丢规则正文
+        assert_eq!(rule["id"], "");
+        assert_eq!(rule["title"], "no-print-in-lib");
+        assert_eq!(rule["rule_text"], "库代码禁止 print");
+        assert_eq!(rule["status"], "active");
+    }
+
+    /// 正常 id 行不受影响（回归保护）。
+    #[test]
+    fn rule_list_returns_text_id_for_well_formed_rows() {
+        let conn = security_db();
+        conn.execute(
+            "INSERT INTO agent_rules (id, title, rule_text, severity, status, created_at, updated_at)
+             VALUES ('AR-bootstrap-i18n', 'i18n', '必须用 t()', 'warning', 'active', 1.0, 1.0)",
+            [],
+        )
+        .unwrap();
+        let res = handle_rule_list(&conn, 1, &json!({})).unwrap();
+        assert_eq!(res["count"].as_i64(), Some(1));
+        assert_eq!(res["rules"][0]["id"], "AR-bootstrap-i18n");
+    }
+
+    /// get_applicable_rules 与 rule_list 共用 security_row_to_rule，
+    /// NULL id 行同样必须可读。
+    #[test]
+    fn get_applicable_rules_tolerates_null_id_rows() {
+        let conn = security_db();
+        conn.execute(
+            "INSERT INTO agent_rules (title, rule_text, scope_json, severity, status,
+                created_at, updated_at)
+             VALUES ('no-bare-except', '禁裸 except', '{}', 'convention', 'active', 1.0, 1.0)",
+            [],
+        )
+        .unwrap();
+        let res = handle_get_applicable_rules(&conn, 1, &json!({"context": {}})).unwrap();
+        // scope 为空对象 → 视为 global，必须命中（修复前整页 500）
+        assert_eq!(res["count"].as_i64(), Some(1));
+        assert_eq!(res["rules"][0]["title"], "no-bare-except");
     }
 }

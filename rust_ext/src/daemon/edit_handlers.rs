@@ -284,17 +284,22 @@ pub fn handle_rule_seed_bootstrap(
 ) -> Result<Value, DaemonRpcError> {
     let source = get_str_param_or(params, "source", "seed");
     let now = now_ts();
-    let seed_rules: Vec<(&str, &str, &str)> = vec![
-        ("no-todo-in-commit", "代码提交不得包含 TODO/FIXME 占位（P0 质量门槛）", "convention"),
-        ("no-bare-except", "禁止裸 except（应捕获具体异常类型）", "convention"),
-        ("no-print-in-lib", "库代码禁止 print 调试输出（应使用 logger）", "convention"),
+    // id 必须显式写入：agent_rules.id 是 TEXT PRIMARY KEY，SQLite 对非
+    // INTEGER 的 PK 列允许 NULL（NULL 之间不判唯一冲突），不写 id 会落出
+    // id=NULL 的行——rule_list 的行映射按 String 读 id 直接 500，且
+    // INSERT OR IGNORE 的幂等性完全失效（每行都互不冲突）。固定字符串 id
+    // 对齐 Python 侧 rule_seed_bootstrap 的 AR-bootstrap-* 幂等范式。
+    let seed_rules: Vec<(&str, &str, &str, &str)> = vec![
+        ("AR-seed-no-todo-in-commit", "no-todo-in-commit", "代码提交不得包含 TODO/FIXME 占位（P0 质量门槛）", "convention"),
+        ("AR-seed-no-bare-except", "no-bare-except", "禁止裸 except（应捕获具体异常类型）", "convention"),
+        ("AR-seed-no-print-in-lib", "no-print-in-lib", "库代码禁止 print 调试输出（应使用 logger）", "convention"),
     ];
     let mut inserted = 0usize;
-    for (title, text, severity) in seed_rules {
+    for (id, title, text, severity) in seed_rules {
         let res = conn.execute(
-            "INSERT OR IGNORE INTO agent_rules (title, rule_text, scope_json, severity, status, source_candidate_id, evidence_json, created_at, updated_at, synced_to_agents_md, sync_hash)
-             VALUES (?1, ?2, '{}', ?3, 'active', '', '{}', ?4, ?4, 0, '')",
-            rusqlite::params![title, text, severity, now],
+            "INSERT OR IGNORE INTO agent_rules (id, title, rule_text, scope_json, severity, status, source_candidate_id, evidence_json, created_at, updated_at, synced_to_agents_md, sync_hash)
+             VALUES (?1, ?2, ?3, '{}', ?4, 'active', '', '{}', ?5, ?5, 0, '')",
+            rusqlite::params![id, title, text, severity, now],
         );
         if res.is_ok() && res.unwrap() > 0 {
             inserted += 1;
@@ -790,5 +795,66 @@ mod tests {
         assert!(set_b.contains("pkg.x"));
         assert!(!set_b.contains("pkg.y"));
         assert_eq!(set_a.difference(&set_b).count(), 1);
+    }
+
+    /// F-014 回归 B2 根因（写入层）：handle_rule_seed_bootstrap 原本不写
+    /// agent_rules.id 列。SQLite 对非 INTEGER 的 PK 列允许 NULL 且 NULL
+    /// 之间不判唯一冲突 → ① 每次调用都新增 id=NULL 的行（INSERT OR IGNORE
+    /// 幂等完全失效）；② rule_list 行映射按 String 读 NULL 直接整页 500。
+    /// 修复后 seed 写固定字符串 id，重复调用必须幂等且零 NULL id 行。
+    #[test]
+    fn rule_seed_bootstrap_is_idempotent_and_never_produces_null_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE agent_rules (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, rule_text TEXT NOT NULL,
+                scope_json TEXT DEFAULT '{}', severity TEXT DEFAULT 'info',
+                status TEXT DEFAULT 'active', source_candidate_id TEXT DEFAULT '',
+                evidence_json TEXT DEFAULT '{}', created_at REAL NOT NULL,
+                updated_at REAL NOT NULL, synced_to_agents_md INTEGER DEFAULT 0,
+                sync_hash TEXT DEFAULT '');",
+        )
+        .unwrap();
+
+        // 第一次 seed：3 条全部新增
+        let r1 = handle_rule_seed_bootstrap(&conn, 1, &json!({})).unwrap();
+        assert_eq!(r1["seeded"].as_i64(), Some(3));
+        let n1: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_rules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n1, 3);
+
+        // 第二次 seed：固定 id 命中唯一约束 → 全部忽略，0 新增（修复前会再插 3 行）
+        let r2 = handle_rule_seed_bootstrap(&conn, 1, &json!({})).unwrap();
+        assert_eq!(r2["seeded"].as_i64(), Some(0));
+        let n2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_rules", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n2, 3);
+
+        // 零 NULL id 行（修复前 3 行 id 全 NULL）
+        let null_n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_rules WHERE id IS NULL", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(null_n, 0);
+
+        // id 可被 rule_list 行映射按字符串读出
+        let ids: Vec<String> = conn
+            .prepare("SELECT id FROM agent_rules ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "AR-seed-no-bare-except",
+                "AR-seed-no-print-in-lib",
+                "AR-seed-no-todo-in-commit"
+            ]
+        );
     }
 }
