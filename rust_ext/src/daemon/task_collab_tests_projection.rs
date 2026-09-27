@@ -1834,3 +1834,135 @@ use super::support::*;
             )
             .unwrap();
     }
+
+    /// 为分页测试播种 created_at 严格递增的任务（DESC 排序确定性）。
+    /// seed_task_binding 用固定 ts，这里再 UPDATE 成每任务独占时间戳。
+    fn seed_paged_task(store: &TaskCollabStore, task_id: &str, ts: f64, status: &str) {
+        seed_task_binding(store, task_id);
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET created_at = ?2, updated_at = ?2, status = ?3 WHERE id = ?1",
+            params![task_id, ts, status],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_task_list_offset_yields_disjoint_windows() {
+        // 回归：handle_task_list 曾只解析 limit、从不读 offset，SQL 无 OFFSET 子句
+        // → 任意 offset 返回同一窗口（分页盲区，客户端把重复计数当全量）。
+        // 修复后 offset 必须推进窗口且各页互不相交。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let ids = ["T-PAGE-A", "T-PAGE-B", "T-PAGE-C", "T-PAGE-D", "T-PAGE-E"];
+        for (i, id) in ids.iter().enumerate() {
+            // created_at 递增 → created_at DESC 下 ids[4] 最新排最前
+            let ts = 1_700_000_000.0_f64 + i as f64;
+            seed_paged_task(&store, id, ts, "paged_open");
+        }
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+        let page = |offset: i64| -> Vec<String> {
+            let r = store
+                .handle_task_list(
+                    peer.clone(),
+                    &serde_json::json!({
+                        "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                        "status": "paged_open",
+                        "limit": 2, "offset": offset
+                    }),
+                )
+                .unwrap();
+            r["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["task_id"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let p0 = page(0);
+        let p1 = page(2);
+        let p2 = page(4);
+        let p3 = page(6);
+        // 时间戳 DESC：最新在前
+        assert_eq!(p0, vec!["T-PAGE-E", "T-PAGE-D"]);
+        assert_eq!(p1, vec!["T-PAGE-C", "T-PAGE-B"]);
+        assert_eq!(p2, vec!["T-PAGE-A"]);
+        assert!(p3.is_empty(), "offset 越界必须返回空页，实得 {:?}", p3);
+        // 各页互不相交
+        for (a, b) in [(&p0, &p1), (&p1, &p2), (&p0, &p2)] {
+            assert!(
+                a.iter().all(|t| !b.contains(t)),
+                "页间重叠: {:?} vs {:?}",
+                a,
+                b
+            );
+        }
+    }
+
+    #[test]
+    fn test_task_list_returns_pagination_metadata() {
+        // 返回必须带 total/limit/offset 元数据，客户端据此判停页。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        for (i, id) in ["T-PAGE-M1", "T-PAGE-M2", "T-PAGE-M3"]
+            .iter()
+            .enumerate()
+        {
+            let ts = 1_700_000_000.0_f64 + i as f64;
+            seed_paged_task(&store, id, ts, "paged_open");
+        }
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let r = store
+            .handle_task_list(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "status": "paged_open",
+                    "limit": 2, "offset": 2
+                }),
+            )
+            .unwrap();
+        assert_eq!(r["total"], 3, "total 不受 limit/offset 影响");
+        assert_eq!(r["limit"], 2);
+        assert_eq!(r["offset"], 2);
+        assert_eq!(r["tasks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_task_list_total_respects_status_filter() {
+        // status 过滤下 total 必须是过滤后计数，而非全表计数。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path).unwrap();
+        seed_workspace(&store);
+        let rows = [
+            ("T-PAGE-S1", "paged_open"),
+            ("T-PAGE-S2", "paged_closed"),
+            ("T-PAGE-S3", "paged_open"),
+        ];
+        for (i, (id, st)) in rows.iter().enumerate() {
+            let ts = 1_700_000_000.0_f64 + i as f64;
+            seed_paged_task(&store, id, ts, st);
+        }
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let r = store
+            .handle_task_list(
+                peer,
+                &serde_json::json!({
+                    "workspace_id": 1, "workspace_instance_id": "ws-inst-test",
+                    "status": "paged_open", "limit": 1, "offset": 0
+                }),
+            )
+            .unwrap();
+        assert_eq!(r["total"], 2, "total 应只计 paged_open 任务");
+        let ids: Vec<&str> = r["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["task_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["T-PAGE-S3"], "过滤 + 分页必须同时生效（DESC 最新在前）");
+    }

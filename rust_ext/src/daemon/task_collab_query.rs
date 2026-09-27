@@ -1,6 +1,8 @@
 //! 任务只读查询域：状态、重conciliation 和事件投影。
 //! 保持原有查询过滤、workspace binding 和治理投影语义。
 
+use crate::daemon::dispatch::get_int_param_or;
+
 use super::*;
 
 impl TaskCollabStore {
@@ -582,6 +584,7 @@ impl TaskCollabStore {
         let workspace_id = required_workspace_id_param(params)?;
         let status_filter = params.get("status").and_then(|v| v.as_str());
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let offset = get_int_param_or(params, "offset", 0).max(0) as usize;
         let parent_filter = params.get("parent_id").and_then(|v| v.as_str());
 
         let conn = self.conn.lock().unwrap();
@@ -608,9 +611,11 @@ impl TaskCollabStore {
             params_vec.push(Box::new(parent_val.clone()));
         }
 
-        query.push_str(" ORDER BY t.created_at DESC LIMIT ?");
+        query.push_str(" ORDER BY t.created_at DESC LIMIT ? OFFSET ?");
         let limit_i64 = limit as i64;
         params_vec.push(Box::new(limit_i64));
+        let offset_i64 = offset as i64;
+        params_vec.push(Box::new(offset_i64));
 
         let mut stmt = conn.prepare(&query).map_err(|e| {
             DaemonRpcError::internal_error(format!("prepare task_list 失败: {}", e))
@@ -685,8 +690,47 @@ impl TaskCollabStore {
             object.insert("governance".to_string(), governance);
         }
 
+        // 分页元数据：total = 同 WHERE 条件下的全量计数（不含 LIMIT/OFFSET），
+        // 供客户端判断是否还有下一页（避免 offset 分页盲扫）。
+        let mut count_query = String::from(
+            "SELECT COUNT(*) FROM tasks t
+             JOIN task_workspace_bindings b ON b.task_id = t.id AND b.workspace_id = ?1
+             WHERE 1=1",
+        );
+        let mut count_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(workspace_id)];
+        if let Some(st) = status_filter {
+            if !st.is_empty() {
+                count_query.push_str(" AND t.status = ?");
+                count_params.push(Box::new(st.to_string()));
+            }
+        }
+        if let Some(pid) = parent_filter {
+            count_query.push_str(" AND t.parent_id = ?");
+            count_params.push(Box::new(pid.to_string()));
+        }
+        let total: i64 = {
+            let count_refs: Vec<&dyn rusqlite::ToSql> =
+                count_params.iter().map(|p| p.as_ref()).collect();
+            conn.query_row(&count_query, count_refs.as_slice(), |r| r.get(0))
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("count task_list 失败: {}", e))
+                })?
+        };
+
         let mut res = Map::new();
         res.insert("tasks".to_string(), Value::Array(tasks));
+        res.insert(
+            "total".to_string(),
+            Value::Number(serde_json::Number::from(total)),
+        );
+        res.insert(
+            "limit".to_string(),
+            Value::Number(serde_json::Number::from(limit as i64)),
+        );
+        res.insert(
+            "offset".to_string(),
+            Value::Number(serde_json::Number::from(offset as i64)),
+        );
         Ok(Value::Object(res))
     }
 
