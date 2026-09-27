@@ -5809,21 +5809,83 @@ pub fn handle_summary_ownership_map(
 // 首行 _init_builtin_rules 走 INSERT OR IGNORE → OperationalError
 // "attempt to write a readonly database"，MCP 面恒 error。Rust 原生侧按
 // fail-closed 同语义返回内部错误（写面拒绝落只读快照连接，不实际写库）。
-// 2026-09-26 修复：guardrail_list_rules 改纯读真实实现（见下方 handler）；
-// guardrail_scan 保持写面 fail-closed（INSERT findings 是真写面）。
+// 2026-09-27 修复：guardrail_list_rules 改纯读真实实现（见下方 handler）；
+// guardrail_scan 同步改为只读检测实现（detect-only，不落 findings 表）。
+// builtin 规则初始化与 findings 持久化职责仍归写面（CLI scan_guardrails）。
 
-/// guardrail_scan（写面 fail-closed，对齐 Python worker readonly error）。
+/// guardrail_scan —— 只读检测实现（2026-09-27 修复：原为写面 fail-closed
+/// stub，恒 internal_error）。Python scan_guardrails（db_guardrail.py:154）
+/// 是真写面（_init_builtin_rules INSERT + _append_finding 持久化）；daemon
+/// 摘要面只持只读快照连接，故做 detect-only：file_instances 枚举（file_filter
+/// 前缀语义对齐 Python rel_path LIKE 'prefix%'）+ 读盘（abs_path，不可读跳过，
+/// 对齐 _read_file_content None 分支）+ 复用既有三类检测器。findings 附
+/// file_path 与 persisted=false，不落 guardrail_findings 表；持久化职责归
+/// 写面调用点（CLI scan_guardrails 事务内）。返回对齐 Python：List[Dict]。
+/// 文件数上限 500（MCP 慢方法超时保护；Python 无上限，摘要面加护栏）。
 pub fn handle_summary_guardrail_scan(
-    _conn: &Connection,
-    _workspace_id: i64,
-    _params: &Value,
+    conn: &Connection,
+    workspace_id: i64,
+    params: &Value,
 ) -> Result<Value, DaemonRpcError> {
-    Err(DaemonRpcError::internal_error(
-        "guardrail_scan is write-face (_init_builtin_rules INSERT); \
-         read-only snapshot connection rejects it \
-         (parity: python worker OperationalError attempt to write a readonly database)"
-            .to_string(),
-    ))
+    const MAX_SCAN_FILES: usize = 500;
+    let file_filter = get_str_param_or(params, "file_filter", "")
+        .replace('\\', "/")
+        .trim()
+        .to_string();
+    let sql = if file_filter.is_empty() {
+        "SELECT rel_path, abs_path FROM file_instances \
+         WHERE workspace_id = ?1 ORDER BY rel_path LIMIT ?2"
+    } else {
+        "SELECT rel_path, abs_path FROM file_instances \
+         WHERE workspace_id = ?1 AND rel_path LIKE ?2 ORDER BY rel_path LIMIT ?3"
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        // 旧库缺 file_instances 表：无可扫文件，空结果（对齐 Python 空库语义）
+        Err(e) if e.to_string().contains("no such table") => return Ok(json!([])),
+        Err(e) => {
+            return Err(DaemonRpcError::internal_error(format!(
+                "guardrail_scan prepare: {e}"
+            )))
+        }
+    };
+    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String)> {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default()))
+    };
+    let files: Vec<(String, String)> = if file_filter.is_empty() {
+        stmt.query_map(rusqlite::params![workspace_id, MAX_SCAN_FILES as i64], map_row)
+    } else {
+        stmt.query_map(
+            rusqlite::params![workspace_id, format!("{file_filter}%"), MAX_SCAN_FILES as i64],
+            map_row,
+        )
+    }
+    .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_scan query: {e}")))?
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_scan row: {e}")))?;
+
+    let mut findings: Vec<Value> = Vec::new();
+    for (rel_path, abs_path) in files {
+        if abs_path.is_empty() {
+            continue;
+        }
+        let Some(content) = summary_read_file_normalized(&abs_path) else {
+            continue; // 文件不存在或无法读取，跳过（对齐 Python content None 分支）
+        };
+        let mut per_file = Vec::new();
+        per_file.extend(summary_detect_db_safety(&content, &rel_path));
+        per_file.extend(summary_detect_api_compat(&content, &rel_path));
+        per_file.extend(summary_detect_incident_readiness(&content, &rel_path));
+        for f in per_file {
+            let mut obj = f;
+            if let Some(o) = obj.as_object_mut() {
+                o.insert("file_path".to_string(), json!(rel_path));
+                o.insert("persisted".to_string(), json!(false));
+            }
+            findings.push(obj);
+        }
+    }
+    Ok(json!(findings))
 }
 
 /// guardrail_list_rules —— 只读实现（2026-09-26 修复：原为写面 fail-closed
@@ -8002,6 +8064,91 @@ mod security_row_binding_tests {
         // 缺表：对齐 Python 新库首跑前语义，空数组而非错误
         let bare = Connection::open_in_memory().unwrap();
         let res = handle_summary_guardrail_list_rules(&bare, 1, &json!({})).unwrap();
+        assert_eq!(res.as_array().unwrap().len(), 0);
+    }
+
+    /// guardrail_scan 只读检测：检测命中（DROP TABLE → block finding），
+    /// 字段对齐 Python（rule_id/file_path/severity/message）+ persisted=false。
+    #[test]
+    fn guardrail_scan_detects_findings_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let danger = dir.path().join("danger.sql");
+        std::fs::write(&danger, "ALTER TABLE users ADD COLUMN x INT;\nDROP TABLE audit;\n").unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE file_instances (workspace_id INTEGER, rel_path TEXT, abs_path TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances VALUES (1, 'src/danger.sql', ?1)",
+            rusqlite::params![danger.to_string_lossy()],
+        )
+        .unwrap();
+
+        let res =
+            handle_summary_guardrail_scan(&conn, 1, &json!({})).unwrap();
+        let arr = res.as_array().unwrap();
+        assert!(!arr.is_empty());
+        // ALTER TABLE → warn（GR-builtin-db-1），DROP TABLE → block（GR-builtin-db-2）
+        assert!(arr
+            .iter()
+            .any(|f| f["rule_id"] == "GR-builtin-db-2" && f["severity"] == "block"));
+        for f in arr {
+            assert_eq!(f["file_path"], "src/danger.sql");
+            assert_eq!(f["persisted"], false);
+        }
+    }
+
+    /// file_filter 前缀过滤 + 不可读文件跳过 + 缺表容错。
+    #[test]
+    fn guardrail_scan_filters_prefix_and_tolerates_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let hit = dir.path().join("api_bad.sql");
+        std::fs::write(&hit, "DROP TABLE t;").unwrap();
+        let miss = dir.path().join("other_ok.sql");
+        std::fs::write(&miss, "SELECT 1;").unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE file_instances (workspace_id INTEGER, rel_path TEXT, abs_path TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances VALUES (1, 'src/api/bad.sql', ?1)",
+            rusqlite::params![hit.to_string_lossy()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances VALUES (1, 'docs/ok.sql', ?1)",
+            rusqlite::params![miss.to_string_lossy()],
+        )
+        .unwrap();
+        // 不可读路径：跳过不报错
+        conn.execute(
+            "INSERT INTO file_instances VALUES (1, 'src/api/gone.sql', 'Z:/no/such/file.sql')",
+            [],
+        )
+        .unwrap();
+
+        let filtered =
+            handle_summary_guardrail_scan(&conn, 1, &json!({"file_filter": "src/api/"}))
+                .unwrap();
+        let arr = filtered.as_array().unwrap();
+        // bad.sql 的 DROP TABLE 会被多个检测器/规则命中（≥1），核心断言：
+        // ① 过滤只留 src/api/ 前缀文件（docs/ok.sql 与不可读 gone.sql 不出现）
+        // ② DROP TABLE 的 block finding（GR-builtin-db-2）在列
+        assert!(!arr.is_empty());
+        for f in arr {
+            assert_eq!(f["file_path"], "src/api/bad.sql");
+        }
+        assert!(arr
+            .iter()
+            .any(|f| f["rule_id"] == "GR-builtin-db-2" && f["severity"] == "block"));
+
+        // 缺 file_instances 表：空数组（对齐 Python 空库语义）
+        let bare = Connection::open_in_memory().unwrap();
+        let res = handle_summary_guardrail_scan(&bare, 1, &json!({})).unwrap();
         assert_eq!(res.as_array().unwrap().len(), 0);
     }
 }
