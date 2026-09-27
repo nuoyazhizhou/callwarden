@@ -199,3 +199,27 @@ apply/close。
 **至此 F-014 回归链全部缺陷闭环**：security 组 5 个 MCP 工具
 （get_edit_history / rule_list / get_applicable_rules /
 guardrail_list_rules / guardrail_scan）全部实测恢复。
+
+---
+
+## 追加 5（2026-09-27 下午）：治理卡 T-1790476445100-28ed77c4 完整 A′ 环收口（closed）
+
+P2 reviewer 独立复审 → P3 adjudicator apply/close 全链完成：
+
+- **P2 独立复审（reviewer，inst-review-guardrailscan，lease L-963826646871c212）**：
+  - diff 核对：f8669e6 仅 query_compat_handlers.rs（160+/13-），stub→只读检测，
+    复用既有三检测器，persisted=false，500 文件上限，缺表容错——与合同一致
+  - 测试独立复跑：cargo test --lib guardrail **6 passed 0 failed**（0.83s）
+  - 部署行为复核：guardrail_scan 全量 14342 findings / 过滤 3217 全命中前缀
+  - verdict V-beaa51c08d85348f12c7dc4f 入账（blind_first_pass，四 clause 全 pass，
+    零 findings）；handoff reviewer_pass（event 10802）
+- **P3 adjudicator（持 reviewer lease 凭证）**：task.apply → applied；
+  task.close → **closed**（workflow=completed，decision=COMPLETE）
+- 终态：lifecycle=closed，next_role=complete
+
+收口过程踩坑（治理 RPC 面）：
+- handoff/verdict 的 identity 必须含非空 agent_instance_id，且两处 identity
+  完全一致（E_HANDOFF_VERDICT_IDENTITY_MISMATCH 强校验）
+- reviewer_pass 必须先有 verdict ledger 记录（handoff 前置校验，防半状态）
+- task.apply/close 的 identity 三元组必须与 reviewer lease holder 一致
+  （E_LEASE_HOLDER_MISMATCH）；role 字段可标 adjudicator（审计记录）
