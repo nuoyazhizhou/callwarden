@@ -223,3 +223,40 @@ P2 reviewer 独立复审 → P3 adjudicator apply/close 全链完成：
 - reviewer_pass 必须先有 verdict ledger 记录（handoff 前置校验，防半状态）
 - task.apply/close 的 identity 三元组必须与 reviewer lease holder 一致
   （E_LEASE_HOLDER_MISMATCH）；role 字段可标 adjudicator（审计记录）
+
+## 追加 6（2026-09-27 晚）：task.list offset 分页缺陷修复（T-1790517973322-33d59c58）
+
+### 缺陷
+`handle_task_list`（rust_ext/src/daemon/task_collab_query.rs:577）只解析 `limit`，
+从不读 `offset` 参数，SQL 无 `OFFSET` 子句 → 任意 offset 返回同一窗口
+（候选卡盘点时实证：7969 页全部重复，"398 万任务"为分页盲区的重复计数假象）。
+
+### 修复（commit 5fb6f3f）
+- `get_int_param_or(params, "offset", 0).max(0)` 解析 offset（负值钳 0）；
+- SQL 追加 `ORDER BY t.created_at DESC LIMIT ? OFFSET ?`；
+- 返回新增 `total`（同 WHERE 条件 COUNT(*)）/ `limit` / `offset` 分页元数据
+  （附加字段，不破坏既有消费方）。
+
+### 回归测试（task_collab_tests_projection.rs，+3）
+| 测试 | 覆盖 |
+|---|---|
+| test_task_list_offset_yields_disjoint_windows | offset 窗口互不相交 + 越界空页 + DESC 排序确定性 |
+| test_task_list_returns_pagination_metadata | total/limit/offset 回显，total 不受窗口影响 |
+| test_task_list_total_respects_status_filter | status 过滤下 total 为过滤后计数 |
+
+projection 模块 30/30 PASS；cargo check --bins 无错误。
+测试隔离：共享测试库 seed_workspace 预置任务时间戳撞车 → 用独占 status 值隔离。
+
+### 部署实测（证据 20260927-223303-5fb6f3f151f6-91c77134.json，passed）
+真实任务库活验证 PASS：
+- offset=0/5 两页零重叠；
+- `total=755`（真实任务总量；"398 万"假象就此证伪）；
+- offset 超过 total → 空页，total 回显正确；
+- status=review 过滤 → total=0 与窗口一致。
+
+### 过程坑（记档）
+- `task_collab_query` 是 `task_collab` 的子模块（task_collab.rs:90），
+  `super::dispatch` 不可达，须 `use crate::daemon::dispatch::get_int_param_or`；
+- `task.report` 的 changes 键名为 `file_path` 且白名单=本步 target_file 精确匹配；
+- 部署脚本拉起的 daemon（pid 5092）在 smoke 通过后退出 → 沙箱托管临时实例
+  完成活验证（pid 57060），快照重发同 id 70300c139ce81466。
