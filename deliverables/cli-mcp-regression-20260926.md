@@ -154,3 +154,25 @@ internal_error（2026-09-10 探针实证）。
 
 用户真实终端部署，daemon（pid 12036，sha256 与证据一致）由部署脚本
 拉起，不随会话回收。
+
+---
+
+## 追加 3（2026-09-27）：guardrail 修复部署实测通过
+
+用户真实终端部署（证据 `20260927-054203-25becfce3101-7ec948e7.json`，
+status=passed，git_head=25becfc，daemon pid 1216，sha256 校验一致）。
+快照重发布（snapshot_id 70300c139ce81466，symbol 293374）。
+
+实测（pipe→HTTP RPC，workspace 4baea3ff12c2ea5c）：
+
+- `guardrail_list_rules` → **18 条 builtin 规则**（db/api/inc ×3 类），
+  category=db_safety 过滤 3 条 ✅（原恒 internal_error，自 2026-09-10
+  探针基线以来首次恢复）
+- `rule_list` → 3 条，id 全为 `AR-seed-*` ✅
+- `get_edit_history` → 1 行，id=1（INTEGER 正确）✅
+
+Remove-Item 报错（core-backup 的 repository_source-callwarden_core.pyd
+Access denied）为已知 fail-closed 清理现象，非部署失败。
+
+至此 B1/B2/C 三类缺陷 + 数据清理全部闭环；security 组 MCP 工具
+仅剩 guardrail_scan 写面 fail-closed（设计如此）。
