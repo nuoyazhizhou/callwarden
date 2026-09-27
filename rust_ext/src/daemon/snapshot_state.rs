@@ -344,6 +344,29 @@ impl SnapshotDaemonState {
         let param_workspace_id = get_int_param(params, "workspace_id")
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少字段: workspace_id".to_string()))?;
         if param_workspace_id != workspace_id {
+            // 双命名空间归一（T-1790517973322-33d59c58 后续卡）：param 可能是
+            // registry 数字主键（workspace.list / `--workspace-id` 惯例传的是
+            // daemon_workspaces.workspace_id），而权威 id 来自快照库 workspaces
+            // 表按 root_path 匹配。同一 instance 两个数字空间并存是历史结构。
+            // 上游 open_query_connection/open_codegraph_db_write 已先经
+            // owned_workspace 完成 uid 归属校验，此处只做「param 是否为本
+            // instance 的 registry 主键」等值判定——registry 行由服务端按
+            // instance 反查，客户端无法注入其他 instance 的主键，无越权面。
+            if let Some(instance) = params.get("workspace_instance_id").and_then(Value::as_str) {
+                if !instance.is_empty() {
+                    let registry_pk = self
+                        .base
+                        .registry
+                        .get_workspace_status(instance)
+                        .ok()
+                        .flatten()
+                        .and_then(|ws| ws.get("workspace_id").and_then(Value::as_i64))
+                        .unwrap_or(0);
+                    if registry_pk != 0 && param_workspace_id == registry_pk {
+                        return Ok(workspace_id);
+                    }
+                }
+            }
             return Err(DaemonRpcError::invalid_params(format!(
                 "workspace_id {} 与 workspace_instance_id 绑定的 {} 不一致",
                 param_workspace_id, workspace_id
@@ -9277,5 +9300,59 @@ mod tests {
             !is_protected_mutation("get_semgrep_summary"),
             "get_semgrep_summary 为只读，不应被归类为 Protected_Mutation"
         );
+    }
+
+    #[test]
+    fn test_require_bound_workspace_id_accepts_registry_pk_namespace() {
+        // 双命名空间归一（W3-1 后续）：param 传 registry 数字主键（--workspace-id
+        // 惯例），权威 id 来自快照库 root_path 匹配——同一 instance 两个数字空间
+        // 并存时必须放行并归一到权威 id，而非 fail-closed 拒绝。
+        let mut state = make_state();
+        let owner_uid = 0;
+        let (ws_instance, ws_num_id) = register_workspace_with_numeric_id(&mut state, owner_uid);
+
+        // 模拟 resolve_true_workspace_id 解析出与 registry 主键不同的权威 id
+        let authoritative = ws_num_id + 1;
+        let params = json!({
+            "workspace_id": ws_num_id,
+            "workspace_instance_id": ws_instance,
+        });
+        let resolved = state
+            .require_bound_workspace_id(&params, authoritative)
+            .unwrap();
+        assert_eq!(resolved, authoritative, "必须归一到权威 id");
+    }
+
+    #[test]
+    fn test_require_bound_workspace_id_still_rejects_unrelated_id() {
+        // param 既不等于权威 id 也不等于本 instance 的 registry 主键 →
+        // 必须 fail-closed（防跨 workspace 越权读取）。
+        let mut state = make_state();
+        let owner_uid = 0;
+        let (ws_instance, ws_num_id) = register_workspace_with_numeric_id(&mut state, owner_uid);
+
+        let authoritative = ws_num_id + 1;
+        let params = json!({
+            "workspace_id": ws_num_id + 42,
+            "workspace_instance_id": ws_instance,
+        });
+        let err = state
+            .require_bound_workspace_id(&params, authoritative)
+            .unwrap_err();
+        assert_eq!(err.code, "invalid_params");
+    }
+
+    #[test]
+    fn test_require_bound_workspace_id_matching_id_passes_without_registry() {
+        // param 与权威 id 一致：原路径直通，不触发 registry 反查。
+        let mut state = make_state();
+        let owner_uid = 0;
+        let (_ws_instance, ws_num_id) = register_workspace_with_numeric_id(&mut state, owner_uid);
+
+        let params = json!({"workspace_id": ws_num_id});
+        let resolved = state
+            .require_bound_workspace_id(&params, ws_num_id)
+            .unwrap();
+        assert_eq!(resolved, ws_num_id);
     }
 }
