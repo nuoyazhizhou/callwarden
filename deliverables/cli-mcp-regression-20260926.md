@@ -176,3 +176,26 @@ Access denied）为已知 fail-closed 清理现象，非部署失败。
 
 至此 B1/B2/C 三类缺陷 + 数据清理全部闭环；security 组 MCP 工具
 仅剩 guardrail_scan 写面 fail-closed（设计如此）。
+
+---
+
+## 追加 4（2026-09-27 上午）：guardrail_scan 修复部署实测通过，治理卡转 review
+
+治理卡 `T-1790476445100-28ed77c4` 五步全部完成。部署证据
+`20260927-105923-f8669e65fb58-59abfa2c.json`（status=passed，daemon
+pid 79748，sha256 校验一致），快照重发布 `70300c139ce81466`。
+
+实测（pipe→HTTP RPC，workspace 4baea3ff12c2ea5c）：
+
+- `guardrail_scan` 全量扫描 → **14342 findings**（原恒 internal_error，
+  自 2026-09-10 mode=ro 探针基线以来首次恢复）✅
+- `file_filter=rust_ext/src/daemon/` → 3217 findings / 33 文件全部
+  命中前缀、persisted=false 逐条核验 ✅
+
+step5 report success → 任务 lifecycle_status=review（next_role=reviewer，
+decision=READY）。executor 侧闭环，待 reviewer 独立复审 → adjudicator
+apply/close。
+
+**至此 F-014 回归链全部缺陷闭环**：security 组 5 个 MCP 工具
+（get_edit_history / rule_list / get_applicable_rules /
+guardrail_list_rules / guardrail_scan）全部实测恢复。
