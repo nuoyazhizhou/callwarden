@@ -13,10 +13,18 @@ use rusqlite::{params, Connection};
 use serde_json::Value;
 
 const RG_TIMEOUT: Duration = Duration::from_secs(30);
+/// rg 不可用时的纯 Rust 回退扫描预算。本仓 `testcode/` 内嵌了 linux 内核等
+/// 第三方语料（约 12 万源码文件 / 3GB+），无预算地全量读取会让一条只读
+/// 命令挂起十几分钟。达到任一上限即停止扫描并在输出中注明截断，命令仍返回
+/// 已收集到的结果（graceful degradation，而非挂死）。
+const MAX_RAW_MATCHES: usize = 5_000;
+const MAX_FALLBACK_BYTES: u64 = 256 * 1024 * 1024;
 const SOURCE_EXTENSIONS: &[&str] = &[
     "py", "rs", "ts", "js", "go", "java", "c", "h", "cpp", "hpp", "cs", "rb", "php", "kt", "swift",
     "scala",
 ];
+// 与 Python `_handle_grep`（cli/main.py）的 os.walk 剪枝列表保持一致；
+// `build` 此前 Rust 侧遗漏，导致扫描 Python 实现会跳过的构建产物目录。
 const IGNORED_DIRECTORIES: &[&str] = &[
     ".git",
     "__pycache__",
@@ -25,6 +33,7 @@ const IGNORED_DIRECTORIES: &[&str] = &[
     ".venv",
     "venv",
     "dist",
+    "build",
 ];
 
 /// `cw grep` 的本地查询参数。
@@ -74,11 +83,11 @@ pub fn query_local_grep(
     let search_root = resolve_search_root(&workspace_root, options.path.as_deref())?;
     let primary_pattern = &options.patterns[0];
 
-    let raw_lines = match run_rg(primary_pattern, options.fixed, &search_root)? {
-        RgOutcome::Lines(lines) => lines,
+    let (mut raw_lines, mut truncated) = match run_rg(primary_pattern, options.fixed, &search_root)? {
+        RgOutcome::Lines(lines) => (lines, false),
         RgOutcome::Unavailable => {
             match fallback_search(primary_pattern, options.fixed, &search_root) {
-                Ok(lines) => lines,
+                Ok((lines, fallback_truncated)) => (lines, fallback_truncated),
                 Err(error) if error.starts_with("regex error:") => {
                     return Ok(Value::String(format!("Error: {error}")));
                 }
@@ -87,6 +96,12 @@ pub fn query_local_grep(
         }
         RgOutcome::UserMessage(message) => return Ok(Value::String(message)),
     };
+    // rg 可用但命中过多（例如命中内嵌语料目录）时同样截断，避免后续逐文件
+    // 符号查询被放大到不可接受。
+    if raw_lines.len() > MAX_RAW_MATCHES {
+        raw_lines.truncate(MAX_RAW_MATCHES);
+        truncated = true;
+    }
 
     if raw_lines.is_empty() {
         return Ok(Value::String(format!("No matches for: {primary_pattern}")));
@@ -115,7 +130,13 @@ pub fn query_local_grep(
         &workspace_root,
         matches.iter().map(|item| item.file_path.as_str()),
     )?;
-    Ok(Value::String(format_matches(matches, contexts, options)))
+    let mut output = format_matches(matches, contexts, options);
+    if truncated {
+        output.push_str(&format!(
+            "\nNote: rg not available or too many matches; scan truncated at {MAX_RAW_MATCHES} raw matches / {MAX_FALLBACK_BYTES} bytes; results may be incomplete."
+        ));
+    }
+    Ok(Value::String(output))
 }
 
 fn query_workspace_root(conn: &Connection, workspace_id: i64) -> Result<PathBuf, String> {
@@ -265,7 +286,9 @@ fn join_reader(
         .map_err(|error| format!("cannot read rg {stream_name}: {error}"))
 }
 
-fn fallback_search(pattern: &str, fixed: bool, search_root: &Path) -> Result<Vec<String>, String> {
+/// 返回 (匹配行, 是否因触及预算被截断)。截断时调用方在输出中注明，保持
+/// graceful degradation 而非挂死。
+fn fallback_search(pattern: &str, fixed: bool, search_root: &Path) -> Result<(Vec<String>, bool), String> {
     let regex = if fixed {
         None
     } else {
@@ -275,13 +298,25 @@ fn fallback_search(pattern: &str, fixed: bool, search_root: &Path) -> Result<Vec
         )
     };
     let mut output = Vec::new();
+    let mut bytes_read: u64 = 0;
+    let mut truncated = false;
     visit_source_files(search_root, &mut |path| {
+        if output.len() >= MAX_RAW_MATCHES || bytes_read >= MAX_FALLBACK_BYTES {
+            truncated = true;
+            // 返回 false 让 visit_source_files 提前结束整棵遍历
+            return false;
+        }
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,
-            Err(_) => return,
+            Err(_) => return true,
         };
+        bytes_read += bytes.len() as u64;
         let text = String::from_utf8_lossy(&bytes);
         for (index, line) in text.lines().enumerate() {
+            if output.len() >= MAX_RAW_MATCHES {
+                truncated = true;
+                break;
+            }
             let matched = if fixed {
                 line.contains(pattern)
             } else {
@@ -296,11 +331,18 @@ fn fallback_search(pattern: &str, fixed: bool, search_root: &Path) -> Result<Vec
                 ));
             }
         }
+        if bytes_read >= MAX_FALLBACK_BYTES {
+            truncated = true;
+            return false;
+        }
+        !truncated
     })?;
-    Ok(output)
+    Ok((output, truncated))
 }
 
-fn visit_source_files(directory: &Path, visitor: &mut impl FnMut(&Path)) -> Result<(), String> {
+/// 递归遍历源码文件。visitor 返回 false 时提前终止整棵遍历（用于回退扫描的
+/// 预算控制）。忽略目录列表与 Python `_handle_grep` 对齐。
+fn visit_source_files(directory: &Path, visitor: &mut impl FnMut(&Path) -> bool) -> Result<(), String> {
     let entries = fs::read_dir(directory).map_err(|error| {
         format!(
             "cannot read grep directory {}: {error}",
@@ -331,7 +373,9 @@ fn visit_source_files(directory: &Path, visitor: &mut impl FnMut(&Path)) -> Resu
             continue;
         }
         if metadata.is_file() && is_source_file(&path) {
-            visitor(&path);
+            if !visitor(&path) {
+                return Ok(());
+            }
         }
     }
     Ok(())
@@ -608,9 +652,38 @@ mod tests {
         fs::create_dir(temp.path().join("target")).unwrap();
         fs::write(temp.path().join("target").join("ignored.py"), "needle\n").unwrap();
 
-        let lines = fallback_search("needle", true, temp.path()).unwrap();
+        let (lines, truncated) = fallback_search("needle", true, temp.path()).unwrap();
+        assert!(!truncated);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].ends_with("a.py:1:needle"));
+    }
+
+    /// 回归：`build` 目录必须与 Python `_handle_grep` 一致地跳过（此前 Rust
+    /// 侧遗漏，导致扫描构建产物目录）。
+    #[test]
+    fn fallback_skips_build_directory_like_python() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("a.py"), "needle\n").unwrap();
+        fs::create_dir(temp.path().join("build")).unwrap();
+        fs::write(temp.path().join("build").join("gen.py"), "needle\n").unwrap();
+
+        let (lines, truncated) = fallback_search("needle", true, temp.path()).unwrap();
+        assert!(!truncated);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with("a.py:1:needle"));
+    }
+
+    /// 回归：单文件海量命中时必须在 MAX_RAW_MATCHES 处截断并置 truncated，
+    /// 而不是无限收集（真实场景：内嵌 linux 内核语料里命中常见关键词）。
+    #[test]
+    fn fallback_truncates_at_raw_match_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = "needle\n".repeat(MAX_RAW_MATCHES + 1000);
+        fs::write(temp.path().join("big.py"), body).unwrap();
+
+        let (lines, truncated) = fallback_search("needle", true, temp.path()).unwrap();
+        assert!(truncated);
+        assert_eq!(lines.len(), MAX_RAW_MATCHES);
     }
 
     #[test]
