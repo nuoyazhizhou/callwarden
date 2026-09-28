@@ -4825,6 +4825,192 @@ fn summary_complexity_hotspots(
         .collect())
 }
 
+/// project_brief 专用：metrics + hotspots 单次拉取单次遍历（T-1790567800125-68b64e1c）。
+///
+/// 与分别调用 `summary_metrics_summary(conn, ws)` + `summary_complexity_hotspots(conn, ws, limit, "")`
+/// 语义逐条等价：
+/// - 行集取二者超集（SELECT 含 fi.status 列，不按 status 过滤），ORDER BY s.id 确定性行序；
+/// - metrics 侧只对 `status != 'archived'` 行累计（对齐原 metrics SQL 的 WHERE），
+///   content 为空行跳过（对齐原 `if content.is_empty() { continue; }`）；
+/// - hotspots 侧不筛 status、不跳空 content（对齐原 hotspots SQL 与遍历语义）；
+/// - 每行 summary_cyclomatic_complexity 只计算一次，两侧复用（原实现各算一遍）；
+/// - hotspots 稳定排序（complexity 降序、同分保持行序）后 take limit，与原实现一致。
+/// 返回 (metrics_json, hotspots_vec)。
+fn summary_brief_combined(
+    conn: &Connection,
+    workspace_id: i64,
+    hotspot_limit: i64,
+) -> Result<(Value, Vec<Value>), DaemonRpcError> {
+    let sql = "SELECT s.qualified_name, s.start_line, s.end_line, s.depth, s.module_path, \
+               sc.content, fi.rel_path, fi.status, s.id \
+               FROM symbols s \
+               JOIN file_instances fi ON s.file_instance_id = fi.id \
+               LEFT JOIN symbol_contents sc ON s.symbol_hash = sc.content_hash \
+               WHERE fi.workspace_id = ?1 AND s.kind IN ('fn','function','method') \
+               ORDER BY s.id";
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| DaemonRpcError::internal_error(format!("brief combined prepare: {e}")))?;
+    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, Option<i64>, Option<i64>, i64, Option<String>, Option<String>, Option<String>, String)> {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            r.get(4)?,
+            r.get(5)?,
+            r.get(6)?,
+            r.get(7)?,
+        ))
+    };
+    let rows: Vec<(String, Option<i64>, Option<i64>, i64, Option<String>, Option<String>, Option<String>, String)> = stmt
+        .query_map([workspace_id], map_row)
+        .map_err(|e| DaemonRpcError::internal_error(format!("brief combined query: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("brief combined collect: {e}")))?;
+
+    // metrics 侧累计（仅 status != 'archived'）
+    let mut bucket_low: i64 = 0;
+    let mut bucket_mid: i64 = 0;
+    let mut bucket_high: i64 = 0;
+    let mut bucket_extreme: i64 = 0;
+    let mut total_complexity: i64 = 0;
+    let mut max_complexity: i64 = 0;
+    let mut with_content: i64 = 0;
+    // hotspots 侧候选（complexity + 行下标，稳定排序用）
+    struct HotspotRow {
+        complexity: i64,
+        qn: String,
+        start_line: Option<i64>,
+        end_line: Option<i64>,
+        depth: i64,
+        module_path: Option<String>,
+        rel_path: Option<String>,
+    }
+    let mut hotspot_rows: Vec<HotspotRow> = Vec::new();
+
+    for (qn, start_line, end_line, depth, module_path, content, rel_path, status) in &rows {
+        let content_str = content.clone().unwrap_or_default();
+        let lang = rel_path.as_deref().map(summary_detect_language).unwrap_or_default();
+        let complexity = summary_cyclomatic_complexity(&content_str, &lang);
+        // hotspots：全部行（对齐原 hotspots 语义）
+        hotspot_rows.push(HotspotRow {
+            complexity,
+            qn: qn.clone(),
+            start_line: *start_line,
+            end_line: *end_line,
+            depth: *depth,
+            module_path: module_path.clone(),
+            rel_path: rel_path.clone(),
+        });
+        // metrics：仅非 archived 且 content 非空（对齐原 metrics 语义）
+        if status == "archived" || content_str.is_empty() {
+            continue;
+        }
+        total_complexity += complexity;
+        if complexity > max_complexity {
+            max_complexity = complexity;
+        }
+        with_content += 1;
+        if complexity <= 5 {
+            bucket_low += 1;
+        } else if complexity <= 10 {
+            bucket_mid += 1;
+        } else if complexity <= 20 {
+            bucket_high += 1;
+        } else {
+            bucket_extreme += 1;
+        }
+    }
+    let avg_complexity = if with_content > 0 {
+        total_complexity as f64 / with_content as f64
+    } else {
+        0.0
+    };
+
+    // metrics 其余标量字段（原 summary_metrics_summary 的廉价查询）
+    let file_count = scalar_i64(
+        conn,
+        "SELECT COUNT(*) FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
+        workspace_id,
+    )?;
+    let function_count = scalar_i64(
+        conn,
+        "SELECT COUNT(*) FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.kind IN ('fn','function','method')",
+        workspace_id,
+    )?;
+    let total_lines: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(fi.total_lines), 0) FROM file_instances fi \
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("brief combined total_lines: {e}")))?;
+    let total_calls = scalar_i64(
+        conn,
+        "SELECT COUNT(*) FROM calls c JOIN symbols s ON c.caller_id = s.id \
+         JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.workspace_id = ? AND fi.status != 'archived'",
+        workspace_id,
+    )?;
+    let (comment_total, commented): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN s.has_comment = 1 THEN 1 ELSE 0 END), 0) \
+             FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND s.kind IN ('fn','function','method')",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("brief combined comment coverage: {e}")))?;
+    let comment_coverage = if comment_total > 0 {
+        commented as f64 / comment_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    let metrics = json!({
+        "file_count": file_count,
+        "function_count": function_count,
+        "total_lines": total_lines,
+        "total_calls": total_calls,
+        "avg_complexity": (avg_complexity * 10.0).round() / 10.0,
+        "max_complexity": max_complexity,
+        "complexity_distribution": {
+            "低 (≤5)": bucket_low,
+            "中 (6-10)": bucket_mid,
+            "高 (11-20)": bucket_high,
+            "极高 (>20)": bucket_extreme,
+        },
+        "comment_coverage": (comment_coverage * 10.0).round() / 10.0,
+    });
+
+    // hotspots：稳定排序（complexity 降序，同分保持行序）+ take limit
+    let mut order: Vec<usize> = (0..hotspot_rows.len()).collect();
+    order.sort_by(|&a, &b| hotspot_rows[b].complexity.cmp(&hotspot_rows[a].complexity));
+    let hotspots: Vec<Value> = order
+        .into_iter()
+        .take(hotspot_limit.max(0) as usize)
+        .map(|i| {
+            let h = &hotspot_rows[i];
+            let line_count = match (h.start_line, h.end_line) {
+                (Some(s), Some(e)) if s != 0 && e != 0 => e - s + 1,
+                _ => 0,
+            };
+            json!({
+                "qualified_name": h.qn,
+                "file_path": h.rel_path,
+                "start_line": h.start_line,
+                "line_count": line_count,
+                "cyclomatic_complexity": h.complexity,
+                "depth": if h.depth >= 0 { h.depth } else { 0 },
+                "module_path": h.module_path,
+            })
+        })
+        .collect();
+    Ok((metrics, hotspots))
+}
+
 /// summary_metrics_summary —— 复刻 db_metrics.get_code_metrics_summary。
 ///
 /// 8 字段 legacy 契约（file_count / function_count / total_lines / total_calls /
@@ -5403,7 +5589,11 @@ pub fn handle_summary_project_brief(
     workspace_id: i64,
     _params: &Value,
 ) -> Result<Value, DaemonRpcError> {
-    let metrics = summary_metrics_summary(conn, workspace_id)?;
+    // T-1790567800125-68b64e1c 慢查询治理：原实现 metrics_summary 与
+    // complexity_hotspots 各自全量拉取函数全文并逐行分析（34939 行 / 28.1MB
+    // ×2 遍），daemon 实测 30.7s 超时。合并为单次拉取 + 单次遍历，
+    // 复杂度只算一次；两块结果的行集语义逐条保持（见 summary_brief_combined）。
+    let (metrics, hotspots) = summary_brief_combined(conn, workspace_id, 10)?;
     let health = summary_health_check(conn, workspace_id, "high")?;
 
     // 项目类型：按扩展名分布
@@ -5469,8 +5659,7 @@ pub fn handle_summary_project_brief(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| DaemonRpcError::internal_error(format!("brief modules collect: {e}")))?;
 
-    // 热点函数（前 10）
-    let hotspots = summary_complexity_hotspots(conn, workspace_id, 10, "")?;
+    // 热点函数（前 10）——已由 summary_brief_combined 单遍产出（见上）
 
     // 文件数：优先 metrics，回退 get_status().files.tracked（= current_files）
     let mut file_count = metrics["file_count"].as_i64().unwrap_or(0);

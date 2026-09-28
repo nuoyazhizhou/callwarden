@@ -4489,26 +4489,31 @@ fn query_local_uncommented_symbols(
     module_filter: &str,
     limit: usize,
 ) -> Result<Value, String> {
+    // T-1790567800125-68b64e1c 慢查询治理：原实现用 ROW_NUMBER() 窗口做
+    // (qualified_name, rel_path) 去重，在 293K 符号库上强制物化 195K 行
+    // co-routine + 双 TEMP B-TREE + AUTOMATIC INDEX（daemon 实测 109s 超时）。
+    // 改写为 GROUP BY MAX(id)（走 idx_file_symbol_versions_qualified，实测 0.15s）：
+    // 在 is_current=1 且非删除集合内，ORDER BY id DESC 首行 ≡ MAX(id)，与原
+    // rn=1 语义严格等价（真实库行集对拍 equal=true，outputs/slowq_equiv_check.json）。
+    // 语义约束：has_comment/kind 过滤必须留在外层——若下推进去重子查询，
+    // 最新版本有注释时旧无注释版本会错误升位（等价性论证见卡 step0）。
     let mut sql = String::from(
         "SELECT fsv.qualified_name, fsv.module_path, fsv.start_line, fsv.end_line,
                 fsv.depth, sc.name, sc.kind, COALESCE(sc.signature, ''), fi.rel_path
          FROM (
-            SELECT fsv_inner.*,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY fsv_inner.qualified_name, fi.rel_path
-                       ORDER BY fsv_inner.id DESC
-                   ) as rn
+            SELECT MAX(fsv_inner.id) AS max_id
             FROM file_symbol_versions fsv_inner
             JOIN file_versions fv_inner ON fsv_inner.file_version_id = fv_inner.id
-            JOIN file_instances fi ON fv_inner.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?1 AND fv_inner.is_current = 1
+            JOIN file_instances fi_inner ON fv_inner.file_instance_id = fi_inner.id
+            WHERE fi_inner.workspace_id = ?1 AND fv_inner.is_current = 1
               AND (fsv_inner.is_deleted = 0 OR fsv_inner.is_deleted IS NULL)
-         ) fsv
-         JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
+            GROUP BY fsv_inner.qualified_name, fi_inner.rel_path
+         ) m
+         JOIN file_symbol_versions fsv ON fsv.id = m.max_id
          JOIN file_versions fv ON fsv.file_version_id = fv.id
          JOIN file_instances fi ON fv.file_instance_id = fi.id
-         WHERE fi.workspace_id = ?1 AND fsv.rn = 1
-           AND sc.has_comment = 0
+         JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
+         WHERE sc.has_comment = 0
            AND sc.kind = ?2",
     );
     let mut params: Vec<rusqlite::types::Value> = vec![
