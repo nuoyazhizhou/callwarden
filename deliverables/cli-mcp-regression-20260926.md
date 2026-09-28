@@ -435,4 +435,31 @@ get_attestation_validity）、18 条 fixture 参数不完整 fail-closed 正确�
 - brief_combined_tests +1（合并 vs 分别调用逐字段对拍 + archived/空 content/
   同分排序锚点）→ PASS；cargo check --bins 干净。
 
-### 部署实测（待部署后补记）
+### 部署实测（证据 20260928-143054-b4f2bafe886f-3d9c9c4f.json，passed）
+
+部署 commit b4f2baf（含 step1 V3 改写 + step2 单测 + 本轮正则预编译修复）。
+部署后 daemon 由沙箱 Job Object 回收，按部署同参
+（`--socket \\.\pipe\callwarden-S-1-5-21-... --http-bind 127.0.0.1:6374`）
+以 run_in_background 托管重启（PID 36232，`ready (workspaces=138)`），
+重发 `snapshot.publish` 后活验证（outputs/slowq_live_verify.json +
+slowq_live_verify2.json）：
+
+| 工具 | 修复前 | 修复后 | 提速 | 目标 |
+|---|---|---|---|---|
+| query.uncommented_symbols | 152~183s（30s 超时） | **0.13~0.26s** | ~700x | <10s ✓ |
+| project_brief | 26.4s（30s 超时边缘） | **1.77~2.2s** | ~12x | <10s ✓ |
+
+- project_brief payload 完整：project_type=Python、file_count=2268、
+  function_count=34939、total_lines=1,159,522、modules=20、hot_functions=10、
+  avg_complexity=4.2、comment_coverage=35.0；连续两次计时稳定（1.92s/1.77s）；
+- query.uncommented_symbols 返回 100 行（首行
+  `lib::rust_ext::src::daemon::replicator.daemon_handle_refresh`），与
+  step0 等价对拍行集一致；
+- 正则预编译根因是本轮部署后新发现：合并改写后 project_brief 仍 26.4s，
+  进一步定位 SQL 层全非瓶颈（子查询 0.01~0.11s），真因是
+  `summary_cyclomatic_complexity` 在 ~5 万函数循环内每函数重编译 15 条
+  正则（75 万次编译）；改 std::sync::OnceLock 进程级预编译一次，
+  pattern 集合/顺序/语义逐条不变（与 cli/external.rs L2248 同范式），
+  单测 test_complexity_regex_precompile_equivalent 覆盖基础关键词、
+  三元门控语言集合、python for-in、空内容早返回、重复调用稳定，PASS。
+
