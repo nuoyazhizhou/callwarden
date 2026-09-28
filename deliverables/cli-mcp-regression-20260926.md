@@ -382,3 +382,19 @@ E_VERDICT_TASK_NOT_IN_REVIEW 拒。「独立复审 = 关闭门禁」未落地。
   调整为 S4 在 S1/S2 之后，161/161 全绿。
 - 测试过滤路径：daemon::task_collab::tests（mod 挂在 task_collab.rs 尾部
   #[cfg(test)] #[path]，非 daemon::task_collab_tests）。
+
+### 门禁活验证（部署后行为级，本卡自证）
+- **负例**：本卡转 review 后持 reviewer lease 无 verdict `task.apply` →
+  **E_VERDICT_REQUIRED**（报错含豁免指引）；空白 reason 豁免 → 同拒；
+  无效 lease → E_LEASE_TOKEN_MISMATCH（S3 lease 门禁在 S4 verdict 门禁之前，
+  错误分层正确）；三次拒绝后状态保持 review 未变、无豁免事件落账。
+  上张卡 T-1790522526627 的「无 verdict 直通 apply/close」路径**已封死**。
+- **绑定可发现性正例**：governance_projection.reviewer_role_contract 给出
+  role_contract_hash=sha256:3e8debc9…/revision/revision_id/lineage_id，
+  verdict 绑定值直接取自该字段**一次提交成功**（V-b32c83685c2a492fe81f412a，
+  event 776）——上张卡 E_ROLE_CONTRACT_HASH_MISMATCH 死局不复现。
+- **正例收口**：verdict(pass) 入账 → apply → close 全部放行（无豁免标记），
+  终态 closed/completed 且 governance_projection.verdicts=[pass 入账]
+  （对比上张卡同路径 verdicts=[]）。「独立复审 = 关闭门禁」闭环。
+- advisory：task.handoff 漏传 next_action 被拒（E_HANDOFF_STRUCTURED_REQUIRED），
+  legacy 卡 verdict→apply 直通路径 handoff 非必需，不影响收口。
