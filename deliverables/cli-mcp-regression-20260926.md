@@ -325,3 +325,60 @@ reviewer 的 `verdict.submit` 因 role_contract_hash 取值错误报 `E_ROLE_CON
 task_contract 同值的 contract_hash、reviewer_role_contract 不含 hash）。
 另记 advisory：snapshot_state.rs:347 注释引用上一张卡号（T-1790517973322-33d59c58），
 纯注释笔误，无行为影响。
+
+## 追加 8（2026-09-28）：治理门禁 task.apply/close 强制 verdict 前置（T-1790563271814-14566fa4）
+
+### 缺陷
+上张卡（追加 7）实证：reviewer verdict 绑定失败（E_ROLE_CONTRACT_HASH_MISMATCH）+
+handoff 结构缺失（E_HANDOFF_STRUCTURED_REQUIRED）的情况下，持 reviewer lease 的
+`task.apply`/`task.close` 仍被接受 → closed 且 verdicts=[]，事后补 verdict 被
+E_VERDICT_TASK_NOT_IN_REVIEW 拒。「独立复审 = 关闭门禁」未落地。
+
+### 修复（commit 4ee8f8d，6 文件 +396/-5）
+- **S4 verdict 门禁**（task_collab_lifecycle_apply.rs）：review 态直接 apply/close
+  必须满足其一——task_verdict_events 存在 overall='pass' 入账，或显式
+  verdict_waiver.reason（非空）；豁免写 task_events（reason_code='verdict_waiver'）
+  落账 + 响应回显 verdict_waived=true，绝不静默放行；两者皆无 →
+  **E_VERDICT_REQUIRED** fail-closed（任何写入前拒绝）。
+- 门禁顺序：apply 在 lease 校验（S3）之后；close 刻意排在 S1 子任务/S2 步骤
+  结构门禁之后（先结构后凭据，错误分层）；applied→closed 已被 apply 把关
+  不重复拦截；cascade_close 聚合收尾为系统路径维持原语义（注释已声明）。
+- **verdict 绑定可发现性**（task_collab_verdict.rs）：三处
+  E_ROLE_CONTRACT_HASH_MISMATCH 报错回显期望 canonical hash 与来源
+  （role_contract_revisions / role_contract_lineage / legacy c14n），
+  reviewer 拿报错即可用正确值重提。
+- **governance projection**（task_collab_contract.rs）：reviewer_role_contract
+  追加 role_contract_hash / role_contract_revision / role_contract_revision_id /
+  role_contract_lineage_id（权威 role_contract_revisions 当前最高 revision），
+  review 态即可编程取得 verdict 绑定三件套。
+
+### 回归测试
+- 新增 task_collab_tests_verdict_gate.rs 4 用例：无 verdict 拒绝（状态不变+
+  无豁免事件）、空 reason 拒绝、豁免落账+响应标记、pass verdict 放行无豁免
+  标记、block verdict 不放行 close、applied→closed 免检；
+- 2 个既有 review 态成功路径测试补显式 waiver；
+- `cargo test --lib daemon::task_collab::tests` → **161 passed / 0 failed**；
+  `cargo check --bins` 干净。
+
+### 部署实测
+- 证据 `20260928-112145-4ee8f8d23f51-5825045b.json`：task_id 溯源本卡、
+  status=passed、git_head=4ee8f8d…（与本地 HEAD 逐字一致）；
+- 二进制实证（MEMORY 铁律）：runtime/current/cw-daemon.exe 46063104 bytes，
+  sha256 `2bfda1c7…` 与证据 binaries[0] 一致；字符串扫描
+  E_VERDICT_REQUIRED×1 + verdict_waiver×4（cw.exe/cw-bridge/cw-client 均 0，
+  改动只落 daemon，符合预期）；
+- 快照门：部署后重发 snapshot.publish → snapshot_id=70300c139ce81466
+  （generation 1，293374 symbols / 273176 calls）。
+
+### 过程坑
+- 建卡时 step target_file 写粗（task_collab.rs/task_collab_lifecycle.rs），实际
+  落点在 task_collab_lifecycle_apply.rs / task_collab_verdict.rs /
+  task_collab_contract.rs（缺 _apply/_verdict/_contract 后缀），且 daemon 无
+  target_file 修订 RPC（task.contract_revise method_not_found）→ step report
+  省略 changes + summary 偏离声明，以 commit 4ee8f8d git 记录为权威变更清单。
+  教训：**建卡 target_file 必须写到真实物理文件粒度**。
+- close 侧门禁初版排在 S1 之前，误拦 2 个结构门禁测试（E_LEASE/E_CLOCK 在
+  门禁之前返回不受影响，但 review 态子任务未关的成功路径测试先撞 S4）→
+  调整为 S4 在 S1/S2 之后，161/161 全绿。
+- 测试过滤路径：daemon::task_collab::tests（mod 挂在 task_collab.rs 尾部
+  #[cfg(test)] #[path]，非 daemon::task_collab_tests）。
