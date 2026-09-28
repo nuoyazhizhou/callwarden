@@ -260,3 +260,68 @@ projection 模块 30/30 PASS；cargo check --bins 无错误。
 - `task.report` 的 changes 键名为 `file_path` 且白名单=本步 target_file 精确匹配；
 - 部署脚本拉起的 daemon（pid 5092）在 smoke 通过后退出 → 沙箱托管临时实例
   完成活验证（pid 57060），快照重发同 id 70300c139ce81466。
+
+## 追加 7（2026-09-28）：workspace 1193↔1 双命名空间归一（T-1790522526627-59fdcdec）
+
+### 缺陷
+`require_bound_workspace_id`（rust_ext/src/daemon/snapshot_state.rs:339）只接受快照库
+按 root_path 解析出的**权威 workspace_id**（本机=1），而 CLI/运维惯例传的是
+**registry 数字主键**（`--workspace-id 1193`）→ 两个命名空间混用即报
+`invalid_params: workspace_id 1193 与 workspace_instance_id 绑定的 1 不一致`。
+MCP 只读矩阵中 5 个 enterprise build 读工具全挂：list_build_contexts /
+get_build_context / get_active_build_context / get_resolved_edges / count_resolved_edges。
+
+### 修复（commit e6d1253）
+mismatch 时用 params 的 `workspace_instance_id` 反查 registry 数字主键：
+param 命中即**归一**为权威 workspace_id 放行；未命中仍 fail-closed 报不一致。
+越权面论证：上游 `owned_workspace` 已按 uid 校验归属，registry 行由服务端按
+instance 反查（客户端无法注入他人主键），故归一不打开跨 workspace 读取。
+
+### 回归测试（snapshot_state.rs，+3）
+| 测试 | 覆盖 |
+|---|---|
+| test_require_bound_workspace_id_accepts_registry_pk_namespace | registry 主键 1193 → 归一为权威 id |
+| test_require_bound_workspace_id_still_rejects_unrelated_id | 无关 id 仍 invalid_params |
+| test_require_bound_workspace_id_matching_id_passes_without_registry | 相等时直通，不查 registry |
+
+snapshot_state 全模块 55/55 PASS；cargo check --bins 无错误。
+
+### 部署实测（证据 20260928-100949-e6d1253e6a24-0d4dde1a.json，passed）
+- git_head=e6d1253e6a24…，daemon PID 10632，cw-daemon.exe sha256 与 expected 一致，ping=0；
+- 部署后按「快照门 vs HEAD 耦合」惯例重发 `snapshot.publish`
+  （db_path=C:/Users/wanpi/.callwarden/callwarden.db）→ snapshot_id=70300c139ce81466，293374 symbols；
+- 5 工具活验证（同失败用例参数）全部脱离 MCP_ERR：list=[]、active=null、
+  get=null、resolved_edges=[]、count={"count":0}（空值为该 workspace 无 build_context 的正确语义）；
+- 反证：workspace_id=999999 与 25（同 root 但另一条 registry 行）仍被拒绝。
+
+### 过程坑（记档）
+- 该 5 工具的 MCP 名与 RPC method 不同名（`build_context.list` / `.get` / `.active` /
+  `.resolved_edges` / `.count_resolved_edges`），映射表在 scripts/gen_route_matrix.py:410 附近；
+- `daemon_client` 的便捷方法（含自动注入权威 instance）在 `HttpDaemonRpcClient` 上，
+  `UnixDaemonRpcClient` 只有裸 `call`，活验证须自传 `workspace_instance_id`；
+- registry 真表名为 `daemon_workspaces`（无 `workspaces` 表），主键 1193 → instance 4baea3ff12c2ea5c。
+
+### 收口后矩阵状态
+MCP_ERR 27 → 22：仅剩容量超时类 4（293K 符号全量库 E_HTTP_REQUEST_TIMEOUT，已知容量非缺陷）
+与 fixture 参数不完整类 18（daemon fail-closed 且报错明确，预期行为）。缺陷队列清零。
+
+### Reviewer 独立复验（行为级，outputs/wsns_review_verify.json）
+- 部署证据 `20260928-100949-e6d1253e6a24-0d4dde1a.json`：task_id 溯源本卡、status=passed、
+  git_head=e6d1253…（与本地 HEAD 逐字一致）、release、endpoint 为 authority named pipe；
+- 二进制身份：runtime/current/cw-daemon.exe 46050304 bytes，sha256 `126dcd1f…`
+  与证据 expected_sha256 **逐字节一致**（部署物即编译产物）；
+- 单测独立复跑：`cargo test --lib daemon::snapshot_state::tests` → **55 passed / 0 failed**（315.6s）；
+- 活验证幂等重跑：5 工具全部 OK、2 条反证仍拒绝（与 executor 汇报一致）；
+- 治理终态：4/4 step done → review → applied → **closed / COMPLETE**。
+
+### 发现的治理缺口（已开卡 T-1790563271814-14566fa4）
+reviewer 的 `verdict.submit` 因 role_contract_hash 取值错误报 `E_ROLE_CONTRACT_HASH_MISMATCH`、
+`task.handoff` 报 `E_HANDOFF_STRUCTURED_REQUIRED`（缺结构化 next_action），
+但持同一 reviewer lease 的 `task.apply` + `task.close` **仍被接受** → 任务 closed 但
+`task.governance_projection.get.verdicts=[]`，对 closed 任务补交 verdict 被
+`E_VERDICT_TASK_NOT_IN_REVIEW` 拒绝。即**「独立复审 = 关闭门禁」在该路径未落地**。
+附带可发现性缺口：verdict 所需 role contract canonical hash 在任务进入 terminal 后
+无任何 RPC 可取（task.prompt.compile 的 contract 段全 null、get_role_view 只给与
+task_contract 同值的 contract_hash、reviewer_role_contract 不含 hash）。
+另记 advisory：snapshot_state.rs:347 注释引用上一张卡号（T-1790517973322-33d59c58），
+纯注释笔误，无行为影响。
