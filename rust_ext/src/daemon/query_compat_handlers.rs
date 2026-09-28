@@ -4713,26 +4713,36 @@ fn summary_cyclomatic_complexity(content: &str, language: &str) -> i64 {
     if content.is_empty() {
         return 1;
     }
+    // T-1790567800125-68b64e1c 慢查询治理：原实现每次调用都重新编译 15 条
+    // 正则（regex::Regex::new 在循环里），~5 万函数 → 75 万次编译，是
+    // project_brief 26s+ 的真因（SQL 侧子查询实测均 <0.11s）。OnceLock
+    // 预编译一次后全文复用；匹配 pattern 集合、顺序、语义逐条不变。
+    static KEYWORD_PATTERNS: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
+    let patterns = KEYWORD_PATTERNS.get_or_init(|| {
+        [
+            r"\bif\b", r"\belse\b", r"\bfor\b", r"\bwhile\b", r"\bmatch\b", r"\bcase\b",
+            r"\bcatch\b", r"\b&&\b", r"\b\|\|\b", r"\btry\b", r"\bexcept\b", r"\bfinally\b",
+            r"\bwhen\b", r"\bguard\b",
+        ]
+        .iter()
+        .map(|pat| regex::Regex::new(pat).expect("valid complexity keyword regex"))
+        .collect()
+    });
     let mut complexity: i64 = 1;
-    let keyword_patterns = [
-        r"\bif\b", r"\belse\b", r"\bfor\b", r"\bwhile\b", r"\bmatch\b", r"\bcase\b",
-        r"\bcatch\b", r"\b&&\b", r"\b\|\|\b", r"\btry\b", r"\bexcept\b", r"\bfinally\b",
-        r"\bwhen\b", r"\bguard\b",
-    ];
-    for pat in keyword_patterns {
-        if let Ok(re) = regex::Regex::new(pat) {
-            complexity += re.find_iter(content).count() as i64;
-        }
+    for re in patterns {
+        complexity += re.find_iter(content).count() as i64;
     }
     if matches!(language, "rust" | "c" | "java" | "typescript" | "javascript" | "go") {
-        if let Ok(re) = regex::Regex::new(r"\?\s*[^:]+\s*:") {
-            complexity += re.find_iter(content).count() as i64;
-        }
+        static TERNARY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = TERNARY
+            .get_or_init(|| regex::Regex::new(r"\?\s*[^:]+\s*:").expect("valid ternary regex"));
+        complexity += re.find_iter(content).count() as i64;
     }
     if language == "python" {
-        if let Ok(re) = regex::Regex::new(r"\bfor\b.*\bin\b") {
-            complexity += re.find_iter(content).count() as i64;
-        }
+        static FOR_IN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = FOR_IN
+            .get_or_init(|| regex::Regex::new(r"\bfor\b.*\bin\b").expect("valid for-in regex"));
+        complexity += re.find_iter(content).count() as i64;
     }
     complexity
 }
@@ -8443,6 +8453,62 @@ mod brief_combined_tests {
             hs.iter().any(|h| h["qualified_name"] == "a.fb"
                 && h["cyclomatic_complexity"] == 1),
             "空 content 符号复杂度=1 且计入 hotspots"
+        );
+    }
+
+    /// T-1790567800125-68b64e1c：正则预编译（OnceLock）后复杂度语义不变。
+    ///
+    /// 覆盖三路分支：基础 14 条关键词、非 python 的三元表达式（rust 走 ternary）、
+    /// python 的 for-in。OnceLock 版与逐次 `Regex::new` 版必须逐字符等价——
+    /// pattern 集合/顺序/匹配规则完全相同，只是编译从每函数 15 次降到进程级 1 次。
+    #[test]
+    fn test_complexity_regex_precompile_equivalent() {
+        // rust 函数：if + for + match + 三元（? :）
+        let rust_src = "fn f() { if a { for _ in b { match c { 1 => d, _ => e } } } let z = cond ? x : y; }";
+        // python 函数：if + for...in + 无三元
+        let py_src = "def f():\n    if a:\n        for i in b:\n            pass\n";
+        // 空内容
+        let empty = "";
+
+        // OnceLock 版结果
+        let rust_once = summary_cyclomatic_complexity(rust_src, "rust");
+        let py_once = summary_cyclomatic_complexity(py_src, "python");
+        let empty_once = summary_cyclomatic_complexity(empty, "rust");
+
+        // 期望值手工核对（与原实现同一组 pattern；基础关键词表非语言门控，
+        // 含 if/else/for/while/match/case/catch/&&/||/try/except/finally/when/guard）：
+        // rust: 1 + if(1) + for(1) + match(1) + ternary(1) = 5
+        // python: 1 + if(1) + for(1) + for...in(1) = 4（三元分支不生效，for 计两次：\bfor\b 与 for...in）
+        assert_eq!(rust_once, 5, "rust: if+for+match+三元");
+        assert_eq!(py_once, 4, "python: if + for(关键字) + for...in");
+        assert_eq!(empty_once, 1, "空内容恒为 1（早返回）");
+
+        // 语言门控：同一 rust 源按 python 计数不加三元，但基础关键词表
+        //（含 \bmatch\b，非语言门控）照计，且 \bfor\b.*\bin\b 命中 "for _ in b"
+        // rust 源含 "for _ in b" → for...in 命中；无三元
+        let rust_as_py = summary_cyclomatic_complexity(rust_src, "python");
+        assert_eq!(
+            rust_as_py, 5,
+            "rust 源按 python 计：基础关键词 if/for/match + for...in，无三元"
+        );
+
+        // 门控语言集合：三元仅在 rust/c/java/ts/js/go 生效
+        assert_eq!(summary_cyclomatic_complexity("a ? b : c", "rust"), 2);
+        assert_eq!(
+            summary_cyclomatic_complexity("a ? b : c", "python"),
+            1,
+            "python 无三元分支"
+        );
+        assert_eq!(
+            summary_cyclomatic_complexity("a ? b : c", "kotlin"),
+            1,
+            "非门控语言无三元分支"
+        );
+
+        // 重复调用稳定（OnceLock 只初始化一次，结果可复现）
+        assert_eq!(
+            summary_cyclomatic_complexity(rust_src, "rust"),
+            rust_once
         );
     }
 }
