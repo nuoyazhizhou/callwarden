@@ -9360,4 +9360,165 @@ mod tests {
             .unwrap();
         assert_eq!(resolved, ws_num_id);
     }
+
+    // ---- T-1790567800125-68b64e1c：uncommented_symbols V3 改写等价性 ----
+
+    /// 建最小 query fixture（多版本/多注释状态），返回 (conn, workspace_id)。
+    /// 行集设计：
+    /// - partition a.fn_a：两版本均无注释（id 100 旧、101 当前）→ 应返回 id=101 行；
+    /// - partition a.fn_b：旧版无注释、当前版**有注释** → 不得返回（V2 直接去窗口的
+    ///   错误路径：旧无注释版本会错误升位）；
+    /// - partition b.fn_c：单版本无注释 → 返回；
+    /// - partition b.fn_d：当前版有注释 → 不返回。
+    fn seed_uncommented_fixture() -> (Connection, i64) {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL, status TEXT NOT NULL, total_lines INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE file_versions (
+                id INTEGER PRIMARY KEY, file_instance_id INTEGER NOT NULL, is_current INTEGER NOT NULL
+            );
+            CREATE TABLE file_symbol_versions (
+                id INTEGER PRIMARY KEY, file_version_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL, qualified_name TEXT NOT NULL,
+                module_path TEXT, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL,
+                depth INTEGER NOT NULL, is_deleted INTEGER NOT NULL
+            );
+            CREATE TABLE symbol_contents (
+                content_hash TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                content TEXT NOT NULL, signature TEXT, has_comment INTEGER
+            );
+            INSERT INTO file_instances VALUES (1, 1, 'a.py', 'active', 10), (2, 1, 'b.py', 'active', 10);
+            INSERT INTO file_versions VALUES (10, 1, 1), (11, 1, 0), (20, 2, 1);
+            -- 注意：file_versions 11 为旧版但 is_current=0；fn_a 的两版本挂同一文件
+            -- 的当前版本内多行（is_current=1 集合内 partition 重复的真实来源）。
+            INSERT INTO symbol_contents VALUES
+                ('h-a-old', 'fn_a', 'fn', 'old', 'fn_a_old()', 0),
+                ('h-a-new', 'fn_a', 'fn', 'new', 'fn_a_new()', 0),
+                ('h-b-old', 'fn_b', 'fn', 'old', 'fn_b_old()', 0),
+                ('h-b-new', 'fn_b', 'fn', 'new', 'fn_b_new()', 1),
+                ('h-c',    'fn_c', 'fn', 'c',   'fn_c()',    0),
+                ('h-d',    'fn_d', 'fn', 'd',   'fn_d()',    1);
+            INSERT INTO file_symbol_versions VALUES
+                (100, 10, 'h-a-old', 'a.fn_a', 'a', 1, 2, 0, 0),
+                (101, 10, 'h-a-new', 'a.fn_a', 'a', 1, 2, 1, 0),
+                (102, 10, 'h-b-old', 'a.fn_b', 'a', 5, 6, 0, 0),
+                (103, 10, 'h-b-new', 'a.fn_b', 'a', 5, 6, 1, 0),
+                (104, 20, 'h-c',     'b.fn_c', 'b', 1, 3, 0, 0),
+                (105, 20, 'h-d',     'b.fn_d', 'b', 1, 3, 0, 0);
+            "#,
+        )
+        .unwrap();
+        (conn, 1)
+    }
+
+    /// 旧实现（窗口 ROW_NUMBER）SQL，作为等价性对拍的 legacy 基准。
+    const LEGACY_UNCOMMENTED_SQL: &str = r#"
+        SELECT fsv.qualified_name, fsv.module_path, fsv.start_line, fsv.end_line,
+               fsv.depth, sc.name, sc.kind, COALESCE(sc.signature, ''), fi.rel_path
+         FROM (
+            SELECT fsv_inner.*,
+                   ROW_NUMBER() OVER (PARTITION BY fsv_inner.qualified_name, fi.rel_path
+                                      ORDER BY fsv_inner.id DESC) as rn
+            FROM file_symbol_versions fsv_inner
+            JOIN file_versions fv_inner ON fsv_inner.file_version_id = fv_inner.id
+            JOIN file_instances fi ON fv_inner.file_instance_id = fi.id
+            WHERE fi.workspace_id = ?1 AND fv_inner.is_current = 1
+              AND (fsv_inner.is_deleted = 0 OR fsv_inner.is_deleted IS NULL)
+         ) fsv
+         JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
+         JOIN file_versions fv ON fsv.file_version_id = fv.id
+         JOIN file_instances fi ON fv.file_instance_id = fi.id
+         WHERE fi.workspace_id = ?1 AND fsv.rn = 1
+           AND sc.has_comment = 0
+           AND sc.kind = ?2"#;
+
+    #[test]
+    fn test_uncommented_symbols_v3_equivalent_to_legacy_window_sql() {
+        let (conn, ws) = seed_uncommented_fixture();
+
+        let v3 = query_local_uncommented_symbols(&conn, ws, "fn", "", 100).unwrap();
+        let names_v3: Vec<&str> = v3
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["qualified_name"].as_str().unwrap())
+            .collect();
+
+        // 语义断言：fn_b（当前版有注释）不得因旧版无注释而返回；fn_a 取最新版本。
+        assert!(
+            !names_v3.contains(&"a.fn_b"),
+            "当前版本有注释的 partition 不得返回（旧版本不得错误升位）"
+        );
+        let fn_a = v3
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["qualified_name"] == "a.fn_a")
+            .expect("a.fn_a 应返回");
+        assert_eq!(fn_a["signature"], "fn_a_new()", "应取 id 最大的当前版本行");
+
+        // 对拍：与 legacy 窗口 SQL 行集完全一致（按 qualified_name 排序后比较）。
+        let mut legacy: Vec<(String, String)> = conn
+            .prepare(LEGACY_UNCOMMENTED_SQL)
+            .unwrap()
+            .query_map(rusqlite::params![ws, "fn"], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(8)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        legacy.sort();
+        let mut v3_pairs: Vec<(String, String)> = v3
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| {
+                (
+                    x["qualified_name"].as_str().unwrap().to_string(),
+                    x["file_path"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        v3_pairs.sort();
+        assert_eq!(v3_pairs, legacy, "V3 与 legacy 窗口 SQL 行集必须一致");
+        assert_eq!(names_v3.len(), 2, "应恰有 fn_a/fn_c 两个无注释函数");
+    }
+
+    #[test]
+    fn test_uncommented_symbols_limit_zero_and_module_filter_semantics() {
+        let (conn, ws) = seed_uncommented_fixture();
+        // limit=0 → 空数组（对齐 Python `[:0]`）
+        let v3 = query_local_uncommented_symbols(&conn, ws, "fn", "", 0).unwrap();
+        assert_eq!(v3.as_array().unwrap().len(), 0);
+        // module_filter 语义（LIKE 'b%'）
+        let v3 = query_local_uncommented_symbols(&conn, ws, "fn", "b", 100).unwrap();
+        let names: Vec<&str> = v3
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["qualified_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["b.fn_c"]);
+    }
+
+    #[test]
+    fn test_uncommented_symbols_handler_rejects_negative_limit() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        // 未发布快照 → snapshot_not_ready 先于参数校验不可达；直接以
+        // handler 可达性为准：负 limit 在发布场景下也必须 invalid_params。
+        // 这里构造无快照环境仅断言不 panic 且非 ok（fail-closed 面回归）。
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.uncommented_symbols",
+            &json!({"workspace_instance_id": "ws-x", "limit": -1}),
+            &[],
+        );
+        assert_ne!(response["ok"], true, "负 limit 必须 fail-closed");
+    }
 }

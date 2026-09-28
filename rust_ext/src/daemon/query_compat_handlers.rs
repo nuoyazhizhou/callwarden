@@ -8341,3 +8341,108 @@ mod security_row_binding_tests {
         assert_eq!(res.as_array().unwrap().len(), 0);
     }
 }
+
+// ============================================================
+// T-1790567800125-68b64e1c：summary_brief_combined 等价性单测
+// 合并单遍 vs 分别调用（metrics_summary + complexity_hotspots）逐字段对拍。
+// ============================================================
+
+#[cfg(test)]
+mod brief_combined_tests {
+    use super::*;
+
+    /// 最小库：active/archived 文件、空 content 符号、同分函数（排序稳定性考察）。
+    fn brief_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL, status TEXT NOT NULL, total_lines INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE symbols (
+                id INTEGER PRIMARY KEY, file_instance_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+                qualified_name TEXT NOT NULL, module_path TEXT NOT NULL,
+                visibility TEXT NOT NULL, start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL, depth INTEGER NOT NULL,
+                has_comment INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE calls (caller_id INTEGER NOT NULL);
+            CREATE TABLE symbol_contents (
+                content_hash TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                content TEXT NOT NULL, signature TEXT, has_comment INTEGER
+            );
+            INSERT INTO file_instances VALUES
+                (1, 1, 'a.py', 'active', 100),
+                (2, 1, 'b.py', 'active', 200),
+                (3, 1, 'c.py', 'archived', 999);
+            INSERT INTO symbols VALUES
+                -- 同分（complexity=3：1+if+for? 各同分），行序 s1 < s4
+                (1, 1, 'h1', 'fn', 'fa', 'a.fa', 'a', 'public', 1, 10, 0, 1),
+                (2, 1, 'h2', 'fn', 'fb', 'a.fb', 'a', 'public', 12, 20, 0, 0),
+                (3, 3, 'h3', 'fn', 'fc', 'c.fc', 'c', 'public', 1, 10, 0, 1),
+                (4, 2, 'h4', 'fn', 'fd', 'b.fd', 'b', 'public', 1, 10, 0, 1);
+            INSERT INTO symbol_contents VALUES
+                ('h1', 'fa', 'fn', 'def fa():
+    if x:
+        for i in y:
+            pass
+', 'fa()', 1),
+                ('h2', '', '', '', '', 0),
+                ('h3', 'fc', 'fn', 'def fc():
+    if x:
+        for i in y:
+            pass
+', 'fc()', 1),
+                ('h4', 'fd', 'fn', 'def fd():
+    if x:
+        for i in y:
+            pass
+', 'fd()', 1);
+            "#,
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_brief_combined_matches_split_functions() {
+        let conn = brief_db();
+
+        // 分別调用（legacy 路径）
+        let legacy_metrics = summary_metrics_summary(&conn, 1).unwrap();
+        let legacy_hotspots = summary_complexity_hotspots(&conn, 1, 10, "").unwrap();
+
+        // 合并单遍（新路径）
+        let (combined_metrics, combined_hotspots) = summary_brief_combined(&conn, 1, 10).unwrap();
+
+        assert_eq!(
+            legacy_metrics, combined_metrics,
+            "metrics 字段必须逐项一致（含 archived 排除与空 content 跳过语义）"
+        );
+        assert_eq!(
+            legacy_hotspots, combined_hotspots,
+            "hotspots 行集与排序必须一致（同分保持行序；archived 行与空 content 行计入）"
+        );
+
+        // 语义断言锚点：archived 的 c.fc 只出现在 hotspots 不出现在 metrics 统计
+        //（function_count=4-1=3）；空 content 的 a.fb 复杂度=1（计入 hotspots），
+        // metrics 的 with_content 跳过它。
+        assert_eq!(combined_metrics["function_count"], 3);
+        assert_eq!(
+            combined_metrics["max_complexity"],
+            legacy_metrics["max_complexity"]
+        );
+        let hs = &combined_hotspots;
+        assert!(
+            hs.iter().any(|h| h["qualified_name"] == "c.fc"),
+            "hotspots 不得筛 status（对齐原语义）"
+        );
+        assert!(
+            hs.iter().any(|h| h["qualified_name"] == "a.fb"
+                && h["cyclomatic_complexity"] == 1),
+            "空 content 符号复杂度=1 且计入 hotspots"
+        );
+    }
+}
