@@ -398,3 +398,41 @@ E_VERDICT_TASK_NOT_IN_REVIEW 拒。「独立复审 = 关闭门禁」未落地。
   （对比上张卡同路径 verdicts=[]）。「独立复审 = 关闭门禁」闭环。
 - advisory：task.handoff 漏传 next_action 被拒（E_HANDOFF_STRUCTURED_REQUIRED），
   legacy 卡 verdict→apply 直通路径 handoff 非必需，不影响收口。
+
+## 追加 9（2026-09-28 下午）：慢查询治理——uncommented_symbols 与 project_brief 超时（T-1790567800125-68b64e1c）
+
+### 基线重放
+旧矩阵 27 条 MCP_ERR 经权威映射重放（outputs/probe_replay_result.json）：
+7 条已恢复（build_context 5 件套 / get_call_heatmap / get_test_coverage /
+get_attestation_validity）、18 条 fixture 参数不完整 fail-closed 正确（写类工具
+不注入真实参数）、真慢查询仅剩 2 条。矩阵 MCP_ERR 实际缺陷队列清零后仅存
+容量类 2 条，本卡处理。
+
+### 缺陷一：query.uncommented_symbols（daemon 109s pipe 超时）
+- QEP 实证：ROW_NUMBER() OVER (PARTITION BY qualified_name, rel_path) 窗口强制
+  物化 195,658 行 co-routine + 双 TEMP B-TREE + AUTOMATIC PARTIAL COVERING INDEX；
+  外层冗余 fv/fi JOIN 不是主因（去掉后仍 238s）；
+- 关键实证：is_current=1 集合内 partition 非恒 1（max=6 行、重复 2367 个），
+  直接去窗口**不严格等价**；
+- **改写 V3**：GROUP BY MAX(id) 走 idx_file_symbol_versions_qualified + max_id
+  回表（commit d1c7c03）。真实库行集对拍 **equal=true**（原版 152.2s vs
+  V3 0.15s，100 行逐字段一致）；语义约束成文：has_comment/kind 过滤不得下推
+  （下推会在最新版本有注释时让旧无注释版本错误升位）。
+
+### 缺陷二：project_brief（daemon 30.7s 超时）
+- SQL 层全部不是瓶颈（ext 0.01s / modules 0.11s / fallback 0.01s / content 拉取
+  0.38s）；瓶颈是 metrics_summary 与 complexity_hotspots **各自**把 34,939 行 /
+  28.1MB 函数全文拉到 Rust 侧逐行分析（~7 万次 ×2 遍）；
+- **改写**：新增 summary_brief_combined 单次拉取超集行集（含 fi.status、
+  ORDER BY s.id）+ 单次遍历，每行 complexity 只算一次；metrics 侧仅统计
+  非 archived 且 content 非空（对齐原语义）、hotspots 侧不筛 status 不跳空
+  content（对齐原语义）。summary_metrics_summary / summary_complexity_hotspots
+  原实现保留（各自其它调用方契约不变）。
+
+### 回归测试（commit 32e526f）
+- snapshot_state tests +3（legacy 窗口 SQL 内联对拍 / limit=0 与 module_filter /
+  负 limit fail-closed）→ **58/58 PASS**；
+- brief_combined_tests +1（合并 vs 分别调用逐字段对拍 + archived/空 content/
+  同分排序锚点）→ PASS；cargo check --bins 干净。
+
+### 部署实测（待部署后补记）
