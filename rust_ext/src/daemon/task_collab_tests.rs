@@ -24,3 +24,5 @@ mod bridge;
 mod verdict_compat;
 #[path = "task_collab_tests_cascade.rs"]
 mod cascade;
+#[path = "task_collab_tests_verdict_gate.rs"]
+mod verdict_gate;

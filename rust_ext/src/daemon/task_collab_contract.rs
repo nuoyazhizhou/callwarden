@@ -1471,6 +1471,54 @@ impl TaskCollabStore {
                 DaemonRpcError::internal_error(format!("查询 Reviewer Role Contract 失败: {}", e))
             })?;
 
+        // 3b) 权威 role contract canonical hash（T-1790563271814-14566fa4）：
+        // verdict.submit 的 E_ROLE_CONTRACT_HASH_MISMATCH 需要 reviewer 能取到期望值。
+        // 权威来源 = 新 schema role_contract_revisions.role_contract_hash（bootstrap
+        // 时 c14n 散列）；按 lineage 当前 revision 取。legacy 扁平表无 hash 列时留空。
+        let reviewer_role_contract = match reviewer_role_contract {
+            Some(mut rc) => {
+                let authoritative: Option<(String, i64, String, String)> = conn
+                    .query_row(
+                        "SELECT r.role_contract_hash, r.revision, r.role_contract_revision_id, \
+                                l.role_contract_lineage_id \
+                         FROM role_contract_lineages l \
+                         JOIN role_contract_revisions r \
+                           ON r.role_contract_lineage_id = l.role_contract_lineage_id \
+                         WHERE l.task_id = ?1 AND l.role = 'reviewer' \
+                         ORDER BY r.revision DESC LIMIT 1",
+                        params![task_id],
+                        |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, i64>(1)?,
+                                r.get::<_, String>(2)?,
+                                r.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|e| {
+                        DaemonRpcError::internal_error(format!(
+                            "查询权威 Role Contract hash 失败: {}",
+                            e
+                        ))
+                    })?;
+                if let Some((hash, revision, revision_id, lineage_id)) = authoritative {
+                    if let Some(obj) = rc.as_object_mut() {
+                        obj.insert("role_contract_hash".into(), Value::String(hash));
+                        obj.insert("role_contract_revision".into(), serde_json::json!(revision));
+                        obj.insert(
+                            "role_contract_revision_id".into(),
+                            Value::String(revision_id),
+                        );
+                        obj.insert("role_contract_lineage_id".into(), Value::String(lineage_id));
+                    }
+                }
+                Some(rc)
+            }
+            None => None,
+        };
+
         // 4) 规则状态（normalization rule set，revoked 视为不可用）
         let normalization_rules = conn
             .query_row(

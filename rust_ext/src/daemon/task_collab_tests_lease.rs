@@ -987,7 +987,13 @@ use super::support::*;
         );
 
         let res = store
-            .handle_task_close(peer, &serde_json::json!({"task_id": "T-PARENT", "lease_token": "tok-p", "fencing_counter": 1}))
+            .handle_task_close(peer, &serde_json::json!({
+                "task_id": "T-PARENT",
+                "lease_token": "tok-p",
+                "fencing_counter": 1,
+                // S4 verdict 门禁：review 态直接 close 需豁免（本测试聚焦 S1 子任务门禁）。
+                "verdict_waiver": {"reason": "unit-test: 父任务 S1 门禁回归场景"},
+            }))
             .unwrap();
         assert_eq!(res["status"], "closed");
 
@@ -1254,10 +1260,18 @@ use super::support::*;
         let res = store
             .handle_task_apply(
                 peer,
-                &serde_json::json!({"task_id": "T-APPLY", "lease_token": "tok-apply", "fencing_counter": 1}),
+                &serde_json::json!({
+                    "task_id": "T-APPLY",
+                    "lease_token": "tok-apply",
+                    "fencing_counter": 1,
+                    // S4 verdict 门禁（T-1790563271814-14566fa4）：本测试聚焦
+                    // applied_at 回填语义，用显式豁免过门禁（豁免本身由专门测试覆盖）。
+                    "verdict_waiver": {"reason": "unit-test: applied_at 回填回归场景"},
+                }),
             )
             .unwrap();
         assert_eq!(res["status"], "applied");
+        assert_eq!(res["verdict_waived"], true);
 
         // 响应层 applied_at 非零
         let applied_at_resp = res["applied_at"].as_f64().unwrap();

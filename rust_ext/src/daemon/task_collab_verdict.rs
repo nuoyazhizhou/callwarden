@@ -242,7 +242,11 @@ impl TaskCollabStore {
             if rc_hash != role_contract_hash {
                 return Err(DaemonRpcError::new(
                     "E_ROLE_CONTRACT_HASH_MISMATCH",
-                    "Role Contract canonical hash 不匹配",
+                    format!(
+                        "Role Contract canonical hash 不匹配（期望 {}，来源 role_contract_revisions \
+                         经 role_contract_lineage {} 绑定本任务；可在报错后直接用该值重提 verdict）",
+                        rc_hash, resolved_role_contract_lineage_id
+                    ),
                 ));
             }
         } else {
@@ -333,7 +337,11 @@ impl TaskCollabStore {
                 if canonical_hash != role_contract_hash {
                     return Err(DaemonRpcError::new(
                         "E_ROLE_CONTRACT_HASH_MISMATCH",
-                        "Role Contract canonical hash 不匹配",
+                        format!(
+                            "Role Contract canonical hash 不匹配（期望 {}，来源 role_contract_revisions \
+                             经 role_contract_lineage {} 绑定本任务；可在报错后直接用该值重提 verdict）",
+                            canonical_hash, lineage_id
+                        ),
                     ));
                 }
                 validated_via_new_schema = true;
@@ -369,7 +377,11 @@ impl TaskCollabStore {
                 if actual_role_contract_hash != role_contract_hash {
                     return Err(DaemonRpcError::new(
                         "E_ROLE_CONTRACT_HASH_MISMATCH",
-                        "Role Contract canonical hash 不匹配",
+                        format!(
+                            "Role Contract canonical hash 不匹配（期望 {}，来源 legacy role_contracts \
+                             payload c14n；可在报错后直接用该值重提 verdict）",
+                            actual_role_contract_hash
+                        ),
                     ));
                 }
             }

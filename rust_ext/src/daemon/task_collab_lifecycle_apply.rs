@@ -3,6 +3,94 @@
 
 use super::*;
 
+/// S4: verdict ledger 门禁（T-1790563271814-14566fa4）——「独立复审 = 关闭门禁」。
+///
+/// review 态直接 apply/close（未经 apply 的 review→closed 跳变）必须满足其一：
+/// 1. `task_verdict_events` 存在该任务的 `overall='pass'` verdict 入账；
+/// 2. 请求携带显式豁免 `verdict_waiver.reason`（非空），豁免由调用方写入
+///    task_events（reason_code='verdict_waiver'）供审计，绝不静默放行。
+/// 两者皆无 → `E_VERDICT_REQUIRED` fail-closed（在任何写入前拒绝）。
+///
+/// 刻意只拦 `current_status == "review"`：applied→closed 的 close 已在 apply
+/// 阶段把过关；cascade_close 的聚合收尾属系统路径（本就不查 verdict，见其文档）。
+/// 返回 Ok(Some(reason)) = 显式豁免生效（调用方需落账）；Ok(None) = verdict 已入账
+/// 或不在门禁范围。
+fn require_verdict_or_waiver(
+    tx: &rusqlite::Transaction<'_>,
+    task_id: &str,
+    current_status: &str,
+    params: &Value,
+) -> Result<Option<String>, DaemonRpcError> {
+    if current_status != "review" {
+        return Ok(None);
+    }
+    let pass_verdicts: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM task_verdict_events \
+             WHERE task_id = ?1 AND overall = 'pass'",
+            params![task_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("verdict 门禁查询失败: {}", e))
+        })?;
+    if pass_verdicts > 0 {
+        return Ok(None);
+    }
+    let waiver_reason = params
+        .get("verdict_waiver")
+        .and_then(|v| v.get("reason"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    match waiver_reason {
+        Some(reason) => Ok(Some(reason)),
+        None => Err(DaemonRpcError::new(
+            "E_VERDICT_REQUIRED",
+            format!(
+                "任务 {} 处于 review 态且无 reviewer pass verdict 入账，禁止 apply/close；\
+                 如确需豁免请携带 verdict_waiver.reason（将写入 task_events 供审计）",
+                task_id
+            ),
+        )),
+    }
+}
+
+/// 把显式豁免写入 task_events（审计轨迹：谁在什么状态下豁免了 verdict 门禁）。
+fn record_verdict_waiver_event(
+    store: &TaskCollabStore,
+    tx: &rusqlite::Transaction<'_>,
+    task_id: &str,
+    current_status: &str,
+    target_status: &str,
+    reason: &str,
+    owner_key: &str,
+    role: &str,
+    ts: f64,
+) -> Result<(), DaemonRpcError> {
+    let seq = store.next_seq();
+    tx.execute(
+        "INSERT INTO task_events
+         (task_id, from_status, to_status, reason_code, reason, actor_identity, role, monotonic_seq, authoritative_timestamp)
+         VALUES (?1, ?2, ?3, 'verdict_waiver', ?4, ?5, ?6, ?7, ?8)",
+        params![
+            task_id,
+            current_status,
+            target_status,
+            format!("verdict waiver: {}", reason),
+            owner_key,
+            role,
+            seq,
+            ts
+        ],
+    )
+    .map_err(|e| {
+        DaemonRpcError::internal_error(format!("verdict_waiver 事件写入失败: {}", e))
+    })?;
+    Ok(())
+}
+
 impl TaskCollabStore {
     pub fn handle_task_apply(
         &self,
@@ -56,6 +144,23 @@ impl TaskCollabStore {
         // 观察#1 修复：daemon 权威 apply 必须回填 applied_at 列，与 Python
         // db_tasks.task_apply（line 1990）及 CLI apply_task（cli/task.rs:1157）对齐，
         // 否则 auto/enterprise 模式下 applied_at 恒为 NULL，破坏审计轨迹与级联语义。
+        // S4: verdict ledger 门禁（T-1790563271814-14566fa4）——review 态 apply 必须
+        // 有 pass verdict 入账或显式豁免；豁免先落账再跳变（任何写入前已 fail-closed）。
+        let verdict_waiver =
+            require_verdict_or_waiver(&tx, task_id, &current_status, params)?;
+        if let Some(ref reason) = verdict_waiver {
+            record_verdict_waiver_event(
+                self,
+                &tx,
+                task_id,
+                &current_status,
+                "applied",
+                reason,
+                &owner_key,
+                identity.as_ref().map(|id| id.role.as_str()).unwrap_or(""),
+                ts,
+            )?;
+        }
         tx.execute(
             "UPDATE tasks SET status = 'applied', applied_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![ts, task_id],
@@ -88,6 +193,9 @@ impl TaskCollabStore {
             Value::Number(serde_json::Number::from_f64(ts).unwrap()),
         );
         res.insert("reviewer".to_string(), Value::String(reviewer.to_string()));
+        if verdict_waiver.is_some() {
+            res.insert("verdict_waived".to_string(), Value::Bool(true));
+        }
         let val = Value::Object(res);
         self.save_dedup(params, &val);
         Ok(val)
@@ -207,6 +315,26 @@ impl TaskCollabStore {
             }
         }
 
+        // S4: verdict ledger 门禁（T-1790563271814-14566fa4）——review 态直接 close
+        // （绕过 apply）必须有 pass verdict 入账或显式豁免；豁免先落账再跳变。
+        // 刻意排在 S1/S2 之后：结构门禁（子任务/步骤）先行，verdict 凭据最后把关。
+        // from applied 的 close 已被 apply 阶段的 S4 把关，不重复拦截。
+        let verdict_waiver =
+            require_verdict_or_waiver(&tx, task_id, &current_status, params)?;
+        if let Some(ref reason) = verdict_waiver {
+            record_verdict_waiver_event(
+                self,
+                &tx,
+                task_id,
+                &current_status,
+                "closed",
+                reason,
+                &owner_key,
+                identity.as_ref().map(|id| id.role.as_str()).unwrap_or(""),
+                ts,
+            )?;
+        }
+
         // S5: closed_at 写入真实非零时间戳
         tx.execute(
             "UPDATE tasks SET status = 'closed', closed_at = ?1, updated_at = ?1 WHERE id = ?2",
@@ -240,6 +368,9 @@ impl TaskCollabStore {
             Value::Number(serde_json::Number::from_f64(ts).unwrap()),
         );
         res.insert("reviewer".to_string(), Value::String(reviewer.to_string()));
+        if verdict_waiver.is_some() {
+            res.insert("verdict_waived".to_string(), Value::Bool(true));
+        }
         let val = Value::Object(res);
         self.save_dedup(params, &val);
         Ok(val)
