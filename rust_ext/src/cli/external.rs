@@ -4824,14 +4824,14 @@ mod tests {
         let db_path = dir.path().join("callwarden.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER);
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
              CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, rel_path TEXT, module_path TEXT);
              CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, symbol_hash TEXT, qualified_name TEXT, module_path TEXT, start_line INTEGER, end_line INTEGER, kind TEXT);
              CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT);
              CREATE TABLE file_versions (id INTEGER PRIMARY KEY, file_instance_id INTEGER, parsed_at REAL);
              CREATE TABLE file_symbol_versions (file_version_id INTEGER, symbol_hash TEXT);
              CREATE TABLE semgrep_findings (file_instance_id INTEGER, symbol_qualified TEXT);
-             INSERT INTO workspaces VALUES (1,1),(2,0);
+             INSERT INTO workspaces VALUES (1,1,''),(2,0,'/other');
              INSERT INTO file_instances VALUES (10,1,'src/run.rs','crate'),(20,2,'src/run.rs','crate');
              INSERT INTO symbols VALUES (1,10,'shared-hash','crate::run','crate',1,3,'fn'),(2,20,'shared-hash','crate::run','crate',1,3,'fn');
              INSERT INTO symbol_contents VALUES ('shared-hash','if value { return; }');
@@ -4856,12 +4856,12 @@ mod tests {
         let db_path = dir.path().join("callwarden.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER);
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
              CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, status TEXT, total_lines INTEGER, rel_path TEXT, abs_path TEXT, module_path TEXT);
              CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, kind TEXT, has_comment INTEGER, symbol_hash TEXT, qualified_name TEXT, name TEXT, start_line INTEGER, end_line INTEGER, depth INTEGER, module_path TEXT, signature TEXT);
              CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT);
              CREATE TABLE calls (caller_id INTEGER, callee_id INTEGER, callee_name TEXT, callee_module TEXT);
-             INSERT INTO workspaces VALUES (1,1),(2,0);
+             INSERT INTO workspaces VALUES (1,1,''),(2,0,'/other');
              INSERT INTO file_instances VALUES (1,1,'active',12,'src/a.rs','/repo/src/a.rs','crate::a'),(2,2,'active',99,'src/b.rs','/other/src/b.rs','other::b');
              INSERT INTO symbols VALUES (1,1,'fn',1,'h1','crate::a::run','run',1,4,0,'crate::a','fn run()'),(2,2,'fn',0,'h2','other::b::run','run',1,80,0,'other::b','fn run()');
              INSERT INTO symbol_contents VALUES ('h1','if (x) { helper(); }');
@@ -4902,12 +4902,12 @@ mod tests {
         let db_path = dir.path().join("callwarden.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER);
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
              CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, status TEXT, total_lines INTEGER, rel_path TEXT);
              CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, kind TEXT, symbol_hash TEXT, start_line INTEGER, end_line INTEGER, module_path TEXT);
              CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT);
              CREATE TABLE calls (caller_id INTEGER, callee_module TEXT);
-             INSERT INTO workspaces VALUES (1,1);
+             INSERT INTO workspaces VALUES (1,1,'');
              INSERT INTO file_instances VALUES (1,1,'active',2500,'src/large.rs');
              INSERT INTO symbols VALUES (1,1,'fn','h1',1,250,'crate::large');
              INSERT INTO symbol_contents VALUES ('h1','');",
@@ -4963,12 +4963,12 @@ mod tests {
         let db_path = dir.path().join("callwarden.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER);
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
              CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, status TEXT, total_lines INTEGER, rel_path TEXT);
              CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, kind TEXT, symbol_hash TEXT, start_line INTEGER, end_line INTEGER, module_path TEXT);
              CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT);
              CREATE TABLE calls (caller_id INTEGER, callee_module TEXT);
-             INSERT INTO workspaces VALUES (1,1),(2,0);
+             INSERT INTO workspaces VALUES (1,1,''),(2,0,'/other');
              INSERT INTO file_instances VALUES (100,2,'active',5000,'other/huge.rs');",
         )
         .unwrap();
@@ -5027,12 +5027,12 @@ mod tests {
         let db_path = dir.path().join("callwarden.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER);
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
              CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, status TEXT, total_lines INTEGER, rel_path TEXT);
              CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, kind TEXT, symbol_hash TEXT, start_line INTEGER, end_line INTEGER, module_path TEXT);
              CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT);
              CREATE TABLE calls (caller_id INTEGER, callee_module TEXT);
-             INSERT INTO workspaces VALUES (1,1),(2,0);
+             INSERT INTO workspaces VALUES (1,1,''),(2,0,'/other');
              INSERT INTO file_instances VALUES (100,2,'active',5000,'other/huge.rs');",
         )
         .unwrap();
@@ -5070,13 +5070,13 @@ mod tests {
         let db_path = dir.path().join("callwarden.db");
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER);
+            "CREATE TABLE workspaces (id INTEGER PRIMARY KEY, is_active INTEGER, root_path TEXT);
              CREATE TABLE file_instances (id INTEGER PRIMARY KEY, workspace_id INTEGER, status TEXT, rel_path TEXT, module_path TEXT);
              CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_instance_id INTEGER, kind TEXT, name TEXT, qualified_name TEXT, module_path TEXT, start_line INTEGER, end_line INTEGER, symbol_hash TEXT);
              CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY, content TEXT);
              CREATE TABLE calls (caller_id INTEGER, callee_id INTEGER);
              CREATE TABLE clone_pairs (workspace_id INTEGER, symbol_a_id INTEGER, symbol_b_id INTEGER, clone_type INTEGER, similarity REAL, token_hash TEXT, lines_a INTEGER, lines_b INTEGER, detected_at REAL);
-             INSERT INTO workspaces VALUES (1,1),(2,0);
+             INSERT INTO workspaces VALUES (1,1,''),(2,0,'/other');
              INSERT INTO file_instances VALUES (1,1,'active','src/a.rs','src'),(2,1,'active','tests/spec.rs','tests'),(3,2,'active','other.rs','other');
              INSERT INTO symbols VALUES (1,1,'fn','target','crate::target','src',1,4,'h1'),(2,2,'fn','behavior_spec','tests::behavior_spec','tests',2,6,'h2'),(3,3,'fn','other_spec','other::other_spec','other',2,6,'h3');
              INSERT INTO symbol_contents VALUES ('h1','target()'),('h2','spec()'),('h3','spec()');

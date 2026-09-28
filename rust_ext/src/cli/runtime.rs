@@ -7,6 +7,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
 use super::router::{daemon_socket_path, get_daemon_mode, is_daemon_available, DaemonMode};
+use crate::daemon::workspace::normalize_path_key;
 
 /// 命令实际使用的数据源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +122,13 @@ impl RuntimeOptions {
         Ok(conn)
     }
 
-    /// 返回显式 workspace，或从本地库解析唯一 active workspace。
+    /// 返回显式 workspace，或按当前工作目录解析到已注册的工作区，
+    /// 最后才回退到“唯一 active workspace”判定。
+    ///
+    /// 解析顺序对齐 Python `_init_workspace`（`db/db_base.py`）的 fail-closed
+    /// 语义：显式 id 优先；缺省时按 cwd 所属的已注册 `root_path` 精确匹配
+    /// （不借用其他项目遗留的全局 active workspace——“工作区身份混串”根因）；
+    /// 仅当 cwd 不属于任何已注册工作区时，才复用全局唯一 active workspace。
     pub fn resolve_local_workspace_id(&self, conn: &Connection) -> Result<i64, String> {
         if let Some(workspace_id) = self.workspace_id.as_deref() {
             let workspace_id = workspace_id.parse::<i64>().map_err(|_| {
@@ -133,6 +140,15 @@ impl RuntimeOptions {
             return Ok(workspace_id);
         }
 
+        // 显式 id 缺省：从当前工作目录逐级向上匹配已注册的 root_path
+        // （最近者优先）。匹配成功即采用，不进入下面的全局 active 判定。
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("cannot determine current directory: {error}"))?;
+        if let Some(workspace_id) = resolve_workspace_by_path(conn, &cwd)? {
+            return Ok(workspace_id);
+        }
+
+        // cwd 不属于任何已注册工作区：保留旧语义，复用全局唯一 active workspace
         let mut stmt = conn
             .prepare("SELECT id FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 2")
             .map_err(|error| format!("cannot query active workspace: {error}"))?;
@@ -356,6 +372,50 @@ impl RuntimeOptions {
     }
 }
 
+/// 从 `start_path` 逐级向上查找已注册的工作区根，返回最近匹配的 workspace id。
+///
+/// 对齐 Python 侧 `detect_project_root`（`config.py`）+ `_init_workspace` 的
+/// `root_path` 精确匹配语义，但以本地库已注册的 `workspaces.root_path` 为权威
+/// （不依赖标记文件推断）：起点目录及其每个祖先按 `normalize_path_key` 规范化后
+/// 与 `root_path` 精确比较，命中最近祖先即返回；同一根存在多行时取最小 id
+/// （确定性，等价于 Python `fetchone` 的首行语义）。起点目录本身排在最前，
+/// 因此注册在子目录的工作区优先于其父级工作区。
+///
+/// 无任何匹配返回 `Ok(None)`，由调用方回退到全局 active 判定。全程只读，
+/// 不会像 Python 那样 find-or-create（CLI 只读命令不应有写副作用）。
+fn resolve_workspace_by_path(conn: &Connection, start_path: &Path) -> Result<Option<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, root_path FROM workspaces ORDER BY id")
+        .map_err(|error| format!("cannot query workspaces: {error}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let root_path: String = row.get(1).unwrap_or_default();
+            Ok((id, root_path))
+        })
+        .map_err(|error| format!("cannot query workspaces: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read workspaces: {error}"))?;
+
+    let mut current = start_path.to_path_buf();
+    loop {
+        let key = normalize_path_key(&current.to_string_lossy());
+        if !key.is_empty() {
+            if let Some(id) = rows
+                .iter()
+                .find(|(_, root_path)| normalize_path_key(root_path) == key)
+                .map(|(id, _)| *id)
+            {
+                return Ok(Some(id));
+            }
+        }
+        match current.parent() {
+            Some(parent) if parent != current => current = parent.to_path_buf(),
+            _ => return Ok(None),
+        }
+    }
+}
+
 fn result_from_source(result: Result<Value, String>, route: RouteUsed) -> CommandResult {
     match result {
         Ok(value) => CommandResult::success_json(&value, route),
@@ -492,12 +552,13 @@ mod tests {
             "CREATE TABLE workspaces (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
+                root_path TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 0
             );",
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO workspaces(id, name, is_active) VALUES (?1, ?2, 1)",
+            "INSERT INTO workspaces(id, name, root_path, is_active) VALUES (?1, ?2, '', 1)",
             params![17_i64, "active"],
         )
         .unwrap();
@@ -515,11 +576,12 @@ mod tests {
             "CREATE TABLE workspaces (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
+                root_path TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 0
             );
-            INSERT INTO workspaces(id, name, is_active) VALUES
-                (1, 'one', 1),
-                (2, 'two', 1);",
+            INSERT INTO workspaces(id, name, root_path, is_active) VALUES
+                (1, 'one', '', 1),
+                (2, 'two', '', 1);",
         )
         .unwrap();
 
@@ -548,9 +610,132 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let db_path = temp.path().join("callwarden.db");
         let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL DEFAULT '',
+                is_active INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
         let mut runtime = options(DaemonMode::Local, db_path);
         runtime.workspace_id = Some("ws-enterprise-id".to_string());
         let error = runtime.resolve_local_workspace_id(&conn).unwrap_err();
         assert!(error.contains("positive integer"));
+    }
+
+    /// 辅助：建一张含 root_path 的 workspaces 表并插入一行。
+    fn workspace_table_with_root(conn: &Connection, id: i64, root_path: &str, is_active: bool) {
+        conn.execute_batch(
+            "CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL DEFAULT '',
+                is_active INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces(id, name, root_path, is_active) VALUES (?1, ?2, ?3, ?4)",
+            params![id, "ws", root_path, is_active as i64],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn path_resolution_matches_exact_working_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let root = temp.path().join("my-project");
+        std::fs::create_dir_all(&root).unwrap();
+        // is_active=0：cwd 匹配也必须能解析（对齐 Python 显式根语义，不依赖 active 标记）
+        workspace_table_with_root(&conn, 42, &root.to_string_lossy(), false);
+
+        assert_eq!(
+            resolve_workspace_by_path(&conn, &root).unwrap(),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn path_resolution_walks_up_to_ancestor_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let root = temp.path().join("my-project");
+        let deep = root.join("src").join("daemon");
+        std::fs::create_dir_all(&deep).unwrap();
+        workspace_table_with_root(&conn, 7, &root.to_string_lossy(), false);
+
+        // 从深层子目录运行 cw：应向上走到已注册的工作区根
+        assert_eq!(resolve_workspace_by_path(&conn, &deep).unwrap(), Some(7));
+    }
+
+    #[test]
+    fn path_resolution_prefers_nearest_registered_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let outer = temp.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL DEFAULT '',
+                is_active INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces(id, name, root_path, is_active) VALUES (1,'o',?1,1),(2,'i',?2,0)",
+            params![outer.to_string_lossy(), inner.to_string_lossy()],
+        )
+        .unwrap();
+        // 外层 active=1、内层 active=0：从内层目录运行应绑定最近的内层工作区，
+        // 而非借用外层遗留的 active 工作区（fail-closed 反“身份混串”）
+        assert_eq!(resolve_workspace_by_path(&conn, &inner).unwrap(), Some(2));
+    }
+
+    #[test]
+    fn path_resolution_normalizes_separators_and_drive_case() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        // 库里按 Windows 原生形态存储（反斜杠 + 大写盘符）
+        let stored = temp.path().to_string_lossy().to_string();
+        workspace_table_with_root(&conn, 99, &stored, false);
+
+        // 查询侧用正斜杠 + 小写盘符 + 末尾斜杠，规范化后必须匹配
+        let mixed = stored.replace('\\', "/");
+        let mixed = if mixed.len() >= 2 && mixed.as_bytes()[1] == b':' {
+            format!("{}/", mixed[..1].to_ascii_lowercase() + &mixed[1..])
+        } else {
+            format!("{mixed}/")
+        };
+        assert_eq!(
+            resolve_workspace_by_path(&conn, Path::new(&mixed)).unwrap(),
+            Some(99)
+        );
+    }
+
+    #[test]
+    fn path_resolution_returns_none_for_unregistered_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let registered = temp.path().join("registered");
+        let unrelated = temp.path().join("unrelated");
+        std::fs::create_dir_all(&registered).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        workspace_table_with_root(&conn, 5, &registered.to_string_lossy(), false);
+
+        assert_eq!(
+            resolve_workspace_by_path(&conn, &unrelated).unwrap(),
+            None
+        );
     }
 }
