@@ -15,6 +15,7 @@ use callwarden_core::cli::build_context::{
     ToolchainRegistration,
 };
 use callwarden_core::cli::config::{check_role_supported, load_config, ConfigEntry, PlatformPaths};
+use callwarden_core::cli::external::enterprise_workspace_id;
 use callwarden_core::cli::file_query::{
     format_file_symbols_output, format_symbol_location_output, query_local_file_symbols,
     query_local_symbol_location,
@@ -2355,9 +2356,7 @@ fn run_refresh(
 }
 
 fn run_enterprise_full_refresh(runtime: &RuntimeOptions, force: bool) -> Result<String, String> {
-    let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-        "enterprise refresh requires --workspace-id <workspace_instance_id>".to_string()
-    })?;
+    let workspace_id = enterprise_workspace_id(runtime, "full refresh")?;
     let started = Instant::now();
     let manifest = prepare_enterprise_manifest()?;
     let manifest_paths = manifest
@@ -2524,9 +2523,7 @@ fn run_enterprise_full_refresh(runtime: &RuntimeOptions, force: bool) -> Result<
 }
 
 fn run_enterprise_refresh(runtime: &RuntimeOptions, paths: &[PathBuf]) -> Result<String, String> {
-    let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-        "enterprise refresh requires --workspace-id <workspace_instance_id>".to_string()
-    })?;
+    let workspace_id = enterprise_workspace_id(runtime, "refresh")?;
     let session_id = new_cli_session_id();
     let connect = runtime.daemon_call(
         "workspace.connect",
@@ -2579,9 +2576,7 @@ fn run_stats(runtime: &RuntimeOptions) -> CommandResult {
             query_local_stats(&conn, workspace_id)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise stats requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "stats")?;
             let (method, params) = callwarden_core::daemon::client::build_query_request(
                 workspace_id,
                 "stats",
@@ -2605,9 +2600,7 @@ fn run_status(runtime: &RuntimeOptions) -> CommandResult {
             query_local_status(&conn, workspace_id, &runtime.db_path)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise status requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "status")?;
             query_enterprise_status(workspace_id, |method, params| {
                 runtime.daemon_call(method, params)
             })
@@ -2628,9 +2621,7 @@ fn run_search(
             query_local_search(&conn, workspace_id, query, kind, limit)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise search requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "search")?;
             query_enterprise_search(workspace_id, query, kind, limit, |method, params| {
                 runtime.daemon_call(method, params)
             })
@@ -2700,9 +2691,7 @@ fn run_symbol(runtime: &RuntimeOptions, qualified_name: &str) -> CommandResult {
             query_symbol_detail(&conn, workspace_id, qualified_name)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise symbol requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "symbol")?;
             query_enterprise_symbol(workspace_id, qualified_name, |method, params| {
                 runtime.daemon_call(method, params)
             })
@@ -2763,9 +2752,7 @@ fn run_file(runtime: &RuntimeOptions, file_path: &str) -> CommandResult {
             query_local_file_symbols(&conn, workspace_id, file_path)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise file requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "file")?;
             let (method, params) =
                 callwarden_core::daemon::client::build_file_query_request(workspace_id, file_path);
             runtime.daemon_call(&method, params)
@@ -2805,9 +2792,7 @@ fn run_query(runtime: &RuntimeOptions, name: &str, file_path: &str) -> CommandRe
             query_local_symbol_location(&conn, workspace_id, name, file_path)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise query requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "query")?;
             let (method, params) =
                 callwarden_core::daemon::client::build_symbol_location_query_request(
                     workspace_id,
@@ -2851,9 +2836,7 @@ fn run_grep(runtime: &RuntimeOptions, options: GrepOptions) -> CommandResult {
             query_local_grep(&conn, workspace_id, &options)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise grep requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "grep")?;
             let (method, params) = callwarden_core::daemon::client::build_grep_query_request(
                 workspace_id,
                 &options.patterns,
@@ -2904,9 +2887,7 @@ fn run_issues(runtime: &RuntimeOptions, qualified_name: &str, include_info: bool
             query_local_issues(&conn, workspace_id, qualified_name, include_info)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise issues requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "issues")?;
             let (method, params) = callwarden_core::daemon::client::build_issues_query_request(
                 workspace_id,
                 qualified_name,
@@ -2967,9 +2948,7 @@ fn run_tests(
             }
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise tests requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "tests")?;
             let (method, params) = callwarden_core::daemon::client::build_tests_query_request(
                 workspace_id,
                 qualified_name,
@@ -3003,9 +2982,7 @@ fn run_callers(
             query_local_callers(&conn, workspace_id, requested_name, qualified_name)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise callers requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "callers")?;
             query_enterprise_graph(
                 workspace_id,
                 "callers",
@@ -3030,9 +3007,7 @@ fn run_callees(
             query_local_callees(&conn, workspace_id, requested_name, qualified_name)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise callees requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "callees")?;
             query_enterprise_graph(
                 workspace_id,
                 "callees",
@@ -3057,9 +3032,7 @@ fn run_call_chain(
             query_local_call_chain(&conn, workspace_id, qualified_name, requested_depth)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise call-chain requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "call-chain")?;
             query_enterprise_call_chain(
                 workspace_id,
                 qualified_name,
@@ -3079,9 +3052,7 @@ fn run_impact(runtime: &RuntimeOptions, symbol_hash: &str, requested_depth: i64)
             query_local_impact(&conn, workspace_id, symbol_hash, requested_depth)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise impact requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "impact")?;
             query_enterprise_impact(
                 workspace_id,
                 symbol_hash,
@@ -3147,9 +3118,7 @@ fn run_topo(runtime: &RuntimeOptions, limit: i64) -> CommandResult {
             query_local_topological_order(&conn, workspace_id, limit)
         },
         || {
-            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
-                "enterprise topo requires --workspace-id <workspace_instance_id>".to_string()
-            })?;
+            let workspace_id = enterprise_workspace_id(runtime, "topo")?;
             query_enterprise_topological_order(workspace_id, limit, |method, params| {
                 runtime.daemon_call(method, params)
             })

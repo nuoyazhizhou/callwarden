@@ -27,7 +27,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::impact::query_local_impact;
 use super::router::DaemonMode;
-use super::runtime::{CommandResult, RouteUsed, RuntimeOptions};
+use super::runtime::{workspace_root_path, CommandResult, RouteUsed, RuntimeOptions};
+use crate::daemon::workspace::normalize_path_key;
 use super::security::bootstrap_status;
 use super::stats::query_local_stats;
 use super::status::{load_ignore_patterns, should_ignore};
@@ -131,14 +132,88 @@ fn enterprise_unsupported(command: &str) -> Result<Value, String> {
     ))
 }
 
-/// F-005：解析 enterprise 模式必需的 workspace_instance_id（缺失时 fail-closed）。
-fn enterprise_workspace_id(runtime: &RuntimeOptions, command: &str) -> Result<String, String> {
-    match runtime.workspace_id.as_deref() {
-        Some(id) if !id.is_empty() => Ok(id.to_string()),
-        _ => Err(format!(
-            "{command} requires --workspace-id <workspace_instance_id> in enterprise mode"
-        )),
+/// F-005：解析 enterprise 查询必需的 workspace_instance_id。
+///
+/// 解析顺序（auto 模式修复 `T-1790611160320-fdbfb0d4` 后续缺陷）：
+/// 1. 显式 `--workspace-id` → 原样透传（既有语义完全不变）；
+/// 2. enterprise 模式缺省 → fail-closed（纯 client 无本地库可推导）；
+/// 3. **auto 模式缺省** → 从本地 cwd 优先解析的 workspace `root_path` 反查
+///    daemon registry（`workspace.list`），按 `client_view_root` /
+///    `host_real_root` 规范化匹配取最近活跃的 `workspace_instance_id`。
+///
+/// 背景：auto 模式下 enterprise 查询此前一律因缺 `--workspace-id` 直接失败并
+/// 降级本地库（每条命令输出 "used local database" warning），即使 cwd 已能
+/// 无歧义解析单一工作区。复用 `resolve_local_workspace_id` 的 cwd 优先 +
+/// fail-closed 语义，把已解析的 root 映射到 registry 的权威 instance id。
+/// 同 root 可能有多条 registry 行（重复 register 轮转 instance）——registry
+/// `list_workspaces` 已按 `last_active_at DESC` 排序，取首个非 archived 命中；
+/// 全部命中均 archived 或无命中时 fail-closed，禁止猜测。
+pub fn enterprise_workspace_id(runtime: &RuntimeOptions, command: &str) -> Result<String, String> {
+    if let Some(id) = runtime.workspace_id.as_deref() {
+        if !id.is_empty() {
+            return Ok(id.to_string());
+        }
     }
+    if runtime.mode == DaemonMode::Enterprise {
+        return Err(format!(
+            "{command} requires --workspace-id <workspace_instance_id> in enterprise mode"
+        ));
+    }
+    // auto 模式：本地 root_path → registry 权威 workspace_instance_id
+    let conn = runtime.open_local_db()?;
+    let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+    let root = workspace_root_path(&conn, workspace_id)?;
+    let rows = runtime.daemon_call("workspace.list", json!({}))?;
+    let rows = rows
+        .as_array()
+        .ok_or_else(|| format!("{command}: workspace.list 返回非数组，无法解析 workspace_instance_id"))?;
+    match_instance_by_root(rows, &root).map_err(|err| {
+        format!(
+            "{command}: {err}；请用 `cw workspace register` 注册该工作区，\
+             或显式传 --workspace-id <workspace_instance_id>"
+        )
+    })
+}
+
+/// 从 registry `workspace.list` 行中按本地 `root_path` 匹配权威
+/// `workspace_instance_id`（纯函数，无 IO，便于单测）。
+///
+/// 匹配规则与 daemon 侧 `resolve_true_workspace_id` 同构：
+/// - `client_view_root` / `host_real_root` 各自经 `normalize_path_key` 规范化后
+///   大小写不敏感比较（反斜杠→正斜杠、去尾斜杠、盘符小写）；
+/// - 分支工作区 `root_path` 可能带 `#分支名` 后缀（db_branch.py），前缀匹配兜底。
+///
+/// `rows` 须已按 `last_active_at DESC` 排序（`list_workspaces` 保证）；同 root
+/// 可能有多条 registry 行（重复 register 轮转 instance），取首个非 archived
+/// 命中；全部命中均 archived 或无命中时 `Err`（fail-closed，禁止猜测）。
+fn match_instance_by_root(rows: &[Value], root: &str) -> Result<String, String> {
+    let key = normalize_path_key(root);
+    if key.is_empty() {
+        return Err("本地 root_path 为空，无法映射到 daemon registry".to_string());
+    }
+    let key_lower = key.to_lowercase();
+    let branch_prefix = format!("{key_lower}#");
+    for row in rows {
+        let instance = match row.get("workspace_instance_id").and_then(Value::as_str) {
+            Some(value) if !value.is_empty() => value,
+            _ => continue,
+        };
+        // registry 行 status 缺省视为 active（保守放行，ACL 由 daemon 侧兜底）
+        let status = row.get("status").and_then(Value::as_str).unwrap_or("");
+        if status == "archived" {
+            continue;
+        }
+        let hit = ["client_view_root", "host_real_root"].iter().any(|field| {
+            row.get(*field).and_then(Value::as_str).map_or(false, |view_root| {
+                let norm = normalize_path_key(view_root).to_lowercase();
+                norm == key_lower || norm.starts_with(&branch_prefix)
+            })
+        });
+        if hit {
+            return Ok(instance.to_string());
+        }
+    }
+    Err(format!("daemon registry 无活跃 workspace 匹配本地 root {root:?}"))
 }
 
 /// F-005：依赖本地资源的命令（本地 git 二进制 / 子进程 / 本地文件）在 enterprise
@@ -5113,5 +5188,107 @@ mod tests {
         assert_eq!(impact["count"], 1);
         assert_eq!(impact["tests"][0]["qualified_name"], "tests::behavior_spec");
         assert_eq!(impact["tests"][0]["module_path"], "tests");
+    }
+
+    // T-1790611160320-fdbfb0d4 后续缺陷：auto 模式 enterprise 查询的
+    // workspace_instance_id 自动解析（消除 "used local database" warning 噪音）。
+    fn registry_row(instance: &str, view_root: &str, host_root: &str, status: &str) -> Value {
+        json!({
+            "workspace_id": 1,
+            "workspace_instance_id": instance,
+            "client_view_root": view_root,
+            "host_real_root": host_root,
+            "status": status,
+            "last_active_at": 0.0,
+        })
+    }
+
+    #[test]
+    fn match_instance_prefers_exact_root_after_normalization() {
+        // 本地 root 为反斜杠 + 尾斜杠 + 大写盘符，registry 行为正斜杠小写盘符
+        let rows = vec![
+            registry_row("inst-other", "c:/other/place", "c:/other/place", "active"),
+            registry_row("inst-target", "c:/git_work/callwarden", "C:\\git_work\\callwarden", "active"),
+        ];
+        assert_eq!(
+            match_instance_by_root(&rows, "C:\\git_work\\callwarden\\").unwrap(),
+            "inst-target"
+        );
+    }
+
+    #[test]
+    fn match_instance_skips_archived_and_uses_host_real_root() {
+        // 同 root 两条行：archived 在前（模拟 last_active_at 更大）也必须跳过
+        let rows = vec![
+            registry_row("inst-old", "c:/git_work/callwarden", "c:/git_work/callwarden", "archived"),
+            registry_row("inst-new", "c:/git_work/callwarden", "c:/git_work/callwarden", "active"),
+        ];
+        assert_eq!(
+            match_instance_by_root(&rows, "c:/git_work/callwarden").unwrap(),
+            "inst-new"
+        );
+        // 仅 archived 命中时 fail-closed，不得返回 archived instance
+        let rows_archived = vec![registry_row(
+            "inst-old",
+            "c:/git_work/callwarden",
+            "c:/git_work/callwarden",
+            "archived",
+        )];
+        assert!(match_instance_by_root(&rows_archived, "c:/git_work/callwarden").is_err());
+    }
+
+    #[test]
+    fn match_instance_accepts_branch_workspace_prefix() {
+        // 分支工作区 root 带 #分支名 后缀（db_branch.py 语义）
+        let rows = vec![registry_row(
+            "inst-branch",
+            "c:/git_work/callwarden#feature/x",
+            "c:/git_work/callwarden#feature/x",
+            "active",
+        )];
+        assert_eq!(
+            match_instance_by_root(&rows, "c:/git_work/callwarden").unwrap(),
+            "inst-branch"
+        );
+    }
+
+    #[test]
+    fn match_instance_fail_closed_on_no_match_or_empty_root() {
+        let rows = vec![registry_row("inst-x", "c:/somewhere", "c:/somewhere", "active")];
+        assert!(match_instance_by_root(&rows, "c:/git_work/callwarden").is_err());
+        // 空 root 直接拒绝（不猜测）
+        assert!(match_instance_by_root(&rows, "").is_err());
+    }
+
+    #[test]
+    fn enterprise_workspace_id_passes_explicit_arg_verbatim() {
+        // 显式 --workspace-id 必须原样透传，不得触发任何 daemon 解析
+        let dir = tempdir().unwrap();
+        let runtime = RuntimeOptions {
+            mode: super::super::router::DaemonMode::Auto,
+            socket_path: PathBuf::from("definitely-not-a-real-socket"),
+            db_path: dir.path().join("absent.db"),
+            workspace_id: Some("my-explicit-instance".to_string()),
+            timeout: Duration::from_secs(1),
+        };
+        assert_eq!(
+            enterprise_workspace_id(&runtime, "stats").unwrap(),
+            "my-explicit-instance"
+        );
+    }
+
+    #[test]
+    fn enterprise_workspace_id_enterprise_mode_requires_explicit_arg() {
+        // enterprise 模式缺省必须 fail-closed（纯 client 无本地库可推导）
+        let dir = tempdir().unwrap();
+        let runtime = RuntimeOptions {
+            mode: super::super::router::DaemonMode::Enterprise,
+            socket_path: PathBuf::from("definitely-not-a-real-socket"),
+            db_path: dir.path().join("absent.db"),
+            workspace_id: None,
+            timeout: Duration::from_secs(1),
+        };
+        let err = enterprise_workspace_id(&runtime, "stats").unwrap_err();
+        assert!(err.contains("requires --workspace-id"), "unexpected error: {err}");
     }
 }
