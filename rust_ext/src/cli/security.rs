@@ -1914,6 +1914,17 @@ fn validate_guardrail_category(category: &str) -> Result<(), String> {
 }
 
 fn active_workspace(conn: &Connection) -> Result<(i64, PathBuf), String> {
+    // 优先按当前工作目录解析到已注册的工作区（对齐 runtime.rs 的
+    // resolve_local_workspace_id / Python _init_workspace 语义）：cwd 所属
+    // root_path 精确匹配即采用，不依赖全局 is_active 标记，避免其他项目
+    // 残留的 active 行造成“multiple active workspaces”误阻断。
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(workspace_id) = super::runtime::resolve_workspace_by_path(conn, &cwd)? {
+            let root_path = super::runtime::workspace_root_path(conn, workspace_id)?;
+            return Ok((workspace_id, PathBuf::from(root_path)));
+        }
+    }
+
     let mut statement = conn
         .prepare("SELECT id,root_path FROM workspaces WHERE is_active=1 ORDER BY id")
         .map_err(|error| format!("cannot query active workspace: {error}"))?;
@@ -3126,5 +3137,41 @@ mod tests {
         assert_eq!(status.blocking_findings_count, 1);
         assert_eq!(status.tasks["review"], 1);
         assert!(status.recommended_next_action.contains("findings"));
+    }
+
+    /// 回归：多行 is_active=1（其他项目残留）时，只要 cwd 落在某个已注册
+    /// root_path 内就必须按 cwd 解析，不再误报 “multiple active workspaces”
+    /// （此前的 dashboard bootstrap failed 即源于此）。
+    #[test]
+    fn active_workspace_prefers_cwd_over_ambiguous_active_rows() {
+        let (_dir, conn) = fixture();
+        let cwd = std::env::current_dir().expect("cannot read current directory");
+        let cwd_key = crate::daemon::workspace::normalize_path_key(&cwd.to_string_lossy());
+        conn.execute(
+            "INSERT INTO workspaces(id,root_path,is_active) VALUES
+             (90,'/other/leftover',1),(91,?1,0)",
+            params![cwd_key],
+        )
+        .unwrap();
+        let (workspace_id, root) = active_workspace(&conn).unwrap();
+        assert_eq!(workspace_id, 91);
+        assert_eq!(root, PathBuf::from(cwd_key));
+    }
+
+    /// 回归：cwd 不属于任何已注册工作区时，多 active 行仍必须 fail-closed。
+    #[test]
+    fn active_workspace_fails_closed_without_cwd_match() {
+        let (_dir, conn) = fixture();
+        conn.execute(
+            "INSERT INTO workspaces(id,root_path,is_active) VALUES
+             (90,'/other/leftover',1)",
+            [],
+        )
+        .unwrap();
+        let error = active_workspace(&conn).expect_err("must fail closed");
+        assert!(
+            error.contains("multiple active workspaces"),
+            "unexpected error: {error}"
+        );
     }
 }

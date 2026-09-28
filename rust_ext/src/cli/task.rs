@@ -3404,12 +3404,34 @@ fn parse_split_plan(plan_markdown: &str) -> Result<Vec<TaskSplitDefinition>, Str
 }
 
 fn active_workspace(conn: &Connection) -> Result<(i64, String), String> {
-    conn.query_row(
-        "SELECT id, root_path FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 1",
-        [],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-    )
-    .map_err(|error| format!("cannot resolve active workspace: {error}"))
+    // 优先按当前工作目录解析到已注册的工作区（对齐 runtime.rs 的
+    // resolve_local_workspace_id / Python _init_workspace 语义）。
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(workspace_id) = super::runtime::resolve_workspace_by_path(conn, &cwd)? {
+            let root_path = super::runtime::workspace_root_path(conn, workspace_id)?;
+            return Ok((workspace_id, root_path));
+        }
+    }
+
+    // cwd 不属于任何已注册工作区：对齐 Python _get_active_workspace_id 的
+    // fail-closed——0 或多个 active workspace 都拒绝，不再静默 LIMIT 1 取首行
+    // （否则可能读到其他项目工作区的任务，属“工作区身份混串”）。
+    let mut stmt = conn
+        .prepare("SELECT id, root_path FROM workspaces WHERE is_active = 1 ORDER BY id")
+        .map_err(|error| format!("cannot resolve active workspace: {error}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("cannot resolve active workspace: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("cannot read active workspace: {error}"))?;
+    match rows.as_slice() {
+        [workspace] => Ok(workspace.clone()),
+        [] => Err("no active workspace; task command fails closed".to_string()),
+        _ => Err("multiple active workspaces; pass --workspace-id to avoid ambiguous data"
+            .to_string()),
+    }
 }
 
 fn active_task_id(conn: &Connection) -> Result<Option<String>, String> {
@@ -4602,5 +4624,42 @@ Move parser logic.
         );
         drop(conn);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// 回归：多行 is_active=1 时，cwd 命中某个已注册 root_path 就必须按 cwd
+    /// 解析（此前是静默 LIMIT 1 取首行，可能读到别的项目工作区）。
+    #[test]
+    fn active_workspace_prefers_cwd_over_ambiguous_active_rows() {
+        let conn = fixture();
+        let cwd = std::env::current_dir().expect("cannot read current directory");
+        let cwd_key = crate::daemon::workspace::normalize_path_key(&cwd.to_string_lossy());
+        conn.execute(
+            "INSERT INTO workspaces(id,name,root_path,is_active,active_task_id) VALUES
+             (90,'leftover-a','/other/leftover',1,''),
+             (91,'cwd-owner',?1,0,'')",
+            params![cwd_key],
+        )
+        .unwrap();
+        let (workspace_id, root_path) = active_workspace(&conn).unwrap();
+        assert_eq!(workspace_id, 91);
+        assert_eq!(root_path, cwd_key);
+    }
+
+    /// 回归：cwd 无匹配时，多 active 行必须 fail-closed，对齐 Python
+    /// _get_active_workspace_id。
+    #[test]
+    fn active_workspace_fails_closed_without_cwd_match() {
+        let conn = fixture();
+        conn.execute(
+            "INSERT INTO workspaces(id,name,root_path,is_active,active_task_id) VALUES
+             (90,'leftover-a','/other/leftover',1,'')",
+            [],
+        )
+        .unwrap();
+        let error = active_workspace(&conn).expect_err("must fail closed");
+        assert!(
+            error.contains("multiple active workspaces"),
+            "unexpected error: {error}"
+        );
     }
 }

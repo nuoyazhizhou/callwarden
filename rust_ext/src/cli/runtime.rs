@@ -383,7 +383,7 @@ impl RuntimeOptions {
 ///
 /// 无任何匹配返回 `Ok(None)`，由调用方回退到全局 active 判定。全程只读，
 /// 不会像 Python 那样 find-or-create（CLI 只读命令不应有写副作用）。
-fn resolve_workspace_by_path(conn: &Connection, start_path: &Path) -> Result<Option<i64>, String> {
+pub(super) fn resolve_workspace_by_path(conn: &Connection, start_path: &Path) -> Result<Option<i64>, String> {
     let mut stmt = conn
         .prepare("SELECT id, root_path FROM workspaces ORDER BY id")
         .map_err(|error| format!("cannot query workspaces: {error}"))?;
@@ -414,6 +414,21 @@ fn resolve_workspace_by_path(conn: &Connection, start_path: &Path) -> Result<Opt
             _ => return Ok(None),
         }
     }
+}
+
+/// 按 workspace id 取注册表中的权威 `root_path`。供 security/task 等命令的
+/// `active_workspace` 在 cwd 命中后回填根路径，与 `resolve_workspace_by_path`
+/// 配对使用。全程只读。
+pub(super) fn workspace_root_path(
+    conn: &Connection,
+    workspace_id: i64,
+) -> Result<String, String> {
+    conn.query_row(
+        "SELECT root_path FROM workspaces WHERE id=?1",
+        rusqlite::params![workspace_id],
+        |row| row.get::<_, String>(0),
+    )
+    .map_err(|error| format!("cannot query root_path for workspace {workspace_id}: {error}"))
 }
 
 fn result_from_source(result: Result<Value, String>, route: RouteUsed) -> CommandResult {
