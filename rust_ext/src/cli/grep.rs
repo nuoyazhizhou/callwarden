@@ -18,7 +18,10 @@ const RG_TIMEOUT: Duration = Duration::from_secs(30);
 /// 命令挂起十几分钟。达到任一上限即停止扫描并在输出中注明截断，命令仍返回
 /// 已收集到的结果（graceful degradation，而非挂死）。
 const MAX_RAW_MATCHES: usize = 5_000;
-const MAX_FALLBACK_BYTES: u64 = 256 * 1024 * 1024;
+/// 实测本机吞吐约 4.3MB/s（大量小文件 + UTF-8 转换开销），96MB ≈ 22s，
+/// 在常见 60s 命令超时下留有稳定余量；真实项目源码树远小于此，只有内嵌
+/// 语料目录（testcode/ 等）才会触及截断。
+const MAX_FALLBACK_BYTES: u64 = 96 * 1024 * 1024;
 const SOURCE_EXTENSIONS: &[&str] = &[
     "py", "rs", "ts", "js", "go", "java", "c", "h", "cpp", "hpp", "cs", "rb", "php", "kt", "swift",
     "scala",
