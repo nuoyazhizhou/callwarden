@@ -399,7 +399,12 @@ impl TaskCollabStore {
                 m.insert("contract_id".to_string(), Value::String(r.get(2)?));
                 m.insert(
                     "contract_revision".to_string(),
-                    Value::Number(r.get::<_, i64>(3)?.into()),
+                    // T-1790585462302-b48af3cc：schema 允许 NULL（迁移期行），
+                    // 对齐 Python SELECT * + dict(r) 的 None→json null 语义。
+                    match r.get::<_, Option<i64>>(3)? {
+                        Some(v) => Value::Number(v.into()),
+                        None => Value::Null,
+                    },
                 );
                 m.insert("contract_hash".to_string(), Value::String(r.get(4)?));
                 m.insert("decision".to_string(), Value::String(r.get(5)?));
@@ -421,7 +426,13 @@ impl TaskCollabStore {
                 m.insert("event_type".to_string(), Value::String(r.get(12)?));
                 m.insert(
                     "decision_time".to_string(),
-                    Value::Number(serde_json::Number::from_f64(r.get(13)?).unwrap()),
+                    // T-1790585462302-b48af3cc：可空，NULL→Value::Null（对齐 Python None）。
+                    match r.get::<_, Option<f64>>(13)? {
+                        Some(v) => Value::Number(
+                            serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()),
+                        ),
+                        None => Value::Null,
+                    },
                 );
                 m.insert("step_id".to_string(), Value::String(r.get(14)?));
                 m.insert(
@@ -434,7 +445,11 @@ impl TaskCollabStore {
                 );
                 m.insert(
                     "role_contract_revision".to_string(),
-                    Value::Number(r.get::<_, i64>(17)?.into()),
+                    // T-1790585462302-b48af3cc：schema DEFAULT 0 但可空，NULL→Value::Null。
+                    match r.get::<_, Option<i64>>(17)? {
+                        Some(v) => Value::Number(v.into()),
+                        None => Value::Null,
+                    },
                 );
                 m.insert("role_contract_hash".to_string(), Value::String(r.get(18)?));
                 m.insert(
@@ -455,7 +470,14 @@ impl TaskCollabStore {
                 );
                 m.insert(
                     "workspace_id".to_string(),
-                    Value::Number(r.get::<_, i64>(23)?.into()),
+                    // T-1790585462302-b48af3cc：live 库 261 行全部 NULL（gate 写路径
+                    // 不消费 workspace_id，db_task_gate.py INSERT 不写该列）；
+                    // r.get::<_, i64> 遇 NULL 直接 InvalidColumnType 崩。
+                    // NULL→Value::Null，对齐 Python sqlite3 None→json null。
+                    match r.get::<_, Option<i64>>(23)? {
+                        Some(v) => Value::Number(v.into()),
+                        None => Value::Null,
+                    },
                 );
                 Ok(Value::Object(m))
             })
@@ -1239,5 +1261,99 @@ impl TaskCollabStore {
         );
         Ok(Value::Object(m))
     }
+}
 
+#[cfg(test)]
+mod gate_decision_null_tests {
+    use super::*;
+    use rusqlite::params;
+
+    /// T-1790585462302-b48af3cc：get_gate_decision 遇 task_gate_decisions 的
+    /// NULL workspace_id 行必崩（live 库 261 行全部 NULL）。from_connection
+    /// 执行官方迁移，建出与生产同构的 task_gate_decisions（workspace_id 可空）。
+    fn store() -> TaskCollabStore {
+        let conn = Connection::open_in_memory().unwrap();
+        TaskCollabStore::from_connection(conn)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()))
+    }
+
+    fn peer() -> PeerCredential {
+        PeerCredential::new_windows("test-sid-gate".to_string(), 1234)
+    }
+
+    /// 插入一行"legacy 风格"的 gate decision：workspace_id 显式 NULL，
+    /// role_contract_* 留空（对齐 live 库旧行）。
+    fn insert_legacy_decision(store: &TaskCollabStore, decision_id: &str, task_id: &str) {
+        let conn = store.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO task_gate_decisions (decision_id, task_id, contract_id, \
+             contract_revision, contract_hash, decision, reason, decision_time, \
+             workspace_id, step_id, role_contract_lineage_id, role_contract_revision_id, \
+             role_contract_revision, role_contract_hash, canonicalization_version, \
+             canonicalization_rules_hash, normalization_version, normalization_rules_hash) \
+             VALUES (?1, ?2, 'TC-x', 1, 'h', 'pass', '', 1000.0, NULL, '', '', '', 0, \
+             '', '', '', '', '')",
+            params![decision_id, task_id],
+        )
+        .unwrap();
+    }
+
+    /// 修复前：`r.get::<_, i64>(23)` 遇 NULL 直接 internal_error
+    /// （Invalid column type Null at index: 23）。修复后 NULL→Value::Null。
+    #[test]
+    fn get_gate_decision_survives_null_workspace_id_row() {
+        let store = store();
+        insert_legacy_decision(&store, "GDEC-NULL-1", "T-null-task");
+
+        let res = store
+            .handle_get_gate_decision(peer(), &json!({"task_id": "T-null-task"}))
+            .expect("NULL workspace_id 行不应崩溃");
+        assert_eq!(res["count"], 1);
+        let item = &res["items"][0];
+        assert_eq!(item["decision_id"], "GDEC-NULL-1");
+        // 关键断言：NULL 列投影为 JSON null（对齐 Python None），不是 0
+        assert!(item["workspace_id"].is_null(), "workspace_id 应为 null");
+        assert_eq!(item["contract_revision"], 1);
+        assert_eq!(item["decision_time"], 1000.0);
+    }
+
+    /// 无参全表扫描（矩阵重放的崩溃路径）返回完整 items 不崩。
+    #[test]
+    fn get_gate_decision_full_scan_with_null_rows() {
+        let store = store();
+        insert_legacy_decision(&store, "GDEC-NULL-A", "T-a");
+        insert_legacy_decision(&store, "GDEC-NULL-B", "T-b");
+
+        let res = store
+            .handle_get_gate_decision(peer(), &json!({}))
+            .expect("无参全表扫描不应崩溃");
+        assert_eq!(res["count"], 2);
+        for item in res["items"].as_array().unwrap() {
+            assert!(item["workspace_id"].is_null());
+        }
+    }
+
+    /// role_contract_revision 显式 NULL 也投影为 null（防御性，schema DEFAULT 0）。
+    #[test]
+    fn get_gate_decision_null_role_contract_revision_is_json_null() {
+        let store = store();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO task_gate_decisions (decision_id, task_id, contract_id, \
+                 contract_revision, contract_hash, decision, decision_time, \
+                 role_contract_revision) \
+                 VALUES ('GDEC-RCR-NULL', 'T-rcr', 'TC-y', 2, 'h2', 'block', 2000.0, NULL)",
+                [],
+            )
+            .unwrap();
+        }
+        let res = store
+            .handle_get_gate_decision(peer(), &json!({"task_id": "T-rcr"}))
+            .unwrap();
+        assert_eq!(res["count"], 1);
+        assert!(res["items"][0]["role_contract_revision"].is_null());
+        assert!(res["items"][0]["workspace_id"].is_null());
+    }
 }

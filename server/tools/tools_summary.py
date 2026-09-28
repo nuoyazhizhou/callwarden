@@ -399,18 +399,22 @@ def register(mcp: FastMCP) -> None:
         return _route('query.defect_correlation', {"symbol_hash": symbol_hash, "window_commits": window_commits}, 'READ_ONLY')
 
     @mcp.tool()
-    def hotspot_evolution(module_filter: str = "") -> list:
+    def hotspot_evolution(module_filter: str = "", limit: int = 100) -> list:
         """热点函数演化
 
         识别近期变更最频繁的热点函数，辅助聚焦审查与重构资源。
 
         Args:
             module_filter: 模块路径前缀过滤
+            limit: 返回数量上限（按 hotspot_score 降序取 top-N，默认 100；
+                0=空数组，负数报错）。RPC 边界必须限流：无 module_filter 时
+                全量结果超 8MB 协议上限会崩（T-1790585462302-b48af3cc）。
 
         Returns:
             热点函数演化列表
         """
-        return _route('hotspot_evolution', {"module_filter": module_filter}, 'READ_ONLY')
+        return _route('hotspot_evolution',
+                      {"module_filter": module_filter, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def churn_analysis(module_filter: str = "", time_window: str = "90d") -> dict:
@@ -665,8 +669,14 @@ def _h_evolution_frequency(ctx: CompatCallContext) -> Any:
 
 
 def _h_hotspot_evolution(ctx: CompatCallContext) -> Any:
-    """worker handler：热点函数演化（只读）"""
-    return _bind_readonly_db(ctx).hotspot_evolution(ctx.params.get("module_filter", ""))
+    """worker handler：热点函数演化（只读；compat 注册已清空，仅留降级参照）"""
+    # T-1790585462302-b48af3cc：本地 db 路径不经 8MB 协议帧不会崩，但与
+    # Rust native 限流语义保持一致（top-N），避免降级时行为发散。
+    limit = ctx.params.get("limit", 100)
+    if not isinstance(limit, int) or limit < 0:
+        limit = 100
+    return _bind_readonly_db(ctx).hotspot_evolution(
+        ctx.params.get("module_filter", ""))[:limit]
 
 
 def _h_defect_learn(ctx: CompatCallContext) -> Any:

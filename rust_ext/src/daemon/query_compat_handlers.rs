@@ -7778,6 +7778,17 @@ pub fn handle_summary_hotspot_evolution(
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
     let module_filter = get_str_param_or(params, "module_filter", "");
+    // T-1790585462302-b48af3cc：无 module_filter 时全量返回 34939 函数（12.4MB）
+    // 超 DEFAULT_MAX_MESSAGE_BYTES=8MB（protocol.rs:22），RPC 边界必崩。
+    // Python db 层无 limit（走本地连接不崩），切片契约在 CLI 调用方
+    // （cli/main.py:9198 [:5]）；迁移到 RPC 后 handler 必须自限流。
+    // 默认 100（对齐 complexity_hotspots 的 top-N 约定），0=空数组，负数 fail-closed。
+    let limit: i64 = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
+    if limit < 0 {
+        return Err(DaemonRpcError::invalid_params(
+            "hotspot_evolution limit 不能为负数（0=空数组，正数=top-N）",
+        ));
+    }
     let now = summary_now_unix();
 
     let base_sql = "SELECT s.symbol_hash, s.qualified_name, s.module_path, \
@@ -7954,6 +7965,8 @@ pub fn handle_summary_hotspot_evolution(
         let sb = b["hotspot_score"].as_f64().unwrap_or(0.0);
         sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
     });
+    // T-1790585462302-b48af3cc：排序后按 limit 截断（top-N），保证返回 <8MB。
+    results.truncate(limit as usize);
     Ok(json!(results))
 }
 
@@ -8510,5 +8523,160 @@ mod brief_combined_tests {
             summary_cyclomatic_complexity(rust_src, "rust"),
             rust_once
         );
+    }
+}
+
+#[cfg(test)]
+mod hotspot_evolution_limit_tests {
+    use super::*;
+    use rusqlite::params;
+
+    /// T-1790585462302-b48af3cc：无 module_filter 时全量返回超 8MB 协议上限，
+    /// handler 必须自限流（limit 默认 100）。建与 db/schema.py 对齐的最小表。
+    fn hotspot_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(
+            "CREATE TABLE file_instances (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL, rel_path TEXT NOT NULL,
+                abs_path TEXT NOT NULL, current_content_hash TEXT DEFAULT '',
+                mtime REAL NOT NULL, total_lines INTEGER DEFAULT 0,
+                last_parsed REAL DEFAULT 0, status TEXT DEFAULT 'pending',
+                module_path TEXT DEFAULT '');
+             CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY,
+                name TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL,
+                signature TEXT DEFAULT '', has_comment INTEGER DEFAULT 0,
+                comment_content TEXT DEFAULT '', qualified_name TEXT DEFAULT '');
+             CREATE TABLE symbols (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_instance_id INTEGER NOT NULL, symbol_hash TEXT NOT NULL,
+                name TEXT NOT NULL, kind TEXT NOT NULL, visibility TEXT DEFAULT 'private',
+                start_line INTEGER NOT NULL, end_line INTEGER NOT NULL,
+                start_col INTEGER DEFAULT 0, end_col INTEGER DEFAULT 0,
+                signature TEXT DEFAULT '', has_comment INTEGER DEFAULT 0,
+                comment_status TEXT DEFAULT 'pending', module_path TEXT DEFAULT '',
+                qualified_name TEXT DEFAULT '', depth INTEGER DEFAULT -1);
+             CREATE TABLE file_versions (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_instance_id INTEGER NOT NULL, version_num INTEGER NOT NULL,
+                content_hash TEXT NOT NULL, mtime REAL NOT NULL,
+                total_lines INTEGER DEFAULT 0, parsed_at REAL NOT NULL,
+                is_current INTEGER DEFAULT 1, is_deleted INTEGER DEFAULT 0,
+                commit_hash TEXT DEFAULT '');
+             CREATE TABLE file_symbol_versions (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_version_id INTEGER NOT NULL, symbol_hash TEXT NOT NULL,
+                qualified_name TEXT NOT NULL, start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL, module_path TEXT DEFAULT '',
+                depth INTEGER DEFAULT -1, is_deleted INTEGER DEFAULT 0);
+             CREATE TABLE semgrep_findings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_instance_id INTEGER NOT NULL, content_hash TEXT DEFAULT '',
+                rule_id TEXT NOT NULL, rule_name TEXT DEFAULT '', message TEXT DEFAULT '',
+                severity TEXT DEFAULT 'INFO', confidence TEXT DEFAULT 'UNKNOWN',
+                language TEXT DEFAULT '', start_line INTEGER DEFAULT 0,
+                end_line INTEGER DEFAULT 0, snippet TEXT DEFAULT '', fix TEXT DEFAULT '',
+                symbol_id INTEGER DEFAULT 0, symbol_qualified TEXT DEFAULT '');",
+        )
+        .expect("schema");
+        conn
+    }
+
+    const N: i64 = 5;
+
+    /// 插入 5 个函数符号，change_count 依次 1..=5（fn_5 分数最高）。
+    /// complexity 走 start/end_line 分支（content 为空）：全部 10 行，
+    /// defect_count=0 ⇒ hotspot_score = 0.4*(i/5) + 0.3，排序确定。
+    fn seed(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO file_instances (workspace_id, rel_path, abs_path, mtime)
+             VALUES (1, 'src/a.rs', 'C:/src/a.rs', 1.0)",
+            [],
+        )
+        .unwrap();
+        for i in 1..=N {
+            let hash = format!("hash-h{i}");
+            conn.execute(
+                "INSERT INTO symbol_contents (content_hash, name, kind, content)
+                 VALUES (?1, ?2, 'fn', '')",
+                params![hash, format!("fn_{i}")],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO symbols (file_instance_id, symbol_hash, name, kind,
+                 start_line, end_line, module_path, qualified_name)
+                 VALUES (1, ?1, ?2, 'fn', 1, 10, 'mod_a', ?2)",
+                params![hash, format!("fn_{i}")],
+            )
+            .unwrap();
+            // i 个 file_version 各挂一条 file_symbol_versions ⇒ change_count=i
+            for v in 1..=i {
+                conn.execute(
+                    "INSERT INTO file_versions (file_instance_id, version_num,
+                     content_hash, mtime, parsed_at)
+                     VALUES (1, ?1, ?2, ?3, ?3)",
+                    params![v, hash, 100.0 + v as f64],
+                )
+                .unwrap();
+                let fvid: i64 = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO file_symbol_versions (file_version_id, symbol_hash,
+                     qualified_name, start_line, end_line, module_path)
+                     VALUES (?1, ?2, ?3, 1, 10, 'mod_a')",
+                    params![fvid, hash, format!("fn_{i}")],
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn hotspot_evolution_default_limit_returns_all_when_small() {
+        let conn = hotspot_db();
+        seed(&conn);
+        let res = handle_summary_hotspot_evolution(&conn, 1, &json!({})).unwrap();
+        let arr = res.as_array().expect("数组");
+        assert_eq!(arr.len(), N as usize, "小结果集默认 limit 不应截断");
+        // 降序：首项是 change_count 最大的 fn_5
+        assert_eq!(arr[0]["qualified_name"], "fn_5");
+    }
+
+    #[test]
+    fn hotspot_evolution_limit_truncates_to_top_n_in_score_order() {
+        let conn = hotspot_db();
+        seed(&conn);
+        let res = handle_summary_hotspot_evolution(&conn, 1, &json!({"limit": 2})).unwrap();
+        let arr = res.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["qualified_name"], "fn_5");
+        assert_eq!(arr[1]["qualified_name"], "fn_4");
+    }
+
+    #[test]
+    fn hotspot_evolution_limit_zero_returns_empty_array() {
+        let conn = hotspot_db();
+        seed(&conn);
+        let res = handle_summary_hotspot_evolution(&conn, 1, &json!({"limit": 0})).unwrap();
+        assert!(res.as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn hotspot_evolution_negative_limit_is_invalid_params() {
+        let conn = hotspot_db();
+        seed(&conn);
+        let err = handle_summary_hotspot_evolution(&conn, 1, &json!({"limit": -1}))
+            .expect_err("负 limit 必须 fail-closed");
+        assert!(format!("{err:?}").contains("limit") || format!("{err:?}").contains("invalid"),
+            "错误应说明 limit 参数问题：{err:?}");
+    }
+
+    #[test]
+    fn hotspot_evolution_module_filter_still_respects_limit() {
+        let conn = hotspot_db();
+        seed(&conn);
+        let res = handle_summary_hotspot_evolution(
+            &conn,
+            1,
+            &json!({"module_filter": "mod_a", "limit": 1}),
+        )
+        .unwrap();
+        let arr = res.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["qualified_name"], "fn_5");
     }
 }
