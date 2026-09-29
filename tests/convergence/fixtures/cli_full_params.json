@@ -1,0 +1,5383 @@
+{
+  "total_leaves": 234,
+  "extracted": 233,
+  "skipped": [
+    "server"
+  ],
+  "commands": {
+    "assignment create": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "assignment show": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "assignment revoke": {
+      "positionals": [
+        {
+          "name": "assignment_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "audit verify": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--table",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "audit rotate-key": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--key-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--secret",
+          "takes_value": true
+        }
+      ]
+    },
+    "audit keys": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "bootstrap status": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "brief": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "build-context register": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--flags",
+          "takes_value": true
+        },
+        {
+          "opt": "--defines",
+          "takes_value": true
+        },
+        {
+          "opt": "--includes",
+          "takes_value": true
+        },
+        {
+          "opt": "--activate",
+          "takes_value": true
+        }
+      ]
+    },
+    "build-context list": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "build-context show": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "build-context activate": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "build-context delete": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "build-context import-compile-commands": {
+      "positionals": [
+        {
+          "name": "file"
+        },
+        {
+          "name": "workspace_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--name",
+          "takes_value": true
+        },
+        {
+          "opt": "--activate",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-root",
+          "takes_value": true
+        }
+      ]
+    },
+    "build-context resolve": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "build-context edges": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--caller",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "call-chain": {
+      "positionals": [
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--depth",
+          "takes_value": true
+        }
+      ]
+    },
+    "callees": {
+      "positionals": [
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--qualified",
+          "takes_value": true
+        }
+      ]
+    },
+    "callers": {
+      "positionals": [
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--qualified",
+          "takes_value": true
+        }
+      ]
+    },
+    "check-gate": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--resolve",
+          "takes_value": false
+        },
+        {
+          "opt": "--step-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "churn": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--module",
+          "takes_value": true
+        },
+        {
+          "opt": "--window",
+          "takes_value": true
+        }
+      ]
+    },
+    "clone detect": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--file-filter",
+          "takes_value": true
+        },
+        {
+          "opt": "--min-lines",
+          "takes_value": true
+        },
+        {
+          "opt": "--similarity",
+          "takes_value": true
+        }
+      ]
+    },
+    "clone list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--type",
+          "takes_value": false
+        },
+        {
+          "opt": "--min-similarity",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        },
+        {
+          "opt": "--symbol",
+          "takes_value": true
+        }
+      ]
+    },
+    "clone stats": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "clone clear": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "collab publish": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": false
+        },
+        {
+          "opt": "--workspace",
+          "takes_value": true
+        },
+        {
+          "opt": "--envelope",
+          "takes_value": true
+        }
+      ]
+    },
+    "collab verdict": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--step-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--contract-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--contract-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--contract-revision",
+          "takes_value": true
+        },
+        {
+          "opt": "--role-contract-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role-contract-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--role-contract-revision",
+          "takes_value": true
+        },
+        {
+          "opt": "--snapshot-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--phase",
+          "takes_value": false
+        },
+        {
+          "opt": "--overall",
+          "takes_value": false
+        },
+        {
+          "opt": "--attestation",
+          "takes_value": true
+        },
+        {
+          "opt": "--amendment-ref",
+          "takes_value": true
+        },
+        {
+          "opt": "--clause-results",
+          "takes_value": true
+        },
+        {
+          "opt": "--findings",
+          "takes_value": true
+        },
+        {
+          "opt": "--view-manifest-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--verdict-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "collab reveal": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": false
+        },
+        {
+          "opt": "--event-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--notes",
+          "takes_value": true
+        }
+      ]
+    },
+    "collab gate-trigger": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": false
+        },
+        {
+          "opt": "--gate-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--clause",
+          "takes_value": true
+        },
+        {
+          "opt": "--value",
+          "takes_value": false
+        }
+      ]
+    },
+    "comment-coverage": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--by",
+          "takes_value": true
+        }
+      ]
+    },
+    "complexity": {
+      "positionals": [
+        {
+          "name": "limit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--module",
+          "takes_value": true
+        }
+      ]
+    },
+    "config explain": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "config paths": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "config check-role": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "coupled-fns": {
+      "positionals": [
+        {
+          "name": "limit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "coupling": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "coverage import": {
+      "positionals": [
+        {
+          "name": "file"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--format",
+          "takes_value": false
+        }
+      ]
+    },
+    "coverage fn": {
+      "positionals": [
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "coverage uncovered": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon ping": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon register": {
+      "positionals": [
+        {
+          "name": "root"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--git-remote",
+          "takes_value": true
+        },
+        {
+          "opt": "--git-head",
+          "takes_value": true
+        },
+        {
+          "opt": "--toolchain",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon status": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon publish": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "db_path"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--build-context",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon query": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "value"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--qualified-name",
+          "takes_value": true
+        },
+        {
+          "opt": "--kind",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        },
+        {
+          "opt": "--max-depth",
+          "takes_value": true
+        },
+        {
+          "opt": "--file-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--fixed",
+          "takes_value": false
+        },
+        {
+          "opt": "--path",
+          "takes_value": true
+        },
+        {
+          "opt": "--include-all",
+          "takes_value": false
+        },
+        {
+          "opt": "--include-info",
+          "takes_value": false
+        },
+        {
+          "opt": "--reverse",
+          "takes_value": false
+        },
+        {
+          "opt": "--history",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon mode": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--set",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon health": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon manifest": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon capability": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon schema-version": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon bridge": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--endpoint",
+          "takes_value": true
+        },
+        {
+          "opt": "--token-file",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon backup": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon restore": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--from",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon gc-cas": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--grace-days",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon gc-snapshots": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--keep-last",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon snapshot-stats": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon snapshot-list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon snapshot-evict": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon metrics": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--format",
+          "takes_value": false
+        },
+        {
+          "opt": "--name",
+          "takes_value": true
+        },
+        {
+          "opt": "--from-file",
+          "takes_value": true
+        }
+      ]
+    },
+    "daemon mount": {
+      "positionals": [
+        {
+          "name": "register"
+        },
+        {
+          "name": "list"
+        },
+        {
+          "name": "delete"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "daemon toolchain": {
+      "positionals": [
+        {
+          "name": "register"
+        },
+        {
+          "name": "list"
+        },
+        {
+          "name": "get"
+        },
+        {
+          "name": "delete"
+        },
+        {
+          "name": "bind"
+        },
+        {
+          "name": "resolve"
+        },
+        {
+          "name": "build"
+        },
+        {
+          "name": "resolved"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "dashboard": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--full",
+          "takes_value": true
+        },
+        {
+          "opt": "--with-cycles",
+          "takes_value": true
+        },
+        {
+          "opt": "--with-evolution",
+          "takes_value": true
+        },
+        {
+          "opt": "--risks",
+          "takes_value": true
+        },
+        {
+          "opt": "--top",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "defect search": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--category",
+          "takes_value": true
+        },
+        {
+          "opt": "--severity",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "defect suggest": {
+      "positionals": [
+        {
+          "name": "symbol_hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--finding",
+          "takes_value": true
+        }
+      ]
+    },
+    "defect learn": {
+      "positionals": [
+        {
+          "name": "commit_hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "defect stats": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "defect build": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "dependency inspect": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--contract-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--revision",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "dependency list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--contract-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "dependency cycle": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "dependency explain": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--contract-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--revision",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "dependency provider-select": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--consumer-task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--contract-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--revision",
+          "takes_value": true
+        },
+        {
+          "opt": "--interface-name",
+          "takes_value": true
+        },
+        {
+          "opt": "--provider-task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "doctor": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--add-defender-exclusion",
+          "takes_value": false
+        }
+      ]
+    },
+    "evolution": {
+      "positionals": [
+        {
+          "name": "qualified_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--window",
+          "takes_value": true
+        },
+        {
+          "opt": "--defects",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment batch-create": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--seed",
+          "takes_value": true
+        },
+        {
+          "opt": "--min-valid",
+          "takes_value": true
+        },
+        {
+          "opt": "--min-nontrivial",
+          "takes_value": true
+        },
+        {
+          "opt": "--assignment-mode",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment batch-lock": {
+      "positionals": [
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment batch-list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment toggle-set": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--scope",
+          "takes_value": false
+        },
+        {
+          "opt": "--value",
+          "takes_value": false
+        },
+        {
+          "opt": "--scope-key",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment toggle-show": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment admit": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--strata",
+          "takes_value": true
+        },
+        {
+          "opt": "--pair-slot",
+          "takes_value": false
+        },
+        {
+          "opt": "--pair-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--notes-file",
+          "takes_value": true
+        },
+        {
+          "opt": "--scope-contract",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment record-metrics": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--tp",
+          "takes_value": true
+        },
+        {
+          "opt": "--fp",
+          "takes_value": true
+        },
+        {
+          "opt": "--misses",
+          "takes_value": true
+        },
+        {
+          "opt": "--duration",
+          "takes_value": true
+        },
+        {
+          "opt": "--tokens",
+          "takes_value": true
+        },
+        {
+          "opt": "--tokens-source",
+          "takes_value": false
+        },
+        {
+          "opt": "--tokens-unavailable-reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--reopen",
+          "takes_value": true
+        },
+        {
+          "opt": "--defects",
+          "takes_value": true
+        },
+        {
+          "opt": "--rollbacks",
+          "takes_value": true
+        },
+        {
+          "opt": "--obs-window",
+          "takes_value": true
+        },
+        {
+          "opt": "--group",
+          "takes_value": false
+        },
+        {
+          "opt": "--nontrivial",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment record-verdict": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--changed",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason-code",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment record-reveal": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--sealed",
+          "takes_value": true
+        },
+        {
+          "opt": "--notes-file",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment record-invalid": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason-code",
+          "takes_value": true
+        },
+        {
+          "opt": "--detail",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment record-incident": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--type",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason-code",
+          "takes_value": true
+        },
+        {
+          "opt": "--detail",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment pause": {
+      "positionals": [
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--trigger",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "experiment report": {
+      "positionals": [
+        {
+          "name": "batch_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--artifacts-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "file": {
+      "positionals": [
+        {
+          "name": "path"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "fn-metrics": {
+      "positionals": [
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "fts rebuild": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "fts status": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "function-issues": {
+      "positionals": [
+        {
+          "name": "fn"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--type",
+          "takes_value": true
+        },
+        {
+          "opt": "--module",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "gc archive": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--force",
+          "takes_value": true
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc restore": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--path",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc status": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc purge": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--older-than",
+          "takes_value": true
+        }
+      ]
+    },
+    "gc policy": {
+      "positionals": [
+        {
+          "name": "show"
+        },
+        {
+          "name": "set"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc retention": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--older-than",
+          "takes_value": true
+        },
+        {
+          "opt": "--keep-versions",
+          "takes_value": true
+        },
+        {
+          "opt": "--include-external,",
+          "takes_value": false
+        },
+        {
+          "opt": "--external-stale-days",
+          "takes_value": true
+        },
+        {
+          "opt": "--backup,",
+          "takes_value": false
+        },
+        {
+          "opt": "--vacuum,",
+          "takes_value": false
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": false
+        },
+        {
+          "opt": "--apply",
+          "takes_value": false
+        },
+        {
+          "opt": "--save-policy",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc archive-list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "gc archive-inspect": {
+      "positionals": [
+        {
+          "name": "path"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc audit-list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        },
+        {
+          "opt": "--operation",
+          "takes_value": true
+        }
+      ]
+    },
+    "gc audit-show": {
+      "positionals": [
+        {
+          "name": "id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc archive-import": {
+      "positionals": [
+        {
+          "name": "path"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--file",
+          "takes_value": true
+        },
+        {
+          "opt": "--package",
+          "takes_value": true
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": false
+        },
+        {
+          "opt": "--apply",
+          "takes_value": false
+        }
+      ]
+    },
+    "gc db-cleanup": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": true
+        },
+        {
+          "opt": "--apply",
+          "takes_value": true
+        },
+        {
+          "opt": "--all-but-current",
+          "takes_value": true
+        }
+      ]
+    },
+    "gc db-migrate-single": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": true
+        },
+        {
+          "opt": "--apply",
+          "takes_value": true
+        },
+        {
+          "opt": "--no-backup",
+          "takes_value": true
+        }
+      ]
+    },
+    "git import": {
+      "positionals": [
+        {
+          "name": "limit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git log": {
+      "positionals": [
+        {
+          "name": "limit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git show": {
+      "positionals": [
+        {
+          "name": "commit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git stats": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git check-task": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git check-push": {
+      "positionals": [
+        {
+          "name": "local_ref"
+        },
+        {
+          "name": "local_sha"
+        },
+        {
+          "name": "remote_ref"
+        },
+        {
+          "name": "remote_sha"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git check-ref-transaction": {
+      "positionals": [
+        {
+          "name": "old_value"
+        },
+        {
+          "name": "new_value"
+        },
+        {
+          "name": "ref_name"
+        },
+        {
+          "name": "flags"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "git destructive-log": {
+      "positionals": [
+        {
+          "name": "limit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--type",
+          "takes_value": true
+        }
+      ]
+    },
+    "graph build-from-c": {
+      "positionals": [
+        {
+          "name": "directory"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--threads",
+          "takes_value": true
+        },
+        {
+          "opt": "--dump",
+          "takes_value": true
+        },
+        {
+          "opt": "--max-files",
+          "takes_value": true
+        },
+        {
+          "opt": "--query",
+          "takes_value": true
+        }
+      ]
+    },
+    "grep": {
+      "positionals": [
+        {
+          "name": "patterns"
+        },
+        {
+          "name": "same"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--fixed",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        },
+        {
+          "opt": "--path",
+          "takes_value": true
+        },
+        {
+          "opt": "--include-all",
+          "takes_value": true
+        },
+        {
+          "opt": "--kind",
+          "takes_value": true
+        }
+      ]
+    },
+    "guardrail scan": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--file",
+          "takes_value": true
+        },
+        {
+          "opt": "--category",
+          "takes_value": true
+        }
+      ]
+    },
+    "guardrail rules": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--category",
+          "takes_value": true
+        }
+      ]
+    },
+    "health-report": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "hotspot": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--module",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "identity revoke": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--issuer",
+          "takes_value": true
+        },
+        {
+          "opt": "--signing-key-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--revocation-mode",
+          "takes_value": true
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "impact": {
+      "positionals": [
+        {
+          "name": "symbol_hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--depth",
+          "takes_value": true
+        }
+      ]
+    },
+    "install": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--all",
+          "takes_value": false
+        },
+        {
+          "opt": "--lang",
+          "takes_value": true
+        },
+        {
+          "opt": "--check",
+          "takes_value": false
+        },
+        {
+          "opt": "--hooks",
+          "takes_value": false
+        },
+        {
+          "opt": "--force-hooks",
+          "takes_value": false
+        },
+        {
+          "opt": "--no-post-commit",
+          "takes_value": false
+        },
+        {
+          "opt": "--no-optional",
+          "takes_value": false
+        },
+        {
+          "opt": "--verbose",
+          "takes_value": false
+        },
+        {
+          "opt": "--agent",
+          "takes_value": true
+        },
+        {
+          "opt": "--detect-agents",
+          "takes_value": true
+        },
+        {
+          "opt": "--force-agent",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-project",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent claude-code": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent claude-desktop": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent cursor": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent cline": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent cline-cli": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent devin-cli": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent windsurf": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent trae": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent gemini-cli": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent antigravity": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent codex": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent opencode": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent kiro": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent qoder": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent jetbrains-junie": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent zed": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent pearai": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent kimi-code": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent codebuddy-cli": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent deep-code": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent comate": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent grok-build": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent zcode": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-agent all": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--output-dir",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--global",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto-detect",
+          "takes_value": true
+        },
+        {
+          "opt": "--registry",
+          "takes_value": true
+        }
+      ]
+    },
+    "install-hook post-commit": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--uninstall",
+          "takes_value": false
+        }
+      ]
+    },
+    "issues": {
+      "positionals": [
+        {
+          "name": "qualified_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--include-info",
+          "takes_value": true
+        }
+      ]
+    },
+    "largest-fns": {
+      "positionals": [
+        {
+          "name": "limit"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "lease acquire": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--ttl",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "lease renew": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--token",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--ttl",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "lease release": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--token",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "lease status": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "lease list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "map text": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--format",
+          "takes_value": false
+        }
+      ]
+    },
+    "map mermaid": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--format",
+          "takes_value": false
+        }
+      ]
+    },
+    "metrics": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "ownership-map": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "query": {
+      "positionals": [
+        {
+          "name": "name"
+        },
+        {
+          "name": "file"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "refresh": {
+      "positionals": [
+        {
+          "name": "paths"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--all",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": true
+        }
+      ]
+    },
+    "review": {
+      "positionals": [
+        {
+          "name": "symbol_hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "rollback register": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--feature",
+          "takes_value": true
+        },
+        {
+          "opt": "--phase",
+          "takes_value": true
+        },
+        {
+          "opt": "--production-entry",
+          "takes_value": true
+        },
+        {
+          "opt": "--rollback-entry",
+          "takes_value": true
+        },
+        {
+          "opt": "--window",
+          "takes_value": true
+        },
+        {
+          "opt": "--config-json",
+          "takes_value": true
+        }
+      ]
+    },
+    "rollback show": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "rollback config": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--phase",
+          "takes_value": true
+        },
+        {
+          "opt": "--flag",
+          "takes_value": false
+        }
+      ]
+    },
+    "rollback set": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        }
+      ]
+    },
+    "rollback is-rolled-back": {
+      "positionals": [
+        {
+          "name": "feature_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "rule candidate": {
+      "positionals": [
+        {
+          "name": "create"
+        },
+        {
+          "name": "list"
+        },
+        {
+          "name": "accept"
+        },
+        {
+          "name": "reject"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "rule list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--status",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "rule applicable": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--context",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "rule sync": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--target",
+          "takes_value": true
+        },
+        {
+          "opt": "--apply",
+          "takes_value": false
+        },
+        {
+          "opt": "--actor",
+          "takes_value": true
+        }
+      ]
+    },
+    "rule insert-block": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--target",
+          "takes_value": true
+        },
+        {
+          "opt": "--actor",
+          "takes_value": true
+        }
+      ]
+    },
+    "rule extract": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--min-occurrences",
+          "takes_value": true
+        }
+      ]
+    },
+    "rule seed-bootstrap": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--apply",
+          "takes_value": false
+        }
+      ]
+    },
+    "rule cleanup-sync-log": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--older-than",
+          "takes_value": true
+        },
+        {
+          "opt": "--keep-latest",
+          "takes_value": true
+        },
+        {
+          "opt": "--apply",
+          "takes_value": false
+        }
+      ]
+    },
+    "search": {
+      "positionals": [
+        {
+          "name": "query"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--kind",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "semgrep scan": {
+      "positionals": [
+        {
+          "name": "paths"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--config",
+          "takes_value": true
+        },
+        {
+          "opt": "--lang",
+          "takes_value": true
+        },
+        {
+          "opt": "--timeout",
+          "takes_value": true
+        },
+        {
+          "opt": "--save",
+          "takes_value": true
+        },
+        {
+          "opt": "--quick",
+          "takes_value": true
+        },
+        {
+          "opt": "--incremental",
+          "takes_value": true
+        },
+        {
+          "opt": "--base",
+          "takes_value": true
+        },
+        {
+          "opt": "--head",
+          "takes_value": true
+        }
+      ]
+    },
+    "semgrep list": {
+      "positionals": [
+        {
+          "name": "filter"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--severity",
+          "takes_value": true
+        },
+        {
+          "opt": "--lang",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "semgrep stats": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "setup": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--force",
+          "takes_value": false
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": false
+        }
+      ]
+    },
+    "stats": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "status": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "symbol": {
+      "positionals": [
+        {
+          "name": "name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "symbol-history": {
+      "positionals": [
+        {
+          "name": "symbol_hash"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "task create": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--title",
+          "takes_value": true
+        },
+        {
+          "opt": "--desc",
+          "takes_value": true
+        },
+        {
+          "opt": "--steps",
+          "takes_value": true
+        },
+        {
+          "opt": "--role-contracts",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--parent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--identity-policy",
+          "takes_value": true
+        },
+        {
+          "opt": "--task-contract-envelope",
+          "takes_value": true
+        },
+        {
+          "opt": "--task-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task next": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--remediation-step-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task next-action": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "task prompt": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--format",
+          "takes_value": false
+        },
+        {
+          "opt": "--expected-workspace-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task assignment-status": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--step-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "task assignment-heartbeat": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "assignment_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "task report": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "step_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--result",
+          "takes_value": true
+        },
+        {
+          "opt": "--fail",
+          "takes_value": false
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--snapshot-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--changes-json",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task handoff": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--from-role",
+          "takes_value": true
+        },
+        {
+          "opt": "--outcome",
+          "takes_value": true
+        },
+        {
+          "opt": "--next-role",
+          "takes_value": true
+        },
+        {
+          "opt": "--next-action",
+          "takes_value": true
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--independence-requirement",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--step-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--report-request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task step-resolve": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "failed_step_id"
+        },
+        {
+          "name": "remediation_step_id"
+        },
+        {
+          "name": "request_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task rollback": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "step_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "task apply": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reviewer",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task close": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reviewer",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task cascade-close": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task reopen": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reviewer",
+          "takes_value": true
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task claim-recover": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        }
+      ]
+    },
+    "task capture-diff": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--step-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--base",
+          "takes_value": true
+        },
+        {
+          "opt": "--dry-run",
+          "takes_value": false
+        },
+        {
+          "opt": "--auto",
+          "takes_value": false
+        },
+        {
+          "opt": "--skip-quality-review",
+          "takes_value": false
+        },
+        {
+          "opt": "--source-commit-hash",
+          "takes_value": true
+        }
+      ]
+    },
+    "task findings": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--status",
+          "takes_value": true
+        },
+        {
+          "opt": "--severity",
+          "takes_value": true
+        }
+      ]
+    },
+    "task resolve-finding": {
+      "positionals": [
+        {
+          "name": "finding_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--resolution",
+          "takes_value": true
+        },
+        {
+          "opt": "--by",
+          "takes_value": true
+        }
+      ]
+    },
+    "task list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--blocked",
+          "takes_value": false
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        },
+        {
+          "opt": "--status",
+          "takes_value": true
+        },
+        {
+          "opt": "--flat",
+          "takes_value": false
+        }
+      ]
+    },
+    "task show": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--flat",
+          "takes_value": false
+        }
+      ]
+    },
+    "task completion-review": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--step-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task split": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--plan",
+          "takes_value": true
+        },
+        {
+          "opt": "--identity-policy",
+          "takes_value": true
+        }
+      ]
+    },
+    "task status-tree": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "task supersede": {
+      "positionals": [
+        {
+          "name": "old"
+        },
+        {
+          "name": "new"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reason",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task attest-legacy-workspace-binding": {
+      "positionals": [
+        {
+          "name": "legacy_task_id"
+        },
+        {
+          "name": "anchor_task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": false
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task contract-bootstrap": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "completely"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--envelope-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": false
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task contract-revise": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--envelope-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--expected-previous-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--lease-token",
+          "takes_value": true
+        },
+        {
+          "opt": "--fencing-counter",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": false
+        }
+      ]
+    },
+    "task bootstrap-executor-evidence": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "completely"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--steps",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": false
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task bootstrap-reviewer-pass": {
+      "positionals": [
+        {
+          "name": "task_id"
+        },
+        {
+          "name": "executor"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--workspace-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--workspace-instance-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--request-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-path",
+          "takes_value": true
+        },
+        {
+          "opt": "--evidence-hash",
+          "takes_value": true
+        },
+        {
+          "opt": "--agent-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--session-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--model-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--role",
+          "takes_value": false
+        },
+        {
+          "opt": "--agent-instance-id",
+          "takes_value": true
+        }
+      ]
+    },
+    "task governance-projection": {
+      "positionals": [
+        {
+          "name": "task_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--json",
+          "takes_value": true
+        }
+      ]
+    },
+    "task superseded": {
+      "positionals": [
+        {
+          "name": "id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "test": {
+      "positionals": [],
+      "options": []
+    },
+    "test-impact": {
+      "positionals": [
+        {
+          "name": "qualified_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "tests": {
+      "positionals": [
+        {
+          "name": "qualified_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--reverse",
+          "takes_value": true
+        },
+        {
+          "opt": "--build",
+          "takes_value": true
+        },
+        {
+          "opt": "--force",
+          "takes_value": true
+        },
+        {
+          "opt": "--history",
+          "takes_value": true
+        },
+        {
+          "opt": "--import",
+          "takes_value": true
+        },
+        {
+          "opt": "--ci-run-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--ci-url",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "toolchain register": {
+      "positionals": [
+        {
+          "name": "name"
+        },
+        {
+          "name": "compiler_path"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--sysroot",
+          "takes_value": true
+        },
+        {
+          "opt": "--description",
+          "takes_value": true
+        },
+        {
+          "opt": "--no-probe",
+          "takes_value": true
+        }
+      ]
+    },
+    "toolchain list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "toolchain show": {
+      "positionals": [
+        {
+          "name": "name_or_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "toolchain delete": {
+      "positionals": [
+        {
+          "name": "name_or_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "toolchain bind": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        },
+        {
+          "name": "toolchain_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--build-context-hash",
+          "takes_value": true
+        }
+      ]
+    },
+    "toolchain list-bound": {
+      "positionals": [
+        {
+          "name": "workspace_id"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--build-context-hash",
+          "takes_value": true
+        }
+      ]
+    },
+    "topo": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "uncommented": {
+      "positionals": [
+        {
+          "name": "kind"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--module",
+          "takes_value": true
+        },
+        {
+          "opt": "--limit",
+          "takes_value": true
+        }
+      ]
+    },
+    "vuln-blast": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--finding-id",
+          "takes_value": true
+        },
+        {
+          "opt": "--severity",
+          "takes_value": true
+        },
+        {
+          "opt": "--depth",
+          "takes_value": true
+        }
+      ]
+    },
+    "who": {
+      "positionals": [
+        {
+          "name": "file"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "workspace list": {
+      "positionals": [],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "workspace register": {
+      "positionals": [
+        {
+          "name": "name"
+        },
+        {
+          "name": "root"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "workspace set": {
+      "positionals": [
+        {
+          "name": "id_or_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "workspace delete": {
+      "positionals": [
+        {
+          "name": "id_or_name"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        }
+      ]
+    },
+    "workspace scan": {
+      "positionals": [
+        {
+          "name": "dir"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--register",
+          "takes_value": true
+        },
+        {
+          "opt": "--include-all",
+          "takes_value": true
+        },
+        {
+          "opt": "--deep",
+          "takes_value": true
+        }
+      ]
+    },
+    "workspace generate-ignore": {
+      "positionals": [
+        {
+          "name": "dir"
+        }
+      ],
+      "options": [
+        {
+          "opt": "-h,",
+          "takes_value": false
+        },
+        {
+          "opt": "--apply",
+          "takes_value": true
+        }
+      ]
+    }
+  }
+}
