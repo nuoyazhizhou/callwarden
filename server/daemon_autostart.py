@@ -577,6 +577,16 @@ def _find_daemon_binary() -> Optional[str]:
     if env_bin and os.path.isfile(env_bin):
         return env_bin
 
+    # 权威 runtime 部署位置优先于 PATH / 开发构建产物：
+    # ~/.callwarden/runtime/current/cw-daemon.exe 是 refresh_shared_runtime.ps1
+    # 部署的生产 daemon（AGENTS.md §43）。autostart 必须拉起这个而非开发树的
+    # debug/release 产物，否则 spawn 出的 daemon 与已部署 runtime 不一致。
+    home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")
+    runtime_name = "cw-daemon.exe" if sys.platform == "win32" else "cw-daemon"
+    runtime_bin = os.path.join(home, ".callwarden", "runtime", "current", runtime_name)
+    if os.path.isfile(runtime_bin):
+        return runtime_bin
+
     # PATH 搜索（cargo bin target 名为 cw-daemon，产物为 cw-daemon.exe；兼容旧命名 cw_daemon）
     names = (
         ["cw_daemon.exe", "cw-daemon.exe"]
@@ -605,6 +615,83 @@ def _find_daemon_binary() -> Optional[str]:
         if os.path.isfile(candidate):
             return candidate
 
+    return None
+
+
+def spawn_http_daemon(wait_window: float = 15.0) -> Optional[str]:
+    """启动本机 HTTP daemon(detached 进程),返回就绪后的 endpoint;失败返回 None。
+
+    与纯探针的 ensure_http_daemon 不同:本函数是**显式启动动作**,供
+    `cw daemon start` 与「HTTP daemon 不可达时的自动拉起」调用。
+
+    启动约定(与 cw_daemon.rs H6 默认 HTTP 一致):
+    - 不带 --http-bind:daemon 默认监听 127.0.0.1:0 动态端口并写 authority-scoped
+      manifest(client 经 manifest 发现端口,不硬编码);
+    - 显式 CW_DAEMON_TRANSPORT=http:防止继承环境把 transport 设成 named-pipe/uds
+      而禁用 HTTP(cw_daemon.rs:显式非 http transport 会回落 pipe-only);
+    - 注入 CW_DAEMON_TASK_DB=权威库:与 Python cw task CLI 共享同一任务状态;
+    - detached 进程:客户端退出后 daemon 仍存活。
+
+    平台:当前仅实现 Windows 与 POSIX 通用 spawn(Popen detached)。macOS/Linux
+    的 launchd/systemd 激活由 _start_daemon_platform 负责,本函数是 HTTP 直启补充。
+    """
+    daemon_bin = _find_daemon_binary()
+    if daemon_bin is None:
+        logger.error("spawn_http_daemon: 未找到 cw-daemon 可执行文件(检查 "
+                     "CW_DAEMON_BIN 或 ~/.callwarden/runtime/current/)")
+        return None
+
+    from callwarden.config import DB_PATH as _AUTHORITY_TASK_DB
+    child_env = dict(os.environ)
+    # 显式 http transport:H6 默认虽为 http,但继承环境若含 named-pipe/uds 会禁用 HTTP
+    child_env["CW_DAEMON_TRANSPORT"] = "http"
+    child_env["CW_DAEMON_TASK_DB"] = _AUTHORITY_TASK_DB
+    # 移除可能强制固定端口的继承值,交给 daemon 默认动态端口 + manifest 发现
+    child_env.pop("CW_DAEMON_HTTP_ENDPOINT", None)
+
+    try:
+        if sys.platform == "win32":
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            CREATE_NO_WINDOW = 0x08000000
+            subprocess.Popen(
+                [daemon_bin],  # 不带 --http-bind:H6 默认 127.0.0.1:0 + manifest
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                env=child_env,
+            )
+        else:
+            subprocess.Popen(
+                [daemon_bin],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+                env=child_env,
+            )
+        logger.info("spawn_http_daemon: 已启动 detached daemon: %s", daemon_bin)
+    except OSError as exc:
+        logger.error("spawn_http_daemon: 启动失败: %s", exc)
+        return None
+
+    # 等待 daemon 写出 manifest 并 health 就绪:轮询 resolve endpoint + /health。
+    deadline = time.monotonic() + wait_window
+    backoff = BACKOFF_BASE
+    while time.monotonic() < deadline:
+        try:
+            endpoint, _manifest = resolve_http_endpoint_and_manifest(validate=True)
+            if endpoint and try_http_connect(endpoint, timeout=2.0):
+                logger.info("spawn_http_daemon: daemon 就绪 @ %s", endpoint)
+                return endpoint
+        except Exception:
+            pass  # manifest 尚未写出/stale,继续等
+        time.sleep(min(backoff, max(0.0, deadline - time.monotonic())))
+        backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
+    logger.error("spawn_http_daemon: 启动后 %.1fs 内未就绪", wait_window)
     return None
 
 

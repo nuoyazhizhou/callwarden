@@ -414,25 +414,36 @@ where
     S: DaemonStateExt + Send + Sync + 'static,
 {
     let local = bound.local_addr;
-    // H3: 启动 compat worker（非致命：失败标记 unhealthy，调用时返回
-    // E_COMPAT_WORKER_UNAVAILABLE，不阻塞 HTTP transport 启动）。
+    // H3: compat worker。止血(审计问题3):COMPAT_ROUTE_WHITELIST 已清零
+    // （所有方法均迁 rust_native），compat_route(method) 恒为 None、worker 分派分支
+    // 是死代码,没有任何 RPC 会路由到 worker。此时启动 worker 纯属多余,且启动
+    // 失败会把 worker_status 标成 "unhealthy" 误导诊断(实际与所有 RPC 无关)。
+    // 因此:白名单为空时跳过启动,worker_status 报明确的 "disabled_no_compat_routes"
+    // （非故障,表达"无需 worker"）;白名单非空时保持原有启动+健康语义。
     let compat = Arc::new(CompatAdapter::new(
         CompatAdapterConfig::from_env(&config.daemon_executable),
         Arc::clone(&sp),
     ));
-    if let Err(e) = compat.start() {
-        eprintln!(
-            "[cw_daemon][compat] worker 启动失败（继续 serve，兼容调用返回 UNAVAILABLE）: {}",
-            e
-        );
+    if COMPAT_ROUTE_WHITELIST.is_empty() {
+        config.worker_status = "disabled_no_compat_routes".to_string();
+    } else {
+        if let Err(e) = compat.start() {
+            eprintln!(
+                "[cw_daemon][compat] worker 启动失败（继续 serve，兼容调用返回 UNAVAILABLE）: {}",
+                e
+            );
+        }
+        config.worker_status = compat.worker_status();
     }
-    config.worker_status = compat.worker_status();
     config.endpoint = format!("http://{}", local);
     // CR10：compat worker 状态回写 manifest（非致命：失败仅影响 manifest 字段新鲜度）
     {
         let manifest = build_manifest(&config, &local);
         if let Err(e) = publish_manifest_atomic(&config.manifest_path, &manifest) {
-            eprintln!("[cw_daemon][http] manifest worker_status 回写失败（忽略）: {}", e);
+            eprintln!(
+                "[cw_daemon][http] manifest worker_status 回写失败（忽略）: {}",
+                e
+            );
         }
     }
     // P0-2：打开持久化去重存储（与 manifest 同目录，跨 restart 保留 ≥24h）
@@ -856,10 +867,7 @@ async fn rpc_handler<S: DaemonStateExt + Send + Sync + 'static>(
 ///
 /// 注意：raw-body 的 strict duplicate-key 检测由各 handler 自行完成
 /// （它需要原始字节），本函数只做结构化字段校验。
-fn validate_rpc_envelope(
-    parsed: &Value,
-    git: &str,
-) -> Result<(String, String, Value), Response> {
+fn validate_rpc_envelope(parsed: &Value, git: &str) -> Result<(String, String, Value), Response> {
     // protocol_version 必须为字符串 "1"（否则 426）
     match parsed.get("protocol_version").and_then(|v| v.as_str()) {
         Some("1") => {}
@@ -1034,8 +1042,7 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
     }
 
     // ---- 3. envelope 解析 + 校验（strict duplicate-key 门禁在原始字节上做）
-    if let Err(e) =
-        crate::daemon::task_loop::strict_transport::parse_strict_envelope(&params_bytes)
+    if let Err(e) = crate::daemon::task_loop::strict_transport::parse_strict_envelope(&params_bytes)
     {
         if e.code == crate::daemon::task_loop::strict_transport::ERR_DUPLICATE_JSON_KEY {
             return json_rpc_error(
@@ -1173,7 +1180,9 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
                 )
             };
             // 最终结果落 dedup：后续同 request_id 的轮询经 Replay 直接返回
-            let _ = app_bg.dedup.store_result(&bg_ws, &bg_method, &bg_id, &result);
+            let _ = app_bg
+                .dedup
+                .store_result(&bg_ws, &bg_method, &bg_id, &result);
         });
         // 202 Accepted：受理回执（result.status="accepted" 供 client 识别）
         let body = json!({
@@ -1191,10 +1200,7 @@ async fn rpc_multipart_handler<S: DaemonStateExt + Send + Sync + 'static>(
                 "schema_version": SCHEMA_VERSION,
             },
         });
-        return json_response(
-            StatusCode::ACCEPTED,
-            serde_json::to_string(&body).unwrap(),
-        );
+        return json_response(StatusCode::ACCEPTED, serde_json::to_string(&body).unwrap());
     }
 
     // ---- 6. 同步分发（合成 local-owner peer；multipart 入口不经 compat 路由——
@@ -5399,14 +5405,19 @@ mod tests {
         let bound = bind_http(&cfg).unwrap();
         // manifest 已原子发布且内容指向本次预绑定
         assert!(manifest.exists(), "manifest must be published at pre-bind");
-        let m: Value =
-            serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+        let m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
         assert_eq!(m["pid"], json!(std::process::id()));
         assert_eq!(m["endpoint"], json!(format!("http://{}", bound.local_addr)));
-        assert!(m["manifest_hash"].as_str().map(|h| h.len() == 64).unwrap_or(false));
+        assert!(m["manifest_hash"]
+            .as_str()
+            .map(|h| h.len() == 64)
+            .unwrap_or(false));
         // serve 尚未启动，listener 已入 backlog：TCP connect 立即成功
         let probe = std::net::TcpStream::connect(bound.local_addr);
-        assert!(probe.is_ok(), "TCP connect must succeed right after pre-bind");
+        assert!(
+            probe.is_ok(),
+            "TCP connect must succeed right after pre-bind"
+        );
     }
 
     #[tokio::test]
@@ -5671,10 +5682,7 @@ mod tests {
         // 手工构造重复 key 的 JSON（serde_json 会保留最后值，但 strict parser 先拦）
         let bad = b"{\"jsonrpc\":\"2.0\",\"id\":\"q10-dup\",\"id\":\"q10-dup\",\
                     \"protocol_version\":\"1\",\"method\":\"ping\",\"params\":{}}";
-        let body = multipart_body(
-            "test-boundary-5",
-            &[("params", "application/json", bad)],
-        );
+        let body = multipart_body("test-boundary-5", &[("params", "application/json", bad)]);
         let (status, resp) = raw_request(
             &addr,
             "POST",
@@ -5793,7 +5801,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, 202);
-        assert_eq!(serde_json::from_str::<Value>(&resp).unwrap()["result"]["status"], "accepted");
+        assert_eq!(
+            serde_json::from_str::<Value>(&resp).unwrap()["result"]["status"],
+            "accepted"
+        );
 
         // 轮询：最终结果非 accepted（后台已完成 → Replay）
         let poll_body = multipart_body(
@@ -5885,7 +5896,11 @@ mod tests {
         assert!(r.is_err(), "活跃 daemon 的 manifest 必须拒绝覆盖");
         let msg = r.unwrap_err().to_string();
         assert!(msg.contains("拒绝覆盖"), "错误信息应说明拒绝覆盖: {}", msg);
-        assert!(msg.contains("fail-closed"), "错误信息应提示 fail-closed: {}", msg);
+        assert!(
+            msg.contains("fail-closed"),
+            "错误信息应提示 fail-closed: {}",
+            msg
+        );
         // 原 manifest 必须未被破坏
         assert!(path.exists());
     }
@@ -5911,7 +5926,10 @@ mod tests {
         .unwrap();
         let manifest = serde_json::json!({"pid": std::process::id()});
         let r = publish_manifest_atomic(&path, &manifest);
-        assert!(r.is_err(), "publish_manifest_atomic 必须拒绝覆盖活 daemon 的 manifest");
+        assert!(
+            r.is_err(),
+            "publish_manifest_atomic 必须拒绝覆盖活 daemon 的 manifest"
+        );
         // 临时文件不应残留（守卫在写 tmp 之前就拒绝）
         assert!(!path.with_extension("tmp").exists());
     }

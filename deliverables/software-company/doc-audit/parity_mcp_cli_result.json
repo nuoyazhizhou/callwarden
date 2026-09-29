@@ -1,0 +1,840 @@
+{
+  "summary": {
+    "mcp_total": 243,
+    "cli_leaf_total": 234,
+    "mapping_table_rows": 177,
+    "mcp_both": 176,
+    "mcp_only": 67,
+    "cli_both": 83,
+    "cli_only": 151,
+    "cli_only_expected": 73,
+    "cli_only_unexpected": 78
+  },
+  "mcp_only_tools": [
+    "append_evidence",
+    "assignment_create",
+    "assignment_revoke",
+    "assignment_show",
+    "build_directory",
+    "build_hard_dependency_edges",
+    "cancel_job",
+    "check_action_identity",
+    "check_session_separation",
+    "compare_snapshots",
+    "count_resolved_edges",
+    "detect_clones_async",
+    "detect_cycle",
+    "diff_callees",
+    "diff_callers",
+    "embed_symbols_async",
+    "find_evidence",
+    "get_action_identity",
+    "get_active_build_context",
+    "get_artifact_freshness",
+    "get_attestation_validity",
+    "get_build_context",
+    "get_clone_aware_impact",
+    "get_clone_group_detail",
+    "get_clone_group_stats",
+    "get_commit_tasks",
+    "get_dependency_edges",
+    "get_freshness_status",
+    "get_gate_decision",
+    "get_interface_providers",
+    "get_job_stats",
+    "get_job_status",
+    "get_metrics",
+    "get_resolved_edges",
+    "get_role_view",
+    "get_symbol_change_tasks",
+    "get_task_commits",
+    "get_toolchain",
+    "get_workspace_toolchains",
+    "import_envelope_dependencies",
+    "lease_acquire",
+    "lease_list_events",
+    "lease_release",
+    "lease_renew",
+    "lease_status",
+    "list_attestation_revocations",
+    "list_build_contexts",
+    "list_clone_groups",
+    "list_jobs",
+    "list_toolchains",
+    "publish_interface",
+    "record_action_identity",
+    "record_artifact_identity",
+    "register_attestation_revocation",
+    "remove_file",
+    "scan_semgrep_incremental",
+    "select_interface_provider",
+    "semgrep_scan_async",
+    "submit_verdict",
+    "task_assignment_heartbeat",
+    "task_assignment_status",
+    "task_get_role_prompt",
+    "task_governance_projection",
+    "task_remediation_create",
+    "task_step_resolve",
+    "validate_revision_dependencies",
+    "wait_for_job"
+  ],
+  "cli_only_commands": [
+    {
+      "leaf": "assignment create",
+      "top": "assignment",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "assignment show",
+      "top": "assignment",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "assignment revoke",
+      "top": "assignment",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context register",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context list",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context show",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context activate",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context delete",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context import-compile-commands",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context resolve",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "build-context edges",
+      "top": "build-context",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "collab publish",
+      "top": "collab",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "collab verdict",
+      "top": "collab",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "collab reveal",
+      "top": "collab",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "collab gate-trigger",
+      "top": "collab",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "comment-coverage",
+      "top": "comment-coverage",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "config explain",
+      "top": "config",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "config paths",
+      "top": "config",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "config check-role",
+      "top": "config",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon ping",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon register",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon list",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon status",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon publish",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon query",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon mode",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon health",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon manifest",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon capability",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon schema-version",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon bridge",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon backup",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon restore",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon gc-cas",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon gc-snapshots",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon snapshot-stats",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon snapshot-list",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon snapshot-evict",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon metrics",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon mount",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "daemon toolchain",
+      "top": "daemon",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "dashboard",
+      "top": "dashboard",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "defect build",
+      "top": "defect",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "dependency inspect",
+      "top": "dependency",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "dependency list",
+      "top": "dependency",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "dependency cycle",
+      "top": "dependency",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "dependency explain",
+      "top": "dependency",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "dependency provider-select",
+      "top": "dependency",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "doctor",
+      "top": "doctor",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment batch-create",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment batch-lock",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment batch-list",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment toggle-set",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment toggle-show",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment admit",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment record-metrics",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment record-verdict",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment record-reveal",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment record-invalid",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment record-incident",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment pause",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "experiment report",
+      "top": "experiment",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "fts rebuild",
+      "top": "fts",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "fts status",
+      "top": "fts",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc restore",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc status",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc purge",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc retention",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc archive-inspect",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc archive-import",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc db-cleanup",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "gc db-migrate-single",
+      "top": "gc",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "git check-task",
+      "top": "git",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "git check-push",
+      "top": "git",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "git check-ref-transaction",
+      "top": "git",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "git destructive-log",
+      "top": "git",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "graph build-from-c",
+      "top": "graph",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "grep",
+      "top": "grep",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "guardrail rules",
+      "top": "guardrail",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "health-report",
+      "top": "health-report",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "hotspot",
+      "top": "hotspot",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "identity revoke",
+      "top": "identity",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "impact",
+      "top": "impact",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "install",
+      "top": "install",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent claude-code",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent claude-desktop",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent cursor",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent cline",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent cline-cli",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent devin-cli",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent windsurf",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent trae",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent gemini-cli",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent antigravity",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent codex",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent opencode",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent kiro",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent qoder",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent jetbrains-junie",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent zed",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent pearai",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent kimi-code",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent codebuddy-cli",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent deep-code",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent comate",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent grok-build",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent zcode",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-agent all",
+      "top": "install-agent",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "install-hook post-commit",
+      "top": "install-hook",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "lease acquire",
+      "top": "lease",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "lease renew",
+      "top": "lease",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "lease release",
+      "top": "lease",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "lease status",
+      "top": "lease",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "lease list",
+      "top": "lease",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "review",
+      "top": "review",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "rollback register",
+      "top": "rollback",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "rollback show",
+      "top": "rollback",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "rollback config",
+      "top": "rollback",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "rollback set",
+      "top": "rollback",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "rollback is-rolled-back",
+      "top": "rollback",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "server",
+      "top": "server",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "setup",
+      "top": "setup",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "symbol-history",
+      "top": "symbol-history",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task next-action",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task prompt",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task assignment-status",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task assignment-heartbeat",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task handoff",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task step-resolve",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task cascade-close",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task reopen",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task claim-recover",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task supersede",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task attest-legacy-workspace-binding",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task contract-bootstrap",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task contract-revise",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task bootstrap-executor-evidence",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task bootstrap-reviewer-pass",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task governance-projection",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "task superseded",
+      "top": "task",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "test",
+      "top": "test",
+      "expected_cli_only": true
+    },
+    {
+      "leaf": "toolchain register",
+      "top": "toolchain",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "toolchain list",
+      "top": "toolchain",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "toolchain show",
+      "top": "toolchain",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "toolchain delete",
+      "top": "toolchain",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "toolchain bind",
+      "top": "toolchain",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "toolchain list-bound",
+      "top": "toolchain",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "uncommented",
+      "top": "uncommented",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "vuln-blast",
+      "top": "vuln-blast",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "workspace scan",
+      "top": "workspace",
+      "expected_cli_only": false
+    },
+    {
+      "leaf": "workspace generate-ignore",
+      "top": "workspace",
+      "expected_cli_only": false
+    }
+  ],
+  "note": "尊重 frozen spec §12(避免 T=M=D)。MCP_ONLY 预期为 [13]-[17] 增量域;CLI_ONLY 预期为本地宿主操作。unexpected 项需人工判断是否遗漏。"
+}

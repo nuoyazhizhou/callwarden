@@ -78,6 +78,19 @@ def _start_daemon_for_mcp_startup() -> None:
                 ready = True
             except Exception:
                 ready = False
+            if not ready:
+                # HTTP daemon 不可达:启动期一次性显式拉起本机 daemon(detached)。
+                # 这是 MCP 宿主进程启动时的自愈——此前 HTTP 模式只探活不 spawn,
+                # daemon 挂掉后 MCP/CLI 全部 fail-closed 且无自助恢复(见审计问题1)。
+                try:
+                    from .daemon_autostart import spawn_http_daemon
+                    endpoint = spawn_http_daemon(wait_window=15.0)
+                    ready = endpoint is not None
+                    if ready:
+                        print(f"[Daemon] 启动期自动拉起 HTTP daemon 成功 @ {endpoint}",
+                              file=sys.stderr)
+                except Exception as spawn_exc:
+                    print(f"[Daemon] 启动期自动拉起失败: {spawn_exc}", file=sys.stderr)
         else:
             from .daemon_client import UnixDaemonRpcClient
             rpc = UnixDaemonRpcClient(timeout=1.0)

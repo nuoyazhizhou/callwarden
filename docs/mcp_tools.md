@@ -2320,6 +2320,79 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw lsp completion`       | `lsp_completion`          | LSP 补全       |
 | `cw lsp check`            | `lsp_check_available`     | LSP 可用性     |
 
+> **增量域映射（[13]-[17]，2026-09-29 审计补全）**：以下 5 个能力域此前未纳入本对照表。
+> 它们与前 12 类一样都经同一 daemon RPC，CLI 与 MCP 各有暴露面；部分域两侧粒度不同
+> （如 Identity 的 CLI 仅暴露 `revoke`，查询类只在 MCP）。这是有意的暴露面差异，
+> 不是能力缺失（依据 `cw-role-prompt-compiler-v1-frozen-spec.md` §12「避免 T=M=D」）。
+
+### [13] 构建上下文感知（build-context / toolchain）
+
+| CLI 子命令                       | MCP 工具                   | 说明                   |
+| -------------------------------- | -------------------------- | ---------------------- |
+| `cw toolchain register`          | `get_toolchain`（查询）    | 工具链注册/查询        |
+| `cw toolchain list`              | `list_toolchains`          | 工具链列表             |
+| `cw toolchain list-bound`        | `get_workspace_toolchains` | workspace 工具链       |
+| `cw build-context register/show` | `get_build_context`        | build context          |
+| `cw build-context list`          | `list_build_contexts`      | build context 列表     |
+| `cw build-context activate`      | `get_active_build_context` | 活动 build context     |
+| `cw build-context resolve`       | `get_resolved_edges`       | 已解析边               |
+| `cw build-context edges`         | `count_resolved_edges`     | 已解析边计数           |
+| —                                | `get_metrics`              | 运行时指标（MCP 专属） |
+
+### [14] 只读协同查询 / 协同治理写（collab）
+
+| CLI 子命令               | MCP 工具                | 说明                     |
+| ------------------------ | ----------------------- | ------------------------ |
+| `cw collab publish`      | `append_evidence`       | 追加协同证据             |
+| `cw collab verdict`      | `submit_verdict`        | 提交裁决                 |
+| `cw collab reveal`       | `find_evidence`（查询） | 协同证据查询             |
+| `cw collab gate-trigger` | `get_gate_decision`     | 门禁决策                 |
+| —                        | `get_role_view`         | 角色视图（MCP 专属查询） |
+| —                        | `get_freshness_status`  | 新鲜度（MCP 专属查询）   |
+
+### [15] 依赖图与环检测（dependency）
+
+| CLI 子命令                      | MCP 工具                         | 说明                       |
+| ------------------------------- | -------------------------------- | -------------------------- |
+| `cw dependency inspect`         | `build_hard_dependency_edges`    | 硬依赖边构建               |
+| `cw dependency list`            | `get_dependency_edges`           | 依赖边查询                 |
+| `cw dependency cycle`           | `detect_cycle`                   | 环检测                     |
+| `cw dependency explain`         | `validate_revision_dependencies` | 版本依赖校验               |
+| `cw dependency provider-select` | `select_interface_provider`      | provider 选择              |
+| —                               | `publish_interface`              | 接口发布（MCP 专属）       |
+| —                               | `get_interface_providers`        | 接口提供者查询（MCP 专属） |
+| —                               | `import_envelope_dependencies`   | 信封依赖导入（MCP 专属）   |
+| —                               | `record_artifact_identity`       | 工件身份记录（MCP 专属）   |
+| —                               | `get_artifact_freshness`         | 工件新鲜度（MCP 专属）     |
+
+### [16] Assignment 与 Lease
+
+| CLI 子命令             | MCP 工具            | 说明            |
+| ---------------------- | ------------------- | --------------- |
+| `cw lease acquire`     | `lease_acquire`     | 获取 lease      |
+| `cw lease renew`       | `lease_renew`       | 续租            |
+| `cw lease release`     | `lease_release`     | 释放            |
+| `cw lease status`      | `lease_status`      | lease 状态      |
+| `cw lease list`        | `lease_list_events` | lease 事件      |
+| `cw assignment create` | `assignment_create` | 创建 assignment |
+| `cw assignment show`   | `assignment_show`   | assignment 详情 |
+| `cw assignment revoke` | `assignment_revoke` | 撤销 assignment |
+
+### [17] Identity 与 Attestation
+
+| CLI 子命令           | MCP 工具                          | 说明                           |
+| -------------------- | --------------------------------- | ------------------------------ |
+| `cw identity revoke` | `register_attestation_revocation` | 撤销 attestation               |
+| —                    | `record_action_identity`          | 记录动作身份（MCP 专属）       |
+| —                    | `get_action_identity`             | 查询动作身份（MCP 专属）       |
+| —                    | `check_action_identity`           | 校验动作身份（MCP 专属）       |
+| —                    | `check_session_separation`        | 会话隔离校验（MCP 专属）       |
+| —                    | `get_attestation_validity`        | attestation 有效性（MCP 专属） |
+| —                    | `list_attestation_revocations`    | 撤销列表（MCP 专属）           |
+
+> Identity 域 CLI 仅暴露 `revoke`（人类运维动作），身份记录/查询/校验由 Agent 编排经 MCP 完成，
+> 这是 P3 设计的有意分工（Req 10.x）。
+
 ---
 
 ## 工具设计原则与优化方向

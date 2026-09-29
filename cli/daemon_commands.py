@@ -47,6 +47,15 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
 
     sub.add_parser("ping", help="检查 daemon 与 peer credential")
 
+    start_cmd = sub.add_parser(
+        "start",
+        help="启动本机 HTTP daemon(若未运行);已运行则复用。detached 进程,client 退出后仍存活",
+    )
+    start_cmd.add_argument("--wait", type=float, default=15.0,
+                           help="等待 daemon 就绪的最长秒数(默认 15)")
+    start_cmd.add_argument("--force", action="store_true",
+                           help="即使探测到已有 daemon 也强制启动新实例(慎用)")
+
     register = sub.add_parser("register", help="注册当前 UID 的 workspace")
     register.add_argument("root")
     register.add_argument("--git-remote", default="")
@@ -424,6 +433,35 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
             `cw-client` 禁止（纯 client 视角，不能启动 daemon 本身）。
     """
     args = _parser(include_serve).parse_args(argv)
+
+    if args.action == "start":
+        # 显式启动本机 HTTP daemon。先探活(避免重复启动),不可达再 spawn。
+        from callwarden.server.daemon_autostart import (
+            resolve_http_endpoint_and_manifest,
+            try_http_connect,
+            spawn_http_daemon,
+        )
+        if not args.force:
+            try:
+                ep, _m = resolve_http_endpoint_and_manifest(validate=True)
+                if ep and try_http_connect(ep, timeout=2.0):
+                    _print_json({"ok": True, "action": "start", "status": "already_running",
+                                 "endpoint": ep})
+                    return 0
+            except Exception:
+                pass  # 无可用 manifest / stale,继续 spawn
+        endpoint = spawn_http_daemon(wait_window=args.wait)
+        if endpoint:
+            _print_json({"ok": True, "action": "start", "status": "started",
+                         "endpoint": endpoint})
+            return 0
+        _print_json({"ok": False, "action": "start", "status": "failed",
+                     "error": "E_DAEMON_START_FAILED",
+                     "detail": ("daemon 启动失败或超时未就绪;检查 "
+                                "~/.callwarden/runtime/current/cw-daemon.exe 是否存在、"
+                                "端口是否被占用")})
+        return 2
+
     if args.action == "mode":
         if args.set:
             print(f"请设置环境变量 CW_DAEMON_MODE={args.set}")

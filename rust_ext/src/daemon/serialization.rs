@@ -109,10 +109,18 @@ impl SerializationPoint {
 
             // 检查超时
             if Instant::now() >= deadline {
+                // 止血(审计问题3):此前超时只回一个语焉不详的 request_timeout,
+                // 用户面对 30s 哑等后无从下手。这里给出可诊断、可恢复的结构化原因:
+                // 串行化点被前一个长时间持锁的 Protected_Mutation 占用(队头阻塞);
+                // 恢复手段是重启 daemon 释放卡死的持有者。锁架构层面的根治(细化
+                // 锁粒度 / 持有者 watchdog)留独立项,本改动仅让超时可自助恢复。
                 return Err(DaemonRpcError::new(
                     "request_timeout",
                     format!(
-                        "Protected_Mutation 等待串行化点超时（{}ms），请求未执行，状态未改变",
+                        "Protected_Mutation 等待串行化点超时（{}ms）：另一个写操作长时间占用\
+                        唯一串行化点(队头阻塞)，本请求未执行、状态未改变。恢复:若持续超时，\
+                        说明有写操作卡死持锁——重启 daemon 释放(cw daemon start 在 daemon \
+                        不可达时会自动拉起；已运行则先停止卡死进程再 cw daemon start)。",
                         timeout.as_millis()
                     ),
                 ));
