@@ -5805,7 +5805,14 @@ pub fn handle_summary_test_impact_selection(
         let mut stmt2 = conn
             .prepare(&sql)
             .map_err(|e| DaemonRpcError::internal_error(format!("tis bfs prepare: {e}")))?;
-        let iter = stmt2.query_map(rusqlite::params_from_iter(current_batch.iter()), |r| {
+        // FIX(全量测试T2,2026-09-30):SQL 有 `fi.workspace_id = ?`(1) + callee_id
+        // IN (N 个 ?)共 1+N 个占位符,但此前 params 只传 current_batch(N 个),
+        // 漏了 workspace_id → SQLite 报 "Wrong number of parameters passed to
+        // query. Got 1, needed 2"(BFS 首轮 N=1)。绑定参数补上 workspace_id。
+        let mut bind_params: Vec<i64> = Vec::with_capacity(current_batch.len() + 1);
+        bind_params.push(workspace_id);
+        bind_params.extend(current_batch.iter().copied());
+        let iter = stmt2.query_map(rusqlite::params_from_iter(bind_params.iter()), |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, Option<String>>(1)?,
