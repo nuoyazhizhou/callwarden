@@ -1,0 +1,2504 @@
+{
+  "op_filter": "ALL",
+  "counts": {
+    "PASS": 157,
+    "EXPECTED_BUSINESS": 72,
+    "DEFECT": 0,
+    "SKIP": 14
+  },
+  "results": [
+    {
+      "name": "append_evidence",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool append_evidence: invalid_params: 缺少 payload_hash",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "evidence_id",
+        "evidence_type",
+        "manifest_path",
+        "contract_id",
+        "contract_revision",
+        "contract_hash",
+        "snapshot_id",
+        "verifier_name",
+        "verifier_version",
+        "verifier_config_hash",
+        "producer_identity",
+        "payload",
+        "payload_hash",
+        "test_run_id",
+        "lease_token",
+        "fencing_counter",
+        "identity_role",
+        "identity_agent_id",
+        "identity_session_id",
+        "identity_model_id",
+        "request_id"
+      ]
+    },
+    {
+      "name": "find_evidence",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "contract_id",
+        "verifier",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_freshness_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "evidence_id",
+        "task_id"
+      ]
+    },
+    {
+      "name": "get_gate_decision",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "gate_id",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_role_view",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "role"
+      ]
+    },
+    {
+      "name": "submit_verdict",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool submit_verdict: invalid_params: 缺少 view_manifest_hash",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "contract_id",
+        "contract_revision",
+        "contract_hash",
+        "role_contract_id",
+        "role_contract_revision",
+        "role_contract_hash",
+        "phase",
+        "overall",
+        "clause_results",
+        "findings",
+        "reviewer_identity",
+        "view_manifest_hash",
+        "snapshot_id",
+        "attestation",
+        "amendment_ref",
+        "verdict_id",
+        "lease_token",
+        "fencing_counter",
+        "identity_role",
+        "identity_agent_id",
+        "identity_agent_instance_id",
+        "identity_session_id",
+        "identity_model_id",
+        "request_id"
+      ]
+    },
+    {
+      "name": "task_remediation_create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_remediation_create: E_LEASE_NOT_FOUND: task=T-seed-000000000000-00000000 role=implementer 无 active lease，受保护写操作需要先 acquire_lease",
+      "params_keys": [
+        "task_id",
+        "source_step_id",
+        "request_id",
+        "lease_token",
+        "fencing_counter",
+        "source_outcome",
+        "source_verdict_id",
+        "source_findings",
+        "identity_role",
+        "identity_agent_id",
+        "identity_session_id",
+        "identity_model_id"
+      ]
+    },
+    {
+      "name": "task_step_resolve",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_step_resolve: E_LEASE_NOT_FOUND: task=T-seed-000000000000-00000000 role=implementer 无 active lease，受保护写操作需要先 acquire_lease",
+      "params_keys": [
+        "task_id",
+        "failed_step_id",
+        "remediation_step_id",
+        "request_id",
+        "evidence_path",
+        "evidence_hash",
+        "lease_token",
+        "fencing_counter",
+        "identity_role",
+        "identity_agent_id",
+        "identity_session_id",
+        "identity_model_id"
+      ]
+    },
+    {
+      "name": "build_hard_dependency_edges",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id",
+        "contract_id",
+        "contract_revision"
+      ]
+    },
+    {
+      "name": "detect_cycle",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "get_artifact_freshness",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "workspace_id",
+        "task_id",
+        "artifact_ref"
+      ]
+    },
+    {
+      "name": "get_dependency_edges",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id",
+        "task_id"
+      ]
+    },
+    {
+      "name": "get_interface_providers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id",
+        "interface_name",
+        "version"
+      ]
+    },
+    {
+      "name": "import_envelope_dependencies",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool import_envelope_dependencies: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "workspace_id",
+        "task_id",
+        "contract_id",
+        "contract_revision",
+        "dependencies"
+      ]
+    },
+    {
+      "name": "publish_interface",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool publish_interface: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "workspace_id",
+        "task_id",
+        "contract_id",
+        "contract_revision",
+        "interface_name",
+        "version",
+        "interface_hash"
+      ]
+    },
+    {
+      "name": "record_artifact_identity",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool record_artifact_identity: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "workspace_id",
+        "task_id",
+        "contract_id",
+        "contract_revision",
+        "artifact_type",
+        "artifact_ref",
+        "artifact_hash",
+        "workspace_snapshot_id"
+      ]
+    },
+    {
+      "name": "select_interface_provider",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool select_interface_provider: invalid_params: 缺少字段: provider_task_id",
+      "params_keys": [
+        "workspace_id",
+        "consumer_task_id",
+        "contract_id",
+        "contract_revision",
+        "interface_name",
+        "selected_provider_task_id"
+      ]
+    },
+    {
+      "name": "validate_revision_dependencies",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id",
+        "contract_id",
+        "contract_revision"
+      ]
+    },
+    {
+      "name": "check_action_identity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "identity",
+        "require_role"
+      ]
+    },
+    {
+      "name": "check_session_separation",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "reviewer_identity",
+        "implementer_identity"
+      ]
+    },
+    {
+      "name": "get_action_identity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "action_id",
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "get_attestation_validity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "issuer",
+        "signing_key_id",
+        "issuance_time",
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "list_attestation_revocations",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "issuer",
+        "signing_key_id",
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "record_action_identity",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool record_action_identity: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "action_id",
+        "action_type",
+        "task_id",
+        "identity",
+        "contract_id",
+        "contract_revision",
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "register_attestation_revocation",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "SKIP",
+      "detail": "破坏性:撤销 attestation"
+    },
+    {
+      "name": "assignment_create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool assignment_create: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "task_id",
+        "role",
+        "agent_id",
+        "session_id",
+        "model_id"
+      ]
+    },
+    {
+      "name": "assignment_revoke",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:撤销 assignment"
+    },
+    {
+      "name": "assignment_show",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool assignment_show: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "params_keys": [
+        "task_id",
+        "role"
+      ]
+    },
+    {
+      "name": "lease_acquire",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool lease_acquire: E_IDENTITY_INCOMPLETE: acquire lease 需要 identity（agent_id/session_id/model_id/role）",
+      "params_keys": [
+        "task_id",
+        "role",
+        "agent_id",
+        "session_id",
+        "model_id",
+        "ttl_seconds"
+      ]
+    },
+    {
+      "name": "lease_list_events",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool lease_list_events: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "params_keys": [
+        "task_id",
+        "role"
+      ]
+    },
+    {
+      "name": "lease_release",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool lease_release: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "params_keys": [
+        "task_id",
+        "role",
+        "token",
+        "agent_id",
+        "session_id",
+        "model_id"
+      ]
+    },
+    {
+      "name": "lease_renew",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool lease_renew: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "params_keys": [
+        "task_id",
+        "role",
+        "token",
+        "agent_id",
+        "session_id",
+        "model_id",
+        "ttl_seconds"
+      ]
+    },
+    {
+      "name": "lease_status",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool lease_status: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "params_keys": [
+        "task_id",
+        "role"
+      ]
+    },
+    {
+      "name": "detect_cycles",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "max_depth"
+      ]
+    },
+    {
+      "name": "export_module_graph",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "format"
+      ]
+    },
+    {
+      "name": "find_issues",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "issue_type",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_call_chain_down",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "max_depth"
+      ]
+    },
+    {
+      "name": "get_call_heatmap",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "group_by",
+        "top_n"
+      ]
+    },
+    {
+      "name": "get_callees",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "caller_name",
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_callers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "callee_name",
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_comment_coverage",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "group_by"
+      ]
+    },
+    {
+      "name": "get_comment_from_version",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "spec"
+      ]
+    },
+    {
+      "name": "get_deepest_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit",
+        "module_filter",
+        "kind"
+      ]
+    },
+    {
+      "name": "get_file_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "get_file_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "get_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "max_depth"
+      ]
+    },
+    {
+      "name": "get_issue_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_module_call_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit"
+      ]
+    },
+    {
+      "name": "get_orphan_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "kind",
+        "module_filter",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_recent_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "since"
+      ]
+    },
+    {
+      "name": "get_semgrep_findings",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "severity",
+        "language",
+        "rule_id",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_semgrep_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_symbol_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_symbol_location",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "name",
+        "file_path"
+      ]
+    },
+    {
+      "name": "get_test_coverage",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_top_callers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit",
+        "kind",
+        "module_filter"
+      ]
+    },
+    {
+      "name": "get_topological_order",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit"
+      ]
+    },
+    {
+      "name": "get_uncommented_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "kind",
+        "module_filter",
+        "limit"
+      ]
+    },
+    {
+      "name": "restore_all_comments",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "preview",
+        "file_filter"
+      ]
+    },
+    {
+      "name": "restore_comment",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool restore_comment: invalid_params: 缺少字段: symbol_hash",
+      "params_keys": [
+        "spec",
+        "preview"
+      ]
+    },
+    {
+      "name": "run_semgrep_scan",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": [
+        "config",
+        "languages",
+        "timeout"
+      ]
+    },
+    {
+      "name": "scan_semgrep_incremental",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": [
+        "base_branch",
+        "head",
+        "config",
+        "languages",
+        "timeout"
+      ]
+    },
+    {
+      "name": "search_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "query",
+        "kind",
+        "limit"
+      ]
+    },
+    {
+      "name": "count_resolved_edges",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id",
+        "build_context_hash"
+      ]
+    },
+    {
+      "name": "get_active_build_context",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "get_build_context",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "workspace_id",
+        "build_context_hash"
+      ]
+    },
+    {
+      "name": "get_metrics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "format",
+        "name",
+        "reset",
+        "source"
+      ]
+    },
+    {
+      "name": "get_resolved_edges",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool get_resolved_edges: 1 validation error for get_resolved_edgesArguments\ncaller_symbol_id\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='seed', ",
+      "params_keys": [
+        "workspace_id",
+        "build_context_hash",
+        "caller_symbol_id",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_toolchain",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "name_or_id"
+      ]
+    },
+    {
+      "name": "get_workspace_toolchains",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id",
+        "build_context_hash"
+      ]
+    },
+    {
+      "name": "list_build_contexts",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_id"
+      ]
+    },
+    {
+      "name": "list_toolchains",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "compare_snapshots",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "left_workspace_id",
+        "right_workspace_id",
+        "scope_type",
+        "scope_value"
+      ]
+    },
+    {
+      "name": "cross_repo_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash",
+        "depth"
+      ]
+    },
+    {
+      "name": "cross_repo_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "detect_cross_repo_deps",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": [
+        "source_workspace",
+        "target_workspace"
+      ]
+    },
+    {
+      "name": "diff_branches",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 源分支不存在: seed",
+      "params_keys": [
+        "source_branch",
+        "target_branch"
+      ]
+    },
+    {
+      "name": "diff_callees",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool diff_callees: invalid_params: 缺少字段: symbol_a",
+      "params_keys": [
+        "left_workspace_id",
+        "right_workspace_id",
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "diff_callers",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool diff_callers: invalid_params: 缺少字段: symbol_a",
+      "params_keys": [
+        "left_workspace_id",
+        "right_workspace_id",
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "extract_rule_candidates_from_quality_findings",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool extract_rule_candidates_from_quality_findings: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "task_id",
+        "min_occurrences"
+      ]
+    },
+    {
+      "name": "find_shared_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "workspace_a",
+        "workspace_b"
+      ]
+    },
+    {
+      "name": "get_applicable_rules",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "context",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_edit_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_edit_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "time_window"
+      ]
+    },
+    {
+      "name": "list_branches",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "lsp_check_available",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "language"
+      ]
+    },
+    {
+      "name": "lsp_completion",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "line",
+        "character"
+      ]
+    },
+    {
+      "name": "lsp_definition",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "line",
+        "character"
+      ]
+    },
+    {
+      "name": "lsp_diagnostics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "lsp_hover",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "line",
+        "character"
+      ]
+    },
+    {
+      "name": "lsp_references",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "line",
+        "character",
+        "include_declaration"
+      ]
+    },
+    {
+      "name": "merge_preview",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 源分支不存在: seed",
+      "params_keys": [
+        "source_branch",
+        "target_branch"
+      ]
+    },
+    {
+      "name": "propose_edit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "new_content",
+        "operation",
+        "agent_task_id",
+        "symbol_hash",
+        "dry_run",
+        "expected_hash"
+      ]
+    },
+    {
+      "name": "propose_range_patch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool propose_range_patch: invalid_params: 缺少字段: new_content",
+      "params_keys": [
+        "file_path",
+        "start_line",
+        "end_line",
+        "replacement",
+        "agent_task_id",
+        "symbol_hash",
+        "dry_run",
+        "expected_hash"
+      ]
+    },
+    {
+      "name": "propose_symbol_id_patch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool propose_symbol_id_patch: invalid_params: 缺少字段: new_content",
+      "params_keys": [
+        "symbol_id",
+        "patch",
+        "mode",
+        "agent_task_id",
+        "dry_run",
+        "expected_hash",
+        "expected_symbol_hash"
+      ]
+    },
+    {
+      "name": "propose_symbol_patch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool propose_symbol_patch: invalid_params: 缺少字段: qualified_name",
+      "params_keys": [
+        "file_path",
+        "symbol_name",
+        "patch",
+        "mode",
+        "agent_task_id",
+        "dry_run",
+        "expected_hash"
+      ]
+    },
+    {
+      "name": "register_branch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool register_branch: invalid_params: 缺少字段: name",
+      "params_keys": [
+        "branch_name",
+        "repo_root"
+      ]
+    },
+    {
+      "name": "resolve_gate_findings",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool resolve_gate_findings: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "revert_edit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool revert_edit: edit_not_found: edit 0 不存在或已回退",
+      "params_keys": [
+        "audit_id"
+      ]
+    },
+    {
+      "name": "rule_candidate_accept",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool rule_candidate_accept: candidate_not_found: candidate seed 不存在",
+      "params_keys": [
+        "candidate_id",
+        "reviewer"
+      ]
+    },
+    {
+      "name": "rule_candidate_create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool rule_candidate_create: 2 validation errors for rule_candidate_createArguments\nscope\n  Input should be a valid dictionary [type=dict_type, input_value='seed', input_type=str]\n    For further informati",
+      "params_keys": [
+        "title",
+        "rule_text",
+        "scope",
+        "severity",
+        "source",
+        "evidence",
+        "confidence"
+      ]
+    },
+    {
+      "name": "rule_candidate_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "status",
+        "limit"
+      ]
+    },
+    {
+      "name": "rule_candidate_reject",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool rule_candidate_reject: candidate_not_found: candidate seed 不存在或已处理",
+      "params_keys": [
+        "candidate_id",
+        "reviewer",
+        "reason"
+      ]
+    },
+    {
+      "name": "rule_insert_agents_md_block",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "target_path",
+        "actor"
+      ]
+    },
+    {
+      "name": "rule_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "status",
+        "limit"
+      ]
+    },
+    {
+      "name": "rule_sync_agents_md",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "target_path",
+        "dry_run",
+        "actor"
+      ]
+    },
+    {
+      "name": "run_check_gate",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool run_check_gate: invalid_params: 缺少字段: workspace_instance_id",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "changed_files"
+      ]
+    },
+    {
+      "name": "switch_branch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool switch_branch: invalid_params: 缺少字段: name",
+      "params_keys": [
+        "branch_name"
+      ]
+    },
+    {
+      "name": "embed_single_symbol",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash"
+      ]
+    },
+    {
+      "name": "embed_symbols",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "force"
+      ]
+    },
+    {
+      "name": "find_similar_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "threshold",
+        "top_k"
+      ]
+    },
+    {
+      "name": "gc_archive_import",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool gc_archive_import: invalid_params: 缺少字段: archive_path",
+      "params_keys": [
+        "path",
+        "file_path",
+        "package_name",
+        "dry_run"
+      ]
+    },
+    {
+      "name": "gc_archive_inspect",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool gc_archive_inspect: invalid_params: 缺少字段: archive_path",
+      "params_keys": [
+        "path"
+      ]
+    },
+    {
+      "name": "gc_archive_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit"
+      ]
+    },
+    {
+      "name": "gc_audit_get",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool gc_audit_get: invalid_params: 缺少字段: audit_id",
+      "params_keys": [
+        "audit_id"
+      ]
+    },
+    {
+      "name": "gc_audit_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit",
+        "operation"
+      ]
+    },
+    {
+      "name": "gc_policy_get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "gc_policy_set",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "older_than_days",
+        "keep_versions",
+        "include_external",
+        "external_stale_days",
+        "backup_enabled",
+        "vacuum_enabled"
+      ]
+    },
+    {
+      "name": "gc_retention",
+      "op": "READ_ONLY",
+      "verdict": "SKIP",
+      "detail": "破坏性:按策略删除历史版本"
+    },
+    {
+      "name": "get_project_dependencies",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "languages"
+      ]
+    },
+    {
+      "name": "get_symbol_commit_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash",
+        "limit"
+      ]
+    },
+    {
+      "name": "import_codeowners",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": []
+    },
+    {
+      "name": "import_git_blame",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": []
+    },
+    {
+      "name": "import_project_dependencies",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": []
+    },
+    {
+      "name": "parse_codeowners",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "prune_external_symbols",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:清理外部符号"
+    },
+    {
+      "name": "semantic_search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "query",
+        "top_k"
+      ]
+    },
+    {
+      "name": "ask_codebase",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "question",
+        "top_k",
+        "include_callers",
+        "include_callees",
+        "max_tokens"
+      ]
+    },
+    {
+      "name": "blast_radius",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash",
+        "depth"
+      ]
+    },
+    {
+      "name": "churn_analysis",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "module_filter",
+        "time_window"
+      ]
+    },
+    {
+      "name": "cross_layer_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash"
+      ]
+    },
+    {
+      "name": "defect_correlation",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash",
+        "window_commits"
+      ]
+    },
+    {
+      "name": "defect_learn",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "fix_commit_hash"
+      ]
+    },
+    {
+      "name": "defect_search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "category",
+        "severity_filter"
+      ]
+    },
+    {
+      "name": "defect_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "defect_suggest_fix",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash",
+        "finding_id"
+      ]
+    },
+    {
+      "name": "diff_to_symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "diff_text"
+      ]
+    },
+    {
+      "name": "evolution_frequency",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "time_window"
+      ]
+    },
+    {
+      "name": "find_uncovered_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "module_filter",
+        "threshold"
+      ]
+    },
+    {
+      "name": "generate_summary",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "summary",
+        "model"
+      ]
+    },
+    {
+      "name": "get_clone_aware_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "depth"
+      ]
+    },
+    {
+      "name": "get_coverage_for_symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_ownership_map",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "module_filter"
+      ]
+    },
+    {
+      "name": "get_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_token_savings_report",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "time_window"
+      ]
+    },
+    {
+      "name": "get_vulnerability_blast_radius",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "finding_id",
+        "severity_filter",
+        "depth"
+      ]
+    },
+    {
+      "name": "guardrail_add_rule",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool guardrail_add_rule: invalid_params: 缺少字段: rule",
+      "params_keys": [
+        "category",
+        "pattern",
+        "severity",
+        "action",
+        "description"
+      ]
+    },
+    {
+      "name": "guardrail_check_edit",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path",
+        "proposed_change"
+      ]
+    },
+    {
+      "name": "guardrail_list_rules",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "category_filter"
+      ]
+    },
+    {
+      "name": "guardrail_scan",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_filter"
+      ]
+    },
+    {
+      "name": "hotspot_evolution",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "module_filter",
+        "limit"
+      ]
+    },
+    {
+      "name": "import_coverage",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "params_keys": [
+        "file_path",
+        "format"
+      ]
+    },
+    {
+      "name": "project_brief",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "record_token_savings",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "operation",
+        "original_tokens",
+        "actual_tokens",
+        "agent_task_id",
+        "detail"
+      ]
+    },
+    {
+      "name": "repo_map",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "format"
+      ]
+    },
+    {
+      "name": "review_readiness",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash"
+      ]
+    },
+    {
+      "name": "test_impact_selection",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool test_impact_selection: internal_error: tis bfs: Wrong number of parameters passed to query. Got 1, needed 2",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "who_to_ask",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "audit_verify_chain",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "table_name",
+        "limit"
+      ]
+    },
+    {
+      "name": "bootstrap_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "cancel_job",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool cancel_job: job_not_found: job seed 不存在",
+      "params_keys": [
+        "job_id"
+      ]
+    },
+    {
+      "name": "cleanup_agent_rule_sync_log",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "older_than_days",
+        "keep_latest",
+        "dry_run"
+      ]
+    },
+    {
+      "name": "clear_clones",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:清空克隆检测结果"
+    },
+    {
+      "name": "detect_clones",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_filter",
+        "min_lines",
+        "similarity_threshold"
+      ]
+    },
+    {
+      "name": "detect_clones_async",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_filter",
+        "min_lines",
+        "similarity_threshold"
+      ]
+    },
+    {
+      "name": "embed_symbols_async",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "batch_size",
+        "force"
+      ]
+    },
+    {
+      "name": "get_clone_group_detail",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: group not found: 1",
+      "params_keys": [
+        "group_id",
+        "members_limit"
+      ]
+    },
+    {
+      "name": "get_clone_group_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_clone_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_commit_tasks",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "commit_hash",
+        "include_task_details"
+      ]
+    },
+    {
+      "name": "get_defect_correlation",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "window_commits"
+      ]
+    },
+    {
+      "name": "get_job_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_job_status",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: job not found: seed",
+      "params_keys": [
+        "job_id"
+      ]
+    },
+    {
+      "name": "get_symbol_change_tasks",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "symbol_hash",
+        "qualified_name",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_symbol_issues",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "include_info"
+      ]
+    },
+    {
+      "name": "get_task_commits",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "include_commit_details"
+      ]
+    },
+    {
+      "name": "get_task_symbol_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "file_path",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_test_cases",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_test_coverage_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_test_stability",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "qualified_name",
+        "limit"
+      ]
+    },
+    {
+      "name": "get_tested_functions",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool get_tested_functions: invalid_params: 缺少字段: qualified_name",
+      "params_keys": [
+        "test_qualified_name"
+      ]
+    },
+    {
+      "name": "link_edit_audit_symbols",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: edit audit has no task id",
+      "params_keys": [
+        "audit_id",
+        "step_id"
+      ]
+    },
+    {
+      "name": "list_audit_signing_keys",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "list_clone_groups",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "clone_type",
+        "min_similarity",
+        "limit"
+      ]
+    },
+    {
+      "name": "list_clones",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "clone_type",
+        "min_similarity",
+        "limit",
+        "symbol_id"
+      ]
+    },
+    {
+      "name": "list_jobs",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "job_type",
+        "status",
+        "limit"
+      ]
+    },
+    {
+      "name": "record_task_symbol_change",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool record_task_symbol_change: internal_error: 写入 task_symbol_changes 失败: FOREIGN KEY constraint failed",
+      "params_keys": [
+        "task_id",
+        "file_path",
+        "step_id",
+        "edit_audit_id",
+        "change_audit_id",
+        "qualified_name",
+        "symbol_name",
+        "symbol_hash_before",
+        "symbol_hash_after",
+        "change_type",
+        "source",
+        "metadata"
+      ]
+    },
+    {
+      "name": "rotate_audit_signing_key",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:轮换审计签名密钥,影响审计链"
+    },
+    {
+      "name": "rule_seed_bootstrap",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "dry_run"
+      ]
+    },
+    {
+      "name": "semgrep_scan_async",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "config",
+        "languages",
+        "timeout"
+      ]
+    },
+    {
+      "name": "task_apply",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "治理写:需 reviewer lease + review 状态前置"
+    },
+    {
+      "name": "task_assignment_heartbeat",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_assignment_heartbeat: E_IDENTITY_INCOMPLETE: identity 必须同时包含 agent_id/session_id/model_id/role",
+      "params_keys": [
+        "task_id",
+        "assignment_id",
+        "agent_session_id",
+        "identity",
+        "request_id",
+        "fencing_counter"
+      ]
+    },
+    {
+      "name": "task_assignment_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "role"
+      ]
+    },
+    {
+      "name": "task_capture_diff",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_capture_diff: internal_error: capture-diff 执行失败: multiple active workspaces; pass --workspace-id to avoid ambiguous data",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "base",
+        "dry_run",
+        "source_commit_hash",
+        "skip_quality_review"
+      ]
+    },
+    {
+      "name": "task_close",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "治理写:需 applied 状态前置"
+    },
+    {
+      "name": "task_completion_review",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "step_id"
+      ]
+    },
+    {
+      "name": "task_create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_create: E_WORKSPACE_AUTHORITY_MISMATCH: task-DB 中不存在 workspace_id=1717 且其 instance=7f9f8e8e9b660527 无 capture；不得用客户端 numeric id 补齐（registry/task-DB 分裂需经 alias 对齐）",
+      "params_keys": [
+        "title",
+        "description",
+        "steps",
+        "creator",
+        "workspace_id",
+        "workspace_instance_id"
+      ]
+    },
+    {
+      "name": "task_create_from_plan",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_create_from_plan: E_WORKSPACE_AUTHORITY_MISMATCH: workspace_id=10 权威 workspace_instance_id=ws-10，请求 7f9f8e8e9b660527 不一致且未在本 workspace capture 链确立；禁止同一 workspace 换 instance / 合成 ws-{id}",
+      "params_keys": [
+        "title",
+        "plan_md",
+        "description"
+      ]
+    },
+    {
+      "name": "task_create_subtask",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_create_subtask: E_TASK_WORKSPACE_UNBOUND: task=seed 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "params_keys": [
+        "parent_task_id",
+        "title",
+        "description",
+        "steps",
+        "creator"
+      ]
+    },
+    {
+      "name": "task_governance_projection",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_governance_projection: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "params_keys": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "task_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "status_filter",
+        "limit"
+      ]
+    },
+    {
+      "name": "task_next_step",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_next_step: E_IDENTITY_INCOMPLETE: identity 必须同时包含 agent_id/session_id/model_id/role",
+      "params_keys": [
+        "task_id",
+        "agent_session_id",
+        "identity",
+        "contract_claim",
+        "agent_instance_id"
+      ]
+    },
+    {
+      "name": "task_plan_template",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": []
+    },
+    {
+      "name": "task_quality_findings",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "task_id",
+        "status",
+        "severity"
+      ]
+    },
+    {
+      "name": "task_report_step",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_report_step: E_IDENTITY_INCOMPLETE: identity 必须同时包含 agent_id/session_id/model_id/role",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "result",
+        "success",
+        "changes",
+        "identity",
+        "agent_instance_id",
+        "snapshot_id"
+      ]
+    },
+    {
+      "name": "task_resolve_block",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_resolve_block: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "params_keys": [
+        "task_id",
+        "step_id",
+        "resolution"
+      ]
+    },
+    {
+      "name": "task_resolve_quality_finding",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "finding_id",
+        "resolution",
+        "resolved_by"
+      ]
+    },
+    {
+      "name": "task_rollback",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "状态破坏:回滚任务变更"
+    },
+    {
+      "name": "task_split",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_split: E_TASK_BINDING_REQUIRED: 父任务 T-seed-000000000000-00000000 缺少不可变 workspace binding，拒绝 split（子任务无法继承 workspace）",
+      "params_keys": [
+        "task_id",
+        "subtasks"
+      ]
+    },
+    {
+      "name": "task_status",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_status: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "params_keys": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "task_status_tree",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_status_tree: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "params_keys": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "wait_for_job",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "error字段: job not found: seed",
+      "params_keys": [
+        "job_id",
+        "timeout",
+        "poll_interval"
+      ]
+    },
+    {
+      "name": "work_next_job",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool work_next_job: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "params_keys": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "task_get_role_prompt",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_get_role_prompt: E_TASK_PROMPT_TASK_NOT_FOUND: task T-seed-000000000000-00000000 在当前 authority 中不存在",
+      "params_keys": [
+        "task_id"
+      ]
+    },
+    {
+      "name": "build_directory",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "重操作:构建目录图谱,可能长耗时"
+    },
+    {
+      "name": "build_graph",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "重操作:全量构建图谱,HTTP 同步超时(应走 async);种子 fixture 已验证"
+    },
+    {
+      "name": "check_file_health",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool check_file_health: path_not_found: 不是目录: \\\\?\\C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t2_w7scwlf8\\calc.py",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "delete_workspace",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:级联删除 workspace 及所有版本"
+    },
+    {
+      "name": "file_grep",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool file_grep: path_escape: path 不在 workspace 根内",
+      "params_keys": [
+        "pattern",
+        "path",
+        "glob",
+        "output_mode",
+        "head_limit"
+      ]
+    },
+    {
+      "name": "file_list",
+      "op": "READ_ONLY",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool file_list: path_escape: path 不在 workspace 根内",
+      "params_keys": [
+        "path",
+        "glob"
+      ]
+    },
+    {
+      "name": "file_read",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "file_path",
+        "offset",
+        "limit",
+        "include_context"
+      ]
+    },
+    {
+      "name": "file_symbol_content",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "file_path",
+        "symbol_name"
+      ]
+    },
+    {
+      "name": "get_active_workspace",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": []
+    },
+    {
+      "name": "get_code_health_check",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "severity"
+      ]
+    },
+    {
+      "name": "get_code_metrics_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": []
+    },
+    {
+      "name": "get_commit_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "commit_hash"
+      ]
+    },
+    {
+      "name": "get_complexity_hotspots",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit",
+        "module_filter"
+      ]
+    },
+    {
+      "name": "get_coupling_analysis",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit"
+      ]
+    },
+    {
+      "name": "get_function_metrics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "qualified_name"
+      ]
+    },
+    {
+      "name": "get_git_commits",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit",
+        "offset"
+      ]
+    },
+    {
+      "name": "get_git_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_largest_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit",
+        "module_filter"
+      ]
+    },
+    {
+      "name": "get_most_coupled_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "limit"
+      ]
+    },
+    {
+      "name": "get_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "get_symbol_content_by_hash",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=tuple",
+      "params_keys": [
+        "content_hash"
+      ]
+    },
+    {
+      "name": "import_git_history",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "重操作:导入 git 历史 job,HTTP 同步超时"
+    },
+    {
+      "name": "list_workspaces",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": []
+    },
+    {
+      "name": "refresh_file",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=list",
+      "params_keys": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "register_workspace",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool register_workspace: path_not_found: 路径不存在: seed",
+      "params_keys": [
+        "name",
+        "root_path",
+        "description"
+      ]
+    },
+    {
+      "name": "remove_file",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:从图谱移除文件"
+    },
+    {
+      "name": "set_active_workspace",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool set_active_workspace: workspace_not_found: workspace_id_or_name='seed' 无法解析为已注册 workspace（fail-closed：禁止回退当前活动 workspace）",
+      "params_keys": [
+        "workspace_id_or_name"
+      ]
+    }
+  ],
+  "seed": {
+    "workspace_id": 1717,
+    "workspace_instance_id": "7f9f8e8e9b660527",
+    "known_qnames": [
+      "c:/users/wanpi/appdata/local/temp/cw_t2_w7scwlf8/calc.compute"
+    ],
+    "known_files": [
+      "c:/users/wanpi/appdata/local/temp/cw_t2_w7scwlf8/calc.py"
+    ]
+  }
+}
