@@ -1,0 +1,3380 @@
+{
+  "counts": {
+    "PASS": 75,
+    "EXPECTED_BUSINESS": 114,
+    "DEFECT": 13,
+    "SKIP": 31
+  },
+  "results": [
+    {
+      "cmd": "assignment create",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:assignment create"
+    },
+    {
+      "cmd": "assignment show",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw assignment [-h] {create,show,revoke} ... cw assignment: error: unrecognized arguments: seed",
+      "argv": [
+        "assignment",
+        "show",
+        "T-seed-000000000000-00000000",
+        "--role",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "assignment revoke",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:assignment revoke"
+    },
+    {
+      "cmd": "audit verify",
+      "verdict": "PASS",
+      "detail": "rc=0: === 审计链验证结果 ===   验证范围: seed   最大验证记录数: 10    安全级别: hmac   总记录: 0，通过: 0，不通过: 0    无 audit_chain 记录",
+      "argv": [
+        "audit",
+        "verify",
+        "--table",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "audit rotate-key",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:audit rotate"
+    },
+    {
+      "cmd": "audit keys",
+      "verdict": "PASS",
+      "detail": "rc=0: === 签名密钥轮换记录 === 共 1 条记录：    [1] key_id=key-000001a0d6e4e93f  rotated_at=1790311721.279669  [活跃]  当前活跃密钥: key-000001a0d6e4e93f",
+      "argv": [
+        "audit",
+        "keys"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "bootstrap status",
+      "verdict": "PASS",
+      "detail": "rc=0: 自举健康状态摘要  ✓ 数据库已同步：扫描基线与当前 HEAD 一致    已生效规则: 3   待审核候选规则: 5    open 质量发现: 0   阻塞发现(block): 0    审计链: total=500, broken=0, level=hmac    最近扫描: 无记录    任务: open=43, in_progress=1, review=0, applied=0  ▶ ",
+      "argv": [
+        "bootstrap",
+        "status"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "brief",
+      "verdict": "PASS",
+      "detail": "rc=0: === 项目简报 ===    项目类型: Python   文件数: 2   函数数: 10   总代码行: 78   健康评分: 90.0 (良好)   平均圈复杂度: 1.4   注释覆盖率: 0.0%    模块（前 2 个，按函数数降序）:     [1] c:/users/wanpi/appdata/local/temp/cw_t3_lffk11u4/calc  (6 个函数)    ",
+      "argv": [
+        "brief"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "build-context register",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw build-context [-h]                         {register,list,show,activate,delete,import-compile-commands,resolve,edges} ... cw build-context: error: unrecognized arguments: seed",
+      "argv": [
+        "build-context",
+        "register",
+        "1",
+        "compute",
+        "--flags",
+        "seed",
+        "--defines",
+        "seed",
+        "--includes",
+        "seed",
+        "--activate",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'build-context' 失败: invalid_params: workspace_id 1 与 workspace_instance_id 绑定的 1716 不一致",
+      "argv": [
+        "build-context",
+        "list",
+        "1"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context show",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'build-context' 失败: invalid_params: workspace_id 1 与 workspace_instance_id 绑定的 1716 不一致",
+      "argv": [
+        "build-context",
+        "show",
+        "1",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context activate",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'build-context' 失败: invalid_params: workspace_id 1 与 workspace_instance_id 绑定的 1716 不一致",
+      "argv": [
+        "build-context",
+        "activate",
+        "1",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context delete",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'build-context' 失败: invalid_params: workspace_id 1 与 workspace_instance_id 绑定的 1716 不一致",
+      "argv": [
+        "build-context",
+        "delete",
+        "1",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context import-compile-commands",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw build-context [-h]                         {register,list,show,activate,delete,import-compile-commands,resolve,edges} ... cw build-context: error: unrecognized arguments: seed",
+      "argv": [
+        "build-context",
+        "import-compile-commands",
+        "calc.py",
+        "1",
+        "--name",
+        "compute",
+        "--activate",
+        "seed",
+        "--workspace-root",
+        "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context resolve",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'build-context' 失败: invalid_params: workspace_id 1 与 workspace_instance_id 绑定的 1716 不一致",
+      "argv": [
+        "build-context",
+        "resolve",
+        "1",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "build-context edges",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw build-context edges [-h] [--caller CALLER] [--limit LIMIT]                               workspace_id hash cw build-context edges: error: argument --caller: invalid int value: 'compute'",
+      "argv": [
+        "build-context",
+        "edges",
+        "1",
+        "seed",
+        "--caller",
+        "compute",
+        "--limit",
+        "10"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "call-chain",
+      "verdict": "PASS",
+      "detail": "rc=0: ✗ 执行子命令 'call-chain' 失败: list indices must be integers or slices, not str",
+      "argv": [
+        "call-chain",
+        "compute",
+        "--depth",
+        "3"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "callees",
+      "verdict": "PASS",
+      "detail": "rc=0: compute 调用的函数（0 个）:",
+      "argv": [
+        "callees",
+        "compute",
+        "--qualified",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "callers",
+      "verdict": "PASS",
+      "detail": "rc=0: 调用 compute 的函数（0 个）:",
+      "argv": [
+        "callers",
+        "compute",
+        "--qualified",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "check-gate",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'check-gate' 失败: invalid_params: 缺少字段: workspace_instance_id",
+      "argv": [
+        "check-gate",
+        "T-seed-000000000000-00000000",
+        "--resolve",
+        "--step-id",
+        "step-seed-0"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "churn",
+      "verdict": "PASS",
+      "detail": "rc=0: === 代码流失分析 ===   时间窗口: seed （模块: seed）    变更文件数: 0   当前总行数: 0   流失总行数: 0   流失率: 0.00%    【高频变更文件 Top 10】:     (无)    【流失趋势】（0 个时间点）:     (无趋势数据)",
+      "argv": [
+        "churn",
+        "--module",
+        "seed",
+        "--window",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "clone detect",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:clone detect"
+    },
+    {
+      "cmd": "clone list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw clone list [-h] [--type {0,1,2,3}] [--min-similarity MIN_SIMILARITY]                      [--limit LIMIT] [--symbol SYMBOL] cw clone list: error: argument --type: expected one argument",
+      "argv": [
+        "clone",
+        "list",
+        "--type",
+        "--min-similarity",
+        "seed",
+        "--limit",
+        "10",
+        "--symbol",
+        "compute"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "clone stats",
+      "verdict": "PASS",
+      "detail": "rc=0: 克隆检测统计    克隆对总数: 0   Type-1: 0   Type-2: 0   Type-3: 0    受影响文件数: 0   受影响符号数: 0",
+      "argv": [
+        "clone",
+        "stats"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "clone clear",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:clone clear"
+    },
+    {
+      "cmd": "collab publish",
+      "verdict": "DEFECT",
+      "detail": "rc=1: Traceback (most recent call last):   File \"C:\\git_work\\callwarden\\cw.py\", line 174, in <module>     main()     ~~~~^^   File \"C:\\git_work\\callwarden\\cw.py\", line 170, in main     mod.main()     ~~~~~~",
+      "argv": [
+        "collab",
+        "publish",
+        "--json",
+        "--workspace",
+        "seed",
+        "--envelope",
+        "seed"
+      ],
+      "rc": 1
+    },
+    {
+      "cmd": "collab verdict",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw collab verdict [-h] [--json] --task-id ID --step-id ID                          --contract-id ID --contract-hash HASH                          --contract-revision N --role-contract-id ID    ",
+      "argv": [
+        "collab",
+        "verdict",
+        "--json",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--step-id",
+        "step-seed-0",
+        "--contract-id",
+        "seed",
+        "--contract-hash",
+        "seed",
+        "--contract-revision",
+        "seed",
+        "--role-contract-id",
+        "seed",
+        "--role-contract-hash",
+        "seed",
+        "--role-contract-revision",
+        "seed",
+        "--snapshot-id",
+        "seed",
+        "--request-id",
+        "seed",
+        "--phase",
+        "--overall",
+        "--attestation",
+        "seed",
+        "--amendment-ref",
+        "seed",
+        "--clause-results",
+        "seed",
+        "--findings",
+        "seed",
+        "--view-manifest-hash",
+        "seed",
+        "--verdict-id",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--role",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "collab reveal",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"ok\": false,   \"error\": {     \"code\": \"E_FILE_NOT_FOUND\",     \"detail\": \"Notes 文件不存在: C:\\\\Users\\\\wanpi\\\\AppData\\\\Local\\\\Temp\\\\cw_t3_lffk11u4\\\\seed\"   } }",
+      "argv": [
+        "collab",
+        "reveal",
+        "--json",
+        "--event-id",
+        "seed",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--notes",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "collab gate-trigger",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw collab gate-trigger [-h] [--json] --gate-id ID --clause NAME                               --value {true,false} cw collab gate-trigger: error: argument --value: expected one argument",
+      "argv": [
+        "collab",
+        "gate-trigger",
+        "--json",
+        "--gate-id",
+        "seed",
+        "--clause",
+        "seed",
+        "--value"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "comment-coverage",
+      "verdict": "PASS",
+      "detail": "rc=0: 注释覆盖率统计   总计: 0 个符号   已注释: 0 个   覆盖率: 0.0%  按类型分布:",
+      "argv": [
+        "comment-coverage",
+        "--by",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "complexity",
+      "verdict": "PASS",
+      "detail": "rc=0: 圈复杂度热点 （模块: seed）（共 0 个）:      #     复杂度     行数    深度  函数名   ---  ------  -----  ----  --------------------------------------------------    提示: 复杂度 >10 的函数建议重构（标记 !）",
+      "argv": [
+        "complexity",
+        "10",
+        "--module",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "config explain",
+      "verdict": "PASS",
+      "detail": "rc=0: # N4 分层配置（来源：callwarden.release.config_loader） # 优先级：CLI > env(CW_*) > user_config > system_config > default  Key                            Value                                    Source -----------",
+      "argv": [
+        "config",
+        "explain"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "config paths",
+      "verdict": "PASS",
+      "detail": "rc=0: # N4 PlatformPaths（来源：callwarden.release.config_loader） # 平台：win32  Name                 Path -------------------- ------------------------------------------------------------ system_config        C:\\",
+      "argv": [
+        "config",
+        "paths"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "config check-role",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw config check-role [-h] {local,client,agent,daemon,all} cw config check-role: error: the following arguments are required: role",
+      "argv": [
+        "config",
+        "check-role"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "coupled-fns",
+      "verdict": "PASS",
+      "detail": "rc=0: 耦合度最高的函数（共 10 个）:      #    扇入    扇出    总计  函数名   ---  ----  ----  ----  -------------------------------------------------- ✗ 执行子命令 'coupled-fns' 失败: 'fan_in'",
+      "argv": [
+        "coupled-fns",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "coupling",
+      "verdict": "PASS",
+      "detail": "rc=0: 模块耦合度分析（共 6 个模块）:      #  模块                                          传入    传出    总计    不稳定性   ---  ----------------------------------------  ----  ----  ----  ------ ✗ 执行子命令 'coupling' 失败: 'instabili",
+      "argv": [
+        "coupling"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "coverage import",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:coverage import"
+    },
+    {
+      "cmd": "coverage fn",
+      "verdict": "PASS",
+      "detail": "rc=0: 未找到函数: compute 提示: 用 --search 搜索函数名称",
+      "argv": [
+        "coverage",
+        "fn",
+        "compute"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "coverage uncovered",
+      "verdict": "PASS",
+      "detail": "rc=0: 未充分覆盖的函数（覆盖率 < 50%，共 0 个）: --------------------------------------------------",
+      "argv": [
+        "coverage",
+        "uncovered"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon ping",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"status\": \"ok\",   \"peer_uid\": 4294967295,   \"pid\": 44584,   \"authority_id\": \"LINKPLAY-SCM/windows/S-1-5-21-1583625257-826939952-3615027596-1001/3631fa3fd8a97989500de65649965dc6da999597b41d3ff0c9e0",
+      "argv": [
+        "daemon",
+        "ping"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon register",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"workspace_id\": 1719,   \"workspace_instance_id\": \"ff3bf6f466a80225\",   \"snapshot_id\": \"bb7d2e93bde4bc56\",   \"owner_uid\": 4294967295,   \"git_remote_url\": \"seed\",   \"git_head_commit_sha\": \"seed\",   ",
+      "argv": [
+        "daemon",
+        "register",
+        "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4",
+        "--git-remote",
+        "seed",
+        "--git-head",
+        "seed",
+        "--toolchain",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon list",
+      "verdict": "PASS",
+      "detail": "rc=0: [   {     \"workspace_id\": 1719,     \"workspace_instance_id\": \"ff3bf6f466a80225\",     \"snapshot_id\": \"bb7d2e93bde4bc56\",     \"owner_uid\": 4294967295,     \"git_remote_url\": \"seed\",     \"git_head_commit_",
+      "argv": [
+        "daemon",
+        "list"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon status",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"registry_workspace_id\": 1,   \"registry_instance_id\": \"4baea3ff12c2ea5c\",   \"task_db_workspace_id\": 1,   \"task_db_instance_id\": \"4baea3ff12c2ea5c\",   \"client_view_root\": null,   \"status\": null }",
+      "argv": [
+        "daemon",
+        "status",
+        "1"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon publish",
+      "verdict": "DEFECT",
+      "detail": "rc=1: Traceback (most recent call last):   File \"C:\\git_work\\callwarden\\cw.py\", line 174, in <module>     main()     ~~~~^^   File \"C:\\git_work\\callwarden\\cw.py\", line 170, in main     mod.main()     ~~~~~~",
+      "argv": [
+        "daemon",
+        "publish",
+        "1",
+        "seed",
+        "--build-context",
+        "seed"
+      ],
+      "rc": 1
+    },
+    {
+      "cmd": "daemon query",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw daemon query [-h] [--qualified-name QUALIFIED_NAME] [--kind KIND]                        [--limit LIMIT] [--max-depth MAX_DEPTH]                        [--file-path FILE_PATH] [--fixed] [--p",
+      "argv": [
+        "daemon",
+        "query",
+        "1",
+        "seed",
+        "--qualified-name",
+        "compute",
+        "--kind",
+        "fn",
+        "--limit",
+        "10",
+        "--max-depth",
+        "3",
+        "--file-path",
+        "calc.py",
+        "--fixed",
+        "--path",
+        "calc.py",
+        "--include-all",
+        "--include-info",
+        "--reverse",
+        "--history"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "daemon mode",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw daemon mode [-h] [--set {auto,enterprise,local}] cw daemon mode: error: argument --set: expected one argument",
+      "argv": [
+        "daemon",
+        "mode",
+        "--set"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "daemon health",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"security_profile\": \"dev_loopback_unauthenticated\",   \"endpoint\": \"http://127.0.0.1:13247\",   \"pid\": 44584,   \"git_commit\": \"b495919f166ef30ad4bee82f7311c88a5322e6d4\",   \"schema_version\": 60,   \"w",
+      "argv": [
+        "daemon",
+        "health"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon manifest",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"authority_id\": \"S-1-5-21-1583625257-826939952-3615027596-1001\",   \"capability_registry_revision\": \"http-mvp-cap-registry-v1\",   \"daemon_binary_sha256\": \"d217af820ac1d6ddae93c4ac59a3ec5c66d8aaef68",
+      "argv": [
+        "daemon",
+        "manifest"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon capability",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"protocol_version\": \"1\",   \"server_mode\": \"dev_loopback_unauthenticated\",   \"methods\": {     \"ping\": {       \"method\": \"ping\",       \"mcp_entry\": \"ping\",       \"cli_entry\": \"ping\",       \"backend\"",
+      "argv": [
+        "daemon",
+        "capability"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon schema-version",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"version\": 60 }",
+      "argv": [
+        "daemon",
+        "schema-version"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon bridge",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=1: {   \"ok\": false,   \"bridge\": {     \"authority\": \"windows-host\",     \"transport\": \"windows-bridge\",     \"endpoint\": \"seed\",     \"token_configured\": false,     \"reachable\": false,     \"error\": \"E_BRIDGE",
+      "argv": [
+        "daemon",
+        "bridge",
+        "--endpoint",
+        "seed",
+        "--token-file",
+        "seed"
+      ],
+      "rc": 1
+    },
+    {
+      "cmd": "daemon backup",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:daemon backup"
+    },
+    {
+      "cmd": "daemon restore",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:daemon restore"
+    },
+    {
+      "cmd": "daemon gc-cas",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:daemon gc-cas"
+    },
+    {
+      "cmd": "daemon gc-snapshots",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:daemon gc-snapshots"
+    },
+    {
+      "cmd": "daemon snapshot-stats",
+      "verdict": "DEFECT",
+      "detail": "rc=1: Traceback (most recent call last):   File \"C:\\git_work\\callwarden\\cw.py\", line 174, in <module>     main()     ~~~~^^   File \"C:\\git_work\\callwarden\\cw.py\", line 170, in main     mod.main()     ~~~~~~",
+      "argv": [
+        "daemon",
+        "snapshot-stats"
+      ],
+      "rc": 1
+    },
+    {
+      "cmd": "daemon snapshot-list",
+      "verdict": "PASS",
+      "detail": "rc=0: [   {     \"workspace_instance_id\": \"d896bae7520323a6\",     \"generation\": 1,     \"history_len\": 0,     \"symbol_count\": 345543,     \"call_count\": 15,     \"file_count\": 131488,     \"build_duration_ms\": 1",
+      "argv": [
+        "daemon",
+        "snapshot-list"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "daemon snapshot-evict",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:daemon snapshot-evict"
+    },
+    {
+      "cmd": "daemon metrics",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw daemon metrics [-h] [--format {prometheus,json}] [--name NAME]                          [--from-file FROM_FILE] cw daemon metrics: error: argument --format: expected one argument",
+      "argv": [
+        "daemon",
+        "metrics",
+        "--format",
+        "--name",
+        "compute",
+        "--from-file",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "daemon mount",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:daemon mount"
+    },
+    {
+      "cmd": "daemon toolchain",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw daemon toolchain [-h]                            {register,list,get,delete,bind,resolve,build-context,resolved-edges} ... cw daemon toolchain: error: argument toolchain_action: invalid choic",
+      "argv": [
+        "daemon",
+        "toolchain",
+        "seed",
+        "seed",
+        "seed",
+        "seed",
+        "seed",
+        "seed",
+        "seed",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "dashboard",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw dashboard [-h] [--full] [--with-cycles] [--with-evolution] [--risks]                     [--top TOP] [--json] cw dashboard: error: unrecognized arguments: seed seed seed seed seed",
+      "argv": [
+        "dashboard",
+        "--full",
+        "seed",
+        "--with-cycles",
+        "seed",
+        "--with-evolution",
+        "seed",
+        "--risks",
+        "seed",
+        "--top",
+        "10",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "defect search",
+      "verdict": "PASS",
+      "detail": "rc=0: === 缺陷模式搜索 ===   过滤条件: 类别: seed | 严重度: seed   找到 0 个模式    (无匹配模式，请先运行 'cw defect build' 构建知识库)",
+      "argv": [
+        "defect",
+        "search",
+        "--category",
+        "seed",
+        "--severity",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "defect suggest",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw defect suggest [-h] [--finding FINDING] symbol_hash cw defect suggest: error: argument --finding: invalid int value: 'seed'",
+      "argv": [
+        "defect",
+        "suggest",
+        "seed",
+        "--finding",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "defect learn",
+      "verdict": "PASS",
+      "detail": "rc=0: 从修复 commit 学习缺陷模式: seed    学习到的模式数: 0   学习到的修复数: 0",
+      "argv": [
+        "defect",
+        "learn",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "defect stats",
+      "verdict": "PASS",
+      "detail": "rc=0: === 缺陷知识库统计 ===   模式总数: 0   修复总数: 0   平均有效性: 0.00    (知识库为空，请先运行 'cw defect build' 构建)",
+      "argv": [
+        "defect",
+        "stats"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "defect build",
+      "verdict": "DEFECT",
+      "detail": "rc=2: 构建缺陷知识库... ✗ 执行子命令 'defect' 失败: method_not_found: 未知方法: build_defect_knowledge",
+      "argv": [
+        "defect",
+        "build"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "dependency inspect",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw dependency inspect [-h] [--task-id ID] [--contract-id ID]                              [--revision REVISION] [--json] cw dependency inspect: error: argument --revision: invalid int value: 's",
+      "argv": [
+        "dependency",
+        "inspect",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--contract-id",
+        "seed",
+        "--revision",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "dependency list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw dependency [-h] {inspect,list,cycle,explain,provider-select} ... cw dependency: error: unrecognized arguments: seed",
+      "argv": [
+        "dependency",
+        "list",
+        "--contract-id",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "dependency cycle",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw dependency [-h] {inspect,list,cycle,explain,provider-select} ... cw dependency: error: unrecognized arguments: seed",
+      "argv": [
+        "dependency",
+        "cycle",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "dependency explain",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw dependency explain [-h] --contract-id ID --revision REVISION                              [--json] cw dependency explain: error: argument --revision: invalid int value: 'seed'",
+      "argv": [
+        "dependency",
+        "explain",
+        "--contract-id",
+        "seed",
+        "--revision",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "dependency provider-select",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw dependency provider-select [-h] --consumer-task-id ID                                      --contract-id ID --revision REVISION                                      --interface-name NAME    ",
+      "argv": [
+        "dependency",
+        "provider-select",
+        "--consumer-task-id",
+        "seed",
+        "--contract-id",
+        "seed",
+        "--revision",
+        "seed",
+        "--interface-name",
+        "seed",
+        "--provider-task-id",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "doctor",
+      "verdict": "PASS",
+      "detail": "rc=0: === 添加 Windows Defender 排除项 ===   将添加排除目录: C:\\Users\\wanpi   注意: 此操作需要管理员权限  ✗ 当前不是管理员权限，正在尝试 UAC 提权... ✓ 已弹出 UAC 提示，请在弹出的窗口中确认    验证是否添加成功：     cw doctor",
+      "argv": [
+        "doctor",
+        "--add-defender-exclusion"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "evolution",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw evolution [-h] [--window WINDOW] [--defects] qualified_name cw evolution: error: unrecognized arguments: seed",
+      "argv": [
+        "evolution",
+        "compute",
+        "--window",
+        "seed",
+        "--defects",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment batch-create",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment batch-create [-h] --seed SEED [--min-valid MIN_VALID]                                   [--min-nontrivial MIN_NONTRIVIAL]                                   [--assignment-mode {has",
+      "argv": [
+        "experiment",
+        "batch-create",
+        "--seed",
+        "seed",
+        "--min-valid",
+        "seed",
+        "--min-nontrivial",
+        "seed",
+        "--assignment-mode",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment batch-lock",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment [-h]                      {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report}",
+      "argv": [
+        "experiment",
+        "batch-lock",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment batch-list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment [-h]                      {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report}",
+      "argv": [
+        "experiment",
+        "batch-list",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment toggle-set",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment toggle-set [-h] --scope {global,workspace,task}                                 --value {on,off} [--scope-key SCOPE_KEY]                                 [--json] cw experiment tog",
+      "argv": [
+        "experiment",
+        "toggle-set",
+        "--scope",
+        "--value",
+        "--scope-key",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment toggle-show",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment [-h]                      {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report}",
+      "argv": [
+        "experiment",
+        "toggle-show",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--workspace-id",
+        "1",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment admit",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment admit [-h] [--strata STRATA] [--pair-slot {0,1}]                            [--pair-id PAIR_ID] [--notes-file NOTES_FILE]                            [--scope-contract SCOPE_CONTRA",
+      "argv": [
+        "experiment",
+        "admit",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--strata",
+        "seed",
+        "--pair-slot",
+        "--pair-id",
+        "seed",
+        "--notes-file",
+        "seed",
+        "--scope-contract",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment record-metrics",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment record-metrics [-h] --tp TP --fp FP --misses MISSES                                     --duration DURATION [--tokens TOKENS]                                     --tokens-source {",
+      "argv": [
+        "experiment",
+        "record-metrics",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--tp",
+        "seed",
+        "--fp",
+        "seed",
+        "--misses",
+        "seed",
+        "--duration",
+        "seed",
+        "--tokens",
+        "seed",
+        "--tokens-source",
+        "--tokens-unavailable-reason",
+        "seed",
+        "--reopen",
+        "seed",
+        "--defects",
+        "seed",
+        "--rollbacks",
+        "seed",
+        "--obs-window",
+        "seed",
+        "--group",
+        "--nontrivial",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment record-verdict",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment record-verdict [-h] --changed {yes,no}                                     [--reason-code REASON_CODE] [--json]                                     task_id batch_id cw experiment ",
+      "argv": [
+        "experiment",
+        "record-verdict",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--changed",
+        "--reason-code",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment record-reveal",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment [-h]                      {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report}",
+      "argv": [
+        "experiment",
+        "record-reveal",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--sealed",
+        "seed",
+        "--notes-file",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment record-invalid",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment [-h]                      {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report}",
+      "argv": [
+        "experiment",
+        "record-invalid",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--reason-code",
+        "seed",
+        "--detail",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment record-incident",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment record-incident [-h] --type {disclosure,integrity}                                      --reason-code REASON_CODE                                      [--detail DETAIL] [--json]  ",
+      "argv": [
+        "experiment",
+        "record-incident",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--type",
+        "--reason-code",
+        "seed",
+        "--detail",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment pause",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment pause [-h]                            --trigger {critical_miss_missing_facts,fp_rate_exceed_20pp_consecutive,latency_or_invalid_rate,disclosure_incident,snapshot_drift_unattributa",
+      "argv": [
+        "experiment",
+        "pause",
+        "seed",
+        "--trigger",
+        "--reason",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "experiment report",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw experiment [-h]                      {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report}",
+      "argv": [
+        "experiment",
+        "report",
+        "seed",
+        "--artifacts-dir",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "file",
+      "verdict": "PASS",
+      "detail": "rc=0: calc.py 内的符号（0 个）:",
+      "argv": [
+        "file",
+        "calc.py"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "fn-metrics",
+      "verdict": "PASS",
+      "detail": "rc=0: 未找到函数: compute 提示: 用 --search 搜索函数名称",
+      "argv": [
+        "fn-metrics",
+        "compute"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "fts rebuild",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:fts rebuild"
+    },
+    {
+      "cmd": "fts status",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'fts' 失败: method_not_found: 未知方法: get_fts_status",
+      "argv": [
+        "fts",
+        "status"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "function-issues",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'function-issues' 失败: method_not_found: 未知方法: get_function_issues",
+      "argv": [
+        "function-issues",
+        "seed",
+        "--type",
+        "seed",
+        "--module",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "gc archive",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:gc archive"
+    },
+    {
+      "cmd": "gc restore",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'gc' 失败: method_not_found: 未知方法: gc_restore",
+      "argv": [
+        "gc",
+        "restore",
+        "--path",
+        "calc.py",
+        "--force"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "gc status",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'gc' 失败: method_not_found: 未知方法: gc_status",
+      "argv": [
+        "gc",
+        "status"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "gc purge",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw gc purge [-h] [--older-than OLDER_THAN] cw gc purge: error: argument --older-than: invalid int value: 'seed'",
+      "argv": [
+        "gc",
+        "purge",
+        "--older-than",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "gc policy",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw gc policy [-h] {show,set} ... cw gc policy: error: argument policy_action: invalid choice: 'seed' (choose from show, set)",
+      "argv": [
+        "gc",
+        "policy",
+        "seed",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "gc retention",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:gc retention"
+    },
+    {
+      "cmd": "gc archive-list",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:gc archive"
+    },
+    {
+      "cmd": "gc archive-inspect",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:gc archive"
+    },
+    {
+      "cmd": "gc audit-list",
+      "verdict": "PASS",
+      "detail": "rc=0: === GC Audit List ===   暂无 GC 审计记录",
+      "argv": [
+        "gc",
+        "audit-list",
+        "--limit",
+        "10",
+        "--operation",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "gc audit-show",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw gc audit-show [-h] id cw gc audit-show: error: argument id: invalid int value: 'seed'",
+      "argv": [
+        "gc",
+        "audit-show",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "gc archive-import",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:gc archive"
+    },
+    {
+      "cmd": "gc db-cleanup",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:gc db-cleanup"
+    },
+    {
+      "cmd": "gc db-migrate-single",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw gc [-h]              {archive,restore,status,purge,policy,retention,archive-list,archive-inspect,audit-list,audit-show,archive-import,db-cleanup,db-migrate-single} ... cw gc: error: unrecogn",
+      "argv": [
+        "gc",
+        "db-migrate-single",
+        "--dry-run",
+        "seed",
+        "--apply",
+        "seed",
+        "--no-backup",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "git import",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:git import"
+    },
+    {
+      "cmd": "git log",
+      "verdict": "PASS",
+      "detail": "rc=0: Git commit 历史（共 0 条）:",
+      "argv": [
+        "git",
+        "log",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "git show",
+      "verdict": "PASS",
+      "detail": "rc=0: 未找到 commit: seed",
+      "argv": [
+        "git",
+        "show",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "git stats",
+      "verdict": "PASS",
+      "detail": "rc=0: Git 集成统计:   Commit 总数: 0   文件变更总数: 0",
+      "argv": [
+        "git",
+        "stats"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "git check-task",
+      "verdict": "PASS",
+      "detail": "rc=0: [Call Warden] Warning: no active task. Consider 'cw task next' to claim a task before committing.",
+      "argv": [
+        "git",
+        "check-task"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "git check-push",
+      "verdict": "PASS",
+      "detail": "rc=0: ",
+      "argv": [
+        "git",
+        "check-push",
+        "seed",
+        "seed",
+        "seed",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "git check-ref-transaction",
+      "verdict": "PASS",
+      "detail": "rc=0: ",
+      "argv": [
+        "git",
+        "check-ref-transaction",
+        "seed",
+        "seed",
+        "seed",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "git destructive-log",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'git' 失败: method_not_found: 未知方法: list_destructive_operations",
+      "argv": [
+        "git",
+        "destructive-log",
+        "10",
+        "--type",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "graph build-from-c",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw graph build-from-c [-h] [--threads THREADS] [--dump DUMP]                              [--max-files MAX_FILES] [--query QUERY]                              directory cw graph build-from-c: e",
+      "argv": [
+        "graph",
+        "build-from-c",
+        "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4",
+        "--threads",
+        "seed",
+        "--dump",
+        "seed",
+        "--max-files",
+        "seed",
+        "--query",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "grep",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw grep [-h] [--fixed] [--limit LIMIT] [--path PATH] [--include-all]                [--kind KIND]                patterns [patterns ...] cw grep: error: unrecognized arguments: seed seed",
+      "argv": [
+        "grep",
+        "seed",
+        "seed",
+        "--fixed",
+        "seed",
+        "--limit",
+        "10",
+        "--path",
+        "calc.py",
+        "--include-all",
+        "seed",
+        "--kind",
+        "fn"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "guardrail scan",
+      "verdict": "PASS",
+      "detail": "rc=0: === 安全护栏扫描结果 === 发现 0 个违规（获取文件内所有符号: calc.py）（cli.args.category: seed）：    ✓ 未检测到安全违规",
+      "argv": [
+        "guardrail",
+        "scan",
+        "--file",
+        "calc.py",
+        "--category",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "guardrail rules",
+      "verdict": "PASS",
+      "detail": "rc=0: === 护栏规则列表 === 共 0 条规则（cli.args.category: seed）：    (无规则)",
+      "argv": [
+        "guardrail",
+        "rules",
+        "--category",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "health-report",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw health-report [-h] [--json] cw health-report: error: unrecognized arguments: seed",
+      "argv": [
+        "health-report",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "hotspot",
+      "verdict": "PASS",
+      "detail": "rc=0: === 热点函数排名 === 共找到 0 个函数 （模块: seed）    (无数据，请先运行 --refresh-all 构建图谱)",
+      "argv": [
+        "hotspot",
+        "--module",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "identity revoke",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw identity revoke [-h] --issuer S --signing-key-id S                           [--revocation-mode MODE] [--reason TEXT]                           [--agent-id ID] [--session-id ID] [--model-id ",
+      "argv": [
+        "identity",
+        "revoke",
+        "--issuer",
+        "seed",
+        "--signing-key-id",
+        "seed",
+        "--revocation-mode",
+        "seed",
+        "--reason",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "impact",
+      "verdict": "PASS",
+      "detail": "rc=0: === 变更影响半径分析 ===   ✗ 未找到符号: seed",
+      "argv": [
+        "impact",
+        "seed",
+        "--depth",
+        "3"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "install",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw [-h] [--all] [--lang LANG [LANG ...]] [--check] [--hooks]           [--force-hooks] [--no-post-commit] [--no-optional] [--verbose]           [--agent] [--detect-agents] [--force-agent] [--ag",
+      "argv": [
+        "install",
+        "--all",
+        "--lang",
+        "python",
+        "--check",
+        "--hooks",
+        "--force-hooks",
+        "--no-post-commit",
+        "--no-optional",
+        "--verbose",
+        "--agent",
+        "seed",
+        "--detect-agents",
+        "seed",
+        "--force-agent",
+        "seed",
+        "--agent-project",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent claude-code",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "claude-code",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent claude-desktop",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "claude-desktop",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent cursor",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "cursor",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent cline",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "cline",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent cline-cli",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "cline-cli",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent devin-cli",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "devin-cli",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent windsurf",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "windsurf",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent trae",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "trae",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent gemini-cli",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "gemini-cli",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent antigravity",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "antigravity",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent codex",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "codex",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent opencode",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "opencode",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent kiro",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "kiro",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent qoder",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "qoder",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent jetbrains-junie",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "jetbrains-junie",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent zed",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "zed",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent pearai",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "pearai",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent kimi-code",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "kimi-code",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent codebuddy-cli",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "codebuddy-cli",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent deep-code",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "deep-code",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent comate",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "comate",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent grok-build",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "grok-build",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent zcode",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "zcode",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-agent all",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]                         [--auto-detect] [--registry REGISTRY]                         [{claude-code,claude-desktop,cursor,cl",
+      "argv": [
+        "install-agent",
+        "all",
+        "--output-dir",
+        "seed",
+        "--force",
+        "--global",
+        "--auto-detect",
+        "seed",
+        "--registry",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "install-hook post-commit",
+      "verdict": "PASS",
+      "detail": "rc=0: 当前目录不在 Git 仓库中；未安装 hooks。",
+      "argv": [
+        "install-hook",
+        "post-commit",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--uninstall"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "issues",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw issues [-h] [--include-info] qualified_name cw issues: error: unrecognized arguments: seed",
+      "argv": [
+        "issues",
+        "compute",
+        "--include-info",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "largest-fns",
+      "verdict": "PASS",
+      "detail": "rc=0: 代码行数最多的函数（共 10 个）:      #     行数    深度  函数名   ---  -----  ----  -------------------------------------------------- ✗ 执行子命令 'largest-fns' 失败: 'line_count'",
+      "argv": [
+        "largest-fns",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "lease acquire",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw lease acquire [-h] [--role ROLE] [--agent-id ID] [--session-id ID]                         [--model-id ID] [--agent-instance-id ID] [--ttl TTL]                         [--json]              ",
+      "argv": [
+        "lease",
+        "acquire",
+        "T-seed-000000000000-00000000",
+        "--role",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--ttl",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "lease renew",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw lease renew [-h] [--role ROLE] --token TOKEN [--agent-id ID]                       [--session-id ID] [--model-id ID]                       [--agent-instance-id ID] [--ttl TTL] [--json]      ",
+      "argv": [
+        "lease",
+        "renew",
+        "T-seed-000000000000-00000000",
+        "--role",
+        "seed",
+        "--token",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--ttl",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "lease release",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw lease [-h] {acquire,renew,release,status,list} ... cw lease: error: unrecognized arguments: seed",
+      "argv": [
+        "lease",
+        "release",
+        "T-seed-000000000000-00000000",
+        "--role",
+        "seed",
+        "--token",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "lease status",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw lease [-h] {acquire,renew,release,status,list} ... cw lease: error: unrecognized arguments: seed",
+      "argv": [
+        "lease",
+        "status",
+        "T-seed-000000000000-00000000",
+        "--role",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "lease list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw lease [-h] {acquire,renew,release,status,list} ... cw lease: error: unrecognized arguments: seed",
+      "argv": [
+        "lease",
+        "list",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--role",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "map text",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw map [-h] [--format {text,mermaid}] cw map: error: argument --format: expected one argument",
+      "argv": [
+        "map",
+        "text",
+        "--format"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "map mermaid",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw map [-h] [--format {text,mermaid}] cw map: error: argument --format: expected one argument",
+      "argv": [
+        "map",
+        "mermaid",
+        "--format"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "metrics",
+      "verdict": "PASS",
+      "detail": "rc=0: 代码度量汇总:   文件数: 2   函数数: 10   总代码行: 78   调用关系: 15    平均圈复杂度: 1.4   最高圈复杂度: 3    复杂度分布:     低 (≤5)         10 (100.0%) ##################################################     中 (6-10)        0 (  0.0%)  ",
+      "argv": [
+        "metrics"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "ownership-map",
+      "verdict": "PASS",
+      "detail": "rc=0: 所有权映射（共 0 个模块）: --------------------------------------------------",
+      "argv": [
+        "ownership-map"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "query",
+      "verdict": "PASS",
+      "detail": "rc=0: 未找到符号: compute",
+      "argv": [
+        "query",
+        "compute",
+        "calc.py"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "refresh",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:refresh"
+    },
+    {
+      "cmd": "review",
+      "verdict": "PASS",
+      "detail": "rc=0: === 审查就绪报告 ===   风险等级: 低   影响范围: 0 个符号    跨层影响:     代码: 0  DB: 0  API: 0  配置: 0    【必测项】（0 个受影响的 public 函数）:     (无)    【人工审查点】（0 个）:     (无)",
+      "argv": [
+        "review",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "rollback register",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw rollback register [-h] --task-id TASK_ID --feature FEATURE                             --phase PHASE --production-entry PRODUCTION_ENTRY                             --rollback-entry ROLLBACK",
+      "argv": [
+        "rollback",
+        "register",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--feature",
+        "seed",
+        "--phase",
+        "seed",
+        "--production-entry",
+        "seed",
+        "--rollback-entry",
+        "seed",
+        "--window",
+        "seed",
+        "--config-json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rollback show",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'rollback' 失败: method_not_found: 未知方法: get_rollback_config",
+      "argv": [
+        "rollback",
+        "show",
+        "T-seed-000000000000-00000000"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rollback config",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw rollback config [-h] [--phase PHASE] [--flag {-1,0,1}] cw rollback config: error: argument --phase: invalid int value: 'seed'",
+      "argv": [
+        "rollback",
+        "config",
+        "--phase",
+        "seed",
+        "--flag"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rollback set",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw rollback set [-h] [--reason REASON] task_id {0,1} cw rollback set: error: the following arguments are required: flag",
+      "argv": [
+        "rollback",
+        "set",
+        "T-seed-000000000000-00000000",
+        "--reason",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rollback is-rolled-back",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'rollback' 失败: method_not_found: 未知方法: is_feature_rolled_back",
+      "argv": [
+        "rollback",
+        "is-rolled-back",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rule candidate",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw rule candidate [-h] {create,list,accept,reject} ... cw rule candidate: error: argument cand_action: invalid choice: 'seed' (choose from create, list, accept, reject)",
+      "argv": [
+        "rule",
+        "candidate",
+        "seed",
+        "seed",
+        "seed",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rule list",
+      "verdict": "PASS",
+      "detail": "rc=0: === 已生效规则 (0) === (空)",
+      "argv": [
+        "rule",
+        "list",
+        "--status",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "rule applicable",
+      "verdict": "PASS",
+      "detail": "rc=0: === 适用规则 (2) === ✗ 执行子命令 'rule' 失败: 'str' object has no attribute 'get'",
+      "argv": [
+        "rule",
+        "applicable",
+        "--context",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "rule sync",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:rule sync"
+    },
+    {
+      "cmd": "rule insert-block",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:rule insert-block"
+    },
+    {
+      "cmd": "rule extract",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw rule extract [-h] [--task-id TASK_ID]                        [--min-occurrences MIN_OCCURRENCES] cw rule extract: error: argument --min-occurrences: invalid int value: 'seed'",
+      "argv": [
+        "rule",
+        "extract",
+        "--task-id",
+        "T-seed-000000000000-00000000",
+        "--min-occurrences",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "rule seed-bootstrap",
+      "verdict": "PASS",
+      "detail": "rc=0: === 自举种子规则已写入（共 0 条）=== 新建: 0 | 更新: 0 | 跳过: 0",
+      "argv": [
+        "rule",
+        "seed-bootstrap",
+        "--apply"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "rule cleanup-sync-log",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw rule cleanup-sync-log [-h] [--older-than OLDER_THAN]                                 [--keep-latest KEEP_LATEST] [--apply] cw rule cleanup-sync-log: error: argument --older-than: invalid int",
+      "argv": [
+        "rule",
+        "cleanup-sync-log",
+        "--older-than",
+        "seed",
+        "--keep-latest",
+        "seed",
+        "--apply"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "search",
+      "verdict": "PASS",
+      "detail": "rc=0: 搜索结果: 'seed' （类型: fn）（共 0 个，显示前 0 个）:",
+      "argv": [
+        "search",
+        "seed",
+        "--kind",
+        "fn",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "semgrep scan",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:semgrep scan"
+    },
+    {
+      "cmd": "semgrep list",
+      "verdict": "PASS",
+      "detail": "rc=0: Semgrep 缺陷列表（严重程度: seed | 语言: python | 规则: seed，共 0 个，显示前 0 个）:",
+      "argv": [
+        "semgrep",
+        "list",
+        "seed",
+        "--severity",
+        "seed",
+        "--lang",
+        "python",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "semgrep stats",
+      "verdict": "PASS",
+      "detail": "rc=0: Semgrep 缺陷统计:   总发现数: 0",
+      "argv": [
+        "semgrep",
+        "stats"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "setup",
+      "verdict": "PASS",
+      "detail": "rc=0: 检测到 16 个 AI 工具：   [CLI] Claude Code (claude-code)        -> C:\\Users\\wanpi\\AppData\\Roaming\\npm\\claude.CMD   [WIN] Claude Desktop (claude-desktop)        -> C:\\Users\\wanpi\\AppData\\Local\\Claude   [CLI] ",
+      "argv": [
+        "setup",
+        "--force",
+        "--dry-run"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "stats",
+      "verdict": "PASS",
+      "detail": "rc=0: {   \"symbol_count\": 345558,   \"qname_index_size\": 15,   \"simple_name_index_size\": 15,   \"file_index_size\": 131490,   \"name_pool_size\": 101,   \"qname_pool_size\": 1006,   \"module_pool_size\": 819,   \"sea",
+      "argv": [
+        "stats"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "status",
+      "verdict": "PASS",
+      "detail": "rc=0: ✗ 执行子命令 'status' 失败: 'workspace'",
+      "argv": [
+        "status"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "symbol",
+      "verdict": "PASS",
+      "detail": "rc=0: 未找到符号: compute 提示: 用 --search 搜索符号名称",
+      "argv": [
+        "symbol",
+        "compute"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "symbol-history",
+      "verdict": "PASS",
+      "detail": "rc=0: === 符号 Git 变更历史 ===   符号 hash: seed...   变更次数: 0    (无 Git 变更记录)",
+      "argv": [
+        "symbol-history",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "task create",
+      "verdict": "PASS",
+      "detail": "rc=0: ✗ --steps JSON 解析失败: Expecting value: line 1 column 1 (char 0)",
+      "argv": [
+        "task",
+        "create",
+        "--title",
+        "seed",
+        "--desc",
+        "seed",
+        "--steps",
+        "seed",
+        "--role-contracts",
+        "seed",
+        "--workspace-id",
+        "1",
+        "--workspace-instance-id",
+        "",
+        "--parent-id",
+        "",
+        "--identity-policy",
+        "seed",
+        "--task-contract-envelope",
+        "seed",
+        "--task-id",
+        "T-seed-000000000000-00000000"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "task next",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'task' 失败: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "argv": [
+        "task",
+        "next",
+        "T-seed-000000000000-00000000",
+        "--remediation-step-id",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task next-action",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task [-h]                {create,next,next-action,prompt,assignment-status,assignment-heartbeat,report,handoff,step-resolve,rollback,apply,close,cascade-close,reopen,claim-recover,capture-di",
+      "argv": [
+        "task",
+        "next-action",
+        "T-seed-000000000000-00000000",
+        "--workspace-instance-id",
+        "",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task prompt",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task prompt [-h] [--format {llm,card,json}]                       [--expected-workspace-instance-id EXPECTED_WORKSPACE_INSTANCE_ID]                       task_id cw task prompt: error: argum",
+      "argv": [
+        "task",
+        "prompt",
+        "T-seed-000000000000-00000000",
+        "--format",
+        "--expected-workspace-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task assignment-status",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task [-h]                {create,next,next-action,prompt,assignment-status,assignment-heartbeat,report,handoff,step-resolve,rollback,apply,close,cascade-close,reopen,claim-recover,capture-di",
+      "argv": [
+        "task",
+        "assignment-status",
+        "T-seed-000000000000-00000000",
+        "--step-id",
+        "step-seed-0",
+        "--role",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task assignment-heartbeat",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task assignment-heartbeat [-h] --request-id REQUEST_ID                                     [--fencing-counter FENCING_COUNTER]                                     [--agent-session-id AGENT_S",
+      "argv": [
+        "task",
+        "assignment-heartbeat",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--request-id",
+        "seed",
+        "--fencing-counter",
+        "seed",
+        "--agent-session-id",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task report",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task report [-h] [--result RESULT] [--fail]                       [--evidence-path EVIDENCE_PATH]                       [--evidence-hash EVIDENCE_HASH]                       [--snapshot-id S",
+      "argv": [
+        "task",
+        "report",
+        "T-seed-000000000000-00000000",
+        "step-seed-0",
+        "--result",
+        "seed",
+        "--fail",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--snapshot-id",
+        "seed",
+        "--changes-json",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task handoff",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task handoff [-h] --from-role FROM_ROLE --outcome OUTCOME                        --next-role NEXT_ROLE --next-action NEXT_ACTION                        --reason REASON                       ",
+      "argv": [
+        "task",
+        "handoff",
+        "T-seed-000000000000-00000000",
+        "--from-role",
+        "seed",
+        "--outcome",
+        "seed",
+        "--next-role",
+        "seed",
+        "--next-action",
+        "seed",
+        "--reason",
+        "seed",
+        "--independence-requirement",
+        "seed",
+        "--request-id",
+        "seed",
+        "--step-id",
+        "step-seed-0",
+        "--report-request-id",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task step-resolve",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task step-resolve [-h] --evidence-path EVIDENCE_PATH                             --evidence-hash EVIDENCE_HASH [--json]                             [--agent-id ID] [--session-id ID] [--model",
+      "argv": [
+        "task",
+        "step-resolve",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "seed",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--json",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task rollback",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:task rollback"
+    },
+    {
+      "cmd": "task apply",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:task apply"
+    },
+    {
+      "cmd": "task close",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:task close"
+    },
+    {
+      "cmd": "task cascade-close",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'task' 失败: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "argv": [
+        "task",
+        "cascade-close",
+        "T-seed-000000000000-00000000",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task reopen",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:task reopen"
+    },
+    {
+      "cmd": "task claim-recover",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task claim-recover [-h] --reason REASON [--request-id REQUEST_ID]                              [--agent-id ID] [--session-id ID] [--model-id ID]                              [--role ROLE] [-",
+      "argv": [
+        "task",
+        "claim-recover",
+        "T-seed-000000000000-00000000",
+        "--reason",
+        "seed",
+        "--request-id",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task capture-diff",
+      "verdict": "PASS",
+      "detail": "rc=0: === Capture Diff === [--auto 模式] 自动检测 in_progress 任务，HEAD~1 作为 base，自动 apply（fail-soft）    ✗ 自动捕获失败（reason=cli_exception）: invalid_params: 缺少 task_id",
+      "argv": [
+        "task",
+        "capture-diff",
+        "T-seed-000000000000-00000000",
+        "--step-id",
+        "step-seed-0",
+        "--base",
+        "seed",
+        "--dry-run",
+        "--auto",
+        "--skip-quality-review",
+        "--source-commit-hash",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "task findings",
+      "verdict": "PASS",
+      "detail": "rc=0: === 任务质量发现 ===   任务 ID: T-seed-000000000000-00000000   发现数量: 0    (无质量发现)",
+      "argv": [
+        "task",
+        "findings",
+        "T-seed-000000000000-00000000",
+        "--status",
+        "seed",
+        "--severity",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "task resolve-finding",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task resolve-finding [-h] [--resolution RESOLUTION] [--by BY]                                finding_id cw task resolve-finding: error: argument finding_id: invalid int value: 'seed'",
+      "argv": [
+        "task",
+        "resolve-finding",
+        "seed",
+        "--resolution",
+        "seed",
+        "--by",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task list",
+      "verdict": "PASS",
+      "detail": "rc=0: === 任务列表 ===   (仅显示有阻塞发现的任务)   (状态过滤: seed)   任务总数: 0",
+      "argv": [
+        "task",
+        "list",
+        "--blocked",
+        "--limit",
+        "10",
+        "--status",
+        "seed",
+        "--flat"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "task show",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'task' 失败: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "argv": [
+        "task",
+        "show",
+        "T-seed-000000000000-00000000",
+        "--flat"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task completion-review",
+      "verdict": "PASS",
+      "detail": "rc=0: 审查结论: blocked   任务 ID: T-seed-000000000000-00000000   步骤 ID: step-seed-0    【发现列表】（1 条）:     1. [block] 任务无步骤记录，无法进行完成性评审（E_NO_STEPS）",
+      "argv": [
+        "task",
+        "completion-review",
+        "T-seed-000000000000-00000000",
+        "--step-id",
+        "step-seed-0"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "task split",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'task' 失败: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "argv": [
+        "task",
+        "split",
+        "T-seed-000000000000-00000000",
+        "--plan",
+        "seed",
+        "--identity-policy",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task status-tree",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: ✗ 执行子命令 'task' 失败: task_not_found: 任务不存在: T-seed-000000000000-00000000",
+      "argv": [
+        "task",
+        "status-tree",
+        "T-seed-000000000000-00000000"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task supersede",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task supersede [-h] [--reason REASON] [--request-id ID]                          [--evidence-path PATH] [--evidence-hash HASH]                          [--lease-token TOKEN] [--fencing-count",
+      "argv": [
+        "task",
+        "supersede",
+        "seed",
+        "seed",
+        "--reason",
+        "seed",
+        "--request-id",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "seed",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task attest-legacy-workspace-binding",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task attest-legacy-workspace-binding [-h] --workspace-id ID                                                --workspace-instance-id ID                                                --request",
+      "argv": [
+        "task",
+        "attest-legacy-workspace-binding",
+        "seed",
+        "seed",
+        "--workspace-id",
+        "1",
+        "--workspace-instance-id",
+        "",
+        "--request-id",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task contract-bootstrap",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task contract-bootstrap [-h] --envelope-path PATH --workspace-id ID                                   --workspace-instance-id ID --request-id ID                                   --evidence-",
+      "argv": [
+        "task",
+        "contract-bootstrap",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--envelope-path",
+        "seed",
+        "--workspace-id",
+        "1",
+        "--workspace-instance-id",
+        "",
+        "--request-id",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task contract-revise",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task contract-revise [-h] --envelope-path PATH                                --expected-previous-hash HASH --workspace-id ID                                --workspace-instance-id ID --requ",
+      "argv": [
+        "task",
+        "contract-revise",
+        "T-seed-000000000000-00000000",
+        "--envelope-path",
+        "seed",
+        "--expected-previous-hash",
+        "seed",
+        "--workspace-id",
+        "1",
+        "--workspace-instance-id",
+        "",
+        "--request-id",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--lease-token",
+        "seed",
+        "--fencing-counter",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--agent-instance-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task bootstrap-executor-evidence",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task bootstrap-executor-evidence [-h] --steps JSON --workspace-id ID                                            --workspace-instance-id ID                                            --reques",
+      "argv": [
+        "task",
+        "bootstrap-executor-evidence",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--steps",
+        "seed",
+        "--workspace-id",
+        "1",
+        "--workspace-instance-id",
+        "",
+        "--request-id",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task bootstrap-reviewer-pass",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task bootstrap-reviewer-pass [-h] --workspace-id ID                                        --workspace-instance-id ID                                        --request-id ID --evidence-path P",
+      "argv": [
+        "task",
+        "bootstrap-reviewer-pass",
+        "T-seed-000000000000-00000000",
+        "seed",
+        "--workspace-id",
+        "1",
+        "--workspace-instance-id",
+        "",
+        "--request-id",
+        "seed",
+        "--evidence-path",
+        "seed",
+        "--evidence-hash",
+        "seed",
+        "--agent-id",
+        "seed",
+        "--session-id",
+        "seed",
+        "--model-id",
+        "seed",
+        "--role",
+        "--agent-instance-id",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task governance-projection",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw task [-h]                {create,next,next-action,prompt,assignment-status,assignment-heartbeat,report,handoff,step-resolve,rollback,apply,close,cascade-close,reopen,claim-recover,capture-di",
+      "argv": [
+        "task",
+        "governance-projection",
+        "T-seed-000000000000-00000000",
+        "--json",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "task superseded",
+      "verdict": "PASS",
+      "detail": "rc=0: 任务 seed 未被任何任务替代",
+      "argv": [
+        "task",
+        "superseded",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "test",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=1: 用法: cw test <module> [pytest 参数]   示例: cw test test_p0_bugfixes   <module> 为 callwarden/tests/ 下的测试模块名(不含 .py)",
+      "argv": [
+        "test"
+      ],
+      "rc": 1
+    },
+    {
+      "cmd": "test-impact",
+      "verdict": "PASS",
+      "detail": "rc=0: === 测试影响分析 ===   目标函数: compute   需运行的测试数: 0    (未找到关联测试，可能该函数无测试覆盖)",
+      "argv": [
+        "test-impact",
+        "compute"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "tests",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw tests [-h] [--reverse] [--build] [--force] [--history]                 [--import IMPORT_FILE] [--ci-run-id CI_RUN_ID]                 [--ci-url CI_URL] [--limit LIMIT]                 [quali",
+      "argv": [
+        "tests",
+        "compute",
+        "--reverse",
+        "seed",
+        "--build",
+        "seed",
+        "--force",
+        "seed",
+        "--history",
+        "seed",
+        "--import",
+        "seed",
+        "--ci-run-id",
+        "seed",
+        "--ci-url",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "toolchain register",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw toolchain [-h] {register,list,show,delete,bind,list-bound} ... cw toolchain: error: unrecognized arguments: seed",
+      "argv": [
+        "toolchain",
+        "register",
+        "compute",
+        "seed",
+        "--sysroot",
+        "seed",
+        "--description",
+        "seed",
+        "--no-probe",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "toolchain list",
+      "verdict": "PASS",
+      "detail": "rc=0: ID    Name                 Type                 Version                        Target                    -----------------------------------------------------------------------------------------------",
+      "argv": [
+        "toolchain",
+        "list"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "toolchain show",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'toolchain' 失败: method_not_found: 未知方法: toolchain not found",
+      "argv": [
+        "toolchain",
+        "show",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "toolchain delete",
+      "verdict": "PASS",
+      "detail": "rc=0: Toolchain deleted: seed",
+      "argv": [
+        "toolchain",
+        "delete",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "toolchain bind",
+      "verdict": "DEFECT",
+      "detail": "rc=2: ✗ 执行子命令 'toolchain' 失败: method_not_found: 未知方法: toolchain not found",
+      "argv": [
+        "toolchain",
+        "bind",
+        "1",
+        "seed",
+        "--build-context-hash",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "toolchain list-bound",
+      "verdict": "PASS",
+      "detail": "rc=0: No toolchains bound to workspace 1",
+      "argv": [
+        "toolchain",
+        "list-bound",
+        "1",
+        "--build-context-hash",
+        "seed"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "topo",
+      "verdict": "PASS",
+      "detail": "rc=0: 拓扑排序（前 10 个，按 depth 升序 = 底层在前）:     1. c:/users/wanpi/appdata/local/temp/cw_t3_lffk11u4/calc.Calculator.__init__     2. c:/users/wanpi/appdata/local/temp/cw_t3_lffk11u4/calc.compute     3. c:/users/wa",
+      "argv": [
+        "topo",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "uncommented",
+      "verdict": "PASS",
+      "detail": "rc=0: 未注释的 fn 列表 （模块: seed）（共 0 个，显示前 0 个）:",
+      "argv": [
+        "uncommented",
+        "fn",
+        "--module",
+        "seed",
+        "--limit",
+        "10"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "vuln-blast",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw vuln-blast [-h] [--finding-id FINDING_ID] [--severity SEVERITY]                      [--depth DEPTH] cw vuln-blast: error: argument --finding-id: invalid int value: 'seed'",
+      "argv": [
+        "vuln-blast",
+        "--finding-id",
+        "seed",
+        "--severity",
+        "seed",
+        "--depth",
+        "3"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "who",
+      "verdict": "PASS",
+      "detail": "rc=0: 未找到文件负责人: calc.py 提示: 请先运行 --refresh-all 构建图谱，文件路径可以是相对或绝对路径",
+      "argv": [
+        "who",
+        "calc.py"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "workspace list",
+      "verdict": "PASS",
+      "detail": "rc=0: 工作区列表（共 154 个）: [1719] cw_t3_lffk11u4 [活动] 路径: C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4 [1718] cw_tisverify_8ip739x7 [活动] 路径: C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_tisverify_8ip739x7 [25] callw",
+      "argv": [
+        "workspace",
+        "list"
+      ],
+      "rc": 0
+    },
+    {
+      "cmd": "workspace register",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:workspace register"
+    },
+    {
+      "cmd": "workspace set",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:workspace set"
+    },
+    {
+      "cmd": "workspace delete",
+      "verdict": "SKIP",
+      "detail": "破坏性/重操作/阻塞:workspace delete"
+    },
+    {
+      "cmd": "workspace scan",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw workspace [-h] {list,register,set,delete,scan,generate-ignore} ... cw workspace: error: unrecognized arguments: seed seed seed",
+      "argv": [
+        "workspace",
+        "scan",
+        "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4",
+        "--register",
+        "seed",
+        "--include-all",
+        "seed",
+        "--deep",
+        "seed"
+      ],
+      "rc": 2
+    },
+    {
+      "cmd": "workspace generate-ignore",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "rc=2: usage: cw workspace [-h] {list,register,set,delete,scan,generate-ignore} ... cw workspace: error: unrecognized arguments: seed",
+      "argv": [
+        "workspace",
+        "generate-ignore",
+        "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4",
+        "--apply",
+        "seed"
+      ],
+      "rc": 2
+    }
+  ],
+  "seed": {
+    "root": "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t3_lffk11u4",
+    "build_ok": true,
+    "known_qnames": [
+      "compute"
+    ],
+    "known_files": [
+      "calc.py"
+    ]
+  }
+}
