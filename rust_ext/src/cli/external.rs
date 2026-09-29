@@ -141,13 +141,23 @@ fn enterprise_unsupported(command: &str) -> Result<Value, String> {
 ///    daemon registry（`workspace.list`），按 `client_view_root` /
 ///    `host_real_root` 规范化匹配取最近活跃的 `workspace_instance_id`。
 ///
-/// 背景：auto 模式下 enterprise 查询此前一律因缺 `--workspace-id` 直接失败并
-/// 降级本地库（每条命令输出 "used local database" warning），即使 cwd 已能
-/// 无歧义解析单一工作区。复用 `resolve_local_workspace_id` 的 cwd 优先 +
-/// fail-closed 语义，把已解析的 root 映射到 registry 的权威 instance id。
-/// 同 root 可能有多条 registry 行（重复 register 轮转 instance）——registry
-/// `list_workspaces` 已按 `last_active_at DESC` 排序，取首个非 archived 命中；
-/// 全部命中均 archived 或无命中时 fail-closed，禁止猜测。
+/// 背景与消歧（T-1790611160320-fdbfb0d4 实测发现）：
+/// auto 模式下 enterprise 查询此前一律因缺 `--workspace-id` 直接失败并降级
+/// 本地库（每条命令输出 "used local database" warning）。首轮修复加了 registry
+/// 反查，但 registry **无 (owner, root) 唯一约束**——同一个 root 因重复
+/// `workspace.register` 轮转出多条 instance 行，且实测它们的
+/// `last_active_at` 完全并列，`list_workspaces` 的排序无法消歧。仅取首个命中
+/// 会选到 owner 不匹配（daemon 报 `workspace_forbidden`）或快照未装载
+/// （daemon 报 `snapshot_not_ready`，registry `snapshot_id` 列非空 ≠ daemon
+/// 内存缓存就绪）的陈旧行。
+///
+/// 因此多候选时按强度依次使用两个 daemon 侧信号（见 `select_instance`）：
+/// - **信号 1（最强）** `snapshot.list_workspaces` —— daemon 内存快照缓存就绪的
+///   instance，且已在 daemon 侧按 peer UID 做归属过滤（只有这些 instance 能真正
+///   服务 `query.*`，ready ∩ 候选 恒为归属安全集合）；
+/// - **信号 2** `ping` 的 `peer_uid` —— 与 registry 行 `owner_uid` 比对，过滤不
+///   归属当前用户的陈旧行（快照未就绪时 daemon 也会给出明确的
+///   `snapshot_not_ready`，而非误导性的 `workspace_forbidden`）。
 pub fn enterprise_workspace_id(runtime: &RuntimeOptions, command: &str) -> Result<String, String> {
     if let Some(id) = runtime.workspace_id.as_deref() {
         if !id.is_empty() {
@@ -167,32 +177,84 @@ pub fn enterprise_workspace_id(runtime: &RuntimeOptions, command: &str) -> Resul
     let rows = rows
         .as_array()
         .ok_or_else(|| format!("{command}: workspace.list 返回非数组，无法解析 workspace_instance_id"))?;
-    match_instance_by_root(rows, &root).map_err(|err| {
+    let candidates = match_candidates_by_root(rows, &root);
+    if candidates.is_empty() {
+        return Err(format!(
+            "{command}: daemon registry 无活跃 workspace 匹配本地 root {root:?}；\
+             请用 `cw workspace register` 注册该工作区，或显式传 --workspace-id <workspace_instance_id>"
+        ));
+    }
+
+    // 信号 2（廉价往返，先取）：自身 peer uid 做归属过滤
+    let peer_uid = runtime
+        .daemon_call("ping", json!({}))
+        .ok()
+        .and_then(|v| v.get("peer_uid").and_then(Value::as_i64));
+    // admin（uid 0）或 ping 失败时不能按 owner 过滤，保留全部候选
+    let admin_or_unknown = matches!(peer_uid, Some(0)) || peer_uid.is_none();
+    let owned_count = candidates
+        .iter()
+        .filter(|c| admin_or_unknown || c.owner_uid == peer_uid)
+        .count();
+
+    // 归属唯一的候选无需快照消歧（常见路径，省一次 snapshot.list_workspaces 往返）
+    if owned_count == 1 {
+        let candidate = candidates
+            .iter()
+            .find(|c| admin_or_unknown || c.owner_uid == peer_uid)
+            .expect("owned_count==1 时必然存在归属候选");
+        return Ok(candidate.instance.to_string());
+    }
+
+    // 多候选或无归属匹配：取 daemon 快照就绪集合做最终消歧
+    let ready: Vec<String> = runtime
+        .daemon_call("snapshot.list_workspaces", json!({}))
+        .ok()
+        .and_then(|v| {
+            v.as_array().map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e.get("workspace_instance_id").and_then(Value::as_str))
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    let ready_refs: Vec<&str> = ready.iter().map(String::as_str).collect();
+    select_instance(&candidates, peer_uid, &ready_refs).map_err(|err| {
         format!(
-            "{command}: {err}；请用 `cw workspace register` 注册该工作区，\
+            "{command}: {err}；请用 `cw snapshot publish` 发布快照，\
              或显式传 --workspace-id <workspace_instance_id>"
         )
     })
 }
 
-/// 从 registry `workspace.list` 行中按本地 `root_path` 匹配权威
-/// `workspace_instance_id`（纯函数，无 IO，便于单测）。
+/// registry `workspace.list` 行中按本地 `root_path` 匹配的活跃候选。
+struct RootCandidate<'a> {
+    instance: &'a str,
+    owner_uid: Option<i64>,
+}
+
+/// 从 registry `workspace.list` 行中筛出本地 `root_path` 匹配的活跃候选
+/// （纯函数，无 IO，便于单测）。
 ///
 /// 匹配规则与 daemon 侧 `resolve_true_workspace_id` 同构：
 /// - `client_view_root` / `host_real_root` 各自经 `normalize_path_key` 规范化后
 ///   大小写不敏感比较（反斜杠→正斜杠、去尾斜杠、盘符小写）；
 /// - 分支工作区 `root_path` 可能带 `#分支名` 后缀（db_branch.py），前缀匹配兜底。
 ///
-/// `rows` 须已按 `last_active_at DESC` 排序（`list_workspaces` 保证）；同 root
-/// 可能有多条 registry 行（重复 register 轮转 instance），取首个非 archived
-/// 命中；全部命中均 archived 或无命中时 `Err`（fail-closed，禁止猜测）。
-fn match_instance_by_root(rows: &[Value], root: &str) -> Result<String, String> {
+/// `rows` 须已按 `last_active_at DESC` 排序（`list_workspaces` 保证）；返回顺序
+/// 保持该排序，供 `select_instance` 在多候选时按信号强度消歧。跳过
+/// `status == "archived"` 的行；`rows` 为空或 root 为空时返回空 vec（fail-closed）。
+fn match_candidates_by_root<'a>(rows: &'a [Value], root: &str) -> Vec<RootCandidate<'a>> {
     let key = normalize_path_key(root);
     if key.is_empty() {
-        return Err("本地 root_path 为空，无法映射到 daemon registry".to_string());
+        return Vec::new();
     }
     let key_lower = key.to_lowercase();
     let branch_prefix = format!("{key_lower}#");
+    let mut out = Vec::new();
     for row in rows {
         let instance = match row.get("workspace_instance_id").and_then(Value::as_str) {
             Some(value) if !value.is_empty() => value,
@@ -203,17 +265,71 @@ fn match_instance_by_root(rows: &[Value], root: &str) -> Result<String, String> 
         if status == "archived" {
             continue;
         }
-        let hit = ["client_view_root", "host_real_root"].iter().any(|field| {
-            row.get(*field).and_then(Value::as_str).map_or(false, |view_root| {
-                let norm = normalize_path_key(view_root).to_lowercase();
-                norm == key_lower || norm.starts_with(&branch_prefix)
-            })
-        });
-        if hit {
-            return Ok(instance.to_string());
+        let hit = ["client_view_root", "host_real_root"]
+            .iter()
+            .any(|field| {
+                row.get(*field).and_then(Value::as_str).map_or(false, |view_root| {
+                    let norm = normalize_path_key(view_root).to_lowercase();
+                    norm == key_lower || norm.starts_with(&branch_prefix)
+                })
+            });
+        if !hit {
+            continue;
         }
+        out.push(RootCandidate {
+            instance,
+            owner_uid: row.get("owner_uid").and_then(Value::as_i64),
+        });
     }
-    Err(format!("daemon registry 无活跃 workspace 匹配本地 root {root:?}"))
+    out
+}
+
+/// 多候选消歧（纯函数，无 IO）：按强度依次用「快照就绪」与「owner 归属」信号
+/// 选出唯一 `workspace_instance_id`；无任何可用信号时 fail-closed，禁止猜测。
+///
+/// 信号强度排序（实测依据见 `enterprise_workspace_id` 文档注释）：
+/// 1. **快照就绪**（`ready`）—— daemon 内存缓存已装载的 instance，由
+///    `snapshot.list_workspaces` 在 daemon 侧按 peer UID 归属过滤后返回，
+///    故 `ready ∩ 候选` 恒为归属安全集合，且是唯一能真正服务 `query.*` 的集合；
+/// 2. **owner 归属**（`peer_uid` vs `owner_uid`）—— 命中时快照未必就绪，但
+///    daemon 会给出明确的 `snapshot_not_ready`（auto 模式随后回退本地库），
+///    而非误导性的 `workspace_forbidden`。
+///
+/// admin（`peer_uid == 0`）或 `peer_uid` 未知（ping 失败）时不按 owner 过滤，
+/// 保留全部候选；此时若 `ready` 也为空，回退首个候选（保持旧行为不更糟）。
+fn select_instance(
+    candidates: &[RootCandidate<'_>],
+    peer_uid: Option<i64>,
+    ready: &[&str],
+) -> Result<String, String> {
+    let admin_or_unknown = matches!(peer_uid, Some(0)) || peer_uid.is_none();
+    let owned: Vec<usize> = (0..candidates.len())
+        .filter(|&i| admin_or_unknown || candidates[i].owner_uid == peer_uid)
+        .collect();
+
+    // 信号 1：快照就绪且归属匹配
+    if let Some(&i) = owned
+        .iter()
+        .find(|&&i| ready.contains(&candidates[i].instance))
+    {
+        return Ok(candidates[i].instance.to_string());
+    }
+    // 信号 2：归属匹配但快照未就绪 —— 返回首个归属候选，daemon 报明确的
+    // snapshot_not_ready（auto 模式随后回退本地库）
+    if let Some(&i) = owned.first() {
+        return Ok(candidates[i].instance.to_string());
+    }
+    // 无归属匹配（非 admin 且 peer_uid 已知）：退回 ready ∩ 全部候选
+    // （ready 集由 daemon 侧归属过滤产生，命中即归属安全）
+    if let Some(candidate) = candidates.iter().find(|c| ready.contains(&c.instance)) {
+        return Ok(candidate.instance.to_string());
+    }
+
+    Err(format!(
+        "本地 root 匹配 {} 个 registry workspace 但无法消歧（无快照就绪且无一归属当前用户，\
+         peer_uid={peer_uid:?}）",
+        candidates.len()
+    ))
 }
 
 /// F-005：依赖本地资源的命令（本地 git 二进制 / 子进程 / 本地文件）在 enterprise
@@ -5203,6 +5319,30 @@ mod tests {
         })
     }
 
+    fn registry_row_owner(
+        instance: &str,
+        view_root: &str,
+        owner_uid: i64,
+        status: &str,
+    ) -> Value {
+        json!({
+            "workspace_id": 1,
+            "workspace_instance_id": instance,
+            "client_view_root": view_root,
+            "host_real_root": view_root,
+            "owner_uid": owner_uid,
+            "status": status,
+            "last_active_at": 0.0,
+        })
+    }
+
+    fn matched_instances(rows: &[Value], root: &str) -> Vec<String> {
+        match_candidates_by_root(rows, root)
+            .into_iter()
+            .map(|c| c.instance.to_string())
+            .collect()
+    }
+
     #[test]
     fn match_instance_prefers_exact_root_after_normalization() {
         // 本地 root 为反斜杠 + 尾斜杠 + 大写盘符，registry 行为正斜杠小写盘符
@@ -5211,8 +5351,8 @@ mod tests {
             registry_row("inst-target", "c:/git_work/callwarden", "C:\\git_work\\callwarden", "active"),
         ];
         assert_eq!(
-            match_instance_by_root(&rows, "C:\\git_work\\callwarden\\").unwrap(),
-            "inst-target"
+            matched_instances(&rows, "C:\\git_work\\callwarden\\"),
+            vec!["inst-target"]
         );
     }
 
@@ -5224,8 +5364,8 @@ mod tests {
             registry_row("inst-new", "c:/git_work/callwarden", "c:/git_work/callwarden", "active"),
         ];
         assert_eq!(
-            match_instance_by_root(&rows, "c:/git_work/callwarden").unwrap(),
-            "inst-new"
+            matched_instances(&rows, "c:/git_work/callwarden"),
+            vec!["inst-new"]
         );
         // 仅 archived 命中时 fail-closed，不得返回 archived instance
         let rows_archived = vec![registry_row(
@@ -5234,7 +5374,7 @@ mod tests {
             "c:/git_work/callwarden",
             "archived",
         )];
-        assert!(match_instance_by_root(&rows_archived, "c:/git_work/callwarden").is_err());
+        assert!(matched_instances(&rows_archived, "c:/git_work/callwarden").is_empty());
     }
 
     #[test]
@@ -5247,17 +5387,92 @@ mod tests {
             "active",
         )];
         assert_eq!(
-            match_instance_by_root(&rows, "c:/git_work/callwarden").unwrap(),
-            "inst-branch"
+            matched_instances(&rows, "c:/git_work/callwarden"),
+            vec!["inst-branch"]
         );
     }
 
     #[test]
     fn match_instance_fail_closed_on_no_match_or_empty_root() {
         let rows = vec![registry_row("inst-x", "c:/somewhere", "c:/somewhere", "active")];
-        assert!(match_instance_by_root(&rows, "c:/git_work/callwarden").is_err());
+        assert!(matched_instances(&rows, "c:/git_work/callwarden").is_empty());
         // 空 root 直接拒绝（不猜测）
-        assert!(match_instance_by_root(&rows, "").is_err());
+        assert!(matched_instances(&rows, "").is_empty());
+    }
+
+    #[test]
+    fn select_instance_prefers_snapshot_ready_over_stale_owner_match() {
+        // 复刻实测：同 root 11 条并列候选，仅 canonical instance 快照就绪；
+        // 另有一条 owner=0 的陈旧行（快照未就绪）。
+        let rows = vec![
+            registry_row_owner("stale-owner0", "c:/git_work/callwarden", 0, "active"),
+            registry_row_owner("stale-a", "c:/git_work/callwarden", 4294967295, "active"),
+            registry_row_owner("canonical", "c:/git_work/callwarden", 4294967295, "active"),
+            registry_row_owner("stale-b", "c:/git_work/callwarden", 4294967295, "active"),
+        ];
+        let candidates = match_candidates_by_root(&rows, "c:/git_work/callwarden");
+        assert_eq!(candidates.len(), 4);
+        // 快照就绪集合只含 canonical（daemon 侧已按 peer UID 过滤）
+        let ready = vec!["canonical"];
+        assert_eq!(
+            select_instance(&candidates, Some(4294967295), &ready).unwrap(),
+            "canonical"
+        );
+    }
+
+    #[test]
+    fn select_instance_falls_back_to_owner_match_without_ready_set() {
+        // 快照就绪集合为空（daemon 刚重启缓存冷）时退回首个归属匹配候选，
+        // 让 daemon 报明确的 snapshot_not_ready 而非 workspace_forbidden
+        let rows = vec![
+            registry_row_owner("stale-owner0", "c:/git_work/callwarden", 0, "active"),
+            registry_row_owner("first-owned", "c:/git_work/callwarden", 4294967295, "active"),
+            registry_row_owner("second-owned", "c:/git_work/callwarden", 4294967295, "active"),
+        ];
+        let candidates = match_candidates_by_root(&rows, "c:/git_work/callwarden");
+        assert_eq!(
+            select_instance(&candidates, Some(4294967295), &[]).unwrap(),
+            "first-owned"
+        );
+    }
+
+    #[test]
+    fn select_instance_fail_closed_when_no_owner_match_and_no_ready() {
+        // 全部候选 owner 不匹配且无快照就绪 → fail-closed，不得猜 workspace_forbidden 的行
+        let rows = vec![
+            registry_row_owner("other-user", "c:/git_work/callwarden", 1000, "active"),
+            registry_row_owner("owner0", "c:/git_work/callwarden", 0, "active"),
+        ];
+        let candidates = match_candidates_by_root(&rows, "c:/git_work/callwarden");
+        assert!(select_instance(&candidates, Some(4294967295), &[]).is_err());
+    }
+
+    #[test]
+    fn select_instance_ready_set_is_owner_safe_fallback() {
+        // peer_uid 已知且无归属匹配时，ready 命中仍可安全返回
+        // （ready 集由 daemon 侧归属过滤产生）
+        let rows = vec![
+            registry_row_owner("other-user", "c:/git_work/callwarden", 1000, "active"),
+            registry_row_owner("daemon-published", "c:/git_work/callwarden", 1000, "active"),
+        ];
+        let candidates = match_candidates_by_root(&rows, "c:/git_work/callwarden");
+        let ready = vec!["daemon-published"];
+        assert_eq!(
+            select_instance(&candidates, Some(4294967295), &ready).unwrap(),
+            "daemon-published"
+        );
+    }
+
+    #[test]
+    fn select_instance_admin_or_unknown_peer_keeps_all_candidates() {
+        // admin（uid 0）或 ping 失败（None）时不按 owner 过滤，首个候选兜底
+        let rows = vec![
+            registry_row_owner("first", "c:/git_work/callwarden", 0, "active"),
+            registry_row_owner("second", "c:/git_work/callwarden", 999, "active"),
+        ];
+        let candidates = match_candidates_by_root(&rows, "c:/git_work/callwarden");
+        assert_eq!(select_instance(&candidates, Some(0), &[]).unwrap(), "first");
+        assert_eq!(select_instance(&candidates, None, &[]).unwrap(), "first");
     }
 
     #[test]
