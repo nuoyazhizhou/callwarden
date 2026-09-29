@@ -375,6 +375,42 @@ impl SnapshotDaemonState {
         Ok(param_workspace_id)
     }
 
+    /// T-1790611160320-fdbfb0d4 后续：legacy `workspace_id` 参数的命名空间归一。
+    ///
+    /// toolchain.{bind,list_bound,resolve} / resolved_edges.{store,get,count} 的
+    /// legacy 路径把 params.`workspace_id` 当 `daemon_workspaces` ROWID 解析
+    /// （`owned_workspace_by_id`），但 CLI/MCP 上游传的是快照库 `workspaces.id`
+    /// （task-DB）——同一 instance 两个数字空间并存且通常不同（本工作区
+    /// registry ROWID=1193 vs task-DB id=1），ROWID 1 又只存在于 task-DB
+    /// capture（`authority_source: task_db_capture`）而非 daemon_workspaces，
+    /// 于是 legacy 路径恒报 `workspace_not_found`。
+    ///
+    /// 上游携带 `workspace_instance_id` 时，改由 registry 按 instance 反查权威
+    /// ROWID（`owned_workspace` 已做 UID 归属 + archived 校验）；未携带时保持
+    /// 旧行为（parse + `owned_workspace_by_id`），兼容老客户端。
+    fn resolve_legacy_workspace_id(
+        &self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<i64, DaemonRpcError> {
+        if let Some(instance) = params
+            .get("workspace_instance_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            let workspace = owned_workspace(&self.base.registry, peer.uid, instance)?;
+            return workspace.get("workspace_id").and_then(Value::as_i64).ok_or_else(
+                || DaemonRpcError::internal_error("registry 行缺少 workspace_id 数字主键"),
+            );
+        }
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        // P0-1 整改（2026-07-22）：先鉴权再访问资源
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        Ok(workspace_id)
+    }
+
     /// 构造单个符号的 JSON 对象（对应 Python `get_symbol` 返回字段）
     ///
     /// 字段：id / name / kind / qualified_name / module_path / start_line / end_line /
@@ -2197,13 +2233,11 @@ impl DaemonStateExt for SnapshotDaemonState {
 
     fn handle_toolchain_bind(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let store = self.require_toolchain_store()?;
-        let workspace_id = require_str_param(params, "workspace_id")?
-            .parse::<i64>()
-            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let workspace_id = self.resolve_legacy_workspace_id(peer, params)?;
         let toolchain_id = require_str_param(params, "toolchain_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("toolchain_id 必须是整数".to_string()))?;
@@ -2223,11 +2257,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let workspace_id = require_str_param(params, "workspace_id")?
-            .parse::<i64>()
-            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
-        // P0-1 整改（2026-07-22）：先鉴权再访问资源，防止跨 UID 读取 toolchain 解析结果
-        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let workspace_id = self.resolve_legacy_workspace_id(peer, params)?;
         let store = self.require_toolchain_store()?;
         let build_context_hash = get_str_param(params, "build_context_hash");
         let result = store
@@ -2244,10 +2274,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let workspace_id = require_str_param(params, "workspace_id")?
-            .parse::<i64>()
-            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
-        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let workspace_id = self.resolve_legacy_workspace_id(peer, params)?;
         let store = self.require_toolchain_store()?;
         let build_context_hash = get_str_param(params, "build_context_hash");
         store
@@ -2516,11 +2543,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let workspace_id = require_str_param(params, "workspace_id")?
-            .parse::<i64>()
-            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
-        // P0-1 整改（2026-07-22）：先鉴权再访问资源
-        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let workspace_id = self.resolve_legacy_workspace_id(peer, params)?;
         let store = self.require_toolchain_store()?;
         let build_context_hash = require_str_param(params, "build_context_hash")?;
         // edges: JSON array of edge objects
@@ -2542,11 +2565,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let workspace_id = require_str_param(params, "workspace_id")?
-            .parse::<i64>()
-            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
-        // P0-1 整改（2026-07-22）：先鉴权再访问资源
-        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let workspace_id = self.resolve_legacy_workspace_id(peer, params)?;
         let store = self.require_toolchain_store()?;
         let build_context_hash = require_str_param(params, "build_context_hash")?;
         let caller_symbol_id = params.get("caller_symbol_id").and_then(|v| v.as_i64());
@@ -2565,11 +2584,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let workspace_id = require_str_param(params, "workspace_id")?
-            .parse::<i64>()
-            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
-        // P0-1 整改（2026-07-22）：先鉴权再访问资源
-        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let workspace_id = self.resolve_legacy_workspace_id(peer, params)?;
         let store = self.require_toolchain_store()?;
         let build_context_hash = require_str_param(params, "build_context_hash")?;
         let count = store

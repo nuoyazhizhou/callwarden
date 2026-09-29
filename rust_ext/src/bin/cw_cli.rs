@@ -3398,14 +3398,10 @@ fn run_toolchain(runtime: &RuntimeOptions, action: ToolchainAction) -> CommandRe
                         serde_json::json!({"name_or_id": enterprise_name}),
                     )?;
                     let toolchain_id = require_json_i64(&toolchain, "id")?;
-                    runtime.daemon_call(
-                        "toolchain.bind",
-                        serde_json::json!({
-                            "workspace_id": workspace_id.to_string(),
-                            "toolchain_id": toolchain_id.to_string(),
-                            "build_context_hash": enterprise_hash,
-                        }),
-                    )?;
+                    let mut bind_params = workspace_rpc_params(runtime, "toolchain bind", workspace_id)?;
+                    bind_params["toolchain_id"] = Value::String(toolchain_id.to_string());
+                    bind_params["build_context_hash"] = Value::String(enterprise_hash);
+                    runtime.daemon_call("toolchain.bind", bind_params)?;
                     Ok(format!(
                         "Toolchain '{}' bound to workspace {}",
                         json_string(&toolchain, "name"),
@@ -3430,18 +3426,37 @@ fn run_toolchain(runtime: &RuntimeOptions, action: ToolchainAction) -> CommandRe
                     format_bound_toolchains(workspace_id, &Value::Array(values))
                 },
                 || {
-                    let value = runtime.daemon_call(
-                        "toolchain.list_bound",
-                        serde_json::json!({
-                            "workspace_id": workspace_id.to_string(),
-                            "build_context_hash": enterprise_hash,
-                        }),
-                    )?;
+                    let mut params =
+                        workspace_rpc_params(runtime, "toolchain list-bound", workspace_id)?;
+                    params["build_context_hash"] = Value::String(enterprise_hash);
+                    let value = runtime.daemon_call("toolchain.list_bound", params)?;
                     format_bound_toolchains(workspace_id, &value)
                 },
             )
         }
     }
+}
+
+/// 构造 toolchain/build_context/resolved_edges RPC 的 workspace 参数。
+///
+/// T-1790611160320-fdbfb0d4 后续：daemon 侧 legacy 路径把 `workspace_id` 当
+/// daemon_workspaces ROWID，而 CLI 的 `<WORKSPACE_ID>` 位置参数是快照库
+/// workspaces.id（task-DB），两者通常不同 → workspace_not_found。附带 auto/
+/// enterprise 模式解析出的 `workspace_instance_id`（daemon 侧按 instance 反查
+/// 权威 ROWID）；解析失败（如 enterprise 模式未传 --workspace-id）时退化到只发
+/// workspace_id，保持旧行为不更糟。
+fn workspace_rpc_params(
+    runtime: &RuntimeOptions,
+    command: &str,
+    workspace_id: i64,
+) -> Result<Value, String> {
+    let mut params = serde_json::json!({"workspace_id": workspace_id.to_string()});
+    // 解析失败（enterprise 模式未传 --workspace-id、或 auto 模式本地 root 未在
+    // daemon registry 注册）时透传可操作错误，而不是发一个必然 workspace_not_found
+    // 的请求；与既有 enterprise 命令的错误提示口径一致（T-1790611160320-fdbfb0d4）。
+    let instance = enterprise_workspace_id(runtime, command)?;
+    params["workspace_instance_id"] = Value::String(instance);
+    Ok(params)
 }
 
 fn run_build_context(runtime: &RuntimeOptions, action: BuildContextAction) -> CommandResult {
@@ -3479,10 +3494,8 @@ fn run_build_context(runtime: &RuntimeOptions, action: BuildContextAction) -> Co
                 format_build_context_list(workspace_id, &Value::Array(values))
             },
             || {
-                let value = runtime.daemon_call(
-                    "build_context.list",
-                    serde_json::json!({"workspace_id": workspace_id.to_string()}),
-                )?;
+                let params = workspace_rpc_params(runtime, "build-context list", workspace_id)?;
+                let value = runtime.daemon_call("build_context.list", params)?;
                 format_build_context_list(workspace_id, &value)
             },
         ),
@@ -3504,24 +3517,17 @@ fn run_build_context(runtime: &RuntimeOptions, action: BuildContextAction) -> Co
                     format_build_context_show(&context, count)
                 },
                 || {
-                    let context = runtime.daemon_call(
-                        "build_context.get",
-                        serde_json::json!({
-                            "workspace_id": workspace_id.to_string(),
-                            "build_context_hash": enterprise_hash,
-                        }),
-                    )?;
+                    let mut params = workspace_rpc_params(runtime, "build-context show", workspace_id)?;
+                    params["build_context_hash"] = Value::String(enterprise_hash.clone());
+                    let context = runtime.daemon_call("build_context.get", params)?;
                     if context.is_null() {
                         return Err(format!("Build context not found: {enterprise_hash}"));
                     }
                     let full_hash = json_string(&context, "build_context_hash");
-                    let count = runtime.daemon_call(
-                        "resolved_edges.count",
-                        serde_json::json!({
-                            "workspace_id": workspace_id.to_string(),
-                            "build_context_hash": full_hash,
-                        }),
-                    )?;
+                    let mut count_params =
+                        workspace_rpc_params(runtime, "build-context show", workspace_id)?;
+                    count_params["build_context_hash"] = Value::String(full_hash);
+                    let count = runtime.daemon_call("resolved_edges.count", count_params)?;
                     format_build_context_show(
                         &context,
                         count.get("count").and_then(Value::as_i64).unwrap_or(0),
@@ -3595,25 +3601,20 @@ fn run_build_context(runtime: &RuntimeOptions, action: BuildContextAction) -> Co
                     format_resolved_edges(&Value::Array(edges))
                 },
                 || {
-                    let context = runtime.daemon_call(
-                        "build_context.get",
-                        serde_json::json!({
-                            "workspace_id": workspace_id.to_string(),
-                            "build_context_hash": enterprise_hash,
-                        }),
-                    )?;
+                    let mut params =
+                        workspace_rpc_params(runtime, "build-context edges", workspace_id)?;
+                    params["build_context_hash"] = Value::String(enterprise_hash.clone());
+                    let context = runtime.daemon_call("build_context.get", params)?;
                     if context.is_null() {
                         return Err(format!("Build context not found: {enterprise_hash}"));
                     }
-                    let value = runtime.daemon_call(
-                        "resolved_edges.get",
-                        serde_json::json!({
-                            "workspace_id": workspace_id.to_string(),
-                            "build_context_hash": json_string(&context, "build_context_hash"),
-                            "caller_symbol_id": caller,
-                            "limit": limit,
-                        }),
-                    )?;
+                    let mut params =
+                        workspace_rpc_params(runtime, "build-context edges", workspace_id)?;
+                    params["build_context_hash"] =
+                        Value::String(json_string(&context, "build_context_hash"));
+                    params["caller_symbol_id"] = serde_json::json!(caller);
+                    params["limit"] = serde_json::json!(limit);
+                    let value = runtime.daemon_call("resolved_edges.get", params)?;
                     format_resolved_edges(&value)
                 },
             )
@@ -3658,17 +3659,14 @@ fn execute_build_context_register(
             format_build_context_registered(&context, local_imported.as_ref())
         },
         || {
-            let context = runtime.daemon_call(
-                "build_context.register",
-                serde_json::json!({
-                    "workspace_id": workspace_id.to_string(),
-                    "name": enterprise_name,
-                    "compile_flags": enterprise_flags,
-                    "defines": pairs_to_json_object(&enterprise_defines),
-                    "include_paths": enterprise_includes,
-                    "set_active": activate,
-                }),
-            )?;
+            let mut params =
+                workspace_rpc_params(runtime, "build-context register", workspace_id)?;
+            params["name"] = Value::String(enterprise_name);
+            params["compile_flags"] = serde_json::json!(enterprise_flags);
+            params["defines"] = pairs_to_json_object(&enterprise_defines);
+            params["include_paths"] = serde_json::json!(enterprise_includes);
+            params["set_active"] = serde_json::json!(activate);
+            let context = runtime.daemon_call("build_context.register", params)?;
             format_build_context_registered(&context, enterprise_imported.as_ref())
         },
     )
@@ -3711,13 +3709,10 @@ fn execute_build_context_mutation(
             }
         },
         || {
-            let context = runtime.daemon_call(
-                "build_context.get",
-                serde_json::json!({
-                    "workspace_id": workspace_id.to_string(),
-                    "build_context_hash": enterprise_hash,
-                }),
-            )?;
+            let mut params =
+                workspace_rpc_params(runtime, "build-context mutation", workspace_id)?;
+            params["build_context_hash"] = Value::String(enterprise_hash.clone());
+            let context = runtime.daemon_call("build_context.get", params)?;
             if context.is_null() {
                 return Err(format!("Build context not found: {enterprise_hash}"));
             }
@@ -3728,13 +3723,10 @@ fn execute_build_context_mutation(
             } else {
                 "build_context.delete"
             };
-            let value = runtime.daemon_call(
-                method,
-                serde_json::json!({
-                    "workspace_id": workspace_id.to_string(),
-                    "build_context_hash": full_hash,
-                }),
-            )?;
+            let mut params =
+                workspace_rpc_params(runtime, "build-context mutation", workspace_id)?;
+            params["build_context_hash"] = Value::String(full_hash.clone());
+            let value = runtime.daemon_call(method, params)?;
             if activate && !value.get("ok").and_then(Value::as_bool).unwrap_or(false) {
                 return Err("Failed to activate".to_string());
             }
@@ -3776,13 +3768,9 @@ fn resolve_enterprise_build_context(
     workspace_id: i64,
     hash: &str,
 ) -> Result<String, String> {
-    let context = runtime.daemon_call(
-        "build_context.get",
-        serde_json::json!({
-            "workspace_id": workspace_id.to_string(),
-            "build_context_hash": hash,
-        }),
-    )?;
+    let mut params = workspace_rpc_params(runtime, "build-context resolve", workspace_id)?;
+    params["build_context_hash"] = Value::String(hash.to_string());
+    let context = runtime.daemon_call("build_context.get", params)?;
     if context.is_null() {
         return Err(format!("Build context not found: {hash}"));
     }
@@ -3792,13 +3780,9 @@ fn resolve_enterprise_build_context(
             "enterprise resolve requires the mounted local workspace database for symbol facts: {error}"
         )
     })?;
-    let toolchain = runtime.daemon_call(
-        "toolchain.resolve",
-        serde_json::json!({
-            "workspace_id": workspace_id.to_string(),
-            "build_context_hash": full_hash,
-        }),
-    )?;
+    let mut params = workspace_rpc_params(runtime, "build-context resolve", workspace_id)?;
+    params["build_context_hash"] = Value::String(full_hash.clone());
+    let toolchain = runtime.daemon_call("toolchain.resolve", params)?;
     let result = compute_resolved_edges_for_external_context(
         &conn,
         workspace_id,
@@ -3808,14 +3792,10 @@ fn resolve_enterprise_build_context(
     .map_err(|error| {
         format!("enterprise resolve requires a matching local symbol snapshot: {error}")
     })?;
-    let response = runtime.daemon_call(
-        "resolved_edges.replace",
-        serde_json::json!({
-            "workspace_id": workspace_id.to_string(),
-            "build_context_hash": full_hash,
-            "edges": resolved_edges_json(&result.edges),
-        }),
-    )?;
+    let mut params = workspace_rpc_params(runtime, "build-context resolve", workspace_id)?;
+    params["build_context_hash"] = Value::String(full_hash);
+    params["edges"] = Value::Array(resolved_edges_json(&result.edges));
+    let response = runtime.daemon_call("resolved_edges.replace", params)?;
     format_resolve_result(
         &context,
         &result,
