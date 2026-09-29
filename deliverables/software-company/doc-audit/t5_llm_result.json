@@ -1,0 +1,252 @@
+{
+  "summary": {
+    "total": 15,
+    "correct": 15,
+    "correct_rate": 1.0,
+    "param_ok": 15,
+    "param_ok_rate": 1.0,
+    "model": "deepseek-v4-flash"
+  },
+  "results": [
+    {
+      "intent": "我想知道有哪些函数调用了 process_order 这个函数",
+      "expected": [
+        "get_callers"
+      ],
+      "chosen": "get_callers",
+      "correct": true,
+      "args_keys": [
+        "callee_name"
+      ],
+      "required": [
+        "callee_name"
+      ],
+      "has_required": true,
+      "latency_s": 2.27
+    },
+    {
+      "intent": "查看 process_order 函数内部调用了哪些其他函数",
+      "expected": [
+        "get_callees"
+      ],
+      "chosen": "get_callees",
+      "correct": true,
+      "args_keys": [
+        "caller_name",
+        "qualified_name"
+      ],
+      "required": [
+        "caller_name"
+      ],
+      "has_required": true,
+      "latency_s": 1.91
+    },
+    {
+      "intent": "我要搜索名字里包含 'auth' 的所有函数和类",
+      "expected": [
+        "search_symbols"
+      ],
+      "chosen": "search_symbols",
+      "correct": true,
+      "args_keys": [
+        "query"
+      ],
+      "required": [
+        "query"
+      ],
+      "has_required": true,
+      "latency_s": 2.06
+    },
+    {
+      "intent": "获取整个代码库的统计信息:多少文件、函数、调用关系",
+      "expected": [
+        "get_stats",
+        "get_status"
+      ],
+      "chosen": "get_stats",
+      "correct": true,
+      "args_keys": [],
+      "required": [],
+      "has_required": true,
+      "latency_s": 1.81
+    },
+    {
+      "intent": "如果我修改了 UserService.login 方法,会影响哪些其他符号?",
+      "expected": [
+        "blast_radius",
+        "get_impact"
+      ],
+      "chosen": "get_impact",
+      "correct": true,
+      "args_keys": [
+        "qualified_name"
+      ],
+      "required": [
+        "qualified_name"
+      ],
+      "has_required": true,
+      "latency_s": 2.09
+    },
+    {
+      "intent": "查看 payment.py 这个文件里定义了哪些符号",
+      "expected": [
+        "get_file_symbols"
+      ],
+      "chosen": "get_file_symbols",
+      "correct": true,
+      "args_keys": [
+        "file_path"
+      ],
+      "required": [
+        "file_path"
+      ],
+      "has_required": true,
+      "latency_s": 1.71
+    },
+    {
+      "intent": "创建一个新任务:标题是'重构支付模块'",
+      "expected": [
+        "task_create"
+      ],
+      "chosen": "task_create",
+      "correct": true,
+      "args_keys": [
+        "title",
+        "workspace_id",
+        "workspace_instance_id"
+      ],
+      "required": [
+        "title"
+      ],
+      "has_required": true,
+      "latency_s": 2.14
+    },
+    {
+      "intent": "查询任务 T-123 当前的状态和进度",
+      "expected": [
+        "task_governance_projection",
+        "task_status"
+      ],
+      "chosen": "task_status",
+      "correct": true,
+      "args_keys": [
+        "task_id"
+      ],
+      "required": [
+        "task_id"
+      ],
+      "has_required": true,
+      "latency_s": 2.34
+    },
+    {
+      "intent": "获取函数 calculate_tax 的复杂度、行数等度量指标",
+      "expected": [
+        "get_function_metrics"
+      ],
+      "chosen": "get_function_metrics",
+      "correct": true,
+      "args_keys": [
+        "qualified_name"
+      ],
+      "required": [
+        "qualified_name"
+      ],
+      "has_required": true,
+      "latency_s": 1.86
+    },
+    {
+      "intent": "找出代码库里最复杂的 10 个函数(复杂度热点)",
+      "expected": [
+        "get_complexity_hotspots"
+      ],
+      "chosen": "get_complexity_hotspots",
+      "correct": true,
+      "args_keys": [
+        "limit"
+      ],
+      "required": [],
+      "has_required": true,
+      "latency_s": 1.72
+    },
+    {
+      "intent": "读取 config.py 文件的完整内容",
+      "expected": [
+        "file_read"
+      ],
+      "chosen": "file_read",
+      "correct": true,
+      "args_keys": [
+        "file_path"
+      ],
+      "required": [
+        "file_path"
+      ],
+      "has_required": true,
+      "latency_s": 1.96
+    },
+    {
+      "intent": "在整个代码库里用正则搜索 'TODO' 这个文本",
+      "expected": [
+        "file_grep"
+      ],
+      "chosen": "file_grep",
+      "correct": true,
+      "args_keys": [
+        "pattern"
+      ],
+      "required": [
+        "pattern"
+      ],
+      "has_required": true,
+      "latency_s": 1.77
+    },
+    {
+      "intent": "检测代码库里有没有循环调用(环)",
+      "expected": [
+        "detect_cycle"
+      ],
+      "chosen": "detect_cycle",
+      "correct": true,
+      "args_keys": [
+        "workspace_id"
+      ],
+      "required": [
+        "workspace_id"
+      ],
+      "has_required": true,
+      "latency_s": 1.82
+    },
+    {
+      "intent": "获取符号 crate::auth::verify 的详细信息(位置、签名、注释)",
+      "expected": [
+        "get_symbol"
+      ],
+      "chosen": "get_symbol",
+      "correct": true,
+      "args_keys": [
+        "qualified_name"
+      ],
+      "required": [
+        "qualified_name"
+      ],
+      "has_required": true,
+      "latency_s": 1.83
+    },
+    {
+      "intent": "哪些文件改动最频繁?查代码演化热点",
+      "expected": [
+        "evolution_frequency",
+        "hotspot_evolution"
+      ],
+      "chosen": "hotspot_evolution",
+      "correct": true,
+      "args_keys": [
+        "limit",
+        "module_filter"
+      ],
+      "required": [],
+      "has_required": true,
+      "latency_s": 3.03
+    }
+  ]
+}

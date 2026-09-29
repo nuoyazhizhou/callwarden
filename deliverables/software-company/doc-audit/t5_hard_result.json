@@ -1,0 +1,154 @@
+{
+  "full_candidate": {
+    "total": 10,
+    "correct": 9,
+    "rate": 0.9,
+    "results": [
+      {
+        "intent": "搜索名字包含 'auth' 的符号",
+        "expected": [
+          "search_symbols"
+        ],
+        "chosen": "search_symbols",
+        "correct": true
+      },
+      {
+        "intent": "查哪些函数调用了 foo",
+        "expected": [
+          "get_callers"
+        ],
+        "chosen": "get_callers",
+        "correct": true
+      },
+      {
+        "intent": "查 foo 调用了哪些函数",
+        "expected": [
+          "get_callees"
+        ],
+        "chosen": "get_callees",
+        "correct": true
+      },
+      {
+        "intent": "获取代码库统计(文件/函数/调用数)",
+        "expected": [
+          "get_stats"
+        ],
+        "chosen": "get_stats",
+        "correct": true
+      },
+      {
+        "intent": "读取 a.py 文件内容",
+        "expected": [
+          "file_read"
+        ],
+        "chosen": "file_read",
+        "correct": true
+      },
+      {
+        "intent": "正则搜索代码文本 TODO",
+        "expected": [
+          "file_grep"
+        ],
+        "chosen": "file_grep",
+        "correct": true
+      },
+      {
+        "intent": "创建新任务",
+        "expected": [
+          "task_create"
+        ],
+        "chosen": "task_create",
+        "correct": true
+      },
+      {
+        "intent": "检测调用环",
+        "expected": [
+          "detect_cycle"
+        ],
+        "chosen": "",
+        "correct": false
+      },
+      {
+        "intent": "修改某函数的影响半径",
+        "expected": [
+          "blast_radius",
+          "get_impact"
+        ],
+        "chosen": "blast_radius",
+        "correct": true
+      },
+      {
+        "intent": "最复杂的函数(复杂度热点)",
+        "expected": [
+          "get_complexity_hotspots"
+        ],
+        "chosen": "get_complexity_hotspots",
+        "correct": true
+      }
+    ]
+  },
+  "confusing": {
+    "total": 7,
+    "correct": 7,
+    "rate": 1.0,
+    "results": [
+      {
+        "intent": "我只想要符号总数、调用边总数这些纯计数统计",
+        "expected": [
+          "get_stats"
+        ],
+        "chosen": "get_stats",
+        "correct": true
+      },
+      {
+        "intent": "按名字模糊搜索单个代码库里的函数",
+        "expected": [
+          "search_symbols"
+        ],
+        "chosen": "search_symbols",
+        "correct": true
+      },
+      {
+        "intent": "跨架构层次分析一个改动的影响(controller→service→dao)",
+        "expected": [
+          "cross_layer_impact"
+        ],
+        "chosen": "cross_layer_impact",
+        "correct": true
+      },
+      {
+        "intent": "我要看某个函数的完整源代码内容",
+        "expected": [
+          "file_symbol_content"
+        ],
+        "chosen": "file_symbol_content",
+        "correct": true
+      },
+      {
+        "intent": "找出行数最多的函数(不是复杂度,是纯行数)",
+        "expected": [
+          "get_largest_functions"
+        ],
+        "chosen": "get_largest_functions",
+        "correct": true
+      },
+      {
+        "intent": "把一个大任务按计划拆分成多个子任务",
+        "expected": [
+          "task_create_subtask",
+          "task_split"
+        ],
+        "chosen": "task_split",
+        "correct": true
+      },
+      {
+        "intent": "递归展开 foo 的多层向下调用链(不只直接被调)",
+        "expected": [
+          "get_call_chain_down"
+        ],
+        "chosen": "get_call_chain_down",
+        "correct": true
+      }
+    ]
+  }
+}
