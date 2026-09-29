@@ -4185,9 +4185,19 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
             # 可核验的 authority projection。DB 路径由 daemon 返回，随后
             # _ensure_remote_snapshot 以 workspace.register 的返回值发布，避免
             # 本地推导 workspace ID 或打开本地 SQLite。
+            #
+            # FIX(全量测试遗留项1,2026-09-30):此前只有 workspace.status 会取
+            # 权威 db_path 触发 snapshot.publish;而所有 query.* RPC(query.stats /
+            # query.symbol / query.callers ...)在 daemon 侧同样经 get_store /
+            # open_query_connection 依赖已发布 snapshot,却走 snapshot_db_path=None
+            # 分支只 register 不 publish,导致 build_graph/refresh 后 `cw stats`
+            # 等恒报 snapshot_not_ready。修复:对 query.* 面同样取权威 db_path
+            # 触发 publish(与 task.report 的正确样板一致)。db_path 由 daemon
+            # 返回(~/.callwarden/callwarden.db,与 build_graph 写入同一主库),
+            # 薄客户端不本地推导。
             snapshot_db_path = None
-            if rpc_method == "workspace.status":
-                # workspace.status 的 authority projection 必须能回答当前
+            if rpc_method == "workspace.status" or rpc_method.startswith("query."):
+                # 需 snapshot 的 authority projection / query 面必须能回答当前
                 # snapshot，而不是只返回一个尚未发布的 registry 行。DB 路径
                 # 仍由 daemon 提供，避免薄客户端读取本地 SQLite。
                 db_result = client.call("mcp.common.get_db_path_for_daemon", {})
@@ -4205,7 +4215,19 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
             # E_TASK_PROMPT_TASK_ID_REQUIRED).  Skip the whole workspace
             # injection block for those requests.
             is_task_scoped = _is_task_scoped_authority_request(params)
-            if not is_task_scoped:
+            # FIX(全量测试遗留项2,2026-09-30):workspace.activate / workspace.remove
+            # 已在 L4150 由 workspace_id_or_name 解析出明确的 workspace_instance_id,
+            # 不能再走 _ensure_remote_snapshot 的 CWD 兜底 register —— daemon 的
+            # workspace.register 会隐式把注册的 workspace 设为 active,导致
+            # `cw workspace set 1714` 后紧接的 get_active_workspace()(workspace.status)
+            # 又把 CWD(callwarden)注册并激活,顶替掉刚 set 的目标 1714,表现为
+            # "set 数字 ID 却激活了 CWD workspace"。这类目标已明确的管理命令跳过
+            # 隐式 register/snapshot(它们不查 snapshot,只需权威 workspace_instance_id)。
+            target_already_bound = (
+                rpc_method in _WS_ID_OR_NAME_METHODS
+                and "workspace_instance_id" in params
+            )
+            if not is_task_scoped and not target_already_bound:
                 ws_id = client._ensure_remote_snapshot(snapshot_db_path)
                 if ws_id is not None and "workspace_instance_id" not in params:
                     params["workspace_instance_id"] = ws_id

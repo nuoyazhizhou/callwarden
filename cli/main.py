@@ -1389,11 +1389,22 @@ class RpcDBProxy:
             return int(result.get("workspace_id") or result.get("id") or 0)
         return int(result or 0)
 
-    def set_active_workspace(self, workspace_id_or_name) -> bool:
-        route_rpc("workspace.activate",
-                  {"workspace_id_or_name": str(workspace_id_or_name)},
-                  "PROTECTED_MUTATION")
-        return True
+    def set_active_workspace(self, workspace_id_or_name):
+        """激活指定 workspace，返回 daemon 激活后的 workspace 行（兼容视图）。
+
+        FIX(全量测试遗留项2,2026-09-30):此前返回裸 True，调用方(_handle_workspace
+        set 分支)随后再调 get_active_workspace()(workspace.status)显示结果，但
+        workspace.status 经 route_rpc 会按调用进程 CWD 注入 workspace_instance_id，
+        返回的是 CWD workspace（如 callwarden）而非刚激活的目标，表现为"set 数字 ID
+        却显示 CWD workspace"。改为直接返回 daemon workspace.activate 的响应
+        （激活后的目标 workspace 行），调用方据此显示，不再二次查询。
+        """
+        result = route_rpc("workspace.activate",
+                           {"workspace_id_or_name": str(workspace_id_or_name)},
+                           "PROTECTED_MUTATION")
+        if isinstance(result, dict):
+            return self._map_workspace_row(result)
+        return None
 
     def delete_workspace(self, workspace_id_or_name) -> bool:
         route_rpc("workspace.remove",
@@ -8953,15 +8964,17 @@ def _handle_workspace(args, db):
 
     if opts.action == "set":
         ws_arg = opts.id_or_name
+        # set_active_workspace 直接返回 daemon workspace.activate 的响应
+        # （激活后的目标 workspace 行），不再二次调 get_active_workspace()——
+        # 后者经 route_rpc 会按 CWD 返回错误的 workspace（遗留项2 修复）。
         try:
-            ws_id = int(ws_arg)
-            success = db.set_active_workspace(ws_id)
+            int(ws_arg)  # 校验是否数字 ID（daemon 侧 id-or-name 均支持）
+            activated = db.set_active_workspace(ws_arg)
         except ValueError:
-            success = db.set_active_workspace(ws_arg)
-        if success:
-            active = db.get_active_workspace()
+            activated = db.set_active_workspace(ws_arg)
+        if activated:
             print(t("cli.messages.set_success",
-                  name=active['name'], root=active['root_path']))
+                  name=activated['name'], root=activated['root_path']))
         else:
             print(t("cli.messages.workspace_set_fail", name=ws_arg))
         return True
