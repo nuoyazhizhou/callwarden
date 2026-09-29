@@ -1,0 +1,845 @@
+{
+  "source": "cli.main._SUBCOMMANDS + standalone (cw.py dispatch) + `cw <cmd> --help` usage choices",
+  "top_command_count": 70,
+  "subcommands_set_size": 65,
+  "standalone_top": [
+    "install",
+    "setup",
+    "server",
+    "test",
+    "daemon"
+  ],
+  "commands": {
+    "assignment": {
+      "help_rc": 0,
+      "sub_actions": [
+        "create",
+        "show",
+        "revoke"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "audit": {
+      "help_rc": 0,
+      "sub_actions": [
+        "verify",
+        "rotate-key",
+        "keys"
+      ],
+      "long_opts": [
+        "--help",
+        "--key-id",
+        "--limit",
+        "--secret",
+        "--table"
+      ]
+    },
+    "bootstrap": {
+      "help_rc": 0,
+      "sub_actions": [
+        "status"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "brief": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "build-context": {
+      "help_rc": 0,
+      "sub_actions": [
+        "register",
+        "list",
+        "show",
+        "activate",
+        "delete",
+        "import-compile-commands",
+        "resolve",
+        "edges"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "call-chain": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--depth",
+        "--help"
+      ]
+    },
+    "callees": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--qualified"
+      ]
+    },
+    "callers": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--qualified"
+      ]
+    },
+    "check-gate": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--resolve",
+        "--step-id"
+      ]
+    },
+    "churn": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--module",
+        "--window"
+      ]
+    },
+    "clone": {
+      "help_rc": 0,
+      "sub_actions": [
+        "detect",
+        "list",
+        "stats",
+        "clear"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "collab": {
+      "help_rc": 0,
+      "sub_actions": [
+        "publish",
+        "verdict",
+        "reveal",
+        "gate-trigger"
+      ],
+      "long_opts": [
+        "--help",
+        "--json"
+      ]
+    },
+    "comment-coverage": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--by",
+        "--help"
+      ]
+    },
+    "complexity": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--module"
+      ]
+    },
+    "config": {
+      "help_rc": 0,
+      "sub_actions": [
+        "explain",
+        "paths",
+        "check-role"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "coupled-fns": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "coupling": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "coverage": {
+      "help_rc": 0,
+      "sub_actions": [
+        "import",
+        "fn",
+        "uncovered"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "daemon": {
+      "help_rc": 0,
+      "sub_actions": [
+        "ping",
+        "register",
+        "list",
+        "status",
+        "publish",
+        "query",
+        "mode",
+        "health",
+        "manifest",
+        "capability",
+        "schema-version",
+        "bridge",
+        "backup",
+        "restore",
+        "gc-cas",
+        "gc-snapshots",
+        "snapshot-stats",
+        "snapshot-list",
+        "snapshot-evict",
+        "metrics",
+        "mount",
+        "toolchain"
+      ],
+      "long_opts": [
+        "--help",
+        "--socket"
+      ]
+    },
+    "dashboard": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--full",
+        "--help",
+        "--json",
+        "--risks",
+        "--top",
+        "--with-cycles",
+        "--with-evolution"
+      ]
+    },
+    "defect": {
+      "help_rc": 0,
+      "sub_actions": [
+        "search",
+        "suggest",
+        "learn",
+        "stats",
+        "build"
+      ],
+      "long_opts": [
+        "--category",
+        "--finding",
+        "--help",
+        "--limit",
+        "--severity"
+      ]
+    },
+    "dependency": {
+      "help_rc": 0,
+      "sub_actions": [
+        "inspect",
+        "list",
+        "cycle",
+        "explain",
+        "provider-select"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "doctor": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--add-defender-exclusion",
+        "--help"
+      ]
+    },
+    "evolution": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--defects",
+        "--help",
+        "--window"
+      ]
+    },
+    "experiment": {
+      "help_rc": 0,
+      "sub_actions": [
+        "batch-create",
+        "batch-lock",
+        "batch-list",
+        "toggle-set",
+        "toggle-show",
+        "admit",
+        "record-metrics",
+        "record-verdict",
+        "record-reveal",
+        "record-invalid",
+        "record-incident",
+        "pause",
+        "report"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "file": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "fn-metrics": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "fts": {
+      "help_rc": 0,
+      "sub_actions": [
+        "rebuild",
+        "status"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "function-issues": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--limit",
+        "--module",
+        "--type"
+      ]
+    },
+    "gc": {
+      "help_rc": 0,
+      "sub_actions": [
+        "archive",
+        "restore",
+        "status",
+        "purge",
+        "policy",
+        "retention",
+        "archive-list",
+        "archive-inspect",
+        "audit-list",
+        "audit-show",
+        "archive-import",
+        "db-cleanup",
+        "db-migrate-single"
+      ],
+      "long_opts": [
+        "--apply",
+        "--dry-run",
+        "--force",
+        "--help",
+        "--limit",
+        "--older-than",
+        "--operation",
+        "--path",
+        "--save-policy"
+      ]
+    },
+    "git": {
+      "help_rc": 0,
+      "sub_actions": [
+        "import",
+        "log",
+        "show",
+        "stats",
+        "check-task",
+        "check-push",
+        "check-ref-transaction",
+        "destructive-log"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "graph": {
+      "help_rc": 0,
+      "sub_actions": [
+        "build-from-c"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "grep": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--fixed",
+        "--help",
+        "--include-all",
+        "--kind",
+        "--limit",
+        "--path"
+      ]
+    },
+    "guardrail": {
+      "help_rc": 0,
+      "sub_actions": [
+        "scan",
+        "rules"
+      ],
+      "long_opts": [
+        "--category",
+        "--file",
+        "--help"
+      ]
+    },
+    "health-report": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--json"
+      ]
+    },
+    "hotspot": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--limit",
+        "--module"
+      ]
+    },
+    "identity": {
+      "help_rc": 0,
+      "sub_actions": [
+        "revoke"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "impact": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--depth",
+        "--help"
+      ]
+    },
+    "install": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--agent",
+        "--agent-project",
+        "--all",
+        "--check",
+        "--detect-agents",
+        "--force-agent",
+        "--force-hooks",
+        "--help",
+        "--hooks",
+        "--lang",
+        "--no-optional",
+        "--no-post-commit",
+        "--verbose"
+      ]
+    },
+    "install-agent": {
+      "help_rc": 0,
+      "sub_actions": [
+        "claude-code",
+        "claude-desktop",
+        "cursor",
+        "cline",
+        "cline-cli",
+        "devin-cli",
+        "windsurf",
+        "trae",
+        "gemini-cli",
+        "antigravity",
+        "codex",
+        "opencode",
+        "kiro",
+        "qoder",
+        "jetbrains-junie",
+        "zed",
+        "pearai",
+        "kimi-code",
+        "codebuddy-cli",
+        "deep-code",
+        "comate",
+        "grok-build",
+        "zcode",
+        "all"
+      ],
+      "long_opts": [
+        "--auto-detect",
+        "--force",
+        "--global",
+        "--help",
+        "--output-dir",
+        "--registry"
+      ]
+    },
+    "install-hook": {
+      "help_rc": 0,
+      "sub_actions": [
+        "post-commit"
+      ],
+      "long_opts": [
+        "--auto",
+        "--help",
+        "--task-id",
+        "--uninstall"
+      ]
+    },
+    "issues": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--include-info"
+      ]
+    },
+    "largest-fns": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "lease": {
+      "help_rc": 0,
+      "sub_actions": [
+        "acquire",
+        "renew",
+        "release",
+        "status",
+        "list"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "map": {
+      "help_rc": 0,
+      "sub_actions": [
+        "text",
+        "mermaid"
+      ],
+      "long_opts": [
+        "--format",
+        "--help"
+      ]
+    },
+    "metrics": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "ownership-map": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "query": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "refresh": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--all",
+        "--force",
+        "--help",
+        "--refresh-all"
+      ]
+    },
+    "review": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "rollback": {
+      "help_rc": 0,
+      "sub_actions": [
+        "register",
+        "show",
+        "config",
+        "set",
+        "is-rolled-back"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "rule": {
+      "help_rc": 0,
+      "sub_actions": [
+        "candidate",
+        "list",
+        "applicable",
+        "sync",
+        "insert-block",
+        "extract",
+        "seed-bootstrap",
+        "cleanup-sync-log"
+      ],
+      "long_opts": [
+        "--context",
+        "--help",
+        "--limit",
+        "--reason",
+        "--reviewer",
+        "--status",
+        "--target",
+        "--text",
+        "--title"
+      ]
+    },
+    "search": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--kind",
+        "--limit"
+      ]
+    },
+    "semgrep": {
+      "help_rc": 0,
+      "sub_actions": [
+        "scan",
+        "list",
+        "stats"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "server": {
+      "help_rc": -1,
+      "sub_actions": [],
+      "long_opts": []
+    },
+    "setup": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--dry-run",
+        "--force",
+        "--help"
+      ]
+    },
+    "stats": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "status": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "symbol": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "symbol-history": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--limit"
+      ]
+    },
+    "task": {
+      "help_rc": 0,
+      "sub_actions": [
+        "create",
+        "next",
+        "next-action",
+        "prompt",
+        "assignment-status",
+        "assignment-heartbeat",
+        "report",
+        "handoff",
+        "step-resolve",
+        "rollback",
+        "apply",
+        "close",
+        "cascade-close",
+        "reopen",
+        "claim-recover",
+        "capture-diff",
+        "findings",
+        "resolve-finding",
+        "list",
+        "show",
+        "completion-review",
+        "split",
+        "status-tree",
+        "supersede",
+        "attest-legacy-workspace-binding",
+        "contract-bootstrap",
+        "contract-revise",
+        "bootstrap-executor-evidence",
+        "bootstrap-reviewer-pass",
+        "governance-projection",
+        "superseded"
+      ],
+      "long_opts": [
+        "--auto",
+        "--blocked",
+        "--dry-run",
+        "--fail",
+        "--flat",
+        "--help",
+        "--json",
+        "--limit",
+        "--resolution",
+        "--result",
+        "--reviewer",
+        "--severity",
+        "--status",
+        "--steps",
+        "--title"
+      ]
+    },
+    "test": {
+      "help_rc": 1,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "test-impact": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "tests": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--build",
+        "--ci-run-id",
+        "--ci-url",
+        "--force",
+        "--help",
+        "--history",
+        "--import",
+        "--limit",
+        "--reverse"
+      ]
+    },
+    "toolchain": {
+      "help_rc": 0,
+      "sub_actions": [
+        "register",
+        "list",
+        "show",
+        "delete",
+        "bind",
+        "list-bound"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "topo": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--limit"
+      ]
+    },
+    "uncommented": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help",
+        "--limit",
+        "--module"
+      ]
+    },
+    "vuln-blast": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--depth",
+        "--finding-id",
+        "--help",
+        "--severity"
+      ]
+    },
+    "who": {
+      "help_rc": 0,
+      "sub_actions": [],
+      "long_opts": [
+        "--help"
+      ]
+    },
+    "workspace": {
+      "help_rc": 0,
+      "sub_actions": [
+        "list",
+        "register",
+        "set",
+        "delete",
+        "scan",
+        "generate-ignore"
+      ],
+      "long_opts": [
+        "--help"
+      ]
+    }
+  },
+  "total_leaf_commands": 234,
+  "help_failures": [
+    {
+      "cmd": "server",
+      "rc": -1
+    }
+  ]
+}

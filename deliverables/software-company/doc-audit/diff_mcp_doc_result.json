@@ -1,0 +1,163 @@
+{
+  "doc": "docs/mcp_tools.md",
+  "truth_tool_count": 243,
+  "category_count": 17,
+  "category_declared_total": 243,
+  "category_listed_total": 243,
+  "categories": [
+    {
+      "idx": 1,
+      "name": "Workspace & Database",
+      "declared": 16,
+      "listed": 16
+    },
+    {
+      "idx": 2,
+      "name": "Query & Search",
+      "declared": 24,
+      "listed": 24
+    },
+    {
+      "idx": 3,
+      "name": "Call Chain Analysis",
+      "declared": 14,
+      "listed": 14
+    },
+    {
+      "idx": 4,
+      "name": "Code Health & Metrics",
+      "declared": 12,
+      "listed": 12
+    },
+    {
+      "idx": 5,
+      "name": "Task Orchestration",
+      "declared": 36,
+      "listed": 36
+    },
+    {
+      "idx": 6,
+      "name": "Agent Rule Memory",
+      "declared": 11,
+      "listed": 11
+    },
+    {
+      "idx": 7,
+      "name": "Audit & Bootstrap",
+      "declared": 10,
+      "listed": 10
+    },
+    {
+      "idx": 8,
+      "name": "Git Integration",
+      "declared": 6,
+      "listed": 6
+    },
+    {
+      "idx": 9,
+      "name": "Semgrep & Defects",
+      "declared": 18,
+      "listed": 18
+    },
+    {
+      "idx": 10,
+      "name": "Coverage & Ownership",
+      "declared": 19,
+      "listed": 19
+    },
+    {
+      "idx": 11,
+      "name": "GC",
+      "declared": 11,
+      "listed": 11
+    },
+    {
+      "idx": 12,
+      "name": "Diagnostics",
+      "declared": 26,
+      "listed": 26
+    },
+    {
+      "idx": 13,
+      "name": "构建上下文感知",
+      "declared": 9,
+      "listed": 9
+    },
+    {
+      "idx": 14,
+      "name": "只读协同查询",
+      "declared": 6,
+      "listed": 6
+    },
+    {
+      "idx": 15,
+      "name": "依赖图与环检测",
+      "declared": 10,
+      "listed": 10
+    },
+    {
+      "idx": 16,
+      "name": "Assignment 与 Lease",
+      "declared": 8,
+      "listed": 8
+    },
+    {
+      "idx": 17,
+      "name": "Identity 与 Attestation",
+      "declared": 7,
+      "listed": 7
+    }
+  ],
+  "category_count_mismatch": [],
+  "doc_declared_tool_count": 243,
+  "doc_has_impl_missing_count": 0,
+  "doc_has_impl_missing": [],
+  "impl_has_doc_missing_count": 0,
+  "impl_has_doc_missing": [],
+  "count_claims": [
+    {
+      "line": 3,
+      "text": "Call Warden 通过 MCP（Model Context Protocol）Server 暴露 243 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。"
+    },
+    {
+      "line": 6,
+      "text": "> 243 个公开工具的调用链为 **243/243 工具壳 route_rpc → HTTP → rust daemon**，HTTP fail-closed"
+    },
+    {
+      "line": 9,
+      "text": "> **rust_native 200 / task_rpc 43 / python_compat 0**。HTTP 模式下："
+    },
+    {
+      "line": 10,
+      "text": "> - 243 个方法（rust_native 200 + task_rpc 43）全部走 Rust daemon dispatch 原生执行（无 Python 业务逻辑）；"
+    },
+    {
+      "line": 36,
+      "text": "Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个主分类（其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为增量能力域，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。"
+    },
+    {
+      "line": 59,
+      "text": "| **合计** | **243**                     |        |                                                                                                                                       |"
+    },
+    {
+      "line": 61,
+      "text": "> **注**：合计 243 与注册的 MCP 工具数一致（243 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 等独立能力域（对应需求 L5 与 P1-P4 增量模块），无对应 CLI 主分类。"
+    },
+    {
+      "line": 2357,
+      "text": "**讨论结论**：243 个工具已够用，应优化组合查询路径而非继续扩功能面。"
+    },
+    {
+      "line": 2360,
+      "text": "- 工具数：243（含构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）"
+    },
+    {
+      "line": 2389,
+      "text": "> 2026-08-20 起，243 个 MCP 工具的路由由"
+    },
+    {
+      "line": 2393,
+      "text": "- **自描述接口**：daemon 提供 `GET /v1/meta/tools`，返回 243 工具"
+    }
+  ]
+}

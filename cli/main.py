@@ -10434,9 +10434,18 @@ def _handle_topo(args, db):
     order = db.get_topological_order(opts.limit)
     print(t("cli.messages.topo_title", count=len(order)))
     for i, sym in enumerate(order):
-        path = sym.get("path", sym.get("rel_path", ""))
-        print(t("cli.messages.topo_item",
-                idx=i+1, depth=f"{sym['depth']:2d}", path=path, line=sym['start_line'], name=sym['name']))
+        # daemon RPC(query.topological_order)返回 qualified_name 字符串列表;
+        # 旧本地路径返回含 depth/path/start_line/name 的 dict。两种都要兼容,
+        # 否则对 str 调用 .get() 会抛 'str' object has no attribute 'get'。
+        if isinstance(sym, dict):
+            path = sym.get("path", sym.get("rel_path", ""))
+            print(t("cli.messages.topo_item",
+                    idx=i + 1, depth=f"{sym.get('depth', 0):2d}", path=path,
+                    line=sym.get('start_line', 0),
+                    name=sym.get('name', sym.get('qualified_name', ''))))
+        else:
+            # str(qualified_name):daemon 未返回位置/深度,只展示序号 + 名称
+            print(f"  {i + 1:3d}. {sym}")
     return True
 
 

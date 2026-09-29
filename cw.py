@@ -120,6 +120,20 @@ def main():
 
     # cw server [opts] → 启动 MCP Server
     if args and args[0] == "server":
+        # --help/-h:先于启动逻辑拦截,打印用法后退出。否则 mod.main() 会直接
+        # 进入 FastMCP stdio 循环(挂起),用户无法查看 server 子命令用法。
+        if any(a in ("--help", "-h") for a in args[1:]):
+            print(
+                "用法: cw server [选项]\n"
+                "  启动 Call Warden MCP Server(默认 stdio 传输)。\n\n"
+                "选项:\n"
+                "  --transport stdio|sse   MCP 传输模式(默认 stdio)\n"
+                "  --check-imports         仅注册全部 MCP 工具并退出(发布自检,\n"
+                "                          不进入 stdio 循环、不写数据库、不下载规则)\n"
+                "  --mode daemon           以企业 daemon 模式运行(独立 Rust 进程)\n"
+                "  -h, --help              显示本帮助并退出"
+            )
+            return
         # 企业 daemon 是独立 Rust 进程，不能交给 FastMCP stdio。
         # nohup/systemd 下 stdin 可能已关闭，MCP runner 会因此抛 closed-file。
         if "--mode" in args[1:]:
@@ -136,8 +150,14 @@ def main():
     if args and args[0] == "test":
         test_name = args[1] if len(args) > 1 else ""
         if not test_name:
-            from .i18n import t
-            print(t("cli_test_usage"))
+            # 使用基于 _PKG 的动态绝对导入(与本文件其它导入一致):
+            # `python cw.py test` 以脚本方式运行时无父包,相对导入 `from .i18n`
+            # 会抛 ImportError: attempted relative import with no known parent package。
+            t = importlib.import_module(f"{_PKG}.i18n").t
+            print(t("cli_test_usage",
+                    default="用法: cw test <module> [pytest 参数]\n"
+                            "  示例: cw test test_p0_bugfixes\n"
+                            "  <module> 为 callwarden/tests/ 下的测试模块名(不含 .py)"))
             sys.exit(1)
         sys.argv = ["cw"] + args[2:]
         mod = importlib.import_module(f"{_PKG}.tests.{test_name}")

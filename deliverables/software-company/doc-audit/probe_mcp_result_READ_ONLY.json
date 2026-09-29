@@ -1,0 +1,1138 @@
+{
+  "op_filter": "READ_ONLY",
+  "counts": {
+    "PASS": 126,
+    "NEEDS_ARGS": 34,
+    "FAIL": 0,
+    "SKIP": 1
+  },
+  "results": [
+    {
+      "name": "find_evidence",
+      "rpc": "find_evidence",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_freshness_status",
+      "rpc": "get_freshness_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_gate_decision",
+      "rpc": "get_gate_decision",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_role_view",
+      "rpc": "role_view.get",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "detect_cycle",
+      "rpc": "detect_cycle",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_artifact_freshness",
+      "rpc": "get_artifact_freshness",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_dependency_edges",
+      "rpc": "get_dependency_edges",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_interface_providers",
+      "rpc": "get_interface_providers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "validate_revision_dependencies",
+      "rpc": "validate_revision_dependencies",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "check_action_identity",
+      "rpc": "check_action_identity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "check_session_separation",
+      "rpc": "check_session_separation",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_action_identity",
+      "rpc": "get_action_identity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_attestation_validity",
+      "rpc": "get_attestation_validity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "list_attestation_revocations",
+      "rpc": "list_attestation_revocations",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "assignment_show",
+      "rpc": "assignment_show",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: assignment_show 需要非空 task_id（workspace 由不可变 task_workspace_bindings 解析）"
+    },
+    {
+      "name": "lease_list_events",
+      "rpc": "lease.list_events",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "lease_status",
+      "rpc": "lease.status",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "detect_cycles",
+      "rpc": "query.detect_cycles",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "export_module_graph",
+      "rpc": "export_module_graph",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=str"
+    },
+    {
+      "name": "find_issues",
+      "rpc": "find_issues",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_call_chain_down",
+      "rpc": "query.call_chain_down",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_call_heatmap",
+      "rpc": "get_call_heatmap",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_callees",
+      "rpc": "query.callees",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: caller_name"
+    },
+    {
+      "name": "get_callers",
+      "rpc": "query.callers",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: callee_name"
+    },
+    {
+      "name": "get_comment_coverage",
+      "rpc": "get_comment_coverage",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_comment_from_version",
+      "rpc": "get_comment_from_version",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_deepest_functions",
+      "rpc": "get_deepest_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_file_history",
+      "rpc": "query.file_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_file_symbols",
+      "rpc": "query.file",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_impact",
+      "rpc": "get_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_issue_summary",
+      "rpc": "get_issue_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_module_call_stats",
+      "rpc": "query.module_call_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_orphan_symbols",
+      "rpc": "get_orphan_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_recent_changes",
+      "rpc": "get_recent_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_semgrep_findings",
+      "rpc": "query.semgrep_findings",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_semgrep_stats",
+      "rpc": "query.semgrep_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_stats",
+      "rpc": "query.stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_symbol",
+      "rpc": "query.symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_symbol_history",
+      "rpc": "get_symbol_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_symbol_location",
+      "rpc": "query.symbol_location",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: name"
+    },
+    {
+      "name": "get_test_coverage",
+      "rpc": "get_test_coverage",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_top_callers",
+      "rpc": "get_top_callers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_topological_order",
+      "rpc": "query.topological_order",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_uncommented_symbols",
+      "rpc": "query.uncommented_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "search_symbols",
+      "rpc": "query.search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "count_resolved_edges",
+      "rpc": "build_context.count_resolved_edges",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: build_context_hash"
+    },
+    {
+      "name": "get_active_build_context",
+      "rpc": "build_context.active",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: workspace_id"
+    },
+    {
+      "name": "get_build_context",
+      "rpc": "build_context.get",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: build_context_hash"
+    },
+    {
+      "name": "get_metrics",
+      "rpc": "admin.metrics_get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_resolved_edges",
+      "rpc": "build_context.resolved_edges",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: build_context_hash"
+    },
+    {
+      "name": "get_toolchain",
+      "rpc": "get_toolchain",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_workspace_toolchains",
+      "rpc": "get_workspace_toolchains",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_build_contexts",
+      "rpc": "build_context.list",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: workspace_id"
+    },
+    {
+      "name": "list_toolchains",
+      "rpc": "list_toolchains",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "compare_snapshots",
+      "rpc": "admin.snapshot_compare",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cross_repo_impact",
+      "rpc": "cross_repo_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cross_repo_summary",
+      "rpc": "cross_repo_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "diff_branches",
+      "rpc": "query.diff_branches",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: source_branch"
+    },
+    {
+      "name": "diff_callees",
+      "rpc": "query.diff_callees",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_a"
+    },
+    {
+      "name": "diff_callers",
+      "rpc": "query.diff_callers",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_a"
+    },
+    {
+      "name": "find_shared_symbols",
+      "rpc": "find_shared_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_applicable_rules",
+      "rpc": "get_applicable_rules",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_edit_history",
+      "rpc": "get_edit_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_edit_stats",
+      "rpc": "edit.stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "list_branches",
+      "rpc": "list_branches",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "lsp_check_available",
+      "rpc": "lsp_check_available",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_completion",
+      "rpc": "lsp_completion",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_definition",
+      "rpc": "lsp_definition",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_diagnostics",
+      "rpc": "lsp_diagnostics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_hover",
+      "rpc": "lsp_hover",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_references",
+      "rpc": "lsp_references",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "merge_preview",
+      "rpc": "merge_preview",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "error字段: 源分支不存在: "
+    },
+    {
+      "name": "rule_candidate_list",
+      "rpc": "rule_candidate_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "rule_list",
+      "rpc": "rule_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "find_similar_functions",
+      "rpc": "find_similar_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "gc_archive_inspect",
+      "rpc": "admin.gc_archive_inspect",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: archive_path"
+    },
+    {
+      "name": "gc_archive_list",
+      "rpc": "admin.gc_archive_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "gc_audit_get",
+      "rpc": "admin.gc_audit_get",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: audit_id"
+    },
+    {
+      "name": "gc_audit_list",
+      "rpc": "admin.gc_audit_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "gc_policy_get",
+      "rpc": "admin.gc_policy_get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "gc_retention",
+      "rpc": "admin.gc_retention",
+      "op": "READ_ONLY",
+      "verdict": "SKIP",
+      "detail": "破坏性:按策略删除历史版本"
+    },
+    {
+      "name": "get_project_dependencies",
+      "rpc": "get_project_dependencies",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_symbol_commit_history",
+      "rpc": "get_symbol_commit_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "parse_codeowners",
+      "rpc": "parse_codeowners",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "semantic_search",
+      "rpc": "semantic_search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "ask_codebase",
+      "rpc": "ask_codebase",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "blast_radius",
+      "rpc": "blast_radius",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "churn_analysis",
+      "rpc": "query.churn_analysis",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cross_layer_impact",
+      "rpc": "cross_layer_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "defect_correlation",
+      "rpc": "query.defect_correlation",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_hash"
+    },
+    {
+      "name": "defect_learn",
+      "rpc": "defect_learn",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "defect_search",
+      "rpc": "query.defect_search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "defect_stats",
+      "rpc": "defect.stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "defect_suggest_fix",
+      "rpc": "query.defect_suggest_fix",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_hash"
+    },
+    {
+      "name": "diff_to_symbol",
+      "rpc": "query.diff_to_symbol",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: diff_text"
+    },
+    {
+      "name": "evolution_frequency",
+      "rpc": "evolution_frequency",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "find_uncovered_functions",
+      "rpc": "find_uncovered_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_clone_aware_impact",
+      "rpc": "get_clone_aware_impact",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "error字段: 符号不存在: "
+    },
+    {
+      "name": "get_coverage_for_symbol",
+      "rpc": "query.coverage_for_symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_ownership_map",
+      "rpc": "get_ownership_map",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_summary",
+      "rpc": "get_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_token_savings_report",
+      "rpc": "get_token_savings_report",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_vulnerability_blast_radius",
+      "rpc": "get_vulnerability_blast_radius",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "guardrail_check_edit",
+      "rpc": "guardrail_check_edit",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "guardrail_list_rules",
+      "rpc": "guardrail_list_rules",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "guardrail_scan",
+      "rpc": "guardrail_scan",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "hotspot_evolution",
+      "rpc": "hotspot_evolution",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "project_brief",
+      "rpc": "project_brief",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "repo_map",
+      "rpc": "repo_map",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=str"
+    },
+    {
+      "name": "review_readiness",
+      "rpc": "review_readiness",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "test_impact_selection",
+      "rpc": "test_impact_selection",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "who_to_ask",
+      "rpc": "who_to_ask",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "audit_verify_chain",
+      "rpc": "audit_verify_chain",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "bootstrap_status",
+      "rpc": "bootstrap_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_clone_group_detail",
+      "rpc": "get_clone_group_detail",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "error字段: group not found: 0"
+    },
+    {
+      "name": "get_clone_group_stats",
+      "rpc": "task.clone_group_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_clone_stats",
+      "rpc": "task.clone_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_commit_tasks",
+      "rpc": "query.commit_tasks",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_defect_correlation",
+      "rpc": "query.get_defect_correlation",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_job_stats",
+      "rpc": "task.job_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_job_status",
+      "rpc": "task.job_status",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_id"
+    },
+    {
+      "name": "get_symbol_change_tasks",
+      "rpc": "get_symbol_change_tasks",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_symbol_issues",
+      "rpc": "query.issues",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_task_commits",
+      "rpc": "task.get_commits",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_task_symbol_changes",
+      "rpc": "task.get_symbol_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_test_cases",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_test_coverage_summary",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_test_stability",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_tested_functions",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "list_audit_signing_keys",
+      "rpc": "list_audit_signing_keys",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_clone_groups",
+      "rpc": "list_clone_groups",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_clones",
+      "rpc": "list_clones",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_jobs",
+      "rpc": "task.list_jobs",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "task_assignment_status",
+      "rpc": "task.assignment.status",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_governance_projection",
+      "rpc": "task.governance_projection.get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_list",
+      "rpc": "task.list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_plan_template",
+      "rpc": "task_plan_template",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=str"
+    },
+    {
+      "name": "task_quality_findings",
+      "rpc": "task.quality_findings",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_status",
+      "rpc": "task.status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_status_tree",
+      "rpc": "task.status_tree",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "wait_for_job",
+      "rpc": "task.wait_for_job",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_id"
+    },
+    {
+      "name": "task_get_role_prompt",
+      "rpc": "task.prompt.compile",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "check_file_health",
+      "rpc": "workspace.file.health",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: path_not_found: 不是目录: \\\\?\\C:\\git_work\\callwarden\\cw.py"
+    },
+    {
+      "name": "file_grep",
+      "rpc": "workspace.file.grep",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "file_list",
+      "rpc": "workspace.file.list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "file_read",
+      "rpc": "workspace.file.read",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "file_symbol_content",
+      "rpc": "workspace.file.symbol_content",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: file_path"
+    },
+    {
+      "name": "get_active_workspace",
+      "rpc": "workspace.status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_code_health_check",
+      "rpc": "query.code_health",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_code_metrics_summary",
+      "rpc": "query.metrics_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_commit_changes",
+      "rpc": "query.git_commit_changes",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: commit_hash"
+    },
+    {
+      "name": "get_complexity_hotspots",
+      "rpc": "query.complexity_hotspots",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_coupling_analysis",
+      "rpc": "query.coupling_analysis",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_function_metrics",
+      "rpc": "query.function_metrics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_git_commits",
+      "rpc": "query.git_commits",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_git_stats",
+      "rpc": "query.git_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_largest_functions",
+      "rpc": "query.largest_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_most_coupled_functions",
+      "rpc": "query.most_coupled_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_status",
+      "rpc": "query.status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_symbol_content_by_hash",
+      "rpc": "query.symbol_content_by_hash",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: content_hash"
+    },
+    {
+      "name": "list_workspaces",
+      "rpc": "workspace.list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    }
+  ]
+}

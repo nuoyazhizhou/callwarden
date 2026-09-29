@@ -1,0 +1,27 @@
+{
+  "task": "Task9-A daemon 超时根因定性",
+  "conclusion": "9 个 DAEMON_TIMEOUT 是 daemon 实例运行时状态问题(worker_status=unhealthy),非 RPC 方法代码缺陷。重启为 healthy daemon 后超时消失。",
+  "evidence": {
+    "before": {
+      "daemon_pid": 11792,
+      "worker_status": "unhealthy",
+      "symptom": "stats/task list/toolchain list/semgrep 等稳定 30.5s 超时(E_HTTP_REQUEST_TIMEOUT),串行单跑仍超时"
+    },
+    "restart_action": {
+      "kill_old": "Stop-Process 11792(runtime/current/cw-daemon.exe)",
+      "stale_manifest_issue": "kill 后 http-daemon manifest 停留旧 PID,client fail-closed E_HTTP_MANIFEST_STALE;autostart/MCP server 均无法拉起 HTTP daemon",
+      "root_cause_of_start_failure": "Start-Process 不继承会话级 CW_DAEMON_TRANSPORT,daemon bind_http 失败静默降级 pipe-only(refresh_shared_runtime.ps1 L432 注释已知)。正确启动须显式 --http-bind 127.0.0.1:6374",
+      "correct_start": "cw-daemon.exe --socket <pipe> --http-bind 127.0.0.1:6374 -> 新 PID 4660 worker_status=healthy"
+    },
+    "after": {
+      "daemon_pid": 4660,
+      "worker_status": "healthy",
+      "result": "命令不再 30.5s 超时,均 0.4s 快速返回;因 daemon 重启后 workspace snapshot 未重新发布,stats 返回 snapshot_not_ready(合理冷启动业务响应,非超时非缺陷);workspace list rc=0 正常"
+    }
+  },
+  "residual_findings": [
+    "cw status 在 snapshot 未就绪时报 'workspace' KeyError,而 stats 报清晰 snapshot_not_ready——_handle_status 未健壮处理 daemon error 信封(CLI 层健壮性,snapshot 就绪后需复核是否仍现)",
+    "稳定性观察:daemon worker 会进入 unhealthy 卡死态,导致核心只读命令(status/stats/task list)全超时;且 kill 后无法自动拉起 HTTP daemon(stale manifest fail-closed + autostart 不带 --http-bind)——运维/自愈缺陷,非本审计文档-实现范围,建议单独立项"
+  ],
+  "verdict": "DAEMON_TIMEOUT 9 项 = 运行时状态问题,不改代码;记录为 daemon 稳定性观察项。cw status 'workspace' 归入代码健壮性待复核。"
+}

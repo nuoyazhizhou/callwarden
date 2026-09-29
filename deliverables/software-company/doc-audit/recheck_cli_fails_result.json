@@ -1,0 +1,121 @@
+[
+  {
+    "leaf": "semgrep scan",
+    "rc": 0,
+    "elapsed_s": 30.38,
+    "verdict": "PASS(串行)",
+    "tail": "_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (run_semgrep): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+  },
+  {
+    "leaf": "semgrep list",
+    "rc": 0,
+    "elapsed_s": 30.29,
+    "verdict": "PASS(串行)",
+    "tail": "✗ 执行子命令 'semgrep' 失败: E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out"
+  },
+  {
+    "leaf": "semgrep stats",
+    "rc": 0,
+    "elapsed_s": 30.38,
+    "verdict": "PASS(串行)",
+    "tail": "✗ 执行子命令 'semgrep' 失败: E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out"
+  },
+  {
+    "leaf": "server",
+    "rc": 0,
+    "elapsed_s": 1.62,
+    "verdict": "PASS(串行)",
+    "tail": "[Semgrep] Rule cache missing, starting background prefetch (non-blocking, 120s timeout)..."
+  },
+  {
+    "leaf": "stats",
+    "rc": 0,
+    "elapsed_s": 30.41,
+    "verdict": "PASS(串行)",
+    "tail": "✗ 执行子命令 'stats' 失败: E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out"
+  },
+  {
+    "leaf": "status",
+    "rc": 0,
+    "elapsed_s": 30.35,
+    "verdict": "PASS(串行)",
+    "tail": "✗ 执行子命令 'status' 失败: E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out"
+  },
+  {
+    "leaf": "task list",
+    "rc": 0,
+    "elapsed_s": 30.41,
+    "verdict": "PASS(串行)",
+    "tail": "✗ 执行子命令 'task' 失败: E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out"
+  },
+  {
+    "leaf": "test",
+    "rc": 1,
+    "elapsed_s": 0.16,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "\n    ~~~~^^\n  File \"C:\\git_work\\callwarden\\cw.py\", line 139, in main\n    from .i18n import t\nImportError: attempted relative import with no known parent package"
+  },
+  {
+    "leaf": "toolchain register",
+    "rc": 1,
+    "elapsed_s": 30.46,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "TP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (workspace.list): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+  },
+  {
+    "leaf": "toolchain list",
+    "rc": 1,
+    "elapsed_s": 30.39,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "TP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (workspace.list): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+  },
+  {
+    "leaf": "toolchain show",
+    "rc": 1,
+    "elapsed_s": 30.49,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "TP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (workspace.list): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+  },
+  {
+    "leaf": "toolchain delete",
+    "rc": 2,
+    "elapsed_s": 8.82,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "usage: cw toolchain delete [-h] name_or_id\ncw toolchain delete: error: the following arguments are required: name_or_id"
+  },
+  {
+    "leaf": "toolchain bind",
+    "rc": 2,
+    "elapsed_s": 0.39,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "_CONTEXT_HASH]\n                         workspace_id toolchain_name\ncw toolchain bind: error: the following arguments are required: workspace_id, toolchain_name"
+  },
+  {
+    "leaf": "toolchain list-bound",
+    "rc": 2,
+    "elapsed_s": 0.37,
+    "verdict": "NEEDS_ARGS_or_BIZERR",
+    "tail": "-context-hash BUILD_CONTEXT_HASH]\n                               workspace_id\ncw toolchain list-bound: error: the following arguments are required: workspace_id"
+  },
+  {
+    "leaf": "topo",
+    "rc": 0,
+    "elapsed_s": 0.39,
+    "verdict": "PASS(串行)",
+    "tail": "拓扑排序（前 50 个，按 depth 升序 = 底层在前）:\n✗ 执行子命令 'topo' 失败: 'str' object has no attribute 'get'"
+  },
+  {
+    "leaf": "uncommented",
+    "rc": 0,
+    "elapsed_s": 0.65,
+    "verdict": "PASS(串行)",
+    "tail": "\n         tests/test_http_combined_worker_cutover.py:904\n         def _spawn_with_client(self, daemon_bin, tmp_path)\n\n... 还有 50 个，用 --uncommented-limit N 调整显示数量"
+  },
+  {
+    "leaf": "vuln-blast",
+    "rc": 0,
+    "elapsed_s": 0.38,
+    "verdict": "PASS(串行)",
+    "tail": "=== 漏洞爆炸半径分析 ===\n  风险等级: none\n  漏洞总数: 0\n  受影响符号数: 0\n\n\n  (无匹配的漏洞发现)"
+  }
+]

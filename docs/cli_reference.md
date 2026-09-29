@@ -11,21 +11,21 @@ Call Warden CLI 提供两种命令风格，遵循"subcommand 为主，--flag dep
 
 Call Warden 把 150+ 个 CLI 命令按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand 与（兼容期保留的）`--flag`。详细分组设计见 `.cli_audit.md` §2。
 
-| # | 主分类 | 涵盖范围 | 主要 subcommand | 等价 --flag（deprecated） |
-|---|--------|----------|-----------------|--------------------------|
-| 1 | **Workspace & Database** | 工作区管理、数据库刷新、状态概览、watcher、分支感知 | `workspace list/register/set/delete/generate-ignore`、`refresh --all/--watch/<paths>`、`stats`、`status` | `--list-workspaces`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--refresh-all`、`--refresh`、`--watch`、`--stats`、`--status` |
-| 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引 | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status` | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
-| 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | `callers`、`callees`、`call-chain`、`impact`、`topo` | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap` |
-| 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard` | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented` |
-| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、派工查询、Role Prompt 编译、capture-diff、质量审查、拆分 | `task create/next/next-action/prompt/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容） |
-| 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log` | — |
-| 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁 | `audit verify/rotate-key/keys`、`bootstrap status` | — |
-| 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | `git import/log/show/stats`、`symbol-history` | `--git-import`、`--git-log`、`--git-show`、`--git-stats` |
-| 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联 | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects` | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary` |
-| 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）| `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
-| 11 | **GC** | 归档、恢复、清理、策略、备份、审计、孤儿库清理、多库迁移 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show`、`gc db-cleanup`、`gc db-migrate-single` | — |
-| 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置 | `doctor`、`install`、`install-agent`、`install-hook`、`setup` | — |
-| 13 | **Migration Rollback** | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关 | `rollback register/show/config/set/is-rolled-back` | — |
+| #   | 主分类                    | 涵盖范围                                                                                    | 主要 subcommand                                                                                                                                                                                                            | 等价 --flag（deprecated）                                                                                                                                                                                                          |
+| --- | ------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Workspace & Database**  | 工作区管理、数据库刷新、状态概览、watcher、分支感知                                         | `workspace list/register/set/delete/generate-ignore`、`refresh --all/--watch/<paths>`、`stats`、`status`                                                                                                                   | `--list-workspaces`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--refresh-all`、`--refresh`、`--watch`、`--stats`、`--status`                                                                               |
+| 2   | **Query & Search**        | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引                       | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status`                                                                                                                                                  | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
+| 3   | **Call Chain Analysis**   | 调用链、拓扑、循环、孤儿、模块图、热力图                                                    | `callers`、`callees`、`call-chain`、`impact`、`topo`                                                                                                                                                                       | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap`                                   |
+| 4   | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告                                | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard`                                          | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented`                                                                                                 |
+| 5   | **Task Orchestration**    | 任务创建/认领/上报/回滚/审批/关闭、派工查询、Role Prompt 编译、capture-diff、质量审查、拆分 | `task create/next/next-action/prompt/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容）                                                                                                                                                                                               |
+| 6   | **Agent Rule Memory**     | 规则候选/审核/生效/同步/提取/清理/种子化                                                    | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log`                                                                               | —                                                                                                                                                                                                                                  |
+| 7   | **Audit & Bootstrap**     | 审计链验证、密钥轮换、自举健康、检查门禁                                                    | `audit verify/rotate-key/keys`、`bootstrap status`                                                                                                                                                                         | —                                                                                                                                                                                                                                  |
+| 8   | **Git Integration**       | git 历史、commit、变更、blame、分支感知                                                     | `git import/log/show/stats`、`symbol-history`                                                                                                                                                                              | `--git-import`、`--git-log`、`--git-show`、`--git-stats`                                                                                                                                                                           |
+| 9   | **Semgrep & Defects**     | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联               | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects`                                                                                     | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary`                                                                                                                                           |
+| 10  | **Coverage & Ownership**  | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射                      | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）                                                                                                              | `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map`                                                                                                                        |
+| 11  | **GC**                    | 归档、恢复、清理、策略、备份、审计、孤儿库清理、多库迁移                                    | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show`、`gc db-cleanup`、`gc db-migrate-single`                                                   | —                                                                                                                                                                                                                                  |
+| 12  | **Diagnostics**           | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置              | `doctor`、`install`、`install-agent`、`install-hook`、`setup`                                                                                                                                                              | —                                                                                                                                                                                                                                  |
+| 13  | **Migration Rollback**    | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关  | `rollback register/show/config/set/is-rolled-back`                                                                                                                                                                         | —                                                                                                                                                                                                                                  |
 
 > **注**：详细 subcommand 用法见下文章节；deprecated `--flag` 的完整映射见本文档末尾「Deprecated --flag 清单」章节。
 
@@ -38,12 +38,32 @@ Call Warden 把 150+ 个 CLI 命令按功能聚合为 13 个主分类，每个�
 ```bash
 cw server
 cw server --check-imports
+cw server --help
 ```
 
 `cw server` 启动 stdio MCP Server。`--check-imports` 仅创建服务器并注册全部 MCP 工具，
 随后立即退出；它不会同步 AGENTS.md、预下载 Semgrep 规则或进入 stdio 循环。发布流水线
 用该模式验证冻结包中的 FastMCP 动态依赖，成功时输出
-`Call Warden MCP imports OK`。
+`Call Warden MCP imports OK`。`cw server --help` 打印用法后立即退出（不会进入 stdio 循环挂起）。
+
+---
+
+## 测试命令
+
+### `test <MODULE>`：运行测试模块
+
+运行 `callwarden/tests/` 下的某个测试模块（pytest 风格），额外参数透传给 pytest。
+
+```bash
+cw test test_p0_bugfixes                 # 运行 tests/test_p0_bugfixes.py
+cw test test_p0_bugfixes -k some_case    # 透传 pytest 参数
+cw test                                  # 不带 <MODULE> 时打印用法并退出（rc=1）
+```
+
+| 参数       | 说明                                             |
+| ---------- | ------------------------------------------------ |
+| `<MODULE>` | `callwarden/tests/` 下的测试模块名（不含 `.py`） |
+| 其余参数   | 原样透传给 `pytest`（如 `-k`、`-v`、`-x`）       |
 
 ---
 
@@ -273,24 +293,24 @@ cw install --check
 
 #### 命令行参数
 
-| 参数 | 说明 |
-|------|------|
-| `--all` | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / numpy；sqlite-vec 当前未接入生产代码） |
-| `--lang <LANG...>` | 仅安装指定语言的 grammar（空格分隔多个语言名） |
-| `--check` | 仅检查依赖状态，不安装 |
-| `--hooks` | 安装 Git hooks 到 `.git/hooks`（pre-commit + pre-push + post-commit 三种） |
-| `--force-hooks` | 强制覆盖已存在的非 Call Warden hooks |
-| `--no-post-commit` | 跳过安装 post-commit hook（仅装 pre-commit + pre-push） |
-| `--no-optional` | 显式跳过可选依赖（默认行为） |
-| `--verbose` | 显示详细安装日志（pip 输出） |
+| 参数               | 说明                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| `--all`            | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / numpy；sqlite-vec 当前未接入生产代码） |
+| `--lang <LANG...>` | 仅安装指定语言的 grammar（空格分隔多个语言名）                                                     |
+| `--check`          | 仅检查依赖状态，不安装                                                                             |
+| `--hooks`          | 安装 Git hooks 到 `.git/hooks`（pre-commit + pre-push + post-commit 三种）                         |
+| `--force-hooks`    | 强制覆盖已存在的非 Call Warden hooks                                                               |
+| `--no-post-commit` | 跳过安装 post-commit hook（仅装 pre-commit + pre-push）                                            |
+| `--no-optional`    | 显式跳过可选依赖（默认行为）                                                                       |
+| `--verbose`        | 显示详细安装日志（pip 输出）                                                                       |
 
 #### 退出码
 
-| 退出码 | 含义 |
-|--------|------|
-| 0 | 全部成功 |
-| 1 | 部分失败（查看输出中的 `[失败]` 行） |
-| 2 | pip 不可用或网络错误 |
+| 退出码 | 含义                                 |
+| ------ | ------------------------------------ |
+| 0      | 全部成功                             |
+| 1      | 部分失败（查看输出中的 `[失败]` 行） |
+| 2      | pip 不可用或网络错误                 |
 
 #### 设计原则
 
@@ -312,10 +332,10 @@ cw install --hooks
 
 #### 三种 hook 的职责
 
-| Hook | 触发时机 | 作用 | 依赖 |
-|------|---------|------|------|
-| `pre-commit` | `git commit` 前 | 刷新代码图谱（`cw --refresh-all`），确保数据库与代码同步 | 无 |
-| `pre-push` | `git push` 前 | 运行 check-gate 门禁（需 `export CALLWARDEN_TASK_ID=<T-xxx>`） | 可选（未设置则跳过） |
+| Hook          | 触发时机        | 作用                                                            | 依赖                                                |
+| ------------- | --------------- | --------------------------------------------------------------- | --------------------------------------------------- |
+| `pre-commit`  | `git commit` 前 | 刷新代码图谱（`cw --refresh-all`），确保数据库与代码同步        | 无                                                  |
+| `pre-push`    | `git push` 前   | 运行 check-gate 门禁（需 `export CALLWARDEN_TASK_ID=<T-xxx>`）  | 可选（未设置则跳过）                                |
 | `post-commit` | `git commit` 后 | 自动捕获变更到 task/audit 闭环（`cw task capture-diff --auto`） | active_task 持久化字段（Schema v30+，无需环境变量） |
 
 #### --auto 模式说明
@@ -385,18 +405,18 @@ cw install-hook post-commit --uninstall
 
 #### 命令行参数
 
-| 参数 | 说明 |
-|------|------|
-| `hook` | Hook 类型（目前仅支持 `post-commit`） |
+| 参数             | 说明                                                                          |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `hook`           | Hook 类型（目前仅支持 `post-commit`）                                         |
 | `--task-id <ID>` | 硬编码 task_id 到 hook（不指定时使用 `--auto` 模式自动检测 in_progress 任务） |
-| `--uninstall` | 卸载 hook（仅删除 Call Warden 生成的 hook，保护用户自定义 hook） |
+| `--uninstall`    | 卸载 hook（仅删除 Call Warden 生成的 hook，保护用户自定义 hook）              |
 
 #### 退出码
 
-| 退出码 | 含义 |
-|--------|------|
-| 0 | 安装/卸载成功 |
-| 1 | 安装/卸载失败（如不在 git 仓库内） |
+| 退出码 | 含义                               |
+| ------ | ---------------------------------- |
+| 0      | 安装/卸载成功                      |
+| 1      | 安装/卸载失败（如不在 git 仓库内） |
 
 #### fail-soft 设计
 
@@ -429,31 +449,31 @@ cw install-agent all --force
 
 **支持的 Agent（23 个）**：
 
-| Tier | Agent | 项目级 MCP 配置 | 全局 MCP 配置 | 格式 | 额外文件 |
-|------|-------|----------------|-------------|------|--------|
-| T1 | claude-code | `.mcp.json` | `~/.claude.json` | JSON mcpServers | settings.json hooks + CALLWARDEN.md |
-| T1 | claude-desktop | N/A | `claude_desktop_config.json` | JSON mcpServers | N/A |
-| T1 | cursor | `.cursor/mcp.json` | `~/.cursor/mcp.json` | JSON mcpServers | `.cursor/rules/callwarden.mdc` |
-| T1 | trae | `.trae/mcp.json` | `~/.trae/mcp.json`（Win: `TRAE SOLO CN\User\mcp.json`） | JSON mcpServers | CALLWARDEN.md |
-| T1 | qoder | `.qoder/mcp.json` | `~/.mcp.json` | JSON mcpServers | N/A |
-| T1 | antigravity | `.antigravity/mcp_config.json` | `~/.gemini/config/mcp_config.json` | JSON mcpServers | `callwarden.md` |
-| T1 | gemini-cli | `.gemini/settings.json` | `~/.gemini/settings.json` | JSON mcpServers | N/A |
-| T1 | codex | `.codex/.mcp.json` | `~/.codex/config.toml` | **TOML** `[mcp_servers]` | 完整插件包 |
-| T2 | windsurf | `.windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` | JSON mcpServers | `callwarden.md` |
-| T2 | opencode | `.opencode/opencode.json` | `~/.config/opencode/opencode.json` | JSON mcpServers | N/A |
-| T2 | jetbrains-junie | `.junie/mcp/mcp.json` | N/A（仅项目级） | JSON mcpServers | N/A |
-| T2 | cline | `.cline/mcp.json` | `~/.cline/mcp.json` | JSON mcpServers | N/A |
-| T2 | cline-cli | `.cline/mcp.json` | `~/.cline/mcp.json` | JSON json_mcp_servers | N/A |
-| T2 | devin-cli | `.devin/config.json` | `~/.config/devin/config.json` | JSON json_mcp_servers | N/A |
-| T2 | kimi-code | `.kimi-code/mcp.json` | `~/.kimi-code/mcp.json`（启动加 `--mcp-config`） | JSON mcpServers | N/A |
-| T2 | codebuddy-cli | `.codebuddy/mcp.json` | `~/.codebuddy/mcp.json` | JSON mcpServers | N/A |
-| T2 | deep-code | `.deepcode/mcp.json` | `~/.deepcode/mcp.json` | JSON mcpServers | N/A |
-| T2 | kiro (AWS) | `.kiro/mcp.json` | `~/.kiro/mcp.json` | JSON mcpServers | `callwarden.md` |
-| T2 | comate | `.comate/mcp.json` | `~/.comate/mcp.json` | JSON mcpServers | N/A |
-| T3 | zed | `.zed/settings.json` | `~/.config/zed/settings.json`（Win: `AppData/Roaming/Zed/`） | JSON **context_servers** | N/A |
-| T3 | pearai | `.pearai/mcp.json` | `~/.pearai/mcp.json` | JSON mcpServers（兼容 Cursor） | N/A |
-| T3 | grok-build | `.grok/mcp.json` | `~/.grok/mcp.json` | JSON json_mcp_servers | N/A |
-| T3 | zcode | `.zcode/mcp.json` | `~/.zcode/mcp.json` | JSON json_mcp_servers | N/A |
+| Tier | Agent           | 项目级 MCP 配置                | 全局 MCP 配置                                                | 格式                           | 额外文件                            |
+| ---- | --------------- | ------------------------------ | ------------------------------------------------------------ | ------------------------------ | ----------------------------------- |
+| T1   | claude-code     | `.mcp.json`                    | `~/.claude.json`                                             | JSON mcpServers                | settings.json hooks + CALLWARDEN.md |
+| T1   | claude-desktop  | N/A                            | `claude_desktop_config.json`                                 | JSON mcpServers                | N/A                                 |
+| T1   | cursor          | `.cursor/mcp.json`             | `~/.cursor/mcp.json`                                         | JSON mcpServers                | `.cursor/rules/callwarden.mdc`      |
+| T1   | trae            | `.trae/mcp.json`               | `~/.trae/mcp.json`（Win: `TRAE SOLO CN\User\mcp.json`）      | JSON mcpServers                | CALLWARDEN.md                       |
+| T1   | qoder           | `.qoder/mcp.json`              | `~/.mcp.json`                                                | JSON mcpServers                | N/A                                 |
+| T1   | antigravity     | `.antigravity/mcp_config.json` | `~/.gemini/config/mcp_config.json`                           | JSON mcpServers                | `callwarden.md`                     |
+| T1   | gemini-cli      | `.gemini/settings.json`        | `~/.gemini/settings.json`                                    | JSON mcpServers                | N/A                                 |
+| T1   | codex           | `.codex/.mcp.json`             | `~/.codex/config.toml`                                       | **TOML** `[mcp_servers]`       | 完整插件包                          |
+| T2   | windsurf        | `.windsurf/mcp_config.json`    | `~/.codeium/windsurf/mcp_config.json`                        | JSON mcpServers                | `callwarden.md`                     |
+| T2   | opencode        | `.opencode/opencode.json`      | `~/.config/opencode/opencode.json`                           | JSON mcpServers                | N/A                                 |
+| T2   | jetbrains-junie | `.junie/mcp/mcp.json`          | N/A（仅项目级）                                              | JSON mcpServers                | N/A                                 |
+| T2   | cline           | `.cline/mcp.json`              | `~/.cline/mcp.json`                                          | JSON mcpServers                | N/A                                 |
+| T2   | cline-cli       | `.cline/mcp.json`              | `~/.cline/mcp.json`                                          | JSON json_mcp_servers          | N/A                                 |
+| T2   | devin-cli       | `.devin/config.json`           | `~/.config/devin/config.json`                                | JSON json_mcp_servers          | N/A                                 |
+| T2   | kimi-code       | `.kimi-code/mcp.json`          | `~/.kimi-code/mcp.json`（启动加 `--mcp-config`）             | JSON mcpServers                | N/A                                 |
+| T2   | codebuddy-cli   | `.codebuddy/mcp.json`          | `~/.codebuddy/mcp.json`                                      | JSON mcpServers                | N/A                                 |
+| T2   | deep-code       | `.deepcode/mcp.json`           | `~/.deepcode/mcp.json`                                       | JSON mcpServers                | N/A                                 |
+| T2   | kiro (AWS)      | `.kiro/mcp.json`               | `~/.kiro/mcp.json`                                           | JSON mcpServers                | `callwarden.md`                     |
+| T2   | comate          | `.comate/mcp.json`             | `~/.comate/mcp.json`                                         | JSON mcpServers                | N/A                                 |
+| T3   | zed             | `.zed/settings.json`           | `~/.config/zed/settings.json`（Win: `AppData/Roaming/Zed/`） | JSON **context_servers**       | N/A                                 |
+| T3   | pearai          | `.pearai/mcp.json`             | `~/.pearai/mcp.json`                                         | JSON mcpServers（兼容 Cursor） | N/A                                 |
+| T3   | grok-build      | `.grok/mcp.json`               | `~/.grok/mcp.json`                                           | JSON json_mcp_servers          | N/A                                 |
+| T3   | zcode           | `.zcode/mcp.json`              | `~/.zcode/mcp.json`                                          | JSON json_mcp_servers          | N/A                                 |
 
 > **市场发布类**（不可脚本写入）：Comate AI IDE（百度 MCP World）、CodeBuddy IDE（IDE 设置面板）、华为云码道（IDE 配置，公测中）— 需在对应平台手动发布。
 
@@ -487,9 +507,9 @@ cw setup --force
 
 **参数**：
 
-| 参数 | 说明 |
-|------|------|
-| `--force` | 强制重新配置（删除已完成标记文件，重新写入配置） |
+| 参数        | 说明                                             |
+| ----------- | ------------------------------------------------ |
+| `--force`   | 强制重新配置（删除已完成标记文件，重新写入配置） |
 | `--dry-run` | 仅探测不写入（显示检测结果但不修改任何配置文件） |
 
 **输出示例**：
@@ -622,11 +642,35 @@ cw --search "User" --search-kind class
 cw --search "handle" --search-limit 20
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--search <QUERY>` | 搜索关键词（模糊匹配） |
+| 参数                   | 说明                                                  |
+| ---------------------- | ----------------------------------------------------- |
+| `--search <QUERY>`     | 搜索关键词（模糊匹配）                                |
 | `--search-kind <KIND>` | 类型过滤：fn/method/class/struct/enum/trait/interface |
-| `--search-limit <N>` | 返回数量（默认 50） |
+| `--search-limit <N>`   | 返回数量（默认 50）                                   |
+
+### `grep <PATTERN...>`：带符号上下文的文本搜索
+
+在工作区内做文本搜索，并为每个命中行附加符号上下文（`file:line [in fn xxx] content`）。
+底层是 ripgrep + `find_symbols_at_lines` 组合，能回答"这行代码在哪个函数里"，是 `grep`/`rg`
+做不到的。默认只显示落在符号内部的命中（过滤掉 import/注释等无符号行）。
+
+```bash
+cw grep "parse_file"
+cw grep parse_file MP_THRESHOLD          # 多关键词 = AND（同一行都命中）
+cw grep "import time" --fixed            # 固定字符串（rg -F），不作正则
+cw grep "TODO" --include-all             # 含符号外的命中（imports/docs/comments）
+cw grep "handle" --kind fn --limit 50    # 仅 fn 内命中，最多 50 条
+cw grep "config" --path src/             # 限定搜索路径
+```
+
+| 参数            | 说明                                                                     |
+| --------------- | ------------------------------------------------------------------------ |
+| `patterns`      | 一个或多个搜索模式；多个 = AND（须在同一行全部命中）；加引号视为单个模式 |
+| `--fixed`       | 按固定字符串处理（等价 `rg -F`），不解析为正则                           |
+| `--limit <N>`   | 最大命中数（默认 200，在符号过滤后应用）                                 |
+| `--path <PATH>` | 搜索路径（默认工作区根）                                                 |
+| `--include-all` | 包含符号外命中（imports/docs/comments）；默认只显示符号内命中            |
+| `--kind <KIND>` | 仅显示该类型符号内的命中（fn/class/...）                                 |
 
 ### `--symbol <QN>`：符号详情
 
@@ -762,11 +806,11 @@ cw vuln-blast --finding-id 42
 cw vuln-blast --severity ERROR --depth 5
 ```
 
-| 参数 | 说明 |
-|------|------|
+| 参数               | 说明                                    |
+| ------------------ | --------------------------------------- |
 | `--finding-id <N>` | 指定 Semgrep finding ID（默认扫描全部） |
-| `--severity <SEV>` | 严重度过滤：ERROR/WARN/INFO |
-| `--depth <N>` | 调用图反向遍历深度（默认 3） |
+| `--severity <SEV>` | 严重度过滤：ERROR/WARN/INFO             |
+| `--depth <N>`      | 调用图反向遍历深度（默认 3）            |
 
 将 Semgrep findings 与调用图结合，分析漏洞能影响多少下游调用方。返回风险等级 + 每个漏洞的影响树。
 
@@ -808,17 +852,17 @@ cw semgrep scan --incremental --base develop --head HEAD
 cw semgrep scan --incremental --config p/security
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--semgrep [PATH...]` | 扫描路径（为空则扫描整个工作区） |
-| `--semgrep-config <CONFIG>` | 规则配置（默认 `p/default`） |
-| `--semgrep-scan-lang <LANG...>` | 限制语言 |
-| `--semgrep-timeout <N>` | 超时秒数（默认 180） |
-| `--semgrep-quick` | 快速汇总模式 |
-| `--semgrep-save` | 扫描结果存入数据库 |
-| `--incremental` | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
-| `--base <BRANCH>` | 增量扫描基准分支（默认 `main`，A14） |
-| `--head <REF>` | 增量扫描目标提交（默认 `HEAD`，A14） |
+| 参数                            | 说明                                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `--semgrep [PATH...]`           | 扫描路径（为空则扫描整个工作区）                                                          |
+| `--semgrep-config <CONFIG>`     | 规则配置（默认 `p/default`）                                                              |
+| `--semgrep-scan-lang <LANG...>` | 限制语言                                                                                  |
+| `--semgrep-timeout <N>`         | 超时秒数（默认 180）                                                                      |
+| `--semgrep-quick`               | 快速汇总模式                                                                              |
+| `--semgrep-save`                | 扫描结果存入数据库                                                                        |
+| `--incremental`                 | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
+| `--base <BRANCH>`               | 增量扫描基准分支（默认 `main`，A14）                                                      |
+| `--head <REF>`                  | 增量扫描目标提交（默认 `HEAD`，A14）                                                      |
 
 ### `--semgrep-stats` / `--semgrep-list`
 
@@ -1435,10 +1479,10 @@ cw audit rotate-key --key-id key-2026-07 --secret "my-secret-string"
 
 **参数**：
 
-| 参数 | 必填 | 默认 | 说明 |
-| ---- | ---- | ---- | ---- |
-| `--key-id` | 是 | - | 新密钥标识（唯一，如 `key-2026-07`） |
-| `--secret` | 否 | 自动生成 | 新密钥内容；省略时自动生成 32 字节随机密钥（hex 编码，64 字符） |
+| 参数       | 必填 | 默认     | 说明                                                            |
+| ---------- | ---- | -------- | --------------------------------------------------------------- |
+| `--key-id` | 是   | -        | 新密钥标识（唯一，如 `key-2026-07`）                            |
+| `--secret` | 否   | 自动生成 | 新密钥内容；省略时自动生成 32 字节随机密钥（hex 编码，64 字符） |
 
 **输出**：
 - 新密钥 ID
@@ -1465,13 +1509,13 @@ cw audit keys
 
 **Schema v29** 新增 `audit_key_rotations` 表，记录每次密钥轮换：
 
-| 字段 | 类型 | 说明 |
-| ---- | ---- | ---- |
-| `id` | INTEGER PK | 自增主键 |
-| `key_id` | TEXT UNIQUE | 密钥标识（如 `key-2026-07`） |
-| `key_secret` | TEXT | 密钥内容（用于 HMAC 计算） |
-| `rotated_at` | REAL | 轮换时间戳 |
-| `is_active` | INTEGER | 1=当前活跃，0=已停用 |
+| 字段         | 类型        | 说明                         |
+| ------------ | ----------- | ---------------------------- |
+| `id`         | INTEGER PK  | 自增主键                     |
+| `key_id`     | TEXT UNIQUE | 密钥标识（如 `key-2026-07`） |
+| `key_secret` | TEXT        | 密钥内容（用于 HMAC 计算）   |
+| `rotated_at` | REAL        | 轮换时间戳                   |
+| `is_active`  | INTEGER     | 1=当前活跃，0=已停用         |
 
 **密钥查找优先级**（`_get_active_signing_key`）：
 1. `audit_key_rotations` 表中 `is_active=1` 的记录
@@ -1739,11 +1783,11 @@ cw clone clear                              # 清空检测结果
 
 #### 克隆类型
 
-| 类型 | 说明 | 检测方法 |
-|------|------|---------|
-| Type-1 | 完全相同（除空白/注释）| content_hash 完全相同 |
-| Type-2 | 重命名克隆（token 序列相同）| token 归一化后相同 |
-| Type-3 | 微调克隆（添加/删除/修改语句）| Jaccard 相似度 ≥ 阈值 |
+| 类型   | 说明                           | 检测方法              |
+| ------ | ------------------------------ | --------------------- |
+| Type-1 | 完全相同（除空白/注释）        | content_hash 完全相同 |
+| Type-2 | 重命名克隆（token 序列相同）   | token 归一化后相同    |
+| Type-3 | 微调克隆（添加/删除/修改语句） | Jaccard 相似度 ≥ 阈值 |
 
 参数：
 - `detect`：`--min-lines <N>`（最小行数，默认 3）/ `--similarity <F>`（相似度阈值 0-1，默认 0.7）
@@ -1962,13 +2006,13 @@ cw rule seed-bootstrap --apply
 
 **内置规则清单**：
 
-| ID | severity | scope | 说明 |
-|----|----------|-------|------|
-| `AR-bootstrap-i18n` | warning | `{}` (global) | 用户可见输出必须通过 i18n.t() |
-| `AR-bootstrap-refresh-before-commit` | warning | `{actions:[commit]}` | git commit 前必须 `cw --refresh-all` |
-| `AR-bootstrap-task-split` | info | `{actions:[task_create]}` | 3+ 文件或 5+ 步骤必须 task_split |
-| `AR-bootstrap-completion-review` | warning | `{actions:[task_report]}` | task_report 前必须 run_task_completion_review |
-| `AR-bootstrap-capture-diff` | info | `{actions:[task_report]}` | task_report 前建议 task_capture_diff 验证磁盘 |
+| ID                                   | severity | scope                     | 说明                                          |
+| ------------------------------------ | -------- | ------------------------- | --------------------------------------------- |
+| `AR-bootstrap-i18n`                  | warning  | `{}` (global)             | 用户可见输出必须通过 i18n.t()                 |
+| `AR-bootstrap-refresh-before-commit` | warning  | `{actions:[commit]}`      | git commit 前必须 `cw --refresh-all`          |
+| `AR-bootstrap-task-split`            | info     | `{actions:[task_create]}` | 3+ 文件或 5+ 步骤必须 task_split              |
+| `AR-bootstrap-completion-review`     | warning  | `{actions:[task_report]}` | task_report 前必须 run_task_completion_review |
+| `AR-bootstrap-capture-diff`          | info     | `{actions:[task_report]}` | task_report 前建议 task_capture_diff 验证磁盘 |
 
 **输出**：
 - `total` / `created` / `updated` / `skipped` 计数
@@ -1999,11 +2043,11 @@ cw rule cleanup-sync-log --apply
 
 **命令行参数**：
 
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `--older-than <DAYS>` | 90 | 超过多少天的记录进入候选 |
-| `--keep-latest <N>` | 100 | 保留最近 N 条记录不删除 |
-| `--apply` | false | 实际执行删除（默认 dry-run，只预估） |
+| 参数                  | 默认  | 说明                                 |
+| --------------------- | ----- | ------------------------------------ |
+| `--older-than <DAYS>` | 90    | 超过多少天的记录进入候选             |
+| `--keep-latest <N>`   | 100   | 保留最近 N 条记录不删除              |
+| `--apply`             | false | 实际执行删除（默认 dry-run，只预估） |
 
 **输出**：
 - dry-run / apply 标题（含 `older_than` / `keep_latest` 参数回显）
@@ -2165,12 +2209,12 @@ cw git check-task
 cw git check-push <local_ref> <local_sha> <remote_ref> <remote_sha>
 ```
 
-| 参数          | 说明                |
-|---------------|---------------------|
-| `<local_ref>` | 本地引用名          |
-| `<local_sha>` | 本地 commit SHA     |
-| `<remote_ref>`| 远程引用名          |
-| `<remote_sha>`| 远程 commit SHA     |
+| 参数           | 说明            |
+| -------------- | --------------- |
+| `<local_ref>`  | 本地引用名      |
+| `<local_sha>`  | 本地 commit SHA |
+| `<remote_ref>` | 远程引用名      |
+| `<remote_sha>` | 远程 commit SHA |
 
 > **软门禁**：仅记录到 `destructive_operations` 表不阻断 push，确保不影响 git push 正常流程。
 
@@ -2182,10 +2226,10 @@ cw git check-push <local_ref> <local_sha> <remote_ref> <remote_sha>
 cw git destructive-log [limit] [--type <TYPE>]
 ```
 
-| 参数/选项      | 说明                                              |
-|----------------|---------------------------------------------------|
-| `[limit]`      | 返回条目上限，默认 20                              |
-| `--type <TYPE>`| 按操作类型过滤（如 `force_push`）                  |
+| 参数/选项       | 说明                              |
+| --------------- | --------------------------------- |
+| `[limit]`       | 返回条目上限，默认 20             |
+| `--type <TYPE>` | 按操作类型过滤（如 `force_push`） |
 
 ```bash
 cw git destructive-log              # 最近 20 条
@@ -2588,97 +2632,97 @@ Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecat
 > **使用 `--flag` 时的行为**：会先打印一行 `deprecated` 警告，然后正常执行原逻辑，不影响向后兼容。
 > **迁移建议**：新代码、脚本、CI 配置应直接使用推荐的 subcommand；`--flag` 将在未来版本移除。
 
-| # | Deprecated `--flag` | 推荐 subcommand | 主分类 |
-|---|---------------------|-----------------|--------|
-| 1 | `--brief` | `cw brief` | 2. Query & Search |
-| 2 | `--call-chain` | `cw call-chain <QUALIFIED_NAME>` | 3. Call Chain Analysis |
-| 3 | `--call-heatmap` | `cw call-chain --heatmap` | 2. Query & Search |
-| 4 | `--callees` | `cw callees <NAME>` | 3. Call Chain Analysis |
-| 5 | `--callers` | `cw callers <NAME>` | 3. Call Chain Analysis |
-| 6 | `--changes` | `cw file changes [SINCE]` | 2. Query & Search |
-| 7 | `--comment-coverage` | `cw comment-coverage` | 4. Code Health & Metrics |
-| 8 | `--complexity` | `cw complexity [N]` | 4. Code Health & Metrics |
-| 9 | `--coupled-fns` | `cw coupled-fns [N]` | 4. Code Health & Metrics |
-| 10 | `--coupling` | `cw coupling` | 4. Code Health & Metrics |
-| 11 | `--coverage-fn` | `cw coverage fn <NAME>` | 10. Coverage & Ownership |
-| 12 | `--coverage-import` | `cw coverage import <FILE>` | 10. Coverage & Ownership |
-| 13 | `--coverage-uncovered` | `cw coverage uncovered` | 10. Coverage & Ownership |
-| 14 | `--deepest` | `cw call-chain --deepest N` | 3. Call Chain Analysis |
-| 15 | `--delete-workspace` | `cw workspace delete <ID_OR_NAME>` | 1. Workspace & Database |
-| 16 | `--detect-cycles` | `cw call-chain --detect-cycles` | 3. Call Chain Analysis |
-| 17 | `--diff` | `cw file diff <HASH1> <HASH2>` | 2. Query & Search |
-| 18 | `--embed` | `cw search --embed` | 2. Query & Search |
-| 19 | `--embed-force` | `cw search --embed --force` | 2. Query & Search |
-| 20 | `--export-module-graph` | `cw call-chain --export-module-graph` | 3. Call Chain Analysis |
-| 21 | `--file` | `cw file <PATH>` | 2. Query & Search |
-| 22 | `--fn-metrics` | `cw fn-metrics <NAME>` | 4. Code Health & Metrics |
-| 23 | `--function-issues` | `cw function-issues [FN]` | 9. Semgrep & Defects |
-| 24 | `--git-import` | `cw git import [N]` | 8. Git Integration |
-| 25 | `--git-log` | `cw git log [N]` | 8. Git Integration |
-| 26 | `--git-show` | `cw git show <COMMIT>` | 8. Git Integration |
-| 27 | `--git-stats` | `cw git stats` | 1. Workspace & Database |
-| 28 | `--history` | `cw symbol-history <NAME>` | 2. Query & Search |
-| 29 | `--impact` | `cw impact <QUALIFIED_NAME>` | 3. Call Chain Analysis |
-| 30 | `--issue-summary` | `cw function-issues --summary` | 9. Semgrep & Defects |
-| 31 | `--largest-fns` | `cw largest-fns [N]` | 4. Code Health & Metrics |
-| 32 | `--list-workspaces` | `cw workspace list` | 1. Workspace & Database |
-| 33 | `--map` | `cw map` | 2. Query & Search |
-| 34 | `--metrics` | `cw metrics` | 4. Code Health & Metrics |
-| 35 | `--module-calls` | `cw call-chain --module-calls N` | 3. Call Chain Analysis |
-| 36 | `--orphan-symbols` | `cw callers --orphans` | 2. Query & Search |
-| 37 | `--ownership-map` | `cw ownership-map` | 2. Query & Search |
-| 38 | `--query` | `cw query <NAME> <FILE>` | 2. Query & Search |
-| 39 | `--refresh` | `cw refresh <PATH>` | 1. Workspace & Database |
-| 40 | `--refresh-all` | `cw refresh --all` | 1. Workspace & Database |
-| 41 | `--register-workspace` | `cw workspace register <NAME> <ROOT>` | 1. Workspace & Database |
-| 42 | `--restore-all-comments` | `cw file restore-all-comments` | 2. Query & Search |
-| 43 | `--restore-comment` | `cw file restore-comment <SPEC>` | 2. Query & Search |
-| 44 | `--restore-file` | `cw file restore-file <PATH>` | 2. Query & Search |
-| 45 | `--search` | `cw search <QUERY>` | 2. Query & Search |
-| 46 | `--semantic-search` | `cw search --semantic <QUERY>` | 2. Query & Search |
-| 47 | `--semgrep` | `cw semgrep scan [PATH]` | 9. Semgrep & Defects |
-| 48 | `--semgrep-list` | `cw semgrep list [FILTER]` | 9. Semgrep & Defects |
-| 49 | `--semgrep-stats` | `cw semgrep stats` | 9. Semgrep & Defects |
-| 50 | `--set-workspace` | `cw workspace set <ID_OR_NAME>` | 1. Workspace & Database |
-| 51 | `--similar` | `cw search --similar <NAME>` | 2. Query & Search |
-| 52 | `--stats` | `cw stats` | 1. Workspace & Database |
-| 53 | `--status` | `cw status` | 1. Workspace & Database |
-| 54 | `--symbol` | `cw symbol <QUALIFIED_NAME>` | 2. Query & Search |
-| 55 | `--test-coverage` | `cw coverage --test` | 10. Coverage & Ownership |
-| 56 | `--top-callers` | `cw callers --top N` | 3. Call Chain Analysis |
-| 57 | `--topo` | `cw topo` | 3. Call Chain Analysis |
-| 58 | `--uncommented` | `cw uncommented [KIND]` | 4. Code Health & Metrics |
-| 59 | `--watch` | `cw refresh --watch` | 1. Workspace & Database |
-| 60 | `--who` | `cw who <FILE>` | 10. Coverage & Ownership |
+| #   | Deprecated `--flag`      | 推荐 subcommand                       | 主分类                   |
+| --- | ------------------------ | ------------------------------------- | ------------------------ |
+| 1   | `--brief`                | `cw brief`                            | 2. Query & Search        |
+| 2   | `--call-chain`           | `cw call-chain <QUALIFIED_NAME>`      | 3. Call Chain Analysis   |
+| 3   | `--call-heatmap`         | `cw call-chain --heatmap`             | 2. Query & Search        |
+| 4   | `--callees`              | `cw callees <NAME>`                   | 3. Call Chain Analysis   |
+| 5   | `--callers`              | `cw callers <NAME>`                   | 3. Call Chain Analysis   |
+| 6   | `--changes`              | `cw file changes [SINCE]`             | 2. Query & Search        |
+| 7   | `--comment-coverage`     | `cw comment-coverage`                 | 4. Code Health & Metrics |
+| 8   | `--complexity`           | `cw complexity [N]`                   | 4. Code Health & Metrics |
+| 9   | `--coupled-fns`          | `cw coupled-fns [N]`                  | 4. Code Health & Metrics |
+| 10  | `--coupling`             | `cw coupling`                         | 4. Code Health & Metrics |
+| 11  | `--coverage-fn`          | `cw coverage fn <NAME>`               | 10. Coverage & Ownership |
+| 12  | `--coverage-import`      | `cw coverage import <FILE>`           | 10. Coverage & Ownership |
+| 13  | `--coverage-uncovered`   | `cw coverage uncovered`               | 10. Coverage & Ownership |
+| 14  | `--deepest`              | `cw call-chain --deepest N`           | 3. Call Chain Analysis   |
+| 15  | `--delete-workspace`     | `cw workspace delete <ID_OR_NAME>`    | 1. Workspace & Database  |
+| 16  | `--detect-cycles`        | `cw call-chain --detect-cycles`       | 3. Call Chain Analysis   |
+| 17  | `--diff`                 | `cw file diff <HASH1> <HASH2>`        | 2. Query & Search        |
+| 18  | `--embed`                | `cw search --embed`                   | 2. Query & Search        |
+| 19  | `--embed-force`          | `cw search --embed --force`           | 2. Query & Search        |
+| 20  | `--export-module-graph`  | `cw call-chain --export-module-graph` | 3. Call Chain Analysis   |
+| 21  | `--file`                 | `cw file <PATH>`                      | 2. Query & Search        |
+| 22  | `--fn-metrics`           | `cw fn-metrics <NAME>`                | 4. Code Health & Metrics |
+| 23  | `--function-issues`      | `cw function-issues [FN]`             | 9. Semgrep & Defects     |
+| 24  | `--git-import`           | `cw git import [N]`                   | 8. Git Integration       |
+| 25  | `--git-log`              | `cw git log [N]`                      | 8. Git Integration       |
+| 26  | `--git-show`             | `cw git show <COMMIT>`                | 8. Git Integration       |
+| 27  | `--git-stats`            | `cw git stats`                        | 1. Workspace & Database  |
+| 28  | `--history`              | `cw symbol-history <NAME>`            | 2. Query & Search        |
+| 29  | `--impact`               | `cw impact <QUALIFIED_NAME>`          | 3. Call Chain Analysis   |
+| 30  | `--issue-summary`        | `cw function-issues --summary`        | 9. Semgrep & Defects     |
+| 31  | `--largest-fns`          | `cw largest-fns [N]`                  | 4. Code Health & Metrics |
+| 32  | `--list-workspaces`      | `cw workspace list`                   | 1. Workspace & Database  |
+| 33  | `--map`                  | `cw map`                              | 2. Query & Search        |
+| 34  | `--metrics`              | `cw metrics`                          | 4. Code Health & Metrics |
+| 35  | `--module-calls`         | `cw call-chain --module-calls N`      | 3. Call Chain Analysis   |
+| 36  | `--orphan-symbols`       | `cw callers --orphans`                | 2. Query & Search        |
+| 37  | `--ownership-map`        | `cw ownership-map`                    | 2. Query & Search        |
+| 38  | `--query`                | `cw query <NAME> <FILE>`              | 2. Query & Search        |
+| 39  | `--refresh`              | `cw refresh <PATH>`                   | 1. Workspace & Database  |
+| 40  | `--refresh-all`          | `cw refresh --all`                    | 1. Workspace & Database  |
+| 41  | `--register-workspace`   | `cw workspace register <NAME> <ROOT>` | 1. Workspace & Database  |
+| 42  | `--restore-all-comments` | `cw file restore-all-comments`        | 2. Query & Search        |
+| 43  | `--restore-comment`      | `cw file restore-comment <SPEC>`      | 2. Query & Search        |
+| 44  | `--restore-file`         | `cw file restore-file <PATH>`         | 2. Query & Search        |
+| 45  | `--search`               | `cw search <QUERY>`                   | 2. Query & Search        |
+| 46  | `--semantic-search`      | `cw search --semantic <QUERY>`        | 2. Query & Search        |
+| 47  | `--semgrep`              | `cw semgrep scan [PATH]`              | 9. Semgrep & Defects     |
+| 48  | `--semgrep-list`         | `cw semgrep list [FILTER]`            | 9. Semgrep & Defects     |
+| 49  | `--semgrep-stats`        | `cw semgrep stats`                    | 9. Semgrep & Defects     |
+| 50  | `--set-workspace`        | `cw workspace set <ID_OR_NAME>`       | 1. Workspace & Database  |
+| 51  | `--similar`              | `cw search --similar <NAME>`          | 2. Query & Search        |
+| 52  | `--stats`                | `cw stats`                            | 1. Workspace & Database  |
+| 53  | `--status`               | `cw status`                           | 1. Workspace & Database  |
+| 54  | `--symbol`               | `cw symbol <QUALIFIED_NAME>`          | 2. Query & Search        |
+| 55  | `--test-coverage`        | `cw coverage --test`                  | 10. Coverage & Ownership |
+| 56  | `--top-callers`          | `cw callers --top N`                  | 3. Call Chain Analysis   |
+| 57  | `--topo`                 | `cw topo`                             | 3. Call Chain Analysis   |
+| 58  | `--uncommented`          | `cw uncommented [KIND]`               | 4. Code Health & Metrics |
+| 59  | `--watch`                | `cw refresh --watch`                  | 1. Workspace & Database  |
+| 60  | `--who`                  | `cw who <FILE>`                       | 10. Coverage & Ownership |
 
 ### 保留的通用 flag（非 deprecated）
 
 以下 flag 作为 subcommand 的通用参数或全局 flag 保留，**不**属于 deprecated 范围：
 
-| flag | 用途 |
-|------|------|
-| `--lang <LANG>` | 全局语言切换（zh_CN / en_US） |
-| `--preview` | 预览模式（配合恢复类命令使用） |
-| `--show-content` | 显示完整内容（配合 `--history` 等使用） |
-| `--force` | 强制全量重新解析（配合 `--refresh-all` 使用） |
-| `--graph-output <FILE>` | 输出到文件（配合 `--export-module-graph` 使用） |
-| `--search-kind <KIND>` | 类型过滤（配合 `--search` 使用） |
-| `--search-limit <N>` | 返回数量限制（配合 `--search` 使用） |
-| `--chain-depth <N>` | 调用链深度（配合 `--impact` / `--call-chain` 使用） |
-| `--topo-limit <N>` | 拓扑排序数量限制（配合 `--topo` 使用） |
-| `--cycle-depth <N>` | 循环检测深度（配合 `--detect-cycles` 使用） |
-| `--heatmap-limit <N>` | 热力图数量限制（配合 `--call-heatmap` 使用） |
-| `--complexity-module <PATH>` | 复杂度模块过滤 |
-| `--coverage-by <GROUP>` | 覆盖率分组（module/file/kind） |
-| `--coverage-format <FORMAT>` | 覆盖率报告格式（lcov/cobertura） |
-| `--semgrep-config <CONFIG>` | Semgrep 规则配置 |
-| `--semgrep-scan-lang <LANG...>` | Semgrep 扫描语言限制 |
-| `--semgrep-timeout <N>` | Semgrep 超时秒数 |
-| `--semgrep-quick` | Semgrep 快速汇总模式 |
-| `--semgrep-save` | Semgrep 结果存入数据库 |
-| `--semgrep-severity <SEV>` | Semgrep 严重度过滤 |
-| `--map-format <FORMAT>` | 模块图格式（text/mermaid） |
-| `--no-auto-setup` | 禁用首次运行时的自动 AI 工具配置（Lazy Auto-Setup） |
+| flag                            | 用途                                                |
+| ------------------------------- | --------------------------------------------------- |
+| `--lang <LANG>`                 | 全局语言切换（zh_CN / en_US）                       |
+| `--preview`                     | 预览模式（配合恢复类命令使用）                      |
+| `--show-content`                | 显示完整内容（配合 `--history` 等使用）             |
+| `--force`                       | 强制全量重新解析（配合 `--refresh-all` 使用）       |
+| `--graph-output <FILE>`         | 输出到文件（配合 `--export-module-graph` 使用）     |
+| `--search-kind <KIND>`          | 类型过滤（配合 `--search` 使用）                    |
+| `--search-limit <N>`            | 返回数量限制（配合 `--search` 使用）                |
+| `--chain-depth <N>`             | 调用链深度（配合 `--impact` / `--call-chain` 使用） |
+| `--topo-limit <N>`              | 拓扑排序数量限制（配合 `--topo` 使用）              |
+| `--cycle-depth <N>`             | 循环检测深度（配合 `--detect-cycles` 使用）         |
+| `--heatmap-limit <N>`           | 热力图数量限制（配合 `--call-heatmap` 使用）        |
+| `--complexity-module <PATH>`    | 复杂度模块过滤                                      |
+| `--coverage-by <GROUP>`         | 覆盖率分组（module/file/kind）                      |
+| `--coverage-format <FORMAT>`    | 覆盖率报告格式（lcov/cobertura）                    |
+| `--semgrep-config <CONFIG>`     | Semgrep 规则配置                                    |
+| `--semgrep-scan-lang <LANG...>` | Semgrep 扫描语言限制                                |
+| `--semgrep-timeout <N>`         | Semgrep 超时秒数                                    |
+| `--semgrep-quick`               | Semgrep 快速汇总模式                                |
+| `--semgrep-save`                | Semgrep 结果存入数据库                              |
+| `--semgrep-severity <SEV>`      | Semgrep 严重度过滤                                  |
+| `--map-format <FORMAT>`         | 模块图格式（text/mermaid）                          |
+| `--no-auto-setup`               | 禁用首次运行时的自动 AI 工具配置（Lazy Auto-Setup） |
 
 ---
 
@@ -2686,11 +2730,11 @@ Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecat
 
 Call Warden 提供三个角色化入口，分离 daemon 管理、client 调用和 agent 监控职责：
 
-| 入口 | 角色 | 平台 | 说明 |
-|------|------|------|------|
+| 入口        | 角色              | 平台                    | 说明                                                                  |
+| ----------- | ----------------- | ----------------------- | --------------------------------------------------------------------- |
 | `cw-daemon` | Enterprise Daemon | Linux / macOS / Windows | 启动 daemon server，管理端点（UDS / 命名管道）、registry DB、snapshot |
-| `cw-client` | RPC Proxy | Linux / macOS / Windows | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon） |
-| `cw-agent` | Watcher Agent | Linux / macOS / Windows | per-UID 文件监控 agent，启动/停止/状态查询 |
+| `cw-client` | RPC Proxy         | Linux / macOS / Windows | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon）           |
+| `cw-agent`  | Watcher Agent     | Linux / macOS / Windows | per-UID 文件监控 agent，启动/停止/状态查询                            |
 
 ### cw-client 子命令
 
@@ -2749,11 +2793,11 @@ cw-client mode --set auto     # 提示如何修改（不会真正设置）
 
 ### 与 `cw daemon` 的差异
 
-| 子命令 | `cw daemon` | `cw-client` |
-|--------|-------------|-------------|
-| `serve` | ✓ 启动 daemon | ✗ 禁止（argparse 拒绝） |
-| 其他 15 个子命令 | ✓ 全部可用 | ✓ 全部可用 |
-| `rpc <method> <json>` | ✓ 通用 RPC | ✓ 通用 RPC（可调用 `task.*` 等任意 daemon 方法） |
+| 子命令                | `cw daemon`   | `cw-client`                                      |
+| --------------------- | ------------- | ------------------------------------------------ |
+| `serve`               | ✓ 启动 daemon | ✗ 禁止（argparse 拒绝）                          |
+| 其他 15 个子命令      | ✓ 全部可用    | ✓ 全部可用                                       |
+| `rpc <method> <json>` | ✓ 通用 RPC    | ✓ 通用 RPC（可调用 `task.*` 等任意 daemon 方法） |
 
 ### `daemon metrics`：查询 daemon 运行时指标（G13 二轮评审补全）
 
@@ -2947,13 +2991,13 @@ cw experiment report <batch_id> [--json]
 
 所有实验记录以 JSONL 追加写入 `~/.callwarden/experiments/<batch_id>/` 目录：
 
-| 文件 | 内容 |
-|------|------|
-| `blind_views.jsonl` | 纳样时的 Minimal_Blind_View 快照（Req 12.24/12.25） |
-| `metrics.jsonl` | review 原始指标 + verdict 变更 + reveal 事件 |
-| `invalid_samples.jsonl` | 无效样本及原因码 |
-| `incidents.jsonl` | 披露/完整性事件 |
-| `evaluation_report.json` | `report` 命令输出的完整评估（含 g0_decision） |
+| 文件                     | 内容                                                |
+| ------------------------ | --------------------------------------------------- |
+| `blind_views.jsonl`      | 纳样时的 Minimal_Blind_View 快照（Req 12.24/12.25） |
+| `metrics.jsonl`          | review 原始指标 + verdict 变更 + reveal 事件        |
+| `invalid_samples.jsonl`  | 无效样本及原因码                                    |
+| `incidents.jsonl`        | 披露/完整性事件                                     |
+| `evaluation_report.json` | `report` 命令输出的完整评估（含 g0_decision）       |
 
 每条记录均携带 `non_product_evidence: true` 标记。
 
@@ -2974,10 +3018,10 @@ cw experiment report <batch_id> [--json]
 
 ### 灰区语义（Req 12.27–12.29）
 
-| 指标 | 灰区范围 | 效果 |
-|------|---------|------|
-| 误报率差值 | Control + 10pp < Treatment ≤ Control + 20pp | 不授权 P1，继续纳样，记录灰区观察 |
-| 中位延迟增幅 | 25% < 增幅 ≤ 50% | 同上 |
+| 指标         | 灰区范围                                    | 效果                              |
+| ------------ | ------------------------------------------- | --------------------------------- |
+| 误报率差值   | Control + 10pp < Treatment ≤ Control + 20pp | 不授权 P1，继续纳样，记录灰区观察 |
+| 中位延迟增幅 | 25% < 增幅 ≤ 50%                            | 同上                              |
 
 灰区观察期间：批次**不暂停**（暂停条件仍为 Req 12.15–12.20 的硬阈值），
 但 `eligible_for_p1` 保持 `false`，直到灰区观察解除。
@@ -2986,14 +3030,14 @@ cw experiment report <batch_id> [--json]
 
 触发暂停的 6 种条件（`PauseTrigger`）：
 
-| 触发器 | 条件 |
-|--------|------|
-| `critical_miss` | Treatment 出现 Control 没有的关键遗漏，且原因是 blind view 缺少必要事实 |
-| `fp_rate_divergence` | Treatment 误报率超 Control > 20pp，连续 10 个 Treatment 样本 |
-| `latency_divergence` | 中位延迟增幅 > 50% 持续 2 周，或无效率 > 30% |
-| `disclosure_violation` | Treatment blind view 泄露 Implementer_Notes/先前 verdict/敏感推理 |
-| `snapshot_drift` | Workspace_Snapshot 漂移导致 > 20% 样本不可归因 |
-| `integrity_violation` | 实验诱导伪造独立性或伪造 Evidence |
+| 触发器                 | 条件                                                                    |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `critical_miss`        | Treatment 出现 Control 没有的关键遗漏，且原因是 blind view 缺少必要事实 |
+| `fp_rate_divergence`   | Treatment 误报率超 Control > 20pp，连续 10 个 Treatment 样本            |
+| `latency_divergence`   | 中位延迟增幅 > 50% 持续 2 周，或无效率 > 30%                            |
+| `disclosure_violation` | Treatment blind view 泄露 Implementer_Notes/先前 verdict/敏感推理       |
+| `snapshot_drift`       | Workspace_Snapshot 漂移导致 > 20% 样本不可归因                          |
+| `integrity_violation`  | 实验诱导伪造独立性或伪造 Evidence                                       |
 
 暂停后：
 
@@ -3045,11 +3089,11 @@ exit code 1。
 
 ### 降级行为（Req 14.27–14.30）
 
-| 操作类别 | daemon 不可用时行为 |
-|----------|-------------------|
+| 操作类别                                                | daemon 不可用时行为                           |
+| ------------------------------------------------------- | --------------------------------------------- |
 | Governance_Write（publish/verdict/reveal/gate-trigger） | fail closed，输出 Structured_Reason，状态不变 |
-| Index_Write | 直连写入（collab 命令不涉及） |
-| read_only | 直连只读（collab 命令不涉及） |
+| Index_Write                                             | 直连写入（collab 命令不涉及）                 |
+| read_only                                               | 直连只读（collab 命令不涉及）                 |
 
 ### 自动唤起与有界等待窗口（Req 14.22–14.26）
 
@@ -3080,14 +3124,14 @@ P0 实验记录**标记为 non-product Evidence**，具体限制：
 
 ### 阶段可用性（Req 13.1）
 
-| 阶段 | 当前状态 | 说明 |
-|------|---------|------|
-| P0（盲评对照实验） | ✅ 已实现 | 本章节所述命令 |
-| D0（跨平台 daemon 化） | ✅ 已实现 | 三平台端点、Peer_Credential、串行化点、Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流 |
-| P1（契约驱动协作） | ✅ 已实现 | Canonical Envelope + Role View allowlist + Blind Verdict/Reveal/Amendment + Evidence Ledger + Evidence Gate + CLI/MCP 工具 |
-| P2（DAG 依赖调度） | ✅ 已实现 | 四类依赖 + artifact freshness + interface identity + 硬依赖图 + 环检测 + provider 选择（`cw dependency` 命令） |
-| P3（Agent 身份审计） | ✅ 已实现 | `cw task report/apply/close/reopen --agent-id/--session-id/--model-id/--role` + `cw identity revoke`（强制 `--revocation-mode`）+ Attestation 校验与撤销 + Identity fail-closed 接入 Evidence Gate |
-| P4（安全租约与分派） | 🔲 planned / unavailable | 需 P1 + P3 启用 |
+| 阶段                   | 当前状态                | 说明                                                                                                                                                                                               |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0（盲评对照实验）     | ✅ 已实现                | 本章节所述命令                                                                                                                                                                                     |
+| D0（跨平台 daemon 化） | ✅ 已实现                | 三平台端点、Peer_Credential、串行化点、Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流                                                              |
+| P1（契约驱动协作）     | ✅ 已实现                | Canonical Envelope + Role View allowlist + Blind Verdict/Reveal/Amendment + Evidence Ledger + Evidence Gate + CLI/MCP 工具                                                                         |
+| P2（DAG 依赖调度）     | ✅ 已实现                | 四类依赖 + artifact freshness + interface identity + 硬依赖图 + 环检测 + provider 选择（`cw dependency` 命令）                                                                                     |
+| P3（Agent 身份审计）   | ✅ 已实现                | `cw task report/apply/close/reopen --agent-id/--session-id/--model-id/--role` + `cw identity revoke`（强制 `--revocation-mode`）+ Attestation 校验与撤销 + Identity fail-closed 接入 Evidence Gate |
+| P4（安全租约与分派）   | 🔲 planned / unavailable | 需 P1 + P3 启用                                                                                                                                                                                    |
 
 在对应阶段启用前，其所有能力均表示为 planned 且 unavailable，
 不得在文档、输出或判定中暗示已实现。

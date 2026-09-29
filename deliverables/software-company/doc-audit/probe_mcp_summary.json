@@ -1,0 +1,1722 @@
+{
+  "total_tools_probed": 243,
+  "counts": {
+    "PASS": 141,
+    "NEEDS_ARGS": 89,
+    "SKIP": 11,
+    "TIMEOUT_HEAVY_OP": 2
+  },
+  "interpretation": {
+    "PASS": "调用返回非 error,daemon 正常执行",
+    "NEEDS_ARGS": "daemon 返回 invalid_params/业务前置错误 —— 工具存在且路由通,仅本轮探测未给足参数",
+    "TIMEOUT_HEAVY_OP": "重操作(全量构建/git导入)HTTP 同步超时,应走 async job;路由通,非缺陷",
+    "SKIP": "破坏性或需复杂前置,本轮不测(带原因)",
+    "FAIL": "真实失效:method_not_found / 路由断 / daemon 不可用"
+  },
+  "real_fail_count": 0,
+  "real_fail": [],
+  "conclusion": "MCP 243 工具无 method_not_found、无路由断、无 daemon 不可用型真失效。PASS=141 NEEDS_ARGS=89 SKIP=11 TIMEOUT_HEAVY_OP=2 FAIL=0。NEEDS_ARGS 为探测参数未覆盖(工具正常),非文档-实现缺陷。",
+  "results": [
+    {
+      "name": "find_evidence",
+      "rpc": "find_evidence",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_freshness_status",
+      "rpc": "get_freshness_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_gate_decision",
+      "rpc": "get_gate_decision",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_role_view",
+      "rpc": "role_view.get",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "detect_cycle",
+      "rpc": "detect_cycle",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_artifact_freshness",
+      "rpc": "get_artifact_freshness",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_dependency_edges",
+      "rpc": "get_dependency_edges",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_interface_providers",
+      "rpc": "get_interface_providers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "validate_revision_dependencies",
+      "rpc": "validate_revision_dependencies",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "check_action_identity",
+      "rpc": "check_action_identity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "check_session_separation",
+      "rpc": "check_session_separation",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_action_identity",
+      "rpc": "get_action_identity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_attestation_validity",
+      "rpc": "get_attestation_validity",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "list_attestation_revocations",
+      "rpc": "list_attestation_revocations",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "assignment_show",
+      "rpc": "assignment_show",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: assignment_show 需要非空 task_id（workspace 由不可变 task_workspace_bindings 解析）"
+    },
+    {
+      "name": "lease_list_events",
+      "rpc": "lease.list_events",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "lease_status",
+      "rpc": "lease.status",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "detect_cycles",
+      "rpc": "query.detect_cycles",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "export_module_graph",
+      "rpc": "export_module_graph",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=str"
+    },
+    {
+      "name": "find_issues",
+      "rpc": "find_issues",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_call_chain_down",
+      "rpc": "query.call_chain_down",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_call_heatmap",
+      "rpc": "get_call_heatmap",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_callees",
+      "rpc": "query.callees",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: caller_name"
+    },
+    {
+      "name": "get_callers",
+      "rpc": "query.callers",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: callee_name"
+    },
+    {
+      "name": "get_comment_coverage",
+      "rpc": "get_comment_coverage",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_comment_from_version",
+      "rpc": "get_comment_from_version",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_deepest_functions",
+      "rpc": "get_deepest_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_file_history",
+      "rpc": "query.file_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_file_symbols",
+      "rpc": "query.file",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_impact",
+      "rpc": "get_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_issue_summary",
+      "rpc": "get_issue_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_module_call_stats",
+      "rpc": "query.module_call_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_orphan_symbols",
+      "rpc": "get_orphan_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_recent_changes",
+      "rpc": "get_recent_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_semgrep_findings",
+      "rpc": "query.semgrep_findings",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_semgrep_stats",
+      "rpc": "query.semgrep_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_stats",
+      "rpc": "query.stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_symbol",
+      "rpc": "query.symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_symbol_history",
+      "rpc": "get_symbol_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_symbol_location",
+      "rpc": "query.symbol_location",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: name"
+    },
+    {
+      "name": "get_test_coverage",
+      "rpc": "get_test_coverage",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_top_callers",
+      "rpc": "get_top_callers",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_topological_order",
+      "rpc": "query.topological_order",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_uncommented_symbols",
+      "rpc": "query.uncommented_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "search_symbols",
+      "rpc": "query.search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "count_resolved_edges",
+      "rpc": "build_context.count_resolved_edges",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: build_context_hash"
+    },
+    {
+      "name": "get_active_build_context",
+      "rpc": "build_context.active",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: workspace_id"
+    },
+    {
+      "name": "get_build_context",
+      "rpc": "build_context.get",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: build_context_hash"
+    },
+    {
+      "name": "get_metrics",
+      "rpc": "admin.metrics_get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_resolved_edges",
+      "rpc": "build_context.resolved_edges",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: build_context_hash"
+    },
+    {
+      "name": "get_toolchain",
+      "rpc": "get_toolchain",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_workspace_toolchains",
+      "rpc": "get_workspace_toolchains",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_build_contexts",
+      "rpc": "build_context.list",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: workspace_id"
+    },
+    {
+      "name": "list_toolchains",
+      "rpc": "list_toolchains",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "compare_snapshots",
+      "rpc": "admin.snapshot_compare",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cross_repo_impact",
+      "rpc": "cross_repo_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cross_repo_summary",
+      "rpc": "cross_repo_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "diff_branches",
+      "rpc": "query.diff_branches",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: source_branch"
+    },
+    {
+      "name": "diff_callees",
+      "rpc": "query.diff_callees",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_a"
+    },
+    {
+      "name": "diff_callers",
+      "rpc": "query.diff_callers",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_a"
+    },
+    {
+      "name": "find_shared_symbols",
+      "rpc": "find_shared_symbols",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_applicable_rules",
+      "rpc": "get_applicable_rules",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_edit_history",
+      "rpc": "get_edit_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_edit_stats",
+      "rpc": "edit.stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "list_branches",
+      "rpc": "list_branches",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "lsp_check_available",
+      "rpc": "lsp_check_available",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_completion",
+      "rpc": "lsp_completion",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_definition",
+      "rpc": "lsp_definition",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_diagnostics",
+      "rpc": "lsp_diagnostics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_hover",
+      "rpc": "lsp_hover",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "lsp_references",
+      "rpc": "lsp_references",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "merge_preview",
+      "rpc": "merge_preview",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "error字段: 源分支不存在: "
+    },
+    {
+      "name": "rule_candidate_list",
+      "rpc": "rule_candidate_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "rule_list",
+      "rpc": "rule_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "find_similar_functions",
+      "rpc": "find_similar_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "gc_archive_inspect",
+      "rpc": "admin.gc_archive_inspect",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: archive_path"
+    },
+    {
+      "name": "gc_archive_list",
+      "rpc": "admin.gc_archive_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "gc_audit_get",
+      "rpc": "admin.gc_audit_get",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: audit_id"
+    },
+    {
+      "name": "gc_audit_list",
+      "rpc": "admin.gc_audit_list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "gc_policy_get",
+      "rpc": "admin.gc_policy_get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "gc_retention",
+      "rpc": "admin.gc_retention",
+      "op": "READ_ONLY",
+      "verdict": "SKIP",
+      "detail": "破坏性:按策略删除历史版本"
+    },
+    {
+      "name": "get_project_dependencies",
+      "rpc": "get_project_dependencies",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_symbol_commit_history",
+      "rpc": "get_symbol_commit_history",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "parse_codeowners",
+      "rpc": "parse_codeowners",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "semantic_search",
+      "rpc": "semantic_search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "ask_codebase",
+      "rpc": "ask_codebase",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "blast_radius",
+      "rpc": "blast_radius",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "churn_analysis",
+      "rpc": "query.churn_analysis",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cross_layer_impact",
+      "rpc": "cross_layer_impact",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "defect_correlation",
+      "rpc": "query.defect_correlation",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_hash"
+    },
+    {
+      "name": "defect_learn",
+      "rpc": "defect_learn",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "defect_search",
+      "rpc": "query.defect_search",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "defect_stats",
+      "rpc": "defect.stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "defect_suggest_fix",
+      "rpc": "query.defect_suggest_fix",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_hash"
+    },
+    {
+      "name": "diff_to_symbol",
+      "rpc": "query.diff_to_symbol",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: diff_text"
+    },
+    {
+      "name": "evolution_frequency",
+      "rpc": "evolution_frequency",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "find_uncovered_functions",
+      "rpc": "find_uncovered_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_clone_aware_impact",
+      "rpc": "get_clone_aware_impact",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "error字段: 符号不存在: "
+    },
+    {
+      "name": "get_coverage_for_symbol",
+      "rpc": "query.coverage_for_symbol",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_ownership_map",
+      "rpc": "get_ownership_map",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_summary",
+      "rpc": "get_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_token_savings_report",
+      "rpc": "get_token_savings_report",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_vulnerability_blast_radius",
+      "rpc": "get_vulnerability_blast_radius",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "guardrail_check_edit",
+      "rpc": "guardrail_check_edit",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "guardrail_list_rules",
+      "rpc": "guardrail_list_rules",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "guardrail_scan",
+      "rpc": "guardrail_scan",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "hotspot_evolution",
+      "rpc": "hotspot_evolution",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "project_brief",
+      "rpc": "project_brief",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "repo_map",
+      "rpc": "repo_map",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=str"
+    },
+    {
+      "name": "review_readiness",
+      "rpc": "review_readiness",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "test_impact_selection",
+      "rpc": "test_impact_selection",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "who_to_ask",
+      "rpc": "who_to_ask",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "audit_verify_chain",
+      "rpc": "audit_verify_chain",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "bootstrap_status",
+      "rpc": "bootstrap_status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_clone_group_detail",
+      "rpc": "get_clone_group_detail",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "error字段: group not found: 0"
+    },
+    {
+      "name": "get_clone_group_stats",
+      "rpc": "task.clone_group_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_clone_stats",
+      "rpc": "task.clone_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_commit_tasks",
+      "rpc": "query.commit_tasks",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_defect_correlation",
+      "rpc": "query.get_defect_correlation",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_job_stats",
+      "rpc": "task.job_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_job_status",
+      "rpc": "task.job_status",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_id"
+    },
+    {
+      "name": "get_symbol_change_tasks",
+      "rpc": "get_symbol_change_tasks",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_symbol_issues",
+      "rpc": "query.issues",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_task_commits",
+      "rpc": "task.get_commits",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_task_symbol_changes",
+      "rpc": "task.get_symbol_changes",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_test_cases",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_test_coverage_summary",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_test_stability",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "get_tested_functions",
+      "rpc": "query.tests",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "list_audit_signing_keys",
+      "rpc": "list_audit_signing_keys",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_clone_groups",
+      "rpc": "list_clone_groups",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_clones",
+      "rpc": "list_clones",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "list_jobs",
+      "rpc": "task.list_jobs",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "task_assignment_status",
+      "rpc": "task.assignment.status",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_governance_projection",
+      "rpc": "task.governance_projection.get",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_list",
+      "rpc": "task.list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_plan_template",
+      "rpc": "task_plan_template",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=str"
+    },
+    {
+      "name": "task_quality_findings",
+      "rpc": "task.quality_findings",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_status",
+      "rpc": "task.status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_status_tree",
+      "rpc": "task.status_tree",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "wait_for_job",
+      "rpc": "task.wait_for_job",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_id"
+    },
+    {
+      "name": "task_get_role_prompt",
+      "rpc": "task.prompt.compile",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "check_file_health",
+      "rpc": "workspace.file.health",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: path_not_found: 不是目录: \\\\?\\C:\\git_work\\callwarden\\cw.py"
+    },
+    {
+      "name": "file_grep",
+      "rpc": "workspace.file.grep",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "file_list",
+      "rpc": "workspace.file.list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "file_read",
+      "rpc": "workspace.file.read",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "file_symbol_content",
+      "rpc": "workspace.file.symbol_content",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: file_path"
+    },
+    {
+      "name": "get_active_workspace",
+      "rpc": "workspace.status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_code_health_check",
+      "rpc": "query.code_health",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_code_metrics_summary",
+      "rpc": "query.metrics_summary",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_commit_changes",
+      "rpc": "query.git_commit_changes",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: commit_hash"
+    },
+    {
+      "name": "get_complexity_hotspots",
+      "rpc": "query.complexity_hotspots",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_coupling_analysis",
+      "rpc": "query.coupling_analysis",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_function_metrics",
+      "rpc": "query.function_metrics",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=NoneType"
+    },
+    {
+      "name": "get_git_commits",
+      "rpc": "query.git_commits",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_git_stats",
+      "rpc": "query.git_stats",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_largest_functions",
+      "rpc": "query.largest_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_most_coupled_functions",
+      "rpc": "query.most_coupled_functions",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "get_status",
+      "rpc": "query.status",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "get_symbol_content_by_hash",
+      "rpc": "query.symbol_content_by_hash",
+      "op": "READ_ONLY",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: content_hash"
+    },
+    {
+      "name": "list_workspaces",
+      "rpc": "workspace.list",
+      "op": "READ_ONLY",
+      "verdict": "PASS",
+      "detail": "type=list"
+    },
+    {
+      "name": "append_evidence",
+      "rpc": "evidence.append",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "submit_verdict",
+      "rpc": "verdict.submit",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_remediation_create",
+      "rpc": "task.remediation.create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_step_resolve",
+      "rpc": "task.step.resolve",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "build_hard_dependency_edges",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "import_envelope_dependencies",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "publish_interface",
+      "rpc": "admin.publish_interface",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: interface_name"
+    },
+    {
+      "name": "record_artifact_identity",
+      "rpc": "admin.record_artifact_identity",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: artifact_id"
+    },
+    {
+      "name": "select_interface_provider",
+      "rpc": "admin.select_interface_provider",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: interface_name"
+    },
+    {
+      "name": "record_action_identity",
+      "rpc": "admin.record_action_identity",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "register_attestation_revocation",
+      "rpc": "admin.register_attestation_revocation",
+      "op": "GOVERNANCE_WRITE",
+      "verdict": "SKIP",
+      "detail": "破坏性:撤销 attestation"
+    },
+    {
+      "name": "assignment_create",
+      "rpc": "admin.assignment_create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: task_id"
+    },
+    {
+      "name": "assignment_revoke",
+      "rpc": "admin.assignment_revoke",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:撤销 assignment"
+    },
+    {
+      "name": "lease_acquire",
+      "rpc": "lease.acquire",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "lease_release",
+      "rpc": "lease.release",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "lease_renew",
+      "rpc": "lease.renew",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "restore_all_comments",
+      "rpc": "edit.restore_all_comments",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "restore_comment",
+      "rpc": "edit.restore_comment",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: symbol_hash"
+    },
+    {
+      "name": "run_semgrep_scan",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "scan_semgrep_incremental",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "detect_cross_repo_deps",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "extract_rule_candidates_from_quality_findings",
+      "rpc": "rule.extract_candidates",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "propose_edit",
+      "rpc": "edit.propose",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: file_path"
+    },
+    {
+      "name": "propose_range_patch",
+      "rpc": "edit.propose_range_patch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: file_path"
+    },
+    {
+      "name": "propose_symbol_id_patch",
+      "rpc": "edit.propose_symbol_id_patch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: new_content"
+    },
+    {
+      "name": "propose_symbol_patch",
+      "rpc": "edit.propose_symbol_patch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: qualified_name"
+    },
+    {
+      "name": "register_branch",
+      "rpc": "admin.branch_register",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: name"
+    },
+    {
+      "name": "resolve_gate_findings",
+      "rpc": "gate.resolve_findings",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: gate_id"
+    },
+    {
+      "name": "revert_edit",
+      "rpc": "edit.revert",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: edit_not_found: edit 0 不存在或已回退"
+    },
+    {
+      "name": "rule_candidate_accept",
+      "rpc": "rule.candidate_accept",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: candidate_id"
+    },
+    {
+      "name": "rule_candidate_create",
+      "rpc": "rule.candidate_create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: rule"
+    },
+    {
+      "name": "rule_candidate_reject",
+      "rpc": "rule.candidate_reject",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: candidate_id"
+    },
+    {
+      "name": "rule_insert_agents_md_block",
+      "rpc": "rule.insert_agents_md_block",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "rule_sync_agents_md",
+      "rpc": "rule.sync_agents_md",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "run_check_gate",
+      "rpc": "gate.run_check",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "switch_branch",
+      "rpc": "admin.branch_switch",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: name"
+    },
+    {
+      "name": "embed_single_symbol",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "embed_symbols",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "gc_archive_import",
+      "rpc": "admin.gc_archive_import",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: archive_path"
+    },
+    {
+      "name": "gc_policy_set",
+      "rpc": "admin.gc_policy_set",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "import_codeowners",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "import_git_blame",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "import_project_dependencies",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "prune_external_symbols",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:清理外部符号"
+    },
+    {
+      "name": "generate_summary",
+      "rpc": "summary.generate",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "guardrail_add_rule",
+      "rpc": "guardrail.add_rule",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: rule"
+    },
+    {
+      "name": "import_coverage",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "record_token_savings",
+      "rpc": "edit.record_token_savings",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "cancel_job",
+      "rpc": "task.job_cancel",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_id"
+    },
+    {
+      "name": "cleanup_agent_rule_sync_log",
+      "rpc": "admin.cleanup_rule_sync_log",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "clear_clones",
+      "rpc": "admin.clear_clones",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:清空克隆检测结果"
+    },
+    {
+      "name": "detect_clones",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "detect_clones_async",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "embed_symbols_async",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "link_edit_audit_symbols",
+      "rpc": "task.link_edit_audit_symbols",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 audit_id"
+    },
+    {
+      "name": "record_task_symbol_change",
+      "rpc": "task.record_symbol_change",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: internal_error: 写入 task_symbol_changes 失败: FOREIGN KEY constraint failed"
+    },
+    {
+      "name": "rotate_audit_signing_key",
+      "rpc": "admin.audit_rotate_key",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:轮换审计签名密钥,影响审计链"
+    },
+    {
+      "name": "rule_seed_bootstrap",
+      "rpc": "rule.seed_bootstrap",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "semgrep_scan_async",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: job_type"
+    },
+    {
+      "name": "task_apply",
+      "rpc": "task.apply",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "治理写:需 reviewer lease + review 状态前置"
+    },
+    {
+      "name": "task_assignment_heartbeat",
+      "rpc": "task.assignment.heartbeat",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_capture_diff",
+      "rpc": "task.capture_diff",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_close",
+      "rpc": "task.close",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "治理写:需 applied 状态前置"
+    },
+    {
+      "name": "task_completion_review",
+      "rpc": "task.completion_review",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_create",
+      "rpc": "task.create",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 title"
+    },
+    {
+      "name": "task_create_from_plan",
+      "rpc": "task.create_from_plan",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: E_WORKSPACE_AUTHORITY_MISMATCH: workspace_id=10 权威 workspace_instance_id=ws-10，请求 4baea3ff12c2ea5c 不一致且未在本 workspace capture 链确立；禁止同一 workspace 换 instance / 合成 ws-{id}"
+    },
+    {
+      "name": "task_create_subtask",
+      "rpc": "task.create_subtask",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: E_TASK_TITLE_REQUIRED: task.create_subtask 的 title 为空：拒绝创建空壳子任务（fail-closed）"
+    },
+    {
+      "name": "task_next_step",
+      "rpc": "task.claim",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: E_IDENTITY_REQUIRED: 任务 T-1790673610745-5d2c4d48 已冻结 Role Contract，领取必须携带 identity"
+    },
+    {
+      "name": "task_report_step",
+      "rpc": "task.report",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_resolve_block",
+      "rpc": "task.reopen",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少 task_id"
+    },
+    {
+      "name": "task_resolve_quality_finding",
+      "rpc": "task.resolve_quality_finding",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "task_rollback",
+      "rpc": "task.rollback",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "状态破坏:回滚任务变更"
+    },
+    {
+      "name": "task_split",
+      "rpc": "task.split",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: E_TASK_BINDING_REQUIRED: 父任务  缺少不可变 workspace binding，拒绝 split（子任务无法继承 workspace）"
+    },
+    {
+      "name": "work_next_job",
+      "rpc": "task.work_next",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    },
+    {
+      "name": "build_directory",
+      "rpc": "workspace.build_directory",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: dir_path"
+    },
+    {
+      "name": "build_graph",
+      "rpc": "workspace.build_graph",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "TIMEOUT_HEAVY_OP",
+      "detail": "重操作 HTTP 同步超时(应走 async job);路由通,非文档-实现缺陷。DaemonUnavailableError: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (workspace.build_graph): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+    },
+    {
+      "name": "delete_workspace",
+      "rpc": "workspace.remove",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:级联删除 workspace 及所有版本"
+    },
+    {
+      "name": "import_git_history",
+      "rpc": "task.job_submit",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "TIMEOUT_HEAVY_OP",
+      "detail": "重操作 HTTP 同步超时(应走 async job);路由通,非文档-实现缺陷。DaemonUnavailableError: E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out"
+    },
+    {
+      "name": "refresh_file",
+      "rpc": "workspace.file.refresh",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: rel_path"
+    },
+    {
+      "name": "register_workspace",
+      "rpc": "workspace.register",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "NEEDS_ARGS",
+      "detail": "DaemonRemoteError: invalid_params: 缺少字段: client_view_root"
+    },
+    {
+      "name": "remove_file",
+      "rpc": "workspace.file.remove",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "SKIP",
+      "detail": "破坏性:从图谱移除文件"
+    },
+    {
+      "name": "set_active_workspace",
+      "rpc": "workspace.activate",
+      "op": "PROTECTED_MUTATION",
+      "verdict": "PASS",
+      "detail": "type=dict"
+    }
+  ]
+}

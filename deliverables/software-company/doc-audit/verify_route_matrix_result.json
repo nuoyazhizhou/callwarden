@@ -1,0 +1,25 @@
+{
+  "tool": "scripts/verify_route_matrix.py",
+  "exit_code": 0,
+  "gate_result": "PASS (全绿)",
+  "note": "控制台/文件文本输出含 GBK 乱码(项目已知现象,数字为 ASCII 可读)。本 JSON 为结构化提取。",
+  "metrics": {
+    "names_T_eq_names_M": 243,
+    "matrix_total_M": 243,
+    "rust_mirror_entries": 243,
+    "dispatch_rs_match_branches_D": 365,
+    "D_minus_matrix_rpc_superset_count": 141,
+    "http_server_whitelist": 0,
+    "compat_registry_RUST_COMPAT_ROUTE": 0,
+    "python_compat_tools": 0,
+    "known_drift": 0
+  },
+  "conclusions": [
+    "names(T)==names(M)==Rust mirror 三向一致,均为 243",
+    "无路由断线:所有 rust_native/task_rpc 工具的 rpc_method 都在 dispatch.rs 注册(D 是超集,365>102)",
+    "无 backend 不一致:current_backend 活审计通过,无 unknown",
+    "无 mirror 漂移:Rust route_matrix.rs 条目段与矩阵语义逐条相等",
+    "python_compat 已完全清零(0 工具、0 白名单、0 compat 路由),KNOWN_DRIFT=0",
+    "实现内部无一致性问题;文档仍描述旧 python_compat 架构(142/43/58),与实现(200/43/0)不符 —— 属文档-实现不一致,留 Task 3"
+  ]
+}

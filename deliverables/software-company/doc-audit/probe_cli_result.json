@@ -1,0 +1,1182 @@
+{
+  "counts": {
+    "PASS": 54,
+    "NEEDS_ARGS": 116,
+    "HELP_OK": 0,
+    "FAIL": 17,
+    "SKIP": 47
+  },
+  "leaf_total": 234,
+  "results": [
+    {
+      "leaf": "assignment create",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "assignment show",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "assignment revoke",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "audit verify",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 审计链验证结果 ===\\n  验证范围: 全部表\\n  最大验证记录数: 1000\\n\\n  安全级别: hmac\\n  总记录: 1000，通过: 1000，不'"
+    },
+    {
+      "leaf": "audit rotate-key",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:轮换审计密钥); help_ok=True"
+    },
+    {
+      "leaf": "audit keys",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 签名密钥轮换记录 ===\\n共 1 条记录：\\n\\n  [1] key_id=key-000001a0d6e4e93f  rotated_at=1790311'"
+    },
+    {
+      "leaf": "bootstrap status",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='自举健康状态摘要\\n\\n✗ 数据库滞后：扫描基线与当前 HEAD 不一致\\n  当前 HEAD: 3bb41bf84b59\\n\\n  已生效规则: 3\\n  待审核候选规则'"
+    },
+    {
+      "leaf": "brief",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 项目简报 ===\\n\\n  项目类型: Python\\n  文件数: 2334\\n  函数数: 34979\\n  总代码行: 1167525\\n  健康评分: 0.'"
+    },
+    {
+      "leaf": "build-context register",
+      "verdict": "HELP_OK",
+      "detail": "help-only(写操作:注册工具链); help_ok=True"
+    },
+    {
+      "leaf": "build-context list",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "build-context show",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "build-context activate",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "build-context delete",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "build-context import-compile-commands",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "build-context resolve",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "build-context edges",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "call-chain",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "callees",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "callers",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "check-gate",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "churn",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 代码流失分析 ===\\n  时间窗口: 90d \\n\\n  变更文件数: 386\\n  当前总行数: 606859\\n  流失总行数: 368393\\n  流失率:'"
+    },
+    {
+      "leaf": "clone detect",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'clone' 失败: method_not_found: 未知方法: detect_clones\""
+    },
+    {
+      "leaf": "clone list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='检测到的克隆对 (0)\\n\\n  无克隆对记录，先运行 `cw clone detect` 检测'"
+    },
+    {
+      "leaf": "clone stats",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='克隆检测统计\\n\\n  克隆对总数: 0\\n  Type-1: 0\\n  Type-2: 0\\n  Type-3: 0\\n\\n  受影响文件数: 0\\n  受影响符号数: 0'"
+    },
+    {
+      "leaf": "clone clear",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"已清空 {'ok': True, 'deleted_pairs': 0} 条克隆记录\""
+    },
+    {
+      "leaf": "collab publish",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "collab verdict",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "collab reveal",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "collab gate-trigger",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "comment-coverage",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='注释覆盖率统计\\n  总计: 19798 个符号\\n  已注释: 13704 个\\n  覆盖率: 69.22%\\n\\n按类型分布:\\n  ██████████████░░░'"
+    },
+    {
+      "leaf": "complexity",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='圈复杂度热点 （共 20 个）:\\n\\n    #     复杂度     行数    深度  函数名\\n  ---  ------  -----  ----  --'"
+    },
+    {
+      "leaf": "config explain",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='# N4 分层配置（来源：callwarden.release.config_loader）\\n# 优先级：CLI > env(CW_*) > user_conf'"
+    },
+    {
+      "leaf": "config paths",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='# N4 PlatformPaths（来源：callwarden.release.config_loader）\\n# 平台：win32\\n\\nName        '"
+    },
+    {
+      "leaf": "config check-role",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "coupled-fns",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='耦合度最高的函数（共 20 个）:\\n\\n    #    扇入    扇出    总计  函数名\\n  ---  ----  ----  ----  -------'"
+    },
+    {
+      "leaf": "coupling",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='模块耦合度分析（共 30 个模块）:\\n\\n    #  模块                                          传入    传出 '"
+    },
+    {
+      "leaf": "coverage import",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "coverage fn",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "coverage uncovered",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='未充分覆盖的函数（覆盖率 < 50%，共 0 个）:\\n--------------------------------------------------'"
+    },
+    {
+      "leaf": "daemon ping",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"status\": \"ok\",\\n  \"peer_uid\": 4294967295,\\n  \"pid\": 11792,\\n  \"authority_id\": '"
+    },
+    {
+      "leaf": "daemon register",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "daemon list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='[\\n  {\\n    \"workspace_id\": 1193,\\n    \"workspace_instance_id\": \"4baea3ff12c2ea5c\",'"
+    },
+    {
+      "leaf": "daemon status",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "daemon publish",
+      "verdict": "HELP_OK",
+      "detail": "help-only(写操作:发布快照); help_ok=True"
+    },
+    {
+      "leaf": "daemon query",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "daemon mode",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"mode\": \"auto\",\\n  \"available\": true,\\n  \"required\": true,\\n  \"socket\": \"\\\\\\\\\\\\\\\\.\\\\'"
+    },
+    {
+      "leaf": "daemon health",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"security_profile\": \"dev_loopback_unauthenticated\",\\n  \"endpoint\": \"http://12'"
+    },
+    {
+      "leaf": "daemon manifest",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"authority_id\": \"S-1-5-21-1583625257-826939952-3615027596-1001\",\\n  \"capabili'"
+    },
+    {
+      "leaf": "daemon capability",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"protocol_version\": \"1\",\\n  \"server_mode\": \"dev_loopback_unauthenticated\",\\n  '"
+    },
+    {
+      "leaf": "daemon schema-version",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"version\": 60\\n}'"
+    },
+    {
+      "leaf": "daemon bridge",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=1 (业务错误,命令存在) | out[:80]='{\\n  \"ok\": false,\\n  \"bridge\": {\\n    \"authority\": \"windows-host\",\\n    \"transport\":'"
+    },
+    {
+      "leaf": "daemon backup",
+      "verdict": "HELP_OK",
+      "detail": "help-only(重操作:备份); help_ok=True"
+    },
+    {
+      "leaf": "daemon restore",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:恢复); help_ok=True"
+    },
+    {
+      "leaf": "daemon gc-cas",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:GC CAS); help_ok=True"
+    },
+    {
+      "leaf": "daemon gc-snapshots",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:GC 快照); help_ok=True"
+    },
+    {
+      "leaf": "daemon snapshot-stats",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=1 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "daemon snapshot-list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='[\\n  {\\n    \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\\n    \"generation\": 5,\\n    '"
+    },
+    {
+      "leaf": "daemon snapshot-evict",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:驱逐快照); help_ok=True"
+    },
+    {
+      "leaf": "daemon metrics",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='{\\n  \"timestamp\": 1790674690149,\\n  \"uptime\": 2e-07,\\n  \"uptime_seconds\": 2e-07,\\n  '"
+    },
+    {
+      "leaf": "daemon mount",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境:挂载); help_ok=True"
+    },
+    {
+      "leaf": "daemon toolchain",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "dashboard",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'dashboard' 失败: method_not_found: 未知方法: get_project_dashboard\""
+    },
+    {
+      "leaf": "defect search",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"=== 缺陷模式搜索 ===\\n  过滤条件: 全部\\n  找到 0 个模式\\n\\n  (无匹配模式，请先运行 'cw defect build' 构建知识库)\""
+    },
+    {
+      "leaf": "defect suggest",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "defect learn",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "defect stats",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"=== 缺陷知识库统计 ===\\n  模式总数: 0\\n  修复总数: 0\\n  平均有效性: 0.00\\n\\n  (知识库为空，请先运行 'cw defect buil\""
+    },
+    {
+      "leaf": "defect build",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"构建缺陷知识库...\\n✗ 执行子命令 'defect' 失败: method_not_found: 未知方法: build_defect_knowledge\""
+    },
+    {
+      "leaf": "dependency inspect",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"✗ 执行子命令 'dependency' 失败: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (mcp.cli_adm\""
+    },
+    {
+      "leaf": "dependency list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='硬依赖图边: 0 条'"
+    },
+    {
+      "leaf": "dependency cycle",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='✓ 无环（hard graph acyclic）'"
+    },
+    {
+      "leaf": "dependency explain",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "dependency provider-select",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "doctor",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境诊断:可能改环境/长耗时); help_ok=True"
+    },
+    {
+      "leaf": "evolution",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment batch-create",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment batch-lock",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment batch-list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='暂无已登记实验批次。'"
+    },
+    {
+      "leaf": "experiment toggle-set",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment toggle-show",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='P0 开关解析结果: disabled'"
+    },
+    {
+      "leaf": "experiment admit",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment record-metrics",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment record-verdict",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment record-reveal",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment record-invalid",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment record-incident",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment pause",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "experiment report",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "file",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "fn-metrics",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "fts rebuild",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"Rebuilding FTS5 index...\\n✗ 执行子命令 'fts' 失败: method_not_found: 未知方法: rebuild_fts_i\""
+    },
+    {
+      "leaf": "fts status",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'fts' 失败: method_not_found: 未知方法: get_fts_status\""
+    },
+    {
+      "leaf": "function-issues",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'function-issues' 失败: method_not_found: 未知方法: get_function_issues\""
+    },
+    {
+      "leaf": "gc archive",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'gc' 失败: method_not_found: 未知方法: gc_archive\""
+    },
+    {
+      "leaf": "gc restore",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:恢复覆盖); help_ok=True"
+    },
+    {
+      "leaf": "gc status",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'gc' 失败: method_not_found: 未知方法: gc_status\""
+    },
+    {
+      "leaf": "gc purge",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:清理); help_ok=True"
+    },
+    {
+      "leaf": "gc policy",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "gc retention",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:按策略删版本); help_ok=True"
+    },
+    {
+      "leaf": "gc archive-list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"=== GC Archive List ===\\n✗ 执行子命令 'gc' 失败: 'name'\""
+    },
+    {
+      "leaf": "gc archive-inspect",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "gc audit-list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"=== GC Audit List ===\\n✗ 执行子命令 'gc' 失败: 'dry_run'\""
+    },
+    {
+      "leaf": "gc audit-show",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "gc archive-import",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "gc db-cleanup",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:清理孤儿库(dry-run 默认,仍 help-only 稳妥)); help_ok=True"
+    },
+    {
+      "leaf": "gc db-migrate-single",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:多库迁移); help_ok=True"
+    },
+    {
+      "leaf": "git import",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"导入 Git 历史记录（最多 100 个 commit）...\\n✗ 执行子命令 'git' 失败: method_not_found: 未知方法: import\""
+    },
+    {
+      "leaf": "git log",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='Git commit 历史（共 20 条）:\\n\\n  a7527061  2026-08-09 11:44  nuoyazhizhou     test(memf'"
+    },
+    {
+      "leaf": "git show",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "git stats",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='Git 集成统计:\\n  Commit 总数: 160\\n  文件变更总数: 1982\\n\\n  按变更类型:\\n    修改: 1504 次\\n    新增: 478 次'"
+    },
+    {
+      "leaf": "git check-task",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"[Call Warden] Warning: no active task. Consider 'cw task next' to claim a task b\""
+    },
+    {
+      "leaf": "git check-push",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "git check-ref-transaction",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "git destructive-log",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'git' 失败: method_not_found: 未知方法: list_destructive_operations\""
+    },
+    {
+      "leaf": "graph build-from-c",
+      "verdict": "HELP_OK",
+      "detail": "help-only(重操作:构建 C 图谱); help_ok=True"
+    },
+    {
+      "leaf": "grep",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "guardrail scan",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 安全护栏扫描结果 ===\\n发现 11854 个违规：\\n\\n  #1 [~] [warn] GR-builtin-inc-1\\n        文件: .gi'"
+    },
+    {
+      "leaf": "guardrail rules",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 护栏规则列表 ===\\n共 18 条规则：\\n\\n  #1 [~] python.lang.security.audit.non-literal-import'"
+    },
+    {
+      "leaf": "health-report",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='============================================================\\n  Call Warden 项目健康报'"
+    },
+    {
+      "leaf": "hotspot",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 热点函数排名 ===\\n共找到 100 个函数 \\n\\n  hash     热点分    变更    缺陷     复杂度  标签        函数名\\n '"
+    },
+    {
+      "leaf": "identity revoke",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "impact",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "install",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:安装依赖); help_ok=True"
+    },
+    {
+      "leaf": "install-agent claude-code",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent claude-desktop",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent cursor",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent cline",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent cline-cli",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent devin-cli",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent windsurf",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent trae",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent gemini-cli",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent antigravity",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent codex",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent opencode",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent kiro",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent qoder",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent jetbrains-junie",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent zed",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent pearai",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent kimi-code",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent codebuddy-cli",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent deep-code",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent comate",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent grok-build",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent zcode",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-agent all",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:install-agent 子命令生成集成包); help_ok=True"
+    },
+    {
+      "leaf": "install-hook post-commit",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:装 git hook); help_ok=True"
+    },
+    {
+      "leaf": "issues",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "largest-fns",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='代码行数最多的函数（共 20 个）:\\n\\n    #     行数    深度  函数名\\n  ---  -----  ----  ----------------'"
+    },
+    {
+      "leaf": "lease acquire",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "lease renew",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "lease release",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "lease status",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "lease list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='Lease Audit Events'"
+    },
+    {
+      "leaf": "map text",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "map mermaid",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "metrics",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='代码度量汇总:\\n  文件数: 2334\\n  函数数: 34979\\n  总代码行: 1167525\\n  调用关系: 274035\\n\\n  平均圈复杂度: 4.2\\n '"
+    },
+    {
+      "leaf": "ownership-map",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='所有权映射（共 0 个模块）:\\n--------------------------------------------------'"
+    },
+    {
+      "leaf": "query",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "refresh",
+      "verdict": "HELP_OK",
+      "detail": "help-only(重操作:全量/增量刷新图谱,长耗时); help_ok=True"
+    },
+    {
+      "leaf": "review",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "rollback register",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "rollback show",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "rollback config",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=\"✗ 执行子命令 'rollback' 失败: method_not_found: 未知方法: list_rollback_configs\""
+    },
+    {
+      "leaf": "rollback set",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "rollback is-rolled-back",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "rule candidate",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "rule list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 已生效规则 (3) ===\\n[AR-seed-no-todo-in-commit] no-todo-in-commit (severity=conven'"
+    },
+    {
+      "leaf": "rule applicable",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]=\"=== 适用规则 (2) ===\\n✗ 执行子命令 'rule' 失败: 'str' object has no attribute 'get'\""
+    },
+    {
+      "leaf": "rule sync",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 预览（dry-run, 共 3 条规则）===\\n目标: AGENTS.md\\nafter_hash: 514b6fce40a8599c\\n\\n\\n\\n使用 --a'"
+    },
+    {
+      "leaf": "rule insert-block",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='插入失败:'"
+    },
+    {
+      "leaf": "rule extract",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 已提取候选 (2) ===\\nmin_occurrences: 2\\n  - ok\\n  - candidates_extracted'"
+    },
+    {
+      "leaf": "rule seed-bootstrap",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 自举种子规则已写入（共 0 条）===\\n新建: 0 | 更新: 0 | 跳过: 0'"
+    },
+    {
+      "leaf": "rule cleanup-sync-log",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='=== 同步日志清理完成（older_than=90 天, keep_latest=100）===\\n清理失败:'"
+    },
+    {
+      "leaf": "search",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "semgrep scan",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "semgrep list",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "semgrep stats",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "server",
+      "verdict": "FAIL",
+      "detail": "--help 挂起(TIMEOUT)"
+    },
+    {
+      "leaf": "setup",
+      "verdict": "HELP_OK",
+      "detail": "help-only(环境写:配置 MCP 集成); help_ok=True"
+    },
+    {
+      "leaf": "stats",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "status",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "symbol",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "symbol-history",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task create",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task next",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task next-action",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task prompt",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task assignment-status",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task assignment-heartbeat",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task report",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task handoff",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task step-resolve",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task rollback",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task apply",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task close",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task cascade-close",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task reopen",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task claim-recover",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task capture-diff",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task findings",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task resolve-finding",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task list",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "task show",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task completion-review",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task split",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task status-tree",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task supersede",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task attest-legacy-workspace-binding",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task contract-bootstrap",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task contract-revise",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task bootstrap-executor-evidence",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task bootstrap-reviewer-pass",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task governance-projection",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "task superseded",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "test",
+      "verdict": "FAIL",
+      "detail": "help-only(运行测试套件(可能长耗时)); help_ok=False"
+    },
+    {
+      "leaf": "test-impact",
+      "verdict": "HELP_OK",
+      "detail": "help-only(需符号参数(下方 needs args 也可)); help_ok=True"
+    },
+    {
+      "leaf": "tests",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='Error: qualified_name required (or use --build/--import/--history)'"
+    },
+    {
+      "leaf": "toolchain register",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "toolchain list",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "toolchain show",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "toolchain delete",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "toolchain bind",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "toolchain list-bound",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "topo",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "uncommented",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "vuln-blast",
+      "verdict": "FAIL",
+      "detail": "TIMEOUT(30s 挂起) | out[:80]=''"
+    },
+    {
+      "leaf": "who",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "workspace list",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='工作区列表（共 148 个）:\\n[1193] callwarden [活动]\\n路径: c:/git_work/callwarden\\n[25] callwarde'"
+    },
+    {
+      "leaf": "workspace register",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "workspace set",
+      "verdict": "NEEDS_ARGS",
+      "detail": "rc=2 缺参/用法 | out[:80]=''"
+    },
+    {
+      "leaf": "workspace delete",
+      "verdict": "HELP_OK",
+      "detail": "help-only(破坏性:删除 workspace); help_ok=True"
+    },
+    {
+      "leaf": "workspace scan",
+      "verdict": "HELP_OK",
+      "detail": "help-only(重操作:扫描); help_ok=True"
+    },
+    {
+      "leaf": "workspace generate-ignore",
+      "verdict": "PASS",
+      "detail": "rc=0 | out[:80]='Auto-generate .callwardenignore  [DRY RUN (preview)]\\n  Target: C:\\\\git_work\\\\callw'"
+    }
+  ]
+}
