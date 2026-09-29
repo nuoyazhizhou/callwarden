@@ -1511,6 +1511,16 @@ def _run_subcommand_mode():
                 if "locked" in str(e).lower():
                     cprint(get_error("db_locked"), "red")
                     sys.exit(2)
+                # FIX(全量测试T3,2026-09-30):启动阶段自动 workspace 注册遇到
+                # 无效 workspace_root(如 --workspace 传了不存在的路径)时,daemon
+                # 返回 path_not_found/workspace_not_found 等 DaemonRemoteError,此前
+                # 直接 raise 裸抛 traceback。改为友好错误 + 非零退出(业务错误不该
+                # 是 traceback)。
+                msg = str(e)
+                if any(k in msg for k in ("path_not_found", "workspace_not_found",
+                                          "路径不存在", "workspace")):
+                    cprint(f"✗ workspace 注册失败: {msg}", "red")
+                    sys.exit(2)
                 raise
 
         # 调度子命令
@@ -2606,13 +2616,26 @@ def _handle_rule_list(opts, db):
 def _handle_rule_applicable(opts, db):
     """rule applicable 子命令"""
     context = _parse_json_arg(opts.context, default={})
-    rules = db.get_applicable_rules(context=context, limit=opts.limit)
+    result = db.get_applicable_rules(context=context, limit=opts.limit)
+    # FIX(全量测试T3,2026-09-30):daemon get_applicable_rules 返回
+    # {"rules": [...], "count": N}(dict),而旧本地路径直接返回 list。此前直接
+    # 迭代 dict 会遍历键(str),r.get() 抛 "'str' object has no attribute 'get'"
+    # (被 fail-soft 吞成 rc=0)。兼容两种:dict 取 rules 字段,list 直接用。
+    if isinstance(result, dict):
+        rules = result.get("rules", [])
+    elif isinstance(result, list):
+        rules = result
+    else:
+        rules = []
     cprint(t("cli.messages.rule_applicable_title",
              default="=== Applicable Rules ({count}) ===", count=len(rules)), "cyan", bold=True)
     if not rules:
         print(t("cli.messages.rule_applicable_empty", default="(no rule matched)"))
         return True
     for r in rules:
+        if not isinstance(r, dict):
+            print(f"  {r}")
+            continue
         print(t("cli.messages.rule_applicable_item",
                 default="[{id}] {title} (severity={sev})",
                 id=r.get("id", ""), title=r.get("title", ""), sev=r.get("severity", "info")))
@@ -9601,6 +9624,26 @@ def _handle_status(args, db):
     )
     parser.parse_args(args)
     status = db.get_status()
+
+    # FIX(全量测试T3,2026-09-30):daemon query.status 返回扁平结构
+    # (workspace_instance_id/status/schema_version/symbol_count/call_count/
+    # file_count),而旧本地 get_status 返回嵌套富结构(workspace/files/symbols/
+    # calls/last_build)。直接 status["workspace"] 在 daemon 模式下 KeyError
+    # (被 fail-soft 吞成 rc=0)。检测扁平结构则渲染精简状态。
+    if isinstance(status, dict) and "workspace" not in status and "symbol_count" in status:
+        print()
+        print(f"  {t('cli.messages.status_title', default='Status')}")
+        print()
+        print(f"  workspace_instance_id: {status.get('workspace_instance_id', '')}")
+        print(f"  status: {status.get('status', '')}")
+        print(f"  schema_version: {status.get('schema_version', '')}")
+        print(f"  files: {status.get('file_count', 0)}")
+        print(f"  symbols: {status.get('symbol_count', 0)}")
+        print(f"  calls: {status.get('call_count', 0)}")
+        print()
+        print("  (daemon 精简状态视图;完整文件/语言/git 概览请用 cw stats / cw health-report)")
+        return True
+
     ws = status["workspace"]
     fi = status["files"]
     sy = status["symbols"]
@@ -10429,6 +10472,35 @@ def _handle_call_chain(args, db):
     opts = parser.parse_args(args)
 
     result = db.get_call_chain_down(opts.name, max_depth=opts.depth)
+    # FIX(全量测试T3,2026-09-30):daemon query.call_chain_down 返回扁平边列表
+    # (list,每元素含 depth/callee_name/callee_qualified/...),而旧本地路径返回
+    # dict(start/total_downstream/max_depth_reached/levels)。对 list 调 result['start']
+    # 会抛 "list indices must be integers"(被 fail-soft 吞成 rc=0)。此处兼容两种:
+    # daemon 的扁平列表按 depth 分组展示;旧 dict 沿用原逻辑。
+    if isinstance(result, list):
+        edges = result
+        total = len(edges)
+        max_depth_reached = max((e.get("depth", 0) for e in edges), default=0)
+        print(t("cli.messages.call_chain_down_title", name=opts.name))
+        print(t("cli.messages.call_chain_down_total", count=total))
+        print(t("cli.messages.call_chain_down_max_depth", depth=max_depth_reached))
+        print()
+        # 按 depth 分组
+        by_depth: Dict[int, list] = {}
+        for e in edges:
+            by_depth.setdefault(e.get("depth", 0), []).append(e)
+        for depth in sorted(by_depth):
+            items = by_depth[depth]
+            print(t("cli.messages.call_chain_down_level",
+                  depth=depth, count=len(items)))
+            for item in items[:15]:
+                callee = item.get("callee_qualified") or item.get("callee_name", "?")
+                print(f"  → {callee}")
+            if len(items) > 15:
+                print(t("cli.messages.call_chain_down_more", count=len(items) - 15))
+            print()
+        return True
+    # 旧本地 dict 结构
     print(t("cli.messages.call_chain_down_title", name=result['start']))
     print(t("cli.messages.call_chain_down_total",
           count=result['total_downstream']))
@@ -11046,9 +11118,15 @@ def _handle_largest_fns(args, db):
     print(f"  {'#':>3}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
     print(f"  {'-'*3}  {'-'*5}  {'-'*4}  {'-'*50}")
     for i, fn in enumerate(fns, 1):
+        # FIX(全量测试T3,2026-09-30):daemon query.largest_functions 返回字段是
+        # line_span(非 line_count),且无 depth。旧本地 SQL 用 line_count/depth,
+        # 直接 fn['line_count'] 在 daemon 模式下 KeyError(被 fail-soft 吞成 rc=0)。
+        # 用 .get() 兼容两种字段名,缺失字段给占位。
+        line_count = fn.get("line_count", fn.get("line_span", 0))
+        depth = fn.get("depth", "-")
         print(
-            f"  {i:3d}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
-        print(f"        {fn['file_path']}:{fn['start_line']}")
+            f"  {i:3d}  {line_count:>5}  {str(depth):>4}  {fn['qualified_name'][:60]}")
+        print(f"        {fn.get('file_path', '')}:{fn.get('start_line', '')}")
     return True
 
 
@@ -11076,9 +11154,16 @@ def _handle_coupled_fns(args, db):
     print(f"  {'#':>3}  {fan_in_h:>4}  {fan_out_h:>4}  {total_h:>4}  {fn_h}")
     print(f"  {'-'*3}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*50}")
     for i, fn in enumerate(fns, 1):
+        # FIX(全量测试T3,2026-09-30):daemon query.most_coupled_functions 返回
+        # incoming_call_count(仅入向计数),无 fan_in/fan_out/total_coupling。旧本地
+        # SQL 用后三者,直接下标在 daemon 模式下 KeyError(fail-soft 吞成 rc=0)。
+        # 用 .get() 兼容:daemon 的 incoming_call_count 作 fan_in,fan_out/total 缺省。
+        fan_in = fn.get("fan_in", fn.get("incoming_call_count", 0))
+        fan_out = fn.get("fan_out", "-")
+        total = fn.get("total_coupling", fan_in if fan_out == "-" else "-")
         print(
-            f"  {i:3d}  {fn['fan_in']:>4}  {fn['fan_out']:>4}  {fn['total_coupling']:>4}  {fn['qualified_name'][:60]}")
-        print(f"        {fn['file_path']}")
+            f"  {i:3d}  {fan_in:>4}  {str(fan_out):>4}  {str(total):>4}  {fn['qualified_name'][:60]}")
+        print(f"        {fn.get('file_path', '')}")
     return True
 
 
@@ -12845,7 +12930,20 @@ def main():
     # daemon 必须绕过本地 CodeGraphDB 初始化，所有状态均通过 UDS/registry 管理。
     if len(sys.argv) > 1 and sys.argv[1] == "daemon":
         from .daemon_commands import run_daemon_command
-        raise SystemExit(run_daemon_command(sys.argv[2:]))
+        # FIX(全量测试T3,2026-09-30):daemon 运维子命令(publish/snapshot-stats 等)
+        # 遇到业务错误(workspace_not_found/invalid_params 缺字段等)会裸抛
+        # DaemonRemoteError traceback。捕获转友好错误 + 非零退出(业务错误不该是
+        # traceback)。connect 级/其他异常仍上抛便于排障。
+        from .console import cprint as _cprint
+        try:
+            from callwarden.server.daemon_protocol import DaemonRemoteError
+        except Exception:
+            DaemonRemoteError = ()  # type: ignore
+        try:
+            raise SystemExit(run_daemon_command(sys.argv[2:]))
+        except DaemonRemoteError as e:
+            _cprint(f"✗ daemon 命令失败: {e}", "red")
+            raise SystemExit(2)
 
     # --workspace 预扫描：允许 `cw --workspace ROOT task show T-xxx` 形式
     # 提取 --workspace ROOT 到环境变量，从 argv 移除后让 sys.argv[1] 指向真正子命令
