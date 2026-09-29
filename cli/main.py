@@ -1210,7 +1210,9 @@ class RpcDBProxy:
                                  ("target_paths", "config", "languages", "timeout")),
         "scan_semgrep_incremental": ("scan_semgrep_incremental", "PROTECTED_MUTATION",
                                      ("base_branch", "head", "config", "languages", "timeout")),
-        "build_full_graph": ("build_full_graph", "PROTECTED_MUTATION", ("force",)),
+        # 注:build_full_graph 走 RpcDBProxy 的显式方法(见下),不在此 map ——
+        # daemon RPC 是 workspace.build_graph,且需吞掉 CLI 侧的 force 关键字参数,
+        # 避免 strict transport 因未知字段 fail-closed。
         "embed_all_symbols": ("embed_all_symbols", "PROTECTED_MUTATION", ("force",)),
         "rebuild_fts_index": ("rebuild_fts_index", "PROTECTED_MUTATION", ()),
         "detect_clones": ("detect_clones", "PROTECTED_MUTATION",
@@ -1361,6 +1363,21 @@ class RpcDBProxy:
         if not isinstance(result, list):
             return []
         return [self._map_workspace_row(r) for r in result if isinstance(r, dict)]
+
+    def build_full_graph(self, force: bool = False, scan_root: Optional[str] = None):
+        """CLI refresh --all → daemon 全量重建（含 tree-sitter 符号落库）。
+
+        FIX(全量测试T1,2026-09-30):此前经 __getattr__ 路由到不存在的 RPC
+        "build_full_graph",HTTP daemon method_not_found fail-closed（AGENTS.md 规则 45a）。
+        daemon 侧真实全量建图是 workspace.build_graph（fs_handlers.rs:handle_build_graph，
+        parse_and_store_symbols + resolve_raw_calls）。handler 总是全量重建、不接受 force，
+        故吞掉 CLI 侧 force 参数避免 strict transport 因未知字段 fail-closed；
+        workspace_instance_id 由 route_rpc 注入。
+        """
+        params: Dict[str, Any] = {}
+        if scan_root:
+            params["scan_root"] = scan_root
+        return route_rpc("workspace.build_graph", params, "PROTECTED_MUTATION")
 
     def register_workspace(self, name, root, description: str = "") -> int:
         result = route_rpc(
