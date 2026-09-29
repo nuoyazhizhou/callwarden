@@ -1,161 +1,155 @@
 {
   "total": 243,
   "counters": {
-    "MCP_ERR": 54,
+    "OK": 114,
+    "OK_EMPTY": 35,
     "WRITE_SKIP": 67,
-    "OK": 95,
-    "OK_EMPTY": 27
+    "MCP_ERR": 27
   },
   "results": [
     {
       "tool": "get_stats",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {},
-      "detail": "Error executing tool get_stats: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"symbol_count\": 293374,\n  \"qname_index_size\": 40177,\n  \"simple_name_index_size\": 40177,\n  \"file_index_size\": 127065,\n  \"name_pool_size\": 914917,\n  \"qname_pool_size\": 3125549,\n  \"module_pool_size\":"
     },
     {
       "tool": "search_symbols",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "query": "test"
       },
-      "detail": "Error executing tool search_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"id\": 550,\n  \"name\": \"get_test_coverage\",\n  \"kind\": \"fn\",\n  \"qualified_name\": \"analyzers.coverage.CoverageMixin.get_test_coverage\",\n  \"module_path\": \"analyzers.coverage\",\n  \"start_line\": 250,\n  \"e"
     },
     {
       "tool": "get_symbol",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "qualified_name": "main"
-      },
-      "detail": "Error executing tool get_symbol: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "get_symbol_location",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "name": "main"
-      },
-      "detail": "Error executing tool get_symbol_location: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "get_file_symbols",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "file_path": "cw.py"
       },
-      "detail": "Error executing tool get_file_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"id\": 252756,\n  \"file_instance_id\": 31,\n  \"symbol_hash\": \"7f4fc1c34ca27a6a\",\n  \"name\": \"_is_entry_point_launch\",\n  \"kind\": \"fn\",\n  \"visibility\": \"public\",\n  \"start_line\": 35,\n  \"end_line\": 44,\n  \""
     },
     {
       "tool": "get_callers",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "callee_name": "main"
       },
-      "detail": "Error executing tool get_callers: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"caller_name\": \"main\",\n  \"caller_qualified_name\": \"c:/git_work/callwarden/cw.main\",\n  \"caller_id\": 273522,\n  \"callee_id\": 273522,\n  \"caller_file\": \"c:/git_work/callwarden/cw.py\",\n  \"caller_module\""
     },
     {
       "tool": "get_callees",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "caller_name": "main"
       },
-      "detail": "Error executing tool get_callees: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"callee_name\": \"loads\",\n  \"callee_qualified_name\": \"\",\n  \"callee_qualified\": \"\",\n  \"callee_id\": 0,\n  \"callee_file\": \"\",\n  \"callee_module\": \"\",\n  \"call_line\": 12,\n  \"is_cross_file\": false\n}\n{\n  \"ca"
     },
     {
       "tool": "get_symbol_history",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "qualified_name": "main"
-      },
-      "detail": "Error executing tool get_symbol_history: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "get_file_history",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "file_path": "cw.py"
       },
-      "detail": "Error executing tool get_file_history: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"id\": 1566,\n  \"file_instance_id\": 31,\n  \"version_num\": 4,\n  \"content_hash\": \"96931c434460532d\",\n  \"mtime\": 1785119778.220975,\n  \"total_lines\": 250,\n  \"parsed_at\": 1785119857.1287262,\n  \"is_current"
     },
     {
       "tool": "get_recent_changes",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "since": ""
       },
-      "detail": "Error executing tool get_recent_changes: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"changed_files\": [],\n  \"changed_functions\": [],\n  \"since_seconds\": 0\n}"
     },
     {
       "tool": "get_topological_order",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "limit": 1
       },
-      "detail": "Error executing tool get_topological_order: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "analyzers.coverage.CoverageMixin"
     },
     {
       "tool": "get_impact",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "qualified_name": "main"
       },
-      "detail": "Error executing tool get_impact: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"start\": \"main\",\n  \"max_depth_reached\": 0,\n  \"total_upstream\": 0,\n  \"levels\": [],\n  \"all_upstream\": []\n}"
     },
     {
       "tool": "get_call_chain_down",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "qualified_name": "main"
-      },
-      "detail": "Error executing tool get_call_chain_down: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "get_top_callers",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "limit": 1
       },
-      "detail": "Error executing tool get_top_callers: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"qualified_name\": \"os.path.join\",\n  \"caller_count\": 777,\n  \"call_count\": 1436\n}"
     },
     {
       "tool": "get_orphan_symbols",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "kind": ""
-      },
-      "detail": "Error executing tool get_orphan_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "get_deepest_functions",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "limit": 1
       },
-      "detail": "Error executing tool get_deepest_functions: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"qualified_name\": \"db.db_build.BuildMixin.refresh_file\",\n  \"module_path\": \"db.db_build\",\n  \"depth\": 9,\n  \"kind\": \"fn\"\n}"
     },
     {
       "tool": "get_module_call_stats",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "limit": 1
       },
-      "detail": "Error executing tool get_module_call_stats: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"caller_module\": \"lib::rust_ext::src\",\n  \"callee_module\": \"std::env.var\",\n  \"call_count\": 32,\n  \"unique_caller_count\": 17,\n  \"unique_callee_count\": 1\n}"
     },
     {
       "tool": "detect_cycles",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "max_depth": 1
       },
-      "detail": "Error executing tool detect_cycles: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "parsers.csharp_parser.CSharpParser._walk_declarations\nparsers.csharp_parser.CSharpParser._process_type_declaration\nparsers.java_parser.JavaParser._walk_symbols\nparsers.java_parser.JavaParser._walk_cla"
     },
     {
       "tool": "get_comment_from_version",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "spec": ""
-      },
-      "detail": "Error executing tool get_comment_from_version: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "restore_comment",
@@ -163,31 +157,29 @@
     },
     {
       "tool": "get_issue_summary",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {},
-      "detail": "Error executing tool get_issue_summary: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"total_functions\": 11025,\n  \"functions_with_issues\": 44,\n  \"issue_free_functions\": 10981,\n  \"issue_free_ratio\": 99.6,\n  \"issues\": [\n    {\n      \"type\": \"raw_type\",\n      \"label\": \"raw_type\",\n     "
     },
     {
       "tool": "find_issues",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "issue_type": ""
-      },
-      "detail": "Error executing tool find_issues: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "get_semgrep_stats",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {},
-      "detail": "Error executing tool get_semgrep_stats: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"by_severity\": {},\n  \"by_language\": {},\n  \"by_rule\": [],\n  \"by_symbol\": [],\n  \"total_findings\": 0\n}"
     },
     {
       "tool": "get_semgrep_findings",
-      "cls": "MCP_ERR",
+      "cls": "OK_EMPTY",
       "args": {
         "severity": ""
-      },
-      "detail": "Error executing tool get_semgrep_findings: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      }
     },
     {
       "tool": "run_semgrep_scan",
@@ -199,11 +191,11 @@
     },
     {
       "tool": "get_comment_coverage",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "group_by": ""
       },
-      "detail": "Error executing tool get_comment_coverage: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "snippet": "{\n  \"total\": 19798,\n  \"commented\": 13704,\n  \"coverage\": 69.22,\n  \"by_kind\": {\n    \"class\": {\n      \"total\": 1657,\n      \"commented\": 1452\n    },\n    \"const\": {\n      \"total\": 199,\n      \"commented\": 0"
     },
     {
       "tool": "get_uncommented_symbols",
@@ -211,7 +203,7 @@
       "args": {
         "kind": ""
       },
-      "detail": "Error executing tool get_uncommented_symbols: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "detail": "Error executing tool get_uncommented_symbols: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (query.uncommented_symbols): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:4619/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
     },
     {
       "tool": "get_call_heatmap",
@@ -219,13 +211,13 @@
       "args": {
         "group_by": ""
       },
-      "detail": "Error executing tool get_call_heatmap: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "detail": "Error executing tool get_call_heatmap: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (get_call_heatmap): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:4619/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
     },
     {
       "tool": "get_test_coverage",
       "cls": "MCP_ERR",
       "args": {},
-      "detail": "Error executing tool get_test_coverage: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "detail": "Error executing tool get_test_coverage: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (get_test_coverage): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:4619/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
     },
     {
       "tool": "export_module_graph",
@@ -233,7 +225,7 @@
       "args": {
         "format": ""
       },
-      "detail": "Error executing tool export_module_graph: snapshot_not_ready: workspace 4baea3ff12c2ea5c 未发布 snapshot"
+      "detail": "Error executing tool export_module_graph: invalid_params: 不支持的格式: "
     },
     {
       "tool": "restore_all_comments",
@@ -251,7 +243,7 @@
       "tool": "list_workspaces",
       "cls": "OK",
       "args": {},
-      "snippet": "{\n  \"workspace_id\": 1193,\n  \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\n  \"snapshot_id\": \"5faeb2790e7b1546\",\n  \"owner_uid\": 4294967295,\n  \"git_remote_url\": \"git@github.com:nuoyazhizhou/callwarden.git"
+      "snippet": "{\n  \"workspace_id\": 1193,\n  \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\n  \"snapshot_id\": \"70300c139ce81466\",\n  \"owner_uid\": 4294967295,\n  \"git_remote_url\": \"git@github.com:nuoyazhizhou/callwarden.git"
     },
     {
       "tool": "register_workspace",
@@ -334,7 +326,7 @@
       "tool": "get_status",
       "cls": "OK",
       "args": {},
-      "snippet": "{\n  \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\n  \"status\": \"ok\",\n  \"schema_version\": 60,\n  \"symbol_count\": 40161,\n  \"call_count\": 273119,\n  \"file_count\": 2267\n}"
+      "snippet": "{\n  \"workspace_instance_id\": \"4baea3ff12c2ea5c\",\n  \"status\": \"ok\",\n  \"schema_version\": 60,\n  \"symbol_count\": 40177,\n  \"call_count\": 273176,\n  \"file_count\": 2268\n}"
     },
     {
       "tool": "remove_file",
@@ -355,7 +347,7 @@
       "tool": "get_code_metrics_summary",
       "cls": "OK",
       "args": {},
-      "snippet": "{\n  \"file_count\": 2267,\n  \"function_count\": 34924,\n  \"total_lines\": 1159101,\n  \"total_calls\": 273119,\n  \"avg_complexity\": 4.2,\n  \"max_complexity\": 471,\n  \"complexity_distribution\": {\n    \"低 (≤5)\": 235"
+      "snippet": "{\n  \"file_count\": 2268,\n  \"function_count\": 34939,\n  \"total_lines\": 1159522,\n  \"total_calls\": 273176,\n  \"avg_complexity\": 4.2,\n  \"max_complexity\": 471,\n  \"complexity_distribution\": {\n    \"低 (≤5)\": 235"
     },
     {
       "tool": "get_complexity_hotspots",
@@ -402,7 +394,7 @@
       "args": {
         "severity": ""
       },
-      "snippet": "{\n  \"severity\": \"\",\n  \"total_issues\": 197336,\n  \"issues\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"LONG_FUNCTIONS\",\n      \"count\": 1685\n    },\n    {\n      \"severity\": \"warning\",\n      \"code\":"
+      "snippet": "{\n  \"severity\": \"\",\n  \"total_issues\": 197381,\n  \"issues\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"LONG_FUNCTIONS\",\n      \"count\": 1685\n    },\n    {\n      \"severity\": \"warning\",\n      \"code\":"
     },
     {
       "tool": "check_file_health",
@@ -537,7 +529,7 @@
       "args": {
         "task_id": "T-1790136923625-2803e218"
       },
-      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"status\": \"in_progress\",\n  \"claimed_by\": \"\",\n  \"next_step_id\": \"S-1790136923628-2832a6c0\",\n  \"next_action\": \"work\",\n  \"remediation_step_id\": null,\n  \"steps"
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"status\": \"in_progress\",\n  \"claimed_by\": \"sess-f7da2b8d608f\",\n  \"next_step_id\": \"S-1790136923628-283596b4\",\n  \"next_action\": \"work\",\n  \"remediation_step_id"
     },
     {
       "tool": "task_assignment_status",
@@ -545,7 +537,7 @@
       "args": {
         "task_id": "T-1790136923625-2803e218"
       },
-      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"assignments\": [\n    {\n      \"assignment_id\": \"A-869f12cebfb0cc46acc3828c\",\n      \"task_id\": \"T-1790136923625-2803e218\",\n      \"step_id\": \"S-1790136923628-"
+      "snippet": "{\n  \"task_id\": \"T-1790136923625-2803e218\",\n  \"assignments\": [\n    {\n      \"assignment_id\": \"A-21d7ca85e1ba731b8d0382a9\",\n      \"task_id\": \"T-1790136923625-2803e218\",\n      \"step_id\": \"S-1790136923628-"
     },
     {
       "tool": "task_assignment_heartbeat",
@@ -639,7 +631,7 @@
       "tool": "bootstrap_status",
       "cls": "OK",
       "args": {},
-      "snippet": "{\n  \"db_stale\": true,\n  \"current_head\": \"eb747d53a196926e0eb9a45ded0030102eb83991\",\n  \"active_rules_count\": 3,\n  \"pending_candidates_count\": 5,\n  \"open_findings_count\": 27998,\n  \"blocking_findings_cou"
+      "snippet": "{\n  \"db_stale\": true,\n  \"current_head\": \"1d9d839e26cb3c51eba704b6707b473ad4cda43d\",\n  \"active_rules_count\": 3,\n  \"pending_candidates_count\": 5,\n  \"open_findings_count\": 27998,\n  \"blocking_findings_cou"
     },
     {
       "tool": "detect_clones",
@@ -886,7 +878,7 @@
       "tool": "project_brief",
       "cls": "MCP_ERR",
       "args": {},
-      "detail": "Error executing tool project_brief: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (project_brief): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:6374/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
+      "detail": "Error executing tool project_brief: E_HTTP_DAEMON_UNAVAILABLE: daemon RPC 调用失败 (project_brief): E_HTTP_REQUEST_TIMEOUT: 连接/读取超时 (url=http://127.0.0.1:4619/v1/rpc): timed out（fail-closed，不回退本地 SQLite）"
     },
     {
       "tool": "repo_map",
@@ -949,11 +941,11 @@
     },
     {
       "tool": "guardrail_list_rules",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "category_filter": ""
       },
-      "detail": "Error executing tool guardrail_list_rules: internal_error: guardrail_list_rules is write-face (_init_builtin_rules INSERT); read-only snapshot connection rejects it (parity: python worker OperationalError attempt to write a readonly database)"
+      "snippet": "{\n  \"rule_id\": \"python.lang.security.audit.non-literal-import.non-literal-import\",\n  \"category\": \"check_gate\",\n  \"severity\": \"warn\",\n  \"pattern\": \"*\",\n  \"action\": \"require_review\",\n  \"description\": \"检"
     },
     {
       "tool": "guardrail_add_rule",
@@ -1095,7 +1087,7 @@
       "tool": "list_branches",
       "cls": "OK",
       "args": {},
-      "snippet": "{\n  \"id\": 1,\n  \"name\": \"callwarden\",\n  \"root_path\": \"c:/git_work/callwarden\",\n  \"created_at\": 1784213382.5007255,\n  \"is_active\": 0,\n  \"symbol_count\": 40161\n}\n{\n  \"id\": 2,\n  \"name\": \"test-h9-ws\",\n  \"ro"
+      "snippet": "{\n  \"id\": 1,\n  \"name\": \"callwarden\",\n  \"root_path\": \"c:/git_work/callwarden\",\n  \"created_at\": 1784213382.5007255,\n  \"is_active\": 0,\n  \"symbol_count\": 40177\n}\n{\n  \"id\": 2,\n  \"name\": \"test-h9-ws\",\n  \"ro"
     },
     {
       "tool": "diff_branches",
@@ -1133,7 +1125,7 @@
         "left_workspace_id": "4baea3ff12c2ea5c",
         "right_workspace_id": "4baea3ff12c2ea5c"
       },
-      "snippet": "{\n  \"archived_files\": 151,\n  \"active_files\": 2267,\n  \"symbols\": 40161,\n  \"delta_files\": 2116\n}"
+      "snippet": "{\n  \"archived_files\": 151,\n  \"active_files\": 2268,\n  \"symbols\": 40177,\n  \"delta_files\": 2117\n}"
     },
     {
       "tool": "switch_branch",
@@ -1169,11 +1161,11 @@
     },
     {
       "tool": "get_edit_history",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "file_path": "cw.py"
       },
-      "detail": "Error executing tool get_edit_history: internal_error: security 组 SQL 失败: Invalid column type Integer at index: 0, name: id"
+      "snippet": "{\n  \"id\": 1,\n  \"file_path\": \"cw.py\",\n  \"operation\": \"edit\",\n  \"file_hash_before\": \"\",\n  \"file_hash_after\": \"\",\n  \"symbol_hash\": \"\",\n  \"agent_task_id\": \"\",\n  \"diff_summary\": \"\",\n  \"status\": \"proposed\","
     },
     {
       "tool": "get_edit_stats",
@@ -1189,7 +1181,7 @@
       "args": {
         "source_workspace": "4baea3ff12c2ea5c"
       },
-      "snippet": "{\n  \"job_id\": \"job-000005\",\n  \"job_type\": \"cross_repo_deps\",\n  \"status\": \"failed\",\n  \"progress\": 0.0,\n  \"created_at\": 1790361709.3783095,\n  \"error\": \"查询 workspace root 失败: Query returned no rows\"\n}"
+      "snippet": "{\n  \"job_id\": \"job-000005\",\n  \"job_type\": \"cross_repo_deps\",\n  \"status\": \"failed\",\n  \"progress\": 0.0,\n  \"created_at\": 1790511282.3226252,\n  \"error\": \"查询 workspace root 失败: Query returned no rows\"\n}"
     },
     {
       "tool": "find_shared_symbols",
@@ -1211,7 +1203,7 @@
       "tool": "cross_repo_summary",
       "cls": "OK",
       "args": {},
-      "snippet": "{\n  \"total_repos\": 18,\n  \"repos\": [\n    {\n      \"id\": 1,\n      \"name\": \"callwarden\",\n      \"root_path\": \"c:/git_work/callwarden\",\n      \"created_at\": 1784213382.5007255,\n      \"symbol_count\": 40161\n  "
+      "snippet": "{\n  \"total_repos\": 18,\n  \"repos\": [\n    {\n      \"id\": 1,\n      \"name\": \"callwarden\",\n      \"root_path\": \"c:/git_work/callwarden\",\n      \"created_at\": 1784213382.5007255,\n      \"symbol_count\": 40177\n  "
     },
     {
       "tool": "lsp_hover",
@@ -1309,11 +1301,11 @@
     },
     {
       "tool": "rule_list",
-      "cls": "MCP_ERR",
+      "cls": "OK",
       "args": {
         "status": ""
       },
-      "detail": "Error executing tool rule_list: internal_error: security 组 SQL 失败: Invalid column type Null at index: 0, name: id"
+      "snippet": "{\n  \"rules\": [\n    {\n      \"id\": \"AR-seed-no-todo-in-commit\",\n      \"title\": \"no-todo-in-commit\",\n      \"rule_text\": \"代码提交不得包含 TODO/FIXME 占位（P0 质量门槛）\",\n      \"scope\": {},\n      \"severity\": \"convention"
     },
     {
       "tool": "get_applicable_rules",
@@ -1321,7 +1313,7 @@
       "args": {
         "context": {}
       },
-      "snippet": "{\n  \"rules\": [],\n  \"count\": 0\n}"
+      "snippet": "{\n  \"rules\": [\n    {\n      \"id\": \"AR-seed-no-todo-in-commit\",\n      \"title\": \"no-todo-in-commit\",\n      \"rule_text\": \"代码提交不得包含 TODO/FIXME 占位（P0 质量门槛）\",\n      \"scope\": {},\n      \"severity\": \"convention"
     },
     {
       "tool": "rule_sync_agents_md",
@@ -1408,7 +1400,7 @@
       "args": {
         "format": ""
       },
-      "snippet": "{\n  \"pid\": 32040,\n  \"uptime_seconds\": 1e-7,\n  \"schema_version\": 60,\n  \"active_jobs\": 5,\n  \"transport\": \"http\"\n}"
+      "snippet": "{\n  \"pid\": 52548,\n  \"uptime_seconds\": 1e-7,\n  \"schema_version\": 60,\n  \"active_jobs\": 5,\n  \"transport\": \"http\"\n}"
     },
     {
       "tool": "get_role_view",
