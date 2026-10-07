@@ -55,6 +55,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 # T10 阶段2.5：原 --flag 独立分析能力提升为独立 subcommand
                 "deepest", "module-calls", "detect-cycles",
                 "export-module-graph", "call-heatmap",
+                "top-callers", "orphan-symbols",
+                "semantic-search", "similar", "embed",
+                "diff", "changes", "restore-comment", "restore-all-comments",
                 "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                 "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
                 "git", "semgrep",
@@ -102,7 +105,7 @@ _READONLY_GIT_ACTIONS = {"log", "show",
 # semgrep list/stats 只读；semgrep scan 含 --save 写，默认视为写以避免锁
 _READONLY_SEMGREP_ACTIONS = {"list", "stats"}
 # coverage fn/uncovered 只读；coverage import 写
-_READONLY_COVERAGE_ACTIONS = {"fn", "uncovered"}
+_READONLY_COVERAGE_ACTIONS = {"fn", "uncovered", "test"}
 # fts status 只读（查询 FTS5 索引状态）；fts rebuild 写（重建索引）
 _READONLY_FTS_ACTIONS = {"status"}
 # F11（2026-07-20 批次6）：graph build-from-c 只读（仅 parse + 内存构 CSR + 报告；
@@ -1592,6 +1595,9 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
                "callers", "callees", "call-chain", "topo",
                "deepest", "module-calls", "detect-cycles",
                "export-module-graph", "call-heatmap",
+               "top-callers", "orphan-symbols",
+               "semantic-search", "similar",
+               "diff", "changes",
                "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
                "who", "ownership-map", "brief", "map", "stats", "status",
@@ -1777,6 +1783,24 @@ def _dispatch_subcommand(argv, db):
             return _handle_export_module_graph(argv, db)
         elif cmd == "call-heatmap":
             return _handle_call_heatmap(argv, db)
+        elif cmd == "top-callers":
+            return _handle_top_callers(argv, db)
+        elif cmd == "orphan-symbols":
+            return _handle_orphan_symbols(argv, db)
+        elif cmd == "semantic-search":
+            return _handle_semantic_search(argv, db)
+        elif cmd == "similar":
+            return _handle_similar(argv, db)
+        elif cmd == "embed":
+            return _handle_embed(argv, db)
+        elif cmd == "diff":
+            return _handle_diff(argv, db)
+        elif cmd == "changes":
+            return _handle_changes(argv, db)
+        elif cmd == "restore-comment":
+            return _handle_restore_comment(argv, db)
+        elif cmd == "restore-all-comments":
+            return _handle_restore_all_comments(argv, db)
         elif cmd == "topo":
             return _handle_topo(argv, db)
         elif cmd == "metrics":
@@ -10554,6 +10578,316 @@ def _handle_call_chain(args, db):
     return True
 
 
+def _handle_diff(args, db):
+    """处理 diff 子命令（对比两个符号内容版本）。只读查询。"""
+    parser = argparse.ArgumentParser(
+        prog="cw diff",
+        description=t("cli.messages.diff_subcommand_desc",
+                      default="Diff two symbol content versions by hash"),
+    )
+    parser.add_argument("hash1", help=t("cli.messages.diff_arg_hash1", default="First content hash"))
+    parser.add_argument("hash2", help=t("cli.messages.diff_arg_hash2", default="Second content hash"))
+    opts = parser.parse_args(args)
+
+    content1 = db.get_symbol_content_by_hash(opts.hash1)
+    content2 = db.get_symbol_content_by_hash(opts.hash2)
+    if not content1:
+        print(t("cli.messages.diff_hash_not_found", hash=opts.hash1))
+    elif not content2:
+        print(t("cli.messages.diff_hash_not_found", hash=opts.hash2))
+    else:
+        print(t("cli.messages.diff_title", hash1=opts.hash1[:12], hash2=opts.hash2[:12]))
+        print(t("cli.messages.diff_function", name=content1['qualified_name']))
+        print(t("cli.messages.diff_type", kind=content1['kind']))
+        print("-" * 40)
+        lines1 = content1["content"].split("\n")
+        lines2 = content2["content"].split("\n")
+        max_lines = max(len(lines1), len(lines2))
+        for i in range(max_lines):
+            l1 = lines1[i] if i < len(lines1) else ""
+            l2 = lines2[i] if i < len(lines2) else ""
+            if l1 != l2:
+                if l1:
+                    print(t("cli.messages.diff_remove_line", idx=i + 1, content=l1))
+                if l2:
+                    print(t("cli.messages.diff_add_line", idx=i + 1, content=l2))
+    return True
+
+
+def _handle_changes(args, db):
+    """处理 changes 子命令（最近变更的文件与函数）。只读查询。"""
+    parser = argparse.ArgumentParser(
+        prog="cw changes",
+        description=t("cli.messages.changes_subcommand_desc",
+                      default="Recently changed files and functions"),
+    )
+    parser.add_argument("since", nargs="?", default="1h",
+                        help=t("cli.messages.changes_arg_since", default="Time window (e.g. 1h/1d/1w; default 1h)"))
+    parser.add_argument("--detail", action="store_true",
+                        help=t("cli.messages.changes_arg_detail", default="Show prev/curr hash detail"))
+    opts = parser.parse_args(args)
+
+    result = db.get_recent_changes(opts.since)
+    changed_files = result["changed_files"]
+    changed_funcs = result["changed_functions"]
+    multi_version_files = [f for f in changed_files if f["version_num"] > 1]
+    print(t("cli.messages.changes_title", since=opts.since))
+    print(t("cli.messages.changes_file_versions", count=len(changed_files)))
+    print(t("cli.messages.changes_multi_files", count=len(multi_version_files)))
+    print(t("cli.messages.changed_funcs_count", count=len(changed_funcs)))
+    print()
+    if multi_version_files:
+        print(t("cli.messages.changed_files_title"))
+        for fv in multi_version_files:
+            parsed_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(fv["parsed_at"]))
+            current = t("cli.messages.history_current") if fv["is_current"] else ""
+            print(f"  v{fv['version_num']}{current} | {parsed_time} | {fv['path']}")
+    if changed_funcs:
+        print()
+        print(t("cli.messages.changed_funcs_title"))
+        for cf in changed_funcs:
+            parsed_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cf["parsed_at"]))
+            type_tag = f"[{cf['change_type']}]"
+            print(f"  {type_tag:4} {cf['qualified_name']}")
+            print(f"       {cf['file_path']}:{cf['line']} | {parsed_time}")
+            if opts.detail:
+                prev = cf['prev_hash']
+                curr = cf['curr_hash']
+                if prev:
+                    print(f"       prev: {prev[:12]}...")
+                else:
+                    print(t("cli.messages.changes_prev_none"))
+                if curr:
+                    print(f"       curr: {curr[:12]}...")
+                else:
+                    print(t("cli.messages.changes_curr_none"))
+    return True
+
+
+def _handle_restore_comment(args, db):
+    """处理 restore-comment 子命令（从历史版本恢复单个符号注释）。写操作。"""
+    parser = argparse.ArgumentParser(
+        prog="cw restore-comment",
+        description=t("cli.messages.restore_comment_subcommand_desc",
+                      default="Restore a symbol's comment from a historical version"),
+    )
+    parser.add_argument("spec", help=t("cli.messages.restore_comment_arg_spec",
+                                        default="Spec: file:symbol@version or file:line"))
+    parser.add_argument("--preview", action="store_true",
+                        help=t("cli.messages.restore_comment_arg_preview", default="Preview only, do not write"))
+    opts = parser.parse_args(args)
+
+    result = db.restore_comment(opts.spec, preview=opts.preview)
+    if not result["success"]:
+        print(t("cli.messages.restore_fail", error=result['error']))
+    elif result.get("preview"):
+        print(t("cli.messages.restore_preview_title"))
+        print(t("cli.messages.restore_function", name=result['qualified_name']))
+        print(t("cli.messages.restore_file", path=result['file_path']))
+        print(t("cli.messages.restore_current_comment", comment=result['old_comment']))
+        print(t("cli.messages.restore_new_comment"))
+        print(result['new_comment'])
+        print()
+        print(t("cli.messages.restore_new_content_preview"))
+        print(result['new_content_preview'])
+    else:
+        print(t("cli.messages.restore_success"))
+        print(t("cli.messages.restore_function", name=result['qualified_name']))
+        print(t("cli.messages.restore_file", path=result['file_path']))
+        print(t("cli.messages.restore_from_version",
+              version=result['restored_from'], lines=result['comment_lines']))
+    return True
+
+
+def _handle_restore_all_comments(args, db):
+    """处理 restore-all-comments 子命令（批量恢复注释）。写操作。"""
+    parser = argparse.ArgumentParser(
+        prog="cw restore-all-comments",
+        description=t("cli.messages.restore_all_subcommand_desc",
+                      default="Restore comments for all symbols from history"),
+    )
+    parser.add_argument("--preview", action="store_true",
+                        help=t("cli.messages.restore_all_arg_preview", default="Preview only, do not write"))
+    parser.add_argument("--file-filter", default="",
+                        help=t("cli.messages.restore_all_arg_file_filter", default="Restore only files matching this prefix"))
+    opts = parser.parse_args(args)
+
+    file_filter = opts.file_filter or None
+    result = db.restore_all_comments(preview=opts.preview, file_filter=file_filter)
+    mode = t("cli.messages.restore_all_mode_preview") if opts.preview else t("cli.messages.restore_all_mode_restore")
+    print(t("cli.messages.restore_all_done", mode=mode))
+    print(t("cli.messages.restore_all_found", count=result['total_found']))
+    print(t("cli.messages.restore_all_restored", count=result['restored']))
+    print(t("cli.messages.restore_all_skipped", count=result['skipped']))
+    print(t("cli.messages.restore_all_failed", count=result['failed']))
+    print(t("cli.messages.restore_all_files", count=len(result['files'])))
+    if result["files"]:
+        print()
+        print(t("cli.messages.restore_all_by_file_title"))
+        for fpath, finfo in sorted(result["files"].items()):
+            if finfo["restored"] > 0 or finfo["failed"] > 0:
+                print(t("cli.messages.restore_all_file_item",
+                        path=fpath, restored=finfo['restored'], skipped=finfo['skipped'],
+                        failed=finfo['failed'], total=finfo['total']))
+    if result["errors"]:
+        print()
+        print(t("cli.messages.restore_all_errors_title"))
+        for err in result["errors"]:
+            print(t("cli.messages.restore_all_error_item", err=err))
+    return True
+
+
+def _handle_semantic_search(args, db):
+    """处理 semantic-search 子命令（向量语义搜索）。只读查询。"""
+    parser = argparse.ArgumentParser(
+        prog="cw semantic-search",
+        description=t("cli.messages.semantic_search_subcommand_desc",
+                      default="Vector semantic search over symbols"),
+    )
+    parser.add_argument("query", help=t("cli.messages.semantic_arg_query", default="Search query"))
+    parser.add_argument("--top-k", type=int, default=10,
+                        help=t("cli.messages.semantic_arg_topk", default="Max results (default 10)"))
+    opts = parser.parse_args(args)
+
+    print(t("cli.messages.semantic_title", query=opts.query))
+    print("-" * 50)
+    results = db.semantic_search(opts.query, top_k=opts.top_k)
+    if not results:
+        print(t("cli.messages.semantic_no_match"))
+        print(t("cli.messages.semantic_hint"))
+    else:
+        for i, r in enumerate(results, 1):
+            print(t("cli.messages.semantic_similarity", idx=i,
+                  value=r['similarity'], name=r['qualified_name']))
+            print(t("cli.messages.semantic_location", file=r['file_path'], line=r['start_line']))
+            if r.get('summary'):
+                print(t("cli.messages.semantic_summary", summary=r['summary'][:80]))
+    print()
+    return True
+
+
+def _handle_similar(args, db):
+    """处理 similar 子命令（查找相似函数）。只读查询。"""
+    parser = argparse.ArgumentParser(
+        prog="cw similar",
+        description=t("cli.messages.similar_subcommand_desc",
+                      default="Find functions similar to a given symbol"),
+    )
+    parser.add_argument("name", help=t("cli.messages.similar_arg_name", default="Symbol name"))
+    parser.add_argument("--threshold", type=float, default=0.7,
+                        help=t("cli.messages.similar_arg_threshold", default="Similarity threshold (default 0.7)"))
+    opts = parser.parse_args(args)
+
+    print(t("cli.messages.similar_title", name=opts.name))
+    print("-" * 50)
+    results = db.find_similar_functions(opts.name, threshold=opts.threshold)
+    if not results:
+        print(t("cli.messages.similar_no_match"))
+        print(t("cli.messages.similar_hint"))
+    else:
+        for i, r in enumerate(results, 1):
+            print(t("cli.messages.semantic_similarity", idx=i,
+                  value=r['similarity'], name=r['qualified_name']))
+            print(t("cli.messages.semantic_location", file=r['file_path'], line=r['start_line']))
+            if r.get('summary'):
+                print(t("cli.messages.semantic_summary", summary=r['summary'][:80]))
+    print()
+    return True
+
+
+def _handle_embed(args, db):
+    """处理 embed 子命令（批量生成符号向量嵌入）。写操作。"""
+    parser = argparse.ArgumentParser(
+        prog="cw embed",
+        description=t("cli.messages.embed_subcommand_desc",
+                      default="Generate vector embeddings for symbols"),
+    )
+    parser.add_argument("--force", action="store_true",
+                        help=t("cli.messages.embed_arg_force", default="Force re-embed all (default incremental)"))
+    opts = parser.parse_args(args)
+
+    mode = t("cli.messages.embed_mode_force") if opts.force else t("cli.messages.embed_mode_incremental")
+    print(t("cli.messages.embed_title", mode=mode))
+    print("-" * 50)
+    stats = db.embed_all_symbols(force=opts.force)
+    print(t("cli.messages.embed_total", count=stats['total']))
+    print(t("cli.messages.embed_success", count=stats['success']))
+    print(t("cli.messages.embed_skipped", count=stats['skipped']))
+    print(t("cli.messages.embed_failed", count=stats['failed']))
+    if stats['success'] == 0 and stats['total'] > 0:
+        print()
+        print(t("cli.messages.embed_hint"))
+    print()
+    return True
+
+
+def _handle_top_callers(args, db):
+    """处理 top-callers 子命令（被调用最多的函数排行）。独立分析命令。"""
+    parser = argparse.ArgumentParser(
+        prog="cw top-callers",
+        description=t("cli.messages.top_callers_subcommand_desc",
+                      default="Functions ranked by number of callers"),
+    )
+    parser.add_argument("limit", type=int, nargs="?", default=20,
+                        help=t("cli.messages.top_callers_arg_limit", default="Max results (default 20)"))
+    parser.add_argument("--module", default="",
+                        help=t("cli.messages.top_callers_arg_module", default="Module filter (prefix)"))
+    opts = parser.parse_args(args)
+
+    results = db.get_top_callers(limit=opts.limit, module_filter=opts.module)
+    if opts.module:
+        print(t("cli.messages.top_callers_title_module", module=opts.module, count=len(results)))
+    else:
+        print(t("cli.messages.top_callers_title", count=len(results)))
+    print()
+    rank_width = len(str(len(results)))
+    for i, item in enumerate(results, 1):
+        rank = str(i).rjust(rank_width)
+        callers = t("cli.messages.top_callers_callers", count=item['caller_count'])
+        calls = t("cli.messages.top_callers_calls", count=item['call_count'])
+        print(f"  #{rank}  {item['qualified_name']}")
+        print(f"        {callers} {calls}")
+    print()
+    return True
+
+
+def _handle_orphan_symbols(args, db):
+    """处理 orphan-symbols 子命令（无调用关系的孤立符号）。独立分析命令。"""
+    parser = argparse.ArgumentParser(
+        prog="cw orphan-symbols",
+        description=t("cli.messages.orphan_subcommand_desc",
+                      default="Symbols with no call relationships"),
+    )
+    parser.add_argument("kind", nargs="?", default="fn",
+                        help=t("cli.messages.orphan_arg_kind", default="Symbol kind (default fn)"))
+    parser.add_argument("--module", default="",
+                        help=t("cli.messages.orphan_arg_module", default="Module filter (prefix)"))
+    parser.add_argument("--limit", type=int, default=50,
+                        help=t("cli.messages.orphan_arg_limit", default="Max results (default 50)"))
+    opts = parser.parse_args(args)
+
+    results = db.get_orphan_symbols(kind=opts.kind, module_filter=opts.module, limit=opts.limit)
+    if opts.module:
+        print(t("cli.messages.orphan_title_module", kind=opts.kind, module=opts.module, count=len(results)))
+    else:
+        print(t("cli.messages.orphan_title", kind=opts.kind, count=len(results)))
+    print()
+    if results:
+        current_module = ""
+        for item in results:
+            mod = item.get("module_path", "") or "(unknown)"
+            if mod != current_module:
+                current_module = mod
+                print(f"  [{current_module}]")
+            print(f"    {item['qualified_name']}")
+        if len(results) >= opts.limit:
+            print(t("cli.messages.orphan_more"))
+    else:
+        print(t("cli.messages.orphan_none"))
+    print()
+    return True
+
+
 def _handle_deepest(args, db):
     """处理 deepest 子命令（调用链最深的函数）。独立分析命令。"""
     parser = argparse.ArgumentParser(
@@ -11236,6 +11570,55 @@ def _handle_uncommented(args, db):
     return True
 
 
+def _print_issue_summary(db, module_filter: str = ""):
+    """全项目缺陷汇总（按严重程度分组）。供 function-issues --summary 调用。
+
+    T10 阶段2.5：复刻原 --issue-summary flag 逻辑。
+    """
+    stats = db.get_issue_summary(module_filter=module_filter)
+    if module_filter:
+        print(t("cli.messages.issue_summary_title_module", module=module_filter))
+    else:
+        print(t("cli.messages.issue_summary_title"))
+    print()
+    print(t("cli.messages.issue_summary_total_fns", count=stats['total_functions']))
+    print(t("cli.messages.issue_summary_with_issues", count=stats['functions_with_issues']))
+    print(t("cli.messages.issue_summary_issue_free",
+          count=stats['issue_free_functions'], pct=stats['issue_free_ratio']))
+    print()
+    severity_icon = {"danger": "[!]", "warn": "[~]", "info": "[i]"}
+    print(t("cli.messages.issue_summary_dist_title"))
+    print()
+    for severity in ["danger", "warn", "info"]:
+        severity_issues = [i for i in stats["issues"]
+                           if i["severity"] == severity and i["function_count"] > 0]
+        if severity_issues:
+            if severity == "danger":
+                severity_label = t("cli.messages.issue_summary_severity_danger")
+            elif severity == "warn":
+                severity_label = t("cli.messages.issue_summary_severity_warn")
+            else:
+                severity_label = t("cli.messages.issue_summary_severity_info")
+            print(f"  [{severity_label}]")
+            for issue in severity_issues:
+                icon = severity_icon.get(issue["severity"], "")
+                bar_len = int(issue["function_count"] / stats["total_functions"]
+                              * 40) if stats["total_functions"] > 0 else 0
+                bar = "█" * bar_len
+                print(t("cli.messages.issue_summary_dist_item",
+                      default="    {icon} {label:<14s}  {bar} {function_count:4d} functions ({ratio}%)  {occurrences} occurrences",
+                      icon=icon, label=issue["label"], bar=bar,
+                      function_count=issue["function_count"], ratio=issue["ratio"],
+                      occurrences=issue["total_occurrences"]))
+            print()
+    zero_issues = [i for i in stats["issues"] if i["function_count"] == 0]
+    if zero_issues:
+        print(t("cli.messages.issue_summary_zero_title"))
+        for issue in zero_issues:
+            print(t("cli.messages.issue_summary_zero_item", label=issue['label']))
+        print()
+
+
 def _handle_function_issues(args, db):
     """处理 function-issues 子命令（函数缺陷检测）
 
@@ -11254,7 +11637,15 @@ def _handle_function_issues(args, db):
         "cli.messages.function_issues_arg_module", default="Filter by module"))
     parser.add_argument("--limit", type=int, default=30, help=t(
         "cli.messages.function_issues_arg_limit", default="Max results (default 30)"))
+    parser.add_argument("--summary", action="store_true", help=t(
+        "cli.messages.function_issues_arg_summary",
+        default="Project-wide issue summary by severity (原 --issue-summary)"))
     opts = parser.parse_args(args)
+
+    # T10 阶段2.5：原 --issue-summary flag 的全项目缺陷汇总并入 --summary 子选项
+    if opts.summary:
+        _print_issue_summary(db, opts.module or "")
+        return True
 
     fn_name = opts.fn
     module_filter = opts.module or ""
@@ -12071,6 +12462,10 @@ def _handle_coverage(args, db):
     sub.add_parser("uncovered", help=t(
         "cli.messages.coverage_action_uncovered", default="Find uncovered functions"))
 
+    # T10 阶段2.5：原 --test-coverage flag 的测试覆盖率统计并入 coverage test 子命令
+    sub.add_parser("test", help=t(
+        "cli.messages.coverage_action_test", default="Test coverage statistics (test functions / module distribution)"))
+
     opts = parser.parse_args(args)
 
     if opts.action == "import":
@@ -12134,6 +12529,34 @@ def _handle_coverage(args, db):
                 f"  [{i:3d}] {pct_label}={r['coverage_pct']:5.1f}%  {r['qualified_name']}")
             print(t("cli.messages.coverage_uncovered_item",
                   file=r['file_path'], start=r['start_line'], end=r['end_line'], covered=r['covered_lines'], tracked=r['tracked_lines']))
+        print()
+        return True
+
+    if opts.action == "test":
+        # T10 阶段2.5：原 --test-coverage flag 的测试覆盖率统计
+        stats = db.get_test_coverage()
+        print(t("cli.messages.test_coverage_title"))
+        print()
+        print(t("cli.messages.test_coverage_total_fns", count=stats['total_functions']))
+        print(t("cli.messages.test_coverage_test_fns", count=stats['test_functions']))
+        print(t("cli.messages.test_coverage_ratio", pct=stats['test_ratio']))
+        print()
+        print(t("cli.messages.test_coverage_total_mods", count=stats['total_modules']))
+        print(t("cli.messages.test_coverage_mods_with_tests", count=stats['modules_with_tests']))
+        print(t("cli.messages.test_coverage_mod_ratio", pct=stats['module_coverage']))
+        print()
+        if stats["test_by_module"]:
+            print(t("cli.messages.test_coverage_dist_title"))
+            print()
+            max_test_count = max(m["test_count"] for m in stats["test_by_module"])
+            max_mod_len = max(len(m["module"]) for m in stats["test_by_module"][:20])
+            for i, mod in enumerate(stats["test_by_module"][:20], 1):
+                bar_len = int(mod["test_count"] / max_test_count * 30) if max_test_count > 0 else 0
+                bar = "█" * bar_len
+                mod_name = mod["module"].ljust(max_mod_len)
+                print(f"  #{i:2d}  {mod_name}  {bar}  {mod['test_count']:3d} {t('cli.messages.test_coverage_test_count', count='')}".rstrip())
+            if len(stats["test_by_module"]) > 20:
+                print(t("cli.messages.test_coverage_more", count=len(stats['test_by_module']) - 20))
         print()
         return True
 
