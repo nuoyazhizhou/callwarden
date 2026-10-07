@@ -31,8 +31,11 @@
     "审计": [
       "audit"
     ],
-    "未分类": [
-      "bootstrap"
+    "GC 与运维": [
+      "bootstrap",
+      "daemon",
+      "gc",
+      "workspace"
     ],
     "文件与检索": [
       "brief",
@@ -100,11 +103,6 @@
       "dependency",
       "test-impact",
       "tests"
-    ],
-    "GC 与运维": [
-      "daemon",
-      "gc",
-      "workspace"
     ],
     "缺陷与安全扫描": [
       "defect",

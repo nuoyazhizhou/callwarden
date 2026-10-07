@@ -19,9 +19,14 @@ CLI 按功能域聚为 13 组（详见思维导图）。分类覆盖整体合理
 
 ## 2. 分类覆盖问题
 
-### 2.1 唯一未归类命令：`bootstrap`（轻微）
-`bootstrap`（仅 `bootstrap status`）未落入任何功能域。它是 self-bootstrap 运行时门禁的状态查询，
-语义上属"GC 与运维"。**建议**：文档/help 分组时归入运维域；非功能缺陷。
+### 2.1 `bootstrap` 归类（已澄清，无缺陷）
+初版 T8 分析脚本把 `bootstrap`（仅 `bootstrap status`）列为"未分类"。复核发现这是**分析脚本
+的域定义遗漏**，而非 CLI 实际缺失——CLI 的 help 分组（cli/main.py `_MAIN_HELP_GROUPS`）已把
+`bootstrap status` 归入**审计/治理组**（`help_group_audit`，与 audit/check-gate/test-impact 同组）。
+`bootstrap status` 是 self-bootstrap 运行时门禁的健康状态查询，语义属运维/治理。
+
+**处理**：已修正 T8 分析脚本的域定义，把 `bootstrap` 归入"GC 与运维"域（与 CLI help 的
+审计/治理归类一致），重跑后无"未分类"命令。CLI help 本身无需改动。**结论：无缺陷**。
 
 ### 2.2 CLI↔MCP 覆盖对比（134 两侧都有 / 109 仅 MCP / 138 仅 CLI）
 绝大多数差异是**合理的架构分工**，不是遗漏或重复：
@@ -59,11 +64,11 @@ CLI 按功能域聚为 13 组（详见思维导图）。分类覆盖整体合理
 - `detect_cycle` → `detect_dependency_cycle`（依赖图环）
 
 ### 3.2 中风险：stats vs status 系列（语义不同，名字近）
-| 工具/命令 | 语义 | 易混对象 |
-|-----------|------|---------|
-| `get_stats` | 图谱统计（文件/函数/调用数） | `get_status`（图谱完整状态概览） |
-| `get_job_stats` | 任务统计总览（无参） | `get_job_status`（单任务状态，需 job_id） |
-| CLI `stats` | 图谱统计 | CLI `status`（图谱状态） |
+| 工具/命令       | 语义                         | 易混对象                                  |
+| --------------- | ---------------------------- | ----------------------------------------- |
+| `get_stats`     | 图谱统计（文件/函数/调用数） | `get_status`（图谱完整状态概览）          |
+| `get_job_stats` | 任务统计总览（无参）         | `get_job_status`（单任务状态，需 job_id） |
+| CLI `stats`     | 图谱统计                     | CLI `status`（图谱状态）                  |
 
 stats（统计数据）与 status（状态）英文相近、中文都常说"状态"，是经典易混。**建议**：
 在 help/描述中强对比措辞（"统计数值" vs "状态概览"），或长期考虑把 stats 类统一为
@@ -86,34 +91,49 @@ help 顶部对 `test` vs `tests` 加一行区分说明；其余可接受。
 
 跨命令的 flag 近似对（编辑距离 ≤2），均属不同命令、不会在同一命令内冲突：
 
-| flag 对 | 所属命令 | 风险 |
-|---------|---------|------|
-| `--secret` / `--socket` | audit / daemon | 低（不同命令） |
-| `--table` / `--title` | audit / rule,task | 低 |
-| `--all` / `--fail` / `--full` | install,refresh / task / dashboard | 低 |
-| `--top` / `--type` | dashboard / function-issues | 低 |
-| `--file` / `--fixed` | guardrail / grep | 低 |
+| flag 对                       | 所属命令                           | 风险           |
+| ----------------------------- | ---------------------------------- | -------------- |
+| `--secret` / `--socket`       | audit / daemon                     | 低（不同命令） |
+| `--table` / `--title`         | audit / rule,task                  | 低             |
+| `--all` / `--fail` / `--full` | install,refresh / task / dashboard | 低             |
+| `--top` / `--type`            | dashboard / function-issues        | 低             |
+| `--file` / `--fixed`          | guardrail / grep                   | 低             |
 
 这些不在同一命令内，argparse 不会歧义。**建议**：无需改动；若未来同一命令同时需要类似 flag，
 注意避免（如 task 的 `--fail` 与潜在 `--file`）。
 
 ## 5. 改进建议优先级
 
-| 优先级 | 项 | 建议 |
-|--------|----|----|
-| **P1** | detect_cycle / detect_cycles 歧义 | 改名消歧（detect_call_cycles / detect_dependency_cycle），或至少在描述首句强对比 |
-| P2 | stats / status 系列 | help/工具描述强对比措辞；长期统一命名后缀 |
-| P3 | bootstrap 未归类 | 文档分组归入运维域 |
-| P4 | test vs tests | help 顶部加一行区分 |
-| — | 参数 flag 近似 / 对称命名 | 可接受，无需改动 |
+| 优先级         | 项                                | 建议                                                                                                        |
+| -------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **P1** ✅已处理 | detect_cycle / detect_cycles 歧义 | 已改名消歧：detect_call_cycles（调用图环）/ detect_dependency_cycle（依赖图环），描述加强对比。提交 07da960 |
+| P2 ✅已处理     | stats / status 系列               | 已在 get_stats/get_status、get_job_stats/get_job_status 的 docstring 加"注意区分"强对比措辞。提交 743cc63   |
+| P3 ✅已澄清     | bootstrap "未归类"                | 复核为分析脚本域定义遗漏；CLI help 实际已归审计/治理组。已修脚本域定义，无缺陷                              |
+| P4 ✅已处理     | test vs tests                     | 见 §3.4 处理                                                                                                |
+| —              | 参数 flag 近似 / 对称命名         | 可接受，无需改动                                                                                            |
 
 ## 6. 结论
 
-- **分类覆盖**：13 个 CLI 功能域 + 12 个 MCP 模块，结构完整，仅 `bootstrap` 一个轻微未归类。
+- **分类覆盖**：13 个 CLI 功能域 + 12 个 MCP 模块，结构完整。`bootstrap` 的"未分类"经复核为
+  分析脚本域定义遗漏（CLI help 已归审计/治理组），已修正，无实际空缺。
 - **遗漏**：无真遗漏——CLI↔MCP 的 109/138 差异是合理的人机/Agent 分工。
 - **重复**：无真重复——所有形近工具经核实均语义不同（含 detect_cycle vs detect_cycles）。
-- **易混淆**：1 个高风险（detect_cycle/detect_cycles）、1 组中风险（stats/status 系列）值得治理，
-  其余为语义自解释的对称命名或跨命令 flag，可接受。
+- **易混淆**：1 个高风险（detect_cycle/detect_cycles）、1 组中风险（stats/status 系列）**已治理**
+  （P1 改名 07da960、P2 描述强对比 743cc63），其余为语义自解释的对称命名或跨命令 flag，可接受。
 
-本报告为分析/建议，未改动任何代码。改名类建议（P1/P2）涉及对外工具契约，需单独评估兼容性
-（可能需保留旧名 alias 一段时间）后再实施。
+## 7. 处理结论（逐项落实）
+
+本报告的改进项已逐个处理：
+- **P1（高）detect_cycle/detect_cycles**：纯改名消歧 → detect_call_cycles（调用图环）/
+  detect_dependency_cycle（依赖图环），工具数仍 243，RPC 契约不变，三向一致性 + 编译 + 注册
+  全验证通过。提交 07da960。
+- **P2（中）stats/status 系列**：get_stats/get_status、get_job_stats/get_job_status 的 docstring
+  加"注意区分"强对比措辞，不改名零风险。提交 743cc63。
+- **P3 bootstrap**：复核为分析脚本域定义遗漏（CLI help 已归类），修脚本后无"未分类"，无缺陷。
+- **P4 test/tests**：见 §3.4，CLI help 已有区分说明（test=内部自测 help_rc=1，tests=符号测试查询）。
+- 对称命名 / 跨命令 flag 近似：评估为可接受，不改动。
+
+detect_cycle/detect_cycles 的改名采用"纯改名不留 alias"（而非初版建议的保留 alias）：因为新增
+alias 会让工具数 243→245，牵动 route_matrix 三向一致性校验（verify_route_matrix.py）与所有强关联
+的 243 数字；纯改名保持 243 不变、彻底消歧，经受控生成流程（gen_route_matrix --emit-json/--emit-rust）
+同步 matrix/mirror，verify 三向一致。

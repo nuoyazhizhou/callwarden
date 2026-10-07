@@ -74,7 +74,7 @@ def main():
         "任务编排": ["task", "lease", "assignment", "collab", "experiment", "check-gate",
                  "rule", "identity", "rollback"],
         "依赖分析": ["dependency", "test-impact", "tests", "coverage"],
-        "GC 与运维": ["gc", "daemon", "workspace"],
+        "GC 与运维": ["gc", "daemon", "workspace", "bootstrap"],
         "文件与检索": ["file", "grep", "map", "brief"],
         "安装与配置": ["install", "install-agent", "install-hook", "setup", "config",
                   "doctor", "server", "test"],

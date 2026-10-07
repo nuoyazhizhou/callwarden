@@ -157,7 +157,9 @@ def main():
             print(t("cli_test_usage",
                     default="用法: cw test <module> [pytest 参数]\n"
                             "  示例: cw test test_p0_bugfixes\n"
-                            "  <module> 为 callwarden/tests/ 下的测试模块名(不含 .py)"))
+                            "  <module> 为 callwarden/tests/ 下的测试模块名(不含 .py)\n"
+                            "  注意区分: `cw test`=运行开发者 pytest 模块; "
+                            "`cw tests <符号>`=查询某符号的测试用例/覆盖"))
             sys.exit(1)
         sys.argv = ["cw"] + args[2:]
         mod = importlib.import_module(f"{_PKG}.tests.{test_name}")

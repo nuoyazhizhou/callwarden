@@ -10107,7 +10107,9 @@ def _handle_tests(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw tests",
-        description="Symbol-level test case relations and test run history",
+        description="Symbol-level test case relations and test run history. "
+                    "NOTE: `cw tests <symbol>` queries which tests cover a symbol; "
+                    "`cw test <module>` (no 's') runs developer pytest modules.",
     )
     parser.add_argument("qualified_name", nargs="?",
                         help="Symbol qualified name")
