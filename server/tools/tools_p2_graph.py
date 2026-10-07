@@ -165,10 +165,13 @@ def register(mcp: FastMCP) -> None:
         return _res.get("result") if isinstance(_res, dict) and "result" in _res else _res
 
     @mcp.tool()
-    def detect_cycle(workspace_id: int) -> dict:
-        """检测硬依赖图中的环，返回最小 cycle path（Req 9.7）。
+    def detect_dependency_cycle(workspace_id: int) -> dict:
+        """检测【契约硬依赖图】中的环，返回最小 cycle path（Req 9.7）。
 
-        只做无环校验和诊断，不提供自动排程/assignment/抢占（Req 9.10）。
+        作用对象是**契约/模块之间的硬依赖关系**（task_dependencies 硬依赖边），
+        参数是 workspace_id。若要检测**函数之间的调用环**，请用 detect_call_cycles
+        （参数是 max_depth）。只做无环校验和诊断，不提供自动排程/assignment/抢占
+        （Req 9.10）。
 
         Returns:
             {"has_cycle": bool, "cycle_path": list}

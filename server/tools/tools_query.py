@@ -232,8 +232,11 @@ def register(mcp: FastMCP) -> None:
         return _route('query.module_call_stats', {"limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
-    def detect_cycles(max_depth: int = 10) -> list:
-        """检测循环调用
+    def detect_call_cycles(max_depth: int = 10) -> list:
+        """检测【函数调用图】中的循环调用（A 调 B、B 调 A 这类环）。
+
+        作用对象是**函数之间的调用关系**（calls 表）。若要检测**契约/模块的硬依赖
+        图环**（Req 9.7），请用 detect_dependency_cycle（参数是 workspace_id）。
 
         Args:
             max_depth: 最大追踪深度（默认 10）

@@ -99,7 +99,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 孤立符号     | `get_orphan_symbols`                              | `cw --orphan-symbols`      | 无调用关系           |
 | 调用最深     | `get_deepest_functions`                           | `cw --deepest`             | 调用链最深           |
 | 模块调用统计 | `get_module_call_stats`                           | `cw --module-calls`        | 跨模块统计           |
-| 循环检测     | `detect_cycles`                                   | `cw --detect-cycles`       | 调用图环             |
+| 循环检测     | `detect_call_cycles`                              | `cw --detect-cycles`       | 调用图环             |
 | 调用热力图   | `get_call_heatmap`                                | `cw --call-heatmap`        | 频率热力图           |
 | 模块图导出   | `export_module_graph`                             | `cw --export-module-graph` | 模块依赖图           |
 | 拓扑排序     | `get_topological_order`                           | `cw --topo`                | 调用图拓扑序         |
@@ -200,7 +200,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 #### [3] Call Chain Analysis（14 个）
 
-`get_callers`、`get_callees`、`get_impact`、`get_call_chain_down`、`get_top_callers`、`get_orphan_symbols`、`get_deepest_functions`、`get_module_call_stats`、`detect_cycles`、`get_call_heatmap`、`export_module_graph`、`get_topological_order`、`diff_callers`、`diff_callees`
+`get_callers`、`get_callees`、`get_impact`、`get_call_chain_down`、`get_top_callers`、`get_orphan_symbols`、`get_deepest_functions`、`get_module_call_stats`、`detect_call_cycles`、`get_call_heatmap`、`export_module_graph`、`get_topological_order`、`diff_callers`、`diff_callees`
 
 #### [4] Code Health & Metrics（12 个）
 
@@ -248,7 +248,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 #### [15] 依赖图与环检测（10 个）
 
-`build_hard_dependency_edges`、`get_dependency_edges`、`detect_cycle`、`validate_revision_dependencies`、`publish_interface`、`get_interface_providers`、`select_interface_provider`、`import_envelope_dependencies`、`record_artifact_identity`、`get_artifact_freshness`
+`build_hard_dependency_edges`、`get_dependency_edges`、`detect_dependency_cycle`、`validate_revision_dependencies`、`publish_interface`、`get_interface_providers`、`select_interface_provider`、`import_envelope_dependencies`、`record_artifact_identity`、`get_artifact_freshness`
 
 #### [16] Assignment 与 Lease（8 个）
 
@@ -371,8 +371,8 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 - **参数**：`limit: int = 30`
 - **返回**：`list`
 
-### `detect_cycles`
-检测循环调用。
+### `detect_call_cycles`
+检测函数调用图中的循环调用（旧名 `detect_cycles` 已更名以区别于依赖图环检测 `detect_dependency_cycle`）。
 - **参数**：`max_depth: int = 10`
 - **返回**：`list` — 每个循环是一个函数名列表
 
@@ -1937,12 +1937,12 @@ G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时�
 
 ### 硬依赖图与环检测
 
-| 工具名                           | 参数                                           | 返回值                                                | 说明                                     |
-| -------------------------------- | ---------------------------------------------- | ----------------------------------------------------- | ---------------------------------------- |
-| `build_hard_dependency_edges`    | `workspace_id, contract_id, contract_revision` | `{"edges_built": int, "edges_skipped": int}`          | 构建硬依赖图边（Req 9.6）                |
-| `detect_cycle`                   | `workspace_id`                                 | `{"has_cycle": bool, "cycle_path": list}`             | 检测环，返回最小 cycle path（Req 9.7）   |
-| `validate_revision_dependencies` | `workspace_id, contract_id, contract_revision` | `{"valid": bool, "errors": list, "cycle_path": list}` | 验证 revision 依赖完整性（Req 9.7, 9.9） |
-| `get_dependency_edges`           | `workspace_id, task_id?`                       | 依赖边列表                                            | 查询硬依赖图边（Req 9.6，诊断用）        |
+| 工具名                           | 参数                                           | 返回值                                                | 说明                                                                    |
+| -------------------------------- | ---------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| `build_hard_dependency_edges`    | `workspace_id, contract_id, contract_revision` | `{"edges_built": int, "edges_skipped": int}`          | 构建硬依赖图边（Req 9.6）                                               |
+| `detect_dependency_cycle`        | `workspace_id`                                 | `{"has_cycle": bool, "cycle_path": list}`             | 检测契约硬依赖图环，返回最小 cycle path（Req 9.7）；旧名 `detect_cycle` |
+| `validate_revision_dependencies` | `workspace_id, contract_id, contract_revision` | `{"valid": bool, "errors": list, "cycle_path": list}` | 验证 revision 依赖完整性（Req 9.7, 9.9）                                |
+| `get_dependency_edges`           | `workspace_id, task_id?`                       | 依赖边列表                                            | 查询硬依赖图边（Req 9.6，诊断用）                                       |
 
 **环检测语义**：`publish_envelope_revision` 在写入 revision 后自动调用 `build_hard_dependency_edges` + `detect_cycle`，有环则原子回滚（删除刚写入的 revision/dependencies/edges）并抛 `HARD_CYCLE_DETECTED`（Req 9.7）。
 

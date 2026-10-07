@@ -9,110 +9,110 @@
 
 ### 1. 符号基本属性（symbols 表）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 查符号定义 | `cw --symbol <QN>` | 精确返回符号内容（含 calls_out/called_by/issues 前 5 条），不含无关代码 |
-| 符号搜索 | `cw --search <Q>` | 结构化结果，含符号类型/位置 |
-| 精确查询位置 | `cw --query <NAME> <FILE>` | 比 Grep 精确（按符号名+文件，不误匹配字符串/注释）|
-| 文件内符号列表 | `cw --file <PATH>` | 结构化列出文件的所有符号（含签名/类型/行号）|
+| 场景           | cw 命令                    | 为什么不用 Grep/Read                                                    |
+| -------------- | -------------------------- | ----------------------------------------------------------------------- |
+| 查符号定义     | `cw --symbol <QN>`         | 精确返回符号内容（含 calls_out/called_by/issues 前 5 条），不含无关代码 |
+| 符号搜索       | `cw --search <Q>`          | 结构化结果，含符号类型/位置                                             |
+| 精确查询位置   | `cw --query <NAME> <FILE>` | 比 Grep 精确（按符号名+文件，不误匹配字符串/注释）                      |
+| 文件内符号列表 | `cw --file <PATH>`         | 结构化列出文件的所有符号（含签名/类型/行号）                            |
 
 ### 2. 代码度量（db_metrics.py）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 度量汇总 | `cw --metrics` | 全项目符号数/调用边/文件数/平均行数等 |
-| 圈复杂度热点 | `cw --complexity [N]` | 按复杂度排序，找出最复杂的 N 个函数 |
-| 模块耦合度 | `cw --coupling` | 模块间调用统计，识别高耦合模块 |
-| 最大函数 | `cw --largest-fns [N]` | 按行数排序的 N 个最大函数 |
-| 高耦合函数 | `cw --coupled-fns [N]` | 按调用关系数排序的 N 个高耦合函数 |
-| 单函数度量 | `cw --fn-metrics <NAME>` | 指定函数的详细度量（行数/复杂度/调用数/被调用数）|
+| 场景         | cw 命令                  | 为什么不用 Grep/Read                              |
+| ------------ | ------------------------ | ------------------------------------------------- |
+| 度量汇总     | `cw --metrics`           | 全项目符号数/调用边/文件数/平均行数等             |
+| 圈复杂度热点 | `cw --complexity [N]`    | 按复杂度排序，找出最复杂的 N 个函数               |
+| 模块耦合度   | `cw --coupling`          | 模块间调用统计，识别高耦合模块                    |
+| 最大函数     | `cw --largest-fns [N]`   | 按行数排序的 N 个最大函数                         |
+| 高耦合函数   | `cw --coupled-fns [N]`   | 按调用关系数排序的 N 个高耦合函数                 |
+| 单函数度量   | `cw --fn-metrics <NAME>` | 指定函数的详细度量（行数/复杂度/调用数/被调用数） |
 
 ### 3. 调用关系 / 爆炸半径（db_impact.py）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 找调用方 | `cw --callers <QN>` | Grep 误匹配注释/字符串/同名函数 |
-| 找被调用方 | `cw --callees <QN>` | 同上 |
-| 调用链 | `cw --call-chain <QN>` | 图遍历，Grep 做不到 |
-| 变更影响（向上爆炸半径）| `cw --impact <QN>` | blast radius，独有能力 |
-| 拓扑排序 | `cw --topo` | 调用图拓扑序，Grep 做不到 |
-| 循环调用检测 | `cw --detect-cycles` | 调用图环检测 |
-| 模块间调用统计 | `cw --module-calls [N]` | 跨模块调用热力图 |
-| 调用频率热力图 | `cw --call-heatmap [GROUP]` | 按模块/文件聚合的调用频率 |
-| 孤立符号 | `cw --orphan-symbols [KIND]` | 无调用方/被调用方的符号 |
-| 调用深度最深 | `cw --deepest [N]` | 调用链最深的 N 个函数 |
-| 跨层影响 | `cw defect cross-layer` | 跨层（API/Service/DAO）影响传播 |
+| 场景                     | cw 命令                      | 为什么不用 Grep/Read            |
+| ------------------------ | ---------------------------- | ------------------------------- |
+| 找调用方                 | `cw --callers <QN>`          | Grep 误匹配注释/字符串/同名函数 |
+| 找被调用方               | `cw --callees <QN>`          | 同上                            |
+| 调用链                   | `cw --call-chain <QN>`       | 图遍历，Grep 做不到             |
+| 变更影响（向上爆炸半径） | `cw --impact <QN>`           | blast radius，独有能力          |
+| 拓扑排序                 | `cw --topo`                  | 调用图拓扑序，Grep 做不到       |
+| 循环调用检测             | `cw --detect-cycles`         | 调用图环检测                    |
+| 模块间调用统计           | `cw --module-calls [N]`      | 跨模块调用热力图                |
+| 调用频率热力图           | `cw --call-heatmap [GROUP]`  | 按模块/文件聚合的调用频率       |
+| 孤立符号                 | `cw --orphan-symbols [KIND]` | 无调用方/被调用方的符号         |
+| 调用深度最深             | `cw --deepest [N]`           | 调用链最深的 N 个函数           |
+| 跨层影响                 | `cw defect cross-layer`      | 跨层（API/Service/DAO）影响传播 |
 
 ### 4. 覆盖率（db_coverage.py）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 注释覆盖率 | `cw --comment-coverage` | 全项目注释覆盖率统计 |
-| 无注释符号 | `cw --uncommented` | 列出没有注释的符号 |
-| 测试覆盖率 | `cw --test-coverage` | 全项目测试覆盖率统计 |
-| 导入覆盖率 | `cw coverage import <file>` | 导入 lcov/jacoco 覆盖率报告 |
-| 函数覆盖率 | `cw coverage fn <QN>` | 指定函数的覆盖率详情 |
-| 未覆盖函数 | `cw coverage uncovered` | 列出未被测试覆盖的函数 |
-| 测试影响选择 | `cw test-impact <QN>` | 改了该函数后需要运行的测试列表 |
-| 谁最懂这个符号 | `cw who <QN>` | 按 git blame + CODEOWNERS 推断负责人 |
-| 所有权映射 | `cw ownership-map` | 符号 → 文件 → 负责人的映射 |
+| 场景           | cw 命令                     | 为什么不用 Grep/Read                 |
+| -------------- | --------------------------- | ------------------------------------ |
+| 注释覆盖率     | `cw --comment-coverage`     | 全项目注释覆盖率统计                 |
+| 无注释符号     | `cw --uncommented`          | 列出没有注释的符号                   |
+| 测试覆盖率     | `cw --test-coverage`        | 全项目测试覆盖率统计                 |
+| 导入覆盖率     | `cw coverage import <file>` | 导入 lcov/jacoco 覆盖率报告          |
+| 函数覆盖率     | `cw coverage fn <QN>`       | 指定函数的覆盖率详情                 |
+| 未覆盖函数     | `cw coverage uncovered`     | 列出未被测试覆盖的函数               |
+| 测试影响选择   | `cw test-impact <QN>`       | 改了该函数后需要运行的测试列表       |
+| 谁最懂这个符号 | `cw who <QN>`               | 按 git blame + CODEOWNERS 推断负责人 |
+| 所有权映射     | `cw ownership-map`          | 符号 → 文件 → 负责人的映射           |
 
 ### 5. Git 历史 / 演化智能（db_git.py + db_evolution.py）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 导入 git 历史 | `cw git import` | 把 commit log 结构化入库 |
-| commit 历史 | `cw git log [--author X] [--since Y]` | 按条件查询 commit |
-| commit 详情 | `cw git show <hash>` | 单个 commit 的文件变更 |
-| git 统计 | `cw git stats` | 提交者/文件/时间段统计 |
-| 符号 commit 历史 | `cw symbol-history <hash>` | 单符号的 commit 时间线 |
-| 函数变更频率 | `cw evolution <QN>` | 变更次数/变更者/时间线（按时间窗口）|
-| 热点函数排名 | `cw hotspot` | 变更次数 + 缺陷数 + 复杂度综合排名 |
-| 代码流失分析 | `cw churn [--window 90d]` | 按时间窗口的代码增删统计 |
+| 场景             | cw 命令                               | 为什么不用 Grep/Read                 |
+| ---------------- | ------------------------------------- | ------------------------------------ |
+| 导入 git 历史    | `cw git import`                       | 把 commit log 结构化入库             |
+| commit 历史      | `cw git log [--author X] [--since Y]` | 按条件查询 commit                    |
+| commit 详情      | `cw git show <hash>`                  | 单个 commit 的文件变更               |
+| git 统计         | `cw git stats`                        | 提交者/文件/时间段统计               |
+| 符号 commit 历史 | `cw symbol-history <hash>`            | 单符号的 commit 时间线               |
+| 函数变更频率     | `cw evolution <QN>`                   | 变更次数/变更者/时间线（按时间窗口） |
+| 热点函数排名     | `cw hotspot`                          | 变更次数 + 缺陷数 + 复杂度综合排名   |
+| 代码流失分析     | `cw churn [--window 90d]`             | 按时间窗口的代码增删统计             |
 
 ### 6. 静态检查（Semgrep + Guardrail + issues + tests + clone + defects）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 符号静态检查 | `cw issues <QN>` | 整合 Semgrep + Guardrail findings，按符号聚合（行范围交集）|
-| 符号测试 case | `cw tests <QN>` | test_fn ↔ tested_fn 三阶推断（direct_call > name_convention > indirect）|
-| 反向测试查询 | `cw tests <QN> --reverse` | test_fn 测了哪些被测函数 |
-| 测试覆盖摘要 | `cw tests <QN> --coverage` | has_tests / test_count / high_confidence_count |
-| 测试稳定性 | `cw tests <QN> --history` | 基于 test_runs 历史的 pass_rate / recent_failures |
-| 导入 JUnit XML | `cw tests --import <file>` | 解析 pytest --junitxml 输出，关联 test_fn |
-| 重建测试关联 | `cw tests --build [--force]` | refresh 测试文件后重建 test_case_relations |
-| 代码重复检测 | `cw clone detect [--min-lines N] [--similarity F]` | Type-1/2/3 克隆检测（MinHash + LSH + token 归一化）|
-| 按符号查重复 | `cw clone list --symbol <QN>` | 查指定符号的重复代码对 |
-| 列出克隆 | `cw clone list [--type 1] [--limit N]` | 按类型/相似度过滤克隆列表 |
-| 克隆统计 | `cw clone stats` | 克隆对数量 / 影响文件数 / 类型分布 |
-| 变更-缺陷关联 | `cw evolution <QN> --defects` | 变更频率 vs 缺陷关联（change_count / defect_count / defect_rate / recent_defects）|
-| Semgrep 扫描 | `cw semgrep scan [PATH...]` | 扫描指定路径，findings 入库 |
-| 函数缺陷检测 | `cw function-issues [FN]` | 按函数聚合 Semgrep findings |
-| 缺陷知识库搜索 | `cw defect search <pattern>` | 按模式搜历史缺陷知识 |
-| 漏洞爆炸半径 | `cw vuln-blast <vuln_id>` | 从漏洞点到调用方的反向影响 |
-| 安全护栏扫描 | `cw guardrail scan` | 编辑前的安全规则匹配 |
+| 场景           | cw 命令                                            | 为什么不用 Grep/Read                                                               |
+| -------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 符号静态检查   | `cw issues <QN>`                                   | 整合 Semgrep + Guardrail findings，按符号聚合（行范围交集）                        |
+| 符号测试 case  | `cw tests <QN>`                                    | test_fn ↔ tested_fn 三阶推断（direct_call > name_convention > indirect）           |
+| 反向测试查询   | `cw tests <QN> --reverse`                          | test_fn 测了哪些被测函数                                                           |
+| 测试覆盖摘要   | `cw tests <QN> --coverage`                         | has_tests / test_count / high_confidence_count                                     |
+| 测试稳定性     | `cw tests <QN> --history`                          | 基于 test_runs 历史的 pass_rate / recent_failures                                  |
+| 导入 JUnit XML | `cw tests --import <file>`                         | 解析 pytest --junitxml 输出，关联 test_fn                                          |
+| 重建测试关联   | `cw tests --build [--force]`                       | refresh 测试文件后重建 test_case_relations                                         |
+| 代码重复检测   | `cw clone detect [--min-lines N] [--similarity F]` | Type-1/2/3 克隆检测（MinHash + LSH + token 归一化）                                |
+| 按符号查重复   | `cw clone list --symbol <QN>`                      | 查指定符号的重复代码对                                                             |
+| 列出克隆       | `cw clone list [--type 1] [--limit N]`             | 按类型/相似度过滤克隆列表                                                          |
+| 克隆统计       | `cw clone stats`                                   | 克隆对数量 / 影响文件数 / 类型分布                                                 |
+| 变更-缺陷关联  | `cw evolution <QN> --defects`                      | 变更频率 vs 缺陷关联（change_count / defect_count / defect_rate / recent_defects） |
+| Semgrep 扫描   | `cw semgrep scan [PATH...]`                        | 扫描指定路径，findings 入库                                                        |
+| 函数缺陷检测   | `cw function-issues [FN]`                          | 按函数聚合 Semgrep findings                                                        |
+| 缺陷知识库搜索 | `cw defect search <pattern>`                       | 按模式搜历史缺陷知识                                                               |
+| 漏洞爆炸半径   | `cw vuln-blast <vuln_id>`                          | 从漏洞点到调用方的反向影响                                                         |
+| 安全护栏扫描   | `cw guardrail scan`                                | 编辑前的安全规则匹配                                                               |
 
 ### 7. 注释恢复（db_comment.py）
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
-| 恢复函数注释 | `cw --restore-comment <SPEC>` | 从历史版本恢复函数的中文注释 |
-| 批量恢复注释 | `cw --restore-all-comments` | 全项目扫描无注释符号，从 git 历史恢复 |
-| 恢复文件版本 | `cw --restore-file <PATH>` | 从指定 hash 恢复文件内容 |
-| 函数历史版本 | `cw --history <NAME>` | 函数的所有历史版本列表 |
-| 版本对比 | `cw --diff <H1> <H2>` | 对比两个版本的内容差异 |
-| 从版本查注释 | `cw symbol comment-from-version <QN> <hash>` | 从指定 commit 的版本提取注释 |
+| 场景         | cw 命令                                      | 为什么不用 Grep/Read                  |
+| ------------ | -------------------------------------------- | ------------------------------------- |
+| 恢复函数注释 | `cw --restore-comment <SPEC>`                | 从历史版本恢复函数的中文注释          |
+| 批量恢复注释 | `cw --restore-all-comments`                  | 全项目扫描无注释符号，从 git 历史恢复 |
+| 恢复文件版本 | `cw --restore-file <PATH>`                   | 从指定 hash 恢复文件内容              |
+| 函数历史版本 | `cw --history <NAME>`                        | 函数的所有历史版本列表                |
+| 版本对比     | `cw --diff <H1> <H2>`                        | 对比两个版本的内容差异                |
+| 从版本查注释 | `cw symbol comment-from-version <QN> <hash>` | 从指定 commit 的版本提取注释          |
 
 ### 8. 编辑前检查与刷新
 
-| 场景 | cw 命令 | 为什么不用 Grep/Read |
-|------|---------|---------------------|
+| 场景                   | cw 命令                                                   | 为什么不用 Grep/Read                                                                   |
+| ---------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | 带符号上下文的文本搜索 | `cw grep <pattern> [--fixed] [--limit N] [--include-all]` | 每行带 `[in fn xxx]` 标注，agent 一眼看出匹配行属于哪个函数；rg 只给 file:line:content |
-| 编辑前检查 | `cw guardrail scan` | 安全规则匹配 |
-| 编辑前符号契约 | `cw guardrail check-edit` | 符号级 Before-Edit Contract 校验 |
-| 改后刷新 | `cw --refresh <file>` | 保持数据库同步 |
-| 全量刷新 | `cw --refresh-all` | 增量刷新代码图谱 |
-| 强制全量刷新 | `cw --refresh-all --force` | 重新解析所有文件 |
+| 编辑前检查             | `cw guardrail scan`                                       | 安全规则匹配                                                                           |
+| 编辑前符号契约         | `cw guardrail check-edit`                                 | 符号级 Before-Edit Contract 校验                                                       |
+| 改后刷新               | `cw --refresh <file>`                                     | 保持数据库同步                                                                         |
+| 全量刷新               | `cw --refresh-all`                                        | 增量刷新代码图谱                                                                       |
+| 强制全量刷新           | `cw --refresh-all --force`                                | 重新解析所有文件                                                                       |
 
 ## 9. 阶段收口与共享 Runtime 刷新（Windows）
 
@@ -170,12 +170,12 @@ pwsh -File .\scripts\refresh_shared_runtime.ps1 `
 
 ## 可以用自带工具的场景
 
-| 场景 | 工具 | 理由 |
-|------|------|------|
-| 读文件全文 | Read | cw --file 也是返回全文 |
-| 浏览目录 | Glob/LS | cw 无目录浏览命令 |
-| 编辑文件 | Edit | cw 无编辑命令 |
-| 运行命令 | RunCommand | cw 无此能力 |
+| 场景       | 工具       | 理由                   |
+| ---------- | ---------- | ---------------------- |
+| 读文件全文 | Read       | cw --file 也是返回全文 |
+| 浏览目录   | Glob/LS    | cw 无目录浏览命令      |
+| 编辑文件   | Edit       | cw 无编辑命令          |
+| 运行命令   | RunCommand | cw 无此能力            |
 
 ## CLI 命令速查（cw）
 
@@ -353,7 +353,7 @@ db.conn.commit()
 
 **查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
 
-**调用链分析**：get_impact、get_call_chain_down、get_top_callers、get_orphan_symbols、get_deepest_functions、get_module_call_stats、detect_cycles
+**调用链分析**：get_impact、get_call_chain_down、get_top_callers、get_orphan_symbols、get_deepest_functions、get_module_call_stats、detect_call_cycles
 
 **缺陷检测**：get_issue_summary、find_issues、get_semgrep_stats、get_semgrep_findings、run_semgrep_scan
 
@@ -390,33 +390,33 @@ db.conn.commit()
 
 ### 场景必要性结论
 
-| 场景 | cw vs Grep | 必要性 | 说明 |
-|------|-----------|--------|------|
-| **call-chain** | cw 独有 | **强制 cw** | Grep 无法做图遍历 |
-| **impact** | cw 独有 | **强制 cw** | Grep 无法算 blast radius |
-| **callers** | cw token 节省 87% | **强制 cw** | Grep 误匹配主要来自文档提及 |
-| **callees** | cw token 节省 98% | **强制 cw** | Grep 无法限定在函数体内 |
-| **grep** | cw 每行带 `[in fn xxx]` | **优先 cw** | 知道匹配行属于哪个函数，省去读上下文；rg 只给原始 file:line:content |
-| **symbol** | cw token 多 100% | **优先 cw** | cw 含 calls_out/called_by/comment，信息密度高 |
+| 场景           | cw vs Grep              | 必要性      | 说明                                                                |
+| -------------- | ----------------------- | ----------- | ------------------------------------------------------------------- |
+| **call-chain** | cw 独有                 | **强制 cw** | Grep 无法做图遍历                                                   |
+| **impact**     | cw 独有                 | **强制 cw** | Grep 无法算 blast radius                                            |
+| **callers**    | cw token 节省 87%       | **强制 cw** | Grep 误匹配主要来自文档提及                                         |
+| **callees**    | cw token 节省 98%       | **强制 cw** | Grep 无法限定在函数体内                                             |
+| **grep**       | cw 每行带 `[in fn xxx]` | **优先 cw** | 知道匹配行属于哪个函数，省去读上下文；rg 只给原始 file:line:content |
+| **symbol**     | cw token 多 100%        | **优先 cw** | cw 含 calls_out/called_by/comment，信息密度高                       |
 
 ### 性能对比的关键澄清（重要）
 
 A/B 脚本测出 "cw 慢于 Grep 1.3-1.8 倍" 是 **CLI 模式固有启动开销**导致的假象，
 不是查询本身慢。用 `tests/_bench_query_cost.py` 拆解 cw CLI 一次调用的耗时构成：
 
-| 阶段 | 耗时 | 占比 |
-|------|------|------|
-| import 模块（含 numpy/parsers/watchdog） | ~190 ms | 83% |
-| init db（SQLite 连接 + WAL 加载） | ~6 ms | 3% |
-| 实际查询（callers / symbol） | 1-2 ms | <1% |
+| 阶段                                     | 耗时    | 占比 |
+| ---------------------------------------- | ------- | ---- |
+| import 模块（含 numpy/parsers/watchdog） | ~190 ms | 83%  |
+| init db（SQLite 连接 + WAL 加载）        | ~6 ms   | 3%   |
+| 实际查询（callers / symbol）             | 1-2 ms  | <1%  |
 
 换算到三种部署模式的单次查询成本：
 
-| 模式 | 单次查询成本 | 对比 Grep (~100ms) |
-|------|------------|------------------|
-| cw CLI（每次重启 Python） | ~200 ms | 慢 2x（启动开销主导） |
-| **cw daemon / MCP（常驻）** | **~0.3 ms** | **快 ~300 倍** |
-| Grep (rg)（Rust 二进制） | ~100 ms | 基准 |
+| 模式                        | 单次查询成本 | 对比 Grep (~100ms)    |
+| --------------------------- | ------------ | --------------------- |
+| cw CLI（每次重启 Python）   | ~200 ms      | 慢 2x（启动开销主导） |
+| **cw daemon / MCP（常驻）** | **~0.3 ms**  | **快 ~300 倍**        |
+| Grep (rg)（Rust 二进制）    | ~100 ms      | 基准                  |
 
 **结论**：真正公平的对比是 cw daemon vs Grep，那时 cw 比 Grep 快约 300 倍。
 CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与查询逻辑无关。
@@ -443,33 +443,33 @@ CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与
 
 ## cw experiment（P0 盲评对照实验）
 
-| 子命令 | 说明 | 读写 |
-|--------|------|------|
-| `experiment batch-create --seed N` | 创建批次 + 默认协议 + 锁定 | 写（JSON 配置） |
-| `experiment batch-lock <id>` | 冻结协议 | 写 |
-| `experiment batch-list` | 列出所有批次 | 只读 |
-| `experiment toggle-set --scope S --value V` | 设置 P0 Stage_Toggle | 写 |
-| `experiment toggle-show` | 显示解析后的 P0 开关 | 只读 |
-| `experiment admit <task> <batch>` | 纳样（分组 + blind view + JSONL） | 写 |
-| `experiment record-metrics <task> <batch>` | 记录 review 指标 | 写（JSONL） |
-| `experiment record-verdict <task> <batch>` | 记录 verdict 变更 | 写（JSONL） |
-| `experiment record-reveal <task> <batch>` | 记录 reveal 事件 | 写（JSONL） |
-| `experiment record-invalid <task> <batch>` | 记录无效样本 | 写（JSONL） |
-| `experiment record-incident <task> <batch>` | 记录披露/完整性事件 | 写（JSONL） |
-| `experiment pause <batch> --trigger T` | 手动暂停批次 | 写 |
-| `experiment report <batch>` | 汇总评估 + G0 决策 | 只读 |
+| 子命令                                      | 说明                              | 读写            |
+| ------------------------------------------- | --------------------------------- | --------------- |
+| `experiment batch-create --seed N`          | 创建批次 + 默认协议 + 锁定        | 写（JSON 配置） |
+| `experiment batch-lock <id>`                | 冻结协议                          | 写              |
+| `experiment batch-list`                     | 列出所有批次                      | 只读            |
+| `experiment toggle-set --scope S --value V` | 设置 P0 Stage_Toggle              | 写              |
+| `experiment toggle-show`                    | 显示解析后的 P0 开关              | 只读            |
+| `experiment admit <task> <batch>`           | 纳样（分组 + blind view + JSONL） | 写              |
+| `experiment record-metrics <task> <batch>`  | 记录 review 指标                  | 写（JSONL）     |
+| `experiment record-verdict <task> <batch>`  | 记录 verdict 变更                 | 写（JSONL）     |
+| `experiment record-reveal <task> <batch>`   | 记录 reveal 事件                  | 写（JSONL）     |
+| `experiment record-invalid <task> <batch>`  | 记录无效样本                      | 写（JSONL）     |
+| `experiment record-incident <task> <batch>` | 记录披露/完整性事件               | 写（JSONL）     |
+| `experiment pause <batch> --trigger T`      | 手动暂停批次                      | 写              |
+| `experiment report <batch>`                 | 汇总评估 + G0 决策                | 只读            |
 
 所有子命令支持 `--json` 输出机器可读 JSON。失败路径输出 Structured_Reason，exit code 1。
 所有记录标记 `non_product_evidence=True`（P0 实验，非产品 Evidence）。
 
 ## cw collab（多 LLM 契约协同治理写命令）
 
-| 命令 | 说明 | 读写 |
-|------|------|------|
-| `collab publish --workspace PATH` | 发布 Envelope（snapshot.publish） | 写（daemon HTTP authority） |
+| 命令                                                                                                                                                                                                                                                                                                                                                                                         | 说明                                                                               | 读写                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------- |
+| `collab publish --workspace PATH`                                                                                                                                                                                                                                                                                                                                                            | 发布 Envelope（snapshot.publish）                                                  | 写（daemon HTTP authority） |
 | `collab verdict --task-id ID --step-id ID --contract-id ID --contract-hash H --contract-revision N --role-contract-id ID --role-contract-hash H --role-contract-revision N --snapshot-id ID --view-manifest-hash H --request-id ID --phase {blind_first_pass,post_reveal_amendment} --overall {pass,block} --attestation TEXT --agent-instance-id ID --role {reviewer,independent_reviewer}` | 提交 Verdict 并封存（verdict.submit，完整 provenance + identity + reviewer lease） | 写（daemon HTTP authority） |
-| `collab reveal --event-id ID --task-id ID` | 提交 Reveal_Event（reveal.submit） | 写（daemon HTTP authority） |
-| `collab gate-trigger --gate-id ID --clause C --value V` | 触发 Gate 判定（gate.decide） | 写（daemon HTTP authority） |
+| `collab reveal --event-id ID --task-id ID`                                                                                                                                                                                                                                                                                                                                                   | 提交 Reveal_Event（reveal.submit）                                                 | 写（daemon HTTP authority） |
+| `collab gate-trigger --gate-id ID --clause C --value V`                                                                                                                                                                                                                                                                                                                                      | 触发 Gate 判定（gate.decide）                                                      | 写（daemon HTTP authority） |
 
 所有操作经统一权威路由 `route_rpc(..., 'GOVERNANCE_WRITE')`（HTTP authority face，与 `cw lease`
 / `cw task` 写命令面同一真相源），不可绕过。daemon 不可用时 Governance_Write fail closed，

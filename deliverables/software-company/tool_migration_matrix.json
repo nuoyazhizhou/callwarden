@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-09-23T06:57:23",
+  "generated_at": "2026-10-07T18:37:08",
   "total_tools": 243,
   "backends": [
     "rust_native",
@@ -106,7 +106,7 @@
       "job_type": "hard_dep_edges"
     },
     {
-      "name": "detect_cycle",
+      "name": "detect_dependency_cycle",
       "module": "tools_p2_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
@@ -347,7 +347,7 @@
       "status": "stable"
     },
     {
-      "name": "detect_cycles",
+      "name": "detect_call_cycles",
       "module": "tools_query",
       "current_backend": "rust_native",
       "target_backend": "rust_native",

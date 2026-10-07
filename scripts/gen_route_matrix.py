@@ -73,7 +73,7 @@ def extract_tool_names(module_name: str) -> List[str]:
 # 内置回退清单（与 `python - <<` 提取结果一致；薄壳化后可删）
 _FALLBACK_NAMES: Dict[str, List[str]] = {
     "tools_query": [
-        "detect_cycles", "export_module_graph", "find_issues", "get_call_chain_down",
+        "detect_call_cycles", "export_module_graph", "find_issues", "get_call_chain_down",
         "get_call_heatmap", "get_callees", "get_callers", "get_comment_coverage",
         "get_comment_from_version", "get_deepest_functions", "get_file_history",
         "get_file_symbols", "get_impact", "get_issue_summary", "get_module_call_stats",
@@ -156,7 +156,7 @@ _FALLBACK_NAMES: Dict[str, List[str]] = {
         "task_remediation_create", "task_step_resolve",
     ],
     "tools_p2_graph": [
-        "build_hard_dependency_edges", "detect_cycle", "get_artifact_freshness",
+        "build_hard_dependency_edges", "detect_dependency_cycle", "get_artifact_freshness",
         "get_dependency_edges", "get_interface_providers",
         "import_envelope_dependencies", "publish_interface",
         "record_artifact_identity", "select_interface_provider",
@@ -187,7 +187,7 @@ _FALLBACK_NAMES: Dict[str, List[str]] = {
 # rpc_method=工具名（compat 路由按工具名直达 worker）。
 ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     # ============ tools_query（32） ============
-    "detect_cycles": {"rpc_method": "query.detect_cycles", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
+    "detect_call_cycles": {"rpc_method": "query.detect_cycles", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
     "export_module_graph": {"rpc_method": "export_module_graph", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "find_issues": {"rpc_method": "find_issues", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},
     "get_call_chain_down": {"rpc_method": "query.call_chain_down", "backend": "rust_native", "op": "READ_ONLY", "batch": "existing-native", "status": "stable"},
@@ -422,7 +422,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
 
     # ============ tools_p2_graph（10） ============
     "build_hard_dependency_edges": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "hard_dep_edges"},
-    "detect_cycle": {"rpc_method": "detect_cycle", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-007", "status": "migrated"},
+    "detect_dependency_cycle": {"rpc_method": "detect_cycle", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-007", "status": "migrated"},
     "get_artifact_freshness": {"rpc_method": "get_artifact_freshness", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-005", "status": "migrated"},
     "get_dependency_edges": {"rpc_method": "get_dependency_edges", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-009", "status": "migrated"},
     "get_interface_providers": {"rpc_method": "get_interface_providers", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-006", "status": "migrated"},
