@@ -111,3 +111,34 @@ jobs:
       - name: Run ruff
         run: ruff check . --exit-zero
         continue-on-error: true
+
+  rust-unit-test:
+    # T7 跨平台审查发现：此前所有 workflow 只 cargo build、从不 cargo test，
+    # Rust daemon 单元测试（如 daemon::compat_native_handlers 的 gc_restore 全扫 /
+    # gc_purge 审计 / build_defect_knowledge fixes 关联逻辑）在 CI 完全无覆盖，
+    # Rust 层逻辑回归 CI 抓不到（违背 AGENTS 规则 24）。本 job 补上 cargo test。
+    #
+    # 范围限定 daemon::compat_native_handlers：这些测试用 in-memory SQLite、
+    # 无环境依赖、稳定可重复。未纳入 daemon:: 全模块是因为 snapshot_state 等
+    # 既有测试依赖进程单例/真实环境，并行跑会挂起（既有问题，另行治理）。
+    name: Rust unit tests (daemon compat handlers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust daemon compat-handler unit tests
+        # --no-default-features 关闭 extension-module，让 PyO3 链接 libpython
+        # （Cargo.toml [features] 注释明确此为测试模式）。setup-python 提供 libpython。
+        run: >-
+          cargo test --manifest-path rust_ext/Cargo.toml
+          --no-default-features --lib daemon::compat_native_handlers
