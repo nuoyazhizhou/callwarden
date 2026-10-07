@@ -52,6 +52,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "workspace", "refresh", "stats", "status",
                 "search", "grep", "symbol", "file", "query", "issues", "tests",
                 "callers", "callees", "call-chain", "topo",
+                # T10 阶段2.5：原 --flag 独立分析能力提升为独立 subcommand
+                "deepest", "module-calls", "detect-cycles",
+                "export-module-graph", "call-heatmap",
                 "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                 "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
                 "git", "semgrep",
@@ -1587,6 +1590,8 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     # C8 Step #1: 新增 subcommand 只读判断
     if cmd in {"search", "grep", "symbol", "file", "query",
                "callers", "callees", "call-chain", "topo",
+               "deepest", "module-calls", "detect-cycles",
+               "export-module-graph", "call-heatmap",
                "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
                "who", "ownership-map", "brief", "map", "stats", "status",
@@ -1762,6 +1767,16 @@ def _dispatch_subcommand(argv, db):
             return _handle_callees(argv, db)
         elif cmd == "call-chain":
             return _handle_call_chain(argv, db)
+        elif cmd == "deepest":
+            return _handle_deepest(argv, db)
+        elif cmd == "module-calls":
+            return _handle_module_calls(argv, db)
+        elif cmd == "detect-cycles":
+            return _handle_detect_cycles(argv, db)
+        elif cmd == "export-module-graph":
+            return _handle_export_module_graph(argv, db)
+        elif cmd == "call-heatmap":
+            return _handle_call_heatmap(argv, db)
         elif cmd == "topo":
             return _handle_topo(argv, db)
         elif cmd == "metrics":
@@ -10536,6 +10551,161 @@ def _handle_call_chain(args, db):
             print(t("cli.messages.call_chain_down_more",
                   count=level['count'] - 15))
         print()
+    return True
+
+
+def _handle_deepest(args, db):
+    """处理 deepest 子命令（调用链最深的函数）。独立分析命令。"""
+    parser = argparse.ArgumentParser(
+        prog="cw deepest",
+        description=t("cli.messages.deepest_subcommand_desc",
+                      default="Functions with the deepest call chains"),
+    )
+    parser.add_argument("limit", type=int, nargs="?", default=20,
+                        help=t("cli.messages.deepest_arg_limit", default="Max results (default 20)"))
+    parser.add_argument("--module", default="",
+                        help=t("cli.messages.deepest_arg_module", default="Module filter (prefix)"))
+    opts = parser.parse_args(args)
+
+    results = db.get_deepest_functions(limit=opts.limit, module_filter=opts.module)
+    if opts.module:
+        print(t("cli.messages.deepest_title_module", module=opts.module, count=len(results)))
+    else:
+        print(t("cli.messages.deepest_title", count=len(results)))
+    print()
+    rank_width = len(str(len(results)))
+    for i, item in enumerate(results, 1):
+        rank = str(i).rjust(rank_width)
+        print(t("cli.messages.deepest_item",
+              default="  #{rank}  [depth {depth:2d}]  {name}",
+              rank=rank, depth=item["depth"], name=item["qualified_name"]))
+    print()
+    return True
+
+
+def _handle_module_calls(args, db):
+    """处理 module-calls 子命令（跨模块调用统计）。独立分析命令。"""
+    parser = argparse.ArgumentParser(
+        prog="cw module-calls",
+        description=t("cli.messages.module_calls_subcommand_desc",
+                      default="Inter-module call statistics"),
+    )
+    parser.add_argument("limit", type=int, nargs="?", default=20,
+                        help=t("cli.messages.module_calls_arg_limit", default="Max results (default 20)"))
+    opts = parser.parse_args(args)
+
+    results = db.get_module_call_stats(limit=opts.limit)
+    print(t("cli.messages.module_calls_title", count=len(results)))
+    print()
+    max_caller_len = max((len(r["caller_module"]) for r in results), default=0)
+    max_callee_len = max((len(r["callee_module"]) for r in results), default=0)
+    for i, item in enumerate(results, 1):
+        caller = item["caller_module"].ljust(max_caller_len)
+        callee = item["callee_module"].ljust(max_callee_len)
+        print(t("cli.messages.module_calls_item", idx=i, caller=caller, callee=callee,
+              calls=item['call_count'], callers=item['unique_caller_count'],
+              callees=item['unique_callee_count']))
+    print()
+    return True
+
+
+def _handle_detect_cycles(args, db):
+    """处理 detect-cycles 子命令（函数调用图环检测）。独立分析命令。
+
+    注：对应 MCP 工具 detect_call_cycles（函数调用图环），区别于依赖图环检测
+    （cw dependency cycle / MCP detect_dependency_cycle）。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw detect-cycles",
+        description=t("cli.messages.detect_cycles_subcommand_desc",
+                      default="Detect cyclic calls in the function call graph"),
+    )
+    parser.add_argument("--depth", type=int, default=10,
+                        help=t("cli.messages.cycle_arg_depth", default="Max cycle detection depth (default 10)"))
+    opts = parser.parse_args(args)
+
+    cycles = db.detect_cycles(max_depth=opts.depth)
+    print(t("cli.messages.cycles_title"))
+    print(t("cli.messages.cycles_max_depth", depth=opts.depth))
+    print(t("cli.messages.cycles_count", count=len(cycles)))
+    print()
+    if cycles:
+        cycles_sorted = sorted(cycles, key=lambda c: len(c) - 1)
+        for i, cycle in enumerate(cycles_sorted[:20], 1):
+            cycle_len = len(cycle) - 1
+            print(t("cli.messages.cycles_item", idx=i, len=cycle_len))
+            for j, fn in enumerate(cycle):
+                arrow = " → " if j < len(cycle) - 1 else ""
+                print(f"      {fn}{arrow}")
+            print()
+        if len(cycles) > 20:
+            print(t("cli.messages.cycles_more", count=len(cycles) - 20))
+            print()
+    else:
+        print(t("cli.messages.cycles_none"))
+        print()
+    return True
+
+
+def _handle_export_module_graph(args, db):
+    """处理 export-module-graph 子命令（导出模块依赖图）。独立分析命令。"""
+    parser = argparse.ArgumentParser(
+        prog="cw export-module-graph",
+        description=t("cli.messages.export_module_graph_subcommand_desc",
+                      default="Export module dependency graph (mermaid or dot)"),
+    )
+    parser.add_argument("--format", default="mermaid", choices=["mermaid", "dot"],
+                        help=t("cli.messages.export_module_graph_arg_format", default="Output format (default mermaid)"))
+    parser.add_argument("--output", default="",
+                        help=t("cli.messages.export_module_graph_arg_output", default="Output file (default stdout)"))
+    opts = parser.parse_args(args)
+
+    result = db.export_module_graph(format=opts.format, output_file=opts.output)
+    if opts.output:
+        print(t("cli.messages.module_graph_exported", file=opts.output))
+        print(t("cli.messages.module_graph_format", fmt=opts.format))
+    else:
+        print(t("cli.messages.module_graph_title", fmt=opts.format))
+        print()
+        print(result)
+    print()
+    return True
+
+
+def _handle_call_heatmap(args, db):
+    """处理 call-heatmap 子命令（调用频率热力图）。独立分析命令。"""
+    parser = argparse.ArgumentParser(
+        prog="cw call-heatmap",
+        description=t("cli.messages.call_heatmap_subcommand_desc",
+                      default="Call frequency heatmap by module or file"),
+    )
+    parser.add_argument("--by", default="module", choices=["module", "file"],
+                        help=t("cli.messages.call_heatmap_arg_by", default="Group by module or file (default module)"))
+    parser.add_argument("--limit", type=int, default=20,
+                        help=t("cli.messages.call_heatmap_arg_limit", default="Top N results (default 20)"))
+    opts = parser.parse_args(args)
+
+    results = db.get_call_heatmap(group_by=opts.by, top_n=opts.limit)
+    unit = t("cli.messages.heatmap_unit_module") if opts.by == "module" else t(
+        "cli.messages.heatmap_unit_file")
+    print(t("cli.messages.heatmap_title", unit=unit, count=len(results)))
+    print()
+    if results:
+        max_calls = max(r["total_calls"] for r in results)
+        max_group_len = max(len(r["group"]) for r in results)
+        heat_chars = " ▁▂▃▄▅▆▇█"
+        for i, item in enumerate(results, 1):
+            ratio = item["total_calls"] / max_calls if max_calls > 0 else 0
+            heat_level = min(int(ratio * 8), 8)
+            heat_bar = heat_chars[heat_level] * (heat_level + 1)
+            group_name = item["group"].ljust(max_group_len)
+            print(t("cli.messages.heatmap_item",
+                  default="  #{idx:2d}  {group}  {bar}  {calls:4d} calls  ({callers} callers, {callees} callees)",
+                  idx=i, group=group_name, bar=heat_bar, calls=item["total_calls"],
+                  callers=item["unique_callers"], callees=item["unique_callees"]))
+    else:
+        print(t("cli.messages.heatmap_none"))
+    print()
     return True
 
 
