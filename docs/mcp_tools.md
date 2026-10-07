@@ -265,7 +265,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 ## 符号查询工具
 
 ### `get_stats`
-获取代码图谱统计信息（文件数、函数数、调用关系数等）。
+获取代码图谱的**统计数值**（文件数、函数数、调用关系数等计数指标）。只返回计数；需要完整状态概览请用 `get_status`。注意区分：`get_stats`=统计数值，`get_status`=状态概览。
 - **参数**：无
 - **返回**：`dict` — 统计信息
 
@@ -318,7 +318,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 - **返回**：`dict | None` — 含完整代码
 
 ### `get_status`
-获取代码图谱完整状态概览。
+获取代码图谱的**完整状态概览**（workspace/文件/语言/符号分布 + 注释覆盖 + 缺陷统计）。只需纯计数指标请用更轻量的 `get_stats`。注意区分：`get_status`=状态概览（全面），`get_stats`=统计数值（计数）。
 - **参数**：无
 - **返回**：`dict`
 
@@ -959,7 +959,7 @@ representative + member_count，不展开成 pairs，避免 N×N 爆炸。
 - **返回**：`list[dict]` — 任务列表，按 `created_at` 降序
 
 ### `get_job_stats`
-获取任务统计信息。
+获取**所有后台任务的汇总统计**（总数、各状态分布，无需 job_id）。查单个 job 的运行状态/结果请用 `get_job_status`（需 job_id）。注意区分：`get_job_stats`=汇总统计（无参），`get_job_status`=单任务状态（需 job_id）。
 - **参数**：无
 - **返回**：`dict` — `{pending, running, completed, cancelled, failed, total}`
 

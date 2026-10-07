@@ -43,7 +43,12 @@ from ..daemon_client import route_rpc as _route
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def get_stats() -> dict:
-        """获取代码知识图谱统计信息（文件数、函数数、调用关系数等）"""
+        """获取代码知识图谱的【统计数值】（文件数、函数数、调用关系数等计数指标）。
+
+        只返回数量指标。若需要工作区/语言/符号分布 + 注释覆盖 + 缺陷等**完整状态
+        概览**（而非单纯计数），请用 get_status。注意区分：get_stats=统计数值，
+        get_status=状态概览。
+        """
         return _route('query.stats', {}, 'READ_ONLY')
 
     @mcp.tool()

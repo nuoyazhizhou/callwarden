@@ -708,7 +708,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def get_job_status(job_id: str) -> dict:
-        """查询后台任务状态
+        """查询【单个后台任务】的运行状态（需 job_id）。
+
+        返回指定 job 的 status/进度/结果。若要查看**所有后台任务的汇总统计**
+        （总数/各状态分布，无需 job_id），请用 get_job_stats。注意区分：
+        get_job_status=单任务状态（需 job_id），get_job_stats=任务汇总统计（无参）。
 
         Args:
             job_id: 任务 ID（如 "J-1783698970719-3a4b5c6d"）
@@ -766,7 +770,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def get_job_stats() -> dict:
-        """获取任务统计信息
+        """获取【所有后台任务的汇总统计】（总数、各状态分布等，无需 job_id）。
+
+        面向全局任务概览。若要查**某个具体 job 的运行状态/结果**，请用
+        get_job_status（需传 job_id）。注意区分：get_job_stats=汇总统计（无参），
+        get_job_status=单任务状态（需 job_id）。
 
         W2-2（T-1786840097330-a9e0ec69）：HTTP 模式（默认）直连
         HttpDaemonRpcClient 便捷方法（Rust native task.job_stats，
