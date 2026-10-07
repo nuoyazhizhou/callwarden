@@ -57,6 +57,21 @@ class SeedContext:
     # 已在种子 workspace 上创建的任务/步骤(供 task.* / evidence.*)
     task_id: Optional[str] = None
     step_id: Optional[str] = None
+    # 深度前置(由 deep fixture 预建的真实实体)
+    lease_token: Optional[str] = None          # 已 acquire 的 implementer lease token
+    fencing_counter: Optional[int] = None      # 对应 fencing counter
+    agent_id: Optional[str] = None             # 已注册 agent identity
+    session_id: Optional[str] = None
+    model_id: Optional[str] = None
+    role: str = "implementer"
+    request_id: Optional[str] = None
+    branch_name: Optional[str] = None          # 已注册 branch
+    candidate_id: Optional[str] = None         # 已建 rule candidate
+    job_id: Optional[str] = None               # 已建 job
+    symbol_hash: Optional[str] = None          # 真实符号 hash
+    finding_id: Optional[str] = None
+    evidence_path: Optional[str] = None        # docs/evidence/ 下真实相对路径
+    snapshot_id: Optional[str] = None
 
     def first_qname(self) -> str:
         return self.known_qualified_names[0] if self.known_qualified_names else "compute"
@@ -66,6 +81,15 @@ class SeedContext:
 
     def first_file(self) -> str:
         return self.known_file_paths[0] if self.known_file_paths else "calc.py"
+
+    def identity(self) -> dict:
+        """返回完整 identity dict(供 lease/task 写操作)。"""
+        return {
+            "agent_id": self.agent_id or "deep-agent",
+            "session_id": self.session_id or "deep-sess",
+            "model_id": self.model_id or "qa-model",
+            "role": self.role or "implementer",
+        }
 
 
 # ----------------------------------------------------------------------
@@ -100,8 +124,107 @@ def _resolve_by_name(pname: str, ctx: SeedContext) -> Any:
         return ctx.task_id or "T-seed-000000000000-00000000"
     if p in ("step_id",):
         return ctx.step_id or "step-seed-0"
-    if p in ("parent_id",):
+    if p in ("parent_id", "parent_task_id"):
+        return ctx.task_id or ""
+    if p in ("provider_task_id", "consumer_task_id", "superseded_id", "anchor_task_id"):
+        return ctx.task_id or "T-seed-000000000000-00000000"
+
+    # identity(深度前置)
+    if p in ("agent_id", "identity_agent_id"):
+        return ctx.agent_id or "deep-agent"
+    if p in ("session_id", "identity_session_id"):
+        return ctx.session_id or "deep-sess"
+    if p in ("model_id", "identity_model_id"):
+        return ctx.model_id or "qa-model"
+    if p in ("role", "identity_role"):
+        return ctx.role or "implementer"
+    if p in ("identity",):
+        return ctx.identity()
+    if p in ("request_id", "report_request_id"):
+        return ctx.request_id or "req-deep-0001"
+
+    # lease / fencing(深度前置)
+    if p in ("lease_token", "token"):
+        return ctx.lease_token or "tok-deep-0001"
+    if p in ("fencing_counter",):
+        return ctx.fencing_counter if ctx.fencing_counter is not None else 1
+    if p in ("ttl_seconds",):
+        return 300
+
+    # 符号 hash / finding
+    if p in ("symbol_hash",):
+        return ctx.symbol_hash or "0" * 64
+    if p in ("finding_id",):
+        return ctx.finding_id or "finding-seed-0"
+    if p in ("symbol_a", "symbol_b", "caller_symbol_id", "callee_symbol_id", "symbol_id"):
+        # diff_callers/diff_callees/get_resolved_edges 等:用真实符号限定名或 id
+        return ctx.first_qname()
+
+    # 编辑 / patch(工具专有)
+    if p in ("new_content", "content", "new_text", "replacement"):
+        return "# deep-round placeholder content\n"
+    if p in ("old_content", "old_text", "expected_content"):
         return ""
+    if p in ("start_line", "line", "line_number"):
+        return 1
+    if p in ("end_line",):
+        return 5
+    if p in ("edit_id",):
+        return "0"
+
+    # branch(深度前置)
+    if p in ("branch_name",):
+        return ctx.branch_name or "seed-branch"
+    if p in ("source_branch", "from_branch"):
+        return ctx.branch_name or "seed-branch"
+    if p in ("target_branch", "to_branch", "base_branch", "head"):
+        return ctx.branch_name or "main"
+
+    # rule candidate(深度前置)
+    if p in ("candidate_id",):
+        return ctx.candidate_id or "cand-seed-0"
+    if p in ("rule", "rule_text"):
+        return "禁止裸 except(应捕获具体异常类型)"
+    if p in ("title",):
+        return "深度轮测试任务"
+    if p in ("scope",):
+        return {}
+    if p in ("severity",):
+        return "info"
+
+    # job(深度前置)
+    if p in ("job_id",):
+        return ctx.job_id or "job-seed-0"
+
+    # evidence / verdict / contract(治理写专有)
+    if p in ("evidence_path", "manifest_path", "view_manifest_path"):
+        return ctx.evidence_path or "docs/evidence/seed/manifest.json"
+    if p in ("evidence_id",):
+        return "ev-seed-0001"
+    if p in ("evidence_type",):
+        return "test_run"
+    if p in ("payload", "evidence_json"):
+        return "{}"
+    if p in ("payload_hash", "view_manifest_hash", "contract_hash", "expected_previous_hash"):
+        return "0" * 64
+    if p in ("contract_id",):
+        return "contract-seed-0"
+    if p in ("contract_revision", "revision"):
+        return 1
+    if p in ("snapshot_id",):
+        return ctx.snapshot_id or ""
+    if p in ("envelope", "envelope_path"):
+        return ctx.evidence_path or "docs/evidence/seed/envelope.json"
+    if p in ("build_context_hash", "build_context"):
+        return "0" * 40
+
+    # gc / archive(专有)
+    if p in ("archive_path",):
+        return ctx.evidence_path or "docs/evidence/seed/archive.tar"
+    if p in ("audit_id",):
+        return "1"
+    if p in ("older_than", "older_than_days", "grace_days"):
+        return 30
 
     # 常见分页 / 限制
     if p in ("limit", "top", "max", "max_results", "count", "keep_last"):
@@ -116,6 +239,24 @@ def _resolve_by_name(pname: str, ctx: SeedContext) -> Any:
         return "fn"
     if p in ("language", "lang"):
         return "python"
+    if p in ("module_filter", "file_filter", "pattern", "query"):
+        return "compute"
+    if p in ("context",):
+        return {}
+    if p in ("since", "window", "time_window"):
+        return "30d"
+    if p in ("format",):
+        return "json"
+    if p in ("severity_filter", "category_filter", "status", "status_filter"):
+        return ""
+    if p in ("force", "dry_run", "reverse", "history", "fail"):
+        return False
+    if p in ("reason",):
+        return "deep-round test"
+    if p in ("outcome",):
+        return "executor_ready_for_review"
+    if p in ("from_role",):
+        return "executor"
 
     return _UNRESOLVED
 
