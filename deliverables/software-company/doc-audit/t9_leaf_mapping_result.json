@@ -1,0 +1,670 @@
+{
+  "real_tool_count": 243,
+  "doc_mapping_rows": 310,
+  "doc_name_drift": [
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`get_role_view`",
+      "doc_mcp_name": "task_id"
+    },
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`task_get_role_prompt`",
+      "doc_mcp_name": "task_id"
+    },
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`find_evidence`",
+      "doc_mcp_name": "task_id"
+    },
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`get_freshness_status`",
+      "doc_mcp_name": "evidence_id"
+    },
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`get_gate_decision`",
+      "doc_mcp_name": "task_id"
+    },
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`submit_verdict`",
+      "doc_mcp_name": "task_id"
+    },
+    {
+      "section": "配套 CLI 命令",
+      "cli": "`append_evidence`",
+      "doc_mcp_name": "task_id"
+    },
+    {
+      "section": "硬依赖图与环检测",
+      "cli": "`detect_dependency_cycle`",
+      "doc_mcp_name": "workspace_id"
+    },
+    {
+      "section": "Assignment 绑定",
+      "cli": "`assignment_revoke`",
+      "doc_mcp_name": "assignment_id"
+    }
+  ],
+  "real_tools_not_in_doc_mapping": [
+    "build_directory",
+    "cancel_job",
+    "compare_snapshots",
+    "diff_callees",
+    "diff_callers",
+    "embed_symbols_async",
+    "get_clone_aware_impact",
+    "get_commit_tasks",
+    "get_job_stats",
+    "get_job_status",
+    "get_symbol_change_tasks",
+    "get_task_commits",
+    "list_jobs",
+    "remove_file",
+    "scan_semgrep_incremental",
+    "task_assignment_heartbeat",
+    "task_assignment_status",
+    "task_get_role_prompt",
+    "task_governance_projection",
+    "task_remediation_create",
+    "task_step_resolve",
+    "wait_for_job"
+  ],
+  "multi_cli_to_one_mcp": {
+    "search_symbols": [
+      "符号搜索",
+      "`cw search <query>`"
+    ],
+    "get_symbol": [
+      "符号详情",
+      "`cw symbol <name>`",
+      "`cw query <name> <file>`"
+    ],
+    "get_symbol_location": [
+      "符号位置",
+      "`cw symbol <name> --file <path>`"
+    ],
+    "get_file_symbols": [
+      "文件内符号",
+      "`cw file <path>`"
+    ],
+    "file_symbol_content": [
+      "符号内容",
+      "`cw file symbol-content`"
+    ],
+    "get_symbol_content_by_hash": [
+      "按 hash 取内容",
+      "`cw --symbol-content-by-hash`"
+    ],
+    "get_code_metrics_summary": [
+      "度量汇总",
+      "`cw metrics` / `cw --metrics`"
+    ],
+    "get_complexity_hotspots": [
+      "复杂度热点",
+      "`cw complexity` / `cw --complexity`"
+    ],
+    "get_coupling_analysis": [
+      "模块耦合",
+      "`cw coupling` / `cw --coupling`"
+    ],
+    "get_function_metrics": [
+      "单函数度量",
+      "`cw fn-metrics <name>` / `cw --fn-metrics`"
+    ],
+    "get_largest_functions": [
+      "最大函数",
+      "`cw largest-fns` / `cw --largest-fns`"
+    ],
+    "get_most_coupled_functions": [
+      "高耦合函数",
+      "`cw coupled-fns` / `cw --coupled-fns`"
+    ],
+    "get_code_health_check": [
+      "代码健康检查",
+      "`cw health check`"
+    ],
+    "get_callers": [
+      "调用方",
+      "`cw callers <name>` / `cw --callers`"
+    ],
+    "get_callees": [
+      "被调用方",
+      "`cw callees <name>` / `cw --callees`"
+    ],
+    "get_call_chain_down": [
+      "调用链",
+      "`cw call-chain <name>` / `cw --call-chain`"
+    ],
+    "get_impact": [
+      "变更影响",
+      "`cw --impact`"
+    ],
+    "get_top_callers": [
+      "Top 调用方",
+      "`cw --top-callers`"
+    ],
+    "get_orphan_symbols": [
+      "孤立符号",
+      "`cw --orphan-symbols`"
+    ],
+    "get_deepest_functions": [
+      "调用最深",
+      "`cw --deepest`"
+    ],
+    "get_module_call_stats": [
+      "模块调用统计",
+      "`cw --module-calls`"
+    ],
+    "detect_call_cycles": [
+      "循环检测",
+      "`cw --detect-cycles`"
+    ],
+    "get_call_heatmap": [
+      "调用热力图",
+      "`cw --call-heatmap`"
+    ],
+    "export_module_graph": [
+      "模块图导出",
+      "`cw --export-module-graph`"
+    ],
+    "get_topological_order": [
+      "拓扑排序",
+      "`cw topo` / `cw --topo`"
+    ],
+    "get_vulnerability_blast_radius": [
+      "漏洞爆炸半径",
+      "`cw defect vuln-blast`"
+    ],
+    "cross_layer_impact": [
+      "跨层影响",
+      "`cw defect cross-layer`"
+    ],
+    "get_comment_coverage": [
+      "注释覆盖",
+      "注释覆盖",
+      "`cw coverage comment` / `cw --comment-coverage`"
+    ],
+    "get_uncommented_symbols": [
+      "无注释符号",
+      "无注释符号",
+      "`cw coverage uncommented` / `cw --uncommented`"
+    ],
+    "get_test_coverage": [
+      "测试覆盖",
+      "`cw coverage test` / `cw --test-coverage`"
+    ],
+    "import_coverage": [
+      "导入覆盖率",
+      "`cw coverage import` / `cw --coverage-import`"
+    ],
+    "get_coverage_for_symbol": [
+      "函数覆盖率",
+      "`cw coverage fn <name>` / `cw --coverage-fn`"
+    ],
+    "find_uncovered_functions": [
+      "未覆盖函数",
+      "`cw coverage uncovered` / `cw --coverage-uncovered`"
+    ],
+    "test_impact_selection": [
+      "测试影响选择",
+      "`cw test-impact <name>`"
+    ],
+    "who_to_ask": [
+      "找负责人",
+      "`cw who <path>` / `cw --who`"
+    ],
+    "get_ownership_map": [
+      "所有权映射",
+      "`cw ownership-map` / `cw --ownership-map`"
+    ],
+    "parse_codeowners": [
+      "CODEOWNERS",
+      "`cw codeowners parse`"
+    ],
+    "import_git_blame": [
+      "Git blame",
+      "`cw --git-blame`"
+    ],
+    "import_git_history": [
+      "导入 git 历史",
+      "`cw git import` / `cw --git-import`"
+    ],
+    "get_git_commits": [
+      "commit 列表",
+      "`cw git log` / `cw --git-log`"
+    ],
+    "get_commit_changes": [
+      "commit 变更",
+      "`cw git show <hash>` / `cw --git-show`"
+    ],
+    "get_git_stats": [
+      "git 统计",
+      "`cw git stats` / `cw --git-stats`"
+    ],
+    "get_symbol_commit_history": [
+      "符号 commit 历史",
+      "`cw git symbol-history <hash>`"
+    ],
+    "get_symbol_history": [
+      "符号历史版本",
+      "`cw symbol history <name>` / `cw --history`"
+    ],
+    "get_file_history": [
+      "文件历史",
+      "`cw file history <path>`"
+    ],
+    "get_recent_changes": [
+      "最近变更",
+      "`cw --changes`"
+    ],
+    "evolution_frequency": [
+      "函数变更频率",
+      "`cw evolution frequency`"
+    ],
+    "hotspot_evolution": [
+      "热点演化",
+      "`cw evolution hotspot`"
+    ],
+    "churn_analysis": [
+      "代码流失",
+      "`cw churn`"
+    ],
+    "get_symbol_issues": [
+      "符号静态检查",
+      "`cw issues <QN>`"
+    ],
+    "get_test_cases": [
+      "测试 case 列表",
+      "`cw tests <QN>`"
+    ],
+    "get_tested_functions": [
+      "反向测试查询",
+      "`cw tests <QN> --reverse`"
+    ],
+    "get_test_coverage_summary": [
+      "测试覆盖摘要",
+      "`cw tests <QN> --coverage`"
+    ],
+    "get_test_stability": [
+      "测试稳定性",
+      "`cw tests <QN> --history`"
+    ],
+    "get_defect_correlation": [
+      "变更-缺陷关联",
+      "`cw evolution <QN> --defects`"
+    ],
+    "run_semgrep_scan": [
+      "Semgrep 扫描",
+      "`cw semgrep scan` / `cw --semgrep`"
+    ],
+    "get_semgrep_stats": [
+      "Semgrep 统计",
+      "`cw semgrep stats` / `cw --semgrep-stats`"
+    ],
+    "get_semgrep_findings": [
+      "Semgrep findings",
+      "`cw semgrep list` / `cw --semgrep-list`"
+    ],
+    "get_issue_summary": [
+      "问题汇总",
+      "`cw --issue-summary`"
+    ],
+    "find_issues": [
+      "函数缺陷检测",
+      "`cw function-issues` / `cw --function-issues`"
+    ],
+    "defect_search": [
+      "缺陷搜索",
+      "`cw defect search`"
+    ],
+    "defect_suggest_fix": [
+      "缺陷修复建议",
+      "`cw defect suggest`"
+    ],
+    "defect_learn": [
+      "缺陷学习",
+      "`cw defect learn`"
+    ],
+    "defect_stats": [
+      "缺陷统计",
+      "`cw defect stats`"
+    ],
+    "review_readiness": [
+      "审查就绪",
+      "`cw defect review-readiness`"
+    ],
+    "guardrail_scan": [
+      "安全护栏扫描",
+      "`cw guardrail scan`"
+    ],
+    "guardrail_check_edit": [
+      "编辑前检查",
+      "`cw guardrail check-edit`"
+    ],
+    "guardrail_list_rules": [
+      "规则列表",
+      "`cw guardrail list`"
+    ],
+    "guardrail_add_rule": [
+      "添加规则",
+      "`cw guardrail add-rule`"
+    ],
+    "get_applicable_rules": [
+      "适用规则",
+      "`cw rule applicable`"
+    ],
+    "restore_comment": [
+      "恢复注释",
+      "`cw symbol restore-comment` / `cw --restore-comment`"
+    ],
+    "restore_all_comments": [
+      "批量恢复",
+      "`cw symbol restore-all-comments` / `cw --restore-all-comments`"
+    ],
+    "get_comment_from_version": [
+      "从版本取注释",
+      "`cw symbol comment-from-version`"
+    ],
+    "detect_clones": [
+      "检测克隆",
+      "`cw clone detect`"
+    ],
+    "list_clones": [
+      "列出克隆",
+      "`cw clone list`"
+    ],
+    "get_clone_stats": [
+      "克隆统计",
+      "`cw clone stats`"
+    ],
+    "clear_clones": [
+      "清空克隆",
+      "`cw clone clear`"
+    ],
+    "task_id": [
+      "`get_role_view`",
+      "`task_get_role_prompt`",
+      "`find_evidence`",
+      "`get_gate_decision`",
+      "`submit_verdict`",
+      "`append_evidence`"
+    ]
+  },
+  "cli_alias_forms": [
+    {
+      "section": "[1] Workspace & Database",
+      "forms": [
+        "cw refresh all",
+        "cw --refresh-all"
+      ],
+      "mcp": "build_graph"
+    },
+    {
+      "section": "[1] Workspace & Database",
+      "forms": [
+        "cw refresh <paths>",
+        "cw --refresh"
+      ],
+      "mcp": "refresh_file"
+    },
+    {
+      "section": "[2] Query & Search",
+      "forms": [
+        "cw symbol history <name>",
+        "cw --history"
+      ],
+      "mcp": "get_symbol_history"
+    },
+    {
+      "section": "[2] Query & Search",
+      "forms": [
+        "cw file read",
+        "cw --file"
+      ],
+      "mcp": "file_read"
+    },
+    {
+      "section": "[2] Query & Search",
+      "forms": [
+        "cw file grep",
+        "cw --search"
+      ],
+      "mcp": "file_grep"
+    },
+    {
+      "section": "[3] Call Chain Analysis",
+      "forms": [
+        "cw callers <name>",
+        "cw --callers"
+      ],
+      "mcp": "get_callers"
+    },
+    {
+      "section": "[3] Call Chain Analysis",
+      "forms": [
+        "cw callees <name>",
+        "cw --callees"
+      ],
+      "mcp": "get_callees"
+    },
+    {
+      "section": "[3] Call Chain Analysis",
+      "forms": [
+        "cw call-chain <name>",
+        "cw --call-chain"
+      ],
+      "mcp": "get_call_chain_down"
+    },
+    {
+      "section": "[3] Call Chain Analysis",
+      "forms": [
+        "cw topo",
+        "cw --topo"
+      ],
+      "mcp": "get_topological_order"
+    },
+    {
+      "section": "[4] Code Health & Metrics",
+      "forms": [
+        "cw metrics",
+        "cw --metrics"
+      ],
+      "mcp": "get_code_metrics_summary"
+    },
+    {
+      "section": "[4] Code Health & Metrics",
+      "forms": [
+        "cw complexity",
+        "cw --complexity"
+      ],
+      "mcp": "get_complexity_hotspots"
+    },
+    {
+      "section": "[4] Code Health & Metrics",
+      "forms": [
+        "cw coupling",
+        "cw --coupling"
+      ],
+      "mcp": "get_coupling_analysis"
+    },
+    {
+      "section": "[4] Code Health & Metrics",
+      "forms": [
+        "cw fn-metrics <name>",
+        "cw --fn-metrics"
+      ],
+      "mcp": "get_function_metrics"
+    },
+    {
+      "section": "[4] Code Health & Metrics",
+      "forms": [
+        "cw largest-fns",
+        "cw --largest-fns"
+      ],
+      "mcp": "get_largest_functions"
+    },
+    {
+      "section": "[4] Code Health & Metrics",
+      "forms": [
+        "cw coupled-fns",
+        "cw --coupled-fns"
+      ],
+      "mcp": "get_most_coupled_functions"
+    },
+    {
+      "section": "[8] Git Integration",
+      "forms": [
+        "cw git import",
+        "cw --git-import"
+      ],
+      "mcp": "import_git_history"
+    },
+    {
+      "section": "[8] Git Integration",
+      "forms": [
+        "cw git log",
+        "cw --git-log"
+      ],
+      "mcp": "get_git_commits"
+    },
+    {
+      "section": "[8] Git Integration",
+      "forms": [
+        "cw git show <hash>",
+        "cw --git-show"
+      ],
+      "mcp": "get_commit_changes"
+    },
+    {
+      "section": "[8] Git Integration",
+      "forms": [
+        "cw git stats",
+        "cw --git-stats"
+      ],
+      "mcp": "get_git_stats"
+    },
+    {
+      "section": "[9] Semgrep & Defects",
+      "forms": [
+        "cw semgrep scan",
+        "cw --semgrep"
+      ],
+      "mcp": "run_semgrep_scan"
+    },
+    {
+      "section": "[9] Semgrep & Defects",
+      "forms": [
+        "cw semgrep list",
+        "cw --semgrep-list"
+      ],
+      "mcp": "get_semgrep_findings"
+    },
+    {
+      "section": "[9] Semgrep & Defects",
+      "forms": [
+        "cw semgrep stats",
+        "cw --semgrep-stats"
+      ],
+      "mcp": "get_semgrep_stats"
+    },
+    {
+      "section": "[9] Semgrep & Defects",
+      "forms": [
+        "cw function-issues",
+        "cw --function-issues"
+      ],
+      "mcp": "find_issues"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw coverage comment",
+        "cw --comment-coverage"
+      ],
+      "mcp": "get_comment_coverage"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw coverage uncommented",
+        "cw --uncommented"
+      ],
+      "mcp": "get_uncommented_symbols"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw coverage test",
+        "cw --test-coverage"
+      ],
+      "mcp": "get_test_coverage"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw coverage import",
+        "cw --coverage-import"
+      ],
+      "mcp": "import_coverage"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw coverage fn <name>",
+        "cw --coverage-fn"
+      ],
+      "mcp": "get_coverage_for_symbol"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw coverage uncovered",
+        "cw --coverage-uncovered"
+      ],
+      "mcp": "find_uncovered_functions"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw who <path>",
+        "cw --who"
+      ],
+      "mcp": "who_to_ask"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw ownership-map",
+        "cw --ownership-map"
+      ],
+      "mcp": "get_ownership_map"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw symbol restore-comment",
+        "cw --restore-comment"
+      ],
+      "mcp": "restore_comment"
+    },
+    {
+      "section": "[10] Coverage & Ownership",
+      "forms": [
+        "cw symbol restore-all-comments",
+        "cw --restore-all-comments"
+      ],
+      "mcp": "restore_all_comments"
+    },
+    {
+      "section": "[11] GC",
+      "forms": [
+        "cw gc archive",
+        "cw gc retention"
+      ],
+      "mcp": "gc_retention"
+    }
+  ]
+}

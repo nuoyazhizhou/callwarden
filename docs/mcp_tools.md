@@ -2144,7 +2144,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw --orphan-symbols`                      | `get_orphan_symbols`    | 孤儿符号           |
 | `cw --deepest`                             | `get_deepest_functions` | 最深函数           |
 | `cw --module-calls`                        | `get_module_call_stats` | 模块调用统计       |
-| `cw --detect-cycles`                       | `detect_cycles`         | 循环检测           |
+| `cw --detect-cycles`                       | `detect_call_cycles`    | 调用图循环检测     |
 | `cw --call-heatmap`                        | `get_call_heatmap`      | 调用热力图         |
 | `cw --export-module-graph`                 | `export_module_graph`   | 模块图导出         |
 
@@ -2356,7 +2356,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | ------------------------------- | -------------------------------- | -------------------------- |
 | `cw dependency inspect`         | `build_hard_dependency_edges`    | 硬依赖边构建               |
 | `cw dependency list`            | `get_dependency_edges`           | 依赖边查询                 |
-| `cw dependency cycle`           | `detect_cycle`                   | 环检测                     |
+| `cw dependency cycle`           | `detect_dependency_cycle`        | 依赖图环检测               |
 | `cw dependency explain`         | `validate_revision_dependencies` | 版本依赖校验               |
 | `cw dependency provider-select` | `select_interface_provider`      | provider 选择              |
 | —                               | `publish_interface`              | 接口发布（MCP 专属）       |
