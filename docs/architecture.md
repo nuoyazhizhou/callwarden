@@ -518,7 +518,7 @@ Call Warden 在以下两个入口点自动触发 `rule_sync_agents_md(dry_run=Fa
 | 入口点 | actor | 触发时机 | fail-soft |
 |--------|-------|----------|-----------|
 | `cw server` (MCP Server 启动) | `mcp_server_startup` | `create_mcp_server()` 之后、`server.run()` 之前 | 同步失败不阻断启动，输出到 stderr |
-| `cw --refresh-all` (CLI 刷新) | `cli_refresh_all` | `db.build_full_graph()` 之后 | 同步失败不阻断 refresh |
+| `cw refresh --all` (CLI 刷新) | `cli_refresh_all` | `db.build_full_graph()` 之后 | 同步失败不阻断 refresh |
 
 **设计要点**：
 - **fail-soft 原则**：同步失败（标记区不存在、权限不足、DB 异常等）不阻断主流程，仅输出提示

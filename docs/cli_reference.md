@@ -1,33 +1,30 @@
 # CLI 命令参考
 
-Call Warden CLI 提供两种命令风格，遵循"subcommand 为主，--flag deprecated 为辅"的长期方向（详见 [架构设计 - 命令风格统一规范](architecture.md#命令风格统一规范c8)）：
+Call Warden CLI 统一使用 subcommand 风格：`cw <subcommand> [options]`，对应 13 大功能分类。
 
-1. **子命令风格（推荐）**：`cw <subcommand> [options]`，对应 13 大功能分类，是长期支持的方向
-2. **Flag 风格（已废弃）**：`cw --flag [options]`，作为兼容入口保留，使用时会打印 `deprecated` 警告，将在未来版本移除
-
-> 下文用 `cw` 作为命令前缀。本文档末尾附「Deprecated --flag 清单」章节，列出所有 60 个 `--flag` 及其推荐的 subcommand 替代。
+> 下文用 `cw` 作为命令前缀。全局 flag（`--lang`/`--workspace`/`--root`/`--force`/`--no-auto-setup`）见本文档末尾「全局 flag」章节。旧的 `cw --flag` 风格已在未上线阶段整体移除，不再保留兼容入口。
 
 ## 命令概览（按 13 大功能分类）
 
-Call Warden 把 70 个顶层命令（展开子动作后共 234 个叶子命令）按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand 与（兼容期保留的）`--flag`。命令数以 `cli.main._SUBCOMMANDS` + `cw.py` standalone 入口的实际 argparse 树为准（2026-09-29 审计核对）。详细分组设计见 `.cli_audit.md` §2。
+Call Warden 把 70 个顶层命令（展开子动作后共 234 个叶子命令）按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand。命令数以 `cli.main._SUBCOMMANDS` + `cw.py` standalone 入口的实际 argparse 树为准（2026-09-29 审计核对）。详细分组设计见 `.cli_audit.md` §2。
 
-| #   | 主分类                    | 涵盖范围                                                                                    | 主要 subcommand                                                                                                                                                                                                            | 等价 --flag（deprecated）                                                                                                                                                                                                          |
-| --- | ------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Workspace & Database**  | 工作区管理、数据库刷新、状态概览、watcher、分支感知                                         | `workspace list/register/set/delete/generate-ignore`、`refresh --all/--watch/<paths>`、`stats`、`status`                                                                                                                   | `--list-workspaces`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--refresh-all`、`--refresh`、`--watch`、`--stats`、`--status`                                                                               |
-| 2   | **Query & Search**        | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引                       | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status`                                                                                                                                                  | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
-| 3   | **Call Chain Analysis**   | 调用链、拓扑、循环、孤儿、模块图、热力图                                                    | `callers`、`callees`、`call-chain`、`impact`、`topo`                                                                                                                                                                       | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap`                                   |
-| 4   | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告                                | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard`                                          | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented`                                                                                                 |
-| 5   | **Task Orchestration**    | 任务创建/认领/上报/回滚/审批/关闭、派工查询、Role Prompt 编译、capture-diff、质量审查、拆分 | `task create/next/next-action/prompt/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容）                                                                                                                                                                                               |
-| 6   | **Agent Rule Memory**     | 规则候选/审核/生效/同步/提取/清理/种子化                                                    | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log`                                                                               | —                                                                                                                                                                                                                                  |
-| 7   | **Audit & Bootstrap**     | 审计链验证、密钥轮换、自举健康、检查门禁                                                    | `audit verify/rotate-key/keys`、`bootstrap status`                                                                                                                                                                         | —                                                                                                                                                                                                                                  |
-| 8   | **Git Integration**       | git 历史、commit、变更、blame、分支感知                                                     | `git import/log/show/stats`、`symbol-history`                                                                                                                                                                              | `--git-import`、`--git-log`、`--git-show`、`--git-stats`                                                                                                                                                                           |
-| 9   | **Semgrep & Defects**     | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联               | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects`                                                                                     | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary`                                                                                                                                           |
-| 10  | **Coverage & Ownership**  | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射                      | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）                                                                                                              | `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map`                                                                                                                        |
-| 11  | **GC**                    | 归档、恢复、清理、策略、备份、审计、孤儿库清理、多库迁移                                    | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show`、`gc db-cleanup`、`gc db-migrate-single`                                                   | —                                                                                                                                                                                                                                  |
-| 12  | **Diagnostics**           | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置              | `doctor`、`install`、`install-agent`、`install-hook`、`setup`                                                                                                                                                              | —                                                                                                                                                                                                                                  |
-| 13  | **Migration Rollback**    | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关  | `rollback register/show/config/set/is-rolled-back`                                                                                                                                                                         | —                                                                                                                                                                                                                                  |
+| #   | 主分类                    | 涵盖范围                                                                                    | 主要 subcommand                                                                                                                                                                                                            |
+| --- | ------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Workspace & Database**  | 工作区管理、数据库刷新、状态概览、watcher、分支感知                                         | `workspace list/register/set/delete/generate-ignore`、`refresh --all/--watch/<paths>`、`stats`、`status`                                                                                                                   |
+| 2   | **Query & Search**        | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引                       | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status`                                                                                                                                                  |
+| 3   | **Call Chain Analysis**   | 调用链、拓扑、循环、孤儿、模块图、热力图                                                    | `callers`、`callees`、`call-chain`、`impact`、`topo`                                                                                                                                                                       |
+| 4   | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告                                | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard`                                          |
+| 5   | **Task Orchestration**    | 任务创建/认领/上报/回滚/审批/关闭、派工查询、Role Prompt 编译、capture-diff、质量审查、拆分 | `task create/next/next-action/prompt/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` |
+| 6   | **Agent Rule Memory**     | 规则候选/审核/生效/同步/提取/清理/种子化                                                    | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log`                                                                               |
+| 7   | **Audit & Bootstrap**     | 审计链验证、密钥轮换、自举健康、检查门禁                                                    | `audit verify/rotate-key/keys`、`bootstrap status`                                                                                                                                                                         |
+| 8   | **Git Integration**       | git 历史、commit、变更、blame、分支感知                                                     | `git import/log/show/stats`、`symbol-history`                                                                                                                                                                              |
+| 9   | **Semgrep & Defects**     | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联               | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects`                                                                                     |
+| 10  | **Coverage & Ownership**  | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射                      | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）                                                                                                              |
+| 11  | **GC**                    | 归档、恢复、清理、策略、备份、审计、孤儿库清理、多库迁移                                    | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show`、`gc db-cleanup`、`gc db-migrate-single`                                                   |
+| 12  | **Diagnostics**           | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置              | `doctor`、`install`、`install-agent`、`install-hook`、`setup`                                                                                                                                                              |
+| 13  | **Migration Rollback**    | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关  | `rollback register/show/config/set/is-rolled-back`                                                                                                                                                                         |
 
-> **注**：详细 subcommand 用法见下文章节；deprecated `--flag` 的完整映射见本文档末尾「Deprecated --flag 清单」章节。
+> **注**：详细 subcommand 用法见下文章节。
 
 > `install` 是独立子命令，调用方式为 `cw install [options]`。
 
@@ -334,7 +331,7 @@ cw install --hooks
 
 | Hook          | 触发时机        | 作用                                                            | 依赖                                                |
 | ------------- | --------------- | --------------------------------------------------------------- | --------------------------------------------------- |
-| `pre-commit`  | `git commit` 前 | 刷新代码图谱（`cw --refresh-all`），确保数据库与代码同步        | 无                                                  |
+| `pre-commit`  | `git commit` 前 | 刷新代码图谱（`cw refresh --all`），确保数据库与代码同步        | 无                                                  |
 | `pre-push`    | `git push` 前   | 运行 check-gate 门禁（需 `export CALLWARDEN_TASK_ID=<T-xxx>`）  | 可选（未设置则跳过）                                |
 | `post-commit` | `git commit` 后 | 自动捕获变更到 task/audit 闭环（`cw task capture-diff --auto`） | active_task 持久化字段（Schema v30+，无需环境变量） |
 
@@ -539,32 +536,30 @@ cw setup --force
 
 ## 构建命令
 
-### `--refresh-all`：构建/增量刷新代码图谱
+### `refresh --all`：构建/增量刷新代码图谱
 
 ```bash
 # 增量刷新（默认，仅解析变更文件，不会清空数据）
-cw --refresh-all
+cw refresh --all
 
 # 强制全量重新解析
-cw --refresh-all --force
+cw refresh --all --force
 
 # 指定工作区
-cw --workspace /path/to/project --refresh-all
+cw --workspace /path/to/project refresh --all
 ```
 
-### `--refresh <PATH [...]>`：刷新文件（支持多路径，C8 Step #5）
+### `refresh <PATH [...]>`：刷新文件（支持多路径，C8 Step #5）
 
 ```bash
 # 刷新单个文件
-cw --refresh src/payment/mod.rs
+cw refresh src/payment/mod.rs
 
 # 同时刷新多个文件（C8 Step #5 新增支持）
-cw --refresh src/payment/mod.rs src/auth/login.py src/db/query.rs
+cw refresh src/payment/mod.rs src/auth/login.py src/db/query.rs
 ```
 
 增量更新指定文件，重新解析符号和调用关系。多文件时会输出汇总（成功数/失败数/总耗时）。
-
-> **deprecated 提示**：`--refresh` 已废弃，建议使用 `cw refresh <paths>` subcommand。详见 `cw --help` 的 deprecated flag 清单。
 
 #### 示例输出（多文件刷新）
 
@@ -579,41 +574,41 @@ Refresh summary: success 2 / failure 0 / total 2, elapsed 0.04s
 #### `cw refresh` subcommand（推荐用法）
 
 ```bash
-# 等价 --refresh-all
+# 全量刷新
 cw refresh --all
 
 # 强制全量重新解析
 cw refresh --all --force
 
-# 刷新指定文件（支持多路径，等价多次 --refresh <path>）
+# 刷新指定文件（支持多路径）
 cw refresh src/payment/mod.rs src/auth/login.py
 
 # 启动文件监控
 cw refresh --watch
 ```
 
-`cw refresh` 是 `--refresh` / `--refresh-all` / `--watch` 的统一入口，支持所有刷新模式。多文件时会输出汇总，失败文件会被单独列出。
+`cw refresh` 支持 `--all` / `--watch` / `<paths>` 多种刷新模式。多文件时会输出汇总，失败文件会被单独列出。
 
-### `--watch`：文件监控
+### `refresh --watch`：文件监控
 
 ```bash
-cw --watch
+cw refresh --watch
 ```
 
 启动文件监控守护进程，文件变化时自动增量更新。按 `Ctrl+C` 停止。
 
-### `--status`：查看状态
+### `status`：查看状态
 
 ```bash
-cw --status
+cw status
 ```
 
 显示工作区、文件分布、符号分布、调用关系统计、上次构建时间等。
 
-### `--stats`：统计信息（JSON）
+### `stats`：统计信息（JSON）
 
 ```bash
-cw --stats
+cw stats
 ```
 
 以 JSON 格式输出统计信息，便于脚本解析。
@@ -634,19 +629,19 @@ cw graph build-from-c <dir> --query <QN>           # 构建后查询指定符号
 
 ## 查询命令
 
-### `--search <QUERY>`：符号搜索
+### `search <QUERY>`：符号搜索
 
 ```bash
-cw --search "login"
-cw --search "User" --search-kind class
-cw --search "handle" --search-limit 20
+cw search "login"
+cw search "User" --kind class
+cw search "handle" --limit 20
 ```
 
-| 参数                   | 说明                                                  |
-| ---------------------- | ----------------------------------------------------- |
-| `--search <QUERY>`     | 搜索关键词（模糊匹配）                                |
-| `--search-kind <KIND>` | 类型过滤：fn/method/class/struct/enum/trait/interface |
-| `--search-limit <N>`   | 返回数量（默认 50）                                   |
+| 参数            | 说明                                                  |
+| --------------- | ----------------------------------------------------- |
+| `<QUERY>`       | 搜索关键词（模糊匹配）                                |
+| `--kind <KIND>` | 类型过滤：fn/method/class/struct/enum/trait/interface |
+| `--limit <N>`   | 返回数量（默认 50）                                   |
 
 ### `grep <PATTERN...>`：带符号上下文的文本搜索
 
@@ -672,41 +667,41 @@ cw grep "config" --path src/             # 限定搜索路径
 | `--include-all` | 包含符号外命中（imports/docs/comments）；默认只显示符号内命中            |
 | `--kind <KIND>` | 仅显示该类型符号内的命中（fn/class/...）                                 |
 
-### `--symbol <QN>`：符号详情
+### `symbol <QN>`：符号详情
 
 ```bash
-cw --symbol "my_project::payment::process_payment"
+cw symbol "my_project::payment::process_payment"
 ```
 
 显示符号的类型、深度、文件位置、签名、注释、调用关系（调用的函数 + 被谁调用）。
 
-### `--file <PATH>`：文件内符号
+### `file <PATH>`：文件内符号
 
 ```bash
-cw --file src/payment/mod.rs
+cw file src/payment/mod.rs
 ```
 
-### `--query <NAME> <FILE>`：精确查询位置
+### `query <NAME> <FILE>`：精确查询位置
 
 ```bash
-cw --query process_payment src/payment/mod.rs
+cw query process_payment src/payment/mod.rs
 ```
 
-### `--callers <NAME>` / `--callees <NAME>`
+### `callers <NAME>` / `callees <NAME>`
 
 ```bash
 # 谁调用了我
-cw --callers process_payment
+cw callers process_payment
 
 # 我调用了谁
-cw --callees process_payment
+cw callees process_payment
 ```
 
-### `--topo`：拓扑排序
+### `topo`：拓扑排序
 
 ```bash
-cw --topo
-cw --topo --topo-limit 100
+cw topo
+cw topo --limit 100
 ```
 
 按依赖深度排序，底层（被调用最多）在前。
@@ -733,63 +728,63 @@ cw fts status
 
 ## 调用链分析命令
 
-### `--impact <QN>`：影响面分析（向上）
+### `impact <QN>`：影响面分析（向上）
 
 ```bash
-cw --impact "my_project::payment::process_payment"
-cw --impact "my_project::payment::process_payment" --chain-depth 5
+cw impact "my_project::payment::process_payment"
+cw impact "my_project::payment::process_payment" --depth 5
 ```
 
 向上追踪所有调用该函数的上游函数，按层级显示。
 
-### `--call-chain <QN>`：调用链向下
+### `call-chain <QN>`：调用链向下
 
 ```bash
-cw --call-chain "my_project::payment::process_payment"
+cw call-chain "my_project::payment::process_payment"
 ```
 
-### `--top-callers [N]`：被调用最多排行
+### `top-callers [N]`：被调用最多排行
 
 ```bash
-cw --top-callers          # 默认 20
-cw --top-callers 50
-cw --top-callers --top-callers-module "src/api"
+cw top-callers          # 默认 20
+cw top-callers 50
+cw top-callers --module "src/api"
 ```
 
-### `--deepest [N]`：调用深度最深
+### `deepest [N]`：调用深度最深
 
 ```bash
-cw --deepest
-cw --deepest 50
+cw deepest
+cw deepest 50
 ```
 
-### `--detect-cycles`：循环调用检测
+### `detect-cycles`：循环调用检测
 
 ```bash
-cw --detect-cycles
-cw --detect-cycles --cycle-depth 15
+cw detect-cycles
+cw detect-cycles --depth 15
 ```
 
-### `--module-calls [N]`：模块间调用统计
+### `module-calls [N]`：模块间调用统计
 
 ```bash
-cw --module-calls
+cw module-calls
 ```
 
-### `--call-heatmap [GROUP]`：调用频率热力图
+### `call-heatmap [GROUP]`：调用频率热力图
 
 ```bash
-cw --call-heatmap              # 默认按 module
-cw --call-heatmap file         # 按 file
-cw --call-heatmap --heatmap-limit 30
+cw call-heatmap              # 默认按 module
+cw call-heatmap --by file      # 按 file
+cw call-heatmap --limit 30
 ```
 
-### `--orphan-symbols [KIND]`：孤立符号
+### `orphan-symbols [KIND]`：孤立符号
 
 ```bash
-cw --orphan-symbols            # 默认 fn
-cw --orphan-symbols struct
-cw --orphan-symbols --orphan-module "src/legacy"
+cw orphan-symbols            # 默认 fn
+cw orphan-symbols struct
+cw orphan-symbols --module "src/legacy"
 ```
 
 查找未被调用的孤立函数/结构体，适合清理死代码。
@@ -829,22 +824,22 @@ cw guardrail rules --category api_compat
 
 扫描 DB/API/Incident 三类可阻断规则。
 
-### `--semgrep [PATH...]`：Semgrep 扫描
+### `semgrep scan [PATH...]`：Semgrep 扫描
 
 ```bash
 # 详细扫描
-cw --semgrep
-cw --semgrep src/payment/ src/api/
+cw semgrep scan
+cw semgrep scan src/payment/ src/api/
 
 # 快速汇总
-cw --semgrep --semgrep-quick
+cw semgrep scan --quick
 
 # 扫描并存入数据库
-cw --semgrep --semgrep-save
+cw semgrep scan --save
 
 # 自定义规则配置
-cw --semgrep --semgrep-config p/security
-cw --semgrep --semgrep-config p/security --semgrep-scan-lang rust typescript
+cw semgrep scan --config p/security
+cw semgrep scan --config p/security --lang rust typescript
 
 # 增量扫描（A14 修复 2026-07-20）：只扫 git diff 变更文件并清理旧 findings
 cw semgrep scan --incremental
@@ -852,67 +847,67 @@ cw semgrep scan --incremental --base develop --head HEAD
 cw semgrep scan --incremental --config p/security
 ```
 
-| 参数                            | 说明                                                                                      |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `--semgrep [PATH...]`           | 扫描路径（为空则扫描整个工作区）                                                          |
-| `--semgrep-config <CONFIG>`     | 规则配置（默认 `p/default`）                                                              |
-| `--semgrep-scan-lang <LANG...>` | 限制语言                                                                                  |
-| `--semgrep-timeout <N>`         | 超时秒数（默认 180）                                                                      |
-| `--semgrep-quick`               | 快速汇总模式                                                                              |
-| `--semgrep-save`                | 扫描结果存入数据库                                                                        |
-| `--incremental`                 | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
-| `--base <BRANCH>`               | 增量扫描基准分支（默认 `main`，A14）                                                      |
-| `--head <REF>`                  | 增量扫描目标提交（默认 `HEAD`，A14）                                                      |
+| 参数                | 说明                                                                                      |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| `[PATH...]`         | 扫描路径（为空则扫描整个工作区）                                                          |
+| `--config <CONFIG>` | 规则配置（默认 `p/default`）                                                              |
+| `--lang <LANG...>`  | 限制语言                                                                                  |
+| `--timeout <N>`     | 超时秒数（默认 180）                                                                      |
+| `--quick`           | 快速汇总模式                                                                              |
+| `--save`            | 扫描结果存入数据库                                                                        |
+| `--incremental`     | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
+| `--base <BRANCH>`   | 增量扫描基准分支（默认 `main`，A14）                                                      |
+| `--head <REF>`      | 增量扫描目标提交（默认 `HEAD`，A14）                                                      |
 
-### `--semgrep-stats` / `--semgrep-list`
+### `semgrep stats` / `semgrep list`
 
 ```bash
 # 统计
-cw --semgrep-stats
+cw semgrep stats
 
 # 列表
-cw --semgrep-list
-cw --semgrep-list --semgrep-severity ERROR
-cw --semgrep-list --semgrep-list-lang rust
+cw semgrep list
+cw semgrep list --severity ERROR
+cw semgrep list --lang rust
 ```
 
 ---
 
 ## 编辑与注释命令
 
-### `--restore-comment <SPEC>`：恢复函数注释
+### `restore-comment <SPEC>`：恢复函数注释
 
 ```bash
 # 预览
-cw --restore-comment "src/payment/mod.rs:process_payment@3" --preview
+cw restore-comment "src/payment/mod.rs:process_payment@3" --preview
 
 # 实际写入
-cw --restore-comment "src/payment/mod.rs:process_payment@3"
+cw restore-comment "src/payment/mod.rs:process_payment@3"
 ```
 
 SPEC 格式：`文件路径:符号名@版本号` 或 `文件路径:行号`
 
-### `--restore-all-comments`：批量恢复
+### `restore-all-comments`：批量恢复
 
 ```bash
 # 预览全部
-cw --restore-all-comments --preview
+cw restore-all-comments --preview
 
 # 恢复指定文件
-cw --restore-all-comments --restore-file src/payment/
+cw restore-all-comments --file-filter src/payment/
 ```
 
-### `--history <NAME>`：函数历史版本
+### `symbol-history <NAME>`：函数历史版本
 
 ```bash
-cw --history process_payment
-cw --history process_payment --show-content
+cw symbol-history process_payment
+cw symbol-history process_payment --show-content
 ```
 
-### `--diff <H1> <H2>`：对比版本
+### `diff <H1> <H2>`：对比版本
 
 ```bash
-cw --diff a1b2c3d4e5f6... d4e5f6a1b2c3...
+cw diff a1b2c3d4e5f6... d4e5f6a1b2c3...
 ```
 
 ---
@@ -1549,68 +1544,65 @@ cw check-gate <task_id> --resolve
 > `task_completion_review`（MCP 工具）会自动调用 `check-gate` 并叠加
 > 5 个扩展检查器（scope / symbol_attribution / file_health / i18n / signature）。
 
-### `--task-list` / `--task-show`：兼容入口（已废弃）
+### `task list` / `task show`：任务列表与详情
 
 ```bash
-cw --task-list                # 等价于 cw task list（显示兼容提示后转调）
-cw --task-show <task_id>      # 等价于 cw task show <task_id>（树形模式）
+cw task list                  # 任务列表
+cw task show <task_id>        # 任务详情（树形模式）
 ```
-
-> **注意**：这两个 flag 作为兼容入口保留，会先打印一行提示再转调对应子命令。
-> 推荐直接使用 `cw task list` / `cw task show` 子命令。
 
 ---
 
 ## 度量命令
 
-### `--metrics`：度量汇总
+### `metrics`：度量汇总
 
 ```bash
-cw --metrics
+cw metrics
 ```
 
-### `--complexity [N]`：圈复杂度热点
+### `complexity [N]`：圈复杂度热点
 
 ```bash
-cw --complexity
-cw --complexity 50
-cw --complexity --complexity-module "src/payment"
+cw complexity
+cw complexity 50
+cw complexity --module "src/payment"
 ```
 
 复杂度 >10 的函数建议重构（标记 `!`）。
 
-### `--coupling`：模块耦合度
+### `coupling`：模块耦合度
 
 ```bash
-cw --coupling
+cw coupling
 ```
 
 计算每个模块的传入/传出耦合度和不稳定性（instability）。
 
-### `--largest-fns [N]` / `--coupled-fns [N]`
+### `largest-fns [N]` / `coupled-fns [N]`
 
 ```bash
-cw --largest-fns          # 代码行数最多
-cw --coupled-fns          # 耦合度最高（扇入+扇出）
+cw largest-fns          # 代码行数最多
+cw coupled-fns          # 耦合度最高（扇入+扇出）
 ```
 
-### `--fn-metrics <NAME>`：单函数度量
+### `fn-metrics <NAME>`：单函数度量
 
 ```bash
-cw --fn-metrics "my_project::payment::process_payment"
+cw fn-metrics "my_project::payment::process_payment"
 ```
 
-### `--comment-coverage`：注释覆盖率
+### `comment-coverage`：注释覆盖率
 
 ```bash
-cw --comment-coverage
-cw --comment-coverage --coverage-by module   # 按 module/file/kind
+cw comment-coverage
+cw comment-coverage --by module   # 按 module/file/kind
 ```
 
-### `--test-coverage`：测试覆盖率
+### `coverage test`：测试覆盖率
 
 ```bash
-cw --test-coverage
+cw coverage test
 ```
 
 ### `health-report`：项目整体健康报告
@@ -1850,22 +1842,22 @@ cw defect stats     # 统计
 cw defect build     # 构建知识库
 ```
 
-### `--function-issues [FN]`：函数缺陷检测
+### `function-issues [FN]`：函数缺陷检测
 
 ```bash
 # 单函数
-cw --function-issues "my_project::payment::process_payment"
+cw function-issues "my_project::payment::process_payment"
 
 # 全部函数列表
-cw --function-issues
-cw --function-issues --issue-type missing_comment
-cw --function-issues --issue-module src/api
+cw function-issues
+cw function-issues --type missing_comment
+cw function-issues --module src/api
 ```
 
-### `--issue-summary`：缺陷汇总
+### `function-issues --summary`：缺陷汇总
 
 ```bash
-cw --issue-summary
+cw function-issues --summary
 ```
 
 ---
@@ -2009,7 +2001,7 @@ cw rule seed-bootstrap --apply
 | ID                                   | severity | scope                     | 说明                                          |
 | ------------------------------------ | -------- | ------------------------- | --------------------------------------------- |
 | `AR-bootstrap-i18n`                  | warning  | `{}` (global)             | 用户可见输出必须通过 i18n.t()                 |
-| `AR-bootstrap-refresh-before-commit` | warning  | `{actions:[commit]}`      | git commit 前必须 `cw --refresh-all`          |
+| `AR-bootstrap-refresh-before-commit` | warning  | `{actions:[commit]}`      | git commit 前必须 `cw refresh --all`          |
 | `AR-bootstrap-task-split`            | info     | `{actions:[task_create]}` | 3+ 文件或 5+ 步骤必须 task_split              |
 | `AR-bootstrap-completion-review`     | warning  | `{actions:[task_report]}` | task_report 前必须 run_task_completion_review |
 | `AR-bootstrap-capture-diff`          | info     | `{actions:[task_report]}` | task_report 前建议 task_capture_diff 验证磁盘 |
@@ -2074,7 +2066,7 @@ cw bootstrap status
 **输出分组**（按区块）：
 
 1. **DB stale 状态** — 当前 git_head 与最近一次 `workspace_scan_runs.git_head`
-   是否一致；不一致会红色提示运行 `cw --refresh-all`
+   是否一致；不一致会红色提示运行 `cw refresh --all`
 2. **规则与候选** — `agent_rules` 已生效规则数 + `agent_rule_candidates`
    pending 候选数
 3. **质量发现** — `task_quality_findings` open 数 + blocking（error/block）数
@@ -2082,7 +2074,7 @@ cw bootstrap status
    （`hash_only` 或 `hmac`）
 5. **最近扫描基线** — 最近一次 `workspace_scan_runs` 的 id / git_head / status
 6. **任务状态分组** — tasks 表按 open / in_progress / review / applied 分组计数
-7. **推荐下一条命令** — 根据当前状态推荐 `cw --refresh-all` /
+7. **推荐下一条命令** — 根据当前状态推荐 `cw refresh --all` /
    `cw rule seed-bootstrap --apply` / `cw audit verify` /
    `cw task next <id>` 等
 
@@ -2165,30 +2157,30 @@ cw rollback is-rolled-back <FEATURE_NAME>
 
 ## Git 集成命令
 
-### `--git-import [N]`：导入 Git 历史
+### `git import [N]`：导入 Git 历史
 
 ```bash
-cw --git-import          # 默认 100 个 commit
-cw --git-import 500
+cw git import          # 默认 100 个 commit
+cw git import 500
 ```
 
-### `--git-log [N]`：commit 历史
+### `git log [N]`：commit 历史
 
 ```bash
-cw --git-log
-cw --git-log 50
+cw git log
+cw git log 50
 ```
 
-### `--git-show <COMMIT>`：commit 详情
+### `git show <COMMIT>`：commit 详情
 
 ```bash
-cw --git-show abc123def456
+cw git show abc123def456
 ```
 
-### `--git-stats`：Git 统计
+### `git stats`：Git 统计
 
 ```bash
-cw --git-stats
+cw git stats
 ```
 
 ### `git check-task`：检查 active task（L3 pre-commit hook）
@@ -2252,122 +2244,122 @@ cw git check-ref-transaction 0000... abcdef1234 refs/heads/main forced
 
 ## 向量与语义搜索命令
 
-### `--semantic-search <QUERY>`：语义搜索
+### `semantic-search <QUERY>`：语义搜索
 
 ```bash
-cw --semantic-search "处理用户认证的函数"
+cw semantic-search "处理用户认证的函数"
 ```
 
-> 首次使用前需运行 `--embed` 生成向量嵌入。嵌入模型不可用时自动回退到关键词匹配。
+> 首次使用前需运行 `cw embed` 生成向量嵌入。嵌入模型不可用时自动回退到关键词匹配。
 
-### `--embed` / `--embed-force`：生成向量嵌入
+### `embed`：生成向量嵌入
 
 ```bash
-cw --embed           # 增量嵌入
-cw --embed-force     # 强制重新嵌入所有函数
+cw embed           # 增量嵌入
+cw embed --force     # 强制重新嵌入所有函数
 ```
 
-### `--similar <NAME>`：查找相似函数
+### `similar <NAME>`：查找相似函数
 
 ```bash
-cw --similar "my_project::payment::process_payment"
+cw similar "my_project::payment::process_payment"
 ```
 
 ---
 
 ## 概览与导出命令
 
-### `--brief`：项目简报
+### `brief`：项目简报
 
 ```bash
-cw --brief
+cw brief
 ```
 
 输出项目类型、文件数、函数数、健康评分、复杂度热点等。
 
-### `--map`：仓库模块依赖图
+### `map`：仓库模块依赖图
 
 ```bash
-cw --map                    # 默认 text
-cw --map --map-format mermaid
+cw map                    # 默认 text
+cw map --format mermaid
 ```
 
-### `--export-module-graph [FORMAT]`：导出模块依赖图
+### `export-module-graph [FORMAT]`：导出模块依赖图
 
 ```bash
-cw --export-module-graph mermaid
-cw --export-module-graph mermaid --graph-output deps.mmd
-cw --export-module-graph dot --graph-output deps.dot
+cw export-module-graph --format mermaid
+cw export-module-graph --format mermaid --output deps.mmd
+cw export-module-graph --format dot --output deps.dot
 ```
 
 ---
 
 ## 覆盖率命令
 
-### `--coverage-import <FILE>`：导入覆盖率报告
+### `coverage import <FILE>`：导入覆盖率报告
 
 ```bash
-cw --coverage-import coverage.lcov --coverage-format lcov
-cw --coverage-import coverage.xml --coverage-format cobertura
+cw coverage import coverage.lcov --format lcov
+cw coverage import coverage.xml --format cobertura
 ```
 
-### `--coverage-fn <NAME>`：函数覆盖率
+### `coverage fn <NAME>`：函数覆盖率
 
 ```bash
-cw --coverage-fn "my_project::payment::process_payment"
+cw coverage fn "my_project::payment::process_payment"
 ```
 
-### `--coverage-uncovered`：未覆盖函数
+### `coverage uncovered`：未覆盖函数
 
 ```bash
-cw --coverage-uncovered
+cw coverage uncovered
 ```
 
 ---
 
 ## 所有权命令
 
-### `--who <FILE>`：文件负责人
+### `who <FILE>`：文件负责人
 
 ```bash
-cw --who src/payment/mod.rs
+cw who src/payment/mod.rs
 ```
 
 综合 CODEOWNERS 和 git blame 信息。
 
-### `--ownership-map`：所有权映射
+### `ownership-map`：所有权映射
 
 ```bash
-cw --ownership-map
+cw ownership-map
 ```
 
 ---
 
 ## 工作区命令
 
-### `--list-workspaces`
+### `workspace list`
 
 ```bash
-cw --list-workspaces
+cw workspace list
 ```
 
-### `--register-workspace <NAME> <ROOT>`
+### `workspace register <NAME> <ROOT>`
 
 ```bash
-cw --register-workspace my_project /path/to/project
+cw workspace register my_project /path/to/project
 ```
 
-### `--set-workspace <ID_OR_NAME>`
+### `workspace set <ID_OR_NAME>`
 
 ```bash
-cw --set-workspace my_project
-cw --set-workspace 1
+cw workspace set my_project
+cw workspace set 1
 ```
 
-### `--delete-workspace <ID_OR_NAME>`
+### `workspace delete <ID_OR_NAME>`
 
 ```bash
-cw --delete-workspace my_project
+cw workspace delete my_project
 ```
 
 ### `workspace generate-ignore`：自动生成 .callwardenignore
@@ -2478,29 +2470,29 @@ cw toolchain list-bound 1 --build-context-hash 3a2f1b8c   # 按 build context �
 ### 示例 1：全量构建并查看状态
 
 ```bash
-cw --refresh-all --force && cw --status
+cw refresh --all --force && cw status
 ```
 
 ### 示例 2：查找函数 → 分析影响 → 查看度量
 
 ```bash
-cw --search "process_payment"
-cw --impact "my_project::payment::process_payment"
-cw --fn-metrics "my_project::payment::process_payment"
+cw search "process_payment"
+cw impact "my_project::payment::process_payment"
+cw fn-metrics "my_project::payment::process_payment"
 ```
 
 ### 示例 3：扫描缺陷 → 查看漏洞爆炸半径
 
 ```bash
-cw --semgrep --semgrep-save
-cw --semgrep-stats
+cw semgrep scan --save
+cw semgrep stats
 cw vuln-blast --severity ERROR
 ```
 
 ### 示例 4：导入 Git 历史 → 分析热点
 
 ```bash
-cw --git-import 200
+cw git import 200
 cw hotspot --limit 30
 cw churn --window 90d
 ```
@@ -2508,16 +2500,16 @@ cw churn --window 90d
 ### 示例 5：生成向量嵌入 → 语义搜索
 
 ```bash
-cw --embed
-cw --semantic-search "处理订单支付的函数"
-cw --similar "my_project::payment::process_payment"
+cw embed
+cw semantic-search "处理订单支付的函数"
+cw similar "my_project::payment::process_payment"
 ```
 
 ### 示例 6：导出模块依赖图用于文档
 
 ```bash
-cw --export-module-graph mermaid --graph-output docs/architecture.mmd
-cw --map --map-format mermaid > docs/repo_map.md
+cw export-module-graph --format mermaid --output docs/architecture.mmd
+cw map --format mermaid > docs/repo_map.md
 ```
 
 ### 示例 7：完整任务流程
@@ -2624,105 +2616,20 @@ C6 引入 GC 清理机制，按**双重过滤策略**删除旧记录，防止表
 
 **fail-soft**：任何异常都封装为 `{"success": False, "error": ...}`，不抛出，不阻断流程。
 
-## Deprecated --flag 清单（C8 Step #2）
+## 全局 flag（非子命令参数）
 
-Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecated` 警告。
-下表列出全部 60 个 `--flag` 及其推荐的 subcommand 替代（数据来源：`deprecated_flag_mapping.json`）。
+以下 flag 是全局选项或首次自动配置专用，可与任意命令组合：
 
-> **使用 `--flag` 时的行为**：会先打印一行 `deprecated` 警告，然后正常执行原逻辑，不影响向后兼容。
-> **迁移建议**：新代码、脚本、CI 配置应直接使用推荐的 subcommand；`--flag` 将在未来版本移除。
+| flag               | 用途                                                  |
+| ------------------ | ----------------------------------------------------- |
+| `--lang <LANG>`    | 全局语言切换（zh_CN / en_US）                         |
+| `--workspace ROOT` | 指定工作区根目录（命令前缀形式）                      |
+| `--root ROOT`      | `--workspace` 的别名                                  |
+| `--force`          | 强制重新配置（配合首次自动配置 / `cw refresh --all`） |
+| `--no-auto-setup`  | 禁用首次运行时的自动 AI 工具配置（Lazy Auto-Setup）   |
 
-| #   | Deprecated `--flag`      | 推荐 subcommand                       | 主分类                   |
-| --- | ------------------------ | ------------------------------------- | ------------------------ |
-| 1   | `--brief`                | `cw brief`                            | 2. Query & Search        |
-| 2   | `--call-chain`           | `cw call-chain <QUALIFIED_NAME>`      | 3. Call Chain Analysis   |
-| 3   | `--call-heatmap`         | `cw call-chain --heatmap`             | 2. Query & Search        |
-| 4   | `--callees`              | `cw callees <NAME>`                   | 3. Call Chain Analysis   |
-| 5   | `--callers`              | `cw callers <NAME>`                   | 3. Call Chain Analysis   |
-| 6   | `--changes`              | `cw file changes [SINCE]`             | 2. Query & Search        |
-| 7   | `--comment-coverage`     | `cw comment-coverage`                 | 4. Code Health & Metrics |
-| 8   | `--complexity`           | `cw complexity [N]`                   | 4. Code Health & Metrics |
-| 9   | `--coupled-fns`          | `cw coupled-fns [N]`                  | 4. Code Health & Metrics |
-| 10  | `--coupling`             | `cw coupling`                         | 4. Code Health & Metrics |
-| 11  | `--coverage-fn`          | `cw coverage fn <NAME>`               | 10. Coverage & Ownership |
-| 12  | `--coverage-import`      | `cw coverage import <FILE>`           | 10. Coverage & Ownership |
-| 13  | `--coverage-uncovered`   | `cw coverage uncovered`               | 10. Coverage & Ownership |
-| 14  | `--deepest`              | `cw call-chain --deepest N`           | 3. Call Chain Analysis   |
-| 15  | `--delete-workspace`     | `cw workspace delete <ID_OR_NAME>`    | 1. Workspace & Database  |
-| 16  | `--detect-cycles`        | `cw call-chain --detect-cycles`       | 3. Call Chain Analysis   |
-| 17  | `--diff`                 | `cw file diff <HASH1> <HASH2>`        | 2. Query & Search        |
-| 18  | `--embed`                | `cw search --embed`                   | 2. Query & Search        |
-| 19  | `--embed-force`          | `cw search --embed --force`           | 2. Query & Search        |
-| 20  | `--export-module-graph`  | `cw call-chain --export-module-graph` | 3. Call Chain Analysis   |
-| 21  | `--file`                 | `cw file <PATH>`                      | 2. Query & Search        |
-| 22  | `--fn-metrics`           | `cw fn-metrics <NAME>`                | 4. Code Health & Metrics |
-| 23  | `--function-issues`      | `cw function-issues [FN]`             | 9. Semgrep & Defects     |
-| 24  | `--git-import`           | `cw git import [N]`                   | 8. Git Integration       |
-| 25  | `--git-log`              | `cw git log [N]`                      | 8. Git Integration       |
-| 26  | `--git-show`             | `cw git show <COMMIT>`                | 8. Git Integration       |
-| 27  | `--git-stats`            | `cw git stats`                        | 1. Workspace & Database  |
-| 28  | `--history`              | `cw symbol-history <NAME>`            | 2. Query & Search        |
-| 29  | `--impact`               | `cw impact <QUALIFIED_NAME>`          | 3. Call Chain Analysis   |
-| 30  | `--issue-summary`        | `cw function-issues --summary`        | 9. Semgrep & Defects     |
-| 31  | `--largest-fns`          | `cw largest-fns [N]`                  | 4. Code Health & Metrics |
-| 32  | `--list-workspaces`      | `cw workspace list`                   | 1. Workspace & Database  |
-| 33  | `--map`                  | `cw map`                              | 2. Query & Search        |
-| 34  | `--metrics`              | `cw metrics`                          | 4. Code Health & Metrics |
-| 35  | `--module-calls`         | `cw call-chain --module-calls N`      | 3. Call Chain Analysis   |
-| 36  | `--orphan-symbols`       | `cw callers --orphans`                | 2. Query & Search        |
-| 37  | `--ownership-map`        | `cw ownership-map`                    | 2. Query & Search        |
-| 38  | `--query`                | `cw query <NAME> <FILE>`              | 2. Query & Search        |
-| 39  | `--refresh`              | `cw refresh <PATH>`                   | 1. Workspace & Database  |
-| 40  | `--refresh-all`          | `cw refresh --all`                    | 1. Workspace & Database  |
-| 41  | `--register-workspace`   | `cw workspace register <NAME> <ROOT>` | 1. Workspace & Database  |
-| 42  | `--restore-all-comments` | `cw file restore-all-comments`        | 2. Query & Search        |
-| 43  | `--restore-comment`      | `cw file restore-comment <SPEC>`      | 2. Query & Search        |
-| 44  | `--restore-file`         | `cw file restore-file <PATH>`         | 2. Query & Search        |
-| 45  | `--search`               | `cw search <QUERY>`                   | 2. Query & Search        |
-| 46  | `--semantic-search`      | `cw search --semantic <QUERY>`        | 2. Query & Search        |
-| 47  | `--semgrep`              | `cw semgrep scan [PATH]`              | 9. Semgrep & Defects     |
-| 48  | `--semgrep-list`         | `cw semgrep list [FILTER]`            | 9. Semgrep & Defects     |
-| 49  | `--semgrep-stats`        | `cw semgrep stats`                    | 9. Semgrep & Defects     |
-| 50  | `--set-workspace`        | `cw workspace set <ID_OR_NAME>`       | 1. Workspace & Database  |
-| 51  | `--similar`              | `cw search --similar <NAME>`          | 2. Query & Search        |
-| 52  | `--stats`                | `cw stats`                            | 1. Workspace & Database  |
-| 53  | `--status`               | `cw status`                           | 1. Workspace & Database  |
-| 54  | `--symbol`               | `cw symbol <QUALIFIED_NAME>`          | 2. Query & Search        |
-| 55  | `--test-coverage`        | `cw coverage --test`                  | 10. Coverage & Ownership |
-| 56  | `--top-callers`          | `cw callers --top N`                  | 3. Call Chain Analysis   |
-| 57  | `--topo`                 | `cw topo`                             | 3. Call Chain Analysis   |
-| 58  | `--uncommented`          | `cw uncommented [KIND]`               | 4. Code Health & Metrics |
-| 59  | `--watch`                | `cw refresh --watch`                  | 1. Workspace & Database  |
-| 60  | `--who`                  | `cw who <FILE>`                       | 10. Coverage & Ownership |
-
-### 保留的通用 flag（非 deprecated）
-
-以下 flag 作为 subcommand 的通用参数或全局 flag 保留，**不**属于 deprecated 范围：
-
-| flag                            | 用途                                                |
-| ------------------------------- | --------------------------------------------------- |
-| `--lang <LANG>`                 | 全局语言切换（zh_CN / en_US）                       |
-| `--preview`                     | 预览模式（配合恢复类命令使用）                      |
-| `--show-content`                | 显示完整内容（配合 `--history` 等使用）             |
-| `--force`                       | 强制全量重新解析（配合 `--refresh-all` 使用）       |
-| `--graph-output <FILE>`         | 输出到文件（配合 `--export-module-graph` 使用）     |
-| `--search-kind <KIND>`          | 类型过滤（配合 `--search` 使用）                    |
-| `--search-limit <N>`            | 返回数量限制（配合 `--search` 使用）                |
-| `--chain-depth <N>`             | 调用链深度（配合 `--impact` / `--call-chain` 使用） |
-| `--topo-limit <N>`              | 拓扑排序数量限制（配合 `--topo` 使用）              |
-| `--cycle-depth <N>`             | 循环检测深度（配合 `--detect-cycles` 使用）         |
-| `--heatmap-limit <N>`           | 热力图数量限制（配合 `--call-heatmap` 使用）        |
-| `--complexity-module <PATH>`    | 复杂度模块过滤                                      |
-| `--coverage-by <GROUP>`         | 覆盖率分组（module/file/kind）                      |
-| `--coverage-format <FORMAT>`    | 覆盖率报告格式（lcov/cobertura）                    |
-| `--semgrep-config <CONFIG>`     | Semgrep 规则配置                                    |
-| `--semgrep-scan-lang <LANG...>` | Semgrep 扫描语言限制                                |
-| `--semgrep-timeout <N>`         | Semgrep 超时秒数                                    |
-| `--semgrep-quick`               | Semgrep 快速汇总模式                                |
-| `--semgrep-save`                | Semgrep 结果存入数据库                              |
-| `--semgrep-severity <SEV>`      | Semgrep 严重度过滤                                  |
-| `--map-format <FORMAT>`         | 模块图格式（text/mermaid）                          |
-| `--no-auto-setup`               | 禁用首次运行时的自动 AI 工具配置（Lazy Auto-Setup） |
+> 各 subcommand 自身的选项（如 `search` 的 `--kind`/`--limit`、`call-chain` 的 `--depth`、
+> `semgrep scan` 的 `--save`/`--config` 等）见对应 subcommand 章节。
 
 ---
 

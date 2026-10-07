@@ -126,11 +126,11 @@ cw setup --dry-run
 
 ```bash
 cd /path/to/your/project
-cw --refresh-all
+cw refresh --all
 ```
 
-- `--refresh-all`：增量刷新（仅解析有变化的文件，不会清空数据）
-- `--refresh-all --force`：强制全量重新解析所有文件
+- `refresh --all`：增量刷新（仅解析有变化的文件，不会清空数据）
+- `refresh --all --force`：强制全量重新解析所有文件
 
 构建过程会：
 1. 自动检测项目根目录（查找 `.git`、`Cargo.toml`、`package.json`、`go.mod` 等标记）
@@ -143,7 +143,7 @@ cw --refresh-all
 ### 2.2 查看构建状态
 
 ```bash
-cw --status
+cw status
 ```
 
 输出示例：
@@ -194,42 +194,42 @@ $HOME/.callwarden/callwarden.db
 
 ```bash
 # 模糊搜索符号名
-cw --search "login"
+cw search "login"
 
 # 按类型过滤（fn/method/class/struct/enum/trait/interface）
-cw --search "User" --search-kind class
+cw search "User" --kind class
 
 # 限制返回数量
-cw --search "handle" --search-limit 20
+cw search "handle" --limit 20
 ```
 
 ### 3.2 调用链分析
 
 ```bash
 # 向上追踪：谁调用了我
-cw --impact "module::function_name"
+cw impact "module::function_name"
 
 # 向下追踪：我调用了谁
-cw --call-chain "module::function_name"
+cw call-chain "module::function_name"
 
 # 设置最大深度
-cw --call-chain "module::function_name" --chain-depth 5
+cw call-chain "module::function_name" --depth 5
 ```
 
 ### 3.3 缺陷扫描
 
 ```bash
 # Semgrep 快速扫描（只显示汇总）
-cw --semgrep --semgrep-quick
+cw semgrep scan --quick
 
 # 详细扫描并存入数据库
-cw --semgrep --semgrep-save
+cw semgrep scan --save
 
 # 查看 Semgrep 统计
-cw --semgrep-stats
+cw semgrep stats
 
 # 查看缺陷列表
-cw --semgrep-list
+cw semgrep list
 ```
 
 ## 4. 启动 MCP Server
@@ -286,13 +286,13 @@ SSE 模式适用于远程访问或多客户端共享同一个 Server 实例。
 
 ```bash
 cd /home/user/my_project
-cw --refresh-all
+cw refresh --all
 ```
 
 ### 5.2 步骤 2：查找目标函数
 
 ```bash
-cw --search "process_payment"
+cw search "process_payment"
 ```
 
 输出：
@@ -310,7 +310,7 @@ cw --search "process_payment"
 ### 5.3 步骤 3：查看符号详情
 
 ```bash
-cw --symbol "my_project::payment::process_payment"
+cw symbol "my_project::payment::process_payment"
 ```
 
 输出包含：类型、深度、文件位置、签名、注释、调用的函数、被谁调用。
@@ -319,7 +319,7 @@ cw --symbol "my_project::payment::process_payment"
 
 ```bash
 # 向上追踪所有调用者（影响半径）
-cw --impact "my_project::payment::process_payment"
+cw impact "my_project::payment::process_payment"
 ```
 
 ### 5.5 步骤 5：通过 MCP 执行安全编辑

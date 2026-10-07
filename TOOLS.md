@@ -9,47 +9,47 @@
 
 ### 1. 符号基本属性（symbols 表）
 
-| 场景           | cw 命令                    | 为什么不用 Grep/Read                                                    |
-| -------------- | -------------------------- | ----------------------------------------------------------------------- |
-| 查符号定义     | `cw --symbol <QN>`         | 精确返回符号内容（含 calls_out/called_by/issues 前 5 条），不含无关代码 |
-| 符号搜索       | `cw --search <Q>`          | 结构化结果，含符号类型/位置                                             |
-| 精确查询位置   | `cw --query <NAME> <FILE>` | 比 Grep 精确（按符号名+文件，不误匹配字符串/注释）                      |
-| 文件内符号列表 | `cw --file <PATH>`         | 结构化列出文件的所有符号（含签名/类型/行号）                            |
+| 场景           | cw 命令                  | 为什么不用 Grep/Read                                                    |
+| -------------- | ------------------------ | ----------------------------------------------------------------------- |
+| 查符号定义     | `cw symbol <QN>`         | 精确返回符号内容（含 calls_out/called_by/issues 前 5 条），不含无关代码 |
+| 符号搜索       | `cw search <Q>`          | 结构化结果，含符号类型/位置                                             |
+| 精确查询位置   | `cw query <NAME> <FILE>` | 比 Grep 精确（按符号名+文件，不误匹配字符串/注释）                      |
+| 文件内符号列表 | `cw file <PATH>`         | 结构化列出文件的所有符号（含签名/类型/行号）                            |
 
 ### 2. 代码度量（db_metrics.py）
 
-| 场景         | cw 命令                  | 为什么不用 Grep/Read                              |
-| ------------ | ------------------------ | ------------------------------------------------- |
-| 度量汇总     | `cw --metrics`           | 全项目符号数/调用边/文件数/平均行数等             |
-| 圈复杂度热点 | `cw --complexity [N]`    | 按复杂度排序，找出最复杂的 N 个函数               |
-| 模块耦合度   | `cw --coupling`          | 模块间调用统计，识别高耦合模块                    |
-| 最大函数     | `cw --largest-fns [N]`   | 按行数排序的 N 个最大函数                         |
-| 高耦合函数   | `cw --coupled-fns [N]`   | 按调用关系数排序的 N 个高耦合函数                 |
-| 单函数度量   | `cw --fn-metrics <NAME>` | 指定函数的详细度量（行数/复杂度/调用数/被调用数） |
+| 场景         | cw 命令                | 为什么不用 Grep/Read                              |
+| ------------ | ---------------------- | ------------------------------------------------- |
+| 度量汇总     | `cw metrics`           | 全项目符号数/调用边/文件数/平均行数等             |
+| 圈复杂度热点 | `cw complexity [N]`    | 按复杂度排序，找出最复杂的 N 个函数               |
+| 模块耦合度   | `cw coupling`          | 模块间调用统计，识别高耦合模块                    |
+| 最大函数     | `cw largest-fns [N]`   | 按行数排序的 N 个最大函数                         |
+| 高耦合函数   | `cw coupled-fns [N]`   | 按调用关系数排序的 N 个高耦合函数                 |
+| 单函数度量   | `cw fn-metrics <NAME>` | 指定函数的详细度量（行数/复杂度/调用数/被调用数） |
 
 ### 3. 调用关系 / 爆炸半径（db_impact.py）
 
-| 场景                     | cw 命令                      | 为什么不用 Grep/Read            |
-| ------------------------ | ---------------------------- | ------------------------------- |
-| 找调用方                 | `cw --callers <QN>`          | Grep 误匹配注释/字符串/同名函数 |
-| 找被调用方               | `cw --callees <QN>`          | 同上                            |
-| 调用链                   | `cw --call-chain <QN>`       | 图遍历，Grep 做不到             |
-| 变更影响（向上爆炸半径） | `cw --impact <QN>`           | blast radius，独有能力          |
-| 拓扑排序                 | `cw --topo`                  | 调用图拓扑序，Grep 做不到       |
-| 循环调用检测             | `cw --detect-cycles`         | 调用图环检测                    |
-| 模块间调用统计           | `cw --module-calls [N]`      | 跨模块调用热力图                |
-| 调用频率热力图           | `cw --call-heatmap [GROUP]`  | 按模块/文件聚合的调用频率       |
-| 孤立符号                 | `cw --orphan-symbols [KIND]` | 无调用方/被调用方的符号         |
-| 调用深度最深             | `cw --deepest [N]`           | 调用链最深的 N 个函数           |
-| 跨层影响                 | `cw defect cross-layer`      | 跨层（API/Service/DAO）影响传播 |
+| 场景                     | cw 命令                    | 为什么不用 Grep/Read            |
+| ------------------------ | -------------------------- | ------------------------------- |
+| 找调用方                 | `cw callers <QN>`          | Grep 误匹配注释/字符串/同名函数 |
+| 找被调用方               | `cw callees <QN>`          | 同上                            |
+| 调用链                   | `cw call-chain <QN>`       | 图遍历，Grep 做不到             |
+| 变更影响（向上爆炸半径） | `cw impact <QN>`           | blast radius，独有能力          |
+| 拓扑排序                 | `cw topo`                  | 调用图拓扑序，Grep 做不到       |
+| 循环调用检测             | `cw detect-cycles`         | 调用图环检测                    |
+| 模块间调用统计           | `cw module-calls [N]`      | 跨模块调用热力图                |
+| 调用频率热力图           | `cw call-heatmap [GROUP]`  | 按模块/文件聚合的调用频率       |
+| 孤立符号                 | `cw orphan-symbols [KIND]` | 无调用方/被调用方的符号         |
+| 调用深度最深             | `cw deepest [N]`           | 调用链最深的 N 个函数           |
+| 跨层影响                 | `cw defect cross-layer`    | 跨层（API/Service/DAO）影响传播 |
 
 ### 4. 覆盖率（db_coverage.py）
 
 | 场景           | cw 命令                     | 为什么不用 Grep/Read                 |
 | -------------- | --------------------------- | ------------------------------------ |
-| 注释覆盖率     | `cw --comment-coverage`     | 全项目注释覆盖率统计                 |
-| 无注释符号     | `cw --uncommented`          | 列出没有注释的符号                   |
-| 测试覆盖率     | `cw --test-coverage`        | 全项目测试覆盖率统计                 |
+| 注释覆盖率     | `cw comment-coverage`       | 全项目注释覆盖率统计                 |
+| 无注释符号     | `cw uncommented`            | 列出没有注释的符号                   |
+| 测试覆盖率     | `cw coverage test`          | 全项目测试覆盖率统计                 |
 | 导入覆盖率     | `cw coverage import <file>` | 导入 lcov/jacoco 覆盖率报告          |
 | 函数覆盖率     | `cw coverage fn <QN>`       | 指定函数的覆盖率详情                 |
 | 未覆盖函数     | `cw coverage uncovered`     | 列出未被测试覆盖的函数               |
@@ -94,14 +94,14 @@
 
 ### 7. 注释恢复（db_comment.py）
 
-| 场景         | cw 命令                                      | 为什么不用 Grep/Read                  |
-| ------------ | -------------------------------------------- | ------------------------------------- |
-| 恢复函数注释 | `cw --restore-comment <SPEC>`                | 从历史版本恢复函数的中文注释          |
-| 批量恢复注释 | `cw --restore-all-comments`                  | 全项目扫描无注释符号，从 git 历史恢复 |
-| 恢复文件版本 | `cw --restore-file <PATH>`                   | 从指定 hash 恢复文件内容              |
-| 函数历史版本 | `cw --history <NAME>`                        | 函数的所有历史版本列表                |
-| 版本对比     | `cw --diff <H1> <H2>`                        | 对比两个版本的内容差异                |
-| 从版本查注释 | `cw symbol comment-from-version <QN> <hash>` | 从指定 commit 的版本提取注释          |
+| 场景         | cw 命令                                        | 为什么不用 Grep/Read                  |
+| ------------ | ---------------------------------------------- | ------------------------------------- |
+| 恢复函数注释 | `cw restore-comment <SPEC>`                    | 从历史版本恢复函数的中文注释          |
+| 批量恢复注释 | `cw restore-all-comments`                      | 全项目扫描无注释符号，从 git 历史恢复 |
+| 恢复文件版本 | `cw restore-all-comments --file-filter <PATH>` | 从指定 hash 恢复文件内容              |
+| 函数历史版本 | `cw symbol-history <NAME>`                     | 函数的所有历史版本列表                |
+| 版本对比     | `cw diff <H1> <H2>`                            | 对比两个版本的内容差异                |
+| 从版本查注释 | `cw symbol comment-from-version <QN> <hash>`   | 从指定 commit 的版本提取注释          |
 
 ### 8. 编辑前检查与刷新
 
@@ -110,9 +110,9 @@
 | 带符号上下文的文本搜索 | `cw grep <pattern> [--fixed] [--limit N] [--include-all]` | 每行带 `[in fn xxx]` 标注，agent 一眼看出匹配行属于哪个函数；rg 只给 file:line:content |
 | 编辑前检查             | `cw guardrail scan`                                       | 安全规则匹配                                                                           |
 | 编辑前符号契约         | `cw guardrail check-edit`                                 | 符号级 Before-Edit Contract 校验                                                       |
-| 改后刷新               | `cw --refresh <file>`                                     | 保持数据库同步                                                                         |
-| 全量刷新               | `cw --refresh-all`                                        | 增量刷新代码图谱                                                                       |
-| 强制全量刷新           | `cw --refresh-all --force`                                | 重新解析所有文件                                                                       |
+| 改后刷新               | `cw refresh <file>`                                       | 保持数据库同步                                                                         |
+| 全量刷新               | `cw refresh --all`                                        | 增量刷新代码图谱                                                                       |
+| 强制全量刷新           | `cw refresh --all --force`                                | 重新解析所有文件                                                                       |
 
 ## 9. 阶段收口与共享 Runtime 刷新（Windows）
 
@@ -170,12 +170,12 @@ pwsh -File .\scripts\refresh_shared_runtime.ps1 `
 
 ## 可以用自带工具的场景
 
-| 场景       | 工具       | 理由                   |
-| ---------- | ---------- | ---------------------- |
-| 读文件全文 | Read       | cw --file 也是返回全文 |
-| 浏览目录   | Glob/LS    | cw 无目录浏览命令      |
-| 编辑文件   | Edit       | cw 无编辑命令          |
-| 运行命令   | RunCommand | cw 无此能力            |
+| 场景       | 工具       | 理由                 |
+| ---------- | ---------- | -------------------- |
+| 读文件全文 | Read       | cw file 也是返回全文 |
+| 浏览目录   | Glob/LS    | cw 无目录浏览命令    |
+| 编辑文件   | Edit       | cw 无编辑命令        |
+| 运行命令   | RunCommand | cw 无此能力          |
 
 ## CLI 命令速查（cw）
 
@@ -185,16 +185,16 @@ cw install            # 核心依赖
 cw install --all      # 全部依赖（含 semgrep / 向量搜索）
 
 # 初始化与构建
-cw --refresh-all      # 增量刷新代码图谱（仅解析变更文件）
-cw --refresh-all --force  # 强制全量重新解析
-cw --refresh <file>   # 刷新单个文件
+cw refresh --all      # 增量刷新代码图谱（仅解析变更文件）
+cw refresh --all --force  # 强制全量重新解析
+cw refresh <file>   # 刷新单个文件
 
 # 查询
-cw --search "login"            # 搜索符号
-cw --call-chain "module::fn"   # 查看调用链
-cw --callers "module::fn"      # 调用方
-cw --callees "module::fn"       # 被调用方
-cw --symbol <QN>                # 查符号定义内容（含 calls_out/called_by/issues 前5条）
+cw search "login"            # 搜索符号
+cw call-chain "module::fn"   # 查看调用链
+cw callers "module::fn"      # 调用方
+cw callees "module::fn"       # 被调用方
+cw symbol <QN>                # 查符号定义内容（含 calls_out/called_by/issues 前5条）
 cw issues <QN>                  # 查符号的静态检查问题（Semgrep + Guardrail findings）
 cw issues <QN> --include-info   # 包含 INFO 级别（默认只 WARNING+）
 cw tests <QN>                   # 查符号的测试 case 列表（按 confidence 降序）
@@ -214,8 +214,8 @@ cw clone clear                   # 清空检测结果
 # 变更-缺陷关联
 cw evolution <QN>               # 函数变更频率（时间窗口、变更者、时间线）
 cw evolution <QN> --defects     # 变更-缺陷关联（change_count / defect_count / defect_rate / recent_defects）
-cw --stats                      # 统计信息
-cw --status                     # 完整状态概览
+cw stats                      # 统计信息
+cw status                     # 完整状态概览
 
 # 带符号上下文的文本搜索（差异化工具）
 cw grep daemon_handle_refresh              # 默认正则模式，limit=200，默认只显示有符号归属的行
@@ -341,13 +341,13 @@ db.conn.commit()
 
 ### 只读命令（跳过 workspace 激活，不撞锁）
 
-- **子命令**：`task list/show/findings/status-tree`、`rule list/candidate/applicable/extract`、`doctor`、`check-gate`、`test-impact`、`hotspot`、`churn`、`evolution`、`impact`、`review`、`vuln-blast`、`symbol-history`、`guardrail scan/rules`、`defect stats/list/show`、`gc list/inspect`、`issues`、`tests`
-- **flag**：`--search`、`--symbol`、`--call-chain`、`--callers`、`--callees`、`--topo`、`--file`、`--history`、`--diff`、`--changes`、`--comment-coverage`、`--stats`、`--status`、`--query`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap`、`--impact`、`--uncommented`、`--who`、`--ownership-map`
+- **任务/规则/诊断类**：`task list/show/findings/status-tree`、`rule list/candidate/applicable/extract`、`doctor`、`check-gate`、`test-impact`、`hotspot`、`churn`、`evolution`、`impact`、`review`、`vuln-blast`、`symbol-history`、`guardrail scan/rules`、`defect stats/list/show`、`gc list/inspect`、`issues`、`tests`
+- **查询/分析类**：`search`、`symbol`、`call-chain`、`callers`、`callees`、`topo`、`file`、`diff`、`changes`、`comment-coverage`、`stats`、`status`、`query`、`top-callers`、`orphan-symbols`、`deepest`、`module-calls`、`detect-cycles`、`export-module-graph`、`call-heatmap`、`uncommented`、`who`、`ownership-map`
 
 ### 写命令（需激活 workspace，可能撞锁）
 
-- **子命令**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`、`identity revoke`、`setup`
-- **flag**：`--refresh-all`、`--refresh`、`--watch`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--restore-comment`、`--restore-all-comments`、`--coverage-import`
+- **任务/规则/维护类**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`、`identity revoke`、`setup`
+- **构建/工作区/恢复类**：`refresh --all`、`refresh <paths>`、`refresh --watch`、`workspace register/set/delete`、`restore-comment`、`restore-all-comments`、`coverage import`
 
 ## MCP 工具分组（237 个）
 

@@ -31,7 +31,7 @@ c:\git_work\cw_demo\
 
 ### 2.1 符号基本属性（`db_query.py`）
 
-**命令**：`cw --symbol demo.core.process_request`
+**命令**：`cw symbol demo.core.process_request`
 
 **实测输出**：
 ```
@@ -63,7 +63,7 @@ Called by (4):
 
 ### 2.2 代码度量（`db_metrics.py`）
 
-**命令 A**：`cw --metrics`（全项目度量汇总）
+**命令 A**：`cw metrics`（全项目度量汇总）
 
 **实测输出**：
 ```
@@ -85,7 +85,7 @@ Code metrics summary:
   Comment coverage: 0.0%
 ```
 
-**命令 B**：`cw --complexity 5`（复杂度热点排名）
+**命令 B**：`cw complexity 5`（复杂度热点排名）
 
 **实测输出**：
 ```
@@ -100,7 +100,7 @@ Code metrics summary:
   Hint: functions with complexity >10 should be refactored (marked !)
 ```
 
-**命令 C**：`cw --fn-metrics demo.metrics_demo.mega_processor`（单函数详细度量）
+**命令 C**：`cw fn-metrics demo.metrics_demo.mega_processor`（单函数详细度量）
 
 **实测输出**：
 ```
@@ -120,7 +120,7 @@ Function metrics: demo.metrics_demo.mega_processor
 
 ### 2.3 调用关系 / 爆炸半径（`db_impact.py`）
 
-**命令 A**：`cw --call-chain demo.core.service_a`（调用链下行）
+**命令 A**：`cw call-chain demo.core.service_a`（调用链下行）
 
 **实测输出**：
 ```
@@ -138,7 +138,7 @@ Layer 6 (3 callees):  → demo.core.validate_request
                       → demo.core.log_request
 ```
 
-**命令 B**：`cw --impact demo.core.process_request`（爆炸半径：向上追溯调用方）
+**命令 B**：`cw impact demo.core.process_request`（爆炸半径：向上追溯调用方）
 
 **实测输出**：
 ```
@@ -157,7 +157,7 @@ Layer 4 (1 callers): ← demo.core.service_b
 Layer 5 (1 callers): ← demo.core.service_a
 ```
 
-**命令 C**：`cw --callers process_request`（直接调用方）
+**命令 C**：`cw callers process_request`（直接调用方）
 
 **实测输出**：
 ```
@@ -177,7 +177,7 @@ Functions calling process_request (4):
 
 ### 2.4 覆盖率（`db_coverage.py`）
 
-**命令 A**：`cw --comment-coverage`（注释覆盖率）
+**命令 A**：`cw comment-coverage`（注释覆盖率）
 
 **实测输出**：
 ```
@@ -198,7 +198,7 @@ By module (top 30):
   ░░░░░░░░░░░░░░░░░░░░   0.0%  tests.test_core                                     (0/3)
 ```
 
-**命令 B**：`cw --test-coverage`（测试覆盖率）
+**命令 B**：`cw coverage test`（测试覆盖率）
 
 **实测输出**：
 ```
@@ -226,7 +226,7 @@ Test function distribution:
 
 ### 2.5 Git 历史 / 演化智能（`db_git.py` + `db_evolution.py`）
 
-**命令 A**：`cw --git-log 6`（commit 历史）
+**命令 A**：`cw git log 6`（commit 历史）
 
 **实测输出**：
 ```
@@ -285,9 +285,9 @@ Git commit history (6 entries):
 
 ### 2.6 静态检查（Semgrep + issues）
 
-**命令 A**：`cw --semgrep demo/security.py --semgrep-save`（扫描并入库）
+**命令 A**：`cw semgrep scan demo/security.py --save`（扫描并入库）
 
-**命令 B**：`cw --semgrep-list`（列出 findings）
+**命令 B**：`cw semgrep list`（列出 findings）
 
 **实测输出**：
 ```
@@ -316,7 +316,7 @@ findings 已关联到符号（`demo.security.query_user` 等），可按符号�
 
 ### 2.7 注释恢复（`db_comment.py`）
 
-**命令**：`cw --restore-comment demo.core.process_request --preview`
+**命令**：`cw restore-comment demo.core.process_request --preview`
 
 **实测结果**：返回"未找到"。
 
@@ -327,7 +327,7 @@ findings 已关联到符号（`demo.security.query_user` 等），可按符号�
 
 ### 2.8 编辑前检查与刷新（`db_guardrail.py` + `db_build.py`）
 
-**命令**：`cw --refresh demo/core.py`（单文件刷新）
+**命令**：`cw refresh demo/core.py`（单文件刷新）
 
 **实测结果**：成功刷新，符号/调用关系同步。
 
@@ -347,7 +347,7 @@ AGENTS.md 规定 commit 前必须刷新数据库，确保符号图谱与代码�
 2. cw task next T-1784027625343-38a7
    → 任务进入 in_progress，设置 active_task_id
 3. 编辑 demo/core.py，新增 retry_request 函数
-4. cw --refresh-all  （刷新数据库）
+4. cw refresh --all  （刷新数据库）
 5. git commit -m "Add retry_request function for fault tolerance"
    → post-commit hook 自动触发 task_capture_diff_auto()
    → 写入 task_symbol_changes（commit → task → symbol）
@@ -462,7 +462,7 @@ python c:\git_work\callwarden\cw.py --workspace "c:\git_work\cw_demo" task creat
 
 # 2. 编辑 demo/core.py，新增 retry_request 函数
 # 3. 刷新数据库
-python c:\git_work\callwarden\cw.py --workspace "c:\git_work\cw_demo" --refresh demo/core.py
+python c:\git_work\callwarden\cw.py --workspace "c:\git_work\cw_demo" refresh demo/core.py
 
 # 4. git commit（hook 自动触发）
 git add demo/core.py

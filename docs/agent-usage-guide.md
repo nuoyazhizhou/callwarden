@@ -43,8 +43,8 @@ Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter 
 | 操作类型 | MCP 未激活（开发期）| MCP 激活后 |
 |---------|-------------------|-----------|
 | 任务编排（task create/next/report）| **CLI** `cw task ...` | **CLI**（保持，写操作避免与 MCP 长连接撞锁）|
-| 刷新数据库（refresh/refresh-all）| **CLI** `cw --refresh ...` | **CLI**（保持，写操作）|
-| 读文件内容 / 搜索代码 / 浏览目录 | **CLI** `cw --file <PATH>` / `cw --search <Q>`；IDE 内置 Read/Grep/Glob 作为降级 | **MCP** `file_read` / `file_grep` / `file_list`（只读）|
+| 刷新数据库（refresh/refresh-all）| **CLI** `cw refresh ...` | **CLI**（保持，写操作）|
+| 读文件内容 / 搜索代码 / 浏览目录 | **CLI** `cw file <PATH>` / `cw search <Q>`；IDE 内置 Read/Grep/Glob 作为降级 | **MCP** `file_read` / `file_grep` / `file_list`（只读）|
 | 符号内容 / 符号查询 | **CLI** `cw symbol <QN>` / `cw callers` / `cw callees` | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）|
 | 符号静态检查 | **CLI** `cw issues <QN>` | **MCP** `get_symbol_issues`（只读）|
 | 符号测试 case | **CLI** `cw tests <QN>` | **MCP** `get_test_cases` / `get_tested_functions` / `get_test_coverage_summary`（只读）|
@@ -72,7 +72,7 @@ python -m callwarden.server   # 默认 stdio 模式
 
 ## 开发阶段开启 watcher
 
-长时间开发时，使用 `cw --watch` 启动文件监控，修改后自动刷新数据库。
+长时间开发时，使用 `cw refresh --watch` 启动文件监控，修改后自动刷新数据库。
 
 ## 任务驱动编排
 

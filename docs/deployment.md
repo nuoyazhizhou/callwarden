@@ -100,7 +100,7 @@ Set-Alias -Name cw -Value "python C:\path\to\callwarden\cw.py"
 
 ```bash
 cd /path/to/your/project
-cw --refresh-all
+cw refresh --all
 ```
 
 数据库将创建在 `$HOME/.callwarden/callwarden.db`（用户级单库，多 workspace 通过 `workspace_id` 逻辑隔离）。
@@ -334,7 +334,7 @@ Call Warden 的 Schema 迁移在启动时自动执行：
 ```bash
 # 升级代码后，首次运行会自动检测版本并迁移
 git pull
-cw --status    # 自动迁移并显示状态
+cw status    # 自动迁移并显示状态
 ```
 
 迁移逻辑在 `db_base.py` 中：
@@ -362,10 +362,10 @@ cw install
 cd rust_ext && maturin develop --release && cd -
 
 # 5. 触发 Schema 迁移
-cw --status
+cw status
 
 # 6. （可选）增量更新图谱
-cw --refresh-all
+cw refresh --all
 ```
 
 ### Docker 升级
@@ -513,7 +513,7 @@ sqlite3 $HOME/.callwarden/callwarden.db ".recover" > recovered.sql
 sqlite3 new.db < recovered.sql
 
 # 3. 确认 new.db 可用后再替换
-cw --refresh-all  # 在临时目录验证 new.db
+cw refresh --all  # 在临时目录验证 new.db
 mv new.db $HOME/.callwarden/callwarden.db
 ```
 
@@ -552,7 +552,7 @@ rustup component add rust-analyzer  # Rust
 pip install sentence-transformers
 
 # 重新生成嵌入
-cw --embed-force
+cw embed --force
 ```
 
 向量服务不可用时，语义搜索自动回退到关键词匹配。
@@ -564,7 +564,7 @@ cw --embed-force
 Call Warden 提供自举门禁脚本 `cicd/bootstrap_check.py`，在 CI 流程中检查自举闭环健康度，决定是否阻断合并。
 
 **检查项**（任一失败即阻断，退出码 1）：
-1. `db_stale=True`：数据库滞后于当前 HEAD（需先 `cw --refresh-all`）
+1. `db_stale=True`：数据库滞后于当前 HEAD（需先 `cw refresh --all`）
 2. `blocking_findings_count > 0`：有阻塞级质量发现（需先修复）
 3. `audit_verify.broken_count > 0`：审计链有损坏记录（需先修复）
 
@@ -597,7 +597,7 @@ jobs:
       - name: Install Call Warden
         run: pip install -e ".[core]"
       - name: Refresh code graph
-        run: cw --refresh-all
+        run: cw refresh --all
       - name: Run bootstrap gate
         run: python -m callwarden.cicd.bootstrap_check
 ```
@@ -609,7 +609,7 @@ jobs:
 Call Warden 提供 `cw install-hook post-commit` 一键安装 post-commit hook，让 Agent 在 commit 后自动把文件变更捕获到 task/audit 闭环。
 
 **前置条件**：
-- 已安装 Call Warden 并注册当前工作区（`cw --refresh-all` 至少跑过一次）
+- 已安装 Call Warden 并注册当前工作区（`cw refresh --all` 至少跑过一次）
 - 至少有一个 `in_progress` 状态的任务（否则自动跳过）
 
 **安装**：

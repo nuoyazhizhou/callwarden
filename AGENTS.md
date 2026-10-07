@@ -42,12 +42,12 @@ Handoff: <完成后交给哪个角色>
 
 ### 角色职责矩阵
 
-| Role          | 主要工作                                               | 可以做                                                                             | 禁止做                                                          | 完成后交给                                                                                                                               |
-| ------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `planner`     | 分析需求、评估复杂度、拆分可执行任务和依赖；对自己创建的任务树治理缺口负责 | 形成/修订计划、创建有完整 Contract 的独立子任务、定义 scope/验收/证据、主动安排治理修复 | 写生产代码、领取 Executor 步骤、review/verdict、apply/close、直连数据库 | Executor（`planner_governance_v1` 未声明时原生派工仍 design-only，但不得把治理缺口转给用户） |
-| `executor`    | 将已规划的原子任务落实为设计、代码、测试和证据         | 执行冻结 scope、发现回归、提交整改或重规划请求、测试、归档并报告                   | apply/close、伪造证据、扩大已冻结 scope、跳过复杂度预检         | Reviewer                                                                                                                                 |
-| `reviewer`    | 独立审核执行者产物和变更影响半径                       | 只读核验，记录 in-scope/adjacent/governance findings，且只输出 `PASS` 或 `BLOCKED` | 修改计划/代码/证据/任务状态、创建整改步骤、apply/close          | Adjudicator（PASS）、Executor（实现缺陷）；计划缺陷交 Planner/内部治理维护路径，post-cutover 才由 Planner 原生承接 |
-| `adjudicator` | 对 Reviewer 的 PASS 作独立最终复审，并核查完整影响半径 | 核验全部门禁；接受后以真实 lease 执行 apply/close，或提交带 finding 的退回         | 制定整改计划、修改实现/证据、覆盖历史 verdict、静默忽略相邻缺陷 | 完成；`adjudicator_returned` 当前固定路由 Executor 但无可执行 remediation bridge；post-cutover 按 finding 路由 Executor/Planner          |
+| Role          | 主要工作                                                                   | 可以做                                                                                  | 禁止做                                                                  | 完成后交给                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `planner`     | 分析需求、评估复杂度、拆分可执行任务和依赖；对自己创建的任务树治理缺口负责 | 形成/修订计划、创建有完整 Contract 的独立子任务、定义 scope/验收/证据、主动安排治理修复 | 写生产代码、领取 Executor 步骤、review/verdict、apply/close、直连数据库 | Executor（`planner_governance_v1` 未声明时原生派工仍 design-only，但不得把治理缺口转给用户）                                    |
+| `executor`    | 将已规划的原子任务落实为设计、代码、测试和证据                             | 执行冻结 scope、发现回归、提交整改或重规划请求、测试、归档并报告                        | apply/close、伪造证据、扩大已冻结 scope、跳过复杂度预检                 | Reviewer                                                                                                                        |
+| `reviewer`    | 独立审核执行者产物和变更影响半径                                           | 只读核验，记录 in-scope/adjacent/governance findings，且只输出 `PASS` 或 `BLOCKED`      | 修改计划/代码/证据/任务状态、创建整改步骤、apply/close                  | Adjudicator（PASS）、Executor（实现缺陷）；计划缺陷交 Planner/内部治理维护路径，post-cutover 才由 Planner 原生承接              |
+| `adjudicator` | 对 Reviewer 的 PASS 作独立最终复审，并核查完整影响半径                     | 核验全部门禁；接受后以真实 lease 执行 apply/close，或提交带 finding 的退回              | 制定整改计划、修改实现/证据、覆盖历史 verdict、静默忽略相邻缺陷         | 完成；`adjudicator_returned` 当前固定路由 Executor 但无可执行 remediation bridge；post-cutover 按 finding 路由 Executor/Planner |
 
 `implementer`、`tester`、`evidence` 是 `executor` 的 legacy 工作模式；`planner` 现在是独立治理角色，
 其 runtime 兼容值仍可由 daemon 映射，但不得退化为 Executor 的隐式规划模式；
@@ -253,8 +253,8 @@ agent"默认安全。本父任务只负责实施编排，关闭前须所有直�
    | 操作类型                                     | 当前（MCP 未激活/开发期）                                                                                        | MCP 激活后                                                                                                               |
    | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
    | 任务编排（task create/next/report/rollback） | **CLI** `cw task ...`                                                                                            | **CLI**（保持，写操作避免与 MCP 长连接撞锁）                                                                             |
-   | 刷新数据库（refresh/refresh-all）            | **CLI** `cw --refresh ...`                                                                                       | **CLI**（保持，写操作）                                                                                                  |
-   | 读文件内容 / 搜索代码 / 浏览目录             | **CLI** `cw --file <PATH>` / `cw --search <Q>` / `cw --query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级    | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）                                     |
+   | 刷新数据库（refresh --all / 单文件）         | **CLI** `cw refresh ...`                                                                                         | **CLI**（保持，写操作）                                                                                                  |
+   | 读文件内容 / 搜索代码 / 浏览目录             | **CLI** `cw file <PATH>` / `cw search <Q>` / `cw query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级          | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）                                     |
    | 符号内容 / 符号查询                          | **CLI** `cw symbol <QN>` / `cw callers` / `cw callees`                                                           | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）                                     |
    | 符号静态检查                                 | **CLI** `cw issues <QN>`（整合 Semgrep + Guardrail findings，按符号聚合）                                        | **MCP** `get_symbol_issues`（只读）                                                                                      |
    | 符号测试 case                                | **CLI** `cw tests <QN>`（`--build` 重建关联 / `--import` 导入 JUnit XML 为写操作走 CLI）；`--history` 查稳定性   | **MCP** `get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`（只读，WAL 安全） |
@@ -578,7 +578,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
    B-P7b 设计原则：单值查询（get_stats）保持 Python SQL；多行查询（get_callers/get_callees/search_symbols）走 Rust 短路。
 
-23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw --refresh-all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。
+23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw refresh --all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。
 
     **根因**：TRAE IDE 沙箱是**进程树型**拦截，基于父进程链判断，无法通过 `powershell.exe` / `cmd.exe` 中转绕过；同一命令在 PowerShell 终端中直接执行不会触发沙箱（PowerShell 进程不在 sh.exe 进程树下）。
 
@@ -587,7 +587,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     - **持续性 SQLITE_CANTOPEN**：TRAE 沙箱拦截 → 重试无效，必须改用 PowerShell 终端执行 `cw refresh --all` 后用 `git commit --no-verify` 跳过 hook
 
     **规避方法**（按优先级）：
-    1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py --refresh-all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
+    1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py refresh --all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
     2. **配置沙箱白名单**：Settings → Conversation → Custom Sandbox Configuration，添加允许规则：`C:\Users\<user>\.callwarden\`（写权限）
     3. **停 MCP Server**：若间歇性失败，`cw server --stop` 释放 `-shm` 锁后再 commit
     4. **用 `python cw.py` 替代 `cw.exe`**：entry_point 启动时 sqlite3 偶发失败，`python cw.py` 更稳定
@@ -597,7 +597,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     - 重试耗尽后打印 TRAE 沙箱排查建议 + PowerShell + `--no-verify` 绕过指引
     - 保持 `exit 1` 硬门禁（AGENTS.md 规则 1：提交前必须全量刷新数据库）
 
-32. **pre-commit 全库刷新卡死自动降级（hook 看门狗）**：Windows 上 `git commit` 的 pre-commit `cw --refresh-all` 偶尔会进入无 CPU、无 DB/WAL 进展的等待状态。**根因已修复（T-1785831377543-8d626745）**：`rust_ext` 4 个文件（cas_query / cas_merge_query / manifest_query / incremental_build_query）的 `open_readonly()` 不再执行 `PRAGMA wal_checkpoint(PASSIVE)`——只读连接经 WAL + `-shm` 总能读到最新已提交数据，checkpoint 冗余；且 Windows + WAL 下 register 写事务（590+ 文件）后 checkpoint 会进入 SQLite 内部 walIndexLock/recovery 的 sleep 循环，不受 `busy_timeout` 控制，导致无限阻塞。open 已改为 8s 有界超时 + 全局降级标记：超时后本次进程后续只读短连接快速失败，Python 侧 `_load_file_result_from_db_python` 用主连接降级查询，不挂死。**hook 看门狗仍作兜底**：每 10s 采样 `~/.callwarden/callwarden.db` 与 `-wal` 的 mtime，连续 9 次（90s）无进展即 `kill -9` 该进程，并自动降级为 `python cw.py refresh <git diff --cached --name-only>`（显式刷新本次提交的变更文件），降级成功即放行 commit（满足规则 1）。若仍遇到挂起：先确认没有残留 `cw.py --refresh-all` 孤儿进程（Get-Process 核对精确 PID），再手动 `python cw.py refresh <全部修改文件...>` 并用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
+32. **pre-commit 全库刷新卡死自动降级（hook 看门狗）**：Windows 上 `git commit` 的 pre-commit `cw refresh --all` 偶尔会进入无 CPU、无 DB/WAL 进展的等待状态。**根因已修复（T-1785831377543-8d626745）**：`rust_ext` 4 个文件（cas_query / cas_merge_query / manifest_query / incremental_build_query）的 `open_readonly()` 不再执行 `PRAGMA wal_checkpoint(PASSIVE)`——只读连接经 WAL + `-shm` 总能读到最新已提交数据，checkpoint 冗余；且 Windows + WAL 下 register 写事务（590+ 文件）后 checkpoint 会进入 SQLite 内部 walIndexLock/recovery 的 sleep 循环，不受 `busy_timeout` 控制，导致无限阻塞。open 已改为 8s 有界超时 + 全局降级标记：超时后本次进程后续只读短连接快速失败，Python 侧 `_load_file_result_from_db_python` 用主连接降级查询，不挂死。**hook 看门狗仍作兜底**：每 10s 采样 `~/.callwarden/callwarden.db` 与 `-wal` 的 mtime，连续 9 次（90s）无进展即 `kill -9` 该进程，并自动降级为 `python cw.py refresh <git diff --cached --name-only>`（显式刷新本次提交的变更文件），降级成功即放行 commit（满足规则 1）。若仍遇到挂起：先确认没有残留 `cw.py --refresh-all` 孤儿进程（Get-Process 核对精确 PID），再手动 `python cw.py refresh <全部修改文件...>` 并用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
 
 33. **`cw task report` 工具超时后先核对状态，禁止盲目重报**：`task_report_step` 会自动运行 check gate 和 completion review；在大型工作区中，CLI 可能尚未返回就超过桌面工具超时，但步骤状态随后仍会成功写入。遇到 `python cw.py task report ...` 超时时，先运行只读命令 `python cw.py task show <task_id>`，确认对应 step 是否已为 `done`/`blocked`；已落库则继续下一步，未落库且确认没有残留进程后才允许重试。不要因无输出直接重复 report，否则可能重复触发质量扫描、修复步骤或审计记录。
 
@@ -723,36 +723,36 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 ### 治理与角色协议（任务系统权威，改动前先读）
 
-| 文档                                                                                     | 说明                                                         |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| [.agents/skills/cw-task-loop/references/role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md) | 四角色共享协议（workflow_status 枚举 / Handoff §5 / finding schema §4 / 命令陷阱 §7 的唯一单源） |
-| [Callwarden 无人值守循环启动模板：Executor v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Executor%20v4.md)                 | Executor 启动入口                                             |
-| [Callwarden 无人值守循环启动模板：Reviewer v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Reviewer%20v4.md)                 | Reviewer 启动入口                                            |
-| [Callwarden 无人值守循环启动模板：Adjudicator v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Adjudicator%20v4.md)           | Adjudicator 启动入口                                         |
-| [Callwarden 无人值守循环启动模板：Planner v1.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Planner%20v1.md)                 | Planner 启动入口（design-only，capability 声明前不可派工）    |
-| [docs/design/requirements.md](docs/design/requirements.md)                               | 需求基线（Req 15 治理三件套之一，冻结）                       |
-| [docs/design/cw-role-handoff-task-loop.md](docs/design/cw-role-handoff-task-loop.md)     | Req 15 角色交接设计基线（冻结，v1 正文不再直接修改）         |
-| [docs/design/cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md) | 四角色模型修订（capability 分层与双轨整改，现行依据）        |
-| [docs/design/tasks.md](docs/design/tasks.md)                                             | 实施任务树基线（冻结）                                       |
-| [docs/design/g0-experiment-protocol-v1.md](docs/design/g0-experiment-protocol-v1.md)     | G0 盲评实验协议（g0-experiment skill 前置阅读）              |
-| [deliverables/software-company/git_recovery_record_20260828.md](deliverables/software-company/git_recovery_record_20260828.md) | git 对象库 gc/prune 事故恢复路径（规则 48 引用）              |
+| 文档                                                                                                                                  | 说明                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [.agents/skills/cw-task-loop/references/role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md)                    | 四角色共享协议（workflow_status 枚举 / Handoff §5 / finding schema §4 / 命令陷阱 §7 的唯一单源） |
+| [Callwarden 无人值守循环启动模板：Executor v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Executor%20v4.md)       | Executor 启动入口                                                                                |
+| [Callwarden 无人值守循环启动模板：Reviewer v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Reviewer%20v4.md)       | Reviewer 启动入口                                                                                |
+| [Callwarden 无人值守循环启动模板：Adjudicator v4.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Adjudicator%20v4.md) | Adjudicator 启动入口                                                                             |
+| [Callwarden 无人值守循环启动模板：Planner v1.md](docs/role-loop-templates/Callwarden%20无人值守循环启动模板：Planner%20v1.md)         | Planner 启动入口（design-only，capability 声明前不可派工）                                       |
+| [docs/design/requirements.md](docs/design/requirements.md)                                                                            | 需求基线（Req 15 治理三件套之一，冻结）                                                          |
+| [docs/design/cw-role-handoff-task-loop.md](docs/design/cw-role-handoff-task-loop.md)                                                  | Req 15 角色交接设计基线（冻结，v1 正文不再直接修改）                                             |
+| [docs/design/cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md)                        | 四角色模型修订（capability 分层与双轨整改，现行依据）                                            |
+| [docs/design/tasks.md](docs/design/tasks.md)                                                                                          | 实施任务树基线（冻结）                                                                           |
+| [docs/design/g0-experiment-protocol-v1.md](docs/design/g0-experiment-protocol-v1.md)                                                  | G0 盲评实验协议（g0-experiment skill 前置阅读）                                                  |
+| [deliverables/software-company/git_recovery_record_20260828.md](deliverables/software-company/git_recovery_record_20260828.md)        | git 对象库 gc/prune 事故恢复路径（规则 48 引用）                                                 |
 
 ### 使用与开发文档
 
-| 文档                                                       | 说明                                     |
-| ---------------------------------------------------------- | ---------------------------------------- |
-| [TOOLS.md](TOOLS.md)                                       | 工具使用指南（CLI/MCP/场景映射）         |
-| [README.md](README.md)                                     | 项目首页                                 |
-| [docs/quickstart.md](docs/quickstart.md)                   | 快速开始                                 |
-| [docs/cli_reference.md](docs/cli_reference.md)             | CLI 命令参考                             |
-| [docs/mcp_tools.md](docs/mcp_tools.md)                     | MCP 工具参考（工具数量权威口径）         |
-| [docs/architecture.md](docs/architecture.md)               | 架构设计                                 |
-| [docs/deployment.md](docs/deployment.md)                   | 部署指南                                 |
-| [docs/agent-usage-guide.md](docs/agent-usage-guide.md)     | 面向使用者的指南（外部 agent 集成引用，从本文件抽取） |
-| [docs/design/implementation-status.md](docs/design/implementation-status.md) | 实现状态总览（规则 22 同步目标）   |
-| [docs/design/migration-manifest.md](docs/design/migration-manifest.md) | Rust 迁移 manifest 状态表（规则 7 客观证据源） |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                         | 贡献指南                                 |
-| [CHANGELOG.md](CHANGELOG.md)                               | 版本变更                                 |
+| 文档                                                                         | 说明                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| [TOOLS.md](TOOLS.md)                                                         | 工具使用指南（CLI/MCP/场景映射）                      |
+| [README.md](README.md)                                                       | 项目首页                                              |
+| [docs/quickstart.md](docs/quickstart.md)                                     | 快速开始                                              |
+| [docs/cli_reference.md](docs/cli_reference.md)                               | CLI 命令参考                                          |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                                       | MCP 工具参考（工具数量权威口径）                      |
+| [docs/architecture.md](docs/architecture.md)                                 | 架构设计                                              |
+| [docs/deployment.md](docs/deployment.md)                                     | 部署指南                                              |
+| [docs/agent-usage-guide.md](docs/agent-usage-guide.md)                       | 面向使用者的指南（外部 agent 集成引用，从本文件抽取） |
+| [docs/design/implementation-status.md](docs/design/implementation-status.md) | 实现状态总览（规则 22 同步目标）                      |
+| [docs/design/migration-manifest.md](docs/design/migration-manifest.md)       | Rust 迁移 manifest 状态表（规则 7 客观证据源）        |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                           | 贡献指南                                              |
+| [CHANGELOG.md](CHANGELOG.md)                                                 | 版本变更                                              |
 
 
 ## Call Warden 自动沉淀规则

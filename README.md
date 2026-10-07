@@ -37,11 +37,11 @@ cw install            # 默认安装
 
 # 2. 初始化数据库（构建代码图谱）
 cd /path/to/your/project
-cw --refresh-all
+cw refresh --all
 
 # 3. 查询符号
-cw --search "login"
-cw --call-chain "module::function_name"
+cw search "login"
+cw call-chain "module::function_name"
 
 # 4. 生成 Agent 集成模板（MCP + Skill/Rules + Hooks）
 cw install-agent all

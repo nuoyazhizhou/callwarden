@@ -68,41 +68,41 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 | 场景           | MCP 工具                     | 对应 CLI      | 说明                                  |
 | -------------- | ---------------------------- | ------------- | ------------------------------------- |
-| 符号搜索       | `search_symbols`             | `cw --search` | 按名字/限定名模糊搜索                 |
-| 符号详情       | `get_symbol`                 | `cw --symbol` | 含 calls_out/called_by/issues 前 5 条 |
-| 符号位置       | `get_symbol_location`        | `cw --query`  | 文件 + 行号                           |
-| 文件内符号     | `get_file_symbols`           | `cw --file`   | 文件所有符号列表                      |
-| 符号内容       | `file_symbol_content`        | `cw --symbol` | 符号源码                              |
+| 符号搜索       | `search_symbols`             | `cw search`   | 按名字/限定名模糊搜索                 |
+| 符号详情       | `get_symbol`                 | `cw symbol`   | 含 calls_out/called_by/issues 前 5 条 |
+| 符号位置       | `get_symbol_location`        | `cw query`    | 文件 + 行号                           |
+| 文件内符号     | `get_file_symbols`           | `cw file`     | 文件所有符号列表                      |
+| 符号内容       | `file_symbol_content`        | `cw symbol`   | 符号源码                              |
 | 按 hash 取内容 | `get_symbol_content_by_hash` | —             | CAS 内容寻址                          |
 
 ### 2. 代码度量（db_metrics.py）
 
 | 场景         | MCP 工具                                      | 对应 CLI           | 说明           |
 | ------------ | --------------------------------------------- | ------------------ | -------------- |
-| 度量汇总     | `get_code_metrics_summary`                    | `cw --metrics`     | 全项目度量     |
-| 复杂度热点   | `get_complexity_hotspots`                     | `cw --complexity`  | Top N 复杂函数 |
-| 模块耦合     | `get_coupling_analysis`                       | `cw --coupling`    | 模块耦合度     |
-| 单函数度量   | `get_function_metrics`                        | `cw --fn-metrics`  | 指定函数详情   |
-| 最大函数     | `get_largest_functions`                       | `cw --largest-fns` | 按行数排序     |
-| 高耦合函数   | `get_most_coupled_functions`                  | `cw --coupled-fns` | 按调用数排序   |
+| 度量汇总     | `get_code_metrics_summary`                    | `cw metrics`       | 全项目度量     |
+| 复杂度热点   | `get_complexity_hotspots`                     | `cw complexity`    | Top N 复杂函数 |
+| 模块耦合     | `get_coupling_analysis`                       | `cw coupling`      | 模块耦合度     |
+| 单函数度量   | `get_function_metrics`                        | `cw fn-metrics`    | 指定函数详情   |
+| 最大函数     | `get_largest_functions`                       | `cw largest-fns`   | 按行数排序     |
+| 高耦合函数   | `get_most_coupled_functions`                  | `cw coupled-fns`   | 按调用数排序   |
 | 代码健康检查 | `get_code_health_check` / `check_file_health` | —                  | 综合健康评分   |
 
 ### 3. 调用关系 / 爆炸半径（db_impact.py）
 
 | 场景         | MCP 工具                                          | 对应 CLI                   | 说明                 |
 | ------------ | ------------------------------------------------- | -------------------------- | -------------------- |
-| 调用方       | `get_callers`                                     | `cw --callers`             | 精确调用方           |
-| 被调用方     | `get_callees`                                     | `cw --callees`             | 函数体内调用         |
-| 调用链       | `get_call_chain_down`                             | `cw --call-chain`          | 下游调用链           |
-| 变更影响     | `get_impact`                                      | `cw --impact`              | blast radius         |
-| Top 调用方   | `get_top_callers`                                 | `cw --top-callers`         | 被调用最多排行       |
-| 孤立符号     | `get_orphan_symbols`                              | `cw --orphan-symbols`      | 无调用关系           |
-| 调用最深     | `get_deepest_functions`                           | `cw --deepest`             | 调用链最深           |
-| 模块调用统计 | `get_module_call_stats`                           | `cw --module-calls`        | 跨模块统计           |
-| 循环检测     | `detect_call_cycles`                              | `cw --detect-cycles`       | 调用图环             |
-| 调用热力图   | `get_call_heatmap`                                | `cw --call-heatmap`        | 频率热力图           |
-| 模块图导出   | `export_module_graph`                             | `cw --export-module-graph` | 模块依赖图           |
-| 拓扑排序     | `get_topological_order`                           | `cw --topo`                | 调用图拓扑序         |
+| 调用方       | `get_callers`                                     | `cw callers`               | 精确调用方           |
+| 被调用方     | `get_callees`                                     | `cw callees`               | 函数体内调用         |
+| 调用链       | `get_call_chain_down`                             | `cw call-chain`            | 下游调用链           |
+| 变更影响     | `get_impact`                                      | `cw impact`                | blast radius         |
+| Top 调用方   | `get_top_callers`                                 | `cw top-callers`           | 被调用最多排行       |
+| 孤立符号     | `get_orphan_symbols`                              | `cw orphan-symbols`        | 无调用关系           |
+| 调用最深     | `get_deepest_functions`                           | `cw deepest`               | 调用链最深           |
+| 模块调用统计 | `get_module_call_stats`                           | `cw module-calls`          | 跨模块统计           |
+| 循环检测     | `detect_call_cycles`                              | `cw detect-cycles`         | 调用图环             |
+| 调用热力图   | `get_call_heatmap`                                | `cw call-heatmap`          | 频率热力图           |
+| 模块图导出   | `export_module_graph`                             | `cw export-module-graph`   | 模块依赖图           |
+| 拓扑排序     | `get_topological_order`                           | `cw topo`                  | 调用图拓扑序         |
 | 漏洞爆炸半径 | `get_vulnerability_blast_radius` / `blast_radius` | `cw vuln-blast`            | 漏洞到调用方反向影响 |
 | 跨层影响     | `cross_layer_impact`                              | `cw defect cross-layer`    | 跨层传播             |
 
@@ -110,9 +110,9 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 | 场景         | MCP 工具                                 | 对应 CLI                | 说明                  |
 | ------------ | ---------------------------------------- | ----------------------- | --------------------- |
-| 注释覆盖     | `get_comment_coverage`                   | `cw --comment-coverage` | 全项目注释率          |
-| 无注释符号   | `get_uncommented_symbols`                | `cw --uncommented`      | 缺注释符号列表        |
-| 测试覆盖     | `get_test_coverage`                      | `cw --test-coverage`    | 全项目测试率          |
+| 注释覆盖     | `get_comment_coverage`                   | `cw comment-coverage`   | 全项目注释率          |
+| 无注释符号   | `get_uncommented_symbols`                | `cw uncommented`        | 缺注释符号列表        |
+| 测试覆盖     | `get_test_coverage`                      | `cw coverage test`      | 全项目测试率          |
 | 导入覆盖率   | `import_coverage`                        | `cw coverage import`    | lcov/jacoco 报告      |
 | 函数覆盖率   | `get_coverage_for_symbol`                | `cw coverage fn`        | 指定函数覆盖率        |
 | 未覆盖函数   | `find_uncovered_functions`               | `cw coverage uncovered` | 未被测试覆盖          |
@@ -131,7 +131,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | commit 变更      | `get_commit_changes`        | `cw git show`       | 单 commit 详情  |
 | git 统计         | `get_git_stats`             | `cw git stats`      | 提交者/文件统计 |
 | 符号 commit 历史 | `get_symbol_commit_history` | `cw symbol-history` | 符号时间线      |
-| 符号历史版本     | `get_symbol_history`        | `cw --history`      | 符号历史版本    |
+| 符号历史版本     | `get_symbol_history`        | `cw symbol-history` | 符号历史版本    |
 | 文件历史         | `get_file_history`          | —                   | 文件变更历史    |
 | 最近变更         | `get_recent_changes`        | —                   | 最近 N 次变更   |
 | 函数变更频率     | `evolution_frequency`       | `cw evolution`      | 变更次数/时间线 |
@@ -152,7 +152,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | Semgrep 异步扫描 | `semgrep_scan_async`        | —                         | 后台 job 扫描，不阻塞 MCP 请求                       |
 | Semgrep 统计     | `get_semgrep_stats`         | `cw semgrep stats`        | findings 汇总                                        |
 | Semgrep findings | `get_semgrep_findings`      | `cw semgrep list`         | 按条件查询                                           |
-| 问题汇总         | `get_issue_summary`         | `cw --issue-summary`      | 按模块/严重度聚合                                    |
+| 问题汇总         | `get_issue_summary`         | `cw function-issues --summary` | 按模块/严重度聚合                                    |
 | 函数缺陷检测     | `find_issues`               | `cw function-issues`      | 按函数聚合 findings                                  |
 | 缺陷搜索         | `defect_search`             | `cw defect search`        | 知识库搜索                                           |
 | 缺陷修复建议     | `defect_suggest_fix`        | `cw defect suggest`       | 修复建议                                             |
@@ -169,10 +169,10 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 | 场景         | MCP 工具                   | 对应 CLI                         | 说明               |
 | ------------ | -------------------------- | -------------------------------- | ------------------ |
-| 注释覆盖     | `get_comment_coverage`     | `cw --comment-coverage`          | 注释率统计         |
-| 无注释符号   | `get_uncommented_symbols`  | `cw --uncommented`               | 缺注释符号         |
-| 恢复注释     | `restore_comment`          | `cw --restore-comment`           | 从历史恢复单个     |
-| 批量恢复     | `restore_all_comments`     | `cw --restore-all-comments`      | 全项目批量         |
+| 注释覆盖     | `get_comment_coverage`     | `cw comment-coverage`            | 注释率统计         |
+| 无注释符号   | `get_uncommented_symbols`  | `cw uncommented`                 | 缺注释符号         |
+| 恢复注释     | `restore_comment`          | `cw restore-comment`             | 从历史恢复单个     |
+| 批量恢复     | `restore_all_comments`     | `cw restore-all-comments`        | 全项目批量         |
 | 从版本取注释 | `get_comment_from_version` | `cw symbol comment-from-version` | 指定 commit 的注释 |
 
 ### 8. 代码重复检测（db_clone_detection.py）
@@ -885,7 +885,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 在图谱刷新后，把某次 `propose_edit` / `propose_range_patch` / `propose_symbol_patch` 产生的 `edit_audit_id` 映射到具体符号 before/after hash。
 
 - **参数**：`audit_id: int`, `step_id: str = ""`
-- **前置条件**：编辑前后的文件版本都已进入 `file_versions`；通常需要先运行 `cw --refresh-all` 或完整构建。
+- **前置条件**：编辑前后的文件版本都已进入 `file_versions`；通常需要先运行 `cw refresh --all` 或完整构建。
 - **返回**：`dict` — `{success, audit_id, linked, changes}`
 
 ### `get_task_symbol_changes`
@@ -1685,7 +1685,7 @@ Agent 提供稳定的行为约束。
 | ID                                   | severity | scope                     | 说明                                          |
 | ------------------------------------ | -------- | ------------------------- | --------------------------------------------- |
 | `AR-bootstrap-i18n`                  | warning  | `{}` (global)             | 用户可见输出必须通过 i18n.t()                 |
-| `AR-bootstrap-refresh-before-commit` | warning  | `{actions:[commit]}`      | git commit 前必须 `cw --refresh-all`          |
+| `AR-bootstrap-refresh-before-commit` | warning  | `{actions:[commit]}`      | git commit 前必须 `cw refresh --all`          |
 | `AR-bootstrap-task-split`            | info     | `{actions:[task_create]}` | 3+ 文件或 5+ 步骤必须 task_split              |
 | `AR-bootstrap-completion-review`     | warning  | `{actions:[task_report]}` | task_report 前必须 run_task_completion_review |
 | `AR-bootstrap-capture-diff`          | info     | `{actions:[task_report]}` | task_report 前建议 task_capture_diff 验证磁盘 |
@@ -1761,7 +1761,7 @@ Agent 提供稳定的行为约束。
   - `audit_verify: {total_count, verified_count, broken_count, security_level}`
   - `latest_scan_run: dict | None`
   - `tasks: {open, in_progress, review, applied}`
-  - `recommended_next_action: str` — 例如 `"cw --refresh-all"` /
+  - `recommended_next_action: str` — 例如 `"cw refresh --all"` /
     `"cw rule seed-bootstrap --apply"` / `"cw audit verify"` /
     `"cw task next <id>"`
 
@@ -2094,8 +2094,8 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw workspace set`                    | `set_active_workspace` | 设置活动工作区   |
 | `cw workspace delete`                 | `delete_workspace`     | 删除工作区       |
 | `cw workspace get-active`             | `get_active_workspace` | 获取活动工作区   |
-| `cw refresh all` / `cw --refresh-all` | `build_graph`          | 全量构建代码图谱 |
-| `cw refresh <paths>` / `cw --refresh` | `refresh_file`         | 刷新单个文件     |
+| `cw refresh all`                      | `build_graph`          | 全量构建代码图谱 |
+| `cw refresh <paths>`                  | `refresh_file`         | 刷新单个文件     |
 | `cw branch register`                  | `register_branch`      | 注册分支工作区   |
 | `cw branch list`                      | `list_branches`        | 列出分支工作区   |
 | `cw branch diff`                      | `diff_branches`        | 比较分支符号差异 |
@@ -2111,17 +2111,17 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw symbol <name> --file <path>`            | `get_symbol_location`        | 符号位置                  |
 | `cw file <path>`                            | `get_file_symbols`           | 文件符号列表              |
 | `cw query <name> <file>`                    | `get_symbol`                 | 符号查询（同 get_symbol） |
-| `cw symbol history <name>` / `cw --history` | `get_symbol_history`         | 符号版本历史              |
+| `cw symbol history <name>`                  | `get_symbol_history`         | 符号版本历史              |
 | `cw file history <path>`                    | `get_file_history`           | 文件版本历史              |
-| `cw --changes`                              | `get_recent_changes`         | 近期变更                  |
-| `cw --symbol-content-by-hash`               | `get_symbol_content_by_hash` | 按 hash 取内容            |
-| `cw file read` / `cw --file`                | `file_read`                  | 读取文件内容              |
-| `cw file grep` / `cw --search`              | `file_grep`                  | 搜索文件内容              |
+| `cw changes`                                | `get_recent_changes`         | 近期变更                  |
+| —                                           | `get_symbol_content_by_hash` | 按 hash 取内容            |
+| `cw file read`                              | `file_read`                  | 读取文件内容              |
+| `cw file grep`                              | `file_grep`                  | 搜索文件内容              |
 | `cw file list`                              | `file_list`                  | 列出目录文件              |
 | `cw file symbol-content`                    | `file_symbol_content`        | 读取符号源码              |
-| `cw --semantic-search`                      | `semantic_search`            | 语义搜索                  |
-| `cw --similar`                              | `find_similar_functions`     | 相似函数                  |
-| `cw --embed`                                | `embed_symbols`              | 批量向量嵌入              |
+| `cw semantic-search`                        | `semantic_search`            | 语义搜索                  |
+| `cw similar`                                | `find_similar_functions`     | 相似函数                  |
+| `cw embed`                                  | `embed_symbols`              | 批量向量嵌入              |
 | `cw embed-single <hash>`                    | `embed_single_symbol`        | 单符号嵌入                |
 | `cw summary generate`                       | `generate_summary`           | 生成摘要                  |
 | `cw summary get`                            | `get_summary`                | 获取摘要                  |
@@ -2135,29 +2135,29 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 | CLI 子命令                                 | MCP 工具                | 说明               |
 | ------------------------------------------ | ----------------------- | ------------------ |
-| `cw callers <name>` / `cw --callers`       | `get_callers`           | 调用者查询         |
-| `cw callees <name>` / `cw --callees`       | `get_callees`           | 被调用者查询       |
-| `cw call-chain <name>` / `cw --call-chain` | `get_call_chain_down`   | 调用链向下         |
-| `cw --impact`                              | `get_impact`            | 影响面分析（向上） |
-| `cw topo` / `cw --topo`                    | `get_topological_order` | 拓扑排序           |
-| `cw --top-callers`                         | `get_top_callers`       | 调用排行           |
-| `cw --orphan-symbols`                      | `get_orphan_symbols`    | 孤儿符号           |
-| `cw --deepest`                             | `get_deepest_functions` | 最深函数           |
-| `cw --module-calls`                        | `get_module_call_stats` | 模块调用统计       |
-| `cw --detect-cycles`                       | `detect_call_cycles`    | 调用图循环检测     |
-| `cw --call-heatmap`                        | `get_call_heatmap`      | 调用热力图         |
-| `cw --export-module-graph`                 | `export_module_graph`   | 模块图导出         |
+| `cw callers <name>`                        | `get_callers`           | 调用者查询         |
+| `cw callees <name>`                        | `get_callees`           | 被调用者查询       |
+| `cw call-chain <name>`                     | `get_call_chain_down`   | 调用链向下         |
+| `cw impact`                                | `get_impact`            | 影响面分析（向上） |
+| `cw topo`                                  | `get_topological_order` | 拓扑排序           |
+| `cw top-callers`                           | `get_top_callers`       | 调用排行           |
+| `cw orphan-symbols`                        | `get_orphan_symbols`    | 孤儿符号           |
+| `cw deepest`                               | `get_deepest_functions` | 最深函数           |
+| `cw module-calls`                          | `get_module_call_stats` | 模块调用统计       |
+| `cw detect-cycles`                         | `detect_call_cycles`    | 调用图循环检测     |
+| `cw call-heatmap`                          | `get_call_heatmap`      | 调用热力图         |
+| `cw export-module-graph`                   | `export_module_graph`   | 模块图导出         |
 
 ### [4] Code Health & Metrics
 
 | CLI 子命令                                 | MCP 工具                     | 说明         |
 | ------------------------------------------ | ---------------------------- | ------------ |
-| `cw metrics` / `cw --metrics`              | `get_code_metrics_summary`   | 度量汇总     |
-| `cw complexity` / `cw --complexity`        | `get_complexity_hotspots`    | 复杂度热点   |
-| `cw coupling` / `cw --coupling`            | `get_coupling_analysis`      | 耦合分析     |
-| `cw fn-metrics <name>` / `cw --fn-metrics` | `get_function_metrics`       | 单函数度量   |
-| `cw largest-fns` / `cw --largest-fns`      | `get_largest_functions`      | 最大函数     |
-| `cw coupled-fns` / `cw --coupled-fns`      | `get_most_coupled_functions` | 高耦合函数   |
+| `cw metrics`                               | `get_code_metrics_summary`   | 度量汇总     |
+| `cw complexity`                            | `get_complexity_hotspots`    | 复杂度热点   |
+| `cw coupling`                              | `get_coupling_analysis`      | 耦合分析     |
+| `cw fn-metrics <name>`                     | `get_function_metrics`       | 单函数度量   |
+| `cw largest-fns`                           | `get_largest_functions`      | 最大函数     |
+| `cw coupled-fns`                           | `get_most_coupled_functions` | 高耦合函数   |
 | `cw health check`                          | `get_code_health_check`      | 代码健康检查 |
 | `cw health file <path>`                    | `check_file_health`          | 文件健康     |
 | `cw evolution frequency`                   | `evolution_frequency`        | 变更频率     |
@@ -2227,21 +2227,21 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 | CLI 子命令                             | MCP 工具                    | 说明          |
 | -------------------------------------- | --------------------------- | ------------- |
-| `cw git import` / `cw --git-import`    | `import_git_history`        | 导入 Git 历史 |
-| `cw git log` / `cw --git-log`          | `get_git_commits`           | commit 列表   |
-| `cw git show <hash>` / `cw --git-show` | `get_commit_changes`        | commit 详情   |
-| `cw git stats` / `cw --git-stats`      | `get_git_stats`             | Git 统计      |
+| `cw git import`                        | `import_git_history`        | 导入 Git 历史 |
+| `cw git log`                           | `get_git_commits`           | commit 列表   |
+| `cw git show <hash>`                   | `get_commit_changes`        | commit 详情   |
+| `cw git stats`                         | `get_git_stats`             | Git 统计      |
 | `cw git symbol-history <hash>`         | `get_symbol_commit_history` | 符号变更历史  |
 
 ### [9] Semgrep & Defects
 
 | CLI 子命令                                    | MCP 工具                         | 说明                                                       |
 | --------------------------------------------- | -------------------------------- | ---------------------------------------------------------- |
-| `cw semgrep scan` / `cw --semgrep`            | `run_semgrep_scan`               | Semgrep 扫描                                               |
-| `cw semgrep list` / `cw --semgrep-list`       | `get_semgrep_findings`           | Semgrep 发现                                               |
-| `cw semgrep stats` / `cw --semgrep-stats`     | `get_semgrep_stats`              | Semgrep 统计                                               |
-| `cw function-issues` / `cw --function-issues` | `find_issues`                    | 缺陷查找                                                   |
-| `cw --issue-summary`                          | `get_issue_summary`              | 缺陷汇总                                                   |
+| `cw semgrep scan`                             | `run_semgrep_scan`               | Semgrep 扫描                                               |
+| `cw semgrep list`                             | `get_semgrep_findings`           | Semgrep 发现                                               |
+| `cw semgrep stats`                            | `get_semgrep_stats`              | Semgrep 统计                                               |
+| `cw function-issues`                          | `find_issues`                    | 缺陷查找                                                   |
+| `cw function-issues --summary`                | `get_issue_summary`              | 缺陷汇总                                                   |
 | `cw defect search`                            | `defect_search`                  | 缺陷模式搜索                                               |
 | `cw defect suggest`                           | `defect_suggest_fix`             | 修复建议                                                   |
 | `cw defect learn`                             | `defect_learn`                   | 从修复学习                                                 |
@@ -2258,20 +2258,20 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 | CLI 子命令                                                     | MCP 工具                    | 说明                                                           |
 | -------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------- |
-| `cw coverage comment` / `cw --comment-coverage`                | `get_comment_coverage`      | 注释覆盖率                                                     |
-| `cw coverage uncommented` / `cw --uncommented`                 | `get_uncommented_symbols`   | 未注释符号                                                     |
-| `cw coverage test` / `cw --test-coverage`                      | `get_test_coverage`         | 测试覆盖率                                                     |
-| `cw coverage import` / `cw --coverage-import`                  | `import_coverage`           | 导入覆盖率                                                     |
-| `cw coverage fn <name>` / `cw --coverage-fn`                   | `get_coverage_for_symbol`   | 函数覆盖率                                                     |
-| `cw coverage uncovered` / `cw --coverage-uncovered`            | `find_uncovered_functions`  | 未覆盖函数                                                     |
+| `cw coverage comment`                                          | `get_comment_coverage`      | 注释覆盖率                                                     |
+| `cw coverage uncommented`                                      | `get_uncommented_symbols`   | 未注释符号                                                     |
+| `cw coverage test`                                             | `get_test_coverage`         | 测试覆盖率                                                     |
+| `cw coverage import`                                           | `import_coverage`           | 导入覆盖率                                                     |
+| `cw coverage fn <name>`                                        | `get_coverage_for_symbol`   | 函数覆盖率                                                     |
+| `cw coverage uncovered`                                        | `find_uncovered_functions`  | 未覆盖函数                                                     |
 | `cw test-impact <name>`                                        | `test_impact_selection`     | 测试影响选择                                                   |
-| `cw who <path>` / `cw --who`                                   | `who_to_ask`                | 文件负责人                                                     |
-| `cw ownership-map` / `cw --ownership-map`                      | `get_ownership_map`         | 所有权映射                                                     |
+| `cw who <path>`                                                | `who_to_ask`                | 文件负责人                                                     |
+| `cw ownership-map`                                             | `get_ownership_map`         | 所有权映射                                                     |
 | `cw codeowners parse`                                          | `parse_codeowners`          | 解析 CODEOWNERS                                                |
 | `cw codeowners import`                                         | `import_codeowners`         | 导入 CODEOWNERS                                                |
-| `cw --git-blame`                                               | `import_git_blame`          | 导入 git blame                                                 |
-| `cw symbol restore-comment` / `cw --restore-comment`           | `restore_comment`           | 恢复注释                                                       |
-| `cw symbol restore-all-comments` / `cw --restore-all-comments` | `restore_all_comments`      | 批量恢复注释                                                   |
+| —                                                              | `import_git_blame`          | 导入 git blame                                                 |
+| `cw symbol restore-comment`                                    | `restore_comment`           | 恢复注释                                                       |
+| `cw symbol restore-all-comments`                               | `restore_all_comments`      | 批量恢复注释                                                   |
 | `cw symbol comment-from-version`                               | `get_comment_from_version`  | 历史版本注释                                                   |
 | `cw tests <QN>`                                                | `get_test_cases`            | 符号的测试 case 列表（test_fn ↔ tested_fn 三阶推断）           |
 | `cw tests <QN> --reverse`                                      | `get_tested_functions`      | 反向查询（test_fn 测了哪些函数）                               |
