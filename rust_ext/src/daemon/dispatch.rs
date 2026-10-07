@@ -1205,9 +1205,7 @@ pub trait DaemonStateExt {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_assignment_status(peer, params)
         } else {
-            Err(DaemonRpcError::method_not_found(
-                "task.assignment.status",
-            ))
+            Err(DaemonRpcError::method_not_found("task.assignment.status"))
         }
     }
     fn handle_task_report(
@@ -1251,7 +1249,9 @@ pub trait DaemonStateExt {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_p0l_reviewer_block_repair(peer, params)
         } else {
-            Err(DaemonRpcError::method_not_found("task.p0l_reviewer_block_repair"))
+            Err(DaemonRpcError::method_not_found(
+                "task.p0l_reviewer_block_repair",
+            ))
         }
     }
     fn handle_p0l_identity_policy_repair(
@@ -1262,7 +1262,9 @@ pub trait DaemonStateExt {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_p0l_identity_policy_repair(peer, params)
         } else {
-            Err(DaemonRpcError::method_not_found("task.p0l_identity_policy_repair"))
+            Err(DaemonRpcError::method_not_found(
+                "task.p0l_identity_policy_repair",
+            ))
         }
     }
     fn handle_p0l_identity_policy_bootstrap_repair(
@@ -1319,7 +1321,9 @@ pub trait DaemonStateExt {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_steps_bootstrap_legacy(peer, params)
         } else {
-            Err(DaemonRpcError::method_not_found("task.steps.bootstrap_legacy"))
+            Err(DaemonRpcError::method_not_found(
+                "task.steps.bootstrap_legacy",
+            ))
         }
     }
     fn handle_task_contract_revise(
@@ -1592,9 +1596,7 @@ pub trait DaemonStateExt {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
-            store.with_conn(|conn| {
-                crate::daemon::task_prompt::handler::compile(conn, params)
-            })
+            store.with_conn(|conn| crate::daemon::task_prompt::handler::compile(conn, params))
         } else {
             Err(DaemonRpcError::method_not_found("task.prompt.compile"))
         }
@@ -2599,6 +2601,18 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "rule.sync_agents_md",
     "guardrail.add_rule",
     "summary.generate",
+    // A 类 compat 修复（T-1791357540076-1201cbe0）：裸名方法迁 daemon 原生（8）。
+    // compat worker 永久下线后这些历史裸名方法无 handler；经 handle_convergence_rpc
+    // 分发到 compat_native_handlers。前 6 走主库写连接（真 workspace_id），
+    // 后 2 走 task DB 只读（全局 rollback 配置）。
+    "gc_status",
+    "gc_restore",
+    "gc_purge",
+    "get_fts_status",
+    "list_destructive_operations",
+    "build_defect_knowledge",
+    "get_rollback_config",
+    "is_feature_rolled_back",
 ];
 
 /// 判断 method 是否为收敛架构 RPC。
@@ -2656,9 +2670,16 @@ pub fn dispatch_rpc_with_payload<S: DaemonStateExt>(
     inline_payload: Option<InlinePayload<'_>>,
 ) -> Value {
     if is_protected_mutation(method) {
-        match serialization_point
-            .execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds, inline_payload))
-        {
+        match serialization_point.execute(|| {
+            dispatch_inner(
+                state,
+                peer.clone(),
+                method,
+                params,
+                received_fds,
+                inline_payload,
+            )
+        }) {
             Ok(value) => make_ok_response(value),
             Err(err) => make_error_response(&err.code, &err.message),
         }
@@ -2940,14 +2961,16 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.remove" => state.handle_workspace_remove(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
         "workspace.refresh.plan" => state.handle_workspace_refresh_plan(peer, params),
-        "workspace.file.refresh" => state
-            .handle_workspace_file_refresh(peer, params, received_fds, inline_payload),
+        "workspace.file.refresh" => {
+            state.handle_workspace_file_refresh(peer, params, received_fds, inline_payload)
+        }
         "workspace.file.delete" => state.handle_workspace_file_delete(peer, params),
         "workspace.recover" => state.handle_workspace_recover(peer, params),
 
         // ---- Snapshot 管理（R6 实现）----
-        "snapshot.publish" => state
-            .handle_snapshot_publish(peer, params, received_fds, inline_payload),
+        "snapshot.publish" => {
+            state.handle_snapshot_publish(peer, params, received_fds, inline_payload)
+        }
         "gc.snapshots" => state.handle_gc_snapshots(peer, params),
 
         // ---- CAS GC（R6 实现）----
@@ -3137,9 +3160,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.report" => state.handle_task_report(peer, params),
         "task.remediation.create" => state.handle_task_remediation_create(peer, params),
         "task.p0l_reviewer_block_repair" => state.handle_p0l_reviewer_block_repair(peer, params),
-        "task.p0l_identity_policy_repair" => {
-            state.handle_p0l_identity_policy_repair(peer, params)
-        }
+        "task.p0l_identity_policy_repair" => state.handle_p0l_identity_policy_repair(peer, params),
         "task.p0l_identity_policy_bootstrap_repair" => {
             state.handle_p0l_identity_policy_bootstrap_repair(peer, params)
         }
@@ -3171,9 +3192,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.bootstrap_executor_evidence" => {
             state.handle_task_bootstrap_executor_evidence(peer, params)
         }
-        "task.bootstrap_reviewer_pass" => {
-            state.handle_task_bootstrap_reviewer_pass(peer, params)
-        }
+        "task.bootstrap_reviewer_pass" => state.handle_task_bootstrap_reviewer_pass(peer, params),
         "task.governance_projection.get" => {
             state.handle_task_governance_projection_get(peer, params)
         }
@@ -3579,8 +3598,10 @@ mod tests {
 
         // 薄注册：dispatch 层零 parent 业务逻辑（route 只转发到 handler）。
         // 只扫描 `#[cfg(test)]` 之前的模块主体，排除本测试自身的错误码字面量。
-        let dispatch_src =
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/daemon/dispatch.rs"));
+        let dispatch_src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/daemon/dispatch.rs"
+        ));
         let dispatch_body = dispatch_src.split("#[cfg(test)]").next().unwrap();
         assert!(!dispatch_body.contains("state.reject_unknown_create_fields"));
         assert!(!dispatch_body.contains("state.validate_parent_for_child_create"));
@@ -4245,7 +4266,9 @@ mod tests {
         assert!(is_protected_mutation("verdict.submit"));
         assert!(is_protected_mutation("task.p0l_reviewer_block_repair"));
         assert!(is_protected_mutation("task.p0l_identity_policy_repair"));
-        assert!(is_protected_mutation("task.p0l_identity_policy_bootstrap_repair"));
+        assert!(is_protected_mutation(
+            "task.p0l_identity_policy_bootstrap_repair"
+        ));
         assert!(is_protected_mutation("role_worker.rotate"));
         assert!(is_protected_mutation("task.steps.bootstrap_legacy"));
         assert!(is_protected_mutation("task.apply"));

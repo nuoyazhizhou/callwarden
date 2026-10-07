@@ -317,15 +317,16 @@ impl SnapshotDaemonState {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_URI,
         )
-        .map_err(|error| {
-            DaemonRpcError::internal_error(format!("打开主库写连接: {error}"))
-        })?;
+        .map_err(|error| DaemonRpcError::internal_error(format!("打开主库写连接: {error}")))?;
         conn.execute_batch("PRAGMA busy_timeout = 5000;")
             .map_err(|error| {
                 DaemonRpcError::internal_error(format!("设置 busy_timeout: {error}"))
             })?;
-        let workspace_id =
-            resolve_true_workspace_id(resolved.to_string_lossy().as_ref(), client_view_root, registry_rowid);
+        let workspace_id = resolve_true_workspace_id(
+            resolved.to_string_lossy().as_ref(),
+            client_view_root,
+            registry_rowid,
+        );
         Ok((workspace_id, conn))
     }
 
@@ -399,9 +400,12 @@ impl SnapshotDaemonState {
             .filter(|s| !s.is_empty())
         {
             let workspace = owned_workspace(&self.base.registry, peer.uid, instance)?;
-            return workspace.get("workspace_id").and_then(Value::as_i64).ok_or_else(
-                || DaemonRpcError::internal_error("registry 行缺少 workspace_id 数字主键"),
-            );
+            return workspace
+                .get("workspace_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    DaemonRpcError::internal_error("registry 行缺少 workspace_id 数字主键")
+                });
         }
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
@@ -494,8 +498,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         // 同 root 的历史分裂行中，task-DB 有权威 capture 绑定的行优先收编，
         // 保证图谱/快照/任务绑定面连续（capture 查询失败降级为空偏好，
         // 由 base 走最早注册行兜底，不阻塞注册）。
-        let preferred: Vec<String> = match params.get("client_view_root").and_then(|v| v.as_str())
-        {
+        let preferred: Vec<String> = match params.get("client_view_root").and_then(|v| v.as_str()) {
             Some(root) if !root.trim().is_empty() => {
                 match crate::daemon::workspace::validate_owned_path_any(root, peer.uid) {
                     Ok(real_root) => {
@@ -541,36 +544,34 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         // 接受 `workspace_instance_id`（字符串）或 `workspace_id`（数字或字符串）；
         // CLI 以整数发送 workspace_id，必须以 i64 读取后再转字符串作为统一解析键。
-        let key: String = if let Some(iv) = params
-            .get("workspace_instance_id")
-            .and_then(|v| v.as_str())
-        {
-            if iv.trim().is_empty() {
-                return Err(DaemonRpcError::invalid_params(
-                    "workspace.status 需要 workspace_instance_id 或 workspace_id",
-                ));
-            }
-            iv.to_string()
-        } else if let Some(nv) = params.get("workspace_id") {
-            if let Some(n) = nv.as_i64() {
-                n.to_string()
-            } else if let Some(s) = nv.as_str() {
-                if s.trim().is_empty() {
+        let key: String =
+            if let Some(iv) = params.get("workspace_instance_id").and_then(|v| v.as_str()) {
+                if iv.trim().is_empty() {
                     return Err(DaemonRpcError::invalid_params(
                         "workspace.status 需要 workspace_instance_id 或 workspace_id",
                     ));
                 }
-                s.to_string()
+                iv.to_string()
+            } else if let Some(nv) = params.get("workspace_id") {
+                if let Some(n) = nv.as_i64() {
+                    n.to_string()
+                } else if let Some(s) = nv.as_str() {
+                    if s.trim().is_empty() {
+                        return Err(DaemonRpcError::invalid_params(
+                            "workspace.status 需要 workspace_instance_id 或 workspace_id",
+                        ));
+                    }
+                    s.to_string()
+                } else {
+                    return Err(DaemonRpcError::invalid_params(
+                        "workspace.status 需要 workspace_instance_id 或 workspace_id",
+                    ));
+                }
             } else {
                 return Err(DaemonRpcError::invalid_params(
                     "workspace.status 需要 workspace_instance_id 或 workspace_id",
                 ));
-            }
-        } else {
-            return Err(DaemonRpcError::invalid_params(
-                "workspace.status 需要 workspace_instance_id 或 workspace_id",
-            ));
-        };
+            };
         let store = self
             .daemon_state()
             .task_collab_store
@@ -2212,7 +2213,13 @@ impl DaemonStateExt for SnapshotDaemonState {
             .map_err(|e| DaemonRpcError::internal_error(format!("get_toolchain: {}", e)))?
         {
             Some(tc) => Ok(tc),
-            None => Err(DaemonRpcError::method_not_found("toolchain not found")),
+            // A 类 compat 修复：工具链不存在是业务结果，不是 RPC method_not_found。
+            // 返回 not_found 错误码（与裸名 get_toolchain 的 Null 语义区分：带前缀
+            // toolchain.get 显式查单条，未命中应是 not_found 而非“未知方法”误导）。
+            None => Err(DaemonRpcError::new(
+                "not_found",
+                format!("工具链不存在: {}", name_or_id),
+            )),
         }
     }
 
@@ -2510,8 +2517,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         if params.get("workspace_instance_id").is_some() {
             let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
             let build_context_hash = require_str_param(params, "build_context_hash")?;
-            let (workspace_id, conn) =
-                self.open_codegraph_db_write(peer, workspace_instance_id)?;
+            let (workspace_id, conn) = self.open_codegraph_db_write(peer, workspace_instance_id)?;
             let _ = self.require_bound_workspace_id(params, workspace_id)?;
             let deleted = conn
                 .execute(
@@ -2662,14 +2668,15 @@ impl DaemonStateExt for SnapshotDaemonState {
         let build_context_hash = require_str_param(params, "build_context_hash")?;
         let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
         let _ = self.require_bound_workspace_id(params, workspace_id)?;
-        let mut computed =
-            compute_resolved_edges_impl(&conn, workspace_id, &build_context_hash)
-                .map_err(DaemonRpcError::internal_error)?;
+        let mut computed = compute_resolved_edges_impl(&conn, workspace_id, &build_context_hash)
+            .map_err(DaemonRpcError::internal_error)?;
         // 查看面限流：全量边（大库 178k+）会超 HTTP 消息上限（8MB）；
         // 完整语义由 resolved_edges.rebuild 承担（edges 不出 daemon）。
         let limit = get_int_param_or(params, "limit", 1000);
         if limit < 0 {
-            return Err(DaemonRpcError::invalid_params("limit 不能为负数".to_string()));
+            return Err(DaemonRpcError::invalid_params(
+                "limit 不能为负数".to_string(),
+            ));
         }
         let mut truncated = false;
         if let Some(obj) = computed.as_object_mut() {
@@ -2734,10 +2741,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         .map_err(DaemonRpcError::internal_error)?;
         let mut m = Map::new();
         m.insert("source".to_string(), Value::String(source));
-        m.insert(
-            "count".to_string(),
-            Value::Number(edges.len().into()),
-        );
+        m.insert("count".to_string(), Value::Number(edges.len().into()));
         m.insert("skipped".to_string(), Value::Number(skipped.into()));
         m.insert("deleted".to_string(), Value::Number(deleted.into()));
         m.insert("inserted".to_string(), Value::Number(inserted.into()));
@@ -2769,13 +2773,13 @@ impl DaemonStateExt for SnapshotDaemonState {
         method: &str,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
+        use super::_mcp_common_handlers as mcp;
         use super::admin_handlers as admin;
+        use super::audit_log_handlers as audit;
         use super::edit_handlers as edit;
         use super::fs_handlers as fs;
         use super::job_runner as job;
         use super::metrics_handlers as metrics;
-        use super::_mcp_common_handlers as mcp;
-        use super::audit_log_handlers as audit;
         use super::query_compat_handlers as query_compat;
         // C-13：semgrep CLI 专用 handler（CLI-061 产物，本卡接入 dispatch）。
         use super::semgrep_handlers as semgrep;
@@ -2786,23 +2790,24 @@ impl DaemonStateExt for SnapshotDaemonState {
         // 不再 fail-closed——单库多 workspace 是既定设计（库内 workspaces 表 +
         // file_instances.workspace_id 承载项目维度），per-workspace 模板仅为
         // 显式注入的隔离测试场景保留。
-        let codegraph_db = |state: &Self, ws: &str| -> Result<Option<std::path::PathBuf>, DaemonRpcError> {
-            let resolved = if state.base.codegraph_db_path_template.is_empty() {
-                super::config::default_codegraph_db_path()
-            } else {
-                std::path::PathBuf::from(
-                    state
-                        .base
-                        .codegraph_db_path_template
-                        .replace("{workspace_instance_id}", ws),
-                )
+        let codegraph_db =
+            |state: &Self, ws: &str| -> Result<Option<std::path::PathBuf>, DaemonRpcError> {
+                let resolved = if state.base.codegraph_db_path_template.is_empty() {
+                    super::config::default_codegraph_db_path()
+                } else {
+                    std::path::PathBuf::from(
+                        state
+                            .base
+                            .codegraph_db_path_template
+                            .replace("{workspace_instance_id}", ws),
+                    )
+                };
+                // 主目录未知（HOME/USERPROFILE 均缺失）→ 空路径，fail-closed
+                if resolved.as_os_str().is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(resolved))
             };
-            // 主目录未知（HOME/USERPROFILE 均缺失）→ 空路径，fail-closed
-            if resolved.as_os_str().is_empty() {
-                return Ok(None);
-            }
-            Ok(Some(resolved))
-        };
 
         // 打开 workspace codegraph DB 写连接（admin/edit/job 用）。
         // C-21（§W20 F4）：其最后一个调用点（edit.*/rule.* 第二路由块，原行 3283）已改走
@@ -2816,9 +2821,8 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "daemon 未配置 codegraph_db_path_template（fail-closed）",
                 )
             })?;
-            Connection::open(db).map_err(|e| {
-                DaemonRpcError::internal_error(format!("打开 codegraph DB 失败: {e}"))
-            })
+            Connection::open(db)
+                .map_err(|e| DaemonRpcError::internal_error(format!("打开 codegraph DB 失败: {e}")))
         };
 
         // 打开 daemon 权威 audit.db 写连接（audit_handlers 用）。
@@ -2835,9 +2839,8 @@ impl DaemonStateExt for SnapshotDaemonState {
                     let _ = std::fs::create_dir_all(parent);
                 }
             }
-            Connection::open(&state.base.audit_db_path).map_err(|e| {
-                DaemonRpcError::internal_error(format!("打开 audit DB 失败: {e}"))
-            })
+            Connection::open(&state.base.audit_db_path)
+                .map_err(|e| DaemonRpcError::internal_error(format!("打开 audit DB 失败: {e}")))
         };
 
         match method {
@@ -2873,14 +2876,10 @@ impl DaemonStateExt for SnapshotDaemonState {
             "workspace.file.health" => fs::handle_file_health(&self.base.registry, &peer, params),
 
             // ---- MCP common 面（SRV-001：Python authority → Rust daemon）----
-            "mcp.common.get_db_path_for_daemon" => {
-                mcp::handle_get_db_path_for_daemon(params)
-            }
+            "mcp.common.get_db_path_for_daemon" => mcp::handle_get_db_path_for_daemon(params),
 
             // ---- audit log 面（SRV-002：server audit log Python authority → Rust daemon）----
-            "mcp.audit_log.get_conn" => {
-                audit::handle_get_conn(&self.base.audit_db_path)
-            }
+            "mcp.audit_log.get_conn" => audit::handle_get_conn(&self.base.audit_db_path),
             "mcp.audit_log.init_db" => {
                 let conn = open_audit(self)?;
                 audit::handle_init_db(&conn)
@@ -2907,20 +2906,37 @@ impl DaemonStateExt for SnapshotDaemonState {
             }
 
             // ---- 度量/状态面（metrics_handlers，经 open_query_connection 只读）----
-            "query.status" | "query.metrics_summary" | "query.complexity_hotspots"
-            | "query.coupling_analysis" | "query.function_metrics"
-            | "query.largest_functions" | "query.most_coupled_functions"
-            | "query.code_health" | "query.symbol_content_by_hash" => {
+            "query.status"
+            | "query.metrics_summary"
+            | "query.complexity_hotspots"
+            | "query.coupling_analysis"
+            | "query.function_metrics"
+            | "query.largest_functions"
+            | "query.most_coupled_functions"
+            | "query.code_health"
+            | "query.symbol_content_by_hash" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
                     "query.status" => metrics::handle_status(&conn, workspace_id, ws, params),
-                    "query.metrics_summary" => metrics::handle_metrics_summary(&conn, workspace_id, params),
-                    "query.complexity_hotspots" => metrics::handle_complexity_hotspots(&conn, workspace_id, params),
-                    "query.coupling_analysis" => metrics::handle_coupling_analysis(&conn, workspace_id, params),
-                    "query.function_metrics" => metrics::handle_function_metrics(&conn, workspace_id, params),
-                    "query.largest_functions" => metrics::handle_largest_functions(&conn, workspace_id, params),
-                    "query.most_coupled_functions" => metrics::handle_most_coupled_functions(&conn, workspace_id, params),
+                    "query.metrics_summary" => {
+                        metrics::handle_metrics_summary(&conn, workspace_id, params)
+                    }
+                    "query.complexity_hotspots" => {
+                        metrics::handle_complexity_hotspots(&conn, workspace_id, params)
+                    }
+                    "query.coupling_analysis" => {
+                        metrics::handle_coupling_analysis(&conn, workspace_id, params)
+                    }
+                    "query.function_metrics" => {
+                        metrics::handle_function_metrics(&conn, workspace_id, params)
+                    }
+                    "query.largest_functions" => {
+                        metrics::handle_largest_functions(&conn, workspace_id, params)
+                    }
+                    "query.most_coupled_functions" => {
+                        metrics::handle_most_coupled_functions(&conn, workspace_id, params)
+                    }
                     "query.code_health" => metrics::handle_code_health(&conn, workspace_id, params),
                     _ => metrics::handle_symbol_content_by_hash(&conn, workspace_id, params),
                 }
@@ -2937,8 +2953,11 @@ impl DaemonStateExt for SnapshotDaemonState {
             }
 
             // ---- S2（P0-compat 批次 1）：查询面 compat 迁 native（6）----
-            "get_top_callers" | "get_orphan_symbols" | "get_deepest_functions"
-            | "get_comment_coverage" | "get_call_heatmap"
+            "get_top_callers"
+            | "get_orphan_symbols"
+            | "get_deepest_functions"
+            | "get_comment_coverage"
+            | "get_call_heatmap"
             | "find_uncovered_functions" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
@@ -2963,9 +2982,14 @@ impl DaemonStateExt for SnapshotDaemonState {
             }
 
             // ---- P0-COMPAT-v3（T-1788963103216-cb818938）：tools_query 组（8）----
-            "get_symbol_history" | "get_recent_changes" | "get_impact"
-            | "get_comment_from_version" | "get_issue_summary" | "find_issues"
-            | "get_test_coverage" | "export_module_graph" => {
+            "get_symbol_history"
+            | "get_recent_changes"
+            | "get_impact"
+            | "get_comment_from_version"
+            | "get_issue_summary"
+            | "find_issues"
+            | "get_test_coverage"
+            | "export_module_graph" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
@@ -2996,17 +3020,19 @@ impl DaemonStateExt for SnapshotDaemonState {
             // 在主机级单库模型下经快照只读连接访问治理表（W4-1 get_commit_tasks
             // 同源）；克隆面 3 个（list_clones / list_clone_groups /
             // get_clone_group_detail）查 clone_pairs / clone_groups。
-            "get_symbol_change_tasks" | "audit_verify_chain"
-            | "list_audit_signing_keys" | "bootstrap_status" | "list_clones"
-            | "list_clone_groups" | "get_clone_group_detail"
+            "get_symbol_change_tasks"
+            | "audit_verify_chain"
+            | "list_audit_signing_keys"
+            | "bootstrap_status"
+            | "list_clones"
+            | "list_clone_groups"
+            | "get_clone_group_detail"
             | "task_plan_template" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
                     "get_symbol_change_tasks" => {
-                        query_compat::handle_get_symbol_change_tasks(
-                            &conn, workspace_id, params,
-                        )
+                        query_compat::handle_get_symbol_change_tasks(&conn, workspace_id, params)
                     }
                     "audit_verify_chain" => {
                         query_compat::handle_audit_verify_chain(&conn, workspace_id, params)
@@ -3033,9 +3059,7 @@ impl DaemonStateExt for SnapshotDaemonState {
                             &reported_head,
                         )
                     }
-                    "list_clones" => {
-                        query_compat::handle_list_clones(&conn, workspace_id, params)
-                    }
+                    "list_clones" => query_compat::handle_list_clones(&conn, workspace_id, params),
                     "list_clone_groups" => {
                         query_compat::handle_list_clone_groups(&conn, workspace_id, params)
                     }
@@ -3051,24 +3075,22 @@ impl DaemonStateExt for SnapshotDaemonState {
             // parse_codeowners / get_project_dependencies 经 workspaces.root_path
             // 访问真实文件（只读）；semantic_search / find_similar_functions 读
             // symbol_embeddings（当前库无嵌入 → 空结果，见 handler 文档注释）。
-            "get_symbol_commit_history" | "parse_codeowners"
-            | "get_project_dependencies" | "semantic_search"
+            "get_symbol_commit_history"
+            | "parse_codeowners"
+            | "get_project_dependencies"
+            | "semantic_search"
             | "find_similar_functions" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
                     "get_symbol_commit_history" => {
-                        query_compat::handle_get_symbol_commit_history(
-                            &conn, workspace_id, params,
-                        )
+                        query_compat::handle_get_symbol_commit_history(&conn, workspace_id, params)
                     }
                     "parse_codeowners" => {
                         query_compat::handle_parse_codeowners(&conn, workspace_id, params)
                     }
                     "get_project_dependencies" => {
-                        query_compat::handle_get_project_dependencies(
-                            &conn, workspace_id, params,
-                        )
+                        query_compat::handle_get_project_dependencies(&conn, workspace_id, params)
                     }
                     "semantic_search" => {
                         query_compat::handle_semantic_search(&conn, workspace_id, params)
@@ -3084,11 +3106,21 @@ impl DaemonStateExt for SnapshotDaemonState {
             // （LSP 未安装环境行为平价，lsp_check_available 实测 where/which）；
             // rule_candidate_list / rule_list / get_applicable_rules 复刻
             // db_agent_rules（scope JSON 反序列化 + fnmatch glob 匹配 + severity 排序）。
-            "list_branches" | "merge_preview" | "get_edit_history"
-            | "find_shared_symbols" | "cross_repo_impact" | "cross_repo_summary"
-            | "lsp_hover" | "lsp_definition" | "lsp_references" | "lsp_diagnostics"
-            | "lsp_completion" | "lsp_check_available" | "rule_candidate_list"
-            | "rule_list" | "get_applicable_rules" => {
+            "list_branches"
+            | "merge_preview"
+            | "get_edit_history"
+            | "find_shared_symbols"
+            | "cross_repo_impact"
+            | "cross_repo_summary"
+            | "lsp_hover"
+            | "lsp_definition"
+            | "lsp_references"
+            | "lsp_diagnostics"
+            | "lsp_completion"
+            | "lsp_check_available"
+            | "rule_candidate_list"
+            | "rule_list"
+            | "get_applicable_rules" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
@@ -3110,9 +3142,7 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "cross_repo_summary" => {
                         query_compat::handle_cross_repo_summary(&conn, workspace_id, params)
                     }
-                    "lsp_hover" => {
-                        query_compat::handle_lsp_hover(&conn, workspace_id, params)
-                    }
+                    "lsp_hover" => query_compat::handle_lsp_hover(&conn, workspace_id, params),
                     "lsp_definition" => {
                         query_compat::handle_lsp_definition(&conn, workspace_id, params)
                     }
@@ -3131,9 +3161,7 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "rule_candidate_list" => {
                         query_compat::handle_rule_candidate_list(&conn, workspace_id, params)
                     }
-                    "rule_list" => {
-                        query_compat::handle_rule_list(&conn, workspace_id, params)
-                    }
+                    "rule_list" => query_compat::handle_rule_list(&conn, workspace_id, params),
                     _ => query_compat::handle_get_applicable_rules(&conn, workspace_id, params),
                 }
             }
@@ -3145,13 +3173,25 @@ impl DaemonStateExt for SnapshotDaemonState {
             // get_token_savings_report / get_vulnerability_blast_radius /
             // get_clone_aware_impact / review_readiness / cross_layer_impact /
             // evolution_frequency / hotspot_evolution / defect_learn
-            "get_summary" | "project_brief" | "repo_map" | "test_impact_selection"
-            | "who_to_ask" | "get_ownership_map" | "guardrail_scan"
-            | "guardrail_check_edit" | "guardrail_list_rules" | "blast_radius"
-            | "ask_codebase" | "get_token_savings_report"
-            | "get_vulnerability_blast_radius" | "get_clone_aware_impact"
-            | "review_readiness" | "cross_layer_impact" | "evolution_frequency"
-            | "hotspot_evolution" | "defect_learn" => {
+            "get_summary"
+            | "project_brief"
+            | "repo_map"
+            | "test_impact_selection"
+            | "who_to_ask"
+            | "get_ownership_map"
+            | "guardrail_scan"
+            | "guardrail_check_edit"
+            | "guardrail_list_rules"
+            | "blast_radius"
+            | "ask_codebase"
+            | "get_token_savings_report"
+            | "get_vulnerability_blast_radius"
+            | "get_clone_aware_impact"
+            | "review_readiness"
+            | "cross_layer_impact"
+            | "evolution_frequency"
+            | "hotspot_evolution"
+            | "defect_learn" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
                 match method {
@@ -3164,9 +3204,11 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "repo_map" => {
                         query_compat::handle_summary_repo_map(&conn, workspace_id, params)
                     }
-                    "test_impact_selection" => {
-                        query_compat::handle_summary_test_impact_selection(&conn, workspace_id, params)
-                    }
+                    "test_impact_selection" => query_compat::handle_summary_test_impact_selection(
+                        &conn,
+                        workspace_id,
+                        params,
+                    ),
                     "who_to_ask" => {
                         query_compat::handle_summary_who_to_ask(&conn, workspace_id, params)
                     }
@@ -3176,12 +3218,16 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "guardrail_scan" => {
                         query_compat::handle_summary_guardrail_scan(&conn, workspace_id, params)
                     }
-                    "guardrail_check_edit" => {
-                        query_compat::handle_summary_guardrail_check_edit(&conn, workspace_id, params)
-                    }
-                    "guardrail_list_rules" => {
-                        query_compat::handle_summary_guardrail_list_rules(&conn, workspace_id, params)
-                    }
+                    "guardrail_check_edit" => query_compat::handle_summary_guardrail_check_edit(
+                        &conn,
+                        workspace_id,
+                        params,
+                    ),
+                    "guardrail_list_rules" => query_compat::handle_summary_guardrail_list_rules(
+                        &conn,
+                        workspace_id,
+                        params,
+                    ),
                     "blast_radius" => {
                         query_compat::handle_summary_blast_radius(&conn, workspace_id, params)
                     }
@@ -3189,10 +3235,18 @@ impl DaemonStateExt for SnapshotDaemonState {
                         query_compat::handle_summary_ask_codebase(&conn, workspace_id, params)
                     }
                     "get_token_savings_report" => {
-                        query_compat::handle_summary_token_savings_report(&conn, workspace_id, params)
+                        query_compat::handle_summary_token_savings_report(
+                            &conn,
+                            workspace_id,
+                            params,
+                        )
                     }
                     "get_vulnerability_blast_radius" => {
-                        query_compat::handle_summary_vulnerability_blast_radius(&conn, workspace_id, params)
+                        query_compat::handle_summary_vulnerability_blast_radius(
+                            &conn,
+                            workspace_id,
+                            params,
+                        )
                     }
                     "get_clone_aware_impact" => {
                         query_compat::handle_summary_clone_aware_impact(&conn, workspace_id, params)
@@ -3203,9 +3257,11 @@ impl DaemonStateExt for SnapshotDaemonState {
                     "cross_layer_impact" => {
                         query_compat::handle_summary_cross_layer_impact(&conn, workspace_id, params)
                     }
-                    "evolution_frequency" => {
-                        query_compat::handle_summary_evolution_frequency(&conn, workspace_id, params)
-                    }
+                    "evolution_frequency" => query_compat::handle_summary_evolution_frequency(
+                        &conn,
+                        workspace_id,
+                        params,
+                    ),
                     "hotspot_evolution" => {
                         query_compat::handle_summary_hotspot_evolution(&conn, workspace_id, params)
                     }
@@ -3223,18 +3279,30 @@ impl DaemonStateExt for SnapshotDaemonState {
                 }
             }
 
+            // ---- A 类 compat 修复：rollback 配置读组（task DB,全局无 workspace）----
+            "get_rollback_config" | "is_feature_rolled_back" => {
+                let conn = self.open_task_db_readonly()?;
+                match method {
+                    "get_rollback_config" => {
+                        super::compat_native_handlers::handle_get_rollback_config(&conn, params)
+                    }
+                    _ => {
+                        super::compat_native_handlers::handle_is_feature_rolled_back(&conn, params)
+                    }
+                }
+            }
+
             // ---- 异步长任务（job_runner）----
             "task.job_submit" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
-                let workspace = super::workspace::owned_workspace(
-                    &self.base.registry,
-                    peer.uid,
-                    ws,
-                )?;
+                let workspace =
+                    super::workspace::owned_workspace(&self.base.registry, peer.uid, ws)?;
                 let workspace_id = workspace
                     .get("workspace_id")
                     .and_then(Value::as_i64)
-                    .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 缺失".to_string()))?;
+                    .ok_or_else(|| {
+                        DaemonRpcError::internal_error("workspace_id 缺失".to_string())
+                    })?;
                 let db = codegraph_db(self, ws)?;
                 job::rpc_job_submit(workspace_id, ws, db, params)
             }
@@ -3244,14 +3312,26 @@ impl DaemonStateExt for SnapshotDaemonState {
             "admin.metrics_get" => admin::handle_metrics_get(params),
             "metrics.snapshot" => admin::handle_metrics_snapshot(params),
             "metrics.prometheus" => admin::handle_metrics_prometheus(params),
-            "admin.gc_archive_import" | "admin.gc_archive_inspect" | "admin.gc_archive_list"
-            | "admin.gc_audit_get" | "admin.gc_audit_list" | "admin.gc_policy_get"
-            | "admin.gc_policy_set" | "admin.gc_retention" | "admin.audit_rotate_key"
-            | "admin.cleanup_rule_sync_log" | "admin.clear_clones"
-            | "admin.snapshot_compare" | "admin.branch_register" | "admin.branch_switch"
-            | "admin.assignment_create" | "admin.assignment_revoke"
-            | "admin.record_action_identity" | "admin.register_attestation_revocation"
-            | "admin.record_artifact_identity" | "admin.publish_interface"
+            "admin.gc_archive_import"
+            | "admin.gc_archive_inspect"
+            | "admin.gc_archive_list"
+            | "admin.gc_audit_get"
+            | "admin.gc_audit_list"
+            | "admin.gc_policy_get"
+            | "admin.gc_policy_set"
+            | "admin.gc_retention"
+            | "admin.audit_rotate_key"
+            | "admin.cleanup_rule_sync_log"
+            | "admin.clear_clones"
+            | "admin.snapshot_compare"
+            | "admin.branch_register"
+            | "admin.branch_switch"
+            | "admin.assignment_create"
+            | "admin.assignment_revoke"
+            | "admin.record_action_identity"
+            | "admin.register_attestation_revocation"
+            | "admin.record_artifact_identity"
+            | "admin.publish_interface"
             | "admin.select_interface_provider" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 // C-17（本卡 step0 盘点 + 实测回执）：本路由块原以
@@ -3275,26 +3355,60 @@ impl DaemonStateExt for SnapshotDaemonState {
                 // `task_bound_workspace_id` 绑定面）对本项目均收敛到 `workspaces.id=1`。
                 let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
                 match method {
-                    "admin.gc_archive_import" => admin::handle_gc_archive_import(&conn, workspace_id, params),
-                    "admin.gc_archive_inspect" => admin::handle_gc_archive_inspect(&conn, workspace_id, params),
-                    "admin.gc_archive_list" => admin::handle_gc_archive_list(&conn, workspace_id, params),
+                    "admin.gc_archive_import" => {
+                        admin::handle_gc_archive_import(&conn, workspace_id, params)
+                    }
+                    "admin.gc_archive_inspect" => {
+                        admin::handle_gc_archive_inspect(&conn, workspace_id, params)
+                    }
+                    "admin.gc_archive_list" => {
+                        admin::handle_gc_archive_list(&conn, workspace_id, params)
+                    }
                     "admin.gc_audit_get" => admin::handle_gc_audit_get(&conn, workspace_id, params),
-                    "admin.gc_audit_list" => admin::handle_gc_audit_list(&conn, workspace_id, params),
-                    "admin.gc_policy_get" => admin::handle_gc_policy_get(&conn, workspace_id, params),
-                    "admin.gc_policy_set" => admin::handle_gc_policy_set(&conn, workspace_id, params),
+                    "admin.gc_audit_list" => {
+                        admin::handle_gc_audit_list(&conn, workspace_id, params)
+                    }
+                    "admin.gc_policy_get" => {
+                        admin::handle_gc_policy_get(&conn, workspace_id, params)
+                    }
+                    "admin.gc_policy_set" => {
+                        admin::handle_gc_policy_set(&conn, workspace_id, params)
+                    }
                     "admin.gc_retention" => admin::handle_gc_retention(&conn, workspace_id, params),
-                    "admin.audit_rotate_key" => admin::handle_audit_rotate_key(&conn, workspace_id, params),
-                    "admin.cleanup_rule_sync_log" => admin::handle_cleanup_rule_sync_log(&conn, workspace_id, params),
+                    "admin.audit_rotate_key" => {
+                        admin::handle_audit_rotate_key(&conn, workspace_id, params)
+                    }
+                    "admin.cleanup_rule_sync_log" => {
+                        admin::handle_cleanup_rule_sync_log(&conn, workspace_id, params)
+                    }
                     "admin.clear_clones" => admin::handle_clear_clones(&conn, workspace_id, params),
-                    "admin.snapshot_compare" => admin::handle_snapshot_compare(&conn, workspace_id, params),
-                    "admin.branch_register" => admin::handle_branch_register(&conn, workspace_id, params),
-                    "admin.branch_switch" => admin::handle_branch_switch(&conn, workspace_id, params),
-                    "admin.assignment_create" => admin::handle_assignment_create(&conn, workspace_id, params),
-                    "admin.assignment_revoke" => admin::handle_assignment_revoke(&conn, workspace_id, params),
-                    "admin.record_action_identity" => admin::handle_record_action_identity(&conn, workspace_id, params),
-                    "admin.register_attestation_revocation" => admin::handle_register_attestation_revocation(&conn, workspace_id, params),
-                    "admin.record_artifact_identity" => admin::handle_record_artifact_identity(&conn, workspace_id, params),
-                    "admin.publish_interface" => admin::handle_publish_interface(&conn, workspace_id, params),
+                    "admin.snapshot_compare" => {
+                        admin::handle_snapshot_compare(&conn, workspace_id, params)
+                    }
+                    "admin.branch_register" => {
+                        admin::handle_branch_register(&conn, workspace_id, params)
+                    }
+                    "admin.branch_switch" => {
+                        admin::handle_branch_switch(&conn, workspace_id, params)
+                    }
+                    "admin.assignment_create" => {
+                        admin::handle_assignment_create(&conn, workspace_id, params)
+                    }
+                    "admin.assignment_revoke" => {
+                        admin::handle_assignment_revoke(&conn, workspace_id, params)
+                    }
+                    "admin.record_action_identity" => {
+                        admin::handle_record_action_identity(&conn, workspace_id, params)
+                    }
+                    "admin.register_attestation_revocation" => {
+                        admin::handle_register_attestation_revocation(&conn, workspace_id, params)
+                    }
+                    "admin.record_artifact_identity" => {
+                        admin::handle_record_artifact_identity(&conn, workspace_id, params)
+                    }
+                    "admin.publish_interface" => {
+                        admin::handle_publish_interface(&conn, workspace_id, params)
+                    }
                     _ => admin::handle_select_interface_provider(&conn, workspace_id, params),
                 }
             }
@@ -3338,12 +3452,24 @@ impl DaemonStateExt for SnapshotDaemonState {
             // 修法：与 admin 块（3215）/ semgrep 写面块（3250）同形，路由层单点改
             // `open_codegraph_db_write`（内部 owned_workspace ACL + resolve_true_workspace_id
             // 按 client_view_root 取真 id）；方法名列表 / match 臂与全部 handler 零改动。
-            "edit.propose" | "edit.propose_range_patch" | "edit.propose_symbol_id_patch"
-            | "edit.propose_symbol_patch" | "edit.revert" | "edit.restore_all_comments"
-            | "edit.restore_comment" | "edit.record_token_savings" | "gate.resolve_findings"
-            | "gate.run_check" | "rule.seed_bootstrap" | "rule.extract_candidates"
-            | "rule.candidate_accept" | "rule.candidate_create" | "rule.candidate_reject"
-            | "rule.insert_agents_md_block" | "rule.sync_agents_md" | "guardrail.add_rule"
+            "edit.propose"
+            | "edit.propose_range_patch"
+            | "edit.propose_symbol_id_patch"
+            | "edit.propose_symbol_patch"
+            | "edit.revert"
+            | "edit.restore_all_comments"
+            | "edit.restore_comment"
+            | "edit.record_token_savings"
+            | "gate.resolve_findings"
+            | "gate.run_check"
+            | "rule.seed_bootstrap"
+            | "rule.extract_candidates"
+            | "rule.candidate_accept"
+            | "rule.candidate_create"
+            | "rule.candidate_reject"
+            | "rule.insert_agents_md_block"
+            | "rule.sync_agents_md"
+            | "guardrail.add_rule"
             | "summary.generate" => {
                 let ws = require_str_param(params, "workspace_instance_id")?;
                 // NF2（T-1789436399100-948b9498）：summary.generate 走版本化事务
@@ -3351,24 +3477,96 @@ impl DaemonStateExt for SnapshotDaemonState {
                 let (workspace_id, mut conn) = self.open_codegraph_db_write(peer, ws)?;
                 match method {
                     "edit.propose" => edit::handle_propose_edit(&conn, workspace_id, params),
-                    "edit.propose_range_patch" => edit::handle_propose_range_patch(&conn, workspace_id, params),
-                    "edit.propose_symbol_id_patch" => edit::handle_propose_symbol_id_patch(&conn, workspace_id, params),
-                    "edit.propose_symbol_patch" => edit::handle_propose_symbol_patch(&conn, workspace_id, params),
+                    "edit.propose_range_patch" => {
+                        edit::handle_propose_range_patch(&conn, workspace_id, params)
+                    }
+                    "edit.propose_symbol_id_patch" => {
+                        edit::handle_propose_symbol_id_patch(&conn, workspace_id, params)
+                    }
+                    "edit.propose_symbol_patch" => {
+                        edit::handle_propose_symbol_patch(&conn, workspace_id, params)
+                    }
                     "edit.revert" => edit::handle_revert_edit(&conn, workspace_id, params),
-                    "edit.restore_all_comments" => edit::handle_restore_all_comments(&conn, workspace_id, params),
-                    "edit.restore_comment" => edit::handle_restore_comment(&conn, workspace_id, params),
-                    "edit.record_token_savings" => edit::handle_record_token_savings(&conn, workspace_id, params),
-                    "gate.resolve_findings" => edit::handle_resolve_gate_findings(&conn, workspace_id, params),
+                    "edit.restore_all_comments" => {
+                        edit::handle_restore_all_comments(&conn, workspace_id, params)
+                    }
+                    "edit.restore_comment" => {
+                        edit::handle_restore_comment(&conn, workspace_id, params)
+                    }
+                    "edit.record_token_savings" => {
+                        edit::handle_record_token_savings(&conn, workspace_id, params)
+                    }
+                    "gate.resolve_findings" => {
+                        edit::handle_resolve_gate_findings(&conn, workspace_id, params)
+                    }
                     "gate.run_check" => edit::handle_run_check_gate(&conn, workspace_id, params),
-                    "rule.seed_bootstrap" => edit::handle_rule_seed_bootstrap(&conn, workspace_id, params),
-                    "rule.extract_candidates" => edit::handle_extract_rule_candidates(&conn, workspace_id, params),
-                    "rule.candidate_accept" => edit::handle_rule_candidate_accept(&conn, workspace_id, params),
-                    "rule.candidate_create" => edit::handle_rule_candidate_create(&conn, workspace_id, params),
-                    "rule.candidate_reject" => edit::handle_rule_candidate_reject(&conn, workspace_id, params),
-                    "rule.insert_agents_md_block" => edit::handle_rule_insert_agents_md_block(&conn, workspace_id, params),
-                    "rule.sync_agents_md" => edit::handle_rule_sync_agents_md(&conn, workspace_id, params),
-                    "guardrail.add_rule" => edit::handle_guardrail_add_rule(&conn, workspace_id, params),
+                    "rule.seed_bootstrap" => {
+                        edit::handle_rule_seed_bootstrap(&conn, workspace_id, params)
+                    }
+                    "rule.extract_candidates" => {
+                        edit::handle_extract_rule_candidates(&conn, workspace_id, params)
+                    }
+                    "rule.candidate_accept" => {
+                        edit::handle_rule_candidate_accept(&conn, workspace_id, params)
+                    }
+                    "rule.candidate_create" => {
+                        edit::handle_rule_candidate_create(&conn, workspace_id, params)
+                    }
+                    "rule.candidate_reject" => {
+                        edit::handle_rule_candidate_reject(&conn, workspace_id, params)
+                    }
+                    "rule.insert_agents_md_block" => {
+                        edit::handle_rule_insert_agents_md_block(&conn, workspace_id, params)
+                    }
+                    "rule.sync_agents_md" => {
+                        edit::handle_rule_sync_agents_md(&conn, workspace_id, params)
+                    }
+                    "guardrail.add_rule" => {
+                        edit::handle_guardrail_add_rule(&conn, workspace_id, params)
+                    }
                     _ => edit::handle_summary_generate(&mut conn, workspace_id, params),
+                }
+            }
+
+            // ---- A 类 compat 修复：主库写组（gc / fts / destructive / defect）----
+            // 这些历史裸名方法此前走 compat worker，compat 已永久下线；此处迁为 daemon
+            // 原生 handler。统一经 open_codegraph_db_write 取真 workspace_id
+            // （resolve_true_workspace_id 按 client_view_root）+ owned_workspace ACL。
+            "gc_status"
+            | "gc_restore"
+            | "gc_purge"
+            | "get_fts_status"
+            | "list_destructive_operations"
+            | "build_defect_knowledge" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
+                match method {
+                    "gc_status" => {
+                        super::compat_native_handlers::handle_gc_status(&conn, workspace_id, params)
+                    }
+                    "gc_restore" => super::compat_native_handlers::handle_gc_restore(
+                        &conn,
+                        workspace_id,
+                        params,
+                    ),
+                    "gc_purge" => {
+                        super::compat_native_handlers::handle_gc_purge(&conn, workspace_id, params)
+                    }
+                    "get_fts_status" => {
+                        super::compat_native_handlers::handle_get_fts_status(&conn, params)
+                    }
+                    "list_destructive_operations" => {
+                        super::compat_native_handlers::handle_list_destructive_operations(
+                            &conn,
+                            workspace_id,
+                            params,
+                        )
+                    }
+                    _ => super::compat_native_handlers::handle_build_defect_knowledge(
+                        &conn,
+                        workspace_id,
+                        params,
+                    ),
                 }
             }
 
@@ -3467,11 +3665,8 @@ fn build_context_register_main_db(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let bch = super::toolchain::compute_build_context_hash(
-        &compile_flags,
-        &defines,
-        &include_paths,
-    );
+    let bch =
+        super::toolchain::compute_build_context_hash(&compile_flags, &defines, &include_paths);
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| DaemonRpcError::internal_error(format!("开启事务: {e}")))?;
@@ -3583,7 +3778,8 @@ fn compute_from_cas(
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
     if manifest_rows.is_empty() {
         return Ok(None);
@@ -3610,7 +3806,8 @@ fn compute_from_cas(
                 ))
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
     if raw_calls.is_empty() {
         return Ok(None);
@@ -3638,8 +3835,12 @@ fn compute_from_cas(
             }
         };
         let caller_relpath = cas_to_relpath.get(&cas_key).cloned().unwrap_or_default();
-        let (callee_id, callee_file, method) =
-            resolve_callee(&callee_name, &caller_relpath, &symbol_index, search_paths.as_ref());
+        let (callee_id, callee_file, method) = resolve_callee(
+            &callee_name,
+            &caller_relpath,
+            &symbol_index,
+            search_paths.as_ref(),
+        );
         let call_line_value = match call_line {
             Some(line) => json!(line),
             None => Value::Null,
@@ -3668,7 +3869,13 @@ fn build_cas_caller_map(
     cas_to_relpath: &HashMap<String, String>,
 ) -> Result<HashMap<(String, i64), i64>, String> {
     let placeholders = vec!["?"; cas_keys.len()].join(",");
-    let cas_syms: Vec<(String, Option<i64>, Option<String>, Option<String>, Option<i64>)> = {
+    let cas_syms: Vec<(
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    )> = {
         let sql = format!(
             "SELECT cas_key, local_symbol_id, local_qualified_name, name, start_line
              FROM cas_symbols WHERE cas_key IN ({placeholders})"
@@ -3685,7 +3892,8 @@ fn build_cas_caller_map(
                 ))
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
 
     let mut relpath_to_fiid: HashMap<String, i64> = HashMap::new();
@@ -3727,8 +3935,13 @@ fn build_cas_caller_map(
             })
             .map_err(|e| e.to_string())?;
         for row in rows {
-            let (s_id, qname, s_name, s_line, fi_id): (i64, Option<String>, Option<String>, Option<i64>, i64) =
-                row.map_err(|e| e.to_string())?;
+            let (s_id, qname, s_name, s_line, fi_id): (
+                i64,
+                Option<String>,
+                Option<String>,
+                Option<i64>,
+                i64,
+            ) = row.map_err(|e| e.to_string())?;
             if let Some(qname) = qname {
                 qname_index.insert((qname, fi_id), s_id);
             }
@@ -3834,7 +4047,11 @@ fn resolve_callee(
         let file = index.file_for_symbol.get(sid).cloned().unwrap_or_default();
         return (*sid, file, "exact_match".to_string());
     }
-    let candidates = index.name_index.get(callee_name).cloned().unwrap_or_default();
+    let candidates = index
+        .name_index
+        .get(callee_name)
+        .cloned()
+        .unwrap_or_default();
     if candidates.len() == 1 {
         let sid = candidates[0];
         let file = index.file_for_symbol.get(&sid).cloned().unwrap_or_default();
@@ -4252,18 +4469,16 @@ fn path_is_abs(p: &str) -> bool {
 
 /// 词法 normpath（折叠 //、.、..；parity os.path.normpath 的纯文本语义）。
 fn lexical_normpath(p: &str) -> String {
-    let (prefix, rest): (&str, &str) = if p.len() >= 2
-        && p.as_bytes()[1] == b':'
-        && p.as_bytes()[0].is_ascii_alphabetic()
-    {
-        (&p[..2], &p[2..])
-    } else if let Some(r) = p.strip_prefix("//") {
-        ("//", r)
-    } else if let Some(r) = p.strip_prefix('/') {
-        ("/", r)
-    } else {
-        ("", p)
-    };
+    let (prefix, rest): (&str, &str) =
+        if p.len() >= 2 && p.as_bytes()[1] == b':' && p.as_bytes()[0].is_ascii_alphabetic() {
+            (&p[..2], &p[2..])
+        } else if let Some(r) = p.strip_prefix("//") {
+            ("//", r)
+        } else if let Some(r) = p.strip_prefix('/') {
+            ("/", r)
+        } else {
+            ("", p)
+        };
     let mut comps: Vec<&str> = Vec::new();
     for c in rest.split('/') {
         match c {
@@ -4603,13 +4818,17 @@ fn query_local_stats_top_files(
         .map_err(|error| format!("cannot prepare stats_top_files query: {error}"))?;
     let rows = stmt
         .query_map(params_from_iter([workspace_id, limit as i64]), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         })
         .map_err(|error| format!("cannot query stats_top_files rows: {error}"))?;
     let mut files = Vec::new();
     for row in rows {
-        let (rel_path, symbol_count, commented_count) = row
-            .map_err(|error| format!("cannot read stats_top_files row: {error}"))?;
+        let (rel_path, symbol_count, commented_count) =
+            row.map_err(|error| format!("cannot read stats_top_files row: {error}"))?;
         let comment_coverage = if symbol_count > 0 {
             (commented_count as f64 / symbol_count as f64 * 10000.0).round() / 10000.0
         } else {
@@ -5071,9 +5290,8 @@ fn query_local_git_commit_changes(
         .map_err(|error| format!("cannot query git commit changes: {error}"))?;
     let mut file_changes = Vec::new();
     for row in rows {
-        file_changes.push(row.map_err(|error| {
-            format!("cannot read git commit changes row: {error}")
-        })?);
+        file_changes
+            .push(row.map_err(|error| format!("cannot read git commit changes row: {error}"))?);
     }
     Ok(json!({"commit": commit, "file_changes": file_changes}))
 }
@@ -5110,16 +5328,13 @@ fn query_local_git_stats(conn: &Connection, workspace_id: i64) -> Result<Value, 
         .map_err(|error| format!("cannot prepare git change types query: {error}"))?;
     let rows = stmt
         .query_map(params_from_iter([workspace_id].iter()), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })
         .map_err(|error| format!("cannot query git change types: {error}"))?;
     let mut change_types = serde_json::Map::new();
     for row in rows {
-        let (change_type, count) = row
-            .map_err(|error| format!("cannot read git change type row: {error}"))?;
+        let (change_type, count) =
+            row.map_err(|error| format!("cannot read git change type row: {error}"))?;
         change_types.insert(change_type, json!(count));
     }
     Ok(json!({
@@ -5426,10 +5641,9 @@ fn query_local_coverage_for_symbol(
         )
         .map_err(|error| format!("cannot prepare coverage data query: {error}"))?;
     let rows = stmt
-        .query_map(
-            params![symbol_id, start_line, end_line],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-        )
+        .query_map(params![symbol_id, start_line, end_line], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
         .map_err(|error| format!("cannot query coverage data: {error}"))?;
     let mut tracked_lines: i64 = 0;
     let mut covered_lines: i64 = 0;
@@ -5516,16 +5730,13 @@ fn query_local_overlapping_symbols(
         )
         .map_err(|error| format!("cannot prepare overlapping symbols fallback: {error}"))?;
     let rows = stmt
-        .query_map(
-            params![workspace_id, end_line, start_line],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
+        .query_map(params![workspace_id, end_line, start_line], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
         .map_err(|error| format!("cannot query overlapping symbols fallback: {error}"))?;
     let mut out = Vec::new();
     for row in rows {
@@ -5590,9 +5801,17 @@ fn flush_diff_hunk(
     }
     // 删除时用旧路径 + 旧行范围；否则用新路径 + 新行范围
     let (query_path, start, length) = if state.file_deleted {
-        (state.old_file.clone(), state.hunk_old_start, state.hunk_old_len)
+        (
+            state.old_file.clone(),
+            state.hunk_old_start,
+            state.hunk_old_len,
+        )
     } else {
-        (state.new_file.clone(), state.hunk_new_start, state.hunk_new_len)
+        (
+            state.new_file.clone(),
+            state.hunk_new_start,
+            state.hunk_new_len,
+        )
     };
     // 先重置 hunk 计数，后判定 change_type（保持 Python 行为）
     state.has_hunk = false;
@@ -5609,7 +5828,11 @@ fn flush_diff_hunk(
     let end = start + length.max(1) - 1;
     // 判定变更类型（重置后 hunk_removed/hunk_added 恒为 0，added/仅删行
     // deleted 分支不可达，与 Python 逐字节一致）
-    let change_type = if state.file_deleted { "deleted" } else { "modified" };
+    let change_type = if state.file_deleted {
+        "deleted"
+    } else {
+        "modified"
+    };
     let syms = query_local_overlapping_symbols(conn, workspace_id, &query_path, start, end)?;
     for (symbol_hash, qualified_name, _rel) in syms {
         state.results.push(json!({
@@ -5648,17 +5871,13 @@ fn query_local_diff_to_symbol(
         }
         if let Some(caps) = new_file_re.captures(raw_line) {
             flush_diff_hunk(conn, workspace_id, &mut state)?;
-            state.new_file = Some(normalize_diff_path(
-                caps.get(1).map_or("", |m| m.as_str()),
-            ));
+            state.new_file = Some(normalize_diff_path(caps.get(1).map_or("", |m| m.as_str())));
             state.file_deleted = false;
             continue;
         }
         if let Some(caps) = old_file_re.captures(raw_line) {
             flush_diff_hunk(conn, workspace_id, &mut state)?;
-            state.old_file = Some(normalize_diff_path(
-                caps.get(1).map_or("", |m| m.as_str()),
-            ));
+            state.old_file = Some(normalize_diff_path(caps.get(1).map_or("", |m| m.as_str())));
             continue;
         }
         if let Some(caps) = hunk_re.captures(raw_line) {
@@ -6465,8 +6684,8 @@ fn query_local_defect_correlation(
             })
             .map_err(|error| format!("cannot query defect correlation changes: {error}"))?;
         for row in rows {
-            let cp = row
-                .map_err(|error| format!("cannot read defect correlation change: {error}"))?;
+            let cp =
+                row.map_err(|error| format!("cannot read defect correlation change: {error}"))?;
             if let Some(entry) = changes
                 .iter_mut()
                 .find(|(fid, _)| *fid == cp.file_instance_id)
@@ -6493,9 +6712,7 @@ fn query_local_defect_correlation(
                      FROM file_versions WHERE file_instance_id = ?1 \
                      ORDER BY version_num ASC",
                 )
-                .map_err(|error| {
-                    format!("cannot prepare defect correlation versions: {error}")
-                })?;
+                .map_err(|error| format!("cannot prepare defect correlation versions: {error}"))?;
             let rows = stmt
                 .query_map([*file_instance_id], |row| {
                     Ok((
@@ -6507,9 +6724,11 @@ fn query_local_defect_correlation(
                 })
                 .map_err(|error| format!("cannot query defect correlation versions: {error}"))?;
             for row in rows {
-                all_versions.push(row.map_err(|error| {
-                    format!("cannot read defect correlation version: {error}")
-                })?);
+                all_versions.push(
+                    row.map_err(|error| {
+                        format!("cannot read defect correlation version: {error}")
+                    })?,
+                );
             }
         }
         let version_num_to_index: HashMap<i64, usize> = all_versions
@@ -6549,8 +6768,7 @@ fn query_local_defect_correlation(
             let mut stmt = conn
                 .prepare(&sql)
                 .map_err(|error| format!("cannot prepare defect correlation findings: {error}"))?;
-            let mut bind: Vec<rusqlite::types::Value> =
-                Vec::with_capacity(window_hashes.len() + 1);
+            let mut bind: Vec<rusqlite::types::Value> = Vec::with_capacity(window_hashes.len() + 1);
             bind.push(rusqlite::types::Value::Integer(*file_instance_id));
             for h in &window_hashes {
                 bind.push(rusqlite::types::Value::Text(h.clone()));
@@ -6568,13 +6786,10 @@ fn query_local_defect_correlation(
                         message: row.get::<_, Option<String>>(9)?,
                     })
                 })
-                .map_err(|error| {
-                    format!("cannot query defect correlation findings: {error}")
-                })?;
+                .map_err(|error| format!("cannot query defect correlation findings: {error}"))?;
             for row in rows {
-                let f = row.map_err(|error| {
-                    format!("cannot read defect correlation finding: {error}")
-                })?;
+                let f = row
+                    .map_err(|error| format!("cannot read defect correlation finding: {error}"))?;
                 if !seen_finding_ids.insert(f.id) {
                     continue;
                 }
@@ -6604,9 +6819,7 @@ fn query_local_defect_correlation(
                  content_hash, scanned_at, symbol_qualified, message \
                  FROM semgrep_findings WHERE symbol_qualified = ?1",
             )
-            .map_err(|error| {
-                format!("cannot prepare defect correlation qualified: {error}")
-            })?;
+            .map_err(|error| format!("cannot prepare defect correlation qualified: {error}"))?;
         let rows = stmt
             .query_map([&qualified_name], |row| {
                 Ok(DefectFindingRow {
@@ -6620,13 +6833,10 @@ fn query_local_defect_correlation(
                     message: row.get::<_, Option<String>>(9)?,
                 })
             })
-            .map_err(|error| {
-                format!("cannot query defect correlation qualified: {error}")
-            })?;
+            .map_err(|error| format!("cannot query defect correlation qualified: {error}"))?;
         for row in rows {
-            let f = row.map_err(|error| {
-                format!("cannot read defect correlation qualified: {error}")
-            })?;
+            let f =
+                row.map_err(|error| format!("cannot read defect correlation qualified: {error}"))?;
             if !seen_finding_ids.insert(f.id) {
                 continue;
             }
@@ -6733,9 +6943,7 @@ fn query_local_churn_analysis(
             })
             .map_err(|error| format!("cannot query churn gfc: {error}"))?;
         for row in rows {
-            gfc_rows.push(
-                row.map_err(|error| format!("cannot read churn gfc row: {error}"))?,
-            );
+            gfc_rows.push(row.map_err(|error| format!("cannot read churn gfc row: {error}"))?);
         }
     }
 
@@ -6925,14 +7133,8 @@ fn query_local_churn_analysis(
     };
 
     file_churn_records.sort_by(|a, b| {
-        let a_churn = a
-            .get("churned_lines")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        let b_churn = b
-            .get("churned_lines")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let a_churn = a.get("churned_lines").and_then(|v| v.as_i64()).unwrap_or(0);
+        let b_churn = b.get("churned_lines").and_then(|v| v.as_i64()).unwrap_or(0);
         b_churn.cmp(&a_churn)
     });
     let top_files: Vec<Value> = file_churn_records.into_iter().take(10).collect();
@@ -7178,7 +7380,11 @@ fn query_local_defect_suggest_fix(
     let effectiveness_score: f64 = if !similar_fixes.is_empty() {
         let sum: f64 = similar_fixes
             .iter()
-            .map(|f| f.get("effectiveness").and_then(|v| v.as_f64()).unwrap_or(0.0))
+            .map(|f| {
+                f.get("effectiveness")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0)
+            })
             .sum();
         sum / similar_fixes.len() as f64
     } else if !pattern_id.is_empty() {

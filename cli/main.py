@@ -1133,6 +1133,12 @@ class RpcDBProxy:
         "find_symbols_at_lines": ("find_symbols_at_lines", "READ_ONLY", ("file_path", "lines")),
         "get_history": ("get_symbol_history", "READ_ONLY", ("qualified_name",)),
         "get_symbol_issues": ("query.issues", "READ_ONLY", ("qualified_name", "include_info")),
+        # FIX(A类修复,2026-09-30):daemon 已有 find_issues 原生 handler(复刻
+        # analyzers/issues.get_function_issues,返回格式一致),此前 CLI get_function_issues
+        # 经 __getattr__ 发同名 RPC → method_not_found(误诊为 compat 连锁)。映射到
+        # find_issues;参数名 issue_filter→issue_type(见 _PARAM_RENAME)。
+        "get_function_issues": ("find_issues", "READ_ONLY",
+                                ("qualified_name", "module_filter", "issue_filter", "limit")),
         "get_recent_changes": ("get_recent_changes", "READ_ONLY", ("since",)),
         "refresh_file": ("workspace.file.refresh_file", "PROTECTED_MUTATION", ("file_path",)),
         "get_applicable_rules": ("get_applicable_rules", "READ_ONLY", ("context", "limit")),
@@ -1275,6 +1281,9 @@ class RpcDBProxy:
         "task_list": {"status_filter": "status"},
         "register_workspace": {"root": "client_view_root"},
         "get_test_cases": {"qualified_name": "qualified_name"},
+        # FIX(A类修复,2026-09-30):daemon find_issues 契约字段是 issue_type,
+        # CLI get_function_issues 调用用 issue_filter,转发前重命名。
+        "get_function_issues": {"issue_filter": "issue_type"},
     }
 
     def __init__(self, workspace_root=None, is_readonly=False, args=None):

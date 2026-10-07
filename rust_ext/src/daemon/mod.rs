@@ -7,9 +7,9 @@ pub mod protocol;
 /// JSON-RPC dispatch 路由表 + 基础方法（跨平台，纯逻辑）
 pub mod dispatch;
 
+pub mod assignment_queue;
 /// Task 协同 RPC 模块（multi-llm-contract-collaboration D0/P1）
 pub mod task_collab;
-pub mod assignment_queue;
 
 /// Task 替代（supersede）治理 RPC 模块（T-1787203926824-9f873bfc-sub-1）
 pub mod task_supersede;
@@ -239,6 +239,12 @@ pub mod admin_handlers;
 /// 3.19: 编辑/提案/规则写面 handler（edit.propose* / rule.* / gate.* / summary.generate）
 /// 对应 61 个拒止工具中的编辑/规则写面（T02-edit 批次，经 CAS + SerializationPoint）。
 pub mod edit_handlers;
+
+/// A 类 compat 连锁修复：8 个此前依赖已下线 Python compat worker 的裸名方法迁
+/// rust_native（gc_status/gc_restore/gc_purge/get_fts_status/
+/// list_destructive_operations/get_rollback_config/is_feature_rolled_back/
+/// build_defect_knowledge；T-1791357540076-1201cbe0）。
+pub mod compat_native_handlers;
 
 /// 3.20: semgrep CLI 专用 handler（run_semgrep / run_semgrep_and_save /
 /// scan_semgrep_incremental / get_semgrep_summary）。
