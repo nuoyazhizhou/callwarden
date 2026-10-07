@@ -1,0 +1,587 @@
+{
+  "cli_top_count": 70,
+  "cli_leaf_count": 234,
+  "mcp_tool_count": 243,
+  "mcp_by_module": {
+    "tools_collab": 8,
+    "tools_p2_graph": 10,
+    "tools_p3_identity": 7,
+    "tools_p4_lease": 8,
+    "tools_query": 32,
+    "tools_rules": 9,
+    "tools_security": 36,
+    "tools_semantic": 19,
+    "tools_summary": 31,
+    "tools_task": 55,
+    "tools_task_prompt": 1,
+    "tools_workspace": 27
+  },
+  "cli_domains": {
+    "任务编排": [
+      "assignment",
+      "check-gate",
+      "collab",
+      "experiment",
+      "identity",
+      "lease",
+      "rollback",
+      "rule",
+      "task"
+    ],
+    "审计": [
+      "audit"
+    ],
+    "未分类": [
+      "bootstrap"
+    ],
+    "文件与检索": [
+      "brief",
+      "file",
+      "grep",
+      "map"
+    ],
+    "构建与刷新": [
+      "build-context",
+      "fts",
+      "graph",
+      "refresh",
+      "toolchain"
+    ],
+    "符号与图谱查询": [
+      "call-chain",
+      "callees",
+      "callers",
+      "impact",
+      "ownership-map",
+      "query",
+      "search",
+      "symbol",
+      "topo",
+      "who"
+    ],
+    "演化与历史": [
+      "churn",
+      "evolution",
+      "git",
+      "hotspot",
+      "symbol-history"
+    ],
+    "克隆检测": [
+      "clone"
+    ],
+    "代码度量与健康": [
+      "comment-coverage",
+      "complexity",
+      "coupled-fns",
+      "coupling",
+      "dashboard",
+      "fn-metrics",
+      "function-issues",
+      "health-report",
+      "issues",
+      "largest-fns",
+      "metrics",
+      "stats",
+      "status",
+      "uncommented"
+    ],
+    "安装与配置": [
+      "config",
+      "doctor",
+      "install",
+      "install-agent",
+      "install-hook",
+      "server",
+      "setup",
+      "test"
+    ],
+    "依赖分析": [
+      "coverage",
+      "dependency",
+      "test-impact",
+      "tests"
+    ],
+    "GC 与运维": [
+      "daemon",
+      "gc",
+      "workspace"
+    ],
+    "缺陷与安全扫描": [
+      "defect",
+      "guardrail",
+      "review",
+      "semgrep",
+      "vuln-blast"
+    ]
+  },
+  "coverage": {
+    "both_count": 134,
+    "mcp_only_count": 109,
+    "cli_only_count": 138,
+    "mcp_only": [
+      "append_evidence",
+      "ask_codebase",
+      "blast_radius",
+      "build_directory",
+      "build_graph",
+      "build_hard_dependency_edges",
+      "cancel_job",
+      "check_action_identity",
+      "check_session_separation",
+      "clear_clones",
+      "compare_snapshots",
+      "count_resolved_edges",
+      "cross_repo_summary",
+      "defect_correlation",
+      "delete_workspace",
+      "detect_clones",
+      "detect_clones_async",
+      "detect_cross_repo_deps",
+      "detect_cycle",
+      "detect_cycles",
+      "diff_branches",
+      "export_module_graph",
+      "find_evidence",
+      "find_similar_functions",
+      "find_uncovered_functions",
+      "gc_audit_get",
+      "generate_summary",
+      "get_action_identity",
+      "get_active_build_context",
+      "get_active_workspace",
+      "get_applicable_rules",
+      "get_artifact_freshness",
+      "get_call_heatmap",
+      "get_clone_group_detail",
+      "get_code_health_check",
+      "get_comment_from_version",
+      "get_commit_changes",
+      "get_commit_tasks",
+      "get_deepest_functions",
+      "get_defect_correlation",
+      "get_dependency_edges",
+      "get_edit_history",
+      "get_gate_decision",
+      "get_git_commits",
+      "get_interface_providers",
+      "get_issue_summary",
+      "get_largest_functions",
+      "get_most_coupled_functions",
+      "get_project_dependencies",
+      "get_recent_changes",
+      "get_resolved_edges",
+      "get_role_view",
+      "get_summary",
+      "get_task_commits",
+      "get_token_savings_report",
+      "get_vulnerability_blast_radius",
+      "get_workspace_toolchains",
+      "guardrail_add_rule",
+      "guardrail_check_edit",
+      "guardrail_list_rules",
+      "import_codeowners",
+      "import_coverage",
+      "import_envelope_dependencies",
+      "import_git_blame",
+      "import_git_history",
+      "import_project_dependencies",
+      "list_audit_signing_keys",
+      "list_branches",
+      "list_build_contexts",
+      "list_clone_groups",
+      "list_clones",
+      "list_jobs",
+      "list_toolchains",
+      "list_workspaces",
+      "lsp_check_available",
+      "lsp_completion",
+      "lsp_definition",
+      "lsp_diagnostics",
+      "lsp_hover",
+      "lsp_references",
+      "parse_codeowners",
+      "propose_edit",
+      "propose_range_patch",
+      "publish_interface",
+      "record_action_identity",
+      "record_artifact_identity",
+      "record_token_savings",
+      "register_branch",
+      "register_workspace",
+      "repo_map",
+      "resolve_gate_findings",
+      "restore_all_comments",
+      "restore_comment",
+      "revert_edit",
+      "rotate_audit_signing_key",
+      "rule_insert_agents_md_block",
+      "select_interface_provider",
+      "set_active_workspace",
+      "submit_verdict",
+      "switch_branch",
+      "task_get_role_prompt",
+      "task_plan_template",
+      "task_quality_findings",
+      "task_remediation_create",
+      "task_resolve_block",
+      "task_resolve_quality_finding",
+      "validate_revision_dependencies",
+      "wait_for_job",
+      "work_next_job"
+    ],
+    "cli_only": [
+      "audit keys",
+      "audit rotate-key",
+      "clone clear",
+      "clone detect",
+      "clone list",
+      "collab gate-trigger",
+      "collab publish",
+      "collab reveal",
+      "collab verdict",
+      "config check-role",
+      "config explain",
+      "config paths",
+      "coupled-fns",
+      "coverage fn",
+      "coverage import",
+      "coverage uncovered",
+      "daemon backup",
+      "daemon bridge",
+      "daemon capability",
+      "daemon gc-cas",
+      "daemon gc-snapshots",
+      "daemon health",
+      "daemon list",
+      "daemon manifest",
+      "daemon mode",
+      "daemon mount",
+      "daemon ping",
+      "daemon publish",
+      "daemon query",
+      "daemon register",
+      "daemon restore",
+      "daemon schema-version",
+      "daemon snapshot-evict",
+      "daemon snapshot-list",
+      "dashboard",
+      "defect build",
+      "dependency cycle",
+      "dependency explain",
+      "dependency inspect",
+      "dependency list",
+      "dependency provider-select",
+      "doctor",
+      "experiment admit",
+      "experiment batch-create",
+      "experiment batch-list",
+      "experiment batch-lock",
+      "experiment pause",
+      "experiment record-incident",
+      "experiment record-invalid",
+      "experiment record-reveal",
+      "experiment record-verdict",
+      "experiment report",
+      "experiment toggle-set",
+      "experiment toggle-show",
+      "fts rebuild",
+      "function-issues",
+      "gc audit-show",
+      "gc db-cleanup",
+      "gc db-migrate-single",
+      "gc purge",
+      "gc restore",
+      "git check-push",
+      "git check-ref-transaction",
+      "git check-task",
+      "git destructive-log",
+      "git import",
+      "git log",
+      "git show",
+      "graph build-from-c",
+      "guardrail rules",
+      "health-report",
+      "identity revoke",
+      "install",
+      "install-agent all",
+      "install-agent antigravity",
+      "install-agent claude-code",
+      "install-agent claude-desktop",
+      "install-agent cline",
+      "install-agent cline-cli",
+      "install-agent codebuddy-cli",
+      "install-agent codex",
+      "install-agent comate",
+      "install-agent cursor",
+      "install-agent deep-code",
+      "install-agent devin-cli",
+      "install-agent gemini-cli",
+      "install-agent grok-build",
+      "install-agent jetbrains-junie",
+      "install-agent kimi-code",
+      "install-agent kiro",
+      "install-agent opencode",
+      "install-agent pearai",
+      "install-agent qoder",
+      "install-agent trae",
+      "install-agent windsurf",
+      "install-agent zcode",
+      "install-agent zed",
+      "install-hook post-commit",
+      "largest-fns",
+      "map mermaid",
+      "map text",
+      "query",
+      "rollback config",
+      "rollback is-rolled-back",
+      "rollback register",
+      "rollback set",
+      "rollback show",
+      "rule applicable",
+      "rule cleanup-sync-log",
+      "rule extract",
+      "rule insert-block",
+      "semgrep list",
+      "server",
+      "setup",
+      "task attest-legacy-workspace-binding",
+      "task bootstrap-executor-evidence",
+      "task bootstrap-reviewer-pass",
+      "task cascade-close",
+      "task claim-recover",
+      "task contract-bootstrap",
+      "task contract-revise",
+      "task findings",
+      "task handoff",
+      "task next-action",
+      "task prompt",
+      "task reopen",
+      "task resolve-finding",
+      "task show",
+      "task supersede",
+      "task superseded",
+      "tests",
+      "vuln-blast",
+      "workspace delete",
+      "workspace generate-ignore",
+      "workspace list",
+      "workspace register",
+      "workspace scan",
+      "workspace set"
+    ]
+  },
+  "naming_confusion": {
+    "cli_top_pairs": [
+      [
+        "callees",
+        "callers",
+        1
+      ],
+      [
+        "stats",
+        "status",
+        1
+      ],
+      [
+        "test",
+        "tests",
+        1
+      ],
+      [
+        "file",
+        "rule",
+        2
+      ],
+      [
+        "graph",
+        "grep",
+        2
+      ],
+      [
+        "task",
+        "test",
+        2
+      ]
+    ],
+    "mcp_tool_pairs": [
+      [
+        "detect_cycle",
+        "detect_cycles",
+        1
+      ],
+      [
+        "get_callees",
+        "get_callers",
+        1
+      ],
+      [
+        "get_stats",
+        "get_status",
+        1
+      ],
+      [
+        "diff_callees",
+        "diff_callers",
+        1
+      ],
+      [
+        "gc_policy_get",
+        "gc_policy_set",
+        1
+      ],
+      [
+        "get_job_stats",
+        "get_job_status",
+        1
+      ],
+      [
+        "get_active_workspace",
+        "set_active_workspace",
+        1
+      ],
+      [
+        "get_edit_stats",
+        "get_git_stats",
+        2
+      ],
+      [
+        "rule_list",
+        "file_list",
+        2
+      ]
+    ],
+    "semantic_singular_plural": [
+      [
+        "detect_cycle",
+        "detect_cycles",
+        "单复数"
+      ],
+      [
+        "rule",
+        "rules",
+        "单复数"
+      ],
+      [
+        "test",
+        "tests",
+        "单复数"
+      ]
+    ]
+  },
+  "param_confusion": [
+    [
+      "--all",
+      "--fail",
+      2,
+      [
+        "install",
+        "refresh"
+      ],
+      [
+        "task"
+      ]
+    ],
+    [
+      "--all",
+      "--full",
+      2,
+      [
+        "install",
+        "refresh"
+      ],
+      [
+        "dashboard"
+      ]
+    ],
+    [
+      "--fail",
+      "--file",
+      2,
+      [
+        "task"
+      ],
+      [
+        "guardrail"
+      ]
+    ],
+    [
+      "--fail",
+      "--full",
+      2,
+      [
+        "task"
+      ],
+      [
+        "dashboard"
+      ]
+    ],
+    [
+      "--file",
+      "--fixed",
+      2,
+      [
+        "guardrail"
+      ],
+      [
+        "grep"
+      ]
+    ],
+    [
+      "--file",
+      "--full",
+      2,
+      [
+        "guardrail"
+      ],
+      [
+        "dashboard"
+      ]
+    ],
+    [
+      "--file",
+      "--title",
+      2,
+      [
+        "guardrail"
+      ],
+      [
+        "rule",
+        "task"
+      ]
+    ],
+    [
+      "--secret",
+      "--socket",
+      2,
+      [
+        "audit"
+      ],
+      [
+        "daemon"
+      ]
+    ],
+    [
+      "--table",
+      "--title",
+      2,
+      [
+        "audit"
+      ],
+      [
+        "rule",
+        "task"
+      ]
+    ],
+    [
+      "--top",
+      "--type",
+      2,
+      [
+        "dashboard"
+      ],
+      [
+        "function-issues"
+      ]
+    ]
+  ]
+}
