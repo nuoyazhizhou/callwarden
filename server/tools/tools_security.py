@@ -91,48 +91,50 @@ def register(mcp: FastMCP) -> None:
         return _route('query.diff_branches', {"source_branch": source_branch, "target_branch": target_branch}, 'READ_ONLY')
 
     @mcp.tool()
-    def diff_callers(left_workspace_id: str, right_workspace_id: str,
-                     qualified_name: str) -> dict:
-        """对比两个 workspace 中同一符号的 caller 边集合
+    def diff_callers(symbol_a: str, symbol_b: str) -> dict:
+        """对比同一 workspace 中两个符号的 caller 边集合
 
-        基于 resolved edge delta，返回 left/right 各自独有的 caller 列表及共同 caller。
+        返回 symbol_a / symbol_b 各自独有的 caller 列表及共同 caller。
 
-        修复 T-1783751538837-33e1: DaemonClient 已有 diff_callers 方法，但 MCP 层未暴露。
-        H4B-I: HTTP 模式 fail-closed（HttpDaemonRpcClient 无 diff_callers 方法，
-        直接调用会 AttributeError），仅 legacy 模式走 DaemonClient。
+        FIX(全量测试深度轮,2026-09-30):daemon query.diff_callers 当前实现是
+        "同一 workspace 内对比两个符号(symbol_a vs symbol_b)的 caller 集合"
+        （edit_handlers.rs:handle_diff_callers → diff_symbol_sets,两符号同 workspace
+        解析)。此前工具壳 schema 是旧的跨 workspace 同符号语义
+        (left_workspace_id/right_workspace_id/qualified_name),与 daemon 契约完全
+        不符,daemon 报 "缺少字段: symbol_a";且跨 workspace 的 RPC 已不存在(legacy
+        GraphStore 路径 HTTP 模式 fail-closed)。工具壳 schema/语义对齐 daemon 当前
+        实现。workspace_instance_id 由 route_rpc 注入。
 
         Args:
-            left_workspace_id: 左 workspace ID
-            right_workspace_id: 右 workspace ID
-            qualified_name: 符号限定名
+            symbol_a: 符号 A 的限定名或简单名
+            symbol_b: 符号 B 的限定名或简单名
 
         Returns:
-            {"left_only": [...], "right_only": [...], "common": [...]}
-            Rust 不可用时返回 {"error": "rust backend unavailable"}
+            {"direction": "caller", "symbol_a": ..., "symbol_b": ...,
+             "only_in_a": [...], "only_in_b": [...], "common": [...]}
         """
-        return _route('query.diff_callers', {"left_workspace_id": left_workspace_id, "right_workspace_id": right_workspace_id, "qualified_name": qualified_name}, 'READ_ONLY')
+        return _route('query.diff_callers', {"symbol_a": symbol_a, "symbol_b": symbol_b}, 'READ_ONLY')
 
     @mcp.tool()
-    def diff_callees(left_workspace_id: str, right_workspace_id: str,
-                     qualified_name: str) -> dict:
-        """对比两个 workspace 中同一符号的 callee 边集合
+    def diff_callees(symbol_a: str, symbol_b: str) -> dict:
+        """对比同一 workspace 中两个符号的 callee 边集合
 
-        基于 resolved edge delta，返回 left/right 各自独有的 callee 列表及共同 callee。
+        返回 symbol_a / symbol_b 各自独有的 callee 列表及共同 callee。
 
-        修复 T-1783751538837-33e1: DaemonClient 已有 diff_callees 方法，但 MCP 层未暴露。
-        H4B-I: 移除指向不存在 RPC 的 `security.diff_callees` 伪路由（HTTP 模式
-        method_not_found），改为 fail-closed；legacy 模式保持 DaemonClient 执行。
+        FIX(全量测试深度轮,2026-09-30):同 diff_callers —— daemon query.diff_callees
+        实现是同 workspace 两符号(symbol_a vs symbol_b)的 callee 集合对比,工具壳
+        schema 对齐 daemon 契约(此前旧的跨 workspace 同符号 schema 与 daemon 不符,
+        报 "缺少字段: symbol_a")。workspace_instance_id 由 route_rpc 注入。
 
         Args:
-            left_workspace_id: 左 workspace ID
-            right_workspace_id: 右 workspace ID
-            qualified_name: 符号限定名
+            symbol_a: 符号 A 的限定名或简单名
+            symbol_b: 符号 B 的限定名或简单名
 
         Returns:
-            {"left_only": [...], "right_only": [...], "common": [...]}
-            Rust 不可用时返回 {"error": "rust backend unavailable"}
+            {"direction": "callee", "symbol_a": ..., "symbol_b": ...,
+             "only_in_a": [...], "only_in_b": [...], "common": [...]}
         """
-        return _route('query.diff_callees', {"left_workspace_id": left_workspace_id, "right_workspace_id": right_workspace_id, "qualified_name": qualified_name}, 'READ_ONLY')
+        return _route('query.diff_callees', {"symbol_a": symbol_a, "symbol_b": symbol_b}, 'READ_ONLY')
 
     @mcp.tool()
     def compare_snapshots(left_workspace_id: str, right_workspace_id: str,
@@ -233,18 +235,22 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def propose_range_patch(file_path: str, start_line: int, end_line: int,
-                            replacement: str, agent_task_id: str = "",
+                            new_content: str, agent_task_id: str = "",
                             symbol_hash: str = "", dry_run: bool = False,
                             expected_hash: str = "") -> dict:
         """提交行号范围补丁，避免读写整个大文件
 
         行号为 1-based 闭区间。用于 Agent 只改目标函数、目标代码块或
         插入少量注释，而不需要提交完整文件内容。
+
+        FIX(全量测试深度轮,2026-09-30):daemon edit.propose_range_patch 契约字段是
+        new_content(非 replacement),此前工具壳转发 replacement 致 daemon 报
+        "缺少字段: new_content"。对外参数名统一为 daemon 契约名 new_content。
         """
-        return _route('edit.propose_range_patch', {"file_path": file_path, "start_line": start_line, "end_line": end_line, "replacement": replacement, "agent_task_id": agent_task_id, "symbol_hash": symbol_hash, "dry_run": dry_run, "expected_hash": expected_hash}, 'PROTECTED_MUTATION')
+        return _route('edit.propose_range_patch', {"file_path": file_path, "start_line": start_line, "end_line": end_line, "new_content": new_content, "agent_task_id": agent_task_id, "symbol_hash": symbol_hash, "dry_run": dry_run, "expected_hash": expected_hash}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def propose_symbol_patch(file_path: str, symbol_name: str, patch: str,
+    def propose_symbol_patch(file_path: str, qualified_name: str, new_content: str,
                              mode: str = "replace", agent_task_id: str = "",
                              dry_run: bool = False,
                              expected_hash: str = "") -> dict:
@@ -252,11 +258,16 @@ def register(mcp: FastMCP) -> None:
 
         mode 支持 replace / insert_before / insert_after。注释任务通常使用
         insert_before；bugfix/refactor 可使用 replace 或 range patch。
+
+        FIX(全量测试深度轮,2026-09-30):daemon edit.propose_symbol_patch 契约字段是
+        qualified_name(符号限定名)+ new_content,此前工具壳转发 symbol_name/patch
+        致 daemon 报 "缺少字段: qualified_name/new_content"。对外参数名统一为 daemon
+        契约名(qualified_name/new_content)。
         """
-        return _route('edit.propose_symbol_patch', {"file_path": file_path, "symbol_name": symbol_name, "patch": patch, "mode": mode, "agent_task_id": agent_task_id, "dry_run": dry_run, "expected_hash": expected_hash}, 'PROTECTED_MUTATION')
+        return _route('edit.propose_symbol_patch', {"file_path": file_path, "qualified_name": qualified_name, "new_content": new_content, "mode": mode, "agent_task_id": agent_task_id, "dry_run": dry_run, "expected_hash": expected_hash}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def propose_symbol_id_patch(symbol_id: int, patch: str,
+    def propose_symbol_id_patch(symbol_id: int, new_content: str,
                                 mode: str = "replace", agent_task_id: str = "",
                                 dry_run: bool = False, expected_hash: str = "",
                                 expected_symbol_hash: str = "") -> dict:
@@ -265,8 +276,12 @@ def register(mcp: FastMCP) -> None:
         使用 symbols.id 定位当前符号快照，并在写入前校验文件 hash
         与符号 hash。工具内部会执行 Before-Edit Contract，block 时拒绝写入。
         mode 支持 replace / insert_before / insert_after。
+
+        FIX(全量测试深度轮,2026-09-30):daemon edit.propose_symbol_id_patch 契约字段
+        是 new_content(非 patch),此前工具壳转发 patch 致 daemon 报 "缺少字段:
+        new_content"。对外参数名统一为 daemon 契约名 new_content。
         """
-        return _route('edit.propose_symbol_id_patch', {"symbol_id": symbol_id, "patch": patch, "mode": mode, "agent_task_id": agent_task_id, "dry_run": dry_run, "expected_hash": expected_hash, "expected_symbol_hash": expected_symbol_hash}, 'PROTECTED_MUTATION')
+        return _route('edit.propose_symbol_id_patch', {"symbol_id": symbol_id, "new_content": new_content, "mode": mode, "agent_task_id": agent_task_id, "dry_run": dry_run, "expected_hash": expected_hash, "expected_symbol_hash": expected_symbol_hash}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def revert_edit(audit_id: int) -> dict:
@@ -581,19 +596,25 @@ def register(mcp: FastMCP) -> None:
         return _route('gate.run_check', {"task_id": task_id, "step_id": step_id, "changed_files": changed_files}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def resolve_gate_findings(task_id: str) -> dict:
-        """标记任务的门禁发现为已解决（F6）
+    def resolve_gate_findings(gate_id: str, task_id: str = "",
+                              resolution: str = "resolved") -> dict:
+        """标记门禁发现为已解决（F6）
 
-        Agent 修复缺陷后调用此工具，将该任务关联文件上的所有 open 状态
-        guardrail_findings 标记为 resolved。
+        Agent 修复缺陷后调用此工具，将指定 gate 的 open 状态 findings 标记为 resolved。
+
+        FIX(全量测试深度轮,2026-09-30):daemon gate.resolve_findings 契约按 gate_id
+        维度定位 findings(require_str_param gate_id),此前工具壳只传 task_id,
+        daemon 报 "缺少字段: gate_id"。补 gate_id 参数并转发(task_id 仍透传作归因)。
 
         Args:
-            task_id: 任务 ID
+            gate_id: 门禁 ID（run_check_gate 返回的 gate 标识）
+            task_id: 任务 ID（归因）
+            resolution: 解决方式（默认 resolved）
 
         Returns:
-            {"resolved_count": int, "task_id": str}
+            {"resolved_count": int, "gate_id": str}
         """
-        return _route('gate.resolve_findings', {"task_id": task_id}, 'PROTECTED_MUTATION')
+        return _route('gate.resolve_findings', {"gate_id": gate_id, "task_id": task_id, "resolution": resolution}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def rule_candidate_create(

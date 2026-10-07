@@ -65,6 +65,7 @@ def register(mcp: FastMCP) -> None:
         task_id: str,
         contract_id: str,
         contract_revision: int,
+        artifact_id: str,
         artifact_type: str,
         artifact_ref: str,
         artifact_hash: str = "",
@@ -72,7 +73,12 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """记录 artifact identity（provider 产出 artifact 时调用，Req 9.3）。
 
+        FIX(全量测试深度轮,2026-09-30):daemon admin.record_artifact_identity 契约
+        要求 artifact_id(require_str_param),此前工具壳未声明/未转发,daemon 报
+        "缺少字段: artifact_id"。补 artifact_id 参数并转发。
+
         Args:
+            artifact_id: artifact 唯一标识
             artifact_type: file/symbol/resource
             artifact_ref: 文件路径或符号限定名
             artifact_hash: artifact 内容摘要（sha256:...），非空时 freshness=fresh
@@ -81,7 +87,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             记录结果（artifact_id / produced_at 等）
         """
-        return _route('admin.record_artifact_identity', {"workspace_id": workspace_id, "task_id": task_id, "contract_id": contract_id, "contract_revision": contract_revision, "artifact_type": artifact_type, "artifact_ref": artifact_ref, "artifact_hash": artifact_hash, "workspace_snapshot_id": workspace_snapshot_id}, 'GOVERNANCE_WRITE')
+        return _route('admin.record_artifact_identity', {"workspace_id": workspace_id, "task_id": task_id, "contract_id": contract_id, "contract_revision": contract_revision, "artifact_id": artifact_id, "artifact_type": artifact_type, "artifact_ref": artifact_ref, "artifact_hash": artifact_hash, "workspace_snapshot_id": workspace_snapshot_id}, 'GOVERNANCE_WRITE')
 
     @mcp.tool()
     def get_artifact_freshness(

@@ -156,9 +156,25 @@ def _resolve_by_name(pname: str, ctx: SeedContext) -> Any:
         return ctx.symbol_hash or "0" * 64
     if p in ("finding_id",):
         return ctx.finding_id or "finding-seed-0"
-    if p in ("symbol_a", "symbol_b", "caller_symbol_id", "callee_symbol_id", "symbol_id"):
-        # diff_callers/diff_callees/get_resolved_edges 等:用真实符号限定名或 id
+    if p in ("symbol_a", "symbol_b"):
+        # diff_callers/diff_callees:用真实符号限定名(两符号对比)
         return ctx.first_qname()
+    if p in ("symbol_id", "caller_symbol_id", "callee_symbol_id"):
+        # propose_symbol_id_patch 等:symbol_id 是整型 id(非符号名),给占位 int 1
+        return 1
+
+    # gate / artifact / interface 专有实体 id(resolve_gate_findings/
+    # record_artifact_identity/select_interface_provider 等)
+    if p in ("gate_id",):
+        return "gate-seed-0"
+    if p in ("artifact_id",):
+        return "artifact-seed-0"
+    if p in ("interface_id", "interface_name"):
+        return "iface-seed-0"
+    if p in ("changed_files",):
+        return []
+    if p in ("dependencies",):
+        return []
 
     # 编辑 / patch(工具专有)
     if p in ("new_content", "content", "new_text", "replacement"):

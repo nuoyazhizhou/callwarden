@@ -4196,10 +4196,26 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
             # 返回(~/.callwarden/callwarden.db,与 build_graph 写入同一主库),
             # 薄客户端不本地推导。
             snapshot_db_path = None
-            if rpc_method == "workspace.status" or rpc_method.startswith("query."):
-                # 需 snapshot 的 authority projection / query 面必须能回答当前
-                # snapshot，而不是只返回一个尚未发布的 registry 行。DB 路径
-                # 仍由 daemon 提供，避免薄客户端读取本地 SQLite。
+            # FIX(全量测试深度轮,2026-09-30):workspace-scoped mutation 面
+            # (admin.* / gate.* / rule.* / edit.* / guardrail.* / summary.*)在
+            # daemon 侧同样 require_str_param(workspace_instance_id)(经
+            # open_codegraph_db_write 做 ACL),但此前只有 workspace.status / query.*
+            # 走 snapshot publish 注入 instance,task.*/lease.* 走 _inject_workspace_id
+            # 注入数字 id,这批 mutation 落入注入 gap → daemon 报 "缺少字段:
+            # workspace_instance_id"。此处把它们纳入与 query.* 相同的 db_path+publish
+            # 注入路径,确保 _ensure_remote_snapshot 产生有效 workspace_instance_id。
+            _WS_SCOPED_MUTATION_PREFIXES = (
+                "admin.", "gate.", "rule.", "edit.", "guardrail.", "summary.",
+            )
+            needs_snapshot = (
+                rpc_method == "workspace.status"
+                or rpc_method.startswith("query.")
+                or rpc_method.startswith(_WS_SCOPED_MUTATION_PREFIXES)
+            )
+            if needs_snapshot:
+                # 需 snapshot 的 authority projection / query 面 / workspace-scoped
+                # mutation 必须能解析权威 workspace。DB 路径由 daemon 提供,
+                # 避免薄客户端读取本地 SQLite。
                 db_result = client.call("mcp.common.get_db_path_for_daemon", {})
                 if not isinstance(db_result, dict) or not db_result.get("db_path"):
                     raise DaemonUnavailableError(
@@ -4227,7 +4243,16 @@ def route_rpc(rpc_method: str, params: dict, op_class: str = "READ_ONLY") -> Any
                 rpc_method in _WS_ID_OR_NAME_METHODS
                 and "workspace_instance_id" in params
             )
-            if not is_task_scoped and not target_already_bound:
+            # FIX(全量测试深度轮,2026-09-30):workspace-scoped mutation 前缀
+            # (admin./gate./rule./edit./guardrail./summary.)在 daemon 侧按
+            # workspace_instance_id 解析权威 workspace(open_codegraph_db_write),
+            # 与 task binding 无关。即使这类请求带 task_id(如 gate.run_check 的
+            # task_id/step_id/changed_files),也必须注入 workspace_instance_id,
+            # 否则被 is_task_scoped 判定吞掉 → daemon 报 "缺少字段:
+            # workspace_instance_id"。故这批前缀强制注入 instance,不受 task-scoped
+            # 判断阻挡。
+            is_ws_scoped_mutation = rpc_method.startswith(_WS_SCOPED_MUTATION_PREFIXES)
+            if (not is_task_scoped or is_ws_scoped_mutation) and not target_already_bound:
                 ws_id = client._ensure_remote_snapshot(snapshot_db_path)
                 if ws_id is not None and "workspace_instance_id" not in params:
                     params["workspace_instance_id"] = ws_id

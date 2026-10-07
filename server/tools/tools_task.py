@@ -578,13 +578,20 @@ def register(mcp: FastMCP) -> None:
         return _route('query.tests', {"qualified_name": qualified_name}, 'READ_ONLY')
 
     @mcp.tool()
-    def get_tested_functions(test_qualified_name: str) -> list:
+    def get_tested_functions(qualified_name: str) -> list:
         """反向查询：test 函数测了哪些被测函数
 
         对应 CLI: cw tests <QN> --reverse（反向查询）
 
+        FIX(全量测试深度轮,2026-09-30):daemon query.tests 契约字段是 qualified_name
+        (非 test_qualified_name),且反向语义由 reverse=true 标志选择(四个 test 工具
+        共用 query.tests,按 reverse/history 标志多路复用)。此前工具壳转发
+        test_qualified_name 且未带 reverse,致 daemon 报 "缺少字段: qualified_name"
+        且即便改名也会返回正向 test cases 而非被测函数。改为 qualified_name +
+        reverse=True。
+
         Args:
-            test_qualified_name: test 函数的限定名
+            qualified_name: test 函数的限定名
 
         Returns:
             被测函数列表，按 confidence 降序，每条含：
@@ -595,7 +602,7 @@ def register(mcp: FastMCP) -> None:
                 "tested_file": str, "tested_start_line": int, "tested_end_line": int,
             }
         """
-        return _route('query.tests', {"test_qualified_name": test_qualified_name}, 'READ_ONLY')
+        return _route('query.tests', {"qualified_name": qualified_name, "reverse": True}, 'READ_ONLY')
 
     @mcp.tool()
     def get_test_coverage_summary(qualified_name: str) -> dict:

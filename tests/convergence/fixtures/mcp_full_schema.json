@@ -810,58 +810,44 @@
     },
     {
       "name": "diff_callees",
-      "description": "对比两个 workspace 中同一符号的 callee 边集合\n\n基于 resolved edge delta，返回 left/right 各自独有的 callee 列表及共同 callee。\n\n修复 T-1783751538837-33e1: DaemonClient 已有 diff_callees 方法，但 MCP 层未暴露。\nH4B-I: 移除指向不存在 RPC 的 `security.diff_callees` 伪路由（HTTP 模式\nmethod_not_found），改为 fail-closed；legacy 模式保持 DaemonClient 执行。\n\nArgs:\n    left_workspace_id: 左 workspace ID\n    right_workspace_id: 右 workspace ID\n    qualified_name: 符号限定名\n\nReturns:\n    {\"left_only\": [...], \"right_only\": [...], \"common\": [...]}\n    Rust 不可用时返回 {\"error\": \"rust backend unavailable\"}\n",
+      "description": "对比同一 workspace 中两个符号的 callee 边集合\n\n返回 symbol_a / symbol_b 各自独有的 callee 列表及共同 callee。\n\nFIX(全量测试深度轮,2026-09-30):同 diff_callers —— daemon query.diff_callees\n实现是同 workspace 两符号(symbol_a vs symbol_b)的 callee 集合对比,工具壳\nschema 对齐 daemon 契约(此前旧的跨 workspace 同符号 schema 与 daemon 不符,\n报 \"缺少字段: symbol_a\")。workspace_instance_id 由 route_rpc 注入。\n\nArgs:\n    symbol_a: 符号 A 的限定名或简单名\n    symbol_b: 符号 B 的限定名或简单名\n\nReturns:\n    {\"direction\": \"callee\", \"symbol_a\": ..., \"symbol_b\": ...,\n     \"only_in_a\": [...], \"only_in_b\": [...], \"common\": [...]}\n",
       "required": [
-        "left_workspace_id",
-        "right_workspace_id",
-        "qualified_name"
+        "symbol_a",
+        "symbol_b"
       ],
       "params": {
-        "left_workspace_id": {
+        "symbol_a": {
           "type": "string",
           "default": null,
-          "title": "Left Workspace Id",
+          "title": "Symbol A",
           "description": ""
         },
-        "right_workspace_id": {
+        "symbol_b": {
           "type": "string",
           "default": null,
-          "title": "Right Workspace Id",
-          "description": ""
-        },
-        "qualified_name": {
-          "type": "string",
-          "default": null,
-          "title": "Qualified Name",
+          "title": "Symbol B",
           "description": ""
         }
       }
     },
     {
       "name": "diff_callers",
-      "description": "对比两个 workspace 中同一符号的 caller 边集合\n\n基于 resolved edge delta，返回 left/right 各自独有的 caller 列表及共同 caller。\n\n修复 T-1783751538837-33e1: DaemonClient 已有 diff_callers 方法，但 MCP 层未暴露。\nH4B-I: HTTP 模式 fail-closed（HttpDaemonRpcClient 无 diff_callers 方法，\n直接调用会 AttributeError），仅 legacy 模式走 DaemonClient。\n\nArgs:\n    left_workspace_id: 左 workspace ID\n    right_workspace_id: 右 workspace ID\n    qualified_name: 符号限定名\n\nReturns:\n    {\"left_only\": [...], \"right_only\": [...], \"common\": [...]}\n    Rust 不可用时返回 {\"error\": \"rust backend unavailable\"}\n",
+      "description": "对比同一 workspace 中两个符号的 caller 边集合\n\n返回 symbol_a / symbol_b 各自独有的 caller 列表及共同 caller。\n\nFIX(全量测试深度轮,2026-09-30):daemon query.diff_callers 当前实现是\n\"同一 workspace 内对比两个符号(symbol_a vs symbol_b)的 caller 集合\"\n（edit_handlers.rs:handle_diff_callers → diff_symbol_sets,两符号同 workspace\n解析)。此前工具壳 schema 是旧的跨 workspace 同符号语义\n(left_workspace_id/right_workspace_id/qualified_name),与 daemon 契约完全\n不符,daemon 报 \"缺少字段: symbol_a\";且跨 workspace 的 RPC 已不存在(legacy\nGraphStore 路径 HTTP 模式 fail-closed)。工具壳 schema/语义对齐 daemon 当前\n实现。workspace_instance_id 由 route_rpc 注入。\n\nArgs:\n    symbol_a: 符号 A 的限定名或简单名\n    symbol_b: 符号 B 的限定名或简单名\n\nReturns:\n    {\"direction\": \"caller\", \"symbol_a\": ..., \"symbol_b\": ...,\n     \"only_in_a\": [...], \"only_in_b\": [...], \"common\": [...]}\n",
       "required": [
-        "left_workspace_id",
-        "right_workspace_id",
-        "qualified_name"
+        "symbol_a",
+        "symbol_b"
       ],
       "params": {
-        "left_workspace_id": {
+        "symbol_a": {
           "type": "string",
           "default": null,
-          "title": "Left Workspace Id",
+          "title": "Symbol A",
           "description": ""
         },
-        "right_workspace_id": {
+        "symbol_b": {
           "type": "string",
           "default": null,
-          "title": "Right Workspace Id",
-          "description": ""
-        },
-        "qualified_name": {
-          "type": "string",
-          "default": null,
-          "title": "Qualified Name",
+          "title": "Symbol B",
           "description": ""
         }
       }
@@ -2644,15 +2630,15 @@
     },
     {
       "name": "get_tested_functions",
-      "description": "反向查询：test 函数测了哪些被测函数\n\n对应 CLI: cw tests <QN> --reverse（反向查询）\n\nArgs:\n    test_qualified_name: test 函数的限定名\n\nReturns:\n    被测函数列表，按 confidence 降序，每条含：\n    {\n        \"tested_fn_id\": int,\n        \"match_method\": str, \"confidence\": str,\n        \"tested_name\": str, \"tested_qualified_name\": str,\n        \"tested_file\": str, \"tested_start_line\": int, \"tested_end_line\": int,\n    }\n",
+      "description": "反向查询：test 函数测了哪些被测函数\n\n对应 CLI: cw tests <QN> --reverse（反向查询）\n\nFIX(全量测试深度轮,2026-09-30):daemon query.tests 契约字段是 qualified_name\n(非 test_qualified_name),且反向语义由 reverse=true 标志选择(四个 test 工具\n共用 query.tests,按 reverse/history 标志多路复用)。此前工具壳转发\ntest_qualified_name 且未带 reverse,致 daemon 报 \"缺少字段: qualified_name\"\n且即便改名也会返回正向 test cases 而非被测函数。改为 qualified_name +\nreverse=True。\n\nArgs:\n    qualified_name: test 函数的限定名\n\nReturns:\n    被测函数列表，按 confidence 降序，每条含：\n    {\n        \"tested_fn_id\": int,\n        \"match_method\": str, \"confidence\": str,\n        \"tested_name\": str, \"tested_qualified_name\": str,\n        \"tested_file\": str, \"tested_start_line\": int, \"tested_end_line\": int,\n    }\n",
       "required": [
-        "test_qualified_name"
+        "qualified_name"
       ],
       "params": {
-        "test_qualified_name": {
+        "qualified_name": {
           "type": "string",
           "default": null,
-          "title": "Test Qualified Name",
+          "title": "Qualified Name",
           "description": ""
         }
       }
@@ -3591,12 +3577,12 @@
     },
     {
       "name": "propose_range_patch",
-      "description": "提交行号范围补丁，避免读写整个大文件\n\n行号为 1-based 闭区间。用于 Agent 只改目标函数、目标代码块或\n插入少量注释，而不需要提交完整文件内容。\n",
+      "description": "提交行号范围补丁，避免读写整个大文件\n\n行号为 1-based 闭区间。用于 Agent 只改目标函数、目标代码块或\n插入少量注释，而不需要提交完整文件内容。\n\nFIX(全量测试深度轮,2026-09-30):daemon edit.propose_range_patch 契约字段是\nnew_content(非 replacement),此前工具壳转发 replacement 致 daemon 报\n\"缺少字段: new_content\"。对外参数名统一为 daemon 契约名 new_content。\n",
       "required": [
         "file_path",
         "start_line",
         "end_line",
-        "replacement"
+        "new_content"
       ],
       "params": {
         "file_path": {
@@ -3617,10 +3603,10 @@
           "title": "End Line",
           "description": ""
         },
-        "replacement": {
+        "new_content": {
           "type": "string",
           "default": null,
-          "title": "Replacement",
+          "title": "New Content",
           "description": ""
         },
         "agent_task_id": {
@@ -3651,10 +3637,10 @@
     },
     {
       "name": "propose_symbol_id_patch",
-      "description": "提交基于 symbol_id 的精确符号补丁\n\n使用 symbols.id 定位当前符号快照，并在写入前校验文件 hash\n与符号 hash。工具内部会执行 Before-Edit Contract，block 时拒绝写入。\nmode 支持 replace / insert_before / insert_after。\n",
+      "description": "提交基于 symbol_id 的精确符号补丁\n\n使用 symbols.id 定位当前符号快照，并在写入前校验文件 hash\n与符号 hash。工具内部会执行 Before-Edit Contract，block 时拒绝写入。\nmode 支持 replace / insert_before / insert_after。\n\nFIX(全量测试深度轮,2026-09-30):daemon edit.propose_symbol_id_patch 契约字段\n是 new_content(非 patch),此前工具壳转发 patch 致 daemon 报 \"缺少字段:\nnew_content\"。对外参数名统一为 daemon 契约名 new_content。\n",
       "required": [
         "symbol_id",
-        "patch"
+        "new_content"
       ],
       "params": {
         "symbol_id": {
@@ -3663,10 +3649,10 @@
           "title": "Symbol Id",
           "description": ""
         },
-        "patch": {
+        "new_content": {
           "type": "string",
           "default": null,
-          "title": "Patch",
+          "title": "New Content",
           "description": ""
         },
         "mode": {
@@ -3703,11 +3689,11 @@
     },
     {
       "name": "propose_symbol_patch",
-      "description": "提交符号级补丁，按图谱定位函数/类范围后局部改写\n\nmode 支持 replace / insert_before / insert_after。注释任务通常使用\ninsert_before；bugfix/refactor 可使用 replace 或 range patch。\n",
+      "description": "提交符号级补丁，按图谱定位函数/类范围后局部改写\n\nmode 支持 replace / insert_before / insert_after。注释任务通常使用\ninsert_before；bugfix/refactor 可使用 replace 或 range patch。\n\nFIX(全量测试深度轮,2026-09-30):daemon edit.propose_symbol_patch 契约字段是\nqualified_name(符号限定名)+ new_content,此前工具壳转发 symbol_name/patch\n致 daemon 报 \"缺少字段: qualified_name/new_content\"。对外参数名统一为 daemon\n契约名(qualified_name/new_content)。\n",
       "required": [
         "file_path",
-        "symbol_name",
-        "patch"
+        "qualified_name",
+        "new_content"
       ],
       "params": {
         "file_path": {
@@ -3716,16 +3702,16 @@
           "title": "File Path",
           "description": ""
         },
-        "symbol_name": {
+        "qualified_name": {
           "type": "string",
           "default": null,
-          "title": "Symbol Name",
+          "title": "Qualified Name",
           "description": ""
         },
-        "patch": {
+        "new_content": {
           "type": "string",
           "default": null,
-          "title": "Patch",
+          "title": "New Content",
           "description": ""
         },
         "mode": {
@@ -3891,12 +3877,13 @@
     },
     {
       "name": "record_artifact_identity",
-      "description": "记录 artifact identity（provider 产出 artifact 时调用，Req 9.3）。\n\nArgs:\n    artifact_type: file/symbol/resource\n    artifact_ref: 文件路径或符号限定名\n    artifact_hash: artifact 内容摘要（sha256:...），非空时 freshness=fresh\n    workspace_snapshot_id: 产出时绑定的工作区快照\n\nReturns:\n    记录结果（artifact_id / produced_at 等）\n",
+      "description": "记录 artifact identity（provider 产出 artifact 时调用，Req 9.3）。\n\nFIX(全量测试深度轮,2026-09-30):daemon admin.record_artifact_identity 契约\n要求 artifact_id(require_str_param),此前工具壳未声明/未转发,daemon 报\n\"缺少字段: artifact_id\"。补 artifact_id 参数并转发。\n\nArgs:\n    artifact_id: artifact 唯一标识\n    artifact_type: file/symbol/resource\n    artifact_ref: 文件路径或符号限定名\n    artifact_hash: artifact 内容摘要（sha256:...），非空时 freshness=fresh\n    workspace_snapshot_id: 产出时绑定的工作区快照\n\nReturns:\n    记录结果（artifact_id / produced_at 等）\n",
       "required": [
         "workspace_id",
         "task_id",
         "contract_id",
         "contract_revision",
+        "artifact_id",
         "artifact_type",
         "artifact_ref"
       ],
@@ -3923,6 +3910,12 @@
           "type": "integer",
           "default": null,
           "title": "Contract Revision",
+          "description": ""
+        },
+        "artifact_id": {
+          "type": "string",
+          "default": null,
+          "title": "Artifact Id",
           "description": ""
         },
         "artifact_type": {
@@ -4214,15 +4207,27 @@
     },
     {
       "name": "resolve_gate_findings",
-      "description": "标记任务的门禁发现为已解决（F6）\n\nAgent 修复缺陷后调用此工具，将该任务关联文件上的所有 open 状态\nguardrail_findings 标记为 resolved。\n\nArgs:\n    task_id: 任务 ID\n\nReturns:\n    {\"resolved_count\": int, \"task_id\": str}\n",
+      "description": "标记门禁发现为已解决（F6）\n\nAgent 修复缺陷后调用此工具，将指定 gate 的 open 状态 findings 标记为 resolved。\n\nFIX(全量测试深度轮,2026-09-30):daemon gate.resolve_findings 契约按 gate_id\n维度定位 findings(require_str_param gate_id),此前工具壳只传 task_id,\ndaemon 报 \"缺少字段: gate_id\"。补 gate_id 参数并转发(task_id 仍透传作归因)。\n\nArgs:\n    gate_id: 门禁 ID（run_check_gate 返回的 gate 标识）\n    task_id: 任务 ID（归因）\n    resolution: 解决方式（默认 resolved）\n\nReturns:\n    {\"resolved_count\": int, \"gate_id\": str}\n",
       "required": [
-        "task_id"
+        "gate_id"
       ],
       "params": {
-        "task_id": {
+        "gate_id": {
           "type": "string",
           "default": null,
+          "title": "Gate Id",
+          "description": ""
+        },
+        "task_id": {
+          "type": "string",
+          "default": "",
           "title": "Task Id",
+          "description": ""
+        },
+        "resolution": {
+          "type": "string",
+          "default": "resolved",
+          "title": "Resolution",
           "description": ""
         }
       }
