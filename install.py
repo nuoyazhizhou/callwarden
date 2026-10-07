@@ -890,7 +890,7 @@ class CallWardenInstaller:
         L3 增强：提交前检查 active_task_id（软门禁，警告不阻止）。
 
         容错设计（T-1784403320003）：
-        - `cw --refresh-all` 在 SQLite WAL 模式下偶尔因 SQLITE_CANTOPEN
+        - `cw refresh --all` 在 SQLite WAL 模式下偶尔因 SQLITE_CANTOPEN
           ('unable to open database file') 失败。常见原因：
           (a) MCP Server 或其他 cw 进程持有 -shm 文件锁（间歇性，重试可恢复）；
           (b) TRAE IDE 沙箱拦截 sh.exe 子进程对 ~/.callwarden 目录的写操作
@@ -901,7 +901,7 @@ class CallWardenInstaller:
           重试仍失败时打印明确错误信息 + 解决建议（停 MCP Server /
           手动 `cw refresh --all` / 配置 TRAE 沙箱规则），并退出非零保持
           AGENTS.md 规则 1 的硬性要求（提交前必须全量刷新数据库）。
-        - 卡死防护（规则 32 自动化，T-1785824926483）：`cw --refresh-all`
+        - 卡死防护（规则 32 自动化，T-1785824926483）：`cw refresh --all`
           偶尔会进入"无 CPU、无 DB/WAL 进展"的等待状态（不是退出非零，重试
           逻辑无法覆盖）。hook 加看门狗：后台运行 refresh-all，每 10s 检查
           DB/WAL mtime；连续 9 次（90s）无进展即终止该进程并降级为显式刷新
@@ -935,7 +935,7 @@ while [ "$_refresh_attempt" -lt "$_refresh_max" ]; do
   _stall=0
   _prev_db=$(_stat_mtime "$_db_path")
   _prev_wal=$(_stat_mtime "$_db_path-wal")
-  {cmd} --refresh-all &
+  {cmd} refresh --all &
   _refresh_pid=$!
   while kill -0 "$_refresh_pid" 2>/dev/null; do
     sleep 10
@@ -977,7 +977,7 @@ if [ "$_refresh_ok" -ne 1 ]; then
 fi
 
 if [ "$_refresh_ok" -ne 1 ]; then
-  echo "[Call Warden] ERROR: cw --refresh-all 重试 $_refresh_max 次后仍失败。"
+  echo "[Call Warden] ERROR: cw refresh --all 重试 $_refresh_max 次后仍失败。"
   echo "[Call Warden] commit 已被阻止（AGENTS.md 规则 1：提交前必须全量刷新数据库）。"
   echo "[Call Warden] 排查建议："
   echo "  1. 停止 MCP Server：cw server --stop"

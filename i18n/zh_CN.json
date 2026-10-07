@@ -734,7 +734,7 @@
             "status_calls_resolved": "已解析",
             "status_calls_rate": "解析率",
             "status_calls_cross": "跨文件",
-            "status_rebuild_hint": "提示: 有文件变更，建议运行 cw --refresh-all 增量刷新（不会清空数据）",
+            "status_rebuild_hint": "提示: 有文件变更，建议运行 cw refresh --all 增量刷新（不会清空数据）",
             "status_up_to_date": "✓ 代码图谱已是最新",
             "kind_fn": "函数",
             "kind_test_fn": "测试",

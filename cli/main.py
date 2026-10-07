@@ -8395,7 +8395,7 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
     # CALLWARDEN_DIR 不存在
     if not os.path.isdir(CALLWARDEN_DIR):
         cprint(f"Directory not found: {CALLWARDEN_DIR}", "dim")
-        cprint("Run 'cw --refresh-all' to initialize.", "dim")
+        cprint("Run 'cw refresh --all' to initialize.", "dim")
         cprint()
         return True
 
@@ -9423,7 +9423,7 @@ def _handle_dashboard(args, db):
         print(f"    Root:         {ov.get('root_path', '?')}")
         print(f"    Git HEAD:     {ov.get('git_head') or '(not a git repo)'}")
         if ov.get('db_stale'):
-            cprint(f"    DB 状态:      ⚠ 滞后于 git HEAD（建议 cw --refresh-all）", "red")
+            cprint(f"    DB 状态:      ⚠ 滞后于 git HEAD（建议 cw refresh --all）", "red")
         else:
             cprint(f"    DB 状态:      ✓ 同步", "green")
         lb = ov.get('last_build_ts', 0)

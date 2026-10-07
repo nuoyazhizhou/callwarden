@@ -1208,7 +1208,7 @@ class BootstrapMixin:
 
         # 8. 推荐下一条命令
         if db_stale:
-            recommended = "cw --refresh-all"
+            recommended = "cw refresh --all"
         elif blocking_findings_count > 0:
             recommended = "cw task findings <task_id>  # 有阻塞发现需修复"
         elif pending_candidates_count > 0:

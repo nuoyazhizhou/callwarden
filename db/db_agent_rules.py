@@ -476,7 +476,7 @@ class AgentRulesMixin:
             "id": "AR-bootstrap-refresh-before-commit",
             "title": "提交前必须刷新代码图谱",
             "rule_text": (
-                "每次 git commit 之前必须运行 cw --refresh-all 或批量刷新所有修改文件，"
+                "每次 git commit 之前必须运行 cw refresh --all 或批量刷新所有修改文件，"
                 "确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。"
             ),
             "scope": {"actions": ["commit"]},

@@ -734,7 +734,7 @@
             "status_calls_resolved": "Resolved",
             "status_calls_rate": "Resolve Rate",
             "status_calls_cross": "Cross-file",
-            "status_rebuild_hint": "Hint: files changed, recommend running 'cw --refresh-all' for incremental update (no data wiped)",
+            "status_rebuild_hint": "Hint: files changed, recommend running 'cw refresh --all' for incremental update (no data wiped)",
             "status_up_to_date": "✓ Code graph is up to date",
             "kind_fn": "Function",
             "kind_test_fn": "Test",

@@ -418,7 +418,7 @@ def step5_full_build_and_refresh(
 
     # 5.1 全量 build
     rc, stdout, stderr = _run_command(
-        [str(cw_exe), "--refresh-all"],
+        [str(cw_exe), "refresh", "--all"],
         cwd=ws_dir,
         timeout=180.0,
         env=env,
@@ -436,7 +436,7 @@ def step5_full_build_and_refresh(
         encoding="utf-8",
     )
     rc2, stdout2, stderr2 = _run_command(
-        [str(cw_exe), "--refresh", str(sample_py)],
+        [str(cw_exe), "refresh", str(sample_py)],
         cwd=ws_dir,
         timeout=60.0,
         env=env,
@@ -745,7 +745,7 @@ def step7_schema_upgrade_rollback(
     if not init_ok and not db_path.is_file():
         # doctor 命令可能在某些版本不存在，尝试 --refresh-all 触发初始化
         rc_init2, stdout_init2, stderr_init2 = _run_command(
-            [str(cw_exe), "--refresh-all"],
+            [str(cw_exe), "refresh", "--all"],
             cwd=ws_root,
             timeout=120.0,
             env=env,
@@ -867,7 +867,7 @@ def step8_performance_report(
     try:
         for _ in range(5):
             t0 = time.perf_counter()
-            _run_command([str(cw_exe), "--refresh", str(sample_py)], timeout=30.0, env=env)
+            _run_command([str(cw_exe), "refresh", str(sample_py)], timeout=30.0, env=env)
             t1 = time.perf_counter()
             parse_latencies_ms.append((t1 - t0) * 1000.0)
     finally:

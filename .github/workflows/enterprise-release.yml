@@ -477,9 +477,9 @@ jobs:
           cw --help
       - name: Smoke test - init workspace
         run: |
-          cw --register-workspace test $PWD
-          cw --set-workspace test
-          cw --refresh cw.py
+          cw workspace register test $PWD
+          cw workspace set test
+          cw refresh cw.py
         shell: bash
 
   gate5b-macos-install:
@@ -500,9 +500,9 @@ jobs:
           cw --help
       - name: Smoke test - init workspace
         run: |
-          cw --register-workspace test $PWD
-          cw --set-workspace test
-          cw --refresh cw.py
+          cw workspace register test $PWD
+          cw workspace set test
+          cw refresh cw.py
 
   gate5c-linux-install:
     name: "Gate 5c: Linux Install Blackbox (5 子包)"
@@ -536,11 +536,11 @@ jobs:
           sudo systemctl status callwarden-daemon --no-pager
       - name: Smoke test - init workspace + refresh
         run: |
-          cw --register-workspace test $PWD
-          cw --set-workspace test
-          cw --refresh cw.py
+          cw workspace register test $PWD
+          cw workspace set test
+          cw refresh cw.py
           # 验证符号查询
-          cw --query main cw.py
+          cw query main cw.py
 
   # ============================================================
   # Gate 6: N-1 升级/回滚 (Linux)
@@ -595,9 +595,9 @@ jobs:
           sudo dpkg -i debs-prev/*.deb || sudo apt-get install -f -y
           cw --version
           # 初始化测试数据
-          cw --register-workspace test $PWD
-          cw --set-workspace test
-          cw --refresh cw.py
+          cw workspace register test $PWD
+          cw workspace set test
+          cw refresh cw.py
           # 记录数据基线
           echo "N1_SYMBOL_COUNT=$(cw stats | grep 'symbols' | grep -oP '\d+')" >> $GITHUB_ENV
       - name: Upgrade to N (current)
@@ -613,7 +613,7 @@ jobs:
         if: steps.prev_tag.outputs.skip != 'true'
         run: |
           # 验证数据保留
-          cw --set-workspace test
+          cw workspace set test
           cw stats
           NEW_SYMBOL_COUNT=$(cw stats | grep 'symbols' | grep -oP '\d+')
           if [ "$NEW_SYMBOL_COUNT" != "$N1_SYMBOL_COUNT" ]; then
@@ -631,7 +631,7 @@ jobs:
           sleep 3
           sudo systemctl is-active callwarden-daemon
           # 验证数据仍然保留
-          cw --set-workspace test
+          cw workspace set test
           cw stats
 
   # ============================================================

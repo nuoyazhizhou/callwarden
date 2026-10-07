@@ -254,7 +254,7 @@ jobs:
             
             ### 使用方式
             ```bash
-            cw --refresh-all
-            cw --search "login"
+            cw refresh --all
+            cw search "login"
             cw server
             ```

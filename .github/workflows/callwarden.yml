@@ -34,7 +34,7 @@ jobs:
 
       - name: Refresh code graph
         run: |
-          cw --refresh-all
+          cw refresh --all
 
       - name: Run bootstrap gate
         run: |
