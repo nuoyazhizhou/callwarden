@@ -8129,20 +8129,29 @@ def _handle_gc(args, db):
         # v20 新增：查看 GC 审计历史
         from datetime import datetime
         rows = db.gc_audit_list(limit=parsed.limit, operation=parsed.operation)
+        # FIX(全量测试,2026-09-30):daemon admin.gc_audit_list 返回的行可能不含
+        # dry_run/id/operation/status/started_at 等字段(或返回 {items:[...]} 包装),
+        # 旧 CLI 直接 row["dry_run"] 等下标在 daemon 模式下 KeyError(被 fail-soft
+        # 吞成 rc=0)。统一用 .get() 容错,并兼容 dict 包装结构。
+        if isinstance(rows, dict):
+            rows = rows.get("items") or rows.get("rows") or rows.get("audits") or []
         cprint(t("cli.messages.gc_audit_list_title"), "cyan", bold=True)
         if not rows:
             cprint(t("cli.messages.gc_audit_list_empty"), "dim")
             cprint()
             return True
         for idx, row in enumerate(rows, 1):
-            dry_label = t("cli.messages.gc_audit_dry_run_yes") if row["dry_run"] else t(
+            if not isinstance(row, dict):
+                continue
+            dry_label = t("cli.messages.gc_audit_dry_run_yes") if row.get("dry_run") else t(
                 "cli.messages.gc_audit_dry_run_no")
             cprint(t("cli.messages.gc_audit_list_item",
-                     idx=idx, id=row["id"], operation=row["operation"],
-                     status=row["status"], dry_run=dry_label), "dim")
-            ts = datetime.fromtimestamp(
-                row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
-            cprint(t("cli.messages.gc_audit_list_started", ts=ts), "dim")
+                     idx=idx, id=row.get("id", "-"), operation=row.get("operation", "-"),
+                     status=row.get("status", "-"), dry_run=dry_label), "dim")
+            started_at = row.get("started_at")
+            if started_at:
+                ts = datetime.fromtimestamp(started_at).strftime("%Y-%m-%d %H:%M:%S")
+                cprint(t("cli.messages.gc_audit_list_started", ts=ts), "dim")
             if row.get("backup_path"):
                 cprint(t("cli.messages.gc_audit_list_backup",
                        path=row["backup_path"]), "dim")
@@ -8153,7 +8162,7 @@ def _handle_gc(args, db):
             dels = row.get("deleted_counts") or {}
             if dels:
                 cprint(t("cli.messages.gc_audit_list_deleted", deleted=dels), "dim")
-            if row["status"] == "failed" and row.get("error"):
+            if row.get("status") == "failed" and row.get("error"):
                 cprint(t("cli.messages.gc_audit_list_error",
                        error=row["error"]), "red")
         cprint()
@@ -10879,10 +10888,19 @@ def _handle_complexity(args, db):
     print(f"  {'#':>3}  {complexity_h:>6}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
     print(f"  {'-'*3}  {'-'*6}  {'-'*5}  {'-'*4}  {'-'*50}")
     for i, fn in enumerate(hotspots, 1):
-        risk = "!" if fn["cyclomatic_complexity"] > 10 else " "
+        # FIX(全量测试,2026-09-30):daemon query.complexity_hotspots 返回字段是
+        # line_span(按行跨度排序,无真实圈复杂度 cyclomatic_complexity,也无 depth),
+        # 旧 CLI 直接 fn['cyclomatic_complexity']/['line_count']/['depth'] 在 daemon
+        # 模式下 KeyError(被 fail-soft 吞成 rc=0)。用 .get() 兼容:复杂度/深度缺失
+        # 显示 "-",行数用 line_span。
+        cc = fn.get("cyclomatic_complexity")
+        line_count = fn.get("line_count", fn.get("line_span", 0))
+        depth = fn.get("depth", "-")
+        risk = "!" if (isinstance(cc, (int, float)) and cc > 10) else " "
+        cc_label = str(cc) if cc is not None else "-"
         print(
-            f"  {i:3d}{risk}  {fn['cyclomatic_complexity']:>6}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
-        print(f"        {fn['file_path']}:{fn['start_line']}")
+            f"  {i:3d}{risk}  {cc_label:>6}  {line_count:>5}  {str(depth):>4}  {fn.get('qualified_name', '')[:60]}")
+        print(f"        {fn.get('file_path', '')}:{fn.get('start_line', '')}")
     print()
     print(t("cli.messages.complexity_hint"))
     return True
@@ -10902,6 +10920,25 @@ def _handle_coupling(args, db):
     modules = db.get_coupling_analysis(limit=30)
     print(t("cli.messages.coupling_title", count=len(modules)))
     print()
+    # FIX(全量测试,2026-09-30):daemon query.coupling_analysis 返回的是模块对
+    # 耦合(caller_module/callee_module/call_count/unique_caller_count/
+    # unique_callee_count),而非旧 CLI 假设的按模块聚合 afferent/efferent/
+    # total_coupling/instability。旧 CLI 直接 mod['instability'] 等在 daemon 模式下
+    # KeyError(被 fail-soft 吞成 rc=0)。检测返回结构:daemon 的模块对结构显示
+    # caller→callee 调用计数;旧聚合结构(含 instability)沿用原渲染。
+    if modules and isinstance(modules[0], dict) and "caller_module" in modules[0]:
+        caller_h = t("cli.messages.col_module", default="Caller module")
+        callee_h = "Callee module"
+        count_h = t("cli.messages.col_total", default="Calls")
+        print(f"  {'#':>3}  {caller_h:<34s}  {callee_h:<34s}  {count_h:>5}")
+        print(f"  {'-'*3}  {'-'*34}  {'-'*34}  {'-'*5}")
+        for i, mod in enumerate(modules, 1):
+            print(
+                f"  {i:3d}  {mod.get('caller_module', '')[:34]:<34s}  "
+                f"{mod.get('callee_module', '')[:34]:<34s}  "
+                f"{mod.get('call_count', 0):>5}")
+        return True
+    # 旧聚合结构(afferent/efferent/instability)
     module_h = t("cli.messages.col_module", default="Module")
     afferent_h = t("cli.messages.col_afferent", default="In")
     efferent_h = t("cli.messages.col_efferent", default="Out")
@@ -11186,20 +11223,33 @@ def _handle_fn_metrics(args, db):
         print(t("cli.messages.fn_metrics_not_found", name=opts.name))
         print(t("cli.messages.fn_metrics_search_hint"))
     else:
+        # FIX(全量测试,2026-09-30):daemon query.function_metrics 返回 line_span
+        # (无 line_count)、call_count/unique_callee_count(无 fan_in/fan_out)、
+        # 无 cyclomatic_complexity/risk_level/module_path。旧 CLI 直接下标这些字段
+        # 在 daemon 模式下 KeyError(被 fail-soft 吞成 rc=0)。用 .get() 兼容,缺失
+        # 字段显示占位。
         print(t("cli.messages.fn_metrics_title",
-              name=metrics['qualified_name']))
-        print(t("cli.messages.fn_metrics_kind", kind=metrics['kind']))
+              name=metrics.get('qualified_name', '')))
+        print(t("cli.messages.fn_metrics_kind", kind=metrics.get('kind', '')))
         print(t("cli.messages.fn_metrics_file",
-              file=metrics['file_path'], start=metrics['start_line'], end=metrics['end_line']))
-        print(t("cli.messages.fn_metrics_lines", count=metrics['line_count']))
-        print(t("cli.messages.fn_metrics_complexity",
-              value=metrics['cyclomatic_complexity'], risk=metrics['risk_level']))
-        print(t("cli.messages.fn_metrics_fan_in", count=metrics['fan_in']))
-        print(t("cli.messages.fn_metrics_fan_out", count=metrics['fan_out']))
-        print(t("cli.messages.fn_metrics_depth", depth=metrics['depth']))
-        print(t("cli.messages.fn_metrics_module",
-              module=metrics['module_path']))
-        if metrics['signature']:
+              file=metrics.get('file_path', ''), start=metrics.get('start_line', ''),
+              end=metrics.get('end_line', '')))
+        _lines = metrics.get('line_count', metrics.get('line_span', 0))
+        print(t("cli.messages.fn_metrics_lines", count=_lines))
+        if 'cyclomatic_complexity' in metrics:
+            print(t("cli.messages.fn_metrics_complexity",
+                  value=metrics['cyclomatic_complexity'],
+                  risk=metrics.get('risk_level', '-')))
+        # fan_in/fan_out 旧字段;daemon 用 call_count(出向)/unique_callee_count
+        print(t("cli.messages.fn_metrics_fan_in",
+              count=metrics.get('fan_in', metrics.get('call_count', 0))))
+        print(t("cli.messages.fn_metrics_fan_out",
+              count=metrics.get('fan_out', metrics.get('unique_callee_count', 0))))
+        print(t("cli.messages.fn_metrics_depth", depth=metrics.get('depth', '-')))
+        if metrics.get('module_path'):
+            print(t("cli.messages.fn_metrics_module",
+                  module=metrics['module_path']))
+        if metrics.get('signature'):
             print(t("cli.messages.fn_metrics_signature",
                   sig=metrics['signature'][:100]))
     return True
