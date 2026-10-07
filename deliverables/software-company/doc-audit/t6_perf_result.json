@@ -1,0 +1,141 @@
+{
+  "env": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.3",
+    "cpu": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "cpu_count": 22,
+    "workspace": "callwarden self (4baea3ff12c2ea5c)",
+    "symbol_count": 339797,
+    "call_count": 274336,
+    "file_count": 130177,
+    "transport": "http"
+  },
+  "params": {
+    "iters": 200,
+    "warmup": 25
+  },
+  "results": [
+    {
+      "method": "ping",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 0.686,
+      "p50_ms": 1.042,
+      "p95_ms": 19.771,
+      "p99_ms": 24.329,
+      "max_ms": 26.85,
+      "mean_ms": 6.391
+    },
+    {
+      "method": "health",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 0.653,
+      "p50_ms": 1.128,
+      "p95_ms": 22.111,
+      "p99_ms": 24.546,
+      "max_ms": 25.629,
+      "mean_ms": 7.672
+    },
+    {
+      "method": "schema.version",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 0.572,
+      "p50_ms": 0.872,
+      "p95_ms": 19.59,
+      "p99_ms": 24.868,
+      "max_ms": 26.111,
+      "mean_ms": 5.555
+    },
+    {
+      "method": "query.stats",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 1.592,
+      "p50_ms": 12.651,
+      "p95_ms": 34.178,
+      "p99_ms": 41.731,
+      "max_ms": 41.752,
+      "mean_ms": 11.753
+    },
+    {
+      "method": "get_fts_status",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 31.7,
+      "p50_ms": 34.356,
+      "p95_ms": 48.313,
+      "p99_ms": 53.818,
+      "max_ms": 64.102,
+      "mean_ms": 37.228
+    },
+    {
+      "method": "query.search(real-terms)",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 1.478,
+      "p50_ms": 2.068,
+      "p95_ms": 33.013,
+      "p99_ms": 41.515,
+      "max_ms": 46.303,
+      "mean_ms": 10.104
+    },
+    {
+      "method": "query.symbol(real-qnames)",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 3.754,
+      "p50_ms": 16.903,
+      "p95_ms": 40.012,
+      "p99_ms": 44.135,
+      "max_ms": 44.626,
+      "mean_ms": 17.523
+    },
+    {
+      "method": "query.callers(real-qnames)",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 1.154,
+      "p50_ms": 1.696,
+      "p95_ms": 30.697,
+      "p99_ms": 41.957,
+      "max_ms": 43.608,
+      "mean_ms": 9.263
+    },
+    {
+      "method": "query.callees(real-qnames)",
+      "n": 200,
+      "errors": 0,
+      "min_ms": 1.132,
+      "p50_ms": 12.902,
+      "p95_ms": 33.394,
+      "p99_ms": 41.306,
+      "max_ms": 42.675,
+      "mean_ms": 11.931
+    },
+    {
+      "method": "query.call_chain_down(depth5)",
+      "n": 50,
+      "errors": 0,
+      "min_ms": 1.147,
+      "p50_ms": 16.208,
+      "p95_ms": 41.637,
+      "p99_ms": 44.551,
+      "max_ms": 44.551,
+      "mean_ms": 15.765
+    }
+  ],
+  "sampled_qnames": [
+    "tests.test_cli_task_fix.test_task_list_flag_delegates_to_handle_task",
+    "tests.test_cli_task_fix.test_task_list_flag_delegates_to_handle_task.spy_handle_task",
+    "tests.test_cli_task_fix.test_task_list_flag_delegates_to_handle_task.FakeArgs",
+    "tests.test_cli_task_fix.test_task_list_flag_delegates_to_handle_task.FakeArgs.__getattr__",
+    "server.health_check.RecoveryHandler",
+    "server.health_check.RecoveryHandler.__init__",
+    "server.health_check.RecoveryHandler.recover",
+    "server.health_check.RecoveryHandler._recover_workspace_registry",
+    "server.health_check.RecoveryHandler._recover_cas_db",
+    "server.health_check.RecoveryHandler._recover_stale_jobs"
+  ]
+}

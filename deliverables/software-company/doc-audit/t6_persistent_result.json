@@ -1,0 +1,28 @@
+{
+  "mode": "persistent_connection",
+  "iters": 200,
+  "results": {
+    "ping": {
+      "n": 200,
+      "min_ms": 0.499,
+      "p50_ms": 0.727,
+      "p95_ms": 17.928,
+      "p99_ms": 25.203,
+      "max_ms": 25.226,
+      "mean_ms": 4.591
+    },
+    "schema.version": {
+      "n": 200,
+      "min_ms": 0.496,
+      "p50_ms": 0.687,
+      "p95_ms": 16.77,
+      "p99_ms": 19.894,
+      "max_ms": 22.52,
+      "mean_ms": 4.521
+    },
+    "query.callers": {
+      "error": "all failed",
+      "errors": 200
+    }
+  }
+}
