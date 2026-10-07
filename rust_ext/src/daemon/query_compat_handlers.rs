@@ -17,9 +17,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 
-use crate::daemon::dispatch::{
-    get_int_param_or, get_str_param, get_str_param_or, DaemonRpcError,
-};
+use crate::daemon::dispatch::{get_int_param_or, get_str_param, get_str_param_or, DaemonRpcError};
 
 /// 查询结果行数上限（QueryBudget 常量，防止 BFS/DFS 指数爆炸）。
 const MAX_RESULT_ROWS: i64 = 500;
@@ -55,29 +53,40 @@ pub fn handle_get_top_callers(
     }
     // limit 是已 clamp 的整数，直接内联为字面量避免 rusqlite 占位符跳号
     // （空 filter 时 SQL 只有 ?1，若再用 ?3 会报 wrong number of parameters）。
-    sql.push_str(&format!(" GROUP BY cv.callee_qualified ORDER BY caller_count DESC LIMIT {limit}"));
+    sql.push_str(&format!(
+        " GROUP BY cv.callee_qualified ORDER BY caller_count DESC LIMIT {limit}"
+    ));
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("top_callers prepare: {e}")))?;
     let rows: Result<Vec<Value>, rusqlite::Error> = if module_filter.is_empty() {
-        stmt.query_map(rusqlite::params![workspace_id], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "qualified_name": row.get::<_, String>(0)?,
-                "caller_count": row.get::<_, i64>(1)?,
-                "call_count": row.get::<_, i64>(2)?,
-            }))
-        })
+        stmt.query_map(
+            rusqlite::params![workspace_id],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "qualified_name": row.get::<_, String>(0)?,
+                    "caller_count": row.get::<_, i64>(1)?,
+                    "call_count": row.get::<_, i64>(2)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("top_callers query: {e}")))?
         .collect()
     } else {
-        let pattern = format!("%{}%", module_filter.replace('\\', "\\\\").replace('%', "\\%"));
-        stmt.query_map(rusqlite::params![workspace_id, pattern], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "qualified_name": row.get::<_, String>(0)?,
-                "caller_count": row.get::<_, i64>(1)?,
-                "call_count": row.get::<_, i64>(2)?,
-            }))
-        })
+        let pattern = format!(
+            "%{}%",
+            module_filter.replace('\\', "\\\\").replace('%', "\\%")
+        );
+        stmt.query_map(
+            rusqlite::params![workspace_id, pattern],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "qualified_name": row.get::<_, String>(0)?,
+                    "caller_count": row.get::<_, i64>(1)?,
+                    "call_count": row.get::<_, i64>(2)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("top_callers query: {e}")))?
         .collect()
     };
@@ -114,31 +123,42 @@ pub fn handle_get_orphan_symbols(
     if !module_filter.is_empty() {
         sql.push_str(" AND fsv.module_path LIKE ?3 ESCAPE '\\'");
     }
-    sql.push_str(&format!(" ORDER BY fsv.module_path, fsv.qualified_name LIMIT {limit}"));
+    sql.push_str(&format!(
+        " ORDER BY fsv.module_path, fsv.qualified_name LIMIT {limit}"
+    ));
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("orphan_symbols prepare: {e}")))?;
     let rows: Result<Vec<Value>, rusqlite::Error> = if module_filter.is_empty() {
-        stmt.query_map(rusqlite::params![workspace_id, kind], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "qualified_name": row.get::<_, String>(0)?,
-                "module_path": row.get::<_, String>(1)?,
-                "name": row.get::<_, String>(2)?,
-                "kind": row.get::<_, String>(3)?,
-            }))
-        })
+        stmt.query_map(
+            rusqlite::params![workspace_id, kind],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "qualified_name": row.get::<_, String>(0)?,
+                    "module_path": row.get::<_, String>(1)?,
+                    "name": row.get::<_, String>(2)?,
+                    "kind": row.get::<_, String>(3)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("orphan_symbols query: {e}")))?
         .collect()
     } else {
-        let pattern = format!("%{}%", module_filter.replace('\\', "\\\\").replace('%', "\\%"));
-        stmt.query_map(rusqlite::params![workspace_id, kind, pattern], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "qualified_name": row.get::<_, String>(0)?,
-                "module_path": row.get::<_, String>(1)?,
-                "name": row.get::<_, String>(2)?,
-                "kind": row.get::<_, String>(3)?,
-            }))
-        })
+        let pattern = format!(
+            "%{}%",
+            module_filter.replace('\\', "\\\\").replace('%', "\\%")
+        );
+        stmt.query_map(
+            rusqlite::params![workspace_id, kind, pattern],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "qualified_name": row.get::<_, String>(0)?,
+                    "module_path": row.get::<_, String>(1)?,
+                    "name": row.get::<_, String>(2)?,
+                    "kind": row.get::<_, String>(3)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("orphan_symbols query: {e}")))?
         .collect()
     };
@@ -169,31 +189,42 @@ pub fn handle_get_deepest_functions(
     if !module_filter.is_empty() {
         sql.push_str(" AND fsv.module_path LIKE ?3 ESCAPE '\\'");
     }
-    sql.push_str(&format!(" ORDER BY fsv.depth DESC, fsv.qualified_name LIMIT {limit}"));
+    sql.push_str(&format!(
+        " ORDER BY fsv.depth DESC, fsv.qualified_name LIMIT {limit}"
+    ));
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("deepest_functions prepare: {e}")))?;
     let rows: Result<Vec<Value>, rusqlite::Error> = if module_filter.is_empty() {
-        stmt.query_map(rusqlite::params![workspace_id, kind], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "qualified_name": row.get::<_, String>(0)?,
-                "module_path": row.get::<_, String>(1)?,
-                "depth": row.get::<_, i64>(2)?,
-                "kind": row.get::<_, String>(3)?,
-            }))
-        })
+        stmt.query_map(
+            rusqlite::params![workspace_id, kind],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "qualified_name": row.get::<_, String>(0)?,
+                    "module_path": row.get::<_, String>(1)?,
+                    "depth": row.get::<_, i64>(2)?,
+                    "kind": row.get::<_, String>(3)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("deepest_functions query: {e}")))?
         .collect()
     } else {
-        let pattern = format!("%{}%", module_filter.replace('\\', "\\\\").replace('%', "\\%"));
-        stmt.query_map(rusqlite::params![workspace_id, kind, pattern], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "qualified_name": row.get::<_, String>(0)?,
-                "module_path": row.get::<_, String>(1)?,
-                "depth": row.get::<_, i64>(2)?,
-                "kind": row.get::<_, String>(3)?,
-            }))
-        })
+        let pattern = format!(
+            "%{}%",
+            module_filter.replace('\\', "\\\\").replace('%', "\\%")
+        );
+        stmt.query_map(
+            rusqlite::params![workspace_id, kind, pattern],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "qualified_name": row.get::<_, String>(0)?,
+                    "module_path": row.get::<_, String>(1)?,
+                    "depth": row.get::<_, i64>(2)?,
+                    "kind": row.get::<_, String>(3)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("deepest_functions query: {e}")))?
         .collect()
     };
@@ -227,13 +258,16 @@ pub fn handle_get_comment_coverage(
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("comment_coverage prepare: {e}")))?;
     let rows = stmt
-        .query_map(rusqlite::params![workspace_id], |row: &rusqlite::Row<'_>| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })
+        .query_map(
+            rusqlite::params![workspace_id],
+            |row: &rusqlite::Row<'_>| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("comment_coverage query: {e}")))?
         .collect::<Result<Vec<_>, rusqlite::Error>>()
         .map_err(|e| DaemonRpcError::internal_error(format!("comment_coverage query: {e}")))?;
@@ -242,14 +276,12 @@ pub fn handle_get_comment_coverage(
     let mut total_all: i64 = 0;
     let mut total_commented: i64 = 0;
     for (kind, has_comment, cnt) in &rows {
-        let entry = by_kind
-            .entry(kind.clone())
-            .or_insert_with(|| {
-                let mut m = Map::new();
-                m.insert("total".to_string(), Value::Number(0.into()));
-                m.insert("commented".to_string(), Value::Number(0.into()));
-                Value::Object(m)
-            });
+        let entry = by_kind.entry(kind.clone()).or_insert_with(|| {
+            let mut m = Map::new();
+            m.insert("total".to_string(), Value::Number(0.into()));
+            m.insert("commented".to_string(), Value::Number(0.into()));
+            Value::Object(m)
+        });
         if let Value::Object(obj) = entry {
             let t = obj.get("total").and_then(Value::as_i64).unwrap_or(0);
             let c = obj.get("commented").and_then(Value::as_i64).unwrap_or(0);
@@ -266,13 +298,19 @@ pub fn handle_get_comment_coverage(
 
     let mut result = Map::new();
     result.insert("total".to_string(), Value::Number(total_all.into()));
-    result.insert("commented".to_string(), Value::Number(total_commented.into()));
+    result.insert(
+        "commented".to_string(),
+        Value::Number(total_commented.into()),
+    );
     let coverage = if total_all > 0 {
         (total_commented as f64 / total_all as f64 * 10000.0).round() / 100.0
     } else {
         0.0
     };
-    result.insert("coverage".to_string(), Value::Number(serde_json::Number::from_f64(coverage).unwrap_or(0.into())));
+    result.insert(
+        "coverage".to_string(),
+        Value::Number(serde_json::Number::from_f64(coverage).unwrap_or(0.into())),
+    );
     result.insert("by_kind".to_string(), Value::Object(by_kind));
 
     // 2. module/file 分组（Python 仅在 group_by in (module, file) 时附加）
@@ -290,25 +328,38 @@ pub fn handle_get_comment_coverage(
                  GROUP BY fsv.module_path, fi.rel_path, sc.kind, sc.has_comment \
                  ORDER BY fsv.module_path",
             )
-            .map_err(|e| DaemonRpcError::internal_error(format!("comment_coverage prepare: {e}")))?;
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("comment_coverage prepare: {e}"))
+            })?;
         let module_rows = module_stmt
-            .query_map(rusqlite::params![workspace_id], |row: &rusqlite::Row<'_>| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, i64>(4)?,
-                ))
-            })
+            .query_map(
+                rusqlite::params![workspace_id],
+                |row: &rusqlite::Row<'_>| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
             .map_err(|e| DaemonRpcError::internal_error(format!("comment_coverage query: {e}")))?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
             .map_err(|e| DaemonRpcError::internal_error(format!("comment_coverage query: {e}")))?;
 
         let mut modules: Map<String, Value> = Map::new();
         for (module_path, rel_path, kind, has_comment, cnt) in &module_rows {
-            let key = if group_by == "file" { rel_path.clone() } else { module_path.clone() };
-            let key = if key.is_empty() { rel_path.clone() } else { key };
+            let key = if group_by == "file" {
+                rel_path.clone()
+            } else {
+                module_path.clone()
+            };
+            let key = if key.is_empty() {
+                rel_path.clone()
+            } else {
+                key
+            };
             let entry = modules.entry(key).or_insert_with(|| {
                 let mut m = Map::new();
                 m.insert("total".to_string(), Value::Number(0.into()));
@@ -354,9 +405,15 @@ pub fn handle_get_comment_coverage(
             if let Value::Object(obj) = v {
                 let t = obj.get("total").and_then(Value::as_i64).unwrap_or(0);
                 let c = obj.get("commented").and_then(Value::as_i64).unwrap_or(0);
-                let cv = if t > 0 { (c as f64 / t as f64 * 10000.0).round() / 100.0 } else { 0.0 };
-                obj.insert("coverage".to_string(),
-                           Value::Number(serde_json::Number::from_f64(cv).unwrap_or(0.into())));
+                let cv = if t > 0 {
+                    (c as f64 / t as f64 * 10000.0).round() / 100.0
+                } else {
+                    0.0
+                };
+                obj.insert(
+                    "coverage".to_string(),
+                    Value::Number(serde_json::Number::from_f64(cv).unwrap_or(0.into())),
+                );
             }
         }
         if group_by == "module" {
@@ -422,14 +479,17 @@ pub fn handle_get_call_heatmap(
     // Python 取 top_n*2 再截断 top_n（保持等价输出上限）
     let fetch_limit = (top_n * 2).clamp(1, MAX_RESULT_ROWS);
     let rows: Vec<Value> = stmt
-        .query_map(rusqlite::params![workspace_id, fetch_limit], |row: &rusqlite::Row<'_>| {
-            Ok(json!({
-                "group": row.get::<_, String>(0)?,
-                "total_calls": row.get::<_, i64>(1)?,
-                "unique_callers": row.get::<_, i64>(2)?,
-                "unique_callees": row.get::<_, i64>(3)?,
-            }))
-        })
+        .query_map(
+            rusqlite::params![workspace_id, fetch_limit],
+            |row: &rusqlite::Row<'_>| {
+                Ok(json!({
+                    "group": row.get::<_, String>(0)?,
+                    "total_calls": row.get::<_, i64>(1)?,
+                    "unique_callers": row.get::<_, i64>(2)?,
+                    "unique_callees": row.get::<_, i64>(3)?,
+                }))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("call_heatmap query: {e}")))?
         .collect::<Result<Vec<_>, rusqlite::Error>>()
         .map_err(|e| DaemonRpcError::internal_error(format!("call_heatmap query: {e}")))?;
@@ -466,39 +526,46 @@ pub fn handle_find_uncovered_functions(
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("uncovered prepare: {e}")))?;
-    let rows: Result<
-        Vec<(String, String, String, i64, i64, i64, i64)>,
-        rusqlite::Error,
-    > = if module_filter.is_empty() {
-        stmt.query_map(rusqlite::params![workspace_id], |row: &rusqlite::Row<'_>| {
-            Ok((
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(6)?,
-                row.get::<_, i64>(7)?,
-            ))
-        })
-        .map_err(|e| DaemonRpcError::internal_error(format!("uncovered query: {e}")))?
-        .collect()
-    } else {
-        let pattern = format!("%{}%", module_filter.replace('\\', "\\\\").replace('%', "\\%"));
-        stmt.query_map(rusqlite::params![workspace_id, pattern], |row: &rusqlite::Row<'_>| {
-            Ok((
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(6)?,
-                row.get::<_, i64>(7)?,
-            ))
-        })
-        .map_err(|e| DaemonRpcError::internal_error(format!("uncovered query: {e}")))?
-        .collect()
-    };
+    let rows: Result<Vec<(String, String, String, i64, i64, i64, i64)>, rusqlite::Error> =
+        if module_filter.is_empty() {
+            stmt.query_map(
+                rusqlite::params![workspace_id],
+                |row: &rusqlite::Row<'_>| {
+                    Ok((
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                    ))
+                },
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("uncovered query: {e}")))?
+            .collect()
+        } else {
+            let pattern = format!(
+                "%{}%",
+                module_filter.replace('\\', "\\\\").replace('%', "\\%")
+            );
+            stmt.query_map(
+                rusqlite::params![workspace_id, pattern],
+                |row: &rusqlite::Row<'_>| {
+                    Ok((
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                    ))
+                },
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("uncovered query: {e}")))?
+            .collect()
+        };
     let rows = rows.map_err(|e| DaemonRpcError::internal_error(format!("uncovered query: {e}")))?;
 
     let mut out: Vec<Value> = Vec::new();
@@ -572,10 +639,7 @@ fn toolchain_row_to_json(row: &rusqlite::Row<'_>) -> Result<Value, rusqlite::Err
 /// `list_toolchains` —— 列出所有工具链。
 ///
 /// 复刻 db/db_toolchain.py `list_toolchains`（SELECT * FROM toolchains ORDER BY created_at）。
-pub fn handle_list_toolchains(
-    conn: &Connection,
-    _params: &Value,
-) -> Result<Value, DaemonRpcError> {
+pub fn handle_list_toolchains(conn: &Connection, _params: &Value) -> Result<Value, DaemonRpcError> {
     let mut stmt = conn
         .prepare("SELECT * FROM toolchains ORDER BY created_at")
         .map_err(|e| DaemonRpcError::internal_error(format!("list_toolchains prepare: {e}")))?;
@@ -590,10 +654,7 @@ pub fn handle_list_toolchains(
 /// `get_toolchain` —— 按 name 或 id 查询工具链。
 ///
 /// 复刻 db/db_toolchain.py `get_toolchain`。
-pub fn handle_get_toolchain(
-    conn: &Connection,
-    params: &Value,
-) -> Result<Value, DaemonRpcError> {
+pub fn handle_get_toolchain(conn: &Connection, params: &Value) -> Result<Value, DaemonRpcError> {
     let name_or_id = get_str_param_or(params, "name_or_id", "");
     // 兼容整数 id 与字符串 name（Python 按 isinstance 分派）
     let sql = if name_or_id.parse::<i64>().is_ok() {
@@ -653,9 +714,9 @@ pub fn handle_get_workspace_toolchains(
             vec![rusqlite::types::Value::Integer(workspace_id)],
         )
     };
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| DaemonRpcError::internal_error(format!("workspace_toolchains prepare: {e}")))?;
+    let mut stmt = conn.prepare(&sql).map_err(|e| {
+        DaemonRpcError::internal_error(format!("workspace_toolchains prepare: {e}"))
+    })?;
     let mut rows_iter = stmt
         .query(rusqlite::params_from_iter(bind.iter()))
         .map_err(|e| DaemonRpcError::internal_error(format!("workspace_toolchains query: {e}")))?;
@@ -783,8 +844,10 @@ pub fn handle_get_recent_changes(
         .unwrap_or(0.0);
     let cutoff = now - seconds as f64;
 
-    let sql = format!("{FV_SELECT} WHERE fi.workspace_id = ?1 AND fv.parsed_at > ?2 \
-               ORDER BY fv.parsed_at DESC");
+    let sql = format!(
+        "{FV_SELECT} WHERE fi.workspace_id = ?1 AND fv.parsed_at > ?2 \
+               ORDER BY fv.parsed_at DESC"
+    );
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("recent_changes prepare: {e}")))?;
@@ -798,7 +861,10 @@ pub fn handle_get_recent_changes(
     for fv in &changed_files {
         let obj = fv.as_object().unwrap();
         let fv_id = obj.get("id").and_then(Value::as_i64).unwrap_or(0);
-        let fi_id = obj.get("file_instance_id").and_then(Value::as_i64).unwrap_or(0);
+        let fi_id = obj
+            .get("file_instance_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         let version_num = obj.get("version_num").and_then(Value::as_i64).unwrap_or(0);
         let rel_path = obj
             .get("rel_path")
@@ -918,7 +984,8 @@ pub fn handle_get_impact(
         // 500 一批分块（与 Python 相同的 IN 子句占位符上限策略）
         let callee_list: Vec<&String> = current_level.iter().filter(|c| !c.is_empty()).collect();
         for chunk in callee_list.chunks(500) {
-            let placeholders: Vec<String> = (0..chunk.len()).map(|i| format!("?{}", i + 2)).collect();
+            let placeholders: Vec<String> =
+                (0..chunk.len()).map(|i| format!("?{}", i + 2)).collect();
             let sql = format!(
                 "SELECT DISTINCT cv.caller_qualified as caller_name, \
                         cv.callee_qualified as callee_name \
@@ -939,10 +1006,7 @@ pub fn handle_get_impact(
             }
             let rows = stmt
                 .query_map(rusqlite::params_from_iter(bind.iter()), |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                    ))
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                 })
                 .map_err(|e| DaemonRpcError::internal_error(format!("call_chain_up query: {e}")))?;
             for r in rows {
@@ -1027,12 +1091,19 @@ pub fn handle_get_comment_from_version(
         Some(t) => t,
         None => return Ok(Value::Null),
     };
-    let symbol_hash = target.get("symbol_hash").and_then(Value::as_str).unwrap_or("");
+    let symbol_hash = target
+        .get("symbol_hash")
+        .and_then(Value::as_str)
+        .unwrap_or("");
 
     let mut stmt = conn
-        .prepare("SELECT content, has_comment, comment_content FROM symbol_contents \
-                  WHERE content_hash = ?1")
-        .map_err(|e| DaemonRpcError::internal_error(format!("comment_from_version prepare: {e}")))?;
+        .prepare(
+            "SELECT content, has_comment, comment_content FROM symbol_contents \
+                  WHERE content_hash = ?1",
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("comment_from_version prepare: {e}"))
+        })?;
     let content = stmt
         .query_row(rusqlite::params![symbol_hash], |row| {
             Ok((
@@ -1072,110 +1143,286 @@ struct IssueRule {
 }
 
 const COMMON_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "todo_fixme", label: "TODO/FIXME", severity: "warn",
+    IssueRule {
+        key: "todo_fixme",
+        label: "TODO/FIXME",
+        severity: "warn",
         pattern: r"\b(TODO|FIXME|HACK|XXX|WORKAROUND)\b",
-        desc: "代码中包含 TODO/FIXME/HACK 等未完成标记" },
-    IssueRule { key: "hardcoded_path", label: "硬编码路径", severity: "warn",
+        desc: "代码中包含 TODO/FIXME/HACK 等未完成标记",
+    },
+    IssueRule {
+        key: "hardcoded_path",
+        label: "硬编码路径",
+        severity: "warn",
         pattern: r#""(?:src|docs|scripts|tests|target|\.cargo|\.git|/tmp/|/usr/|/etc/|C://|/home/)[//w/-/.//]*""#,
-        desc: "硬编码了文件路径，建议使用配置文件或环境变量" },
-    IssueRule { key: "hardcoded_url", label: "硬编码 URL", severity: "info",
+        desc: "硬编码了文件路径，建议使用配置文件或环境变量",
+    },
+    IssueRule {
+        key: "hardcoded_url",
+        label: "硬编码 URL",
+        severity: "info",
         pattern: r#""https?://[^\s"]+""#,
-        desc: "硬编码了 URL，建议使用配置文件" },
-    IssueRule { key: "magic_number", label: "魔法数字", severity: "info",
+        desc: "硬编码了 URL，建议使用配置文件",
+    },
+    IssueRule {
+        key: "magic_number",
+        label: "魔法数字",
+        severity: "info",
         pattern: r"\b\d{4,}\b",
-        desc: "硬编码的大数字常量（4 位以上），建议定义为具名常量" },
+        desc: "硬编码的大数字常量（4 位以上），建议定义为具名常量",
+    },
 ];
 
 const RUST_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "unwrap_call", label: "unwrap 调用", severity: "danger",
-        pattern: r"\.unwrap\(\)", desc: "使用 unwrap()，可能导致 panic" },
-    IssueRule { key: "expect_call", label: "expect 调用", severity: "warn",
-        pattern: r"\.expect\(", desc: "使用 expect()，可能导致 panic" },
-    IssueRule { key: "panic_macro", label: "panic!/unimplemented!", severity: "danger",
+    IssueRule {
+        key: "unwrap_call",
+        label: "unwrap 调用",
+        severity: "danger",
+        pattern: r"\.unwrap\(\)",
+        desc: "使用 unwrap()，可能导致 panic",
+    },
+    IssueRule {
+        key: "expect_call",
+        label: "expect 调用",
+        severity: "warn",
+        pattern: r"\.expect\(",
+        desc: "使用 expect()，可能导致 panic",
+    },
+    IssueRule {
+        key: "panic_macro",
+        label: "panic!/unimplemented!",
+        severity: "danger",
         pattern: r"\bpanic!\(|\bunimplemented!\(|\btodo!\(\)",
-        desc: "包含 panic!/unimplemented!/todo!() 占位代码" },
-    IssueRule { key: "unsafe_block", label: "unsafe 块", severity: "warn",
+        desc: "包含 panic!/unimplemented!/todo!() 占位代码",
+    },
+    IssueRule {
+        key: "unsafe_block",
+        label: "unsafe 块",
+        severity: "warn",
         pattern: r"\bunsafe\s*\{|\bunsafe\s+fn\b|\bunsafe\s+impl\b",
-        desc: "包含 unsafe 代码块" },
-    IssueRule { key: "clone_heavy", label: "频繁 clone", severity: "info",
-        pattern: r"\.clone\(\)", desc: "频繁使用 clone()，可能影响性能" },
+        desc: "包含 unsafe 代码块",
+    },
+    IssueRule {
+        key: "clone_heavy",
+        label: "频繁 clone",
+        severity: "info",
+        pattern: r"\.clone\(\)",
+        desc: "频繁使用 clone()，可能影响性能",
+    },
 ];
 
 const TYPESCRIPT_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "any_type", label: "any 类型", severity: "warn",
-        pattern: r":\s*any\b|\bas\s+any\b", desc: "使用 any 类型，失去类型安全" },
-    IssueRule { key: "console_log", label: "console.log", severity: "info",
+    IssueRule {
+        key: "any_type",
+        label: "any 类型",
+        severity: "warn",
+        pattern: r":\s*any\b|\bas\s+any\b",
+        desc: "使用 any 类型，失去类型安全",
+    },
+    IssueRule {
+        key: "console_log",
+        label: "console.log",
+        severity: "info",
         pattern: r"console\.(log|error|warn|debug)\(",
-        desc: "包含 console 调试输出，建议移除" },
-    IssueRule { key: "ts_ignore", label: "@ts-ignore", severity: "warn",
-        pattern: r"@ts-ignore|@ts-nocheck", desc: "使用 @ts-ignore 跳过类型检查" },
-    IssueRule { key: "non_null_assertion", label: "非空断言", severity: "warn",
-        pattern: r"\w!\s*[.\(\)]", desc: "使用非空断言操作符 (!)，可能导致运行时错误" },
+        desc: "包含 console 调试输出，建议移除",
+    },
+    IssueRule {
+        key: "ts_ignore",
+        label: "@ts-ignore",
+        severity: "warn",
+        pattern: r"@ts-ignore|@ts-nocheck",
+        desc: "使用 @ts-ignore 跳过类型检查",
+    },
+    IssueRule {
+        key: "non_null_assertion",
+        label: "非空断言",
+        severity: "warn",
+        pattern: r"\w!\s*[.\(\)]",
+        desc: "使用非空断言操作符 (!)，可能导致运行时错误",
+    },
 ];
 
 const PYTHON_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "bare_except", label: "裸 except", severity: "danger",
-        pattern: r"except\s*:", desc: "使用裸 except，会捕获所有异常包括 SystemExit" },
-    IssueRule { key: "print_debug", label: "print 调试", severity: "info",
-        pattern: r"\bprint\(", desc: "包含 print 调试输出，建议使用 logging" },
-    IssueRule { key: "broad_except", label: "宽泛异常", severity: "warn",
-        pattern: r"except\s+Exception\s*:", desc: "捕获 Exception 过于宽泛，建议精确捕获" },
-    IssueRule { key: "mutable_default", label: "可变默认参数", severity: "warn",
+    IssueRule {
+        key: "bare_except",
+        label: "裸 except",
+        severity: "danger",
+        pattern: r"except\s*:",
+        desc: "使用裸 except，会捕获所有异常包括 SystemExit",
+    },
+    IssueRule {
+        key: "print_debug",
+        label: "print 调试",
+        severity: "info",
+        pattern: r"\bprint\(",
+        desc: "包含 print 调试输出，建议使用 logging",
+    },
+    IssueRule {
+        key: "broad_except",
+        label: "宽泛异常",
+        severity: "warn",
+        pattern: r"except\s+Exception\s*:",
+        desc: "捕获 Exception 过于宽泛，建议精确捕获",
+    },
+    IssueRule {
+        key: "mutable_default",
+        label: "可变默认参数",
+        severity: "warn",
         pattern: r"def\s+\w+\([^)]*=\s*(\[\]|\{\})",
-        desc: "使用可变对象作为默认参数，可能导致意外行为" },
+        desc: "使用可变对象作为默认参数，可能导致意外行为",
+    },
 ];
 
 const KOTLIN_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "!!_operator", label: "!! 非空断言", severity: "warn",
-        pattern: r"\w\s*!!", desc: "使用 !! 非空断言，可能导致 NullPointerException" },
-    IssueRule { key: "println_debug", label: "println 调试", severity: "info",
-        pattern: r"\bprintln\(", desc: "包含 println 调试输出" },
-    IssueRule { key: "unsafe_cast", label: "不安全类型转换", severity: "warn",
-        pattern: r"\bas\s+\w", desc: "使用不安全的类型转换，建议用安全转换 as?" },
+    IssueRule {
+        key: "!!_operator",
+        label: "!! 非空断言",
+        severity: "warn",
+        pattern: r"\w\s*!!",
+        desc: "使用 !! 非空断言，可能导致 NullPointerException",
+    },
+    IssueRule {
+        key: "println_debug",
+        label: "println 调试",
+        severity: "info",
+        pattern: r"\bprintln\(",
+        desc: "包含 println 调试输出",
+    },
+    IssueRule {
+        key: "unsafe_cast",
+        label: "不安全类型转换",
+        severity: "warn",
+        pattern: r"\bas\s+\w",
+        desc: "使用不安全的类型转换，建议用安全转换 as?",
+    },
 ];
 
 const GO_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "nil_check_missing", label: "缺少 nil 检查", severity: "warn",
-        pattern: r"\.([A-Z]\w*)\(", desc: "可能缺少 nil 检查（调用方法前未判断 nil）" },
-    IssueRule { key: "err_ignored", label: "忽略错误返回", severity: "danger",
-        pattern: r"_\s*=\s*\w+\.\w+\(", desc: "使用 _ 忽略了错误返回值，建议处理错误" },
-    IssueRule { key: "fmt_print_debug", label: "fmt.Print 调试", severity: "info",
-        pattern: r"fmt\.Print(ln|f)?\(", desc: "包含 fmt.Print 调试输出，建议使用日志库" },
-    IssueRule { key: "panic_call", label: "panic 调用", severity: "danger",
-        pattern: r"\bpanic\(", desc: "使用 panic()，可能导致程序崩溃" },
-    IssueRule { key: "unsafe_import", label: "unsafe 包", severity: "warn",
-        pattern: r#""unsafe""#, desc: "导入了 unsafe 包，可能存在内存安全风险" },
+    IssueRule {
+        key: "nil_check_missing",
+        label: "缺少 nil 检查",
+        severity: "warn",
+        pattern: r"\.([A-Z]\w*)\(",
+        desc: "可能缺少 nil 检查（调用方法前未判断 nil）",
+    },
+    IssueRule {
+        key: "err_ignored",
+        label: "忽略错误返回",
+        severity: "danger",
+        pattern: r"_\s*=\s*\w+\.\w+\(",
+        desc: "使用 _ 忽略了错误返回值，建议处理错误",
+    },
+    IssueRule {
+        key: "fmt_print_debug",
+        label: "fmt.Print 调试",
+        severity: "info",
+        pattern: r"fmt\.Print(ln|f)?\(",
+        desc: "包含 fmt.Print 调试输出，建议使用日志库",
+    },
+    IssueRule {
+        key: "panic_call",
+        label: "panic 调用",
+        severity: "danger",
+        pattern: r"\bpanic\(",
+        desc: "使用 panic()，可能导致程序崩溃",
+    },
+    IssueRule {
+        key: "unsafe_import",
+        label: "unsafe 包",
+        severity: "warn",
+        pattern: r#""unsafe""#,
+        desc: "导入了 unsafe 包，可能存在内存安全风险",
+    },
 ];
 
 const JAVA_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "print_stack_trace", label: "printStackTrace", severity: "warn",
-        pattern: r"\.printStackTrace\(", desc: "使用 printStackTrace()，建议使用日志框架" },
-    IssueRule { key: "system_out_print", label: "System.out 调试", severity: "info",
-        pattern: r"System\.out\.print(ln)?\(", desc: "包含 System.out 调试输出，建议使用日志框架" },
-    IssueRule { key: "empty_catch", label: "空 catch 块", severity: "warn",
-        pattern: r"catch\s*\([^)]+\)\s*\{[\s;]*\}", desc: "空的 catch 块，异常被静默吞掉" },
-    IssueRule { key: "raw_type", label: "原始类型", severity: "warn",
+    IssueRule {
+        key: "print_stack_trace",
+        label: "printStackTrace",
+        severity: "warn",
+        pattern: r"\.printStackTrace\(",
+        desc: "使用 printStackTrace()，建议使用日志框架",
+    },
+    IssueRule {
+        key: "system_out_print",
+        label: "System.out 调试",
+        severity: "info",
+        pattern: r"System\.out\.print(ln)?\(",
+        desc: "包含 System.out 调试输出，建议使用日志框架",
+    },
+    IssueRule {
+        key: "empty_catch",
+        label: "空 catch 块",
+        severity: "warn",
+        pattern: r"catch\s*\([^)]+\)\s*\{[\s;]*\}",
+        desc: "空的 catch 块，异常被静默吞掉",
+    },
+    IssueRule {
+        key: "raw_type",
+        label: "原始类型",
+        severity: "warn",
         pattern: r"\b(List|Map|Set|Collection|Iterator|Comparable)\s*[^<\w]",
-        desc: "使用原始类型（未指定泛型参数），失去类型安全" },
-    IssueRule { key: "magic_suppress", label: "@SuppressWarnings", severity: "info",
-        pattern: r"@SuppressWarnings", desc: "使用 @SuppressWarnings 抑制警告" },
+        desc: "使用原始类型（未指定泛型参数），失去类型安全",
+    },
+    IssueRule {
+        key: "magic_suppress",
+        label: "@SuppressWarnings",
+        severity: "info",
+        pattern: r"@SuppressWarnings",
+        desc: "使用 @SuppressWarnings 抑制警告",
+    },
 ];
 
 const C_CPP_ISSUE_RULES: &[IssueRule] = &[
-    IssueRule { key: "printf_debug", label: "printf 调试", severity: "info",
-        pattern: r"\bprintf\(|\bfprintf\(", desc: "包含 printf/fprintf 调试输出" },
-    IssueRule { key: "unsafe_malloc", label: "malloc 不检查", severity: "danger",
-        pattern: r"=\s*malloc\s*\(", desc: "调用 malloc 后未检查返回值是否为 NULL" },
-    IssueRule { key: "unsafe_free", label: "野指针风险", severity: "warn",
-        pattern: r"free\s*\([^)]+\);", desc: "free 后未置空指针，可能导致野指针" },
-    IssueRule { key: "goto_statement", label: "goto 语句", severity: "warn",
-        pattern: r"\bgoto\s+\w+", desc: "使用 goto 语句，影响代码可读性" },
-    IssueRule { key: "char_buffer", label: "char 数组溢出", severity: "warn",
-        pattern: r"char\s+\w+\s*\[\d+\]", desc: "固定大小 char 数组，可能存在缓冲区溢出风险" },
-    IssueRule { key: "void_star", label: "void* 指针", severity: "warn",
-        pattern: r"void\s*\*", desc: "使用 void* 指针，失去类型安全" },
-    IssueRule { key: "define_macro", label: "宏定义", severity: "info",
-        pattern: r"#define\s+\w+", desc: "使用宏定义，建议用 const/constexpr 替代" },
+    IssueRule {
+        key: "printf_debug",
+        label: "printf 调试",
+        severity: "info",
+        pattern: r"\bprintf\(|\bfprintf\(",
+        desc: "包含 printf/fprintf 调试输出",
+    },
+    IssueRule {
+        key: "unsafe_malloc",
+        label: "malloc 不检查",
+        severity: "danger",
+        pattern: r"=\s*malloc\s*\(",
+        desc: "调用 malloc 后未检查返回值是否为 NULL",
+    },
+    IssueRule {
+        key: "unsafe_free",
+        label: "野指针风险",
+        severity: "warn",
+        pattern: r"free\s*\([^)]+\);",
+        desc: "free 后未置空指针，可能导致野指针",
+    },
+    IssueRule {
+        key: "goto_statement",
+        label: "goto 语句",
+        severity: "warn",
+        pattern: r"\bgoto\s+\w+",
+        desc: "使用 goto 语句，影响代码可读性",
+    },
+    IssueRule {
+        key: "char_buffer",
+        label: "char 数组溢出",
+        severity: "warn",
+        pattern: r"char\s+\w+\s*\[\d+\]",
+        desc: "固定大小 char 数组，可能存在缓冲区溢出风险",
+    },
+    IssueRule {
+        key: "void_star",
+        label: "void* 指针",
+        severity: "warn",
+        pattern: r"void\s*\*",
+        desc: "使用 void* 指针，失去类型安全",
+    },
+    IssueRule {
+        key: "define_macro",
+        label: "宏定义",
+        severity: "info",
+        pattern: r"#define\s+\w+",
+        desc: "使用宏定义，建议用 const/constexpr 替代",
+    },
 ];
 
 /// 复刻 `LANGUAGE_RULES_MAP.get(language, [])`（语言 → 专用规则）。
@@ -1346,11 +1593,18 @@ pub fn handle_find_issues(
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("find_issues prepare: {e}")))?;
-    let pattern = format!("%{}%", module_filter.replace('\\', "\\\\").replace('%', "\\%"));
+    let pattern = format!(
+        "%{}%",
+        module_filter.replace('\\', "\\\\").replace('%', "\\%")
+    );
     type IssueRow = (String, String, String, i64, String);
     let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<IssueRow> {
         Ok((
-            row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
         ))
     };
     let rows: Vec<IssueRow> = if !qualified_name.is_empty() && !module_filter.is_empty() {
@@ -1370,8 +1624,10 @@ pub fn handle_find_issues(
     .map_err(|e| DaemonRpcError::internal_error(format!("find_issues query: {e}")))?;
 
     // 按行语言惰性编译规则（同一语言复用缓存）
-    let mut rule_cache: std::collections::HashMap<&'static str, Vec<(&'static IssueRule, regex::Regex)>> =
-        std::collections::HashMap::new();
+    let mut rule_cache: std::collections::HashMap<
+        &'static str,
+        Vec<(&'static IssueRule, regex::Regex)>,
+    > = std::collections::HashMap::new();
 
     let mut results: Vec<Value> = Vec::new();
     for (qn, module_path, content, has_comment, name) in rows {
@@ -1417,7 +1673,10 @@ pub fn handle_get_issue_summary(
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("issue_summary prepare: {e}")))?;
-    let pattern = format!("%{}%", module_filter.replace('\\', "\\\\").replace('%', "\\%"));
+    let pattern = format!(
+        "%{}%",
+        module_filter.replace('\\', "\\\\").replace('%', "\\%")
+    );
     type SummaryRow = (String, String, String, i64);
     let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<SummaryRow> {
         Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -1440,8 +1699,10 @@ pub fn handle_get_issue_summary(
         stat_meta.push((r.key, r.label, r.severity, r.desc));
     }
 
-    let mut rule_cache: std::collections::HashMap<&'static str, Vec<(&'static IssueRule, regex::Regex)>> =
-        std::collections::HashMap::new();
+    let mut rule_cache: std::collections::HashMap<
+        &'static str,
+        Vec<(&'static IssueRule, regex::Regex)>,
+    > = std::collections::HashMap::new();
 
     let mut total_functions: i64 = 0;
     let mut functions_with_issues: i64 = 0;
@@ -1690,7 +1951,10 @@ pub fn handle_export_module_graph(
         if !all_modules.contains(&callee_mod) {
             all_modules.push(callee_mod.clone());
         }
-        match edges.iter_mut().find(|(c, e, _)| c == &caller_mod && e == &callee_mod) {
+        match edges
+            .iter_mut()
+            .find(|(c, e, _)| c == &caller_mod && e == &callee_mod)
+        {
             Some(e) => e.2 += count,
             None => edges.push((caller_mod, callee_mod, count)),
         }
@@ -1760,10 +2024,7 @@ pub fn handle_export_module_graph(
 
 /// 局部 f64 参数helper（dispatch.rs 目前只有 str/int 变体）。
 fn get_f64_param_or(params: &Value, key: &str, default: f64) -> f64 {
-    params
-        .get(key)
-        .and_then(Value::as_f64)
-        .unwrap_or(default)
+    params.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
 
 /// `get_symbol_change_tasks` —— 反查符号版本/符号名由哪些任务改变过。
@@ -1920,14 +2181,7 @@ pub fn handle_bootstrap_status(
             "SELECT id, git_head, started_at, status FROM workspace_scan_runs \
              WHERE workspace_id = ?1 ORDER BY started_at DESC LIMIT 1",
             rusqlite::params![workspace_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .map_err(|e| DaemonRpcError::internal_error(format!("bootstrap scan_run: {e}")))?;
@@ -2017,8 +2271,7 @@ pub fn handle_bootstrap_status(
         "open": 0, "in_progress": 0, "review": 0, "applied": 0
     });
     if let Ok(mut stmt) = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status") {
-        if let Ok(rows) =
-            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
         {
             for row in rows.flatten() {
                 if let Some(slot) = task_counts.get_mut(&row.0) {
@@ -2030,7 +2283,7 @@ pub fn handle_bootstrap_status(
 
     // 8. 推荐下一条命令（分支顺序与 Python 一致）
     let recommended = if db_stale {
-        "cw --refresh-all"
+        "cw refresh --all"
     } else if blocking_findings_count > 0 {
         "cw task findings <task_id>  # 有阻塞发现需修复"
     } else if pending_candidates_count > 0 {
@@ -2452,7 +2705,10 @@ fn parse_codeowners_rules(content: &str) -> Vec<Value> {
 /// 语言 → manifest 候选文件（顺序敏感，复刻 db_external.LANG_PACKAGE_MANAGERS
 /// 的 dict 顺序与 manifest_files 列表）。
 const LANG_MANIFESTS: [(&str, &[&str]); 13] = [
-    ("python", &["requirements.txt", "pyproject.toml", "setup.py"]),
+    (
+        "python",
+        &["requirements.txt", "pyproject.toml", "setup.py"],
+    ),
     ("rust", &["Cargo.toml"]),
     ("java", &["pom.xml", "build.gradle"]),
     ("scala", &["build.sbt", "pom.xml", "build.gradle"]),
@@ -2597,7 +2853,10 @@ fn parse_python_deps(base: &Path, out: &mut Map<String, Value>) {
     let pyproject = base.join("pyproject.toml");
     if pyproject.exists() {
         if let Some(doc) = load_toml(&pyproject) {
-            for section in [&["project", "dependencies"][..], &["tool", "poetry", "dependencies"][..]] {
+            for section in [
+                &["project", "dependencies"][..],
+                &["tool", "poetry", "dependencies"][..],
+            ] {
                 let mut cur = Some(&doc);
                 for key in section {
                     cur = cur.and_then(|v| v.get(key));
@@ -2860,9 +3119,8 @@ fn parse_csharp_manifest(path: &Path, out: &mut Map<String, Value>) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
-    let Ok(re) = regex::Regex::new(
-        r#"<PackageReference\s+Include="([^"]+)"\s+Version="([^"]*)""#,
-    ) else {
+    let Ok(re) = regex::Regex::new(r#"<PackageReference\s+Include="([^"]+)"\s+Version="([^"]*)""#)
+    else {
         return;
     };
     for cap in re.captures_iter(&content) {
@@ -3083,10 +3341,8 @@ pub fn handle_find_similar_functions(
         return Ok(Value::Array(vec![]));
     }
     let all = load_embeddings(conn)?;
-    let filtered: Vec<(String, Vec<f32>)> = all
-        .into_iter()
-        .filter(|(h, _)| h != &target_hash)
-        .collect();
+    let filtered: Vec<(String, Vec<f32>)> =
+        all.into_iter().filter(|(h, _)| h != &target_hash).collect();
     let top = cosine_topk(&target_vec, &filtered, threshold, top_k as usize);
     symbol_results(conn, workspace_id, &top)
 }
@@ -3199,9 +3455,8 @@ mod semantic_tests {
 
     #[test]
     fn codeowners_rules_respect_comments_and_owners() {
-        let rules = parse_codeowners_rules(
-            "# 顶层注释\n\n*.py @alice @bob  # 行内注释\n/docs/ @team\nC\n",
-        );
+        let rules =
+            parse_codeowners_rules("# 顶层注释\n\n*.py @alice @bob  # 行内注释\n/docs/ @team\nC\n");
         assert_eq!(rules.len(), 3);
         assert_eq!(rules[0]["pattern"], json!("*.py"));
         assert_eq!(rules[0]["owners"], json!(["@alice", "@bob"]));
@@ -3268,12 +3523,9 @@ mod semantic_tests {
             [],
         )
         .unwrap();
-        let ok = handle_get_symbol_commit_history(
-            &conn,
-            1,
-            &json!({ "symbol_hash": "h1", "limit": 5 }),
-        )
-        .unwrap();
+        let ok =
+            handle_get_symbol_commit_history(&conn, 1, &json!({ "symbol_hash": "h1", "limit": 5 }))
+                .unwrap();
         assert_eq!(ok.as_array().unwrap().len(), 1);
         assert_eq!(ok[0]["commit_hash"], json!("abc"));
         assert_eq!(ok[0]["change_type"], json!("modified"));
@@ -3311,7 +3563,8 @@ mod semantic_tests {
             [],
         )
         .unwrap();
-        let hits = handle_semantic_search(&conn, 1, &json!({ "query": "auth", "top_k": 3 })).unwrap();
+        let hits =
+            handle_semantic_search(&conn, 1, &json!({ "query": "auth", "top_k": 3 })).unwrap();
         assert_eq!(hits.as_array().unwrap().len(), 1);
         assert_eq!(hits[0]["qualified_name"], json!("mod::a"));
         assert!(hits[0]["similarity"].as_f64().unwrap().abs() <= 1.0);
@@ -3326,7 +3579,8 @@ mod semantic_tests {
         seed_symbol(&conn, "h1", "mod::a");
         // 有 symbol 无 embedding → 空
         let no_emb =
-            handle_find_similar_functions(&conn, 1, &json!({ "qualified_name": "mod::a" })).unwrap();
+            handle_find_similar_functions(&conn, 1, &json!({ "qualified_name": "mod::a" }))
+                .unwrap();
         assert_eq!(no_emb, json!([]));
         // 注入 target + 候选 embedding
         conn.execute(
@@ -3371,9 +3625,12 @@ mod semantic_tests {
         let rules = handle_parse_codeowners(&conn, 1, &json!({})).unwrap();
         assert_eq!(rules.as_array().unwrap().len(), 1);
         assert_eq!(rules[0]["pattern"], json!("*.rs"));
-        let explicit =
-            handle_parse_codeowners(&conn, 1, &json!({ "file_path": dir.join("nope").to_str().unwrap() }))
-                .unwrap();
+        let explicit = handle_parse_codeowners(
+            &conn,
+            1,
+            &json!({ "file_path": dir.join("nope").to_str().unwrap() }),
+        )
+        .unwrap();
         assert_eq!(explicit, json!([]));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3446,17 +3703,16 @@ pub fn handle_list_branches(
         .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+        out.push(
+            row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?,
+        );
     }
     Ok(Value::Array(out))
 }
 
 /// cross_layer_impact 的 db/api/config 三层正则提取（复刻 db_impact.py
 /// Python 全路径；code 层由调用方负责 SQL 查询）。返回计数（by_layer 用）。
-fn security_cross_layer_counts(
-    source_name: &str,
-    content: &str,
-) -> (usize, usize, usize) {
+fn security_cross_layer_counts(source_name: &str, content: &str) -> (usize, usize, usize) {
     // DB 层：SQL 表名提取（FROM/UPDATE/INSERT INTO/DELETE FROM），BTreeSet 保序去重
     let mut table_names = BTreeSet::new();
     for pat in [
@@ -3477,18 +3733,19 @@ fn security_cross_layer_counts(
 
     // API 层：函数名关键词 / HTTP 注解 / 路由装饰器（命中与否 → 0 或 1 条）
     let name_lower = source_name.to_lowercase();
-    let is_api_name =
-        name_lower.contains("route") || name_lower.contains("handler") || name_lower.contains("endpoint");
-    let http_annotation = regex::Regex::new(r"(?i)#\[(?:get|post|put|delete|patch|head|options)\s*\(")
-        .ok()
-        .map(|re| re.is_match(content))
-        .unwrap_or(false);
+    let is_api_name = name_lower.contains("route")
+        || name_lower.contains("handler")
+        || name_lower.contains("endpoint");
+    let http_annotation =
+        regex::Regex::new(r"(?i)#\[(?:get|post|put|delete|patch|head|options)\s*\(")
+            .ok()
+            .map(|re| re.is_match(content))
+            .unwrap_or(false);
     let route_decorator = regex::Regex::new(r"(?i)@\w+\.(?:route|get|post|put|delete|patch)\s*\(")
         .ok()
         .map(|re| re.is_match(content))
         .unwrap_or(false);
-    let api_count =
-        usize::from(is_api_name || http_annotation || route_decorator);
+    let api_count = usize::from(is_api_name || http_annotation || route_decorator);
 
     // 配置层：配置项引用提取
     let mut config_keys = BTreeSet::new();
@@ -3587,7 +3844,9 @@ fn security_blast_radius_sql(
         for id in &current_batch {
             bind_params.push(Box::new(*id));
         }
-        let mut rows = match stmt.query(rusqlite::params_from_iter(bind_params.iter().map(|b| b.as_ref()))) {
+        let mut rows = match stmt.query(rusqlite::params_from_iter(
+            bind_params.iter().map(|b| b.as_ref()),
+        )) {
             Ok(rows) => rows,
             Err(_) => break,
         };
@@ -3595,9 +3854,19 @@ fn security_blast_radius_sql(
         let mut layer_symbols: Vec<Value> = Vec::new();
         while let Ok(Some(r)) = rows.next() {
             let id: i64 = r.get(0).unwrap_or(0);
-            let sh: String = r.get::<_, Option<String>>(1).unwrap_or(None).unwrap_or_default();
-            let qn: String = r.get::<_, Option<String>>(2).unwrap_or(None).unwrap_or_default();
-            let key = if qn.is_empty() { sh.clone() } else { qn.clone() };
+            let sh: String = r
+                .get::<_, Option<String>>(1)
+                .unwrap_or(None)
+                .unwrap_or_default();
+            let qn: String = r
+                .get::<_, Option<String>>(2)
+                .unwrap_or(None)
+                .unwrap_or_default();
+            let key = if qn.is_empty() {
+                sh.clone()
+            } else {
+                qn.clone()
+            };
             if visited_qn.contains(&key) || visited_hash.contains(&sh) {
                 continue;
             }
@@ -3638,10 +3907,7 @@ fn security_blast_radius_sql(
         .flatten()
         .unwrap_or(None)
         .unwrap_or_default();
-    let (db_n, api_n, config_n) = security_cross_layer_counts(
-        &row.3.unwrap_or_default(),
-        &content,
-    );
+    let (db_n, api_n, config_n) = security_cross_layer_counts(&row.3.unwrap_or_default(), &content);
     let code_n: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM calls c \
@@ -3788,7 +4054,9 @@ pub fn handle_get_edit_history(
             .query_map([rel_path, limit.to_string()], security_edit_row_to_json)
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         for row in rows {
-            out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+            out.push(row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}"))
+            })?);
         }
     } else {
         let mut stmt = conn
@@ -3800,7 +4068,9 @@ pub fn handle_get_edit_history(
             .query_map([limit], security_edit_row_to_json)
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         for row in rows {
-            out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+            out.push(row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}"))
+            })?);
         }
     }
     Ok(Value::Array(out))
@@ -3828,11 +4098,7 @@ fn security_edit_row_to_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 /// find_shared_symbols 核心（复刻 db_cross_repo.find_shared_symbols：
 /// symbol_contents content_hash 分组 + 跨 workspace 配对）。供
 /// handle_find_shared_symbols 与 handle_cross_repo_summary 复用。
-fn security_find_shared_symbols(
-    conn: &Connection,
-    workspace_a: &str,
-    workspace_b: &str,
-) -> Value {
+fn security_find_shared_symbols(conn: &Connection, workspace_a: &str, workspace_b: &str) -> Value {
     // workspace_a 不存在 → 空结果（与 Python 一致）
     if !workspace_a.is_empty() && security_workspace_id_by_name(conn, workspace_a).is_none() {
         return json!({"total_shared": 0, "shared_symbols": []});
@@ -3882,7 +4148,13 @@ fn security_find_shared_symbols(
     };
     let mut by_hash: HashMap<String, Vec<(i64, String, String, String, String)>> = HashMap::new();
     for row in rows.flatten() {
-        by_hash.entry(row.0).or_default().push((row.3, row.4, row.1.unwrap_or_default(), row.2.unwrap_or_default(), String::new()));
+        by_hash.entry(row.0).or_default().push((
+            row.3,
+            row.4,
+            row.1.unwrap_or_default(),
+            row.2.unwrap_or_default(),
+            String::new(),
+        ));
     }
 
     // Python defaultdict 保插入序（content_hash 排序后首现序）；输出顺序对齐：
@@ -4011,12 +4283,10 @@ pub fn handle_cross_repo_impact(
     let mut order: Vec<String> = Vec::new();
     let mut impacted: BTreeMap<String, (String, f64, Vec<String>)> = BTreeMap::new();
     for dep in rows.flatten() {
-        let entry = impacted
-            .entry(dep.1.clone())
-            .or_insert_with(|| {
-                order.push(dep.1.clone());
-                (dep.2.clone().unwrap_or_default(), dep.3, Vec::new())
-            });
+        let entry = impacted.entry(dep.1.clone()).or_insert_with(|| {
+            order.push(dep.1.clone());
+            (dep.2.clone().unwrap_or_default(), dep.3, Vec::new())
+        });
         if let Some(sh) = dep.4 {
             if !sh.is_empty() {
                 entry.2.push(sh);
@@ -4026,15 +4296,11 @@ pub fn handle_cross_repo_impact(
 
     // local blast_radius（Python worker 通道因 GraphStore 缺失恒异常 → 0；
     // Rust 实现完整 SQL BFS，行为改进已在 evidence 声明）
-    let local_impacted_count = match security_blast_radius_sql(
-        conn,
-        workspace_id,
-        &symbol_hash,
-        depth,
-    ) {
-        Some((_, _, total, _)) => total,
-        None => 0,
-    };
+    let local_impacted_count =
+        match security_blast_radius_sql(conn, workspace_id, &symbol_hash, depth) {
+            Some((_, _, total, _)) => total,
+            None => 0,
+        };
 
     let impacted_list: Vec<Value> = order
         .iter()
@@ -4097,7 +4363,9 @@ pub fn handle_cross_repo_summary(
         .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
     let mut repos = Vec::new();
     for row in rows {
-        repos.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+        repos.push(
+            row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?,
+        );
     }
 
     let mut stmt = conn
@@ -4105,10 +4373,7 @@ pub fn handle_cross_repo_summary(
         .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
     let rows = stmt
         .query_map([], |r| {
-            Ok((
-                r.get::<_, Option<String>>(0)?,
-                r.get::<_, i64>(1)?,
-            ))
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?))
         })
         .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
     let mut deps_by_type = serde_json::Map::new();
@@ -4343,7 +4608,9 @@ pub fn handle_rule_candidate_list(
             .query_map([status, limit.to_string()], security_row_to_candidate)
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         for row in rows {
-            out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+            out.push(row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}"))
+            })?);
         }
     } else {
         let mut stmt = conn
@@ -4355,7 +4622,9 @@ pub fn handle_rule_candidate_list(
             .query_map([limit], security_row_to_candidate)
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         for row in rows {
-            out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+            out.push(row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}"))
+            })?);
         }
     }
     let count = out.len() as i64;
@@ -4389,19 +4658,21 @@ pub fn handle_rule_list(
             .query_map([status, limit.to_string()], security_row_to_rule)
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         for row in rows {
-            out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+            out.push(row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}"))
+            })?);
         }
     } else {
         let mut stmt = conn
-            .prepare(&format!(
-                "SELECT {COLS} FROM agent_rules {ORDER} LIMIT ?1"
-            ))
+            .prepare(&format!("SELECT {COLS} FROM agent_rules {ORDER} LIMIT ?1"))
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         let rows = stmt
             .query_map([limit], security_row_to_rule)
             .map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?;
         for row in rows {
-            out.push(row.map_err(|e| DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}")))?);
+            out.push(row.map_err(|e| {
+                DaemonRpcError::internal_error(format!("security 组 SQL 失败: {e}"))
+            })?);
         }
     }
     let count = out.len() as i64;
@@ -4499,7 +4770,11 @@ fn security_match_scope(scope: &Value, params_ctx: &Value) -> (Vec<String>, bool
         // Python fnmatch.fnmatch 在 Windows 上经 os.path.normcase 把
         // pattern 与 name 都转小写（大小写不敏感）；POSIX 保持原样。
         let norm = |s: &str| -> String {
-            if cfg!(windows) { s.to_lowercase() } else { s.to_string() }
+            if cfg!(windows) {
+                s.to_lowercase()
+            } else {
+                s.to_string()
+            }
         };
         let hit = scope_patterns.iter().any(|pat| {
             security_fnmatch_to_regex(&norm(pat))
@@ -4561,7 +4836,11 @@ fn security_match_scope(scope: &Value, params_ctx: &Value) -> (Vec<String>, bool
             .get("module_prefix")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if ctx_module.is_empty() || !scope_prefixes.iter().any(|p| ctx_module.starts_with(p.as_str())) {
+        if ctx_module.is_empty()
+            || !scope_prefixes
+                .iter()
+                .any(|p| ctx_module.starts_with(p.as_str()))
+        {
             return (vec![], false);
         }
         labels.push(format!("module:{ctx_module}"));
@@ -4635,7 +4914,10 @@ pub fn handle_get_applicable_rules(
             .unwrap_or("info")
             .to_string();
         let precision = labels.len();
-        let updated_at = rule.get("updated_at").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let updated_at = rule
+            .get("updated_at")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
         matched.push(Matched {
             rule,
             order_key: (
@@ -4646,12 +4928,18 @@ pub fn handle_get_applicable_rules(
         });
     }
     matched.sort_by(|a, b| {
-        a.order_key
-            .cmp(&b.order_key)
-            .then(b.updated_at.partial_cmp(&a.updated_at).unwrap_or(std::cmp::Ordering::Equal))
+        a.order_key.cmp(&b.order_key).then(
+            b.updated_at
+                .partial_cmp(&a.updated_at)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
     });
 
-    let out: Vec<Value> = matched.into_iter().take(limit as usize).map(|m| m.rule).collect();
+    let out: Vec<Value> = matched
+        .into_iter()
+        .take(limit as usize)
+        .map(|m| m.rule)
+        .collect();
     let count = out.len() as i64;
     Ok(json!({"rules": out, "count": count}))
 }
@@ -4720,9 +5008,20 @@ fn summary_cyclomatic_complexity(content: &str, language: &str) -> i64 {
     static KEYWORD_PATTERNS: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
     let patterns = KEYWORD_PATTERNS.get_or_init(|| {
         [
-            r"\bif\b", r"\belse\b", r"\bfor\b", r"\bwhile\b", r"\bmatch\b", r"\bcase\b",
-            r"\bcatch\b", r"\b&&\b", r"\b\|\|\b", r"\btry\b", r"\bexcept\b", r"\bfinally\b",
-            r"\bwhen\b", r"\bguard\b",
+            r"\bif\b",
+            r"\belse\b",
+            r"\bfor\b",
+            r"\bwhile\b",
+            r"\bmatch\b",
+            r"\bcase\b",
+            r"\bcatch\b",
+            r"\b&&\b",
+            r"\b\|\|\b",
+            r"\btry\b",
+            r"\bexcept\b",
+            r"\bfinally\b",
+            r"\bwhen\b",
+            r"\bguard\b",
         ]
         .iter()
         .map(|pat| regex::Regex::new(pat).expect("valid complexity keyword regex"))
@@ -4732,7 +5031,10 @@ fn summary_cyclomatic_complexity(content: &str, language: &str) -> i64 {
     for re in patterns {
         complexity += re.find_iter(content).count() as i64;
     }
-    if matches!(language, "rust" | "c" | "java" | "typescript" | "javascript" | "go") {
+    if matches!(
+        language,
+        "rust" | "c" | "java" | "typescript" | "javascript" | "go"
+    ) {
         static TERNARY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let re = TERNARY
             .get_or_init(|| regex::Regex::new(r"\?\s*[^:]+\s*:").expect("valid ternary regex"));
@@ -4776,7 +5078,15 @@ fn summary_complexity_hotspots(
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("hotspots prepare: {e}")))?;
-    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, Option<i64>, Option<i64>, i64, Option<String>, Option<String>, Option<String>)> {
+    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(
+        String,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> {
         Ok((
             r.get(0)?,
             r.get(1)?,
@@ -4801,27 +5111,29 @@ fn summary_complexity_hotspots(
     };
     let mut results: Vec<Value> = rows
         .into_iter()
-        .map(|(qn, start_line, end_line, depth, module_path, content, rel_path)| {
-            let content = content.clone().unwrap_or_default();
-            let lang = rel_path
-                .as_deref()
-                .map(summary_detect_language)
-                .unwrap_or_default();
-            let complexity = summary_cyclomatic_complexity(&content, &lang);
-            let line_count = match (start_line, end_line) {
-                (Some(s), Some(e)) if s != 0 && e != 0 => e - s + 1,
-                _ => 0,
-            };
-            json!({
-                "qualified_name": qn,
-                "file_path": rel_path,
-                "start_line": start_line,
-                "line_count": line_count,
-                "cyclomatic_complexity": complexity,
-                "depth": if depth >= 0 { depth } else { 0 },
-                "module_path": module_path,
-            })
-        })
+        .map(
+            |(qn, start_line, end_line, depth, module_path, content, rel_path)| {
+                let content = content.clone().unwrap_or_default();
+                let lang = rel_path
+                    .as_deref()
+                    .map(summary_detect_language)
+                    .unwrap_or_default();
+                let complexity = summary_cyclomatic_complexity(&content, &lang);
+                let line_count = match (start_line, end_line) {
+                    (Some(s), Some(e)) if s != 0 && e != 0 => e - s + 1,
+                    _ => 0,
+                };
+                json!({
+                    "qualified_name": qn,
+                    "file_path": rel_path,
+                    "start_line": start_line,
+                    "line_count": line_count,
+                    "cyclomatic_complexity": complexity,
+                    "depth": if depth >= 0 { depth } else { 0 },
+                    "module_path": module_path,
+                })
+            },
+        )
         .collect();
     // Python sort 稳定（复杂度降序，同分保持行序）；Rust sort_by 同为稳定排序
     results.sort_by(|a, b| {
@@ -4829,10 +5141,7 @@ fn summary_complexity_hotspots(
         let cb = b["cyclomatic_complexity"].as_i64().unwrap_or(0);
         cb.cmp(&ca)
     });
-    Ok(results
-        .into_iter()
-        .take(limit.max(0) as usize)
-        .collect())
+    Ok(results.into_iter().take(limit.max(0) as usize).collect())
 }
 
 /// project_brief 专用：metrics + hotspots 单次拉取单次遍历（T-1790567800125-68b64e1c）。
@@ -4861,7 +5170,16 @@ fn summary_brief_combined(
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("brief combined prepare: {e}")))?;
-    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, Option<i64>, Option<i64>, i64, Option<String>, Option<String>, Option<String>, String)> {
+    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(
+        String,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> {
         Ok((
             r.get(0)?,
             r.get(1)?,
@@ -4873,7 +5191,16 @@ fn summary_brief_combined(
             r.get(7)?,
         ))
     };
-    let rows: Vec<(String, Option<i64>, Option<i64>, i64, Option<String>, Option<String>, Option<String>, String)> = stmt
+    let rows: Vec<(
+        String,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = stmt
         .query_map([workspace_id], map_row)
         .map_err(|e| DaemonRpcError::internal_error(format!("brief combined query: {e}")))?
         .collect::<Result<Vec<_>, _>>()
@@ -4901,7 +5228,10 @@ fn summary_brief_combined(
 
     for (qn, start_line, end_line, depth, module_path, content, rel_path, status) in &rows {
         let content_str = content.clone().unwrap_or_default();
-        let lang = rel_path.as_deref().map(summary_detect_language).unwrap_or_default();
+        let lang = rel_path
+            .as_deref()
+            .map(summary_detect_language)
+            .unwrap_or_default();
         let complexity = summary_cyclomatic_complexity(&content_str, &lang);
         // hotspots：全部行（对齐原 hotspots 语义）
         hotspot_rows.push(HotspotRow {
@@ -4973,7 +5303,9 @@ fn summary_brief_combined(
             [workspace_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .map_err(|e| DaemonRpcError::internal_error(format!("brief combined comment coverage: {e}")))?;
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("brief combined comment coverage: {e}"))
+        })?;
     let comment_coverage = if comment_total > 0 {
         commented as f64 / comment_total as f64 * 100.0
     } else {
@@ -5161,7 +5493,11 @@ fn summary_coupling_analysis(
         .map_err(|e| DaemonRpcError::internal_error(format!("coupling prepare: {e}")))?;
     let rows: Vec<(String, String, i64)> = stmt
         .query_map([workspace_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })
         .map_err(|e| DaemonRpcError::internal_error(format!("coupling query: {e}")))?
         .collect::<Result<Vec<_>, _>>()
@@ -5187,7 +5523,11 @@ fn summary_coupling_analysis(
             let aff = afferent.get(m).copied().unwrap_or(0);
             let eff = efferent.get(m).copied().unwrap_or(0);
             let total = aff + eff;
-            let instability = if total > 0 { eff as f64 / total as f64 } else { 0.0 };
+            let instability = if total > 0 {
+                eff as f64 / total as f64
+            } else {
+                0.0
+            };
             json!({
                 "module": m,
                 "afferent": aff,
@@ -5292,7 +5632,10 @@ fn summary_health_check(
     for fn_v in &hotspots {
         let comp = fn_v["cyclomatic_complexity"].as_i64().unwrap_or(0);
         let (sev, advice) = if comp >= 30 {
-            ("high", "极复杂函数，必须重构拆分，否则 AI 难以正确理解和修改")
+            (
+                "high",
+                "极复杂函数，必须重构拆分，否则 AI 难以正确理解和修改",
+            )
         } else if comp >= 20 {
             ("medium", "复杂度高，建议拆分为多个小函数")
         } else if comp >= 10 {
@@ -5397,9 +5740,9 @@ fn summary_health_check(
             }
         }
     }
-    let health_score = (100.0 - high_count as f64 * 5.0 - medium_count as f64 * 2.0
-        - low_count as f64 * 0.5)
-        .max(0.0);
+    let health_score =
+        (100.0 - high_count as f64 * 5.0 - medium_count as f64 * 2.0 - low_count as f64 * 0.5)
+            .max(0.0);
     let health_level = if health_score >= 80.0 {
         "良好"
     } else if health_score >= 60.0 {
@@ -5509,10 +5852,11 @@ fn summary_cross_layer_full(
     let is_api_name = name_lower.contains("route")
         || name_lower.contains("handler")
         || name_lower.contains("endpoint");
-    let http_annotation = regex::Regex::new(r"(?i)#\[(?:get|post|put|delete|patch|head|options)\s*\(")
-        .ok()
-        .map(|re| re.is_match(&content))
-        .unwrap_or(false);
+    let http_annotation =
+        regex::Regex::new(r"(?i)#\[(?:get|post|put|delete|patch|head|options)\s*\(")
+            .ok()
+            .map(|re| re.is_match(&content))
+            .unwrap_or(false);
     let route_decorator = regex::Regex::new(r"(?i)@\w+\.(?:route|get|post|put|delete|patch)\s*\(")
         .ok()
         .map(|re| re.is_match(&content))
@@ -5728,7 +6072,11 @@ pub fn handle_summary_repo_map(
         .map_err(|e| DaemonRpcError::internal_error(format!("repo_map prepare: {e}")))?;
     let edges: Vec<(String, String, i64)> = stmt
         .query_map([workspace_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })
         .map_err(|e| DaemonRpcError::internal_error(format!("repo_map: {e}")))?
         .collect::<Result<Vec<_>, _>>()
@@ -5830,10 +6178,11 @@ pub fn handle_summary_test_impact_selection(
         };
         let mut next_queue: Vec<i64> = Vec::new();
         for row in iter {
-            let (id, qn_o, name_o, module_o, start_line, rel_path) = row
-                .map_err(|e| DaemonRpcError::internal_error(format!("tis bfs row: {e}")))?;
+            let (id, qn_o, name_o, module_o, start_line, rel_path) =
+                row.map_err(|e| DaemonRpcError::internal_error(format!("tis bfs row: {e}")))?;
             let caller_qn = qn_o.clone().unwrap_or_default();
-            if !caller_qn.is_empty() && !visited.contains(&id) && seen_qn.insert(caller_qn.clone()) {
+            if !caller_qn.is_empty() && !visited.contains(&id) && seen_qn.insert(caller_qn.clone())
+            {
                 all_callers.push(json!({
                     "qualified_name": caller_qn,
                     "name": name_o,
@@ -5888,21 +6237,17 @@ pub fn handle_summary_who_to_ask(
          WHERE fi.workspace_id = ?1 AND {match_col} = ?2 LIMIT 1"
     );
     let row = conn
-        .query_row(
-            &sql,
-            rusqlite::params![workspace_id, match_val],
-            |r| {
-                Ok((
-                    r.get::<_, Option<String>>(0)?,
-                    r.get::<_, Option<String>>(1)?,
-                    r.get::<_, Option<f64>>(2)?,
-                    r.get::<_, Option<String>>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, Option<f64>>(5)?,
-                    r.get::<_, Option<String>>(6)?,
-                ))
-            },
-        )
+        .query_row(&sql, rusqlite::params![workspace_id, match_val], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<f64>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<f64>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ))
+        })
         .optional()
         .map_err(|e| DaemonRpcError::internal_error(format!("who_to_ask: {e}")))?;
     match row {
@@ -5946,7 +6291,10 @@ pub fn handle_summary_ownership_map(
         .map_err(|e| DaemonRpcError::internal_error(format!("ownership prepare: {e}")))?;
     let rows: Vec<(Option<String>, Option<String>)> = if module_filter.is_empty() {
         stmt.query_map([workspace_id], |r| {
-            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
         })
         .map_err(|e| DaemonRpcError::internal_error(format!("ownership: {e}")))?
         .collect::<Result<Vec<_>, _>>()
@@ -5954,7 +6302,10 @@ pub fn handle_summary_ownership_map(
     } else {
         let like = format!("{module_filter}%");
         stmt.query_map(rusqlite::params![workspace_id, like], |r| {
-            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
         })
         .map_err(|e| DaemonRpcError::internal_error(format!("ownership: {e}")))?
         .collect::<Result<Vec<_>, _>>()
@@ -6007,7 +6358,10 @@ pub fn handle_summary_ownership_map(
         })
         .collect();
     results.sort_by(|a, b| b.0.cmp(&a.0));
-    Ok(json!(results.into_iter().map(|(_, v)| v).collect::<Vec<_>>()))
+    Ok(json!(results
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect::<Vec<_>>()))
 }
 
 // ---- guardrail 组 ----
@@ -6056,13 +6410,23 @@ pub fn handle_summary_guardrail_scan(
         }
     };
     let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String)> {
-        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default()))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        ))
     };
     let files: Vec<(String, String)> = if file_filter.is_empty() {
-        stmt.query_map(rusqlite::params![workspace_id, MAX_SCAN_FILES as i64], map_row)
+        stmt.query_map(
+            rusqlite::params![workspace_id, MAX_SCAN_FILES as i64],
+            map_row,
+        )
     } else {
         stmt.query_map(
-            rusqlite::params![workspace_id, format!("{file_filter}%"), MAX_SCAN_FILES as i64],
+            rusqlite::params![
+                workspace_id,
+                format!("{file_filter}%"),
+                MAX_SCAN_FILES as i64
+            ],
             map_row,
         )
     }
@@ -6182,7 +6546,10 @@ fn summary_extract_function_blocks(content: &str) -> Vec<(String, String, i64, i
                 Some(m) => m,
                 None => continue,
             };
-            let name = cap.get(1).map(|g| g.as_str().to_string()).unwrap_or_default();
+            let name = cap
+                .get(1)
+                .map(|g| g.as_str().to_string())
+                .unwrap_or_default();
             let start_line = content[..m.start()].matches('\n').count() as i64 + 1;
             let brace_start = match content[m.end()..].find('{') {
                 Some(off) => m.end() + off,
@@ -6212,7 +6579,10 @@ fn summary_extract_function_blocks(content: &str) -> Vec<(String, String, i64, i
                 Some(m) => m,
                 None => continue,
             };
-            let name = cap.get(1).map(|g| g.as_str().to_string()).unwrap_or_default();
+            let name = cap
+                .get(1)
+                .map(|g| g.as_str().to_string())
+                .unwrap_or_default();
             let start_line = content[..m.start()].matches('\n').count() as i64 + 1;
             let colon_pos = match content[m.end()..].find(':') {
                 Some(off) => m.end() + off,
@@ -6262,16 +6632,22 @@ fn summary_detect_db_safety(content: &str, file_path: &str) -> Vec<Value> {
             }));
         }
     }
-    if let Ok(re) = regex::Regex::new(
-        r"(?i)VARCHAR\s*\(\s*(\d+)\s*\)\s*(?:→|->)\s*VARCHAR\s*\(\s*(\d+)\s*\)",
-    ) {
+    if let Ok(re) =
+        regex::Regex::new(r"(?i)VARCHAR\s*\(\s*(\d+)\s*\)\s*(?:→|->)\s*VARCHAR\s*\(\s*(\d+)\s*\)")
+    {
         for cap in re.captures_iter(content) {
             let m = match cap.get(0) {
                 Some(m) => m,
                 None => continue,
             };
-            let old_len: i64 = cap.get(1).and_then(|g| g.as_str().parse().ok()).unwrap_or(0);
-            let new_len: i64 = cap.get(2).and_then(|g| g.as_str().parse().ok()).unwrap_or(0);
+            let old_len: i64 = cap
+                .get(1)
+                .and_then(|g| g.as_str().parse().ok())
+                .unwrap_or(0);
+            let new_len: i64 = cap
+                .get(2)
+                .and_then(|g| g.as_str().parse().ok())
+                .unwrap_or(0);
             if new_len < old_len {
                 let line = content[..m.start()].matches('\n').count() as i64 + 1;
                 findings.push(json!({
@@ -6304,7 +6680,11 @@ fn summary_detect_api_compat(content: &str, _file_path: &str) -> Vec<Value> {
                 .find('\n')
                 .map(|off| m.start() + off)
                 .unwrap_or(content.len());
-            let context = content[m.start()..line_end].trim().chars().take(80).collect::<String>();
+            let context = content[m.start()..line_end]
+                .trim()
+                .chars()
+                .take(80)
+                .collect::<String>();
             findings.push(json!({
                 "rule_id": "GR-builtin-api-1",
                 "severity": "block",
@@ -6347,10 +6727,9 @@ fn summary_detect_incident_readiness(content: &str, _file_path: &str) -> Vec<Val
         blocks.push(("<file>".to_string(), content.to_string(), 1, total_lines));
     }
     let err_re = regex::Regex::new(r"\b(?:try|catch|unwrap|expect)\b|\?|Result").ok();
-    let log_re = regex::Regex::new(
-        r"\blog::|tracing::|println!|print!|eprintln!|warn!|info!|error!|debug!",
-    )
-    .ok();
+    let log_re =
+        regex::Regex::new(r"\blog::|tracing::|println!|print!|eprintln!|warn!|info!|error!|debug!")
+            .ok();
     let write_re1 = regex::Regex::new(r"(?i)\b(?:INSERT|UPDATE|DELETE|CREATE|DROP)\b").ok();
     let write_re2 = regex::Regex::new(r"\.(?:write|save|push|insert|update|delete)\s*\(").ok();
     let safety_re =
@@ -6360,7 +6739,10 @@ fn summary_detect_incident_readiness(content: &str, _file_path: &str) -> Vec<Val
             continue;
         }
         let location = format!("函数 {name}（第 {start_line}-{end_line} 行）");
-        let has_err = err_re.as_ref().map(|re| re.is_match(&body)).unwrap_or(false);
+        let has_err = err_re
+            .as_ref()
+            .map(|re| re.is_match(&body))
+            .unwrap_or(false);
         if !has_err {
             findings.push(json!({
                 "rule_id": "GR-builtin-inc-1",
@@ -6369,7 +6751,10 @@ fn summary_detect_incident_readiness(content: &str, _file_path: &str) -> Vec<Val
                 "symbol_hash": "",
             }));
         }
-        let has_log = log_re.as_ref().map(|re| re.is_match(&body)).unwrap_or(false);
+        let has_log = log_re
+            .as_ref()
+            .map(|re| re.is_match(&body))
+            .unwrap_or(false);
         if !has_log {
             findings.push(json!({
                 "rule_id": "GR-builtin-inc-2",
@@ -6457,18 +6842,18 @@ pub fn handle_summary_guardrail_check_edit(
     for f in findings.iter_mut() {
         f["file_path"] = json!(file_path);
     }
-    let block_count = findings
-        .iter()
-        .filter(|f| f["severity"] == "block")
-        .count();
-    let warn_count = findings
-        .iter()
-        .filter(|f| f["severity"] == "warn")
-        .count();
+    let block_count = findings.iter().filter(|f| f["severity"] == "block").count();
+    let warn_count = findings.iter().filter(|f| f["severity"] == "warn").count();
     let (decision, message) = if block_count > 0 {
-        ("block", format!("检测到 {block_count} 个阻断级问题，禁止编辑"))
+        (
+            "block",
+            format!("检测到 {block_count} 个阻断级问题，禁止编辑"),
+        )
     } else if warn_count > 0 {
-        ("warn", format!("检测到 {warn_count} 个警告级问题，建议审查后编辑"))
+        (
+            "warn",
+            format!("检测到 {warn_count} 个警告级问题，建议审查后编辑"),
+        )
     } else {
         ("pass", "未检测到安全问题，可以编辑".to_string())
     };
@@ -6554,23 +6939,20 @@ fn summary_keyword_fallback_search(
             )
             .map_err(|e| DaemonRpcError::internal_error(format!("kw fallback prepare: {e}")))?;
         let rows = stmt
-            .query_map(
-                rusqlite::params![workspace_id, like, top_k.max(0)],
-                |r| {
-                    Ok((
-                        r.get::<_, Option<String>>(0)?,
-                        r.get::<_, Option<String>>(1)?,
-                        r.get::<_, Option<i64>>(2)?,
-                        r.get::<_, Option<i64>>(3)?,
-                        r.get::<_, Option<String>>(4)?,
-                        r.get::<_, Option<String>>(5)?,
-                    ))
-                },
-            )
+            .query_map(rusqlite::params![workspace_id, like, top_k.max(0)], |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                ))
+            })
             .map_err(|e| DaemonRpcError::internal_error(format!("kw fallback: {e}")))?;
         for row in rows {
-            let (hash, qn, start_line, _end_line, rel_path, summary) = row
-                .map_err(|e| DaemonRpcError::internal_error(format!("kw fallback row: {e}")))?;
+            let (hash, qn, start_line, _end_line, rel_path, summary) =
+                row.map_err(|e| DaemonRpcError::internal_error(format!("kw fallback row: {e}")))?;
             let hash_s = hash.unwrap_or_default();
             if hash_s.is_empty() || !seen.insert(hash_s) {
                 continue;
@@ -6641,7 +7023,11 @@ fn summary_build_rag_block(
         Some(v) => v,
         None => return Ok(None),
     };
-    let start_line = meta["start_line"].as_i64().filter(|v| *v != 0).or(row_start).unwrap_or(0);
+    let start_line = meta["start_line"]
+        .as_i64()
+        .filter(|v| *v != 0)
+        .or(row_start)
+        .unwrap_or(0);
     Ok(Some(json!({
         "role": role,
         "qualified_name": meta["qualified_name"],
@@ -6673,18 +7059,21 @@ fn summary_get_callees(
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("callees prepare: {e}")))?;
     let rows = stmt
-        .query_map(rusqlite::params![workspace_id, symbol_hash, limit.max(0)], |r| {
-            Ok((
-                r.get::<_, Option<String>>(0)?,
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, Option<String>>(2)?,
-            ))
-        })
+        .query_map(
+            rusqlite::params![workspace_id, symbol_hash, limit.max(0)],
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
         .map_err(|e| DaemonRpcError::internal_error(format!("callees: {e}")))?;
     let mut out = Vec::new();
     for row in rows {
-        let (hash, qn, rel_path) = row
-            .map_err(|e| DaemonRpcError::internal_error(format!("callees row: {e}")))?;
+        let (hash, qn, rel_path) =
+            row.map_err(|e| DaemonRpcError::internal_error(format!("callees row: {e}")))?;
         out.push(json!({
             "symbol_hash": hash.unwrap_or_default(),
             "qualified_name": qn.unwrap_or_default(),
@@ -6748,8 +7137,14 @@ pub fn handle_summary_ask_codebase(
         if let Some(block) =
             summary_build_rag_block(conn, workspace_id, &symbol_hash, seed, "seed")?
         {
-            total_chars += block["code"].as_str().map(|s| s.chars().count()).unwrap_or(0)
-                + block["summary"].as_str().map(|s| s.chars().count()).unwrap_or(0);
+            total_chars += block["code"]
+                .as_str()
+                .map(|s| s.chars().count())
+                .unwrap_or(0)
+                + block["summary"]
+                    .as_str()
+                    .map(|s| s.chars().count())
+                    .unwrap_or(0);
             context_blocks.push(block);
         }
         // 调用方上下文（blast_radius depth=1）
@@ -6781,10 +7176,16 @@ pub fn handle_summary_ask_codebase(
                             "summary": "",
                         });
                         if let Some(cblock) = summary_build_rag_block(
-                            conn, workspace_id, caller_hash, &meta, "caller",
+                            conn,
+                            workspace_id,
+                            caller_hash,
+                            &meta,
+                            "caller",
                         )? {
-                            total_chars +=
-                                cblock["code"].as_str().map(|s| s.chars().count()).unwrap_or(0);
+                            total_chars += cblock["code"]
+                                .as_str()
+                                .map(|s| s.chars().count())
+                                .unwrap_or(0);
                             context_blocks.push(cblock);
                         }
                     }
@@ -6793,8 +7194,7 @@ pub fn handle_summary_ask_codebase(
         }
         // 被调用方上下文
         if include_callees > 0 {
-            let callees =
-                summary_get_callees(conn, workspace_id, &symbol_hash, include_callees)?;
+            let callees = summary_get_callees(conn, workspace_id, &symbol_hash, include_callees)?;
             for callee in callees {
                 if total_chars > max_chars {
                     truncated = true;
@@ -6810,11 +7210,13 @@ pub fn handle_summary_ask_codebase(
                         "similarity": 0.0,
                         "summary": "",
                     });
-                    if let Some(cblock) = summary_build_rag_block(
-                        conn, workspace_id, callee_hash, &meta, "callee",
-                    )? {
-                        total_chars +=
-                            cblock["code"].as_str().map(|s| s.chars().count()).unwrap_or(0);
+                    if let Some(cblock) =
+                        summary_build_rag_block(conn, workspace_id, callee_hash, &meta, "callee")?
+                    {
+                        total_chars += cblock["code"]
+                            .as_str()
+                            .map(|s| s.chars().count())
+                            .unwrap_or(0);
                         context_blocks.push(cblock);
                     }
                 }
@@ -6839,7 +7241,9 @@ pub fn handle_summary_ask_codebase(
         let sim = block["similarity"].as_f64().unwrap_or(0.0);
         let summary = block["summary"].as_str().unwrap_or("");
         let code = block["code"].as_str().unwrap_or("");
-        lines.push(format!("## [{role_label}] {qn} ({fp}:{sl}) — similarity: {sim:.4}"));
+        lines.push(format!(
+            "## [{role_label}] {qn} ({fp}:{sl}) — similarity: {sim:.4}"
+        ));
         if !summary.is_empty() {
             lines.push(format!("摘要: {summary}"));
         }
@@ -7004,8 +7408,8 @@ pub fn handle_summary_token_savings_report(
             })
             .map_err(|e| DaemonRpcError::internal_error(format!("trend: {e}")))?;
         for row in rows {
-            let (date, saved, ops) = row
-                .map_err(|e| DaemonRpcError::internal_error(format!("trend row: {e}")))?;
+            let (date, saved, ops) =
+                row.map_err(|e| DaemonRpcError::internal_error(format!("trend row: {e}")))?;
             daily_trend.push(json!({
                 "date": date.unwrap_or_default(),
                 "saved": saved.unwrap_or(0),
@@ -7098,12 +7502,30 @@ pub fn handle_summary_vulnerability_blast_radius(
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("vuln prepare: {e}")))?;
     let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(
-        i64, Option<String>, Option<String>, Option<String>, Option<String>,
-        Option<i64>, Option<i64>, Option<i64>, Option<String>, Option<String>, Option<String>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
     )> {
         Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
-            r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?,
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+            r.get(6)?,
+            r.get(7)?,
+            r.get(8)?,
+            r.get(9)?,
+            r.get(10)?,
         ))
     };
     let findings_rows = if finding_id > 0 {
@@ -7130,14 +7552,26 @@ pub fn handle_summary_vulnerability_blast_radius(
     }
 
     let mut findings_results: Vec<Value> = Vec::new();
-    let mut all_impacted_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut all_impacted_hashes: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     // qualified_name -> 被多少漏洞影响（插入序保留供平局稳定）
     let mut caller_order: Vec<String> = Vec::new();
     let mut caller_count: HashMap<String, i64> = HashMap::new();
 
     for row in findings_rows {
-        let (id, rule_id, rule_name, severity, message, start_line, _end_line,
-             symbol_id, symbol_qualified_o, content_hash_o, rel_path) = row;
+        let (
+            id,
+            rule_id,
+            rule_name,
+            severity,
+            message,
+            start_line,
+            _end_line,
+            symbol_id,
+            symbol_qualified_o,
+            content_hash_o,
+            rel_path,
+        ) = row;
         let mut symbol_hash = content_hash_o.unwrap_or_default();
         let symbol_qualified = symbol_qualified_o.unwrap_or_default();
         if symbol_hash.is_empty() {
@@ -7237,7 +7671,10 @@ pub fn handle_summary_vulnerability_blast_radius(
     } else if has_error && total_impacted > 3 {
         "high"
     } else if findings_results.iter().any(|f| {
-        matches!(f["severity"].as_str().unwrap_or(""), "WARN" | "warn" | "WARNING")
+        matches!(
+            f["severity"].as_str().unwrap_or(""),
+            "WARN" | "warn" | "WARNING"
+        )
     }) {
         "medium"
     } else {
@@ -7256,8 +7693,7 @@ pub fn handle_summary_vulnerability_blast_radius(
         })
         .collect();
     high_risk.sort_by(|a, b| b.0.cmp(&a.0));
-    let high_risk_callers: Vec<Value> =
-        high_risk.into_iter().take(20).map(|(_, v)| v).collect();
+    let high_risk_callers: Vec<Value> = high_risk.into_iter().take(20).map(|(_, v)| v).collect();
 
     let mut summary_by_layer = json!({"code": 0, "db": 0, "api": 0, "config": 0});
     for f in &findings_results {
@@ -7322,17 +7758,19 @@ pub fn handle_summary_clone_aware_impact(
     let symbol_hash = symbol_hash_o.unwrap_or_default();
 
     let br_value = |hash: &str| -> Result<Value, DaemonRpcError> {
-        Ok(match security_blast_radius_sql(conn, workspace_id, hash, depth) {
-            Some((src, layers, total, by_layer)) => json!({
-                "source_symbol": src, "source_hash": hash, "depth": depth,
-                "layers": layers, "total_impacted": total, "by_layer": by_layer,
-            }),
-            None => json!({
-                "source_symbol": "", "source_hash": hash, "depth": depth,
-                "layers": [], "total_impacted": 0,
-                "by_layer": {"code": 0, "db": 0, "api": 0, "config": 0},
-            }),
-        })
+        Ok(
+            match security_blast_radius_sql(conn, workspace_id, hash, depth) {
+                Some((src, layers, total, by_layer)) => json!({
+                    "source_symbol": src, "source_hash": hash, "depth": depth,
+                    "layers": layers, "total_impacted": total, "by_layer": by_layer,
+                }),
+                None => json!({
+                    "source_symbol": "", "source_hash": hash, "depth": depth,
+                    "layers": [], "total_impacted": 0,
+                    "by_layer": {"code": 0, "db": 0, "api": 0, "config": 0},
+                }),
+            },
+        )
     };
     let original_radius = br_value(&symbol_hash)?;
 
@@ -7369,8 +7807,8 @@ pub fn handle_summary_clone_aware_impact(
     let mut clone_infos: Vec<Value> = Vec::new();
     let mut clone_impacts: Vec<Value> = Vec::new();
     for row in clone_rows {
-        let (clone_type, similarity, a_qn, b_qn, file_a, file_b, a_line, b_line) = row
-            .map_err(|e| DaemonRpcError::internal_error(format!("clones row: {e}")))?;
+        let (clone_type, similarity, a_qn, b_qn, file_a, file_b, a_line, b_line) =
+            row.map_err(|e| DaemonRpcError::internal_error(format!("clones row: {e}")))?;
         let a_qn = a_qn.unwrap_or_default();
         let b_qn = b_qn.unwrap_or_default();
         let (clone_qn, clone_file, clone_line) = if a_qn == qualified_name {
@@ -7569,7 +8007,13 @@ fn summary_coverage_for_symbol(
              JOIN file_instances fi ON s.file_instance_id = fi.id \
              WHERE fi.workspace_id = ?1 AND s.qualified_name = ?2 LIMIT 1",
             rusqlite::params![workspace_id, qualified_name],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
         )
         .optional()
         .map_err(|e| DaemonRpcError::internal_error(format!("coverage sym: {e}")))?;
@@ -7598,7 +8042,11 @@ fn summary_coverage_for_symbol(
         .map_err(|e| DaemonRpcError::internal_error(format!("coverage covered: {e}")))?
         .unwrap_or(0);
     let total_lines = end_line - start_line + 1;
-    let pct = if tracked > 0 { covered as f64 / tracked as f64 * 100.0 } else { 0.0 };
+    let pct = if tracked > 0 {
+        covered as f64 / tracked as f64 * 100.0
+    } else {
+        0.0
+    };
     Ok(Some(json!({
         "qualified_name": qualified_name,
         "coverage_pct": pct,
@@ -7813,7 +8261,15 @@ pub fn handle_summary_hotspot_evolution(
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("hotspot prepare: {e}")))?;
-    let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, Option<String>, i64, i64, Option<String>, Option<String>)> {
+    let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(
+        String,
+        String,
+        Option<String>,
+        i64,
+        i64,
+        Option<String>,
+        Option<String>,
+    )> {
         Ok((
             r.get(0)?,
             r.get(1)?,
@@ -7859,8 +8315,8 @@ pub fn handle_summary_hotspot_evolution(
         })
         .map_err(|e| DaemonRpcError::internal_error(format!("hotspot change: {e}")))?;
     for row in rows {
-        let (hash, cnt, first, last) = row
-            .map_err(|e| DaemonRpcError::internal_error(format!("hotspot change row: {e}")))?;
+        let (hash, cnt, first, last) =
+            row.map_err(|e| DaemonRpcError::internal_error(format!("hotspot change row: {e}")))?;
         if let Some(h) = hash {
             change_map.insert(h, (cnt, first, last));
         }
@@ -7878,8 +8334,8 @@ pub fn handle_summary_hotspot_evolution(
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
         .map_err(|e| DaemonRpcError::internal_error(format!("hotspot defect: {e}")))?;
     for row in rows {
-        let (qn, cnt) = row
-            .map_err(|e| DaemonRpcError::internal_error(format!("hotspot defect row: {e}")))?;
+        let (qn, cnt) =
+            row.map_err(|e| DaemonRpcError::internal_error(format!("hotspot defect row: {e}")))?;
         defect_map.insert(qn, cnt);
     }
 
@@ -7889,10 +8345,8 @@ pub fn handle_summary_hotspot_evolution(
     let mut max_defect: i64 = 1;
     let mut max_complexity: i64 = 1;
     for (hash, qn, module_o, start_line, end_line, content_o, rel_path_o) in &symbols {
-        let (change_count, first_seen, last_changed) = change_map
-            .get(hash)
-            .copied()
-            .unwrap_or((0, 0.0, 0.0));
+        let (change_count, first_seen, last_changed) =
+            change_map.get(hash).copied().unwrap_or((0, 0.0, 0.0));
         let defect_count = defect_map.get(qn).copied().unwrap_or(0);
         let content = content_o.clone().unwrap_or_default();
         let complexity = if !content.is_empty() {
@@ -7924,48 +8378,59 @@ pub fn handle_summary_hotspot_evolution(
     // 第二轮：归一化评分 + 热点标注
     let mut results: Vec<Value> = raw_list
         .iter()
-        .map(|(hash, qn, module, change_count, defect_count, complexity, first_seen, last_changed)| {
-            let change_freq = if max_change > 0 {
-                *change_count as f64 / max_change as f64
-            } else {
-                0.0
-            };
-            let defect_density = if max_defect > 0 {
-                *defect_count as f64 / max_defect as f64
-            } else {
-                0.0
-            };
-            let cyclo_norm = if max_complexity > 0 {
-                *complexity as f64 / max_complexity as f64
-            } else {
-                0.0
-            };
-            let hotspot_score = change_freq * 0.4 + defect_density * 0.3 + cyclo_norm * 0.3;
-            let days_since = if *last_changed > 0.0 {
-                (now - last_changed) / 86400.0
-            } else {
-                f64::INFINITY
-            };
-            let label = if *change_count > 5 && days_since <= 30.0 {
-                "持续热点"
-            } else if (3..=5).contains(change_count) && days_since <= 7.0 {
-                "新兴热点"
-            } else {
-                ""
-            };
-            json!({
-                "qualified_name": qn,
-                "symbol_hash": hash,
-                "module_path": module,
-                "hotspot_score": (hotspot_score * 10000.0).round() / 10000.0,
-                "change_count": change_count,
-                "defect_count": defect_count,
-                "complexity": complexity,
-                "first_seen": first_seen,
-                "last_changed": last_changed,
-                "label": if label.is_empty() { Value::Null } else { json!(label) },
-            })
-        })
+        .map(
+            |(
+                hash,
+                qn,
+                module,
+                change_count,
+                defect_count,
+                complexity,
+                first_seen,
+                last_changed,
+            )| {
+                let change_freq = if max_change > 0 {
+                    *change_count as f64 / max_change as f64
+                } else {
+                    0.0
+                };
+                let defect_density = if max_defect > 0 {
+                    *defect_count as f64 / max_defect as f64
+                } else {
+                    0.0
+                };
+                let cyclo_norm = if max_complexity > 0 {
+                    *complexity as f64 / max_complexity as f64
+                } else {
+                    0.0
+                };
+                let hotspot_score = change_freq * 0.4 + defect_density * 0.3 + cyclo_norm * 0.3;
+                let days_since = if *last_changed > 0.0 {
+                    (now - last_changed) / 86400.0
+                } else {
+                    f64::INFINITY
+                };
+                let label = if *change_count > 5 && days_since <= 30.0 {
+                    "持续热点"
+                } else if (3..=5).contains(change_count) && days_since <= 7.0 {
+                    "新兴热点"
+                } else {
+                    ""
+                };
+                json!({
+                    "qualified_name": qn,
+                    "symbol_hash": hash,
+                    "module_path": module,
+                    "hotspot_score": (hotspot_score * 10000.0).round() / 10000.0,
+                    "change_count": change_count,
+                    "defect_count": defect_count,
+                    "complexity": complexity,
+                    "first_seen": first_seen,
+                    "last_changed": last_changed,
+                    "label": if label.is_empty() { Value::Null } else { json!(label) },
+                })
+            },
+        )
         .collect();
     results.sort_by(|a, b| {
         let sa = a["hotspot_score"].as_f64().unwrap_or(0.0);
@@ -8005,8 +8470,8 @@ pub fn handle_summary_defect_learn(
         .map_err(|e| DaemonRpcError::internal_error(format!("defect learn: {e}")))?;
     let mut has_qualifying = false;
     for row in rows {
-        let (_hash, old_c, new_c) = row
-            .map_err(|e| DaemonRpcError::internal_error(format!("defect learn row: {e}")))?;
+        let (_hash, old_c, new_c) =
+            row.map_err(|e| DaemonRpcError::internal_error(format!("defect learn row: {e}")))?;
         if old_c.unwrap_or_default() != new_c.unwrap_or_default() {
             has_qualifying = true;
             break;
@@ -8270,12 +8735,9 @@ mod security_row_binding_tests {
         )
         .unwrap();
 
-        let filtered = handle_summary_guardrail_list_rules(
-            &conn,
-            1,
-            &json!({"category_filter": "db_safety"}),
-        )
-        .unwrap();
+        let filtered =
+            handle_summary_guardrail_list_rules(&conn, 1, &json!({"category_filter": "db_safety"}))
+                .unwrap();
         let arr = filtered.as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["rule_id"], "GR-db-1");
@@ -8292,7 +8754,11 @@ mod security_row_binding_tests {
     fn guardrail_scan_detects_findings_read_only() {
         let dir = tempfile::tempdir().unwrap();
         let danger = dir.path().join("danger.sql");
-        std::fs::write(&danger, "ALTER TABLE users ADD COLUMN x INT;\nDROP TABLE audit;\n").unwrap();
+        std::fs::write(
+            &danger,
+            "ALTER TABLE users ADD COLUMN x INT;\nDROP TABLE audit;\n",
+        )
+        .unwrap();
 
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -8305,8 +8771,7 @@ mod security_row_binding_tests {
         )
         .unwrap();
 
-        let res =
-            handle_summary_guardrail_scan(&conn, 1, &json!({})).unwrap();
+        let res = handle_summary_guardrail_scan(&conn, 1, &json!({})).unwrap();
         let arr = res.as_array().unwrap();
         assert!(!arr.is_empty());
         // ALTER TABLE → warn（GR-builtin-db-1），DROP TABLE → block（GR-builtin-db-2）
@@ -8351,8 +8816,7 @@ mod security_row_binding_tests {
         .unwrap();
 
         let filtered =
-            handle_summary_guardrail_scan(&conn, 1, &json!({"file_filter": "src/api/"}))
-                .unwrap();
+            handle_summary_guardrail_scan(&conn, 1, &json!({"file_filter": "src/api/"})).unwrap();
         let arr = filtered.as_array().unwrap();
         // bad.sql 的 DROP TABLE 会被多个检测器/规则命中（≥1），核心断言：
         // ① 过滤只留 src/api/ 前缀文件（docs/ok.sql 与不可读 gone.sql 不出现）
@@ -8470,8 +8934,8 @@ mod brief_combined_tests {
             "hotspots 不得筛 status（对齐原语义）"
         );
         assert!(
-            hs.iter().any(|h| h["qualified_name"] == "a.fb"
-                && h["cyclomatic_complexity"] == 1),
+            hs.iter()
+                .any(|h| h["qualified_name"] == "a.fb" && h["cyclomatic_complexity"] == 1),
             "空 content 符号复杂度=1 且计入 hotspots"
         );
     }
@@ -8484,7 +8948,8 @@ mod brief_combined_tests {
     #[test]
     fn test_complexity_regex_precompile_equivalent() {
         // rust 函数：if + for + match + 三元（? :）
-        let rust_src = "fn f() { if a { for _ in b { match c { 1 => d, _ => e } } } let z = cond ? x : y; }";
+        let rust_src =
+            "fn f() { if a { for _ in b { match c { 1 => d, _ => e } } } let z = cond ? x : y; }";
         // python 函数：if + for...in + 无三元
         let py_src = "def f():\n    if a:\n        for i in b:\n            pass\n";
         // 空内容
@@ -8526,10 +8991,7 @@ mod brief_combined_tests {
         );
 
         // 重复调用稳定（OnceLock 只初始化一次，结果可复现）
-        assert_eq!(
-            summary_cyclomatic_complexity(rust_src, "rust"),
-            rust_once
-        );
+        assert_eq!(summary_cyclomatic_complexity(rust_src, "rust"), rust_once);
     }
 }
 
@@ -8668,8 +9130,10 @@ mod hotspot_evolution_limit_tests {
         seed(&conn);
         let err = handle_summary_hotspot_evolution(&conn, 1, &json!({"limit": -1}))
             .expect_err("负 limit 必须 fail-closed");
-        assert!(format!("{err:?}").contains("limit") || format!("{err:?}").contains("invalid"),
-            "错误应说明 limit 参数问题：{err:?}");
+        assert!(
+            format!("{err:?}").contains("limit") || format!("{err:?}").contains("invalid"),
+            "错误应说明 limit 参数问题：{err:?}"
+        );
     }
 
     #[test]

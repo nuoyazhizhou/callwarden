@@ -155,12 +155,12 @@ def verify_n1_upgrade(bundle: Path, report: dict) -> list[str]:
 
     init_ok = db_path.is_file()
     if not init_ok:
-        # doctor 命令可能不存在，尝试 --refresh-all 触发初始化
+        # doctor 命令可能不存在，尝试 refresh --all 触发初始化
         sample_dir = ws_root / "sample"
         sample_dir.mkdir(parents=True, exist_ok=True)
         (sample_dir / "main.py").write_text("def f():\n    pass\n", encoding="utf-8")
         rc_init2, _, stderr_init2 = _run(
-            [str(cw_exe), "--refresh-all", str(sample_dir)],
+            [str(cw_exe), "refresh", "--all"],
             cwd=ws_root,
             env=env,
             timeout=120.0,
@@ -251,23 +251,23 @@ def verify_rollback(bundle: Path, report: dict) -> list[str]:
     (ws_dir / "main.py").write_text("def f():\n    pass\n", encoding="utf-8")
 
     rc1, _, stderr1 = _run(
-        [str(cw_exe), "--refresh-all", str(ws_dir)],
+        [str(cw_exe), "refresh", "--all"],
         cwd=ws_dir,
         env=env,
         timeout=120.0,
     )
     if rc1 != 0:
-        errors.append(f"rollback 预检：--refresh-all 失败: {stderr1[:300]}")
+        errors.append(f"rollback 预检：refresh --all 失败: {stderr1[:300]}")
 
-    # 2.2 模拟回滚：再次 --refresh-all，验证 cw 能读取自己创建的 snapshot
+    # 2.2 模拟回滚：再次 refresh --all，验证 cw 能读取自己创建的 snapshot
     rc2, _, stderr2 = _run(
-        [str(cw_exe), "--refresh-all", str(ws_dir)],
+        [str(cw_exe), "refresh", "--all"],
         cwd=ws_dir,
         env=env,
         timeout=120.0,
     )
     if rc2 != 0:
-        errors.append(f"rollback 验证：第二次 --refresh-all 失败: {stderr2[:300]}")
+        errors.append(f"rollback 验证：第二次 refresh --all 失败: {stderr2[:300]}")
 
     # 2.3 验证 bundle 中不含 Python grammar（不允许临时下载恢复）
     # 设计 §9.2 禁止：在同一生产进程中临时下载 Python grammar 并静默恢复

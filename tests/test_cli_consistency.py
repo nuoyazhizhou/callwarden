@@ -5,14 +5,16 @@
 - 跨组件一致性检查（CLI ↔ JSON ↔ i18n ↔ 文档 ↔ MCP）
 
 覆盖 Check Items:
-[1] deprecated flag 显示 warning 但仍执行（抽样 10 个 flag 端到端验证）
-[2] --refresh 支持多 path（端到端验证多文件刷新）
+[1] subcommand 可解析执行 + 已删除的顶层 --flag 被拒绝（端到端验证）
+[2] refresh subcommand 支持多 path（端到端验证多文件刷新）
 [3] 主 --help 输出包含 12 个分组标题（端到端验证）
 [4] 子命令 --help 详细化（抽样 5 个子命令端到端验证 5 章节）
 [5] MCP 工具命名对齐（验证 @mcp.tool() 数量与 .mcp_audit.md 一致）
-[6] 一致性: deprecated_flag_mapping.json ↔ _DEPRECATED_FLAG_MAPPING
 [7] 一致性: i18n zh_CN ↔ en_US key 集合
 [8] 一致性: 文档交叉引用链路完整性
+
+注：原 [6] deprecated_flag_mapping.json ↔ _DEPRECATED_FLAG_MAPPING 一致性
+检查已随 T10 阶段3 删除（deprecated flag 机制整体移除）。
 """
 
 import ast
@@ -31,7 +33,6 @@ if _PKG_PARENT not in sys.path:
 
 CW_PATH = os.path.join(_PKG_PARENT, "cw.py")
 I18N_DIR = os.path.join(_PKG_PARENT, "i18n")
-DEPRECATED_JSON = os.path.join(_PKG_PARENT, "deprecated_flag_mapping.json")
 MCP_AUDIT = os.path.join(_PKG_PARENT, ".mcp_audit.md")
 MCP_SERVER = os.path.join(_PKG_PARENT, "server", "mcp_server.py")
 
@@ -80,76 +81,88 @@ def _flatten_keys(d, prefix=""):
 
 
 # ============================================
-# [1] deprecated flag 端到端抽样验证（10 个）
+# [1] subcommand 端到端抽样 + 已删 flag 拒绝验证
 # ============================================
 
-# 抽样 10 个只读、安全的 deprecated flag 进行端到端验证
-DEPRECATED_FLAG_SAMPLES = [
-    "--stats",
-    "--status",
-    "--list-workspaces",
-    "--metrics",
-    "--comment-coverage",
-    "--topo",
-    "--call-heatmap",
-    "--orphan-symbols",
-    "--deepest",
-    "--module-calls",
+# 抽样 10 个只读、安全的 subcommand 进行端到端验证（T10 阶段3：
+# deprecated --flag 已全部删除，统一改为验证对应 subcommand 可解析执行）
+SUBCOMMAND_SAMPLES = [
+    ["stats"],
+    ["status"],
+    ["workspace", "list"],
+    ["metrics"],
+    ["comment-coverage"],
+    ["topo"],
+    ["call-heatmap"],
+    ["orphan-symbols"],
+    ["deepest"],
+    ["module-calls"],
 ]
 
 
-@pytest.mark.parametrize("flag", DEPRECATED_FLAG_SAMPLES)
-def test_deprecated_flag_emits_warning_and_executes(flag):
-    """[1] 端到端: deprecated flag 显示 warning 但仍执行
+@pytest.mark.parametrize("argv", SUBCOMMAND_SAMPLES, ids=lambda a: " ".join(a))
+def test_subcommand_parses_and_executes(argv):
+    """[1] 端到端: subcommand 可被解析并执行（不触发 argparse 错误）
 
     验证：
-    - stderr 包含 'deprecated' 警告
-    - 程序不崩溃（exit code 不为 argparse 错误码 2）
+    - 不因参数解析失败而 exit 2
+    - 已删除的顶层 --flag 不再是合法入口（见 test_deprecated_flags_rejected）
+    """
+    returncode, stdout, stderr = _run_cw(argv, timeout=60)
+    assert returncode != 2, (
+        f"{' '.join(argv)} 触发 argparse 错误 (exit 2): stderr={stderr[:500]}"
+    )
+
+
+# 抽样已删除的顶层 flag，验证它们已不再被接受
+REMOVED_FLAG_SAMPLES = [
+    "--stats",
+    "--status",
+    "--list-workspaces",
+    "--topo",
+    "--metrics",
+    "--deepest",
+    "--module-calls",
+    "--call-heatmap",
+    "--comment-coverage",
+]
+
+
+@pytest.mark.parametrize("flag", REMOVED_FLAG_SAMPLES)
+def test_deprecated_flags_rejected(flag):
+    """[1] 端到端: 已删除的顶层 --flag 被 argparse 拒绝（exit 2 + unrecognized）
+
+    T10 阶段3 后，所有 deprecated --flag 不再是合法入口，必须报
+    'unrecognized arguments' 并以 exit code 2 退出。
     """
     returncode, stdout, stderr = _run_cw([flag], timeout=60)
-    # argparse 错误时 exit code = 2
-    assert returncode != 2, (
-        f"{flag} 触发 argparse 错误 (exit 2): stderr={stderr}"
+    assert returncode == 2, (
+        f"{flag} 应被 argparse 拒绝 (exit 2)，实际 exit={returncode}"
     )
-    # stderr 应包含 deprecated 警告
-    combined = stdout + stderr
-    assert "deprecated" in combined.lower() or "废弃" in combined, (
-        f"{flag} 未输出 deprecated 警告: stderr={stderr[:500]}"
+    assert "unrecognized arguments" in (stdout + stderr).lower(), (
+        f"{flag} 应报 'unrecognized arguments': stderr={stderr[:500]}"
     )
 
 
 # ============================================
-# [2] --refresh 多 path 端到端验证
+# [2] refresh subcommand 多 path 端到端验证
 # ============================================
 
 
 def test_refresh_multi_path_end_to_end():
-    """[2] 端到端: --refresh 支持多 path
+    """[2] 端到端: refresh subcommand 支持多 path
 
-    验证 cw --refresh <path1> <path2> 不会因参数解析失败而 exit 2。
+    验证 cw refresh <path1> <path2> 不会因参数解析失败而 exit 2。
     使用不存在的路径，验证程序能尝试刷新（即使失败也算解析正确）。
     """
     returncode, stdout, stderr = _run_cw(
-        ["--refresh", "nonexistent_a.py", "nonexistent_b.py"],
+        ["refresh", "nonexistent_a.py", "nonexistent_b.py"],
         timeout=60,
     )
     # 不应为 argparse 错误（exit 2）
     assert returncode != 2, (
-        f"--refresh 多 path 触发 argparse 错误: stderr={stderr[:500]}"
+        f"refresh 多 path 触发 argparse 错误: stderr={stderr[:500]}"
     )
-
-
-def test_refresh_metavar_shows_path_ellipsis():
-    """[2] --refresh 的 metavar 显示 'PATH [...]' 表明支持多路径"""
-    parser = cli_main.create_parser()
-    refresh_action = None
-    for action in parser._actions:
-        if "--refresh" in (action.option_strings or []):
-            refresh_action = action
-            break
-    assert refresh_action is not None
-    assert refresh_action.nargs == "+"
-    assert refresh_action.metavar == "PATH [...]"
 
 
 # ============================================
@@ -297,39 +310,6 @@ def test_mcp_tools_all_have_docstring():
                                       and isinstance(node.body[0].value.value, str)):
                 missing.append(node.name)
     assert not missing, f"MCP 工具缺少 docstring: {missing[:10]}"
-
-
-# ============================================
-# [6] 一致性: deprecated_flag_mapping.json ↔ _DEPRECATED_FLAG_MAPPING
-# ============================================
-
-
-def test_deprecated_flag_json_matches_python_mapping():
-    """[6] deprecated_flag_mapping.json 与 cli/main.py::_DEPRECATED_FLAG_MAPPING 一致
-
-    JSON 文件中每个 flag -> subcommand 映射应与 Python 字典一致（去除 _meta）。
-    """
-    with open(DEPRECATED_JSON, encoding="utf-8") as f:
-        json_data = json.load(f)
-    # 去除 _meta key
-    json_mapping = {k: v for k, v in json_data.items() if k != "_meta"}
-
-    # Python 字典: attr -> (flag_name, subcommand)
-    py_mapping = cli_main._DEPRECATED_FLAG_MAPPING
-    # 转换为: flag_name -> subcommand
-    py_as_dict = {flag_name: subcommand for (flag_name, subcommand) in py_mapping.values()}
-
-    # 验证 key 集合一致
-    assert set(json_mapping.keys()) == set(py_as_dict.keys()), (
-        f"JSON 与 Python 映射的 key 不一致:\n"
-        f"  JSON only: {set(json_mapping.keys()) - set(py_as_dict.keys())}\n"
-        f"  Python only: {set(py_as_dict.keys()) - set(json_mapping.keys())}"
-    )
-    # 验证 value 一致
-    for flag in json_mapping:
-        assert json_mapping[flag] == py_as_dict[flag], (
-            f"{flag} 映射不一致: JSON={json_mapping[flag]}, Python={py_as_dict[flag]}"
-        )
 
 
 # ============================================

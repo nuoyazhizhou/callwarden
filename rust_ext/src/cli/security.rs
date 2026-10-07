@@ -306,7 +306,10 @@ const BUILTIN_GUARDRAIL_RULES: [(&str, &str, &str, &str, &str, &str); 9] = [
     ),
 ];
 
-pub fn list_guardrail_rules(conn: &mut Connection, category: &str) -> Result<Vec<GuardrailRule>, String> {
+pub fn list_guardrail_rules(
+    conn: &mut Connection,
+    category: &str,
+) -> Result<Vec<GuardrailRule>, String> {
     // 纯读：不做 builtin 规则初始化（那是写面）。daemon 只读快照连接会因
     // ensure 的 Immediate 事务 INSERT 拒绝而整页失败（"attempt to write a
     // readonly database"）。初始化职责归写面调用点：CLI guardrail rules
@@ -804,7 +807,7 @@ pub fn bootstrap_status(conn: &Connection) -> Result<BootstrapStatus, String> {
         }
     }
     let recommended_next_action = if db_stale {
-        "cw --refresh-all"
+        "cw refresh --all"
     } else if blocking_findings_count > 0 {
         "cw task findings <task_id>  # 有阻塞发现需修复"
     } else if pending_candidates_count > 0 {
@@ -1581,7 +1584,7 @@ fn bootstrap_seed_rules() -> Vec<BootstrapSeed> {
         BootstrapSeed {
             id: "AR-bootstrap-refresh-before-commit",
             title: "提交前必须刷新代码图谱",
-            rule_text: "每次 git commit 之前必须运行 cw --refresh-all 或批量刷新所有修改文件，确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。",
+            rule_text: "每次 git commit 之前必须运行 cw refresh --all 或批量刷新所有修改文件，确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。",
             scope: json!({"actions":["commit"]}),
             severity: "critical",
             evidence: json!({"source":"bootstrap-seed","plan":"bootstrap-closure-plan.md"}),

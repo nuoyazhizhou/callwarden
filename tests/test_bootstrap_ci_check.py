@@ -194,7 +194,7 @@ def test_print_gate_result_fail():
             "db_stale": True,
             "blocking_findings_count": 0,
             "audit_verify": {"broken_count": 0},
-            "recommended_next_action": "cw --refresh-all",
+            "recommended_next_action": "cw refresh --all",
         },
     }
     out_buf = io.StringIO()
@@ -203,7 +203,7 @@ def test_print_gate_result_fail():
     output = out_buf.getvalue()
     assert "FAIL" in output
     assert "db_stale" in output
-    assert "cw --refresh-all" in output  # 推荐修复
+    assert "cw refresh --all" in output  # 推荐修复
 
 
 # ============================================

@@ -378,8 +378,8 @@ def step5_full_build_and_refresh(
     workspace_root: Path | None = None,
 ) -> list[str]:
     """使用 frozen cw 在临时工作空间执行：
-    - 全量 build（cw --refresh-all 或 cw register + parse）
-    - 单文件 refresh（修改一个 .py 文件后 cw --refresh <file>）
+    - 全量 build（cw refresh --all 或 cw register + parse）
+    - 单文件 refresh（修改一个 .py 文件后 cw refresh <file>）
     - watcher save-to-query（启动 watcher，保存文件，验证可查询到新符号）
 
     本步骤在临时工作空间中创建小型多语言样例仓库。
@@ -743,7 +743,7 @@ def step7_schema_upgrade_rollback(
     )
     init_ok = rc_init == 0 or "schema" in stdout_init.lower() or "schema" in stderr_init.lower()
     if not init_ok and not db_path.is_file():
-        # doctor 命令可能在某些版本不存在，尝试 --refresh-all 触发初始化
+        # doctor 命令可能在某些版本不存在，尝试 refresh --all 触发初始化
         rc_init2, stdout_init2, stderr_init2 = _run_command(
             [str(cw_exe), "refresh", "--all"],
             cwd=ws_root,

@@ -1,12 +1,11 @@
 """C8 Step #5 测试：--refresh 多 path 支持
 
-验证：
-1. --refresh flag 支持 nargs='+' 接收多个 path
-2. metavar 改为 'PATH [...]'
+验证（T10 阶段3：顶层 --refresh/--refresh-all flag 已删除）：
+1. 顶层 --refresh / --refresh-all flag 已从 create_parser 移除
+2. cw refresh <paths> subcommand 支持多路径（nargs="*"）
 3. 多文件时输出汇总（成功数/失败数/总耗时）
-4. cw refresh <paths> subcommand 也支持多路径
-5. 失败文件被记录并显示
-6. i18n key 完整
+4. 失败文件被记录并显示
+5. i18n key 完整
 """
 import json
 import os
@@ -37,36 +36,18 @@ def _parse(args_list):
 
 
 # ----------------------------------------------------------------------
-# argparse 层：--refresh 接受多 path
+# 顶层 --refresh flag 已删除（T10 阶段3）：多路径刷新改由
+# `cw refresh <paths>` subcommand 承接，断言见下方 _handle_refresh 子命令层。
+# 这里验证旧顶层 flag 已不再是合法入口。
 # ----------------------------------------------------------------------
 
-def test_refresh_flag_accepts_multiple_paths():
-    """--refresh a.py b.py c.py 解析后 args.refresh 为 list[str]。"""
-    args = _parse(["--refresh", "a.py", "b.py", "c.py"])
-    assert args.refresh == ["a.py", "b.py", "c.py"]
-
-
-def test_refresh_flag_accepts_single_path():
-    """--refresh a.py 仍兼容单 path（list 长度为 1）。"""
-    args = _parse(["--refresh", "a.py"])
-    assert args.refresh == ["a.py"]
-
-
-def test_refresh_metavar_is_path_ellipsis():
-    """--refresh 的 metavar 改为 'PATH [...]'（提示多 path）。
-
-    验证方式：直接检查 parser 的 action 定义。
-    """
+def test_top_level_refresh_flag_removed():
+    """顶层 --refresh / --refresh-all flag 已删除，不再出现在 create_parser。"""
     parser = cli_main.create_parser()
-    # 找到 --refresh action
-    refresh_action = None
     for action in parser._actions:
-        if "--refresh" in (action.option_strings or []):
-            refresh_action = action
-            break
-    assert refresh_action is not None, "--refresh flag not found in parser"
-    assert refresh_action.metavar == "PATH [...]"
-    assert refresh_action.nargs == "+"
+        opts = action.option_strings or []
+        assert "--refresh" not in opts, "顶层 --refresh flag 应已删除"
+        assert "--refresh-all" not in opts, "顶层 --refresh-all flag 应已删除"
 
 
 # ----------------------------------------------------------------------
@@ -201,13 +182,8 @@ def test_handle_refresh_all_force_flag(capsys):
 
 
 # ----------------------------------------------------------------------
-# 兼容性
+# 语法
 # ----------------------------------------------------------------------
-
-def test_refresh_flag_still_in_deprecated_mapping():
-    """--refresh 仍在 deprecated mapping 中（提示迁移到 cw refresh）。"""
-    assert "refresh" in cli_main._DEPRECATED_FLAG_MAPPING
-
 
 def test_python_syntax_ok():
     """cli/main.py 语法正确。"""

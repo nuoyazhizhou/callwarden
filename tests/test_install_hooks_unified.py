@@ -421,7 +421,7 @@ def test_pre_commit_hook_has_watchdog_degradation():
 
 
 def test_pre_commit_hook_refresh_all_present():
-    """pre-commit hook 必须实际执行 cw --refresh-all。"""
+    """pre-commit hook 必须实际执行 cw refresh --all（T10 阶段3：顶层 --refresh-all 已删）。"""
     installer = CallWardenInstaller()
     content = installer._pre_commit_hook()
-    assert "--refresh-all" in content, "hook 必须执行 cw --refresh-all"
+    assert "refresh --all" in content, "hook 必须执行 cw refresh --all"

@@ -130,35 +130,18 @@ def test_main_help_contains_gc_group():
 
 
 # ============================================
-# 2. deprecated flag 章节测试
+# 2. 主 help 不再包含 deprecated flag 章节（T10 阶段3：flag 已全部删除）
 # ============================================
 
 
-def test_main_help_contains_deprecated_section():
-    """cw --help 包含 deprecated flag 章节"""
-    output_zh = _run_cw_help("zh_CN")
-    assert "已废弃" in output_zh or "Deprecated" in output_zh, (
-        "zh_CN 输出缺少 deprecated 章节"
-    )
-
+def test_main_help_no_deprecated_section():
+    """cw --help 不再输出 deprecated flag 章节（flag 已删，subcommand 为唯一入口）"""
     output_en = _run_cw_help("en_US")
-    assert "Deprecated" in output_en, "en_US 输出缺少 'Deprecated' 章节"
-
-
-def test_main_help_contains_deprecated_arrow():
-    """deprecated 章节包含 -> 指向替代 subcommand 的箭头"""
-    output = _run_cw_help("en_US")
-    assert "-> cw " in output, (
-        "deprecated 章节应包含 '-> cw <subcommand>' 指向替代命令"
+    assert "-> cw " not in output_en, (
+        "deprecated flag 已删除，main help 不应再有 '-> cw <subcommand>' 映射清单"
     )
-
-
-def test_main_help_contains_deprecated_more_count():
-    """deprecated 章节包含剩余数量提示（'... and N more deprecated flags'）"""
-    output = _run_cw_help("en_US")
-    # _DEPRECATED_FLAG_MAPPING 有 60+ entry，剩余 50+ 个
-    assert "more deprecated flags" in output, (
-        "应包含剩余 deprecated flag 数量提示"
+    assert "more deprecated flags" not in output_en, (
+        "deprecated flag 已删除，不应再有剩余数量提示"
     )
 
 
@@ -267,10 +250,6 @@ _REQUIRED_I18N_KEYS = [
     "help_group_coverage",
     "help_group_gc",
     "help_group_diagnostics",
-    # deprecated 章节
-    "help_deprecated_title",
-    "help_deprecated_intro",
-    "help_deprecated_more",
     # 全局选项
     "help_global_options_title",
     "help_lang",
@@ -304,16 +283,6 @@ def test_i18n_keys_exist_en():
     assert not missing, (
         f"en_US.json 缺少以下 i18n key: {missing}"
     )
-
-
-def test_i18n_deprecated_more_has_placeholder():
-    """help_deprecated_more 包含 {count} 占位符"""
-    for lang in ("zh_CN", "en_US"):
-        data = _load_i18n(lang)
-        msg = data["cli"]["messages"]["help_deprecated_more"]
-        assert "{count}" in msg, (
-            f"{lang}.json help_deprecated_more 缺少 {{count}} 占位符: {msg!r}"
-        )
 
 
 def test_i18n_keys_bilingual():

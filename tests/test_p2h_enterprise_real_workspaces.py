@@ -303,7 +303,7 @@ def test_10_users_5_workspaces_shared_parse_idempotent() -> None:
         probe_ws.mkdir(parents=True, exist_ok=True)
         (probe_ws / "main.py").write_text("def f():\n    pass\n", encoding="utf-8")
         probe_rc, _, probe_err = _run_cw(
-            ["--refresh-all", str(probe_ws)],
+            ["refresh", "--all"],
             cwd=probe_ws,
             env=env,
             timeout=60.0,
@@ -332,7 +332,7 @@ def test_10_users_5_workspaces_shared_parse_idempotent() -> None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
 
-        # 10 个用户依次对 5 个 workspace 执行 --refresh-all
+        # 10 个用户依次对 5 个 workspace 执行 refresh --all
         parse_count = 0
         success_count = 0
         for user_idx in range(10):
@@ -345,7 +345,7 @@ def test_10_users_5_workspaces_shared_parse_idempotent() -> None:
             for ws_idx in range(5):
                 ws_dir = ws_root / f"ws-{ws_idx}"
                 rc, stdout, stderr = _run_cw(
-                    ["--refresh-all", str(ws_dir)],
+                    ["refresh", "--all"],
                     cwd=ws_dir,
                     env=user_env,
                     timeout=120.0,
@@ -381,7 +381,7 @@ def test_10x5_clean_workspace_repeat_parse_rate_below_5_percent() -> None:
     重复 parse 率定义：相同 canonical bytes 的文件被实际调用 parser 的次数
     与总 parse 次数的比值。在 CAS 命中时不应重复 parse。
 
-    本测试通过多次 --refresh-all 同一 workspace，验证第二次以后的 parse
+    本测试通过多次 refresh --all 同一 workspace，验证第二次以后的 parse
     应全部命中 CAS，不重复调用 parser。
     """
     cw = _find_cw_executable()
@@ -404,26 +404,26 @@ def test_10x5_clean_workspace_repeat_parse_rate_below_5_percent() -> None:
 
         # 第一次 parse：全部新文件
         rc1, stdout1, stderr1 = _run_cw(
-            ["--refresh-all", str(ws_dir)],
+            ["refresh", "--all"],
             cwd=ws_dir,
             env=env,
             timeout=120.0,
         )
         if rc1 != 0:
-            pytest.skip(f"第一次 --refresh-all 失败（cw 可能不可用）: {stderr1[:200]}")
+            pytest.skip(f"第一次 refresh --all 失败（cw 可能不可用）: {stderr1[:200]}")
 
         # 第二次 parse：相同文件，应全部命中 CAS
         rc2, stdout2, stderr2 = _run_cw(
-            ["--refresh-all", str(ws_dir)],
+            ["refresh", "--all"],
             cwd=ws_dir,
             env=env,
             timeout=120.0,
         )
         if rc2 != 0:
-            pytest.fail(f"第二次 --refresh-all 失败: {stderr2[:200]}")
+            pytest.fail(f"第二次 refresh --all 失败: {stderr2[:200]}")
 
         # 验证 CAS 命中：第二次 parse 应报告 0 个新符号或全部缓存命中
-        # cw --refresh-all 输出格式可能因版本而异，这里宽松匹配
+        # cw refresh --all 输出格式可能因版本而异，这里宽松匹配
         # 期望第二次输出包含 "0 symbols" 或 "cached" 或 "skipped" 或类似字样
         cas_hit_indicators = ["cached", "skipped", "0 symbols", "0 new", "no changes", "up to date"]
         cas_hit = any(ind in stdout2.lower() for ind in cas_hit_indicators)
@@ -460,7 +460,7 @@ def test_workspace_path_handling_windows_style() -> None:
         (ws_dir / "main.py").write_text("def f():\n    pass\n", encoding="utf-8")
 
         rc, stdout, stderr = _run_cw(
-            ["--refresh-all", str(ws_dir)],
+            ["refresh", "--all"],
             cwd=ws_dir,
             env=env,
             timeout=60.0,
@@ -493,7 +493,7 @@ def test_workspace_dirty_overlay_not_in_global_cas() -> None:
 
         # 第一次 parse
         rc1, _, _ = _run_cw(
-            ["--refresh-all", str(ws_dir)],
+            ["refresh", "--all"],
             cwd=ws_dir,
             env=env,
             timeout=60.0,
@@ -509,12 +509,12 @@ def test_workspace_dirty_overlay_not_in_global_cas() -> None:
 
         # 第二次 parse
         rc2, _, _ = _run_cw(
-            ["--refresh-all", str(ws_dir)],
+            ["refresh", "--all"],
             cwd=ws_dir,
             env=env,
             timeout=60.0,
         )
-        assert rc2 == 0, "dirty overlay 后 --refresh-all 应成功"
+        assert rc2 == 0, "dirty overlay 后 refresh --all 应成功"
 
     finally:
         try:
@@ -563,13 +563,13 @@ def test_mixed_encoding_files_parse_without_crash() -> None:
         )
 
         rc, stdout, stderr = _run_cw(
-            ["--refresh-all", str(ws_dir)],
+            ["refresh", "--all"],
             cwd=ws_dir,
             env=env,
             timeout=60.0,
         )
         # 混合编码不应导致 cw 崩溃
-        # 某些文件可能因编码问题被跳过，但整体 --refresh-all 应完成
+        # 某些文件可能因编码问题被跳过，但整体 refresh --all 应完成
         if rc != 0:
             # 记录但不强制失败：编码处理可能因平台/版本而异
             pytest.skip(f"cw 处理混合编码文件返回非零（可能因版本差异）: {stderr[:200]}")

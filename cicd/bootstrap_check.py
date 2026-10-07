@@ -41,7 +41,7 @@ def run_bootstrap_gate(db) -> Dict[str, Any]:
     聚合 db.bootstrap_status() 的关键指标，判断当前自举闭环是否健康。
 
     检查项（任一失败即阻断）：
-    1. db_stale=True：数据库滞后于当前 HEAD（需先 cw --refresh-all）
+    1. db_stale=True：数据库滞后于当前 HEAD（需先 cw refresh --all）
     2. blocking_findings_count > 0：有阻塞级质量发现（需先修复）
     3. audit_verify.broken_count > 0：审计链有损坏记录（需先修复）
 

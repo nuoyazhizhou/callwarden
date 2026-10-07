@@ -478,9 +478,9 @@ def test_mcp_and_cli_concurrent_read_no_lock(w3_live):
         f"MCP 侧 query.stats 应返回 dict，实际 {type(mcp_stats)}: {mcp_stats}"
     )
 
-    # 2. CLI 侧：子进程 `cw.py --stats` 查询同一隔离 daemon
+    # 2. CLI 侧：子进程 `cw.py stats` 查询同一隔离 daemon
     cli_result = subprocess.run(
-        [sys.executable, os.path.join(_PKG_PARENT, "cw.py"), "--stats"],
+        [sys.executable, os.path.join(_PKG_PARENT, "cw.py"), "stats"],
         cwd=_w3_repo_root(w3_live),
         capture_output=True,
         text=True,
@@ -489,7 +489,7 @@ def test_mcp_and_cli_concurrent_read_no_lock(w3_live):
     )
     cli_output = cli_result.stdout + cli_result.stderr
     assert cli_result.returncode == 0, (
-        f"CLI --stats 应在 live daemon 上成功（无锁/fail-closed），实际退出码 "
+        f"CLI stats 应在 live daemon 上成功（无锁/fail-closed），实际退出码 "
         f"{cli_result.returncode}，输出: {cli_output[-500:]}"
     )
 
@@ -509,7 +509,7 @@ def test_concurrent_cli_reads_no_conflict(w3_live):
 
     def _run_cli():
         return subprocess.run(
-            [sys.executable, os.path.join(_PKG_PARENT, "cw.py"), "--stats"],
+            [sys.executable, os.path.join(_PKG_PARENT, "cw.py"), "stats"],
             cwd=repo,
             capture_output=True,
             text=True,

@@ -28,11 +28,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::impact::query_local_impact;
 use super::router::DaemonMode;
 use super::runtime::{workspace_root_path, CommandResult, RouteUsed, RuntimeOptions};
-use crate::daemon::workspace::normalize_path_key;
 use super::security::bootstrap_status;
 use super::stats::query_local_stats;
 use super::status::{load_ignore_patterns, should_ignore};
 use crate::clone_detection::detect_clones_core;
+use crate::daemon::workspace::normalize_path_key;
 use crate::graph::GraphStore;
 
 /// 执行外部工具并提供硬超时，避免 Semgrep/Git 进程在 CLI 中永久占用资源。
@@ -174,9 +174,9 @@ pub fn enterprise_workspace_id(runtime: &RuntimeOptions, command: &str) -> Resul
     let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
     let root = workspace_root_path(&conn, workspace_id)?;
     let rows = runtime.daemon_call("workspace.list", json!({}))?;
-    let rows = rows
-        .as_array()
-        .ok_or_else(|| format!("{command}: workspace.list 返回非数组，无法解析 workspace_instance_id"))?;
+    let rows = rows.as_array().ok_or_else(|| {
+        format!("{command}: workspace.list 返回非数组，无法解析 workspace_instance_id")
+    })?;
     let candidates = match_candidates_by_root(rows, &root);
     if candidates.is_empty() {
         return Err(format!(
@@ -265,14 +265,14 @@ fn match_candidates_by_root<'a>(rows: &'a [Value], root: &str) -> Vec<RootCandid
         if status == "archived" {
             continue;
         }
-        let hit = ["client_view_root", "host_real_root"]
-            .iter()
-            .any(|field| {
-                row.get(*field).and_then(Value::as_str).map_or(false, |view_root| {
+        let hit = ["client_view_root", "host_real_root"].iter().any(|field| {
+            row.get(*field)
+                .and_then(Value::as_str)
+                .map_or(false, |view_root| {
                     let norm = normalize_path_key(view_root).to_lowercase();
                     norm == key_lower || norm.starts_with(&branch_prefix)
                 })
-            });
+        });
         if !hit {
             continue;
         }
@@ -1258,7 +1258,8 @@ pub fn run_git_show(runtime: &RuntimeOptions, commit_sha: &str) -> CommandResult
     }
     // F-005：该命令执行本地 `git show` 子进程，daemon 无等价能力 →
     // enterprise 模式显式 fail-closed（不再静默跑本地进程）。
-    if let Some(denied) = enterprise_local_only(runtime, "git show", "运行本地 git show 子进程") {
+    if let Some(denied) = enterprise_local_only(runtime, "git show", "运行本地 git show 子进程")
+    {
         return denied;
     }
     let conn = match runtime.open_local_db() {
@@ -4735,7 +4736,7 @@ pub fn run_dashboard(
             values.push(json!({"type":"broken_audit","severity":"high","detail":format!("审计链有 {} 条损坏记录（cw audit verify 查看）", bootstrap.audit_verify.broken_count)}));
         }
         if bootstrap.db_stale {
-            values.push(json!({"type":"db_stale","severity":"medium","detail":"DB 滞后于 git HEAD，建议 cw --refresh-all"}));
+            values.push(json!({"type":"db_stale","severity":"medium","detail":"DB 滞后于 git HEAD，建议 cw refresh --all"}));
         }
         values.truncate(top * 3);
         json!(values)
@@ -5034,7 +5035,8 @@ mod tests {
         drop(conn);
 
         let runtime = test_runtime(db_path);
-        let value: Value = serde_json::from_str(&run_hotspot_report(&runtime, "", 10).stdout).unwrap();
+        let value: Value =
+            serde_json::from_str(&run_hotspot_report(&runtime, "", 10).stdout).unwrap();
         let result = &value["results"][0];
         assert_eq!(result["symbol_hash"], "shared-hash");
         assert_eq!(result["change_count"], 1);
@@ -5319,12 +5321,7 @@ mod tests {
         })
     }
 
-    fn registry_row_owner(
-        instance: &str,
-        view_root: &str,
-        owner_uid: i64,
-        status: &str,
-    ) -> Value {
+    fn registry_row_owner(instance: &str, view_root: &str, owner_uid: i64, status: &str) -> Value {
         json!({
             "workspace_id": 1,
             "workspace_instance_id": instance,
@@ -5348,7 +5345,12 @@ mod tests {
         // 本地 root 为反斜杠 + 尾斜杠 + 大写盘符，registry 行为正斜杠小写盘符
         let rows = vec![
             registry_row("inst-other", "c:/other/place", "c:/other/place", "active"),
-            registry_row("inst-target", "c:/git_work/callwarden", "C:\\git_work\\callwarden", "active"),
+            registry_row(
+                "inst-target",
+                "c:/git_work/callwarden",
+                "C:\\git_work\\callwarden",
+                "active",
+            ),
         ];
         assert_eq!(
             matched_instances(&rows, "C:\\git_work\\callwarden\\"),
@@ -5360,8 +5362,18 @@ mod tests {
     fn match_instance_skips_archived_and_uses_host_real_root() {
         // 同 root 两条行：archived 在前（模拟 last_active_at 更大）也必须跳过
         let rows = vec![
-            registry_row("inst-old", "c:/git_work/callwarden", "c:/git_work/callwarden", "archived"),
-            registry_row("inst-new", "c:/git_work/callwarden", "c:/git_work/callwarden", "active"),
+            registry_row(
+                "inst-old",
+                "c:/git_work/callwarden",
+                "c:/git_work/callwarden",
+                "archived",
+            ),
+            registry_row(
+                "inst-new",
+                "c:/git_work/callwarden",
+                "c:/git_work/callwarden",
+                "active",
+            ),
         ];
         assert_eq!(
             matched_instances(&rows, "c:/git_work/callwarden"),
@@ -5394,7 +5406,12 @@ mod tests {
 
     #[test]
     fn match_instance_fail_closed_on_no_match_or_empty_root() {
-        let rows = vec![registry_row("inst-x", "c:/somewhere", "c:/somewhere", "active")];
+        let rows = vec![registry_row(
+            "inst-x",
+            "c:/somewhere",
+            "c:/somewhere",
+            "active",
+        )];
         assert!(matched_instances(&rows, "c:/git_work/callwarden").is_empty());
         // 空 root 直接拒绝（不猜测）
         assert!(matched_instances(&rows, "").is_empty());
@@ -5426,8 +5443,18 @@ mod tests {
         // 让 daemon 报明确的 snapshot_not_ready 而非 workspace_forbidden
         let rows = vec![
             registry_row_owner("stale-owner0", "c:/git_work/callwarden", 0, "active"),
-            registry_row_owner("first-owned", "c:/git_work/callwarden", 4294967295, "active"),
-            registry_row_owner("second-owned", "c:/git_work/callwarden", 4294967295, "active"),
+            registry_row_owner(
+                "first-owned",
+                "c:/git_work/callwarden",
+                4294967295,
+                "active",
+            ),
+            registry_row_owner(
+                "second-owned",
+                "c:/git_work/callwarden",
+                4294967295,
+                "active",
+            ),
         ];
         let candidates = match_candidates_by_root(&rows, "c:/git_work/callwarden");
         assert_eq!(
@@ -5504,6 +5531,9 @@ mod tests {
             timeout: Duration::from_secs(1),
         };
         let err = enterprise_workspace_id(&runtime, "stats").unwrap_err();
-        assert!(err.contains("requires --workspace-id"), "unexpected error: {err}");
+        assert!(
+            err.contains("requires --workspace-id"),
+            "unexpected error: {err}"
+        );
     }
 }
