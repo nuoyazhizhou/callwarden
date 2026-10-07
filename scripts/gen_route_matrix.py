@@ -46,9 +46,9 @@ TOOL_MODULES: List[str] = [
     "tools_security",
     "tools_rules",
     "tools_collab",
-    "tools_p2_graph",
-    "tools_p3_identity",
-    "tools_p4_lease",
+    "tools_dependency_graph",
+    "tools_identity",
+    "tools_lease",
     "tools_task_prompt",
 ]
 
@@ -155,19 +155,19 @@ _FALLBACK_NAMES: Dict[str, List[str]] = {
         "get_gate_decision", "get_role_view", "submit_verdict",
         "task_remediation_create", "task_step_resolve",
     ],
-    "tools_p2_graph": [
+    "tools_dependency_graph": [
         "build_hard_dependency_edges", "detect_dependency_cycle", "get_artifact_freshness",
         "get_dependency_edges", "get_interface_providers",
         "import_envelope_dependencies", "publish_interface",
         "record_artifact_identity", "select_interface_provider",
         "validate_revision_dependencies",
     ],
-    "tools_p3_identity": [
+    "tools_identity": [
         "check_action_identity", "check_session_separation", "get_action_identity",
         "get_attestation_validity", "list_attestation_revocations",
         "record_action_identity", "register_attestation_revocation",
     ],
-    "tools_p4_lease": [
+    "tools_lease": [
         "assignment_create", "assignment_revoke", "assignment_show",
         "lease_acquire", "lease_list_events", "lease_release", "lease_renew",
         "lease_status",
@@ -420,7 +420,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "task_remediation_create": {"rpc_method": "task.remediation.create", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "existing-native", "status": "stable"},
     "task_step_resolve": {"rpc_method": "task.step.resolve", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "existing-native", "status": "stable"},
 
-    # ============ tools_p2_graph（10） ============
+    # ============ tools_dependency_graph（10） ============
     "build_hard_dependency_edges": {"rpc_method": "task.job_submit", "backend": "task_rpc", "op": "PROTECTED_MUTATION", "batch": "T02-job", "status": "migrated", "job_type": "hard_dep_edges"},
     "detect_dependency_cycle": {"rpc_method": "detect_cycle", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-007", "status": "migrated"},
     "get_artifact_freshness": {"rpc_method": "get_artifact_freshness", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-005", "status": "migrated"},
@@ -432,7 +432,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "select_interface_provider": {"rpc_method": "admin.select_interface_provider", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "validate_revision_dependencies": {"rpc_method": "validate_revision_dependencies", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-008", "status": "migrated"},
 
-    # ============ tools_p3_identity（7） ============
+    # ============ tools_identity（7） ============
     "check_action_identity": {"rpc_method": "check_action_identity", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-011", "status": "migrated"},
     "check_session_separation": {"rpc_method": "check_session_separation", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-012", "status": "migrated"},
     "get_action_identity": {"rpc_method": "get_action_identity", "backend": "rust_native", "op": "READ_ONLY", "batch": "MCP-010", "status": "migrated"},
@@ -441,7 +441,7 @@ ROUTE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "record_action_identity": {"rpc_method": "admin.record_action_identity", "backend": "rust_native", "op": "GOVERNANCE_WRITE", "batch": "T02-admin", "status": "migrated"},
     "register_attestation_revocation": {"rpc_method": "admin.register_attestation_revocation", "backend": "rust_native", "op": "GOVERNANCE_WRITE", "batch": "T02-admin", "status": "migrated"},
 
-    # ============ tools_p4_lease（8） ============
+    # ============ tools_lease（8） ============
     "assignment_create": {"rpc_method": "admin.assignment_create", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "assignment_revoke": {"rpc_method": "admin.assignment_revoke", "backend": "rust_native", "op": "PROTECTED_MUTATION", "batch": "T02-admin", "status": "migrated"},
     "assignment_show": {"rpc_method": "assignment_show", "backend": "rust_native", "op": "READ_ONLY", "batch": "P0-COMPAT-v3", "status": "migrated"},

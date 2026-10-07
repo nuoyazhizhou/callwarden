@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-10-07T18:37:08",
+  "generated_at": "2026-10-07T19:38:32",
   "total_tools": 243,
   "backends": [
     "rust_native",
@@ -96,7 +96,7 @@
     },
     {
       "name": "build_hard_dependency_edges",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "task_rpc",
       "target_backend": "task_rpc",
       "rpc_method": "task.job_submit",
@@ -107,7 +107,7 @@
     },
     {
       "name": "detect_dependency_cycle",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "detect_cycle",
@@ -117,7 +117,7 @@
     },
     {
       "name": "get_artifact_freshness",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "get_artifact_freshness",
@@ -127,7 +127,7 @@
     },
     {
       "name": "get_dependency_edges",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "get_dependency_edges",
@@ -137,7 +137,7 @@
     },
     {
       "name": "get_interface_providers",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "get_interface_providers",
@@ -147,7 +147,7 @@
     },
     {
       "name": "import_envelope_dependencies",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "task_rpc",
       "target_backend": "task_rpc",
       "rpc_method": "task.job_submit",
@@ -158,7 +158,7 @@
     },
     {
       "name": "publish_interface",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.publish_interface",
@@ -168,7 +168,7 @@
     },
     {
       "name": "record_artifact_identity",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.record_artifact_identity",
@@ -178,7 +178,7 @@
     },
     {
       "name": "select_interface_provider",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.select_interface_provider",
@@ -188,7 +188,7 @@
     },
     {
       "name": "validate_revision_dependencies",
-      "module": "tools_p2_graph",
+      "module": "tools_dependency_graph",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "validate_revision_dependencies",
@@ -198,7 +198,7 @@
     },
     {
       "name": "check_action_identity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "check_action_identity",
@@ -208,7 +208,7 @@
     },
     {
       "name": "check_session_separation",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "check_session_separation",
@@ -218,7 +218,7 @@
     },
     {
       "name": "get_action_identity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "get_action_identity",
@@ -228,7 +228,7 @@
     },
     {
       "name": "get_attestation_validity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "get_attestation_validity",
@@ -238,7 +238,7 @@
     },
     {
       "name": "list_attestation_revocations",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "list_attestation_revocations",
@@ -248,7 +248,7 @@
     },
     {
       "name": "record_action_identity",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.record_action_identity",
@@ -258,7 +258,7 @@
     },
     {
       "name": "register_attestation_revocation",
-      "module": "tools_p3_identity",
+      "module": "tools_identity",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.register_attestation_revocation",
@@ -268,7 +268,7 @@
     },
     {
       "name": "assignment_create",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.assignment_create",
@@ -278,7 +278,7 @@
     },
     {
       "name": "assignment_revoke",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "admin.assignment_revoke",
@@ -288,7 +288,7 @@
     },
     {
       "name": "assignment_show",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "assignment_show",
@@ -298,7 +298,7 @@
     },
     {
       "name": "lease_acquire",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "lease.acquire",
@@ -308,7 +308,7 @@
     },
     {
       "name": "lease_list_events",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "lease.list_events",
@@ -318,7 +318,7 @@
     },
     {
       "name": "lease_release",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "lease.release",
@@ -328,7 +328,7 @@
     },
     {
       "name": "lease_renew",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "lease.renew",
@@ -338,7 +338,7 @@
     },
     {
       "name": "lease_status",
-      "module": "tools_p4_lease",
+      "module": "tools_lease",
       "current_backend": "rust_native",
       "target_backend": "rust_native",
       "rpc_method": "lease.status",

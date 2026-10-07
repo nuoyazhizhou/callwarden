@@ -4,7 +4,7 @@
   success / no-match / task_id 过滤 / 缺省参数、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p2_graph.get_dependency_edges）已从 _P2_READ_ONLY_METHODS
+- Python MCP wrapper（tools_dependency_graph.get_dependency_edges）已从 _P2_READ_ONLY_METHODS
   移除 compat 注册（p2 组全部迁移），改由 Rust daemon
   （task_collab.rs::handle_get_dependency_edges）为权威：查询 dependency_edges
   全部列按 created_at 排序，可选按 task_id 过滤（provider 或 consumer 匹配）。

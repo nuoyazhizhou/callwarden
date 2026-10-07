@@ -5,11 +5,11 @@
   unknown workspace、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p2_graph.get_interface_providers）已是 route_rpc 薄壳；
+- Python MCP wrapper（tools_dependency_graph.get_interface_providers）已是 route_rpc 薄壳；
   本测试直连 HTTP RPC `get_interface_providers`，验证 Rust daemon
   （task_collab.rs::handle_get_interface_providers）为权威：从 interface_identities 按
   workspace_id + interface_name (+ version) 查询 provider 列表，返回 items + count。
-- Python compat `_h_get_interface_providers` 已从 tools_p2_graph._P2_READ_ONLY_METHODS 移除。
+- Python compat `_h_get_interface_providers` 已从 tools_dependency_graph._P2_READ_ONLY_METHODS 移除。
 
 确定性 parity：interface_identities 当前为空 → 任何过滤均返回 items=[], count=0（与
 Python db_task_dependencies.get_interface_providers 空表语义一致）。

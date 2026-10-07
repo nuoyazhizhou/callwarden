@@ -1,22 +1,22 @@
 """H4B-E: Governance/unsupported/error HTTP cutover 测试
 
-验证 tools_p2_graph.py、tools_p3_identity.py、tools_p4_lease.py 中所有工具的
+验证 tools_dependency_graph.py、tools_identity.py、tools_lease.py 中所有工具的
 HTTP 路由契约。
 
 stale 依据（A 桶 / MCP 工具 `_route` 化）：
 旧版本断言三类旧路由机制——
-1. 只读接入组经 `route_worker_call()` → compat worker（tools_p2_graph.py:22 /
-   tools_p3_identity.py:22 / tools_p4_lease.py:26 的顶层 import 仍在，但工具体
+1. 只读接入组经 `route_worker_call()` → compat worker（tools_dependency_graph.py:22 /
+   tools_identity.py:22 / tools_lease.py:26 的顶层 import 仍在，但工具体
    内已无调用点，仅剩注释）；
 2. 写语义组 HTTP 模式短路 `_http_unsupported()` 返回 E_HTTP_COMPAT_UNSUPPORTED
    （源码已无 `def _http_unsupported`，各模块仅剩注释引用）；
 3. rust_native lease_* HTTP 模式经 `_call_daemon_rpc()` 真名透传
-   （`from .._mcp_common import _call_daemon_rpc` 仍在 tools_p4_lease.py:23，
+   （`from .._mcp_common import _call_daemon_rpc` 仍在 tools_lease.py:23，
    但工具体内已无调用点）。
 
 现行生产实现已全面 `_route` 化：
-- `server/tools/tools_p2_graph.py:33`、`tools_p3_identity.py:33`、
-  `tools_p4_lease.py:43` 均为
+- `server/tools/tools_dependency_graph.py:33`、`tools_identity.py:33`、
+  `tools_lease.py:43` 均为
   `from ..daemon_client import route_rpc as _route`；
 - 每个工具体退化为一行式 `return _route('<rpc method>', {...}, '<OP_CLASS>')`
   （写语义 job_submit 类工具额外 unwrap `result`）；
@@ -75,7 +75,7 @@ def _register_tools(module, mcp=None):
 def _route_recorder(monkeypatch, module, result):
     """把模块级 `_route` 替换为记录器，返回记录列表 [(method, params, op_class)]。
 
-    现行工具体一律 `return _route(method, params, op_class)`（tools_p2_graph.py:60
+    现行工具体一律 `return _route(method, params, op_class)`（tools_dependency_graph.py:60
     等），故此处直接替换模块属性即可捕获下发路由。
     """
     calls = []
@@ -98,52 +98,52 @@ def _module_name(module):
 
 # (module_name, tool_name, 调用 kwargs, rpc_method, 期望 params)
 READ_ROUTE_CASES = [
-    ("tools_p2_graph", "get_artifact_freshness",
+    ("tools_dependency_graph", "get_artifact_freshness",
      {"workspace_id": 1, "task_id": "T-001", "artifact_ref": "src/main.py"},
      "get_artifact_freshness",
      {"workspace_id": 1, "task_id": "T-001", "artifact_ref": "src/main.py"}),
-    ("tools_p2_graph", "get_interface_providers",
+    ("tools_dependency_graph", "get_interface_providers",
      {"workspace_id": 1, "interface_name": "IFace", "version": "1.0"},
      "get_interface_providers",
      {"workspace_id": 1, "interface_name": "IFace", "version": "1.0"}),
-    ("tools_p2_graph", "detect_cycle",
+    ("tools_dependency_graph", "detect_cycle",
      {"workspace_id": 1},
      "detect_cycle",
      {"workspace_id": 1}),
-    ("tools_p2_graph", "validate_revision_dependencies",
+    ("tools_dependency_graph", "validate_revision_dependencies",
      {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1},
      "validate_revision_dependencies",
      {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1}),
-    ("tools_p2_graph", "get_dependency_edges",
+    ("tools_dependency_graph", "get_dependency_edges",
      {"workspace_id": 1, "task_id": "T-001"},
      "get_dependency_edges",
      {"workspace_id": 1, "task_id": "T-001"}),
-    ("tools_p3_identity", "get_action_identity",
+    ("tools_identity", "get_action_identity",
      {"action_id": "ACT-001"},
      "get_action_identity",
      {"action_id": "ACT-001", "workspace_id": None}),
-    ("tools_p3_identity", "check_action_identity",
+    ("tools_identity", "check_action_identity",
      {"identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}',
       "require_role": "implementer"},
      "check_action_identity",
      {"identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}',
       "require_role": "implementer"}),
-    ("tools_p3_identity", "check_session_separation",
+    ("tools_identity", "check_session_separation",
      {"reviewer_identity": '{"agent_id": "r1", "session_id": "s1", "model_id": "m1", "role": "reviewer"}',
       "implementer_identity": '{"agent_id": "a1", "session_id": "s2", "model_id": "m1", "role": "implementer"}'},
      "check_session_separation",
      {"reviewer_identity": '{"agent_id": "r1", "session_id": "s1", "model_id": "m1", "role": "reviewer"}',
       "implementer_identity": '{"agent_id": "a1", "session_id": "s2", "model_id": "m1", "role": "implementer"}'}),
-    ("tools_p3_identity", "get_attestation_validity",
+    ("tools_identity", "get_attestation_validity",
      {"issuer": "issuer-1", "signing_key_id": "key-1", "issuance_time": 1234567890.0},
      "get_attestation_validity",
      {"issuer": "issuer-1", "signing_key_id": "key-1",
       "issuance_time": 1234567890.0, "workspace_id": None}),
-    ("tools_p3_identity", "list_attestation_revocations",
+    ("tools_identity", "list_attestation_revocations",
      {"issuer": "issuer-1", "signing_key_id": "key-1"},
      "list_attestation_revocations",
      {"issuer": "issuer-1", "signing_key_id": "key-1", "workspace_id": None}),
-    ("tools_p4_lease", "assignment_show",
+    ("tools_lease", "assignment_show",
      {"task_id": "T-001", "role": "implementer"},
      "assignment_show",
      {"task_id": "T-001", "role": "implementer"}),
@@ -206,7 +206,7 @@ class TestReadToolsRouteReadOnly:
 
 # (module_name, tool_name, 调用 kwargs, rpc_method, 期望 params, op_class, unwrap_result)
 WRITE_ROUTE_CASES = [
-    ("tools_p2_graph", "import_envelope_dependencies",
+    ("tools_dependency_graph", "import_envelope_dependencies",
      {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
       "contract_revision": 1, "dependencies": []},
      "task.job_submit",
@@ -214,7 +214,7 @@ WRITE_ROUTE_CASES = [
       "contract_revision": 1, "dependencies": [],
       "job_type": "envelope_deps", "sync": True},
      "PROTECTED_MUTATION", True),
-    ("tools_p2_graph", "record_artifact_identity",
+    ("tools_dependency_graph", "record_artifact_identity",
      {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
       "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py"},
      "admin.record_artifact_identity",
@@ -222,7 +222,7 @@ WRITE_ROUTE_CASES = [
       "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py",
       "artifact_hash": "", "workspace_snapshot_id": ""},
      "GOVERNANCE_WRITE", False),
-    ("tools_p2_graph", "publish_interface",
+    ("tools_dependency_graph", "publish_interface",
      {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
       "contract_revision": 1, "interface_name": "IFace", "version": "1.0"},
      "admin.publish_interface",
@@ -230,7 +230,7 @@ WRITE_ROUTE_CASES = [
       "contract_revision": 1, "interface_name": "IFace", "version": "1.0",
       "interface_hash": ""},
      "PROTECTED_MUTATION", False),
-    ("tools_p2_graph", "select_interface_provider",
+    ("tools_dependency_graph", "select_interface_provider",
      {"workspace_id": 1, "consumer_task_id": "T-001", "contract_id": "C-001",
       "contract_revision": 1, "interface_name": "IFace",
       "selected_provider_task_id": "T-002"},
@@ -239,13 +239,13 @@ WRITE_ROUTE_CASES = [
       "contract_revision": 1, "interface_name": "IFace",
       "selected_provider_task_id": "T-002"},
      "PROTECTED_MUTATION", False),
-    ("tools_p2_graph", "build_hard_dependency_edges",
+    ("tools_dependency_graph", "build_hard_dependency_edges",
      {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1},
      "task.job_submit",
      {"workspace_id": 1, "contract_id": "C-001", "contract_revision": 1,
       "job_type": "hard_dep_edges", "sync": True},
      "PROTECTED_MUTATION", True),
-    ("tools_p3_identity", "record_action_identity",
+    ("tools_identity", "record_action_identity",
      {"action_id": "ACT-001", "action_type": "contract", "task_id": "T-001",
       "identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}'},
      "admin.record_action_identity",
@@ -253,19 +253,19 @@ WRITE_ROUTE_CASES = [
       "identity": '{"agent_id": "a1", "session_id": "s1", "model_id": "m1", "role": "implementer"}',
       "contract_id": "", "contract_revision": 0, "workspace_id": None},
      "GOVERNANCE_WRITE", False),
-    ("tools_p3_identity", "register_attestation_revocation",
+    ("tools_identity", "register_attestation_revocation",
      {"issuer": "issuer-1", "signing_key_id": "key-1", "revocation_mode": "compromised"},
      "admin.register_attestation_revocation",
      {"issuer": "issuer-1", "signing_key_id": "key-1", "revocation_mode": "compromised",
       "revocation_reason": "", "initiating_actor": "", "workspace_id": None},
      "GOVERNANCE_WRITE", False),
-    ("tools_p4_lease", "assignment_create",
+    ("tools_lease", "assignment_create",
      {"task_id": "T-001"},
      "admin.assignment_create",
      {"task_id": "T-001", "role": "implementer",
       "agent_id": "", "session_id": "", "model_id": ""},
      "PROTECTED_MUTATION", False),
-    ("tools_p4_lease", "assignment_revoke",
+    ("tools_lease", "assignment_revoke",
      {"assignment_id": "ASG-001"},
      "admin.assignment_revoke",
      {"assignment_id": "ASG-001"},
@@ -278,7 +278,7 @@ class TestWriteToolsRouteMutation:
 
     stale 依据：旧用例 patch `_http_unsupported`（源码已无此函数，仅剩注释）并断言
     返回 E_HTTP_COMPAT_UNSUPPORTED；现行工具体直接 `_route` 到真实 RPC
-    （如 tools_p2_graph.py:85 `admin.record_artifact_identity`），无客户端 fail-closed
+    （如 tools_dependency_graph.py:85 `admin.record_artifact_identity`），无客户端 fail-closed
     短路。HTTP 模式不可用等 fail-closed 语义整体下沉到 route_rpc。
     """
 
@@ -360,11 +360,11 @@ LEASE_ROUTE_CASES = [
 
 
 class TestToolsP4LeaseRoute:
-    """tools_p4_lease.py 中 lease_* 工具现行经 `_route('lease.*', ...)` 下发。
+    """tools_lease.py 中 lease_* 工具现行经 `_route('lease.*', ...)` 下发。
 
-    stale 依据：旧用例 patch `tools_p4_lease._call_daemon_rpc` 并断言真名透传；
+    stale 依据：旧用例 patch `tools_lease._call_daemon_rpc` 并断言真名透传；
     现行工具体为一行式 `_route('lease.acquire', {...}, 'PROTECTED_MUTATION')`
-    （tools_p4_lease.py:78/:109/:138/:156/:172），`_call_daemon_rpc` 已无调用点。
+    （tools_lease.py:78/:109/:138/:156/:172），`_call_daemon_rpc` 已无调用点。
     """
 
     @pytest.mark.parametrize(
@@ -375,7 +375,7 @@ class TestToolsP4LeaseRoute:
     def test_lease_tool_routes_native_rpc(
         self, monkeypatch, tool_name, args, rpc_method, expect_params, op_class,
     ):
-        module = _import_tool_module("tools_p4_lease")
+        module = _import_tool_module("tools_lease")
         expected = {"ok": True}
         calls = _route_recorder(monkeypatch, module, expected)
 
@@ -395,7 +395,7 @@ class TestToolsP4LeaseRoute:
     def test_lease_tool_fail_closed_no_local_fallback(
         self, monkeypatch, tool_name, args, rpc_method, expect_params, op_class,
     ):
-        module = _import_tool_module("tools_p4_lease")
+        module = _import_tool_module("tools_lease")
 
         def _boom(*a, **kw):
             raise DaemonRemoteError("E_HTTP_DAEMON_UNAVAILABLE", "daemon 不可达")
@@ -418,26 +418,26 @@ class TestRouteCoverage:
 
     stale 依据：旧用例断言 `route_worker_call` / `_http_unsupported` /
     `_call_daemon_rpc` 出现在工具源码中；现行工具一律 `return _route(...)`
-    （tools_p2_graph.py:60/85/98/115/128/144/159/171/187/202，
-    tools_p3_identity.py:66/82/98/114/139/161/191，
-    tools_p4_lease.py:78/109/138/156/172/199/213/228），旧 marker 已消失。
+    （tools_dependency_graph.py:60/85/98/115/128/144/159/171/187/202，
+    tools_identity.py:66/82/98/114/139/161/191，
+    tools_lease.py:78/109/138/156/172/199/213/228），旧 marker 已消失。
     """
 
     MODULE_TOOLS = {
-        "tools_p2_graph": [
+        "tools_dependency_graph": [
             "import_envelope_dependencies", "record_artifact_identity",
             "get_artifact_freshness", "publish_interface",
             "get_interface_providers", "select_interface_provider",
             "build_hard_dependency_edges", "detect_cycle",
             "validate_revision_dependencies", "get_dependency_edges",
         ],
-        "tools_p3_identity": [
+        "tools_identity": [
             "record_action_identity", "get_action_identity",
             "check_action_identity", "check_session_separation",
             "get_attestation_validity", "list_attestation_revocations",
             "register_attestation_revocation",
         ],
-        "tools_p4_lease": [
+        "tools_lease": [
             "lease_acquire", "lease_renew", "lease_release",
             "lease_status", "lease_list_events",
             "assignment_create", "assignment_show", "assignment_revoke",

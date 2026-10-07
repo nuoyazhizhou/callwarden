@@ -146,7 +146,7 @@ def test_api_register_attestation_revocation_routes_governance_write(
     stale 修复（PYT 回归卡 step#4 · A 桶）：旧用例 mock
     `is_http_transport_enabled`=False 后调用工具，期望 Python API 层返回
     `{"status": "error", "reason": {"code": E_TASK_LOOP_CAPABILITY_DISABLED}}` 且
-    `get_db` 不被触碰。生产侧 server/tools/tools_p3_identity.py:163-191 现为一行式
+    `get_db` 不被触碰。生产侧 server/tools/tools_identity.py:163-191 现为一行式
     `return _route('admin.register_attestation_revocation', {...}, 'GOVERNANCE_WRITE')`
     （:33 `route_rpc as _route`）：工具层已无 `_get_daemon_mode() != "local"` gate
     分支、无 `db.register_attestation_revocation(` 直写、也不读 `get_db`；HTTP/local/
@@ -159,7 +159,7 @@ def test_api_register_attestation_revocation_routes_governance_write(
     get_db；路由细节由 test_http_governance_error_cutover.py 的 WRITE_ROUTE_CASES
     覆盖。
     """
-    from callwarden.server.tools import tools_p3_identity
+    from callwarden.server.tools import tools_identity
 
     daemon_mode(mode)
     expected = {"code": "OK", "revocation_id": "rev-1"}
@@ -169,10 +169,10 @@ def test_api_register_attestation_revocation_routes_governance_write(
         calls.append((method, dict(params), op_class))
         return expected
 
-    monkeypatch.setattr(tools_p3_identity, "_route", _fake_route)
-    tools = _register_tools(tools_p3_identity)
+    monkeypatch.setattr(tools_identity, "_route", _fake_route)
+    tools = _register_tools(tools_identity)
     fn = tools["register_attestation_revocation"]
-    with patch.object(tools_p3_identity, "get_db") as mock_get_db:
+    with patch.object(tools_identity, "get_db") as mock_get_db:
         result = fn(
             issuer="iss",
             signing_key_id="k1",
@@ -232,7 +232,7 @@ def test_cli_identity_revoke_fail_closed(monkeypatch):
 #
 # stale 修复（PYT 回归卡 step#4 · A 桶）：原清单含
 # `("api.register_attestation_revocation", "api")`，依赖 MCP 工具在 Python 侧
-# 做 gate-first fail-closed。工具 `_route` 薄壳化后（server/tools/tools_p3_identity.py:163-191
+# 做 gate-first fail-closed。工具 `_route` 薄壳化后（server/tools/tools_identity.py:163-191
 # 一行式 `_route('admin.register_attestation_revocation', {...}, 'GOVERNANCE_WRITE')`）
 # 该 API 路径在 Python 侧已无 DB 写入口与 gate 分支：分流失衡与 fail-closed 下沉
 # route_rpc（server/daemon_client.py:3880-3994），gate-first 锁序迁入 Rust

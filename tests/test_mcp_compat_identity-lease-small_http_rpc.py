@@ -141,7 +141,7 @@ def test_compat_methods_daemon_unavailable_fail_closed(method):
 # Python compat 退役断言：条目已从只读白名单摘除
 # ---------------------------------------------------------------------------
 def test_python_compat_entries_retired():
-    from callwarden.server.tools import tools_p3_identity, tools_p4_lease
-    assert "get_attestation_validity" not in tools_p3_identity._P3_READ_ONLY_METHODS
-    assert "list_attestation_revocations" not in tools_p3_identity._P3_READ_ONLY_METHODS
-    assert "assignment_show" not in tools_p4_lease._P4_READ_ONLY_METHODS
+    from callwarden.server.tools import tools_identity, tools_lease
+    assert "get_attestation_validity" not in tools_identity._P3_READ_ONLY_METHODS
+    assert "list_attestation_revocations" not in tools_identity._P3_READ_ONLY_METHODS
+    assert "assignment_show" not in tools_lease._P4_READ_ONLY_METHODS

@@ -4,7 +4,7 @@
   success（无撤销记录 → valid）/ 缺省参数、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p3_identity.get_attestation_validity）已从 _P3_READ_ONLY_METHODS
+- Python MCP wrapper（tools_identity.get_attestation_validity）已从 _P3_READ_ONLY_METHODS
   移除 compat 注册，改由 Rust daemon（task_collab.rs::handle_get_attestation_validity）为
   权威：查 attestation_revocation_records 按 revoked_at 升序，compromised → invalid（忽略
   issuance_time）；rotated 且 issuance_time > revoked_at → invalid；否则 valid。

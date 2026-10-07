@@ -219,14 +219,14 @@ P2_METHODS = [
     "get_dependency_edges",
 ]
 
-# p3 身份/证明组（tools_p3_identity 注册）= 2（get_action_identity /
+# p3 身份/证明组（tools_identity 注册）= 2（get_action_identity /
 # check_action_identity / check_session_separation 已迁 native，残留于静态表）。
 P3_METHODS = [
     "get_attestation_validity",
     "list_attestation_revocations",
 ]
 
-# p4 租约组（tools_p4_lease 注册）= 1（assignment_show 仍注册）。
+# p4 租约组（tools_lease 注册）= 1（assignment_show 仍注册）。
 P4_METHODS = [
     "assignment_show",
 ]

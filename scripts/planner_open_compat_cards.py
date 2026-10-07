@@ -22,7 +22,7 @@ MATRIX = "deliverables/software-company/tool_migration_matrix.json"
 
 # 每卡覆盖的 module 组（module 名 → client 文件）
 GROUPS: dict[str, list[str]] = {
-    "identity-lease-small": ["server/tools/tools_p3_identity.py", "server/tools/tools_p4_lease.py"],
+    "identity-lease-small": ["server/tools/tools_identity.py", "server/tools/tools_lease.py"],
     "tools_query": ["server/tools/tools_query.py"],
     "tools_task": ["server/tools/tools_task.py"],
     "tools_semantic": ["server/tools/tools_semantic.py"],

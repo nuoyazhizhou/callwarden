@@ -94,9 +94,9 @@ def test_success_retired_files_14():
         "server/job_executor.py",
         "server/replicator.py",
         "server/tools/tools_collab.py",
-        "server/tools/tools_p2_graph.py",
-        "server/tools/tools_p3_identity.py",
-        "server/tools/tools_p4_lease.py",
+        "server/tools/tools_dependency_graph.py",
+        "server/tools/tools_identity.py",
+        "server/tools/tools_lease.py",
         "server/tools/tools_security.py",
         "server/tools/tools_task.py",
     }

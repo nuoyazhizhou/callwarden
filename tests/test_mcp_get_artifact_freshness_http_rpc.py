@@ -5,12 +5,12 @@
   workspace、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p2_graph.get_artifact_freshness）已是 route_rpc 薄壳；
+- Python MCP wrapper（tools_dependency_graph.get_artifact_freshness）已是 route_rpc 薄壳；
   本测试直连 HTTP RPC `get_artifact_freshness`，验证 Rust daemon
   （task_collab.rs::handle_get_artifact_freshness）为权威：从 artifact_identities 按
   workspace_id + task_id (+ artifact_ref) 取最新一条，命中返回字段投影，未命中返回
   {"found": false}。
-- Python compat `_h_get_artifact_freshness` 已从 tools_p2_graph._P2_READ_ONLY_METHODS 移除。
+- Python compat `_h_get_artifact_freshness` 已从 tools_dependency_graph._P2_READ_ONLY_METHODS 移除。
 
 确定性 parity：artifact_identities 当前为空 → 返回 {"found": false}（与 Python
 get_artifact_freshness 无行时返回 None 一致，本 Rust 实现转为结构化 found 标志）。

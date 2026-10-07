@@ -12,7 +12,7 @@ EVIDENCE_PATH = os.path.join(
 # - tools_query.py 10 个 query.*（H4B-N 头部注释权威清单）
 # - tools_task.py 5 个 query.issues/query.tests（M2.4/M2.5）+ 22 个 task.* 路由工具
 #   （route_task_write/read HTTP 模式经 HttpDaemonRpcClient 透传，dispatch.rs 有真名分支）
-# - tools_p4_lease.py 5 个 lease.*（_call_daemon_rpc 真名透传）
+# - tools_lease.py 5 个 lease.*（_call_daemon_rpc 真名透传）
 # - tools_workspace.py 2 个 workspace.list/workspace.activate
 # - W4-1（T-1786886251769-22b94ee8-sub-1）：5 个 git 读面工具迁移 rust_native
 #   （get_file_history/get_git_commits/get_commit_changes/get_git_stats/

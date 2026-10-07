@@ -4,7 +4,7 @@
   success / no-match / 缺省参数、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p2_graph.validate_revision_dependencies）已从
+- Python MCP wrapper（tools_dependency_graph.validate_revision_dependencies）已从
   _P2_READ_ONLY_METHODS 移除 compat 注册，改由 Rust daemon
   （task_collab.rs::handle_validate_revision_dependencies）为权威：内存模拟
   build_hard_dependency_edges（不写 dependency_edges 表），合并现有硬边做环检测，

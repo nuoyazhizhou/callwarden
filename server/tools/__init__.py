@@ -12,9 +12,9 @@ _MODULES = [
     "tools_security",
     "tools_rules",
     "tools_collab",
-    "tools_p2_graph",
-    "tools_p3_identity",
-    "tools_p4_lease",
+    "tools_dependency_graph",
+    "tools_identity",
+    "tools_lease",
     "tools_task_prompt",
 ]
 

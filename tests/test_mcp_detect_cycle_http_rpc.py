@@ -4,7 +4,7 @@
   success / no-cycle / workspace 隔离、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p2_graph.detect_cycle）已从 _P2_READ_ONLY_METHODS 移除 compat
+- Python MCP wrapper（tools_dependency_graph.detect_cycle）已从 _P2_READ_ONLY_METHODS 移除 compat
   注册，改由 Rust daemon（task_collab.rs::handle_detect_cycle）为权威：从 dependency_edges
   取 workspace 内 is_hard=1 边，DFS 三色检测环 + BFS 最短 cycle path。
 - 本测试直连 HTTP RPC `detect_cycle`，验证返回结构（has_cycle / cycle_path / checked_nodes）。

@@ -5,7 +5,7 @@
   缺 identity 参数、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p3_identity.check_action_identity）已从 _P3_READ_ONLY_METHODS
+- Python MCP wrapper（tools_identity.check_action_identity）已从 _P3_READ_ONLY_METHODS
   移除 compat 注册，改由 Rust daemon（task_collab.rs::handle_check_action_identity）为
   权威：解析 identity JSON 字符串 → 校验 agent_id/session_id/model_id/role 四字段 +
   require_role 匹配 → 返回 {"valid": bool, "reason": {...}}。

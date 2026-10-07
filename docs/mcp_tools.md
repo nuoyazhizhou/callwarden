@@ -51,14 +51,14 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 10       | **Coverage & Ownership**    | 19     | 注释 / 测试覆盖率 / 测试 case 关联 / 测试稳定性 / CODEOWNERS / 所有权 / 注释恢复                                                      | 10. Coverage & Ownership |
 | 11       | **GC**                      | 11     | 外部符号 / retention / policy / 备份 / 审计                                                                                           | 11. GC                   |
 | 12       | **Diagnostics**             | 26     | clone 检测 / clone group / LSP / 安全编辑 / 跨仓库分析 / clone 感知影响                                                               | 12. Diagnostics          |
-| 13       | **构建上下文感知**          | 9      | 工具链注册 / build context / resolved edges / 指标                                                                                    | —（L5 新增域）           |
-| 14       | **只读协同查询**            | 6      | 协同证据 / 门禁决策 / 角色视图 / 新鲜度                                                                                               | —（P1 协同域）           |
-| 15       | **依赖图与环检测**          | 10     | 依赖边 / 接口提供者 / 环检测 / 版本校验 / 工件身份                                                                                    | —（P2 域）               |
-| 16       | **Assignment 与 Lease**     | 8      | lease 获取 / 续租 / 释放 / assignment 创建撤销                                                                                        | —（P4 域）               |
-| 17       | **Identity 与 Attestation** | 7      | 动作身份 / 会话隔离 / attestation 撤销 / 注册                                                                                         | —（P3 域）               |
+| 13       | **构建上下文感知**          | 9      | 工具链注册 / build context / resolved edges / 指标                                                                                    | —（纯 MCP，无对应 CLI）  |
+| 14       | **只读协同查询**            | 6      | 协同证据 / 门禁决策 / 角色视图 / 新鲜度                                                                                               | —（纯 MCP，无对应 CLI）  |
+| 15       | **依赖图与环检测**          | 10     | 依赖边 / 接口提供者 / 环检测 / 版本校验 / 工件身份                                                                                    | —（纯 MCP，无对应 CLI）  |
+| 16       | **Assignment 与 Lease**     | 8      | lease 获取 / 续租 / 释放 / assignment 创建撤销                                                                                        | —（纯 MCP，无对应 CLI）  |
+| 17       | **Identity 与 Attestation** | 7      | 动作身份 / 会话隔离 / attestation 撤销 / 注册                                                                                         | —（纯 MCP，无对应 CLI）  |
 | **合计** | **243**                     |        |                                                                                                                                       |
 
-> **注**：合计 243 与注册的 MCP 工具数一致（243 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 等独立能力域（对应需求 L5 与 P1-P4 增量模块），无对应 CLI 主分类。
+> **注**：合计 243 与注册的 MCP 工具数一致（243 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 等独立能力域（纯 MCP 能力面，无对应 CLI 主分类）。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 

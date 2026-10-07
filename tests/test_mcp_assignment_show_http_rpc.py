@@ -5,7 +5,7 @@
   （fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p4_lease.assignment_show）已从 _P4_READ_ONLY_METHODS
+- Python MCP wrapper（tools_lease.assignment_show）已从 _P4_READ_ONLY_METHODS
   移除 compat 注册，改由 Rust daemon（task_collab.rs::handle_assignment_show）为
   权威：按 workspace_id + task_id + status='active'（可选 role 过滤）查
   task_assignments，按 id DESC LIMIT 1；无匹配返回 {"status":"none", task_id, role}。

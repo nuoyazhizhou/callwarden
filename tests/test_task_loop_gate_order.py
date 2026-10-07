@@ -22,10 +22,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 # 已知 authority 写入口 → (相对路径, 方法名, gate 标记, 首个 DB 写语句标记)
 #
 # stale 修复（PYT 回归卡 step#4 · A 桶）：原第 5 项
-# `server/tools/tools_p3_identity.py::register_attestation_revocation`
+# `server/tools/tools_identity.py::register_attestation_revocation`
 # （gate 标记 `_get_daemon_mode() != "local"`、db 标记
 # `db.register_attestation_revocation(`）已随 MCP 工具 `_route` 薄壳化失效：
-# 生产侧 server/tools/tools_p3_identity.py:163-191 现为一行式
+# 生产侧 server/tools/tools_identity.py:163-191 现为一行式
 # `return _route('admin.register_attestation_revocation', {...}, 'GOVERNANCE_WRITE')`
 # —— 方法体内已无 `_get_daemon_mode()` 分支、也无 `db.register_attestation_revocation(`
 # 调用点（两标记均不存在，`body.index()` 抛 ValueError: substring not found）。

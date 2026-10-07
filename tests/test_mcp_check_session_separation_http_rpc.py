@@ -5,7 +5,7 @@
   daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p3_identity.check_session_separation）已从
+- Python MCP wrapper（tools_identity.check_session_separation）已从
   _P3_READ_ONLY_METHODS 移除 compat 注册，改由 Rust daemon
   （task_collab.rs::handle_check_session_separation）为权威：解析 reviewer/
   implementer_identity JSON → 校验 session 分离 → 返回 {"valid": bool, "reason": {...}}。

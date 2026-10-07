@@ -4,7 +4,7 @@
   success / no-match / 缺省参数、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p3_identity.get_action_identity）已从 _P3_READ_ONLY_METHODS
+- Python MCP wrapper（tools_identity.get_action_identity）已从 _P3_READ_ONLY_METHODS
   移除 compat 注册，改由 Rust daemon（task_collab.rs::handle_get_action_identity）为
   权威：按 workspace_id + action_id 查询 action_identities 单行（全部列），无匹配返回
   None。

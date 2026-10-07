@@ -7,7 +7,7 @@
 既破坏 M1（239/239 可路由——这 18 个工具路由前就崩），也破坏 R0.5 零回归。
 
 修复建议（Engineer）：将 `server/tools/{tools_task,tools_query,tools_semantic,
-tools_security,tools_summary,tools_workspace,tools_p2_graph}.py` 中
+tools_security,tools_summary,tools_workspace,tools_dependency_graph}.py` 中
 `"sync": true` → `"sync": True`、`"sync": false` → `"sync": False`，
 并修正 `thinify_tools.py` 生成逻辑（防复发）。
 """
@@ -22,7 +22,7 @@ _TOOLS_DIR = os.path.join(_REPO_ROOT, "server", "tools")
 
 # 受影响函数清单（Round 1 AST 枚举）：模块 → [函数名]
 AFFECTED: dict[str, list[str]] = {
-    "tools_p2_graph.py": ["import_envelope_dependencies", "build_hard_dependency_edges"],
+    "tools_dependency_graph.py": ["import_envelope_dependencies", "build_hard_dependency_edges"],
     "tools_query.py": ["run_semgrep_scan", "scan_semgrep_incremental"],
     "tools_security.py": ["detect_cross_repo_deps"],
     "tools_semantic.py": [

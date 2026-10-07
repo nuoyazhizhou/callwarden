@@ -4,7 +4,7 @@
   success / 空表 / issuer 过滤 / 缺省参数、daemon unavailable（fail-closed）、restart。
 
 设计要点（与 task 不变量一致）：
-- Python MCP wrapper（tools_p3_identity.list_attestation_revocations）已从
+- Python MCP wrapper（tools_identity.list_attestation_revocations）已从
   _P3_READ_ONLY_METHODS 移除 compat 注册（p3 组全部迁移），改由 Rust daemon
   （task_collab.rs::handle_list_attestation_revocations）为权威：按 workspace_id +
   可选 issuer/signing_key_id 过滤 attestation_revocation_records，按 revoked_at 升序，

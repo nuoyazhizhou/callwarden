@@ -52,9 +52,9 @@ import callwarden.server.tools.tools_semantic  # noqa: E402 (H4C-2 第二批: �
 import callwarden.server.tools.tools_security  # noqa: E402 (H4C-2 第三批: 分支/编辑历史/跨仓库/LSP 组 handler 注册)
 import callwarden.server.tools.tools_rules  # noqa: E402   (H4C-2 第三批: toolchain/edge 组 handler 注册)
 import callwarden.server.tools.tools_collab  # noqa: E402  (H4C-2 第三批: collab 组只读 handler 注册)
-import callwarden.server.tools.tools_p2_graph  # noqa: E402 (H4C-2 第三批: p2 依赖图/环检测组只读 handler 注册)
-import callwarden.server.tools.tools_p3_identity  # noqa: E402 (H4C-2 第三批: p3 身份/证明组只读 handler 注册)
-import callwarden.server.tools.tools_p4_lease  # noqa: E402 (H4C-2 第三批: p4 assignment_show 只读 handler 注册)
+import callwarden.server.tools.tools_dependency_graph  # noqa: E402 (依赖图/环检测组只读 handler 注册)
+import callwarden.server.tools.tools_identity  # noqa: E402 (身份/证明组只读 handler 注册)
+import callwarden.server.tools.tools_lease  # noqa: E402 (assignment_show 只读 handler 注册)
 
 # 帧协议常量（契约 §3.3）
 WORKER_PROTOCOL_VERSION = 1

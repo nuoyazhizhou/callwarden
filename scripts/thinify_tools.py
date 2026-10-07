@@ -34,9 +34,9 @@ TOOL_MODULES = [
     "tools_security",
     "tools_rules",
     "tools_collab",
-    "tools_p2_graph",
-    "tools_p3_identity",
-    "tools_p4_lease",
+    "tools_dependency_graph",
+    "tools_identity",
+    "tools_lease",
 ]
 
 # 同步 job 工具：job_submit(sync=true) 后解包 result（返回结构不变）
