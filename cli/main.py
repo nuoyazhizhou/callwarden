@@ -13005,12 +13005,27 @@ def main():
             raise SystemExit(2)
 
     # --workspace 预扫描：允许 `cw --workspace ROOT task show T-xxx` 形式
-    # 提取 --workspace ROOT 到环境变量，从 argv 移除后让 sys.argv[1] 指向真正子命令
+    # 提取 --workspace ROOT 到环境变量，从 argv 移除后让 sys.argv[1] 指向真正子命令。
+    # FIX(全量测试T3遗留,2026-10-07)：此前无差别删除任意位置的 --workspace，会把
+    # 子命令自己的 --workspace 参数（如 `collab publish --workspace PATH`、未来其他
+    # 子命令同名参数）一并吞掉，导致子命令 argparse 报 "required: --workspace"。
+    # 全局 --workspace 前缀语义只在"子命令关键字之前"成立；一旦遇到第一个子命令
+    # 关键字（sys.argv 中首个属于 _SUBCOMMANDS 的 token），其后的 --workspace 归子
+    # 命令所有，预扫描不得触碰。
     if "--workspace" in sys.argv[1:]:
-        idx = sys.argv.index("--workspace")
-        if idx + 1 < len(sys.argv):
-            os.environ["CALLWARDEN_WORKSPACE"] = sys.argv[idx + 1]
-            del sys.argv[idx:idx + 2]
+        # 定位第一个子命令关键字的位置（全局前缀区边界）
+        subcmd_idx = None
+        for _i, _tok in enumerate(sys.argv[1:], start=1):
+            if _tok in _SUBCOMMANDS:
+                subcmd_idx = _i
+                break
+        ws_idx = sys.argv.index("--workspace")
+        # 仅当 --workspace 出现在子命令关键字之前（或根本没有子命令关键字）才视为
+        # 全局前缀；否则它属于子命令，保留原样交给子命令 argparse。
+        is_global_prefix = subcmd_idx is None or ws_idx < subcmd_idx
+        if is_global_prefix and ws_idx + 1 < len(sys.argv):
+            os.environ["CALLWARDEN_WORKSPACE"] = sys.argv[ws_idx + 1]
+            del sys.argv[ws_idx:ws_idx + 2]
 
     # 代码守护者架构子命令拦截（四大支柱）
     # 子命令格式: cw <subcommand> [options]，如 cw defect stats

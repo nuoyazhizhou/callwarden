@@ -133,8 +133,19 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     gc_snapshots.add_argument("--keep-last", type=int, default=3, help="每个 workspace 保留的快照数量")
 
     # ---- Snapshot 缓存运维命令（J8 协议闭合：Rust daemon 已实现 3 个 method）----
-    sub.add_parser("snapshot-stats",
-                   help="查询 daemon 内 SnapshotCache 统计（hit/miss/evictions）")
+    # FIX(全量测试T3遗留,2026-10-07)：snapshot.stats RPC 是单 workspace 语义
+    # （Rust handle_snapshot_stats 强制 require workspace_instance_id）。此前
+    # CLI snapshot-stats 无参直发 snapshot.stats{} 必返 invalid_params。改为：
+    # 传 --workspace-instance-id 查单个（真实 RPC 语义）；不传则聚合所有
+    # workspace 的 snapshot 统计（走 snapshot.list_workspaces，匹配 help 的
+    # “SnapshotCache 总览”意图）。
+    snap_stats = sub.add_parser(
+        "snapshot-stats",
+        help="查询 daemon 内 SnapshotCache 统计（不带参数聚合所有 workspace；"
+             "--workspace-instance-id 查单个）")
+    snap_stats.add_argument(
+        "--workspace-instance-id", default=None,
+        help="仅查询指定 workspace 的 snapshot 统计（缺省聚合所有 workspace）")
     sub.add_parser("snapshot-list",
                    help="列出 daemon 已知的所有 workspace snapshot")
     snap_evict = sub.add_parser("snapshot-evict",
@@ -693,8 +704,15 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
     elif args.action == "gc-snapshots":
         result = client.call("gc.snapshots", {"keep_last": args.keep_last})
     elif args.action == "snapshot-stats":
-        # J8 协议闭合：Rust daemon snapshot.stats method
-        result = client.call("snapshot.stats", {})
+        # J8 协议闭合：Rust daemon snapshot.stats method。
+        # FIX(T3遗留,2026-10-07)：snapshot.stats 需 workspace_instance_id；
+        # 传了查单个，否则聚合所有（list_workspaces 无参返回全部缓存项）。
+        ws_inst = getattr(args, "workspace_instance_id", None)
+        if ws_inst:
+            result = client.call("snapshot.stats",
+                                 {"workspace_instance_id": ws_inst})
+        else:
+            result = client.call("snapshot.list_workspaces", {})
     elif args.action == "snapshot-list":
         # J8 协议闭合：Rust daemon snapshot.list_workspaces method
         result = client.call("snapshot.list_workspaces", {})
