@@ -6,7 +6,7 @@ Call Warden CLI 统一使用 subcommand 风格：`cw <subcommand> [options]`，�
 
 ## 命令概览（按 13 大功能分类）
 
-Call Warden 把 70 个顶层命令（展开子动作后共 234 个叶子命令）按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand。命令数以 `cli.main._SUBCOMMANDS` + `cw.py` standalone 入口的实际 argparse 树为准（2026-09-29 审计核对）。详细分组设计见 `.cli_audit.md` §2。
+Call Warden 把 83 个顶层命令按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand。顶层命令数 = `cli.main._SUBCOMMANDS` 的 79 个 subcommand + `cw.py` standalone 入口 4 个（`install` / `server` / `test` / `daemon`）；展开各命令的二级子动作后约 200+ 个可执行命令（`gc` / `task` / `rule` 等含多级子动作）。命令数以实际 argparse 树为准（2026-10-08 审计核对，T10 flag 移除 + 阶段2.5 新增独立 subcommand 后）。详细分组设计见 `.cli_audit.md` §2。
 
 | #   | 主分类                    | 涵盖范围                                                                                    | 主要 subcommand                                                                                                                                                                                                            |
 | --- | ------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -3227,6 +3227,6 @@ cw task report <task-id> <step-id> --success \
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 237 个工具
+- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 243 个工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署与多容器共享

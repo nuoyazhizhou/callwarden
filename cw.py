@@ -167,7 +167,7 @@ def main():
         import pytest
         sys.exit(pytest.main([f"{_PKG}/tests/{test_name}.py"] + sys.argv[1:]))
 
-    # 其余命令（--flag 风格和子命令）透传给 CLI 主入口
+    # 其余 subcommand 透传给 CLI 主入口
     mod = importlib.import_module(f"{_PKG}.cli.main")
     mod.main()
 

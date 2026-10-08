@@ -47,8 +47,8 @@ from .agent_registry import get_merged_specs
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
-                "clone", "fts", "identity", "lease", "assignment",
-                # C8 Step #1: 新增 8 大类 subcommand 入口（保留旧 flag 兼容）
+                "clone", "fts", "lease", "assignment",
+                # 符号查询 / 构建 / 刷新 subcommand 入口
                 "workspace", "refresh", "stats", "status",
                 "search", "grep", "symbol", "file", "query", "issues", "tests",
                 "callers", "callees", "call-chain", "topo",

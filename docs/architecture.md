@@ -12,8 +12,8 @@
                ▼                               ▼
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
-│  子命令 + --flag 双风格  │     │   210 个 @mcp.tool() 工具    │
-│  145+ 命令               │     │   stdio / SSE 传输           │
+│  subcommand 风格         │     │   243 个 @mcp.tool() 工具    │
+│  83 个顶层命令           │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
              └──────────────┬───────────────────┘
@@ -43,14 +43,14 @@
 
 ### 分层说明
 
-| 层 | 职责 | 关键文件 |
-|----|------|----------|
-| 接入层 | CLI 命令解析、MCP 协议处理 | `cli/main.py`、`server/mcp_server.py` |
-| 业务层 | 43 个功能 Mixin + 1 基类（含 analyzers 3 个） | `db.py` + `db_*.py`（48 个文件） |
-| 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（18 个文件） |
-| 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（6 个文件） |
-| 加速层 | PyO3 Rust 扩展（可选） | `rust_ext/` |
-| 存储层 | SQLite 项目级数据库 | `schema.py` |
+| 层     | 职责                                          | 关键文件                              |
+| ------ | --------------------------------------------- | ------------------------------------- |
+| 接入层 | CLI 命令解析、MCP 协议处理                    | `cli/main.py`、`server/mcp_server.py` |
+| 业务层 | 43 个功能 Mixin + 1 基类（含 analyzers 3 个） | `db.py` + `db_*.py`（48 个文件）      |
+| 解析层 | tree-sitter 多语言解析、调用关系提取          | `parsers/`（18 个文件）               |
+| 分析层 | 调用链、覆盖率、缺陷检测                      | `analyzers/`（6 个文件）              |
+| 加速层 | PyO3 Rust 扩展（可选）                        | `rust_ext/`                           |
+| 存储层 | SQLite 项目级数据库                           | `schema.py`                           |
 
 ## 数据库架构
 
@@ -152,27 +152,27 @@ symbol_contents (content_hash PK) ←─── symbols (当前快照)
 
 按 content_hash 唯一存储，相同内容只存一次。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| content_hash | TEXT PK | SHA-256 内容哈希 |
-| language | TEXT | 语言（rust/typescript/...） |
-| total_lines | INTEGER | 总行数 |
-| first_seen_at | REAL | 首次发现时间戳 |
+| 字段          | 类型    | 说明                        |
+| ------------- | ------- | --------------------------- |
+| content_hash  | TEXT PK | SHA-256 内容哈希            |
+| language      | TEXT    | 语言（rust/typescript/...） |
+| total_lines   | INTEGER | 总行数                      |
+| first_seen_at | REAL    | 首次发现时间戳              |
 
 ### file_instances（文件实例表）
 
 一个内容可出现在多个工作区的多个路径（path 为副键）。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 实例 ID |
-| workspace_id | INTEGER FK | 工作区 ID |
-| rel_path | TEXT | 相对路径 |
-| abs_path | TEXT | 绝对路径 |
-| current_content_hash | TEXT FK | 当前内容 hash |
-| mtime | REAL | 修改时间 |
-| status | TEXT | pending/parsed/stale/deleted |
-| module_path | TEXT | 模块路径 |
+| 字段                 | 类型       | 说明                         |
+| -------------------- | ---------- | ---------------------------- |
+| id                   | INTEGER PK | 实例 ID                      |
+| workspace_id         | INTEGER FK | 工作区 ID                    |
+| rel_path             | TEXT       | 相对路径                     |
+| abs_path             | TEXT       | 绝对路径                     |
+| current_content_hash | TEXT FK    | 当前内容 hash                |
+| mtime                | REAL       | 修改时间                     |
+| status               | TEXT       | pending/parsed/stale/deleted |
+| module_path          | TEXT       | 模块路径                     |
 
 UNIQUE 约束：`(workspace_id, rel_path)`
 
@@ -180,146 +180,146 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 
 按 content_hash 唯一，相同函数体只存一次（跨文件/跨仓库去重）。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| content_hash | TEXT PK | 符号内容 SHA-256 |
-| name | TEXT | 符号名 |
-| kind | TEXT | fn/method/class/struct/enum/trait |
-| content | TEXT | 完整源代码 |
-| signature | TEXT | 签名 |
-| has_comment | INTEGER | 是否有注释 |
-| comment_content | TEXT | 注释内容 |
-| qualified_name | TEXT | 限定名 |
+| 字段            | 类型    | 说明                              |
+| --------------- | ------- | --------------------------------- |
+| content_hash    | TEXT PK | 符号内容 SHA-256                  |
+| name            | TEXT    | 符号名                            |
+| kind            | TEXT    | fn/method/class/struct/enum/trait |
+| content         | TEXT    | 完整源代码                        |
+| signature       | TEXT    | 签名                              |
+| has_comment     | INTEGER | 是否有注释                        |
+| comment_content | TEXT    | 注释内容                          |
+| qualified_name  | TEXT    | 限定名                            |
 
 ### symbols（符号表 — 当前快照）
 
 查询优化用的当前快照表。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INTEGER PK | 符号 ID |
-| file_instance_id | INTEGER FK | 文件实例 |
-| symbol_hash | TEXT FK | 符号内容 hash |
-| name | TEXT | 符号名 |
-| kind | TEXT | 类型 |
-| visibility | TEXT | public/private |
-| start_line / end_line | INTEGER | 位置 |
-| signature | TEXT | 签名 |
-| has_comment | INTEGER | 注释标志 |
-| qualified_name | TEXT | 限定名 |
-| depth | INTEGER | 调用深度 |
+| 字段                  | 类型       | 说明           |
+| --------------------- | ---------- | -------------- |
+| id                    | INTEGER PK | 符号 ID        |
+| file_instance_id      | INTEGER FK | 文件实例       |
+| symbol_hash           | TEXT FK    | 符号内容 hash  |
+| name                  | TEXT       | 符号名         |
+| kind                  | TEXT       | 类型           |
+| visibility            | TEXT       | public/private |
+| start_line / end_line | INTEGER    | 位置           |
+| signature             | TEXT       | 签名           |
+| has_comment           | INTEGER    | 注释标志       |
+| qualified_name        | TEXT       | 限定名         |
+| depth                 | INTEGER    | 调用深度       |
 
 ### calls（调用关系表 — 当前快照）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| caller_id | INTEGER FK | 调用者符号 ID |
-| caller_name | TEXT | 调用者名 |
-| callee_name | TEXT | 被调用者名 |
-| callee_qualified | TEXT | 被调用者限定名 |
-| callee_file | TEXT | 被调用者文件 |
-| callee_id | INTEGER | 被调用者符号 ID（解析后） |
-| call_line | INTEGER | 调用行号 |
-| is_cross_file | INTEGER | 是否跨文件调用 |
+| 字段             | 类型       | 说明                      |
+| ---------------- | ---------- | ------------------------- |
+| caller_id        | INTEGER FK | 调用者符号 ID             |
+| caller_name      | TEXT       | 调用者名                  |
+| callee_name      | TEXT       | 被调用者名                |
+| callee_qualified | TEXT       | 被调用者限定名            |
+| callee_file      | TEXT       | 被调用者文件              |
+| callee_id        | INTEGER    | 被调用者符号 ID（解析后） |
+| call_line        | INTEGER    | 调用行号                  |
+| is_cross_file    | INTEGER    | 是否跨文件调用            |
 
 ### file_versions（文件版本表）
 
 记录每个文件实例的所有历史版本。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| file_instance_id | INTEGER FK | 文件实例 |
-| version_num | INTEGER | 版本号（递增） |
-| content_hash | TEXT FK | 内容 hash |
-| mtime | REAL | 修改时间 |
-| parsed_at | REAL | 解析时间 |
-| is_current | INTEGER | 是否当前版本 |
-| is_deleted | INTEGER | 是否已删除 |
-| commit_hash | TEXT | 关联 commit |
-| ast_cache | BLOB | tree-sitter AST 序列化字节流（v28 新增，支持增量解析） |
+| 字段             | 类型       | 说明                                                   |
+| ---------------- | ---------- | ------------------------------------------------------ |
+| file_instance_id | INTEGER FK | 文件实例                                               |
+| version_num      | INTEGER    | 版本号（递增）                                         |
+| content_hash     | TEXT FK    | 内容 hash                                              |
+| mtime            | REAL       | 修改时间                                               |
+| parsed_at        | REAL       | 解析时间                                               |
+| is_current       | INTEGER    | 是否当前版本                                           |
+| is_deleted       | INTEGER    | 是否已删除                                             |
+| commit_hash      | TEXT       | 关联 commit                                            |
+| ast_cache        | BLOB       | tree-sitter AST 序列化字节流（v28 新增，支持增量解析） |
 
 ### file_symbol_versions（文件-符号关联表）
 
 记录每个文件版本包含哪些符号及位置，用于历史回溯和注释恢复。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| file_version_id | INTEGER FK | 文件版本 |
-| symbol_hash | TEXT FK | 符号内容 hash |
-| qualified_name | TEXT | 限定名 |
-| start_line / end_line | INTEGER | 位置 |
-| module_path | TEXT | 模块路径 |
-| depth | INTEGER | 调用深度 |
-| is_deleted | INTEGER | 是否已删除 |
+| 字段                  | 类型       | 说明          |
+| --------------------- | ---------- | ------------- |
+| file_version_id       | INTEGER FK | 文件版本      |
+| symbol_hash           | TEXT FK    | 符号内容 hash |
+| qualified_name        | TEXT       | 限定名        |
+| start_line / end_line | INTEGER    | 位置          |
+| module_path           | TEXT       | 模块路径      |
+| depth                 | INTEGER    | 调用深度      |
+| is_deleted            | INTEGER    | 是否已删除    |
 
 ### 守护者架构表（v10）
 
-| 表 | 说明 |
-|----|------|
-| guardrail_rules | 安全护栏规则定义（DB/API/Incident 三类） |
-| guardrail_findings | 规则扫描结果（open/resolved/wontfix） |
-| change_impacts | 跨层影响分析结果 |
-| evolution_metrics | 演化指标缓存（变更频率、缺陷数、热点分） |
-| defect_patterns | 缺陷模式库 |
-| defect_fixes | 缺陷修复案例 |
+| 表                 | 说明                                     |
+| ------------------ | ---------------------------------------- |
+| guardrail_rules    | 安全护栏规则定义（DB/API/Incident 三类） |
+| guardrail_findings | 规则扫描结果（open/resolved/wontfix）    |
+| change_impacts     | 跨层影响分析结果                         |
+| evolution_metrics  | 演化指标缓存（变更频率、缺陷数、热点分） |
+| defect_patterns    | 缺陷模式库                               |
+| defect_fixes       | 缺陷修复案例                             |
 
 ### 任务与编辑审计表（v7 + v12 + v15 + v24）
 
-| 表 | 说明 |
-|----|------|
-| tasks | 任务（open/in_progress/review/applied/closed/reverted）。v15 加 `parent_id` / `depth` / `sort_order` 支持父子任务树；v24 加 `applied_at` 字段支持 review → applied → closed 流转 |
-| task_steps | 任务步骤（pending/in_progress/done/failed/blocked） |
-| change_audit | 变更审计日志（hash + diff） |
-| file_edit_audit | propose_edit 审计流水线（pending/applied/reverted/failed） |
+| 表              | 说明                                                                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tasks           | 任务（open/in_progress/review/applied/closed/reverted）。v15 加 `parent_id` / `depth` / `sort_order` 支持父子任务树；v24 加 `applied_at` 字段支持 review → applied → closed 流转 |
+| task_steps      | 任务步骤（pending/in_progress/done/failed/blocked）                                                                                                                              |
+| change_audit    | 变更审计日志（hash + diff）                                                                                                                                                      |
+| file_edit_audit | propose_edit 审计流水线（pending/applied/reverted/failed）                                                                                                                       |
 
 ### 归档与 GC 表（v14 + v19 + v20）
 
-| 表 | 说明 |
-|----|------|
-| archived_files | 归档文件元数据（v14）。`file_instances.status='archived'` 时记录归档原因、符号/调用数快照、归档时间戳，便于 GC 可恢复归档闭环 |
-| gc_policies | GC 策略配置（v19）。每个 workspace 一行，包含 `older_than_days` / `keep_versions` / `include_external` / `backup_enabled` 等 retention 参数 |
-| gc_runs | GC 运行审计（v20）。每次 retention/archive/purge 记一行，含 `policy_json`（策略参数）/ `candidate_counts`（候选明细）/ `deleted_counts`（实删明细）/ `backup_path`（备份路径）/ `status`（running/completed/failed） |
+| 表             | 说明                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| archived_files | 归档文件元数据（v14）。`file_instances.status='archived'` 时记录归档原因、符号/调用数快照、归档时间戳，便于 GC 可恢复归档闭环                                                                                        |
+| gc_policies    | GC 策略配置（v19）。每个 workspace 一行，包含 `older_than_days` / `keep_versions` / `include_external` / `backup_enabled` 等 retention 参数                                                                          |
+| gc_runs        | GC 运行审计（v20）。每次 retention/archive/purge 记一行，含 `policy_json`（策略参数）/ `candidate_counts`（候选明细）/ `deleted_counts`（实删明细）/ `backup_path`（备份路径）/ `status`（running/completed/failed） |
 
 ### 外部依赖表（v16 + v18）
 
-| 表 | 说明 |
-|----|------|
-| external_symbols | 外部符号表（v16）。存储标准库和第三方包的函数/类/常量，用于跨文件调用解析时查找项目外的被调符号。`qualified_name` 唯一，关联 `package_versions` |
+| 表               | 说明                                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| external_symbols | 外部符号表（v16）。存储标准库和第三方包的函数/类/常量，用于跨文件调用解析时查找项目外的被调符号。`qualified_name` 唯一，关联 `package_versions`                                                                          |
 | package_versions | 包版本表（v16，v18 增强）。`package_name` + `package_version` 联合主键。v18 加 `last_seen_at`（依赖清单最近看到时间）/ `last_used_at`（最近被调用解析命中时间）/ `import_source`（manifest/manual/stdlib）用于冷数据追踪 |
 
 ### 任务-符号变更归因表（v17）
 
-| 表 | 说明 |
-|----|------|
+| 表                  | 说明                                                                                                                                                                                                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | task_symbol_changes | 任务-符号变更归因（v17）。记录一次任务/步骤/编辑行为为什么导致某个符号版本变化，含 `task_id` / `step_id` / `edit_audit_id` / `symbol_hash_before` / `symbol_hash_after` / `change_type` / `source`。事实层仍是 `file_symbol_versions` / `symbol_contents`，本表只做归因 |
 
 ### 任务质量门禁表（v21）
 
-| 表 | 说明 |
-|----|------|
+| 表                    | 说明                                                                                                                                                                                                                                                                          |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | task_quality_findings | 任务质量门禁发现（v21）。把 Semgrep、复杂度、调用链一致性、scope violation、i18n 硬编码等质量问题挂到 task/step 上。`severity`：info/warn/error/block（block 阻止任务进入 done）；`status`：open/resolved/wontfix；`source`：semgrep/file_health/call_chain/scope/i18n/manual |
 
 ### 审计签名链表（v22 + v29）
 
-| 表 | 说明 |
-|----|------|
-| audit_chain | 审计签名链（v22）。为 `task_quality_findings` / `change_audit` / `file_edit_audit` 等关键审计表生成可验证的 hash/HMAC 链。每条记录含 `payload_hash` + `prev_signature` + `record_signature`，形成链式结构。`signing_key_id`：`'local'` 表示本地 SHA-256 链；可通过环境变量 `CALLWARDEN_AUDIT_HMAC_KEY` 或 `~/.callwarden/audit.key` 切换到 HMAC-SHA256 |
-| audit_key_rotations | 审计签名密钥轮换表（v29）。记录每次密钥轮换的 `key_id` / `key_secret` / `rotated_at` / `is_active`，支持按时间点选择对应密钥验证旧记录。轮换后新记录用新 key 签名，旧记录保持原签名；验证时按 `signing_key_id` 查找对应密钥 |
+| 表                  | 说明                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| audit_chain         | 审计签名链（v22）。为 `task_quality_findings` / `change_audit` / `file_edit_audit` 等关键审计表生成可验证的 hash/HMAC 链。每条记录含 `payload_hash` + `prev_signature` + `record_signature`，形成链式结构。`signing_key_id`：`'local'` 表示本地 SHA-256 链；可通过环境变量 `CALLWARDEN_AUDIT_HMAC_KEY` 或 `~/.callwarden/audit.key` 切换到 HMAC-SHA256 |
+| audit_key_rotations | 审计签名密钥轮换表（v29）。记录每次密钥轮换的 `key_id` / `key_secret` / `rotated_at` / `is_active`，支持按时间点选择对应密钥验证旧记录。轮换后新记录用新 key 签名，旧记录保持原签名；验证时按 `signing_key_id` 查找对应密钥                                                                                                                            |
 
 ### Agent Rule Memory 表（v23）
 
-| 表 | 说明 |
-|----|------|
+| 表                    | 说明                                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------- |
 | agent_rule_candidates | 候选规则（pending/accepted/rejected），由 Agent 观察或从 task_quality_findings 自动提取 |
-| agent_rules | 已生效规则（active/deprecated/removed），accept 后写入，按 scope 匹配注入到上下文 |
-| agent_rule_sync_log | AGENTS.md 同步日志（dry_run/apply 都记录，含 before/after hash） |
+| agent_rules           | 已生效规则（active/deprecated/removed），accept 后写入，按 scope 匹配注入到上下文       |
+| agent_rule_sync_log   | AGENTS.md 同步日志（dry_run/apply 都记录，含 before/after hash）                        |
 
 ### 自举闭环与代码克隆表（v25 + v27）
 
-| 表 | 说明 |
-|----|------|
+| 表                  | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | workspace_scan_runs | 工作区扫描基线记录（id / workspace_id / purpose / task_id / step_id / baseline_type / git_head / git_merge_base / git_status_hash / root_mtime / file_count / manifest_hash / changed_files_json / metadata_json / started_at / completed_at / status）。`purpose` 取值 `bootstrap`（启动时基线）/ `task_capture`（task_capture_diff 触发）；`status` 走 `running → completed/failed`；三个索引 `idx_workspace_scan_runs_workspace/task/git_head` |
-| clone_pairs | 重复代码检测对（id / workspace_id / symbol_a_id / symbol_b_id / clone_type / similarity / token_hash / lines_a / lines_b / detected_at）。`clone_type` 取值 1=Type-1 完全相同 / 2=Type-2 重命名 / 3=Type-3 微调；`similarity` 0.0-1.0；五个索引 `idx_clone_pairs_workspace/symbol_a/symbol_b/type` + `idx_clone_pairs_unique`（UNIQUE）|
+| clone_pairs         | 重复代码检测对（id / workspace_id / symbol_a_id / symbol_b_id / clone_type / similarity / token_hash / lines_a / lines_b / detected_at）。`clone_type` 取值 1=Type-1 完全相同 / 2=Type-2 重命名 / 3=Type-3 微调；`similarity` 0.0-1.0；五个索引 `idx_clone_pairs_workspace/symbol_a/symbol_b/type` + `idx_clone_pairs_unique`（UNIQUE）                                                                                                           |
 
 ## Mixin 架构
 
@@ -334,56 +334,56 @@ CodeGraphDB 通过 **35 个功能 Mixin 多继承**组装（不含 db_base.py �
 
 ### Mixin 列表（43 个功能 Mixin + 1 基类 = 44 项）
 
-| # | Mixin | 文件 | 职责 |
-|---|-------|------|------|
-| 1 | CodeGraphBase | db_base.py | 核心基类：连接、schema 迁移、工作区管理 |
-| 2 | BuildMixin | db_build.py | 构建：文件扫描、解析、调用图构建 |
-| 3 | QueryMixin | db_query.py | 查询：符号查询、状态、模块图 |
-| 4 | CommentMixin | db_comment.py | 注释恢复 |
-| 5 | GitMixin | db_git.py | Git 集成 |
-| 6 | MetricsMixin | db_metrics.py | 代码度量（圈复杂度、耦合度、健康检查） |
-| 7 | SummaryMixin | db_summary.py | 代码摘要与项目简报 |
-| 8 | VectorMixin | db_vector.py | 向量嵌入与语义搜索 |
-| 9 | OwnershipMixin | db_ownership.py | 文件所有权（CODEOWNERS + git blame） |
-| 10 | TaskMixin | db_tasks.py | 任务驱动 MCP（任务/步骤/审计） |
-| 11 | CallChainMixin | analyzers/call_chain.py | 调用链分析 |
-| 12 | IssueAnalyzerMixin | analyzers/issues.py | 缺陷检测 |
-| 13 | CoverageMixin | analyzers/coverage.py + db_coverage.py | 覆盖率统计与智能分析 |
-| 14 | GuardrailMixin | db_guardrail.py | 生产安全护栏 |
-| 15 | ImpactMixin | db_impact.py | 变更影响智能（blast_radius、跨层） |
-| 16 | EvolutionMixin | db_evolution.py | 代码演化智能（频率、热点、churn） |
-| 17 | DefectKbMixin | db_defect_kb.py | 缺陷知识库 |
-| 18 | TokenSavingsMixin | db_token_savings.py | Token 节省账本 |
-| 19 | BranchMixin | db_branch.py | 分支感知图谱 |
-| 20 | EditSafetyMixin | db_edit.py | 安全文件编辑（propose_edit） |
-| 21 | CrossRepoMixin | db_cross_repo.py | 跨仓库分析 |
-| 22 | LspMixin | db_lsp.py | LSP 集成 |
-| 23 | CheckGateMixin | db_check_gate.py | 检查门禁（F6） |
-| 24 | AgentRulesMixin | db_agent_rules.py | Agent Rule Memory：候选规则审核、scope 匹配注入、AGENTS.md 同步 |
-| 25 | BootstrapMixin | db_bootstrap.py | 自举闭环：扫描基线检测（workspace_scan_runs）、task_capture_diff 闭环入口、bootstrap_status 健康摘要 |
-| 26 | AuditChainMixin | db_audit_chain.py | 审计签名链：关键审计表的签名记录与验证 |
-| 27 | CasMixin | db_cas.py | Global CAS（Content-Addressable Storage）缓存池，相同文件跨工作区只解析一次 |
-| 28 | CloneDetectionMixin | db_clone_detection.py | 重复代码检测：基于 tree-sitter token 序列检测 Type-1/2/3 克隆 |
-| 29 | CloneGroupsMixin | db_clone_groups.py | Clone Groups 存储：替代 clone_pairs 的分组存储 |
-| 30 | DaemonMixin | db_daemon.py | Enterprise daemon workspace registry：workspace 注册、查询、状态管理 |
-| 31 | ExternalMixin | db_external.py | 第三方包解析（多语言通用版）：从已安装包提取函数/类/常量符号 |
-| 32 | GcMixin | db_gc.py | 代码图谱 GC：分代回收机制（新生代/老年代） |
-| 33 | JobsMixin | db_jobs.py | 后台任务系统：clone/vector/semgrep 等耗时操作异步执行 |
-| 34 | MigrateMixin | db_migrate.py | 数据库迁移工具：旧版多库架构迁移到用户级单库架构 |
-| 35 | StdlibMixin | db_stdlib.py | 标准库符号表：管理 Python 标准库符号信息，用于跨文件调用解析 |
-| 36 | TaskAttributionMixin | db_task_attribution.py | 任务-符号变更归因层：链接 edit audit 到符号版本变更 |
-| 37 | TaskQualityMixin | db_task_quality.py | 任务质量门禁：承载任务完成门禁发现 |
-| 38 | TestsMixin | db_tests.py | 测试关联：建立 test_fn ↔ 被测 fn 的关联关系 |
-| 39 | ToolchainMixin | db_toolchain.py | Toolchain CAS：工具链注册与存储 |
-| 40 | WorkspaceManifestMixin | db_workspace_manifest.py | Workspace manifest：clean snapshot 和 dirty overlay |
-| 41 | RollbackConfigMixin | db_rollback_config.py | 迁移回滚配置：rollback_config 表注册/查询/紧急回滚开关（schema v42，全量 Rust 迁移自举计划用） |
-| 42 | TaskContractsMixin | db_task_contracts.py | P1 契约驱动协作：Canonical Envelope、revision 发布、Contract_Hash（schema v43） |
-| 43 | TaskReviewsMixin | db_task_reviews.py | P3 独立审核证明：blind verdict/reveal/amendment、reviewer/implementer Identity（Req 10.1-10.5） |
-| 44 | TaskEvidenceMixin | db_task_evidence.py | P1 Evidence 账本：快照绑定、追加式 Evidence 与 freshness（schema v43） |
-| 45 | TaskGateMixin | db_task_gate.py | Evidence Gate 判定内核：Blocking Clause、Profile_Policy_Matrix、Identity fail-closed（P1+P3） |
-| 46 | TaskDependenciesMixin | db_task_dependencies.py | P2 依赖模型：四类依赖、artifact/interface identity、环检测（schema v44） |
-| 47 | TaskIdentityMixin | db_task_identity.py | P3 Identity/Attestation：action 身份记录、会话/家族分离、daemon Attestation 校验、撤销派生（schema v45） |
-| 48 | LeaseMixin | db_task_leases.py | P4 安全 Lease：assignment、token hash、fencing counter、append-only 事件（schema v46） |
+| #   | Mixin                  | 文件                                   | 职责                                                                                                     |
+| --- | ---------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 1   | CodeGraphBase          | db_base.py                             | 核心基类：连接、schema 迁移、工作区管理                                                                  |
+| 2   | BuildMixin             | db_build.py                            | 构建：文件扫描、解析、调用图构建                                                                         |
+| 3   | QueryMixin             | db_query.py                            | 查询：符号查询、状态、模块图                                                                             |
+| 4   | CommentMixin           | db_comment.py                          | 注释恢复                                                                                                 |
+| 5   | GitMixin               | db_git.py                              | Git 集成                                                                                                 |
+| 6   | MetricsMixin           | db_metrics.py                          | 代码度量（圈复杂度、耦合度、健康检查）                                                                   |
+| 7   | SummaryMixin           | db_summary.py                          | 代码摘要与项目简报                                                                                       |
+| 8   | VectorMixin            | db_vector.py                           | 向量嵌入与语义搜索                                                                                       |
+| 9   | OwnershipMixin         | db_ownership.py                        | 文件所有权（CODEOWNERS + git blame）                                                                     |
+| 10  | TaskMixin              | db_tasks.py                            | 任务驱动 MCP（任务/步骤/审计）                                                                           |
+| 11  | CallChainMixin         | analyzers/call_chain.py                | 调用链分析                                                                                               |
+| 12  | IssueAnalyzerMixin     | analyzers/issues.py                    | 缺陷检测                                                                                                 |
+| 13  | CoverageMixin          | analyzers/coverage.py + db_coverage.py | 覆盖率统计与智能分析                                                                                     |
+| 14  | GuardrailMixin         | db_guardrail.py                        | 生产安全护栏                                                                                             |
+| 15  | ImpactMixin            | db_impact.py                           | 变更影响智能（blast_radius、跨层）                                                                       |
+| 16  | EvolutionMixin         | db_evolution.py                        | 代码演化智能（频率、热点、churn）                                                                        |
+| 17  | DefectKbMixin          | db_defect_kb.py                        | 缺陷知识库                                                                                               |
+| 18  | TokenSavingsMixin      | db_token_savings.py                    | Token 节省账本                                                                                           |
+| 19  | BranchMixin            | db_branch.py                           | 分支感知图谱                                                                                             |
+| 20  | EditSafetyMixin        | db_edit.py                             | 安全文件编辑（propose_edit）                                                                             |
+| 21  | CrossRepoMixin         | db_cross_repo.py                       | 跨仓库分析                                                                                               |
+| 22  | LspMixin               | db_lsp.py                              | LSP 集成                                                                                                 |
+| 23  | CheckGateMixin         | db_check_gate.py                       | 检查门禁（F6）                                                                                           |
+| 24  | AgentRulesMixin        | db_agent_rules.py                      | Agent Rule Memory：候选规则审核、scope 匹配注入、AGENTS.md 同步                                          |
+| 25  | BootstrapMixin         | db_bootstrap.py                        | 自举闭环：扫描基线检测（workspace_scan_runs）、task_capture_diff 闭环入口、bootstrap_status 健康摘要     |
+| 26  | AuditChainMixin        | db_audit_chain.py                      | 审计签名链：关键审计表的签名记录与验证                                                                   |
+| 27  | CasMixin               | db_cas.py                              | Global CAS（Content-Addressable Storage）缓存池，相同文件跨工作区只解析一次                              |
+| 28  | CloneDetectionMixin    | db_clone_detection.py                  | 重复代码检测：基于 tree-sitter token 序列检测 Type-1/2/3 克隆                                            |
+| 29  | CloneGroupsMixin       | db_clone_groups.py                     | Clone Groups 存储：替代 clone_pairs 的分组存储                                                           |
+| 30  | DaemonMixin            | db_daemon.py                           | Enterprise daemon workspace registry：workspace 注册、查询、状态管理                                     |
+| 31  | ExternalMixin          | db_external.py                         | 第三方包解析（多语言通用版）：从已安装包提取函数/类/常量符号                                             |
+| 32  | GcMixin                | db_gc.py                               | 代码图谱 GC：分代回收机制（新生代/老年代）                                                               |
+| 33  | JobsMixin              | db_jobs.py                             | 后台任务系统：clone/vector/semgrep 等耗时操作异步执行                                                    |
+| 34  | MigrateMixin           | db_migrate.py                          | 数据库迁移工具：旧版多库架构迁移到用户级单库架构                                                         |
+| 35  | StdlibMixin            | db_stdlib.py                           | 标准库符号表：管理 Python 标准库符号信息，用于跨文件调用解析                                             |
+| 36  | TaskAttributionMixin   | db_task_attribution.py                 | 任务-符号变更归因层：链接 edit audit 到符号版本变更                                                      |
+| 37  | TaskQualityMixin       | db_task_quality.py                     | 任务质量门禁：承载任务完成门禁发现                                                                       |
+| 38  | TestsMixin             | db_tests.py                            | 测试关联：建立 test_fn ↔ 被测 fn 的关联关系                                                              |
+| 39  | ToolchainMixin         | db_toolchain.py                        | Toolchain CAS：工具链注册与存储                                                                          |
+| 40  | WorkspaceManifestMixin | db_workspace_manifest.py               | Workspace manifest：clean snapshot 和 dirty overlay                                                      |
+| 41  | RollbackConfigMixin    | db_rollback_config.py                  | 迁移回滚配置：rollback_config 表注册/查询/紧急回滚开关（schema v42，全量 Rust 迁移自举计划用）           |
+| 42  | TaskContractsMixin     | db_task_contracts.py                   | P1 契约驱动协作：Canonical Envelope、revision 发布、Contract_Hash（schema v43）                          |
+| 43  | TaskReviewsMixin       | db_task_reviews.py                     | P3 独立审核证明：blind verdict/reveal/amendment、reviewer/implementer Identity（Req 10.1-10.5）          |
+| 44  | TaskEvidenceMixin      | db_task_evidence.py                    | P1 Evidence 账本：快照绑定、追加式 Evidence 与 freshness（schema v43）                                   |
+| 45  | TaskGateMixin          | db_task_gate.py                        | Evidence Gate 判定内核：Blocking Clause、Profile_Policy_Matrix、Identity fail-closed（P1+P3）            |
+| 46  | TaskDependenciesMixin  | db_task_dependencies.py                | P2 依赖模型：四类依赖、artifact/interface identity、环检测（schema v44）                                 |
+| 47  | TaskIdentityMixin      | db_task_identity.py                    | P3 Identity/Attestation：action 身份记录、会话/家族分离、daemon Attestation 校验、撤销派生（schema v45） |
+| 48  | LeaseMixin             | db_task_leases.py                      | P4 安全 Lease：assignment、token hash、fencing counter、append-only 事件（schema v46）                   |
 
 ### 组装方式
 
@@ -472,14 +472,14 @@ Agent Rule Memory 是 Call Warden 的项目规则记忆系统，让 Agent 能够
 
 `agent_rules.scope_json` 是一个 JSON 对象，支持以下字段：
 
-| 字段 | 类型 | 匹配方式 |
-|------|------|----------|
-| `languages` | `list[str]` | 上下文 `languages` 任一命中即匹配（OR） |
-| `file_patterns` | `list[str]` | glob 匹配（如 `src/api/**/*.py`） |
-| `symbol_kinds` | `list[str]` | `fn` / `method` / `class` / `struct` 等 |
-| `actions` | `list[str]` | `edit` / `delete` / `create` 等 |
-| `finding_types` | `list[str]` | 与 `task_quality_findings.finding_type` 对齐 |
-| `module_prefixes` | `list[str]` | 前缀匹配（如 `crate::payment::`） |
+| 字段              | 类型        | 匹配方式                                     |
+| ----------------- | ----------- | -------------------------------------------- |
+| `languages`       | `list[str]` | 上下文 `languages` 任一命中即匹配（OR）      |
+| `file_patterns`   | `list[str]` | glob 匹配（如 `src/api/**/*.py`）            |
+| `symbol_kinds`    | `list[str]` | `fn` / `method` / `class` / `struct` 等      |
+| `actions`         | `list[str]` | `edit` / `delete` / `create` 等              |
+| `finding_types`   | `list[str]` | 与 `task_quality_findings.finding_type` 对齐 |
+| `module_prefixes` | `list[str]` | 前缀匹配（如 `crate::payment::`）            |
 
 **匹配规则**：
 - 空 scope = 全局匹配
@@ -493,13 +493,13 @@ Agent Rule Memory 是 Call Warden 的项目规则记忆系统，让 Agent 能够
 
 规则注入采用 **fail-soft** 模式：规则查询失败时降级为空列表，不阻塞主流程。已接入的注入点：
 
-| 注入点 | 返回字段 | 上下文来源 |
-|--------|----------|-----------|
-| `task_next_step` | `applicable_rules` | 任务关联的 file/symbol/kind |
-| `work_next_job` | `project_rules` + `context.applicable_rules` | 当前 job 的符号上下文 |
-| `build_structured_instruction` | `project_rules` | 全局 active 规则 |
-| `get_symbol` | `applicable_rules` | 符号的语言/类型/文件 |
-| `file_symbol_content` | `applicable_rules` | 文件的语言/路径 |
+| 注入点                         | 返回字段                                     | 上下文来源                  |
+| ------------------------------ | -------------------------------------------- | --------------------------- |
+| `task_next_step`               | `applicable_rules`                           | 任务关联的 file/symbol/kind |
+| `work_next_job`                | `project_rules` + `context.applicable_rules` | 当前 job 的符号上下文       |
+| `build_structured_instruction` | `project_rules`                              | 全局 active 规则            |
+| `get_symbol`                   | `applicable_rules`                           | 符号的语言/类型/文件        |
+| `file_symbol_content`          | `applicable_rules`                           | 文件的语言/路径             |
 
 ### AGENTS.md 同步
 
@@ -515,10 +515,10 @@ Agent Rule Memory 是 Call Warden 的项目规则记忆系统，让 Agent 能够
 
 Call Warden 在以下两个入口点自动触发 `rule_sync_agents_md(dry_run=False)`，让规则无需手动同步即可生效：
 
-| 入口点 | actor | 触发时机 | fail-soft |
-|--------|-------|----------|-----------|
+| 入口点                        | actor                | 触发时机                                        | fail-soft                         |
+| ----------------------------- | -------------------- | ----------------------------------------------- | --------------------------------- |
 | `cw server` (MCP Server 启动) | `mcp_server_startup` | `create_mcp_server()` 之后、`server.run()` 之前 | 同步失败不阻断启动，输出到 stderr |
-| `cw refresh --all` (CLI 刷新) | `cli_refresh_all` | `db.build_full_graph()` 之后 | 同步失败不阻断 refresh |
+| `cw refresh --all` (CLI 刷新) | `cli_refresh_all`    | `db.build_full_graph()` 之后                    | 同步失败不阻断 refresh            |
 
 **设计要点**：
 - **fail-soft 原则**：同步失败（标记区不存在、权限不足、DB 异常等）不阻断主流程，仅输出提示
@@ -534,12 +534,12 @@ Call Warden 在以下两个入口点自动触发 `rule_sync_agents_md(dry_run=Fa
 
 ### 解决的问题
 
-| 场景 | 没有 capture-diff 时 | 有 capture-diff 后 |
-|------|---------------------|--------------------|
-| 外部 Agent（Claude Code/Codex）直接编辑磁盘文件 | 图谱与磁盘脱节，task 无法归因真实变更 | 自动捕获变更、归因到 task/step、生成 quality findings |
-| 任务完成审查 | 只靠 Agent 自报 `task_report`，缺验证 | `task_capture_diff` 提供磁盘事实，与 Agent 声明交叉验证 |
-| 跨会话审计 | 多个 Agent 改动难以追溯 | 每次 capture 写 `workspace_scan_runs` + `change_audit` + `audit_chain` |
-| 规则注入空转 | active_rules 表为空，注入点返回空列表 | `rule_seed_bootstrap --apply` 写入 5 条核心规约，注入稳定 |
+| 场景                                            | 没有 capture-diff 时                  | 有 capture-diff 后                                                     |
+| ----------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| 外部 Agent（Claude Code/Codex）直接编辑磁盘文件 | 图谱与磁盘脱节，task 无法归因真实变更 | 自动捕获变更、归因到 task/step、生成 quality findings                  |
+| 任务完成审查                                    | 只靠 Agent 自报 `task_report`，缺验证 | `task_capture_diff` 提供磁盘事实，与 Agent 声明交叉验证                |
+| 跨会话审计                                      | 多个 Agent 改动难以追溯               | 每次 capture 写 `workspace_scan_runs` + `change_audit` + `audit_chain` |
+| 规则注入空转                                    | active_rules 表为空，注入点返回空列表 | `rule_seed_bootstrap --apply` 写入 5 条核心规约，注入稳定              |
 
 ### 数据流
 
@@ -599,15 +599,15 @@ Call Warden 在以下两个入口点自动触发 `rule_sync_agents_md(dry_run=Fa
 
 ### 闭环命令映射
 
-| 阶段 | CLI | MCP | 说明 |
-|------|-----|-----|------|
-| 种子规则 | `cw rule seed-bootstrap --apply` | `rule_seed_bootstrap(dry_run=False)` | 写入 5 条 `AR-bootstrap-*` |
-| 健康摘要 | `cw bootstrap status` | `bootstrap_status()` | 一行汇总 db_stale/规则/质量发现/审计链/扫描基线/任务/推荐 |
-| 捕获改动 | `cw task capture-diff <T> --apply` | `task_capture_diff(task_id, dry_run=False)` | 写 scan_runs + change_audit + audit_chain + findings |
-| 审计验证 | `cw audit verify` | `audit_chain_verify(table_name, limit)` | 验证签名链完整性与签名匹配 |
-| 任务报告 | `cw task report <T> <S> --result "..."` | `task_report_step(task_id, step_id, result)` | Agent 声明完成 step |
-| 任务应用 | `cw task apply <T> --reviewer <S>` | `task_apply(task_id, reviewer)` | review → applied |
-| 任务关闭 | `cw task close <T> --reviewer <S>` | `task_close(task_id, reviewer)` | applied → closed（带级联） |
+| 阶段     | CLI                                     | MCP                                          | 说明                                                      |
+| -------- | --------------------------------------- | -------------------------------------------- | --------------------------------------------------------- |
+| 种子规则 | `cw rule seed-bootstrap --apply`        | `rule_seed_bootstrap(dry_run=False)`         | 写入 5 条 `AR-bootstrap-*`                                |
+| 健康摘要 | `cw bootstrap status`                   | `bootstrap_status()`                         | 一行汇总 db_stale/规则/质量发现/审计链/扫描基线/任务/推荐 |
+| 捕获改动 | `cw task capture-diff <T> --apply`      | `task_capture_diff(task_id, dry_run=False)`  | 写 scan_runs + change_audit + audit_chain + findings      |
+| 审计验证 | `cw audit verify`                       | `audit_chain_verify(table_name, limit)`      | 验证签名链完整性与签名匹配                                |
+| 任务报告 | `cw task report <T> <S> --result "..."` | `task_report_step(task_id, step_id, result)` | Agent 声明完成 step                                       |
+| 任务应用 | `cw task apply <T> --reviewer <S>`      | `task_apply(task_id, reviewer)`              | review → applied                                          |
+| 任务关闭 | `cw task close <T> --reviewer <S>`      | `task_close(task_id, reviewer)`              | applied → closed（带级联）                                |
 
 ### BootstrapMixin 职责
 
@@ -711,18 +711,18 @@ Agent 每次编辑文件都记录完整审计：
 
 标准 `workflow_status`：
 
-| workflow_status | 含义 | 下一责任方 |
-|---|---|---|
-| `queued` | 已创建但尚未开始执行 | Executor |
-| `execution_in_progress` | Executor 正在执行或持有 active lease | Executor |
-| `remediation_in_progress` | 正在处理 Reviewer/Adjudicator 退回的缺陷 | Executor |
-| `review_pending` | 已交付，等待 Reviewer | Reviewer |
-| `adjudication_pending` | Reviewer 已 PASS，等待 Adjudicator | Adjudicator |
-| `remediation_pending` | Reviewer 已 BLOCKED，等待 Executor 修复 | Executor |
-| `applied_pending_close` | Adjudicator 已 apply，等待最终 close | Adjudicator |
-| `completed` | 已 closed | — |
-| `reverted` | 已回退 | — |
-| `governance_blocked` | 缺少可验证的 workspace binding、Task Contract 或其他治理事实；不伪造历史状态 | Executor/用户补齐治理事实 |
+| workflow_status           | 含义                                                                         | 下一责任方                |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------- |
+| `queued`                  | 已创建但尚未开始执行                                                         | Executor                  |
+| `execution_in_progress`   | Executor 正在执行或持有 active lease                                         | Executor                  |
+| `remediation_in_progress` | 正在处理 Reviewer/Adjudicator 退回的缺陷                                     | Executor                  |
+| `review_pending`          | 已交付，等待 Reviewer                                                        | Reviewer                  |
+| `adjudication_pending`    | Reviewer 已 PASS，等待 Adjudicator                                           | Adjudicator               |
+| `remediation_pending`     | Reviewer 已 BLOCKED，等待 Executor 修复                                      | Executor                  |
+| `applied_pending_close`   | Adjudicator 已 apply，等待最终 close                                         | Adjudicator               |
+| `completed`               | 已 closed                                                                    | —                         |
+| `reverted`                | 已回退                                                                       | —                         |
+| `governance_blocked`      | 缺少可验证的 workspace binding、Task Contract 或其他治理事实；不伪造历史状态 | Executor/用户补齐治理事实 |
 
 统一投影至少包含 `task_id`、`lifecycle_status`、`workflow_status`、`current_role`、
 `next_role`、`next_action`、`review.state`、可用时的 `review.verdict_id` /
@@ -891,14 +891,14 @@ Call Warden 同时维护两套查询路径：**Rust GraphStore（CSR 内存索�
 
 **路由策略**（基于 BR3 实测，1M 符号）：
 
-| 查询 | GraphStore | SQL | 选用 | 原因 |
-|------|-----------|-----|------|------|
-| `get_callers` | 0.003ms | 0.165ms | **GraphStore**（54x 加速） | CSR backward 遍历 + `by_callee_name` 哈希索引，完全跳过 SQL |
-| `get_callees` | 0.000ms | 0.146ms | **GraphStore**（330x 加速） | CSR forward 遍历，零 SQL |
-| `get_symbol` | 0.008ms | 0.013ms | **GraphStore**（1.66x 加速） | `by_qualified_name` HashMap O(1) |
-| `call_chain BFS d=5` | 24.4ms | 96.4ms | **GraphStore**（3.95x 加速） | CSR 内存遍历 vs SQL CTE 递归 |
-| `batch_callers(100)` | 0.29ms | 2.45ms | **GraphStore**（8.56x 加速） | 单次 CSR 遍历多次查询 |
-| `search_symbols` | 3.132ms（memchr 子串） | 2.354ms（FTS5 trigram） | **FTS5**（**1.33x 加速**） | 见下方根因 |
+| 查询                 | GraphStore             | SQL                     | 选用                         | 原因                                                        |
+| -------------------- | ---------------------- | ----------------------- | ---------------------------- | ----------------------------------------------------------- |
+| `get_callers`        | 0.003ms                | 0.165ms                 | **GraphStore**（54x 加速）   | CSR backward 遍历 + `by_callee_name` 哈希索引，完全跳过 SQL |
+| `get_callees`        | 0.000ms                | 0.146ms                 | **GraphStore**（330x 加速）  | CSR forward 遍历，零 SQL                                    |
+| `get_symbol`         | 0.008ms                | 0.013ms                 | **GraphStore**（1.66x 加速） | `by_qualified_name` HashMap O(1)                            |
+| `call_chain BFS d=5` | 24.4ms                 | 96.4ms                  | **GraphStore**（3.95x 加速） | CSR 内存遍历 vs SQL CTE 递归                                |
+| `batch_callers(100)` | 0.29ms                 | 2.45ms                  | **GraphStore**（8.56x 加速） | 单次 CSR 遍历多次查询                                       |
+| `search_symbols`     | 3.132ms（memchr 子串） | 2.354ms（FTS5 trigram） | **FTS5**（**1.33x 加速**）   | 见下方根因                                                  |
 
 **F20 设计决策根因**：`search_symbols` 走 SQL 是有意的，不是遗漏：
 
@@ -1018,35 +1018,34 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 
 ### 总体方向
 
-| 命令风格 | 状态 | 长期定位 |
-|----------|------|----------|
-| **subcommand**（`cw <subcommand> [options]`） | ✅ 推荐 | 长期支持，所有新功能必须以 subcommand 形式提供 |
-| **--flag**（`cw --flag [options]`） | ⚠️ deprecated | 兼容期保留，使用时打印 `deprecated` 警告，将在未来版本移除 |
+| 命令风格                                      | 状态     | 长期定位                                                        |
+| --------------------------------------------- | -------- | --------------------------------------------------------------- |
+| **subcommand**（`cw <subcommand> [options]`） | ✅ 唯一   | 全部命令统一为 subcommand 风格，所有功能以 subcommand 形式提供  |
+| **--flag**（`cw --flag [options]`）           | ❌ 已移除 | T10 阶段3 已删除全部 60 个 deprecated 顶层 `--flag`，无兼容入口 |
 
 **原则**：
-1. 新增 CLI 命令必须使用 subcommand 风格
-2. 现有 `--flag` 不删除执行逻辑，仅添加 `deprecated` 警告
-3. subcommand 与 `--flag` 在兼容期内并存，用户可渐进迁移
-4. MCP 工具命名不重命名，仅审计与归档
+1. 所有 CLI 命令统一使用 subcommand 风格；顶层仅保留全局 flag（`--lang`/`--workspace`/`--root`/`--force`/`--no-auto-setup`）
+2. 旧 `--flag` 风格已在未上线阶段整体移除，不保留同义词，确保分类清晰、零二义性
+3. MCP 工具命名不重命名，仅审计与归档
 
 ### 12 主分类设计
 
-Call Warden 把 145+ 个 CLI 命令和 237 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+Call Warden 把 83 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
 
-| # | 主分类 | CLI 涵盖范围 | MCP 工具数 |
-|---|--------|-------------|-----------|
-| 1 | **Workspace & Database** | 工作区管理、数据库刷新、状态概览、watcher、分支感知 | 16 |
-| 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复 | 24 |
-| 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | 12 |
-| 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失 | 12 |
-| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、capture-diff | 22 |
-| 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | 11 |
-| 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁、安全护栏 | 10 |
-| 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | 5 |
-| 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径 | 14 |
-| 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、CODEOWNERS、所有权映射 | 15 |
-| 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | 11 |
-| 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | 21 |
+| #   | 主分类                    | CLI 涵盖范围                                                      | MCP 工具数 |
+| --- | ------------------------- | ----------------------------------------------------------------- | ---------- |
+| 1   | **Workspace & Database**  | 工作区管理、数据库刷新、状态概览、watcher、分支感知               | 16         |
+| 2   | **Query & Search**        | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复           | 24         |
+| 3   | **Call Chain Analysis**   | 调用链、拓扑、循环、孤儿、模块图、热力图                          | 12         |
+| 4   | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失                    | 12         |
+| 5   | **Task Orchestration**    | 任务创建/认领/上报/回滚/审批/关闭、capture-diff                   | 22         |
+| 6   | **Agent Rule Memory**     | 规则候选/审核/生效/同步/提取/清理/种子化                          | 11         |
+| 7   | **Audit & Bootstrap**     | 审计链验证、密钥轮换、自举健康、检查门禁、安全护栏                | 10         |
+| 8   | **Git Integration**       | git 历史、commit、变更、blame、分支感知                           | 5          |
+| 9   | **Semgrep & Defects**     | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径                  | 14         |
+| 10  | **Coverage & Ownership**  | 注释覆盖、测试覆盖、CODEOWNERS、所有权映射                        | 15         |
+| 11  | **GC**                    | 归档、恢复、清理、策略、备份、审计                                | 11         |
+| 12  | **Diagnostics**           | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | 21         |
 
 > 详细子分类设计见 `.cli_audit.md` §3；MCP 工具分组明细见 `.mcp_audit.md` §4。
 
@@ -1054,36 +1053,36 @@ Call Warden 把 145+ 个 CLI 命令和 237 个 MCP 工具按功能聚合为 12 �
 
 #### 阶段 1：CLI subcommand 改造（✅ 已完成）
 
-| 工作项 | 状态 | 说明 |
-|--------|------|------|
-| 新增 27 个 subcommand handler | ✅ | 覆盖 8 个主分类（workspace/db/query/call-chain/metrics/git/semgrep/coverage/diagnostics 部分） |
-| 60 个 `--flag` deprecated 警告 | ✅ | 通过 `_DEPRECATED_FLAG_MAPPING` 字典实现，使用 `--flag` 时打印推荐 subcommand |
-| `cw --help` 12 组分组 | ✅ | main help 按 12 主分类组织 subcommand 列表 |
-| 子命令 `--help` 统一模板 | ✅ | 所有 subcommand 共享统一的 help 输出格式 |
-| `--refresh` 多 path 支持 | ✅ | `cw --refresh <path1> <path2> ...` 支持同时刷新多文件 |
-| readonly 命令集合扩展 | ✅ | `_READONLY_*_ACTIONS` 集合覆盖 workspace/git/semgrep/coverage 查询类 |
+| 工作项                         | 状态 | 说明                                                                                           |
+| ------------------------------ | ---- | ---------------------------------------------------------------------------------------------- |
+| 新增 27 个 subcommand handler  | ✅    | 覆盖 8 个主分类（workspace/db/query/call-chain/metrics/git/semgrep/coverage/diagnostics 部分） |
+| 60 个 `--flag` deprecated 警告 | ✅    | 通过 `_DEPRECATED_FLAG_MAPPING` 字典实现，使用 `--flag` 时打印推荐 subcommand                  |
+| `cw --help` 12 组分组          | ✅    | main help 按 12 主分类组织 subcommand 列表                                                     |
+| 子命令 `--help` 统一模板       | ✅    | 所有 subcommand 共享统一的 help 输出格式                                                       |
+| `--refresh` 多 path 支持       | ✅    | `cw --refresh <path1> <path2> ...` 支持同时刷新多文件                                          |
+| readonly 命令集合扩展          | ✅    | `_READONLY_*_ACTIONS` 集合覆盖 workspace/git/semgrep/coverage 查询类                           |
 
-完整 flag → subcommand 映射见 [CLI 命令参考 - Deprecated --flag 清单](cli_reference.md#deprecated---flag-清单c8-step-2) 和 `deprecated_flag_mapping.json`。
+> **T10 终态（2026-10）**：上表为 C8 阶段的 subcommand/flag 并存历史。T10 阶段3 已删除全部 60 个 deprecated `--flag`（含 `_DEPRECATED_FLAG_MAPPING`、`deprecated_flag_mapping.json` 与 main help deprecated 清单），阶段2.5 把 14 个原 flag 独立分析能力提升为独立 subcommand。当前 CLI 为纯 subcommand 设计，命令清单见 [CLI 命令参考](cli_reference.md)。
 
 #### 阶段 2：MCP 工具审计与文档（🔄 进行中）
 
-| 工作项 | 状态 | 说明 |
-|--------|------|------|
-| MCP 工具命名审计 | ✅ | 210 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
-| 12 大类分组注释 | ✅ | `server/mcp_server.py` 中用统一注释格式标注每个分类起点 |
-| CLI↔MCP 映射对照表 | ✅ | `docs/mcp_tools.md` 末尾添加 171 条 CLI↔MCP 命名映射 |
-| CLI 命令参考 12 大类重构 | ✅ | `docs/cli_reference.md` 开头概览表替换为 12 大功能分类 |
-| MCP 工具参考 12 大类重组 | ✅ | `docs/mcp_tools.md` 开头概览表替换为 12 大功能分类 |
-| 架构规范文档化 | ✅ | 本节（architecture.md 命令风格统一规范） |
+| 工作项                   | 状态 | 说明                                                                         |
+| ------------------------ | ---- | ---------------------------------------------------------------------------- |
+| MCP 工具命名审计         | ✅    | 210 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
+| 12 大类分组注释          | ✅    | `server/mcp_server.py` 中用统一注释格式标注每个分类起点                      |
+| CLI↔MCP 映射对照表       | ✅    | `docs/mcp_tools.md` 末尾添加 171 条 CLI↔MCP 命名映射                         |
+| CLI 命令参考 12 大类重构 | ✅    | `docs/cli_reference.md` 开头概览表替换为 12 大功能分类                       |
+| MCP 工具参考 12 大类重组 | ✅    | `docs/mcp_tools.md` 开头概览表替换为 12 大功能分类                           |
+| 架构规范文档化           | ✅    | 本节（architecture.md 命令风格统一规范）                                     |
 
 #### 阶段 3：深度完善（📋 计划中）
 
-| 工作项 | 状态 | 说明 |
-|--------|------|------|
-| MCP 工具内部 i18n 改造 | 📋 | MCP 工具的错误消息/提示走 i18n.t()，与 CLI 输出一致 |
-| 文档深度完善 | 📋 | 补充各 subcommand 的完整参数表、退出码、示例 |
-| 测试覆盖加强 | 📋 | 为 27 个新增 subcommand handler 编写端到端测试 |
-| `--flag` 移除评估 | 📋 | 评估 deprecated `--flag` 的使用率，制定移除时间表 |
+| 工作项                 | 状态 | 说明                                                |
+| ---------------------- | ---- | --------------------------------------------------- |
+| MCP 工具内部 i18n 改造 | 📋    | MCP 工具的错误消息/提示走 i18n.t()，与 CLI 输出一致 |
+| 文档深度完善           | 📋    | 补充各 subcommand 的完整参数表、退出码、示例        |
+| 测试覆盖加强           | 📋    | 为 27 个新增 subcommand handler 编写端到端测试      |
+| `--flag` 移除评估      | 📋    | 评估 deprecated `--flag` 的使用率，制定移除时间表   |
 
 ### 设计决策
 
@@ -1120,12 +1119,12 @@ Call Warden 把 145+ 个 CLI 命令和 237 个 MCP 工具按功能聚合为 12 �
 
 **兼容矩阵**：
 
-| 命令类型 | MCP 未激活 | MCP 激活 |
-|---------|-----------|----------|
-| subcommand（推荐） | ✅ CLI 执行 | ✅ CLI 执行（写操作避免与 MCP 撞锁） |
-| `--flag`（deprecated） | ✅ CLI 执行 + deprecated 警告 | ✅ CLI 执行 + deprecated 警告 |
-| MCP 工具（只读） | ❌ 不可用 | ✅ MCP 执行（WAL 模式下与 CLI 写并发安全） |
-| MCP 工具（写操作） | ❌ 不可用 | ⚠️ 5% 撞锁概率，建议用 CLI subcommand 替代 |
+| 命令类型               | MCP 未激活                   | MCP 激活                                  |
+| ---------------------- | ---------------------------- | ----------------------------------------- |
+| subcommand（推荐）     | ✅ CLI 执行                   | ✅ CLI 执行（写操作避免与 MCP 撞锁）       |
+| `--flag`（deprecated） | ✅ CLI 执行 + deprecated 警告 | ✅ CLI 执行 + deprecated 警告              |
+| MCP 工具（只读）       | ❌ 不可用                     | ✅ MCP 执行（WAL 模式下与 CLI 写并发安全） |
+| MCP 工具（写操作）     | ❌ 不可用                     | ⚠️ 5% 撞锁概率，建议用 CLI subcommand 替代 |
 
 > 数据库锁策略详见 [AGENTS.md - 代码读取工具按场景分工](../AGENTS.md)。
 
@@ -1155,11 +1154,11 @@ daemon 提供四个不可替代的能力，这些能力是 P1 Protected_Mutation
 
 ### 跨平台端点设计
 
-| 平台 | 端点类型 | 传输协议 | Peer_Credential 来源 | 自动唤起方式 |
-|------|----------|----------|----------------------|-------------|
-| Linux | Unix 域套接字 | UDS (`SO_PEERCRED`) | UID + GID + PID | systemd user service |
-| macOS | Unix 域套接字 | UDS (`LOCAL_PEERCRED`) | UID + GID（无 PID） | launchd user agent |
-| Windows | 命名管道 | `\\.\pipe\callwarden-<user-sid>` | 对端 SID (`GetNamedPipeClientProcessId`) | detached process |
+| 平台    | 端点类型      | 传输协议                         | Peer_Credential 来源                     | 自动唤起方式         |
+| ------- | ------------- | -------------------------------- | ---------------------------------------- | -------------------- |
+| Linux   | Unix 域套接字 | UDS (`SO_PEERCRED`)              | UID + GID + PID                          | systemd user service |
+| macOS   | Unix 域套接字 | UDS (`LOCAL_PEERCRED`)           | UID + GID（无 PID）                      | launchd user agent   |
+| Windows | 命名管道      | `\\.\pipe\callwarden-<user-sid>` | 对端 SID (`GetNamedPipeClientProcessId`) | detached process     |
 
 **Windows 端点决策**（Requirements 14.2, 14.18–14.21）：
 
@@ -1270,19 +1269,19 @@ Independence_Policy（Requirements 5.12–5.17）与 Stage_Toggle 同源，存�
 
 **三平台唤起方式**（Requirements 14.24–14.26）：
 
-| 平台 | 唤起方式 |
-|------|---------|
-| Linux | systemd user service（`systemctl --user start callwarden`） |
-| macOS | launchd user agent（`launchctl start <label>`） |
-| Windows | detached process（`Start-Process -WindowStyle Hidden`） |
+| 平台    | 唤起方式                                                    |
+| ------- | ----------------------------------------------------------- |
+| Linux   | systemd user service（`systemctl --user start callwarden`） |
+| macOS   | launchd user agent（`launchctl start <label>`）             |
+| Windows | detached process（`Start-Process -WindowStyle Hidden`）     |
 
 **Degraded_Mode 分流**（Requirements 14.27–14.30）：有界等待窗口耗尽后，按操作类型分级处理：
 
-| 操作类型 | Degraded_Mode 行为 | 理由 |
-|----------|-------------------|------|
-| Read_Only 查询 | 直连只读 SQLite 连接执行并返回结果（Requirement 14.28） | 只读不改变状态，安全降级 |
-| Index_Write | 直连 SQLite 执行（Requirement 14.29） | 派生事实不含授权语义，可从当前 workspace 重算 |
-| Governance_Write | **fail closed**，返回 Structured_Reason + 可执行恢复指引（Requirement 14.30） | 授权/门禁决策必须经 daemon 串行化点 |
+| 操作类型         | Degraded_Mode 行为                                                            | 理由                                          |
+| ---------------- | ----------------------------------------------------------------------------- | --------------------------------------------- |
+| Read_Only 查询   | 直连只读 SQLite 连接执行并返回结果（Requirement 14.28）                       | 只读不改变状态，安全降级                      |
+| Index_Write      | 直连 SQLite 执行（Requirement 14.29）                                         | 派生事实不含授权语义，可从当前 workspace 重算 |
+| Governance_Write | **fail closed**，返回 Structured_Reason + 可执行恢复指引（Requirement 14.30） | 授权/门禁决策必须经 daemon 串行化点           |
 
 **Governance_Write 恢复指引**包含平台具体拉起命令（如 `systemctl --user start callwarden` /
 `launchctl start <label>` / `Start-Process ...`），便于用户快速恢复 daemon。
@@ -1322,12 +1321,12 @@ Independence_Policy（Requirements 5.12–5.17）与 Stage_Toggle 同源，存�
 D0 已交付 4 个只读协同查询 MCP 工具（Requirement 14.17），通过 daemon `call_with_autostart`
 路由，不触发写操作（含 workspace 激活一类隐式 UPDATE）：
 
-| 工具 | 用途 | P1 启用后返回 | P1 未启用返回 |
-|------|------|---------------|---------------|
-| `get_role_view` | 获取 Role_View 投影 | Role_View dict | `{"status": "planned", ...}` |
-| `find_evidence` | 查询 Evidence 记录 | `{"items": [...], "count": N}` | `{"status": "planned", ...}` |
-| `get_freshness_status` | 查询 Evidence Freshness_Status | `{"items": [...]}` | `{"status": "planned", ...}` |
-| `get_gate_decision` | 查询 gate decision 历史 | `{"items": [...], "count": N}` | `{"status": "planned", ...}` |
+| 工具                   | 用途                           | P1 启用后返回                  | P1 未启用返回                |
+| ---------------------- | ------------------------------ | ------------------------------ | ---------------------------- |
+| `get_role_view`        | 获取 Role_View 投影            | Role_View dict                 | `{"status": "planned", ...}` |
+| `find_evidence`        | 查询 Evidence 记录             | `{"items": [...], "count": N}` | `{"status": "planned", ...}` |
+| `get_freshness_status` | 查询 Evidence Freshness_Status | `{"items": [...]}`             | `{"status": "planned", ...}` |
+| `get_gate_decision`    | 查询 gate decision 历史        | `{"items": [...], "count": N}` | `{"status": "planned", ...}` |
 
 P1 未启用时返回 `planned/unavailable` 结构化响应（Requirement 13.1），不视为错误。
 实现见 [server/mcp_server.py](../server/mcp_server.py) `_collab_rpc_call`。
@@ -1346,13 +1345,13 @@ P2 阶段实现了 artifact/interface 依赖关系校验与环检测，覆盖 Re
 
 ### 核心表结构（Schema v44 新增）
 
-| 表 | 用途 | Req |
-|----|------|-----|
-| `task_dependencies` | 四类依赖声明（requires_existing/artifact/provides_interface/requires_interface） | 9.1 |
-| `artifact_identities` | artifact identity/hash/freshness（producing/fresh/stale） | 9.3 |
-| `interface_identities` | interface identity/version/hash | 9.4-9.5 |
-| `interface_provider_selections` | 多 provider 时的显式选择 | 9.9 |
-| `dependency_edges` | 去重后的硬依赖图边（provider→consumer） | 9.6 |
+| 表                              | 用途                                                                             | Req     |
+| ------------------------------- | -------------------------------------------------------------------------------- | ------- |
+| `task_dependencies`             | 四类依赖声明（requires_existing/artifact/provides_interface/requires_interface） | 9.1     |
+| `artifact_identities`           | artifact identity/hash/freshness（producing/fresh/stale）                        | 9.3     |
+| `interface_identities`          | interface identity/version/hash                                                  | 9.4-9.5 |
+| `interface_provider_selections` | 多 provider 时的显式选择                                                         | 9.9     |
+| `dependency_edges`              | 去重后的硬依赖图边（provider→consumer）                                          | 9.6     |
 
 ### 依赖类型与边归一化
 
@@ -1399,11 +1398,11 @@ P3 阶段实现 Agent 身份审计（Requirements 10.1-10.18），为 contract/v
 
 ### 核心表结构（Schema v45 新增）
 
-| 表 | 用途 | Req |
-|----|------|-----|
-| `action_identities` | contract/view/verdict/evidence/gate/state_transition 动作的 actor Identity（agent_id/session_id/model_id/role） | 10.1 |
-| `attestation_records` | daemon 签发的 Attestation（issuer/signing_key_id/peer_identity/contract_hash/有效期窗口） | 10.8 |
-| `attestation_revocation_records` | 撤销账本（单条记录对应一次撤销，Revocation_Mode CHECK 约束：compromised/rotated） | 10.10-10.12 |
+| 表                               | 用途                                                                                                            | Req         |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------- |
+| `action_identities`              | contract/view/verdict/evidence/gate/state_transition 动作的 actor Identity（agent_id/session_id/model_id/role） | 10.1        |
+| `attestation_records`            | daemon 签发的 Attestation（issuer/signing_key_id/peer_identity/contract_hash/有效期窗口）                       | 10.8        |
+| `attestation_revocation_records` | 撤销账本（单条记录对应一次撤销，Revocation_Mode CHECK 约束：compromised/rotated）                               | 10.10-10.12 |
 
 ### Identity 校验与分离策略
 
@@ -1523,6 +1522,6 @@ CREATE TABLE task_lease_events (
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：237 个工具详情
-- [CLI 命令参考](cli_reference.md)：145+ 命令详情
+- [MCP 工具参考](mcp_tools.md)：243 个工具详情
+- [CLI 命令参考](cli_reference.md)：83 个顶层命令详情
 - [部署指南](deployment.md)：Docker 部署与升级
