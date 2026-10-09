@@ -763,12 +763,49 @@ impl TaskCollabStore {
 
         let mut conn = self.conn.lock().unwrap();
 
+        // B5（审计 20261009）：daemon 进程 cwd 不属于任何注册工作区，直接把
+        // Path::new("") 传给 capture_task_diff 时，内部 active_workspace 会因
+        // 多 active workspace 歧义 fail-closed。task_workspace_bindings 绑定
+        // 才是任务的工作区权威身份源：显式解析绑定 root_path 传入，走显式
+        // workspace 优先路径。
+        let mut ws_roots: Vec<String> = conn
+            .prepare(
+                "SELECT DISTINCT w.root_path FROM workspaces w \
+                 JOIN task_workspace_bindings b ON b.workspace_id = w.id \
+                 WHERE b.task_id = ?1 ORDER BY w.root_path",
+            )
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询任务工作区绑定 prepare 失败: {}", e))
+            })?
+            .query_map(rusqlite::params![task_id], |r| r.get::<_, String>(0))
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("查询任务工作区绑定失败: {}", e))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("读取任务工作区绑定失败: {}", e))
+            })?;
+        if ws_roots.len() != 1 {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "任务 {} 的工作区绑定数为 {}（需要恰好 1 个），无法定位 capture-diff 工作区",
+                task_id,
+                ws_roots.len()
+            )));
+        }
+        let ws_root = ws_roots.remove(0);
+        if ws_root.trim().is_empty() {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "任务 {} 绑定的工作区 root_path 为空，无法执行 capture-diff",
+                task_id
+            )));
+        }
+
         // 完整 capture-diff：change_audit（真实 schema）+ task_symbol_changes + audit_chain 签名
         let result = crate::cli::task::capture_task_diff(
             &mut conn,
             task_id,
             step_id,
-            Path::new(""),
+            Path::new(&ws_root),
             base,
             dry_run,
             source_commit_hash,

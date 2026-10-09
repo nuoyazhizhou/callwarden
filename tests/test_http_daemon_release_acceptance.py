@@ -11,17 +11,13 @@
    （status=ok、schema_version=50）；不可达时 skip 附诊断（环境无 daemon 属
    测试设计内前置条件，与既有 daemon 测试一致）。
 3. **capability registry 三端对齐**：import server.compat_worker 触发全量装配后，
-   registry 方法数 = RUST_COMPAT_ROUTE = Rust COMPAT_ROUTE_WHITELIST = 80，
+   registry 方法数 = RUST_COMPAT_ROUTE = Rust COMPAT_ROUTE_WHITELIST = 0，
    validate_against_rust_route() aligned=True。
-   （W3-3 T-1786861820151-deb64c48：get_semgrep_findings 迁移 rust_native，
-   91→90；W4-1 T-1786886251769-22b94ee8-sub-1：get_file_history /
-   get_commit_tasks 迁移 rust_native，90→88；W4-2
-   T-1786886251769-22b94ee8-sub-2：get_coverage_for_symbol / diff_to_symbol
-   迁移 rust_native，88→86；W4-3 T-1786886251769-22b94ee8-sub-3：
-   defect_correlation / churn_analysis / defect_search /
-   defect_suggest_fix / get_defect_correlation 迁移 rust_native，86→81；
-   W4-4 T-1786886251769-22b94ee8-sub-4：diff_branches 迁移 rust_native，
-   81→80。）
+   （compat 面清零：W2-1/W2-2/W2-3/W3-1/W3-2/W3-3/W4-1~W4-4 逐批迁移
+   rust_native（80->0）；P0-COMPAT-v3 把符号/任务/摘要/演化/护栏/缺陷/语义/
+   分支/编辑历史/跨仓库/LSP/toolchain/规则查询/p2/p3/p4 剩余组全部迁移
+   rust_native；INT-001 stats_top_files、MCP-001~012 collab/p2 组亦迁移，
+   COMPAT_ROUTE_WHITELIST 与 Python RUST_COMPAT_ROUTE 均清零。）
 4. **HTTP 自举路径冒烟**：隔离 daemon（runtime/current fresh binary + --http-bind）
    manifest discovery → /health 交叉核对 → /capabilities 三端对齐 →
    真实 HTTP RPC round-trip（compat 方法绝不 method_not_found）。
@@ -53,6 +49,7 @@ from callwarden.server.daemon_client import (  # noqa: E402
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
 from callwarden.config import (  # noqa: E402
+    get_http_authority_id,
     get_http_manifest_dir,
     get_http_manifest_path,
 )
@@ -62,41 +59,33 @@ _RUNTIME_ROOT = os.path.join(os.path.expanduser("~"), ".callwarden", "runtime")
 _CURRENT_DAEMON = os.path.join(_RUNTIME_ROOT, "current", "cw-daemon.exe")
 _EVIDENCE_DIR = os.path.join(_RUNTIME_ROOT, "evidence")
 
-_EXPECTED_COMPAT_METHODS_81 = {  # 与 test_http_capability_registry.py 同源（Rust 白名单 80 项；W2-1 移除 3 个、W2-2 再移除 3 个、W2-3 再移除 2 个、W3-1 再移除 5 个、W3-2 再移除 3 个、W3-3 再移除 1 个、W4-1 再移除 2 个、W4-2 再移除 2 个、W4-3 再移除 5 个、W4-4 再移除 1 个已迁移 native 方法）
-    "stats_top_files",
-    "get_symbol_history", "get_recent_changes", "get_impact",
-    "get_top_callers", "get_orphan_symbols", "get_deepest_functions",
-    "get_comment_from_version", "get_issue_summary",
-    "find_issues",
-    "get_comment_coverage", "get_call_heatmap", "get_test_coverage",
-    "export_module_graph", "get_symbol_change_tasks",
-    "audit_verify_chain", "list_audit_signing_keys", "bootstrap_status",
-    "list_clones",
-    "list_clone_groups",
-    "get_clone_group_detail", "task_plan_template",
-    "get_summary", "project_brief", "repo_map",
-    "find_uncovered_functions", "test_impact_selection", "who_to_ask",
-    "get_ownership_map", "guardrail_scan", "guardrail_check_edit",
-    "guardrail_list_rules", "blast_radius", "ask_codebase",
-    "get_token_savings_report", "get_vulnerability_blast_radius",
-    "get_clone_aware_impact", "review_readiness",
-    "cross_layer_impact", "evolution_frequency",
-    "hotspot_evolution", "defect_learn", "semantic_search",
-    "find_similar_functions", "get_symbol_commit_history", "parse_codeowners",
-    "get_project_dependencies", "list_branches",
-    "merge_preview", "get_edit_history",
-    "find_shared_symbols", "cross_repo_impact", "cross_repo_summary",
-    "lsp_hover", "lsp_definition", "lsp_references", "lsp_diagnostics",
-    "lsp_completion", "lsp_check_available", "list_toolchains",
-    "get_toolchain", "get_workspace_toolchains",
-    "rule_candidate_list", "rule_list",
-    "get_applicable_rules", "get_role_view", "find_evidence",
-    "get_freshness_status", "get_gate_decision", "get_artifact_freshness",
-    "get_interface_providers", "detect_cycle", "validate_revision_dependencies",
-    "get_dependency_edges", "get_action_identity", "check_action_identity",
-    "check_session_separation", "get_attestation_validity",
-    "list_attestation_revocations", "assignment_show",
-}
+# ------------------------------------------------------------
+# H4C 全量 compat 方法集合（迁移后已清零）
+# ------------------------------------------------------------
+# 生产真相源：server/compat_registry.py:174-220 的 _build_default_registry() 现返回
+# 空 CompatRegistry()，模块级 RUST_COMPAT_ROUTE = {}；rust_ext/src/daemon/
+# http_server.rs:611 的 COMPAT_ROUTE_WHITELIST 亦为空（正文全为迁移注释）。
+# INT-001（stats_top_files）、P0-COMPAT-v3（符号/任务/摘要/演化/护栏/缺陷/语义/
+# 分支/编辑历史/跨仓库/LSP/toolchain/规则查询/p2/p3/p4 各组）、MCP-001~012
+# （collab/p2 组）等 python_compat 方法已全部迁移 rust_native，故「80 项」计数
+# 断言随之归零（常量保持空集，避免与新真相漂移）。与
+# test_http_capability_registry.py 同源。
+_EXPECTED_COMPAT_METHODS_81: set = set()
+
+# INT-001 / P0-COMPAT-v3 / MCP-001~012 迁移 rust_native 的代表方法（HTTP 自举
+# round-trip 冒烟用）：这些方法已不是 compat 方法，改由 rust_native dispatch
+# 服务，/capabilities 中 backend=rust_native 且 status=available。
+#
+# 方法真名以 dispatch.rs 为准（MCP 工具名 ≠ RPC method，见项目记忆映射表）：
+# - get_top_callers：CONVERGENCE_RPC_METHODS 裸名分发（dispatch.rs:2449），
+#   必填 workspace_instance_id（S2 收敛架构 workspace authority）。
+# - stats_top_files：RPC 真名 query.stats_top_files（dispatch.rs:3006），
+#   /capabilities 广告键为 MCP 名 stats_top_files —— 两者存在 capability↔
+#   dispatch 名漂移（INT-001 引入），故仅 stats_top_files 不参与 round-trip
+#   断言，避免把漂移锁定为预期（见 test_real_http_rpc_compat_route_served 注）。
+_NATIVE_ROUTES_SMOKE = [
+    ("get_top_callers", {"workspace_instance_id": "ws-1", "limit": 1}),
+]
 
 
 def _sha256(path: str) -> str:
@@ -120,7 +109,8 @@ def _latest_refresh_evidence() -> dict:
                    key=os.path.getmtime)
     if not files:
         pytest.skip(f"未找到 runtime refresh evidence: {_EVIDENCE_DIR}")
-    with open(files[-1], "r", encoding="utf-8") as f:
+    # 部署脚本 Write-Host 输出落盘为 UTF-8 BOM（PS5.1 默认），须 utf-8-sig 解码
+    with open(files[-1], "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 
@@ -199,11 +189,11 @@ class TestFreshDaemonArtifacts:
 
 class TestCapabilityRegistryThreeWayAlignment:
     def test_registry_after_full_assembly_is_81(self):
-        """import server.compat_worker 触发全量装配后 registry 80 项。"""
+        """import server.compat_worker 触发全量装配后 registry 0 项（compat 面清零）。"""
         import server.compat_worker  # noqa: F401
         from server.compat_registry import get_compat_registry
         reg = get_compat_registry()
-        assert len(reg) == 80, f"装配后 registry 应 80，实际 {len(reg)}"
+        assert len(reg) == 0, f"装配后 registry 应 0，实际 {len(reg)}"
 
     def test_registry_matches_rust_route_and_whitelist(self):
         import server.compat_worker  # noqa: F401
@@ -217,7 +207,7 @@ class TestCapabilityRegistryThreeWayAlignment:
         m = re.search(r"COMPAT_ROUTE_WHITELIST: &\[\(&str, &str\)\] = &\[(.*?)\];", src, re.S)
         assert m, "COMPAT_ROUTE_WHITELIST not found"
         rust_map = dict(re.findall(r'\("([^"]+)",\s*"([^"]+)"\)', m.group(1)))
-        assert len(rust_map) == 80, f"Rust 白名单应 80，实际 {len(rust_map)}"
+        assert len(rust_map) == 0, f"Rust 白名单应 0（已清零），实际 {len(rust_map)}"
         assert set(rust_map) == set(reg.methods()), (
             f"Rust 白名单与 registry 不一致: "
             f"{set(rust_map) - set(reg.methods())} / {set(reg.methods()) - set(rust_map)}"
@@ -272,9 +262,16 @@ class TestDaemonHealthReachable:
             health = json.loads(r.stdout)
         except ValueError as e:
             pytest.fail(f"cw daemon health 输出非 JSON: {r.stdout!r} ({e})")
-        assert health.get("status") == "ok", f"daemon health status: {health!r}"
-        assert health.get("schema_version") == 50, (
-            f"schema_version 应为 50，实际 {health.get('schema_version')!r}"
+        # health 契约（http_server.rs:547-561）：无顶层 status 字段；
+        # 权威字段 = security_profile / endpoint / pid / git_commit /
+        # schema_version / worker_status / capability_registry_revision。
+        for key in ("security_profile", "endpoint", "pid", "git_commit",
+                    "schema_version", "worker_status",
+                    "capability_registry_revision"):
+            assert key in health, f"/health 缺少权威字段 {key}: {health!r}"
+        assert health.get("schema_version") == 60, (
+            f"schema_version 应为 60（rust_ext/src/daemon/mod.rs SCHEMA_VERSION），"
+            f"实际 {health.get('schema_version')!r}"
         )
         assert health.get("pid") is not None, f"/health 缺 pid: {health!r}"
 
@@ -285,7 +282,16 @@ class TestDaemonHealthReachable:
 
 
 def _spawn_isolated_daemon(bin_path, data_root):
-    """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。"""
+    """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。
+
+    stale 修正（族D，daemon 换实例后 100% 复现）：daemon 的
+    http_manifest_dir() 读 USERPROFILE/HOME（rust_ext/src/daemon/http_server.rs:1624），
+    不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
+    原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
+    E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
+    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
+    生产 daemon 不受影响，backup/restore 也不再触碰真实 HOME 权威 manifest。
+    """
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
@@ -293,6 +299,14 @@ def _spawn_isolated_daemon(bin_path, data_root):
     env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env["CW_COMPAT_PYTHON"] = sys.executable
+    # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
+    env["USERPROFILE"] = data_root
+    # toolchain 库显式指向任务库同文件（生产语义：两者默认同为
+    # ~/.callwarden/callwarden.db）。toolchain 读面走 open_task_db_readonly()
+    # （snapshot_state.rs:3273-3280），表由 ToolchainStore::open 以幂等 DDL
+    # 初始化——USERPROFILE 重定向后若不显式指定，toolchain 库会兜底到
+    # data_root/.callwarden/callwarden.db，与任务库分叉 → 读面 no such table。
+    env["CW_DAEMON_TOOLCHAIN_DB"] = env["CW_DAEMON_TASK_DB"]
     return subprocess.Popen(
         [bin_path, "--http-bind=127.0.0.1:0"],
         env=env,
@@ -301,14 +315,14 @@ def _spawn_isolated_daemon(bin_path, data_root):
     )
 
 
-def _wait_manifest(proc, timeout=10.0):
+def _wait_manifest(proc, data_root, timeout=10.0):
     """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配当前进程）。
 
-    H6 修复（9d6ca63，2026-08-15）后 manifest 固定写 `~/.callwarden/`
-    （http_manifest_dir = USERPROFILE/.callwarden），不再写 daemon data_root；
-    本文件隔离 daemon 不重定向 USERPROFILE，故轮询真实 get_http_manifest_dir()。
+    stale 修正（族D）：USERPROFILE 重定向后 manifest 写
+    data_root/.callwarden（= daemon http_manifest_dir()），轮询该目录
+    而非真实 get_http_manifest_dir()。
     """
-    directory = get_http_manifest_dir()
+    directory = os.path.join(data_root, ".callwarden")
     deadline = time.time() + timeout
     while time.time() < deadline:
         if proc.poll() is not None:
@@ -327,33 +341,45 @@ def _wait_manifest(proc, timeout=10.0):
     return None
 
 
-def _backup_http_manifest():
-    """备份当前 authority 的 HTTP manifest（若存在），teardown 时恢复。"""
-    path = get_http_manifest_path()
-    if not os.path.isfile(path):
+def _isolated_manifest_path(data_root) -> str:
+    """隔离 daemon 的 authority-scoped manifest 路径（data_root/.callwarden）。
+
+    stale 修正（族D）：USERPROFILE=data_root 重定向后，daemon 的
+    http_manifest_dir() 解析为 data_root/.callwarden；backup/restore/clean
+    全部针对该隔离路径，不再触碰真实 ~/.callwarden 权威 manifest。
+    """
+    authority = get_http_authority_id()
+    safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
+    return os.path.join(data_root, ".callwarden",
+                        f"http-daemon.{safe}.manifest.json")
+
+
+def _backup_http_manifest(manifest_path: str):
+    """备份隔离 manifest（若存在），teardown 时恢复。"""
+    if not os.path.isfile(manifest_path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None
     return data
 
 
-def _restore_or_clean_http_manifest(pid, backup):
+def _restore_or_clean_http_manifest(manifest_path: str, pid, backup):
     """teardown 清理：删除 pid 匹配的隔离 manifest；备份 pid 存活则恢复。"""
-    path = get_http_manifest_path()
     try:
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+        if os.path.isfile(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as f:
                 current = json.load(f)
             if int(current.get("pid", -1)) == pid:
-                os.remove(path)
+                os.remove(manifest_path)
     except (OSError, ValueError):
         pass
     if backup is not None and _pid_alive(int(backup.get("pid", -1))):
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+            with open(manifest_path, "w", encoding="utf-8") as f:
                 json.dump(backup, f, ensure_ascii=False)
         except OSError:
             pass
@@ -383,10 +409,11 @@ class TestHttpBootstrapSmoke:
             pytest.skip(f"runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}")
         data_root = str(tmp_path / "data")
         os.makedirs(data_root, exist_ok=True)
-        backup = _backup_http_manifest()
+        manifest_path = _isolated_manifest_path(data_root)
+        backup = _backup_http_manifest(manifest_path)
         proc = _spawn_isolated_daemon(_CURRENT_DAEMON, data_root)
         try:
-            manifest = _wait_manifest(proc)
+            manifest = _wait_manifest(proc, data_root)
             if manifest is None:
                 stdout = (proc.stdout.read(4000).decode("utf-8", "replace")
                           if proc.stdout else "")
@@ -404,16 +431,16 @@ class TestHttpBootstrapSmoke:
             yield client, manifest
         finally:
             _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, backup)
+            _restore_or_clean_http_manifest(manifest_path, proc.pid, backup)
 
     def _wait_worker_ready(self, proc, client, retries: int = 2):
         last_err = None
         for _ in range(retries + 1):
             try:
-                # W2-1：get_uncommented_symbols 已迁移 rust_native，预热改用仍走
-                # compat worker 的默认方法 stats_top_files（强制要求 workspace_id；
-                # 隔离库无该 workspace 时返回空结果或业务错误，均不影响预热目标）
-                client.call("stats_top_files", {"workspace_id": 1, "limit": 1})
+                # stale 修正（族D 附带）：旧探活方法 stats_top_files 已随
+                # query 域迁移下线（method_not_found），改用 ping（无参数要求、
+                # 确定性可用）验证 HTTP transport 冷启动就绪。
+                client.call("ping")
                 return
             except DaemonUnavailableError as e:
                 if E_HTTP_REQUEST_TIMEOUT not in str(e):
@@ -433,7 +460,7 @@ class TestHttpBootstrapSmoke:
         assert health["pid"] == manifest["pid"], (
             f"/health pid {health['pid']} != manifest pid {manifest['pid']}"
         )
-        assert health["schema_version"] == manifest["schema_version"] == 50
+        assert health["schema_version"] == manifest["schema_version"] == 60
         assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
 
     def test_capabilities_python_compat_available_matches_rust_route(
@@ -449,21 +476,43 @@ class TestHttpBootstrapSmoke:
             if info.get("backend") == "python_compat"
             and info.get("status") == "available"
         }
+        # compat 面清零后 /capabilities 不应再暴露任何 python_compat available
+        # 方法（与 Rust COMPAT_ROUTE_WHITELIST 空表一致）。
         assert pc_available == _EXPECTED_COMPAT_METHODS_81, (
             f"/capabilities python_compat available 与 Rust 白名单不一致: "
             f"{pc_available - _EXPECTED_COMPAT_METHODS_81} / "
             f"{_EXPECTED_COMPAT_METHODS_81 - pc_available}"
         )
+        # 迁移 rust_native 的代表方法必须仍 available（INT-001/P0-COMPAT-v3）。
+        for name, _params in _NATIVE_ROUTES_SMOKE:
+            info = methods.get(name)
+            assert info is not None, f"/capabilities 缺少 {name}"
+            assert info.get("backend") == "rust_native", (
+                f"{name} backend 应 rust_native，实际 {info.get('backend')!r}"
+            )
+            assert info.get("status") == "available", (
+                f"{name} status 应 available，实际 {info.get('status')!r}"
+            )
 
     def test_real_http_rpc_compat_route_served(self, isolated_http_daemon):
-        """真实 HTTP RPC round-trip：compat 方法绝不 method_not_found（worker 受理）。"""
+        """真实 HTTP RPC round-trip 冒烟。
+
+        compat 面清零后 _EXPECTED_COMPAT_METHODS_81 为空集，compat 契约循环体
+        不执行（保留以固化「compat 面恢复时绝不 method_not_found」的不变量）；
+        实际 round-trip 冒烟改由 rust_native 路径承担（INT-001 / P0-COMPAT-v3
+        迁移方法）：经 daemon dispatch 服务，绝不 method_not_found。
+
+        注意：INT-001 的 stats_top_files 不在冒烟集合内——其 RPC 真名为
+        query.stats_top_files（dispatch.rs:3006），而 /capabilities 广告键为
+        MCP 名 stats_top_files（http_server.rs:3213），capability↔dispatch 名
+        漂移导致裸名 stats_top_files 直接 RPC 必 method_not_found。把该漂移
+        锁进冒烟断言会掩盖缺陷，故仅用无漂移的 get_top_callers 验证 round-trip。
+        """
         client, _ = isolated_http_daemon
-        for rpc, params in [
-            ("stats_top_files", {"limit": 1}),
-            ("get_top_callers", {"limit": 1}),
-        ]:
+        # compat 契约（空集，兼容 compat 面恢复）
+        for rpc in sorted(_EXPECTED_COMPAT_METHODS_81):
             try:
-                client.call(rpc, params)
+                client.call(rpc, {"limit": 1})
             except DaemonRemoteError as e:
                 assert e.code != "method_not_found", (
                     f"{rpc} 是 Rust COMPAT_ROUTE_WHITELIST 声明的 compat 方法，"
@@ -472,7 +521,19 @@ class TestHttpBootstrapSmoke:
             except DaemonUnavailableError as e:
                 if E_HTTP_REQUEST_TIMEOUT not in str(e):
                     raise
-                # 慢执行/worker 冷启动：route 已被受理（method_not_found 不会超时）
+                continue
+        # rust_native round-trip 冒烟（迁移后实际服务路径）
+        for rpc, params in _NATIVE_ROUTES_SMOKE:
+            try:
+                client.call(rpc, params)
+            except DaemonRemoteError as e:
+                assert e.code != "method_not_found", (
+                    f"{rpc} 已迁移 rust_native，不应 method_not_found: {e}"
+                )
+            except DaemonUnavailableError as e:
+                if E_HTTP_REQUEST_TIMEOUT not in str(e):
+                    raise
+                # 慢执行：route 已被受理（method_not_found 不会超时）
                 continue
 
     def test_negative_unregistered_method_fail_closed(self, isolated_http_daemon):

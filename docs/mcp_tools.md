@@ -31,34 +31,38 @@ cw server                    # stdio 模式
 cw server --transport sse    # SSE 模式
 ```
 
-## 按 12 大功能分类
+## 按 17 大功能分类
 
-Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个主分类（其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为增量能力域，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个主分类（[1]-[12] 与 CLI 主分类对齐；[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 能力域，CLI 侧亦有同构分类）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。分类真相源为 `server/tools/_categories.py`（`TOOL_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-mcp` 生成，勿手工编辑标记块内内容。
 
 ### 概览表
 
-| #        | 主分类                      | 工具数 | 涵盖范围                                                                                                                              | 对应 CLI 主分类          |
-| -------- | --------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| 1        | **Workspace & Database**    | 16     | workspace / db 构建 / branch                                                                                                          | 1. Workspace & Database  |
-| 2        | **Query & Search**          | 24     | 符号 / 文件 / 语义搜索 / 摘要 / RAG / Token 账本                                                                                      | 2. Query & Search        |
-| 3        | **Call Chain Analysis**     | 14     | 调用链 / 拓扑 / 循环 / 孤儿 / 模块图 / 热力图 / 调用差异                                                                              | 3. Call Chain Analysis   |
-| 4        | **Code Health & Metrics**   | 12     | 度量 / 健康检查 / 演化 / 热点 / 流失 / 缺陷关联                                                                                       | 4. Code Health & Metrics |
-| 5        | **Task Orchestration**      | 36     | 任务 CRUD / 审批 / 质量门禁 / 符号归因 / capture-diff / 后台 job / 任务-提交关联 / assignment / role prompt / remediation / step 解决 | 5. Task Orchestration    |
-| 6        | **Agent Rule Memory**       | 11     | 候选 / 审核 / 生效 / 同步 / 提取 / 清理 / 种子                                                                                        | 6. Agent Rule Memory     |
-| 7        | **Audit & Bootstrap**       | 10     | 审计链 / 密钥轮换 / 自举 / 检查门禁 / 安全护栏                                                                                        | 7. Audit & Bootstrap     |
-| 8        | **Git Integration**         | 6      | git 历史 / commit / 变更 / 统计 / 符号历史 / 快照对比                                                                                 | 8. Git Integration       |
-| 9        | **Semgrep & Defects**       | 18     | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 / 符号静态检查 / 变更-缺陷关联                                                      | 9. Semgrep & Defects     |
-| 10       | **Coverage & Ownership**    | 19     | 注释 / 测试覆盖率 / 测试 case 关联 / 测试稳定性 / CODEOWNERS / 所有权 / 注释恢复                                                      | 10. Coverage & Ownership |
-| 11       | **GC**                      | 11     | 外部符号 / retention / policy / 备份 / 审计                                                                                           | 11. GC                   |
-| 12       | **Diagnostics**             | 26     | clone 检测 / clone group / LSP / 安全编辑 / 跨仓库分析 / clone 感知影响                                                               | 12. Diagnostics          |
-| 13       | **构建上下文感知**          | 9      | 工具链注册 / build context / resolved edges / 指标                                                                                    | —（纯 MCP，无对应 CLI）  |
-| 14       | **只读协同查询**            | 6      | 协同证据 / 门禁决策 / 角色视图 / 新鲜度                                                                                               | —（纯 MCP，无对应 CLI）  |
-| 15       | **依赖图与环检测**          | 10     | 依赖边 / 接口提供者 / 环检测 / 版本校验 / 工件身份                                                                                    | —（纯 MCP，无对应 CLI）  |
-| 16       | **Assignment 与 Lease**     | 8      | lease 获取 / 续租 / 释放 / assignment 创建撤销                                                                                        | —（纯 MCP，无对应 CLI）  |
-| 17       | **Identity 与 Attestation** | 7      | 动作身份 / 会话隔离 / attestation 撤销 / 注册                                                                                         | —（纯 MCP，无对应 CLI）  |
-| **合计** | **243**                     |        |                                                                                                                                       |
+<!-- BEGIN:generated-overview (scripts/gen_category_overview.py; DO NOT EDIT) -->
 
-> **注**：合计 243 与注册的 MCP 工具数一致（243 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。其中 [1]-[12] 与 CLI 12 主分类对齐，[13]-[17] 为构建上下文感知 / 协同 / 依赖图 / Assignment-Lease / Identity 等独立能力域（纯 MCP 能力面，无对应 CLI 主分类）。
+| # | 主分类 | 工具数 | 涵盖范围 | 对应 CLI 主分类 |
+| --- | --- | --- | --- | --- |
+| 1 | **Workspace & Database** | 16 | workspace / db 构建 / branch | Workspace & Database |
+| 2 | **Query & Search** | 24 | 符号 / 文件 / 语义搜索 / 摘要 / RAG / Token 账本 | Query & Search |
+| 3 | **Call Chain Analysis** | 14 | 调用链 / 拓扑 / 循环 / 孤儿 / 模块图 / 热力图 / 调用差异 | Call Chain Analysis |
+| 4 | **Code Health & Metrics** | 12 | 度量 / 健康检查 / 演化 / 热点 / 流失 / 缺陷关联 | Code Health & Metrics |
+| 5 | **Task Orchestration** | 36 | 任务 CRUD / 审批 / 质量门禁 / 符号归因 / capture-diff / 后台 job / 任务-提交关联 / assignment / role prompt / remediation / step 解决 | Task Orchestration |
+| 6 | **Agent Rule Memory** | 11 | 候选 / 审核 / 生效 / 同步 / 提取 / 清理 / 种子 | Agent Rule Memory |
+| 7 | **Audit & Bootstrap** | 10 | 审计链 / 密钥轮换 / 自举 / 检查门禁 / 安全护栏 | Audit & Bootstrap |
+| 8 | **Git Integration** | 6 | git 历史 / commit / 变更 / 统计 / 符号历史 / 快照对比 | Git Integration |
+| 9 | **Semgrep & Defects** | 18 | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 / 符号静态检查 / 变更-缺陷关联 | Semgrep & Defects |
+| 10 | **Coverage & Ownership** | 19 | 注释 / 测试覆盖率 / 测试 case 关联 / 测试稳定性 / CODEOWNERS / 所有权 / 注释恢复 | Coverage & Ownership |
+| 11 | **GC** | 11 | 外部符号 / retention / policy / 备份 / 审计 | GC |
+| 12 | **Diagnostics** | 27 | clone 检测 / clone group / LSP / 安全编辑 / 跨仓库分析 / clone 感知影响 / daemon 运行时指标 | Diagnostics |
+| 13 | **构建上下文感知** | 8 | 工具链注册 / build context / resolved edges | 构建上下文感知 |
+| 14 | **只读协同查询** | 6 | 协同证据 / 门禁决策 / 角色视图 / 新鲜度 | 只读协同查询 |
+| 15 | **依赖图与环检测** | 10 | 依赖边 / 接口提供者 / 环检测 / 版本校验 / 工件身份 | 依赖图与环检测 |
+| 16 | **Assignment 与 Lease** | 8 | lease 获取 / 续租 / 释放 / assignment 创建撤销 | Assignment 与 Lease |
+| 17 | **Identity 与 Attestation** | 7 | 动作身份 / 会话隔离 / attestation 撤销 / 注册 | Identity 与 Attestation |
+| **合计** | | **243** | | |
+
+<!-- END:generated-overview -->
+
+> **注**：合计 243 与注册的 MCP 工具数一致（243 个工具全部归入 17 个主分类，无遗漏；权威核对 `scripts/gen_route_matrix.py --report`）。[1]-[17] 与 CLI 21 主分类中的 [1]-[17] 同构对齐（分类 key 一致，见 `cli/categories.py` 与 `server/tools/_categories.py`）；CLI 的 [18]-[21]（Migration Rollback / Daemon 运维 / 安装与初始化 / 盲评实验）为 CLI 独有运维面，无 MCP 对应分类。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -72,8 +76,8 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 符号详情       | `get_symbol`                 | `cw symbol`   | 含 calls_out/called_by/issues 前 5 条 |
 | 符号位置       | `get_symbol_location`        | `cw query`    | 文件 + 行号                           |
 | 文件内符号     | `get_file_symbols`           | `cw file`     | 文件所有符号列表                      |
-| 符号内容       | `file_symbol_content`        | `cw symbol`   | 符号源码                              |
-| 按 hash 取内容 | `get_symbol_content_by_hash` | —             | CAS 内容寻址                          |
+| 符号内容       | `file_symbol_content`        | —             | 符号源码（MCP 专属）                  |
+| 按 hash 取内容 | `get_symbol_content_by_hash` | `cw diff`     | CAS 内容寻址（`cw diff <hash1> <hash2>`） |
 
 ### 2. 代码度量（db_metrics.py）
 
@@ -94,7 +98,8 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 调用方       | `get_callers`                                     | `cw callers`               | 精确调用方           |
 | 被调用方     | `get_callees`                                     | `cw callees`               | 函数体内调用         |
 | 调用链       | `get_call_chain_down`                             | `cw call-chain`            | 下游调用链           |
-| 变更影响     | `get_impact`                                      | `cw impact`                | blast radius         |
+| 变更影响     | `blast_radius`                                    | `cw impact`                | blast radius（BFS 反向调用图） |
+| 影响子图     | `get_impact`                                      | —                          | MCP 专属（与 blast_radius 语义重叠） |
 | Top 调用方   | `get_top_callers`                                 | `cw top-callers`           | 被调用最多排行       |
 | 孤立符号     | `get_orphan_symbols`                              | `cw orphan-symbols`        | 无调用关系           |
 | 调用最深     | `get_deepest_functions`                           | `cw deepest`               | 调用链最深           |
@@ -103,8 +108,8 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 调用热力图   | `get_call_heatmap`                                | `cw call-heatmap`          | 频率热力图           |
 | 模块图导出   | `export_module_graph`                             | `cw export-module-graph`   | 模块依赖图           |
 | 拓扑排序     | `get_topological_order`                           | `cw topo`                  | 调用图拓扑序         |
-| 漏洞爆炸半径 | `get_vulnerability_blast_radius` / `blast_radius` | `cw vuln-blast`            | 漏洞到调用方反向影响 |
-| 跨层影响     | `cross_layer_impact`                              | `cw defect cross-layer`    | 跨层传播             |
+| 漏洞爆炸半径 | `get_vulnerability_blast_radius`                  | `cw vuln-blast`            | 漏洞到调用方反向影响 |
+| 跨层影响     | `cross_layer_impact`                              | —                          | 跨层传播（MCP 专属） |
 
 ### 4. 覆盖率（db_coverage.py）
 
@@ -131,9 +136,9 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | commit 变更      | `get_commit_changes`        | `cw git show`       | 单 commit 详情  |
 | git 统计         | `get_git_stats`             | `cw git stats`      | 提交者/文件统计 |
 | 符号 commit 历史 | `get_symbol_commit_history` | `cw symbol-history` | 符号时间线      |
-| 符号历史版本     | `get_symbol_history`        | `cw symbol-history` | 符号历史版本    |
+| 符号历史版本     | `get_symbol_history`        | —                   | 符号历史版本（MCP 专属） |
 | 文件历史         | `get_file_history`          | —                   | 文件变更历史    |
-| 最近变更         | `get_recent_changes`        | —                   | 最近 N 次变更   |
+| 最近变更         | `get_recent_changes`        | `cw changes`        | 最近 N 次变更   |
 | 函数变更频率     | `evolution_frequency`       | `cw evolution`      | 变更次数/时间线 |
 | 热点演化         | `hotspot_evolution`         | `cw hotspot`        | 热点函数演化    |
 | 代码流失         | `churn_analysis`            | `cw churn`          | 增删统计        |
@@ -145,7 +150,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 符号静态检查     | `get_symbol_issues`         | `cw issues <QN>`          | Semgrep + Guardrail findings 聚合                    |
 | 测试 case 列表   | `get_test_cases`            | `cw tests <QN>`           | 三阶推断（direct_call > name_convention > indirect） |
 | 反向测试查询     | `get_tested_functions`      | `cw tests --reverse`      | test_fn 测了哪些函数                                 |
-| 测试覆盖摘要     | `get_test_coverage_summary` | `cw tests --coverage`     | has_tests / test_count / high_confidence_count       |
+| 测试覆盖摘要     | `get_test_coverage_summary` | —                         | has_tests / test_count / high_confidence_count（MCP 专属） |
 | 测试稳定性       | `get_test_stability`        | `cw tests --history`      | pass_rate / recent_failures / by_test                |
 | 变更-缺陷关联    | `get_defect_correlation`    | `cw evolution --defects`  | change_count / defect_count / defect_rate            |
 | Semgrep 扫描     | `run_semgrep_scan`          | `cw semgrep scan`         | 扫描入库                                             |
@@ -158,10 +163,10 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 缺陷修复建议     | `defect_suggest_fix`        | `cw defect suggest`       | 修复建议                                             |
 | 缺陷学习         | `defect_learn`              | `cw defect learn`         | 知识库录入                                           |
 | 缺陷统计         | `defect_stats`              | `cw defect stats`         | 缺陷分布                                             |
-| 审查就绪         | `review_readiness`          | —                         | review 准备度评估                                    |
+| 审查就绪         | `review_readiness`          | `cw review`               | review 准备度评估                                    |
 | 安全护栏扫描     | `guardrail_scan`            | `cw guardrail scan`       | 编辑前规则匹配                                       |
-| 编辑前检查       | `guardrail_check_edit`      | `cw guardrail check-edit` | Before-Edit Contract                                 |
-| 规则列表         | `guardrail_list_rules`      | `cw guardrail list`       | 规则查询                                             |
+| 编辑前检查       | `guardrail_check_edit`      | —                         | Before-Edit Contract（MCP 专属；CLI guardrail 仅 scan/rules） |
+| 规则列表         | `guardrail_list_rules`      | `cw guardrail rules`      | 规则查询                                             |
 | 添加规则         | `guardrail_add_rule`        | —                         | 自定义规则                                           |
 | 适用规则         | `get_applicable_rules`      | `cw rule applicable`      | 当前 applicable 规则                                 |
 
@@ -173,7 +178,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 | 无注释符号   | `get_uncommented_symbols`  | `cw uncommented`                 | 缺注释符号         |
 | 恢复注释     | `restore_comment`          | `cw restore-comment`             | 从历史恢复单个     |
 | 批量恢复     | `restore_all_comments`     | `cw restore-all-comments`        | 全项目批量         |
-| 从版本取注释 | `get_comment_from_version` | `cw symbol comment-from-version` | 指定 commit 的注释 |
+| 从版本取注释 | `get_comment_from_version` | `cw restore-comment`             | 指定 commit 的注释（`--preview` 只读预览） |
 
 ### 8. 代码重复检测（db_clone_detection.py）
 
@@ -234,13 +239,13 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 `get_project_dependencies`、`import_project_dependencies`、`prune_external_symbols`、`gc_retention`、`gc_policy_get`、`gc_policy_set`、`gc_archive_list`、`gc_archive_inspect`、`gc_archive_import`、`gc_audit_list`、`gc_audit_get`
 
-#### [12] Diagnostics（26 个）
+#### [12] Diagnostics（27 个）
 
-`detect_clones`、`detect_clones_async`、`list_clone_groups`、`get_clone_group_detail`、`get_clone_group_stats`、`list_clones`、`get_clone_stats`、`clear_clones`、`get_clone_aware_impact`、`propose_edit`、`propose_range_patch`、`propose_symbol_patch`、`propose_symbol_id_patch`、`revert_edit`、`get_edit_history`、`get_edit_stats`、`detect_cross_repo_deps`、`find_shared_symbols`、`cross_repo_impact`、`cross_repo_summary`、`lsp_hover`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`、`lsp_completion`、`lsp_check_available`
+`detect_clones`、`detect_clones_async`、`list_clone_groups`、`get_clone_group_detail`、`get_clone_group_stats`、`list_clones`、`get_clone_stats`、`clear_clones`、`get_clone_aware_impact`、`propose_edit`、`propose_range_patch`、`propose_symbol_patch`、`propose_symbol_id_patch`、`revert_edit`、`get_edit_history`、`get_edit_stats`、`detect_cross_repo_deps`、`find_shared_symbols`、`cross_repo_impact`、`cross_repo_summary`、`lsp_hover`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`、`lsp_completion`、`lsp_check_available`、`get_metrics`
 
-#### [13] 构建上下文感知（9 个）
+#### [13] 构建上下文感知（8 个）
 
-`get_toolchain`、`list_toolchains`、`get_build_context`、`list_build_contexts`、`get_active_build_context`、`get_workspace_toolchains`、`get_resolved_edges`、`count_resolved_edges`、`get_metrics`
+`get_toolchain`、`list_toolchains`、`get_build_context`、`list_build_contexts`、`get_active_build_context`、`get_workspace_toolchains`、`get_resolved_edges`、`count_resolved_edges`
 
 #### [14] 只读协同查询（6 个）
 
@@ -258,7 +263,7 @@ Call Warden 通过 MCP Server 暴露 243 个工具，按功能聚合为 17 个�
 
 `record_action_identity`、`get_action_identity`、`check_action_identity`、`check_session_separation`、`get_attestation_validity`、`register_attestation_revocation`、`list_attestation_revocations`
 
-> **注**：以下章节按原有功能分组保留各工具的详细参数与返回值说明。MCP 工具命名不重命名，仅审计与归档（详见 `.mcp_audit.md` §5 设计决策）。
+> **注**：以下章节按原有功能分组保留各工具的详细参数与返回值说明。MCP 工具命名不重命名，仅审计与归档（分组数据源 `server/tools/_categories.py`）。
 
 ---
 
@@ -1848,6 +1853,29 @@ Agent 提供稳定的行为约束。
   - `build_context_hash: str`
 - **返回**：`int`
 
+### 配套 CLI 命令
+
+写操作走 CLI `cw build-context <subcommand>`：
+
+| 子命令                                                                                             | 说明                                                                   |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `register <WORKSPACE_ID> <NAME> [--flags ...] [--defines ...] [--includes ...] [--activate]`       | 手动注册构建上下文                                                     |
+| `list <WORKSPACE_ID>`                                                                              | 列出 workspace 下构建上下文                                            |
+| `show <WORKSPACE_ID> <HASH>`                                                                       | 显示详情                                                               |
+| `activate <WORKSPACE_ID> <HASH>`                                                                   | 设为活跃                                                               |
+| `delete <WORKSPACE_ID> <HASH>`                                                                     | 删除                                                                   |
+| `import-compile-commands <FILE> <WORKSPACE_ID> [--name NAME] [--activate] [--workspace-root ROOT]` | 从 `compile_commands.json` 导入                                        |
+| `resolve <WORKSPACE_ID> <HASH>`                                                                    | 计算 resolved_edges（先清旧再写入，CAS 模式优先，降级从 calls 表复制） |
+| `edges <WORKSPACE_ID> <HASH> [--caller SYM_ID] [--limit N]`                                        | 查询 resolved_edges                                                    |
+
+---
+
+## daemon 运行时指标工具（[12] Diagnostics）
+
+> **分类归属**：`get_metrics` 归 [12] Diagnostics（daemon 运行时可观测性）；CLI 侧对应
+> `cw daemon metrics`（属 [19] Daemon 运维 CLI-only 域），两者共享同一 daemon 指标
+> 数据源（`metrics.snapshot` / `metrics.prometheus` RPC）。
+
 ### `get_metrics(format="json", name="", reset=False, source="auto")`
 
 查询 daemon 运行时指标（Phase 8 metrics endpoint 闭合 + G13 二轮评审补全）。
@@ -1865,22 +1893,7 @@ G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时�
   - `format="json" + name`：`{"found": bool, "counters": {...}, "gauges": {...}, "histograms": {...}, "name_filter": str, "source": str}`
   - `format="prometheus"`：`{"format": "prometheus", "text": "<prometheus 文本>", "source": str}`
   - `reset=True`：`{"status": "reset", "timestamp": float, "source": "local"}`
-- **配套 CLI**：`cw daemon metrics [--format prometheus|json] [--name NAME] [--reset] [--local]`（默认走 RPC，`--local` 降级本进程直读）
-
-### 配套 CLI 命令
-
-写操作走 CLI `cw build-context <subcommand>`：
-
-| 子命令                                                                                             | 说明                                                                   |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `register <WORKSPACE_ID> <NAME> [--flags ...] [--defines ...] [--includes ...] [--activate]`       | 手动注册构建上下文                                                     |
-| `list <WORKSPACE_ID>`                                                                              | 列出 workspace 下构建上下文                                            |
-| `show <WORKSPACE_ID> <HASH>`                                                                       | 显示详情                                                               |
-| `activate <WORKSPACE_ID> <HASH>`                                                                   | 设为活跃                                                               |
-| `delete <WORKSPACE_ID> <HASH>`                                                                     | 删除                                                                   |
-| `import-compile-commands <FILE> <WORKSPACE_ID> [--name NAME] [--activate] [--workspace-root ROOT]` | 从 `compile_commands.json` 导入                                        |
-| `resolve <WORKSPACE_ID> <HASH>`                                                                    | 计算 resolved_edges（先清旧再写入，CAS 模式优先，降级从 calls 表复制） |
-| `edges <WORKSPACE_ID> <HASH> [--caller SYM_ID] [--limit N]`                                        | 查询 resolved_edges                                                    |
+- **配套 CLI**：`cw daemon metrics [--format prometheus|json] [--name NAME] [--from-file FILE]`（默认经 daemon RPC 获取，Rust daemon 为唯一 authority、失败即 fail-closed；`--from-file` 仅显式读取 daemon 周期性 dump 的 JSON 快照做离线检视，无本地降级）
 
 ---
 
@@ -2079,316 +2092,393 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ## CLI↔MCP 命名映射对照表（C8 Step #6）
 
-> 本表覆盖所有有对应 CLI subcommand 的 MCP 工具，按 12 大类分组。
-> 旧名保留作 alias（兼容已有 Agent 集成），新调用优先用新名。
-> 完整审计见 `.mcp_audit.md`。
+> 本表为 **243 个 MCP 工具的全量 CLI 入口映射**（每工具一行，`—` 表示 MCP 专属、无 CLI 入口），
+> 按 17 大类分组（与上方概览表同构）。数据源 `server/tools/_categories.py` 的
+> `TOOL_CLI_MAPPING`（单一真相源），由 `scripts/gen_category_overview.py --emit-mapping`
+> 生成，marker 区间请勿手改；映射的机器校验（顶层命令 + 子命令级存在性）见
+> `tests/test_category_source.py::TestToolCliMapping`。表后附「[1]-[17] 域内 CLI 独有命令」。
+
+<!-- BEGIN:generated-mapping (scripts/gen_category_overview.py; DO NOT EDIT) -->
 
 ### [1] Workspace & Database
 
-| CLI 子命令                            | MCP 工具               | 说明             |
-| ------------------------------------- | ---------------------- | ---------------- |
-| `cw stats`                            | `get_stats`            | 代码图谱统计信息 |
-| `cw status`                           | `get_status`           | 完整状态概览     |
-| `cw workspace list`                   | `list_workspaces`      | 列出所有工作区   |
-| `cw workspace register`               | `register_workspace`   | 注册新工作区     |
-| `cw workspace set`                    | `set_active_workspace` | 设置活动工作区   |
-| `cw workspace delete`                 | `delete_workspace`     | 删除工作区       |
-| `cw workspace get-active`             | `get_active_workspace` | 获取活动工作区   |
-| `cw refresh all`                      | `build_graph`          | 全量构建代码图谱 |
-| `cw refresh <paths>`                  | `refresh_file`         | 刷新单个文件     |
-| `cw branch register`                  | `register_branch`      | 注册分支工作区   |
-| `cw branch list`                      | `list_branches`        | 列出分支工作区   |
-| `cw branch diff`                      | `diff_branches`        | 比较分支符号差异 |
-| `cw branch switch`                    | `switch_branch`        | 切换活动分支     |
-| `cw branch merge-preview`             | `merge_preview`        | 合并预览         |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw workspace list` | `list_workspaces` | 列出所有工作区 |
+| `cw workspace register` | `register_workspace` | 注册新工作区 |
+| `cw workspace set` | `set_active_workspace` | 设置活动工作区 |
+| `cw workspace delete` | `delete_workspace` | 删除工作区 |
+| — | `get_active_workspace` | MCP 专属，无 CLI 入口 |
+| `cw refresh` | `build_graph` | 全量构建代码图谱（cw refresh --all） |
+| `cw refresh` | `refresh_file` | 刷新指定文件（cw refresh <paths>） |
+| — | `build_directory` | MCP 专属，无 CLI 入口 |
+| — | `remove_file` | MCP 专属，无 CLI 入口 |
+| `cw stats` | `get_stats` | 代码图谱统计信息 |
+| `cw status` | `get_status` | 完整状态概览 |
+| — | `register_branch` | MCP 专属，无 CLI 入口 |
+| — | `list_branches` | MCP 专属，无 CLI 入口 |
+| — | `diff_branches` | MCP 专属，无 CLI 入口 |
+| — | `switch_branch` | MCP 专属，无 CLI 入口 |
+| — | `merge_preview` | MCP 专属，无 CLI 入口 |
+
+<!-- [1]: 16 工具（8 有 CLI 对应 / 8 MCP 专属） -->
 
 ### [2] Query & Search
 
-| CLI 子命令                                  | MCP 工具                     | 说明                      |
-| ------------------------------------------- | ---------------------------- | ------------------------- |
-| `cw search <query>`                         | `search_symbols`             | 模糊搜索符号              |
-| `cw symbol <name>`                          | `get_symbol`                 | 符号详情                  |
-| `cw symbol <name> --file <path>`            | `get_symbol_location`        | 符号位置                  |
-| `cw file <path>`                            | `get_file_symbols`           | 文件符号列表              |
-| `cw query <name> <file>`                    | `get_symbol`                 | 符号查询（同 get_symbol） |
-| `cw symbol history <name>`                  | `get_symbol_history`         | 符号版本历史              |
-| `cw file history <path>`                    | `get_file_history`           | 文件版本历史              |
-| `cw changes`                                | `get_recent_changes`         | 近期变更                  |
-| —                                           | `get_symbol_content_by_hash` | 按 hash 取内容            |
-| `cw file read`                              | `file_read`                  | 读取文件内容              |
-| `cw file grep`                              | `file_grep`                  | 搜索文件内容              |
-| `cw file list`                              | `file_list`                  | 列出目录文件              |
-| `cw file symbol-content`                    | `file_symbol_content`        | 读取符号源码              |
-| `cw semantic-search`                        | `semantic_search`            | 语义搜索                  |
-| `cw similar`                                | `find_similar_functions`     | 相似函数                  |
-| `cw embed`                                  | `embed_symbols`              | 批量向量嵌入              |
-| `cw embed-single <hash>`                    | `embed_single_symbol`        | 单符号嵌入                |
-| `cw summary generate`                       | `generate_summary`           | 生成摘要                  |
-| `cw summary get`                            | `get_summary`                | 获取摘要                  |
-| `cw brief`                                  | `project_brief`              | 项目简报                  |
-| `cw map`                                    | `repo_map`                   | 仓库模块图                |
-| `cw ask`                                    | `ask_codebase`               | RAG 问答                  |
-| `cw token-savings record`                   | `record_token_savings`       | 记录 token 节省           |
-| `cw token-savings report`                   | `get_token_savings_report`   | token 节省报告            |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw search` | `search_symbols` | 模糊搜索符号 |
+| `cw symbol` | `get_symbol` | 符号详情 |
+| `cw query` | `get_symbol_location` | 符号定位 |
+| `cw file` | `get_file_symbols` | 文件符号列表 |
+| — | `get_symbol_history` | MCP 专属，无 CLI 入口 |
+| — | `get_file_history` | MCP 专属，无 CLI 入口 |
+| `cw changes` | `get_recent_changes` | 近期变更 |
+| `cw diff` | `get_symbol_content_by_hash` | 按 hash 取符号内容（cw diff <hash1> <hash2> 取两版本内容对比；单取内容无独立入口，语义等价） |
+| — | `file_read` | MCP 专属，无 CLI 入口 |
+| `cw grep` | `file_grep` | 搜索内容（带符号归属） |
+| — | `file_list` | MCP 专属，无 CLI 入口 |
+| — | `file_symbol_content` | MCP 专属，无 CLI 入口 |
+| `cw semantic-search` | `semantic_search` | 语义搜索 |
+| `cw similar` | `find_similar_functions` | 相似函数 |
+| `cw embed` | `embed_symbols` | 批量向量嵌入 |
+| — | `embed_symbols_async` | MCP 专属，无 CLI 入口 |
+| — | `embed_single_symbol` | MCP 专属，无 CLI 入口 |
+| — | `generate_summary` | MCP 专属，无 CLI 入口 |
+| — | `get_summary` | MCP 专属，无 CLI 入口 |
+| `cw brief` | `project_brief` | 项目简报 |
+| `cw map` | `repo_map` | 仓库模块图 |
+| — | `ask_codebase` | MCP 专属，无 CLI 入口 |
+| — | `record_token_savings` | MCP 专属，无 CLI 入口 |
+| `cw health-report` | `get_token_savings_report` | Token 节省报告（cw health-report 的 token_savings 段，固定 30d 窗口；MCP 支持自定义窗口） |
+
+<!-- [2]: 24 工具（13 有 CLI 对应 / 11 MCP 专属） -->
 
 ### [3] Call Chain Analysis
 
-| CLI 子命令                                 | MCP 工具                | 说明               |
-| ------------------------------------------ | ----------------------- | ------------------ |
-| `cw callers <name>`                        | `get_callers`           | 调用者查询         |
-| `cw callees <name>`                        | `get_callees`           | 被调用者查询       |
-| `cw call-chain <name>`                     | `get_call_chain_down`   | 调用链向下         |
-| `cw impact`                                | `get_impact`            | 影响面分析（向上） |
-| `cw topo`                                  | `get_topological_order` | 拓扑排序           |
-| `cw top-callers`                           | `get_top_callers`       | 调用排行           |
-| `cw orphan-symbols`                        | `get_orphan_symbols`    | 孤儿符号           |
-| `cw deepest`                               | `get_deepest_functions` | 最深函数           |
-| `cw module-calls`                          | `get_module_call_stats` | 模块调用统计       |
-| `cw detect-cycles`                         | `detect_call_cycles`    | 调用图循环检测     |
-| `cw call-heatmap`                          | `get_call_heatmap`      | 调用热力图         |
-| `cw export-module-graph`                   | `export_module_graph`   | 模块图导出         |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw callers` | `get_callers` | 调用者查询 |
+| `cw callees` | `get_callees` | 被调用者查询 |
+| — | `get_impact` | MCP 专属，无 CLI 入口 |
+| `cw call-chain` | `get_call_chain_down` | 调用链向下 |
+| `cw top-callers` | `get_top_callers` | 调用排行 |
+| `cw orphan-symbols` | `get_orphan_symbols` | 孤儿符号 |
+| `cw deepest` | `get_deepest_functions` | 最深函数 |
+| `cw module-calls` | `get_module_call_stats` | 模块调用统计 |
+| `cw detect-cycles` | `detect_call_cycles` | 调用图循环检测 |
+| `cw call-heatmap` | `get_call_heatmap` | 调用热力图 |
+| `cw export-module-graph` | `export_module_graph` | 模块图导出 |
+| `cw topo` | `get_topological_order` | 拓扑排序 |
+| — | `diff_callers` | MCP 专属，无 CLI 入口 |
+| — | `diff_callees` | MCP 专属，无 CLI 入口 |
+
+<!-- [3]: 14 工具（11 有 CLI 对应 / 3 MCP 专属） -->
 
 ### [4] Code Health & Metrics
 
-| CLI 子命令                                 | MCP 工具                     | 说明         |
-| ------------------------------------------ | ---------------------------- | ------------ |
-| `cw metrics`                               | `get_code_metrics_summary`   | 度量汇总     |
-| `cw complexity`                            | `get_complexity_hotspots`    | 复杂度热点   |
-| `cw coupling`                              | `get_coupling_analysis`      | 耦合分析     |
-| `cw fn-metrics <name>`                     | `get_function_metrics`       | 单函数度量   |
-| `cw largest-fns`                           | `get_largest_functions`      | 最大函数     |
-| `cw coupled-fns`                           | `get_most_coupled_functions` | 高耦合函数   |
-| `cw health check`                          | `get_code_health_check`      | 代码健康检查 |
-| `cw health file <path>`                    | `check_file_health`          | 文件健康     |
-| `cw evolution frequency`                   | `evolution_frequency`        | 变更频率     |
-| `cw evolution defect-correlation`          | `defect_correlation`         | 缺陷关联     |
-| `cw evolution hotspot`                     | `hotspot_evolution`          | 热点演化     |
-| `cw churn`                                 | `churn_analysis`             | 代码流失     |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw metrics` | `get_code_metrics_summary` | 度量汇总 |
+| `cw complexity` | `get_complexity_hotspots` | 复杂度热点 |
+| `cw coupling` | `get_coupling_analysis` | 耦合分析 |
+| `cw fn-metrics` | `get_function_metrics` | 单函数度量 |
+| `cw largest-fns` | `get_largest_functions` | 最大函数 |
+| `cw coupled-fns` | `get_most_coupled_functions` | 高耦合函数 |
+| — | `get_code_health_check` | MCP 专属，无 CLI 入口 |
+| — | `check_file_health` | MCP 专属，无 CLI 入口 |
+| `cw evolution` | `evolution_frequency` | 变更频率（cw evolution <QN>） |
+| — | `defect_correlation` | MCP 专属，无 CLI 入口 |
+| `cw hotspot` | `hotspot_evolution` | 热点演化 |
+| `cw churn` | `churn_analysis` | 代码流失 |
+
+<!-- [4]: 12 工具（9 有 CLI 对应 / 3 MCP 专属） -->
 
 ### [5] Task Orchestration
 
-| CLI 子命令                       | MCP 工具                       | 说明         |
-| -------------------------------- | ------------------------------ | ------------ |
-| `cw task create`                 | `task_create`                  | 创建任务     |
-| `cw task create-subtask`         | `task_create_subtask`          | 创建子任务   |
-| `cw task split`                  | `task_split`                   | 拆分任务     |
-| `cw task from-plan`              | `task_create_from_plan`        | 从计划创建   |
-| `cw task plan-template`          | `task_plan_template`           | 计划模板     |
-| `cw task next <id>`              | `task_next_step`               | 认领步骤     |
-| `cw task work <id>`              | `work_next_job`                | 领取工作     |
-| `cw task resolve-block`          | `task_resolve_block`           | 处理护栏告警 |
-| `cw task report <id> <step>`     | `task_report_step`             | 上报步骤     |
-| `cw task rollback <id>`          | `task_rollback`                | 回滚任务     |
-| `cw task apply <id>`             | `task_apply`                   | 审核通过     |
-| `cw task close <id>`             | `task_close`                   | 关闭任务     |
-| `cw task capture-diff <id>`      | `task_capture_diff`            | 捕获改动     |
-| `cw task list`                   | `task_list`                    | 列出任务     |
-| `cw task show <id>`              | `task_status`                  | 任务详情     |
-| `cw task status-tree <id>`       | `task_status_tree`             | 任务树       |
-| `cw task completion-review <id>` | `task_completion_review`       | 完成审查     |
-| `cw task findings <id>`          | `task_quality_findings`        | 质量发现     |
-| `cw task resolve-finding <id>`   | `task_resolve_quality_finding` | 解决发现     |
-| `cw task symbol-changes`         | `get_task_symbol_changes`      | 符号变化归因 |
-| `cw task record-change`          | `record_task_symbol_change`    | 记录符号变化 |
-| `cw task link-audit`             | `link_edit_audit_symbols`      | 关联编辑审计 |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw task create` | `task_create` | 创建任务 |
+| `cw task create` | `task_create_subtask` | 创建子任务（cw task create --parent-id；MCP 走 task.create_subtask 专项治理，语义等价） |
+| `cw task split` | `task_split` | 拆分任务 |
+| — | `task_create_from_plan` | MCP 专属，无 CLI 入口 |
+| — | `task_plan_template` | MCP 专属，无 CLI 入口 |
+| `cw task next` | `task_next_step` | 认领步骤 |
+| — | `work_next_job` | MCP 专属，无 CLI 入口 |
+| — | `task_resolve_block` | MCP 专属，无 CLI 入口 |
+| `cw task report` | `task_report_step` | 上报步骤 |
+| `cw task rollback` | `task_rollback` | 回滚任务 |
+| `cw task apply` | `task_apply` | 审核通过 |
+| `cw task close` | `task_close` | 关闭任务 |
+| `cw task capture-diff` | `task_capture_diff` | 捕获改动 |
+| `cw task list` | `task_list` | 列出任务 |
+| `cw task show` | `task_status` | 任务详情 |
+| `cw task governance-projection` | `task_governance_projection` | 治理投影 |
+| `cw task status-tree` | `task_status_tree` | 任务树 |
+| `cw task completion-review` | `task_completion_review` | 完成审查 |
+| `cw task findings` | `task_quality_findings` | 质量发现 |
+| `cw task resolve-finding` | `task_resolve_quality_finding` | 解决发现 |
+| — | `record_task_symbol_change` | MCP 专属，无 CLI 入口 |
+| — | `link_edit_audit_symbols` | MCP 专属，无 CLI 入口 |
+| `cw task show` | `get_task_symbol_changes` | 任务归因符号变化（cw task show 的 Related 段，RPC task.get_symbol_changes） |
+| `cw symbol-history` | `get_symbol_change_tasks` | 符号反查关联任务（cw symbol-history 的 Related Tasks 段，同 RPC 原名路由） |
+| — | `cancel_job` | MCP 专属，无 CLI 入口 |
+| — | `list_jobs` | MCP 专属，无 CLI 入口 |
+| — | `get_job_stats` | MCP 专属，无 CLI 入口 |
+| — | `wait_for_job` | MCP 专属，无 CLI 入口 |
+| — | `get_job_status` | MCP 专属，无 CLI 入口 |
+| `cw task show` | `get_task_commits` | 任务关联 commit（cw task show 的 Related 段，RPC task.get_commits） |
+| `cw git show` | `get_commit_tasks` | commit 关联任务（cw git show 的 Related Tasks 段；CLI 走 db.get_commit_tasks 原名路由，MCP 走 query.commit_tasks，语义等价） |
+| `cw task assignment-status` | `task_assignment_status` | 派工队列投影 |
+| `cw task assignment-heartbeat` | `task_assignment_heartbeat` | 派工心跳 |
+| `cw task prompt` | `task_get_role_prompt` | 角色提示编译 |
+| — | `task_remediation_create` | MCP 专属，无 CLI 入口 |
+| `cw task step-resolve` | `task_step_resolve` | 失败步骤回审 |
+
+<!-- [5]: 36 工具（24 有 CLI 对应 / 12 MCP 专属） -->
 
 ### [6] Agent Rule Memory
 
-| CLI 子命令                 | MCP 工具                                        | 说明           |
-| -------------------------- | ----------------------------------------------- | -------------- |
-| `cw rule candidate create` | `rule_candidate_create`                         | 创建候选       |
-| `cw rule candidate list`   | `rule_candidate_list`                           | 候选列表       |
-| `cw rule candidate accept` | `rule_candidate_accept`                         | 接受候选       |
-| `cw rule candidate reject` | `rule_candidate_reject`                         | 拒绝候选       |
-| `cw rule list`             | `rule_list`                                     | 已生效规则     |
-| `cw rule applicable`       | `get_applicable_rules`                          | 上下文匹配     |
-| `cw rule sync`             | `rule_sync_agents_md`                           | 同步 AGENTS.md |
-| `cw rule insert-block`     | `rule_insert_agents_md_block`                   | 插入标记块     |
-| `cw rule extract`          | `extract_rule_candidates_from_quality_findings` | 提取候选       |
-| `cw rule seed-bootstrap`   | `rule_seed_bootstrap`                           | 种子化         |
-| `cw rule cleanup-sync-log` | `cleanup_agent_rule_sync_log`                   | 清理日志       |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw rule candidate create` | `rule_candidate_create` | 创建候选 |
+| `cw rule candidate list` | `rule_candidate_list` | 候选列表 |
+| `cw rule candidate accept` | `rule_candidate_accept` | 接受候选 |
+| `cw rule candidate reject` | `rule_candidate_reject` | 拒绝候选 |
+| `cw rule list` | `rule_list` | 已生效规则 |
+| `cw rule applicable` | `get_applicable_rules` | 上下文匹配 |
+| `cw rule sync` | `rule_sync_agents_md` | 同步 AGENTS.md |
+| `cw rule insert-block` | `rule_insert_agents_md_block` | 插入标记块 |
+| `cw rule extract` | `extract_rule_candidates_from_quality_findings` | 提取候选 |
+| `cw rule seed-bootstrap` | `rule_seed_bootstrap` | 种子化 |
+| `cw rule cleanup-sync-log` | `cleanup_agent_rule_sync_log` | 清理日志 |
+
+<!-- [6]: 11 工具（11 有 CLI 对应 / 0 MCP 专属） -->
 
 ### [7] Audit & Bootstrap
 
-| CLI 子命令                 | MCP 工具                   | 说明         |
-| -------------------------- | -------------------------- | ------------ |
-| `cw audit verify`          | `audit_verify_chain`       | 审计链验证   |
-| `cw audit rotate-key`      | `rotate_audit_signing_key` | 密钥轮换     |
-| `cw audit keys`            | `list_audit_signing_keys`  | 密钥列表     |
-| `cw bootstrap status`      | `bootstrap_status`         | 自举健康     |
-| `cw check-gate`            | `run_check_gate`           | 检查门禁     |
-| `cw resolve-gate-findings` | `resolve_gate_findings`    | 解决门禁发现 |
-| `cw guardrail scan`        | `guardrail_scan`           | 安全扫描     |
-| `cw guardrail check-edit`  | `guardrail_check_edit`     | 编辑前检查   |
-| `cw guardrail list`        | `guardrail_list_rules`     | 规则列表     |
-| `cw guardrail add-rule`    | `guardrail_add_rule`       | 添加规则     |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw audit verify` | `audit_verify_chain` | 审计链验证 |
+| `cw audit rotate-key` | `rotate_audit_signing_key` | 密钥轮换 |
+| `cw audit keys` | `list_audit_signing_keys` | 密钥列表 |
+| `cw bootstrap status` | `bootstrap_status` | 自举健康 |
+| `cw check-gate` | `run_check_gate` | 检查门禁 |
+| `cw check-gate` | `resolve_gate_findings` | 解决门禁发现（cw check-gate <task_id> --resolve，经 _METHOD_MAP 同 RPC gate.resolve_findings；CLI 仅传 task_id，MCP 契约为 gate_id 必填） |
+| `cw guardrail scan` | `guardrail_scan` | 安全扫描 |
+| — | `guardrail_check_edit` | MCP 专属，无 CLI 入口 |
+| `cw guardrail rules` | `guardrail_list_rules` | 规则列表 |
+| — | `guardrail_add_rule` | MCP 专属，无 CLI 入口 |
+
+<!-- [7]: 10 工具（8 有 CLI 对应 / 2 MCP 专属） -->
 
 ### [8] Git Integration
 
-| CLI 子命令                             | MCP 工具                    | 说明          |
-| -------------------------------------- | --------------------------- | ------------- |
-| `cw git import`                        | `import_git_history`        | 导入 Git 历史 |
-| `cw git log`                           | `get_git_commits`           | commit 列表   |
-| `cw git show <hash>`                   | `get_commit_changes`        | commit 详情   |
-| `cw git stats`                         | `get_git_stats`             | Git 统计      |
-| `cw git symbol-history <hash>`         | `get_symbol_commit_history` | 符号变更历史  |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw git import` | `import_git_history` | 导入 Git 历史 |
+| `cw git log` | `get_git_commits` | commit 列表 |
+| `cw git show` | `get_commit_changes` | commit 详情 |
+| `cw git stats` | `get_git_stats` | Git 统计 |
+| `cw symbol-history` | `get_symbol_commit_history` | 符号 Git 变更历史 |
+| — | `compare_snapshots` | MCP 专属，无 CLI 入口 |
+
+<!-- [8]: 6 工具（5 有 CLI 对应 / 1 MCP 专属） -->
 
 ### [9] Semgrep & Defects
 
-| CLI 子命令                                    | MCP 工具                         | 说明                                                       |
-| --------------------------------------------- | -------------------------------- | ---------------------------------------------------------- |
-| `cw semgrep scan`                             | `run_semgrep_scan`               | Semgrep 扫描                                               |
-| `cw semgrep list`                             | `get_semgrep_findings`           | Semgrep 发现                                               |
-| `cw semgrep stats`                            | `get_semgrep_stats`              | Semgrep 统计                                               |
-| `cw function-issues`                          | `find_issues`                    | 缺陷查找                                                   |
-| `cw function-issues --summary`                | `get_issue_summary`              | 缺陷汇总                                                   |
-| `cw defect search`                            | `defect_search`                  | 缺陷模式搜索                                               |
-| `cw defect suggest`                           | `defect_suggest_fix`             | 修复建议                                                   |
-| `cw defect learn`                             | `defect_learn`                   | 从修复学习                                                 |
-| `cw defect stats`                             | `defect_stats`                   | 缺陷库统计                                                 |
-| `cw defect blast-radius <hash>`               | `blast_radius`                   | 变更影响半径                                               |
-| `cw defect vuln-blast`                        | `get_vulnerability_blast_radius` | 漏洞爆炸半径                                               |
-| `cw defect diff-to-symbol`                    | `diff_to_symbol`                 | diff 映射符号                                              |
-| `cw defect review-readiness`                  | `review_readiness`               | 审查就绪                                                   |
-| `cw defect cross-layer`                       | `cross_layer_impact`             | 跨层影响                                                   |
-| `cw issues <QN>`                              | `get_symbol_issues`              | 符号静态检查（Semgrep + Guardrail findings 聚合）          |
-| `cw evolution <QN> --defects`                 | `get_defect_correlation`         | 变更-缺陷关联（change_count / defect_count / defect_rate） |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw semgrep scan` | `run_semgrep_scan` | Semgrep 扫描 |
+| — | `semgrep_scan_async` | MCP 专属，无 CLI 入口 |
+| `cw semgrep scan` | `scan_semgrep_incremental` | 增量 Semgrep 扫描（cw semgrep scan --incremental；MCP 经 job 通道 sync 执行，语义等价） |
+| `cw semgrep stats` | `get_semgrep_stats` | Semgrep 统计 |
+| `cw semgrep list` | `get_semgrep_findings` | Semgrep 发现 |
+| `cw function-issues` | `get_issue_summary` | 缺陷汇总（cw function-issues --summary） |
+| `cw issues` | `get_symbol_issues` | 符号静态检查（Semgrep + Guardrail 聚合） |
+| `cw function-issues` | `find_issues` | 缺陷查找 |
+| `cw defect search` | `defect_search` | 缺陷模式搜索 |
+| `cw defect suggest` | `defect_suggest_fix` | 修复建议 |
+| `cw defect learn` | `defect_learn` | 从修复学习 |
+| `cw defect stats` | `defect_stats` | 缺陷库统计 |
+| `cw evolution` | `get_defect_correlation` | 变更-缺陷关联（cw evolution --defects） |
+| `cw impact` | `blast_radius` | 变更影响半径（cw impact <hash>，BFS 反向调用图） |
+| `cw vuln-blast` | `get_vulnerability_blast_radius` | 漏洞爆炸半径 |
+| — | `diff_to_symbol` | MCP 专属，无 CLI 入口 |
+| `cw review` | `review_readiness` | 审查就绪报告 |
+| — | `cross_layer_impact` | MCP 专属，无 CLI 入口 |
+
+<!-- [9]: 18 工具（15 有 CLI 对应 / 3 MCP 专属） -->
 
 ### [10] Coverage & Ownership
 
-| CLI 子命令                                                     | MCP 工具                    | 说明                                                           |
-| -------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------- |
-| `cw coverage comment`                                          | `get_comment_coverage`      | 注释覆盖率                                                     |
-| `cw coverage uncommented`                                      | `get_uncommented_symbols`   | 未注释符号                                                     |
-| `cw coverage test`                                             | `get_test_coverage`         | 测试覆盖率                                                     |
-| `cw coverage import`                                           | `import_coverage`           | 导入覆盖率                                                     |
-| `cw coverage fn <name>`                                        | `get_coverage_for_symbol`   | 函数覆盖率                                                     |
-| `cw coverage uncovered`                                        | `find_uncovered_functions`  | 未覆盖函数                                                     |
-| `cw test-impact <name>`                                        | `test_impact_selection`     | 测试影响选择                                                   |
-| `cw who <path>`                                                | `who_to_ask`                | 文件负责人                                                     |
-| `cw ownership-map`                                             | `get_ownership_map`         | 所有权映射                                                     |
-| `cw codeowners parse`                                          | `parse_codeowners`          | 解析 CODEOWNERS                                                |
-| `cw codeowners import`                                         | `import_codeowners`         | 导入 CODEOWNERS                                                |
-| —                                                              | `import_git_blame`          | 导入 git blame                                                 |
-| `cw symbol restore-comment`                                    | `restore_comment`           | 恢复注释                                                       |
-| `cw symbol restore-all-comments`                               | `restore_all_comments`      | 批量恢复注释                                                   |
-| `cw symbol comment-from-version`                               | `get_comment_from_version`  | 历史版本注释                                                   |
-| `cw tests <QN>`                                                | `get_test_cases`            | 符号的测试 case 列表（test_fn ↔ tested_fn 三阶推断）           |
-| `cw tests <QN> --reverse`                                      | `get_tested_functions`      | 反向查询（test_fn 测了哪些函数）                               |
-| `cw tests <QN> --coverage`                                     | `get_test_coverage_summary` | 测试覆盖摘要（has_tests / test_count / high_confidence_count） |
-| `cw tests <QN> --history`                                      | `get_test_stability`        | 测试稳定性（pass_rate / recent_failures / by_test）            |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw comment-coverage` | `get_comment_coverage` | 注释覆盖率 |
+| `cw uncommented` | `get_uncommented_symbols` | 未注释符号 |
+| `cw coverage test` | `get_test_coverage` | 测试覆盖率 |
+| `cw tests` | `get_test_cases` | 符号的测试 case 列表（cw tests <QN>） |
+| `cw tests` | `get_tested_functions` | 反向查询（cw tests <QN> --reverse） |
+| — | `get_test_coverage_summary` | MCP 专属，无 CLI 入口 |
+| `cw tests` | `get_test_stability` | 测试稳定性（cw tests <QN> --history） |
+| `cw restore-comment` | `get_comment_from_version` | 历史版本注释预览（cw restore-comment <spec> --preview 只读预览，语义等价） |
+| `cw restore-comment` | `restore_comment` | 恢复注释 |
+| `cw restore-all-comments` | `restore_all_comments` | 批量恢复注释 |
+| `cw coverage import` | `import_coverage` | 导入覆盖率 |
+| `cw coverage fn` | `get_coverage_for_symbol` | 函数覆盖率 |
+| `cw coverage uncovered` | `find_uncovered_functions` | 未覆盖函数 |
+| `cw test-impact` | `test_impact_selection` | 测试影响选择 |
+| `cw who` | `who_to_ask` | 文件负责人 |
+| `cw ownership-map` | `get_ownership_map` | 所有权映射 |
+| — | `parse_codeowners` | MCP 专属，无 CLI 入口 |
+| — | `import_codeowners` | MCP 专属，无 CLI 入口 |
+| — | `import_git_blame` | MCP 专属，无 CLI 入口 |
+
+<!-- [10]: 19 工具（15 有 CLI 对应 / 4 MCP 专属） -->
 
 ### [11] GC
 
-| CLI 子命令                          | MCP 工具                      | 说明              |
-| ----------------------------------- | ----------------------------- | ----------------- |
-| `cw gc archive` / `cw gc retention` | `gc_retention`                | GC retention 清理 |
-| `cw gc policy show`                 | `gc_policy_get`               | 策略查询          |
-| `cw gc policy set`                  | `gc_policy_set`               | 策略设置          |
-| `cw gc archive-list`                | `gc_archive_list`             | 备份列表          |
-| `cw gc inspect <path>`              | `gc_archive_inspect`          | 检查备份          |
-| `cw gc import <path>`               | `gc_archive_import`           | 导入备份          |
-| `cw gc audit-list`                  | `gc_audit_list`               | 审计历史          |
-| `cw gc audit-show <id>`             | `gc_audit_get`                | 审计详情          |
-| `cw gc external prune`              | `prune_external_symbols`      | 外部符号清理      |
-| `cw deps list`                      | `get_project_dependencies`    | 直接依赖          |
-| `cw deps import`                    | `import_project_dependencies` | 导入外部符号      |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| — | `get_project_dependencies` | MCP 专属，无 CLI 入口 |
+| — | `import_project_dependencies` | MCP 专属，无 CLI 入口 |
+| — | `prune_external_symbols` | MCP 专属，无 CLI 入口 |
+| `cw gc retention` | `gc_retention` | GC retention 清理 |
+| `cw gc policy show` | `gc_policy_get` | 策略查询 |
+| `cw gc policy set` | `gc_policy_set` | 策略设置 |
+| `cw gc archive-list` | `gc_archive_list` | 备份列表 |
+| `cw gc archive-inspect` | `gc_archive_inspect` | 检查备份 |
+| `cw gc archive-import` | `gc_archive_import` | 导入备份 |
+| `cw gc audit-list` | `gc_audit_list` | 审计历史 |
+| `cw gc audit-show` | `gc_audit_get` | 审计详情 |
+
+<!-- [11]: 11 工具（8 有 CLI 对应 / 3 MCP 专属） -->
 
 ### [12] Diagnostics
 
-| CLI 子命令                | MCP 工具                  | 说明           |
-| ------------------------- | ------------------------- | -------------- |
-| `cw clone detect`         | `detect_clones`           | 克隆检测       |
-| `cw clone list`           | `list_clones`             | 克隆列表       |
-| `cw clone stats`          | `get_clone_stats`         | 克隆统计       |
-| `cw clone clear`          | `clear_clones`            | 清空克隆       |
-| `cw edit propose`         | `propose_edit`            | 提交编辑       |
-| `cw edit range-patch`     | `propose_range_patch`     | 范围补丁       |
-| `cw edit symbol-patch`    | `propose_symbol_patch`    | 符号补丁       |
-| `cw edit symbol-id-patch` | `propose_symbol_id_patch` | symbol_id 补丁 |
-| `cw edit revert <id>`     | `revert_edit`             | 回滚编辑       |
-| `cw edit history`         | `get_edit_history`        | 编辑历史       |
-| `cw edit stats`           | `get_edit_stats`          | 编辑统计       |
-| `cw cross-repo detect`    | `detect_cross_repo_deps`  | 跨仓库依赖     |
-| `cw cross-repo find`      | `find_shared_symbols`     | 共享符号       |
-| `cw cross-repo impact`    | `cross_repo_impact`       | 跨仓库影响     |
-| `cw cross-repo summary`   | `cross_repo_summary`      | 跨仓库总览     |
-| `cw lsp hover`            | `lsp_hover`               | LSP hover      |
-| `cw lsp definition`       | `lsp_definition`          | LSP 定义       |
-| `cw lsp references`       | `lsp_references`          | LSP 引用       |
-| `cw lsp diagnostics`      | `lsp_diagnostics`         | LSP 诊断       |
-| `cw lsp completion`       | `lsp_completion`          | LSP 补全       |
-| `cw lsp check`            | `lsp_check_available`     | LSP 可用性     |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw clone detect` | `detect_clones` | 克隆检测 |
+| — | `detect_clones_async` | MCP 专属，无 CLI 入口 |
+| — | `list_clone_groups` | MCP 专属，无 CLI 入口 |
+| — | `get_clone_group_detail` | MCP 专属，无 CLI 入口 |
+| — | `get_clone_group_stats` | MCP 专属，无 CLI 入口 |
+| `cw clone list` | `list_clones` | 克隆列表 |
+| `cw clone stats` | `get_clone_stats` | 克隆统计 |
+| `cw clone clear` | `clear_clones` | 清空克隆 |
+| — | `get_clone_aware_impact` | MCP 专属，无 CLI 入口 |
+| — | `propose_edit` | MCP 专属，无 CLI 入口 |
+| — | `propose_range_patch` | MCP 专属，无 CLI 入口 |
+| — | `propose_symbol_patch` | MCP 专属，无 CLI 入口 |
+| — | `propose_symbol_id_patch` | MCP 专属，无 CLI 入口 |
+| — | `revert_edit` | MCP 专属，无 CLI 入口 |
+| — | `get_edit_history` | MCP 专属，无 CLI 入口 |
+| — | `get_edit_stats` | MCP 专属，无 CLI 入口 |
+| — | `detect_cross_repo_deps` | MCP 专属，无 CLI 入口 |
+| — | `find_shared_symbols` | MCP 专属，无 CLI 入口 |
+| — | `cross_repo_impact` | MCP 专属，无 CLI 入口 |
+| — | `cross_repo_summary` | MCP 专属，无 CLI 入口 |
+| — | `lsp_hover` | MCP 专属，无 CLI 入口 |
+| — | `lsp_definition` | MCP 专属，无 CLI 入口 |
+| — | `lsp_references` | MCP 专属，无 CLI 入口 |
+| — | `lsp_diagnostics` | MCP 专属，无 CLI 入口 |
+| — | `lsp_completion` | MCP 专属，无 CLI 入口 |
+| — | `lsp_check_available` | MCP 专属，无 CLI 入口 |
+| — | `get_metrics` | MCP 专属，无 CLI 入口 |
 
-> **增量域映射（[13]-[17]，2026-09-29 审计补全）**：以下 5 个能力域此前未纳入本对照表。
-> 它们与前 12 类一样都经同一 daemon RPC，CLI 与 MCP 各有暴露面；部分域两侧粒度不同
-> （如 Identity 的 CLI 仅暴露 `revoke`，查询类只在 MCP）。这是有意的暴露面差异，
-> 不是能力缺失（依据 `cw-role-prompt-compiler-v1-frozen-spec.md` §12「避免 T=M=D」）。
+<!-- [12]: 27 工具（4 有 CLI 对应 / 23 MCP 专属） -->
 
-### [13] 构建上下文感知（build-context / toolchain）
+### [13] 构建上下文感知
 
-| CLI 子命令                       | MCP 工具                   | 说明                   |
-| -------------------------------- | -------------------------- | ---------------------- |
-| `cw toolchain register`          | `get_toolchain`（查询）    | 工具链注册/查询        |
-| `cw toolchain list`              | `list_toolchains`          | 工具链列表             |
-| `cw toolchain list-bound`        | `get_workspace_toolchains` | workspace 工具链       |
-| `cw build-context register/show` | `get_build_context`        | build context          |
-| `cw build-context list`          | `list_build_contexts`      | build context 列表     |
-| `cw build-context activate`      | `get_active_build_context` | 活动 build context     |
-| `cw build-context resolve`       | `get_resolved_edges`       | 已解析边               |
-| `cw build-context edges`         | `count_resolved_edges`     | 已解析边计数           |
-| —                                | `get_metrics`              | 运行时指标（MCP 专属） |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw toolchain show` | `get_toolchain` | 工具链详情（按 name 或 ID） |
+| `cw toolchain list` | `list_toolchains` | 工具链列表 |
+| `cw build-context show` | `get_build_context` | build context 详情 |
+| `cw build-context list` | `list_build_contexts` | build context 列表 |
+| — | `get_active_build_context` | MCP 专属，无 CLI 入口 |
+| `cw toolchain list-bound` | `get_workspace_toolchains` | workspace 绑定工具链 |
+| `cw build-context edges` | `get_resolved_edges` | 已解析边查询 |
+| `cw build-context show` | `count_resolved_edges` | show 详情含 resolved edges 计数 |
 
-### [14] 只读协同查询 / 协同治理写（collab）
+<!-- [13]: 8 工具（7 有 CLI 对应 / 1 MCP 专属） -->
 
-| CLI 子命令               | MCP 工具                | 说明                     |
-| ------------------------ | ----------------------- | ------------------------ |
-| `cw collab publish`      | `append_evidence`       | 追加协同证据             |
-| `cw collab verdict`      | `submit_verdict`        | 提交裁决                 |
-| `cw collab reveal`       | `find_evidence`（查询） | 协同证据查询             |
-| `cw collab gate-trigger` | `get_gate_decision`     | 门禁决策                 |
-| —                        | `get_role_view`         | 角色视图（MCP 专属查询） |
-| —                        | `get_freshness_status`  | 新鲜度（MCP 专属查询）   |
+### [14] 只读协同查询
 
-### [15] 依赖图与环检测（dependency）
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| — | `append_evidence` | MCP 专属，无 CLI 入口 |
+| — | `find_evidence` | MCP 专属，无 CLI 入口 |
+| — | `get_freshness_status` | MCP 专属，无 CLI 入口 |
+| — | `get_gate_decision` | MCP 专属，无 CLI 入口 |
+| — | `get_role_view` | MCP 专属，无 CLI 入口 |
+| `cw collab verdict` | `submit_verdict` | 提交裁决（verdict.submit） |
 
-| CLI 子命令                      | MCP 工具                         | 说明                       |
-| ------------------------------- | -------------------------------- | -------------------------- |
-| `cw dependency inspect`         | `build_hard_dependency_edges`    | 硬依赖边构建               |
-| `cw dependency list`            | `get_dependency_edges`           | 依赖边查询                 |
-| `cw dependency cycle`           | `detect_dependency_cycle`        | 依赖图环检测               |
-| `cw dependency explain`         | `validate_revision_dependencies` | 版本依赖校验               |
-| `cw dependency provider-select` | `select_interface_provider`      | provider 选择              |
-| —                               | `publish_interface`              | 接口发布（MCP 专属）       |
-| —                               | `get_interface_providers`        | 接口提供者查询（MCP 专属） |
-| —                               | `import_envelope_dependencies`   | 信封依赖导入（MCP 专属）   |
-| —                               | `record_artifact_identity`       | 工件身份记录（MCP 专属）   |
-| —                               | `get_artifact_freshness`         | 工件新鲜度（MCP 专属）     |
+<!-- [14]: 6 工具（1 有 CLI 对应 / 5 MCP 专属） -->
+
+### [15] 依赖图与环检测
+
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw dependency inspect` | `build_hard_dependency_edges` | 硬依赖边构建 |
+| `cw dependency list` | `get_dependency_edges` | 依赖边查询 |
+| `cw dependency cycle` | `detect_dependency_cycle` | 依赖图环检测 |
+| `cw dependency explain` | `validate_revision_dependencies` | 版本依赖校验 |
+| — | `publish_interface` | MCP 专属，无 CLI 入口 |
+| — | `get_interface_providers` | MCP 专属，无 CLI 入口 |
+| `cw dependency provider-select` | `select_interface_provider` | provider 选择 |
+| — | `import_envelope_dependencies` | MCP 专属，无 CLI 入口 |
+| — | `record_artifact_identity` | MCP 专属，无 CLI 入口 |
+| — | `get_artifact_freshness` | MCP 专属，无 CLI 入口 |
+
+<!-- [15]: 10 工具（5 有 CLI 对应 / 5 MCP 专属） -->
 
 ### [16] Assignment 与 Lease
 
-| CLI 子命令             | MCP 工具            | 说明            |
-| ---------------------- | ------------------- | --------------- |
-| `cw lease acquire`     | `lease_acquire`     | 获取 lease      |
-| `cw lease renew`       | `lease_renew`       | 续租            |
-| `cw lease release`     | `lease_release`     | 释放            |
-| `cw lease status`      | `lease_status`      | lease 状态      |
-| `cw lease list`        | `lease_list_events` | lease 事件      |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| `cw lease acquire` | `lease_acquire` | 获取 lease |
+| `cw lease renew` | `lease_renew` | 续租 |
+| `cw lease release` | `lease_release` | 释放 |
+| `cw lease status` | `lease_status` | lease 状态 |
+| `cw lease list` | `lease_list_events` | lease 事件 |
 | `cw assignment create` | `assignment_create` | 创建 assignment |
-| `cw assignment show`   | `assignment_show`   | assignment 详情 |
+| `cw assignment show` | `assignment_show` | assignment 详情 |
 | `cw assignment revoke` | `assignment_revoke` | 撤销 assignment |
+
+<!-- [16]: 8 工具（8 有 CLI 对应 / 0 MCP 专属） -->
 
 ### [17] Identity 与 Attestation
 
-| CLI 子命令           | MCP 工具                          | 说明                           |
-| -------------------- | --------------------------------- | ------------------------------ |
-| `cw identity revoke` | `register_attestation_revocation` | 撤销 attestation               |
-| —                    | `record_action_identity`          | 记录动作身份（MCP 专属）       |
-| —                    | `get_action_identity`             | 查询动作身份（MCP 专属）       |
-| —                    | `check_action_identity`           | 校验动作身份（MCP 专属）       |
-| —                    | `check_session_separation`        | 会话隔离校验（MCP 专属）       |
-| —                    | `get_attestation_validity`        | attestation 有效性（MCP 专属） |
-| —                    | `list_attestation_revocations`    | 撤销列表（MCP 专属）           |
+| CLI 入口 | MCP 工具 | 说明 |
+| --- | --- | --- |
+| — | `record_action_identity` | MCP 专属，无 CLI 入口 |
+| — | `get_action_identity` | MCP 专属，无 CLI 入口 |
+| — | `check_action_identity` | MCP 专属，无 CLI 入口 |
+| — | `check_session_separation` | MCP 专属，无 CLI 入口 |
+| — | `get_attestation_validity` | MCP 专属，无 CLI 入口 |
+| `cw identity revoke` | `register_attestation_revocation` | 撤销 attestation |
+| — | `list_attestation_revocations` | MCP 专属，无 CLI 入口 |
+
+<!-- [17]: 7 工具（1 有 CLI 对应 / 6 MCP 专属） -->
+
+<!-- END:generated-mapping -->
+
+<!-- BEGIN:generated-cli-only (scripts/gen_category_overview.py; DO NOT EDIT) -->
+
+### [1]-[17] 域内 CLI 独有命令（无任何 MCP 工具映射）
+
+| 分类 | 命令 | 说明 |
+| --- | --- | --- |
+| Workspace & Database | `cw graph` | 构建 C 文件调用图（build-from-c） |
+| Workspace & Database | `cw config` | 分层配置查看与解释（explain/paths） |
+| Query & Search | `cw fts` | FTS5 全文索引构建与状态（rebuild/status） |
+| Code Health & Metrics | `cw dashboard` | 项目综合状态驾驶舱 |
+| Diagnostics | `cw doctor` | 环境诊断与维护 |
+
+> [18]-[21] CLI-only 分类（rollback / daemon / setup_install / experiment）为有意的 CLI 独有能力域，不在此表统计。
+
+<!-- END:generated-cli-only -->
 
 > Identity 域 CLI 仅暴露 `revoke`（人类运维动作），身份记录/查询/校验由 Agent 编排经 MCP 完成，
 > 这是 P3 设计的有意分工（Req 10.x）。
@@ -2397,7 +2487,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ## 工具设计原则与优化方向
 
-> 对应 [_feature_matrix.md L10 + L16](../design/_feature_matrix.md) 设计方向项。
+> 对应 [_feature_matrix.md L10 + L16](design/_feature_matrix.md) 设计方向项。
 >
 > 来源：D3（Phase 2 收口/增量架构/Daemon 讨论）+ WL1（工具层讨论）。
 
@@ -2431,7 +2521,7 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 1. **当前状态盘点**：
    - 工具数：243（含构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）
-   - 12 主分类已覆盖所有 Agent 常见任务场景
+   - 17 主分类已覆盖所有 Agent 常见任务场景
    - 已实现的"组合工具"：`compare_snapshots` / `diff_callers` / `diff_callees` / `get_clone_aware_impact` / `get_defect_correlation` / `get_symbol_issues`（聚合 Semgrep + Guardrail findings）
 
 2. **优化方向**（不再加新工具，优化已有）：

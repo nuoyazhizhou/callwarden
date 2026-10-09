@@ -980,7 +980,7 @@ if [ "$_refresh_ok" -ne 1 ]; then
   echo "[Call Warden] ERROR: cw refresh --all 重试 $_refresh_max 次后仍失败。"
   echo "[Call Warden] commit 已被阻止（AGENTS.md 规则 1：提交前必须全量刷新数据库）。"
   echo "[Call Warden] 排查建议："
-  echo "  1. 停止 MCP Server：cw server --stop"
+  echo "  1. 停止 MCP Server：在 IDE 中停止/重载，或结束占用 DB 的 MCP 进程"
   echo "  2. 手动刷新：cw refresh --all"
   echo "  3. 检查 ~/.callwarden/callwarden.db 文件权限和 -shm/-wal 残留"
   echo "  4. 若在 TRAE IDE 中运行（git commit 触发 sh.exe hook）："

@@ -2132,7 +2132,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "",
     );
     add(
-        "stats",
+        "query.stats",
         "stats",
         "stats",
         "rust_native",
@@ -3191,7 +3191,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // get_semgrep_stats 已迁移 rust_native（走 snapshot query_db_path，native handler 在
     // snapshot_state.rs），对应 COMPAT_ROUTE_WHITELIST 条目已移除。
     add(
-        "get_uncommented_symbols",
+        "query.uncommented_symbols",
         "get_uncommented_symbols",
         "get-uncommented-symbols",
         "rust_native",
@@ -3210,7 +3210,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // query_db_path）；对应 Python compat_registry._stats_top_files 已移除、
     // RUST_COMPAT_ROUTE 条目已移除。
     add(
-        "stats_top_files",
+        "query.stats_top_files",
         "stats_top_files",
         "stats-top-files",
         "rust_native",
@@ -3245,7 +3245,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W4-1（T-1786886251769-22b94ee8-sub-1）：get_file_history 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除（90->88）。
     add(
-        "get_file_history",
+        "query.file_history",
         "get_file_history",
         "get-file-history",
         "rust_native",
@@ -3337,7 +3337,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W2-1（T-1786840097330-dec66710）：get_module_call_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
     add(
-        "get_module_call_stats",
+        "query.module_call_stats",
         "get_module_call_stats",
         "get-module-call-stats",
         "rust_native",
@@ -3399,7 +3399,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W2-1（T-1786840097330-dec66710）：get_semgrep_stats 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
     add(
-        "get_semgrep_stats",
+        "query.semgrep_stats",
         "get_semgrep_stats",
         "get-semgrep-stats",
         "rust_native",
@@ -3416,7 +3416,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除（91->90）。
     add(
-        "get_semgrep_findings",
+        "query.semgrep_findings",
         "get_semgrep_findings",
         "get-semgrep-findings",
         "rust_native",
@@ -3513,7 +3513,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W4-1（T-1786886251769-22b94ee8-sub-1）：get_commit_tasks 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除（90->88）。
     add(
-        "get_commit_tasks",
+        "query.commit_tasks",
         "get_commit_tasks",
         "get-commit-tasks",
         "rust_native",
@@ -3530,7 +3530,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W4-1（T-1786886251769-22b94ee8-sub-1）：git 读组 3 工具首次入册
     // rust_native（此前 legacy_local 无 HTTP 分支、无 registry 条目）。
     add(
-        "get_git_commits",
+        "query.git_commits",
         "get_git_commits",
         "get-git-commits",
         "rust_native",
@@ -3545,7 +3545,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "",
     );
     add(
-        "get_commit_changes",
+        "query.git_commit_changes",
         "get_commit_changes",
         "get-commit-changes",
         "rust_native",
@@ -3560,7 +3560,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "",
     );
     add(
-        "get_git_stats",
+        "query.git_stats",
         "get_git_stats",
         "get-git-stats",
         "rust_native",
@@ -3655,7 +3655,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // rust_native，backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST
     // 对应条目已移除。
     add(
-        "get_defect_correlation",
+        "query.get_defect_correlation",
         "get_defect_correlation",
         "get-defect-correlation",
         "rust_native",
@@ -3846,7 +3846,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // rust_native，backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST
     // 对应条目已移除。
     add(
-        "get_coverage_for_symbol",
+        "query.coverage_for_symbol",
         "get_coverage_for_symbol",
         "get-coverage-for-symbol",
         "rust_native",
@@ -4043,7 +4043,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // W4-2（T-1786886251769-22b94ee8-sub-2）：diff_to_symbol 迁移 rust_native，
     // backend 由 python_compat 切换，COMPAT_ROUTE_WHITELIST 对应条目已移除。
     add(
-        "diff_to_symbol",
+        "query.diff_to_symbol",
         "diff_to_symbol",
         "diff-to-symbol",
         "rust_native",
@@ -4111,7 +4111,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // defect_learn 为写面（INSERT defect_fixes/defect_patterns），保持
     // python_compat（W4-3 决策，T-1786886251769-22b94ee8-sub-3，见 ledger §9.24）。
     add(
-        "defect_correlation",
+        "query.defect_correlation",
         "defect_correlation",
         "defect-correlation",
         "rust_native",
@@ -4141,7 +4141,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "",
     );
     add(
-        "churn_analysis",
+        "query.churn_analysis",
         "churn_analysis",
         "churn-analysis",
         "rust_native",
@@ -4156,7 +4156,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "",
     );
     add(
-        "defect_search",
+        "query.defect_search",
         "defect_search",
         "defect-search",
         "rust_native",
@@ -4171,7 +4171,7 @@ fn build_capability_registry() -> Result<Value, String> {
         "",
     );
     add(
-        "defect_suggest_fix",
+        "query.defect_suggest_fix",
         "defect_suggest_fix",
         "defect-suggest-fix",
         "rust_native",
@@ -4316,7 +4316,7 @@ fn build_capability_registry() -> Result<Value, String> {
     // peer 合法可访问的 snapshot 库内，workspace_instance_id 仅用于连接级
     // ACL（同 W4-3 defect_search 全局视图模式）。
     add(
-        "diff_branches",
+        "query.diff_branches",
         "diff_branches",
         "diff-branches",
         "rust_native",
@@ -5260,7 +5260,7 @@ mod tests {
             "rust_native"
         );
         assert_eq!(v["methods"]["get_semgrep_stats"]["backend"], "rust_native");
-        assert_eq!(v["methods"]["stats_top_files"]["status"], "available");
+        assert_eq!(v["methods"]["query.stats_top_files"]["status"], "available");
         assert_eq!(
             v["methods"]["task.quality_findings"]["backend"],
             "rust_native"

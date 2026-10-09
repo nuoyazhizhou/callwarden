@@ -21,7 +21,7 @@ production prompt 的唯一来源是 daemon 编译的 Role Prompt Bundle（RPC `
 ## 工作循环
 
 状态读取：原样展示 daemon 返回的 `task_id`、`lifecycle_status`、`workflow_status`、`current_role`、`next_role`、`next_action` 和 `blocking_reasons`。
-apply/close 必须携带 reviewer lease、`--lease-token`、`--fencing-counter`，并在完成后 release；完整命令和错误码见 [role-protocol.md §7](.agents/skills/cw-task-loop/references/role-protocol.md)。
+apply/close 必须携带 reviewer lease、`--lease-token`、`--fencing-counter`，并在完成后 release；完整命令和错误码见 [role-protocol.md §7](../../.agents/skills/cw-task-loop/references/role-protocol.md)。
 
 1. 对 Epic 子树逐个调用 `task.next-action <子任务ID> --workspace-instance-id <instance_id> --json`，只处理 `READY/ADJUDICATE`；终态验证另行记录。
    后续所有动作绑定响应中的精确 `task_id`。
@@ -38,5 +38,5 @@ apply/close 必须携带 reviewer lease、`--lease-token`、`--fencing-counter`�
 
 ## 强制交接
 
-Handoff: 统一使用 [role-protocol.md §5](.agents/skills/cw-task-loop/references/role-protocol.md)。Adjudicator 允许的 outcome 为
+Handoff: 统一使用 [role-protocol.md §5](../../.agents/skills/cw-task-loop/references/role-protocol.md)。Adjudicator 允许的 outcome 为
 `adjudicator_accepted` 或 `adjudicator_returned`；前者只有裁决事实，未成功 apply/close 不得声称完成。当前 task 完成后才重新发现下一项。

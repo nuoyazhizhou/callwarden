@@ -767,11 +767,22 @@ pub fn capture_task_diff(
     if task_id.is_empty() {
         return Err("task_id is required".to_string());
     }
-    let (workspace_id, db_root) = active_workspace(conn)?;
-    let root = if workspace_root.as_os_str().is_empty() {
-        PathBuf::from(db_root)
+    let (workspace_id, root) = if workspace_root.as_os_str().is_empty() {
+        let (workspace_id, db_root) = active_workspace(conn)?;
+        (workspace_id, PathBuf::from(db_root))
     } else {
-        workspace_root.to_path_buf()
+        // 显式 workspace 优先路径（审计 20261009 B5）：daemon 等非 CLI 进程的
+        // cwd 不在任何注册工作区内，active_workspace 会因多 active workspace
+        // 歧义 fail-closed。显式传入 root 时以 root 为权威身份源解析
+        // workspace_id，不再走 active_workspace。
+        let wid = super::runtime::resolve_workspace_by_path(conn, workspace_root)?
+            .ok_or_else(|| {
+                format!(
+                    "workspace root {} 未注册到任何工作区",
+                    workspace_root.display()
+                )
+            })?;
+        (wid, workspace_root.to_path_buf())
     };
     validate_task_scope(conn, task_id, step_id)?;
     let (changed_files, status_text) = collect_workspace_changes(conn, workspace_id, &root, base)?;

@@ -1,12 +1,16 @@
 """C8 Step #7: 文档结构验证测试。
 
 覆盖三个文档的关键章节存在性：
-- docs/cli_reference.md: 12 大类概览表 + Deprecated --flag 清单 + 链接到 architecture.md
-- docs/mcp_tools.md: 12 大类分组 + CLI↔MCP 命名映射对照表
+- docs/cli_reference.md: 21 大类概览表（marker 生成块）+ 链接到 architecture.md
+- docs/mcp_tools.md: 17 大类分组 + CLI↔MCP 命名映射对照表
 - docs/architecture.md: 命令风格统一规范章节 + 三阶段迁移时间线
 
 不验证具体内容细节（已在 Step #2-#6 的功能测试中覆盖），
 仅验证文档骨架结构符合 Step #7 的 Check Items 要求。
+
+2026-10 更新（cli-mcp-surface-audit）：Deprecated --flag 已在 T10 阶段3
+全部删除，文档不再包含 flag 清单；分类数由代码真相源
+（cli/categories.py 21 类 / server/tools/_categories.py 17 类）动态校验。
 """
 
 import os
@@ -20,26 +24,19 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
+from callwarden.cli.categories import COMMAND_CATEGORIES
+from callwarden.server.tools._categories import TOOL_CATEGORIES
+
 DOCS_DIR = os.path.join(_PKG_PARENT, "docs")
 CLI_REF = os.path.join(DOCS_DIR, "cli_reference.md")
 MCP_TOOLS = os.path.join(DOCS_DIR, "mcp_tools.md")
 ARCHITECTURE = os.path.join(DOCS_DIR, "architecture.md")
 
-# 12 主分类名称（与 cli/main.py 的 _MAIN_HELP_GROUPS 对齐）
-EXPECTED_MAIN_CATEGORIES = [
-    "Workspace & Database",
-    "Query & Search",
-    "Call Chain Analysis",
-    "Code Health & Metrics",
-    "Task Orchestration",
-    "Agent Rule Memory",
-    "Audit & Bootstrap",
-    "Git Integration",
-    "Semgrep & Defects",
-    "Coverage & Ownership",
-    "GC",
-    "Diagnostics",
-]
+# 21 主分类标题（与 cli/categories.py COMMAND_CATEGORIES 对齐，防漂移）
+EXPECTED_MAIN_CATEGORIES = [cat.title for cat in COMMAND_CATEGORIES]
+
+# MCP 17 主分类标题（与 server/tools/_categories.py 对齐）
+EXPECTED_MCP_CATEGORIES = [cat.title for cat in TOOL_CATEGORIES]
 
 
 def _read_file(path):
@@ -59,36 +56,23 @@ class TestCliReferenceDoc:
     def test_file_exists(self):
         assert os.path.isfile(CLI_REF), f"缺少文件: {CLI_REF}"
 
-    def test_has_12_categories_overview_section(self):
-        """[1] 文档开头包含 '命令概览（按 13 大功能分类）' 章节"""
+    def test_has_21_categories_overview_section(self):
+        """[1] 文档开头包含 '命令概览（按 21 大功能分类）' 章节"""
         content = _read_file(CLI_REF)
-        assert "命令概览（按 13 大功能分类）" in content, \
-            "cli_reference.md 缺少 13 大类概览章节"
+        assert "命令概览（按 21 大功能分类）" in content, \
+            "cli_reference.md 缺少 21 大类概览章节"
 
-    def test_overview_table_contains_all_12_categories(self):
-        """[1] 概览表包含全部 12 个主分类名称"""
+    def test_overview_table_contains_all_21_categories(self):
+        """[1] 概览表包含全部 21 个主分类名称（与 cli/categories.py 对齐）"""
         content = _read_file(CLI_REF)
         missing = [c for c in EXPECTED_MAIN_CATEGORIES if c not in content]
         assert not missing, f"cli_reference.md 概览缺少分类: {missing}"
 
-    def test_has_deprecated_flag_section(self):
-        """[1] 文档末尾包含 'Deprecated --flag 清单' 章节"""
+    def test_no_deprecated_flag_section(self):
+        """[1] T10 阶段3 已删除全部 deprecated --flag，文档不应再有清单章节"""
         content = _read_file(CLI_REF)
-        assert "Deprecated --flag 清单" in content, \
-            "cli_reference.md 缺少 Deprecated --flag 清单章节"
-
-    def test_deprecated_flag_table_has_60_entries(self):
-        """[1] Deprecated --flag 清单包含 60 个 flag 条目
-
-        通过统计表格行（| N | `--xxx` | ...）数量验证。
-        """
-        content = _read_file(CLI_REF)
-        # 匹配表格行: | <序号> | `--xxx` | ... |
-        pattern = re.compile(r"^\|\s*\d+\s*\|\s*`--[a-z-]+`\s*\|", re.MULTILINE)
-        matches = pattern.findall(content)
-        # 至少 60 个（允许少量通用 flag 也在表中，不强制恰好 60）
-        assert len(matches) >= 60, \
-            f"Deprecated --flag 清单条目不足: {len(matches)} < 60"
+        assert "Deprecated --flag 清单" not in content, \
+            "cli_reference.md 不应再包含 Deprecated --flag 清单（flag 已全部删除）"
 
     def test_links_to_architecture_command_style(self):
         """[1] 文档开头链接到 architecture.md 的命令风格统一规范章节"""
@@ -119,16 +103,16 @@ class TestMcpToolsDoc:
     def test_file_exists(self):
         assert os.path.isfile(MCP_TOOLS), f"缺少文件: {MCP_TOOLS}"
 
-    def test_has_12_categories_section(self):
-        """[2] 文档包含 '按 12 大功能分类' 章节"""
+    def test_has_17_categories_section(self):
+        """[2] 文档包含 '按 17 大功能分类' 章节"""
         content = _read_file(MCP_TOOLS)
-        assert "按 12 大功能分类" in content, \
-            "mcp_tools.md 缺少 '按 12 大功能分类' 章节"
+        assert "按 17 大功能分类" in content, \
+            "mcp_tools.md 缺少 '按 17 大功能分类' 章节"
 
-    def test_overview_table_contains_all_12_categories(self):
-        """[2] 概览表包含全部 12 个主分类名称"""
+    def test_overview_table_contains_all_17_categories(self):
+        """[2] 概览表包含全部 17 个主分类名称（与 server/tools/_categories.py 对齐）"""
         content = _read_file(MCP_TOOLS)
-        missing = [c for c in EXPECTED_MAIN_CATEGORIES if c not in content]
+        missing = [c for c in EXPECTED_MCP_CATEGORIES if c not in content]
         assert not missing, f"mcp_tools.md 概览缺少分类: {missing}"
 
     def test_has_cli_mcp_mapping_section(self):
@@ -195,12 +179,12 @@ class TestArchitectureDoc:
             "缺少 'subcommand 为主' 的方向说明"
 
     def test_section_has_12_categories_table(self):
-        """[3] 章节包含 12 主分类设计表"""
+        """[3] 章节包含 21 主分类设计表"""
         content = _read_file(ARCHITECTURE)
         idx = content.find("命令风格统一规范")
         section = content[idx:idx + 10000]
-        assert "12 主分类设计" in section or "12 主分类" in section, \
-            "缺少 12 主分类设计表"
+        assert "21 主分类设计" in section or "21 主分类" in section, \
+            "缺少 21 主分类设计表"
 
     def test_section_has_three_phase_migration(self):
         """[3] 章节包含三阶段迁移时间线"""

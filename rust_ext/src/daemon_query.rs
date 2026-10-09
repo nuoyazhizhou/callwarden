@@ -595,6 +595,42 @@ const METHODS: &[MethodInfo] = &[
         description: "原子替换 resolved edge 缓存（workspace owner）",
         admin_only: false,
     },
+    // ---- 审计 20261009（9 个 CLI 接线断修复）：补注册的 CLI 缺失方法 ----
+    MethodInfo {
+        method: "get_project_dashboard",
+        description: "项目综合驾驶舱（overview/code_scale/code_quality/call_graph/task_risk/audit 聚合）",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "find_symbols_at_lines",
+        description: "批量行号→符号归属匹配（文件内最内层符号）",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "task.get_changed_files",
+        description: "按 task_id 查询任务变更文件列表（change_audit 去重）",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "rebuild_fts_index",
+        description: "FTS5 全文索引全量重建（含触发器重建，PROTECTED_MUTATION）",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "gc_archive",
+        description: "归档清理执行（候选筛选→归档/激活，PROTECTED_MUTATION）",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "detect_clones",
+        description: "MinHash/LSH 克隆检测并落库 clone_pairs（PROTECTED_MUTATION）",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "list_rollback_configs",
+        description: "批量查询回滚配置（按 phase/rollback_flag 过滤）",
+        admin_only: false,
+    },
 ];
 
 /// RPC 错误码信息

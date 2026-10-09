@@ -1,9 +1,9 @@
 {
   "scope": "server-python",
-  "scanned_files": 57,
-  "finding_count": 83,
-  "files_with_findings": 4,
-  "retired_files_count": 14,
+  "scanned_files": 58,
+  "finding_count": 87,
+  "files_with_findings": 5,
+  "retired_files_count": 11,
   "retired_files": {
     "server/compat_registry.py": "compat 过渡期声明文件（http-daemon-mvp-compatibility-contract §3.3）；生产主链 = Rust dispatch_rpc，registry 仅 _h_* worker 用",
     "server/compat_worker.py": "compat 过渡期 worker（Rust compat_adapter 管理）；check_client_purity 对_h_* 区间豁免（设计 Q5，白名单只减不加）",
@@ -14,9 +14,6 @@
     "server/job_executor.py": "文件头声明：sqlite3.connect 仅供存量 phase7 测试与进程内 executor；Rust task.job_status/list_jobs/job_stats 已由 SnapshotDaemonState 实现",
     "server/replicator.py": "Rust mcp.replicator.* 路由已接管（dispatch.rs:2960-2966）；本文件 sqlite3 实现仅 legacy 复制器使用",
     "server/tools/tools_collab.py": "残留全在 compat _h_* 处理器区间（check_client_purity 实测 0 违例）；HTTP 模式走 Rust dispatch.handle_collab_rpc",
-    "server/tools/tools_p2_graph.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust query.* 路由",
-    "server/tools/tools_p3_identity.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust identity 路由",
-    "server/tools/tools_p4_lease.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust lease 路由",
     "server/tools/tools_security.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust 安全路由",
     "server/tools/tools_task.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust task.* 路由"
   },
@@ -25,7 +22,8 @@
     "server/cas_schema.py": 34,
     "server/daemon_registry.py": 14,
     "server/migrate.py": 4,
-    "server/toolchain_store.py": 31
+    "server/toolchain_store.py": 31,
+    "server/tools/tools_dependency_graph.py": 4
   },
   "findings": [
     {
@@ -608,6 +606,34 @@
       "line": 1188,
       "kind": "sql_execute",
       "detail": "conn.execute"
+    },
+    {
+      "file": "server/tools/tools_dependency_graph.py",
+      "handler": "_h_validate_revision_dependencies",
+      "line": 298,
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
+    },
+    {
+      "file": "server/tools/tools_dependency_graph.py",
+      "handler": "_h_validate_revision_dependencies",
+      "line": 339,
+      "kind": "db_helper",
+      "detail": "db.get_interface_providers"
+    },
+    {
+      "file": "server/tools/tools_dependency_graph.py",
+      "handler": "_h_validate_revision_dependencies",
+      "line": 349,
+      "kind": "db_helper",
+      "detail": "db.get_provider_selection"
+    },
+    {
+      "file": "server/tools/tools_dependency_graph.py",
+      "handler": "_h_validate_revision_dependencies",
+      "line": 372,
+      "kind": "db_helper",
+      "detail": "db.conn.execute"
     }
   ]
 }

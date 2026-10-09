@@ -34,6 +34,7 @@ if REPO_ROOT not in sys.path:
 
 from test_http_daemon_release_acceptance import (  # noqa: E402
     _backup_http_manifest,
+    _isolated_manifest_path,
     _restore_or_clean_http_manifest,
     _spawn_isolated_daemon,
     _terminate,
@@ -120,10 +121,11 @@ def e2e_daemon():
     bin_path = _pick_bin()
     data_root = tempfile.mkdtemp(prefix="cw_rp10_e2e_")
     ws_root = tempfile.mkdtemp(prefix="cw_rp10_ws_")
-    backup = _backup_http_manifest()
+    manifest_path = _isolated_manifest_path(data_root)
+    backup = _backup_http_manifest(manifest_path)
     proc = _spawn_isolated_daemon(bin_path, data_root)
     try:
-        manifest = _wait_manifest(proc, timeout=30)
+        manifest = _wait_manifest(proc, data_root, timeout=30)
         if manifest is None:
             stdout = proc.stdout.read(4000).decode("utf-8", "replace") if proc.stdout else ""
             stderr = proc.stderr.read(4000).decode("utf-8", "replace") if proc.stderr else ""
@@ -164,7 +166,7 @@ def e2e_daemon():
         }
     finally:
         _terminate(proc)
-        _restore_or_clean_http_manifest(proc.pid, backup)
+        _restore_or_clean_http_manifest(manifest_path, proc.pid, backup)
         shutil.rmtree(data_root, ignore_errors=True)
         shutil.rmtree(ws_root, ignore_errors=True)
 
@@ -207,6 +209,11 @@ def _run_cli(e2e_daemon, *args: str, task_id: str | None = None) -> subprocess.C
     # 显式 loopback endpoint（frozen contract §4.1 显式发现路径）
     env["CW_DAEMON_HTTP_ENDPOINT"] = e2e_daemon["endpoint"]
     env.pop("CW_DAEMON_TRANSPORT", None)
+    # manifest 作用域与 daemon 对齐（族D）：CLI 侧 get_http_manifest_dir() 与
+    # daemon http_manifest_dir() 同读 USERPROFILE/HOME（config.py:1615/2005）。
+    # 不重定向则 CLI 解析真实 HOME 的生产 manifest，/health PID 与之不一致 →
+    # E_HTTP_MANIFEST_STALE；重定向后 CLI 只见隔离 daemon 的 manifest。
+    env["USERPROFILE"] = e2e_daemon["data_root"]
     return subprocess.run(
         [sys.executable, "cw.py", "task", "prompt", task_id or e2e_daemon["task_id"], *args],
         capture_output=True, text=True, cwd=REPO_ROOT, env=env, timeout=120,

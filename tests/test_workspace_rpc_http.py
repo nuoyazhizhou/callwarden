@@ -250,51 +250,22 @@ class TestToolsWorkspaceHttpBranches:
 
 
 # ----------------------------------------------------------------------
-# 进程级 round-trip（设计性 skip：生产 daemon 占用默认 HTTP 端口时跳过）
+# 进程级 round-trip（USERPROFILE 重定向隔离，生产 daemon 并行运行时仍可执行）
 # ----------------------------------------------------------------------
-
-def _http_manifest_occupied() -> bool:
-    """判断权威 HTTP manifest 是否"占用"（有效或 stale 均视为占用）。
-
-    生产 daemon（transport=http）运行中时 manifest 有效 → True（skip）。
-    manifest 存在但 stale（PID 已死，例如隔离测试 daemon 残留）→ 也返回
-    True：此时无法可靠区分"生产 daemon 仍在跑但 manifest 被覆盖"与"确无
-    daemon"，而启动隔离 daemon 必然覆盖 ~/.callwarden 权威 manifest（H6
-    固定目录），属于禁止路径；保守 skip 对齐 test_query_issues_rpc.py 的
-    设计性 skip 模式。仅当 E_HTTP_MANIFEST_MISSING（manifest 完全不存在，
-    即从未有 daemon 发布过）才返回 False 允许启动隔离 daemon。
-    """
-    from callwarden.config import get_http_authority_id
-    from callwarden.server.daemon_autostart import resolve_http_endpoint_and_manifest
-    from callwarden.server.daemon_client import HttpDaemonRpcClient
-    try:
-        endpoint, _manifest = resolve_http_endpoint_and_manifest(
-            authority_id=get_http_authority_id()
-        )
-    except DaemonRemoteError as exc:
-        # E_HTTP_MANIFEST_MISSING：确实无 manifest → 允许隔离 daemon
-        if getattr(exc, "code", "") == "E_HTTP_MANIFEST_MISSING":
-            return False
-        # E_HTTP_MANIFEST_STALE 等：manifest 存在但不可用 → 保守视为占用
-        return True
-    client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
-    client._resolved_endpoint = endpoint
-    try:
-        resp = client.call("ping")
-        return not (isinstance(resp, dict) and resp.get("status") == "ok")
-    except Exception:
-        # manifest 有效但 ping 失败：同样保守视为占用（可能是竞态）
-        return True
-
 
 def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。
 
     对齐 test_http_native_read_cutover.py _spawn_isolated_daemon：经环境变量
     配置隔离数据目录，`--http-bind 127.0.0.1:0` 随机端口避免与生产冲突。
-    注意：HTTP manifest 仍写入 ~/.callwarden（http_manifest_dir 固定），仅
-    在确认生产 daemon 未运行时才允许本路径（测试结束 terminate 后，生产
-    daemon 下次启动会重新发布权威 manifest）。
+
+    stale 修正（族D，daemon 换实例后 100% 复现）：daemon 的
+    http_manifest_dir() 读 USERPROFILE/HOME（rust_ext/src/daemon/http_server.rs:1624），
+    不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
+    原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
+    E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
+    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
+    生产 daemon 不受影响，无需 skip。
     """
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
@@ -302,6 +273,8 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
     env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+    # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
+    env["USERPROFILE"] = data_root
     proc = subprocess.Popen(
         [bin_path, "--http-bind=" + http_bind],
         env=env,
@@ -311,13 +284,17 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     return proc
 
 
-def _wait_isolated_manifest(proc, timeout=15.0):
-    """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配）。"""
+def _wait_isolated_manifest(proc, data_root, timeout=15.0):
+    """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配）。
+
+    stale 修正（族D）：manifest 现写入 data_root/.callwarden（USERPROFILE
+    重定向后），轮询 data_root 而非真实 HOME。
+    """
     from callwarden.config import get_http_authority_id
     authority = get_http_authority_id()
     safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
     manifest_path = os.path.join(
-        os.path.expanduser("~"), ".callwarden",
+        data_root, ".callwarden",
         f"http-daemon.{safe}.manifest.json",
     )
     deadline = time.time() + timeout
@@ -350,24 +327,16 @@ def _terminate(proc):
 
 
 class TestRealDaemonWorkspaceRoundTrip:
-    """真实 daemon 进程级 workspace.status/list round-trip（设计性 skip）。
+    """真实 daemon 进程级 workspace.status/list round-trip（USERPROFILE 隔离）。
 
-    生产 daemon（transport=http）占用默认 HTTP 端口与 ~/.callwarden 权威
-    manifest 时跳过：直接连生产 daemon 会污染生产 registry（daemon_workspaces
-    表），启动隔离 daemon 会覆盖权威 manifest，均不可接受 —— 对齐
-    test_query_issues_rpc.py 的"默认管道被占用则 skip"设计性 skip 模式。
-    无 daemon 响应时才启动隔离 daemon（随机端口）验证拒绝矩阵。
+    隔离 daemon 经 USERPROFILE=data_root 重定向 manifest 与 single-instance 锁
+    到 data_root/.callwarden，与生产 daemon 完全隔离——即使生产 daemon 正在
+    运行（占用默认 HTTP 端口与权威 manifest）也可并行执行，不污染生产
+    registry（daemon_workspaces 表）、不覆盖 ~/.callwarden 权威 manifest。
     """
 
     @pytest.fixture
     def real_daemon_client(self, tmp_path):
-        if _http_manifest_occupied():
-            pytest.skip(
-                "权威 HTTP manifest 被占用（生产 daemon 运行中或残留 stale "
-                "manifest）；为避免污染生产 registry（daemon_workspaces 表）与"
-                "覆盖 ~/.callwarden 权威 manifest，进程级 round-trip 设计性 "
-                "skip（对齐 test_query_issues_rpc.py 管道占用 skip 模式）"
-            )
         bin_path = _DAEMON_BIN
         if not os.path.exists(bin_path):
             pytest.skip("cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）")
@@ -375,9 +344,14 @@ class TestRealDaemonWorkspaceRoundTrip:
         os.makedirs(data_root, exist_ok=True)
         proc = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
         try:
-            manifest = _wait_isolated_manifest(proc)
+            manifest = _wait_isolated_manifest(proc, data_root)
             if manifest is None:
-                pytest.fail("隔离 daemon 未在超时内发布 manifest")
+                stdout = (proc.stdout.read(4000).decode("utf-8", "replace")
+                          if proc.stdout else "")
+                stderr = (proc.stderr.read(4000).decode("utf-8", "replace")
+                          if proc.stderr else "")
+                pytest.fail(
+                    f"隔离 daemon 未在超时内发布 manifest\nstdout={stdout}\nstderr={stderr}")
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],

@@ -3280,15 +3280,55 @@ impl DaemonStateExt for SnapshotDaemonState {
             }
 
             // ---- A 类 compat 修复：rollback 配置读组（task DB,全局无 workspace）----
-            "get_rollback_config" | "is_feature_rolled_back" => {
+            "get_rollback_config" | "is_feature_rolled_back" | "list_rollback_configs" => {
                 let conn = self.open_task_db_readonly()?;
                 match method {
                     "get_rollback_config" => {
                         super::compat_native_handlers::handle_get_rollback_config(&conn, params)
                     }
+                    "list_rollback_configs" => super::compat_native_handlers::handle_list_rollback_configs(&conn, params),
                     _ => {
                         super::compat_native_handlers::handle_is_feature_rolled_back(&conn, params)
                     }
+                }
+            }
+
+            // ---- 审计 20261009：CLI 接线补注册读面（workspace 主库只读）----
+            // C1 find_symbols_at_lines（行号→符号归属批量匹配）、
+            // C4 task.get_changed_files（change_audit DISTINCT file_path）、
+            // C3 get_project_dashboard（驾驶舱聚合，quick 必选参数路径）
+            "find_symbols_at_lines" | "task.get_changed_files" | "get_project_dashboard" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_query_connection(peer, ws)?;
+                match method {
+                    "find_symbols_at_lines" => {
+                        query_compat::handle_find_symbols_at_lines(&conn, workspace_id, params)
+                    }
+                    "get_project_dashboard" => {
+                        query_compat::handle_get_project_dashboard(&conn, workspace_id, params)
+                    }
+                    _ => query_compat::handle_task_get_changed_files(&conn, workspace_id, params),
+                }
+            }
+
+            // ---- 审计 20261009 补注册的 CLI 写面（C2/C5/C6，PROTECTED_MUTATION）----
+            // C2 rebuild_fts_index（FTS5 全量重建）、C5 gc_archive（归档清理执行）、
+            // C6 detect_clones（克隆检测落库）。写连接 + 真 workspace_id 解析
+            // 复用 open_codegraph_db_write（C-17：registry 代理 rowid ≠ workspaces.id，
+            // 理由详见上方 admin 块注释）。
+            "rebuild_fts_index" | "gc_archive" | "detect_clones" => {
+                let ws = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) = self.open_codegraph_db_write(peer, ws)?;
+                match method {
+                    "rebuild_fts_index" => super::compat_native_handlers::handle_rebuild_fts_index(
+                        &conn, workspace_id, params,
+                    ),
+                    "gc_archive" => {
+                        super::compat_native_handlers::handle_gc_archive(&conn, workspace_id, params)
+                    }
+                    _ => super::compat_native_handlers::handle_detect_clones(
+                        &conn, workspace_id, params,
+                    ),
                 }
             }
 

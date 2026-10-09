@@ -1,0 +1,8 @@
+{
+  "home": "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_seed_home_cvwzgt_l",
+  "seed_project": "C:\\git_work\\callwarden\\testcode\\code-review-graph",
+  "refresh_rc": 1,
+  "refresh_seconds": 0.2,
+  "stats_rc": 2,
+  "stats_output_head": "✗ 执行子命令 'stats' 失败: E_HTTP_MANIFEST_MISSING: 未设置 CW_DAEMON_HTTP_ENDPOINT 且未找到 authority-scoped manifest；fail-closed（不回退 Named Pipe/UDS/SQLite）"
+}

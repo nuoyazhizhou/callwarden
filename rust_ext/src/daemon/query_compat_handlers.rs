@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 
-use crate::daemon::dispatch::{get_int_param_or, get_str_param, get_str_param_or, DaemonRpcError};
+use crate::daemon::dispatch::{
+    get_int_param_or, get_str_param, get_str_param_or, require_str_param, DaemonRpcError,
+};
 
 /// 查询结果行数上限（QueryBudget 常量，防止 BFS/DFS 指数爆炸）。
 const MAX_RESULT_ROWS: i64 = 500;
@@ -6487,9 +6489,15 @@ pub fn handle_summary_guardrail_list_rules(
             )))
         }
     };
-    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
-        Ok(json!({
-            "rule_id": r.get::<_, String>(0)?,
+    // 旧缺陷期（guardrail_add_rule 漏插 rule_id）遗留的 NULL rule_id 行：
+    // 主键为 NULL 无法被任何 API 寻址，跳过而非让整批查询失败。
+    let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Option<Value>> {
+        let rule_id: Option<String> = r.get(0)?;
+        if rule_id.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(json!({
+            "rule_id": rule_id,
             "category": r.get::<_, String>(1)?,
             "severity": r.get::<_, String>(2)?,
             "pattern": r.get::<_, String>(3)?,
@@ -6497,7 +6505,7 @@ pub fn handle_summary_guardrail_list_rules(
             "description": r.get::<_, String>(5)?,
             "is_builtin": r.get::<_, i64>(6)? != 0,
             "created_at": r.get::<_, f64>(7)?,
-        }))
+        })))
     };
     let rows: Vec<Value> = if category_filter.trim().is_empty() {
         stmt.query_map([], map_row)
@@ -6506,8 +6514,712 @@ pub fn handle_summary_guardrail_list_rules(
     }
     .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_list_rules query: {e}")))?
     .collect::<rusqlite::Result<Vec<_>>>()
-    .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_list_rules row: {e}")))?;
+    .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_list_rules row: {e}")))?
+    .into_iter()
+    .flatten()
+    .collect();
     Ok(json!(rows))
+}
+
+/// `task.get_changed_files` —— 任务变更文件列表（审计 20261009 C4：CLI 接线补
+/// daemon handler）。复刻 db/db_check_gate.py get_task_changed_files：
+/// change_audit 按 task_id 查 DISTINCT file_path（过滤空值）。
+pub fn handle_task_get_changed_files(
+    conn: &Connection,
+    _workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let task_id = require_str_param(params, "task_id")?;
+    let paths: Vec<String> = conn
+        .prepare(
+            "SELECT DISTINCT file_path FROM change_audit \
+             WHERE task_id = ?1 AND file_path IS NOT NULL AND file_path != '' \
+             ORDER BY file_path",
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("task_get_changed_files prepare: {e}"))
+        })?
+        .query_map(rusqlite::params![task_id], |r| r.get::<_, String>(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("task_get_changed_files query: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("task_get_changed_files rows: {e}")))?;
+    Ok(json!(paths))
+}
+
+/// `find_symbols_at_lines` —— 批量行号→符号归属（审计 20261009 C1：CLI 接线补
+/// daemon handler）。复刻 db/db_query.py find_symbols_at_lines：一次取文件全部
+/// 有行区间的符号（按区间宽度升序），行号匹配取第一个命中（最内层），避免
+/// N 次 SQL。返回 {行号字符串: 符号对象或 null}。
+pub fn handle_find_symbols_at_lines(
+    conn: &Connection,
+    workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let file_path = require_str_param(params, "file_path")?;
+    // lines 宽容解析：JSON 数组或逗号/空白分隔字符串
+    let mut lines: Vec<i64> = params
+        .get("lines")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(|x| x.as_i64()).collect())
+        .unwrap_or_default();
+    if lines.is_empty() {
+        if let Some(s) = params.get("lines").and_then(Value::as_str) {
+            lines = s
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|t| !t.is_empty())
+                .filter_map(|t| t.parse::<i64>().ok())
+                .collect();
+        }
+    }
+    // 绝对路径 → 相对路径（对齐 Python os.path.relpath(file, workspace_root)）
+    let root: String = conn
+        .query_row(
+            "SELECT root_path FROM workspaces WHERE id = ?1",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("find_symbols_at_lines root: {e}")))?
+        .unwrap_or_default();
+    let normalized = file_path.replace('\\', "/");
+    let rel_path = {
+        let root_norm = root.replace('\\', "/");
+        let root_trim = root_norm.trim_end_matches('/');
+        if !root_trim.is_empty() {
+            normalized
+                .strip_prefix(&format!("{root_trim}/"))
+                .map(str::to_string)
+                .unwrap_or(normalized)
+        } else {
+            normalized
+        }
+    };
+    let symbols: Vec<(String, String, String, i64, i64)> = conn
+        .prepare(
+            "SELECT s.qualified_name, s.name, s.kind, s.start_line, s.end_line \
+             FROM symbols s \
+             JOIN file_instances fi ON s.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND fi.rel_path = ?2 AND fi.status != 'archived' \
+               AND s.start_line > 0 AND s.end_line > 0 \
+             ORDER BY (s.end_line - s.start_line) ASC",
+        )
+        .map_err(|e| {
+            DaemonRpcError::internal_error(format!("find_symbols_at_lines prepare: {e}"))
+        })?
+        .query_map(rusqlite::params![workspace_id, rel_path], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(|e| DaemonRpcError::internal_error(format!("find_symbols_at_lines query: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("find_symbols_at_lines rows: {e}")))?;
+    let mut result = Map::new();
+    for line in lines {
+        let matched = symbols
+            .iter()
+            .find(|s| s.3 <= line && line <= s.4);
+        let jv = match matched {
+            Some(s) => json!({
+                "qualified_name": s.0,
+                "name": s.1,
+                "kind": s.2,
+                "start_line": s.3,
+                "end_line": s.4,
+            }),
+            None => Value::Null,
+        };
+        result.insert(line.to_string(), jv);
+    }
+    Ok(Value::Object(result))
+}
+
+/// `get_project_dashboard` —— 项目综合驾驶舱（审计 20261009 C3：CLI 接线补
+/// daemon handler）。复刻 db/db_dashboard.py get_project_dashboard 的 quick
+/// 模式必选路径：
+/// - overview / code_scale / code_quality / call_graph：全 SQL 聚合
+/// - task_risk / audit：复刻 cli/security.rs bootstrap_status 的纯 COUNT 语义
+/// - evolution：昂贵可选路径（需 git history），恒返回 null（CLI 渲染为「未计算」）
+/// - with_cycles=true 时不做循环检测（cycles_count=null，与 Python 未启用时一致）
+/// section 级异常隔离对齐 Python：单 section 失败返回 {"error": ...} 不影响其余。
+pub fn handle_get_project_dashboard(
+    conn: &Connection,
+    workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let _with_cycles = params
+        .get("with_cycles")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let _with_evolution = params
+        .get("with_evolution")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    // full 模式（quick=false 需 Python 圈复杂度逐函数计算）daemon 暂不支持，按 quick 聚合
+    let _quick = params.get("quick").and_then(Value::as_bool).unwrap_or(true);
+    let top_n = params
+        .get("top_n")
+        .and_then(Value::as_i64)
+        .unwrap_or(5)
+        .clamp(1, 50);
+
+    // get_stats 等价聚合（db_query.py get_stats 的 dashboard 所需子集），
+    // 被 code_scale 与 call_graph 共用，失败时降级 None（各 section 自行兜底）
+    let cached_stats = dash_get_stats(conn, workspace_id).ok();
+    let mut result = Map::new();
+
+    // ── 1. overview ──
+    let (git_head, is_git, db_stale) = dash_overview_git(conn, workspace_id);
+    result_insert(
+        &mut result,
+        "overview",
+        dash_section(|| dash_overview(conn, workspace_id, &git_head, is_git, db_stale)),
+    );
+
+    // ── 2. code_scale ──
+    let stats_ref = cached_stats.clone();
+    result_insert(
+        &mut result,
+        "code_scale",
+        dash_section(|| dash_code_scale(conn, workspace_id, stats_ref)),
+    );
+
+    // ── 3. code_quality（quick）──
+    result_insert(
+        &mut result,
+        "code_quality",
+        dash_section(|| dash_code_quality(conn, workspace_id, top_n)),
+    );
+
+    // ── 4. call_graph ──
+    let stats_ref = cached_stats.clone();
+    result_insert(
+        &mut result,
+        "call_graph",
+        dash_section(|| dash_call_graph(conn, workspace_id, stats_ref)),
+    );
+
+    // ── 5. task_risk（复刻 bootstrap_status 纯 COUNT + 推荐动作链）──
+    result_insert(
+        &mut result,
+        "task_risk",
+        dash_section(|| dash_task_risk(conn, db_stale)),
+    );
+
+    // ── 6. audit ──
+    result_insert(&mut result, "audit", dash_section(|| dash_audit(conn)));
+
+    // ── 7. evolution：daemon quick 路径未实现，恒 null（对齐 Python with_evolution=false）──
+    result.insert("evolution".to_string(), Value::Null);
+
+    Ok(Value::Object(result))
+}
+
+/// section 包装：Err → {"error": str}（对齐 Python per-section try/except）
+fn dash_section<F: FnOnce() -> Result<Value, DaemonRpcError>>(f: F) -> Value {
+    match f() {
+        Ok(v) => v,
+        Err(e) => json!({ "error": e.to_string() }),
+    }
+}
+
+fn result_insert(result: &mut Map<String, Value>, key: &str, value: Value) {
+    result.insert(key.to_string(), value);
+}
+
+/// get_stats 等价聚合（db_query.py get_stats 子集：total_files / total_lines /
+/// total_symbols / commented / total_file_symbol_links / by_kind /
+/// total_calls / resolved_calls / cross_file_calls / depth_distribution）
+fn dash_get_stats(conn: &Connection, workspace_id: i64) -> Result<Value, DaemonRpcError> {
+    let (total_files, total_lines): (i64, i64) = conn
+        .query_row(
+            "SELECT \
+                (SELECT COUNT(*) FROM file_instances \
+                 WHERE workspace_id = ?1 AND status != 'archived'), \
+                (SELECT COALESCE(SUM(total_lines), 0) FROM file_instances \
+                 WHERE workspace_id = ?1 AND status != 'archived')",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash files: {e}")))?;
+    let (total_symbols, commented): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), \
+                    COALESCE(SUM(CASE WHEN s.comment_status = 'done' THEN 1 ELSE 0 END), 0) \
+             FROM symbols s \
+             JOIN file_instances fi ON s.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash symbols: {e}")))?;
+    let (total_calls, cross_file_calls, resolved_calls): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), \
+                    COALESCE(SUM(CASE WHEN c.is_cross_file = 1 THEN 1 ELSE 0 END), 0), \
+                    COALESCE(SUM(CASE WHEN c.callee_id IS NOT NULL THEN 1 ELSE 0 END), 0) \
+             FROM calls c \
+             JOIN symbols s ON c.caller_id = s.id \
+             JOIN file_instances fi ON s.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash calls: {e}")))?;
+    let total_file_symbol_links: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM file_symbol_versions fsv \
+             JOIN file_versions fv ON fsv.file_version_id = fv.id \
+             JOIN file_instances fi ON fv.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash fsv: {e}")))?;
+    let mut by_kind = Map::new();
+    let rows = conn
+        .prepare(
+            "SELECT s.kind, COUNT(*) AS cnt FROM symbols s \
+             WHERE s.file_instance_id IN ( \
+                 SELECT id FROM file_instances \
+                 WHERE workspace_id = ?1 AND status != 'archived') \
+             GROUP BY s.kind ORDER BY cnt DESC",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash by_kind: {e}")))?
+        .query_map([workspace_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash by_kind q: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash by_kind r: {e}")))?;
+    for (kind, cnt) in rows {
+        by_kind.insert(kind, json!(cnt));
+    }
+    let mut depth_distribution = Map::new();
+    let rows = conn
+        .prepare(
+            "SELECT s.depth, COUNT(*) AS cnt FROM symbols s \
+             WHERE s.file_instance_id IN ( \
+                 SELECT id FROM file_instances \
+                 WHERE workspace_id = ?1 AND status != 'archived') \
+               AND s.kind IN ('fn', 'test_fn') AND s.depth >= 0 \
+             GROUP BY s.depth ORDER BY s.depth",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash depth: {e}")))?
+        .query_map([workspace_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash depth q: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash depth r: {e}")))?;
+    for (depth, cnt) in rows {
+        depth_distribution.insert(depth.to_string(), json!(cnt));
+    }
+    Ok(json!({
+        "total_files": total_files,
+        "total_lines": total_lines,
+        "total_symbols": total_symbols,
+        "commented": commented,
+        "total_file_symbol_links": total_file_symbol_links,
+        "total_calls": total_calls,
+        "cross_file_calls": cross_file_calls,
+        "resolved_calls": resolved_calls,
+        "by_kind": Value::Object(by_kind),
+        "depth_distribution": Value::Object(depth_distribution),
+    }))
+}
+
+/// overview 的 git 探测：root_path 下跑 `git rev-parse HEAD`（对齐 Python
+/// _is_git_repo + _get_git_head），db_stale 对比最近一次 scan 的 git_head。
+/// 任何失败静默降级（is_git=false），与 Python try/except 一致。
+fn dash_overview_git(conn: &Connection, workspace_id: i64) -> (String, bool, bool) {
+    let root: String = conn
+        .query_row(
+            "SELECT root_path FROM workspaces WHERE id = ?1",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .unwrap_or_default();
+    let git_head = std::process::Command::new("git")
+        .args(["-C", &root, "rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    let scan_head: Option<String> = conn
+        .query_row(
+            "SELECT git_head FROM workspace_scan_runs \
+             WHERE workspace_id = ?1 AND git_head != '' \
+             ORDER BY started_at DESC, id DESC LIMIT 1",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+    let is_git = git_head.is_some();
+    let db_stale = match (&git_head, &scan_head) {
+        (Some(head), Some(scan)) => head != scan,
+        _ => false,
+    };
+    (git_head.unwrap_or_default(), is_git, db_stale)
+}
+
+/// overview section（db_dashboard.py _dashboard_overview）
+fn dash_overview(
+    conn: &Connection,
+    workspace_id: i64,
+    git_head: &str,
+    is_git: bool,
+    db_stale: bool,
+) -> Result<Value, DaemonRpcError> {
+    let (ws_name, root_path): (String, String) = conn
+        .query_row(
+            "SELECT name, root_path FROM workspaces WHERE id = ?1",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash overview ws: {e}")))?
+        .unwrap_or(("unknown".to_string(), String::new()));
+    let last_build: i64 = conn
+        .query_row(
+            // last_parsed 是 REAL（epoch 浮点）；CAST 保整数语义，否则
+            // rusqlite 按 i64 读 Real 列报 Invalid column type（20261009 实测）
+            "SELECT CAST(COALESCE(MAX(last_parsed), 0) AS INTEGER) FROM file_instances \
+             WHERE workspace_id = ?1 AND last_parsed > 0",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash overview build: {e}")))?
+        .unwrap_or(0);
+    // db_size：PRAGMA database_list 拿主库文件路径（daemon 上下文无 self.db_path）
+    let mut db_size: u64 = 0;
+    if let Ok(mut stmt) = conn.prepare("PRAGMA database_list") {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        }) {
+            for row in rows.flatten() {
+                if row.1 == "main" && !row.2.is_empty() {
+                    if let Ok(meta) = std::fs::metadata(&row.2) {
+                        db_size = meta.len();
+                    }
+                }
+            }
+        }
+    }
+    let latest_scan_run: Option<(i64, String, f64, String)> = conn
+        .query_row(
+            "SELECT id, git_head, started_at, status FROM workspace_scan_runs \
+             WHERE workspace_id = ?1 ORDER BY started_at DESC, id DESC LIMIT 1",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash overview scan: {e}")))?;
+    let latest_scan_json = latest_scan_run
+        .map(|(id, git_head, started_at, status)| {
+            json!({ "id": id, "git_head": git_head, "started_at": started_at, "status": status })
+        });
+    Ok(json!({
+        "workspace_name": ws_name,
+        "root_path": root_path,
+        "is_git_repo": is_git,
+        "git_head": if git_head.is_empty() { String::new() } else { git_head.chars().take(12).collect::<String>() },
+        "last_build_ts": last_build,
+        "db_size_bytes": db_size,
+        "db_stale": db_stale,
+        "latest_scan_run": latest_scan_json,
+    }))
+}
+
+/// code_scale section（db_dashboard.py _dashboard_code_scale）
+fn dash_code_scale(
+    conn: &Connection,
+    workspace_id: i64,
+    stats: Option<Value>,
+) -> Result<Value, DaemonRpcError> {
+    let stats = match stats {
+        Some(v) => v,
+        None => dash_get_stats(conn, workspace_id)?,
+    };
+    // by_language：首点切段后再取末段（对齐 Python substr(instr)+rsplit 两步）
+    let mut by_language: std::collections::BTreeMap<String, i64> = Default::default();
+    let rows = conn
+        .prepare(
+            "SELECT substr(rel_path, instr(rel_path, '.') + 1) AS ext, COUNT(*) AS cnt \
+             FROM file_instances \
+             WHERE workspace_id = ?1 AND status != 'archived' AND rel_path LIKE '%.%' \
+             GROUP BY ext ORDER BY cnt DESC",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash lang: {e}")))?
+        .query_map([workspace_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash lang q: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash lang r: {e}")))?;
+    for (ext, cnt) in rows {
+        let key = ext.rsplit('.').next().unwrap_or(&ext).to_string();
+        if key.is_empty() {
+            continue;
+        }
+        *by_language.entry(key).or_insert(0) += cnt;
+    }
+    let by_language_json: Map<String, Value> = by_language
+        .into_iter()
+        .map(|(k, v)| (k, json!(v)))
+        .collect();
+    Ok(json!({
+        "total_files": stats.get("total_files").and_then(Value::as_i64).unwrap_or(0),
+        "total_lines": stats.get("total_lines").and_then(Value::as_i64).unwrap_or(0),
+        "total_symbols": stats.get("total_symbols").and_then(Value::as_i64).unwrap_or(0),
+        "total_function_versions": stats.get("total_file_symbol_links").and_then(Value::as_i64).unwrap_or(0),
+        "by_kind": stats.get("by_kind").cloned().unwrap_or_else(|| json!({})),
+        "by_language": Value::Object(by_language_json),
+        "commented_symbols": stats.get("commented").and_then(Value::as_i64).unwrap_or(0),
+    }))
+}
+
+/// code_quality section（db_dashboard.py _dashboard_code_quality 的 quick 分支）
+fn dash_code_quality(
+    conn: &Connection,
+    workspace_id: i64,
+    top_n: i64,
+) -> Result<Value, DaemonRpcError> {
+    let uncommented_fns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM symbols s \
+             WHERE s.has_comment = 0 AND s.kind IN ('fn', 'test_fn', 'method') \
+               AND s.file_instance_id IN ( \
+                   SELECT id FROM file_instances \
+                   WHERE workspace_id = ?1 AND status != 'archived')",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash cq uncommented: {e}")))?
+        .unwrap_or(0);
+    let (total, commented): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), \
+                    COALESCE(SUM(CASE WHEN s.has_comment = 1 THEN 1 ELSE 0 END), 0) \
+             FROM symbols s \
+             WHERE s.kind IN ('fn', 'function', 'method') \
+               AND s.file_instance_id IN ( \
+                   SELECT id FROM file_instances \
+                   WHERE workspace_id = ?1 AND status != 'archived')",
+            [workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash cq coverage: {e}")))?
+        .unwrap_or((0, 0));
+    let comment_coverage_pct = if total > 0 {
+        (commented as f64 / total as f64 * 100.0 * 10.0).round() / 10.0
+    } else {
+        0.0
+    };
+    let mut largest_fns: Vec<Value> = Vec::new();
+    let rows = conn
+        .prepare(
+            "SELECT s.qualified_name, s.kind, s.start_line, s.end_line, \
+                    s.module_path, s.depth, fi.rel_path \
+             FROM symbols s \
+             JOIN file_instances fi ON s.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND s.kind IN ('fn', 'function', 'method') \
+               AND s.start_line > 0 AND s.end_line > 0 \
+             ORDER BY (s.end_line - s.start_line) DESC LIMIT ?2",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash cq largest: {e}")))?
+        .query_map(rusqlite::params![workspace_id, top_n], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash cq largest q: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash cq largest r: {e}")))?;
+    for (qualified_name, _kind, start_line, end_line, module_path, depth, rel_path) in rows {
+        largest_fns.push(json!({
+            "qualified_name": qualified_name,
+            "file_path": rel_path,
+            "start_line": start_line,
+            "line_count": end_line - start_line + 1,
+            "depth": if depth >= 0 { depth } else { 0 },
+            "module_path": module_path,
+        }));
+    }
+    // quick 模式：跳过 Python 圈复杂度计算，avg/max/distribution/hotspots 置空
+    Ok(json!({
+        "avg_complexity": Value::Null,
+        "max_complexity": Value::Null,
+        "complexity_distribution": Value::Null,
+        "comment_coverage_pct": comment_coverage_pct,
+        "uncommented_fns": uncommented_fns,
+        "complexity_hotspots_top": [],
+        "largest_fns_top": largest_fns,
+        "quick_mode": true,
+    }))
+}
+
+/// call_graph section（db_dashboard.py _dashboard_call_graph）
+fn dash_call_graph(
+    conn: &Connection,
+    workspace_id: i64,
+    stats: Option<Value>,
+) -> Result<Value, DaemonRpcError> {
+    let stats = match stats {
+        Some(v) => v,
+        None => dash_get_stats(conn, workspace_id)?,
+    };
+    let total_calls = stats.get("total_calls").and_then(Value::as_i64).unwrap_or(0);
+    let resolved_calls = stats
+        .get("resolved_calls")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let cross_file_calls = stats
+        .get("cross_file_calls")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let resolve_rate_pct = if total_calls > 0 {
+        (resolved_calls as f64 / total_calls as f64 * 100.0 * 10.0).round() / 10.0
+    } else {
+        0.0
+    };
+    // orphans_count：COUNT 版孤立函数（对齐 Python，不拉明细行）
+    let orphans_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM file_symbol_versions fsv \
+             JOIN file_versions fv ON fsv.file_version_id = fv.id \
+             JOIN file_instances fi ON fv.file_instance_id = fi.id \
+             JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash \
+             WHERE fi.workspace_id = ?1 AND fv.is_current = 1 AND sc.kind = 'fn' \
+               AND fsv.qualified_name NOT IN ( \
+                   SELECT DISTINCT cv.callee_qualified FROM call_versions cv \
+                   JOIN file_versions fv2 ON cv.file_version_id = fv2.id \
+                   JOIN file_instances fi2 ON fv2.file_instance_id = fi2.id \
+                   WHERE fi2.workspace_id = ?1 AND fv2.is_current = 1 \
+                     AND cv.callee_qualified != '' AND cv.caller_qualified != '')",
+            [workspace_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash orphans: {e}")))?
+        .unwrap_or(0);
+    Ok(json!({
+        "total_calls": total_calls,
+        "resolved_calls": resolved_calls,
+        "resolve_rate_pct": resolve_rate_pct,
+        "cross_file_calls": cross_file_calls,
+        "cycles_count": Value::Null,
+        "orphans_count": orphans_count,
+        "depth_distribution": stats.get("depth_distribution").cloned().unwrap_or_else(|| json!({})),
+    }))
+}
+
+/// task_risk section（复刻 cli/security.rs bootstrap_status 的纯 COUNT 语义
+/// 与推荐动作优先级链；不跑 audit chain 验证——那属于 audit section）
+fn dash_task_risk(conn: &Connection, db_stale: bool) -> Result<Value, DaemonRpcError> {
+    let count = |where_clause: &str| -> i64 {
+        let sql = format!("SELECT COUNT(*) FROM task_quality_findings WHERE {where_clause}");
+        conn.query_row(&sql, [], |r| r.get::<_, i64>(0)).unwrap_or(0)
+    };
+    let open_findings_count = count("status = 'open'");
+    let blocking_findings_count = count("status = 'open' AND severity = 'block'");
+    let pending_rule_candidates: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM agent_rule_candidates WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let mut tasks = Map::new();
+    for status in ["open", "in_progress", "review", "applied"] {
+        tasks.insert(status.to_string(), json!(0));
+    }
+    if let Ok(mut stmt) = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status") {
+        if let Ok(rows) =
+            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        {
+            for (status, cnt) in rows.flatten() {
+                if tasks.contains_key(&status) {
+                    tasks.insert(status, json!(cnt));
+                }
+            }
+        }
+    }
+    let review_count = tasks
+        .get("review")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let recommended_action = if db_stale {
+        "cw refresh --all"
+    } else if blocking_findings_count > 0 {
+        "cw task findings <task_id>  # 有阻塞发现需修复"
+    } else if pending_rule_candidates > 0 {
+        "cw rule candidate  # 有待审核的候选规则"
+    } else if review_count > 0 {
+        "cw task apply <task_id>  # 有任务待审核"
+    } else {
+        "cw task list  # 一切正常，查看任务列表"
+    };
+    Ok(json!({
+        "task_counts": Value::Object(tasks),
+        "open_findings_count": open_findings_count,
+        "blocking_findings_count": blocking_findings_count,
+        "pending_rule_candidates": pending_rule_candidates,
+        "recommended_action": recommended_action,
+    }))
+}
+
+/// audit section（db_dashboard.py _dashboard_audit；audit chain 验证失败时
+/// 对齐 Python except 语义静默降级为 0，不拖垮整个 section）
+fn dash_audit(conn: &Connection) -> Result<Value, DaemonRpcError> {
+    let active_rules_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM agent_rules WHERE status = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let (broken_count, verified_count) =
+        match crate::cli::security::verify_audit_chain(conn, "", 500) {
+            Ok(r) => (r.broken_count, r.verified_count),
+            Err(_) => (0, 0),
+        };
+    let latest_scan_run: Option<(i64, String, f64, String)> = conn
+        .query_row(
+            "SELECT id, git_head, started_at, status FROM workspace_scan_runs \
+             ORDER BY started_at DESC, id DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("dash audit scan: {e}")))?;
+    Ok(json!({
+        "active_rules_count": active_rules_count,
+        "audit_broken_count": broken_count,
+        "audit_verified_count": verified_count,
+        "latest_scan_run": latest_scan_run.map(|(id, git_head, started_at, status)| {
+            json!({ "id": id, "git_head": git_head, "started_at": started_at, "status": status })
+        }),
+    }))
 }
 
 /// summary_read_file_normalized —— 复刻 config.read_file_normalized

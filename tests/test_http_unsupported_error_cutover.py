@@ -34,6 +34,7 @@ stale 依据（A 桶 / MCP 工具 `_route` 化）：
 
 import sys
 from pathlib import Path
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -92,6 +93,26 @@ def _module_name(module):
     return module.__name__
 
 
+@contextmanager
+def _no_local_get_db(module):
+    """「工具执行不触碰本地 get_db()」的 fail-closed 证据（族A 契约对齐）。
+
+    stale 依据（T-1791511742091-064b1c40 族A）：`_route` 化后部分模块
+    （tools_identity/tools_lease）已彻底移除 get_db 绑定，`patch(...get_db)`
+    直接 AttributeError。模块仍保留绑定时 patch 后断言未被调用；已无绑定时
+    hasattr 为 False 即无本地回退 seam 的结构性证明（沿用
+    test_http_native_read_cutover.py 先例），yield 一个永不被触达的 mock
+    保持调用点代码不变。
+    """
+    if hasattr(module, "get_db"):
+        with patch(f"{module.__name__}.get_db") as mock_db:
+            yield mock_db
+    else:
+        assert not hasattr(module, "get_db"), (
+            f"{module.__name__} 不应存在 get_db（本地回退 seam 已移除）")
+        yield MagicMock()
+
+
 # ============================================================
 # 1. 只读组：`_route(..., 'READ_ONLY')`
 # ============================================================
@@ -106,7 +127,9 @@ READ_ROUTE_CASES = [
      {"workspace_id": 1, "interface_name": "IFace", "version": "1.0"},
      "get_interface_providers",
      {"workspace_id": 1, "interface_name": "IFace", "version": "1.0"}),
-    ("tools_dependency_graph", "detect_cycle",
+    # stale 修正（族C）：源码工具已改名 detect_cycle → detect_dependency_cycle
+    # （tools_dependency_graph.py:168），RPC 真名仍为 detect_cycle（:179）
+    ("tools_dependency_graph", "detect_dependency_cycle",
      {"workspace_id": 1},
      "detect_cycle",
      {"workspace_id": 1}),
@@ -171,7 +194,7 @@ class TestReadToolsRouteReadOnly:
         calls = _route_recorder(monkeypatch, module, expected)
 
         tools = _register_tools(module)
-        with patch(f"{_module_name(module)}.get_db") as mock_db:
+        with _no_local_get_db(module) as mock_db:
             out = tools[tool_name](**kwargs)
             mock_db.assert_not_called()
 
@@ -194,7 +217,7 @@ class TestReadToolsRouteReadOnly:
 
         monkeypatch.setattr(module, "_route", _boom)
         tools = _register_tools(module)
-        with patch(f"{_module_name(module)}.get_db") as mock_db:
+        with _no_local_get_db(module) as mock_db:
             with pytest.raises(DaemonRemoteError):
                 tools[tool_name](**kwargs)
             mock_db.assert_not_called()
@@ -214,12 +237,16 @@ WRITE_ROUTE_CASES = [
       "contract_revision": 1, "dependencies": [],
       "job_type": "envelope_deps", "sync": True},
      "PROTECTED_MUTATION", True),
+    # stale 修正（族C）：daemon admin.record_artifact_identity 契约要求
+    # artifact_id（必参），工具壳已补声明与转发（tools_dependency_graph.py:63-90）
     ("tools_dependency_graph", "record_artifact_identity",
      {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
-      "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py"},
+      "contract_revision": 1, "artifact_id": "ART-001",
+      "artifact_type": "file", "artifact_ref": "src/main.py"},
      "admin.record_artifact_identity",
      {"workspace_id": 1, "task_id": "T-001", "contract_id": "C-001",
-      "contract_revision": 1, "artifact_type": "file", "artifact_ref": "src/main.py",
+      "contract_revision": 1, "artifact_id": "ART-001",
+      "artifact_type": "file", "artifact_ref": "src/main.py",
       "artifact_hash": "", "workspace_snapshot_id": ""},
      "GOVERNANCE_WRITE", False),
     ("tools_dependency_graph", "publish_interface",
@@ -296,7 +323,7 @@ class TestWriteToolsRouteMutation:
         calls = _route_recorder(monkeypatch, module, payload)
 
         tools = _register_tools(module)
-        with patch(f"{_module_name(module)}.get_db") as mock_db:
+        with _no_local_get_db(module) as mock_db:
             out = tools[tool_name](**kwargs)
             mock_db.assert_not_called()
 
@@ -321,7 +348,7 @@ class TestWriteToolsRouteMutation:
 
         monkeypatch.setattr(module, "_route", _boom)
         tools = _register_tools(module)
-        with patch(f"{_module_name(module)}.get_db") as mock_db:
+        with _no_local_get_db(module) as mock_db:
             with pytest.raises(DaemonRemoteError):
                 tools[tool_name](**kwargs)
             mock_db.assert_not_called()
@@ -380,7 +407,7 @@ class TestToolsP4LeaseRoute:
         calls = _route_recorder(monkeypatch, module, expected)
 
         tools = _register_tools(module)
-        with patch(f"{_module_name(module)}.get_db") as mock_db:
+        with _no_local_get_db(module) as mock_db:
             out = tools[tool_name](*args)
             mock_db.assert_not_called()
 
@@ -402,7 +429,7 @@ class TestToolsP4LeaseRoute:
 
         monkeypatch.setattr(module, "_route", _boom)
         tools = _register_tools(module)
-        with patch(f"{_module_name(module)}.get_db") as mock_db:
+        with _no_local_get_db(module) as mock_db:
             with pytest.raises(DaemonRemoteError):
                 tools[tool_name](*args)
             mock_db.assert_not_called()
@@ -428,7 +455,7 @@ class TestRouteCoverage:
             "import_envelope_dependencies", "record_artifact_identity",
             "get_artifact_freshness", "publish_interface",
             "get_interface_providers", "select_interface_provider",
-            "build_hard_dependency_edges", "detect_cycle",
+            "build_hard_dependency_edges", "detect_dependency_cycle",
             "validate_revision_dependencies", "get_dependency_edges",
         ],
         "tools_identity": [

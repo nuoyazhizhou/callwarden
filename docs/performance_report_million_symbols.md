@@ -1,6 +1,6 @@
 # 千万级符号性能验证报告
 
-> 任务来源：[docs/roadmap_phase2_plan.md](../roadmap_phase2_plan.md) §千万级符号性能验证
+> 任务来源：[roadmap_phase2_plan.md](roadmap_phase2_plan.md) §千万级符号性能验证
 > 测试日期：2026-07-09
 > 测试环境：Windows + Python 3.x，8 核 CPU，Call Warden P0-P7 优化已实施
 
@@ -113,7 +113,7 @@ DB 状态监控显示：refresh 在 symbols 写入完成后（100 万 symbols �
 
 #### 3.2.2 瓶颈根因
 
-通过 [tests/_check_parse.py](../tests/_check_parse.py)（临时调试脚本）解析单文件，发现 `raw_calls` 的关键字段：
+通过 `tests/_check_parse.py`（临时调试脚本，已删除）解析单文件，发现 `raw_calls` 的关键字段：
 
 ```python
 {
@@ -341,7 +341,7 @@ cw fts rebuild   # 仅重建 FTS 索引，不重新 refresh
 
 | 数据源 | 项目数 | 文件数 | 符号数 | 调用数 | 备注 |
 |--------|--------|--------|--------|--------|------|
-| [tests/_bench_report.json](../tests/_bench_report.json) | 1,080 | 188K | 1,504,023 | 5,850,684 | 真实仓库扫描 |
+| tests/_bench_report.json（`_bench_repos.py` 生成产物，未随仓库提交） | 1,080 | 188K | 1,504,023 | 5,850,684 | 真实仓库扫描 |
 | [tests/_perf_results.json](../tests/_perf_results.json) | 1 | 5,257 | 26,524 | 146,441 | firmware 单仓 |
 | 本次 100K 测试 | 1 | 1,010 | 100,000 | 111,000 | 模拟生成 |
 | 本次 1M 测试 | 1 | 10,100 | 1,000,000 | 1,110,000 | 模拟生成 |

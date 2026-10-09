@@ -343,44 +343,28 @@ class TestWriteToolsHttpBranches:
 
 
 # ----------------------------------------------------------------------
-# 进程级 round-trip（设计性 skip：生产 daemon 占用默认 HTTP 端口时跳过）
+# 进程级 round-trip（USERPROFILE 重定向隔离，生产 daemon 并行运行时仍可执行）
 # ----------------------------------------------------------------------
 
-def _http_manifest_occupied() -> bool:
-    """判断权威 HTTP manifest 是否"占用"（有效或 stale 均视为占用）。
-
-    对齐 test_workspace_rpc_http.py：生产 daemon（transport=http）运行中时
-    manifest 有效 → True（skip）；manifest 存在但 stale → 保守视为占用。
-    仅当 E_HTTP_MANIFEST_MISSING（manifest 完全不存在）才返回 False。
-    """
-    from callwarden.config import get_http_authority_id
-    from callwarden.server.daemon_autostart import resolve_http_endpoint_and_manifest
-    from callwarden.server.daemon_client import HttpDaemonRpcClient
-    try:
-        endpoint, _manifest = resolve_http_endpoint_and_manifest(
-            authority_id=get_http_authority_id()
-        )
-    except DaemonRemoteError as exc:
-        if getattr(exc, "code", "") == "E_HTTP_MANIFEST_MISSING":
-            return False
-        return True
-    client = HttpDaemonRpcClient.__new__(HttpDaemonRpcClient)
-    client._resolved_endpoint = endpoint
-    try:
-        resp = client.call("ping")
-        return not (isinstance(resp, dict) and resp.get("status") == "ok")
-    except Exception:
-        return True
-
-
 def _spawn_isolated_daemon(bin_path, data_root, http_bind):
-    """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。"""
+    """启动隔离 daemon（临时 task DB / registry / 管道），启用 HTTP transport。
+
+    stale 修正（族D，daemon 换实例后 100% 复现）：daemon 的
+    http_manifest_dir() 读 USERPROFILE/HOME（rust_ext/src/daemon/http_server.rs:1624），
+    不读 CW_DAEMON_DATA_ROOT——隔离 daemon 的 manifest 与 single-instance 锁
+    原本固定写真实 ~/.callwarden，与生产 daemon 的 authority 锁冲突 →
+    E_DAEMON_ALREADY_RUNNING → daemon 立即退出 → 「未发布 manifest」。
+    现重定向 USERPROFILE=data_root，manifest 与锁完全隔离到 data_root/.callwarden，
+    生产 daemon 不受影响，无需 skip。
+    """
     env = os.environ.copy()
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
     env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+    # 重定向 manifest/lock 作用域：daemon http_manifest_dir() 读 USERPROFILE
+    env["USERPROFILE"] = data_root
     proc = subprocess.Popen(
         [bin_path, "--http-bind=" + http_bind],
         env=env,
@@ -390,12 +374,17 @@ def _spawn_isolated_daemon(bin_path, data_root, http_bind):
     return proc
 
 
-def _wait_isolated_manifest(proc, timeout=15.0):
+def _wait_isolated_manifest(proc, data_root, timeout=15.0):
+    """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配）。
+
+    stale 修正（族D）：manifest 现写入 data_root/.callwarden（USERPROFILE
+    重定向后），轮询 data_root 而非真实 HOME。
+    """
     from callwarden.config import get_http_authority_id
     authority = get_http_authority_id()
     safe = authority.replace("/", "_").replace("\\", "_").replace(":", "_")
     manifest_path = os.path.join(
-        os.path.expanduser("~"), ".callwarden",
+        data_root, ".callwarden",
         f"http-daemon.{safe}.manifest.json",
     )
     deadline = time.time() + timeout
@@ -427,7 +416,7 @@ def _terminate(proc):
 
 
 class TestRealDaemonWriteRoundTrip:
-    """真实 daemon 进程级写面 round-trip（设计性 skip，对齐 W1-1）。
+    """真实 daemon 进程级写面 round-trip（USERPROFILE 隔离，对齐 W1-1）。
 
     register→activate→remove 三态：register 幂等拿 instance_id；
     workspace.status 命中 active；workspace.remove 归档后 workspace.status
@@ -437,13 +426,6 @@ class TestRealDaemonWriteRoundTrip:
 
     @pytest.fixture
     def real_daemon_client(self, tmp_path):
-        if _http_manifest_occupied():
-            pytest.skip(
-                "权威 HTTP manifest 被占用（生产 daemon 运行中或残留 stale "
-                "manifest）；为避免污染生产 registry（daemon_workspaces 表）"
-                "与覆盖 ~/.callwarden 权威 manifest，进程级 round-trip 设计性 "
-                "skip（对齐 test_workspace_rpc_http.py skip 模式）"
-            )
         bin_path = _DAEMON_BIN
         if not os.path.exists(bin_path):
             pytest.skip("cw-daemon.exe 未构建（需先 cargo build --bin cw-daemon）")
@@ -451,9 +433,14 @@ class TestRealDaemonWriteRoundTrip:
         os.makedirs(data_root, exist_ok=True)
         proc = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
         try:
-            manifest = _wait_isolated_manifest(proc)
+            manifest = _wait_isolated_manifest(proc, data_root)
             if manifest is None:
-                pytest.fail("隔离 daemon 未在超时内发布 manifest")
+                stdout = (proc.stdout.read(4000).decode("utf-8", "replace")
+                          if proc.stdout else "")
+                stderr = (proc.stderr.read(4000).decode("utf-8", "replace")
+                          if proc.stderr else "")
+                pytest.fail(
+                    f"隔离 daemon 未在超时内发布 manifest\nstdout={stdout}\nstderr={stderr}")
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],

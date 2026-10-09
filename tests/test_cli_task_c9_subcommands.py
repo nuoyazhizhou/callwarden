@@ -9,7 +9,7 @@
 1. argparse 子命令注册（3 个新子命令 choices 包含）
 2. handler 派发（action == "completion-review"/"split"/"status-tree"）
 3. i18n key 完整性（zh_CN + en_US 对齐）
-4. help 模板一致性（_HELP_GROUPS 中列出 3 个新命令）
+4. help 一致性（3 个新子命令经 argparse 注册；主 --help 只列顶层命令）
 5. _parse_plan_to_subtasks 辅助函数解析正确性
 6. 子命令端到端行为（错误场景：任务不存在 / 计划文件不存在 / 无子任务）
 """
@@ -17,6 +17,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -434,57 +435,43 @@ class TestI18nCompleteness:
 
 
 class TestHelpTemplateConsistency:
-    """验证 help 模板列出 3 个新子命令"""
+    """验证 3 个新子命令已注册（T10 Phase 2 后契约）
 
-    def test_help_template_contains_completion_review(self):
-        """_MAIN_HELP_GROUPS 应包含 task completion-review 项"""
-        help_text = ""
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                help_text += cmd + "\n"
-        assert "task completion-review" in help_text
+    stale 修正（族B）：_MAIN_HELP_GROUPS 静态块已删除，主 --help 由
+    COMMAND_CATEGORIES 渲染且只列顶层命令；子命令级真相源是 argparse，
+    断言目标改为 `cw task <sub> --help` 的注册面 + categories 顶层归类。
+    """
 
-    def test_help_template_contains_split(self):
-        """_MAIN_HELP_GROUPS 应包含 task split 项"""
-        help_text = ""
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                help_text += cmd + "\n"
-        assert "task split" in help_text
+    NEW_SUBCOMMANDS = ["completion-review", "split", "status-tree"]
 
-    def test_help_template_contains_status_tree(self):
-        """_MAIN_HELP_GROUPS 应包含 task status-tree 项"""
-        help_text = ""
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                help_text += cmd + "\n"
-        assert "task status-tree" in help_text
+    @pytest.mark.parametrize("sub", NEW_SUBCOMMANDS)
+    def test_task_subcommand_registered(self, sub):
+        """cw task <sub> --help 应正常退出（argparse 已注册）"""
+        env = os.environ.copy()
+        env["NO_COLOR"] = "1"
+        env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        result = subprocess.run(
+            [sys.executable, os.path.join(_PKG_PARENT, "cw.py"),
+             "task", sub, "--help"],
+            capture_output=True, text=True, env=env, encoding="utf-8",
+        )
+        assert result.returncode == 0, (
+            f"cw task {sub} 未注册：{(result.stderr or result.stdout)[-300:]}")
 
-    def test_task_group_contains_new_commands(self):
-        """task 分组应包含 3 个新命令"""
-        found_task_group = False
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            if any("completion-review" in cmd for cmd, _ in items):
-                found_task_group = True
-                cmds = [cmd for cmd, _ in items]
-                assert any("completion-review" in c for c in cmds)
-                assert any(c.startswith("task split") for c in cmds)
-                assert any("status-tree" in c for c in cmds)
-                break
-        assert found_task_group, "未找到包含 completion-review 的 help 分组"
+    def test_task_top_level_in_categories(self):
+        """task 顶层命令在 categories 真相源中唯一归类"""
+        from callwarden.cli.categories import all_command_names
+        assert "task" in all_command_names()
 
-    def test_help_template_msg_keys_resolve(self):
-        """所有 help 模板引用的 msg_key 应可解析"""
-        from callwarden.i18n import set_language, t as _t
-        set_language("en_US")
-        try:
-            for group_title, items in cli_main._MAIN_HELP_GROUPS:
-                for cmd, msg_key in items:
-                    if "completion-review" in cmd or "split" in cmd or "status-tree" in cmd:
-                        text = _t(msg_key, default="")
-                        assert text, f"无法解析 msg_key: {msg_key}"
-        finally:
-            set_language("zh_CN")
+    def test_task_category_desc_lists_subcommands(self):
+        """categories 中 task 命令 desc 非空且不出现裸 i18n key"""
+        from callwarden.cli.categories import COMMAND_CATEGORIES
+        cat = next(c for c in COMMAND_CATEGORIES if c.key == "task")
+        (cmd,) = cat.commands
+        assert cmd.name == "task"
+        assert cmd.default_desc, "task 命令 desc 不应为空"
+        assert "cli.messages" not in cmd.default_desc
 
 
 # ============================================

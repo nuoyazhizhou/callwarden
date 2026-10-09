@@ -440,8 +440,9 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
 
     Args:
         argv: 命令行参数（不含程序名）
-        include_serve: 是否允许 `serve` 子命令。`cw daemon` 允许，
-            `cw-client` 禁止（纯 client 视角，不能启动 daemon 本身）。
+        include_serve: 兼容参数（历史语义：是否注册 `serve` 子命令）。
+            G1（2026-09-09）`cw daemon serve` 已下线，`cw daemon` 与 `cw-client`
+            均不再注册 serve；参数仅为调用点兼容保留，无行为差异。
     """
     args = _parser(include_serve).parse_args(argv)
 

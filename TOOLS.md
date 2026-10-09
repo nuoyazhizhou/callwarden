@@ -34,14 +34,14 @@
 | 找调用方                 | `cw callers <QN>`          | Grep 误匹配注释/字符串/同名函数 |
 | 找被调用方               | `cw callees <QN>`          | 同上                            |
 | 调用链                   | `cw call-chain <QN>`       | 图遍历，Grep 做不到             |
-| 变更影响（向上爆炸半径） | `cw impact <QN>`           | blast radius，独有能力          |
+| 变更影响（向上爆炸半径） | `cw impact <hash>`         | blast radius，独有能力          |
 | 拓扑排序                 | `cw topo`                  | 调用图拓扑序，Grep 做不到       |
 | 循环调用检测             | `cw detect-cycles`         | 调用图环检测                    |
 | 模块间调用统计           | `cw module-calls [N]`      | 跨模块调用热力图                |
 | 调用频率热力图           | `cw call-heatmap [GROUP]`  | 按模块/文件聚合的调用频率       |
 | 孤立符号                 | `cw orphan-symbols [KIND]` | 无调用方/被调用方的符号         |
 | 调用深度最深             | `cw deepest [N]`           | 调用链最深的 N 个函数           |
-| 跨层影响                 | `cw defect cross-layer`    | 跨层（API/Service/DAO）影响传播 |
+| 跨层影响                 | （MCP 专属 `cross_layer_impact`，无 CLI） | 跨层（API/Service/DAO）影响传播 |
 
 ### 4. 覆盖率（db_coverage.py）
 
@@ -62,7 +62,7 @@
 | 场景             | cw 命令                               | 为什么不用 Grep/Read                 |
 | ---------------- | ------------------------------------- | ------------------------------------ |
 | 导入 git 历史    | `cw git import`                       | 把 commit log 结构化入库             |
-| commit 历史      | `cw git log [--author X] [--since Y]` | 按条件查询 commit                    |
+| commit 历史      | `cw git log [limit]`                  | 按数量查询 commit（默认 20）         |
 | commit 详情      | `cw git show <hash>`                  | 单个 commit 的文件变更               |
 | git 统计         | `cw git stats`                        | 提交者/文件/时间段统计               |
 | 符号 commit 历史 | `cw symbol-history <hash>`            | 单符号的 commit 时间线               |
@@ -77,7 +77,7 @@
 | 符号静态检查   | `cw issues <QN>`                                   | 整合 Semgrep + Guardrail findings，按符号聚合（行范围交集）                        |
 | 符号测试 case  | `cw tests <QN>`                                    | test_fn ↔ tested_fn 三阶推断（direct_call > name_convention > indirect）           |
 | 反向测试查询   | `cw tests <QN> --reverse`                          | test_fn 测了哪些被测函数                                                           |
-| 测试覆盖摘要   | `cw tests <QN> --coverage`                         | has_tests / test_count / high_confidence_count                                     |
+| 测试覆盖摘要   | （MCP 专属 `get_test_coverage_summary`，无 CLI）    | has_tests / test_count / high_confidence_count                                     |
 | 测试稳定性     | `cw tests <QN> --history`                          | 基于 test_runs 历史的 pass_rate / recent_failures                                  |
 | 导入 JUnit XML | `cw tests --import <file>`                         | 解析 pytest --junitxml 输出，关联 test_fn                                          |
 | 重建测试关联   | `cw tests --build [--force]`                       | refresh 测试文件后重建 test_case_relations                                         |
@@ -99,9 +99,9 @@
 | 恢复函数注释 | `cw restore-comment <SPEC>`                    | 从历史版本恢复函数的中文注释          |
 | 批量恢复注释 | `cw restore-all-comments`                      | 全项目扫描无注释符号，从 git 历史恢复 |
 | 恢复文件版本 | `cw restore-all-comments --file-filter <PATH>` | 从指定 hash 恢复文件内容              |
-| 函数历史版本 | `cw symbol-history <NAME>`                     | 函数的所有历史版本列表                |
+| 函数历史版本 | `cw symbol-history <hash>`                     | 函数的所有历史版本列表                |
 | 版本对比     | `cw diff <H1> <H2>`                            | 对比两个版本的内容差异                |
-| 从版本查注释 | `cw symbol comment-from-version <QN> <hash>`   | 从指定 commit 的版本提取注释          |
+| 从版本查注释 | `cw restore-comment <SPEC> --preview`          | 从指定 commit 的版本提取注释（只读预览） |
 
 ### 8. 编辑前检查与刷新
 
@@ -109,7 +109,7 @@
 | ---------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | 带符号上下文的文本搜索 | `cw grep <pattern> [--fixed] [--limit N] [--include-all]` | 每行带 `[in fn xxx]` 标注，agent 一眼看出匹配行属于哪个函数；rg 只给 file:line:content |
 | 编辑前检查             | `cw guardrail scan`                                       | 安全规则匹配                                                                           |
-| 编辑前符号契约         | `cw guardrail check-edit`                                 | 符号级 Before-Edit Contract 校验                                                       |
+| 编辑前符号契约         | （MCP 专属 `guardrail_check_edit`，无 CLI）               | 符号级 Before-Edit Contract 校验                                                       |
 | 改后刷新               | `cw refresh <file>`                                       | 保持数据库同步                                                                         |
 | 全量刷新               | `cw refresh --all`                                        | 增量刷新代码图谱                                                                       |
 | 强制全量刷新           | `cw refresh --all --force`                                | 重新解析所有文件                                                                       |
@@ -241,10 +241,10 @@ cw setup --force       # 强制重新配置
 
 # 安全护栏
 cw guardrail scan      # 扫描安全规则
-cw guardrail list      # 列出规则
+cw guardrail rules     # 列出规则
 
 # Daemon
-cw daemon serve        # 启动 daemon
+cw daemon start        # 启动 daemon（Rust cw-daemon.exe；serve 子命令已下线）
 cw daemon ping         # 测试 daemon 连通性
 cw daemon status <workspace_id|workspace_instance_id>  # workspace 状态
 
@@ -335,7 +335,7 @@ db.conn.execute(
 db.conn.commit()
 ```
 
-**脚本模板**：[docs/task_create_subtask.py](docs/task_create_subtask.py) — 挂载子任务的标准脚本
+**脚本模板**：[archive/docs-legacy/task_create_subtask.py](archive/docs-legacy/task_create_subtask.py) — 挂载子任务的 legacy 脚本模板（2026-08-28 归档；daemon 模式请用 `cw task split`）
 
 ## 只读/写命令分类
 
@@ -346,10 +346,10 @@ db.conn.commit()
 
 ### 写命令（需激活 workspace，可能撞锁）
 
-- **任务/规则/维护类**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`、`identity revoke`、`setup`
-- **构建/工作区/恢复类**：`refresh --all`、`refresh <paths>`、`refresh --watch`、`workspace register/set/delete`、`restore-comment`、`restore-all-comments`、`coverage import`
+- **任务/规则/维护类**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect learn/build`、`gc archive/import`、`identity revoke`、`setup`
+- **构建/工作区/恢复类**：`refresh --all`、`refresh <paths>`、`watch`、`workspace register/set/delete`、`restore-comment`、`restore-all-comments`、`coverage import`
 
-## MCP 工具分组（237 个）
+## MCP 工具分组（节选；完整 243 个见 docs/mcp_tools.md）
 
 **查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
 
@@ -477,10 +477,10 @@ CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与
 
 ## 路由矩阵与收敛架构（T01/T05）
 
-239 个 MCP 工具的路由矩阵（单一真相源）：
+243 个 MCP 工具的路由矩阵（单一真相源）：
 `deliverables/software-company/tool_migration_matrix.json`。
 daemon 自描述接口 `GET /v1/meta/tools` 返回工具级
 `{name, module, target_backend, rpc_method, op_class, batch, status}`；
-一致性由 `scripts/verify_route_matrix.py`（239/239）+ `scripts/check_client_purity.py`
+一致性由 `scripts/verify_route_matrix.py`（243/243）+ `scripts/check_client_purity.py`
 （0 业务 SQL）门禁。详见 `docs/design/rust-client-convergence-protocol.md` 与
 `docs/design/cw-rust-client-convergence-migration-guide.md`。

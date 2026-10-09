@@ -7,8 +7,8 @@
 > **design-only 声明：** daemon 声明 capability `planner_governance_v1` 前，本模板仅描述目标
 > 协议，**不得作为现行派工入口**：daemon 不接受 `planner` Role Contract、不产生 `READY/PLAN`
 > 派工，也不持久化 `planner_ready_for_execution`/`planner_replan_required` outcome
-> （见 [role-protocol.md](.agents/skills/cw-task-loop/references/role-protocol.md) 顶部声明与
-> [cw-role-handoff-task-loop-v2-amendment.md](docs/design/cw-role-handoff-task-loop-v2-amendment.md) §3）。
+> （见 [role-protocol.md](../../.agents/skills/cw-task-loop/references/role-protocol.md) 顶部声明与
+> [cw-role-handoff-task-loop-v2-amendment.md](../design/cw-role-handoff-task-loop-v2-amendment.md) §3）。
 > 原生 Planner 派工仍是 design-only，但 Planner 对自己创建的任务树治理缺口仍负主动分析和修复编排责任；scope/Contract/架构缺陷 pre-cutover 按协议 §3 临时桥接
 > （daemon 固定路由 Executor，Executor 复查 `owner_route=planner` 后交 Planner/内部治理维护路径，不把技术问题升级给用户）。
 
@@ -45,7 +45,7 @@ Handoff: Executor；存在多条合法路线时需要决策请求（decision_req
 ## 工作循环
 
 状态读取：原样展示 daemon 返回的 `task_id`、`lifecycle_status`、`workflow_status`、`current_role`、`next_role`、`next_action` 和 `blocking_reasons`。
-命令、身份、lease、VCS 和刷新陷阱统一见 [role-protocol.md §7](.agents/skills/cw-task-loop/references/role-protocol.md)，本模板不另行复制。
+命令、身份、lease、VCS 和刷新陷阱统一见 [role-protocol.md §7](../../.agents/skills/cw-task-loop/references/role-protocol.md)，本模板不另行复制。
 
 1. 先读 `AGENTS.md`、冻结需求/设计、当前 Task Contract 和 workspace binding；逐个任务调用
    `python C:/git_work/callwarden/cw.py task next-action <task_id> --workspace-instance-id <instance_id> --json`。
@@ -66,6 +66,6 @@ Executor 的 `executor_replan_requested`（post-cutover 才可持久化；pre-cu
 
 ## 强制交接
 
-Handoff: 统一使用 [role-protocol.md §5](.agents/skills/cw-task-loop/references/role-protocol.md)。Planner 允许的 outcome 为
+Handoff: 统一使用 [role-protocol.md §5](../../.agents/skills/cw-task-loop/references/role-protocol.md)。Planner 允许的 outcome 为
 `planner_ready_for_execution` 或 `planner_replan_required`；字段无法验证时不能声称 ready，也不能使用 Executor 的 outcome。
 完成当前 task 后才重新发现下一任务。

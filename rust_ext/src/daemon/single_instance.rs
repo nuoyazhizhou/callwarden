@@ -180,7 +180,7 @@ pub(crate) fn pid_alive(pid: u32) -> bool {
     {
         use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
         // SAFETY: OpenProcess 句柄由本进程持有，CloseProcess 释放
         unsafe {
@@ -189,8 +189,19 @@ pub(crate) fn pid_alive(pid: u32) -> bool {
                 // 句柄为空通常表示进程不存在（或权限不足视为存活，fail-closed）
                 return std::io::Error::last_os_error().raw_os_error() == Some(5); // ERROR_ACCESS_DENIED
             }
+            // OpenProcess 成功 ≠ 进程在跑：Windows 上已退出但尚未被完全回收的
+            // 进程（仍有句柄打开，如测试进程持有的 Popen/Child 句柄）依然能打开
+            // 句柄。必须用 GetExitCodeProcess 复核退出码，STILL_ACTIVE(259) 才算存活。
+            // 语义对齐：src/bin/cw_agent.rs:736-752 is_process_alive_windows 与
+            // Python 侧 server/daemon_autostart.py:814 _win_pid_alive。
+            let mut exit_code: u32 = 0;
+            let ok = GetExitCodeProcess(h, &mut exit_code);
             let _ = CloseHandle(h);
-            true
+            if ok == 0 {
+                // 句柄已打开但查询失败：保守视为存活（fail-closed，与 null 分支同取舍）
+                return true;
+            }
+            return exit_code == 259; // STILL_ACTIVE
         }
     }
 }
@@ -333,6 +344,34 @@ mod tests {
         assert!(pid_alive(std::process::id()));
         // PID 0 不存活
         assert!(!pid_alive(0));
+    }
+
+    /// D2 回归（Windows）：已退出但句柄尚未关闭的进程不得判活。
+    ///
+    /// 复现路径：daemon restart 场景里旧 daemon 被外部终止，而启动方仍持有
+    /// 其 Popen/Child 句柄。Windows 对已退出进程仍允许 OpenProcess 成功，
+    /// 若只看 OpenProcess 结果，会把死进程判活，导致 manifest 守卫
+    /// （`refuse_if_manifest_owned_by_live_daemon`）误拒新 daemon 覆盖
+    /// 残留 manifest。必须用 GetExitCodeProcess 复核退出码 == STILL_ACTIVE(259)。
+    ///
+    /// 测试手法：spawn 短命子进程，`wait()` 后**不 drop Child**（保持句柄打开），
+    /// 强制命中「OpenProcess 成功但进程已死」的分支。
+    #[cfg(windows)]
+    #[test]
+    fn pid_alive_terminated_but_handle_open_is_dead() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/c", "exit", "0"])
+            .spawn()
+            .expect("spawn cmd.exe");
+        let pid = child.id();
+        child.wait().expect("wait child");
+        // child 未 drop → 句柄仍打开 → OpenProcess 必然成功，
+        // 只有 GetExitCodeProcess 复核才能识别进程已退出。
+        assert!(
+            !pid_alive(pid),
+            "已退出但句柄仍打开的进程必须判为死亡（D2：GetExitCodeProcess 复核）"
+        );
+        drop(child);
     }
 
     #[test]

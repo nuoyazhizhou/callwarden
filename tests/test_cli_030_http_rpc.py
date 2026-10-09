@@ -2,7 +2,9 @@
 
 覆盖 task step `fixture_matrix`（target_file: tests/test_cli_030_http_rpc.py）：
   - success：evolution 经 db.function_change_frequency → route_rpc
-    （function_change_frequency，READ_ONLY），Python 仅编排输出
+    （evolution_frequency，READ_ONLY；审计 20261009 A1：daemon 权威方法名
+    为 evolution_frequency，旧断言 function_change_frequency 是接线断根因），
+    Python 仅编排输出
   - --defects 模式经 db.get_defect_correlation_by_qn → route_rpc
 
 Rust 侧 cli_handle_evolution_handlers.rs 由 Rust 专项 agent 核验。
@@ -12,7 +14,7 @@ import callwarden.cli.main as main_mod
 
 
 def test_cli030_evolution_routes_to_daemon(monkeypatch, capsys):
-    """success：evolution 经 route_rpc 调用 function_change_frequency。"""
+    """success：evolution 经 route_rpc 调用 evolution_frequency。"""
     captured = {}
 
     def _fake_route(method, params, op_class):
@@ -27,7 +29,7 @@ def test_cli030_evolution_routes_to_daemon(monkeypatch, capsys):
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     rc = main_mod._handle_evolution(["m::f", "--window", "30d"], proxy)
     assert rc is True
-    assert captured.get("method") == "function_change_frequency"
+    assert captured.get("method") == "evolution_frequency"
     assert captured.get("op") == "READ_ONLY"
     assert captured["params"].get("qualified_name") == "m::f"
     assert captured["params"].get("time_window") == "30d"

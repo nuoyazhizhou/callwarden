@@ -563,6 +563,11 @@ pub fn handle_rule_sync_agents_md(
 }
 
 /// `guardrail.add_rule` —— 添加护栏规则。
+///
+/// 对齐 Python 真相源 db/db_guardrail.py guardrail_add_rule：生成
+/// `GR-custom-{int(ts)}-{rand4hex}` 作为 TEXT PRIMARY KEY 的 rule_id 全列插入。
+/// 旧实现漏插 rule_id 列（TEXT PK 允许 NULL）→ 产生 NULL rule_id 脏行，
+/// 且用 last_insert_rowid（整数 rowid）谎报为 rule_id 返回。
 pub fn handle_guardrail_add_rule(
     conn: &Connection,
     workspace_id: i64,
@@ -574,13 +579,17 @@ pub fn handle_guardrail_add_rule(
     let action = get_str_param_or(params, "action", "block");
     let description = get_str_param_or(params, "description", "");
     let now = now_ts();
+    let mut entropy = [0u8; 2];
+    getrandom::fill(&mut entropy).map_err(|e| {
+        DaemonRpcError::internal_error(format!("guardrail_add_rule entropy: {e}"))
+    })?;
+    let rule_id = format!("GR-custom-{}-{:04x}", now as i64, u16::from_le_bytes(entropy));
     conn.execute(
-        "INSERT INTO guardrail_rules (category, severity, pattern, action, description, is_builtin, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
-        rusqlite::params![category, severity, rule, action, description, now],
+        "INSERT INTO guardrail_rules (rule_id, category, severity, pattern, action, description, is_builtin, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)",
+        rusqlite::params![rule_id, category, severity, rule, action, description, now],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("guardrail_add_rule: {e}")))?;
-    let rule_id = conn.last_insert_rowid();
     let _ = workspace_id;
     Ok(json!({ "ok": true, "rule_id": rule_id, "category": category, "severity": severity, "action": action }))
 }

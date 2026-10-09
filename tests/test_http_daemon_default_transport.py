@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -55,20 +56,18 @@ from callwarden.config import (  # noqa: E402
     HTTP_MVP_TRANSPORT_PROFILE,
     get_daemon_transport,
     get_http_authority_id,
-    get_http_manifest_dir,
-    get_http_manifest_path,
     is_http_transport_enabled,
 )
-from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 from callwarden.server.daemon_client import (  # noqa: E402
     DaemonClient,
-    DaemonUnavailableError,
-    E_HTTP_REQUEST_TIMEOUT,
     HttpDaemonRpcClient,
     get_daemon_client,
 )
 from callwarden.server.daemon_mutex import DaemonMutex  # noqa: E402
 from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
+
+# 复用共享 harness 的空 codegraph 构造（与 setup_w3_client 同源，避免复制漂移）
+from _w3_harness import build_empty_codegraph  # noqa: E402
 
 _RUNTIME_ROOT = os.path.join(os.path.expanduser("~"), ".callwarden", "runtime")
 _CURRENT_DAEMON = os.path.join(_RUNTIME_ROOT, "current", "cw-daemon.exe")
@@ -83,17 +82,28 @@ def _sha256(path: str) -> str:
 
 
 def _spawn_isolated_daemon(bin_path, data_root, extra_args=None, extra_env=None):
-    """启动隔离 daemon（临时 task DB / registry / 管道）。
+    """启动隔离 daemon（临时 task DB / registry / 管道 / USERPROFILE）。
 
     - 默认态（不传 extra_env）：删除继承的 CW_DAEMON_TRANSPORT /
       CW_DAEMON_HTTP_BIND，使 daemon 处于 H6 默认态（HTTP 默认启用）。
     - 显式回落（extra_env={"CW_DAEMON_TRANSPORT": "named-pipe"}）覆盖之。
     - 始终传 `--socket <tmp>/pipe` 隔离 UDS 路径（Windows 下 pipe 名仍按
       SID 派生，此处仅为 Unix 分支与启动参数一致性）。
+
+    stale 修复（族D）：daemon 的 HTTP manifest 目录与 SID 级单实例锁都落在
+    `USERPROFILE/.callwarden`（权威来源：config.py:52/91 `get_http_manifest_dir`；
+    rust_ext/src/daemon/single_instance.rs:142 `instance_lock_path`）。旧实现
+    未重定向 USERPROFILE，隔离 daemon 会撞真实 HOME 下由生产 daemon 持有的
+    `daemon-instance.<SID>.lock` → `E_DAEMON_ALREADY_RUNNING` 拒绝启动。
+    现按 tests/test_http_daemon_transport.py:81 模式 A 重定向 USERPROFILE 到
+    `data_root/userhome`，并预建其 `.callwarden` 子目录。
     """
     env = os.environ.copy()
     env.pop("CW_DAEMON_TRANSPORT", None)   # H6 默认态：不允许外部 env 污染
     env.pop("CW_DAEMON_HTTP_BIND", None)
+    home_dir = os.path.join(data_root, "userhome")
+    os.makedirs(os.path.join(home_dir, ".callwarden"), exist_ok=True)
+    env["USERPROFILE"] = home_dir
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
@@ -111,9 +121,17 @@ def _spawn_isolated_daemon(bin_path, data_root, extra_args=None, extra_env=None)
     )
 
 
-def _scan_manifest_for_pid(pid, directory=None):
+def _manifest_dir(data_root):
+    """隔离 daemon 的 manifest 目录（= 重定向后的 `USERPROFILE/.callwarden`）。
+
+    与 `_spawn_isolated_daemon` 的 USERPROFILE 重定向配套：隔离 manifest 落
+    `data_root/userhome/.callwarden`，不再污染真实 HOME（族D 隔离修复）。
+    """
+    return os.path.join(data_root, "userhome", ".callwarden")
+
+
+def _scan_manifest_for_pid(pid, directory):
     """在 manifest 目录扫描 pid 匹配的 HTTP manifest；无则返回 None。"""
-    directory = directory or get_http_manifest_dir()
     if not os.path.isdir(directory):
         return None
     for name in os.listdir(directory):
@@ -129,9 +147,9 @@ def _scan_manifest_for_pid(pid, directory=None):
     return None
 
 
-def _wait_manifest_for_pid(pid, timeout=8.0):
-    """等待 pid 匹配的 HTTP manifest 出现（H6 后固定写 `~/.callwarden/`）。"""
-    directory = get_http_manifest_dir()
+def _wait_manifest_for_pid(pid, data_root, timeout=8.0):
+    """等待 pid 匹配的 HTTP manifest 出现（隔离目录 `data_root/userhome/.callwarden`）。"""
+    directory = _manifest_dir(data_root)
     deadline = time.time() + timeout
     while time.time() < deadline:
         m = _scan_manifest_for_pid(pid, directory)
@@ -166,36 +184,10 @@ def _terminate(proc):
             pass
 
 
-def _backup_http_manifest():
-    """备份当前 authority 的 HTTP manifest（若存在），teardown 时恢复。"""
-    path = get_http_manifest_path()
-    if not os.path.isfile(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return data
-
-
-def _restore_or_clean_http_manifest(pid, backup):
-    """teardown 清理：删除 pid 匹配的隔离 manifest；备份 pid 存活则恢复。"""
-    path = get_http_manifest_path()
-    try:
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                current = json.load(f)
-            if int(current.get("pid", -1)) == pid:
-                os.remove(path)
-    except (OSError, ValueError):
-        pass
-    if backup is not None and _pid_alive(int(backup.get("pid", -1))):
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(backup, f, ensure_ascii=False)
-        except OSError:
-            pass
+# 族D 隔离修复：隔离 daemon 的 USERPROFILE 已重定向到 data_root/userhome，
+# manifest 与单实例锁都落隔离目录，不再触碰真实 `~/.callwarden`。原先针对
+# 真实 manifest 的 _backup_http_manifest / _restore_or_clean_http_manifest
+# 已无对象（且会在生产 daemon 存活时改写真实 manifest），故整体移除。
 
 
 # ============================================================
@@ -250,27 +242,41 @@ class TestPythonDefaultTransportConfig:
 # ============================================================
 
 
-def _warm_worker(proc, client, retries=2):
-    """compat worker 冷启动就绪探测（首个 python_compat 调用可能慢）。
+def _assemble_workspace(client, data_root, root_path):
+    """建立测试用 workspace 权威栈，返回 (workspace_instance_id, workspace_id)。
 
-    W2-1（T-1786840097330-dec66710）：get_uncommented_symbols 已迁移
-    rust_native，预热改用仍走 compat worker 的 stats_top_files。
+    stale 依据（族D 第二层，取代旧 `_warm_worker`）：
+    - compat worker 白名单已清零（P0-COMPAT-v3，COMPAT_ROUTE_WHITELIST 现 0 项），
+      旧预热调用的裸名 `stats_top_files` 已随 INT-001（T-1787322971676-e9aae4d4）
+      迁 rust_native，权威 RPC 名为 `query.stats_top_files`，裸名必 method_not_found；
+      且无 python_compat 方法可预热，预热语义整体作废。
+    - RP-09 治理后 `task.create` 必传 workspace_id>0 + 非空 workspace_instance_id
+      （rust_ext/src/daemon/task_loop/create.rs）。
+    故按权威装配配方（tests/_w3_harness.py:710 setup_w3_client 同构）建立真实
+    workspace + 空快照，供只读 round-trip 与 dedup 用例使用。
     """
-    last_err = None
-    for _ in range(retries + 1):
-        try:
-            client.call("stats_top_files", {"workspace_id": 1, "limit": 1})
-            return
-        except DaemonUnavailableError as e:
-            if E_HTTP_REQUEST_TIMEOUT not in str(e):
-                raise
-            last_err = e
-        except DaemonRemoteError as e:
-            if e.code == "method_not_found":
-                raise
-            return
-    _terminate(proc)
-    pytest.fail(f"compat worker 冷启动就绪超时: {last_err}")
+    os.makedirs(root_path, exist_ok=True)
+    reg = client.call("workspace.register", {"client_view_root": root_path})
+    inst = reg["workspace_instance_id"]
+    ws_id = int(reg.get("workspace_id", 1))
+    # task-DB workspaces seed（resolve_create_authority 第4步）
+    conn = sqlite3.connect(os.path.join(data_root, "task.db"), timeout=10)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at, is_active)"
+            " VALUES (?, ?, ?, ?, 1)",
+            (ws_id, f"ws-{ws_id}", root_path, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    # 空 codegraph + snapshot.publish（消除 snapshot_not_ready）
+    cg_db = os.path.join(data_root, "userhome", ".callwarden", "callwarden.db")
+    os.makedirs(os.path.dirname(cg_db), exist_ok=True)
+    build_empty_codegraph(cg_db, root_path, ws_id)
+    client.call("snapshot.publish",
+                {"workspace_instance_id": inst, "db_path": cg_db})
+    return inst, ws_id
 
 
 class TestDaemonDefaultHttpTransport:
@@ -285,14 +291,14 @@ class TestDaemonDefaultHttpTransport:
         if not os.path.isfile(_CURRENT_DAEMON):
             pytest.skip(f"runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}")
         data_root = str(tmp_path / "data")
+        root_path = str(tmp_path / "seed-repo")
         os.makedirs(data_root, exist_ok=True)
-        backup = _backup_http_manifest()
         proc = _spawn_isolated_daemon(
             _CURRENT_DAEMON, data_root,
             extra_args=["--socket", os.path.join(data_root, "pipe")],
         )
         try:
-            manifest = _wait_manifest_for_pid(proc.pid)
+            manifest = _wait_manifest_for_pid(proc.pid, data_root)
             if manifest is None:
                 if proc.poll() is not None:
                     pytest.fail(
@@ -310,14 +316,13 @@ class TestDaemonDefaultHttpTransport:
                 verify_health=False,
                 timeout=5.0,
             )
-            _warm_worker(proc, client)
-            yield client, manifest
+            inst, ws_id = _assemble_workspace(client, data_root, root_path)
+            yield client, manifest, inst, ws_id
         finally:
             _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, backup)
 
     def test_default_transport_publishes_http_manifest(self, isolated_default_http_daemon):
-        client, manifest = isolated_default_http_daemon
+        client, manifest, _, _ = isolated_default_http_daemon
         assert manifest["manifest_version"] == HTTP_MANIFEST_SCHEMA_VERSION
         assert manifest["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
         assert manifest["authority_id"] == get_http_authority_id()
@@ -327,7 +332,7 @@ class TestDaemonDefaultHttpTransport:
         )
 
     def test_health_cross_check(self, isolated_default_http_daemon):
-        client, manifest = isolated_default_http_daemon
+        client, manifest, _, _ = isolated_default_http_daemon
         health = client.verify_health()
         assert int(health["pid"]) == int(manifest["pid"]), (
             f"/health pid {health['pid']} != manifest pid {manifest['pid']}"
@@ -336,7 +341,7 @@ class TestDaemonDefaultHttpTransport:
         assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
 
     def test_ping_reports_transport_http(self, isolated_default_http_daemon):
-        client, manifest = isolated_default_http_daemon
+        client, manifest, _, _ = isolated_default_http_daemon
         result = client.call("ping", {})
         assert result["transport"] == "http", (
             f"默认态 daemon ping 应报告 transport=http，实际 {result.get('transport')!r}"
@@ -345,18 +350,22 @@ class TestDaemonDefaultHttpTransport:
         assert result["status"] == "ok"
 
     def test_http_rpc_read_only_round_trip(self, isolated_default_http_daemon):
-        client, _ = isolated_default_http_daemon
+        client, _, inst, _ = isolated_default_http_daemon
         try:
-            # stats_top_files 为 authority 范围方法，需注入 workspace_id
-            result = client.call("stats_top_files", {"workspace_id": 1, "limit": 1})
+            # stale 修复（族D 第二层）：`stats_top_files` 已 INT-001 迁 rust_native，
+            # 权威 RPC 名为 `query.stats_top_files`，参数为 workspace_instance_id
+            # （rust_ext/src/daemon/dispatch.rs:2883；snapshot_state.rs:940 handler）。
+            result = client.call(
+                "query.stats_top_files",
+                {"workspace_instance_id": inst, "limit": 1},
+            )
         except DaemonRemoteError as e:
             assert e.code != "method_not_found", (
-                f"stats_top_files 是 Rust COMPAT_ROUTE_WHITELIST 声明的 compat 方法，"
-                f"不应 method_not_found: {e}"
+                f"query.stats_top_files 是 Rust-native 已注册方法，不应 method_not_found: {e}"
             )
             raise
         # 只读方法返回结构不深断言：route 受理并成功执行（字段级断言交给
-        # capabilities 测试；release acceptance 同源契约容忍 E_COMPAT 执行错误，
+        # capabilities 测试；release acceptance 同源契约容忍执行错误，
         # 此处要求真正 round-trip 成功）
         assert result is not None
         assert result.get("files") is not None or result.get("count") is not None
@@ -386,14 +395,14 @@ class TestHttpRequestIdDedupSemantics:
         if not os.path.isfile(_CURRENT_DAEMON):
             pytest.skip(f"runtime/current/cw-daemon.exe 不存在: {_CURRENT_DAEMON}")
         data_root = str(tmp_path / "data")
+        root_path = str(tmp_path / "seed-repo")
         os.makedirs(data_root, exist_ok=True)
-        backup = _backup_http_manifest()
         proc = _spawn_isolated_daemon(
             _CURRENT_DAEMON, data_root,
             extra_args=["--socket", os.path.join(data_root, "pipe")],
         )
         try:
-            manifest = _wait_manifest_for_pid(proc.pid)
+            manifest = _wait_manifest_for_pid(proc.pid, data_root)
             if manifest is None:
                 if proc.poll() is not None:
                     pytest.fail(
@@ -409,15 +418,14 @@ class TestHttpRequestIdDedupSemantics:
                 verify_health=False,
                 timeout=5.0,
             )
-            _warm_worker(proc, client)
-            yield client, manifest
+            inst, ws_id = _assemble_workspace(client, data_root, root_path)
+            yield client, manifest, inst, ws_id
         finally:
             _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, backup)
 
     def test_default_request_id_is_globally_unique_uuid(self, isolated_default_http_daemon):
         """默认 envelope id 为 uuid4 字符串（非计数器 "1"），同 client 连续调用唯一。"""
-        client, _ = isolated_default_http_daemon
+        client, _, _, _ = isolated_default_http_daemon
         seen = set()
         for _ in range(3):
             client.call("ping", {})
@@ -432,7 +440,7 @@ class TestHttpRequestIdDedupSemantics:
 
     def test_params_request_id_adopted_as_envelope_id(self, isolated_default_http_daemon):
         """params.request_id（CLI 路由注入的 uuid）应被采用为 envelope id。"""
-        client, _ = isolated_default_http_daemon
+        client, _, _, _ = isolated_default_http_daemon
         custom = f"req-{uuid.uuid4().hex[:12]}"
         result = client.call("ping", {"request_id": custom})
         assert result["transport"] == "http"
@@ -442,13 +450,20 @@ class TestHttpRequestIdDedupSemantics:
         assert client.last_request_body["id"] == custom
 
     def test_explicit_request_id_same_params_replays(self, isolated_default_http_daemon):
-        """显式同 request_id + 同 params 重试命中 Replay（不重复执行）。"""
-        client, _ = isolated_default_http_daemon
+        """显式同 request_id + 同 params 重试命中 Replay（不重复执行）。
+
+        stale 依据（族D 第二层 / RP-09）：`task.create` 必传 workspace_id>0 +
+        非空 workspace_instance_id（rust_ext/src/daemon/task_loop/create.rs），
+        故 params 补两组 workspace 字段（由 fixture 的权威装配提供）。
+        """
+        client, _, inst, ws_id = isolated_default_http_daemon
         params = {
             "title": f"h6fix-replay-{uuid.uuid4().hex[:8]}",
             "description": "H6-FIX Replay 验证",
             "steps": [],
             "creator": "agent",
+            "workspace_id": ws_id,
+            "workspace_instance_id": inst,
         }
         rid = f"req-{uuid.uuid4().hex[:12]}"
         r1 = client.call("task.create", params, request_id=rid)
@@ -468,8 +483,9 @@ class TestHttpRequestIdDedupSemantics:
 
         修复前每个新实例默认 id 从 "1" 开始，第二个实例同 method 不同 params
         会触发 daemon E_REQUEST_ID_REUSE_MISMATCH；修复后 uuid 全局唯一，均成功。
+        stale 依据（族D 第二层 / RP-09）：params 补 workspace_id + workspace_instance_id。
         """
-        _, manifest = isolated_default_http_daemon
+        _, manifest, inst, ws_id = isolated_default_http_daemon
 
         def _new_client():
             return HttpDaemonRpcClient(
@@ -481,12 +497,16 @@ class TestHttpRequestIdDedupSemantics:
             "description": "H6-FIX 跨实例不冲突 A",
             "steps": [],
             "creator": "agent",
+            "workspace_id": ws_id,
+            "workspace_instance_id": inst,
         })
         r2 = _new_client().call("task.create", {
             "title": f"h6fix-cross-b-{uuid.uuid4().hex[:8]}",
             "description": "H6-FIX 跨实例不冲突 B",
             "steps": [],
             "creator": "agent",
+            "workspace_id": ws_id,
+            "workspace_instance_id": inst,
         })
         assert isinstance(r1, dict) and "task_id" in r1
         assert isinstance(r2, dict) and "task_id" in r2
@@ -570,11 +590,10 @@ class TestNamedPipeFallback:
             assert proc.poll() is None, (
                 f"隔离 daemon（named-pipe 回落）启动失败\n{_proc_diag(proc)}"
             )
-            manifest = _scan_manifest_for_pid(proc.pid)
+            manifest = _scan_manifest_for_pid(proc.pid, _manifest_dir(data_root))
             assert manifest is None, (
                 f"显式 CW_DAEMON_TRANSPORT=named-pipe 回落时不应发布 HTTP manifest: "
                 f"{manifest}"
             )
         finally:
             _terminate(proc)
-            _restore_or_clean_http_manifest(proc.pid, None)

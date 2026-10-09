@@ -70,6 +70,12 @@ fn gen_revocation_id() -> Result<String, DaemonRpcError> {
 }
 
 /// `admin.gc_archive_import` —— 导入归档记录（archived_files 写入）。
+///
+/// B6（审计 20261009）：file_instance_id 带 FK → file_instances(id)（自增从 1
+/// 起），旧实现缺省 0 永不存在 → INSERT 恒 FK 失败。修法：
+/// - 未传 file_instance_id：按 (workspace_id, rel_path) 解析（file_instances 有
+///   UNIQUE(workspace_id, rel_path)），解析不到 → invalid_params；
+/// - 显式传入但不存在（或不属于该工作区）→ invalid_params 而非 internal_error。
 pub fn handle_gc_archive_import(
     conn: &Connection,
     workspace_id: i64,
@@ -78,9 +84,46 @@ pub fn handle_gc_archive_import(
     let archive_path = require_str_param(params, "archive_path")?;
     let reason = get_str_param_or(params, "archive_reason", "manual_import");
     let now = now_ts();
-    let file_instance_id = get_int_param_or(params, "file_instance_id", 0);
     let rel_path = get_str_param_or(params, "rel_path", "");
     let content_hash = get_str_param_or(params, "content_hash", "");
+    let file_instance_id = match params.get("file_instance_id").and_then(Value::as_i64) {
+        Some(explicit) => {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM file_instances WHERE id = ?1 AND workspace_id = ?2",
+                    rusqlite::params![explicit, workspace_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("gc_archive_import lookup: {e}"))
+                })?;
+            if exists == 0 {
+                return Err(DaemonRpcError::invalid_params(format!(
+                    "file_instance_id {} 在工作区 {} 下不存在，无法归档",
+                    explicit, workspace_id
+                )));
+            }
+            explicit
+        }
+        None => {
+            if rel_path.trim().is_empty() {
+                return Err(DaemonRpcError::invalid_params(
+                    "未传 file_instance_id 时必须提供 rel_path 以解析文件实例",
+                ));
+            }
+            conn.query_row(
+                "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2",
+                rusqlite::params![workspace_id, rel_path],
+                |r| r.get(0),
+            )
+            .map_err(|_| {
+                DaemonRpcError::invalid_params(format!(
+                    "工作区 {} 下找不到 rel_path={} 的文件实例，无法归档",
+                    workspace_id, rel_path
+                ))
+            })?
+        }
+    };
     let inserted = conn
         .execute(
             "INSERT INTO archived_files
@@ -89,7 +132,7 @@ pub fn handle_gc_archive_import(
             rusqlite::params![file_instance_id, workspace_id, rel_path, archive_path, content_hash, reason, now],
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("gc_archive_import: {e}")))?;
-    Ok(json!({ "ok": true, "inserted": inserted, "archive_path": archive_path }))
+    Ok(json!({ "ok": true, "inserted": inserted, "file_instance_id": file_instance_id, "archive_path": archive_path }))
 }
 
 /// `admin.gc_archive_inspect` —— 检查归档记录。
@@ -223,18 +266,22 @@ pub fn handle_gc_audit_list(
     Ok(Value::Array(rows))
 }
 
-/// `admin.gc_policy_get` —— 读取 GC 策略（无记录时返回默认值）。
+/// `admin.gc_policy_get` —— 读取 GC 策略（按 workspace 过滤，无记录返回默认值）。
+///
+/// 对齐 Python 真相源 db/db_gc.py get_gc_policy / DEFAULT_GC_POLICY：
+/// 策略按 workspace_id 隔离（INTEGER PRIMARY KEY），默认 365/100/365。
+/// 旧实现 `LIMIT 1` 全表取第一行 → 多工作区下读到别的 workspace 的策略。
 pub fn handle_gc_policy_get(
     conn: &Connection,
     workspace_id: i64,
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
-    let _ = (workspace_id, params);
+    let _ = params;
     let rows = conn
         .query_row(
             "SELECT older_than_days, keep_versions, include_external, external_stale_days, backup_enabled, vacuum_enabled, updated_at
-             FROM gc_policies LIMIT 1",
-            [],
+             FROM gc_policies WHERE workspace_id = ?1",
+            [workspace_id],
             |row| {
                 Ok(json!({
                     "older_than_days": row.get::<_, i64>(0)?,
@@ -249,49 +296,121 @@ pub fn handle_gc_policy_get(
         );
     match rows {
         Ok(v) => Ok(v),
-        Err(_) => Ok(json!({
-            "older_than_days": 30,
-            "keep_versions": 3,
-            "include_external": false,
-            "external_stale_days": 90,
-            "backup_enabled": true,
-            "vacuum_enabled": false,
-            "updated_at": 0.0,
-        })),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            // 无记录 → Python DEFAULT_GC_POLICY（db_gc.py:70）
+            Ok(json!({
+                "older_than_days": 365,
+                "keep_versions": 100,
+                "include_external": false,
+                "external_stale_days": 365,
+                "backup_enabled": true,
+                "vacuum_enabled": false,
+                "updated_at": 0.0,
+            }))
+        }
+        Err(e) if e.to_string().contains("no such table") => {
+            // 表未建 → 视为无记录（对齐 Python 新库首跑前语义）
+            Ok(json!({
+                "older_than_days": 365,
+                "keep_versions": 100,
+                "include_external": false,
+                "external_stale_days": 365,
+                "backup_enabled": true,
+                "vacuum_enabled": false,
+                "updated_at": 0.0,
+            }))
+        }
+        Err(e) => Err(DaemonRpcError::internal_error(format!("gc_policy_get: {e}"))),
     }
 }
 
-/// `admin.gc_policy_set` —— 写入 GC 策略（UPSERT 单行）。
+/// `admin.gc_policy_set` —— 写入 GC 策略（按 workspace merge + UPSERT）。
+///
+/// 对齐 Python 真相源 db/db_gc.py set_gc_policy：
+/// 1. 基线 = 该 workspace 现有行（无则 DEFAULT_GC_POLICY），仅覆盖显式传入字段；
+/// 2. int 字段 clamp 到 >= 1；
+/// 3. DDL 对齐 db/schema.py:797（workspace_id INTEGER PRIMARY KEY + FK）；
+/// 4. UPSERT ON CONFLICT(workspace_id)。
+/// 旧实现自建异 schema DDL（自增 id、无 workspace_id 列）且 `let _ = workspace_id`
+/// 忽略入参，裸 INSERT 每次新增一行——策略按行隔离永不生效且表无限膨胀。
 pub fn handle_gc_policy_set(
     conn: &Connection,
     workspace_id: i64,
     params: &Value,
 ) -> Result<Value, DaemonRpcError> {
-    let older_than_days = get_int_param_or(params, "older_than_days", 30);
-    let keep_versions = get_int_param_or(params, "keep_versions", 3);
-    let include_external = params.get("include_external").and_then(Value::as_bool).unwrap_or(false);
-    let external_stale_days = get_int_param_or(params, "external_stale_days", 90);
-    let backup_enabled = params.get("backup_enabled").and_then(Value::as_bool).unwrap_or(true);
-    let vacuum_enabled = params.get("vacuum_enabled").and_then(Value::as_bool).unwrap_or(false);
+    let existing = conn
+        .query_row(
+            "SELECT older_than_days, keep_versions, include_external, external_stale_days, backup_enabled, vacuum_enabled
+             FROM gc_policies WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)? != 0,
+                    row.get::<_, i64>(5)? != 0,
+                ))
+            },
+        )
+        .unwrap_or((365, 100, false, 365, true, false));
+    let older_than_days = params
+        .get("older_than_days")
+        .and_then(Value::as_i64)
+        .map(|v| v.max(1))
+        .unwrap_or(existing.0);
+    let keep_versions = params
+        .get("keep_versions")
+        .and_then(Value::as_i64)
+        .map(|v| v.max(1))
+        .unwrap_or(existing.1);
+    let include_external = params
+        .get("include_external")
+        .and_then(Value::as_bool)
+        .unwrap_or(existing.2);
+    let external_stale_days = params
+        .get("external_stale_days")
+        .and_then(Value::as_i64)
+        .map(|v| v.max(1))
+        .unwrap_or(existing.3);
+    let backup_enabled = params
+        .get("backup_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(existing.4);
+    let vacuum_enabled = params
+        .get("vacuum_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(existing.5);
     let now = now_ts();
     conn.execute(
         "CREATE TABLE IF NOT EXISTS gc_policies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            older_than_days INTEGER NOT NULL DEFAULT 30,
-            keep_versions INTEGER NOT NULL DEFAULT 3,
+            workspace_id INTEGER PRIMARY KEY,
+            older_than_days INTEGER NOT NULL DEFAULT 365,
+            keep_versions INTEGER NOT NULL DEFAULT 100,
             include_external INTEGER NOT NULL DEFAULT 0,
-            external_stale_days INTEGER NOT NULL DEFAULT 90,
+            external_stale_days INTEGER NOT NULL DEFAULT 365,
             backup_enabled INTEGER NOT NULL DEFAULT 1,
             vacuum_enabled INTEGER NOT NULL DEFAULT 0,
-            updated_at REAL NOT NULL
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
          )",
         [],
     )
     .map_err(|e| DaemonRpcError::internal_error(format!("gc_policies ddl: {e}")))?;
     conn.execute(
-        "INSERT INTO gc_policies (older_than_days, keep_versions, include_external, external_stale_days, backup_enabled, vacuum_enabled, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO gc_policies (workspace_id, older_than_days, keep_versions, include_external, external_stale_days, backup_enabled, vacuum_enabled, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(workspace_id) DO UPDATE SET
+           older_than_days = excluded.older_than_days,
+           keep_versions = excluded.keep_versions,
+           include_external = excluded.include_external,
+           external_stale_days = excluded.external_stale_days,
+           backup_enabled = excluded.backup_enabled,
+           vacuum_enabled = excluded.vacuum_enabled,
+           updated_at = excluded.updated_at",
         rusqlite::params![
+            workspace_id,
             older_than_days,
             keep_versions,
             include_external as i64,
@@ -301,10 +420,10 @@ pub fn handle_gc_policy_set(
             now
         ],
     )
-    .map_err(|e| DaemonRpcError::internal_error(format!("gc_policies insert: {e}")))?;
-    let _ = workspace_id;
+    .map_err(|e| DaemonRpcError::internal_error(format!("gc_policies upsert: {e}")))?;
     Ok(json!({
         "ok": true,
+        "workspace_id": workspace_id,
         "older_than_days": older_than_days,
         "keep_versions": keep_versions,
         "include_external": include_external,

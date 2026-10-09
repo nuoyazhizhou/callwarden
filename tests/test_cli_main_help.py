@@ -1,11 +1,14 @@
-"""C8 Step #3: 主 --help 输出（12 组分组结构）测试。
+"""主 --help 输出（分类分组结构）测试。
+
+Phase 2 重构后（cli-mcp-surface-audit）：help 从 cli/categories.py
+COMMAND_CATEGORIES 渲染（21 分类 / 84 顶层命令），不再有手写
+_MAIN_HELP_GROUPS 静态块。
 
 覆盖：
-- cw --help 输出包含所有 12 个分组标题
-- 包含 "Workspace & Database" / "工作区与数据库" 分组
-- 包含 deprecated flag 章节
+- cw --help 输出包含全部分类标题（[1]-[17] 与 MCP 对齐 + [18]-[21] CLI-only）
+- 顶层命令全覆盖（84 个，与 categories 真相源一致）
+- 无裸 i18n key（cli.messages 字样不得出现）
 - 包含全局选项章节（--lang/--workspace/--help）
-- 包含补全缺失功能（task capture-diff / audit verify / bootstrap status / rule seed-bootstrap）
 - 不再包含旧的 4-pillar 字样（"Four Pillars" / "四大支柱"）
 - i18n key 完整性（zh_CN + en_US）
 - cli/main.py 语法正确
@@ -14,6 +17,7 @@
 import json
 import os
 import py_compile
+import re
 import subprocess
 import sys
 from unittest import mock
@@ -26,6 +30,7 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
+from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names
 from callwarden.i18n import set_language, t
 
 
@@ -58,7 +63,7 @@ def _load_i18n(lang):
         return json.load(f)
 
 
-# 12 个分组标题 i18n key
+# 前 12 个分类标题 i18n key（沿用既有 key，[1]-[12] 与 MCP 分类对齐）
 _GROUP_KEYS = [
     "help_group_workspace",
     "help_group_query",
@@ -74,12 +79,11 @@ _GROUP_KEYS = [
     "help_group_diagnostics",
 ]
 
-# 补全缺失功能的命令字符串（应出现在主 --help 输出中）
-_COMPLETION_COMMANDS = [
-    "task capture-diff",
-    "audit verify",
-    "bootstrap status",
-    "rule seed-bootstrap",
+# 主 --help 必须覆盖的顶层命令抽样（全量 84 个覆盖有专项测试；
+# 集合一致性由 tests/test_category_source.py 校验 categories ↔ dispatch）
+_TOP_LEVEL_COMMANDS_SAMPLE = [
+    "task", "audit", "bootstrap", "rule",
+    "changes", "lease", "identity", "daemon", "experiment",
 ]
 
 
@@ -167,41 +171,42 @@ def test_main_help_contains_global_options_zh():
 
 
 # ============================================
-# 4. 补全缺失功能测试
+# 4. 顶层命令覆盖测试（Phase 2：从 categories 渲染）
 # ============================================
 
 
-@pytest.mark.parametrize("cmd_str", _COMPLETION_COMMANDS)
-def test_main_help_contains_completion_commands(cmd_str):
-    """cw --help 包含补全的缺失功能命令（task capture-diff 等）"""
+@pytest.mark.parametrize("cmd_str", _TOP_LEVEL_COMMANDS_SAMPLE)
+def test_main_help_contains_top_level_commands(cmd_str):
+    """cw --help 包含抽样顶层命令（此前未文档化的 changes/lease/identity 等）"""
     output = _run_cw_help("en_US")
-    assert cmd_str in output, (
-        f"主 --help 输出应包含补全的命令 '{cmd_str}'"
+    assert re.search(rf"^  {re.escape(cmd_str)}\s", output, re.M), (
+        f"主 --help 输出应包含顶层命令 '{cmd_str}'"
     )
 
 
-def test_main_help_contains_task_capture_diff():
-    """cw --help 包含 task capture-diff"""
-    output = _run_cw_help("en_US")
-    assert "task capture-diff" in output
+def test_main_help_covers_all_84_commands():
+    """cw --help 覆盖全部 84 个顶层命令（与 categories 真相源一致，AC-2）"""
+    output = _run_cw_help("zh_CN")
+    missing = [name for name in all_command_names()
+               if not re.search(rf"^  {re.escape(name)}\s", output, re.M)]
+    assert not missing, f"主 --help 缺少以下命令: {missing}"
 
 
-def test_main_help_contains_audit_verify():
-    """cw --help 包含 audit verify"""
-    output = _run_cw_help("en_US")
-    assert "audit verify" in output
+def test_main_help_no_raw_i18n_keys():
+    """cw --help 输出无裸 i18n key（cli.messages 字样不得出现，AC-2）"""
+    output_zh = _run_cw_help("zh_CN")
+    assert "cli.messages" not in output_zh, "zh_CN 输出出现裸 i18n key"
+    output_en = _run_cw_help("en_US")
+    assert "cli.messages" not in output_en, "en_US 输出出现裸 i18n key"
 
 
-def test_main_help_contains_bootstrap_status():
-    """cw --help 包含 bootstrap status"""
-    output = _run_cw_help("en_US")
-    assert "bootstrap status" in output
-
-
-def test_main_help_contains_rule_seed_bootstrap():
-    """cw --help 包含 rule seed-bootstrap"""
-    output = _run_cw_help("en_US")
-    assert "rule seed-bootstrap" in output
+def test_main_help_category_count_21():
+    """cw --help 输出 21 个 [N] 编号分类（与文档概览表分类数一致）"""
+    output = _run_cw_help("zh_CN")
+    numbered = re.findall(r"^\[(\d+)\] ", output, re.M)
+    assert len(numbered) == len(COMMAND_CATEGORIES) == 21, (
+        f"分类数应为 21，实际 {len(numbered)}"
+    )
 
 
 # ============================================
@@ -321,19 +326,19 @@ def test_print_main_help_returns_no_exception(capsys):
 
 
 def test_main_help_groups_data_structure():
-    """_MAIN_HELP_GROUPS 数据结构正确（12 组，每组非空）"""
-    assert len(cli_main._MAIN_HELP_GROUPS) == 12, (
-        f"应有 12 组，实际 {len(cli_main._MAIN_HELP_GROUPS)}"
+    """COMMAND_CATEGORIES 数据结构正确（21 类，与 MCP 17 类同构 + CLI-only 4 类）
+
+    注：静态 _MAIN_HELP_GROUPS 已删除，分组数据唯一来源是
+    cli/categories.py（更完整的校验见 tests/test_category_source.py）。
+    """
+    assert len(COMMAND_CATEGORIES) == 21, (
+        f"应有 21 类，实际 {len(COMMAND_CATEGORIES)}"
     )
-    for group_title_key, items in cli_main._MAIN_HELP_GROUPS:
-        assert isinstance(group_title_key, str)
-        assert group_title_key.startswith("cli.messages.help_group_")
-        assert isinstance(items, list) and len(items) >= 2, (
-            f"组 {group_title_key} 至少应有 2 个命令，实际 {len(items)}"
-        )
-        for cmd, desc_key in items:
-            assert isinstance(cmd, str) and cmd
-            assert desc_key.startswith("cli.messages.help_")
+    cli_only_keys = [c.key for c in COMMAND_CATEGORIES if c.cli_only]
+    assert len(cli_only_keys) == 4, (
+        f"CLI-only 分类应为 4 个（rollback/daemon/setup_install/experiment），"
+        f"实际 {cli_only_keys}"
+    )
 
 
 # ============================================

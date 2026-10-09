@@ -673,6 +673,283 @@ pub fn handle_is_feature_rolled_back(
     Ok(json!(flag == Some(1)))
 }
 
+/// `rebuild_fts_index` —— FTS5 索引全量重建（审计 20261009 C2：CLI 接线补
+/// daemon handler，写类 INDEX_WRITE，经主库写连接）。复刻 db/db_build.py
+/// rebuild_fts_index：symbols_fts 存在检查 → FTS5 'rebuild' 命令 → 重建
+/// ai/ad/au 同步触发器。整个重建包在 BEGIN IMMEDIATE 内（失败整体回滚，
+/// 对齐 Python 隐式事务 + commit 语义）；失败返回 success=false + error
+/// 而非 RPC 错误（对齐 Python 不抛异常语义）。
+pub fn handle_rebuild_fts_index(
+    conn: &Connection,
+    _workspace_id: i64,
+    _params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let t0 = std::time::Instant::now();
+    let exists: bool = conn
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols_fts'",
+            [],
+            |_| Ok(true),
+        )
+        .optional()
+        .map_err(|e| DaemonRpcError::internal_error(format!("fts exists: {e}")))?
+        .unwrap_or(false);
+    if !exists {
+        return Ok(json!({
+            "success": false,
+            "symbols_count": 0,
+            "fts_rows": 0,
+            "triggers_recreated": 0,
+            "elapsed": t0.elapsed().as_secs_f64(),
+            "error": "symbols_fts 表不存在（数据库版本过低或未初始化）",
+        }));
+    }
+    let symbols_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
+        .unwrap_or(0);
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| DaemonRpcError::internal_error(format!("fts rebuild begin: {e}")))?;
+    let outcome = (|| -> Result<i64, rusqlite::Error> {
+        conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')", [])?;
+        conn.execute("DROP TRIGGER IF EXISTS symbols_fts_ai", [])?;
+        conn.execute("DROP TRIGGER IF EXISTS symbols_fts_ad", [])?;
+        conn.execute("DROP TRIGGER IF EXISTS symbols_fts_au", [])?;
+        conn.execute(
+            "CREATE TRIGGER symbols_fts_ai AFTER INSERT ON symbols BEGIN
+                 INSERT INTO symbols_fts(rowid, name, qualified_name)
+                 VALUES (new.id, new.name, new.qualified_name);
+             END",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TRIGGER symbols_fts_ad AFTER DELETE ON symbols BEGIN
+                 INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+                 VALUES ('delete', old.id, old.name, old.qualified_name);
+             END",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TRIGGER symbols_fts_au AFTER UPDATE ON symbols BEGIN
+                 INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+                 VALUES ('delete', old.id, old.name, old.qualified_name);
+                 INSERT INTO symbols_fts(rowid, name, qualified_name)
+                 VALUES (new.id, new.name, new.qualified_name);
+             END",
+            [],
+        )?;
+        conn.query_row("SELECT COUNT(*) FROM symbols_fts", [], |r| r.get(0))
+    })();
+    match outcome {
+        Ok(fts_rows) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| DaemonRpcError::internal_error(format!("fts rebuild commit: {e}")))?;
+            Ok(json!({
+                "success": true,
+                "symbols_count": symbols_count,
+                "fts_rows": fts_rows,
+                "triggers_recreated": 3,
+                "elapsed": t0.elapsed().as_secs_f64(),
+                "error": "",
+            }))
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Ok(json!({
+                "success": false,
+                "symbols_count": symbols_count,
+                "fts_rows": 0,
+                "triggers_recreated": 0,
+                "elapsed": t0.elapsed().as_secs_f64(),
+                "error": e.to_string(),
+            }))
+        }
+    }
+}
+
+/// `detect_clones` —— 克隆检测（审计 20261009 C6：CLI 接线补 daemon handler，
+/// 写类 PROTECTED_MUTATION，经主库写连接）。复刻 cli/external.rs run_clone
+/// "detect" 分支：读 fn/method 符号（token 来自 symbol_contents.content）→
+/// detect_clones_core → DELETE + INSERT OR IGNORE clone_pairs → 返回统计。
+pub fn handle_detect_clones(
+    conn: &Connection,
+    workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let file_filter = get_str_param_or(params, "file_filter", "");
+    let min_lines = get_int_param_or(params, "min_lines", 8).max(1);
+    let similarity = params
+        .get("similarity_threshold")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.8)
+        .clamp(0.1, 1.0);
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.symbol_hash, COALESCE(sc.content, ''), s.start_line, s.end_line \
+             FROM symbols s \
+             JOIN file_instances fi ON fi.id = s.file_instance_id \
+             LEFT JOIN symbol_contents sc ON sc.content_hash = s.symbol_hash \
+             WHERE fi.workspace_id = ?1 AND s.kind IN ('fn', 'function', 'method') \
+               AND (?2 = '' OR fi.rel_path LIKE ?3)",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("detect_clones query: {e}")))?;
+    let like = format!("%{file_filter}%");
+    let rows = stmt
+        .query_map(
+            rusqlite::params![workspace_id, file_filter, like],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("detect_clones rows: {e}")))?;
+    let mut inputs: Vec<(i64, String, String, Vec<String>)> = Vec::new();
+    let mut line_map: std::collections::BTreeMap<i64, (i64, i64)> = Default::default();
+    for row in rows.flatten() {
+        if row.4.saturating_sub(row.3) + 1 < min_lines {
+            continue;
+        }
+        let tokens: Vec<String> = row.2.split_whitespace().map(str::to_string).collect();
+        let normalized = tokens.join(" ");
+        let mut hasher = Sha256::new();
+        hasher.update(normalized.as_bytes());
+        let token_hash = hex::encode(hasher.finalize());
+        line_map.insert(row.0, (row.3, row.4));
+        inputs.push((row.0, row.1, token_hash, tokens));
+    }
+    let (groups, stats) = crate::clone_detection::detect_clones_core(inputs, similarity);
+    conn.execute(
+        "DELETE FROM clone_pairs WHERE workspace_id = ?1",
+        [workspace_id],
+    )
+    .map_err(|e| DaemonRpcError::internal_error(format!("detect_clones cleanup: {e}")))?;
+    let detected_at = now_ts();
+    let mut pairs = 0i64;
+    for group in &groups {
+        if group.members.len() < 2 {
+            continue;
+        }
+        let first = group.members[0];
+        for other in &group.members[1..] {
+            let a = line_map.get(&first).copied().unwrap_or((0, 0));
+            let b = line_map.get(other).copied().unwrap_or((0, 0));
+            conn.execute(
+                "INSERT OR IGNORE INTO clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type, similarity, token_hash, lines_a, lines_b, detected_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    workspace_id,
+                    first,
+                    other,
+                    group.clone_type as i64,
+                    group.similarity,
+                    group.token_hash,
+                    a.1 - a.0 + 1,
+                    b.1 - b.0 + 1,
+                    detected_at
+                ],
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("detect_clones write: {e}")))?;
+            pairs += 1;
+        }
+    }
+    Ok(json!({
+        "total_pairs": pairs,
+        "scanned_symbols": stats.scanned_symbols,
+        "skipped_symbols": stats.skipped_symbols,
+        "total_groups": stats.total_groups,
+        "type1_groups": stats.type1_groups,
+        "type2_groups": stats.type2_groups,
+        "type3_groups": stats.type3_groups,
+        "similarity_threshold": similarity,
+    }))
+}
+
+/// `gc_archive` —— 归档清理执行（审计 20261009 C5：CLI 接线补 daemon handler，
+/// 写类 PROTECTED_MUTATION，经主库写连接）。复用 cli/external.rs gc_archive_core
+///（CLI run_gc_archive 抽取的核心：候选筛选 → should_ignore 分流 → 归档/激活，
+/// 事务语义完整保留），force/dry_run 布尔宽容解析（缺省 false/false）。
+pub fn handle_gc_archive(
+    conn: &Connection,
+    workspace_id: i64,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let force = params.get("force").and_then(Value::as_bool).unwrap_or(false);
+    let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    crate::cli::external::gc_archive_core(conn, workspace_id, force, dry_run)
+        .map_err(DaemonRpcError::internal_error)
+}
+
+/// `list_rollback_configs` —— 批量查询回滚配置（审计 20261009 C7：CLI 接线补
+/// daemon handler，与 get_rollback_config 同源 task DB 只读）。
+/// 复刻 db/db_rollback_config.py list_rollback_configs：phase>0 过滤指定阶段、
+/// rollback_flag>=0 过滤回滚标志、按 phase/feature_name 升序、config_blob 反序列化。
+pub fn handle_list_rollback_configs(
+    conn: &Connection,
+    params: &Value,
+) -> Result<Value, DaemonRpcError> {
+    let phase = get_int_param_or(params, "phase", 0);
+    let rollback_flag = get_int_param_or(params, "rollback_flag", -1);
+    let mut sql = String::from("SELECT * FROM rollback_config WHERE 1=1");
+    let mut bind: Vec<rusqlite::types::Value> = Vec::new();
+    if phase > 0 {
+        sql.push_str(" AND phase = ?");
+        bind.push(rusqlite::types::Value::Integer(phase));
+    }
+    if rollback_flag >= 0 {
+        sql.push_str(" AND rollback_flag = ?");
+        bind.push(rusqlite::types::Value::Integer(rollback_flag));
+    }
+    sql.push_str(" ORDER BY phase ASC, feature_name ASC");
+    let col_names: Vec<String> = {
+        let stmt = conn
+            .prepare(&format!("{sql} LIMIT 0"))
+            .map_err(|e| DaemonRpcError::internal_error(format!("rollback cols: {e}")))?;
+        stmt.column_names().iter().map(|s| s.to_string()).collect()
+    };
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| DaemonRpcError::internal_error(format!("rollback prepare: {e}")))?;
+    let rows: Vec<Value> = stmt
+        .query_map(rusqlite::params_from_iter(bind.iter()), |row| {
+            let mut m = Map::new();
+            for (i, name) in col_names.iter().enumerate() {
+                let v = row.get_ref(i)?;
+                let jv = match v {
+                    rusqlite::types::ValueRef::Null => Value::Null,
+                    rusqlite::types::ValueRef::Integer(n) => Value::Number(n.into()),
+                    rusqlite::types::ValueRef::Real(f) => serde_json::Number::from_f64(f)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null),
+                    rusqlite::types::ValueRef::Text(t) => {
+                        Value::String(String::from_utf8_lossy(t).to_string())
+                    }
+                    rusqlite::types::ValueRef::Blob(_) => Value::Null,
+                };
+                m.insert(name.clone(), jv);
+            }
+            Ok(Value::Object(m))
+        })
+        .map_err(|e| DaemonRpcError::internal_error(format!("rollback query: {e}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| DaemonRpcError::internal_error(format!("rollback rows: {e}")))?;
+    // config_blob 反序列化（与 Python 一致）
+    let mut items = rows;
+    for item in items.iter_mut() {
+        if let Some(blob) = item.get("config_blob").and_then(Value::as_str) {
+            if let Ok(parsed) = serde_json::from_str::<Value>(blob) {
+                if let Value::Object(ref mut m) = item {
+                    m.insert("config_blob".into(), parsed);
+                }
+            }
+        }
+    }
+    Ok(Value::Array(items))
+}
+
 // ====================================================================
 // build_defect_knowledge —— 复刻 db_defect_kb.build_defect_knowledge(主库写)
 // 简化:只做 pattern 挖掘(按 rule_id 分组 → defect_patterns upsert),不做

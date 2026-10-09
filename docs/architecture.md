@@ -13,7 +13,7 @@
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
 │  subcommand 风格         │     │   243 个 @mcp.tool() 工具    │
-│  83 个顶层命令           │     │   stdio / SSE 传输           │
+│  84 个顶层命令           │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
              └──────────────┬───────────────────┘
@@ -885,7 +885,7 @@ Schema 中为所有高频查询字段创建索引：
 
 ### 6. 查询路径设计决策（GraphStore vs SQL 路由）
 
-> 对应 [_feature_matrix.md F20](../design/_feature_matrix.md) 设计决策项。
+> 对应 [_feature_matrix.md F20](design/_feature_matrix.md) 设计决策项。
 
 Call Warden 同时维护两套查询路径：**Rust GraphStore（CSR 内存索引）** 和 **SQLite SQL**。`DaemonClient` 按查询类型选择最优路径（详见 [server/daemon_client.py](../server/daemon_client.py) `_remote_query` / `_sql_fallback_*`）。
 
@@ -1011,10 +1011,10 @@ def new_tool(param: str) -> dict:
 
 ## 命令风格统一规范（C8）
 
-Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprecated 为辅"** 的长期命令风格方向。本节说明总体方向、12 主分类设计、迁移时间线与设计决策。
+Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprecated 为辅"** 的长期命令风格方向。本节说明总体方向、21 主分类设计、迁移时间线与设计决策。
 
-> 相关审计文档：`.cli_audit.md`（CLI/MCP 参数一致性审计）、`.mcp_audit.md`（MCP 工具命名审计）。
-> 相关用户文档：[CLI 命令参考 - 命令概览（按 13 大功能分类）](cli_reference.md#命令概览按-13-大功能分类)、[MCP 工具参考 - 按 12 大功能分类](mcp_tools.md#按-12-大功能分类)。
+> 分类真相源：CLI 侧 `cli/categories.py`（21 分类）、MCP 侧 `server/tools/_categories.py`（17 分类）。
+> 相关用户文档：[CLI 命令参考 - 命令概览（按 21 大功能分类）](cli_reference.md#命令概览按-21-大功能分类)、[MCP 工具参考 - 按 17 大功能分类](mcp_tools.md#按-17-大功能分类)。
 
 ### 总体方向
 
@@ -1028,26 +1028,35 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 2. 旧 `--flag` 风格已在未上线阶段整体移除，不保留同义词，确保分类清晰、零二义性
 3. MCP 工具命名不重命名，仅审计与归档
 
-### 12 主分类设计
+### 21 主分类设计
 
-Call Warden 把 83 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+Call Warden 把 84 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 21 个主分类，CLI 与 MCP 共用同一套分类体系（[1]-[17] 同构对齐，[18]-[21] 为 CLI 独有运维面）。
 
-| #   | 主分类                    | CLI 涵盖范围                                                      | MCP 工具数 |
-| --- | ------------------------- | ----------------------------------------------------------------- | ---------- |
-| 1   | **Workspace & Database**  | 工作区管理、数据库刷新、状态概览、watcher、分支感知               | 16         |
-| 2   | **Query & Search**        | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复           | 24         |
-| 3   | **Call Chain Analysis**   | 调用链、拓扑、循环、孤儿、模块图、热力图                          | 12         |
-| 4   | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失                    | 12         |
-| 5   | **Task Orchestration**    | 任务创建/认领/上报/回滚/审批/关闭、capture-diff                   | 22         |
-| 6   | **Agent Rule Memory**     | 规则候选/审核/生效/同步/提取/清理/种子化                          | 11         |
-| 7   | **Audit & Bootstrap**     | 审计链验证、密钥轮换、自举健康、检查门禁、安全护栏                | 10         |
-| 8   | **Git Integration**       | git 历史、commit、变更、blame、分支感知                           | 5          |
-| 9   | **Semgrep & Defects**     | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径                  | 14         |
-| 10  | **Coverage & Ownership**  | 注释覆盖、测试覆盖、CODEOWNERS、所有权映射                        | 15         |
-| 11  | **GC**                    | 归档、恢复、清理、策略、备份、审计                                | 11         |
-| 12  | **Diagnostics**           | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | 21         |
+| #   | 主分类                       | CLI 命令数 | MCP 工具数 |
+| --- | ---------------------------- | ---------- | ---------- |
+| 1   | **Workspace & Database**     | 6          | 16         |
+| 2   | **Query & Search**           | 13         | 24         |
+| 3   | **Call Chain Analysis**      | 12         | 14         |
+| 4   | **Code Health & Metrics**    | 11         | 12         |
+| 5   | **Task Orchestration**       | 1          | 36         |
+| 6   | **Agent Rule Memory**        | 1          | 11         |
+| 7   | **Audit & Bootstrap**        | 4          | 10         |
+| 8   | **Git Integration**          | 2          | 6          |
+| 9   | **Semgrep & Defects**        | 6          | 18         |
+| 10  | **Coverage & Ownership**     | 9          | 19         |
+| 11  | **GC**                       | 1          | 11         |
+| 12  | **Diagnostics**              | 2          | 27         |
+| 13  | **构建上下文感知**           | 2          | 8          |
+| 14  | **只读协同查询**             | 1          | 6          |
+| 15  | **依赖图与环检测**           | 1          | 10         |
+| 16  | **Assignment 与 Lease**      | 2          | 8          |
+| 17  | **Identity 与 Attestation**  | 1          | 7          |
+| 18  | **Migration Rollback**（CLI 独有） | 1    | —          |
+| 19  | **Daemon 运维**（CLI 独有）  | 1          | —          |
+| 20  | **安装与初始化**（CLI 独有） | 6          | —          |
+| 21  | **盲评实验**（CLI 独有）     | 1          | —          |
 
-> 详细子分类设计见 `.cli_audit.md` §3；MCP 工具分组明细见 `.mcp_audit.md` §4。
+> 详细子分类设计见 `cli/categories.py`（`COMMAND_CATEGORIES`）；MCP 工具分组明细见 `server/tools/_categories.py`（`TOOL_CATEGORIES`）。
 
 ### 迁移时间线（三阶段）
 
@@ -1057,7 +1066,7 @@ Call Warden 把 83 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 
 | ------------------------------ | ---- | ---------------------------------------------------------------------------------------------- |
 | 新增 27 个 subcommand handler  | ✅    | 覆盖 8 个主分类（workspace/db/query/call-chain/metrics/git/semgrep/coverage/diagnostics 部分） |
 | 60 个 `--flag` deprecated 警告 | ✅    | 通过 `_DEPRECATED_FLAG_MAPPING` 字典实现，使用 `--flag` 时打印推荐 subcommand                  |
-| `cw --help` 12 组分组          | ✅    | main help 按 12 主分类组织 subcommand 列表                                                     |
+| `cw --help` 21 组分组          | ✅    | main help 按 21 主分类组织 subcommand 列表                                                     |
 | 子命令 `--help` 统一模板       | ✅    | 所有 subcommand 共享统一的 help 输出格式                                                       |
 | `--refresh` 多 path 支持       | ✅    | `cw --refresh <path1> <path2> ...` 支持同时刷新多文件                                          |
 | readonly 命令集合扩展          | ✅    | `_READONLY_*_ACTIONS` 集合覆盖 workspace/git/semgrep/coverage 查询类                           |
@@ -1068,11 +1077,11 @@ Call Warden 把 83 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 
 
 | 工作项                   | 状态 | 说明                                                                         |
 | ------------------------ | ---- | ---------------------------------------------------------------------------- |
-| MCP 工具命名审计         | ✅    | 210 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
-| 12 大类分组注释          | ✅    | `server/mcp_server.py` 中用统一注释格式标注每个分类起点                      |
-| CLI↔MCP 映射对照表       | ✅    | `docs/mcp_tools.md` 末尾添加 171 条 CLI↔MCP 命名映射                         |
-| CLI 命令参考 12 大类重构 | ✅    | `docs/cli_reference.md` 开头概览表替换为 12 大功能分类                       |
-| MCP 工具参考 12 大类重组 | ✅    | `docs/mcp_tools.md` 开头概览表替换为 12 大功能分类                           |
+| MCP 工具命名审计         | ✅    | 243 个 `@mcp.tool()` 全量审计，结论：无严重不一致                              |
+| 功能分类分组注释         | ✅    | `server/mcp_server.py` 中用统一注释格式标注每个分类起点                      |
+| CLI↔MCP 映射对照表       | ✅    | `docs/mcp_tools.md` 末尾添加 153 条有 CLI 入口的 CLI↔MCP 命名映射（另 90 条 MCP 专属） |
+| CLI 命令参考分类重构     | ✅    | `docs/cli_reference.md` 开头概览表替换为功能分类                             |
+| MCP 工具参考分类重组     | ✅    | `docs/mcp_tools.md` 开头概览表替换为功能分类                                 |
 | 架构规范文档化           | ✅    | 本节（architecture.md 命令风格统一规范）                                     |
 
 #### 阶段 3：深度完善（📋 计划中）
@@ -1099,14 +1108,14 @@ Call Warden 把 83 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 
 
 #### 2. 不重命名 MCP 工具
 
-**决策**：210 个 MCP 工具的命名保持不变，仅审计和归档。
+**决策**：243 个 MCP 工具的命名保持不变，仅审计和归档。
 
 **理由**：
 - MCP 工具名是 Agent 集成的稳定接口，重命名会破坏已部署的 Agent workflow
 - 现有命名前缀（`get_` / `list_` / `find_` / `task_` / `gc_` / `rule_` 等）基本符合约定
 - 部分工具名（如 `blast_radius` / `who_to_ask` / `bootstrap_status`）使用业务领域术语而非动词前缀，但已成为稳定接口
 
-**实现**：在 `server/mcp_server.py` 中添加 12 大类分组注释（`# === [N] <Category> ===`），不修改任何 `@mcp.tool()` 注册。详细审计结论见 `.mcp_audit.md` §5。
+**实现**：在 `server/mcp_server.py` 中添加 17 分类分组注释（`# === [N] <Category> ===`），不修改任何 `@mcp.tool()` 注册。当前分组真相源为 `server/tools/_categories.py`（17 分类，243 工具）。
 
 #### 3. subcommand 与 `--flag` 并存
 
@@ -1198,7 +1207,7 @@ PID/process start、binary hash、Git、schema、profile、protocol 与 `/health
 authority mismatch 都 fail closed。compatibility worker frame 不含 DB path，由 daemon 注入并
 验证 workspace context，worker 不得自行选择 active workspace。
 
-**实现**：传输抽象位于 [rust_ext/src/daemon/transport/](../rust_ext/src/daemon/transport/)，
+**实现**：传输抽象位于 [rust_ext/src/daemon/transport.rs](../rust_ext/src/daemon/transport.rs)，
 平台无关的 listen/accept/request 循环由 `Transport` trait 抽象，各平台实现 `UnixTransport`
 与 `NamedPipeTransport`。daemon 主循环见 [rust_ext/src/daemon/server.rs](../rust_ext/src/daemon/server.rs)。
 
@@ -1516,12 +1525,12 @@ CREATE TABLE task_lease_events (
 
 ### 相关文档
 
-- [MCP 工具参考 - Identity 与 Attestation 工具](mcp_tools.md#identity-与-attestation-工具p3-req-101-1018)：6 个 MCP 工具详情
+- [MCP 工具参考 - Identity 与 Attestation 工具](mcp_tools.md#identity-与-attestation-工具p3-req-101-1018)：7 个 MCP 工具详情
 - [实施状态 - P3 已实现能力清单](design/implementation-status.md#p3-已实现能力清单)：11 项能力清单
 - [requirements.md - Requirement 10 Identity 与 Attestation](design/requirements.md)
 
 ## 下一步
 
 - [MCP 工具参考](mcp_tools.md)：243 个工具详情
-- [CLI 命令参考](cli_reference.md)：83 个顶层命令详情
+- [CLI 命令参考](cli_reference.md)：84 个顶层命令详情
 - [部署指南](deployment.md)：Docker 部署与升级

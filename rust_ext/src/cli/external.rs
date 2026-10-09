@@ -1512,11 +1512,22 @@ pub fn run_gc_archive(runtime: &RuntimeOptions, force: bool, dry_run: bool) -> C
         Ok(id) => id,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
+    match gc_archive_core(&conn, ws_id, force, dry_run) {
+        Ok(value) => CommandResult::success_json(&value, RouteUsed::Local),
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    }
+}
 
-    let root = match workspace_root(&conn, ws_id) {
-        Ok(root) => root,
-        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
-    };
+/// GC archive 核心逻辑（CLI `run_gc_archive` 与 daemon `gc_archive` RPC handler
+/// 共用，审计 20261009 C5 抽取）。dry_run=false 时全程 BEGIN IMMEDIATE …
+/// COMMIT，任一步失败整体 ROLLBACK 并返回 Err。
+pub fn gc_archive_core(
+    conn: &rusqlite::Connection,
+    ws_id: i64,
+    force: bool,
+    dry_run: bool,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root(conn, ws_id)?;
     let patterns = load_ignore_patterns(&root);
     let status_filter = if force {
         "status NOT IN ('archived', 'deleted')"
@@ -1524,18 +1535,11 @@ pub fn run_gc_archive(runtime: &RuntimeOptions, force: bool, dry_run: bool) -> C
         "status = 'pending'"
     };
     let sql = format!("SELECT id, rel_path, abs_path, current_content_hash, status FROM file_instances WHERE workspace_id = ?1 AND {status_filter}");
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(stmt) => stmt,
-        Err(error) => {
-            return CommandResult::failure(
-                1,
-                format!("cannot query GC candidates: {error}"),
-                RouteUsed::Local,
-            )
-        }
-    };
-    let candidates: Vec<(i64, String, String, String, String)> =
-        match stmt.query_map(params![ws_id], |row| {
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|error| format!("cannot query GC candidates: {error}"))?;
+    let candidates: Vec<(i64, String, String, String, String)> = stmt
+        .query_map(params![ws_id], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -1543,37 +1547,17 @@ pub fn run_gc_archive(runtime: &RuntimeOptions, force: bool, dry_run: bool) -> C
                 row.get(3)?,
                 row.get(4)?,
             ))
-        }) {
-            Ok(rows) => match rows.collect() {
-                Ok(rows) => rows,
-                Err(error) => {
-                    return CommandResult::failure(
-                        1,
-                        format!("cannot read GC candidates: {error}"),
-                        RouteUsed::Local,
-                    )
-                }
-            },
-            Err(error) => {
-                return CommandResult::failure(
-                    1,
-                    format!("cannot read GC candidates: {error}"),
-                    RouteUsed::Local,
-                )
-            }
-        };
+        })
+        .map_err(|error| format!("cannot read GC candidates: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read GC candidates: {error}"))?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
     if !dry_run {
-        if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
-            return CommandResult::failure(
-                1,
-                format!("cannot begin GC archive: {error}"),
-                RouteUsed::Local,
-            );
-        }
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|error| format!("cannot begin GC archive: {error}"))?;
     }
     let mut archived = 0usize;
     let mut activated = 0usize;
@@ -1581,17 +1565,14 @@ pub fn run_gc_archive(runtime: &RuntimeOptions, force: bool, dry_run: bool) -> C
     for (file_id, rel_path, abs_path, content_hash, status) in &candidates {
         if !should_ignore(rel_path, false, &patterns) {
             if !dry_run && status == "pending" {
-                if let Err(error) = conn.execute(
+                conn.execute(
                     "UPDATE file_instances SET status = 'active' WHERE id = ?1",
                     params![file_id],
-                ) {
+                )
+                .map_err(|error| {
                     let _ = conn.execute_batch("ROLLBACK");
-                    return CommandResult::failure(
-                        1,
-                        format!("failed to activate {rel_path}: {error}"),
-                        RouteUsed::Local,
-                    );
-                }
+                    format!("failed to activate {rel_path}: {error}")
+                })?;
                 activated += 1;
             }
             continue;
@@ -1616,49 +1597,47 @@ pub fn run_gc_archive(runtime: &RuntimeOptions, force: bool, dry_run: bool) -> C
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
-            let call_count: i64 = conn.query_row("SELECT COUNT(*) FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?1)", params![file_id], |row| row.get(0)).unwrap_or(0);
-            if let Err(error) = conn.execute(
+            let call_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+                    params![file_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            conn.execute(
                 "INSERT INTO archived_files (file_instance_id, workspace_id, rel_path, abs_path, content_hash, symbol_count, call_count, archive_reason, archived_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![file_id, ws_id, rel_path, abs_path, content_hash, symbol_count, call_count, "matched ignore rule", now],
-            ) {
+            )
+            .map_err(|error| {
                 let _ = conn.execute_batch("ROLLBACK");
-                return CommandResult::failure(1, format!("failed to record archived file {rel_path}: {error}"), RouteUsed::Local);
-            }
-            if let Err(error) = delete_file_graph_data(&conn, *file_id) {
+                format!("failed to record archived file {rel_path}: {error}")
+            })?;
+            delete_file_graph_data(conn, *file_id).map_err(|error| {
                 let _ = conn.execute_batch("ROLLBACK");
-                return CommandResult::failure(1, error, RouteUsed::Local);
-            }
-            if let Err(error) = conn.execute(
+                error
+            })?;
+            conn.execute(
                 "UPDATE file_instances SET status = 'archived' WHERE id = ?1",
                 params![file_id],
-            ) {
+            )
+            .map_err(|error| {
                 let _ = conn.execute_batch("ROLLBACK");
-                return CommandResult::failure(
-                    1,
-                    format!("failed to mark {rel_path} archived: {error}"),
-                    RouteUsed::Local,
-                );
-            }
+                format!("failed to mark {rel_path} archived: {error}")
+            })?;
         }
     }
     if !dry_run {
-        if let Err(error) = conn.execute_batch("COMMIT") {
-            let _ = conn.execute_batch("ROLLBACK");
-            return CommandResult::failure(
-                1,
-                format!("GC archive commit failed: {error}"),
-                RouteUsed::Local,
-            );
-        }
+        conn.execute_batch("COMMIT")
+            .map_err(|error| {
+                let _ = conn.execute_batch("ROLLBACK");
+                format!("GC archive commit failed: {error}")
+            })?;
     }
-    CommandResult::success_json(
-        &json!({
-            "action": "archive", "force": force, "dry_run": dry_run, "workspace_id": ws_id,
-            "scanned": candidates.len(), "archived": archived, "activated": activated, "skipped": skipped
-        }),
-        RouteUsed::Local,
-    )
+    Ok(json!({
+        "action": "archive", "force": force, "dry_run": dry_run, "workspace_id": ws_id,
+        "scanned": candidates.len(), "archived": archived, "activated": activated, "skipped": skipped
+    }))
 }
 
 pub fn run_gc_restore(runtime: &RuntimeOptions, paths: &[PathBuf], force: bool) -> CommandResult {

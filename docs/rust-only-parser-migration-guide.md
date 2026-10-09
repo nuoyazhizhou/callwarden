@@ -115,7 +115,7 @@ cw query new_fn <workspace>/main.py
 ```bash
 # 1. 停止当前版本 watcher / daemon
 cw watcher stop <workspace>
-cw server --stop  # 如有 daemon 运行
+# 停止 MCP Server / daemon 进程（无对应 CLI 子命令；在 IDE 中停止或结束进程）
 
 # 2. 恢复上一版本安装目录
 rm -rf callwarden

@@ -14,6 +14,7 @@
 
 import io
 import os
+import re
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -25,10 +26,29 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
+from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names
 from callwarden.i18n import set_language
 from callwarden.db import CodeGraphDB
 
 set_language("zh_CN")
+
+
+def _main_help_text() -> str:
+    """渲染主 --help 文本（T10 Phase 2 契约：COMMAND_CATEGORIES → _print_main_help）。
+
+    stale 依据（T-1791511742091-064b1c40 族B）：_MAIN_HELP_GROUPS 静态块已删除，
+    主 --help 由 cli/main.py:141 _print_main_help() 从 cli/categories.py 渲染，
+    断言目标改为渲染后的 help 文本（用户实际所见）。
+    """
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cli_main._print_main_help()
+    return buf.getvalue()
+
+
+# _handle_coverage 实际注册的子命令（cli/main.py:12139-12156，
+# 含 T10 阶段2.5 重新并入的 test）
+REGISTERED_COVERAGE_SUBCOMMANDS = {"import", "fn", "uncovered", "test"}
 
 
 @pytest.fixture
@@ -46,60 +66,65 @@ def db():
 
 
 class TestHelpTemplateRemoved:
-    """验证 coverage comment/uncommented/test 已从 help 模板移除"""
+    """验证 coverage comment/uncommented 不再出现在主 --help 渲染输出中
 
-    def _collect_help_cmds(self):
-        """收集 _MAIN_HELP_GROUPS 中所有命令文本"""
-        cmds = []
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                cmds.append(cmd)
-        return cmds
+    stale 修正（族B）：断言目标从 _MAIN_HELP_GROUPS 静态块改为渲染后的
+    主 --help 文本（_print_main_help 输出）。
+    """
 
     def test_coverage_comment_removed(self):
-        """help 模板不应再列出 'coverage comment'"""
-        cmds = self._collect_help_cmds()
-        assert not any("coverage comment" == c for c in cmds), \
-            "help 模板仍包含 'coverage comment'"
-        # 更严格：不应有任何以 "coverage comment" 开头的项
-        assert not any(c.startswith("coverage comment") for c in cmds), \
-            "help 模板仍包含以 'coverage comment' 开头的项"
+        """主 --help 不应列出 'coverage comment'"""
+        text = _main_help_text()
+        assert "coverage comment" not in text, \
+            "主 --help 仍包含 'coverage comment'"
 
     def test_coverage_uncommented_removed(self):
-        """help 模板不应再列出 'coverage uncommented'"""
-        cmds = self._collect_help_cmds()
-        assert not any(c.startswith("coverage uncommented") for c in cmds), \
-            "help 模板仍包含 'coverage uncommented'"
+        """主 --help 不应列出 'coverage uncommented'"""
+        text = _main_help_text()
+        assert "coverage uncommented" not in text, \
+            "主 --help 仍包含 'coverage uncommented'"
 
     def test_coverage_test_removed(self):
-        """help 模板不应再列出 'coverage test'"""
-        cmds = self._collect_help_cmds()
-        assert not any(c.startswith("coverage test") for c in cmds), \
-            "help 模板仍包含 'coverage test'"
+        """主 --help 顶层命令面不应有 'coverage test' 行（test 是 coverage 的
+        argparse 子命令，主 help 只列顶层命令）"""
+        text = _main_help_text()
+        assert not re.search(r"^  coverage test\b", text, re.M), \
+            "主 --help 不应列出 'coverage test' 顶层命令行"
 
     def test_coverage_import_kept(self):
-        """help 模板应保留 'coverage import'（已注册）"""
-        cmds = self._collect_help_cmds()
-        assert any(c.startswith("coverage import") for c in cmds)
+        """coverage 命令行应保留并列出 import 子命令"""
+        text = _main_help_text()
+        assert re.search(r"^  coverage\s{2,}.*\bimport\b", text, re.M), \
+            "主 --help coverage 行应列出 import 子命令"
 
     def test_coverage_fn_kept(self):
-        """help 模板应保留 'coverage fn'（已注册）"""
-        cmds = self._collect_help_cmds()
-        assert any(c.startswith("coverage fn") for c in cmds)
+        """coverage 命令行应保留并列出 fn 子命令"""
+        text = _main_help_text()
+        assert re.search(r"^  coverage\s{2,}.*\bfn\b", text, re.M), \
+            "主 --help coverage 行应列出 fn 子命令"
 
     def test_coverage_uncovered_kept(self):
-        """help 模板应保留 'coverage uncovered'（已注册）"""
-        cmds = self._collect_help_cmds()
-        assert any(c.startswith("coverage uncovered") for c in cmds)
+        """coverage 命令行应保留并列出 uncovered 子命令"""
+        text = _main_help_text()
+        assert re.search(r"^  coverage\s{2,}.*\buncovered\b", text, re.M), \
+            "主 --help coverage 行应列出 uncovered 子命令"
 
     def test_coverage_group_has_5_items(self):
-        """coverage 分组应剩 5 项（原 8 项移除 3 项）"""
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            if group_title == "cli.messages.help_group_coverage":
-                assert len(items) == 5, \
-                    f"coverage 分组应有 5 项，实际 {len(items)} 项"
-                return
-        pytest.fail("未找到 coverage help 分组")
+        """coverage 命令归 coverage_ownership 分类，desc 列出的子命令集与
+        argparse 注册集一致（不超前声明）
+
+        stale 修正：旧断言按 _MAIN_HELP_GROUPS「coverage 分组 5 项」计数；
+        新结构下子命令级真相源是 argparse（见 TestRegisteredSubcommands），
+        categories desc 只须与注册集一致。
+        """
+        cat = next(c for c in COMMAND_CATEGORIES if c.key == "coverage_ownership")
+        cov = next(c for c in cat.commands if c.name == "coverage")
+        inner = cov.default_desc.split("（", 1)[1].rstrip("）")
+        listed = {tok.strip() for tok in inner.split("/")}
+        assert listed == REGISTERED_COVERAGE_SUBCOMMANDS, (
+            f"coverage desc 子命令集 {sorted(listed)} 应与注册集 "
+            f"{sorted(REGISTERED_COVERAGE_SUBCOMMANDS)} 一致"
+        )
 
 
 # ============================================
@@ -149,11 +174,11 @@ class TestRemovedSubcommandsReject:
             cli_main._handle_coverage(["uncommented"], db)
         assert exc_info.value.code == 2
 
-    def test_coverage_test_rejected(self, db):
-        """coverage test 应报 invalid choice"""
-        with pytest.raises(SystemExit) as exc_info:
-            cli_main._handle_coverage(["test"], db)
-        assert exc_info.value.code == 2
+    def test_coverage_test_registered(self, db, capsys):
+        """coverage test 自 T10 阶段2.5 重新注册（原 --test-coverage flag 并入，
+        cli/main.py:12154-12156），应正常执行而非报 invalid choice"""
+        cli_main._handle_coverage(["test"], db)  # 不应抛 SystemExit
+        assert "测试覆盖率统计" in capsys.readouterr().out
 
 
 # ============================================
@@ -211,45 +236,34 @@ class TestI18nKeysRetained:
 
 
 class TestHelpTemplateConsistency:
-    """全量交叉验证：所有 help 模板中列出的 coverage 子命令都应已注册
+    """全量交叉验证：categories 真相源列出的 coverage 子命令都应已注册
 
-    这是 C9 任务的核心理念：help 模板不应超前声明未注册的子命令。
-    遍历 _MAIN_HELP_GROUPS 中所有 "coverage xxx" 形式的项，
-    验证 xxx 是 _handle_coverage 中实际注册的子命令。
+    C9 核心理念（help/文档不超前声明未注册子命令）在新结构下的等价物：
+    主 --help 由 COMMAND_CATEGORIES 渲染，coverage 命令 default_desc 列出
+    子命令清单，校验该清单与 argparse 实际注册集一致。
     """
 
-    # _handle_coverage 中实际注册的子命令（从 cli/main.py 源码提取）
-    REGISTERED_COVERAGE_SUBCOMMANDS = {"import", "fn", "uncovered"}
-
     def test_all_coverage_help_items_are_registered(self):
-        """所有 help 模板中的 coverage xxx 项都应已注册"""
-        unregistered = []
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                cmd = cmd.strip()
-                # 匹配 "coverage <subcommand>" 形式
-                if cmd.startswith("coverage "):
-                    # 提取子命令名（取第一个 token，忽略后续参数）
-                    parts = cmd.split()
-                    if len(parts) >= 2:
-                        sub_name = parts[1]
-                        # 跳过带 <...> 占位符的（如 "coverage import <FILE>"）
-                        # sub_name 是 "import"，不是 "<FILE>"
-                        if sub_name not in self.REGISTERED_COVERAGE_SUBCOMMANDS:
-                            unregistered.append(cmd)
+        """coverage desc 列出的子命令都必须已注册"""
+        cat = next(c for c in COMMAND_CATEGORIES if c.key == "coverage_ownership")
+        cov = next(c for c in cat.commands if c.name == "coverage")
+        inner = cov.default_desc.split("（", 1)[1].rstrip("）")
+        listed = {tok.strip() for tok in inner.split("/")}
+        unregistered = listed - REGISTERED_COVERAGE_SUBCOMMANDS
         assert not unregistered, \
-            f"以下 coverage help 项未注册为子命令: {unregistered}"
+            f"coverage desc 列出未注册子命令: {unregistered}"
 
     def test_help_template_msg_keys_resolve(self):
-        """所有保留的 help 模板 msg_key 应可解析"""
+        """coverage_ownership 分类中所有 desc_key 应可解析（en_US）"""
         from callwarden.i18n import set_language, t as _t
         set_language("en_US")
         try:
-            for group_title, items in cli_main._MAIN_HELP_GROUPS:
-                if group_title == "cli.messages.help_group_coverage":
-                    for cmd, msg_key in items:
-                        text = _t(msg_key, default="")
-                        assert text, f"无法解析 msg_key: {msg_key}"
+            cat = next(c for c in COMMAND_CATEGORIES
+                       if c.key == "coverage_ownership")
+            for cmd in cat.commands:
+                if cmd.desc_key:
+                    text = _t(cmd.desc_key, default="")
+                    assert text, f"无法解析 msg_key: {cmd.desc_key}"
         finally:
             set_language("zh_CN")
 
@@ -260,38 +274,23 @@ class TestHelpTemplateConsistency:
 
 
 class TestEquivalentFunctionalityAvailable:
-    """验证被移除子命令的等价功能仍可通过其他命令访问
+    """被移除子命令的等价功能仍可访问（T10 Phase 2 后契约更新）
 
-    - coverage comment → metrics 分组的 --comment-coverage flag
-    - coverage uncommented → metrics 分组的 --uncommented flag
-    - coverage test → test-impact 子命令
+    stale 修正：comment-coverage / uncommented / test-impact 已从 metrics
+    flag / 附带子命令升格为 coverage_ownership 分类下的顶层命令
+    （cli/categories.py coverage_ownership.commands），主 --help 直接列出。
     """
 
-    def test_comment_coverage_flag_in_help(self):
-        """comment-coverage 等价功能应在 help 模板中列出（metrics 分组）"""
-        cmds = []
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                cmds.append(cmd)
-        # metrics 分组应包含 comment-coverage（help 模板用无 -- 前缀的名称）
-        assert any("comment-coverage" in c for c in cmds), \
-            "metrics 分组应列出 comment-coverage 等价功能"
+    EQUIV_COMMANDS = ["comment-coverage", "uncommented", "test-impact"]
 
-    def test_uncommented_flag_in_help(self):
-        """uncommented 等价功能应在 help 模板中列出（metrics 分组）"""
-        cmds = []
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                cmds.append(cmd)
-        # metrics 分组应包含 uncommented
-        assert any("uncommented" in c for c in cmds), \
-            "help 模板应列出 uncommented 等价功能"
+    @pytest.mark.parametrize("cmd_name", EQUIV_COMMANDS)
+    def test_equiv_command_is_top_level(self, cmd_name):
+        """等价命令已在顶层命令真相源（categories）注册"""
+        assert cmd_name in all_command_names()
 
-    def test_test_impact_in_help(self):
-        """test-impact 子命令应在 help 模板中列出"""
-        cmds = []
-        for group_title, items in cli_main._MAIN_HELP_GROUPS:
-            for cmd, msg_key in items:
-                cmds.append(cmd)
-        assert any("test-impact" in c for c in cmds), \
-            "help 模板应列出 test-impact 子命令"
+    @pytest.mark.parametrize("cmd_name", EQUIV_COMMANDS)
+    def test_equiv_command_in_main_help(self, cmd_name):
+        """等价命令已在主 --help 列出"""
+        text = _main_help_text()
+        assert re.search(rf"^  {re.escape(cmd_name)}\s", text, re.M), \
+            f"主 --help 应列出顶层命令 {cmd_name}"

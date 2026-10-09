@@ -152,8 +152,10 @@ NATIVE_READ_CASES = [
         id="get_topological_order",
     ),
     pytest.param(
-        "detect_cycles", (), {}, "query.detect_cycles", {"max_depth": 10},
-        id="detect_cycles",
+        # stale 修正（族C）：源码工具已改名 detect_cycles → detect_call_cycles
+        # （tools_query.py:240），RPC 真名仍为 query.detect_cycles（:252）
+        "detect_call_cycles", (), {}, "query.detect_cycles", {"max_depth": 10},
+        id="detect_call_cycles",
     ),
 ]
 
@@ -363,7 +365,7 @@ class TestNoPseudoRoutes:
         "get_callees": "query.callees",
         "get_topological_order": "query.topological_order",
         "get_call_chain_down": "query.call_chain_down",
-        "detect_cycles": "query.detect_cycles",
+        "detect_call_cycles": "query.detect_cycles",
         "get_uncommented_symbols": "query.uncommented_symbols",
         "get_module_call_stats": "query.module_call_stats",
         "get_semgrep_stats": "query.semgrep_stats",

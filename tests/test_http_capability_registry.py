@@ -544,21 +544,25 @@ class TestRealDaemonCompatRpcAlignment:
         yield w3_live["client"]
 
     def _wait_worker_ready(self, proc, client, retries: int = 2):
-        """worker 冷启动就绪等待（整改 4 模式，无 sleep 兜底）。"""
+        """worker 冷启动就绪等待（整改 4 模式，无 sleep 兜底）。
+
+        注意：compat 面清零后 POSITIVE_COMPAT_RPCS 为空集，本方法当前无调用点
+        （保留以固化「compat 面恢复时预热语义」）。预热探针用 ping：旧探针
+        stats_top_files 已随 INT-001 迁移为 query.stats_top_files（dispatch 真名
+        带 query. 前缀），裸名调用必 method_not_found，不再适合作预热。
+        """
         last_err = None
         for _ in range(retries + 1):
             try:
-                # stats_top_files handler 强制要求 workspace_id；隔离库
-                # 无该 workspace 时返回空结果（成功）或业务错误，均不影响预热目标
-                client.call("stats_top_files", {"workspace_id": 1, "limit": 1})
+                client.call("ping")
                 return
             except DaemonUnavailableError as e:
                 if E_HTTP_REQUEST_TIMEOUT not in str(e):
                     raise
                 last_err = e
             except DaemonRemoteError as e:
-                # worker 已能响应帧：业务错误（如隔离库无该 workspace）说明
-                # spawn + 装配已完成，预热目标达成。method_not_found 除外。
+                # worker 已能响应帧：业务错误说明 spawn + 装配已完成，
+                # 预热目标达成。method_not_found 除外。
                 if e.code == "method_not_found":
                     raise
                 return

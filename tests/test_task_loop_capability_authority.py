@@ -14,12 +14,33 @@ gate 直写本地 SQLite；local 模式保留 legacy 直写语义（迁移契约
 """
 
 import pytest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from callwarden.db.db import CodeGraphDB
 
 GATE_DISABLED = "E_TASK_LOOP_CAPABILITY_DISABLED"
+
+
+@contextmanager
+def _no_local_get_db(module):
+    """「工具执行不触碰本地 get_db()」的 fail-closed 证据（族A 契约对齐）。
+
+    stale 依据（T-1791511742091-064b1c40 族A）：tools_identity `_route` 化后
+    已彻底移除 get_db 绑定，`patch.object(tools_identity, "get_db")` 直接
+    AttributeError。tools_identity 无绑定 → hasattr 为 False 即无本地回退
+    seam 的结构性证明（沿用 test_http_native_read_cutover.py 先例）；仍保留
+    绑定的模块走 patch + 未调用断言，yield 一个永不被触达的 mock 保持调用点
+    代码不变。
+    """
+    if hasattr(module, "get_db"):
+        with patch(f"{module.__name__}.get_db") as mock_db:
+            yield mock_db
+    else:
+        assert not hasattr(module, "get_db"), (
+            f"{module.__name__} 不应存在 get_db（本地回退 seam 已移除）")
+        yield MagicMock()
 
 
 def _db(tmp_path):
@@ -172,7 +193,7 @@ def test_api_register_attestation_revocation_routes_governance_write(
     monkeypatch.setattr(tools_identity, "_route", _fake_route)
     tools = _register_tools(tools_identity)
     fn = tools["register_attestation_revocation"]
-    with patch.object(tools_identity, "get_db") as mock_get_db:
+    with _no_local_get_db(tools_identity) as mock_get_db:
         result = fn(
             issuer="iss",
             signing_key_id="k1",

@@ -18,7 +18,7 @@ Command policy:
 
 ## 身份
 
-你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 237 个 MCP 工具和 145+ CLI 命令。
+你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 243 个 MCP 工具和 84 个顶层 CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
 
@@ -319,7 +319,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 237 个 MCP 工具 + 145+ CLI 命令
+- 243 个 MCP 工具 + 84 个顶层 CLI 命令
 
 ## 技术栈
 
@@ -589,7 +589,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     **规避方法**（按优先级）：
     1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py refresh --all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
     2. **配置沙箱白名单**：Settings → Conversation → Custom Sandbox Configuration，添加允许规则：`C:\Users\<user>\.callwarden\`（写权限）
-    3. **停 MCP Server**：若间歇性失败，`cw server --stop` 释放 `-shm` 锁后再 commit
+    3. **停 MCP Server**：若间歇性失败，在 IDE 中停止/重载 MCP Server（或结束占用 DB 的 MCP 进程）释放 `-shm` 锁后再 commit
     4. **用 `python cw.py` 替代 `cw.exe`**：entry_point 启动时 sqlite3 偶发失败，`python cw.py` 更稳定
 
     **已沉淀修复**（见 [install.py](install.py) `_pre_commit_hook()`）：

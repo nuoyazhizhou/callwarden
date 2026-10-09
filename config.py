@@ -1739,6 +1739,8 @@ HTTP_SLOW_METHOD_PREFIXES = (
     "snapshot.publish",           # 快照发布（checkpoint + WAL）
     "import",                     # import.git_history/blame/codeowners/deps/coverage
     "embed",                      # embed.symbols 等（批量向量化）
+    "detect_clones",              # 克隆检测 O(N²) token 比较（审计 20261009 C6：
+                                  #  39k 符号主仓库 30s 默认超时实测命中）
 )
 
 # 慢方法判定（供 HttpDaemonRpcClient.call 按方法选超时）

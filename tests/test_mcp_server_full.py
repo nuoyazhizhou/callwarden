@@ -22,9 +22,29 @@ import subprocess
 import sys
 import tempfile
 import time
-from unittest.mock import patch
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@contextmanager
+def _no_local_get_db(module):
+    """「工具执行不触碰本地 get_db()」的 fail-closed 证据（族A 契约对齐）。
+
+    stale 依据（T-1791511742091-064b1c40 族A）：tools_query/tools_workspace
+    等 `_route` 化模块已彻底移除 get_db 绑定，`patch(...get_db)` 直接
+    AttributeError。无绑定 → hasattr 为 False 即无本地回退 seam 的结构性证明
+    （沿用 test_http_native_read_cutover.py 先例）；仍保留绑定的模块走 patch
+    + 未调用断言，yield 一个永不被触达的 mock 保持调用点代码不变。
+    """
+    if hasattr(module, "get_db"):
+        with patch(f"{module.__name__}.get_db") as mock_db:
+            yield mock_db
+    else:
+        assert not hasattr(module, "get_db"), (
+            f"{module.__name__} 不应存在 get_db（本地回退 seam 已移除）")
+        yield MagicMock()
 
 # 项目根目录
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -289,7 +309,7 @@ def test_get_stats_tool_returns_dict_on_empty_db(reset_mcp_db_singleton, tmp_pat
 
     mcp = create_mcp_server()
     monkeypatch.setattr(tools_query, "_route", fake_route)
-    with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+    with _no_local_get_db(tools_query) as mock_db:
         stats = _call_tool_sync(mcp, "get_stats", {})
         mock_db.assert_not_called()
 

@@ -489,7 +489,21 @@ class TestHelpTemplate:
     """验证 help 模板包含 task reopen"""
 
     def test_help_groups_contains_task_reopen(self):
-        """_MAIN_HELP_GROUPS 应包含 task reopen"""
-        assert hasattr(cli_main, "_MAIN_HELP_GROUPS")
-        help_text = str(cli_main._MAIN_HELP_GROUPS)
-        assert "task reopen" in help_text, "help 模板缺少 task reopen"
+        """task reopen 已注册（T10 Phase 2 后：_MAIN_HELP_GROUPS 已删除，
+        断言目标改为 `cw task --help` 的 argparse 渲染输出）"""
+        import os as _os
+        import subprocess as _sp
+        import sys as _sys
+        env = _os.environ.copy()
+        env["NO_COLOR"] = "1"
+        env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        cw_py = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "cw.py")
+        result = _sp.run(
+            [_sys.executable, cw_py, "task", "--help"],
+            capture_output=True, text=True, env=env, encoding="utf-8",
+        )
+        assert result.returncode == 0, (result.stderr or result.stdout)[-300:]
+        assert "reopen" in result.stdout, "cw task --help 缺少 reopen 子命令"

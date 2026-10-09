@@ -24,6 +24,7 @@ test_build_read_rpc_http.py / test_task_stats_rpc_http.py 同构）：
    传播（不回落本地 get_db）。
 """
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +32,26 @@ import pytest
 from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.tools import tools_query
+
+
+@contextmanager
+def _no_local_get_db(module):
+    """「工具执行不触碰本地 get_db()」的 fail-closed 证据（族A 契约对齐）。
+
+    stale 依据（T-1791511742091-064b1c40 族A）：tools_query `_route` 化后已
+    彻底移除 get_db 绑定，`patch(...get_db)` 直接 AttributeError。tools_query
+    无绑定 → hasattr 为 False 即无本地回退 seam 的结构性证明（沿用
+    test_http_native_read_cutover.py 先例）；仍保留绑定的模块走 patch +
+    未调用断言，yield 一个永不被触达的 mock 保持调用点代码不变。
+    """
+    if hasattr(module, "get_db"):
+        with patch(f"{module.__name__}.get_db") as mock_db:
+            yield mock_db
+    else:
+        assert not hasattr(module, "get_db"), (
+            f"{module.__name__} 不应存在 get_db（本地回退 seam 已移除）")
+        yield MagicMock()
+
 
 DB_A = "/tmp/w3_3_a.db"
 DB_B = "/tmp/w3_3_b.db"
@@ -298,7 +319,7 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_query, "_route", fake_route)
         q = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+        with _no_local_get_db(tools_query) as mock_db:
             out = q["get_semgrep_findings"](**call_kwargs)
             mock_db.assert_not_called()
         assert out == [{"rule_id": "no-else-return"}]
@@ -320,7 +341,7 @@ class TestToolRouteContract:
 
         monkeypatch.setattr(tools_query, "_route", fake_route)
         q = _register_tools(tools_query)
-        with patch("callwarden.server.tools.tools_query.get_db") as mock_db:
+        with _no_local_get_db(tools_query) as mock_db:
             with pytest.raises(DaemonRemoteError):
                 q["get_semgrep_findings"](**call_kwargs)
             mock_db.assert_not_called()

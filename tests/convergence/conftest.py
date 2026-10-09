@@ -29,6 +29,7 @@ if _TESTS_DIR not in sys.path:
 
 from test_http_daemon_release_acceptance import (  # noqa: E402
     _backup_http_manifest,
+    _isolated_manifest_path,
     _restore_or_clean_http_manifest,
     _spawn_isolated_daemon,
     _terminate,
@@ -55,19 +56,20 @@ def isolated_http_daemon():
 
     bin_path = _pick_bin()
     data_root = tempfile.mkdtemp(prefix="cw_convergence_")
-    backup = _backup_http_manifest()
+    manifest_path = _isolated_manifest_path(data_root)
+    backup = _backup_http_manifest(manifest_path)
     proc = _spawn_isolated_daemon(bin_path, data_root)
     try:
-        manifest = _wait_manifest(proc, timeout=20)
+        manifest = _wait_manifest(proc, data_root, timeout=20)
         if manifest is None:
             stdout = (proc.stdout.read(4000).decode("utf-8", "replace")
                       if proc.stdout else "")
             stderr = (proc.stderr.read(4000).decode("utf-8", "replace")
                       if proc.stderr else "")
             # 生产 daemon 正持有 SID 级 instance 锁(daemon-instance.<SID>.lock,
-            # AGENTS.md §34 DaemonMutex)时,隔离 daemon 无法启动。这是环境约束
-            # (隔离套件设计为不触碰生产 daemon,需在生产 daemon 停止时运行),
-            # 不是测试失败——skip 而非 fail,避免本地有 daemon 在跑时误报红。
+            # AGENTS.md §34 DaemonMutex)时,隔离 daemon 无法启动。USERPROFILE
+            # 重定向后此分支原则上不再触发（锁已隔离到 data_root）；保留兜底，
+            # 万一重定向失效时 skip 而非 fail。
             if "E_DAEMON_ALREADY_RUNNING" in stderr:
                 _terminate(proc)
                 pytest.skip(
@@ -92,7 +94,7 @@ def isolated_http_daemon():
         }
     finally:
         _terminate(proc)
-        _restore_or_clean_http_manifest(proc.pid, backup)
+        _restore_or_clean_http_manifest(manifest_path, proc.pid, backup)
         shutil.rmtree(data_root, ignore_errors=True)
 
 

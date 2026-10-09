@@ -2426,6 +2426,10 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "rule.sync_agents_md",
     "guardrail.add_rule",
     "summary.generate",
+    // 审计 20261009 补注册的 CLI 写面（C2/C5/C6，PROTECTED_MUTATION）
+    "rebuild_fts_index",
+    "gc_archive",
+    "detect_clones",
 ];
 
 /// 判断方法是否为 Protected_Mutation（须经串行化点）。
@@ -2613,6 +2617,19 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "build_defect_knowledge",
     "get_rollback_config",
     "is_feature_rolled_back",
+    // 审计 20261009（9 个 CLI 接线断修复）：daemon 补注册 CLI 缺失方法。
+    // 读类：C7 list_rollback_configs（task DB 只读）、C1 find_symbols_at_lines、
+    // C3 get_project_dashboard（workspace 主库只读）、C4 task.get_changed_files
+    // （task DB 只读）。
+    "list_rollback_configs",
+    "find_symbols_at_lines",
+    "get_project_dashboard",
+    "task.get_changed_files",
+    // 写类（PROTECTED_MUTATION，经串行化点）：C2 rebuild_fts_index、
+    // C5 gc_archive、C6 detect_clones（workspace 主库写连接）。
+    "rebuild_fts_index",
+    "gc_archive",
+    "detect_clones",
 ];
 
 /// 判断 method 是否为收敛架构 RPC。

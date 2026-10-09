@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -129,176 +130,31 @@ _WRITE_FLAGS = {
 
 
 # ====================================================================
-# 主 --help 输出（12 组分组结构）
+# 主 --help 输出（分类分组结构，cli-mcp-surface-audit Phase 2 重构）
 # --------------------------------------------------------------------
-# 替代旧的 4-pillar 分组 + argparse 默认 description。
-# 输出：标题 + 12 组分组 + 最底部全局选项
+# 分组数据唯一来源：cli/categories.py 的 COMMAND_CATEGORIES（84 命令）。
+# 渲染逻辑见 _print_main_help()；新增命令只改 categories.py 并接 dispatch，
+# 不再手写静态 help 块（消除概览/help/文档三处快照漂移的根因）。
 # ====================================================================
-
-# 12 组分组数据：每组 (group_title_key, [(cmd, desc_key), ...])
-_MAIN_HELP_GROUPS = [
-    ("cli.messages.help_group_workspace", [
-        ("workspace list", "cli.messages.help_workspace_list"),
-        ("workspace register <NAME> <ROOT>",
-         "cli.messages.help_workspace_register"),
-        ("workspace set <ID_OR_NAME>", "cli.messages.help_workspace_set"),
-        ("workspace delete <ID_OR_NAME>", "cli.messages.help_workspace_delete"),
-        ("workspace scan [<DIR>]", "cli.messages.help_workspace_scan"),
-        ("workspace generate-ignore [<DIR>] [--apply]",
-         "cli.messages.help_workspace_generate_ignore"),
-        ("refresh all | <paths> | --watch", "cli.messages.help_refresh"),
-        ("stats", "cli.messages.help_stats"),
-        ("status", "cli.messages.help_status"),
-        ("doctor", "cli.messages.help_doctor"),
-    ]),
-    ("cli.messages.help_group_query", [
-        ("search <QUERY>", "cli.messages.help_search"),
-        ("symbol <QUALIFIED_NAME>", "cli.messages.help_symbol"),
-        ("file <PATH>", "cli.messages.help_file"),
-        ("query <NAME> <FILE>", "cli.messages.help_query"),
-        ("brief", "cli.messages.help_brief"),
-        ("map", "cli.messages.help_map"),
-    ]),
-    ("cli.messages.help_group_call_chain", [
-        ("callers <NAME>", "cli.messages.help_callers"),
-        ("callees <NAME>", "cli.messages.help_callees"),
-        ("call-chain <QUALIFIED_NAME>", "cli.messages.help_call_chain"),
-        ("topo", "cli.messages.help_topo"),
-        ("impact <SYMBOL_HASH>", "cli.messages.help_chain_impact"),
-        ("detect-cycles", "cli.messages.help_chain_cycles"),
-        ("orphan-symbols [KIND]", "cli.messages.help_chain_orphans"),
-        ("deepest [N]", "cli.messages.help_chain_deepest"),
-        ("top-callers [N]", "cli.messages.help_chain_top_callers"),
-        ("module-calls [N]", "cli.messages.help_chain_module_calls"),
-        ("call-heatmap [GROUP_BY]", "cli.messages.help_chain_heatmap"),
-        ("export-module-graph [FORMAT]",
-         "cli.messages.help_chain_module_graph"),
-    ]),
-    ("cli.messages.help_group_metrics", [
-        ("metrics", "cli.messages.help_metrics"),
-        ("complexity [N]", "cli.messages.help_complexity"),
-        ("coupling", "cli.messages.help_coupling"),
-        ("largest-fns [N]", "cli.messages.help_largest_fns"),
-        ("coupled-fns [N]", "cli.messages.help_coupled_fns"),
-        ("fn-metrics <NAME>", "cli.messages.help_fn_metrics"),
-        ("comment-coverage", "cli.messages.help_comment_coverage"),
-        ("uncommented [KIND]", "cli.messages.help_uncommented"),
-        ("function-issues [FN]", "cli.messages.help_function_issues"),
-    ]),
-    ("cli.messages.help_group_task", [
-        ("task create --title ... --steps ...", "cli.messages.help_task_create"),
-        ("task next <TASK_ID>", "cli.messages.help_task_next"),
-        ("task next-action <TASK_ID> [--json]",
-         "cli.messages.help_task_next_action"),
-        ("task report <TASK_ID> <STEP_ID>", "cli.messages.help_task_report"),
-        ("task rollback <TASK_ID> <STEP_ID>", "cli.messages.help_task_rollback"),
-        ("task apply <TASK_ID>", "cli.messages.help_task_apply"),
-        ("task close <TASK_ID>", "cli.messages.help_task_close"),
-        ("task reopen <TASK_ID>", "cli.messages.help_task_reopen"),
-        ("task list [--blocked]", "cli.messages.help_task_list"),
-        ("task show <TASK_ID>", "cli.messages.help_task_show"),
-        ("task findings <TASK_ID>", "cli.messages.help_task_findings"),
-        ("task capture-diff [TASK_ID] [--auto]",
-         "cli.messages.help_task_capture_diff"),
-        ("task resolve-finding <FINDING_ID>",
-         "cli.messages.help_task_resolve_finding"),
-        ("task completion-review <TASK_ID>",
-         "cli.messages.help_task_completion_review"),
-        ("task split <TASK_ID>", "cli.messages.help_task_split"),
-        ("task status-tree", "cli.messages.help_task_status_tree"),
-    ]),
-    ("cli.messages.help_group_rule", [
-        ("rule candidate create/list/accept/reject",
-         "cli.messages.help_rule_candidate"),
-        ("rule list", "cli.messages.help_rule_list"),
-        ("rule applicable --context ...", "cli.messages.help_rule_applicable"),
-        ("rule sync [--target AGENTS.md]", "cli.messages.help_rule_sync"),
-        ("rule insert-block", "cli.messages.help_rule_insert_block"),
-        ("rule extract", "cli.messages.help_rule_extract"),
-        ("rule seed-bootstrap", "cli.messages.help_rule_seed_bootstrap"),
-        ("rule cleanup-sync-log", "cli.messages.help_rule_cleanup_sync_log"),
-    ]),
-    ("cli.messages.help_group_audit", [
-        ("audit verify [--table T] [--limit N]",
-         "cli.messages.help_audit_verify"),
-        ("audit rotate-key --key-id <ID>", "cli.messages.help_audit_rotate_key"),
-        ("audit keys", "cli.messages.help_audit_keys"),
-        ("bootstrap status", "cli.messages.help_bootstrap_status"),
-        ("check-gate <TASK_ID> [--resolve]", "cli.messages.help_check_gate"),
-        ("test-impact <QUALIFIED_NAME>", "cli.messages.help_test_impact"),
-    ]),
-    ("cli.messages.help_group_git", [
-        ("git import [N]", "cli.messages.help_git_import"),
-        ("git log [N]", "cli.messages.help_git_log"),
-        ("git show <COMMIT>", "cli.messages.help_git_show"),
-        ("git stats", "cli.messages.help_git_stats"),
-        ("symbol-history <SYMBOL_HASH>", "cli.messages.help_symbol_history"),
-    ]),
-    ("cli.messages.help_group_semgrep", [
-        ("semgrep scan [PATH]", "cli.messages.help_semgrep_scan"),
-        ("semgrep list [FILTER]", "cli.messages.help_semgrep_list"),
-        ("semgrep stats", "cli.messages.help_semgrep_stats"),
-        ("defect search [--category C] [--severity S]",
-         "cli.messages.help_defect_search"),
-        ("defect suggest <SYMBOL_HASH>", "cli.messages.help_defect_suggest"),
-        ("defect learn <COMMIT_HASH>", "cli.messages.help_defect_learn"),
-        ("defect stats", "cli.messages.help_defect_stats"),
-        ("defect build", "cli.messages.help_defect_build"),
-        ("vuln-blast [--finding-id N]", "cli.messages.help_vuln_blast"),
-        ("impact <SYMBOL_HASH>", "cli.messages.help_impact"),
-        ("review <SYMBOL_HASH>", "cli.messages.help_review"),
-    ]),
-    ("cli.messages.help_group_coverage", [
-        ("coverage import <FILE>", "cli.messages.help_coverage_import"),
-        ("coverage fn <NAME>", "cli.messages.help_coverage_fn"),
-        ("coverage uncovered", "cli.messages.help_coverage_uncovered"),
-        ("who <FILE>", "cli.messages.help_who"),
-        ("ownership-map", "cli.messages.help_ownership_map"),
-    ]),
-    ("cli.messages.help_group_gc", [
-        ("gc archive [--force] [--dry-run]", "cli.messages.help_gc_archive"),
-        ("gc restore [--path P ...] [--force]",
-         "cli.messages.help_gc_restore"),
-        ("gc status", "cli.messages.help_gc_status"),
-        ("gc purge [--older-than N]", "cli.messages.help_gc_purge"),
-        ("gc policy show|set", "cli.messages.help_gc_policy"),
-        ("gc retention [--apply]", "cli.messages.help_gc_retention"),
-        ("gc archive-list", "cli.messages.help_gc_archive_list"),
-        ("gc archive-inspect <PATH>", "cli.messages.help_gc_archive_inspect"),
-        ("gc archive-import <PATH>", "cli.messages.help_gc_archive_import"),
-        ("gc audit-list", "cli.messages.help_gc_audit_list"),
-        ("gc audit-show <ID>", "cli.messages.help_gc_audit_show"),
-        ("gc db-cleanup [--apply]", "cli.messages.help_gc_db_cleanup"),
-    ]),
-    ("cli.messages.help_group_diagnostics", [
-        ("doctor [--add-defender-exclusion]", "cli.messages.help_doctor"),
-        ("install-agent <codex|claude|cursor|all>",
-         "cli.messages.help_install_agent"),
-        ("install-hook", "cli.messages.help_install_hook"),
-        ("guardrail scan [--file P] [--category C]",
-         "cli.messages.help_guardrail_scan"),
-        ("guardrail rules [--category C]",
-         "cli.messages.help_guardrail_rules"),
-        ("clone detect [--file-filter P]", "cli.messages.help_clone_detect"),
-        ("clone list [--type 1|2|3]", "cli.messages.help_clone_list"),
-        ("clone stats", "cli.messages.help_clone_stats"),
-        ("clone clear", "cli.messages.help_clone_clear"),
-        ("evolution <QUALIFIED_NAME>", "cli.messages.help_evolution"),
-        ("hotspot [--module P]", "cli.messages.help_hotspot"),
-        ("churn [--module P] [--window 90d]", "cli.messages.help_churn"),
-        ("setup [--force] [--dry-run]", "cli.messages.help_setup"),
-    ]),
-]
 
 
 def _print_main_help():
-    """打印主 --help 输出（12 组分组结构，C8 Step #3）
+    """打印主 --help 输出（从 cli.categories 分类真相源渲染）
 
-    替代旧的 4-pillar 分组。输出顺序：
+    调用链：main() 检测 --help/-h → 本函数 → 遍历
+    cli.categories.COMMAND_CATEGORIES 逐类渲染。
+
+    命令描述优先取 i18n（t(desc_key)），缺 key 回退 categories.py 内置的
+    default_desc——任何情况下不输出裸 i18n key（cli-mcp-surface-audit AC-2，
+    修复 workspace scan/generate-ignore、gc db-cleanup、setup 4 处裸 key）。
+
+    输出结构：
     1. 标题 + intro
-    2. 12 组分组（每组：组标题 + 命令-说明对）
+    2. 全部分类（每组：组标题 + 顶层命令一行一句描述）
     3. 最底部全局选项（--lang/--workspace/--root/--help）
     """
+    from .categories import COMMAND_CATEGORIES
+
     # 标题
     cprint(t("cli.messages.main_help_title"), "cyan", bold=True)
     print(t("cli.messages.main_help_intro"))
@@ -310,12 +166,24 @@ def _print_main_help():
     except Exception:
         _agent_count = 0
 
-    # 12 组分组
-    for group_title_key, items in _MAIN_HELP_GROUPS:
-        cprint(t(group_title_key), "yellow", bold=True)
-        for cmd, desc_key in items:
-            desc = t(desc_key, count=_agent_count)
-            print(f"  {cmd:45s}  {desc}")
+    # 全部分组（分类数据来自 cli/categories.py，顺序即输出顺序）
+    for idx, cat in enumerate(COMMAND_CATEGORIES, 1):
+        # 组标题：i18n key 存在用翻译（前 12 类沿用既有 key，其值自带旧编号
+        # 前缀，剥离后统一重编），否则回退中文标题；最终统一加 [N] 编号，
+        # 保证与文档概览表的分类序号一致
+        raw_title = (t(cat.title_key, default=cat.title)
+                     if cat.title_key else cat.title)
+        clean_title = re.sub(r"^\[\d+\]\s*", "", raw_title)
+        cprint(f"[{idx}] {clean_title}", "yellow", bold=True)
+        for cmd in cat.commands:
+            # 命令描述：desc_key 存在走 i18n（缺 key 由 t() 回退 default），
+            # 未配 key 的命令直接用 default_desc
+            if cmd.desc_key:
+                desc = t(cmd.desc_key, default=cmd.default_desc,
+                         count=_agent_count)
+            else:
+                desc = cmd.default_desc
+            print(f"  {cmd.name:32s}  {desc}")
         print()
 
     # 最底部全局选项
@@ -1026,7 +894,7 @@ class RpcDBProxy:
         "review_readiness_report": ("review_readiness", "READ_ONLY", ("symbol_hash",)),
         "hotspot_evolution": ("hotspot_evolution", "READ_ONLY", ("module_filter",)),
         "churn_analysis": ("query.churn_analysis", "READ_ONLY", ("module_filter", "time_window")),
-        "function_change_frequency": ("function_change_frequency", "READ_ONLY", ("qualified_name", "time_window")),
+        "function_change_frequency": ("evolution_frequency", "READ_ONLY", ("qualified_name", "time_window")),
         "get_defect_correlation_by_qn": ("query.get_defect_correlation", "READ_ONLY", ("qualified_name", "window_commits")),
         "defect_pattern_search": ("query.defect_search", "READ_ONLY", ("category", "severity_filter")),
         "defect_stats": ("defect.stats", "READ_ONLY", ()),
@@ -10472,7 +10340,7 @@ def _handle_changes(args, db):
                       default="Recently changed files and functions"),
     )
     parser.add_argument("since", nargs="?", default="1h",
-                        help=t("cli.messages.changes_arg_since", default="Time window (e.g. 1h/1d/1w; default 1h)"))
+                        help=t("cli.messages.changes_arg_since", default="Time window (e.g. 30m/1h/1d; default 1h)"))
     parser.add_argument("--detail", action="store_true",
                         help=t("cli.messages.changes_arg_detail", default="Show prev/curr hash detail"))
     opts = parser.parse_args(args)

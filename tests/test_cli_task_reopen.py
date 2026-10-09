@@ -352,17 +352,29 @@ class TestTaskReopenI18n:
 
 
 class TestHelpTemplateUpdate:
-    """验证 _MAIN_HELP_GROUPS 中 task 分组包含 reopen"""
+    """验证 reopen 已注册（T10 Phase 2 后契约：argparse 注册为真相源）
+
+    stale 修正（族B）：_MAIN_HELP_GROUPS 静态块已删除，主 --help 由
+    COMMAND_CATEGORIES 渲染且只列顶层命令；子命令级断言改为
+    `cw task --help` 的 argparse 渲染输出。
+    """
 
     def test_help_groups_contains_task_reopen(self):
-        """_MAIN_HELP_GROUPS 中 task 分组应包含 'task reopen <TASK_ID>'"""
-        # 找到 task 分组
-        for group_key, items in cli_main._MAIN_HELP_GROUPS:
-            if "task" in group_key.lower():
-                commands = [cmd for cmd, _ in items]
-                # 查找 reopen
-                reopen_items = [cmd for cmd in commands if "reopen" in cmd]
-                assert len(reopen_items) > 0, "task 分组应包含 reopen 命令"
-                return
-        pytest.fail("未找到 task 分组")
+        """cw task --help 应包含 reopen 子命令"""
+        import os
+        import subprocess
+        import sys
+        env = os.environ.copy()
+        env["NO_COLOR"] = "1"
+        env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        cw_py = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "cw.py")
+        result = subprocess.run(
+            [sys.executable, cw_py, "task", "--help"],
+            capture_output=True, text=True, env=env, encoding="utf-8",
+        )
+        assert result.returncode == 0, (result.stderr or result.stdout)[-300:]
+        assert "reopen" in result.stdout, "cw task --help 缺少 reopen 子命令"
 

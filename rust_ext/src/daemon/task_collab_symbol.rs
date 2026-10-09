@@ -13,7 +13,12 @@ impl TaskCollabStore {
             return Ok(cached);
         }
         let _ = peer;
-        let task_id = params.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
+        // task_id 是 tasks.id（TEXT PK）的外键目标：缺失时静默落空串会撞 FK 或
+        // 产出孤儿行，必须显式 invalid_params（对齐 handle_task_apply 风格）。
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少 task_id"))?;
         let file_path = params
             .get("file_path")
             .and_then(|v| v.as_str())

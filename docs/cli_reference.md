@@ -1,28 +1,41 @@
 # CLI 命令参考
 
-Call Warden CLI 统一使用 subcommand 风格：`cw <subcommand> [options]`，对应 13 大功能分类。
+Call Warden CLI 统一使用 subcommand 风格：`cw <subcommand> [options]`，对应 21 大功能分类（[1]-[17] 与 MCP 工具分类同构，[18]-[21] 为 CLI 独有运维面）。
 
-> 下文用 `cw` 作为命令前缀。全局 flag（`--lang`/`--workspace`/`--root`/`--force`/`--no-auto-setup`）见本文档末尾「全局 flag」章节。旧的 `cw --flag` 风格已在未上线阶段整体移除，不再保留兼容入口。
+> 下文用 `cw` 作为命令前缀。全局 flag（`--lang`/`--workspace`/`--root`/`--force`/`--no-auto-setup`）见本文档末尾「全局 flag」章节。旧的 `cw --flag` 风格已在未上线阶段整体移除，不再保留兼容入口（决策记录见 [architecture.md 命令风格统一规范](architecture.md#命令风格统一规范c8)）。
 
-## 命令概览（按 13 大功能分类）
+## 命令概览（按 21 大功能分类）
 
-Call Warden 把 83 个顶层命令按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand。顶层命令数 = `cli.main._SUBCOMMANDS` 的 79 个 subcommand + `cw.py` standalone 入口 4 个（`install` / `server` / `test` / `daemon`）；展开各命令的二级子动作后约 200+ 个可执行命令（`gc` / `task` / `rule` 等含多级子动作）。命令数以实际 argparse 树为准（2026-10-08 审计核对，T10 flag 移除 + 阶段2.5 新增独立 subcommand 后）。详细分组设计见 `.cli_audit.md` §2。
+Call Warden 把 84 个顶层命令按功能聚合为 21 个主分类（[1]-[17] 与 MCP 工具 17 分类同构对齐，[18]-[21] 为 CLI 独有运维面），每个主分类下包含若干 subcommand。顶层命令数 = `cli.main._SUBCOMMANDS` 的 79 个 subcommand + `cw.py` standalone 入口 3 个（`install` / `server` / `test`）+ `setup`（cli/main.py 单独分发）+ `daemon`（cli.main 转发 daemon_commands）= 84 个；展开各命令的二级子动作后约 200+ 个可执行命令（`gc` / `task` / `rule` 等含多级子动作）。分类真相源为 `cli/categories.py`（`COMMAND_CATEGORIES`），下表由 `scripts/gen_category_overview.py --emit-cli` 生成，勿手工编辑标记块内内容。命令数以实际 argparse 树为准（2026-10-08 审计核对）。
 
-| #   | 主分类                    | 涵盖范围                                                                                    | 主要 subcommand                                                                                                                                                                                                            |
-| --- | ------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Workspace & Database**  | 工作区管理、数据库刷新、状态概览、watcher、分支感知                                         | `workspace list/register/set/delete/generate-ignore`、`refresh --all/--watch/<paths>`、`stats`、`status`                                                                                                                   |
-| 2   | **Query & Search**        | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复、FTS 全文索引                       | `search`、`symbol`、`file`、`query`、`brief`、`map`、`fts rebuild/status`                                                                                                                                                  |
-| 3   | **Call Chain Analysis**   | 调用链、拓扑、循环、孤儿、模块图、热力图                                                    | `callers`、`callees`、`call-chain`、`impact`、`topo`                                                                                                                                                                       |
-| 4   | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失、项目健康报告                                | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented`、`health-report`、`dashboard`                                          |
-| 5   | **Task Orchestration**    | 任务创建/认领/上报/回滚/审批/关闭、派工查询、Role Prompt 编译、capture-diff、质量审查、拆分 | `task create/next/next-action/prompt/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` |
-| 6   | **Agent Rule Memory**     | 规则候选/审核/生效/同步/提取/清理/种子化                                                    | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log`                                                                               |
-| 7   | **Audit & Bootstrap**     | 审计链验证、密钥轮换、自举健康、检查门禁                                                    | `audit verify/rotate-key/keys`、`bootstrap status`                                                                                                                                                                         |
-| 8   | **Git Integration**       | git 历史、commit、变更、blame、分支感知                                                     | `git import/log/show/stats`、`symbol-history`                                                                                                                                                                              |
-| 9   | **Semgrep & Defects**     | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联               | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects`                                                                                     |
-| 10  | **Coverage & Ownership**  | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射                      | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）                                                                                                              |
-| 11  | **GC**                    | 归档、恢复、清理、策略、备份、审计、孤儿库清理、多库迁移                                    | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show`、`gc db-cleanup`、`gc db-migrate-single`                                                   |
-| 12  | **Diagnostics**           | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置              | `doctor`、`install`、`install-agent`、`install-hook`、`setup`                                                                                                                                                              |
-| 13  | **Migration Rollback**    | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关  | `rollback register/show/config/set/is-rolled-back`                                                                                                                                                                         |
+<!-- BEGIN:generated-overview (scripts/gen_category_overview.py; DO NOT EDIT) -->
+
+| # | 主分类 | 命令数 | 涵盖范围 | 主要 subcommand |
+| --- | --- | --- | --- | --- |
+| 1 | **Workspace & Database** | 6 | 工作区管理、数据库刷新、状态概览、分支感知、分层配置、C 图构建 | `workspace`、`refresh`、`stats`、`status`、`graph`、`config` |
+| 2 | **Query & Search** | 13 | 符号/文件/语义搜索、摘要、RAG、版本对比、最近变更、FTS 全文索引 | `search`、`grep`、`symbol`、`file`、`query`、`brief`、`map`、`fts`、`semantic-search`、`similar`、`embed`、`diff`、`changes` |
+| 3 | **Call Chain Analysis** | 12 | 调用链、拓扑、循环、孤儿、模块图、热力图、变更影响半径 | `callers`、`callees`、`call-chain`、`topo`、`impact`、`deepest`、`module-calls`、`detect-cycles`、`export-module-graph`、`call-heatmap`、`top-callers`、`orphan-symbols` |
+| 4 | **Code Health & Metrics** | 11 | 度量、复杂度、耦合、演化、热点、流失、健康报告、驾驶舱 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`health-report`、`dashboard` |
+| 5 | **Task Orchestration** | 1 | 任务创建/认领/上报/回滚/审批/关闭、派工查询、角色提示、capture-diff | `task` |
+| 6 | **Agent Rule Memory** | 1 | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule` |
+| 7 | **Audit & Bootstrap** | 4 | 审计链、密钥轮换、自举健康、检查门禁、安全护栏 | `audit`、`bootstrap`、`check-gate`、`guardrail` |
+| 8 | **Git Integration** | 2 | git 历史、commit、变更、统计、符号历史 | `git`、`symbol-history` |
+| 9 | **Semgrep & Defects** | 6 | Semgrep 扫描、缺陷知识库、漏洞爆炸半径、审查就绪、符号静态检查 | `semgrep`、`defect`、`vuln-blast`、`review`、`issues`、`function-issues` |
+| 10 | **Coverage & Ownership** | 9 | 注释/测试覆盖率、测试 case 关联、所有权、注释恢复 | `coverage`、`tests`、`test-impact`、`comment-coverage`、`uncommented`、`restore-comment`、`restore-all-comments`、`who`、`ownership-map` |
+| 11 | **GC** | 1 | 归档、恢复、清理、策略、备份、审计、外部符号 | `gc` |
+| 12 | **Diagnostics** | 2 | doctor 环境诊断、clone 重复检测 | `doctor`、`clone` |
+| 13 | **构建上下文感知** | 2 | 工具链注册、build context、resolved edges | `build-context`、`toolchain` |
+| 14 | **只读协同查询** | 1 | 协同证据、门禁决策、角色视图、新鲜度 | `collab` |
+| 15 | **依赖图与环检测** | 1 | 依赖边、接口提供者、环检测、版本校验、工件身份 | `dependency` |
+| 16 | **Assignment 与 Lease** | 2 | lease 获取/续租/释放、assignment 创建/查询/撤销 | `lease`、`assignment` |
+| 17 | **Identity 与 Attestation** | 1 | Attestation 撤销（CLI 仅暴露 revoke，避免 T=M=D） | `identity` |
+| 18 | **Migration Rollback（CLI 独有）** | 1 | 全量迁移自举计划的回滚配置登记与紧急回滚开关 | `rollback` |
+| 19 | **Daemon 运维（CLI 独有）** | 1 | daemon 启动/状态/查询/快照/备份等运维操作（UDS/HTTP 客户端） | `daemon` |
+| 20 | **安装与初始化（CLI 独有）** | 6 | 安装部署、Agent 集成包、Git hook、MCP Server、测试运行器 | `install`、`install-agent`、`install-hook`、`setup`、`server`、`test` |
+| 21 | **盲评实验（CLI 独有）** | 1 | P0 盲评对照实验的批次/纳样/指标记录/揭示全生命周期 | `experiment` |
+| **合计** | | **84** | | |
+
+<!-- END:generated-overview -->
 
 > **注**：详细 subcommand 用法见下文章节。
 
@@ -66,10 +79,12 @@ cw test                                  # 不带 <MODULE> 时打印用法并退
 
 ## HTTP daemon MVP 路由状态（H4B-N/C/I/E 收口）
 
-HTTP MVP transport 为可选监听，默认关闭。仅当 `cw daemon serve --http-bind 127.0.0.1:<port>`
-显式设置（或环境变量 `CW_DAEMON_TRANSPORT=http`）时启用，绑定地址必须是 loopback
-（`dev_loopback_unauthenticated` 安全档）。HTTP 端点：`GET /health`、`GET /capabilities`、
-`POST /v1/rpc`（JSON-RPC 2.0）、`POST /v1/jobs`。
+HTTP transport 由 Rust daemon（`cw-daemon.exe`）提供（`cw daemon serve` 影子 server 已下线）：
+不带 `--http-bind` 时默认监听 `127.0.0.1:0` 动态端口（客户端经 authority-scoped manifest
+发现端口），`--http-bind 127.0.0.1:<port>` 可固定端口；绑定地址必须是 loopback
+（`dev_loopback_unauthenticated` 安全档），环境变量 `CW_DAEMON_TRANSPORT=http` 显式
+锁定 HTTP transport。HTTP 端点：`GET /health`、`GET /capabilities`、`POST /v1/rpc`
+（JSON-RPC 2.0）、`POST /v1/jobs`。
 
 工具/方法在 HTTP 模式下的可达性由 H0 冻结的 capability registry 决定（backend 归类
 **python_compat 193 / rust_native 44 / legacy_local 0**，见
@@ -910,6 +925,27 @@ cw symbol-history process_payment --show-content
 cw diff a1b2c3d4e5f6... d4e5f6a1b2c3...
 ```
 
+### `changes [SINCE]`：最近变更的文件与函数
+
+[2] Query & Search 分类下的顶层命令（只读查询）：按时间窗口列出近期变更的
+多版本文件与函数，常用于在 `symbol-history` / `diff` 之前先定位"最近改了什么"。
+
+```bash
+cw changes               # 最近 1 小时（默认）
+cw changes 1d            # 最近 1 天
+cw changes 2h30m         # 支持 h/d/m/s 组合窗口
+cw changes 6h --detail   # 附带变更函数的 prev/curr hash
+```
+
+| 参数         | 说明                                                          |
+| ------------ | ------------------------------------------------------------- |
+| `[SINCE]`    | 时间窗口（`1h`/`30m`/`1d`/`2h30m` 等 h/d/m/s 组合，默认 `1h`） |
+| `--detail`   | 显示每个变更函数的 prev/curr 内容 hash                        |
+
+输出：变更文件总数、多版本文件数、变更函数数，随后列出多版本文件
+（`v<版本号> | 解析时间 | 路径`）与变更函数（`[变更类型] 限定名` +
+`文件:行 | 时间`）。数据来自 `file_versions`，多版本即 `version_num > 1`。
+
 ---
 
 ## 任务管理命令
@@ -1417,6 +1453,149 @@ cw task capture-diff --auto
 > `task capture-diff` 是从磁盘真实变更反向同步到任务上下文，二者配合
 > 构成完整的"声明 + 验证"闭环。
 
+### `task assignment-status`：读取 daemon 派工队列投影（只读）
+
+```bash
+cw task assignment-status <task_id>
+cw task assignment-status <task_id> --step-id S-1783... --role executor
+cw task assignment-status <task_id> --json
+```
+
+读取 daemon durable 工作队列投影（`task.assignment.status`）；CLI 不在本地
+推导或回收队列状态，local 模式无此投影（fail-closed）。
+
+- `--step-id` / `--role`：可选过滤（step ID / 治理角色）
+- `--json`：输出 daemon 原始 JSON
+- 默认展示 `current_assignment`（assignment_id / step_id / role / status /
+  holder_session_id / last_heartbeat_at）与队列历史条数 `history_count`
+
+### `task assignment-heartbeat`：daemon 派工心跳
+
+```bash
+cw task assignment-heartbeat <task_id> <assignment_id> \
+  --request-id req-abc123 --fencing-counter 3
+```
+
+向 daemon 上报 durable assignment 心跳（`task.assignment.heartbeat`），证明
+executor 仍持有该派工；仅转发 daemon，客户端不能直接修改队列。
+
+- `<task_id>` / `<assignment_id>`：任务 ID 与 durable assignment ID（必填）
+- `--request-id`：**必填**，稳定幂等请求 ID（重放安全）
+- `--fencing-counter`：当前 fencing 计数（int，默认 `-1`，`>= 0` 时才随请求发送）
+- `--agent-session-id`：Agent 会话 ID（缺省从结构化身份 session 解析）
+- 身份参数：`--agent-id` / `--session-id` / `--model-id` / `--role` /
+  `--agent-instance-id`（提供则须完整，否则 fail-closed）；`--json` 输出原始 JSON
+
+### `task handoff`：结构化角色交接（task.handoff ledger 事件）
+
+```bash
+cw task handoff <task_id> --from-role executor --outcome blocked \
+  --next-role reviewer --next-action review --reason "自查发现风险" \
+  --independence-requirement "different-session" --request-id req-001 \
+  --step-id S-1783... --report-request-id req-000 \
+  --evidence-path evidence/manifest.json --evidence-hash <sha256>
+```
+
+向 append-only ledger 追加一条结构化 Executor/Reviewer/Adjudicator 交接事件
+（`task.handoff`）。仅 daemon 权威写入（禁止 local SQLite fallback），必须携带
+完整结构化身份（否则 `E_IDENTITY_REQUIRED`）。以下 11 个 flag **全部必填**：
+`--from-role` / `--outcome` / `--next-role` / `--next-action` / `--reason` /
+`--independence-requirement` / `--request-id` / `--step-id` /
+`--report-request-id` / `--evidence-path` / `--evidence-hash`。
+
+- `--step-id` 传字符串 `null` 时透传为 JSON null（task-level 语义）
+- 身份参数与 lease 凭证（`--lease-token` / `--fencing-counter`）可选，
+  提供则须完整配对（fail-closed）
+
+### `task step-resolve`：失败步骤 remediation 后回审
+
+```bash
+cw task step-resolve <task_id> <failed_step_id> <remediation_step_id> <request_id> \
+  --evidence-path evidence/fix.json --evidence-hash <sha256>
+```
+
+daemon-only 命令（`task.step.resolve`）：失败步骤经 remediation 步骤修复后合法
+回审。resolution 以 append-only 方式写入 `task_events` ledger（原始失败行不可变），
+校验（remediation 来源 / lease / request_id 重放）全部在 daemon authority 内完成。
+
+- 位置参数：`task_id` / `failed_step_id`（原失败步骤）/ `remediation_step_id`
+  （已完成的 fix_defect 步骤）/ `request_id`（幂等请求 ID）
+- `--evidence-path` / `--evidence-hash`：**必填**，resolution 证据 manifest
+  路径与 SHA-256
+- 必须携带完整结构化身份；支持 `--lease-token` / `--fencing-counter` 与 `--json`
+
+### `task cascade-close`：聚合节点级联收尾
+
+```bash
+cw task cascade-close <task_id>
+```
+
+聚合节点级联收尾：子树全部 closed 后树干自动 close（递归向上）。系统级操作，
+经 daemon 权威 `task.cascade_close`，无 local fallback（daemon 不可用 fail-closed）。
+
+- 目标卡已 closed 时幂等跳过（无新增收尾）
+- 子树存在未 closed 子卡或叶子步骤未完成时拒绝收尾，退出码 2（GOV-FIX-06）
+- 支持结构化身份参数（`--agent-id` / `--session-id` / `--model-id` / `--role` /
+  `--agent-instance-id`）
+
+### `task claim-recover`：释放失联 executor claim
+
+```bash
+cw task claim-recover <task_id> --reason "executor 会话已失联" \
+  --agent-id A-1 --session-id S-2 --model-id M-3 --role adjudicator \
+  --lease-token <token> --fencing-counter 5
+```
+
+释放已确认失联的旧 Executor claim（daemon-only，`task.claim.recover`）：只追加
+`claim_released` 审计事件，不改变任务状态/步骤/历史。释放后新 Executor 需显式
+调用 `cw task next` 重新领取。
+
+- `--reason`：**必填**，判定 claim 失联的原因
+- 仅限 **adjudicator** 身份（`--role adjudicator`），且必须持有目标任务**独立
+  Reviewer** 的 `--lease-token` / `--fencing-counter`（缺失即 fail-closed）
+- `--request-id`：可选，幂等请求 ID（缺省自动生成 `claim-recover-<hex>`）
+
+### `task supersede`：声明任务替代关系
+
+```bash
+cw task supersede <old_task_id> <new_task_id> --reason "范围扩大，改由新任务承接" \
+  --evidence-path evidence/supersede.json --evidence-hash <sha256> \
+  --lease-token <token> --fencing-counter 7 \
+  --agent-id A-1 --session-id S-2 --model-id M-3 --role adjudicator
+```
+
+声明旧任务被新任务替代（`task.supersede`，GOVERNANCE_WRITE 治理 mutation，
+append-only 事件 + 独立关系表）。仅 daemon 权威写点，local 模式 fail-closed。
+
+- 位置参数：`<old>`（被替代任务）/ `<new>`（替代任务）
+- `--evidence-path` / `--evidence-hash`：**必填**，治理依据 evidence manifest
+  （CLI 前置 fail-fast，daemon 侧仍 fail-closed）
+- `--request-id`：幂等 key 成员（缺省自动生成 `req-<uuid>`）
+- `--lease-token` / `--fencing-counter`：source（被替代）任务的 reviewer lease
+- `--role` 严格限定 `adjudicator`；身份参数与其他治理命令一致
+
+### `task governance-projection`：查看任务治理投影（只读）
+
+```bash
+cw task governance-projection <task_id>
+cw task governance-projection <task_id> --json
+```
+
+只读查询任务治理投影（`task.governance_projection.get`，daemon 权威，无 local
+fallback）。展示 lifecycle/workflow 状态、当前与下一角色、review 状态与 verdict、
+Task Contract、当前步骤、Reviewer Role Contract、normalization 规则与阻断原因；
+投影绝不返回 lease token（`lease_raw_token_omitted`）。
+
+### `task superseded`：查询任务被替代状态（只读）
+
+```bash
+cw task superseded <task_id>
+```
+
+只读查询某任务是否已被其他任务替代（`task.superseded_by`，daemon 权威，无 local
+fallback）。已替代时显示替代者 task_id、reason、actor、supersedence_id、
+reason_code 与 evidence_hash；未被替代时明确提示。
+
 ### `audit verify`：验证审计链完整性
 
 ```bash
@@ -1678,7 +1857,6 @@ cw test-impact "my_project::payment::process_payment"
 
 ```bash
 cw evolution "module::fn" --defects
-cw evolution "module::fn" --defects --window-commits 10
 ```
 
 分析符号的变更频率与缺陷（Semgrep findings）的时间关联性，回答"这个函数改得多不多？改完之后容易引入缺陷吗？"
@@ -1686,7 +1864,7 @@ cw evolution "module::fn" --defects --window-commits 10
 参数：
 - `<QN>`：符号限定名
 - `--defects`：启用变更-缺陷关联模式（不加则只返回变更频率）
-- `--window-commits <N>`：变更后观察的提交窗口数（默认 5，即变更后 N 次提交内出现的 findings 算关联）
+- 变更-缺陷关联窗口固定为默认 5 次提交内（CLI 无窗口覆盖入口）；`--window` 仅作用于非 `--defects` 的变更频率模式（如 `30d/90d/1y`）
 
 返回字段：`change_count`（变更次数）/ `defect_count`（关联缺陷数）/ `defect_rate`（defect_count / change_count）/ `recent_defects`（最近的关联缺陷列表）
 
@@ -1728,7 +1906,6 @@ cw issues "module::fn" --include-info
 ```bash
 cw tests "module::fn"                      # 查测试 case 列表（按 confidence 降序）
 cw tests "module::fn" --reverse            # 反向：test_fn 测了哪些函数
-cw tests "module::fn" --coverage           # 测试覆盖摘要
 cw tests "module::fn" --history            # 测试稳定性（pass_rate / failures / by_test）
 cw tests --build                           # 全量重建 test_case_relations（refresh 后调用）
 cw tests --build --force                   # 强制全量重建（清空已有关联）
@@ -1747,7 +1924,7 @@ test_fn ↔ tested_fn 的关联分 3 个置信度等级：
 参数：
 - `<QN>`：被测函数限定名（`--reverse` 时为 test_fn 限定名）
 - `--reverse`：反向查询
-- `--coverage`：返回 `has_tests` / `test_count` / `high_confidence_count` / `tests`
+- （测试覆盖摘要 `has_tests` / `test_count` / `high_confidence_count` / `tests` 为 MCP 专属 `get_test_coverage_summary`，CLI 无对应 flag）
 - `--history`：基于 `test_runs` 表的运行历史，返回 `pass_rate` / `recent_failures` / `by_test`
 - `--build`：重建关联（写操作，refresh 测试文件后调用）
 - `--force`：与 `--build` 配合，强制清空已有关联后重建
@@ -2645,7 +2822,9 @@ Call Warden 提供三个角色化入口，分离 daemon 管理、client 调用�
 
 ### cw-client 子命令
 
-`cw-client` 是 `cw daemon` 的角色化简化版，**禁止 `serve` 子命令**（不能启动 daemon 本身），其他 15 个子命令与 `cw daemon` 完全一致：
+`cw-client` 是 `cw daemon` 的角色化简化版（纯 client 视角，不启动 daemon 本身）。
+默认（Python）路径与 `cw daemon` 共用同一套 23 个子命令；设置 `CW_USE_RUST_CLIENT=1`
+时优先 exec Rust 加速版 `cw-client`（18 个子命令，额外提供通用 `rpc`）：
 
 ```bash
 # 检查 daemon 健康
@@ -2677,7 +2856,7 @@ cw-client mount register <container_id> <container_path> <host_path> --type bind
 cw-client mount list --container-id <id>
 cw-client mount delete <container_id> <container_path>
 
-# 通用 RPC 调用（method + JSON params，可调用 task.* 等任意 daemon 方法）
+# 通用 RPC 调用（仅 Rust 加速版 cw-client 提供；method + JSON params，可调用 task.* 等任意 daemon 方法）
 cw-client rpc task.create '{"title":"示例任务"}'
 cw-client rpc task.status '{"task_id":"T-xxx"}'
 
@@ -2700,17 +2879,19 @@ cw-client mode --set auto     # 提示如何修改（不会真正设置）
 
 ### 与 `cw daemon` 的差异
 
-| 子命令                | `cw daemon`   | `cw-client`                                      |
-| --------------------- | ------------- | ------------------------------------------------ |
-| `serve`               | ✓ 启动 daemon | ✗ 禁止（argparse 拒绝）                          |
-| 其他 15 个子命令      | ✓ 全部可用    | ✓ 全部可用                                       |
-| `rpc <method> <json>` | ✓ 通用 RPC    | ✓ 通用 RPC（可调用 `task.*` 等任意 daemon 方法） |
+| 子命令                 | `cw daemon`                     | `cw-client`                                        |
+| ---------------------- | ------------------------------- | -------------------------------------------------- |
+| `serve`                | ✗ 已下线（G1 影子 daemon 退休）  | ✗ 禁止（不启动 daemon 本身）                        |
+| 其余子命令（Python）   | ✓ 全部可用（23 个）             | ✓ 全部可用（与 `cw daemon` 同一套 23 个）           |
+| `rpc <method> <json>`  | ✗ 无此子命令                    | ✓ 仅 Rust 加速版提供（`CW_USE_RUST_CLIENT=1`）      |
 
 ### `daemon metrics`：查询 daemon 运行时指标（G13 二轮评审补全）
 
-G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时指标；`--local` 降级
-为本进程直读（用于离线调试，daemon 未启动时也能查看本地快照）；`--reset` 仅 `--local`
-模式支持（不能重置远端 daemon 指标）。
+G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时指标（Rust daemon
+为唯一 authority）。CLI-004 整改后已移除 `--local` 本地降级与 RPC 失败时的隐式
+snapshot fallback——metrics 仅经 daemon 获取，失败即 fail-closed；`--from-file`
+仅作**显式离线快照检视**（读取 daemon 周期性 dump 的 JSON 快照，不涉及本地 DB，
+不作自动降级）。
 
 ```bash
 # 默认走 RPC 拉 daemon 进程指标（JSON 格式）
@@ -2722,11 +2903,8 @@ cw daemon metrics --format prometheus
 # 按指标名过滤（在 counters/gauges/histograms 三类中查找）
 cw daemon metrics --name requests_total
 
-# 本进程直读（离线调试，daemon 未启动时也能查看）
-cw daemon metrics --local
-
-# 重置本进程指标（仅 --local 模式，仅测试场景）
-cw daemon metrics --local --reset
+# 显式离线检视 daemon 周期性 dump 的 JSON 快照（daemon 不可达时人工使用；仅支持 json）
+cw daemon metrics --from-file ~/.callwarden/metrics_snapshot.json
 ```
 
 返回的指标包含：`memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` /
@@ -2779,6 +2957,178 @@ cw daemon toolchain build-context set-active <workspace_id> <build_context_hash>
 ```
 
 > 注意与本地 CLI 的 `cw build-context activate <WORKSPACE_ID> <HASH>` 区分：前者设置 daemon 内存 registry 中的 active context，后者写本地库 active 标志。
+
+### daemon 核心运维子命令
+
+`cw daemon <action>` 的全部子命令由 `cli.main` 转发到 `cli/daemon_commands.py`
+（Rust 原生 daemon 的客户端；`metrics` / `bridge` / `snapshot-*` 见上文对应章节）。
+通用参数 `--socket`：UDS 路径（默认 `CW_DAEMON_SOCKET`）。
+
+#### `daemon serve`：启动影子 server（已下线）
+
+G1（2026-09-09）整改：`cw daemon serve` 的 Python 影子 server 已下线，
+argparse 不再注册该子命令（调用直接报 invalid choice）。Rust 原生 daemon 为
+唯一权威，启动方式为 `cw-daemon.exe`（启动模板见 `docs/role-loop-templates/`）。
+
+#### `daemon start`：启动本机 HTTP daemon
+
+显式启动本机 HTTP daemon：先探活（已在运行则复用），不可达再 spawn；
+detached 进程，client 退出后仍存活。
+
+```bash
+cw daemon start              # 已运行则复用（status=already_running）
+cw daemon start --wait 30    # 等待就绪最长 30 秒（默认 15）
+cw daemon start --force      # 探测到已有 daemon 也强制启动新实例（慎用）
+```
+
+输出 JSON：`ok` / `action` / `status`（`started` / `already_running`）/
+`endpoint`；启动失败退出码 2（`E_DAEMON_START_FAILED`，检查
+`~/.callwarden/runtime/current/cw-daemon.exe` 是否存在、端口是否被占用）。
+
+#### `daemon ping`：检查 daemon 连通性
+
+```bash
+cw daemon ping
+```
+
+检查 daemon 与 peer credential（经 UDS / 命名管道发送 `ping` RPC）。
+
+#### `daemon register <root>`：注册 workspace
+
+```bash
+cw daemon register /path/to/project \
+  --git-remote <url> --git-head <sha> --toolchain <fingerprint>
+```
+
+注册当前 UID 的 workspace（`workspace.register`）；`--git-remote` /
+`--git-head` / `--toolchain` 均可选（默认空）。
+
+#### `daemon list`：列出 workspace
+
+```bash
+cw daemon list
+```
+
+列出当前 UID 已注册的全部 workspace（`workspace.list`）。
+
+#### `daemon status <workspace_id>`：查询 workspace 与 snapshot 状态
+
+```bash
+cw daemon status 730                   # 数字 workspace 主键
+cw daemon status 4baea3ff12c2ea5c      # workspace_instance_id
+```
+
+查询指定 workspace 和 snapshot 状态（`workspace.status`）；`workspace_id`
+接受数字主键或 daemon 注册返回的 `workspace_instance_id`。
+
+#### `daemon publish <workspace_id> <db_path>`：发布共享 snapshot
+
+```bash
+cw daemon publish <workspace_id> /path/to/callwarden.db --build-context <hash>
+```
+
+把已刷新的本地 DB 发布为 daemon 共享 snapshot；`--build-context` 可选（默认空）。
+
+#### `daemon query <workspace_id> <query_type> [value]`：查询共享 snapshot
+
+```bash
+cw daemon query <workspace_id> stats
+cw daemon query <workspace_id> symbol my_mod::process_payment
+cw daemon query <workspace_id> search "login" --kind fn --limit 20
+```
+
+对共享 snapshot 执行查询，`query_type` 取值：`stats` / `symbol` / `search` /
+`callers` / `callees` / `file` / `symbol_location` / `grep` / `issues` / `tests` /
+`call_chain_down` / `topological_order` / `detect_cycles`。关键参数：
+`--qualified-name`（callers/callees 精确限定名）、`--kind`、`--limit`（默认 20）、
+`--max-depth`（默认 10，call_chain_down / detect_cycles 的最大深度）、
+`--file-path`（file / symbol_location 使用的文件路径）、`--fixed` / `--path` /
+`--include-all`（grep：字面量匹配 / 限定路径 / 含无符号命中行）、`--include-info`
+（issues 包含 INFO finding）、`--reverse` / `--history`（tests 反向查询 /
+运行稳定性历史）。
+
+#### `daemon mode`：查看 daemon 模式
+
+```bash
+cw daemon mode                 # 查看当前模式
+cw daemon mode --set auto      # 只提示设置方式，不真正修改
+```
+
+输出 `mode` / `available` / `required` / `socket`。`--set {auto,enterprise,local}`
+仅打印"请设置环境变量 `CW_DAEMON_MODE=<值>`"，修改需自行设置环境变量。
+
+#### `daemon health`：检查 daemon 健康状态
+
+```bash
+cw daemon health
+```
+
+经 HTTP thin client 调用 Rust daemon 的 `/health`（Rust 权威）；Python 仅做
+client + 输出格式化，失败 fail-closed 返回结构化错误（如
+`E_DAEMON_UNAVAILABLE`），不降级本地 SQLite。
+
+#### `daemon manifest`：显示 daemon HTTP manifest
+
+```bash
+cw daemon manifest
+```
+
+输出 daemon HTTP manifest（authority / endpoint / registry revision）。
+manifest 发现与校验（missing / stale / wrong-authority / daemon-unavailable）
+由 Rust daemon + authority-scoped manifest 完成，失败 fail-closed，不静默
+降级到本地 SQLite 或 `get_db()`。与 `health`/`capability` 同属 CLI-01（A′ 恢复）
+诊断链路。
+
+#### `daemon capability`：查询 capability registry
+
+```bash
+cw daemon capability
+```
+
+查询 daemon capability registry（MCP/RPC 工具矩阵）；同样经 HTTP thin client
+查询 Rust daemon，fail-closed。
+
+#### `daemon schema-version`：查询 registry DB schema 版本
+
+```bash
+cw daemon schema-version
+```
+
+查询 daemon registry DB 的 schema 版本（`schema.version` RPC）。
+
+#### `daemon backup --output <path>`：备份 registry DB
+
+```bash
+cw daemon backup --output /backup/registry.db.bak
+```
+
+`--output` **必填**：备份输出路径（绝对化后传给 daemon）。
+
+#### `daemon restore --from <path>`：从备份恢复 registry DB
+
+```bash
+cw daemon restore --from /backup/registry.db.bak
+```
+
+`--from` **必填**：备份文件路径。
+
+#### `daemon gc-cas <workspace_id>`：GC CAS 存储
+
+```bash
+cw daemon gc-cas <workspace_instance_id> --grace-days 7
+```
+
+清理 CAS 存储中的未引用 content；`--grace-days`（int，默认 7）——只清理指定
+天数之前的未引用内容。
+
+#### `daemon gc-snapshots`：GC 快照
+
+```bash
+cw daemon gc-snapshots --keep-last 3
+```
+
+按保留策略 GC snapshot：每个 workspace 保留最近 N 个（`--keep-last`，int，
+默认 3）。
 
 ### `cw-agent` 子命令（start / stop / status）
 
@@ -3205,12 +3555,12 @@ cw assignment revoke <assignment-id>
 
 - assignment 绑定 task+role+holder Identity，**不把** workspace `active_task_id` 当作
   assignment authority（Req 13.4）；assignment 可以没有 lease（Req 11.12）
-- `show` 只读；`create`/`revoke` 写操作（读/写分类见 [TOOLS.md](TOOLS.md)）
+- `show` 只读；`create`/`revoke` 写操作（读/写分类见 [TOOLS.md](../TOOLS.md)）
 
 ### task report/apply/close/reopen 的 Lease 凭证（P4，Req 11.8-11.9）
 
 ```bash
-cw task report <task-id> <step-id> --success \
+cw task report <task-id> <step-id> --result "实现完成" \
   --agent-id <id> --session-id <id> --model-id <id> --role implementer \
   --lease-token <raw-token> --fencing-counter <n>
 ```
