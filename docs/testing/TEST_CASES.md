@@ -55,12 +55,6 @@
 | TC-CLI-018 | P0 | READONLY | `python cw.py symbol multiply` | result["name"]=="multiply" 且 有 line/signature 字段 |
 | TC-CLI-019 | P0 | READONLY | `python cw.py topo` | 返回可解析结构 且 无 traceback |
 
-> **📌 实现状态速览（v5 订正，重要）**：上表 19 个 P0 用例的"精确断言"**目前是文字清单，尚未在测试代码中落地**。
-> - T3 运行器 `t3_cli_runner.classify`（`tests/convergence/t3_cli_runner.py:64`）只做 `rc/stdout/stderr` 分类（PASS / EXPECTED_BUSINESS / DEFECT / SKIP），**无任何对返回内容的精确断言**。
-> - 断言 `defects <= 18` 仅在 `test_t3_cli_full_invocation.py:37,93-114`，属**总量钉死**；`callees=={"add"}`、`file calc.py=={add,multiply}`、`stats.symbols>0` 等**均未实现**。
-> - 同理 M&#x200B;CP 侧（§4）的读工具"集合/数量断言"也仅有 T2 的 `DEFECT==0 & PASS>=100` 总量门禁（`test_t2_mcp_full_invocation.py:57-80`）。
-> - **因此本清单当前反映的是"设计意图"，不是"已验证覆盖"**。把精确断言落地是 v5 §5.7（N7）的首批任务；落地前请勿据本表宣称"P0 已验证"。
-
 
 ## 3. 已知缺陷基线组（来自 T3 首轮，必须先钉住不许回升）
 
