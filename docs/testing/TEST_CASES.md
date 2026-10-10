@@ -1,530 +1,510 @@
-# CallWarden 分级测试用例清单（锚定权威真相源）
-
-> 由 `docs/testing/gen_test_cases.py` 从**实仓权威数据**生成，所有命令/参数/工具均真实，非虚构。
-
-> 真相源：`cli/categories.py`(21类/84顶层) · `cli_full_params.json`(234叶子/提取233) · 
-`server/tools/_categories.py`(17类/243工具) · `mcp_full_schema.json`(243工具) · `seed_sample/`(真实种子)
-
-> 本清单是收敛套件（T1–T5 / M1–M4）的**人工可读映射层**；真正执行由收敛套件以同批权威 JSON 全量驱动。
-
-
-## 0. 权威口径总览
-
-| 项 | 真实值 | 来源 |
-|----|--------|------|
-| CLI 顶层命令 | 84（分 21 类，[18]-[21] 为 CLI-only） | `cli/categories.py` |
-| CLI 叶子命令 | 234（已提取参数 233，跳过 1） | `cli_full_params.json` |
-| MCP 工具 | 243（分 17 类，与 CLI [1]-[17] 同构） | `server/tools/_categories.py` |
-| 真实种子 fixture | `tests/convergence/seed_sample/`（calc.py + service.ts） | 实仓 |
-
-## 1. CLI 叶子用例分级统计
-
-| 优先级 | 用例数 | 说明 |
-|--------|--------|------|
-| **P0** | 19 | 只读查询精确断言 + 已知缺陷钉死（fail-closed） |
-| **P1** | 187 | 常规契约 / 写隔离 |
-| **P2** | 27 | 破坏性/重操作 → 隔离沙箱，不进主回归 |
-| **合计** | 233 | CLI 叶子全覆盖 |
-
-按类别分布：GENERAL=174、DESTRUCTIVE=27、WRITE_ISO=13、READONLY=11、FAIL_SOFT=5、TRACEBACK=3
-
-
-## 2. P0 用例（先做，含 fail-closed 钉死）
-
-统一 AAA：`Arrange`=种子 workspace 已 build_graph（seed_sample）｜`Act`=真实 argv｜`Assert`=精确断言
-
-| case_id | 优先级 | 类别 | Act（真实 argv） | Assert（精确断言） |
-|---------|--------|------|------------------|-------------------|
-| TC-CLI-001 | P0 | READONLY | `python cw.py brief` | 返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-002 | P0 | FAIL_SOFT | `python cw.py call-chain multiply` | result 非空 且 首节点 == "multiply"；⚠ 已知 fail-soft，rc==0 但空结果须判失败 |
-| TC-CLI-003 | P0 | READONLY | `python cw.py callees multiply` | set(result["callees"]) == {"add"}  # multiply -> add 真实调用边 |
-| TC-CLI-004 | P0 | READONLY | `python cw.py callers multiply` | set(result["callers"]) == set()  # multiply 无调用者；add 的调用者 == {"multiply"} |
-| TC-CLI-005 | P0 | TRACEBACK | `python cw.py collab publish --json` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-006 | P0 | FAIL_SOFT | `python cw.py coupled-fns 20` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-007 | P0 | TRACEBACK | `python cw.py daemon publish <workspace_id> <db_path>` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-008 | P0 | TRACEBACK | `python cw.py daemon snapshot-stats` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-009 | P0 | READONLY | `python cw.py file calc.py` | set(s["name"] for s in result) == {"add","multiply"}  # calc.py 恰 2 函数 |
-| TC-CLI-010 | P0 | READONLY | `python cw.py grep <patterns> <same>` | 返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-011 | P0 | READONLY | `python cw.py impact <symbol_hash>` | result["impacted"] 集合确定（multiply → add）；入参是 hash 不是限定名 |
-| TC-CLI-012 | P0 | FAIL_SOFT | `python cw.py largest-fns 20` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-013 | P0 | READONLY | `python cw.py query multiply calc.py` | 返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-014 | P0 | FAIL_SOFT | `python cw.py rule applicable` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-015 | P0 | READONLY | `python cw.py search <query>` | multiply 必在结果内；结果条数 == 已知固定值 |
-| TC-CLI-016 | P0 | READONLY | `python cw.py stats` | result["symbols"]/["calls"] 为 int 且 >0（>0 非空） |
-| TC-CLI-017 | P0 | FAIL_SOFT | `python cw.py status` | exit code / 结构契约：返回可解析结构 且 关键字段存在 且 无 traceback |
-| TC-CLI-018 | P0 | READONLY | `python cw.py symbol multiply` | result["name"]=="multiply" 且 有 line/signature 字段 |
-| TC-CLI-019 | P0 | READONLY | `python cw.py topo` | 返回可解析结构 且 无 traceback |
-
-
-## 3. 已知缺陷基线组（来自 T3 首轮，必须先钉住不许回升）
-
-T3 首轮结果（生产 daemon b495919）：**70 PASS / 114 EXPECTED_BUSINESS / 18 DEFECT / 31 SKIP**
-
-| 缺陷类 | 数量 | 代表命令 | 钉死方式 |
-|--------|------|----------|----------|
-| rc=0 掩盖真 bug（fail-soft 吞异常） | 5 | call-chain, coupled-fns, largest-fns, rule applicable, status | 断言：rc==0 时必须返回有效载荷，**空结果/吞异常 = FAIL** |
-| traceback | 3 | collab publish, daemon publish, daemon snapshot-stats | 断言：stdout/stderr 不得含 `Traceback (most recent call last)` |
-| method_not_found（CLI→daemon compat RPC 未实现） | 10 | 由探测得出 | 断言：不得新增，只许减少 |
-
-> **关键**：rc=0 却返回空/错误 = 比崩溃更危险。这 5 个 fail-soft 是当前最高价值用例。
-
-
-## 4. MCP 侧分级（243 工具，T2 已 157 PASS / 72 BUSINESS / **0 DEFECT**）
-
-共 243 个工具，按动词/描述判定：**只读 ≈ 171（P0）**，**写 ≈ 72（P1）**。
-
-- 只读类工具 → P0，用 seed 事实做集合/数量断言；
-- 写类工具（`propose_`/`task_`/`lease_`/`guardrail_add`/`gc_*` 等）→ P1，跑在隔离 daemon；
-- 基线门禁：`DEFECT == 0` 且 `PASS >= 100` 且 `覆盖合计 == 243`。
-
-### 4.1 17 分类 × 243 工具（权威，与 CLI [1]-[17] 同构）
-
-
-#### [1] `workspace_database` — Workspace & Database（16：读 9 / 写 7）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `list_workspaces` | P0 | READ |
-| `register_workspace` | P1 | WRITE |
-| `set_active_workspace` | P1 | WRITE |
-| `delete_workspace` | P1 | WRITE |
-| `get_active_workspace` | P0 | READ |
-| `build_graph` | P1 | WRITE |
-| `refresh_file` | P0 | READ |
-| `build_directory` | P1 | WRITE |
-| `remove_file` | P1 | WRITE |
-| `get_stats` | P0 | READ |
-| `get_status` | P0 | READ |
-| `register_branch` | P1 | WRITE |
-| `list_branches` | P0 | READ |
-| `diff_branches` | P0 | READ |
-| `switch_branch` | P0 | READ |
-| `merge_preview` | P0 | READ |
-
-#### [2] `query_search` — Query & Search（24：读 24 / 写 0）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `search_symbols` | P0 | READ |
-| `get_symbol` | P0 | READ |
-| `get_symbol_location` | P0 | READ |
-| `get_file_symbols` | P0 | READ |
-| `get_symbol_history` | P0 | READ |
-| `get_file_history` | P0 | READ |
-| `get_recent_changes` | P0 | READ |
-| `get_symbol_content_by_hash` | P0 | READ |
-| `file_read` | P0 | READ |
-| `file_grep` | P0 | READ |
-| `file_list` | P0 | READ |
-| `file_symbol_content` | P0 | READ |
-| `semantic_search` | P0 | READ |
-| `find_similar_functions` | P0 | READ |
-| `embed_symbols` | P0 | READ |
-| `embed_symbols_async` | P0 | READ |
-| `embed_single_symbol` | P0 | READ |
-| `generate_summary` | P0 | READ |
-| `get_summary` | P0 | READ |
-| `project_brief` | P0 | READ |
-| `repo_map` | P0 | READ |
-| `ask_codebase` | P0 | READ |
-| `record_token_savings` | P0 | READ |
-| `get_token_savings_report` | P0 | READ |
-
-#### [3] `call_chain` — Call Chain Analysis（14：读 13 / 写 1）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `get_callers` | P0 | READ |
-| `get_callees` | P0 | READ |
-| `get_impact` | P0 | READ |
-| `get_call_chain_down` | P0 | READ |
-| `get_top_callers` | P0 | READ |
-| `get_orphan_symbols` | P0 | READ |
-| `get_deepest_functions` | P0 | READ |
-| `get_module_call_stats` | P0 | READ |
-| `detect_call_cycles` | P1 | WRITE |
-| `get_call_heatmap` | P0 | READ |
-| `export_module_graph` | P0 | READ |
-| `get_topological_order` | P0 | READ |
-| `diff_callers` | P0 | READ |
-| `diff_callees` | P0 | READ |
-
-#### [4] `code_health` — Code Health & Metrics（12：读 12 / 写 0）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `get_code_metrics_summary` | P0 | READ |
-| `get_complexity_hotspots` | P0 | READ |
-| `get_coupling_analysis` | P0 | READ |
-| `get_function_metrics` | P0 | READ |
-| `get_largest_functions` | P0 | READ |
-| `get_most_coupled_functions` | P0 | READ |
-| `get_code_health_check` | P0 | READ |
-| `check_file_health` | P0 | READ |
-| `evolution_frequency` | P0 | READ |
-| `defect_correlation` | P0 | READ |
-| `hotspot_evolution` | P0 | READ |
-| `churn_analysis` | P0 | READ |
-
-#### [5] `task` — Task Orchestration（36：读 11 / 写 25）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `task_create` | P1 | WRITE |
-| `task_create_subtask` | P1 | WRITE |
-| `task_split` | P1 | WRITE |
-| `task_create_from_plan` | P1 | WRITE |
-| `task_plan_template` | P1 | WRITE |
-| `task_next_step` | P1 | WRITE |
-| `work_next_job` | P0 | READ |
-| `task_resolve_block` | P1 | WRITE |
-| `task_report_step` | P1 | WRITE |
-| `task_rollback` | P1 | WRITE |
-| `task_apply` | P1 | WRITE |
-| `task_close` | P1 | WRITE |
-| `task_capture_diff` | P1 | WRITE |
-| `task_list` | P1 | WRITE |
-| `task_status` | P1 | WRITE |
-| `task_governance_projection` | P1 | WRITE |
-| `task_status_tree` | P1 | WRITE |
-| `task_completion_review` | P1 | WRITE |
-| `task_quality_findings` | P1 | WRITE |
-| `task_resolve_quality_finding` | P1 | WRITE |
-| `record_task_symbol_change` | P0 | READ |
-| `link_edit_audit_symbols` | P0 | READ |
-| `get_task_symbol_changes` | P0 | READ |
-| `get_symbol_change_tasks` | P0 | READ |
-| `cancel_job` | P1 | WRITE |
-| `list_jobs` | P0 | READ |
-| `get_job_stats` | P0 | READ |
-| `wait_for_job` | P0 | READ |
-| `get_job_status` | P0 | READ |
-| `get_task_commits` | P0 | READ |
-| `get_commit_tasks` | P0 | READ |
-| `task_assignment_status` | P1 | WRITE |
-| `task_assignment_heartbeat` | P1 | WRITE |
-| `task_get_role_prompt` | P1 | WRITE |
-| `task_remediation_create` | P1 | WRITE |
-| `task_step_resolve` | P1 | WRITE |
-
-#### [6] `rule_memory` — Agent Rule Memory（11：读 11 / 写 0）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `rule_candidate_create` | P0 | READ |
-| `rule_candidate_list` | P0 | READ |
-| `rule_candidate_accept` | P0 | READ |
-| `rule_candidate_reject` | P0 | READ |
-| `rule_list` | P0 | READ |
-| `get_applicable_rules` | P0 | READ |
-| `rule_sync_agents_md` | P0 | READ |
-| `rule_insert_agents_md_block` | P0 | READ |
-| `extract_rule_candidates_from_quality_findings` | P0 | READ |
-| `rule_seed_bootstrap` | P0 | READ |
-| `cleanup_agent_rule_sync_log` | P0 | READ |
-
-#### [7] `audit_bootstrap` — Audit & Bootstrap（10：读 7 / 写 3）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `audit_verify_chain` | P1 | WRITE |
-| `rotate_audit_signing_key` | P1 | WRITE |
-| `list_audit_signing_keys` | P0 | READ |
-| `bootstrap_status` | P0 | READ |
-| `run_check_gate` | P0 | READ |
-| `resolve_gate_findings` | P0 | READ |
-| `guardrail_scan` | P0 | READ |
-| `guardrail_check_edit` | P0 | READ |
-| `guardrail_list_rules` | P0 | READ |
-| `guardrail_add_rule` | P1 | WRITE |
-
-#### [8] `git` — Git Integration（6：读 5 / 写 1）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `import_git_history` | P1 | WRITE |
-| `get_git_commits` | P0 | READ |
-| `get_commit_changes` | P0 | READ |
-| `get_git_stats` | P0 | READ |
-| `get_symbol_commit_history` | P0 | READ |
-| `compare_snapshots` | P0 | READ |
-
-#### [9] `semgrep_defects` — Semgrep & Defects（18：读 18 / 写 0）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `run_semgrep_scan` | P0 | READ |
-| `semgrep_scan_async` | P0 | READ |
-| `scan_semgrep_incremental` | P0 | READ |
-| `get_semgrep_stats` | P0 | READ |
-| `get_semgrep_findings` | P0 | READ |
-| `get_issue_summary` | P0 | READ |
-| `get_symbol_issues` | P0 | READ |
-| `find_issues` | P0 | READ |
-| `defect_search` | P0 | READ |
-| `defect_suggest_fix` | P0 | READ |
-| `defect_learn` | P0 | READ |
-| `defect_stats` | P0 | READ |
-| `get_defect_correlation` | P0 | READ |
-| `blast_radius` | P0 | READ |
-| `get_vulnerability_blast_radius` | P0 | READ |
-| `diff_to_symbol` | P0 | READ |
-| `review_readiness` | P0 | READ |
-| `cross_layer_impact` | P0 | READ |
-
-#### [10] `coverage_ownership` — Coverage & Ownership（19：读 14 / 写 5）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `get_comment_coverage` | P0 | READ |
-| `get_uncommented_symbols` | P0 | READ |
-| `get_test_coverage` | P0 | READ |
-| `get_test_cases` | P0 | READ |
-| `get_tested_functions` | P0 | READ |
-| `get_test_coverage_summary` | P0 | READ |
-| `get_test_stability` | P0 | READ |
-| `get_comment_from_version` | P0 | READ |
-| `restore_comment` | P1 | WRITE |
-| `restore_all_comments` | P1 | WRITE |
-| `import_coverage` | P1 | WRITE |
-| `get_coverage_for_symbol` | P0 | READ |
-| `find_uncovered_functions` | P0 | READ |
-| `test_impact_selection` | P0 | READ |
-| `who_to_ask` | P0 | READ |
-| `get_ownership_map` | P0 | READ |
-| `parse_codeowners` | P0 | READ |
-| `import_codeowners` | P1 | WRITE |
-| `import_git_blame` | P1 | WRITE |
-
-#### [11] `gc` — GC（11：读 2 / 写 9）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `get_project_dependencies` | P0 | READ |
-| `import_project_dependencies` | P1 | WRITE |
-| `prune_external_symbols` | P0 | READ |
-| `gc_retention` | P1 | WRITE |
-| `gc_policy_get` | P1 | WRITE |
-| `gc_policy_set` | P1 | WRITE |
-| `gc_archive_list` | P1 | WRITE |
-| `gc_archive_inspect` | P1 | WRITE |
-| `gc_archive_import` | P1 | WRITE |
-| `gc_audit_list` | P1 | WRITE |
-| `gc_audit_get` | P1 | WRITE |
-
-#### [12] `diagnostics` — Diagnostics（27：读 20 / 写 7）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `detect_clones` | P1 | WRITE |
-| `detect_clones_async` | P1 | WRITE |
-| `list_clone_groups` | P0 | READ |
-| `get_clone_group_detail` | P0 | READ |
-| `get_clone_group_stats` | P0 | READ |
-| `list_clones` | P0 | READ |
-| `get_clone_stats` | P0 | READ |
-| `clear_clones` | P1 | WRITE |
-| `get_clone_aware_impact` | P0 | READ |
-| `propose_edit` | P1 | WRITE |
-| `propose_range_patch` | P1 | WRITE |
-| `propose_symbol_patch` | P1 | WRITE |
-| `propose_symbol_id_patch` | P1 | WRITE |
-| `revert_edit` | P0 | READ |
-| `get_edit_history` | P0 | READ |
-| `get_edit_stats` | P0 | READ |
-| `detect_cross_repo_deps` | P0 | READ |
-| `find_shared_symbols` | P0 | READ |
-| `cross_repo_impact` | P0 | READ |
-| `cross_repo_summary` | P0 | READ |
-| `lsp_hover` | P0 | READ |
-| `lsp_definition` | P0 | READ |
-| `lsp_references` | P0 | READ |
-| `lsp_diagnostics` | P0 | READ |
-| `lsp_completion` | P0 | READ |
-| `lsp_check_available` | P0 | READ |
-| `get_metrics` | P0 | READ |
-
-#### [13] `build_context` — 构建上下文感知（8：读 8 / 写 0）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `get_toolchain` | P0 | READ |
-| `list_toolchains` | P0 | READ |
-| `get_build_context` | P0 | READ |
-| `list_build_contexts` | P0 | READ |
-| `get_active_build_context` | P0 | READ |
-| `get_workspace_toolchains` | P0 | READ |
-| `get_resolved_edges` | P0 | READ |
-| `count_resolved_edges` | P0 | READ |
-
-#### [14] `collab` — 只读协同查询（6：读 3 / 写 3）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `append_evidence` | P1 | WRITE |
-| `find_evidence` | P0 | READ |
-| `get_freshness_status` | P1 | WRITE |
-| `get_gate_decision` | P0 | READ |
-| `get_role_view` | P0 | READ |
-| `submit_verdict` | P1 | WRITE |
-
-#### [15] `dependency` — 依赖图与环检测（10：读 6 / 写 4）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `build_hard_dependency_edges` | P1 | WRITE |
-| `get_dependency_edges` | P0 | READ |
-| `detect_dependency_cycle` | P1 | WRITE |
-| `validate_revision_dependencies` | P0 | READ |
-| `publish_interface` | P1 | WRITE |
-| `get_interface_providers` | P0 | READ |
-| `select_interface_provider` | P0 | READ |
-| `import_envelope_dependencies` | P1 | WRITE |
-| `record_artifact_identity` | P0 | READ |
-| `get_artifact_freshness` | P0 | READ |
-
-#### [16] `assignment_lease` — Assignment 与 Lease（8：读 0 / 写 8）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `lease_acquire` | P1 | WRITE |
-| `lease_renew` | P1 | WRITE |
-| `lease_release` | P1 | WRITE |
-| `lease_status` | P1 | WRITE |
-| `lease_list_events` | P1 | WRITE |
-| `assignment_create` | P1 | WRITE |
-| `assignment_show` | P1 | WRITE |
-| `assignment_revoke` | P1 | WRITE |
-
-#### [17] `identity` — Identity 与 Attestation（7：读 6 / 写 1）
-
-| 工具 | 优先级 | 读写 |
-|------|--------|------|
-| `record_action_identity` | P0 | READ |
-| `get_action_identity` | P0 | READ |
-| `check_action_identity` | P0 | READ |
-| `check_session_separation` | P0 | READ |
-| `get_attestation_validity` | P0 | READ |
-| `register_attestation_revocation` | P1 | WRITE |
-| `list_attestation_revocations` | P0 | READ |
-
-
-## 5. 21 个 CLI 分类 × 84 顶层命令（权威）
-
-> 注：[18]-[21] 为 CLI-only（MCP 无对应分类）。新增命令漏归类会被既有 `test_category_source.py` 拦截。
-
-
-### [1] `workspace_database` — Workspace & Database（6）
-
-`workspace`, `refresh`, `stats`, `status`, `graph`, `config`
-
-### [2] `query_search` — Query & Search（13）
-
-`search`, `grep`, `symbol`, `file`, `query`, `brief`, `map`, `fts`, `semantic-search`, `similar`, `embed`, `diff`, `changes`
-
-### [3] `call_chain` — Call Chain Analysis（12）
-
-`callers`, `callees`, `call-chain`, `topo`, `impact`, `deepest`, `module-calls`, `detect-cycles`, `export-module-graph`, `call-heatmap`, `top-callers`, `orphan-symbols`
-
-### [4] `code_health` — Code Health & Metrics（11）
-
-`metrics`, `complexity`, `coupling`, `largest-fns`, `coupled-fns`, `fn-metrics`, `evolution`, `hotspot`, `churn`, `health-report`, `dashboard`
-
-### [5] `task` — Task Orchestration（1）
-
-`task`
-
-### [6] `rule_memory` — Agent Rule Memory（1）
-
-`rule`
-
-### [7] `audit_bootstrap` — Audit & Bootstrap（4）
-
-`audit`, `bootstrap`, `check-gate`, `guardrail`
-
-### [8] `git` — Git Integration（2）
-
-`git`, `symbol-history`
-
-### [9] `semgrep_defects` — Semgrep & Defects（6）
-
-`semgrep`, `defect`, `vuln-blast`, `review`, `issues`, `function-issues`
-
-### [10] `coverage_ownership` — Coverage & Ownership（9）
-
-`coverage`, `tests`, `test-impact`, `comment-coverage`, `uncommented`, `restore-comment`, `restore-all-comments`, `who`, `ownership-map`
-
-### [11] `gc` — GC（1）
-
-`gc`
-
-### [12] `diagnostics` — Diagnostics（2）
-
-`doctor`, `clone`
-
-### [13] `build_context` — 构建上下文感知（2）
-
-`build-context`, `toolchain`
-
-### [14] `collab` — 只读协同查询（1）
-
-`collab`
-
-### [15] `dependency` — 依赖图与环检测（1）
-
-`dependency`
-
-### [16] `assignment_lease` — Assignment 与 Lease（2）
-
-`lease`, `assignment`
-
-### [17] `identity` — Identity 与 Attestation（1）
-
-`identity`
-
-### [18] `rollback` — Migration Rollback（1） *(CLI-only)*
-
-`rollback`
-
-### [19] `daemon_ops` — Daemon 运维（1） *(CLI-only)*
-
-`daemon`
-
-### [20] `setup_install` — 安装与初始化（6） *(CLI-only)*
-
-`install`, `install-agent`, `install-hook`, `setup`, `server`, `test`
-
-### [21] `experiment` — 盲评实验（1） *(CLI-only)*
-
-`experiment`
-
-
-## 6. 收敛套件覆盖映射（执行层 ↔ 本清单）
-
-| 套件 | 职责 | 覆盖本清单的哪部分 | 基线 / 门禁 |
-|------|------|---------------------|----------------|
-| **T1** 基建冒烟 | 种子 workspace fixture + param_provider 骨架 | 不直接测业务，是 T2/T3 的前提 | 必须 PASS 才能跑 T2/T3 |
-| **T2** MCP 全参数 | 243 MCP 工具真实调用 | §4 全部 243 工具 | 157 PASS / 72 BUSINESS / **0 DEFECT**；门禁 DEFECT==0 & PASS>=100 & 覆盖==243 |
-| **T3** CLI 全参数 | 234 CLI 叶子真实调用 | §1 全部 233 提取叶子 + §5 84 顶层 | 70 PASS / 114 BUSINESS / 18 DEFECT / 31 SKIP；门禁 DEFECT 不回升 |
-| **T4** 多 workspace 隔离 | 多用户/多 workspace/多 agent 并发正确性 | §4 写类工具的并发隔离场景 | 并发无死锁、隔离性成立 |
-| **T5** LLM 可理解性 | 真实 LLM 按工具 description 选对率 | §4 工具 description 质量 | 选对率 ≥ 基线阈值（需 OPENAI_API_KEY） |
-| **M1** 路由矩阵 | 243/243 路由验证（每个工具 rpc_method 在 dispatch.rs） | §4 全部 243 工具的路由可达性 | 243/243 通过 |
-| **M2** 纯 client 审计 | Python 侧无新违例 | cli/ 包 purity | 零新增违例 |
-| **M3** 并发写 | 双 agent 单 workspace 并发一致性 | §4 写类工具的并发正确性 | 混合读写无脏写 |
-| **M4** fail-closed | daemon 不可达 → DaemonUnavailableError（不降级本地） | §2 的 fail-closed 钉死 + §5 所有 CLI 命令 | 不可达一律结构化错误，绝不本地执行 |
-
-> **覆盖结论（诚实口径，v6 订正）**：T2 + T3 当前只做到**表面可达调用**——
-> 每个工具/命令的路由存在、参数可被构造、调用能往返。**不构成「全参数真实调用」**：
-> `param_provider.py` 对未匹配参数返回占位值（`"seed"` / `"0"*64` / `"T-seed-..."`），
-> `seed_workspace` 不预建 task/lease/agent/snapshot，结果多为 `EXPECTED_BUSINESS`(not_found)，
-> **不验证业务正确性**；T2/T3 断言仅数总量，无逐项精确断言。
->
-> **另一关键事实**：主 `ci.yml` 的 `test` job 跑在 Linux，而
-> `tests/convergence/conftest.py:40-49` 的 `_pick_bin()` 硬编码 `cw-daemon.exe`，
-> 且该 job 不构建 `cw-daemon` 二进制 → **收敛套件在主 CI 中真实执行量为 0**。
-> 下表基线数字来自首轮本地实测（生产 daemon `b495919`），非 CI 门禁产出。
->
-> 全仓真实 skip 站点 **447 处**（213 `pytest.skip(` + 234 `pytest.mark.skipif`，
-> 分布于 131 个测试文件），**不是早期版本所述的 219 处**。
-> 其中仅 52 处（11.6%）有实测归因，最大单一家族为 `callwarden_core 未安装` 39 处，
-> 归因明细与算术修正详见 `COVERAGE_AUDIT.md` §2、§3。
+# CallWarden 测试入口与参数规划清单（v7 · 自动生成）
+
+> gen_test_cases.py只读静态源生成；没有运行产品或测试，不代表功能通过。
+> 数字与输入hash见STATIC_AUDIT.json；策略/交付门禁见TESTING_PLAN.md。
+
+## 1. 清单与证据边界
+
+CLI分类21，顶层84；快照叶子234，提取233，未提取['server']。
+MCP分类17，工具243；source/matrix/category名字集合静态一致。
+固化schema集合一致=False；缺当前工具=['detect_call_cycles', 'detect_dependency_cycle']；历史额外项=['detect_cycle', 'detect_cycles']。漂移阻断清单冻结，不能凭总数相等补绿。
+CLI snapshot未与当前runtime/argparse比对；MCP未取wire runtime schema。参数表亦为固化快照，默认值/类型/互斥和语义均待复核。
+所有行状态为待合同化/未计入语义覆盖，表示未完成逐入口证据映射，不表示存量测试完全不存在。
+
+## 2. 每行的合同义务
+
+C1正常语义；C2逐参数等价类/默认/边界/互斥；C3精确负向及无非法副作用；C4适用写入/幂等/回滚；C5适用故障/恢复；C6跨端共享语义。
+须填入真实corpus/profile/实体provenance、独立oracle、runnable selector、timeout/cleanup与证据；适用性不能从工具名推断。常驻入口用启动/ready/交互/停止。
+
+## 3. CLI逐叶子（含未提取项）
+
+| 稳定case族ID | 入口 | 分类 | 快照positionals | 快照options | 状态 |
+|---|---|---|---|---|---|
+| CLI:assignment create | `assignment create` | assignment_lease | task_id | -h,, --role, --agent-id, --session-id, --model-id, --json | 待合同化 |
+| CLI:assignment revoke | `assignment revoke` | assignment_lease | assignment_id | -h,, --json | 待合同化 |
+| CLI:assignment show | `assignment show` | assignment_lease | task_id | -h,, --role, --json | 待合同化 |
+| CLI:audit keys | `audit keys` | audit_bootstrap |  | -h, | 待合同化 |
+| CLI:audit rotate-key | `audit rotate-key` | audit_bootstrap |  | -h,, --key-id, --secret | 待合同化 |
+| CLI:audit verify | `audit verify` | audit_bootstrap |  | -h,, --table, --limit | 待合同化 |
+| CLI:bootstrap status | `bootstrap status` | audit_bootstrap |  | -h, | 待合同化 |
+| CLI:brief | `brief` | query_search |  | -h, | 待合同化 |
+| CLI:build-context activate | `build-context activate` | build_context | workspace_id, hash | -h, | 待合同化 |
+| CLI:build-context delete | `build-context delete` | build_context | workspace_id, hash | -h, | 待合同化 |
+| CLI:build-context edges | `build-context edges` | build_context | workspace_id, hash | -h,, --caller, --limit | 待合同化 |
+| CLI:build-context import-compile-commands | `build-context import-compile-commands` | build_context | file, workspace_id | -h,, --name, --activate, --workspace-root | 待合同化 |
+| CLI:build-context list | `build-context list` | build_context | workspace_id | -h, | 待合同化 |
+| CLI:build-context register | `build-context register` | build_context | workspace_id, name | -h,, --flags, --defines, --includes, --activate | 待合同化 |
+| CLI:build-context resolve | `build-context resolve` | build_context | workspace_id, hash | -h, | 待合同化 |
+| CLI:build-context show | `build-context show` | build_context | workspace_id, hash | -h, | 待合同化 |
+| CLI:call-chain | `call-chain` | call_chain | name | -h,, --depth | 待合同化 |
+| CLI:callees | `callees` | call_chain | name | -h,, --qualified | 待合同化 |
+| CLI:callers | `callers` | call_chain | name | -h,, --qualified | 待合同化 |
+| CLI:check-gate | `check-gate` | audit_bootstrap | task_id | -h,, --resolve, --step-id | 待合同化 |
+| CLI:churn | `churn` | code_health |  | -h,, --module, --window | 待合同化 |
+| CLI:clone clear | `clone clear` | diagnostics |  | -h, | 待合同化 |
+| CLI:clone detect | `clone detect` | diagnostics |  | -h,, --file-filter, --min-lines, --similarity | 待合同化 |
+| CLI:clone list | `clone list` | diagnostics |  | -h,, --type, --min-similarity, --limit, --symbol | 待合同化 |
+| CLI:clone stats | `clone stats` | diagnostics |  | -h, | 待合同化 |
+| CLI:collab gate-trigger | `collab gate-trigger` | collab |  | -h,, --json, --gate-id, --clause, --value | 待合同化 |
+| CLI:collab publish | `collab publish` | collab |  | -h,, --json, --workspace, --envelope | 待合同化 |
+| CLI:collab reveal | `collab reveal` | collab |  | -h,, --json, --event-id, --task-id, --notes | 待合同化 |
+| CLI:collab verdict | `collab verdict` | collab |  | -h,, --json, --task-id, --step-id, --contract-id, --contract-hash, --contract-revision, --role-contract-id, --role-contract-hash, --role-contract-revision, --snapshot-id, --request-id, --phase, --overall, --attestation, --amendment-ref, --clause-results, --findings, --view-manifest-hash, --verdict-id, --agent-id, --session-id, --model-id, --agent-instance-id, --role, --lease-token, --fencing-counter | 待合同化 |
+| CLI:comment-coverage | `comment-coverage` | coverage_ownership |  | -h,, --by | 待合同化 |
+| CLI:complexity | `complexity` | code_health | limit | -h,, --module | 待合同化 |
+| CLI:config check-role | `config check-role` | workspace_database |  | -h, | 待合同化 |
+| CLI:config explain | `config explain` | workspace_database |  | -h, | 待合同化 |
+| CLI:config paths | `config paths` | workspace_database |  | -h, | 待合同化 |
+| CLI:coupled-fns | `coupled-fns` | code_health | limit | -h, | 待合同化 |
+| CLI:coupling | `coupling` | code_health |  | -h, | 待合同化 |
+| CLI:coverage fn | `coverage fn` | coverage_ownership | name | -h, | 待合同化 |
+| CLI:coverage import | `coverage import` | coverage_ownership | file | -h,, --format | 待合同化 |
+| CLI:coverage uncovered | `coverage uncovered` | coverage_ownership |  | -h, | 待合同化 |
+| CLI:daemon backup | `daemon backup` | daemon_ops |  | -h,, --output | 待合同化 |
+| CLI:daemon bridge | `daemon bridge` | daemon_ops |  | -h,, --endpoint, --token-file | 待合同化 |
+| CLI:daemon capability | `daemon capability` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon gc-cas | `daemon gc-cas` | daemon_ops | workspace_id | -h,, --grace-days | 待合同化 |
+| CLI:daemon gc-snapshots | `daemon gc-snapshots` | daemon_ops |  | -h,, --keep-last | 待合同化 |
+| CLI:daemon health | `daemon health` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon list | `daemon list` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon manifest | `daemon manifest` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon metrics | `daemon metrics` | daemon_ops |  | -h,, --format, --name, --from-file | 待合同化 |
+| CLI:daemon mode | `daemon mode` | daemon_ops |  | -h,, --set | 待合同化 |
+| CLI:daemon mount | `daemon mount` | daemon_ops | register, list, delete | -h, | 待合同化 |
+| CLI:daemon ping | `daemon ping` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon publish | `daemon publish` | daemon_ops | workspace_id, db_path | -h,, --build-context | 待合同化 |
+| CLI:daemon query | `daemon query` | daemon_ops | workspace_id, value | -h,, --qualified-name, --kind, --limit, --max-depth, --file-path, --fixed, --path, --include-all, --include-info, --reverse, --history | 待合同化 |
+| CLI:daemon register | `daemon register` | daemon_ops | root | -h,, --git-remote, --git-head, --toolchain | 待合同化 |
+| CLI:daemon restore | `daemon restore` | daemon_ops |  | -h,, --from | 待合同化 |
+| CLI:daemon schema-version | `daemon schema-version` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon snapshot-evict | `daemon snapshot-evict` | daemon_ops | workspace_id | -h, | 待合同化 |
+| CLI:daemon snapshot-list | `daemon snapshot-list` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon snapshot-stats | `daemon snapshot-stats` | daemon_ops |  | -h, | 待合同化 |
+| CLI:daemon status | `daemon status` | daemon_ops | workspace_id | -h, | 待合同化 |
+| CLI:daemon toolchain | `daemon toolchain` | daemon_ops | register, list, get, delete, bind, resolve, build, resolved | -h, | 待合同化 |
+| CLI:dashboard | `dashboard` | code_health |  | -h,, --full, --with-cycles, --with-evolution, --risks, --top, --json | 待合同化 |
+| CLI:defect build | `defect build` | semgrep_defects |  | -h, | 待合同化 |
+| CLI:defect learn | `defect learn` | semgrep_defects | commit_hash | -h, | 待合同化 |
+| CLI:defect search | `defect search` | semgrep_defects |  | -h,, --category, --severity, --limit | 待合同化 |
+| CLI:defect stats | `defect stats` | semgrep_defects |  | -h, | 待合同化 |
+| CLI:defect suggest | `defect suggest` | semgrep_defects | symbol_hash | -h,, --finding | 待合同化 |
+| CLI:dependency cycle | `dependency cycle` | dependency |  | -h,, --json | 待合同化 |
+| CLI:dependency explain | `dependency explain` | dependency |  | -h,, --contract-id, --revision, --json | 待合同化 |
+| CLI:dependency inspect | `dependency inspect` | dependency |  | -h,, --task-id, --contract-id, --revision, --json | 待合同化 |
+| CLI:dependency list | `dependency list` | dependency |  | -h,, --contract-id, --json | 待合同化 |
+| CLI:dependency provider-select | `dependency provider-select` | dependency |  | -h,, --consumer-task-id, --contract-id, --revision, --interface-name, --provider-task-id, --json | 待合同化 |
+| CLI:doctor | `doctor` | diagnostics |  | -h,, --add-defender-exclusion | 待合同化 |
+| CLI:evolution | `evolution` | code_health | qualified_name | -h,, --window, --defects | 待合同化 |
+| CLI:experiment admit | `experiment admit` | experiment | task_id, batch_id | -h,, --strata, --pair-slot, --pair-id, --notes-file, --scope-contract, --json | 待合同化 |
+| CLI:experiment batch-create | `experiment batch-create` | experiment |  | -h,, --seed, --min-valid, --min-nontrivial, --assignment-mode, --json | 待合同化 |
+| CLI:experiment batch-list | `experiment batch-list` | experiment |  | -h,, --json | 待合同化 |
+| CLI:experiment batch-lock | `experiment batch-lock` | experiment | batch_id | -h,, --json | 待合同化 |
+| CLI:experiment pause | `experiment pause` | experiment | batch_id | -h,, --trigger, --reason, --json | 待合同化 |
+| CLI:experiment record-incident | `experiment record-incident` | experiment | task_id, batch_id | -h,, --type, --reason-code, --detail, --json | 待合同化 |
+| CLI:experiment record-invalid | `experiment record-invalid` | experiment | task_id, batch_id | -h,, --reason-code, --detail, --json | 待合同化 |
+| CLI:experiment record-metrics | `experiment record-metrics` | experiment | task_id, batch_id | -h,, --tp, --fp, --misses, --duration, --tokens, --tokens-source, --tokens-unavailable-reason, --reopen, --defects, --rollbacks, --obs-window, --group, --nontrivial, --json | 待合同化 |
+| CLI:experiment record-reveal | `experiment record-reveal` | experiment | task_id, batch_id | -h,, --sealed, --notes-file, --json | 待合同化 |
+| CLI:experiment record-verdict | `experiment record-verdict` | experiment | task_id, batch_id | -h,, --changed, --reason-code, --json | 待合同化 |
+| CLI:experiment report | `experiment report` | experiment | batch_id | -h,, --artifacts-dir, --json | 待合同化 |
+| CLI:experiment toggle-set | `experiment toggle-set` | experiment |  | -h,, --scope, --value, --scope-key, --json | 待合同化 |
+| CLI:experiment toggle-show | `experiment toggle-show` | experiment |  | -h,, --task-id, --workspace-id, --json | 待合同化 |
+| CLI:file | `file` | query_search | path | -h, | 待合同化 |
+| CLI:fn-metrics | `fn-metrics` | code_health | name | -h, | 待合同化 |
+| CLI:fts rebuild | `fts rebuild` | query_search |  | -h, | 待合同化 |
+| CLI:fts status | `fts status` | query_search |  | -h, | 待合同化 |
+| CLI:function-issues | `function-issues` | semgrep_defects | fn | -h,, --type, --module, --limit | 待合同化 |
+| CLI:gc archive | `gc archive` | gc |  | -h,, --force, --dry-run | 待合同化 |
+| CLI:gc archive-import | `gc archive-import` | gc | path | -h,, --file, --package, --dry-run, --apply | 待合同化 |
+| CLI:gc archive-inspect | `gc archive-inspect` | gc | path | -h, | 待合同化 |
+| CLI:gc archive-list | `gc archive-list` | gc |  | -h,, --limit | 待合同化 |
+| CLI:gc audit-list | `gc audit-list` | gc |  | -h,, --limit, --operation | 待合同化 |
+| CLI:gc audit-show | `gc audit-show` | gc | id | -h, | 待合同化 |
+| CLI:gc db-cleanup | `gc db-cleanup` | gc |  | -h,, --dry-run, --apply, --all-but-current | 待合同化 |
+| CLI:gc db-migrate-single | `gc db-migrate-single` | gc |  | -h,, --dry-run, --apply, --no-backup | 待合同化 |
+| CLI:gc policy | `gc policy` | gc | show, set | -h, | 待合同化 |
+| CLI:gc purge | `gc purge` | gc |  | -h,, --older-than | 待合同化 |
+| CLI:gc restore | `gc restore` | gc |  | -h,, --path, --force | 待合同化 |
+| CLI:gc retention | `gc retention` | gc |  | -h,, --older-than, --keep-versions, --include-external,, --external-stale-days, --backup,, --vacuum,, --dry-run, --apply, --save-policy | 待合同化 |
+| CLI:gc status | `gc status` | gc |  | -h, | 待合同化 |
+| CLI:git check-push | `git check-push` | git | local_ref, local_sha, remote_ref, remote_sha | -h, | 待合同化 |
+| CLI:git check-ref-transaction | `git check-ref-transaction` | git | old_value, new_value, ref_name, flags | -h, | 待合同化 |
+| CLI:git check-task | `git check-task` | git |  | -h, | 待合同化 |
+| CLI:git destructive-log | `git destructive-log` | git | limit | -h,, --type | 待合同化 |
+| CLI:git import | `git import` | git | limit | -h, | 待合同化 |
+| CLI:git log | `git log` | git | limit | -h, | 待合同化 |
+| CLI:git show | `git show` | git | commit | -h, | 待合同化 |
+| CLI:git stats | `git stats` | git |  | -h, | 待合同化 |
+| CLI:graph build-from-c | `graph build-from-c` | workspace_database | directory | -h,, --threads, --dump, --max-files, --query | 待合同化 |
+| CLI:grep | `grep` | query_search | patterns, same | -h,, --fixed, --limit, --path, --include-all, --kind | 待合同化 |
+| CLI:guardrail rules | `guardrail rules` | audit_bootstrap |  | -h,, --category | 待合同化 |
+| CLI:guardrail scan | `guardrail scan` | audit_bootstrap |  | -h,, --file, --category | 待合同化 |
+| CLI:health-report | `health-report` | code_health |  | -h,, --json | 待合同化 |
+| CLI:hotspot | `hotspot` | code_health |  | -h,, --module, --limit | 待合同化 |
+| CLI:identity revoke | `identity revoke` | identity |  | -h,, --issuer, --signing-key-id, --revocation-mode, --reason, --agent-id, --session-id, --model-id, --role, --json | 待合同化 |
+| CLI:impact | `impact` | call_chain | symbol_hash | -h,, --depth | 待合同化 |
+| CLI:install | `install` | setup_install |  | -h,, --all, --lang, --check, --hooks, --force-hooks, --no-post-commit, --no-optional, --verbose, --agent, --detect-agents, --force-agent, --agent-project | 待合同化 |
+| CLI:install-agent all | `install-agent all` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent antigravity | `install-agent antigravity` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent claude-code | `install-agent claude-code` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent claude-desktop | `install-agent claude-desktop` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent cline | `install-agent cline` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent cline-cli | `install-agent cline-cli` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent codebuddy-cli | `install-agent codebuddy-cli` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent codex | `install-agent codex` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent comate | `install-agent comate` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent cursor | `install-agent cursor` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent deep-code | `install-agent deep-code` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent devin-cli | `install-agent devin-cli` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent gemini-cli | `install-agent gemini-cli` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent grok-build | `install-agent grok-build` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent jetbrains-junie | `install-agent jetbrains-junie` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent kimi-code | `install-agent kimi-code` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent kiro | `install-agent kiro` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent opencode | `install-agent opencode` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent pearai | `install-agent pearai` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent qoder | `install-agent qoder` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent trae | `install-agent trae` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent windsurf | `install-agent windsurf` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent zcode | `install-agent zcode` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-agent zed | `install-agent zed` | setup_install |  | -h,, --output-dir, --force, --global, --auto-detect, --registry | 待合同化 |
+| CLI:install-hook post-commit | `install-hook post-commit` | setup_install |  | -h,, --task-id, --uninstall | 待合同化 |
+| CLI:issues | `issues` | semgrep_defects | qualified_name | -h,, --include-info | 待合同化 |
+| CLI:largest-fns | `largest-fns` | code_health | limit | -h, | 待合同化 |
+| CLI:lease acquire | `lease acquire` | assignment_lease | task_id | -h,, --role, --agent-id, --session-id, --model-id, --agent-instance-id, --ttl, --json | 待合同化 |
+| CLI:lease list | `lease list` | assignment_lease |  | -h,, --task-id, --role, --json | 待合同化 |
+| CLI:lease release | `lease release` | assignment_lease | task_id | -h,, --role, --token, --agent-id, --session-id, --model-id, --agent-instance-id, --json | 待合同化 |
+| CLI:lease renew | `lease renew` | assignment_lease | task_id | -h,, --role, --token, --agent-id, --session-id, --model-id, --agent-instance-id, --ttl, --json | 待合同化 |
+| CLI:lease status | `lease status` | assignment_lease | task_id | -h,, --role, --json | 待合同化 |
+| CLI:map mermaid | `map mermaid` | query_search |  | -h,, --format | 待合同化 |
+| CLI:map text | `map text` | query_search |  | -h,, --format | 待合同化 |
+| CLI:metrics | `metrics` | code_health |  | -h, | 待合同化 |
+| CLI:ownership-map | `ownership-map` | coverage_ownership |  | -h, | 待合同化 |
+| CLI:query | `query` | query_search | name, file | -h, | 待合同化 |
+| CLI:refresh | `refresh` | workspace_database | paths | -h,, --all, --force | 待合同化 |
+| CLI:review | `review` | semgrep_defects | symbol_hash | -h, | 待合同化 |
+| CLI:rollback config | `rollback config` | rollback |  | -h,, --phase, --flag | 待合同化 |
+| CLI:rollback is-rolled-back | `rollback is-rolled-back` | rollback | feature_name | -h, | 待合同化 |
+| CLI:rollback register | `rollback register` | rollback |  | -h,, --task-id, --feature, --phase, --production-entry, --rollback-entry, --window, --config-json | 待合同化 |
+| CLI:rollback set | `rollback set` | rollback | task_id | -h,, --reason | 待合同化 |
+| CLI:rollback show | `rollback show` | rollback | task_id | -h, | 待合同化 |
+| CLI:rule applicable | `rule applicable` | rule_memory |  | -h,, --context, --limit | 待合同化 |
+| CLI:rule candidate | `rule candidate` | rule_memory | create, list, accept, reject | -h, | 待合同化 |
+| CLI:rule cleanup-sync-log | `rule cleanup-sync-log` | rule_memory |  | -h,, --older-than, --keep-latest, --apply | 待合同化 |
+| CLI:rule extract | `rule extract` | rule_memory |  | -h,, --task-id, --min-occurrences | 待合同化 |
+| CLI:rule insert-block | `rule insert-block` | rule_memory |  | -h,, --target, --actor | 待合同化 |
+| CLI:rule list | `rule list` | rule_memory |  | -h,, --status, --limit | 待合同化 |
+| CLI:rule seed-bootstrap | `rule seed-bootstrap` | rule_memory |  | -h,, --apply | 待合同化 |
+| CLI:rule sync | `rule sync` | rule_memory |  | -h,, --target, --apply, --actor | 待合同化 |
+| CLI:search | `search` | query_search | query | -h,, --kind, --limit | 待合同化 |
+| CLI:semgrep list | `semgrep list` | semgrep_defects | filter | -h,, --severity, --lang, --limit | 待合同化 |
+| CLI:semgrep scan | `semgrep scan` | semgrep_defects | paths | -h,, --config, --lang, --timeout, --save, --quick, --incremental, --base, --head | 待合同化 |
+| CLI:semgrep stats | `semgrep stats` | semgrep_defects |  | -h, | 待合同化 |
+| CLI:server | `server` | setup_install | 未提取 | 未提取 | 待合同化 |
+| CLI:setup | `setup` | setup_install |  | -h,, --force, --dry-run | 待合同化 |
+| CLI:stats | `stats` | workspace_database |  | -h, | 待合同化 |
+| CLI:status | `status` | workspace_database |  | -h, | 待合同化 |
+| CLI:symbol | `symbol` | query_search | name | -h, | 待合同化 |
+| CLI:symbol-history | `symbol-history` | git | symbol_hash | -h,, --limit | 待合同化 |
+| CLI:task apply | `task apply` | task | task_id | -h,, --reviewer, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task assignment-heartbeat | `task assignment-heartbeat` | task | task_id, assignment_id | -h,, --request-id, --fencing-counter, --agent-session-id, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --json | 待合同化 |
+| CLI:task assignment-status | `task assignment-status` | task | task_id | -h,, --step-id, --role, --json | 待合同化 |
+| CLI:task attest-legacy-workspace-binding | `task attest-legacy-workspace-binding` | task | legacy_task_id, anchor_task_id | -h,, --workspace-id, --workspace-instance-id, --request-id, --evidence-path, --evidence-hash, --lease-token, --fencing-counter, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task bootstrap-executor-evidence | `task bootstrap-executor-evidence` | task | task_id, completely | -h,, --steps, --workspace-id, --workspace-instance-id, --request-id, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task bootstrap-reviewer-pass | `task bootstrap-reviewer-pass` | task | task_id, executor | -h,, --workspace-id, --workspace-instance-id, --request-id, --evidence-path, --evidence-hash, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task capture-diff | `task capture-diff` | task | task_id | -h,, --step-id, --base, --dry-run, --auto, --skip-quality-review, --source-commit-hash | 待合同化 |
+| CLI:task cascade-close | `task cascade-close` | task | task_id | -h,, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task claim-recover | `task claim-recover` | task | task_id | -h,, --reason, --request-id, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task close | `task close` | task | task_id | -h,, --reviewer, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task completion-review | `task completion-review` | task | task_id | -h,, --step-id | 待合同化 |
+| CLI:task contract-bootstrap | `task contract-bootstrap` | task | task_id, completely | -h,, --envelope-path, --workspace-id, --workspace-instance-id, --request-id, --evidence-path, --evidence-hash, --lease-token, --fencing-counter, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task contract-revise | `task contract-revise` | task | task_id | -h,, --envelope-path, --expected-previous-hash, --workspace-id, --workspace-instance-id, --request-id, --evidence-path, --evidence-hash, --lease-token, --fencing-counter, --agent-id, --agent-instance-id, --session-id, --model-id, --role | 待合同化 |
+| CLI:task create | `task create` | task |  | -h,, --title, --desc, --steps, --role-contracts, --workspace-id, --workspace-instance-id, --parent-id, --identity-policy, --task-contract-envelope, --task-id | 待合同化 |
+| CLI:task findings | `task findings` | task | task_id | -h,, --status, --severity | 待合同化 |
+| CLI:task governance-projection | `task governance-projection` | task | task_id | -h,, --json | 待合同化 |
+| CLI:task handoff | `task handoff` | task | task_id | -h,, --from-role, --outcome, --next-role, --next-action, --reason, --independence-requirement, --request-id, --step-id, --report-request-id, --evidence-path, --evidence-hash, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task list | `task list` | task |  | -h,, --blocked, --limit, --status, --flat | 待合同化 |
+| CLI:task next | `task next` | task | task_id | -h,, --remediation-step-id, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task next-action | `task next-action` | task | task_id | -h,, --workspace-instance-id, --json | 待合同化 |
+| CLI:task prompt | `task prompt` | task | task_id | -h,, --format, --expected-workspace-instance-id | 待合同化 |
+| CLI:task reopen | `task reopen` | task | task_id | -h,, --reviewer, --reason, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task report | `task report` | task | task_id, step_id | -h,, --result, --fail, --evidence-path, --evidence-hash, --snapshot-id, --changes-json, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task resolve-finding | `task resolve-finding` | task | finding_id | -h,, --resolution, --by | 待合同化 |
+| CLI:task rollback | `task rollback` | task | task_id, step_id | -h, | 待合同化 |
+| CLI:task show | `task show` | task | task_id | -h,, --flat | 待合同化 |
+| CLI:task split | `task split` | task | task_id | -h,, --plan, --identity-policy | 待合同化 |
+| CLI:task status-tree | `task status-tree` | task | task_id | -h, | 待合同化 |
+| CLI:task step-resolve | `task step-resolve` | task | task_id, failed_step_id, remediation_step_id, request_id | -h,, --evidence-path, --evidence-hash, --json, --agent-id, --session-id, --model-id, --role, --agent-instance-id, --lease-token, --fencing-counter | 待合同化 |
+| CLI:task supersede | `task supersede` | task | old, new | -h,, --reason, --request-id, --evidence-path, --evidence-hash, --lease-token, --fencing-counter, --agent-id, --session-id, --model-id, --role, --agent-instance-id | 待合同化 |
+| CLI:task superseded | `task superseded` | task | id | -h, | 待合同化 |
+| CLI:test | `test` | setup_install |  |  | 待合同化 |
+| CLI:test-impact | `test-impact` | coverage_ownership | qualified_name | -h, | 待合同化 |
+| CLI:tests | `tests` | coverage_ownership | qualified_name | -h,, --reverse, --build, --force, --history, --import, --ci-run-id, --ci-url, --limit | 待合同化 |
+| CLI:toolchain bind | `toolchain bind` | build_context | workspace_id, toolchain_name | -h,, --build-context-hash | 待合同化 |
+| CLI:toolchain delete | `toolchain delete` | build_context | name_or_id | -h, | 待合同化 |
+| CLI:toolchain list | `toolchain list` | build_context |  | -h, | 待合同化 |
+| CLI:toolchain list-bound | `toolchain list-bound` | build_context | workspace_id | -h,, --build-context-hash | 待合同化 |
+| CLI:toolchain register | `toolchain register` | build_context | name, compiler_path | -h,, --sysroot, --description, --no-probe | 待合同化 |
+| CLI:toolchain show | `toolchain show` | build_context | name_or_id | -h, | 待合同化 |
+| CLI:topo | `topo` | call_chain |  | -h,, --limit | 待合同化 |
+| CLI:uncommented | `uncommented` | coverage_ownership | kind | -h,, --module, --limit | 待合同化 |
+| CLI:vuln-blast | `vuln-blast` | semgrep_defects |  | -h,, --finding-id, --severity, --depth | 待合同化 |
+| CLI:who | `who` | coverage_ownership | file | -h, | 待合同化 |
+| CLI:workspace delete | `workspace delete` | workspace_database | id_or_name | -h, | 待合同化 |
+| CLI:workspace generate-ignore | `workspace generate-ignore` | workspace_database | dir | -h,, --apply | 待合同化 |
+| CLI:workspace list | `workspace list` | workspace_database |  | -h, | 待合同化 |
+| CLI:workspace register | `workspace register` | workspace_database | name, root | -h, | 待合同化 |
+| CLI:workspace scan | `workspace scan` | workspace_database | dir | -h,, --register, --include-all, --deep | 待合同化 |
+| CLI:workspace set | `workspace set` | workspace_database | id_or_name | -h, | 待合同化 |
+
+## 4. MCP逐工具（矩阵声明，不是副作用实测）
+
+| 稳定case族ID | 分类 | backend / op_class | 必填快照参数 | 可选快照参数 | 状态 |
+|---|---|---|---|---|---|
+| MCP:append_evidence | collab | rust_native / GOVERNANCE_WRITE | task_id, step_id, evidence_id, evidence_type, manifest_path | contract_hash, contract_id, contract_revision, fencing_counter, identity_agent_id, identity_model_id, identity_role, identity_session_id, lease_token, payload, payload_hash, producer_identity, request_id, snapshot_id, test_run_id, verifier_config_hash, verifier_name, verifier_version | 待合同化；快照待复核 |
+| MCP:ask_codebase | query_search | rust_native / READ_ONLY | question | include_callees, include_callers, max_tokens, top_k | 待合同化；快照待复核 |
+| MCP:assignment_create | assignment_lease | rust_native / PROTECTED_MUTATION | task_id | agent_id, model_id, role, session_id | 待合同化；快照待复核 |
+| MCP:assignment_revoke | assignment_lease | rust_native / PROTECTED_MUTATION | assignment_id |  | 待合同化；快照待复核 |
+| MCP:assignment_show | assignment_lease | rust_native / READ_ONLY | task_id | role | 待合同化；快照待复核 |
+| MCP:audit_verify_chain | audit_bootstrap | rust_native / READ_ONLY |  | limit, table_name | 待合同化；快照待复核 |
+| MCP:blast_radius | semgrep_defects | rust_native / READ_ONLY | symbol_hash | depth | 待合同化；快照待复核 |
+| MCP:bootstrap_status | audit_bootstrap | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:build_directory | workspace_database | rust_native / PROTECTED_MUTATION | dir_path |  | 待合同化；快照待复核 |
+| MCP:build_graph | workspace_database | rust_native / PROTECTED_MUTATION |  | workspace_instance_id | 待合同化；快照待复核 |
+| MCP:build_hard_dependency_edges | dependency | task_rpc / PROTECTED_MUTATION | workspace_id, contract_id, contract_revision |  | 待合同化；快照待复核 |
+| MCP:cancel_job | task | task_rpc / PROTECTED_MUTATION | job_id |  | 待合同化；快照待复核 |
+| MCP:check_action_identity | identity | rust_native / READ_ONLY | identity | require_role | 待合同化；快照待复核 |
+| MCP:check_file_health | code_health | rust_native / READ_ONLY | file_path |  | 待合同化；快照待复核 |
+| MCP:check_session_separation | identity | rust_native / READ_ONLY | reviewer_identity, implementer_identity |  | 待合同化；快照待复核 |
+| MCP:churn_analysis | code_health | rust_native / READ_ONLY |  | module_filter, time_window | 待合同化；快照待复核 |
+| MCP:cleanup_agent_rule_sync_log | rule_memory | rust_native / PROTECTED_MUTATION |  | dry_run, keep_latest, older_than_days | 待合同化；快照待复核 |
+| MCP:clear_clones | diagnostics | rust_native / PROTECTED_MUTATION |  |  | 待合同化；快照待复核 |
+| MCP:compare_snapshots | git | rust_native / READ_ONLY | left_workspace_id, right_workspace_id | scope_type, scope_value | 待合同化；快照待复核 |
+| MCP:count_resolved_edges | build_context | rust_native / READ_ONLY | workspace_id, build_context_hash |  | 待合同化；快照待复核 |
+| MCP:cross_layer_impact | semgrep_defects | rust_native / READ_ONLY | symbol_hash |  | 待合同化；快照待复核 |
+| MCP:cross_repo_impact | diagnostics | rust_native / READ_ONLY | symbol_hash | depth | 待合同化；快照待复核 |
+| MCP:cross_repo_summary | diagnostics | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:defect_correlation | code_health | rust_native / READ_ONLY | symbol_hash | window_commits | 待合同化；快照待复核 |
+| MCP:defect_learn | semgrep_defects | rust_native / READ_ONLY | fix_commit_hash |  | 待合同化；快照待复核 |
+| MCP:defect_search | semgrep_defects | rust_native / READ_ONLY |  | category, severity_filter | 待合同化；快照待复核 |
+| MCP:defect_stats | semgrep_defects | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:defect_suggest_fix | semgrep_defects | rust_native / READ_ONLY | symbol_hash | finding_id | 待合同化；快照待复核 |
+| MCP:delete_workspace | workspace_database | rust_native / PROTECTED_MUTATION | workspace_id_or_name |  | 待合同化；快照待复核 |
+| MCP:detect_call_cycles | call_chain | rust_native / READ_ONLY | 未知（schema缺失） | 未知（schema缺失） | 待合同化；SCHEMA缺失，阻断 |
+| MCP:detect_clones | diagnostics | task_rpc / PROTECTED_MUTATION |  | file_filter, min_lines, similarity_threshold | 待合同化；快照待复核 |
+| MCP:detect_clones_async | diagnostics | task_rpc / PROTECTED_MUTATION |  | file_filter, min_lines, similarity_threshold | 待合同化；快照待复核 |
+| MCP:detect_cross_repo_deps | diagnostics | task_rpc / PROTECTED_MUTATION | source_workspace | target_workspace | 待合同化；快照待复核 |
+| MCP:detect_dependency_cycle | dependency | rust_native / READ_ONLY | 未知（schema缺失） | 未知（schema缺失） | 待合同化；SCHEMA缺失，阻断 |
+| MCP:diff_branches | workspace_database | rust_native / READ_ONLY | source_branch, target_branch |  | 待合同化；快照待复核 |
+| MCP:diff_callees | call_chain | rust_native / READ_ONLY | symbol_a, symbol_b |  | 待合同化；快照待复核 |
+| MCP:diff_callers | call_chain | rust_native / READ_ONLY | symbol_a, symbol_b |  | 待合同化；快照待复核 |
+| MCP:diff_to_symbol | semgrep_defects | rust_native / READ_ONLY | diff_text |  | 待合同化；快照待复核 |
+| MCP:embed_single_symbol | query_search | task_rpc / PROTECTED_MUTATION | symbol_hash |  | 待合同化；快照待复核 |
+| MCP:embed_symbols | query_search | task_rpc / PROTECTED_MUTATION |  | force | 待合同化；快照待复核 |
+| MCP:embed_symbols_async | query_search | task_rpc / PROTECTED_MUTATION |  | batch_size, force | 待合同化；快照待复核 |
+| MCP:evolution_frequency | code_health | rust_native / READ_ONLY | qualified_name | time_window | 待合同化；快照待复核 |
+| MCP:export_module_graph | call_chain | rust_native / READ_ONLY |  | format | 待合同化；快照待复核 |
+| MCP:extract_rule_candidates_from_quality_findings | rule_memory | rust_native / PROTECTED_MUTATION |  | min_occurrences, task_id | 待合同化；快照待复核 |
+| MCP:file_grep | query_search | rust_native / READ_ONLY | pattern | glob, head_limit, output_mode, path | 待合同化；快照待复核 |
+| MCP:file_list | query_search | rust_native / READ_ONLY |  | glob, path | 待合同化；快照待复核 |
+| MCP:file_read | query_search | rust_native / READ_ONLY | file_path | include_context, limit, offset | 待合同化；快照待复核 |
+| MCP:file_symbol_content | query_search | rust_native / READ_ONLY | file_path, symbol_name |  | 待合同化；快照待复核 |
+| MCP:find_evidence | collab | rust_native / READ_ONLY |  | contract_id, limit, task_id, verifier | 待合同化；快照待复核 |
+| MCP:find_issues | semgrep_defects | rust_native / READ_ONLY |  | issue_type, limit | 待合同化；快照待复核 |
+| MCP:find_shared_symbols | diagnostics | rust_native / READ_ONLY |  | workspace_a, workspace_b | 待合同化；快照待复核 |
+| MCP:find_similar_functions | query_search | rust_native / READ_ONLY | qualified_name | threshold, top_k | 待合同化；快照待复核 |
+| MCP:find_uncovered_functions | coverage_ownership | rust_native / READ_ONLY |  | module_filter, threshold | 待合同化；快照待复核 |
+| MCP:gc_archive_import | gc | rust_native / PROTECTED_MUTATION | path | dry_run, file_path, package_name | 待合同化；快照待复核 |
+| MCP:gc_archive_inspect | gc | rust_native / READ_ONLY | path |  | 待合同化；快照待复核 |
+| MCP:gc_archive_list | gc | rust_native / READ_ONLY |  | limit | 待合同化；快照待复核 |
+| MCP:gc_audit_get | gc | rust_native / READ_ONLY | audit_id |  | 待合同化；快照待复核 |
+| MCP:gc_audit_list | gc | rust_native / READ_ONLY |  | limit, operation | 待合同化；快照待复核 |
+| MCP:gc_policy_get | gc | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:gc_policy_set | gc | rust_native / PROTECTED_MUTATION |  | backup_enabled, external_stale_days, include_external, keep_versions, older_than_days, vacuum_enabled | 待合同化；快照待复核 |
+| MCP:gc_retention | gc | rust_native / READ_ONLY |  | backup, dry_run, external_stale_days, include_external, keep_versions, older_than_days, save_policy, vacuum | 待合同化；快照待复核 |
+| MCP:generate_summary | query_search | rust_native / PROTECTED_MUTATION | qualified_name, summary | model | 待合同化；快照待复核 |
+| MCP:get_action_identity | identity | rust_native / READ_ONLY | action_id | workspace_id | 待合同化；快照待复核 |
+| MCP:get_active_build_context | build_context | rust_native / READ_ONLY | workspace_id |  | 待合同化；快照待复核 |
+| MCP:get_active_workspace | workspace_database | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_applicable_rules | rule_memory | rust_native / READ_ONLY | context | limit | 待合同化；快照待复核 |
+| MCP:get_artifact_freshness | dependency | rust_native / READ_ONLY | workspace_id, task_id | artifact_ref | 待合同化；快照待复核 |
+| MCP:get_attestation_validity | identity | rust_native / READ_ONLY | issuer, signing_key_id, issuance_time | workspace_id | 待合同化；快照待复核 |
+| MCP:get_build_context | build_context | rust_native / READ_ONLY | workspace_id, build_context_hash |  | 待合同化；快照待复核 |
+| MCP:get_call_chain_down | call_chain | rust_native / READ_ONLY | qualified_name | max_depth | 待合同化；快照待复核 |
+| MCP:get_call_heatmap | call_chain | rust_native / READ_ONLY |  | group_by, top_n | 待合同化；快照待复核 |
+| MCP:get_callees | call_chain | rust_native / READ_ONLY | caller_name | qualified_name | 待合同化；快照待复核 |
+| MCP:get_callers | call_chain | rust_native / READ_ONLY | callee_name | qualified_name | 待合同化；快照待复核 |
+| MCP:get_clone_aware_impact | diagnostics | rust_native / READ_ONLY | qualified_name | depth | 待合同化；快照待复核 |
+| MCP:get_clone_group_detail | diagnostics | rust_native / READ_ONLY | group_id | members_limit | 待合同化；快照待复核 |
+| MCP:get_clone_group_stats | diagnostics | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_clone_stats | diagnostics | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_code_health_check | code_health | rust_native / READ_ONLY |  | severity | 待合同化；快照待复核 |
+| MCP:get_code_metrics_summary | code_health | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_comment_coverage | coverage_ownership | rust_native / READ_ONLY |  | group_by | 待合同化；快照待复核 |
+| MCP:get_comment_from_version | coverage_ownership | rust_native / READ_ONLY | spec |  | 待合同化；快照待复核 |
+| MCP:get_commit_changes | git | rust_native / READ_ONLY | commit_hash |  | 待合同化；快照待复核 |
+| MCP:get_commit_tasks | task | rust_native / READ_ONLY | commit_hash | include_task_details | 待合同化；快照待复核 |
+| MCP:get_complexity_hotspots | code_health | rust_native / READ_ONLY |  | limit, module_filter | 待合同化；快照待复核 |
+| MCP:get_coupling_analysis | code_health | rust_native / READ_ONLY |  | limit | 待合同化；快照待复核 |
+| MCP:get_coverage_for_symbol | coverage_ownership | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_deepest_functions | call_chain | rust_native / READ_ONLY |  | kind, limit, module_filter | 待合同化；快照待复核 |
+| MCP:get_defect_correlation | semgrep_defects | rust_native / READ_ONLY | qualified_name | window_commits | 待合同化；快照待复核 |
+| MCP:get_dependency_edges | dependency | rust_native / READ_ONLY | workspace_id | task_id | 待合同化；快照待复核 |
+| MCP:get_edit_history | diagnostics | rust_native / READ_ONLY |  | file_path, limit | 待合同化；快照待复核 |
+| MCP:get_edit_stats | diagnostics | rust_native / READ_ONLY |  | time_window | 待合同化；快照待复核 |
+| MCP:get_file_history | query_search | rust_native / READ_ONLY | file_path |  | 待合同化；快照待复核 |
+| MCP:get_file_symbols | query_search | rust_native / READ_ONLY | file_path |  | 待合同化；快照待复核 |
+| MCP:get_freshness_status | collab | rust_native / READ_ONLY |  | evidence_id, task_id | 待合同化；快照待复核 |
+| MCP:get_function_metrics | code_health | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_gate_decision | collab | rust_native / READ_ONLY |  | gate_id, limit, task_id | 待合同化；快照待复核 |
+| MCP:get_git_commits | git | rust_native / READ_ONLY |  | limit, offset | 待合同化；快照待复核 |
+| MCP:get_git_stats | git | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_impact | call_chain | rust_native / READ_ONLY | qualified_name | max_depth | 待合同化；快照待复核 |
+| MCP:get_interface_providers | dependency | rust_native / READ_ONLY | workspace_id, interface_name | version | 待合同化；快照待复核 |
+| MCP:get_issue_summary | semgrep_defects | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_job_stats | task | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_job_status | task | rust_native / READ_ONLY | job_id |  | 待合同化；快照待复核 |
+| MCP:get_largest_functions | code_health | rust_native / READ_ONLY |  | limit, module_filter | 待合同化；快照待复核 |
+| MCP:get_metrics | diagnostics | rust_native / READ_ONLY |  | format, name, reset, source | 待合同化；快照待复核 |
+| MCP:get_module_call_stats | call_chain | rust_native / READ_ONLY |  | limit | 待合同化；快照待复核 |
+| MCP:get_most_coupled_functions | code_health | rust_native / READ_ONLY |  | limit | 待合同化；快照待复核 |
+| MCP:get_orphan_symbols | call_chain | rust_native / READ_ONLY |  | kind, limit, module_filter | 待合同化；快照待复核 |
+| MCP:get_ownership_map | coverage_ownership | rust_native / READ_ONLY |  | module_filter | 待合同化；快照待复核 |
+| MCP:get_project_dependencies | gc | rust_native / READ_ONLY |  | languages | 待合同化；快照待复核 |
+| MCP:get_recent_changes | query_search | rust_native / READ_ONLY |  | since | 待合同化；快照待复核 |
+| MCP:get_resolved_edges | build_context | rust_native / READ_ONLY | workspace_id, build_context_hash | caller_symbol_id, limit | 待合同化；快照待复核 |
+| MCP:get_role_view | collab | rust_native / READ_ONLY | task_id | role | 待合同化；快照待复核 |
+| MCP:get_semgrep_findings | semgrep_defects | rust_native / READ_ONLY |  | language, limit, rule_id, severity | 待合同化；快照待复核 |
+| MCP:get_semgrep_stats | semgrep_defects | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_stats | workspace_database | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_status | workspace_database | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_summary | query_search | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_symbol | query_search | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_symbol_change_tasks | task | rust_native / READ_ONLY |  | limit, qualified_name, symbol_hash | 待合同化；快照待复核 |
+| MCP:get_symbol_commit_history | git | rust_native / READ_ONLY | symbol_hash | limit | 待合同化；快照待复核 |
+| MCP:get_symbol_content_by_hash | query_search | rust_native / READ_ONLY | content_hash |  | 待合同化；快照待复核 |
+| MCP:get_symbol_history | query_search | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_symbol_issues | semgrep_defects | rust_native / READ_ONLY | qualified_name | include_info | 待合同化；快照待复核 |
+| MCP:get_symbol_location | query_search | rust_native / READ_ONLY | name | file_path | 待合同化；快照待复核 |
+| MCP:get_task_commits | task | task_rpc / READ_ONLY | task_id | include_commit_details | 待合同化；快照待复核 |
+| MCP:get_task_symbol_changes | task | task_rpc / READ_ONLY | task_id | file_path, limit, step_id | 待合同化；快照待复核 |
+| MCP:get_test_cases | coverage_ownership | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_test_coverage | coverage_ownership | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:get_test_coverage_summary | coverage_ownership | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_test_stability | coverage_ownership | rust_native / READ_ONLY | qualified_name | limit | 待合同化；快照待复核 |
+| MCP:get_tested_functions | coverage_ownership | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:get_token_savings_report | query_search | rust_native / READ_ONLY |  | time_window | 待合同化；快照待复核 |
+| MCP:get_toolchain | build_context | rust_native / READ_ONLY | name_or_id |  | 待合同化；快照待复核 |
+| MCP:get_top_callers | call_chain | rust_native / READ_ONLY |  | kind, limit, module_filter | 待合同化；快照待复核 |
+| MCP:get_topological_order | call_chain | rust_native / READ_ONLY |  | limit | 待合同化；快照待复核 |
+| MCP:get_uncommented_symbols | coverage_ownership | rust_native / READ_ONLY |  | kind, limit, module_filter | 待合同化；快照待复核 |
+| MCP:get_vulnerability_blast_radius | semgrep_defects | rust_native / READ_ONLY |  | depth, finding_id, severity_filter | 待合同化；快照待复核 |
+| MCP:get_workspace_toolchains | build_context | rust_native / READ_ONLY | workspace_id | build_context_hash | 待合同化；快照待复核 |
+| MCP:guardrail_add_rule | audit_bootstrap | rust_native / PROTECTED_MUTATION | category, pattern | action, description, severity | 待合同化；快照待复核 |
+| MCP:guardrail_check_edit | audit_bootstrap | rust_native / READ_ONLY | file_path | proposed_change | 待合同化；快照待复核 |
+| MCP:guardrail_list_rules | audit_bootstrap | rust_native / READ_ONLY |  | category_filter | 待合同化；快照待复核 |
+| MCP:guardrail_scan | audit_bootstrap | rust_native / READ_ONLY |  | file_filter | 待合同化；快照待复核 |
+| MCP:hotspot_evolution | code_health | rust_native / READ_ONLY |  | limit, module_filter | 待合同化；快照待复核 |
+| MCP:import_codeowners | coverage_ownership | task_rpc / PROTECTED_MUTATION |  |  | 待合同化；快照待复核 |
+| MCP:import_coverage | coverage_ownership | task_rpc / PROTECTED_MUTATION | file_path | format | 待合同化；快照待复核 |
+| MCP:import_envelope_dependencies | dependency | task_rpc / PROTECTED_MUTATION | workspace_id, task_id, contract_id, contract_revision, dependencies |  | 待合同化；快照待复核 |
+| MCP:import_git_blame | coverage_ownership | task_rpc / PROTECTED_MUTATION |  |  | 待合同化；快照待复核 |
+| MCP:import_git_history | git | task_rpc / PROTECTED_MUTATION |  | max_commits | 待合同化；快照待复核 |
+| MCP:import_project_dependencies | gc | task_rpc / PROTECTED_MUTATION |  |  | 待合同化；快照待复核 |
+| MCP:lease_acquire | assignment_lease | rust_native / PROTECTED_MUTATION | task_id | agent_id, model_id, role, session_id, ttl_seconds | 待合同化；快照待复核 |
+| MCP:lease_list_events | assignment_lease | rust_native / READ_ONLY |  | role, task_id | 待合同化；快照待复核 |
+| MCP:lease_release | assignment_lease | rust_native / PROTECTED_MUTATION | task_id, role, token | agent_id, model_id, session_id | 待合同化；快照待复核 |
+| MCP:lease_renew | assignment_lease | rust_native / PROTECTED_MUTATION | task_id, role, token | agent_id, model_id, session_id, ttl_seconds | 待合同化；快照待复核 |
+| MCP:lease_status | assignment_lease | rust_native / READ_ONLY | task_id | role | 待合同化；快照待复核 |
+| MCP:link_edit_audit_symbols | task | task_rpc / PROTECTED_MUTATION | audit_id | step_id | 待合同化；快照待复核 |
+| MCP:list_attestation_revocations | identity | rust_native / READ_ONLY |  | issuer, signing_key_id, workspace_id | 待合同化；快照待复核 |
+| MCP:list_audit_signing_keys | audit_bootstrap | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:list_branches | workspace_database | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:list_build_contexts | build_context | rust_native / READ_ONLY | workspace_id |  | 待合同化；快照待复核 |
+| MCP:list_clone_groups | diagnostics | rust_native / READ_ONLY |  | clone_type, limit, min_similarity | 待合同化；快照待复核 |
+| MCP:list_clones | diagnostics | rust_native / READ_ONLY |  | clone_type, limit, min_similarity, symbol_id | 待合同化；快照待复核 |
+| MCP:list_jobs | task | rust_native / READ_ONLY |  | job_type, limit, status | 待合同化；快照待复核 |
+| MCP:list_toolchains | build_context | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:list_workspaces | workspace_database | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:lsp_check_available | diagnostics | rust_native / READ_ONLY |  | language | 待合同化；快照待复核 |
+| MCP:lsp_completion | diagnostics | rust_native / READ_ONLY | file_path, line, character |  | 待合同化；快照待复核 |
+| MCP:lsp_definition | diagnostics | rust_native / READ_ONLY | file_path, line, character |  | 待合同化；快照待复核 |
+| MCP:lsp_diagnostics | diagnostics | rust_native / READ_ONLY | file_path |  | 待合同化；快照待复核 |
+| MCP:lsp_hover | diagnostics | rust_native / READ_ONLY | file_path, line, character |  | 待合同化；快照待复核 |
+| MCP:lsp_references | diagnostics | rust_native / READ_ONLY | file_path, line, character | include_declaration | 待合同化；快照待复核 |
+| MCP:merge_preview | workspace_database | rust_native / READ_ONLY | source_branch, target_branch |  | 待合同化；快照待复核 |
+| MCP:parse_codeowners | coverage_ownership | rust_native / READ_ONLY |  | file_path | 待合同化；快照待复核 |
+| MCP:project_brief | query_search | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:propose_edit | diagnostics | rust_native / PROTECTED_MUTATION | file_path, new_content | agent_task_id, dry_run, expected_hash, operation, symbol_hash | 待合同化；快照待复核 |
+| MCP:propose_range_patch | diagnostics | rust_native / PROTECTED_MUTATION | file_path, start_line, end_line, new_content | agent_task_id, dry_run, expected_hash, symbol_hash | 待合同化；快照待复核 |
+| MCP:propose_symbol_id_patch | diagnostics | rust_native / PROTECTED_MUTATION | symbol_id, new_content | agent_task_id, dry_run, expected_hash, expected_symbol_hash, mode | 待合同化；快照待复核 |
+| MCP:propose_symbol_patch | diagnostics | rust_native / PROTECTED_MUTATION | file_path, qualified_name, new_content | agent_task_id, dry_run, expected_hash, mode | 待合同化；快照待复核 |
+| MCP:prune_external_symbols | gc | task_rpc / PROTECTED_MUTATION |  | keep_project_deps, package_names, vacuum | 待合同化；快照待复核 |
+| MCP:publish_interface | dependency | rust_native / PROTECTED_MUTATION | workspace_id, task_id, contract_id, contract_revision, interface_name, version | interface_hash | 待合同化；快照待复核 |
+| MCP:record_action_identity | identity | rust_native / GOVERNANCE_WRITE | action_id, action_type, task_id, identity | contract_id, contract_revision, workspace_id | 待合同化；快照待复核 |
+| MCP:record_artifact_identity | dependency | rust_native / GOVERNANCE_WRITE | workspace_id, task_id, contract_id, contract_revision, artifact_id, artifact_type, artifact_ref | artifact_hash, workspace_snapshot_id | 待合同化；快照待复核 |
+| MCP:record_task_symbol_change | task | task_rpc / PROTECTED_MUTATION | task_id, file_path | change_audit_id, change_type, edit_audit_id, metadata, qualified_name, source, step_id, symbol_hash_after, symbol_hash_before, symbol_name | 待合同化；快照待复核 |
+| MCP:record_token_savings | query_search | rust_native / PROTECTED_MUTATION | operation, original_tokens, actual_tokens | agent_task_id, detail | 待合同化；快照待复核 |
+| MCP:refresh_file | workspace_database | rust_native / PROTECTED_MUTATION | file_path |  | 待合同化；快照待复核 |
+| MCP:register_attestation_revocation | identity | rust_native / GOVERNANCE_WRITE | issuer, signing_key_id | initiating_actor, revocation_mode, revocation_reason, workspace_id | 待合同化；快照待复核 |
+| MCP:register_branch | workspace_database | rust_native / PROTECTED_MUTATION | branch_name | repo_root | 待合同化；快照待复核 |
+| MCP:register_workspace | workspace_database | rust_native / PROTECTED_MUTATION | name, root_path | description | 待合同化；快照待复核 |
+| MCP:remove_file | workspace_database | rust_native / PROTECTED_MUTATION | file_path |  | 待合同化；快照待复核 |
+| MCP:repo_map | query_search | rust_native / READ_ONLY |  | format | 待合同化；快照待复核 |
+| MCP:resolve_gate_findings | audit_bootstrap | rust_native / PROTECTED_MUTATION | gate_id | resolution, task_id | 待合同化；快照待复核 |
+| MCP:restore_all_comments | coverage_ownership | rust_native / PROTECTED_MUTATION |  | file_filter, preview | 待合同化；快照待复核 |
+| MCP:restore_comment | coverage_ownership | rust_native / PROTECTED_MUTATION | spec | preview | 待合同化；快照待复核 |
+| MCP:revert_edit | diagnostics | rust_native / PROTECTED_MUTATION | audit_id |  | 待合同化；快照待复核 |
+| MCP:review_readiness | semgrep_defects | rust_native / READ_ONLY | symbol_hash |  | 待合同化；快照待复核 |
+| MCP:rotate_audit_signing_key | audit_bootstrap | rust_native / PROTECTED_MUTATION | key_id | key_secret | 待合同化；快照待复核 |
+| MCP:rule_candidate_accept | rule_memory | rust_native / PROTECTED_MUTATION | candidate_id | reviewer | 待合同化；快照待复核 |
+| MCP:rule_candidate_create | rule_memory | rust_native / PROTECTED_MUTATION | title, rule_text | confidence, evidence, scope, severity, source | 待合同化；快照待复核 |
+| MCP:rule_candidate_list | rule_memory | rust_native / READ_ONLY |  | limit, status | 待合同化；快照待复核 |
+| MCP:rule_candidate_reject | rule_memory | rust_native / PROTECTED_MUTATION | candidate_id | reason, reviewer | 待合同化；快照待复核 |
+| MCP:rule_insert_agents_md_block | rule_memory | rust_native / PROTECTED_MUTATION |  | actor, target_path | 待合同化；快照待复核 |
+| MCP:rule_list | rule_memory | rust_native / READ_ONLY |  | limit, status | 待合同化；快照待复核 |
+| MCP:rule_seed_bootstrap | rule_memory | rust_native / PROTECTED_MUTATION |  | dry_run | 待合同化；快照待复核 |
+| MCP:rule_sync_agents_md | rule_memory | rust_native / PROTECTED_MUTATION |  | actor, dry_run, target_path | 待合同化；快照待复核 |
+| MCP:run_check_gate | audit_bootstrap | rust_native / PROTECTED_MUTATION | task_id, step_id, changed_files |  | 待合同化；快照待复核 |
+| MCP:run_semgrep_scan | semgrep_defects | task_rpc / PROTECTED_MUTATION |  | config, languages, timeout | 待合同化；快照待复核 |
+| MCP:scan_semgrep_incremental | semgrep_defects | task_rpc / PROTECTED_MUTATION |  | base_branch, config, head, languages, timeout | 待合同化；快照待复核 |
+| MCP:search_symbols | query_search | rust_native / READ_ONLY | query | kind, limit | 待合同化；快照待复核 |
+| MCP:select_interface_provider | dependency | rust_native / PROTECTED_MUTATION | workspace_id, consumer_task_id, contract_id, contract_revision, interface_name, selected_provider_task_id |  | 待合同化；快照待复核 |
+| MCP:semantic_search | query_search | rust_native / READ_ONLY | query | top_k | 待合同化；快照待复核 |
+| MCP:semgrep_scan_async | semgrep_defects | task_rpc / PROTECTED_MUTATION |  | config, languages, timeout | 待合同化；快照待复核 |
+| MCP:set_active_workspace | workspace_database | rust_native / PROTECTED_MUTATION | workspace_id_or_name |  | 待合同化；快照待复核 |
+| MCP:submit_verdict | collab | rust_native / GOVERNANCE_WRITE | task_id, step_id, contract_id, contract_revision, contract_hash, role_contract_id, role_contract_revision, role_contract_hash | amendment_ref, attestation, clause_results, fencing_counter, findings, identity_agent_id, identity_agent_instance_id, identity_model_id, identity_role, identity_session_id, lease_token, overall, phase, request_id, reviewer_identity, snapshot_id, verdict_id, view_manifest_hash | 待合同化；快照待复核 |
+| MCP:switch_branch | workspace_database | rust_native / PROTECTED_MUTATION | branch_name |  | 待合同化；快照待复核 |
+| MCP:task_apply | task | task_rpc / PROTECTED_MUTATION | task_id | fencing_counter, identity, lease_token, reviewer | 待合同化；快照待复核 |
+| MCP:task_assignment_heartbeat | task | task_rpc / PROTECTED_MUTATION | task_id, assignment_id | agent_session_id, fencing_counter, identity, request_id | 待合同化；快照待复核 |
+| MCP:task_assignment_status | task | task_rpc / READ_ONLY | task_id | role, step_id | 待合同化；快照待复核 |
+| MCP:task_capture_diff | task | task_rpc / PROTECTED_MUTATION | task_id | base, dry_run, skip_quality_review, source_commit_hash, step_id | 待合同化；快照待复核 |
+| MCP:task_close | task | task_rpc / PROTECTED_MUTATION | task_id | fencing_counter, identity, lease_token, reviewer | 待合同化；快照待复核 |
+| MCP:task_completion_review | task | task_rpc / PROTECTED_MUTATION | task_id | step_id | 待合同化；快照待复核 |
+| MCP:task_create | task | task_rpc / PROTECTED_MUTATION | title | creator, description, steps, workspace_id, workspace_instance_id | 待合同化；快照待复核 |
+| MCP:task_create_from_plan | task | task_rpc / PROTECTED_MUTATION | title, plan_md | description | 待合同化；快照待复核 |
+| MCP:task_create_subtask | task | task_rpc / PROTECTED_MUTATION | parent_task_id, title | creator, description, steps | 待合同化；快照待复核 |
+| MCP:task_get_role_prompt | task | rust_native / READ_ONLY | task_id |  | 待合同化；快照待复核 |
+| MCP:task_governance_projection | task | task_rpc / READ_ONLY | task_id |  | 待合同化；快照待复核 |
+| MCP:task_list | task | task_rpc / READ_ONLY |  | limit, status_filter | 待合同化；快照待复核 |
+| MCP:task_next_step | task | task_rpc / PROTECTED_MUTATION | task_id | agent_instance_id, agent_session_id, contract_claim, identity | 待合同化；快照待复核 |
+| MCP:task_plan_template | task | rust_native / READ_ONLY |  |  | 待合同化；快照待复核 |
+| MCP:task_quality_findings | task | task_rpc / READ_ONLY | task_id | severity, status | 待合同化；快照待复核 |
+| MCP:task_remediation_create | task | rust_native / PROTECTED_MUTATION | task_id, source_step_id, request_id, lease_token, fencing_counter | identity_agent_id, identity_model_id, identity_role, identity_session_id, source_findings, source_outcome, source_verdict_id | 待合同化；快照待复核 |
+| MCP:task_report_step | task | task_rpc / PROTECTED_MUTATION | task_id, step_id | agent_instance_id, changes, identity, result, snapshot_id, success | 待合同化；快照待复核 |
+| MCP:task_resolve_block | task | task_rpc / PROTECTED_MUTATION | task_id, step_id | resolution | 待合同化；快照待复核 |
+| MCP:task_resolve_quality_finding | task | task_rpc / PROTECTED_MUTATION | finding_id | resolution, resolved_by | 待合同化；快照待复核 |
+| MCP:task_rollback | task | task_rpc / PROTECTED_MUTATION | task_id | change_id, reason | 待合同化；快照待复核 |
+| MCP:task_split | task | task_rpc / PROTECTED_MUTATION | task_id, subtasks |  | 待合同化；快照待复核 |
+| MCP:task_status | task | task_rpc / READ_ONLY | task_id |  | 待合同化；快照待复核 |
+| MCP:task_status_tree | task | task_rpc / READ_ONLY | task_id |  | 待合同化；快照待复核 |
+| MCP:task_step_resolve | task | rust_native / PROTECTED_MUTATION | task_id, failed_step_id, remediation_step_id, request_id, evidence_path, evidence_hash, lease_token, fencing_counter | identity_agent_id, identity_model_id, identity_role, identity_session_id | 待合同化；快照待复核 |
+| MCP:test_impact_selection | coverage_ownership | rust_native / READ_ONLY | qualified_name |  | 待合同化；快照待复核 |
+| MCP:validate_revision_dependencies | dependency | rust_native / READ_ONLY | workspace_id, contract_id, contract_revision |  | 待合同化；快照待复核 |
+| MCP:wait_for_job | task | rust_native / READ_ONLY | job_id | poll_interval, timeout | 待合同化；快照待复核 |
+| MCP:who_to_ask | coverage_ownership | rust_native / READ_ONLY | file_path |  | 待合同化；快照待复核 |
+| MCP:work_next_job | task | task_rpc / PROTECTED_MUTATION | task_id |  | 待合同化；快照待复核 |
+
+## 5. 执行映射与阻断条件
+
+现有T1参数骨架、T2进程内MCP、T3源码CLI、M1静态路由、M2纯度、M3并发、M4入口故障、T4 workspace、T5 LLM各有不同深度；不自动折算为上表C1–C6全部完成。
+MCP进程内调用不代替wire；CLI源码不代替安装/冻结产物；假ID业务拒绝不代替正常case；破坏性/重操作在隔离实例验而非永久跳过。
+正式合同实现后追加逐case selector/证据映射（独立机器manifest待建），本生成器不得自行把行改为PASS。未知错误、清单漂移、缺selector/报告/前置按策略阻断。
