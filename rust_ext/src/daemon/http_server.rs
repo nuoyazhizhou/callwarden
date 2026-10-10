@@ -5248,18 +5248,18 @@ mod tests {
         assert_eq!(v["methods"]["ping"]["backend"], "rust_native");
         assert_eq!(v["methods"]["ping"]["status"], "available");
         assert_eq!(
-            v["methods"]["get_uncommented_symbols"]["backend"],
+            v["methods"]["query.uncommented_symbols"]["backend"],
             "rust_native"
         );
         assert_eq!(
-            v["methods"]["get_uncommented_symbols"]["status"],
+            v["methods"]["query.uncommented_symbols"]["status"],
             "available"
         );
         assert_eq!(
-            v["methods"]["get_module_call_stats"]["backend"],
+            v["methods"]["query.module_call_stats"]["backend"],
             "rust_native"
         );
-        assert_eq!(v["methods"]["get_semgrep_stats"]["backend"], "rust_native");
+        assert_eq!(v["methods"]["query.semgrep_stats"]["backend"], "rust_native");
         assert_eq!(v["methods"]["query.stats_top_files"]["status"], "available");
         assert_eq!(
             v["methods"]["task.quality_findings"]["backend"],
