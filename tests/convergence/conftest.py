@@ -172,6 +172,110 @@ def call_rpc(client, method: str, params: dict):
     return client.call(method, params)
 
 
+def _ensure_codegraph_seed_tables(data_root: str) -> None:
+    """在隔离 codegraph 库补齐 5 张读面依赖表（t2 缺陷溯源修复）。
+
+    根因：隔离 daemon 的 codegraph 库（USERPROFILE=data_root 下默认
+    data_root/.callwarden/callwarden.db）由 build_graph 经
+    storage::initialize_or_migrate 初始化，只含 storage.rs 的 canonical schema；
+    而 build_context.* / clone 读组经 open_query_connection 查同一 codegraph
+    库的 5 张表在其中根本没有 DDL：
+      - workspace_build_contexts / resolved_edges：仅存在于
+        toolchain.rs 的 TOOLCHAIN_SCHEMA_DDL（ToolchainStore 在 toolchain 库
+        ——隔离环境即任务库——建表），codegraph schema 不含；
+      - clone_groups / clone_group_members / clone_pairs：Rust daemon 从不创建
+        （detect_clones 写面只 INSERT clone_pairs 且无 CREATE；见
+        compat_native_handlers.handle_detect_clones / job_runner.exec_clone_detect）。
+    生产库 ~/.callwarden/callwarden.db 里这些表由 Python 时代 db 层
+    （db_clone_groups.py 等）历史创建并保留；隔离库是新文件，缺表导致
+    list_build_contexts / get_build_context / get_active_build_context /
+    get_resolved_edges / count_resolved_edges / list_clone_groups /
+    get_clone_group_detail 七个工具 no such table → t2 判 DEFECT。
+
+    注意：不能把 codegraph 库并入任务库（CW_DAEMON_CODEGRAPH_DB_TEMPLATE=任务库）
+    来复用 ToolchainStore 建表——任务库与 codegraph 库都有 workspaces 表且
+    schema 不同（任务库 workspaces 由 daemon 启动建表，列集与 storage.rs 的
+    codegraph workspaces 不一致），合并会触发 schema 冲突，导致多数工具
+    snapshot/前置失败、PASS 数从 >=100 掉到 24。故采用本助手在 codegraph 库
+    显式建表的正解：表结构逐字复刻生产库实测 DDL（clone 三表）与
+    TOOLCHAIN_SCHEMA_DDL（build_context 两表 + 索引），保持隔离库与生产库一致。
+    """
+    import sqlite3
+
+    codegraph_db = os.path.join(data_root, ".callwarden", "callwarden.db")
+    if not os.path.exists(codegraph_db):
+        raise RuntimeError(f"隔离 codegraph 库不存在: {codegraph_db}")
+    ddl = [
+        # ---- TOOLCHAIN_SCHEMA_DDL（toolchain.rs:34-92）原样复刻 ----
+        """CREATE TABLE IF NOT EXISTS workspace_build_contexts (
+    workspace_id INTEGER NOT NULL,
+    build_context_hash TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    compile_flags TEXT DEFAULT '[]',
+    defines TEXT DEFAULT '{}',
+    include_paths TEXT DEFAULT '[]',
+    is_active INTEGER DEFAULT 0,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (workspace_id, build_context_hash)
+)""",
+        """CREATE TABLE IF NOT EXISTS resolved_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    build_context_hash TEXT NOT NULL,
+    caller_symbol_id INTEGER NOT NULL,
+    callee_symbol_id INTEGER NOT NULL,
+    callee_name TEXT NOT NULL,
+    callee_file TEXT DEFAULT '',
+    call_line INTEGER DEFAULT 0,
+    resolution_method TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    UNIQUE(workspace_id, build_context_hash, caller_symbol_id, callee_symbol_id, call_line)
+)""",
+        "CREATE INDEX IF NOT EXISTS idx_build_contexts_ws ON workspace_build_contexts(workspace_id)",
+        "CREATE INDEX IF NOT EXISTS idx_build_contexts_active ON workspace_build_contexts(workspace_id, is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_resolved_edges_ws_ctx ON resolved_edges(workspace_id, build_context_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_resolved_edges_caller ON resolved_edges(caller_symbol_id)",
+        "CREATE INDEX IF NOT EXISTS idx_resolved_edges_callee ON resolved_edges(callee_symbol_id)",
+        # ---- clone 三表：生产库 ~/.callwarden/callwarden.db 实测 DDL ----
+        """CREATE TABLE IF NOT EXISTS clone_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    group_hash TEXT NOT NULL,
+    clone_type INTEGER NOT NULL,
+    token_hash TEXT NOT NULL DEFAULT '',
+    similarity REAL DEFAULT 0.0,
+    representative_symbol_id INTEGER NOT NULL,
+    member_count INTEGER DEFAULT 0,
+    created_at REAL NOT NULL,
+    UNIQUE(workspace_id, group_hash)
+)""",
+        """CREATE TABLE IF NOT EXISTS clone_group_members (
+    group_id INTEGER NOT NULL,
+    symbol_id INTEGER NOT NULL,
+    PRIMARY KEY (group_id, symbol_id)
+)""",
+        """CREATE TABLE IF NOT EXISTS clone_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    symbol_a_id INTEGER NOT NULL,
+    symbol_b_id INTEGER NOT NULL,
+    clone_type INTEGER NOT NULL,
+    similarity REAL NOT NULL,
+    token_hash TEXT NOT NULL DEFAULT '',
+    lines_a INTEGER DEFAULT 0,
+    lines_b INTEGER DEFAULT 0,
+    detected_at REAL NOT NULL
+)""",
+    ]
+    conn = sqlite3.connect(codegraph_db, timeout=15)
+    try:
+        for stmt in ddl:
+            conn.execute(stmt)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ----------------------------------------------------------------------
 # T1 种子 workspace fixture(全功能全量测试基建)
 # ----------------------------------------------------------------------
@@ -226,6 +330,11 @@ def seed_workspace(isolated_http_daemon):
 
     # 2. build_graph(全量解析种子样本,慢方法但样本小,秒级)
     build = client.call("workspace.build_graph", {"workspace_instance_id": ws_inst})
+
+    # 2b. 补齐 codegraph 读面 5 表(根因见 _ensure_codegraph_seed_tables)：
+    #     build_context 两表 + clone 三表在 codegraph schema 无 DDL，隔离库
+    #     必须显式建，否则 7 个工具 no such table → DEFECT。
+    _ensure_codegraph_seed_tables(data_root)
 
     # 3. publish snapshot(query.* 依赖已发布 snapshot;db_path 由 daemon 返回)
     db_result = client.call("mcp.common.get_db_path_for_daemon", {})
