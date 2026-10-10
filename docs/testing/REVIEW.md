@@ -32,3 +32,35 @@
 - 工作树检查：本轮变更限于 docs/testing；既有 `.bak_v5/` 保留。未commit。
 
 Handoff: 方案留给用户确认；确认后由Planner绑定正式task、冻结Contract和独立ownership，再交Executor实施。本记录不构造缺失task_id或daemon交接事件。
+
+## 第三轮独立复评（2026-10-10 16:18，独立评审Agent）
+
+只读复评对象：v7 全套文档 + 生成器 + 两份机器账本。独立复算（AST + SKIP_SITES.json 账本重读，非沿用前轮结论）：
+
+### 复算确认成立的结论
+
+- skip 机制站点 213+234+21=**468**，账本 `sites` 总数一致；v7 对 v6「21 vs 22」的订正正确（第 22 处是注释非调用）。
+- v7 归因口径核实：精确字面量 `=="callwarden_core 未安装"` **46** 处（parser_contract **18**）、`=="callwarden_core Rust 扩展未构建"` **4** 处成立；第 47/5 处为「未安装**或**…」变体，v7 已声明「其他变体另列」，口径自洽。v6 的 39/36/3（grep 子串）确实不可比，v7 订正有效。
+- calc.py 种子事实（add/multiply/Calculator/compute、Calculator.scale→multiply、旧「multiply 无调用者」错误）逐行核对属实。
+- `E_LEASE_FENCING_STALE` 为现码、`E_LEASE_FENCED` 不存在：rust_ext 5 处引用属实。
+- GAP-15 源码冲突属实：`task_collab_lifecycle.rs` 确以 `matches!(outcome, "reviewer_blocked" | "adjudicator_returned")` 同事务整改，role-protocol.md:192–196 仍称 returned 不自动追加。
+- MCP schema 漂移属实：固化 schema 含 detect_cycle/detect_cycles、缺 detect_call_cycles/detect_dependency_cycle，`planning_inventory_gate=BLOCKED_SCHEMA_DRIFT` 正确阻断冻结。
+- 16 语言口径（15 grammar 配置 + tree-sitter-c 独立 C 解析，Cargo.toml:58）成立。
+
+### 本轮新发现与整改
+
+| ID | 严重度 | Finding | 整改 |
+|---|---|---|---|
+| F-D1 | **P1** | `gen_test_cases.py:32` 硬依赖 `rg`（ripgrep）；本机 PATH 无 rg，`--check` 裸抛 `FileNotFoundError`。**前轮"exit 0"结论在当前环境不可复现**，评审可复现性破缺 | `files()` 增加 `git ls-files -co --exclude-standard` 兜底（与 rg 的 gitignore 语义等价）+ 空清单拒绝生成 + CalledProcessError 明确报错。整改后**在本机（无 rg）实测 `--check` 退出 0**；逐字段 diff 证明兜底产物与 rg 产物除生成器自身 hash 外完全一致，业务输入 hash 全部不变 |
+| F-D2 | P2 | `STATIC_AUDIT.supplied_source_revision=c6ec977` 已非 HEAD（现 `dcd99c7`，仅 docs/testing 文件变更，源码输入未动），未记录 HEAD 前进，易误读为陈旧扫描 | 以当前 HEAD 重新生成并落盘；`supplied_source_revision` 更新为 `dcd99c7`，重新 `--check` 自洽 |
+| F-D3 | P3 | 生成器把自身文件 hash 记入 `inputs`——改生成器必致 `--check` 首跑失配，属自引用固有限制 | 不改设计（hash 绑定输入语义正确），仅在此登记，避免后续误判为漂移 |
+
+### 整改后净变更
+
+- `gen_test_cases.py`：`files()` 兜底 + 报错强化（+38/−7 行）。
+- `STATIC_AUDIT.json`：仅 `supplied_source_revision` 与生成器自身 sha256 两行。
+- `TEST_CASES.md` / `COVERAGE_AUDIT.md` / `TESTING_PLAN.md`：字节未变。
+
+### 复评结论
+
+**PASS（静态文档层，含一处 P1 已整改并本机复现）**。v7 的数字口径、错误码、种子事实、GAP-15 冲突与 schema 漂移披露经独立复算全部成立；生成器可复现性破缺已修复。仍适用原边界：文档 PASS ≠ 产品验收 ≠ daemon verdict；A–E 实施义务未动。

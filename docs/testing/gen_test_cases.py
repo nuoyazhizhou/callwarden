@@ -30,11 +30,42 @@ def digest(path):
 
 
 def files(directory, glob):
-    result = subprocess.run(
-        ["rg", "--files", directory, "-g", glob], cwd=ROOT,
-        capture_output=True, text=True, encoding="utf-8", check=True,
-    )
-    return sorted(Path(p).as_posix() for p in result.stdout.splitlines())
+    """List files matching glob under directory, sorted, gitignore-aware.
+
+    Primary tool is rg (ripgrep). When rg is unavailable, fall back to
+    `git ls-files -co --exclude-standard` (tracked + untracked-not-ignored),
+    which matches rg's gitignore semantics for these read-only source scopes.
+    Raises a clear error when neither tool exists instead of a bare
+    FileNotFoundError, so the audit remains reproducible across machines.
+    """
+    try:
+        result = subprocess.run(
+            ["rg", "--files", directory, "-g", glob], cwd=ROOT,
+            capture_output=True, text=True, encoding="utf-8", check=True,
+        )
+        source = "rg"
+    except FileNotFoundError:
+        result = subprocess.run(
+            ["git", "ls-files", "-co", "--exclude-standard", "--", directory],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+        )
+        entries = [p for p in result.stdout.splitlines() if Path(p).match(glob)]
+        result = subprocess.CompletedProcess([], 0, stdout="\n".join(sorted(entries)) + "\n")
+        source = "git-ls-files-fallback"
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"rg --files failed for {directory!r} -g {glob!r}: "
+            f"rc={exc.returncode} stderr={exc.stderr.strip()[:200]}"
+        ) from exc
+    listing = sorted(Path(p).as_posix() for p in result.stdout.splitlines())
+    # Fallback semantics must match rg; verify the git path found the directory
+    # at all, otherwise fail loudly rather than silently generating an empty audit.
+    if source == "git-ls-files-fallback" and not listing:
+        raise RuntimeError(
+            f"git fallback returned no files for {directory!r} -g {glob!r}; "
+            "refusing to generate an empty inventory"
+        )
+    return listing
 
 
 def tree(path):

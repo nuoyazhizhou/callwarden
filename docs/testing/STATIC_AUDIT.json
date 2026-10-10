@@ -1,6 +1,6 @@
 {
   "schema_version": "static-planning-audit/v1",
-  "supplied_source_revision": "c6ec977c1d5c6320b6f583cb07719f3648e36e6d",
+  "supplied_source_revision": "dcd99c7f12e963e5032f168acdd74ddddd87ba34",
   "revision_note": "Externally verified HEAD; input hashes, not HEAD alone, bind working-tree content.",
   "execution_status": "NOT_RUN",
   "runtime_inventory_status": "NOT_VERIFIED",
@@ -73,7 +73,7 @@
     },
     {
       "path": "docs/testing/gen_test_cases.py",
-      "sha256": "1d1a76e808a61aa802fb63e28e01ef364cecbb21539ecede7e20c2b988fe96fa"
+      "sha256": "a5b2ad7d12746bdbbc2c193394d373db0d75cba1f2627ac02a7b9197618edf2f"
     },
     {
       "path": "rust_ext/src/abi_contract.rs",
