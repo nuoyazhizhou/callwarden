@@ -251,3 +251,7 @@ rust_ext/target-*/
 *.rollback
 # 诊断脚本暂存区（灾难恢复/取证脚本，物理保留不入库）
 Temp/
+
+# 隔离工作区产物（agent 临时探查/缓存/一次性脚本，不入库；正式交付物不在此处）
+# 仅 outputs/audit/report/ 与顶层 *.md 为有意保留的交付物，其余均临时，可随时清理
+outputs/
