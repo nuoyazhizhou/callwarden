@@ -126,7 +126,7 @@ LLM选择另设非确定性产品实验，记录模型/配置/样本/成本/阈�
 | 性能 | 冻结硬件/corpus/profile预算通过；未校准不宣称达到SLO |
 | 证据 | 完整/同版本/新鲜；缺报告/selector、空suite不放行 |
 
-运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态447/7133不能称执行skip率。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
+运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态447/7133不能称执行skip率。468处skip机制站点中仅282处为字符串字面量（精确覆盖60%），其余186处为非字面量表达式或无reason（GAP-16），禁止以静态字面量冒充全量已归因，须runtime回填。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
 
 Python coverage只说明Python层，Rust需独立模块/分支义务。2091为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
 
