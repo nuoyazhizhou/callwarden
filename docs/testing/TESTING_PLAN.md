@@ -1,413 +1,423 @@
-# CallWarden 测试方案（v6 · 全景闭环与工程落地版 · 锚定代码与架构事实）
+# CallWarden 测试方案（v6 · 全景闭环与工程落地版）
 
-> 版本：v6（全景闭环与工程落地版）｜ 日期：2026-10-10 ｜ 适用仓库：`callwarden`
+> 版本：**v6**｜ 日期：2026-10-10 ｜ 适用仓库：`callwarden`
 > 配套文档：
+>
 > - `TEST_CASES.md` —— 分级测试用例清单（由 `gen_test_cases.py` 从权威源生成）
-> - `COVERAGE_AUDIT.md` —— 覆盖矩阵与 skip 审计（447 站点全量归因与解锁路径）
-> - `BUILD_ENV.md` —— 构建前置（Rust 工具链打通与跨平台 daemon 产物构建指南）
-> - `gen_test_cases.py` —— 可复现用例生成器
+> - `COVERAGE_AUDIT.md` —— 覆盖矩阵与 skip 审计
+> - `BUILD_ENV.md` —— 构建前置（Rust 工具链如何打通，cw-daemon 二进制如何产出）
+> - `gen_test_cases.py` —— 可复现生成器
+>
+> **事实基线声明**：本文所有数字均经 2026-10-10 实仓扫描核对，标注了证据来源。
+> 凡未核实的断言一律写「待核实」，**不写估算冒充实测**。
 
 ---
 
-## 0. 修订演进与版本说明（v4 → v5 → v6）
+## 0. 修订要点（v5 → v6 改了什么）
 
-| 阶段 | 核心特征 | 存在问题 / 突破 |
+| # | v5 的问题 | v6 的修正 |
 |---|---|---|
-| **v4（初期版本）** | 结构完整、口径宏大 | **覆盖声明失真**：将"占位参数 + 表面路由可达 + SKIP 计数"误报为"100% 真实调用与业务覆盖"；skip 统计严重漏项（仅数 219 处，漏记 234 处 skipif）。 |
-| **v5（核查纠偏版）** | 诚实核查、戳破虚标 | **揭露三大断裂**：揭露收敛套件在 Linux CI 因 `_pick_bin` 硬编码 `.exe` 完全不可运行（0 执行）；揭露 Rust 2073 单测在 CI 仅跑 1 个模块；揭露真实 skip 为 447 处（skip_rate 6.3% 超标）；提出 N1–N7 维度方向。 |
-| **v6（当前工程落地版）** | **全景架构对齐、统一基建、闭环落地** | **突破与重构**：<br>1. **终结 4 套分裂 harness**：设计统一跨平台瞬态守护进程基建（`EphemeralDaemonFixture`），彻底解决管道冲突、端口死锁与进程泄漏；<br>2. **治理与状态机闭环（G-Suite）**：将 4 角色（Planner/Executor/Reviewer/Adjudicator）治理闭环、Lease 单调 Fencing、Task Tree 级联完成、Attestation 撤销升级为一级测试专项；<br>3. **16 语言图谱矩阵（L-Matrix-16）**：消除 `seed_sample` 仅 Python/TS 的巨大盲区，构建覆盖全部 16 种语言语法与调用的 Golden Fixture；<br>4. **三层存储深度验证（S-Suite）**：覆盖 CAS 并发写入与 GC 互斥锁、SQLite WAL 读写并发、Snapshot 原子发布与 DB 迁移回归；<br>5. **缺陷指纹原子钉死**：废弃 `defects <= 18` 粗暴总量门禁，对 5 个 fail-soft、3 个 traceback、10 个 method_not_found 进行签名级原子锁定；<br>6. **CI/CD 分层流水线设计**：提供 Tier 0–Tier 5 五级流水线与具体 GitHub Actions 补丁，建立 skip 率（≤2%）、行覆盖率（≥65%）、零进程泄漏硬门禁。 |
+| 1 | 收敛套件 CI 断链、Rust 单测漏跑、skip 统计偏低的诊断正确 | **保留**，并补上 `_pick_bin` 现址核实（`conftest.py:40-49`） |
+| 2 | 覆盖矩阵「20 类」从未建立，测试金字塔止于 L4 名称罗列 | 新增 §4 五层金字塔 + §6 N1–N8 专项矩阵，**每层给出可执行判据** |
+| 3 | 4 角色治理、16 语言、三层存储 CAS 竞态均为「零正向覆盖」，未立项 | 新增 **G-Suite**（N3 深化）、**L-Matrix-16**（N8）、**S-Suite**（N5 深化）三套专项 |
+| 4 | 18 项缺陷仅 `defects <= 18` 总量监控 | 改为**原子指纹钉死**（5 fail-soft / 3 traceback / 10 method_not_found 分项） |
+| 5 | 4 套分裂 daemon harness 未立项 | 新增统一基建 `EphemeralDaemonFixture` 规格（§7） |
+| 6 | 文档自称 v6 但内容仍是 v5 | 本次同步修正 `TEST_CASES.md` 尾注与 `gen_test_cases.py` 中的失真硬编码 |
+
+> ⚠️ **v6 的自我修正声明**：本文上一轮修订中曾出现三处数字造假/口径错误，已于本次修正，
+> 详见 §13「文档勘误」。保留此节以留痕，避免同类错误复现。
 
 ---
 
-## 1. 全仓现状与测试资产全景事实（权威数据）
+## 1. 覆盖现状事实核查（必读）
 
-所有数据均经 2026-10-10 实仓代码扫描与 AST 统计确认，杜绝虚构：
+### 1.1 真实规模（2026-10-10 实测）
 
-### 1.1 资产规模统计
+| 指标 | 真实值 | 证据 |
+|---|---|---|
+| 全仓 `def test_` 级函数 | **7133** | `grep -rn "^def test_\|    def test_\|^async def test_" tests/ --include=*.py \| wc -l` |
+| 收敛套件（T1–T5/M1–M4 + 3 附加）测试函数 | **58**（占全仓 0.8%） | `tests/convergence/` 12 个测试文件 + 2 runner |
+| Rust 单测函数 | **2091**（121 个含 `#[cfg(test)]` 的 `.rs` 文件） | `grep -rn "#\[test\]\|#\[tokio::test\]" rust_ext/src --include=*.rs \| wc -l`；口径为「`#[test]` + `#[tokio::test]` 属性数」，**v5 的 2073 口径未注明，本次已订正为 2091** |
+| 含 skip 的测试文件数 | **131** | `grep -rl "pytest.skip(\|pytest.mark.skipif" tests/ --include=*.py \| wc -l` |
+| 真实 skip 站点 | **447**（213 `pytest.skip(` + 234 `pytest.mark.skipif`） | 全仓 grep 复核一致，**该数字成立** |
+| 权威 MCP 工具清单 | **243**（`src_tool_count` / `matrix_tool_count` / `matrix_total_tools_field` 三者一致，`only_in_source_code=0`） | `tests/convergence/fixtures/audit_mcp_inventory.json` |
+| 权威 CLI 叶子 | **234**（已提取 233，skip 1 = `server`） | `tests/convergence/fixtures/cli_full_params.json` |
 
-| 维度 | 数量 | 源码依据 | 现状评估 |
+### 1.2 三个致命落差
+
+**落差 A —— 旗舰收敛套件在主 CI 完全无法运行（最严重）。**
+
+- `tests/convergence/conftest.py:40-49` `_pick_bin()` **硬编码** `cw-daemon.exe` / `debug/cw-daemon.exe`，两者均缺失即 `raise RuntimeError`。
+- 主 `.github/workflows/ci.yml` 的 `test` job 跑在 `ubuntu-latest`，其构建步（`ci.yml:32`）仅执行 `python release/build.py --rust`（构建 Python 扩展 `.pyd`，**不构建 `cw-daemon` 二进制**），随后 `pytest tests/`（`ci.yml:82`）触发收敛套件。
+- 结果：Linux 上 `_pick_bin` 抛 `RuntimeError` → `isolated_http_daemon` 夹具 setup 失败 → **T1/T2/M3/M4/T4 + `test_regression_http_tools` 全部 ERROR**；T3 因 `_http_daemon_available()` 探测失败（`test_t3_cli_full_invocation.py:20-36`）而 SKIP。
+- `e2e-verify-linux-x86_64.yml` **有** `cargo build --release --bin cw-daemon`，但那是独立 workflow，**不在主 `ci.yml`**。
+- **结论**：文档宣称的「243/234 全参数真实调用」在主 CI 中执行量为 **0**。
+
+**落差 B —— Rust 单测 CI 几乎不跑。**
+
+- `ci.yml:141-145` 的 `rust-unit-test` job 仅 `cargo test --no-default-features --lib daemon::compat_native_handlers`，注释自承「未纳入 daemon:: 全模块」。
+- 2091 个 Rust 单测中，dispatch 路由、storage、daemon HTTP handler、snapshot、lease、attestation 等绝大多数 daemon 逻辑**无 CI 回归保护**。
+
+**落差 C —— 「全参数真实调用」的参数大量是占位，断言只数总量。**
+
+- `tests/convergence/param_provider.py` 的 `_resolve_by_name` 对未匹配参数返回确定性占位：`"seed"`、`"0"*64`（hash）、`"T-seed-..."` 等。
+- `seed_workspace`（`conftest.py:286-401`）只建符号图谱，**不预建 task/lease/agent/snapshot**。依赖真实实体的工具被喂假 ID，结果多为 `EXPECTED_BUSINESS`（not_found），**不验证业务正确性**。
+- T2 断言仅 `DEFECT==0 & PASS>=100 & 覆盖==243`（`test_t2_mcp_full_invocation.py:57-80`）；T3 仅断言 `defects <= 18` + `PASS+BUSINESS >= 150`（`test_t3_cli_full_invocation.py:37,90-114`）。
+
+### 1.3 被 SKIP 的真实工具/命令（覆盖盲区）
+
+- **T2 SKIP_TOOLS（15 个，`t2_mcp_runner.py:36-54`）**：`rotate_audit_signing_key`、`delete_workspace`、`remove_file`、`prune_external_symbols`、`gc_retention`、`clear_clones`、`task_rollback`、`register_attestation_revocation`、`assignment_revoke`、`task_apply`、`task_close`、`build_graph`、`import_git_history`、`build_directory`（清单实际 14 项，以代码为准）。即**治理写面与破坏性写面主要靠 SKIP**，无正向正确性断言。
+- **T3 SKIP_CMD_PREFIXES（`t3_cli_runner.py:36-55`）**：30 个前缀，覆盖 `workspace delete/register/set`、`gc *`、`task apply/close/rollback/reopen/revert`、`clone clear/detect`、`fts rebuild`、`audit rotate`、`assignment *`、`rule *`、`refresh`、`* import`、`server`、`watch`、`daemon *`。
+
+---
+
+## 2. 测试哲学（三条铁律 + 三条补充）
+
+| # | 铁律 | 含义 | 违反后果 |
 |---|---|---|---|
-| **Python 测试文件** | 595 个 | `tests/test_*.py` | 涵盖大量历史迁移单测与集成测试 |
-| **Python `def test_` 函数** | **7133** 个 | `tests/**` | 测试函数存量巨大，但分散且 harness 各异 |
-| **收敛测试套件函数** | **58** 个 | `tests/convergence/` (12 文件) | 占全仓 0.8%；设计为验收核心，但此前存在 CI 断链 |
-| **Rust `#[cfg(test)]` 单测** | **2073** 个 | `rust_ext/src/**` (121 文件) | 覆盖核心算法、图计算、CAS、Lease，此前 CI 严重漏跑 |
-| **Rust 专项集成测试** | 3 个模块 | `rust_ext/tests/` (`daemon_e2e.rs` 等) | 具备端到端能力，未串联入主 CI 流程 |
-| **真实 Skip 站点** | **447** 处 | 213 处 `pytest.skip` + 234 处 `skipif` | 真实 skip 率约 6.3%，超过 5% 质量门禁阈值 |
-| **CLI 命令表面** | 84 顶层 / 234 叶子 | `cli/categories.py` / `cli_full_params.json` | 21 大类，[18]-[21] 为 CLI 独有运维面 |
-| **MCP 工具表面** | 243 个工具 | `server/tools/_categories.py` / `mcp_full_schema.json` | 17 大类，与 CLI [1]-[17] 业务域 1:1 同构 |
+| 1 | **fail-closed** | 任何异常必须显式失败或返回结构化错误，**绝不静默降级 / 绝不本地兜底执行** | daemon 不可达 → `DaemonUnavailableError`；rc=0 但返回空/垃圾 → 判 FAIL |
+| 2 | **整类关闭** | 一个分类（21 CLI 类 / 17 MCP 类）内全部用例通过后才整体关闭该类的 `cw task` 节点 | 不允许「挑几个过了就关类」 |
+| 3 | **门禁不降级** | 已知缺陷基线只许减少不许回升；新增 skip 必须带原因且计入 `skip_rate` | DEFECT / fail-soft / traceback 数只能降 |
 
-### 1.2 核心瓶颈与痛点归因
+**补充铁律**：
 
-```mermaid
-graph TD
-    A[测试体系核心痛点] --> B[测试 Harness 严重分化]
-    A --> C[平台与构建断链]
-    A --> D[全量调用流于表面]
-    A --> E[治理与核心能力缺测]
-
-    B --> B1[convergence: isolated_http_daemon]
-    B --> B2[W3 体系: setup_w3_client / w3_live]
-    B --> B3[H5 体系: _spawn_isolated_daemon]
-    B --> B4[单测体系: RouteStub monkeypatch]
-    B1 -.-> BX[相互端口竞争/管道占用/进程残留]
-
-    C --> C1[_pick_bin 硬编码 .exe 致 Linux CI 全崩]
-    C --> C2[主 ci.yml 不编 cw-daemon 二进制]
-    C --> C3[Rust 2073 单测在 CI 仅跑 compat 模块]
-
-    D --> D1[param_provider 大量依赖假 ID 占位]
-    D --> D2[seed_sample 仅 calc.py 与 service.ts 2 个文件]
-    D --> D3[断言仅数总量 defects<=18，无语义级校验]
-
-    E --> E1[4 角色流转与 Lease 单调 Fencing 零端到端测试]
-    E --> E2[CAS 并发写入与 GC Mark-Sweep 竞态缺测]
-    E --> E3[16 种多语言语法解析 14 种处于盲区]
-```
+| # | 铁律 | 理由 |
+|---|---|---|
+| 4 | **可执行优先** | 任何「覆盖声明」必须有对应的、能在主 CI 跑通的测试代码；CI 跑不起来的套件不计入覆盖 |
+| 5 | **断言可证伪** | 「全参数真实调用」必须配合精确断言，仅 `rc==0` 或「调用可达」不算覆盖 |
+| 6 | **跨平台无硬编码** | 测试基建（二进制路径、管道/端口、路径分隔）必须跨 Windows/Linux/macOS，禁止 `.exe` 写死 |
+| 7 | **数字须可复算**（v6 新增） | 文档中每个比率、总数必须给出**分子/分母/口径**；分项估算之和若不等于总数，须显式标注「差额未归因」 |
+| 8 | **缺失即证据**（v6 新增） | 本地未安装 / 未授权 / 扫描截断的维度一律标「未实测」，**不得写成通过或达标** |
 
 ---
 
-## 2. 核心测试哲学与质量公理
+## 3. 被测系统范围（两轴，措辞修正）
 
-CallWarden 作为面向 AI Agent 的核心代码基础设施，测试方案必须坚守以下铁律：
+| 轴 | 真相源 | 规模 |
+|---|---|---|
+| **CLI 轴** | `cli/categories.py` | **21 类 / 84 顶层命令**（[18]-[21] 为 CLI-only） |
+| | `tests/convergence/fixtures/cli_full_params.json` | **234 个叶子**（提取 233 + 跳过 1 = `server`） |
+| **MCP 轴** | `server/tools/_categories.py` | **17 类 / 243 工具** |
+| | `tests/convergence/fixtures/audit_mcp_inventory.json` | 243 工具清单，三处总数一致、`only_in_source_code=0` |
 
-| # | 铁律原则 | 核心含义 | 落地标准与违反判定 |
-|---|---|---|---|
-| **1** | **Fail-Closed（严禁伪装成功）** | 任何异常、依赖不可达或认证失败必须显式报错或返回结构化错误码，**绝不允许静默降级或本地兜底**。 | • rc=0 但输出含 Python Traceback / 异常堆栈 → **FAIL**<br>• daemon 崩溃但 CLI 尝试降级直连本地 SQLite → **FAIL**<br>• 查询目标不存在但返回伪造空成功 → **FAIL** |
-| **2** | **整类关闭（Atomic Category Closure）** | 21 个 CLI 类与 17 个 MCP 类必须以分类为单位整体闭环；单类内所有用例达标前不得关闭该能力卡。 | 严禁"挑几个简单的过了就宣称模块完成"；每个子系统必须有分类级覆盖度检查报告。 |
-| **3** | **门禁单向收敛（Monotonic Quality Ratchet）** | 质量门禁只许收紧不许放宽；已知缺陷清单只许减少不许回升；测试覆盖率只升不降。 | 新增任何未归因的 `pytest.skip` 立即打断构建；缺陷基线由原子指纹守住，防止"修了旧的冒出新的"。 |
-| **4** | **跨平台与零残留（Zero Leakage & Native Parity）** | 测试基建必须原生支持 Windows、Linux 与 macOS；单次用例或套件执行完毕后，系统内孤儿进程与临时文件必须为 0。 | • 严禁写死 `.exe` 或 Unix 绝对路径；<br>• 强制使用 OS 级生命周期托管（Windows Job Object / POSIX Process Group），防止杀父留子导致 Named Pipe 持续占用。 |
-| **5** | **可证伪与语义精确断言（Semantic Falsifiability）** | 真实调用必须验证返回结果的结构、数据集合、字段值与语义逻辑；单纯的 `rc==0` 或 `is not None` 不计入业务覆盖。 | 核心只读工具必须做集合相等（如 `callees == {"add"}`）与图拓扑断言；写工具必须校验 DB 状态突变。 |
+**诚实区分两种「覆盖」**：
 
----
+- **表面可达覆盖**（当前收敛套件做到的）：每个工具/命令的路由存在、参数可被构造、调用能往返。
+- **功能正确性覆盖**（v6 目标）：对给定真实种子，返回结构/字段/集合/数量可被精确断言；负向输入返回结构化错误而非崩溃/空结果。
 
-## 3. 被测系统边界与双轴真相源
+> 当前仅达成前者。
 
-CallWarden 具备统一的双轴对外服务表面，两者由权威真相源严格定义并受自动化同构测试约束：
-
-```
-                              ┌──────────────────────────────────────┐
-                              │  权威真相源与同构校验体系            │
-                              │  tests/test_category_source.py       │
-                              └──────────────────┬───────────────────┘
-                                                 │
-                   ┌─────────────────────────────┴─────────────────────────────┐
-                   ▼                                                           ▼
-┌─────────────────────────────────────┐                     ┌─────────────────────────────────────┐
-│ 【CLI 轴】cli/categories.py         │                     │ 【MCP 轴】server/tools/_categories.py│
-├─────────────────────────────────────┤                     ├─────────────────────────────────────┤
-│ • 21 个命令分类                      │  [1]-[17] 业务域同构 │ • 17 个工具分类                      │
-│ • 84 个顶层命令 (79+3+setup+daemon) │ ◄─────────────────► │ • 243 个注册工具 (@mcp.tool)        │
-│ • 234 个叶子命令 (cli_full_params)  │                     │ • 完整 Schema (mcp_full_schema.json)│
-│ • [18]-[21] CLI 独有运维管理面      │                     │                                     │
-└─────────────────────────────────────┘                     └─────────────────────────────────────┘
-```
-
-### 3.1 两种覆盖口径的严格区分
-1. **表面路由可达覆盖（Surface Reachability）**：验证工具/命令的入口注册、参数解析、向 daemon 的 RPC 转发是否通畅。这是基线，当前套件已基本实现。
-2. **业务语义功能覆盖（Semantic Correctness）**：验证工具在真实且具有复杂前置状态的 workspace 下，能否正确执行符号提取、图遍历、Lease 校验、任务级联或 CAS 变更。这是 v6 优化的核心战场。
+**种子事实**（用于精确断言）：
+- `tests/convergence/seed_sample/calc.py`：`add(a,b)` / `multiply(a,b)`，且 **multiply → add 存在真实调用边**
+- `tests/convergence/seed_sample/service.ts`：`MemoryRepo.find` / `MemoryRepo.save`、`Service` 类
 
 ---
 
-## 4. 优化后的测试架构分层（五层金字塔）
-
-为兼顾开发效率、CI 执行时间与系统级鲁棒性，将测试划分为 L0 至 L4 五个层次：
+## 4. 测试架构：五层金字塔（L0–L4）
 
 ```
        ▲
-      ╱ ╲     L4: 专项与系统级 (N1–N8 专项矩阵: 混沌注入 / 安全 Lease / 16 语言 / 10M 压测)
-     ╱───╲    ─────────────────────────────────────────────────────────────────────────────
-    ╱     ╲   L3: 多 Agent 协同与系统集成 (T4 多租户隔离 / T5 LLM 意图 / G-Suite 4 角色)
-   ╱───────╲  ─────────────────────────────────────────────────────────────────────────────
-  ╱         ╲ L2: 跨端矩阵与架构不变量 (M1 路由四端一致 / M2 纯 Client 审计 / M4 Fail-Closed)
- ╱───────────╲─────────────────────────────────────────────────────────────────────────────
-╱             ╲ L1: 业务全量调用与语义断言 (T2 243 MCP 真实调用 / T3 234 CLI 叶子精准断言)
-─────────────── ─────────────────────────────────────────────────────────────────────────────
-L0: 统一基建层   (EphemeralDaemonFixture 瞬态进程 / Golden Seed Fixture 真实状态底座)
+      ╱ ╲     L4 专项层  N1–N8（混沌 / 安全 Lease / 16 语言 / CAS 并发 / 10M 压测 …）
+     ╱───╲    ────────────────────────────────────────────────────────────────
+    ╱     ╲   L3 多 Agent 协同与系统集成  T4 多租户隔离 / T5 LLM 意图 / G-Suite 四角色
+   ╱───────╲  ────────────────────────────────────────────────────────────────
+  ╱         ╲ L2 跨端矩阵与架构不变量  M1 路由四端一致 / M2 纯 Client 审计 / M4 Fail-Closed
+ ╱───────────╲────────────────────────────────────────────────────────────────
+╱             ╲L1 业务全量调用与语义断言  T2 243 MCP / T3 234 CLI 叶子
+──────────────  ───────────────────────────────────────────────────────────────
+L0 统一基建层  EphemeralDaemonFixture 瞬态进程 / L-Matrix-16 Golden Fixtures
 ```
 
-| 层次 | 范围与套件 | 依赖环境 | CI 目标耗时 | 放行标准 |
-|---|---|---|---|---|
-| **L0 基建** | `EphemeralDaemonFixture` + `L-Matrix-16 Golden Fixtures` | 本机/CI 瞬态环境 | < 10 秒 | 守护进程自举 100% 成功，端口/管道零冲突 |
-| **L1 全量调用** | **T2**（243 MCP） + **T3**（234 CLI 叶子） | 隔离守护进程 + 深度 Fixture | < 3 分钟 | T2 DEFECT=0；T3 18 项基线原子锁定且无新增缺陷 |
-| **L2 不变量** | **M1**（路由四端一致） + **M2**（Client 纯度） + **M4**（Fail-Closed） | 静态/单测/轻量进程 | < 1 分钟 | M1 239/239 100% 对齐；M2 零违规；M4 拒绝本地兜底 |
-| **L3 集成协同** | **T4**（多 Workspace 隔离） + **G-Suite**（4 角色状态机闭环） | 隔离守护进程集群 | < 3 分钟 | 并发写无脏写；租约防脑裂；任务级联关闭正确 |
-| **L4 深度专项** | **N1–N8** 专项矩阵（负向、故障注入、存储 CAS、16 语言、性能） | 专用环境 / 容器矩阵 | < 8 分钟 (主 CI)<br>长耗时跑 Nightly | 零崩溃；吞吐不退化；16 语言解析无 Panic |
-
----
-
-## 5. 八大核心专项方案深化落地（N1–N8 核心工程）
-
-### 5.1 N1 · 负向与边界输入测试矩阵（Robustness & Input Fuzzing）
-断言原则：**任何非法输入必须返回结构化业务错误码或合法退出码，严禁引发内部未捕获 Panic / Traceback / 挂起**。
-
-```
-[非法输入类型]
-├── 符号名异常: 空字符串 / 包含空格 / 特殊字符 ("foo; rm -rf") / 超长 4KB 标识符
-├── 路径越界: "../../../etc/passwd" / "C:\\Windows\\System32" (路径穿透防护)
-├── 格式畸形: 传非法 JSON / 字符串传给整型字段 / 缺失必填字段
-├── 未就绪状态: 未注册 Workspace / 未构建图谱直接查询 / 传不存在的 task_id
-└── 并发极限: 100 个并发连接瞬间发送空 payload
-```
-- **断言硬指标**：返回包必含 `code` 与 `message`；CLI `rc != 0`；输出严禁出现 `Traceback (most recent call last)` 或 `panic`。
-
-### 5.2 N2 · 真实子进程故障注入与端到端 Fail-Closed 验证（Fault Injection）
-摒弃原有仅在进程内 mock 的局限，采用真实 `subprocess` 触发故障，验证端到端 fail-closed 契约：
-- **场景 1（Daemon 猝死）**：CLI 执行中途 `SIGKILL` 杀死 daemon 进程 → CLI 必须捕获 BrokenPipe/ConnectionRefused 并输出友好结构化错误，禁止挂起超过 3 秒。
-- **场景 2（端口与端点欺骗）**：配置 `CW_DAEMON_HTTP_ENDPOINT` 指向黑洞 IP 或非 HTTP 端口 → 必须在超时内抛出 `E_HTTP_DAEMON_UNAVAILABLE`，**严禁回退执行本地 SQLite**。
-- **场景 3（管道占用与冲突）**：预先创建同名占用 Named Pipe → 后续启动必须探测到占用并安全退出，不覆盖、不静默死锁。
-- **场景 4（协议畸形回包）**：Daemon 返回 HTTP 500、HTTP 502 或非法截断 JSON → Client 必须返回 `E_PROTOCOL_ERROR`。
-
-### 5.3 N3 · 四角色治理与状态机端到端全链路闭环（G-Suite: Governance & Role State Machine）
-CallWarden 核心生产力来自其基于 Contract 的 4 角色编排。必须通过真实调用覆盖完整生命周期：
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor P as Planner
-    actor E as Executor
-    actor R as Reviewer
-    actor A as Adjudicator
-    participant D as Daemon (Task & Lease Engine)
-
-    P->>D: task_create + contract 绑定 (scope/paths/checks)
-    Note over D: 状态: open / queued
-    E->>D: lease_acquire (role=executor) -> 获得 Lease Token & Monotonic Counter
-    Note over D: 状态: in_progress
-    E->>D: 提交实现证据 + task.report (携带 token & request_id)
-    E->>D: lease_release
-    Note over D: 状态: review_pending
-    R->>D: lease_acquire (role=reviewer)
-    alt 审查发现缺陷 (BLOCKED)
-        R->>D: verdict_submit (result=BLOCKED, findings)
-        Note over D: 自动双轨路由: 追加 fix_defect step 回退 in_progress
-    else 审查通过 (PASS)
-        R->>D: verdict_submit (result=PASS)
-        Note over D: 状态: adjudication_pending
-        A->>D: 核验全门禁 + task_apply + task_close
-        Note over D: 状态: closed (若为最后子任务，原子级联关闭父任务)
-    end
-```
-
-- **安全门禁测试点**：
-  1. **越权阻断（Role Independence Gate）**：同一 `agent_id` 或 `session_id` 既当 Executor 又当 Reviewer 提交 PASS → 必须被系统拦截（抛出 `E_ROLE_INDEPENDENCE_VIOLATION`）。
-  2. **租约防脑裂（Monotonic Lease Fencing）**：模拟 Agent A 获取租约后休眠；超时后租约被 Agent B 夺取（Counter 递增至 2）；Agent A 唤醒后尝试写入变更 → 必须由于 Counter 过期被拒绝（返回 `E_LEASE_FENCED`）。
-  3. **身份撤销即刻生效（Attestation Revocation）**：调用 `register_attestation_revocation` 吊销某 Agent 凭证后，其任何后续写入必须立即可见地被拒绝。
-  4. **父子任务级联闭环**：创建含 3 个子任务的大任务树，依次完成前 2 个，验证父任务维持 `in_progress`；完成第 3 个子任务时，验证父任务原子变为 `closed`；直接手动关闭父任务必须抛错拦截。
-
-### 5.4 N4 · 架构迁移语义双跑对比（Rust-native vs Python-compat Dual-Run）
-针对从 Python 迁移至 Rust 守护进程的方法，实施全字段同构检验：
-- 对输入相同的参数，并行调用 Rust 原生路由与历史兼容实现；
-- **比对范围**：
-  1. 顶级 JSON Key 集合完全一致；
-  2. 符号列表排序与数量完全一致；
-  3. 异常错误码（`code` 字符串与 HTTP 状态）严格对齐；
-- 杜绝"接口名字相同，但字段少返回一个、类型从 int 变 string"的静默迁移破坏。
-
-### 5.5 N5 · 三层存储与 CAS 一致性/并发 GC 深度测试（S-Suite: Storage Integrity）
-CallWarden 依赖 CAS 内容寻址、SQLite 关系图谱与内存 Snapshot。专项测试：
-- **CAS 并发写入与 Mark-Sweep GC 互斥**：启动线程 A 高频解析新文件写入 CAS，线程 B 同时执行 `daemon gc-cas` → 依托 `fs2` 文件锁机制，验证绝对不发生"正在引用的 Blob 被当成孤儿删掉"的数据损毁。
-- **Snapshot 原子无锁切换**：在客户端以 1000 QPS 持续高频查询 `query.symbol` 的同时，后台发布新的 `snapshot.publish` → 验证读线程基于 `arc-swap` 零等待平滑切换，不出现读脏、段错误或 Panic。
-- **SQLite WAL 并发与损坏恢复**：高频并发写入触发 WAL 检查点，断电式杀进程后重新自举，验证 DB 自动恢复且数据完整。
-- **Schema 迁移幂等性**：从空库、v2 旧库迁移至 v50 最新 Schema，验证表结构 Checksum 严格一致，无残留临时列。
-
-### 5.6 N6 · 性能回归门禁与微基准（Performance Baseline & Guardrails）
-将 `rust_ext/tests/perf_daemon_baseline.py` 纳入 CI 自动回归：
-- **微基准阈值表**（超出阈值即打断构建）：
-
-| 测试项 | 规模 | P95 延迟门禁 | 吞吐/内存门禁 |
+| 层 | 现有资产 | v6 目标 | 判据 |
 |---|---|---|---|
-| **符号解析（build_graph）** | 100 个混合语言文件 | ≤ 1.5 秒 | CPU 占满但不死锁 |
-| **符号搜索（query.search）** | 100,000 符号索引库 | ≤ 15 毫秒 | 吞吐 ≥ 200 QPS |
-| **调用链分析（query.callers）** | 深度 5 层 BFS | ≤ 25 毫秒 | 内存增量 ≤ 5MB |
-| **Daemon 内存底噪** | 待机状态 | — | RSS 驻留内存 ≤ 80MB |
-
-### 5.7 N7 · Deep Fixture 与语义级精确断言落地（Semantic Assertions）
-彻底改造 `tests/convergence/param_provider.py`，摆脱占位符假数据：
-- **扩展 SeedContext 实体装配器**：
-  在 fixture 初始化阶段，除代码图谱外，真实调用底层接口预先生成：
-  - 1 个已注册的真实 Workspace；
-  - 1 个具备 2 个子任务与步骤的真实 Task Tree；
-  - 1 个通过权威认证的合法 Lease Token（绑定 active agent）；
-  - 1 条已发布的真实快照与关联代码的有效 Hash；
-- **落地 19 个 P0 CLI 的语义断言**（从 `TEST_CASES.md` 文字转为可执行代码）：
-  - `cw callees multiply` 必须断言 `set(result["callees"]) == {"add"}`；
-  - `cw callers add` 必须断言 `set(result["callers"]) == {"multiply"}`；
-  - `cw file calc.py` 必须断言 `len(result) == 2` 且包含 `add` 与 `multiply`；
-  - `cw stats` 必须断言 `result["symbols"] >= 2` 且 `result["calls"] >= 1`；
-  - 废弃单纯的 `rc == 0`，必须校验 Payload 核心业务字段。
-
-### 5.8 N8 · 16 种多语言语法与图谱分析完整矩阵（L-Matrix-16）
-针对 CallWarden 支持的 16 种编程语言构建完整 Golden 样本库，彻底消灭当前仅覆盖 Python/TS 的巨大盲区：
-- **语言覆盖清单**：Rust, TypeScript, JavaScript, Python, Kotlin, Go, Java, C, C++, C#, Ruby, PHP, Swift, Scala, HCL, Elixir。
-- **每个语言的 Golden 测试用例三件套**：
-  1. `syntax_valid.*`：标准函数定义、跨函数调用（A 调用 B）、类与方法定义；
-  2. `syntax_error.*`：故意缺失括号或语法残缺的文件 → 验证 tree-sitter 容错解析，系统不崩溃且能提取部分有效符号；
-  3. `unicode_ident.*`：含非 ASCII 字符（如中文函数名、特殊命名）→ 验证 UTF-8 与 NFC 规范化安全。
-- **统一断言**：16 种语言批量执行 `build_graph`，无一 Panic，全部成功生成符号记录并正确识别内部调用边。
+| **L0** | `conftest.py` / `_w3_harness.py` / `test_http_daemon_release_acceptance.py` / `conftest.RouteStub`（**4 套分裂**） | 统一为 `EphemeralDaemonFixture`（§7） | 四套 harness 收敛为一套，其余转调 |
+| **L1** | T2（157 PASS/72 BUSINESS/0 DEFECT）、T3（70/114/18/31） | 语义断言落地 | P0 精确断言从 0 例 → 有实现；DEFECT 分项可观测 |
+| **L2** | M1 路由矩阵、M2 纯 client、M3 并发写、M4 fail-closed | M4 端到端化 | M4 从 monkeypatch → 真实子进程 |
+| **L3** | T4 隔离、T5 LLM（无 key 时 skip） | **G-Suite 补齐四角色闭环** | 越权阻断率 100% |
+| **L4** | 仅 `perf_daemon_baseline.py`（未接 CI） | N1–N8 全部专项 | 每项有独立通过判据 |
 
 ---
 
-## 6. 统一守护进程测试基建方案（Unified Ephemeral Daemon Harness）
+## 5. M1 路由矩阵口径订正（v6 勘误）
 
-为了彻底解决目前代码中 4 套 harness 并存导致的端口争用、管道冲突与跨平台死锁，设计统一的瞬态基建：
+> **v5/v6 初稿均误写「239/239」，实测为 243/243。**
 
-### 6.1 核心设计原理
+| 证据 | 值 |
+|---|---|
+| `test_m1_route_matrix.py:30` | `_EXPECTED_TOTAL = 243` |
+| `deliverables/software-company/tool_migration_matrix.json` | `total_tools = 243`，`len(tools) = 243` |
+| `audit_mcp_inventory.json` | `src_tool_count = matrix_tool_count = matrix_total_tools_field = 243`，`consistent = True` |
 
-```python
-# 统一基建逻辑抽象（落于 tests/harness/ephemeral_daemon.py）
-class EphemeralDaemonFixture:
-    """跨平台统一瞬态 Daemon 守护基建：
-    1. 动态端口探测：绑定 0 端口或从 20000-30000 范围获取可用随机端口，杜绝 12487 端口冲突；
-    2. 目录完全沙箱化：自动在临时目录重定向 USERPROFILE / HOME，完全隔离 ~/.callwarden 生产环境；
-    3. 进程树自毁保障：
-       - Windows: 挂载到 Win32 Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE），父进程结束时 OS 强制回收所有子进程；
-       - Linux/macOS: 设置 preexec_fn=os.setsid，退出时向进程组发送 SIGKILL；
-    4. 跨平台二进制解析：根据 sys.platform 自动补全 .exe 后缀，优先使用构建出的 release 二进制。
-    """
-```
-
-### 6.2 跨平台二进制定位规范（消除 Hardcoded `.exe`）
-
-```python
-import os, sys
-
-def resolve_daemon_binary(repo_root: str) -> str:
-    ext = ".exe" if sys.platform == "win32" else ""
-    candidates = [
-        os.path.join(repo_root, "rust_ext", "target", "release", f"cw-daemon{ext}"),
-        os.path.join(repo_root, "rust_ext", "target", "debug", f"cw-daemon{ext}"),
-        os.path.join(os.path.expanduser("~"), ".callwarden", "runtime", "current", f"cw-daemon{ext}"),
-    ]
-    for p in candidates:
-        if os.path.isfile(p) and os.access(p, os.X_OK if sys.platform != "win32" else os.R_OK):
-            return os.path.abspath(p)
-    raise FileNotFoundError(f"cw-daemon 未找到，已检索路径: {candidates}。请先执行 cargo build --bin cw-daemon")
-```
+**遗留技术债**：`test_m1_route_matrix.py:75` 的函数名仍为 `test_matrix_has_239_tools`，名实不符，易误导后续读者。**建议随 Phase 1 一并重命名**（本文档不改测试代码）。
 
 ---
 
-## 7. 已知缺陷基线（18 项）的原子指纹钉死与解离修复
+## 6. N1–N8 专项矩阵（v6 核心）
 
-原有的 `assert len(defects) <= 18` 存在重大隐患：新缺陷的引入会被旧缺陷的偶然修复所掩盖。v6 实施**逐项指纹绑定**：
-
-### 7.1 原子缺陷清单与指纹定义
-
-| 缺陷类别 | 命令 | 触发参数 / 现象 | 精确指纹判断条件 | 修复归属与目标 |
+| 编号 | 专项 | 覆盖的空缺 | 关键判据 | 规模预估 |
 |---|---|---|---|---|
-| **FAIL_SOFT (5 项)** | `cw call-chain` | `multiply` | rc=0 但结果中节点列表为空 | 判定为 FAIL；待补齐 BFS 遍历连接 |
-| | `cw coupled-fns` | `20` | rc=0 但返回空或未预期结构 | 判定为 FAIL；待修复度量计算 |
-| | `cw largest-fns` | `20` | rc=0 但未按行数降序返回函数 | 判定为 FAIL；待修复 SQL 查询聚合 |
-| | `cw rule applicable` | 默认参数 | rc=0 但规则引擎静默吞错 | 判定为 FAIL；待修复规则状态检查 |
-| | `cw status` | 默认参数 | rc=0 但 status 概览丢关键字段 | 判定为 FAIL；待规范化状态响应 |
-| **TRACEBACK (3 项)** | `cw collab publish` | `--json` | 输出含 `Traceback (most recent call last)` | 捕获 Traceback 并阻断合入 |
-| | `cw daemon publish` | `<ws_id> <db_path>` | 输出含 Python 异常堆栈 | 捕获 Traceback 并阻断合入 |
-| | `cw daemon snapshot-stats`| 默认参数 | 输出含 Python 异常堆栈 | 捕获 Traceback 并阻断合入 |
-| **METHOD_NOT_FOUND (10 项)** | CLI 映射到未实现 RPC | 10 条特定兼容子命令 | 响应含 `Method not found` 或 `E_HTTP_COMPAT_UNSUPPORTED` | **仅允许这 10 条命中；任何第 11 条命中即刻判 FAIL** |
+| **N1** | 负向 / 边界矩阵 | 每类工具的非法输入、空符号、未 build 空间、超大输入 | 返回结构化 `error`/`code`；**禁止 `rc==0` 配空 payload**（铁律 #1） | 中 |
+| **N2** | 故障注入 / 混沌 | M4 仅进程内 monkeypatch，未用真实子进程 | 真实 `python cw.py` 子进程在 daemon kill/超时/500/畸形 JSON 下 fail-closed | 中 |
+| **N3** | 安全：Lease / Identity / Attestation | 治理写面零正向测试 | ① lease 过期拒写；② 孤儿 lease 心跳回收；③ attestation 撤销即时失效；④ **G-Suite 越权阻断**；⑤ 任务树级联关闭 | 大 |
+| **N4** | 迁移语义对比 | 只验证路由存在，无 native vs compat 输出一致性 | 双跑对比结构同构、关键字段值一致、错误码一致 | 中 |
+| **N5** | 三层存储 CAS 一致性 | CAS 写入与 GC 锁互斥无极端竞态测试 | 高频 CAS 写入 × 并发 `gc-cas` 无误删；`snapshot.publish` 1000 QPS 无锁切换不撕裂；WAL 崩溃自愈；schema 迁移幂等 | 大 |
+| **N6** | 性能回归门禁 | `perf_daemon_baseline.py` 未接 CI | P95 / 吞吐不低于固化基线，超阈 FAIL | 小 |
+| **N7** | 精确断言落地（deep fixture） | 19 个 P0 CLI 精确断言 0 例落地 | `seed_workspace` 预建 task/lease/agent/snapshot；断言从文字变 `assert` | 大 |
+| **N8** | L-Matrix-16 多语言矩阵 | `seed_sample` 仅 `calc.py` + `service.ts`（**2/16**），14 种语言在常规回归中为盲区 | 16 语言 × 3 类样本（valid / error 容错 / unicode ident）无 panic 且正确建边 | 大 |
 
-- **门禁断言伪代码**：
-  ```python
-  known_defects_found = set()
-  for item in execution_results:
-      if item.is_defect():
-          fingerprint = item.get_fingerprint()
-          assert fingerprint in WHITELISTED_18_DEFECTS, f"发现未经登记的全新缺陷: {fingerprint}"
-          known_defects_found.add(fingerprint)
-  # 验证缺陷只许减少，不许新增
-  assert len(known_defects_found) <= 18
-  ```
+### 6.1 G-Suite：四角色治理全链路（N3 深化）
 
----
+- **越权防御**：同一 `agent_id`/`session_id` 既当 Executor 又当 Reviewer 提交 PASS → 必须 `E_ROLE_INDEPENDENCE_VIOLATION`。
+- **租约防脑裂**：Agent A 持 lease 挂起 → B 抢占（fencing counter 递增）→ A 唤醒后写操作必须 `E_LEASE_FENCED`。
+- **身份吊销即时失效**：`register_attestation_revocation` 后该 identity 后续写操作立即阻断。
+- **任务树级联关闭**：末个子任务完成时父任务原子关闭；越权直接关父任务被拒。
 
-## 8. 447 处 Skip 站点的解锁行动矩阵与闭环目标
+### 6.2 L-Matrix-16 样本规格（N8）
 
-当前 447 处 Skip 站点（213 处直接 `skip` + 234 处 `skipif`）构成了 6.3% 的偏高跳过率。分类消除计划如下：
+`rust_ext/src/languages/` 实测含 **15 个** grammar 模块（`cpp.rs` / `csharp.rs` / `elixir.rs` / `go.rs` / `hcl.rs` / `java.rs` / `javascript.rs` / `kotlin.rs` / `php.rs` / `python.rs` / `ruby.rs` / `rust.rs` / `scala.rs` / `swift.rs` / `typescript.rs`），即 **JS 与 TS 分列** → 16 种语言口径成立。
 
-```
-                              ┌───────────────────────────────────┐
-                              │ 全仓 447 处 Skip 站点系统性化解   │
-                              └─────────────────┬─────────────────┘
-                                                │
-         ┌──────────────────────────────┬───────┴──────────────────────┬──────────────────────────────┐
-         ▼                              ▼                              ▼                              ▼
-【第一类：构建与 CI 失效】       【第二类：前置环境占用】       【第三类：Fixture 缺失】       【第四类：固有平台差异】
- • 数量：约 50 处                • 数量：约 45 处               • 数量：约 36 处               • 数量：约 55 处
- • 根因：CI 漏编译二进制；       • 根因：默认管道被占；         • 根因：缺语言/多工作区数据；  • 根因：Windows 无 AF_UNIX；
-   路径硬编码 .exe               cargo 不在 PATH                无 Semgrep/证据文件            容器专有/单例独占
- • 行动：补 CI 编译 + 跨平台     • 行动：统一瞬态 Harness，     • 行动：引入 L-Matrix-16       • 行动：规范化平台 Tag，
-   路径探测                      随机端口/隔离目录              与多租户深层 Seed              严格审计为合理保留
- • 效果：彻底消灭 (降至 0)       • 效果：彻底消灭 (降至 0)      • 效果：大幅消除 (降至 ≤5)     • 效果：稳定保持为合理基线
-```
+每种语言三套样本：`syntax_valid.*`（正常定义+调用）、`syntax_error.*`（残缺代码，验 tree-sitter 容错不崩）、`unicode_ident.*`（非 ASCII 符号 + NFC 规范化安全）。
 
-- **闭环指标**：
-  实施上述行动后，主回归套件的可解锁 Skip 消除约 130 处，全仓跳过率将由 **6.3% 压降至 1.8%**（远优于 ≤5% 门禁标准）。
+### 6.3 S-Suite：三层存储与 CAS（N5 深化）
+
+- CAS 写入与 Mark-Sweep GC 的 `fs2` 跨平台文件锁互斥（**注意**：fs2 排他锁连读都阻，`os error 33`；`try_lock` 失败才是持锁权威信号）
+- Snapshot 基于 `arc-swap` 的无锁原子发布，读线程 1000 QPS 期间不撕裂
+- SQLite WAL 并发写 + 检查点 + 断电式杀进程后自愈
+- Schema 迁移幂等性（升级到当前 v50 后表结构 checksum 一致）
 
 ---
 
-## 9. CI/CD 分级流水线与自动化门禁重构（具体补丁方案）
+## 7. 统一守护进程测试基建（`EphemeralDaemonFixture`）
 
-### 9.1 五级流水线设计
+**要解决的真问题**：`PIPE_IN_USE` 类 skip、Named Pipe 持续占用、孤儿进程残留、12487 端口争用。
+
+| 要求 | 规格 | 依据 |
+|---|---|---|
+| **动态端口** | 绑定 0 端口或在 20000–30000 探测可用端口 | 终结端口争用 |
+| **目录沙箱** | 重定向 `USERPROFILE` / `HOME` 至临时目录 | 不污染 `~/.callwarden` |
+| **跨平台二进制探测** | 按 `sys.platform` 解析 `cw-daemon` / `cw-daemon.exe`，多候选路径探测 | 修 `conftest.py:40-49` 硬编码 |
+| **进程树自毁（Zero Leakage）** | Windows 挂 Win32 Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）；Unix 用 `os.setsid` + 进程组 `SIGKILL` | 保证父进程退出时 100% 回收 |
+| **统一入口** | 现有 4 套 harness（`conftest.py` / `_w3_harness.py` / `test_http_daemon_release_acceptance.py` / `conftest.RouteStub`）全部转调此 fixture | 消除分裂 |
+
+---
+
+## 8. 18 项已知缺陷的原子指纹钉死
+
+**废弃** `assert len(defects) <= 18`（总量监控存在「新掩盖旧」的假阳性风险）。
+
+| 缺陷类 | 数量 | 代表 | 钉死方式 |
+|---|---|---|---|
+| rc=0 掩盖真 bug（fail-soft 吞异常） | 5 | `call-chain`, `coupled-fns`, `largest-fns`, `rule applicable`, `status` | 断言 `rc==0` 时 payload 非空，空结果 = FAIL |
+| traceback | 3 | `collab publish`, `daemon publish`, `daemon snapshot-stats` | stdout/stderr 不含 `Traceback (most recent call last)` |
+| method_not_found（CLI→daemon compat RPC） | 10 | 由探测得出 | 白名单指纹，**出现第 11 个即刻阻断合入** |
+
+> 数量口径：5 + 3 + 10 = 18，与基线 18 自洽。**分项名单需在 Phase 1 从 `report["results"]` 落盘固化**，当前基线来自首轮（生产 daemon `b495919`），**换版本后须重新探测**。
+
+---
+
+## 9. 447 处 Skip 的解锁行动矩阵
+
+> 完整归因与算术修正见 `COVERAGE_AUDIT.md`。本节仅给行动口径。
+
+| 家族 | 数量 | 解锁动作 | 状态 |
+|---|---|---|---|
+| `callwarden_core 未安装` / Rust 扩展未构建 | **39** | CI 装好扩展（36 处集中在 `tests/parser_contract/`） | 🟢 构建可解 |
+| BINARY_MISSING / CI 执行断链 | ~50 | `ci.yml` 增 `cargo build --bin cw-daemon`；跨平台二进制探针 | 🔴 P0 |
+| PIPE_IN_USE / 管道冲突 | ~45 | `EphemeralDaemonFixture` 统一瞬态隔离 | 🟡 P1 |
+| LANG_FIXTURE / 语言缺失 | ~22 | L-Matrix-16 补齐 | 🟡 P1 |
+| PLATFORM_INHERENT（Windows 无 AF_UNIX / 无 memfd_create、Linux 无 Named Pipe、Docker 专有） | ~55 | 标 `@pytest.mark.platform_specific`，从有效 skip 率中**单列而非扣除分母** | ⚪ 合理保留 |
+| DATA_MISSING / 业务实体缺失 | ~14 | Deep Fixture 预建实体 | 🟡 P1 |
+| CLI_DAEMON_UNAVAILABLE | ~11 | Daemon 统一自举 | 🟢 随构建解除 |
+| CARGO_MISSING | ~8 | 统一使用已编译产物，不在测试内实时 `cargo build` | 🟢 环境可解 |
+| DOC_MISSING | ~3 | 补文档或修断链路径 | 🟢 文档可解 |
+| **未归因差额** | **239** | **逐文件归因（见 COVERAGE_AUDIT §2.1）** | ⬜ 待补 |
+
+### 9.1 skip 率目标（算术已修正）
 
 ```
-[Tier 0: 快速静态与安全] ──► [Tier 1: Rust 全模块单测] ──► [Tier 2: Python 单测与存量]
-(ruff / 路由四端一致 /       (cargo test 2073 单测，       (7000+ 轻量单测，
- 客户端纯度审计，<2 min)      in-memory DB，<3 min)         Mock/Stub 隔离，<4 min)
-                                                                     │
-                                                                     ▼
-[Tier 5: 规模基准与矩阵] ◄── [Tier 4: 多语言与专项]   ◄── [Tier 3: 收敛与治理核心]
-(1M-10M 符号图谱，Nightly/   (16 语言 Golden 矩阵，        (T1–T4 / M1–M4 / G-Suite，
- PR-Merge 触发，<15 min)     负向/混沌注入，<6 min)         编译 fresh daemon，<5 min)
+当前真实基线：447 / 7133 = 6.27%（超 ≤5% 红线）
+
+P0 解除 BINARY_MISSING  ~50  → 397/7133 = 5.57%
+P1 解除 PIPE_IN_USE 等    ~64  → 333/7133 = 4.67%  ✅ 达标
+P2 解除 LANG/DATA         ~36  → 297/7133 = 4.16%
+P3 归因并解除剩余         ~239 → 需逐项核实
 ```
 
-### 9.2 `.github/workflows/ci.yml` 关键补丁定义
+> **v6 勘误**：上一稿宣称「扣除平台固有 55 处 → 有效 skip 率 < 1.8%」。该结论**算术不成立**——
+> `(447−55)/7133 = 5.5%`，分子分母同减一个数不可能使比率降到 1.8%。若要真达 1.8%，分子须 ≤ 128，
+> 即**必须真解 319 处**。平台固有 skip 应**单列统计**（`platform_specific` 标记），
+> 不允许通过「扣除分项」伪造达标。
+
+---
+
+## 10. CI/CD 分级流水线与门禁
+
+### 10.1 Tier 0–5 分级
+
+| Tier | 内容 | 目标时长 | 触发 |
+|---|---|---|---|
+| **T0** | lint + 客户端纯度（M2 静态） | < 2 min | push |
+| **T1** | 单元 + 快速子集（离线） | < 5 min | push |
+| **T2** | 全量 `pytest tests/ -n auto` + 门禁脚本 | < 20 min | push / PR |
+| **T3** | 收敛套件（需 daemon 二进制） | < 15 min | PR |
+| **T4** | `cargo test --lib daemon::` 全模块 | < 30 min | PR |
+| **T5** | 性能基线 + 混沌专项 | 定时 | nightly |
+
+### 10.2 主 `ci.yml` 改造（**注意 `--no-default-features` 不可省**）
 
 ```yaml
-# 1. 修复 daemon 二进制构建断链（在 test job 中）
+# 1. 补齐 daemon 可执行程序（消除主 CI 收敛套件全崩断链）
+#    --no-default-features 必须保留：PyO3 需关闭 extension-module 才能链接 libpython，
+#    否则 CI 链接阶段失败（本项目已多次踩坑，见 --no-default-features 在 ci.yml:144 的既有用法）
 - name: Build cw-daemon binary and Python extension
   run: |
-    # 编译 Python 扩展 (.pyd / .so)
     python release/build.py --rust
-    # 强制编译 cw-daemon 可执行程序并放至目标目录
-    cargo build --release --manifest-path rust_ext/Cargo.toml --bin cw-daemon
+    cargo build --release --manifest-path rust_ext/Cargo.toml \
+      --no-default-features --bin cw-daemon
   shell: bash
 
-# 2. 补齐 Rust 2073 个全模块单测（扩展 rust-unit-test job）
+# 2. 补齐 Rust 全模块单测（解除仅跑 compat 模块的盲区）
+#    注意：snapshot_state 等既有测试依赖进程单例/真实环境，直接扩面会 CI 雪崩，
+#    需先修测试隔离，再逐步纳入（建议顺序：compat → dispatch → storage → http_server → lease）
 - name: Run Full Rust Unit Tests
   run: |
-    # 运行 daemon 内部所有无需物理文件依赖的内存级单元测试
-    cargo test --manifest-path rust_ext/Cargo.toml --no-default-features \
-      --lib daemon:: -- --skip snapshot_state::tests::test_heavy_realworld
+    cargo test --manifest-path rust_ext/Cargo.toml \
+      --no-default-features --lib daemon:: \
+      -- --skip snapshot_state::tests::test_heavy_realworld
   shell: bash
 
-# 3. 运行测试并执行覆盖率与 Skip 率硬门禁
+# 3. 全量测试 + 覆盖率 + skip 率门禁
 - name: Run Pytest with Strict Gates
   run: |
     pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 \
+      --timeout-method=thread \
       --cov=callwarden --cov-report=term-missing --cov-report=xml \
       --junitxml=report.xml
-    # 门禁脚本校验
-    python scripts/check_ci_gates.py --junit report.xml --max-skip-rate 0.05 --min-cov 60
+  shell: bash
+
+# 4. 门禁判定（脚本需新建，见下）
+- name: Enforce Gates
+  run: |
+    python scripts/check_ci_gates.py --junit report.xml \
+      --max-skip-rate 0.05 --min-cov 60 \
+      --t2-defect-baseline 0 --t3-defect-baseline 18
   shell: bash
 ```
 
+### 10.3 跨平台修复 `_pick_bin`（`tests/convergence/conftest.py:40-49`）
+
+```python
+import sys
+_SUFFIX = ".exe" if sys.platform == "win32" else ""
+_TARGET = os.path.join(_REPO_ROOT, "rust_ext", "target")
+_RELEASE_BIN = os.path.join(_TARGET, "release", f"cw-daemon{_SUFFIX}")
+_DEBUG_BIN = os.path.join(_TARGET, "debug", f"cw-daemon{_SUFFIX}")
+```
+
+### 10.4 门禁脚本（**当前均不存在，须新建**）
+
+| 脚本 | 状态 | 职责 |
+|---|---|---|
+| `scripts/check_ci_gates.py` | ❌ **不存在** | 汇总 T2/T3/M1 分项门禁 + skip 率 + 覆盖率，单点裁决 |
+| `scripts/check_skip_rate.py` | ❌ **不存在** | 解析 junitxml 计算 `skip/total`，>5% 非零退出 |
+| `scripts/verify_route_matrix.py` | ✅ 存在 | 路由矩阵 7 道门禁 |
+| `scripts/check_client_purity.py` | ✅ 存在 | 客户端纯度 0 违例 |
+
+> ⚠️ 引用不存在的脚本是上一稿的缺陷之一：门禁清单必须区分「已有」与「待建」，
+> 否则 CI 改造照抄即失败。
+
 ---
 
-## 10. 分阶段实施 Backlog（对齐四角色工作流）
+## 11. 分级法（P0 / P1 / P2 + 实现状态）
 
-| 阶段 (Phase) | 核心目标 | 交付产物与关键任务 | 门禁验收标准 |
+| 优先级 | 含义 | 执行环境 | 放行要求 |
 |---|---|---|---|
-| **Phase 0 (紧急自救)** | 解锁 CI 可执行性与核心单测 | 1. 修复 `ci.yml` 构建 `cw-daemon`；<br>2. 修复 `conftest.py` 跨平台定位；<br>3. 扩展 Rust `daemon::` 单测运行。 | 收敛套件在 Linux CI 上 0 ERROR；Rust CI 单测增加 1500+。 |
-| **Phase 1 (基建统一)** | 瞬态基建与已知缺陷原子化 | 1. 落地 `EphemeralDaemonFixture`；<br>2. 钉死 18 项缺陷原子指纹；<br>3. 消除 Named Pipe / 端口占用 skip。 | 消除 ~45 处环境冲突 Skip；杜绝新增未登记缺陷。 |
-| **Phase 2 (语义断言)** | 深度 Fixture 与 P0 精确断言 | 1. 扩展 `SeedContext` 预建真实任务与租约；<br>2. 落地 19 个 P0 CLI 语义断言；<br>3. 落地 MCP 核心只读工具图数据断言。 | T3 19 个 P0 用例完成语义级断言；T2 真实业务验证通过率提升。 |
-| **Phase 3 (治理与存储)** | G-Suite 4 角色闭环与 CAS 验证 | 1. 4 角色状态机与级联关闭端到端测试；<br>2. Lease Monotonic Fencing 防脑裂测试；<br>3. CAS 并发写入与 GC 锁互斥测试。 | 治理安全门禁覆盖率 100%；CAS 极端并发零数据损坏。 |
-| **Phase 4 (全语言与性能)** | 16 语言 Golden 矩阵与性能门禁 | 1. 建立 16 语言 Golden 语法测试集；<br>2. 接入 `perf_daemon_baseline.py` CI 门禁；<br>3. 编写 `check_ci_gates.py`。 | 16 语言解析无死锁/Panic；Skip 率稳定低于 2.0%。 |
+| **P0** | 核心只读查询（精确断言）+ 已知缺陷钉死 | 种子 workspace（已 build_graph + deep fixture） | **必须通过**；DEFECT/fail-soft/traceback 不许回升 |
+| **P1** | 常规契约 / 写路径 | 隔离 daemon + 临时 DB 实例 | 隔离环境通过即可合入 |
+| **P2** | 破坏性 / 重操作 | **专用隔离沙箱**，不进主回归 | 单独环境验证，禁止污染生产 daemon |
+
+**实现状态（v6 复核）**：
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| P0 CLI 19 例精确断言 | ❌ **0 例落地** | `test_t3_cli_full_invocation.py` 仅总量断言 |
+| T2/T3 分项钉死 | ❌ 未实现 | 仅 `defects <= 18` |
+| M1 路由矩阵 | ✅ 已落地 | `_EXPECTED_TOTAL = 243`，但函数名遗留 239 |
+| M2 纯 client 审计 | ✅ 已落地 | `scripts/check_client_purity.py` |
+| M4 fail-closed | ⚠️ 仅入口层 | `test_m4_cli_fail_closed.py:57-121` monkeypatch，非端到端 |
+| 18 缺陷分项指纹 | ❌ 未实现 | 仅总量断言 |
+| 统一 daemon fixture | ❌ 未实现 | 4 套 harness 并存 |
 
 ---
 
-## 11. 交付物矩阵与持续演进规范
+## 12. 分阶段实施 backlog
 
-为保证测试体系长效健康，本目录下资产维护遵循如下准则：
+| Phase | 目标 | 关键交付 | 门禁影响 |
+|---|---|---|---|
+| **P0 紧急** | 收敛套件在 CI 跑通 | `ci.yml` 增 `cargo build --no-default-features --bin cw-daemon`；`_pick_bin` 跨平台；`check_ci_gates.py` / `check_skip_rate.py` 新建；M1 函数名 239→243 订正 | 收敛 ERROR → 0 |
+| **P1** | 精确断言 + 缺陷分项 | `seed_workspace` deep fixture；19 P0 CLI 断言；18 缺陷原子指纹；统一 `EphemeralDaemonFixture` 收敛 4 套 harness | T3 从「总量≤18」升级「分项可观测」 |
+| **P2** | 负向 + 故障注入 | N1 负向矩阵；N2 真实子进程 fail-closed | M4 端到端化 |
+| **P3** | 安全 + 存储一致性 | N3（含 G-Suite）；N4 语义对比；N5 CAS/GC/竞态 | 治理写面 SKIP → 正向测试 |
+| **P4** | 多语言 + 性能 | N8 L-Matrix-16；N6 性能门禁 | 16 语言纳入回归 |
+| **P5** | skip 归因收口 | 逐文件归因 239 处差额；平台 skip 单列标记 | 有效 skip 率真实达标 |
 
-1. **`TESTING_PLAN.md`（本文件）**：测试顶层架构与质量治理唯一法典，任何新增测试套件或门禁变更须在此登记；
-2. **`TEST_CASES.md`**：人工可读的用例映射清单，严禁手动修改，必须由 `python docs/testing/gen_test_cases.py` 同步最新代码生成；
-3. **`COVERAGE_AUDIT.md`**：Skip 归因与覆盖率审计台账，随每次基线变动更新真实统计；
-4. **`BUILD_ENV.md`**：工具链踩坑与编译指南，为异构系统（Windows GNU/Zig、Linux、macOS）提供第一现场支持。
+> 每个 Phase 对应一个或多个 `cw task` 子卡，沿用四角色交接流；Phase 内「整类关闭」后才统一关闭（铁律 #2）。
+
+---
+
+## 13. 文档勘误记录（留痕）
+
+| 稿次 | 错误陈述 | 实测 | 处置 |
+|---|---|---|---|
+| v4 | skip 219 处 | 447 处 | v5 已修 |
+| v5 | Rust 单测 2073 | 2091（口径：`#[test]`+`#[tokio::test]`） | v6 已修并注明口径 |
+| v5 / v6初稿 | M1 路由 **239/239** | **243/243** | §5 已订正 |
+| v6初稿 | 「扣除平台固有 55 处 → 有效 skip 率 < 1.8%」 | `(447−55)/7133 = 5.5%`，算术不成立 | §9.1 已拆穿并重算 |
+| v6初稿 | 「447 处已完成四类归因」 | 已归因 208，**差额 239 未归因** | `COVERAGE_AUDIT.md` §2.1 已标注 |
+| v6初稿 | CI 命令缺 `--no-default-features` | PyO3 需该 flag 才能链接 libpython | §10.2 已补 |
+| v6初稿 | 引用 `check_ci_gates.py` / `check_skip_rate.py` | 两脚本均不存在 | §10.4 已标「待建」 |
+
+> 保留此表以留痕。**教训**：凡未跑过命令的数字，不得写入方案作为门禁依据。
+
+---
+
+## 14. 交付物清单
+
+| 文件 | 内容 |
+|---|---|
+| `TESTING_PLAN.md` | 本文件：v6 测试策略（现状核查 + 五层金字塔 + N1–N8 + CI 改造 + backlog + 勘误） |
+| `TEST_CASES.md` | 分级测试用例清单（84 CLI / 233 叶 / 243 MCP，P0/P1/P2 + 实现状态列） |
+| `COVERAGE_AUDIT.md` | 覆盖矩阵 + skip 审计（447 站点，含**未归因差额标注**） |
+| `BUILD_ENV.md` | 构建前置（Rust 工具链打通记录） |
+| `gen_test_cases.py` | 可复现生成器（改权威源后重跑刷新 `TEST_CASES.md`） |
+| `.bak_v5/` | v5 原件备份（本次修正前快照，可回溯） |
+
+---
+
+## 15. 门禁总表
+
+| 门禁 | 指标 | 阈值 | 当前基线 | CI 强制 |
+|---|---|---|---|---|
+| 收敛套件可执行 | T1–T4/M1–M4 在 Linux CI 跑通 | 0 ERROR | ❌ 全 ERROR | 待建 |
+| 主回归 skip 率 | `skip / total` | ≤ 5% | 447/7133 = **6.27%**（超阈） | 待建 |
+| 行覆盖率 | `pytest --cov` | ≥ 60%（逐步升） | 无门禁 | 待建 |
+| Rust 单测 | `cargo test` 覆盖模块 | `daemon::` 全模块 | 仅 1 模块 | 待建 |
+| T2（MCP） | DEFECT / PASS / 覆盖 | `DEFECT==0` & `PASS>=100` & `覆盖==243` | 157/72/0 | 已有，须 CI 真跑 |
+| T3（CLI） | DEFECT 基线 | 不回升（基线 18） | 70/114/18/31 | 已有，须 CI 真跑 |
+| T3 分项钉死 | 5 fail-soft / 3 traceback / 10 method_not_found | 各自不新增 | 仅总量钉死 | **Phase 1** |
+| M1 | 路由矩阵 | **243/243** | 243/243 | 随 `pytest tests/` 跑 ✓ |
+| M2 | 纯 client | 0 违例 | 0 | ✓ |
+| M3/M4/T4/T5 | 并发/fail-closed/隔离 | 全部通过 | — | 须 CI 真跑 |
+| N6 性能 | P95 / 吞吐 | ≥ 基线阈值 | 无门禁 | Phase 4 |
+
+> 未达 `skip_rate ≤ 5%` 与收敛套件可执行前，**不准宣称「通过」**。
+> 门禁脚本在 `check_ci_gates.py` 建成前，上表「待建」项均为**文档约定而非可执行约束**。
+
+---
+
+## 附：v4 → v6 一句话总结
+
+> v4 把「路由可达 + 占位参数 + SKIP 计数」包装成「100% 业务覆盖、精确断言、门禁化」；
+> v5 戳破这层包装（CI 零执行、Rust 单测仅 1 模块、精确断言未落地、skip 447 非 219）；
+> v6 给出五层金字塔 + N1–N8 专项 + 统一瞬态基建 + 缺陷原子钉死 + CI 分级流水线，
+> **并同时勘误自身的算术与口径错误**——把「数字可复算」立为铁律 #7，避免方案本身成为新的假阳性来源。
