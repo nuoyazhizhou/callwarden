@@ -58,6 +58,10 @@
     "core_not_installed_exact_sites": 46,
     "core_not_built_exact_sites": 4,
     "parser_core_not_installed_exact_sites": 18,
+    "reason_literal_sites": 282,
+    "reason_expression_sites": 167,
+    "reason_absent_sites": 19,
+    "statically_unattributable_sites": 186,
     "root_cause_reviewed_sites": 0,
     "rust_src_attributes": 2091,
     "rust_src_cfg_test_files": 121
@@ -73,7 +77,7 @@
     },
     {
       "path": "docs/testing/gen_test_cases.py",
-      "sha256": "a5b2ad7d12746bdbbc2c193394d373db0d75cba1f2627ac02a7b9197618edf2f"
+      "sha256": "dec74b5a4077700b7a4e473d531ca58e616e70a440ee7e7bd71963c5445862d5"
     },
     {
       "path": "rust_ext/src/abi_contract.rs",

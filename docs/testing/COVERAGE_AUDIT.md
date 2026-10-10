@@ -13,6 +13,16 @@ AST调用pytest.skip213、pytest.mark.skipif234，合计447，分布131文件；
 
 精确reason字面量“callwarden_core 未安装”46，其中parser_contract18；“callwarden_core Rust 扩展未构建”4。两字面量全仓合计50；其他变体及importorskip另列。parser_contract前两机制总计44。v6的39/36/3不符合当前AST。
 
+**静态可归因与不可归因的实测划分（v7.1 补充）**：468 站点中，`reason` 为**字符串字面量**（可静态精确归因）仅 **282（60%）**；`reason` 为 f-string/变量/拼接等**非字面量表达式**共 **167**，另有 **19** 无 reason。即**186 站点（40%）在静态阶段无法归因**，须 runtime 落地才能定性。按机制拆分：
+
+| 机制 | 站点 | 非字面量 | 占比 |
+|---|---|---|---|
+| pytest.skip | 213 | 98 | 46% |
+| pytest.mark.skipif | 234 | 69 | 29% |
+| pytest.importorskip | 21 | 19 | 90% |
+
+其中 importorskip 90% 非字面量（形如 `pytest.importorskip("callwarden_core")` 的模块名即表达式），意味着**扩展缺失类 skip 的静态归因能力远弱于其表象**。故 46/18/4 等精确字面量数字**只覆盖 60% 站点**，不得据此声称全量 skip 已完成归因；186 处差额登记为 **GAP-16**，由 runtime 阶段补齐。
+
 reason字面量分组不是人工根因归因。SKIP_SITES记录路径/行/机制/reason/condition/hash，root_cause统一待复核；故239/190/52等历史差额不再作为当前结论。不得混用估算/重叠家族加总成全量归因。
 
 ## 2. 入口事实
@@ -40,6 +50,7 @@ CLI快照声明234叶子，commands233、skipped=[server]；分类84顶层/21类
 | GAP-13 | v6 BUILD_ENV | 历史wiimu/Zig路径与当前环境混用 | E按profile核构建来源 |
 | GAP-14 | mcp_full_schema.json vs源码/矩阵 | 两个环检测工具名已陈旧；总数相等掩盖集合漂移 | A重新提取真实schema、逐字段核验，不改当前上游源 |
 | GAP-15 | task_collab_lifecycle.rs:1516–1524、task_collab_tests_core.rs:885–920 vs role-protocol.md:192–196 | returned同事务整改的源码/静态测试合同与协议“不自动追加”冲突，运行结果未知 | A解决权威语义冲突；D按冻结合同真实验证projection/steps/assignment、provenance、幂等与冲突 |
+| GAP-16 | SKIP_SITES.json 实测 | 468 站点中 186（40%）reason 非字面量（f-string/拼接/importorskip 模块名），静态无法归因；精确字面量只覆盖 282（60%） | A 阶段账本须显式标注 literal/expression 字段分布；runtime 阶段跑出真实 reason 后回填，禁止以 60% 字面量冒充全量归因 |
 
 不再将“CI执行量0/全ERROR”称本轮实测：配置可推断前置风险，但部分静态测试不依赖daemon，具体数量需CI/JUnit。历史T2 157/72/0/14、T3 70/114/18/31只是旧叙述，非当前revision证据。
 

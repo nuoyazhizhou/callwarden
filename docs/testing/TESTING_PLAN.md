@@ -144,13 +144,17 @@ check_ci_gates/check_skip_rate当前不存在，仅登记待实现职责。gate�
 
 跨基建、两客户端、治理/存储、CI与产物，多个独立验收目标，不是atomic_hotfix。本次文档修订为同一讨论线程；未来按独立ownership/不交叠白名单建任务，不机械按每分类/phase建child。
 
+为闭合“正式MCP/CLI入口需运行环境提取，而隔离底座又需清单输入”的阶段循环依赖，实施阶段细化为单向闭环链：`A0 → B0 → A1 → B1 → C/D → E`：
+
 | 阶段 | 交付与验收 | 路径上限（实施前逐文件冻结） | 依赖 |
 |---|---|---|---|
-| A清单/合同 | runtime清单、case/参数映射、逐站点skip账本、profile/corpus；无混口径 | docs/testing、独立manifest/提取脚本 | 无 |
-| B基建 | 空库公共接口初始化、隔离/ready/cleanup，无SQL补绿/生产发现 | 专用tests harness与自验收 | A |
-| C接口 | 全量CLI/MCP wire语义、写/常驻/参数/跨端，逐case结果 | 独立CLI/MCP测试目录与fixture；共享文件串行 | B |
-| D专项 | G/I/J/E/W/S/A/X和16语言，正负/恢复/并发 | 按domain冻结测试目录/fixture | B、相关C |
-| E交付 | 安装产物、平台/性能、报告硬门禁 | workflows、release验收和独立gate脚本 | C、D |
+| A0 静态候选/合同 | 静态源与快照清单扫描、case/参数规划表、逐站点skip账本、profile/corpus候选；纯静态门禁自洽 | docs/testing、生成器与静态账本 | 无 |
+| B0 最小隔离底座 | EphemeralDaemonFixture 最小隔离沙箱（HOME/USERPROFILE/data/socket隔离、随机端口分配、进程树追踪与安全cleanup），为runtime提取提供无污染底座 | 专用测试harness最小隔离子集 | A0 |
+| A1 真实清单冻结 | 基于B0沙箱通过公开协议提取CLI真实argparse/runtime与MCP wire tools/list，核验逐字段一致性，消除GAP-14漂移并正式冻结清单合同 | docs/testing/manifests、提取脚本与测试定义 | B0 |
+| B1 完整公共初始化 | 扩展隔离底座至空库正式公共接口初始化/迁移、workspace/identity注册、Role Contract/lease绑定与ready gate，无SQL补绿/无生产发现 | 专用tests harness完整集与自验收 | A1 |
+| C 接口验收 | 全量CLI/MCP wire语义、写/常驻/参数/跨端，逐case结果 | 独立CLI/MCP测试目录与fixture；共享文件串行 | B1 |
+| D 专项矩阵 | G/I/J/E/W/S/A/X和16语言，正负/恢复/并发 | 按domain冻结测试目录/fixture | B1、相关C |
+| E 交付门禁 | 安装产物、平台/性能、报告硬门禁 | workflows、release验收和独立gate脚本 | C、D |
 
 各合同排除未冻结生产路径和用户权威库。产品前置缺口另冻最小daemon/client修复scope，产品修复后重验公开链路，不能扩充fixture补绿。task号/基线/schema/命令/rollback/角色合同方案通过后绑定，本文不虚构。
 
