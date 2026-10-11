@@ -15870,6 +15870,44 @@ def _identity_revoke(db, opts, use_json):
 # lease / assignment：P4 Assignment 与安全 Lease 命令（Req 11.1-11.13, 10.5 任务）
 # ============================================================
 
+
+def _resolve_lease_role_from_projection(task_id):
+    """--role 省略时，从 daemon 的 task.next_action 投影取权威 lease_role。
+
+    daemon 把治理角色（acting role）与受保护写的 lease 作用域（lease role）
+    分开投影（`authorization.lease_role`）：adjudicator→reviewer、
+    executor→implementer、reviewer/planner→自身。CLI 的历史默认值
+    `implementer` 对 reviewer/adjudicator 是错的（apply/close 会得
+    E_LEASE_NOT_FOUND）。省略 --role 时改用投影值，让每个角色都拿到正确的
+    lease 作用域；显式传 --role 仍优先于投影（人工覆盖权）。
+
+    fail-closed：daemon 不可用或投影没有可解析的 lease_role 时返回 None，
+    由调用方决定降级策略（acquire/renew/release 各自回退到旧行为）。
+    """
+    try:
+        from callwarden.server.daemon_client import (
+            DaemonRemoteError,
+            route_task_read,
+        )
+    except Exception:
+        return None
+    try:
+        result = route_task_read(
+            "task.next_action", {"task_id": task_id},
+            lambda: (_ for _ in ()).throw(RuntimeError("no local evaluator")))
+    except (DaemonRemoteError, RuntimeError, Exception):
+        # daemon 不可用 / 任务不存在 / local 模式无 evaluator：不猜角色
+        return None
+    if not isinstance(result, dict):
+        return None
+    auth = result.get("authorization")
+    if not isinstance(auth, dict):
+        return None
+    role = auth.get("lease_role")
+    if isinstance(role, str) and role.strip():
+        return role.strip()
+    return None
+
 def _collect_lease_identity(opts):
     """收集 Lease 命令的 holder Identity（agent_id/session_id/model_id 必填；
     agent_instance_id/role 可选，由调用方按需并入）
@@ -16015,8 +16053,10 @@ def _handle_lease(args, db):
         help=t("cli_lease_acquire_desc",
                default="Acquire a lease (returns raw token once)"))
     acquire_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
-    acquire_p.add_argument("--role", default="implementer",
-                           help=t("cli_lease_arg_role", default="Role"))
+    acquire_p.add_argument("--role", default=None,
+                           help=t("cli_lease_arg_role",
+                                  default="Lease 作用域角色（省略时取 daemon 投影的"
+                                          " authorization.lease_role；adjudicator→reviewer）"))
     acquire_p.add_argument("--agent-id", default="", metavar="ID",
                            help=t("cli_task_arg_agent_id", default="Agent ID"))
     acquire_p.add_argument("--session-id", default="", metavar="ID",
@@ -16037,8 +16077,10 @@ def _handle_lease(args, db):
         help=t("cli_lease_renew_desc",
                default="Renew an active lease (idempotent, counter unchanged)"))
     renew_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
-    renew_p.add_argument("--role", default="implementer",
-                         help=t("cli_lease_arg_role", default="Role"))
+    renew_p.add_argument("--role", default=None,
+                         help=t("cli_lease_arg_role",
+                                default="Lease 作用域角色（省略时取 daemon 投影的"
+                                        " authorization.lease_role；adjudicator→reviewer）"))
     renew_p.add_argument("--token", default="", required=True,
                          help=t("cli_lease_arg_token", default="Lease raw token"))
     renew_p.add_argument("--agent-id", default="", metavar="ID",
@@ -16060,8 +16102,10 @@ def _handle_lease(args, db):
         help=t("cli_lease_release_desc",
                default="Release an active lease (idempotent)"))
     release_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
-    release_p.add_argument("--role", default="implementer",
-                           help=t("cli_lease_arg_role", default="Role"))
+    release_p.add_argument("--role", default=None,
+                           help=t("cli_lease_arg_role",
+                                  default="Lease 作用域角色（省略时取 daemon 投影的"
+                                          " authorization.lease_role；adjudicator→reviewer）"))
     release_p.add_argument("--token", default="", required=True,
                            help=t("cli_lease_arg_token", default="Lease raw token"))
     release_p.add_argument("--agent-id", default="", metavar="ID",
@@ -16130,6 +16174,13 @@ def _handle_lease(args, db):
     if ireason is not None:
         _lease_reason_output(ireason, use_json)
         return True
+
+    # --role 省略时取 daemon 投影的权威 lease_role（adjudicator→reviewer、
+    # executor→implementer）；显式 --role 优先。daemon 不可用时回退到历史
+    # 默认 implementer，保持既有行为不 break。
+    if opts.action in ("acquire", "renew", "release") and not opts.role:
+        _projected = _resolve_lease_role_from_projection(opts.task_id)
+        opts.role = _projected or "implementer"
 
     if opts.action == "acquire":
         # 治理前置门禁（与 daemon prompt 权威一致）：governance_blocked 的卡
