@@ -1,0 +1,205 @@
+{
+  "task_id": "T-1791627786186-a562f188",
+  "title": "TP-04 GAP-15语义差异与对齐设计",
+  "description": "Approved offline plan: docs/testing/TASK_BREAKDOWN.md; document key TP-04 (not an identity).\nBaseline manifest: docs/testing/registration/source_baseline.json.\nGAP-15语义差异与对齐设计\n\n单一owner：governance-contract。四步：①比较现行AGENTS/protocol/amendment与source/static tests；②定义已声明capability/profile的目标语义；③形成source/protocol逐字段差异与最小责任路径；④冻结正常/重放/冲突/计划缺陷路由验收oracle。\n\nallowed逐文件（所有basename均以 `docs/testing/planning/governance/` 为根）：`ALIGNMENT.md`、`differences.json`、`acceptance_contract.json`、`validate_contract.py`。source仅只读，不把静态测试写成运行证明。设计裁定由项目现行权威审批，Planner不冒充Adjudicator；审批事件来源在未来合同绑定。\n\n验收：`C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --self-check`、`--verify-contract`，独立核验returned/reviewer_blocked的source verdict/step/finding/provenance、assignment/projection、幂等和错误码契约。缺权威批准、实现/协议不一致未登记、预设bridge缺失/已通过、编造capability均拒绝。\n\n成功：得到明确批准的语义与差异责任，而不是要求用户手工改库。对齐完成门禁覆盖AGENTS、protocol、amendment、实际candidate能力与实现：批准源码语义时TP-05同步所有现行权威文本；批准协议语义或两者需改时，必要产品修复按P-FIX加入TP-09/11G前置。协议变化交TP-05；生产修复由Planner另冻daemon/client独立任务及回归合同，所有适用对齐责任未闭合不得冻结下游合同或宣称运行通过。\n\n## 2. 状态与共享合同\n\n所有卡均为DRAFT。TP-01/02/03/04是首批候选合同；路径可审计但实际profile、corpus、命令和证据版本尚待它们产出，故不称execution_ready。下游卡为条件合同，依赖完成后Planner补齐精确case/nodeid/命令/路径再冻结，不授权Executor自行扩大scope。\n\n共同excluded：所有未列allowed的源码编辑路径；生产业务库/manifest/lease/CAS；生产源码（TP-05只含明确治理文档）；archive、备份、其他Agent dirty文件。各任务都可只读源码。以下新路径尚不存在，表示拟建产物，不是现有实现。每卡只编辑自己的allowed源码/文档，不修改别卡、本文或现有五份核心方案；需要同步核心方案由Planner另作文档修订。\n\n源码编辑白名单与运行写面分别冻结。每个执行卡另有唯一run临时根：正式合同指定其绝对路径、批准父目录、owner标记及run_id，解析后必须在批准的临时父目录内，且不与生产/其他run/源仓路径相交。仅在此根内允许该卡运行生成venv、隔离源码副本、target/build/cache、corpus副本、DB/CAS/manifest/socket/报告；各子目录用途写入合同。守护进程cwd及HOME/USERPROFILE/data/toolchain/cache全部指向该run授权根，不能借默认路径写共享源仓或全局缓存。cleanup只清理有本run归属证据且仍位于批准父目录内的路径。TP-06输出只复制必要hash绑定候选到自己的证据目录，消费方从只读候选复制到自己的run根。\n\n共同正向：声明的expected obligation集合逐项通过且有独立oracle。共同负向：缺前置/空套件/清单缺漏/UNKNOWN/非法副作用/越界连接/证据陈旧一律阻断；严格负例不等于正常功能通过。无daemon、artifact或fixture不能skip必需suite。\n\n共同证据：`deliverables/testing/<TP编号>/<run_id>/`（仅对应卡可写），含输入/输出hash、revision与dirty归属、candidate/profile/corpus、case/nodeid、argv或MCP请求响应、rc、前后状态/oracle、日志、耗时与cleanup；脱敏。此目录只用于未来证据，不在本轮创建。任务验收冻结其证据manifest，后续不覆盖历史run。\n\n共同回滚：只撤回该卡已归属的commit/白名单文件；不能reset共享工作树、删旧证据、修改生产数据。运行停止只清理已证明属于本run的进程和临时根，强杀/清理失败保留证据并阻断。代码基线/候选hash变化必须重新判断证据有效性。\n\n共同Handoff：Executor→独立Reviewer→独立Adjudicator，真实task_id及身份从daemon取得；本稿不填写占位身份。正式PASS不等于已apply/close。Planner不得实施产品修复或冒充正式verdict。\n\n\nCreation only: executor/reviewer/adjudicator are UNASSIGNED. No agent/session/model is fabricated. Only local static planning scripts may be executed. No product tests/build/network/production source/database writes. Use daemon-compiled task prompt before any later claim. Reviewer/Adjudicator must be independent.\nRuntime scratch: per-task run roots under C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-04/; validate owner, run_id, approved parent before cleanup; never clean another task or production.\nEvidence: deliverables/testing/TP-04/<run_id>/; only this task evidence outputs allowed.\nAcceptance commands (not run now): [\"C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --self-check\", \"C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --verify-contract\"]\nRollback: revert only owned whitelist changes; preserve historic evidence; no shared reset.",
+  "parent_id": "",
+  "status": "open",
+  "lifecycle_status": "open",
+  "workflow_status": "queued",
+  "review": {
+    "state": "not_in_review"
+  },
+  "blocking_reasons": [],
+  "governance": {
+    "task_id": "T-1791627786186-a562f188",
+    "lifecycle_status": "open",
+    "workflow_status": "queued",
+    "current_role": "executor",
+    "next_role": "executor",
+    "next_action": "claim_current_step",
+    "review": {
+      "state": "not_in_review"
+    },
+    "decision": "READY",
+    "action": "CLAIM",
+    "required_role": "executor",
+    "step_id": "S-1791627786188-a5784358",
+    "task_contract": {
+      "id": "TC-T-1791627786186-a562f188",
+      "revision": 1,
+      "hash": "sha256:8a783888443152221f9541139f46f5d3c655e2a4dd232473fd53d2467481ee10"
+    },
+    "role_contract": {
+      "id": "rcl-T-1791627786186-a562f188-executor",
+      "revision_id": "rcr-T-1791627786186-a562f188-executor-r1",
+      "revision": 1,
+      "hash": "sha256:41982a3ddd4878ce11de554275b7f1070c38488b65111a48733b2b08d817c384",
+      "canonicalization_version": "role-contract-c14n/v1",
+      "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+      "skill_id": "cw-executor-senior-engineer",
+      "skill_version": "",
+      "prompt_template_id": "",
+      "handoff_to": "reviewer"
+    },
+    "authorization": {
+      "acting_role": "executor",
+      "lease_role": "implementer",
+      "lease_required": true,
+      "fencing_required": true,
+      "different_agent_instance_from": [],
+      "different_session_from": []
+    },
+    "allowed_paths": [
+      "deliverables/testing/TP-04/",
+      "docs/testing/planning/governance/ALIGNMENT.md",
+      "docs/testing/planning/governance/acceptance_contract.json",
+      "docs/testing/planning/governance/differences.json",
+      "docs/testing/planning/governance/validate_contract.py"
+    ],
+    "forbidden_paths": [
+      "direct SQLite writes",
+      "fabricated task, identity, lease, capability",
+      "out-of-scope changes",
+      "product tests or builds or internet in this static planning task",
+      "production source edits",
+      "task.apply",
+      "task.close"
+    ],
+    "eligibility": {
+      "verdict": "not_required_for_claim",
+      "evidence_gate": "not_evaluated",
+      "snapshot": "not_evaluated",
+      "mutation_recheck_required": true
+    },
+    "blocking_conditions": [],
+    "blocking_reasons": [],
+    "revision_hint": null,
+    "routing": {
+      "origin_kind": "system_evaluator",
+      "next_role": "executor",
+      "next_action": "claim_current_step",
+      "reason": [
+        "当前步骤 S-1791627786188-a5784358 可领取（唯一 verified Role Contract binding）"
+      ]
+    },
+    "next_session": {
+      "role": "executor",
+      "task_id": "T-1791627786186-a562f188",
+      "step_id": "S-1791627786188-a5784358",
+      "must_be_new_session": false
+    },
+    "source": {
+      "task_status": "open",
+      "task_contract_hash": "sha256:8a783888443152221f9541139f46f5d3c655e2a4dd232473fd53d2467481ee10",
+      "role_contract_hash": "sha256:41982a3ddd4878ce11de554275b7f1070c38488b65111a48733b2b08d817c384",
+      "evaluated_at": "1791627799.150383"
+    },
+    "inbound_handoff": {
+      "diagnosis": "no_handoff"
+    },
+    "work_order": {
+      "objective": "edit",
+      "task_title": "TP-04 GAP-15语义差异与对齐设计",
+      "allowed_paths": [
+        "deliverables/testing/TP-04/",
+        "docs/testing/planning/governance/ALIGNMENT.md",
+        "docs/testing/planning/governance/acceptance_contract.json",
+        "docs/testing/planning/governance/differences.json",
+        "docs/testing/planning/governance/validate_contract.py"
+      ],
+      "excluded_paths": [
+        "direct SQLite writes",
+        "fabricated task, identity, lease, capability",
+        "out-of-scope changes",
+        "product tests or builds or internet in this static planning task",
+        "production source edits",
+        "task.apply",
+        "task.close"
+      ],
+      "acceptance_checks": [
+        "Exact approved TP-04 card and common contract",
+        "No UNKNOWN, missing evidence or scope violations",
+        "No static planning PASS represented as product PASS"
+      ],
+      "required_evidence": [
+        "owned diff and independent review record",
+        "positive and negative validator outputs, rc and hashes",
+        "source_baseline.json and task-scoped run manifest"
+      ],
+      "commands": [
+        "C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --self-check",
+        "C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --verify-contract"
+      ],
+      "prior_attempts": [],
+      "prior_handoffs": []
+    },
+    "identity_policy": "legacy_identity_v1",
+    "identity_policy_status": "declared"
+  },
+  "steps": [
+    {
+      "step_id": "S-1791627786188-a5784358",
+      "step_index": 0,
+      "action": "edit",
+      "target_file": "docs/testing/planning/governance/ALIGNMENT.md+docs/testing/planning/governance/differences.json",
+      "target_symbol": "",
+      "check_items": "[\"Compare current authority documents and implementation\",\"Stay in exact task whitelist; no product execution or authority bypass\",\"Final acceptance uses approved card and negative oracle; unknown results block\"]",
+      "status": "pending",
+      "result": "",
+      "created_at": 1791627786.1868477,
+      "completed_at": null
+    },
+    {
+      "step_id": "S-1791627786188-a5789114",
+      "step_index": 1,
+      "action": "edit",
+      "target_file": "docs/testing/planning/governance/ALIGNMENT.md",
+      "target_symbol": "",
+      "check_items": "[\"Define target semantics and explicit approval boundary\",\"Stay in exact task whitelist; no product execution or authority bypass\",\"Final acceptance uses approved card and negative oracle; unknown results block\"]",
+      "status": "pending",
+      "result": "",
+      "created_at": 1791627786.1868477,
+      "completed_at": null
+    },
+    {
+      "step_id": "S-1791627786188-a578c954",
+      "step_index": 2,
+      "action": "edit",
+      "target_file": "docs/testing/planning/governance/differences.json+docs/testing/planning/governance/acceptance_contract.json",
+      "target_symbol": "",
+      "check_items": "[\"Assign protocol/product alignment responsibilities and blocked successors\",\"Stay in exact task whitelist; no product execution or authority bypass\",\"Final acceptance uses approved card and negative oracle; unknown results block\"]",
+      "status": "pending",
+      "result": "",
+      "created_at": 1791627786.1868477,
+      "completed_at": null
+    },
+    {
+      "step_id": "S-1791627786188-a578e5d8",
+      "step_index": 3,
+      "action": "edit",
+      "target_file": "docs/testing/planning/governance/acceptance_contract.json+docs/testing/planning/governance/validate_contract.py",
+      "target_symbol": "",
+      "check_items": "[\"Validate alignment acceptance oracle and fail-closed cases, archive evidence\",\"Stay in exact task whitelist; no product execution or authority bypass\",\"Final acceptance uses approved card and negative oracle; unknown results block\"]",
+      "status": "pending",
+      "result": "",
+      "created_at": 1791627786.1868477,
+      "completed_at": null
+    }
+  ],
+  "progress": {
+    "total": 4,
+    "done": 0,
+    "progress": 0,
+    "ratio": 0,
+    "percent": 0
+  },
+  "creator": "S-1-5-21-1583625257-826939952-3615027596-1001",
+  "claimed_by": "",
+  "created_at": 1791627786.1868477,
+  "updated_at": 1791627786.1868477,
+  "workspace_id": 1,
+  "workspace_binding_id": "tb-T-1791627786186-a562f188-4baea3ff12c2ea5c",
+  "workspace_capture_id": "wc-4baea3ff12c2ea5c-2775679300",
+  "workspace_instance_id": "4baea3ff12c2ea5c",
+  "assignment_id": "A-6788f097c9cb084918272e69"
+}

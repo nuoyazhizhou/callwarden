@@ -1,0 +1,167 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://callwarden.local/docs/testing/planning/inventory/run_report.schema.json",
+  "title": "CallWarden 测试运行报告（run report）",
+  "description": "TP-01 Step 1：运行报告的权威结构。必须能表示 setup/call/teardown 三阶段、collection 统计、UNKNOWN、NOT_TRIGGERED 与各层结果。静态规划 PASS 不得写成产品 PASS。语义级校验（分母未冻结、未知状态放行、空套件）由 validate.py 实施，见 x-callwarden-semantic。",
+  "type": "object",
+  "required": [
+    "run_id",
+    "run_manifest",
+    "phases",
+    "collection",
+    "results",
+    "case_results",
+    "denominators",
+    "gate_status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "本次运行的稳定 ID（与证据目录 deliverables/testing/TP-01/<run_id>/ 对应）。"
+    },
+    "run_manifest": {
+      "type": "object",
+      "description": "运行清单：revision/dirty/依赖版本/产物 hash/corpus/profile/capability/selector 全集/日志/耗时/cleanup。相关变更发生则旧证据失效。",
+      "required": ["revision", "dirty", "dependency_versions", "artifact_hash", "selectors", "daemon_logs", "duration_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "revision": {"type": "string", "description": "被测仓库 40-hex commit。"},
+        "dirty_summary": {"type": "string", "description": "dirty 归属摘要（哪些文件 dirty、归属哪个 run）。"},
+        "dirty": {"type": "boolean"},
+        "dependency_versions": {"type": "object", "description": "依赖版本（Python/Rust/工具链），用于复算判定。"},
+        "artifact_hash": {"type": "string", "description": "候选产物 hash（同候选 release 干净安装）。"},
+        "corpus": {"type": "array", "items": {"type": "string"}, "description": "corpus manifest 引用列表。"},
+        "profile": {"type": "object", "description": "发布配置引用，含 frozen 标志与冻结证据。", "properties": {"profile_id": {"type": "string"}, "frozen": {"type": "boolean"}}, "required": ["profile_id", "frozen"]},
+        "capability": {"type": "array", "items": {"type": "string"}, "description": "本次启用 capability（由隔离实例查询，不从文档推算）。"},
+        "selectors": {"type": "array", "items": {"type": "string"}, "description": "完整 selector 集合（本次实际运行的全集）。"},
+        "daemon_logs": {"type": "array", "items": {"type": "string"}, "description": "daemon 日志路径（脱敏后）。"},
+        "duration_seconds": {"type": "number"}
+      }
+    },
+    "phases": {
+      "type": "object",
+      "description": "三阶段执行状态。每个阶段独立记录状态、耗时与日志；阶段失败不得被其他阶段成功抵消。",
+      "required": ["setup", "call", "teardown"],
+      "additionalProperties": false,
+      "properties": {
+        "setup": {"$ref": "#/$defs/phase"},
+        "call": {"$ref": "#/$defs/phase"},
+        "teardown": {"$ref": "#/$defs/phase"}
+      }
+    },
+    "collection": {
+      "type": "object",
+      "description": "collection 统计。collection 模块 skip 另列且缺必需 suite 阻断；不把 collection skip 计入运行 skip 率。参数化按 nodeid 计数；模块 importorskip 不虚构未收集数量。",
+      "required": ["collected", "collection_errors", "module_skips", "truncated"],
+      "additionalProperties": false,
+      "properties": {
+        "collected": {"type": "integer", "description": "实际收集到的 nodeid/用例数（参数化按 nodeid）。"},
+        "collection_errors": {"type": "array", "items": {"type": "object"}, "description": "collection 错误（模块导入失败等）；非空则阻断。"},
+        "module_skips": {"type": "array", "items": {"type": "object"}, "description": "collection 期模块级 skip（importorskip 触发等），单独列出，不得与运行 skip 混算。", "properties": {"module": {"type": "string"}, "reason": {"type": "string"}, "affected_nodeid_count": {"type": "integer"}}},
+        "truncated": {"type": "boolean", "description": "是否被 maxfail/中断截断；true 阻断。"},
+        "junit": {"type": "object", "description": "JUnit 聚合信息；testsuites 子节点必须递归聚合，漏聚合拒绝。", "properties": {"aggregated": {"type": "boolean"}, "suites": {"type": "integer"}}}
+      }
+    },
+    "results": {
+      "type": "object",
+      "description": "各层结果汇总。必需 suite 的 FAIL/ERROR/UNKNOWN=0；必需适用 case 的 SKIP/XFAIL=0；未知状态不放行。",
+      "required": ["passed", "failed", "error", "setup_skip", "call_skip", "teardown_skip", "skipped", "xfail", "xpass", "unknown", "not_applicable", "missing", "not_triggered"],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {"type": "integer"},
+        "failed": {"type": "integer"},
+        "error": {"type": "integer"},
+        "setup_skip": {"type": "integer", "description": "setup 阶段 skip（单独计）。"},
+        "call_skip": {"type": "integer", "description": "call 阶段 skip（单独计）。"},
+        "teardown_skip": {"type": "integer", "description": "teardown 阶段 skip（单独计）。"},
+        "skipped": {"type": "integer", "description": "运行期 skip 总数（不含 collection 模块 skip）。"},
+        "xfail": {"type": "integer"},
+        "xpass": {"type": "integer"},
+        "unknown": {"type": "integer", "description": "UNKNOWN 计数；非零阻断（未知结果不放行）。"},
+        "not_applicable": {"type": "integer", "description": "不适用计数；每项必须附冻结依据。"},
+        "missing": {"type": "integer", "description": "缺报告/缺 selector/空套件计数；非零阻断。"},
+        "not_triggered": {"type": "integer", "description": "NOT_TRIGGERED 计数（如 skip 站点未触发）；每项须登记审查依据，不伪造运行 reason。"}
+      }
+    },
+    "case_results": {
+      "type": "array",
+      "description": "逐 case 结果。连接 case_id/参数义务/selector/证据；空数组仅在 collection 为空时允许，否则拒绝。",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "selector", "status", "duration_seconds", "evidence_ref"],
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {"type": "string", "description": "对应 case_contract 的 case_id；未知 case_id 拒绝。"},
+          "selector": {"type": "string", "description": "实际运行的 selector（必须在 run_manifest.selectors 内）。"},
+          "status": {"type": "string", "enum": ["PASS", "FAIL", "ERROR", "UNKNOWN", "SKIPPED", "XFAIL", "XPASS", "NOT_APPLICABLE", "NOT_TRIGGERED", "MISSING"], "description": "UNKNOWN 阻断交付；NOT_APPLICABLE 需冻结依据；NOT_TRIGGERED 需审查依据。"},
+          "rc": {"type": "integer", "description": "退出码（CLI case）。"},
+          "stdout": {"type": "string", "description": "stdout 摘要（协议级，脱敏）。"},
+          "stderr": {"type": "string", "description": "stderr 摘要。"},
+          "mcp_request": {"type": "object", "description": "MCP wire 请求快照（tools/call）。"},
+          "mcp_response": {"type": "object", "description": "MCP wire 响应快照（isError/content/structuredContent）。"},
+          "oracle_result": {"type": "string", "description": "独立 oracle 比对结论（通过/失败+差异）。"},
+          "before_state": {"type": "string", "description": "前置状态快照引用（写 case 必填）。"},
+          "after_state": {"type": "string", "description": "后置状态快照引用（写 case 必填）。"},
+          "duration_seconds": {"type": "number"},
+          "evidence_ref": {"type": "string", "description": "证据路径（同 run_id 下）。"}
+        }
+      }
+    },
+    "denominators": {
+      "type": "object",
+      "description": "覆盖率分母。平台分母事前冻结；零 unexpected skip 硬门禁不能被总 skip<=5% 抵消。入口/参数/场景覆盖率分别报告，不能以函数数或调用次数替代。",
+      "required": ["applicable_collected", "entry_denominator", "param_denominator", "scenario_denominator", "platform_frozen"],
+      "additionalProperties": false,
+      "properties": {
+        "applicable_collected": {"type": "integer", "description": "同次适用 collected nodeid（运行 skip 率 S/N 的 N）。"},
+        "entry_denominator": {"type": "integer", "description": "发布配置入口数（有完整且通过的适用语义合同的入口数为分子）。"},
+        "param_denominator": {"type": "integer", "description": "全部适用参数义务数。"},
+        "scenario_denominator": {"type": "integer", "description": "冻结必需场景数。"},
+        "platform_frozen": {"type": "boolean", "description": "平台分母是否事前冻结；false 时 skip 率不可作为门禁依据。"},
+        "unfrozen_reason": {"type": "string", "description": "platform_frozen=false 时必填原因。"}
+      }
+    },
+    "gate_status": {
+      "type": "object",
+      "description": "门禁判定。只记录判定输入与结论，不替代交付门禁的独立复核。",
+      "required": ["blockers", "ready_for_review"],
+      "additionalProperties": false,
+      "properties": {
+        "blockers": {"type": "array", "items": {"type": "object"}, "description": "阻断项（必需 suite FAIL/ERROR/UNKNOWN、必需 case SKIP/XFAIL、collection error、空套件、缺报告、缺 selector、unknown_result）。", "properties": {"code": {"type": "string"}, "detail": {"type": "string"}}},
+        "skip_rate": {"type": "object", "description": "运行 skip 率（仅辅助）。S/N 来自同次适用 collected nodeid；跨 suite 去重。", "properties": {"skipped": {"type": "integer"}, "denominator": {"type": "integer"}, "unexpected_skip": {"type": "integer", "description": "零 unexpected skip 硬门禁；不为总比例豁免。"}}},
+        "static_planning_only": {"type": "boolean", "description": "true=本报告只含静态规划产物，不含产品运行；静态 PASS 不得写成产品 PASS。"},
+        "ready_for_review": {"type": "boolean", "description": "是否可移交独立 reviewer（blockers 为空且证据完整新鲜）。"}
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "description": "单阶段（setup/call/teardown）执行记录。",
+      "required": ["status", "duration_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "string", "enum": ["ok", "failed", "skipped", "error", "unknown"], "description": "unknown 阻断；teardown failed 保留证据并阻断。"},
+        "duration_seconds": {"type": "number"},
+        "log_refs": {"type": "array", "items": {"type": "string"}},
+        "failure_detail": {"type": "string", "description": "失败/超时现场摘要。"}
+      }
+    }
+  },
+  "x-callwarden-semantic": {
+    "description": "JSON Schema 无法表达的语义校验，由 validate.py --report 实施（若提供报告）：",
+    "rules": [
+      "results.unknown>0 或 case_results 含 UNKNOWN → 阻断",
+      "collection.collection_errors 非空 或 truncated=true → 阻断",
+      "denominators.platform_frozen=false 时 skip_rate 不得作为门禁依据",
+      "case_results 中 status=NOT_APPLICABLE 必须附冻结依据，否则非法 N/A 拒绝",
+      "case_results 中 status=NOT_TRIGGERED 必须附审查依据（不伪造运行 reason）",
+      "case_results[].case_id 必须存在于合同集合（未知 case 拒绝）",
+      "case_results[].selector 必须在 run_manifest.selectors 内（孤立 selector 拒绝）",
+      "collection.collected=0 且 case_results 非空 → 空套件拒绝",
+      "gate_status.static_planning_only=true 时 results.passed 不得标称为产品 PASS",
+      "必需 suite 的 FAIL/ERROR/UNKNOWN=0，必需适用 case SKIP/XFAIL=0"
+    ]
+  }
+}

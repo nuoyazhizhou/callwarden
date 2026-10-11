@@ -1,0 +1,218 @@
+{
+ "schema_version": "assets-oracle-catalog/v1",
+ "task_id": "T-1791627784101-291afe54",
+ "step_id": "S-1791627784103-2938b55c",
+ "owner": "acceptance-assets",
+ "generated_by": "TP-02 Step 1 静态规划；源码实读，未运行产品、未构建、未联网",
+ "oracle_principles": [
+  "golden 来自人工核验样本和冻结契约，不从被测 search/stats 结果复制预期",
+  "API 返回 ID/hash 可定位实体，但业务语义仍由独立 oracle 验",
+  "差分比较不能用同一个 daemon 的同一个错误来证明正确",
+  "真实符号/调用/引用 oracle 必须独立人工可复核",
+  "本轮 golden 由源码实读得出；人工复核状态显式标 pending_human_review，不冒充已复核"
+ ],
+ "source": "docs/testing/TESTING_PLAN.md §3 用例合同与oracle",
+ "corpus_refs": [
+  "CORPUS-R0-calc-seed"
+ ],
+ "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+ "entries": [
+  {
+   "oracle_id": "OR-R0-PY-CALC-SYMBOL-SET",
+   "corpus_ref": "CORPUS-R0-calc-seed",
+   "language": "python",
+   "kind": "symbol_set",
+   "independent": true,
+   "human_verifiable": true,
+   "status": "golden_from_source_read_pending_human_review",
+   "subject_path": "tests/convergence/seed_sample/calc.py",
+   "subject_sha256": "142f57c0068d42e3d26890c8ecb7d31331482aaf17f37280c0c1448eecf53d59",
+   "assertions": [
+    {
+     "kind": "module_function",
+     "value": "add"
+    },
+    {
+     "kind": "module_function",
+     "value": "multiply"
+    },
+    {
+     "kind": "module_function",
+     "value": "compute"
+    },
+    {
+     "kind": "class",
+     "value": "Calculator"
+    },
+    {
+     "kind": "method",
+     "value": "Calculator.__init__"
+    },
+    {
+     "kind": "method",
+     "value": "Calculator.apply"
+    },
+    {
+     "kind": "method",
+     "value": "Calculator.scale"
+    }
+   ],
+   "corrections_frozen": [
+    {
+     "historical_error": "calc.py 恰两函数",
+     "correction": "实有 add/multiply/compute 三个模块级函数，另有 Calculator 类含三个方法",
+     "why_it_matters": "以函数个数做断言会与真实解析契约冲突"
+    }
+   ]
+  },
+  {
+   "oracle_id": "OR-R0-PY-CALC-CALL-EDGES",
+   "corpus_ref": "CORPUS-R0-calc-seed",
+   "language": "python",
+   "kind": "call_edges",
+   "independent": true,
+   "human_verifiable": true,
+   "status": "golden_from_source_read_pending_human_review",
+   "subject_path": "tests/convergence/seed_sample/calc.py",
+   "subject_sha256": "142f57c0068d42e3d26890c8ecb7d31331482aaf17f37280c0c1448eecf53d59",
+   "assertions": [
+    {
+     "caller": "multiply",
+     "callee": "add",
+     "evidence": "循环内 result = add(result, a)"
+    },
+    {
+     "caller": "Calculator.apply",
+     "callee": "add",
+     "evidence": "return add(self.base, x)"
+    },
+    {
+     "caller": "Calculator.scale",
+     "callee": "multiply",
+     "evidence": "return multiply(self.apply(x), factor)"
+    },
+    {
+     "caller": "Calculator.scale",
+     "callee": "Calculator.apply",
+     "evidence": "multiply(self.apply(x), factor)"
+    },
+    {
+     "caller": "compute",
+     "callee": "Calculator.scale",
+     "evidence": "total = add(total, calc.scale(v, 2))"
+    },
+    {
+     "caller": "compute",
+     "callee": "add",
+     "evidence": "total = add(total, ...)"
+    }
+   ],
+   "corrections_frozen": [
+    {
+     "historical_error": "multiply 无调用者",
+     "correction": "Calculator.scale 调用 multiply",
+     "why_it_matters": "以‘无调用者’做断言会掩盖真实调用边，属历史错误必须固化"
+    }
+   ],
+   "direction_note": "调用方向 caller→callee 必须与解析契约一致，不得反向或对称化"
+  },
+  {
+   "oracle_id": "OR-R0-TS-SERVICE-SYMBOL-SET",
+   "corpus_ref": "CORPUS-R0-calc-seed",
+   "language": "typescript",
+   "kind": "symbol_set",
+   "independent": true,
+   "human_verifiable": true,
+   "status": "golden_from_source_read_pending_human_review",
+   "subject_path": "tests/convergence/seed_sample/service.ts",
+   "subject_sha256": "13b1d48248d385242823f806b084e755bbecfcde1b4fdfced3aeca82f0d693c6",
+   "assertions": [
+    {
+     "kind": "interface",
+     "value": "Repo"
+    },
+    {
+     "kind": "interface_method",
+     "value": "Repo.find"
+    },
+    {
+     "kind": "class",
+     "value": "MemoryRepo"
+    },
+    {
+     "kind": "class_method",
+     "value": "MemoryRepo.find"
+    },
+    {
+     "kind": "class_method",
+     "value": "MemoryRepo.save"
+    },
+    {
+     "kind": "class",
+     "value": "Service"
+    },
+    {
+     "kind": "class_method",
+     "value": "Service.lookup"
+    },
+    {
+     "kind": "function",
+     "value": "bootstrap"
+    }
+   ],
+   "notes": [
+    "MemoryRepo implements Repo，用于验证接口实现关系是否被解析",
+    "覆盖第二种语言，验证多语言解析（种子样本自述）"
+   ]
+  },
+  {
+   "oracle_id": "OR-R0-TS-SERVICE-CALL-EDGES",
+   "corpus_ref": "CORPUS-R0-calc-seed",
+   "language": "typescript",
+   "kind": "call_edges",
+   "independent": true,
+   "human_verifiable": true,
+   "status": "golden_from_source_read_pending_human_review",
+   "subject_path": "tests/convergence/seed_sample/service.ts",
+   "subject_sha256": "13b1d48248d385242823f806b084e755bbecfcde1b4fdfced3aeca82f0d693c6",
+   "assertions": [
+    {
+     "caller": "Service.lookup",
+     "callee": "Repo.find",
+     "evidence": "const found = this.repo.find(id)",
+     "note": "经接口 Repo 调用；实现为 MemoryRepo.find，接口与实现的归属须在 oracle 内明确"
+    },
+    {
+     "caller": "bootstrap",
+     "callee": "MemoryRepo.save",
+     "evidence": "repo.save(\"k1\", \"v1\")"
+    },
+    {
+     "caller": "bootstrap",
+     "callee": "Service.lookup",
+     "evidence": "return svc.lookup(\"k1\")"
+    }
+   ],
+   "notes": [
+    "this.store.get / this.store.set 为内置容器操作，不作为本仓符号记录"
+   ]
+  }
+ ],
+ "entry_count": 4,
+ "human_review": {
+  "state": "pending",
+  "rule": "每条 golden 必须由人独立复核后才能作为运行期 oracle；本轮仅完成源码实读，不宣称人工已复核",
+  "how_to_verify": "打开 subject_path 指定文件，逐条核对 assertions 与 corrections_frozen"
+ },
+ "forbidden": [
+  "从被测 search/stats 的输出复制预期值作为 golden",
+  "用同一 daemon 的同一错误做差分自证",
+  "以符号个数、函数个数等易错计数字充当语义断言而不固化历史错误",
+  "在未复核状态下把 golden 标为已验证"
+ ],
+ "not_covered": [
+  "R1（CallWarden 自身）的预选符号与历史独立核验：需执行卡产出，本轮未做",
+  "R2/R3 的 oracle：名单未冻结，无法产生",
+  "改删/历史/恢复类断言的 golden：需结合具体入口义务，由下游执行卡承接"
+ ]
+}

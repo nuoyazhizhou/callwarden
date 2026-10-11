@@ -1,0 +1,345 @@
+{
+ "schema_version": "assets-profiles/v1",
+ "task_id": "T-1791627784101-291afe54",
+ "step_id": "S-1791627784103-29385cb0",
+ "owner": "acceptance-assets",
+ "generated_by": "TP-02 Step 0 静态盘点；未运行产品、未构建、未联网、未写入源仓数据",
+ "generation_rule": "候选值一律来自仓库内 CI 证据与已审批文档；未实测字段标 UNVERIFIED，业务未决标 DECISION_REQUIRED",
+ "binding": {
+  "baseline_file": "docs/testing/registration/source_baseline.json",
+  "head_reference_recorded": "db952964ca49e07d77c033e886298a3e004542af",
+  "head_current": "db952964ca49e07d77c033e886298a3e004542af",
+  "head_match": true,
+  "source_revision_recorded": "dcd99c7f12e963e5032f168acdd74ddddd87ba34",
+  "working_tree_dirty": true,
+  "dirty_entries": 13
+ },
+ "profile_contract": {
+  "required_fields": [
+   "os",
+   "arch",
+   "python_version",
+   "python_abi",
+   "interpreter_path",
+   "rust_toolchain",
+   "rust_target",
+   "cargo_lock",
+   "c_compiler_linker",
+   "dependencies_sdk",
+   "extension_path_and_hash",
+   "binary_path_and_hash",
+   "source_revision",
+   "external_tools_rules_models",
+   "corpus_digests"
+  ],
+  "source": "docs/testing/BUILD_ENV.md §4 前置manifest与验收",
+  "rule": "profile 固定 OS/架构、Python/ABI、Rust toolchain/target、Cargo.lock、C编译器/链接器、依赖/SDK、扩展/binary 路径及 hash、source revision、外部工具/规则/模型、corpus 摘要"
+ },
+ "candidate_profiles": [
+  {
+   "profile_id": "P-CAND-linux-x86_64-py312",
+   "label": "linux-x86_64",
+   "os": "ubuntu-22.04",
+   "arch": "x86_64",
+   "libc": "gnu",
+   "python_version": "3.12",
+   "evidence": [
+    ".github/workflows/e2e-verify-linux-x86_64.yml :: job linux-x86_64-e2e :: runs-on ubuntu-22.04 :: python-version 3.12",
+    ".github/workflows/e2e-verify-linux-x86_64.yml :: job daemon-collab-e2e :: runs-on ubuntu-22.04 :: python-version 3.12",
+    ".github/workflows/e2e-verify-linux-x86_64.yml :: Set up Rust :: dtolnay/rust-toolchain@stable"
+   ],
+   "build_commands_seen": [
+    "python release/build.py --rust",
+    "cargo build --release --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon"
+   ],
+   "frozen": false,
+   "status": "candidate_from_ci",
+   "commitment": "UNDECIDED",
+   "commitment_note": "现有平台 workflow 是候选证据，不自动等于本次全部承诺 target",
+   "python_abi": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "interpreter_path": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "rust_toolchain": "stable（dtolnay/rust-toolchain@stable，未锁定具体版本）",
+   "rust_toolchain_locked": false,
+   "rust_target": "宿主默认 target（workflow 未显式指定）",
+   "cargo_lock": "rust_ext/Cargo.lock 存在，版本内容未在本轮逐项核验",
+   "c_compiler_linker": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "dependencies_sdk": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "extension_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "binary_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "external_tools": {
+    "rg": "静态文档生成器文件枚举的明确前置；本机 PATH 缺失，需运行前冻结版本与可执行路径",
+    "c_toolchain_for_grammar": "grammar 需要真实 C 工具链，未来实测可用性，不凭 PATH 推定",
+    "tokenslim": "BUILD_ENV 模板中出现；CI 是否部署 TokenSlim 及 native shell 须在 profile 明确"
+   },
+   "transport": [
+    "http",
+    "named_pipe",
+    "unix_socket"
+   ],
+   "transport_note": "来自 TESTING_PLAN §5；bridge 为专用安全适配，不单独作为发布 target"
+  },
+  {
+   "profile_id": "P-CAND-linux-aarch64-py312",
+   "label": "linux-aarch64",
+   "os": "ubuntu-24.04-arm",
+   "arch": "aarch64",
+   "libc": "gnu",
+   "python_version": "3.12",
+   "evidence": [
+    ".github/workflows/e2e-verify-linux-aarch64.yml :: job linux-aarch64-e2e :: runs-on ubuntu-24.04-arm :: python-version 3.12",
+    ".github/workflows/e2e-verify-linux-aarch64.yml :: ABI manifest（OS/arch/libc/parser ABI/grammar versions）"
+   ],
+   "build_commands_seen": [
+    "cargo build --release --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon"
+   ],
+   "companion_artifacts": [
+    {
+     "label": "linux-musl-static-build",
+     "os": "ubuntu-22.04",
+     "note": "同 workflow 内的 musl 静态构建 job；是否纳入本次承诺范围待业务决策",
+     "evidence": ".github/workflows/e2e-verify-linux-aarch64.yml :: job linux-musl-static-build :: runs-on ubuntu-22.04"
+    }
+   ],
+   "frozen": false,
+   "status": "candidate_from_ci",
+   "commitment": "UNDECIDED",
+   "commitment_note": "现有平台 workflow 是候选证据，不自动等于本次全部承诺 target",
+   "python_abi": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "interpreter_path": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "rust_toolchain": "stable（dtolnay/rust-toolchain@stable，未锁定具体版本）",
+   "rust_toolchain_locked": false,
+   "rust_target": "宿主默认 target（workflow 未显式指定）",
+   "cargo_lock": "rust_ext/Cargo.lock 存在，版本内容未在本轮逐项核验",
+   "c_compiler_linker": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "dependencies_sdk": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "extension_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "binary_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "external_tools": {
+    "rg": "静态文档生成器文件枚举的明确前置；本机 PATH 缺失，需运行前冻结版本与可执行路径",
+    "c_toolchain_for_grammar": "grammar 需要真实 C 工具链，未来实测可用性，不凭 PATH 推定",
+    "tokenslim": "BUILD_ENV 模板中出现；CI 是否部署 TokenSlim 及 native shell 须在 profile 明确"
+   },
+   "transport": [
+    "http",
+    "named_pipe",
+    "unix_socket"
+   ],
+   "transport_note": "来自 TESTING_PLAN §5；bridge 为专用安全适配，不单独作为发布 target"
+  },
+  {
+   "profile_id": "P-CAND-macos-arm64-py312",
+   "label": "macos-arm64",
+   "os": "macos-latest",
+   "arch": "aarch64",
+   "libc": "libSystem",
+   "python_version": "3.12",
+   "evidence": [
+    ".github/workflows/e2e-verify-macos-arm64.yml :: job macos-arm64-e2e :: runs-on macos-latest :: python-version 3.12",
+    ".github/workflows/e2e-verify-macos-arm64.yml :: job daemon-collab-e2e :: runs-on macos-latest :: python-version 3.12",
+    ".github/workflows/e2e-verify-macos-arm64.yml :: Set up Rust :: dtolnay/rust-toolchain@stable :: targets aarch64-apple-darwin"
+   ],
+   "build_commands_seen": [
+    "python release/build.py --rust"
+   ],
+   "rust_target": "aarch64-apple-darwin",
+   "frozen": false,
+   "status": "candidate_from_ci",
+   "commitment": "UNDECIDED",
+   "commitment_note": "现有平台 workflow 是候选证据，不自动等于本次全部承诺 target",
+   "python_abi": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "interpreter_path": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "rust_toolchain": "stable（dtolnay/rust-toolchain@stable，未锁定具体版本）",
+   "rust_toolchain_locked": false,
+   "cargo_lock": "rust_ext/Cargo.lock 存在，版本内容未在本轮逐项核验",
+   "c_compiler_linker": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "dependencies_sdk": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "extension_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "binary_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "external_tools": {
+    "rg": "静态文档生成器文件枚举的明确前置；本机 PATH 缺失，需运行前冻结版本与可执行路径",
+    "c_toolchain_for_grammar": "grammar 需要真实 C 工具链，未来实测可用性，不凭 PATH 推定",
+    "tokenslim": "BUILD_ENV 模板中出现；CI 是否部署 TokenSlim 及 native shell 须在 profile 明确"
+   },
+   "transport": [
+    "http",
+    "named_pipe",
+    "unix_socket"
+   ],
+   "transport_note": "来自 TESTING_PLAN §5；bridge 为专用安全适配，不单独作为发布 target"
+  },
+  {
+   "profile_id": "P-CAND-windows-amd64-py312",
+   "label": "windows-amd64",
+   "os": "windows-latest",
+   "arch": "x86_64",
+   "libc": "msvc-runtime",
+   "python_version": "3.12",
+   "evidence": [
+    ".github/workflows/e2e-verify-windows-amd64.yml :: job windows-amd64-e2e :: runs-on windows-latest :: python-version 3.12",
+    ".github/workflows/e2e-verify-windows-amd64.yml :: job daemon-collab-e2e :: runs-on windows-latest :: python-version 3.12",
+    ".github/workflows/e2e-verify-windows-amd64.yml :: Set up Rust :: dtolnay/rust-toolchain@stable"
+   ],
+   "build_commands_seen": [
+    "python release/build.py --rust"
+   ],
+   "frozen": false,
+   "status": "candidate_from_ci",
+   "commitment": "UNDECIDED",
+   "commitment_note": "现有平台 workflow 是候选证据，不自动等于本次全部承诺 target",
+   "python_abi": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "interpreter_path": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "rust_toolchain": "stable（dtolnay/rust-toolchain@stable，未锁定具体版本）",
+   "rust_toolchain_locked": false,
+   "rust_target": "宿主默认 target（workflow 未显式指定）",
+   "cargo_lock": "rust_ext/Cargo.lock 存在，版本内容未在本轮逐项核验",
+   "c_compiler_linker": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "dependencies_sdk": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "extension_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "binary_path_and_hash": "UNVERIFIED：本轮静态规划未实测，须由执行卡在隔离环境取得后回填",
+   "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "external_tools": {
+    "rg": "静态文档生成器文件枚举的明确前置；本机 PATH 缺失，需运行前冻结版本与可执行路径",
+    "c_toolchain_for_grammar": "grammar 需要真实 C 工具链，未来实测可用性，不凭 PATH 推定",
+    "tokenslim": "BUILD_ENV 模板中出现；CI 是否部署 TokenSlim 及 native shell 须在 profile 明确"
+   },
+   "transport": [
+    "http",
+    "named_pipe",
+    "unix_socket"
+   ],
+   "transport_note": "来自 TESTING_PLAN §5；bridge 为专用安全适配，不单独作为发布 target"
+  }
+ ],
+ "candidate_count": 4,
+ "committed_count": 0,
+ "commitment_note": "本轮不声称任何 target 已被承诺；4 个 candidate 全部 frozen=false，须业务决策后由 Planner 冻结为 committed profile",
+ "decision_points": [
+  {
+   "id": "DP-01",
+   "kind": "business_choice",
+   "status": "DECISION_REQUIRED",
+   "question": "本次承诺的发布 target 是否等于 4 个 e2e-verify workflow 覆盖的全部平台？",
+   "why": "TASK_BREAKDOWN 明确：现有平台 workflow 是候选证据，不自动等于本次全部承诺 target",
+   "owner": "Planner / 业务决策",
+   "blocks": [
+    "profile 冻结"
+   ]
+  },
+  {
+   "id": "DP-02",
+   "kind": "business_choice",
+   "status": "DECISION_REQUIRED",
+   "question": "linux musl 静态构建产物是否纳入承诺范围？",
+   "why": "linux-aarch64 workflow 内含独立 musl job，但它是附加产物而非 E2E 主 target",
+   "owner": "Planner / 业务决策",
+   "blocks": [
+    "linux profile 冻结"
+   ]
+  },
+  {
+   "id": "DP-03",
+   "kind": "technical_asset",
+   "status": "DECISION_REQUIRED",
+   "question": "承诺的 CPython 版本是 3.12（CI 用）还是包含本机 3.14？requires-python 为 >=3.10",
+   "why": "CI 全部 job 用 3.12；BUILD_ENV 与本机用 C:\\Python314\\python.exe；pyproject requires-python >=3.10。三者不一致，须业务明确承诺集合",
+   "owner": "Planner / 业务决策",
+   "blocks": [
+    "python_abi",
+    "interpreter_path"
+   ]
+  },
+  {
+   "id": "DP-04",
+   "kind": "business_choice",
+   "status": "DECISION_REQUIRED",
+   "question": "原生 Rust CLI 是否在发布范围？",
+   "why": "TASK_BREAKDOWN：若纳入，TP-08C/10C 必须按独立命令树分卡，不能把 Python CLI ownership 无限扩展",
+   "owner": "Planner",
+   "blocks": [
+    "CLI 入口清单范围"
+   ]
+  },
+  {
+   "id": "DP-05",
+   "kind": "business_choice",
+   "status": "DECISION_REQUIRED",
+   "question": "LLM 相关能力是否在承诺发布范围内？",
+   "why": "TASK_BREAKDOWN：若在范围内，按 TP-11X 独立拆实验合同与成本/模型门禁；缺 key 不能标通过",
+   "owner": "Planner",
+   "blocks": [
+    "相关入口义务"
+   ]
+  },
+  {
+   "id": "DP-06",
+   "kind": "technical_asset",
+   "status": "DECISION_REQUIRED",
+   "question": "Rust toolchain 是否锁定具体版本？CI 使用 @stable 未锁定",
+   "why": "未锁定的 stable 会漂移，构建 hash 不可复现，影响 profile 冻结与证据有效性",
+   "owner": "Planner / 内部修复",
+   "blocks": [
+    "rust_toolchain 冻结"
+   ]
+  },
+  {
+   "id": "DP-07",
+   "kind": "technical_asset",
+   "status": "DECISION_REQUIRED",
+   "question": "CI 是否部署 TokenSlim 及 native shell？",
+   "why": "BUILD_ENV 模板命令以 tokenslim run 开头，但明确要求「须在 profile 明确」",
+   "owner": "Planner",
+   "blocks": [
+    "构建命令冻结"
+   ]
+  },
+  {
+   "id": "DP-08",
+   "kind": "technical_asset",
+   "status": "DECISION_REQUIRED",
+   "question": "本机 .tokenslim-context 误检测为 Node/npm 如何修正？",
+   "why": "BUILD_ENV §1：正式实施前核对并修正探测/允许命令",
+   "owner": "Planner / 内部修复",
+   "blocks": [
+    "本机 profile"
+   ]
+  }
+ ],
+ "known_divergence": [
+  {
+   "item": "Python 版本",
+   "ci": "3.12",
+   "local": "3.14 (C:\\Python314\\python.exe)",
+   "declared": "pyproject requires-python >=3.10",
+   "risk": "偷换平台 / 版本冒充"
+  },
+  {
+   "item": "Rust toolchain",
+   "ci": "dtolnay/rust-toolchain@stable（未锁定）",
+   "local": "未实测",
+   "declared": "仓库无 rust-toolchain 文件",
+   "risk": "构建 hash 不可复现"
+  },
+  {
+   "item": "macOS 架构",
+   "ci": "macos-latest + aarch64-apple-darwin",
+   "local": "n/a",
+   "declared": "workflow 显式指定 target",
+   "risk": "架构冒充"
+  },
+  {
+   "item": "libc",
+   "ci": "gnu（musl 仅作为附加产物 job）",
+   "local": "n/a",
+   "declared": "linux-aarch64 workflow 含 musl 静态构建",
+   "risk": "产物类型冒充"
+  }
+ ],
+ "out_of_scope": [
+  "不在本轮冻结 runtime 清单（TP-01 已声明不得在 TP-01 冻结）",
+  "不复制 corpus 到源仓；实际 corpus 只允许复制到合同明列的 run 临时根",
+  "不构建、不下载、不写入生产业务库/manifest/lease/CAS"
+ ]
+}

@@ -1,0 +1,3 @@
+C:/Python314/python.exe -c "import json; from callwarden.server.daemon_client import resolve_workspace_pair_from_daemon; print(json.dumps(resolve_workspace_pair_from_daemon('C:/git_work/callwarden')))"
+{"workspace_id": 1, "workspace_instance_id": "4baea3ff12c2ea5c"}
+

@@ -1,0 +1,90 @@
+{
+  "status": "DESIGN_ONLY_NOTIFICATION_NOT_DAEMON_EVENT",
+  "authority": "task IDs and current-step projection come from daemon; no planner identity or event is fabricated",
+  "handoffs": [
+    {
+      "task_id": "T-1791627645904-fbe3a4c4",
+      "step_id": "S-1791627645912-fc6690c8",
+      "from_role": "planner",
+      "outcome": "planner_ready_for_execution",
+      "next_role": "executor",
+      "next_action": "Read exact daemon task, contracts and workspace binding; register real identity and claim this task's current step through the daemon.",
+      "reason": "User approved registration; task and three Role Contracts read back. This is a design-only chat handoff, NOT a persisted daemon planner event.",
+      "independence_requirement": "required",
+      "request_id": "unavailable",
+      "report_request_id": "unavailable",
+      "evidence_path": "docs/testing/registration/verification.json",
+      "evidence_hash": "unavailable",
+      "identity": {
+        "agent_id": "unavailable",
+        "agent_instance_id": "unavailable",
+        "session_id": "unavailable",
+        "model_id": "unavailable",
+        "role": "planner"
+      }
+    },
+    {
+      "task_id": "T-1791627784101-291afe54",
+      "step_id": "S-1791627784103-29385cb0",
+      "from_role": "planner",
+      "outcome": "planner_ready_for_execution",
+      "next_role": "executor",
+      "next_action": "Read exact daemon task, contracts and workspace binding; register real identity and claim this task's current step through the daemon.",
+      "reason": "User approved registration; task and three Role Contracts read back. This is a design-only chat handoff, NOT a persisted daemon planner event.",
+      "independence_requirement": "required",
+      "request_id": "unavailable",
+      "report_request_id": "unavailable",
+      "evidence_path": "docs/testing/registration/verification.json",
+      "evidence_hash": "unavailable",
+      "identity": {
+        "agent_id": "unavailable",
+        "agent_instance_id": "unavailable",
+        "session_id": "unavailable",
+        "model_id": "unavailable",
+        "role": "planner"
+      }
+    },
+    {
+      "task_id": "T-1791627785150-67976028",
+      "step_id": "S-1791627785151-67b305e4",
+      "from_role": "planner",
+      "outcome": "planner_ready_for_execution",
+      "next_role": "executor",
+      "next_action": "Read exact daemon task, contracts and workspace binding; register real identity and claim this task's current step through the daemon.",
+      "reason": "User approved registration; task and three Role Contracts read back. This is a design-only chat handoff, NOT a persisted daemon planner event.",
+      "independence_requirement": "required",
+      "request_id": "unavailable",
+      "report_request_id": "unavailable",
+      "evidence_path": "docs/testing/registration/verification.json",
+      "evidence_hash": "unavailable",
+      "identity": {
+        "agent_id": "unavailable",
+        "agent_instance_id": "unavailable",
+        "session_id": "unavailable",
+        "model_id": "unavailable",
+        "role": "planner"
+      }
+    },
+    {
+      "task_id": "T-1791627786186-a562f188",
+      "step_id": "S-1791627786188-a5784358",
+      "from_role": "planner",
+      "outcome": "planner_ready_for_execution",
+      "next_role": "executor",
+      "next_action": "Read exact daemon task, contracts and workspace binding; register real identity and claim this task's current step through the daemon.",
+      "reason": "User approved registration; task and three Role Contracts read back. This is a design-only chat handoff, NOT a persisted daemon planner event.",
+      "independence_requirement": "required",
+      "request_id": "unavailable",
+      "report_request_id": "unavailable",
+      "evidence_path": "docs/testing/registration/verification.json",
+      "evidence_hash": "unavailable",
+      "identity": {
+        "agent_id": "unavailable",
+        "agent_instance_id": "unavailable",
+        "session_id": "unavailable",
+        "model_id": "unavailable",
+        "role": "planner"
+      }
+    }
+  ]
+}

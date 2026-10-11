@@ -1,0 +1,30 @@
+{
+  "head_reference": "db952964ca49e07d77c033e886298a3e004542af",
+  "file_hashes": {
+    "docs/testing/BUILD_ENV.md": "1dff47790296e1961f44c1fcbd10dcd3e7b042646401f3b6b33bc5a9b0dc1e03",
+    "docs/testing/COVERAGE_AUDIT.md": "9474c997bd1efa604e3dab5d86dc1b77a0abbdef6b8c0f7d5109e6592cc89000",
+    "docs/testing/gen_test_cases.py": "faf3593dc844aab3a95e829b1c00ad656aa6d6022539c5d52d95a4eb96da333e",
+    "docs/testing/REVIEW.md": "b4ab7bdee6e4858697f430a69490e5984b2921f278483caf69fbf772cce6ecdd",
+    "docs/testing/SKIP_SITES.json": "2f1be8b8c2e44f36fbf40adb510cac51f9fc84534af0d49cf5794555c046ce62",
+    "docs/testing/STATIC_AUDIT.json": "73f991c8782a4d10c2bf3c59c5e416c738636d79343037a3c322a55157d81a4d",
+    "docs/testing/TASK_BREAKDOWN.md": "c47fa1700e09c81d98af727092c5de832f083a4613dfc1b6a0506d0688a75895",
+    "docs/testing/TASK_BREAKDOWN_REVIEW.md": "b784e3b6e8ebcb20a417a092a720e453afc72dd86106afe8583b61bdb8a611ac",
+    "docs/testing/TESTING_PLAN.md": "8b95497dfea6cf7fc792118da79218ac24e53f7df4a86368dd6d3e297c90dde8",
+    "docs/testing/TEST_CASES.md": "fa1572afb9d540bf469045a74ec45bed70c43c011e2b63fc9cf98e35bf28d82c"
+  },
+  "source_revision_recorded": "dcd99c7f12e963e5032f168acdd74ddddd87ba34",
+  "refreeze": [
+   {
+    "path": "docs/testing/TEST_CASES.md",
+    "prior_sha256": "4553414db50b262463a1c41c036076ed57194a9b671a5b33898ef97aa3e7b4b7",
+    "new_sha256": "fa1572afb9d540bf469045a74ec45bed70c43c011e2b63fc9cf98e35bf28d82c",
+    "detected_by": "TP-01 validate.py --self-check (E_BASELINE_DRIFT)",
+    "classification": "cosmetic markdown table-alignment reformat of the generated doc; semantic content unchanged",
+    "equivalence_proof": "cell-level normalization (per-cell strip, separator rows unified, blank lines dropped) == normalized git HEAD blob 661fb2a28dd7a946ac1ed1cba015a8f81f9a034d62d339bb8a3ca926b7bd127f (500 lines, 0 substantive diffs)",
+    "semantic_sources_still_bound": ["docs/testing/gen_test_cases.py", "docs/testing/STATIC_AUDIT.json", "docs/testing/SKIP_SITES.json"],
+    "authority": "user directive 2026-10-10",
+    "rebound_in": "docs/testing/planning/inventory/candidate_entries.json binding.baseline_document_hashes"
+   }
+  ],
+  "note": "working-tree document hashes bind approved plan; no product evidence"
+}

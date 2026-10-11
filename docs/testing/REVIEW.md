@@ -200,3 +200,22 @@ Handoff: 提交用户确认；策略通过后启动阶段 A0/B0 任务规划。
 **PASS（静态文档层，含 1 P2 + 1 P3 本轮已整改并机器化防回归）**。第五轮三项整改经独立复算全部成立；本轮补出静态归因缺口 186 处（GAP-16）并使其可回归。边界重申：文档 PASS ≠ 产品验收 ≠ daemon verdict；`BLOCKED_SCHEMA_DRIFT`（GAP-14）与 GAP-15/GAP-16 仍为清单与合同冻结的阻断前置，须由 A0/A1/runtime 阶段真实闭环。
 
 Handoff: 提交用户确认策略；确认后由 Planner 启动 A0/B0 任务规划与 Role Contract 绑定。
+
+## 对 db95296“全部闭环”报告的核验与继续修订（2026-10-10）
+
+Role: planner；RuntimeRole: 未调用daemon；Task: 未创建（用户方案讨论例外）；Skill: cw-planner-architect。本节保留前六轮记录，但取代其Git回落普遍等价、字面量可精确归因和无残留问题的表述。本轮未改生产代码、未跑产品测试/构建、未联网、未写daemon、未commit。
+
+核验起点HEAD为 `db952964ca49e07d77c033e886298a3e004542af`。当时tracked文件无修改，但 `.backups/`、`.bak_v5/` 为untracked，故“工作树完全干净”不成立。原件与hash备份在 `.backups/20261010-174929-before-report-correction/`。A0/B0/A1/B1拆分及严格JSON重复键拒绝已落盘；不能据此断言方案没有任何残留漏洞。
+
+| 问题 | 本轮处理 |
+|---|---|
+| Git回落即使增加NUL/存在性/去重，仍未对齐rg的ignore/hidden扫描政策；有限样本一致不能证明普遍等价 | 取消回落，明确rg为profile前置，rg路径NUL分隔；缺rg、空必需范围和枚举失败阻断。同步BUILD_ENV和方案 |
+| 字面量282/468被称为已可归因；importorskip缺省reason被误写成模块名非字面量 | 明确282字面量、167表达式、19缺省仅为reason语法；全部468处root_cause待复核。废止statically_unattributable_sites，改reason_nonliteral_or_absent_sites；同步生成器、账本和两份核心文档 |
+| 强制186站点靠runtime回填会将未触发站点或模块前置错误当成运行归因 | GAP-16覆盖全部站点的源码/适用性审查；仅实际触发记录runtime reason/nodeid/collection，未触发登记NOT_TRIGGERED及依据，不人为触发skip凑数 |
+| 最小底座来源/endpoint和治理合同冻结边界需进一步明确 | B0最低来源/manifest/health核验、bind 0、禁止生产发现和联网；生命周期归B owner。A1仅入口清单冻结，GAP-15治理合同须独立对齐 |
+
+本轮静态自洽验证：生成器重新生成后零参数 `--check` 退出0；内存compile、嵌套JSON重复键拒绝、模拟缺rg拒绝均通过；899输入hash失配0，898非生成器输入hash与本轮备份一致，SKIP_SITES字节不变。reason分布282/167/19、人工根因已复核0。`git diff --check`退出0；Git另提示生成器CRLF将规范为LF，不是产品运行结果。
+
+独立复评：`/root/review_generator` **PASS（静态复评）**，确认枚举/重复键/基准错误处理和统计一致，未发现本轮新增阻断；`/root/review_strategy` **PASS（文档复评）**，确认前置链、ownership、GAP-16语义及NOT_TRIGGERED规则一致，未发现本轮新增可证阻断。两者均只读，未执行产品测试或daemon verdict，均不背书历史db95296报告的“全部闭环”。
+
+当前可提交用户确认的是方案策略，不能宣称不存在未知问题或产品通过。GAP-14仍由BLOCKED_SCHEMA_DRIFT阻止清单冻结；GAP-15须对齐治理权威语义；GAP-16根因与运行关联义务仍待实施。Task创建/Contract绑定继续等待用户确认，不伪造正式派工能力或交接事件。

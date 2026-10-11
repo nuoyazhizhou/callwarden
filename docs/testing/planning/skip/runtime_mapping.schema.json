@@ -1,0 +1,111 @@
+{
+ "schema_version": "runtime-mapping/v1",
+ "ledger_kind": "runtime_mapping_contract_step2",
+ "owner": "skip-audit",
+ "task_id": "T-1791627785150-67976028",
+ "frozen_at_step": "S-1791627785152-67ba8c10",
+ "status": "frozen_rules_only",
+ "declares": "本文件只冻结 nodeid/collection 与运行关联的规则（mapping rules），不产出任何运行关联数据。真实运行关联（collection 记录、observed nodeid、runtime reason）由 TP-10/11 真实运行产出，TP-13 核验。",
+
+ "nodeid": {
+  "definition": "pytest nodeid：相对 rootdir 的 `file::[Class::]test` 形式，唯一标识一个被收集的测试项。",
+  "format": "<repo-relative file path>::<Class name>::<test function name>，无 class 时为 <file>::<test>；模块级/类级跳过展开为受影响 test 的 nodeid 集合。",
+  "authoritative_source": "只能是真实 pytest 运行产出（--collect-only 的收集输出、或运行报告的 testcase nodeid）。禁止从源码静态信息反推后冒充真实 collection 记录。",
+  "static_counterpart": "expected_nodeids（本卡 Step 2 产出，见 mapping_rules）：静态计算的「若该站点触发会影响哪些 nodeid」，是期望集合，不是运行结果。"
+ },
+
+ "collection": {
+  "definition": "一次真实 pytest 运行中被收集的全部 nodeid 全集。",
+  "authoritative_source": "真实运行的 --collect-only 输出或等价报告字段。",
+  "provenance_requirement": "每条 collection 记录必须绑定运行证据（run_id、产物路径、source revision）。无运行证据的 collection 记录视为虚构。",
+  "prohibition": "禁止静态推断 collection：源码里存在 `def test_*` 不等于该 nodeid 出现在某次运行的 collection 中（可能因上层模块 importorskip、collect error、deselect 等缺席）。"
+ },
+
+ "mapping_rules": {
+  "inputs": "site_reviews.json 每条站点的 file/line/column/mechanism + 源文件 AST（需 file_sha256 与磁盘一致）",
+  "algorithm": "position_kind 由 AST 机械判定（见 kinds）；expected_nodeids 由 position_kind 对应规则计算。",
+  "kinds": {
+   "statement_in_test": {
+    "count": 155,
+    "rule": "跳过语句（pytest.skip / pytest.mark.skipif 条件体 / importorskip 语句）位于 `def test_*` 函数体内",
+    "expected_nodeids": "单一 nodeid = 该 test 函数（含外层 Class 前缀）"
+   },
+   "statement_in_fixture": {
+    "count": 64,
+    "rule": "跳过语句位于非 test 函数（fixture / helper）体内",
+    "expected_nodeids": "占位 `fixture:<函数名>`；真实 nodeid 集合 = 运行时请求该 fixture 的 test，只能由真实运行确认（fixture 依赖图非静态可见）"
+   },
+   "decorator": {
+    "count": 55,
+    "rule": "@pytest.mark.skipif 直接装饰 def test_*",
+    "expected_nodeids": "单一 nodeid = 被装饰的 test 函数"
+   },
+   "decorator_class": {
+    "count": 116,
+    "rule": "@pytest.mark.skipif 装饰 class",
+    "expected_nodeids": "该 class 内全部 test 函数的 nodeid 集合"
+   },
+   "module_pytestmark": {
+    "count": 36,
+    "rule": "`pytestmark = pytest.mark.skipif(...)` 或 `pytestmark = [ ... skipif ... ]` 模块级赋值（含列表组合形式）",
+    "expected_nodeids": "该模块内全部 test 函数的 nodeid 集合"
+   },
+   "module_importorskip": {
+    "count": 15,
+    "rule": "模块级 `pytest.importorskip(...)`（importorskip 单列，属模块前置而非单点跳过）",
+    "expected_nodeids": "该模块内全部 test 函数的 nodeid 集合；模块不可导入时整模块跳过"
+   },
+   "marker_variable": {
+    "count": 24,
+    "rule": "marker 赋值给变量（如 `requires_binaries = pytest.mark.skipif(...)`），该变量被本文件内 `@<var>` 装饰器引用",
+    "expected_nodeids": "本文件内引用该 marker 变量的全部 def/class（class 引用展开为类内全部 test）；跨文件共享引用的完整集合只能由真实运行确认"
+   },
+   "marker_variable_dead": {
+    "count": 3,
+    "rule": "marker 赋值给变量，但该变量在本文件内无装饰器引用、且无跨文件 import 证据（dead marker）",
+    "expected_nodeids": "空集（定义存在但从未应用，运行时不可能触发任何 skip；不得虚构 nodeid）"
+   }
+  },
+  "invariants": [
+   "expected_nodeids 是静态期望，不是运行结果；不得被复制为 observed collection 记录。",
+   "expected_nodeid_count == 0 时（fixture 占位 / dead marker），该站点不得声称任何运行 nodeid。",
+   "site_id 的 file_sha256 与磁盘不一致时，position_kind 与 expected_nodeids 全部作废，必须重算（同 Step 0 绑定规则）。"
+  ]
+ },
+
+ "runtime_reason": {
+  "definition": "运行时跳过的真实原因文本，只能来自真实 pytest 运行的 skip 报告（reason 字段或等价报告字段）。",
+  "not_triggered": "站点未触发时，记录 NOT_TRIGGERED 状态占位，不得填写任何 reason 文本。",
+  "static_reason_is_not_runtime_reason": "站点源码里的 reason_literal / reason_expression（282 字面量 / 167 表达式 / 19 缺省）是源码文本，属于静态语法分类，不是运行 reason。禁止把 reason 字面量当作运行根因或运行 reason。",
+  "prohibition": "未触发捏造运行 reason = 拒绝（卡片负向）。"
+ },
+
+ "static_runtime_separation": {
+  "classic_sites": "447 classic 站点（skip+skipif）是源码机制出现点，不是运行 skip 结果。一个 classic 站点只有在真实运行中触发才成为运行 skip 记录，否则为 NOT_TRIGGERED。",
+  "importorskip_sites": "21 importorskip 站点单列为模块前置；模块可导入时整模块的 test 正常运行（站点 NOT_TRIGGERED），不可导入时整模块跳过。",
+  "static_root_cause_vs_runtime": "static_root_cause（Step 1）回答「这个跳过点的静态根因族/规则」；运行关联回答「真实运行中它是否触发、影响哪些 nodeid」。两者不可互相冒充。",
+  "skip_sites_are_not_run_evidence": "本卡为静态规划，不运行产品；任何静态判定不得表述为运行通过。"
+ },
+
+ "ledger_binding": {
+  "reviews_document": "docs/testing/planning/skip/site_reviews.json",
+  "per_site_field": "runtime_mapping{position_kind, expected_nodeids, expected_nodeid_count, mapping_note}",
+  "top_level_field": "runtime_association{schema, schema_version, declared:false, expected_only:true, position_kind_counts}",
+  "rule": "site_reviews.json 每条站点必须含 runtime_mapping，且其 position_kind 属于 mapping_rules.kinds 枚举；缺失或不合法 = 账本不完整，阻断审查完成宣称。"
+ },
+
+ "prohibitions": [
+  "把 447 classic 站点当作运行 skip 结果（它们是静态机制出现点）",
+  "collection 虚构 nodeid（无真实运行证据的 collection 记录）",
+  "未触发捏造运行 reason（NOT_TRIGGERED 不得填写 reason 文本）",
+  "以 reason 字面量（literal/expression）冒充运行根因或运行 reason",
+  "把 expected_nodeids 当作 observed collection 记录",
+  "删除必需 suite 逃逸（删除/禁用测试以规避 skip 审查）"
+ ],
+
+ "downstream": {
+  "TP-10": "产出真实运行 collection 与 nodeid 记录，与本 schema 的 mapping_rules 对齐",
+  "TP-11": "按运行关联规则核对触发状态与 runtime reason",
+  "TP-13": "核验必需 skip=0 及 NOT_TRIGGERED 合法依据"
+ }
+}

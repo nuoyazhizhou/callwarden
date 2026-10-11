@@ -1,0 +1,262 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://callwarden.local/docs/testing/planning/inventory/case_contract.schema.json",
+  "title": "CallWarden 测试用例合同（case contract）",
+  "description": "TP-01 Step 1：逐入口 case 合同的权威结构。每个 case 是一个可冻结、可追溯、可独立 oracle 校验的验收单元。本 schema 只定义结构；语义级校验（孤立 selector、未冻结分母、非法 N/A、schema 漂移放行）由 validate.py 实施，JSON Schema 表达不了的部分见 x-callwarden-semantic。",
+  "type": "object",
+  "required": [
+    "case_id",
+    "case_family",
+    "surface",
+    "profile",
+    "requirement",
+    "risk",
+    "preconditions",
+    "repo_revision",
+    "provenance",
+    "param_equivalence_classes",
+    "act",
+    "oracle",
+    "allowed_events",
+    "forbidden_side_effects",
+    "timeout",
+    "cleanup",
+    "selector",
+    "implementation_status",
+    "obligations",
+    "evidence_ref"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "description": "稳定唯一 case ID。格式 <entry_id>/<obligation>/<scenario>，如 CLI:assignment create/C2/missing-required-task-id。全局唯一，重复 ID 被 validate.py 拒绝。",
+      "pattern": "^(CLI|MCP|CLI-FLAG):[^/]+/(C[1-6]|NEG|LIFECYCLE)/[A-Za-z0-9_.-]+$"
+    },
+    "case_family": {
+      "type": "string",
+      "description": "所属候选入口 entry_id，必须与 candidate_entries.json 中某条 entry_id 精确一致；指向不存在入口的 case 被 validate.py 判为孤立并拒绝。"
+    },
+    "surface": {
+      "type": "string",
+      "description": "入口形态。cli_flag 类 case 的 family 必须是 CLI-FLAG:* 入口。",
+      "enum": ["cli", "mcp", "cli_flag"]
+    },
+    "profile": {
+      "type": "object",
+      "description": "发布配置引用。OS/架构/transport/security/依赖/启用 capability 必须由 TP-02 冻结；未冻结 profile 不得声称通过。",
+      "required": ["profile_id", "frozen"],
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "TP-02 profiles.json 中的 profile 标识。未冻结时填候选 ID 并标 frozen=false。"
+        },
+        "frozen": {
+          "type": "boolean",
+          "description": "profile 是否已冻结。false 表示待 TP-02 冻结，case 不得实施运行。"
+        },
+        "frozen_ref": {
+          "type": "string",
+          "description": "冻结证据引用（profiles.json 条目 hash 或 manifest 路径），frozen=true 时必填。"
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "description": "本 case 验证的业务需求及其权威来源。",
+      "required": ["text", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "需求陈述（业务语义，非工具名推断）。"
+        },
+        "source": {
+          "type": "object",
+          "description": "需求来源。source_kind=document 时 ref 指向现行 AGENTS.md / role-protocol.md / 接口契约等权威文档；source_kind=matrix 时 ref 指向 tool_migration_matrix 条目；source_kind=plan 时指向 TESTING_PLAN 章节。README/历史设计只能登记差异，不作为现行行为来源。",
+          "required": ["source_kind", "ref"],
+          "additionalProperties": false,
+          "properties": {
+            "source_kind": {"type": "string", "enum": ["document", "matrix", "plan", "gap"]},
+            "ref": {"type": "string", "description": "文档路径+行号或矩阵工具名或 GAP 编号。"}
+          }
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "description": "风险分级与失效模式。用于回归优先级与破坏性 case 的隔离要求。",
+      "required": ["level", "failure_mode"],
+      "additionalProperties": false,
+      "properties": {
+        "level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+        "failure_mode": {"type": "string", "description": "主要失效模式（如 越权写、状态泄漏、静默降级、数据丢失）。"},
+        "is_destructive": {"type": "boolean", "description": "是否破坏性/重操作；true 时必须在隔离实例验证，不得永久跳过。"}
+      }
+    },
+    "preconditions": {
+      "type": "array",
+      "description": "前置条件清单。每项须可由公共接口在隔离实例建立；无法建立时登记产品能力缺口，不得 fixture 补绿。",
+      "items": {
+        "type": "object",
+        "required": ["kind", "description", "establishment"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string", "description": "如 workspace、identity、contract、lease、snapshot、corpus、build。"},
+          "description": {"type": "string"},
+          "establishment": {
+            "type": "object",
+            "description": "建立方式。public_api=产品公共接口；product_gap=产品无法建立，登记缺口由 Planner 另冻修复 scope；forbidden_sql=禁止的 SQL 补偿（仅记录历史 fixture 的问题，不得作为建立方式）。",
+            "required": ["method"],
+            "properties": {
+              "method": {"type": "string", "enum": ["public_api", "product_gap", "forbidden_sql"]},
+              "gap_id": {"type": "string", "description": "method=product_gap 时的缺口登记 ID。"}
+            }
+          }
+        }
+      }
+    },
+    "repo_revision": {
+      "type": "object",
+      "description": "被测仓库 revision 与 corpus 绑定。证据与 revision 绑定，变更即失效。",
+      "required": ["revision", "dirty", "corpus_tier"],
+      "additionalProperties": false,
+      "properties": {
+        "revision": {"type": "string", "description": "40-hex commit。"},
+        "dirty": {"type": "boolean", "description": "运行时工作树是否 dirty；dirty 证据需附归属。"},
+        "corpus_tier": {"type": "string", "enum": ["R0", "R1", "R2", "R3"], "description": "R0 确定性小仓/R1 CallWarden 自身/R2 代表性真实仓/R3 大型仓。R0 不得替代 R1/R2。"},
+        "corpus_ref": {"type": "string", "description": "corpus manifest 引用（来源/授权/commit/摘要/语言/规模/依赖/oracle来源/复制方式）。"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "description": "真实实体 provenance。所有 task/identity/lease/snapshot 必须来自隔离实例的公共接口，禁止固定假 ID/hash。",
+      "required": ["real", "workspace_instance_id"],
+      "additionalProperties": false,
+      "properties": {
+        "real": {"type": "boolean", "description": "true=真实实体；false=占位（仅静态规划期允许，运行前必须替换）。"},
+        "workspace_instance_id": {"type": "string", "description": "隔离实例的 workspace_instance_id。"},
+        "entity_refs": {
+          "type": "array",
+          "description": "本 case 涉及的实体引用（task_id、assignment_id、lease_token、snapshot_id 等），运行时由公共接口取得。",
+          "items": {"type": "object", "required": ["entity", "how_obtained"], "properties": {"entity": {"type": "string"}, "how_obtained": {"type": "string", "enum": ["public_api", "pending", "forbidden_fixed_value"]}}}
+        }
+      }
+    },
+    "param_equivalence_classes": {
+      "type": "array",
+      "description": "参数等价类。每个适用参数义务至少一个等价类；危险组合显式列举。C2 义务的载体。",
+      "items": {
+        "type": "object",
+        "required": ["param", "class_id", "representative", "expected_behavior"],
+        "additionalProperties": false,
+        "properties": {
+          "param": {"type": "string", "description": "参数名（与候选入口 param_obligations 一致）。"},
+          "class_id": {"type": "string", "description": "等价类标识，如 valid/missing/invalid-type/out-of-range/boundary/mutex-conflict/unknown-value。"},
+          "representative": {"type": "string", "description": "该类的代表输入值（字符串表示）。"},
+          "expected_behavior": {"type": "string", "description": "期望行为（正常结果或精确错误码/结构）。"},
+          "is_dangerous_combination": {"type": "boolean", "description": "是否显式列举的危险组合。"}
+        }
+      }
+    },
+    "act": {
+      "type": "object",
+      "description": "执行动作。CLI 填 argv；MCP 填 wire 请求；常驻入口填启动/ready/交互/停止序列。",
+      "required": ["entry", "mode", "timeout"],
+      "additionalProperties": false,
+      "properties": {
+        "entry": {"type": "string", "description": "入口调用（CLI argv 数组字符串或 MCP 工具名）。"},
+        "mode": {"type": "string", "enum": ["cli_argv", "mcp_wire", "daemon_lifecycle"], "description": "mcp_wire 必须走真实 ClientSession→initialize→tools/list→tools/call，进程内 call_tool 不代替 wire。"},
+        "argv": {"type": "array", "items": {"type": "string"}, "description": "CLI argv（mode=cli_argv 时必填）。"},
+        "mcp_request": {"type": "object", "description": "MCP 请求（mode=mcp_wire 时必填）：name + arguments。"},
+        "lifecycle_steps": {"type": "array", "items": {"type": "string"}, "description": "常驻入口序列（mode=daemon_lifecycle）：start→ready→interact→stop。"},
+        "timeout": {"type": "object", "required": ["seconds"], "properties": {"seconds": {"type": "number", "description": "超时秒数；超时保留现场，不是成功。"}, "on_timeout": {"type": "string", "enum": ["fail", "collect_and_fail", "retry_once"]}}
+        }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "description": "独立 oracle。预期来自人工 golden 或冻结契约，禁止从被测 daemon 的 search/stats 结果复制预期；差分比较不能用同 daemon 同错误证明正确。",
+      "required": ["kind", "expected", "independent_source"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "enum": ["manual_golden", "frozen_contract", "computed_from_source", "differential"], "description": "differential 必须比较不同端的关键语义，不能自我证明。"},
+        "expected": {"type": "string", "description": "期望值或断言描述（业务语义）。"},
+        "independent_source": {"type": "string", "description": "独立来源（golden 文件路径、契约条目、人工核验记录）。"},
+        "normalization": {"type": "array", "items": {"type": "string"}, "description": "允许规范化的非确定字段（如 ID/时间戳），不能借规范化忽略业务差异。"}
+      }
+    },
+    "allowed_events": {
+      "type": "array",
+      "description": "允许产生的审计事件/状态变化清单。",
+      "items": {"type": "string"}
+    },
+    "forbidden_side_effects": {
+      "type": "array",
+      "description": "禁止的副作用（如 越界写、生产库变更、其他 workspace 串扰、端口/锁残留）。写 case 必须断言前后对象/文件/图谱/事件精确对比。",
+      "items": {"type": "string"}
+    },
+    "timeout": {
+      "type": "object",
+      "description": "运行级超时与保留策略。",
+      "required": ["seconds"],
+      "properties": {"seconds": {"type": "number"}, "preserve_scene": {"type": "boolean", "description": "超时是否保留现场（日志/进程树/临时资源）。"}}
+    },
+    "cleanup": {
+      "type": "object",
+      "description": "清理策略。只清理有本 run 归属证据且仍位于批准父目录内的路径；强杀/清理失败保留证据并阻断。",
+      "required": ["strategy", "verification"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {"type": "string", "enum": ["normal_exit", "graceful_shutdown", "force_kill_and_verify", "defer_to_harness"], "description": "正常退出与强杀分别记录。"},
+        "verification": {"type": "string", "description": "清理后核验项（进程树/端口/锁/临时资源）。"},
+        "owned_only": {"type": "boolean", "description": "是否只清理本 run 归属路径；false 会被 validate.py 拒绝。"}
+      }
+    },
+    "selector": {
+      "type": "object",
+      "description": "可运行 selector。必须映射到真实收集到的 nodeid/命令；孤立 selector（找不到对应入口或收集不到）被 validate.py 拒绝。",
+      "required": ["kind", "value", "resolves_to_entry"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"type": "string", "enum": ["pytest_nodeid", "rust_test_path", "cli_command", "mcp_tool_call", "script"], "description": "script 仅限批准的静态规划脚本（validate.py 等），不得冒充产品测试。"},
+        "value": {"type": "string", "description": "selector 值（nodeid / argv / 工具调用）。"},
+        "resolves_to_entry": {"type": "string", "description": "解析到的 entry_id；必须与 case_family 一致或为其跨端对端。"}
+      }
+    },
+    "implementation_status": {
+      "type": "string",
+      "description": "实现状态。pending_contract=仅合同；contracted=合同冻结待实施；implemented=已实施未运行；passed=运行通过有证据；blocked=受阻（附原因）；unknown_result=运行结果未知，阻断交付门禁。",
+      "enum": ["pending_contract", "contracted", "implemented", "passed", "blocked", "unknown_result"]
+    },
+    "obligations": {
+      "type": "object",
+      "description": "本 case 覆盖的义务集合（C1-C6 子集）。每个义务至少一个 case；只调用不断言不算覆盖。",
+      "properties": {
+        "C1": {"type": "boolean"}, "C2": {"type": "boolean"}, "C3": {"type": "boolean"},
+        "C4": {"type": "boolean"}, "C5": {"type": "boolean"}, "C6": {"type": "boolean"}
+      }
+    },
+    "evidence_ref": {
+      "type": ["string", "null"],
+      "description": "证据路径（deliverables/testing/TP-01/<run_id>/ 下）或 null（未运行）。"
+    }
+  },
+  "x-callwarden-semantic": {
+    "description": "JSON Schema 无法表达的语义校验，由 validate.py --candidate/--cases 实施：",
+    "rules": [
+      "case_id 全局唯一（重复键/ID 非零退出）",
+      "case_family 必须存在于 candidate_entries.json 的 entry_id 集合（孤立 selector/缺入口拒绝）",
+      "selector.resolves_to_entry 必须等于 case_family 或其跨端对端 entry",
+      "profile.frozen=false 时 implementation_status 不得为 passed",
+      "provenance.real=false 时不得声称 passed",
+      "cleanup.owned_only=false 拒绝",
+      "preconditions[].establishment.method=forbidden_sql 拒绝（SQL 补绿）",
+      "oracle.kind=differential 时必须有跨端 normalization 说明",
+      "implementation_status=unknown_result 阻断（未知结果不放行）",
+      "N/A（not_applicable）必须附冻结依据（profile/corpus/platform），非法 N/A 拒绝",
+      "schema 漂移期（schema_matrix_set_consistent=false）受影响入口的 case 不得标 passed"
+    ]
+  }
+}

@@ -1,0 +1,174 @@
+{
+ "schema_version": "governance-acceptance/v1",
+ "status": "frozen_oracle_pending_approval",
+ "task_id": "T-1791627786186-a562f188",
+ "generated_at": 1791704042.3980334,
+ "acceptance_commands": [
+  "C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --self-check",
+  "C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --verify-contract"
+ ],
+ "acceptance_criteria": {
+  "positive": [
+   "两验收命令 rc=0",
+   "四类路由 oracle 全部 PASS（normal/replay/conflict/plan_defect + responsibility）",
+   "差异账本与权威文档 sha256 磁盘对拍一致"
+  ],
+  "negative": [
+   "缺权威批准时宣称对齐完成 -> 拒绝",
+   "实现/协议不一致未登记 -> 拒绝",
+   "预设 bridge 缺失或已通过 -> 拒绝",
+   "编造 capability（含把 adjudicator_returned 说成 capability 门控）-> 拒绝",
+   "把静态测试写成运行证明 -> 拒绝",
+   "runtime_status=unknown 的项表述为运行通过 -> 拒绝"
+  ]
+ },
+ "oracles": [
+  {
+   "oracle_id": "OC-NORMAL-01",
+   "route": "normal",
+   "name": "差异账本自洽（正常路径）",
+   "checks": [
+    "differences.json 存在且 schema_version=governance-diff/v1",
+    "每个 difference 有 diff_id/title/category/protocol_semantics/implementation_semantics/conflict/runtime_status",
+    "GAP-15-D01 的 protocol 侧 >=3 份文档引用、>=9 处 citation",
+    "GAP-15-D01 的 implementation 侧 >=6 文件、>=9 处 evidence",
+    "aligned_items >=5 条且每条有双侧 citation",
+    "所有 citation 的 excerpt 非空且 sha256 与磁盘一致"
+   ],
+   "fail_mode": "任一缺失/不自洽 -> FAIL，不允许宣称对齐完成"
+  },
+  {
+   "oracle_id": "OC-REPLAY-01",
+   "route": "replay",
+   "name": "账本可重放（幂等）",
+   "checks": [
+    "用相同源码 revision 重跑生成器得到 byte-identical differences.json（除 generated_at 外）",
+    "source_revision 与 registration source_baseline.json head_reference 一致",
+    "每条 citation 的 (file, sha256, lines) 三元组可由磁盘独立复算"
+   ],
+   "fail_mode": "重放不一致 -> FAIL（证据陈旧）"
+  },
+  {
+   "oracle_id": "OC-CONFLICT-01",
+   "route": "conflict",
+   "name": "冲突登记完整性（负向 oracle）",
+   "checks": [
+    "GAP-15-D01 conflict=True 且 conflict_type 明确",
+    "D01 的 direction_options 恰好两个（A/B），每个有 doc_changes/product_changes/downstream",
+    "D01 approval_boundary=target_semantics_pending_project_authority_approval",
+    "D02 partial_agreement_note 明确区分 CLI/MCP 显式入口与 daemon 自动路径两维度",
+    "禁止 preset_bridge_missing 或 preset_bridge_passed（不得预设 bridge 缺失或已通过）"
+   ],
+   "fail_mode": "冲突未登记/方向不全/预设结论 -> FAIL"
+  },
+  {
+   "oracle_id": "OC-PLAN-DEFECT-01",
+   "route": "plan_defect",
+   "name": "计划缺陷路由（批准缺位）",
+   "checks": [
+    "任一方向被宣称'已批准'但无审批事件来源 -> FAIL",
+    "approval_note 必须声明审批事件来源在未来合同绑定",
+    "runtime_status=unknown 的项不得被表述为运行通过",
+    "静态测试合同只作为契约证据登记，不作为运行证明"
+   ],
+   "fail_mode": "缺权威批准时宣称对齐完成 -> FAIL"
+  },
+  {
+   "oracle_id": "OC-RESPONSIBILITY-01",
+   "route": "responsibility",
+   "name": "对齐责任与受阻下游绑定",
+   "checks": [
+    "direction A 的 downstream 指向 TP-05（文档同步）",
+    "direction B 的 downstream 指向 P-FIX + TP-09/11G（产品修复前置）",
+    "所有适用对齐责任未闭合前不得冻结下游合同或宣称运行通过"
+   ],
+   "fail_mode": "责任路径缺失或下游未阻断 -> FAIL"
+  }
+ ],
+ "responsibilities": [
+  {
+   "resp_id": "RESP-A",
+   "direction": "A",
+   "owner": "TP-05",
+   "type": "document_sync",
+   "scope": "AGENTS.md:155-159、role-protocol.md 6 处、v2-amendment 3 处共 10 段改写；删除或改写 bridge 缺失/不自动追加表述",
+   "blocked_successors": [],
+   "product_fix": false,
+   "closed": false
+  },
+  {
+   "resp_id": "RESP-B1",
+   "direction": "B",
+   "owner": "P-FIX",
+   "type": "product_fix",
+   "scope": "task_collab_lifecycle.rs:1521-1524 移除 adjudicator_returned；显式 handler:638-646 移除该 outcome",
+   "blocked_successors": [
+    "TP-09",
+    "TP-11G"
+   ],
+   "product_fix": true,
+   "closed": false
+  },
+  {
+   "resp_id": "RESP-B2",
+   "direction": "B",
+   "owner": "P-FIX",
+   "type": "product_fix",
+   "scope": "task_collab_lease.rs:40、task_collab_shared.rs:311、task_loop/claim.rs:513、task_loop/next_action.rs:600 四处同步收窄",
+   "blocked_successors": [
+    "TP-09",
+    "TP-11G"
+   ],
+   "product_fix": true,
+   "closed": false
+  },
+  {
+   "resp_id": "RESP-B3",
+   "direction": "B",
+   "owner": "P-FIX",
+   "type": "static_test_rewrite",
+   "scope": "task_collab_tests_core.rs:722-921 改写为断言拒绝（无 remediation step、状态不变）",
+   "blocked_successors": [
+    "TP-09",
+    "TP-11G"
+   ],
+   "product_fix": true,
+   "closed": false
+  }
+ ],
+ "directions": [
+  {
+   "option_id": "A",
+   "name": "批准实现语义（adjudicator_returned 自动追加 remediation）",
+   "doc_changes": "AGENTS.md:156-159、role-protocol.md:13-17/34/108-113/122-127/189-198、v2-amendment §3.1/§3.2/§4 全部改写为'两种退回均同事务追加 fix_defect'；删除'bridge 缺失'表述或降级为仅 CLI/MCP 显式入口的缺口",
+   "product_changes": "无（实现与静态测试不变）",
+   "downstream": "TP-05 同步全部现行权威文本；协议变化交 TP-05"
+  },
+  {
+   "option_id": "B",
+   "name": "批准协议语义（adjudicator_returned 不自动追加）",
+   "doc_changes": "无（协议文本不变）",
+   "product_changes": "task_collab_lifecycle.rs:1521-1524 移除 'adjudicator_returned' 分支；显式 handler:638-646 移除该 outcome；lease/claim/next_action/shared 四处同步收窄；静态测试 test_adjudicator_returned_handoff_reopens_executor_remediation_atomically 改为断言拒绝",
+   "downstream": "必要产品修复按 P-FIX 加入 TP-09/11G 前置；Planner 另冻 daemon/client 独立任务及回归合同"
+  }
+ ],
+ "aligned_item_count": 5,
+ "ledger_binding": {
+  "differences_json_sha256": "e314106a5731bd43d0254b9e5135d04e900aff1e4b32d0ec46597ebce861c8ac",
+  "alignment_md_sha256": "9531fb0cc3d5a06f9099d0d51c1b5f130821966883e33100a5f068b1621a4cce",
+  "source_revision": "db952964ca49e07d77c033e886298a3e004542af"
+ },
+ "approval_boundary": {
+  "mode": "target_semantics_pending_project_authority_approval",
+  "note": "TP-04 只登记差异并定义目标语义候选，不代替裁定；审批事件来源在未来合同绑定",
+  "design_adjudicator": "project_current_authority",
+  "planner_does_not_impersonate_adjudicator": true
+ },
+ "runtime_separation": {
+  "static_planning_only": true,
+  "no_product_tests_runs": true,
+  "no_builds": true,
+  "no_network": true,
+  "static_test_as_contract_evidence_only": true
+ }
+}

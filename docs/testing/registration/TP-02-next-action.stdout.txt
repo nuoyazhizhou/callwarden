@@ -1,0 +1,148 @@
+C:/Python314/python.exe cw.py task next-action T-1791627784101-291afe54 --workspace-instance-id 4baea3ff12c2ea5c --json
+{
+  "task_id": "T-1791627784101-291afe54",
+  "lifecycle_status": "open",
+  "workflow_status": "queued",
+  "current_role": "executor",
+  "next_role": "executor",
+  "next_action": "claim_current_step",
+  "review": {
+    "state": "not_in_review"
+  },
+  "decision": "READY",
+  "action": "CLAIM",
+  "required_role": "executor",
+  "step_id": "S-1791627784103-29385cb0",
+  "task_contract": {
+    "id": "TC-T-1791627784101-291afe54",
+    "revision": 1,
+    "hash": "sha256:b302613bc09b357a907cb58b9146080b7ea2afefd789219b7f35e3d9aa789c89"
+  },
+  "role_contract": {
+    "id": "rcl-T-1791627784101-291afe54-executor",
+    "revision_id": "rcr-T-1791627784101-291afe54-executor-r1",
+    "revision": 1,
+    "hash": "sha256:541ada0e5de6a6c1a72fa516a99f2667fe97e2816a3e45e91d3984179a6bd29b",
+    "canonicalization_version": "role-contract-c14n/v1",
+    "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+    "skill_id": "cw-executor-senior-engineer",
+    "skill_version": "",
+    "prompt_template_id": "",
+    "handoff_to": "reviewer"
+  },
+  "authorization": {
+    "acting_role": "executor",
+    "lease_role": "implementer",
+    "lease_required": true,
+    "fencing_required": true,
+    "different_agent_instance_from": [],
+    "different_session_from": []
+  },
+  "allowed_paths": [
+    "deliverables/testing/TP-02/",
+    "docs/testing/planning/assets/ASSET_CONTRACT.md",
+    "docs/testing/planning/assets/budgets.json",
+    "docs/testing/planning/assets/corpora.json",
+    "docs/testing/planning/assets/oracle_catalog.json",
+    "docs/testing/planning/assets/profiles.json",
+    "docs/testing/planning/assets/validate_assets.py"
+  ],
+  "forbidden_paths": [
+    "direct SQLite writes",
+    "fabricated task, identity, lease, capability",
+    "out-of-scope changes",
+    "product tests or builds or internet in this static planning task",
+    "production source edits",
+    "task.apply",
+    "task.close"
+  ],
+  "eligibility": {
+    "verdict": "not_required_for_claim",
+    "evidence_gate": "not_evaluated",
+    "snapshot": "not_evaluated",
+    "mutation_recheck_required": true
+  },
+  "blocking_conditions": [],
+  "blocking_reasons": [],
+  "revision_hint": null,
+  "routing": {
+    "origin_kind": "system_evaluator",
+    "next_role": "executor",
+    "next_action": "claim_current_step",
+    "reason": [
+      "当前步骤 S-1791627784103-29385cb0 可领取（唯一 verified Role Contract binding）"
+    ]
+  },
+  "next_session": {
+    "role": "executor",
+    "task_id": "T-1791627784101-291afe54",
+    "step_id": "S-1791627784103-29385cb0",
+    "must_be_new_session": false
+  },
+  "source": {
+    "task_status": "open",
+    "task_contract_hash": "sha256:b302613bc09b357a907cb58b9146080b7ea2afefd789219b7f35e3d9aa789c89",
+    "role_contract_hash": "sha256:541ada0e5de6a6c1a72fa516a99f2667fe97e2816a3e45e91d3984179a6bd29b",
+    "evaluated_at": "1791627784.640194"
+  },
+  "inbound_handoff": {
+    "diagnosis": "no_handoff"
+  },
+  "work_order": {
+    "objective": "edit",
+    "task_title": "TP-02 profile、离线真实仓库与独立oracle资产",
+    "allowed_paths": [
+      "deliverables/testing/TP-02/",
+      "docs/testing/planning/assets/ASSET_CONTRACT.md",
+      "docs/testing/planning/assets/budgets.json",
+      "docs/testing/planning/assets/corpora.json",
+      "docs/testing/planning/assets/oracle_catalog.json",
+      "docs/testing/planning/assets/profiles.json",
+      "docs/testing/planning/assets/validate_assets.py"
+    ],
+    "excluded_paths": [
+      "direct SQLite writes",
+      "fabricated task, identity, lease, capability",
+      "out-of-scope changes",
+      "product tests or builds or internet in this static planning task",
+      "production source edits",
+      "task.apply",
+      "task.close"
+    ],
+    "acceptance_checks": [
+      "Exact approved TP-02 card and common contract",
+      "No UNKNOWN, missing evidence or scope violations",
+      "No static planning PASS represented as product PASS"
+    ],
+    "required_evidence": [
+      "owned diff and independent review record",
+      "positive and negative validator outputs, rc and hashes",
+      "source_baseline.json and task-scoped run manifest"
+    ],
+    "commands": [
+      "C:/Python314/python.exe docs/testing/planning/assets/validate_assets.py --self-check",
+      "C:/Python314/python.exe docs/testing/planning/assets/validate_assets.py --verify-manifests"
+    ],
+    "prior_attempts": [],
+    "prior_handoffs": []
+  },
+  "assignment": {
+    "assignment_id": "A-109fa07bd3008307345e2bb0",
+    "task_id": "T-1791627784101-291afe54",
+    "step_id": "S-1791627784103-29385cb0",
+    "role": "executor",
+    "status": "queued",
+    "holder_agent_id": "",
+    "holder_session_id": "",
+    "holder_model_id": "",
+    "queued_at": 1791627784.101758,
+    "claimed_at": null,
+    "last_heartbeat_at": null,
+    "source_request_id": "task.create:T-1791627784101-291afe54",
+    "source_event_id": null,
+    "last_event_id": 11078
+  },
+  "assignment_status": "queued",
+  "identity_policy": "legacy_identity_v1",
+  "identity_policy_status": "declared"
+}

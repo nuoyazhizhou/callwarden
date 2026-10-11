@@ -61,7 +61,7 @@
     "reason_literal_sites": 282,
     "reason_expression_sites": 167,
     "reason_absent_sites": 19,
-    "statically_unattributable_sites": 186,
+    "reason_nonliteral_or_absent_sites": 186,
     "root_cause_reviewed_sites": 0,
     "rust_src_attributes": 2091,
     "rust_src_cfg_test_files": 121
@@ -77,7 +77,7 @@
     },
     {
       "path": "docs/testing/gen_test_cases.py",
-      "sha256": "dec74b5a4077700b7a4e473d531ca58e616e70a440ee7e7bd71963c5445862d5"
+      "sha256": "faf3593dc844aab3a95e829b1c00ad656aa6d6022539c5d52d95a4eb96da333e"
     },
     {
       "path": "rust_ext/src/abi_contract.rs",

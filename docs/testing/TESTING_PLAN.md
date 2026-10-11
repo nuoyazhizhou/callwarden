@@ -126,7 +126,7 @@ LLM选择另设非确定性产品实验，记录模型/配置/样本/成本/阈�
 | 性能 | 冻结硬件/corpus/profile预算通过；未校准不宣称达到SLO |
 | 证据 | 完整/同版本/新鲜；缺报告/selector、空suite不放行 |
 
-运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态447/7133不能称执行skip率。468处skip机制站点中仅282处为字符串字面量（精确覆盖60%），其余186处为非字面量表达式或无reason（GAP-16），禁止以静态字面量冒充全量已归因，须runtime回填。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
+运行skip率仅辅助，用实际适用collected nodeid和运行结果计算；collection模块skip另列。静态447/7133不能称执行skip率。468处站点的reason语法为字面量282、表达式167、缺省19，全部根因尚未复核（GAP-16）；字面量文本不等于已归因。逐站点源码/适用性审查，runtime只补充实际触发的reason和nodeid/collection关联，未触发登记NOT_TRIGGERED及依据，不强行触发skip凑全量。平台分母事先冻结，零unexpected skip硬门禁不能被总skip≤5%抵消。
 
 Python coverage只说明Python层，Rust需独立模块/分支义务。2091为src属性数，非cargo执行数，也非全部integration/bin测试。不得把--lib daemon::称全量Rust。覆盖预算按关键handler/负分支冻结，不以无基线60%总行覆盖代替功能完备。
 
@@ -149,7 +149,7 @@ check_ci_gates/check_skip_rate当前不存在，仅登记待实现职责。gate�
 | 阶段 | 交付与验收 | 路径上限（实施前逐文件冻结） | 依赖 |
 |---|---|---|---|
 | A0 静态候选/合同 | 静态源与快照清单扫描、case/参数规划表、逐站点skip账本、profile/corpus候选；纯静态门禁自洽 | docs/testing、生成器与静态账本 | 无 |
-| B0 最小隔离底座 | EphemeralDaemonFixture 最小隔离沙箱（HOME/USERPROFILE/data/socket隔离、随机端口分配、进程树追踪与安全cleanup），为runtime提取提供无污染底座 | 专用测试harness最小隔离子集 | A0 |
+| B0 最小隔离底座 | EphemeralDaemonFixture 最小隔离沙箱（HOME/USERPROFILE/data/socket隔离、daemon bind 0取得endpoint、进程树追踪与安全cleanup）；最低来源/manifest/health核验后供runtime提取，禁止生产发现、自启动和联网规则下载 | 专用测试harness最小隔离子集 | A0 |
 | A1 真实清单冻结 | 基于B0沙箱通过公开协议提取CLI真实argparse/runtime与MCP wire tools/list，核验逐字段一致性，消除GAP-14漂移并正式冻结清单合同 | docs/testing/manifests、提取脚本与测试定义 | B0 |
 | B1 完整公共初始化 | 扩展隔离底座至空库正式公共接口初始化/迁移、workspace/identity注册、Role Contract/lease绑定与ready gate，无SQL补绿/无生产发现 | 专用tests harness完整集与自验收 | A1 |
 | C 接口验收 | 全量CLI/MCP wire语义、写/常驻/参数/跨端，逐case结果 | 独立CLI/MCP测试目录与fixture；共享文件串行 | B1 |
@@ -158,6 +158,8 @@ check_ci_gates/check_skip_rate当前不存在，仅登记待实现职责。gate�
 
 各合同排除未冻结生产路径和用户权威库。产品前置缺口另冻最小daemon/client修复scope，产品修复后重验公开链路，不能扩充fixture补绿。task号/基线/schema/命令/rollback/角色合同方案通过后绑定，本文不虚构。
 
+B0的进程生命周期由基建owner统一负责，A1提取脚本只消费底座。A1冻结入口/schema清单，不表示治理语义合同已冻结；GAP-15须由Planner先安排独立协议/实现对齐责任和验收合同，再进入B1及相关D治理用例，不让Executor自行选择宽松语义。GAP-16的源码审查始于A0，实际运行关联随C/D完成，不要求在A1前取得不存在的全部运行reason。
+
 回滚：文档生成失配停生成并保留旧证据；已标记schema漂移的规划草稿可留存，但阻断清单冻结；连接非隔离实例、清理越界、实体无provenance立即阻断；产物升级失败保留旧runtime/业务库，禁止删WAL/SHM。具体实施合同冻结并验证rollback。
 
 ## 11. 证据与独立评审
@@ -165,6 +167,8 @@ check_ci_gates/check_skip_rate当前不存在，仅登记待实现职责。gate�
 每run记录run_id、revision/dirty摘要、依赖版本、artifact hash、corpus/profile/capability、完整selectors、CLI argv/rc/stdout/stderr或MCP request/response、oracle/前后状态、JUnit/coverage、daemon日志、耗时和cleanup。相关变更发生则旧证据失效；raw token只在进程内，证据脱敏。
 
 TESTING_PLAN维护策略；TEST_CASES生成静态入口/参数和待合同化状态；COVERAGE_AUDIT解释事实/缺口；BUILD_ENV分离源码配置与历史环境；STATIC_AUDIT/SKIP_SITES用于复算，不代表运行通过。
+
+静态生成器明确依赖rg并采用NUL路径分隔；不再以Git索引回落冒充相同扫描范围。缺rg、空必需范围或枚举失败明确阻断。机器字段reason_nonliteral_or_absent_sites只计reason语法，不推断根因；原statically_unattributable_sites字段废止。
 
 v6原件与hash保留在`.backups/20261010-153813-before-v7/manifest.json`，更早.bak_v5保留。生成器禁止硬编码通过/历史缺陷/skip率；重复项、计数或源/矩阵/分类集合失配须报错。schema与源的名称漂移允许生成显式带 `planning_inventory_gate=BLOCKED_SCHEMA_DRIFT` 的规划草稿，禁止冻结。当前 `--check` 退出0仅表示生成字节一致，不能解除该阻断；后续清单冻结门禁必须读取该字段并要求schema集合及逐字段核验通过。
 

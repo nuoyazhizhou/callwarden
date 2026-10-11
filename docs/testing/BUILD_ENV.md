@@ -10,6 +10,8 @@ Windows按AGENTS规则42用C:\Python314\python.exe并设置PYTHON/PYO3_PYTHON；
 
 本机.tokenslim-context误检测为Node/npm。正式实施前核对并修正探测/允许命令；下列仅候选模板，未执行。CI是否部署TokenSlim及native shell须在profile明确。
 
+静态文档生成器的文件枚举以rg为明确前置，不使用Git索引回落。运行前冻结rg版本及可执行路径；缺失、空必需范围或枚举错误会阻断生成。Git仍负责外部VCS来源核验，但不代替rg的工作树扫描语义。
+
 ## 2. Windows未来实施模板
 
 ```powershell

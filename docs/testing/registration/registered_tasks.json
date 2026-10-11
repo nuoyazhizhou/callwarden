@@ -1,0 +1,38 @@
+[
+  {
+    "document_key": "TP-01",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "title": "TP-01 静态清单与case/报告合同",
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "assignment_status": "UNASSIGNED",
+    "create_cli_exit": 0
+  },
+  {
+    "document_key": "TP-02",
+    "task_id": "T-1791627784101-291afe54",
+    "title": "TP-02 profile、离线真实仓库与独立oracle资产",
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "assignment_status": "UNASSIGNED",
+    "create_cli_exit": 0
+  },
+  {
+    "document_key": "TP-03",
+    "task_id": "T-1791627785150-67976028",
+    "title": "TP-03 skip逐站点审查与运行映射合同",
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "assignment_status": "UNASSIGNED",
+    "create_cli_exit": 0
+  },
+  {
+    "document_key": "TP-04",
+    "task_id": "T-1791627786186-a562f188",
+    "title": "TP-04 GAP-15语义差异与对齐设计",
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "assignment_status": "UNASSIGNED",
+    "create_cli_exit": 0
+  }
+]

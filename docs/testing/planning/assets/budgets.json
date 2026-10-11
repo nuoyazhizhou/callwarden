@@ -1,0 +1,57 @@
+{
+ "schema_version": "assets-budgets/v1",
+ "task_id": "T-1791627784101-291afe54",
+ "step_id": "S-1791627784103-2938b55c",
+ "owner": "acceptance-assets",
+ "generated_by": "TP-02 Step 1 静态规划；未做任何性能测量",
+ "calibration": {
+  "state": "NOT_CALIBRATED",
+  "rule": "未校准不得写 SLO 已达标；预算只有在校准环境内测得后才可填数值",
+  "source": "TP-02 成功标准 + TASK_BREAKDOWN：performance selectors、样本数/分位/噪声/timeout 预算由 TP-02 冻结；不得临时调整预算补绿"
+ },
+ "required_fields_per_budget": [
+  "校准环境（OS/架构/CPU/内存/磁盘/负载与干扰控制）",
+  "被测 selector 与入口",
+  "corpus 与 tier（R0/R1/R2/R3）绑定",
+  "测量次数（重复样本数）",
+  "统计方式（分位数、均值、方差、离群处理）",
+  "噪声与波动控制（预热、冷/热缓存区分、并发干扰）",
+  "timeout 预算",
+  "判定规则（通过/阻断阈值与置信要求）",
+  "证据引用（测量原始输出与 manifest）"
+ ],
+ "budgets": [],
+ "budget_count": 0,
+ "why_empty": "校准环境尚未建立、未做任何测量；填任何数值都会变成未校准的伪 SLO，等价于用预算补绿，因此本轮只冻结规则不填数值",
+ "freezing_rules": [
+  "预算必须先冻结再测量；测量后不得为通过而临时上调阈值",
+  "R3 才承担吞吐/资源/增量/长期稳定性预算；R0 不得冒充 R3 结论",
+  "timeout 预算与性能预算分开记录，超时不得被统计为通过",
+  "每次测量必须记录校准环境与 manifest，环境变更即证据失效",
+  "冷启动/预热必须区分（daemon 冷启动约 30–35s 属已知量级，须实测固化而非沿用）"
+ ],
+ "known_uncertainties": [
+  {
+   "item": "daemon 冷启动耗时",
+   "status": "UNVERIFIED",
+   "note": "经验观察约 30–35s（含 workspace recovery），未实测固化，不得写进预算"
+  },
+  {
+   "item": "R3 吞吐/资源基线",
+   "status": "BLOCKED",
+   "note": "R3 名单未冻结（见 corpora.json missing），无法建立预算"
+  },
+  {
+   "item": "硬件基线",
+   "status": "BLOCKED",
+   "note": "平台 profile 未冻结（见 profiles.json decision points），校准环境无从绑定"
+  }
+ ],
+ "gate": {
+  "rule": "budgets 为空且 calibration.state=NOT_CALIBRATED 时，任何性能/资源类结论不得标 SLO 达标",
+  "blocks": [
+   "TP-14 性能与长期稳定性结论",
+   "任何以耗时为通过条件的入口"
+  ]
+ }
+}

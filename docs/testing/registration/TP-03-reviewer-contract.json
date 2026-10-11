@@ -1,0 +1,22 @@
+{
+  "task_id": "T-1791627785150-67976028",
+  "contracts": [
+    {
+      "role": "reviewer",
+      "skill_id": "none",
+      "skill_version": "",
+      "prompt_template_id": "",
+      "prompt_hash": "",
+      "allowed_paths": "[\"read-only source, contract, evidence; daemon role events only\"]",
+      "forbidden_paths": "[\"production source edits\", \"direct SQLite writes\", \"out-of-scope changes\", \"fabricated task, identity, lease, capability\", \"product tests or builds or internet in this static planning task\", \"task.apply\", \"task.close\"]",
+      "commands": "[\"daemon-compiled role prompt and independent verification\", \"supported role handoff via daemon\"]",
+      "acceptance_checks": "[\"Exact approved TP-03 card and common contract\", \"No UNKNOWN, missing evidence or scope violations\", \"No static planning PASS represented as product PASS\"]",
+      "required_evidence": "[\"source_baseline.json and task-scoped run manifest\", \"positive and negative validator outputs, rc and hashes\", \"owned diff and independent review record\"]",
+      "handoff_to": "adjudicator",
+      "independence": "{\"mode\": \"required\", \"executor_reviewer_session_separation\": true, \"reviewer_adjudicator_session_separation\": true}",
+      "revision": 1,
+      "contract_id": "RC-T-1791627785150-67976028-reviewer-1",
+      "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+    }
+  ]
+}

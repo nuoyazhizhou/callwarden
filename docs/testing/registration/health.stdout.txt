@@ -1,0 +1,11 @@
+C:/Python314/python.exe cw.py daemon health
+{
+  "security_profile": "dev_loopback_unauthenticated",
+  "endpoint": "http://127.0.0.1:13463",
+  "pid": 28336,
+  "git_commit": "c6ec977c1d5c6320b6f583cb07719f3648e36e6d",
+  "schema_version": 60,
+  "worker_status": "disabled_no_compat_routes",
+  "capability_registry_revision": "http-mvp-cap-registry-v1"
+}
+

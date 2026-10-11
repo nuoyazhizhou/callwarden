@@ -1,0 +1,22 @@
+{
+  "task_id": "T-1791627785150-67976028",
+  "contracts": [
+    {
+      "role": "executor",
+      "skill_id": "cw-executor-senior-engineer",
+      "skill_version": "",
+      "prompt_template_id": "",
+      "prompt_hash": "",
+      "allowed_paths": "[\"docs/testing/planning/skip/site_reviews.json\", \"docs/testing/planning/skip/runtime_mapping.schema.json\", \"docs/testing/planning/skip/validate_skip.py\", \"docs/testing/planning/skip/AUDIT_CONTRACT.md\", \"deliverables/testing/TP-03/\"]",
+      "forbidden_paths": "[\"production source edits\", \"direct SQLite writes\", \"out-of-scope changes\", \"fabricated task, identity, lease, capability\", \"product tests or builds or internet in this static planning task\", \"task.apply\", \"task.close\"]",
+      "commands": "[\"C:/Python314/python.exe docs/testing/planning/skip/validate_skip.py --self-check\", \"C:/Python314/python.exe docs/testing/planning/skip/validate_skip.py --verify-reviews\"]",
+      "acceptance_checks": "[\"Exact approved TP-03 card and common contract\", \"No UNKNOWN, missing evidence or scope violations\", \"No static planning PASS represented as product PASS\"]",
+      "required_evidence": "[\"source_baseline.json and task-scoped run manifest\", \"positive and negative validator outputs, rc and hashes\", \"owned diff and independent review record\"]",
+      "handoff_to": "reviewer",
+      "independence": "{\"mode\": \"required\", \"executor_reviewer_session_separation\": true, \"reviewer_adjudicator_session_separation\": true}",
+      "revision": 1,
+      "contract_id": "RC-T-1791627785150-67976028-executor-0",
+      "created_by": "S-1-5-21-1583625257-826939952-3615027596-1001"
+    }
+  ]
+}

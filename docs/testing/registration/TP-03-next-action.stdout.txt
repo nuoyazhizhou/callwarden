@@ -1,0 +1,144 @@
+C:/Python314/python.exe cw.py task next-action T-1791627785150-67976028 --workspace-instance-id 4baea3ff12c2ea5c --json
+{
+  "task_id": "T-1791627785150-67976028",
+  "lifecycle_status": "open",
+  "workflow_status": "queued",
+  "current_role": "executor",
+  "next_role": "executor",
+  "next_action": "claim_current_step",
+  "review": {
+    "state": "not_in_review"
+  },
+  "decision": "READY",
+  "action": "CLAIM",
+  "required_role": "executor",
+  "step_id": "S-1791627785151-67b305e4",
+  "task_contract": {
+    "id": "TC-T-1791627785150-67976028",
+    "revision": 1,
+    "hash": "sha256:64cb6d9341c10538ec558a6bcc90f1f02dea9959d0450ca20bcac8e069376ee1"
+  },
+  "role_contract": {
+    "id": "rcl-T-1791627785150-67976028-executor",
+    "revision_id": "rcr-T-1791627785150-67976028-executor-r1",
+    "revision": 1,
+    "hash": "sha256:f71f3c9445719d208ed4b348de6171da4a0b54015b17c603d50298e8ce690526",
+    "canonicalization_version": "role-contract-c14n/v1",
+    "canonicalization_rules_hash": "sha256:59ad755be8740794624c927294f95515d2b17790ffc21b58f6d9cf7155ff188d",
+    "skill_id": "cw-executor-senior-engineer",
+    "skill_version": "",
+    "prompt_template_id": "",
+    "handoff_to": "reviewer"
+  },
+  "authorization": {
+    "acting_role": "executor",
+    "lease_role": "implementer",
+    "lease_required": true,
+    "fencing_required": true,
+    "different_agent_instance_from": [],
+    "different_session_from": []
+  },
+  "allowed_paths": [
+    "deliverables/testing/TP-03/",
+    "docs/testing/planning/skip/AUDIT_CONTRACT.md",
+    "docs/testing/planning/skip/runtime_mapping.schema.json",
+    "docs/testing/planning/skip/site_reviews.json",
+    "docs/testing/planning/skip/validate_skip.py"
+  ],
+  "forbidden_paths": [
+    "direct SQLite writes",
+    "fabricated task, identity, lease, capability",
+    "out-of-scope changes",
+    "product tests or builds or internet in this static planning task",
+    "production source edits",
+    "task.apply",
+    "task.close"
+  ],
+  "eligibility": {
+    "verdict": "not_required_for_claim",
+    "evidence_gate": "not_evaluated",
+    "snapshot": "not_evaluated",
+    "mutation_recheck_required": true
+  },
+  "blocking_conditions": [],
+  "blocking_reasons": [],
+  "revision_hint": null,
+  "routing": {
+    "origin_kind": "system_evaluator",
+    "next_role": "executor",
+    "next_action": "claim_current_step",
+    "reason": [
+      "当前步骤 S-1791627785151-67b305e4 可领取（唯一 verified Role Contract binding）"
+    ]
+  },
+  "next_session": {
+    "role": "executor",
+    "task_id": "T-1791627785150-67976028",
+    "step_id": "S-1791627785151-67b305e4",
+    "must_be_new_session": false
+  },
+  "source": {
+    "task_status": "open",
+    "task_contract_hash": "sha256:64cb6d9341c10538ec558a6bcc90f1f02dea9959d0450ca20bcac8e069376ee1",
+    "role_contract_hash": "sha256:f71f3c9445719d208ed4b348de6171da4a0b54015b17c603d50298e8ce690526",
+    "evaluated_at": "1791627785.676871"
+  },
+  "inbound_handoff": {
+    "diagnosis": "no_handoff"
+  },
+  "work_order": {
+    "objective": "edit",
+    "task_title": "TP-03 skip逐站点审查与运行映射合同",
+    "allowed_paths": [
+      "deliverables/testing/TP-03/",
+      "docs/testing/planning/skip/AUDIT_CONTRACT.md",
+      "docs/testing/planning/skip/runtime_mapping.schema.json",
+      "docs/testing/planning/skip/site_reviews.json",
+      "docs/testing/planning/skip/validate_skip.py"
+    ],
+    "excluded_paths": [
+      "direct SQLite writes",
+      "fabricated task, identity, lease, capability",
+      "out-of-scope changes",
+      "product tests or builds or internet in this static planning task",
+      "production source edits",
+      "task.apply",
+      "task.close"
+    ],
+    "acceptance_checks": [
+      "Exact approved TP-03 card and common contract",
+      "No UNKNOWN, missing evidence or scope violations",
+      "No static planning PASS represented as product PASS"
+    ],
+    "required_evidence": [
+      "owned diff and independent review record",
+      "positive and negative validator outputs, rc and hashes",
+      "source_baseline.json and task-scoped run manifest"
+    ],
+    "commands": [
+      "C:/Python314/python.exe docs/testing/planning/skip/validate_skip.py --self-check",
+      "C:/Python314/python.exe docs/testing/planning/skip/validate_skip.py --verify-reviews"
+    ],
+    "prior_attempts": [],
+    "prior_handoffs": []
+  },
+  "assignment": {
+    "assignment_id": "A-644ddf3a9e382ab9931292ba",
+    "task_id": "T-1791627785150-67976028",
+    "step_id": "S-1791627785151-67b305e4",
+    "role": "executor",
+    "status": "queued",
+    "holder_agent_id": "",
+    "holder_session_id": "",
+    "holder_model_id": "",
+    "queued_at": 1791627785.150097,
+    "claimed_at": null,
+    "last_heartbeat_at": null,
+    "source_request_id": "task.create:T-1791627785150-67976028",
+    "source_event_id": null,
+    "last_event_id": 11080
+  },
+  "assignment_status": "queued",
+  "identity_policy": "legacy_identity_v1",
+  "identity_policy_status": "declared"
+}

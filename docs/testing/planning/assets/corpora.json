@@ -1,0 +1,274 @@
+{
+ "schema_version": "assets-corpora/v1",
+ "task_id": "T-1791627784101-291afe54",
+ "step_id": "S-1791627784103-29385cb0",
+ "owner": "acceptance-assets",
+ "generated_by": "TP-02 Step 0 静态盘点；未复制、未下载、未运行产品",
+ "manifest_contract": {
+  "required_fields": [
+   "来源/授权",
+   "commit",
+   "文件摘要",
+   "语言",
+   "规模",
+   "依赖",
+   "适用 case",
+   "oracle 来源",
+   "复制方式"
+  ],
+  "source": "docs/testing/TESTING_PLAN.md §4",
+  "rules": [
+   "原仓只读；所有改动在隔离副本",
+   "不复制生产业务数据库",
+   "每入口选适合的真实场景，不要求每入口在每仓重复",
+   "R0 不能替代 R1/R2",
+   "R3 不能以合成数据冒充"
+  ]
+ },
+ "tier_definitions": {
+  "R0": {
+   "purpose": "确定性小仓库：图谱、边界、改删、历史、恢复精确断言",
+   "freeze_basis": "人工 golden；旧种子先纠错"
+  },
+  "R1": {
+   "purpose": "真实仓库：全量 CLI/MCP 适用业务",
+   "freeze_basis": "首先 CallWarden 自身固定 commit，预选符号与历史独立核验"
+  },
+  "R2": {
+   "purpose": "代表性真实仓库：多语言、构建上下文、跨仓依赖",
+   "freeze_basis": "已可取得的离线快照；实施前冻结名单"
+  },
+  "R3": {
+   "purpose": "大型真实仓库：吞吐、资源、增量、长期稳定性",
+   "freeze_basis": "固定快照/硬件/基线；不能以合成数据冒充"
+  }
+ },
+ "language_matrix": {
+  "declared_total": 16,
+  "basis": "TESTING_PLAN §4：16 语言依据是 15 种通用 Rust 配置加独立 C 解析，不是 JS/TS 再次分列",
+  "rust_grammars": [
+   {
+    "language": "c",
+    "crate": "tree-sitter-c",
+    "version": "0.24"
+   },
+   {
+    "language": "cpp",
+    "crate": "tree-sitter-cpp",
+    "version": "0.23"
+   },
+   {
+    "language": "python",
+    "crate": "tree-sitter-python",
+    "version": "0.25"
+   },
+   {
+    "language": "rust",
+    "crate": "tree-sitter-rust",
+    "version": "0.24"
+   },
+   {
+    "language": "go",
+    "crate": "tree-sitter-go",
+    "version": "0.25"
+   },
+   {
+    "language": "java",
+    "crate": "tree-sitter-java",
+    "version": "0.23"
+   },
+   {
+    "language": "typescript",
+    "crate": "tree-sitter-typescript",
+    "version": "0.23"
+   },
+   {
+    "language": "ruby",
+    "crate": "tree-sitter-ruby",
+    "version": "0.23"
+   },
+   {
+    "language": "php",
+    "crate": "tree-sitter-php",
+    "version": "0.23"
+   },
+   {
+    "language": "scala",
+    "crate": "tree-sitter-scala",
+    "version": "0.23"
+   },
+   {
+    "language": "c_sharp",
+    "crate": "tree-sitter-c-sharp",
+    "version": "0.23"
+   },
+   {
+    "language": "kotlin",
+    "crate": "tree-sitter-kotlin-ng",
+    "version": "1.1"
+   },
+   {
+    "language": "swift",
+    "crate": "tree-sitter-swift",
+    "version": "0.7"
+   },
+   {
+    "language": "elixir",
+    "crate": "tree-sitter-elixir",
+    "version": "0.3"
+   },
+   {
+    "language": "hcl",
+    "crate": "tree-sitter-hcl",
+    "version": "1.1"
+   }
+  ],
+  "rust_grammar_count": 15,
+  "independent_c_parser": true,
+  "note": "JS 不再次分列（typescript grammar 覆盖）；HCL 按引用契约验收",
+  "source": "rust_ext/Cargo.toml 依赖块"
+ },
+ "corpora": [
+  {
+   "corpus_id": "CORPUS-R0-calc-seed",
+   "tier": "R0",
+   "status": "available_offline",
+   "frozen": false,
+   "path": "tests/convergence/seed_sample/calc.py",
+   "exists": true,
+   "sha256": "142f57c0068d42e3d26890c8ecb7d31331482aaf17f37280c0c1448eecf53d59",
+   "language": "python",
+   "scale": {
+    "files": 1,
+    "note": "刻意保持小而多样：模块级函数、类、方法、跨函数调用"
+   },
+   "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "license_or_authorization": "仓库内自带种子样本（本仓源码树内）",
+   "copy_method": "只读复制到本卡 run 临时根 C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-02/",
+   "applicable_cases": [
+    "符号定义/调用/引用",
+    "调用边方向",
+    "改删与历史",
+    "增量"
+   ],
+   "oracle_source": "人工 golden（源码实读固化，见 symbols.historical_errors_frozen）",
+   "symbols": {
+    "module_functions": [
+     "add",
+     "multiply",
+     "compute"
+    ],
+    "classes": [
+     "Calculator"
+    ],
+    "methods": [
+     "Calculator.__init__",
+     "Calculator.apply",
+     "Calculator.scale"
+    ],
+    "call_edges": [
+     {
+      "caller": "multiply",
+      "callee": "add",
+      "note": "循环内重复 add 实现乘法"
+     },
+     {
+      "caller": "Calculator.apply",
+      "callee": "add",
+      "note": "base + x"
+     },
+     {
+      "caller": "Calculator.scale",
+      "callee": "multiply",
+      "note": "历史错误：‘multiply 无调用者’"
+     },
+     {
+      "caller": "Calculator.scale",
+      "callee": "Calculator.apply",
+      "note": "scale 先 apply 再 multiply"
+     },
+     {
+      "caller": "compute",
+      "callee": "Calculator.scale",
+      "note": "values 循环内"
+     },
+     {
+      "caller": "compute",
+      "callee": "add",
+      "note": "聚合 total"
+     }
+    ],
+    "historical_errors_frozen": [
+     "旧结论‘multiply 无调用者’错误：Calculator.scale 调用 multiply",
+     "旧结论‘calc.py 恰两函数’错误：实有 add/multiply/compute 三模块函数 + Calculator 类三方法"
+    ]
+   },
+   "gaps": [
+    "规模与边界类断言的 golden 尚未逐条人工复核，由 Step 1 oracle_catalog 承接"
+   ]
+  },
+  {
+   "corpus_id": "CORPUS-R1-callwarden-self",
+   "tier": "R1",
+   "status": "available_offline",
+   "frozen": false,
+   "path": ".",
+   "exists": true,
+   "revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "revision_matches_baseline": true,
+   "dirty": true,
+   "dirty_entries": 13,
+   "dirty_note": "dirty 证据需附归属；dirty 状态下 R1 结论须标注工作树归属",
+   "language": "rust+python",
+   "scale": {
+    "note": "规模未在本轮逐项计量；执行卡冻结时补 files/loc/符号数"
+   },
+   "license_or_authorization": "本仓自身源码",
+   "copy_method": "只读；隔离副本必须落在 run 临时根，禁止在源仓写入",
+   "applicable_cases": [
+    "全量 CLI/MCP 适用业务"
+   ],
+   "oracle_source": "预选符号与历史须独立人工核验（TESTING_PLAN §4）",
+   "gaps": [
+    "预选符号清单与历史独立核验结果尚未产出（Step 1 oracle_catalog 承接）",
+    "dirty 工作树的归属判定未逐项完成"
+   ]
+  }
+ ],
+ "missing": [
+  {
+   "tier": "R2",
+   "status": "DECISION_REQUIRED",
+   "reason": "尚无冻结名单",
+   "required_from": "Planner：规划离线资产准备 / 产品范围决策",
+   "forbidden": "不得填假路径、不得以合成数据替代",
+   "criteria": "多语言、构建上下文、跨仓依赖；须为已可取得的离线快照"
+  },
+  {
+   "tier": "R3",
+   "status": "DECISION_REQUIRED",
+   "reason": "尚无冻结名单",
+   "required_from": "Planner：规划离线资产准备 / 产品范围决策",
+   "forbidden": "不得填假路径、不得以合成数据替代",
+   "criteria": "固定快照/硬件/基线；用于吞吐、资源、增量、长期稳定性"
+  }
+ ],
+ "confusion_guard": [
+  {
+   "risk": "同名 calc.py 混淆",
+   "detail": "tests/fixtures/container-matrix/project/calc.py 与 R0 种子同名但结构不同（无类、无 scale 方法、add/multiply/compute 三函数）",
+   "decoy_sha256": "79c96209cc24e9bb137449c616ddd88d2062251779e16e267e9169d68c00b62d",
+   "rule": "R0 必须用 tests/convergence/seed_sample/calc.py；以 sha256 与符号集双重校验，禁止按文件名匹配"
+  },
+  {
+   "risk": "以 R0 冒充 R1/R2 覆盖",
+   "detail": "R0 是小而多样的确定性样本，不能替代真实仓库的语义覆盖",
+   "rule": "TESTING_PLAN §4：R0 不能替代 R1/R2；每入口选适合的真实场景"
+  }
+ ],
+ "out_of_scope": [
+  "不在源仓写入；不入库生产数据",
+  "本轮不实际复制 corpus（复制动作在合同明列的 run 临时根内由执行卡执行）",
+  "不创建 deliverables/testing/TP-02/<run_id>/（卡片规定该目录只用于未来证据）"
+ ]
+}

@@ -1,0 +1,541 @@
+{
+ "schema_version": "governance-diff/v1",
+ "status": "static_differences_registered",
+ "task_id": "T-1791627786186-a562f188",
+ "step_id": "S-1791627786188-a5784358",
+ "generated_at": 1791702707.514352,
+ "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+ "baseline_head_reference": "db952964ca49e07d77c033e886298a3e004542af",
+ "scope_note": "静态规划账本：只读权威文档与源码，不运行产品测试/构建/联网；不把静态测试写成运行证明；runtime_status=unknown 的项其运行验证属下游任务",
+ "authority_documents": [
+  {
+   "file": "AGENTS.md",
+   "role": "project_authority_entry",
+   "description": "项目 AI 入口权威；角色矩阵与状态推进规则",
+   "sha256": "75e31a7f6d38132c467d50d711616f5e9bcb37ef1feb3176dd564795cc8a7e1f",
+   "exists": true
+  },
+  {
+   "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+   "role": "shared_protocol_single_source",
+   "description": "四角色共享协议唯一单源；capability 分层、双轨整改、Handoff 结构",
+   "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+   "exists": true
+  },
+  {
+   "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+   "role": "design_amendment_current",
+   "description": "四角色模型修订与 capability 分层 cutover 的现行设计依据",
+   "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+   "exists": true
+  }
+ ],
+ "implementation_sources": [
+  {
+   "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+   "description": "handoff/remediation 主逻辑",
+   "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+   "exists": true
+  },
+  {
+   "file": "rust_ext/src/daemon/task_collab_lease.rs",
+   "description": "lease source_outcome 判定",
+   "sha256": "120290cb460dfd874c1f9c48cbefbde86645502e9351838278005c165e3aaca6",
+   "exists": true
+  },
+  {
+   "file": "rust_ext/src/daemon/task_collab_shared.rs",
+   "description": "共享 source_outcome 判定",
+   "sha256": "e9cb7c6a6c94be9f71658039391e5764abbfed1c514849e9892a9d272ea5b8f8",
+   "exists": true
+  },
+  {
+   "file": "rust_ext/src/daemon/task_loop/claim.rs",
+   "description": "claim source_outcome 判定",
+   "sha256": "105fe1164207e6ebdddecb916eefc661d1e98ffbac5054efc5beba61eb890a9f",
+   "exists": true
+  },
+  {
+   "file": "rust_ext/src/daemon/task_loop/next_action.rs",
+   "description": "next_action provenance 判定",
+   "sha256": "ab743cdb37eb842572d9a5abb8d4d28a5418d6360e6a118c908951fac84072a1",
+   "exists": true
+  },
+  {
+   "file": "rust_ext/src/daemon/task_loop/report_handoff.rs",
+   "description": "outcome_route 路由表",
+   "sha256": "7352d2bc939c4ee255b2b557a76373a27c5b8704b8dc2c4687f4c86ae21fb0ce",
+   "exists": true
+  },
+  {
+   "file": "cli/main.py",
+   "description": "CLI _STRUCTURED_HANDOFF_ROUTES",
+   "sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+   "exists": true
+  },
+  {
+   "file": "server/tools/tools_collab.py",
+   "description": "MCP task_remediation_create adapter",
+   "sha256": "974476b71efbc7cdcdf2ac89e58801f02abf45a6cf9725cf00837cff085d465c",
+   "exists": true
+  }
+ ],
+ "static_test_contracts": [
+  {
+   "file": "rust_ext/src/daemon/task_collab_tests_core.rs",
+   "description": "task_collab 静态测试合同",
+   "sha256": "2106efe7312647b3a20eff85482f11b2b20d0ebe301e11906bfaed7eec1c6428",
+   "exists": true
+  }
+ ],
+ "differences": [
+  {
+   "diff_id": "GAP-15-D01",
+   "title": "adjudicator_returned 是否自动追加 provenance-bound fix_defect step",
+   "category": "protocol_vs_implementation_vs_static_test",
+   "gap_origin": "docs/testing/COVERAGE_AUDIT.md:54 GAP-15",
+   "protocol_semantics": {
+    "claim": "adjudicator_returned 退回只持久化 handoff 并固定路由 executor，不自动追加 step、不自动 reopen；自动 remediation 仅 reviewer_blocked 触发；当前无角色可合法使用的端到端 bridge",
+    "citations": [
+     {
+      "file": "AGENTS.md",
+      "sha256": "75e31a7f6d38132c467d50d711616f5e9bcb37ef1feb3176dd564795cc8a7e1f",
+      "lines": [
+       155,
+       159
+      ],
+      "note": "AGENTS 状态推进第5条：daemon 仅固定路由 Executor，不自动追加整改 step——自动 remediation 仅 reviewer_blocked 触发",
+      "excerpt": "   或带具体缺口退回 Executor；不得自己补计划或修改实现。Adjudicator 退回用 `adjudicator_returned`：\n   daemon 仅固定路由 Executor（不自动追加整改 step——自动 remediation 仅 `reviewer_blocked` 触发），\n   当前 CLI/MCP 尚无受支持的 provenance-bound remediation bridge。退回后必须重新查询同一 `task_id`；\n   若仍为 `READY/ADJUDICATE`，应记录精确 task/verdict/handoff/source-step 治理缺口，交后续 daemon/CLI/MCP\n   实现任务。不得改用通用 RPC、伪造整改 step 或自行声称 `remediation_pending`。"
+     },
+     {
+      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "lines": [
+       13,
+       17
+      ],
+      "note": "协议顶部 capability 分层：adjudicator_returned 不在此列，只固定路由 executor，不自动追加 step/reopen",
+      "excerpt": "> - **当前已实现（无 capability 门禁）**：`reviewer_blocked` 触发 daemon 在同一主任务原子追加\n>   provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。\n>   `adjudicator_returned` **不在此列**：它只固定路由 executor，不自动追加 step/reopen；当前 CLI\n>   没有对应命令，MCP adapter 也不满足 daemon 的结构化 findings 契约，因此尚无受支持的端到端\n>   remediation bridge。角色不得改用通用 RPC 或自行投影 `remediation_pending`（详见 §3/§4）。"
+     },
+     {
+      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "lines": [
+       34,
+       34
+      ],
+      "note": "协议 §1 角色表：Adjudicator 当前退回固定路由 Executor 但 bridge 未闭合",
+      "excerpt": "| Adjudicator | 独立核验 Reviewer PASS 及最终门禁；接受后 apply/close，或退回   | complete；当前退回固定路由 Executor 但 bridge 未闭合；目标双轨见 §3 | 已实现                                        |"
+     },
+     {
+      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "lines": [
+       108,
+       113
+      ],
+      "note": "协议 §3 双轨整改：Adjudicator 退回仅持久化 handoff 并固定路由 executor，不自动追加 step、不自动 reopen",
+      "excerpt": "  → Adjudicator 退回：task.handoff adjudicator_returned\n    → daemon 仅持久化 handoff 并固定路由 executor（不自动追加 step、不自动 reopen）\n    → 当前 CLI/MCP 没有受支持的 provenance-bound remediation bridge\n    → 重新查询同一 task；当前 next_action 可能仍按 Reviewer PASS 返回 READY/ADJUDICATE\n    → 记录精确 task/verdict/handoff/source-step 缺口，交后续 daemon/CLI/MCP 实现任务；\n      不得使用通用 RPC、伪造 step 或自行声称 remediation_pending"
+     },
+     {
+      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "lines": [
+       122,
+       127
+      ],
+      "note": "协议 §3 scope/Contract 缺陷分支：adjudicator_returned 后无受支持 remediation bridge，不得假装存在可领取 Executor step",
+      "excerpt": "      3. Adjudicator 用 adjudicator_returned 提交后重新查询同一 task；由于当前没有受支持的\n         remediation bridge，若仍为 READY/ADJUDICATE，必须记录治理实现缺口并等待后续\n         daemon/CLI/MCP 修复，不得假装存在可领取的 Executor step。\n    该桥接是 pre-cutover 的临时内部修复路径——Reviewer/Adjudicator 不能冒用\n    executor_blocked_to_user（from_role 校验拒绝）；`next_role: user` 仅用于真正的业务决策、外部事实、验收或敏感授权。\n```"
+     },
+     {
+      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "lines": [
+       189,
+       198
+      ],
+      "note": "协议 §4：adjudicator_returned 只持久化 handoff，不自动追加 step/不自动 reopen；明称 task_collab_lifecycle.rs 自动整改分支仅匹配 reviewer_blocked；CLI 无命令、MCP 透传字符串",
+      "excerpt": "BLOCKED 不是终点。Reviewer 提交 `reviewer_blocked` 后，daemon 在同一主任务原子追加带\n`source_verdict_id`、`finding_id`、`remediation_of_step_id` 的 `fix_defect` 并投影为\n`remediation_pending`（**当前已实现的唯一自动 remediation**，无 capability 门禁）。Adjudicator 的\n`adjudicator_returned` 退回**只持久化 handoff 并固定路由 executor，不自动追加 step/不自动 reopen**\n（`task_collab_lifecycle.rs` 自动整改分支仅匹配 `reviewer_blocked`）。虽然 daemon 内部存在\n`task.remediation.create` handler，当前 CLI 没有对应命令，MCP adapter 又把 `source_findings`\n作为字符串透传，而 daemon 要求 JSON array；该入口也没有完成对 `adjudicator_returned` handoff event\n与 source step 的权威绑定。因此当前不存在角色可合法使用的端到端 bridge。提交退回后必须重新查询并\n如实显示治理缺口；不得改用通用 RPC、伪造整改 step 或自行声称 `remediation_pending`。该闭环属于后续\ndaemon/CLI/MCP 实现任务。"
+     },
+     {
+      "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+      "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+      "lines": [
+       61,
+       64
+      ],
+      "note": "amendment §3.1：adjudicator_returned 仅固定路由 Executor，不自动追加 step/reopen；CLI/MCP 尚无受支持的端到端 remediation bridge",
+      "excerpt": "**明确不在任何 capability 门禁内（当前已实现）**：`reviewer_blocked` 触发 daemon 在同一主任务\n原子追加 provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。\n`adjudicator_returned` 仅固定路由 Executor，不自动追加 step/reopen；当前 CLI/MCP 尚无受支持的\n端到端 remediation bridge，不得把固定路由描述成可执行整改能力。"
+     },
+     {
+      "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+      "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+      "lines": [
+       75,
+       75
+      ],
+      "note": "amendment §3.2 pre-cutover 行：Adjudicator 用 adjudicator_returned 提交后因当前无受支持 remediation bridge，不得合成 Executor step",
+      "excerpt": "| 计划/scope/Contract/架构缺陷 | **临时桥接**（§4）：Reviewer 用 `reviewer_blocked` 提交后由 daemon 追加 `fix_defect`，Executor 按 `owner_route=planner` 复查并以 `executor_blocked_to_user` 升级用户；Adjudicator 用 `adjudicator_returned` 提交后因当前无受支持 remediation bridge，重新查询并如实记录治理实现缺口，不得合成 Executor step | `replan` 路由 Planner（`replanning_pending`） |"
+     },
+     {
+      "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+      "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+      "lines": [
+       113,
+       118
+      ],
+      "note": "amendment §4 双轨整改：daemon 仅持久化 handoff 并固定路由 executor（不自动追加 step、不自动 reopen）",
+      "excerpt": "  → Adjudicator 退回：task.handoff adjudicator_returned\n    → daemon 仅持久化 handoff 并固定路由 executor（不自动追加 step、不自动 reopen）\n    → 当前 CLI/MCP 没有受支持的 provenance-bound remediation bridge\n    → 重新查询同一 task；若 next_action 仍按 Reviewer PASS 返回 READY/ADJUDICATE，\n      记录精确 task/verdict/handoff/source-step 治理缺口，交后续 daemon/CLI/MCP 实现任务；\n      不得使用通用 RPC、伪造 step 或自行声称 remediation_pending"
+     }
+    ],
+    "doc_count": 3,
+    "citation_count": 9
+   },
+   "implementation_semantics": {
+    "behavior": "handle_task_handoff 对 adjudicator_returned 与 reviewer_blocked 走同一自动整改分支，同事务追加 provenance-bound fix_defect step；显式 task.remediation.create 亦接受 adjudicator_returned；lease/claim/next_action/provenance 判定全程匹配两者",
+    "citations": [
+     {
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+      "lines": [
+       1516,
+       1524
+      ],
+      "note": "handle_task_handoff 自动整改分支：matches!(outcome, 'reviewer_blocked' | 'adjudicator_returned') —— 两种 outcome 都进入同事务 remediation 计算",
+      "excerpt": "        // Reviewer BLOCKED / Adjudicator RETURNED 都是同一主任务上的治理回复：\n        // 从唯一 Verdict Ledger 读取 source verdict/findings，并在本事务中准备\n        // 一个 provenance-bound fix_defect。不得创建 child task，也不得修改被审\n        // 步骤或历史 verdict。两条路由共享同一事务，避免裁决退回留下旧 Reviewer\n        // 队列而没有可领取的 Executor remediation。\n        let remediation_plan: Option<(String, String, String, String, Value, String)> = if matches!(\n            outcome.as_str(),\n            \"reviewer_blocked\" | \"adjudicator_returned\"\n        ) {"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+      "lines": [
+       1591,
+       1595
+      ],
+      "note": "source_overcome 判定：reviewer_blocked→block，其余（即 adjudicator_returned）→pass；两类 verdict 各自作为 source",
+      "excerpt": "            let source_overall = if outcome == \"reviewer_blocked\" {\n                \"block\"\n            } else {\n                \"pass\"\n            };"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+      "lines": [
+       1720,
+       1739
+      ],
+      "note": "findings 契约：adjudicator_returned 允许空数组（pass verdict 可无 finding），reviewer_blocked 必须非空——为 adjudicator_returned 专门留了通道",
+      "excerpt": "            let source_findings = serde_json::from_str::<Value>(&source_findings_raw)\n                .ok()\n                .filter(Value::is_array)\n                .filter(|value| {\n                    outcome == \"adjudicator_returned\"\n                        || value\n                            .as_array()\n                            .map(|items| !items.is_empty())\n                            .unwrap_or(false)\n                })\n                .ok_or_else(|| {\n                    DaemonRpcError::new(\n                        \"E_REMEDIATION_FINDINGS_REQUIRED\",\n                        if outcome == \"reviewer_blocked\" {\n                            \"block verdict 必须携带至少一个结构化 finding\"\n                        } else {\n                            \"pass verdict 的 findings 必须是结构化数组\"\n                        },\n                    )\n                })?;"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+      "lines": [
+       1782,
+       1794
+      ],
+      "note": "remediation_step_id 生成：对两种 outcome 同样生成 S-<sha256[..24]>，不区分 outcome",
+      "excerpt": "            let remediation_step_id = format!(\n                \"S-{}\",\n                &sha256_hex(\n                    format!(\n                        \"{}:{}:{}:{}\",\n                        task_id,\n                        source_verdict_id,\n                        step_id.as_deref().unwrap_or(\"task-level\"),\n                        request_id\n                    )\n                    .as_bytes()\n                )[..24]\n            );"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+      "lines": [
+       638,
+       646
+      ],
+      "note": "显式 task.remediation.create handler：source_outcome 接受 failed_step/reviewer_blocked/adjudicator_returned 三者",
+      "excerpt": "        if !matches!(\n            source_outcome,\n            \"failed_step\" | \"reviewer_blocked\" | \"adjudicator_returned\"\n        ) {\n            return Err(DaemonRpcError::new(\n                \"E_REMEDIATION_SOURCE_OUTCOME_INVALID\",\n                \"source_outcome 必须是 failed_step/reviewer_blocked/adjudicator_returned\",\n            ));\n        }"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_lease.rs",
+      "sha256": "120290cb460dfd874c1f9c48cbefbde86645502e9351838278005c165e3aaca6",
+      "lines": [
+       40,
+       41
+      ],
+      "note": "lease 判定：source_outcome ∈ {reviewer_blocked, adjudicator_returned} 选中 remediation lease",
+      "excerpt": "    if !matches!(source_outcome, \"reviewer_blocked\" | \"adjudicator_returned\") {\n        return false;"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_shared.rs",
+      "sha256": "e9cb7c6a6c94be9f71658039391e5764abbfed1c514849e9892a9d272ea5b8f8",
+      "lines": [
+       311,
+       312
+      ],
+      "note": "共享判定：source_outcome 匹配两者",
+      "excerpt": "            || matches!(source_outcome, \"reviewer_blocked\" | \"adjudicator_returned\")\n        {"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_loop/claim.rs",
+      "sha256": "105fe1164207e6ebdddecb916eefc661d1e98ffbac5054efc5beba61eb890a9f",
+      "lines": [
+       513,
+       514
+      ],
+      "note": "claim 判定：source_outcome 匹配两者",
+      "excerpt": "    if !matches!(source_outcome, \"reviewer_blocked\" | \"adjudicator_returned\") {\n        return false;"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_loop/next_action.rs",
+      "sha256": "ab743cdb37eb842572d9a5abb8d4d28a5418d6360e6a118c908951fac84072a1",
+      "lines": [
+       600,
+       601
+      ],
+      "note": "next_action provenance 判定：source_outcome 匹配两者",
+      "excerpt": "    if !matches!(source_outcome, \"reviewer_blocked\" | \"adjudicator_returned\") {\n        return Ok(false);"
+     }
+    ],
+    "file_count": 9
+   },
+   "static_test_contract": {
+    "requires": "adjudicator_returned 必须原子创建 Executor remediation（status=in_progress、remediation_step_id、action=fix_defect、source_outcome/source_verdict_id/remediation_of_step_id 绑定、幂等重放、active assignment=1 executor）",
+    "citations": [
+     {
+      "file": "rust_ext/src/daemon/task_collab_tests_core.rs",
+      "sha256": "2106efe7312647b3a20eff85482f11b2b20d0ebe301e11906bfaed7eec1c6428",
+      "lines": [
+       722,
+       921
+      ],
+      "note": "test_adjudicator_returned_handoff_reopens_executor_remediation_atomically：断言 adjudicator_returned 应原子创建 Executor remediation（fix_defect step + provenance + 幂等重放 + active assignment=1 executor）",
+      "excerpt": "    #[test]\n    fn test_adjudicator_returned_handoff_reopens_executor_remediation_atomically() {\n        let (_dir, db_path) = temp_db();\n        let store = TaskCollabStore::new(&db_path)\n            .unwrap()\n            .with_clock(Arc::new(AuthoritativeClock::new()));\n        let peer = PeerCredential::new_unix(1000, 1000, 1234);\n        seed_workspace(&store);\n        let task_id = \"T-ADJUDICATOR-RETURNED-REMEDIATION\";\n        store\n            .handle_task_create(\n                peer.clone(),\n                &serde_json::json!({\n                    \"workspace_id\": 1, \"workspace_instance_id\": \"ws-inst-test\",\n                    \"task_id\": task_id,\n                    \"title\": \"adjudicator returned remediation\",\n                    \"steps\": [{\n                        \"action\": \"deploy_and_round_trip\",\n                        \"target_file\": \"scripts/refresh_shared_runtime.ps1\",\n                        \"target_symbol\": \"\",\n                        \"check_items\": \"fresh PID and binary hash\"\n                    }],\n                    \"identity_policy\": \"legacy_identity_v1\",\n                    \"role_contracts\": p0l_governance_roles()\n                }),\n            )\n            .unwrap();\n\n        let reviewer_identity = lease_identity(\n            \"agent-adjudicator-returned-reviewer\",\n            \"reviewer-returned-session\",\n            \"reviewer-model\",\n            \"reviewer\",\n        );\n        let adjudicator_identity = lease_identity(\n            \"agent-adjudicator-returned-adjudicator\",\n            \"adjudicator-returned-session\",\n            \"adjudicator-model\",\n            \"adjudicator\",\n        );\n        register_agent_with_identity(\n            &store,\n            &peer,\n            \"agent-adjudicator-returned-adjudicator\",\n            \"adjudicator-returned-instance\",\n            \"adjudicator-returned-session\",\n            \"adjudicator\",\n        );\n\n        let source_step_id: String = {\n            let conn = store.conn.lock().unwrap();\n            conn.query_row(\n                \"SELECT id FROM task_steps WHERE task_id=?1 ORDER BY step_index LIMIT 1\",\n                params![task_id],\n                |row| row.get(0),\n            )\n            .unwrap()\n        };\n        {\n            let conn = store.conn.lock().unwrap();\n            conn.execute(\n                \"UPDATE tasks SET status='review' WHERE id=?1\",\n                params![task_id],\n            )\n            .unwrap();\n            conn.execute(\n                \"UPDATE task_steps SET status='done', result=?2 WHERE id=?1\",\n                params![source_step_id, serde_json::json!({\"success\": true}).to_string()],\n            )\n            .unwrap();\n            conn.execute(\n                \"INSERT INTO task_verdict_events\n                (verdict_id, task_id, contract_id, contract_revision, contract_hash,\n                  phase, step_id, snapshot_id, view_manifest_hash, reviewer_identity,\n                  findings, overall, attestation, submitted_at, workspace_id)\n                 VALUES ('V-ADJ-RETURNED-1', ?1, 'TC-ADJ-RETURNED', 1, 'sha256:adj-returned',\n                         'adjudication', ?2, 'snapshot-adj-returned', 'manifest-adj-returned',\n                         ?3, ?4, 'pass', 'attested', ?5, 1)\",\n                params![\n                    task_id,\n                    source_step_id,\n                    serde_json::json!({\"identity\": reviewer_identity}).to_string(),\n                    serde_json::json!([{\"finding_id\":\"F-ADJ-RETURNED-1\",\"fact\":\"deployment evidence is stale\"}]).to_string(),\n                    now_ts(),\n                ],\n            )\n            .unwrap();\n        }\n        // 模拟旧投影中同时残留的 Executor/Reviewer/Adjudicator assignment；正式\n        // handoff 必须原子完成它们，再只排入 remediation Executor。\n        {\n            let mut conn = store.conn.lock().unwrap();\n            let tx = conn.unchecked_transaction().unwrap();\n            assignment_queue::queue_assignment(\n                &tx,\n                task_id,\n                Some(&source_step_id),\n                \"reviewer\",\n                \"stale-reviewer-source\",\n                None,\n                \"test\",\n                \"test-reviewer\",\n                store.next_seq(),\n                now_ts(),\n            )\n            .unwrap();\n            assignment_queue::queue_assignment(\n                &tx,\n                task_id,\n                None,\n                \"reviewer\",\n                \"stale-reviewer-task\",\n                None,\n                \"test\",\n                \"test-reviewer\",\n                store.next_seq(),\n                now_ts(),\n            )\n            .unwrap();\n            assignment_queue::queue_assignment(\n                &tx,\n                task_id,\n                Some(&source_step_id),\n                \"adjudicator\",\n                \"stale-adjudicator-source\",\n                None,\n                \"test\",\n                \"test-adjudicator\",\n                store.next_seq(),\n                now_ts(),\n            )\n            .unwrap();\n            tx.commit().unwrap();\n        }\n\n        let adjudicator_lease = store\n            .handle_lease_acquire(\n                peer.clone(),\n                &serde_json::json!({\n                    \"task_id\": task_id,\n                    \"role\": \"adjudicator\",\n                    \"ttl_seconds\": 3600.0,\n                    \"identity\": adjudicator_identity.clone()\n                }),\n            )\n            .unwrap();\n        let handoff = serde_json::json!({\n            \"task_id\": task_id,\n            \"from_role\": \"adjudicator\",\n            \"outcome\": \"adjudicator_returned\",\n            \"next_role\": \"executor\",\n            \"next_action\": \"claim deployment evidence remediation\",\n            \"reason\": \"fresh deployment evidence is required\",\n            \"independence_requirement\": \"not_required\",\n            \"request_id\": \"handoff-adjudicator-returned-1\",\n            \"step_id\": source_step_id,\n            \"report_request_id\": \"report-adjudicator-returned-1\",\n            \"evidence_path\": \"docs/evidence/adjudicator-returned-1.json\",\n            \"evidence_hash\": \"sha256:adjudicator-returned-1\",\n            \"identity\": adjudicator_identity,\n            \"lease_token\": adjudicator_lease[\"token\"],\n            \"fencing_counter\": adjudicator_lease[\"fencing_counter\"]\n        });\n        let response = store\n            .handle_task_handoff(peer.clone(), &handoff)\n            .expect(\"adjudicator_returned 应原子创建 Executor remediation\");\n        assert_eq!(response[\"status\"], \"in_progress\");\n        let remediation_step_id = response[\"remediation_step_id\"].as_str().unwrap();\n        assert!(response[\"assignment_id\"].as_str().is_some());\n\n        let replay = store\n            .handle_task_handoff(peer.clone(), &handoff)\n            .expect(\"相同 request_id 必须幂等重放\");\n        assert_eq!(replay[\"replayed\"], true);\n        assert_eq!(replay[\"remediation_step_id\"], remediation_step_id);\n\n        let conn = store.conn.lock().unwrap();\n        let (action, status, target_file, result): (String, String, String, String) = conn\n            .query_row(\n                \"SELECT action, status, target_file, result FROM task_steps WHERE id=?1\",\n                params![remediation_step_id],\n                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),\n            )\n            .unwrap();\n        assert_eq!(action, \"fix_defect\");\n        assert_eq!(status, \"pending\");\n        assert_eq!(target_file, \"scripts/refresh_shared_runtime.ps1\");\n        let metadata: Value = serde_json::from_str(&result).unwrap();\n        assert_eq!(metadata[\"source_outcome\"], \"adjudicator_returned\");\n        assert_eq!(metadata[\"source_verdict_id\"], \"V-ADJ-RETURNED-1\");\n        assert_eq!(metadata[\"remediation_of_step_id\"], source_step_id);\n        let active: Vec<_> = assignment_queue::project_task_assignments(&conn, task_id)\n            .unwrap()\n            .into_iter()\n            .filter(|assignment| assignment.is_active())\n            .collect();\n        assert_eq!(active.len(), 1);\n        assert_eq!(active[0].role, \"executor\");\n        assert_eq!(active[0].step_id.as_deref(), Some(remediation_step_id));\n    }"
+     }
+    ]
+   },
+   "conflict": true,
+   "conflict_type": "protocol_claims_negative_vs_implementation_and_test_positive",
+   "runtime_status": "unknown",
+   "runtime_status_note": "静态规划阶段不运行产品测试；该静态测试是否在当前 daemon 二进制上通过属运行验证（TP-09/11G 范围），本账本只登记源码级语义差异",
+   "direction_options": [
+    {
+     "option_id": "A",
+     "name": "批准实现语义（adjudicator_returned 自动追加 remediation）",
+     "doc_changes": "AGENTS.md:156-159、role-protocol.md:13-17/34/108-113/122-127/189-198、v2-amendment §3.1/§3.2/§4 全部改写为'两种退回均同事务追加 fix_defect'；删除'bridge 缺失'表述或降级为仅 CLI/MCP 显式入口的缺口",
+     "product_changes": "无（实现与静态测试不变）",
+     "downstream": "TP-05 同步全部现行权威文本；协议变化交 TP-05"
+    },
+    {
+     "option_id": "B",
+     "name": "批准协议语义（adjudicator_returned 不自动追加）",
+     "doc_changes": "无（协议文本不变）",
+     "product_changes": "task_collab_lifecycle.rs:1521-1524 移除 'adjudicator_returned' 分支；显式 handler:638-646 移除该 outcome；lease/claim/next_action/shared 四处同步收窄；静态测试 test_adjudicator_returned_handoff_reopens_executor_remediation_atomically 改为断言拒绝",
+     "downstream": "必要产品修复按 P-FIX 加入 TP-09/11G 前置；Planner 另冻 daemon/client 独立任务及回归合同"
+    }
+   ],
+   "approval_boundary": "target_semantics_pending_project_authority_approval",
+   "approval_note": "TP-04 只登记差异并定义目标语义候选，不代替裁定；审批事件来源在未来合同绑定（卡片：设计裁定由项目现行权威审批，Planner 不冒充 Adjudicator）"
+  },
+  {
+   "diff_id": "GAP-15-D02",
+   "title": "remediation 的 CLI/MCP 显式入口是否可用",
+   "category": "protocol_claim_vs_implementation_surface",
+   "protocol_semantics": {
+    "claim": "当前 CLI 没有对应命令，MCP adapter 把 source_findings 作为字符串透传而 daemon 要求 JSON array，因此不存在角色可合法使用的端到端 bridge",
+    "citations": [
+     {
+      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "lines": [
+       193,
+       198
+      ],
+      "note": "协议 §4：CLI 无命令、MCP 字符串透传、daemon 要求 JSON array、无权威绑定",
+      "excerpt": "（`task_collab_lifecycle.rs` 自动整改分支仅匹配 `reviewer_blocked`）。虽然 daemon 内部存在\n`task.remediation.create` handler，当前 CLI 没有对应命令，MCP adapter 又把 `source_findings`\n作为字符串透传，而 daemon 要求 JSON array；该入口也没有完成对 `adjudicator_returned` handoff event\n与 source step 的权威绑定。因此当前不存在角色可合法使用的端到端 bridge。提交退回后必须重新查询并\n如实显示治理缺口；不得改用通用 RPC、伪造整改 step 或自行声称 `remediation_pending`。该闭环属于后续\ndaemon/CLI/MCP 实现任务。"
+     }
+    ]
+   },
+   "implementation_semantics": {
+    "behavior": "CLI 无 cw task remediation 子命令（仅有 --remediation-step-id claim 参数与 step-resolve）；MCP task_remediation_create 存在但 source_findings 类型为 str，与 daemon 的 Value/JSON array 契约不一致；daemon handler 本身支持 adjudicator_returned",
+    "citations": [
+     {
+      "file": "server/tools/tools_collab.py",
+      "sha256": "974476b71efbc7cdcdf2ac89e58801f02abf45a6cf9725cf00837cff085d465c",
+      "lines": [
+       345,
+       381
+      ],
+      "note": "MCP task_remediation_create：source_findings: str = ''，透传给 task.remediation.create",
+      "excerpt": "        source_findings: str = \"\",\n        identity_role: str = \"implementer\",\n        identity_agent_id: str = \"\",\n        identity_session_id: str = \"\",\n        identity_model_id: str = \"\",\n    ) -> dict:\n        \"\"\"为历史 failed/reviewer_blocked 步骤创建带 provenance 的 fix_defect 步骤（写路径，daemon 权威）\n\n        薄壳转发：把 MCP 参数适配为 daemon native v1 wire 后经\n        ``task.remediation.create`` RPC 透传（业务校验/落库全在 Rust daemon，\n        不回退本地 SQLite）。不可以执行时 fail-closed 返回结构化错误。\n\n        Args:\n            task_id: 目标任务 ID（source_step_id 必须属于该任务）\n            source_step_id: 被 remediation 的源步骤 ID（failed_step 场景即\n                            failed 步骤；别名 failed_step_id 亦可，daemon 兼容）\n            source_outcome: 源结局枚举：failed_step（默认）| reviewer_blocked |\n                            adjudicator_returned\n            source_verdict_id: reviewer_blocked/adjudicator_returned 时必填的\n                               source verdict id（failed_step 场景必须留空）\n            source_findings: reviewer_blocked/adjudicator_returned 时必填的\n                             source findings JSON 字符串（failed_step 场景留空）\n            request_id: 幂等 request_id（daemon 端去重/重放，必填）\n            lease_token: daemon implementer lease raw token（受保护写必填）\n            fencing_counter: 当前 fencing counter（受保护写必填）\n            identity_role: 授权身份 role（默认 implementer）\n            identity_agent_id: 授权身份 agent_id（必填）\n            identity_session_id: 授权身份 session_id（必填）\n            identity_model_id: 授权身份 model_id（必填）\n\n        Returns:\n            {\"success\": True, \"remediation_step_id\": ..., \"source_step_id\": ...,\n             \"request_id\": ..., \"replayed\": ...}\n            或 {\"success\": False, \"error\": {code, message}}\n        \"\"\"\n        return _route('task.remediation.create', {\"task_id\": task_id, \"source_step_id\": source_step_id, \"request_id\": request_id, \"lease_token\": lease_token, \"fencing_counter\": fencing_counter, \"source_outcome\": source_outcome, \"source_verdict_id\": source_verdict_id, \"source_findings\": source_findings, \"identity_role\": identity_role, \"identity_agent_id\": identity_agent_id, \"identity_session_id\": identity_session_id, \"identity_model_id\": identity_model_id}, 'PROTECTED_MUTATION')\n"
+     },
+     {
+      "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+      "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+      "lines": [
+       652,
+       655
+      ],
+      "note": "daemon handler 取 source_findings 为 Value（期望 JSON 结构）",
+      "excerpt": "        let requested_findings = params\n            .get(\"source_findings\")\n            .cloned()\n            .unwrap_or(Value::Null);"
+     }
+    ]
+   },
+   "conflict": true,
+   "conflict_type": "partial_agreement",
+   "partial_agreement_note": "协议对'CLI 无命令'与'MCP 字符串透传'的声称与实现一致；但 daemon handler 与 task.handoff 自动路径本身支持 adjudicator_returned，故'不存在可合法使用的端到端 bridge'仅在 CLI/MCP 显式入口维度成立，在 daemon 内部自动路径维度不成立",
+   "runtime_status": "unknown",
+   "depends_on": "GAP-15-D01"
+  }
+ ],
+ "aligned_items": [
+  {
+   "item_id": "AL-01",
+   "title": "六种已实现 outcome 路由表一致",
+   "check": "CLI _STRUCTURED_HANDOFF_ROUTES 与 daemon outcome_route 的 (from_role,next_role,independence) 三元组完全一致，且与协议 §5 已实现集一致",
+   "citations": [
+    {
+     "file": "cli/main.py",
+     "sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+     "lines": [
+      3529,
+      3536
+     ],
+     "note": "CLI 六种 outcome 路由",
+     "excerpt": "_STRUCTURED_HANDOFF_ROUTES = {\n    \"executor_ready_for_review\": (\"executor\", \"reviewer\", \"required\"),\n    \"executor_blocked_to_user\": (\"executor\", \"user\", \"not_applicable\"),\n    \"reviewer_pass\": (\"reviewer\", \"adjudicator\", \"required\"),\n    \"reviewer_blocked\": (\"reviewer\", \"executor\", \"not_required\"),\n    \"adjudicator_accepted\": (\"adjudicator\", \"complete\", \"not_applicable\"),\n    \"adjudicator_returned\": (\"adjudicator\", \"executor\", \"not_required\"),\n}"
+    },
+    {
+     "file": "rust_ext/src/daemon/task_loop/report_handoff.rs",
+     "sha256": "7352d2bc939c4ee255b2b557a76373a27c5b8704b8dc2c4687f4c86ae21fb0ce",
+     "lines": [
+      246,
+      256
+     ],
+     "note": "daemon outcome_route 六种",
+     "excerpt": "fn outcome_route(outcome: &str) -> Option<(&'static str, &'static str, &'static str)> {\n    match outcome {\n        \"executor_ready_for_review\" => Some((\"executor\", \"reviewer\", \"required\")),\n        \"executor_blocked_to_user\" => Some((\"executor\", \"user\", \"not_applicable\")),\n        \"reviewer_pass\" => Some((\"reviewer\", \"adjudicator\", \"required\")),\n        \"reviewer_blocked\" => Some((\"reviewer\", \"executor\", \"not_required\")),\n        \"adjudicator_accepted\" => Some((\"adjudicator\", \"complete\", \"not_applicable\")),\n        \"adjudicator_returned\" => Some((\"adjudicator\", \"executor\", \"not_required\")),\n        _ => None,\n    }\n}"
+    }
+   ],
+   "conflict": false
+  },
+  {
+   "item_id": "AL-02",
+   "title": "三种 design-only outcome 双侧不存在",
+   "check": "planner_ready_for_execution/planner_replan_required/executor_replan_requested 在 daemon rust_ext 源码与 CLI 路由表中均无匹配，task.handoff 经 outcome_route 返回 None 拒绝",
+   "citations": [
+    {
+     "file": "rust_ext/src/daemon/task_loop/report_handoff.rs",
+     "sha256": "7352d2bc939c4ee255b2b557a76373a27c5b8704b8dc2c4687f4c86ae21fb0ce",
+     "lines": [
+      246,
+      256
+     ],
+     "note": "outcome_route 无 design-only 三种",
+     "excerpt": "fn outcome_route(outcome: &str) -> Option<(&'static str, &'static str, &'static str)> {\n    match outcome {\n        \"executor_ready_for_review\" => Some((\"executor\", \"reviewer\", \"required\")),\n        \"executor_blocked_to_user\" => Some((\"executor\", \"user\", \"not_applicable\")),\n        \"reviewer_pass\" => Some((\"reviewer\", \"adjudicator\", \"required\")),\n        \"reviewer_blocked\" => Some((\"reviewer\", \"executor\", \"not_required\")),\n        \"adjudicator_accepted\" => Some((\"adjudicator\", \"complete\", \"not_applicable\")),\n        \"adjudicator_returned\" => Some((\"adjudicator\", \"executor\", \"not_required\")),\n        _ => None,\n    }\n}"
+    },
+    {
+     "file": "cli/main.py",
+     "sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+     "lines": [
+      3529,
+      3536
+     ],
+     "note": "CLI 路由表无 design-only 三种",
+     "excerpt": "_STRUCTURED_HANDOFF_ROUTES = {\n    \"executor_ready_for_review\": (\"executor\", \"reviewer\", \"required\"),\n    \"executor_blocked_to_user\": (\"executor\", \"user\", \"not_applicable\"),\n    \"reviewer_pass\": (\"reviewer\", \"adjudicator\", \"required\"),\n    \"reviewer_blocked\": (\"reviewer\", \"executor\", \"not_required\"),\n    \"adjudicator_accepted\": (\"adjudicator\", \"complete\", \"not_applicable\"),\n    \"adjudicator_returned\": (\"adjudicator\", \"executor\", \"not_required\"),\n}"
+    }
+   ],
+   "conflict": false
+  },
+  {
+   "item_id": "AL-03",
+   "title": "runtime_role 把 planner 映射为 executor（pre-cutover 预期）",
+   "check": "daemon runtime_role 将 planner/implementer/tester/evidence 统一映射 executor，与 v2-amendment §2 的 pre-cutover 预期行为声明一致",
+   "citations": [
+    {
+     "file": "rust_ext/src/daemon/task_loop/report_handoff.rs",
+     "sha256": "7352d2bc939c4ee255b2b557a76373a27c5b8704b8dc2c4687f4c86ae21fb0ce",
+     "lines": [
+      259,
+      266
+     ],
+     "note": "runtime_role 映射表",
+     "excerpt": "fn runtime_role(acting_role: &str) -> &'static str {\n    match acting_role {\n        \"planner\" | \"implementer\" | \"tester\" | \"evidence\" | \"executor\" => \"executor\",\n        \"reviewer\" | \"independent_reviewer\" => \"reviewer\",\n        \"adjudicator\" => \"adjudicator\",\n        _ => \"\",\n    }\n}"
+    },
+    {
+     "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+     "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+     "lines": [
+      41,
+      46
+     ],
+     "note": "amendment §2：pre-cutover 映射为 executor 是预期行为，不是缺陷",
+     "excerpt": "`implementer`、`tester`、`evidence`、`independent_reviewer` 仍是 RuntimeRole 兼容值（映射为\nexecutor/reviewer），不增加治理角色。`planner` 是新增**目标**治理角色；在 daemon 通过\n`planner_governance_v1` capability cutover（§3）前，runtime 将 `planner` 映射为 executor 兼容值\n（`rust_ext/src/daemon/task_loop/next_action.rs::runtime_role`），CLI `--role-contracts` 也只接受\nexecutor/reviewer/adjudicator（`cli/main.py::_build_role_contracts`）——这是**预期的 pre-cutover\n行为**，不是缺陷；文档与模板不得据此声称 Planner 已可领取派工。"
+    }
+   ],
+   "conflict": false
+  },
+  {
+   "item_id": "AL-04",
+   "title": "capability 三件套均未由 daemon 声明（fail-closed 前提核验）",
+   "check": "planner_governance_v1/decision_request_v1/adjacent_relation_v1 为未声明 capability；协议与 amendment 一致声明未声明，且协议保留 workflow_status 值 daemon 不 emit",
+   "citations": [
+    {
+     "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+     "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+     "lines": [
+      6,
+      25
+     ],
+     "note": "协议顶部：三个 capability 均未声明及 fail-closed 后果",
+     "excerpt": "> **实现状态与 capability 分层声明（与 daemon 源码对齐）：**\n> - **`planner_governance_v1`（未声明）**：Planner 原生派工（`READY/PLAN`、`planning_*`/\n>   `replanning_*` 投影）、`planner` Role Contract、`planner_ready_for_execution`/\n>   `planner_replan_required`/`executor_replan_requested` 三种 outcome 持久化。\n> - **`decision_request_v1`（未声明）**：`decision_request`/`decision.respond` 落库与\n>   `waiting_for_decision`/`waiting_for_input` 投影。\n> - **`adjacent_relation_v1`（未声明）**：`adjacent_defect → related_to` 自动关联。\n> - **当前已实现（无 capability 门禁）**：`reviewer_blocked` 触发 daemon 在同一主任务原子追加\n>   provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。\n>   `adjudicator_returned` **不在此列**：它只固定路由 executor，不自动追加 step/reopen；当前 CLI\n>   没有对应命令，MCP adapter 也不满足 daemon 的结构化 findings 契约，因此尚无受支持的端到端\n>   remediation bridge。角色不得改用通用 RPC 或自行投影 `remediation_pending`（详见 §3/§4）。\n>\n> 上述 capability 未由 daemon 公共 capability 通道声明前：`task.next_action` 不返回 `READY/PLAN`、\n> 不 emit `planning_*`/`replanning_*`/`waiting_*`；`task.create`/`--role-contracts` 拒绝 `planner`\n> 角色；`task.handoff` 只接受 §5 的已实现六种 outcome。Planner v1 启动模板在此期间为\n> **design-only**，不得作为现行派工入口；计划/scope/Contract/架构缺陷按 §3 的 pre-cutover\n> 桥接处理，不得由 Reviewer/Adjudicator 直接塞给 Executor 当实现缺陷硬修。客户端不得自行合成\n> 规划中状态；缺少 capability 时必须显示 `governance_blocked`/明确错误，并将其作为内部 capability gap 进入修复计划，\n> 不得假装可领取，也不得把技术修复责任转给用户。"
+    },
+    {
+     "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+     "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+     "lines": [
+      55,
+      68
+     ],
+     "note": "amendment §3.1 门禁定义与未声明前行为",
+     "excerpt": "| capability | 把关能力 | 未声明前 |\n|---|---|---|\n| `planner_governance_v1` | Planner 原生派工（`READY/PLAN`、`planning_*`/`replanning_*` 投影、`execution_ready`）、`planner` Role Contract、`planner_ready_for_execution`/`planner_replan_required`/`executor_replan_requested` outcome 持久化 | `task.next_action` 不产生 `READY/PLAN`；`task.create`/`--role-contracts` 拒绝 `planner`；`task.handoff` 拒绝上述三种 outcome（CLI `_STRUCTURED_HANDOFF_ROUTES` 与 daemon `outcome_route` 仍只有已实现六种） |\n| `decision_request_v1` | `decision_request`/`decision.respond` 落库、`waiting_for_decision`/`waiting_for_input` 投影 | 不落库、不投影；多路线决策由当前持棒角色在 handoff/verdict 文本中升级用户 |\n| `adjacent_relation_v1` | `adjacent_defect → related_to` 自动关联 | 由人工在 finding/ledger 中记录关联 |\n\n**明确不在任何 capability 门禁内（当前已实现）**：`reviewer_blocked` 触发 daemon 在同一主任务\n原子追加 provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。\n`adjudicator_returned` 仅固定路由 Executor，不自动追加 step/reopen；当前 CLI/MCP 尚无受支持的\n端到端 remediation bridge，不得把固定路由描述成可执行整改能力。\n\ncapability 声明必须走 daemon 公共 capability 通道（v1 §7 0A Capability Authority Amendment 的\npublic promote 路径），不得用客户端文档、模板标注或聊天声明代替。客户端查询方式以 daemon\ncapability 投影为准；查询不到该 capability 时一律按未声明处理（fail-closed）。"
+    }
+   ],
+   "conflict": false,
+   "note": "capability 声明状态以 daemon 公共 capability 通道查询为准；静态规划阶段不查询 daemon 运行时，按文档一致登记为'未声明'"
+  },
+  {
+   "item_id": "AL-05",
+   "title": "reviewer_blocked 自动整改无 capability 门禁（协议与实现一致）",
+   "check": "协议顶部与 amendment §3.1 均把 reviewer_blocked 自动追加 fix_defect 列为'当前已实现、无 capability 门禁'；实现 task_collab_lifecycle.rs:1521 的 matches! 包含 reviewer_blocked",
+   "citations": [
+    {
+     "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
+     "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+     "lines": [
+      13,
+      14
+     ],
+     "note": "协议顶部：reviewer_blocked 已实现无门禁",
+     "excerpt": "> - **当前已实现（无 capability 门禁）**：`reviewer_blocked` 触发 daemon 在同一主任务原子追加\n>   provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。"
+    },
+    {
+     "file": "docs/design/cw-role-handoff-task-loop-v2-amendment.md",
+     "sha256": "92d9da9b278456ee43201f86505a024ca6199265119a0aa7739a0f7b6991f5b8",
+     "lines": [
+      61,
+      62
+     ],
+     "note": "amendment §3.1：reviewer_blocked 明确不在任何 capability 门禁内",
+     "excerpt": "**明确不在任何 capability 门禁内（当前已实现）**：`reviewer_blocked` 触发 daemon 在同一主任务\n原子追加 provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。"
+    },
+    {
+     "file": "rust_ext/src/daemon/task_collab_lifecycle.rs",
+     "sha256": "35d720cbd6874ee0c5a4b56a9b7d4dd0795468f61cb16914368ea30d5905dae1",
+     "lines": [
+      1521,
+      1524
+     ],
+     "note": "实现包含 reviewer_blocked",
+     "excerpt": "        let remediation_plan: Option<(String, String, String, String, Value, String)> = if matches!(\n            outcome.as_str(),\n            \"reviewer_blocked\" | \"adjudicator_returned\"\n        ) {"
+    }
+   ],
+   "conflict": false
+  }
+ ],
+ "summary": {
+  "difference_count": 2,
+  "conflict_count": 2,
+  "aligned_count": 5,
+  "protocol_claim_citations": 9,
+  "implementation_evidence_count": 9,
+  "static_test_contract_count": 1,
+  "core_gap": "GAP-15"
+ }
+}

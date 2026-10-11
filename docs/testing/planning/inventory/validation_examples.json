@@ -1,0 +1,3586 @@
+{
+ "schema_version": "validation-examples/v1",
+ "description": "TP-01 正负向验证样本。positive[0] 引用真实 candidate_entries.json（严格绑定）；其余为内部自洽的最小样本（strict_sets=False），负向样本逐项注入单一缺陷。",
+ "positive": [
+  {
+   "name": "real candidate_entries.json (strict binding)",
+   "kind": "candidate",
+   "strict_sets": true,
+   "doc_ref": "candidate_entries.json"
+  },
+  {
+   "name": "minimal consistent candidate",
+   "kind": "candidate",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "valid multi-profile case contract with cross-end selector",
+   "kind": "case",
+   "doc": {
+    "case_id": "MCP:append_evidence/C1/valid-append",
+    "case_family": "MCP:append_evidence",
+    "surface": "mcp",
+    "profile": {
+     "profile_id": "windows-release",
+     "frozen": true,
+     "frozen_ref": "profiles.json#windows-release"
+    },
+    "requirement": {
+     "text": "追加不可变 evidence 记录",
+     "source": {
+      "source_kind": "matrix",
+      "ref": "append_evidence"
+     }
+    },
+    "risk": {
+     "level": "high",
+     "failure_mode": "越权写",
+     "is_destructive": false
+    },
+    "preconditions": [
+     {
+      "kind": "lease",
+      "description": "持有 reviewer lease",
+      "establishment": {
+       "method": "public_api"
+      }
+     }
+    ],
+    "repo_revision": {
+     "revision": "db952964ca49e07d77c033e886298a3e004542af",
+     "dirty": false,
+     "corpus_tier": "R1"
+    },
+    "provenance": {
+     "real": true,
+     "workspace_instance_id": "4baea3ff12c2ea5c",
+     "entity_refs": [
+      {
+       "entity": "lease_token",
+       "how_obtained": "public_api"
+      }
+     ]
+    },
+    "param_equivalence_classes": [
+     {
+      "param": "evidence_id",
+      "class_id": "valid",
+      "representative": "EV-tp01-001",
+      "expected_behavior": "落库并返回 evidence 记录"
+     }
+    ],
+    "act": {
+     "entry": "append_evidence",
+     "mode": "mcp_wire",
+     "timeout": {
+      "seconds": 30
+     },
+     "mcp_request": {
+      "name": "append_evidence",
+      "arguments": {}
+     }
+    },
+    "oracle": {
+     "kind": "manual_golden",
+     "expected": "记录出现且不可变",
+     "independent_source": "golden/append_evidence.json",
+     "normalization": [
+      "evidence_id",
+      "timestamp"
+     ]
+    },
+    "allowed_events": [
+     "evidence.append"
+    ],
+    "forbidden_side_effects": [
+     "其他 workspace 的 evidence 表变更"
+    ],
+    "timeout": {
+     "seconds": 30,
+     "preserve_scene": true
+    },
+    "cleanup": {
+     "strategy": "normal_exit",
+     "verification": "无端口/锁残留",
+     "owned_only": true
+    },
+    "selector": {
+     "kind": "mcp_tool_call",
+     "value": "append_evidence",
+     "resolves_to_entry": "MCP:append_evidence"
+    },
+    "implementation_status": "contracted",
+    "obligations": {
+     "C1": true,
+     "C2": true,
+     "C3": false,
+     "C4": true,
+     "C5": false,
+     "C6": true
+    },
+    "evidence_ref": null
+   }
+  }
+ ],
+ "negative": [
+  {
+   "name": "duplicate JSON key at root",
+   "kind": "candidate",
+   "expected_code": "E_DUPLICATE_JSON_KEY",
+   "strict_sets": false,
+   "doc_raw": "{\"schema_version\": \"candidate-entries/v1\", \"task_id\": \"T-1791627645904-fbe3a4c4\", \"binding\": {\"baseline_document_hashes\": {\"docs/testing/TESTING_PLAN.md\": {\"baseline_sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"current_sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"match\": true}}, \"inventory_inputs\": [{\"path\": \"tests/convergence/fixtures/cli_full_params.json\", \"role\": \"cli_snapshot\", \"sha256\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}], \"static_audit_inputs_recomputed\": {\"inputs_recorded\": 2, \"inputs_matched\": 2}}, \"sets\": {\"cli_categories\": 21, \"cli_top_levels\": 84, \"cli_snapshot_leaves\": 234, \"cli_extracted\": 233, \"cli_unextracted\": [\"server\"], \"mcp_categories\": 17, \"mcp_tools\": 243, \"mcp_backends\": {\"rust_native\": 200, \"task_rpc\": 43}, \"mcp_op_classes\": {\"GOVERNANCE_WRITE\": 5, \"PROTECTED_MUTATION\": 77, \"READ_ONLY\": 161}, \"source_matrix_category_set_consistent\": true, \"schema_matrix_set_consistent\": false, \"schema_name_drift\": {\"missing_current_tools\": [\"detect_call_cycles\"], \"obsolete_schema_tools\": [\"detect_cycle\"]}, \"independent_flags\": 8, \"candidate_entries_total\": 5, \"entry_counts_by_surface\": {\"cli\": 2, \"cli_flag\": 1, \"mcp\": 2}, \"entries_blocked_schema_drift\": 1, \"skip_ledger\": {\"sites_total\": 468, \"classic_skip_sites\": 447, \"reason_literal_sites\": 282, \"reason_expression_sites\": 167, \"reason_absent_sites\": 19, \"root_cause_reviewed_sites\": 0}}, \"obligation_model\": {\"C1\": \"x\", \"C2\": \"x\", \"C3\": \"x\", \"C4\": \"x\", \"C5\": \"x\", \"C6\": \"x\"}, \"status_vocabulary\": {\"pending_contract\": \"x\"}, \"ownership_model\": {\"planning\": \"TP-01\"}, \"cross_end_mapping\": [{\"rpc_method\": \"evidence.append\", \"mcp_entry_ids\": [\"MCP:append_evidence\"], \"cli_entry_ids\": null, \"cli_binding_status\": \"pending_extraction\", \"cli_binding_owner\": \"TP-08C/A1\", \"static_source_hint\": \"cli/main.py:823\"}, {\"rpc_method\": \"query.detect_cycles\", \"mcp_entry_ids\": [\"MCP:detect_call_cycles\"], \"cli_entry_ids\": null, \"cli_binding_status\": \"pending_extraction\", \"cli_binding_owner\": \"TP-08C/A1\", \"static_source_hint\": \"cli/main.py:823\"}], \"gaps\": [{\"gap_id\": \"GAP-14\", \"kind\": \"schema_drift\", \"severity\": \"blocks_inventory_freeze\"}], \"entries\": [{\"entry_id\": \"CLI:assignment create\", \"surface\": \"cli\", \"invocation\": \"assignment create\", \"top_level\": \"assignment\", \"category\": \"assignment_lease\", \"snapshot\": {\"extracted\": true, \"positionals\": [\"task_id\"], \"options\": [{\"opt\": \"--role\", \"takes_value\": true}]}, \"param_obligations\": [{\"param\": \"task_id\", \"kind\": \"positional\"}, {\"param\": \"--role\", \"kind\": \"option\", \"takes_value\": true}], \"matrix_binding\": null, \"obligations\": {\"C1\": \"pending_contract\", \"C2\": \"pending_contract\", \"C3\": \"pending_contract\", \"C4\": \"pending_contract\", \"C5\": \"pending_contract\", \"C6\": \"pending_contract\"}, \"status\": \"pending_contract\", \"owner\": {\"planning\": \"TP-01\"}, \"evidence_ref\": null}, {\"entry_id\": \"CLI:server\", \"surface\": \"cli\", \"invocation\": \"server\", \"top_level\": \"server\", \"category\": \"setup_install\", \"snapshot\": {\"extracted\": false, \"positionals\": [], \"options\": []}, \"param_obligations\": [], \"matrix_binding\": null, \"obligations\": {\"C1\": \"pending_contract\", \"C2\": \"pending_contract\", \"C3\": \"pending_contract\", \"C4\": \"not_applicable_pending\", \"C5\": \"pending_contract\", \"C6\": \"pending_contract\"}, \"status\": \"params_not_extracted\", \"owner\": {\"planning\": \"TP-01\"}, \"evidence_ref\": null}, {\"entry_id\": \"CLI-FLAG:--version\", \"surface\": \"cli_flag\", \"flag\": \"--version\", \"aliases\": [\"-V\"], \"scope\": \"top_level_intercept\", \"static_provenance\": \"cli/main.py:13141\", \"param_obligations\": [{\"param\": \"--version\", \"kind\": \"flag\"}], \"matrix_binding\": null, \"obligations\": {\"C1\": \"pending_contract\", \"C2\": \"pending_contract\", \"C3\": \"pending_contract\", \"C4\": \"not_applicable_pending\", \"C5\": \"pending_contract\", \"C6\": \"pending_contract\"}, \"status\": \"pending_contract\", \"owner\": {\"planning\": \"TP-01\"}, \"evidence_ref\": null}, {\"entry_id\": \"MCP:append_evidence\", \"surface\": \"mcp\", \"tool_name\": \"append_evidence\", \"category\": \"collab\", \"matrix\": {\"backend\": \"rust_native\", \"op_class\": \"GOVERNANCE_WRITE\", \"rpc_method\": \"evidence.append\", \"module\": \"tools_collab\", \"batch\": \"existing-native\", \"matrix_status\": \"stable\"}, \"schema\": {\"present\": true, \"required\": [\"task_id\", \"step_id\"], \"optional\": [\"lease_token\"], \"param_types\": {\"task_id\": \"string\"}, \"param_defaults\": {\"task_id\": null}}, \"param_obligations\": [{\"param\": \"task_id\", \"kind\": \"required\", \"type\": \"string\"}, {\"param\": \"step_id\", \"kind\": \"required\", \"type\": \"string\"}, {\"param\": \"lease_token\", \"kind\": \"optional\", \"type\": \"string\", \"snapshot_default\": \"\"}], \"obligations\": {\"C1\": \"pending_contract\", \"C2\": \"pending_contract\", \"C3\": \"pending_contract\", \"C4\": \"pending_contract\", \"C5\": \"pending_contract\", \"C6\": \"pending_contract\"}, \"status\": \"pending_contract\", \"owner\": {\"planning\": \"TP-01\"}, \"evidence_ref\": null}, {\"entry_id\": \"MCP:detect_call_cycles\", \"surface\": \"mcp\", \"tool_name\": \"detect_call_cycles\", \"category\": \"call_chain\", \"matrix\": {\"backend\": \"rust_native\", \"op_class\": \"READ_ONLY\", \"rpc_method\": \"query.detect_cycles\", \"module\": \"tools_query\", \"batch\": \"existing-native\", \"matrix_status\": \"stable\"}, \"schema\": {\"present\": false, \"required\": null, \"optional\": null, \"param_types\": null, \"param_defaults\": null}, \"param_obligations\": [], \"obligations\": {\"C1\": \"pending_contract\", \"C2\": \"pending_contract\", \"C3\": \"pending_contract\", \"C4\": \"not_applicable_pending\", \"C5\": \"pending_contract\", \"C6\": \"pending_contract\"}, \"status\": \"blocked_schema_drift\", \"owner\": {\"planning\": \"TP-01\"}, \"evidence_ref\": null}], \"schema_version\": \"candidate-entries/v1\"}"
+  },
+  {
+   "name": "duplicate entry_id",
+   "kind": "candidate",
+   "expected_code": "E_DUPLICATE_ENTRY_ID",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "entries empty (missing entries)",
+   "kind": "candidate",
+   "expected_code": "E_MISSING_ENTRY",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": []
+   }
+  },
+  {
+   "name": "orphan cross-end mapping reference",
+   "kind": "candidate",
+   "expected_code": "E_ORPHAN_SELECTOR",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:does_not_exist"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "unknown entry status",
+   "kind": "candidate",
+   "expected_code": "E_UNKNOWN_STATUS",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "totally_fine",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "illegal N/A without frozen basis",
+   "kind": "candidate",
+   "expected_code": "E_ILLEGAL_NA",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "not_applicable_pending",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "skip ledger missing (unfrozen denominator)",
+   "kind": "candidate",
+   "expected_code": "E_UNFROZEN_DENOMINATOR",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "schema drift tool not blocked",
+   "kind": "candidate",
+   "expected_code": "E_SCHEMA_DRIFT_RELEASED",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "entry count mismatch",
+   "kind": "candidate",
+   "expected_code": "E_ENTRY_COUNT_MISMATCH",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": false,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 999,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "schema drift hidden as consistent",
+   "kind": "candidate",
+   "expected_code": "E_SCHEMA_DRIFT_HIDDEN",
+   "strict_sets": false,
+   "doc": {
+    "schema_version": "candidate-entries/v1",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "binding": {
+     "baseline_document_hashes": {
+      "docs/testing/TESTING_PLAN.md": {
+       "baseline_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "current_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "match": true
+      }
+     },
+     "inventory_inputs": [
+      {
+       "path": "tests/convergence/fixtures/cli_full_params.json",
+       "role": "cli_snapshot",
+       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+     ],
+     "static_audit_inputs_recomputed": {
+      "inputs_recorded": 2,
+      "inputs_matched": 2
+     }
+    },
+    "sets": {
+     "cli_categories": 21,
+     "cli_top_levels": 84,
+     "cli_snapshot_leaves": 234,
+     "cli_extracted": 233,
+     "cli_unextracted": [
+      "server"
+     ],
+     "mcp_categories": 17,
+     "mcp_tools": 243,
+     "mcp_backends": {
+      "rust_native": 200,
+      "task_rpc": 43
+     },
+     "mcp_op_classes": {
+      "GOVERNANCE_WRITE": 5,
+      "PROTECTED_MUTATION": 77,
+      "READ_ONLY": 161
+     },
+     "source_matrix_category_set_consistent": true,
+     "schema_matrix_set_consistent": true,
+     "schema_name_drift": {
+      "missing_current_tools": [
+       "detect_call_cycles"
+      ],
+      "obsolete_schema_tools": [
+       "detect_cycle"
+      ]
+     },
+     "independent_flags": 8,
+     "candidate_entries_total": 5,
+     "entry_counts_by_surface": {
+      "cli": 2,
+      "cli_flag": 1,
+      "mcp": 2
+     },
+     "entries_blocked_schema_drift": 1,
+     "skip_ledger": {
+      "sites_total": 468,
+      "classic_skip_sites": 447,
+      "reason_literal_sites": 282,
+      "reason_expression_sites": 167,
+      "reason_absent_sites": 19,
+      "root_cause_reviewed_sites": 0
+     }
+    },
+    "obligation_model": {
+     "C1": "x",
+     "C2": "x",
+     "C3": "x",
+     "C4": "x",
+     "C5": "x",
+     "C6": "x"
+    },
+    "status_vocabulary": {
+     "pending_contract": "x"
+    },
+    "ownership_model": {
+     "planning": "TP-01"
+    },
+    "cross_end_mapping": [
+     {
+      "rpc_method": "evidence.append",
+      "mcp_entry_ids": [
+       "MCP:append_evidence"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     },
+     {
+      "rpc_method": "query.detect_cycles",
+      "mcp_entry_ids": [
+       "MCP:detect_call_cycles"
+      ],
+      "cli_entry_ids": null,
+      "cli_binding_status": "pending_extraction",
+      "cli_binding_owner": "TP-08C/A1",
+      "static_source_hint": "cli/main.py:823"
+     }
+    ],
+    "gaps": [
+     {
+      "gap_id": "GAP-14",
+      "kind": "schema_drift",
+      "severity": "blocks_inventory_freeze"
+     }
+    ],
+    "entries": [
+     {
+      "entry_id": "CLI:assignment create",
+      "surface": "cli",
+      "invocation": "assignment create",
+      "top_level": "assignment",
+      "category": "assignment_lease",
+      "snapshot": {
+       "extracted": true,
+       "positionals": [
+        "task_id"
+       ],
+       "options": [
+        {
+         "opt": "--role",
+         "takes_value": true
+        }
+       ]
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "positional"
+       },
+       {
+        "param": "--role",
+        "kind": "option",
+        "takes_value": true
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI:server",
+      "surface": "cli",
+      "invocation": "server",
+      "top_level": "server",
+      "category": "setup_install",
+      "snapshot": {
+       "extracted": false,
+       "positionals": [],
+       "options": []
+      },
+      "param_obligations": [],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "params_not_extracted",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "CLI-FLAG:--version",
+      "surface": "cli_flag",
+      "flag": "--version",
+      "aliases": [
+       "-V"
+      ],
+      "scope": "top_level_intercept",
+      "static_provenance": "cli/main.py:13141",
+      "param_obligations": [
+       {
+        "param": "--version",
+        "kind": "flag"
+       }
+      ],
+      "matrix_binding": null,
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:append_evidence",
+      "surface": "mcp",
+      "tool_name": "append_evidence",
+      "category": "collab",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "GOVERNANCE_WRITE",
+       "rpc_method": "evidence.append",
+       "module": "tools_collab",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": true,
+       "required": [
+        "task_id",
+        "step_id"
+       ],
+       "optional": [
+        "lease_token"
+       ],
+       "param_types": {
+        "task_id": "string"
+       },
+       "param_defaults": {
+        "task_id": null
+       }
+      },
+      "param_obligations": [
+       {
+        "param": "task_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "step_id",
+        "kind": "required",
+        "type": "string"
+       },
+       {
+        "param": "lease_token",
+        "kind": "optional",
+        "type": "string",
+        "snapshot_default": ""
+       }
+      ],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "pending_contract",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "pending_contract",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     },
+     {
+      "entry_id": "MCP:detect_call_cycles",
+      "surface": "mcp",
+      "tool_name": "detect_call_cycles",
+      "category": "call_chain",
+      "matrix": {
+       "backend": "rust_native",
+       "op_class": "READ_ONLY",
+       "rpc_method": "query.detect_cycles",
+       "module": "tools_query",
+       "batch": "existing-native",
+       "matrix_status": "stable"
+      },
+      "schema": {
+       "present": false,
+       "required": null,
+       "optional": null,
+       "param_types": null,
+       "param_defaults": null
+      },
+      "param_obligations": [],
+      "obligations": {
+       "C1": "pending_contract",
+       "C2": "pending_contract",
+       "C3": "pending_contract",
+       "C4": "not_applicable_pending",
+       "C5": "pending_contract",
+       "C6": "pending_contract"
+      },
+      "status": "blocked_schema_drift",
+      "owner": {
+       "planning": "TP-01"
+      },
+      "evidence_ref": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "case orphan selector",
+   "kind": "case",
+   "expected_code": "E_ORPHAN_SELECTOR",
+   "strict_sets": false,
+   "doc": {
+    "case_id": "MCP:append_evidence/C1/valid-append",
+    "case_family": "MCP:append_evidence",
+    "surface": "mcp",
+    "profile": {
+     "profile_id": "windows-release",
+     "frozen": true,
+     "frozen_ref": "profiles.json#windows-release"
+    },
+    "requirement": {
+     "text": "追加不可变 evidence 记录",
+     "source": {
+      "source_kind": "matrix",
+      "ref": "append_evidence"
+     }
+    },
+    "risk": {
+     "level": "high",
+     "failure_mode": "越权写",
+     "is_destructive": false
+    },
+    "preconditions": [
+     {
+      "kind": "lease",
+      "description": "持有 reviewer lease",
+      "establishment": {
+       "method": "public_api"
+      }
+     }
+    ],
+    "repo_revision": {
+     "revision": "db952964ca49e07d77c033e886298a3e004542af",
+     "dirty": false,
+     "corpus_tier": "R1"
+    },
+    "provenance": {
+     "real": true,
+     "workspace_instance_id": "4baea3ff12c2ea5c",
+     "entity_refs": [
+      {
+       "entity": "lease_token",
+       "how_obtained": "public_api"
+      }
+     ]
+    },
+    "param_equivalence_classes": [
+     {
+      "param": "evidence_id",
+      "class_id": "valid",
+      "representative": "EV-tp01-001",
+      "expected_behavior": "落库并返回 evidence 记录"
+     }
+    ],
+    "act": {
+     "entry": "append_evidence",
+     "mode": "mcp_wire",
+     "timeout": {
+      "seconds": 30
+     },
+     "mcp_request": {
+      "name": "append_evidence",
+      "arguments": {}
+     }
+    },
+    "oracle": {
+     "kind": "manual_golden",
+     "expected": "记录出现且不可变",
+     "independent_source": "golden/append_evidence.json",
+     "normalization": [
+      "evidence_id",
+      "timestamp"
+     ]
+    },
+    "allowed_events": [
+     "evidence.append"
+    ],
+    "forbidden_side_effects": [
+     "其他 workspace 的 evidence 表变更"
+    ],
+    "timeout": {
+     "seconds": 30,
+     "preserve_scene": true
+    },
+    "cleanup": {
+     "strategy": "normal_exit",
+     "verification": "无端口/锁残留",
+     "owned_only": true
+    },
+    "selector": {
+     "kind": "mcp_tool_call",
+     "value": "append_evidence",
+     "resolves_to_entry": "MCP:nope"
+    },
+    "implementation_status": "contracted",
+    "obligations": {
+     "C1": true,
+     "C2": true,
+     "C3": false,
+     "C4": true,
+     "C5": false,
+     "C6": true
+    },
+    "evidence_ref": null
+   }
+  },
+  {
+   "name": "case unknown_result released",
+   "kind": "case",
+   "expected_code": "E_UNKNOWN_RELEASED",
+   "strict_sets": false,
+   "doc": {
+    "case_id": "MCP:append_evidence/C1/valid-append",
+    "case_family": "MCP:append_evidence",
+    "surface": "mcp",
+    "profile": {
+     "profile_id": "windows-release",
+     "frozen": true,
+     "frozen_ref": "profiles.json#windows-release"
+    },
+    "requirement": {
+     "text": "追加不可变 evidence 记录",
+     "source": {
+      "source_kind": "matrix",
+      "ref": "append_evidence"
+     }
+    },
+    "risk": {
+     "level": "high",
+     "failure_mode": "越权写",
+     "is_destructive": false
+    },
+    "preconditions": [
+     {
+      "kind": "lease",
+      "description": "持有 reviewer lease",
+      "establishment": {
+       "method": "public_api"
+      }
+     }
+    ],
+    "repo_revision": {
+     "revision": "db952964ca49e07d77c033e886298a3e004542af",
+     "dirty": false,
+     "corpus_tier": "R1"
+    },
+    "provenance": {
+     "real": true,
+     "workspace_instance_id": "4baea3ff12c2ea5c",
+     "entity_refs": [
+      {
+       "entity": "lease_token",
+       "how_obtained": "public_api"
+      }
+     ]
+    },
+    "param_equivalence_classes": [
+     {
+      "param": "evidence_id",
+      "class_id": "valid",
+      "representative": "EV-tp01-001",
+      "expected_behavior": "落库并返回 evidence 记录"
+     }
+    ],
+    "act": {
+     "entry": "append_evidence",
+     "mode": "mcp_wire",
+     "timeout": {
+      "seconds": 30
+     },
+     "mcp_request": {
+      "name": "append_evidence",
+      "arguments": {}
+     }
+    },
+    "oracle": {
+     "kind": "manual_golden",
+     "expected": "记录出现且不可变",
+     "independent_source": "golden/append_evidence.json",
+     "normalization": [
+      "evidence_id",
+      "timestamp"
+     ]
+    },
+    "allowed_events": [
+     "evidence.append"
+    ],
+    "forbidden_side_effects": [
+     "其他 workspace 的 evidence 表变更"
+    ],
+    "timeout": {
+     "seconds": 30,
+     "preserve_scene": true
+    },
+    "cleanup": {
+     "strategy": "normal_exit",
+     "verification": "无端口/锁残留",
+     "owned_only": true
+    },
+    "selector": {
+     "kind": "mcp_tool_call",
+     "value": "append_evidence",
+     "resolves_to_entry": "MCP:append_evidence"
+    },
+    "implementation_status": "unknown_result",
+    "obligations": {
+     "C1": true,
+     "C2": true,
+     "C3": false,
+     "C4": true,
+     "C5": false,
+     "C6": true
+    },
+    "evidence_ref": null
+   }
+  },
+  {
+   "name": "case forbidden SQL precondition",
+   "kind": "case",
+   "expected_code": "E_FORBIDDEN_SQL",
+   "strict_sets": false,
+   "doc": {
+    "case_id": "MCP:append_evidence/C1/valid-append",
+    "case_family": "MCP:append_evidence",
+    "surface": "mcp",
+    "profile": {
+     "profile_id": "windows-release",
+     "frozen": true,
+     "frozen_ref": "profiles.json#windows-release"
+    },
+    "requirement": {
+     "text": "追加不可变 evidence 记录",
+     "source": {
+      "source_kind": "matrix",
+      "ref": "append_evidence"
+     }
+    },
+    "risk": {
+     "level": "high",
+     "failure_mode": "越权写",
+     "is_destructive": false
+    },
+    "preconditions": [
+     {
+      "kind": "lease",
+      "description": "持有 reviewer lease",
+      "establishment": {
+       "method": "forbidden_sql"
+      }
+     }
+    ],
+    "repo_revision": {
+     "revision": "db952964ca49e07d77c033e886298a3e004542af",
+     "dirty": false,
+     "corpus_tier": "R1"
+    },
+    "provenance": {
+     "real": true,
+     "workspace_instance_id": "4baea3ff12c2ea5c",
+     "entity_refs": [
+      {
+       "entity": "lease_token",
+       "how_obtained": "public_api"
+      }
+     ]
+    },
+    "param_equivalence_classes": [
+     {
+      "param": "evidence_id",
+      "class_id": "valid",
+      "representative": "EV-tp01-001",
+      "expected_behavior": "落库并返回 evidence 记录"
+     }
+    ],
+    "act": {
+     "entry": "append_evidence",
+     "mode": "mcp_wire",
+     "timeout": {
+      "seconds": 30
+     },
+     "mcp_request": {
+      "name": "append_evidence",
+      "arguments": {}
+     }
+    },
+    "oracle": {
+     "kind": "manual_golden",
+     "expected": "记录出现且不可变",
+     "independent_source": "golden/append_evidence.json",
+     "normalization": [
+      "evidence_id",
+      "timestamp"
+     ]
+    },
+    "allowed_events": [
+     "evidence.append"
+    ],
+    "forbidden_side_effects": [
+     "其他 workspace 的 evidence 表变更"
+    ],
+    "timeout": {
+     "seconds": 30,
+     "preserve_scene": true
+    },
+    "cleanup": {
+     "strategy": "normal_exit",
+     "verification": "无端口/锁残留",
+     "owned_only": true
+    },
+    "selector": {
+     "kind": "mcp_tool_call",
+     "value": "append_evidence",
+     "resolves_to_entry": "MCP:append_evidence"
+    },
+    "implementation_status": "contracted",
+    "obligations": {
+     "C1": true,
+     "C2": true,
+     "C3": false,
+     "C4": true,
+     "C5": false,
+     "C6": true
+    },
+    "evidence_ref": null
+   }
+  },
+  {
+   "name": "case unfrozen profile but passed",
+   "kind": "case",
+   "expected_code": "E_PROFILE_UNFROZEN_PASSED",
+   "strict_sets": false,
+   "doc": {
+    "case_id": "MCP:append_evidence/C1/valid-append",
+    "case_family": "MCP:append_evidence",
+    "surface": "mcp",
+    "profile": {
+     "profile_id": "windows-release",
+     "frozen": false,
+     "frozen_ref": "profiles.json#windows-release"
+    },
+    "requirement": {
+     "text": "追加不可变 evidence 记录",
+     "source": {
+      "source_kind": "matrix",
+      "ref": "append_evidence"
+     }
+    },
+    "risk": {
+     "level": "high",
+     "failure_mode": "越权写",
+     "is_destructive": false
+    },
+    "preconditions": [
+     {
+      "kind": "lease",
+      "description": "持有 reviewer lease",
+      "establishment": {
+       "method": "public_api"
+      }
+     }
+    ],
+    "repo_revision": {
+     "revision": "db952964ca49e07d77c033e886298a3e004542af",
+     "dirty": false,
+     "corpus_tier": "R1"
+    },
+    "provenance": {
+     "real": true,
+     "workspace_instance_id": "4baea3ff12c2ea5c",
+     "entity_refs": [
+      {
+       "entity": "lease_token",
+       "how_obtained": "public_api"
+      }
+     ]
+    },
+    "param_equivalence_classes": [
+     {
+      "param": "evidence_id",
+      "class_id": "valid",
+      "representative": "EV-tp01-001",
+      "expected_behavior": "落库并返回 evidence 记录"
+     }
+    ],
+    "act": {
+     "entry": "append_evidence",
+     "mode": "mcp_wire",
+     "timeout": {
+      "seconds": 30
+     },
+     "mcp_request": {
+      "name": "append_evidence",
+      "arguments": {}
+     }
+    },
+    "oracle": {
+     "kind": "manual_golden",
+     "expected": "记录出现且不可变",
+     "independent_source": "golden/append_evidence.json",
+     "normalization": [
+      "evidence_id",
+      "timestamp"
+     ]
+    },
+    "allowed_events": [
+     "evidence.append"
+    ],
+    "forbidden_side_effects": [
+     "其他 workspace 的 evidence 表变更"
+    ],
+    "timeout": {
+     "seconds": 30,
+     "preserve_scene": true
+    },
+    "cleanup": {
+     "strategy": "normal_exit",
+     "verification": "无端口/锁残留",
+     "owned_only": true
+    },
+    "selector": {
+     "kind": "mcp_tool_call",
+     "value": "append_evidence",
+     "resolves_to_entry": "MCP:append_evidence"
+    },
+    "implementation_status": "passed",
+    "obligations": {
+     "C1": true,
+     "C2": true,
+     "C3": false,
+     "C4": true,
+     "C5": false,
+     "C6": true
+    },
+    "evidence_ref": null
+   }
+  }
+ ]
+}

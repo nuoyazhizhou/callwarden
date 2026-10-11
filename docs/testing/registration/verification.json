@@ -1,0 +1,114 @@
+[
+  {
+    "document_key": "TP-01",
+    "task_id": "T-1791627645904-fbe3a4c4",
+    "workspace_binding_id": "tb-T-1791627645904-fbe3a4c4-4baea3ff12c2ea5c",
+    "steps": 5,
+    "lifecycle_status": "open",
+    "workflow_status": "queued",
+    "claimed": false,
+    "role_contracts": [
+      {
+        "role": "executor",
+        "readback": "MATCH"
+      },
+      {
+        "role": "reviewer",
+        "readback": "MATCH"
+      },
+      {
+        "role": "adjudicator",
+        "readback": "MATCH"
+      }
+    ],
+    "task_contract": {
+      "id": "TC-T-1791627645904-fbe3a4c4",
+      "revision": 1,
+      "hash": "sha256:0a9d1258d1b26d7a8e5a7665140c7cdbbd96bc4408960d4aac8893ae04cc76f4"
+    }
+  },
+  {
+    "document_key": "TP-02",
+    "task_id": "T-1791627784101-291afe54",
+    "workspace_binding_id": "tb-T-1791627784101-291afe54-4baea3ff12c2ea5c",
+    "steps": 5,
+    "lifecycle_status": "open",
+    "workflow_status": "queued",
+    "claimed": false,
+    "role_contracts": [
+      {
+        "role": "executor",
+        "readback": "MATCH"
+      },
+      {
+        "role": "reviewer",
+        "readback": "MATCH"
+      },
+      {
+        "role": "adjudicator",
+        "readback": "MATCH"
+      }
+    ],
+    "task_contract": {
+      "id": "TC-T-1791627784101-291afe54",
+      "revision": 1,
+      "hash": "sha256:b302613bc09b357a907cb58b9146080b7ea2afefd789219b7f35e3d9aa789c89"
+    }
+  },
+  {
+    "document_key": "TP-03",
+    "task_id": "T-1791627785150-67976028",
+    "workspace_binding_id": "tb-T-1791627785150-67976028-4baea3ff12c2ea5c",
+    "steps": 4,
+    "lifecycle_status": "open",
+    "workflow_status": "queued",
+    "claimed": false,
+    "role_contracts": [
+      {
+        "role": "executor",
+        "readback": "MATCH"
+      },
+      {
+        "role": "reviewer",
+        "readback": "MATCH"
+      },
+      {
+        "role": "adjudicator",
+        "readback": "MATCH"
+      }
+    ],
+    "task_contract": {
+      "id": "TC-T-1791627785150-67976028",
+      "revision": 1,
+      "hash": "sha256:64cb6d9341c10538ec558a6bcc90f1f02dea9959d0450ca20bcac8e069376ee1"
+    }
+  },
+  {
+    "document_key": "TP-04",
+    "task_id": "T-1791627786186-a562f188",
+    "workspace_binding_id": "tb-T-1791627786186-a562f188-4baea3ff12c2ea5c",
+    "steps": 4,
+    "lifecycle_status": "open",
+    "workflow_status": "queued",
+    "claimed": false,
+    "role_contracts": [
+      {
+        "role": "executor",
+        "readback": "MATCH"
+      },
+      {
+        "role": "reviewer",
+        "readback": "MATCH"
+      },
+      {
+        "role": "adjudicator",
+        "readback": "MATCH"
+      }
+    ],
+    "task_contract": {
+      "id": "TC-T-1791627786186-a562f188",
+      "revision": 1,
+      "hash": "sha256:8a783888443152221f9541139f46f5d3c655e2a4dd232473fd53d2467481ee10"
+    }
+  }
+]

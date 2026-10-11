@@ -42,55 +42,26 @@ def strict_json_loads(text, label="JSON"):
 
 
 def files(directory, glob):
-    """List files matching glob under directory, sorted, gitignore-aware.
+    """List required audit scopes using rg's ignore/hidden policy only.
 
-    Primary tool is rg (ripgrep). When rg is unavailable, fall back to
-    `git -c core.quotepath=false ls-files -z -co --exclude-standard -- <directory>`.
-    Fallback guarantees:
-    - NUL byte (-z) and core.quotepath=false prevent octal escaping of non-ASCII paths.
-    - (ROOT / p).is_file() verifies real filesystem presence (filters deleted tracked files).
-    - set() deduplication and Path(p).as_posix() ensure clean posix paths.
-    - Explicit Path(p).match(glob) filters to the requested file pattern.
-    Raises a clear error when neither tool exists instead of a bare
-    FileNotFoundError, so the audit remains reproducible across machines.
+    rg is an explicit prerequisite. A git index listing is not an equivalent
+    working-tree enumeration, so there is no fallback that changes scope.
+    NUL framing preserves Unicode and newline-containing file names.
     """
-    source = None
     try:
         result = subprocess.run(
-            ["rg", "--files", directory, "-g", glob], cwd=ROOT,
-            capture_output=True, text=True, encoding="utf-8", check=True,
+            ["rg", "--files", "--null", directory, "-g", glob], cwd=ROOT,
+            capture_output=True, check=False,
         )
-        source = "rg"
-        listing = sorted(Path(p).as_posix() for p in result.stdout.splitlines())
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        try:
-            result = subprocess.run(
-                ["git", "-c", "core.quotepath=false", "ls-files", "-z", "-co", "--exclude-standard", "--", directory],
-                cwd=ROOT, capture_output=True, check=True,
-            )
-            raw_entries = [p for p in result.stdout.decode("utf-8", errors="surrogateescape").split("\0") if p]
-            valid = set()
-            for p in raw_entries:
-                if (ROOT / p).is_file() and Path(p).match(glob):
-                    valid.add(Path(p).as_posix())
-            listing = sorted(valid)
-            source = "git-ls-files-fallback"
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"Neither 'rg' nor 'git' found in PATH while listing {directory!r} -g {glob!r}"
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"git ls-files failed for {directory!r} -g {glob!r}: "
-                f"rc={exc.returncode} stderr={exc.stderr.strip()[:200]}"
-            ) from exc
-    # Fallback semantics must match rg; verify the git path found the directory
-    # at all, otherwise fail loudly rather than silently generating an empty audit.
-    if source == "git-ls-files-fallback" and not listing:
-        raise RuntimeError(
-            f"git fallback returned no files for {directory!r} -g {glob!r}; "
-            "refusing to generate an empty inventory"
-        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("rg is required for static inventory enumeration; install it in this profile") from exc
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()[:200]
+        raise RuntimeError(f"rg inventory failed or empty for {directory!r}: rc={result.returncode}; {detail}")
+    listing = sorted(set(Path(p).as_posix() for p in
+                         result.stdout.decode("utf-8").split("\0") if p))
+    if not listing:
+        raise RuntimeError(f"empty required inventory scope: {directory!r} -g {glob!r}")
     return listing
 
 
@@ -236,7 +207,7 @@ def generate(revision):
                          "reason_literal_sites": sum(1 for s in sites if s["reason_literal"] is not None),
                          "reason_expression_sites": sum(1 for s in sites if s["reason_literal"] is None and s.get("reason_expression")),
                          "reason_absent_sites": sum(1 for s in sites if s["reason_literal"] is None and not s.get("reason_expression")),
-                         "statically_unattributable_sites": sum(1 for s in sites if s["reason_literal"] is None),
+                         "reason_nonliteral_or_absent_sites": sum(1 for s in sites if s["reason_literal"] is None),
                          "root_cause_reviewed_sites": 0,
                          "rust_src_attributes": sum(len(re.findall(r"#\[(?:test|tokio::test)\]", read(p))) for p in rust_paths),
                          "rust_src_cfg_test_files": sum("#[cfg(test)]" in read(p) for p in rust_paths)},
@@ -250,7 +221,7 @@ def generate(revision):
              f"MCP分类{len(mcp_cats)}，工具{len(names)}；source/matrix/category名字集合静态一致。",
              f"固化schema集合一致={schema_names == names}；缺当前工具={cell(schema_drift['missing_current_tools'])}；历史额外项={cell(schema_drift['obsolete_schema_tools'])}。漂移阻断清单冻结，不能凭总数相等补绿。",
              "CLI snapshot未与当前runtime/argparse比对；MCP未取wire runtime schema。参数表亦为固化快照，默认值/类型/互斥和语义均待复核。",
-             f"skip站点静态归因能力：reason为字符串字面量{sum(1 for s in sites if s['reason_literal'] is not None)}/{len(sites)}（可静态精确归因），非字面量表达式{sum(1 for s in sites if s['reason_literal'] is None and s.get('reason_expression'))}、无reason{sum(1 for s in sites if s['reason_literal'] is None and not s.get('reason_expression'))}；共{sum(1 for s in sites if s['reason_literal'] is None)}处（{sum(1 for s in sites if s['reason_literal'] is None)/len(sites):.0%}）需runtime补齐（GAP-16）。",
+             f"skip reason语法分布：字符串字面量{sum(s['reason_literal'] is not None for s in sites)}/{len(sites)}；非字面量表达式{sum(s['reason_literal'] is None and bool(s.get('reason_expression')) for s in sites)}、无显式reason{sum(s['reason_literal'] is None and not s.get('reason_expression') for s in sites)}。这是文本提取能力，不是根因归因比例；全部{len(sites)}处root_cause待复核（GAP-16）。importorskip模块名见condition_or_module，不等于reason。",
              "所有行状态为待合同化/未计入语义覆盖，表示未完成逐入口证据映射，不表示存量测试完全不存在。", "",
              "## 2. 每行的合同义务", "",
              "C1正常语义；C2逐参数等价类/默认/边界/互斥；C3精确负向及无非法副作用；C4适用写入/幂等/回滚；C5适用故障/恢复；C6跨端共享语义。",
@@ -298,14 +269,16 @@ def main():
             if audit_path.exists():
                 try:
                     audit_data = strict_json_loads(audit_path.read_text(encoding="utf-8"), "STATIC_AUDIT.json")
-                except ValueError as exc:
+                    if not isinstance(audit_data, dict):
+                        raise ValueError("audit root must be a JSON object")
+                except (ValueError, OSError) as exc:
                     # Surface the real cause (e.g. duplicate key) instead of the
                     # misleading "--revision is required" fallthrough.
                     parser.error(f"cannot read {audit_path.name} for --check: {exc}")
                 revision = audit_data.get("supplied_source_revision")
         if not revision:
             parser.error("--revision is required unless --check is used with an existing STATIC_AUDIT.json")
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         parser.error(f"--revision must be a verified lowercase 40-hex HEAD, got {revision!r}")
     outputs = generate(revision)  # all validations precede writes
     mismatches = []

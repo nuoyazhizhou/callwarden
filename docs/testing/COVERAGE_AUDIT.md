@@ -13,15 +13,17 @@ AST调用pytest.skip213、pytest.mark.skipif234，合计447，分布131文件；
 
 精确reason字面量“callwarden_core 未安装”46，其中parser_contract18；“callwarden_core Rust 扩展未构建”4。两字面量全仓合计50；其他变体及importorskip另列。parser_contract前两机制总计44。v6的39/36/3不符合当前AST。
 
-**静态可归因与不可归因的实测划分（v7.1 补充）**：468 站点中，`reason` 为**字符串字面量**（可静态精确归因）仅 **282（60%）**；`reason` 为 f-string/变量/拼接等**非字面量表达式**共 **167**，另有 **19** 无 reason。即**186 站点（40%）在静态阶段无法归因**，须 runtime 落地才能定性。按机制拆分：
+**reason语法分布（不等于根因归因）**：468站点中显式reason为字符串字面量282（282/468≈60.26%），非字面量表达式167，无显式reason19；后两者合计186（186/468≈39.74%）。字面量只允许直接提取文本，动态表达式也可结合源码人工分析，不能按语法形态断言能否归因。以下“非字面量或缺省”合并两类，不能把缺省写成表达式：
 
-| 机制 | 站点 | 非字面量 | 占比 |
+| 机制 | 站点 | 非字面量或缺省 | 占比（近似） |
 |---|---|---|---|
 | pytest.skip | 213 | 98 | 46% |
 | pytest.mark.skipif | 234 | 69 | 29% |
 | pytest.importorskip | 21 | 19 | 90% |
 
-其中 importorskip 90% 非字面量（形如 `pytest.importorskip("callwarden_core")` 的模块名即表达式），意味着**扩展缺失类 skip 的静态归因能力远弱于其表象**。故 46/18/4 等精确字面量数字**只覆盖 60% 站点**，不得据此声称全量 skip 已完成归因；186 处差额登记为 **GAP-16**，由 runtime 阶段补齐。
+importorskip的19处是没有显式reason，不是模块名非字面量；`"callwarden_core"` 本身是字符串字面量，其模块前置记录在condition_or_module。46/18/4是特定reason文本子集，不能声称它们覆盖60%站点。当前全部468处root_cause仍为UNREVIEWED，人工根因已复核数为0。
+
+GAP-16要求逐站点复核源码条件、依赖、平台与适用profile，并绑定对应nodeid或collection位置。runtime补充实际触发的reason与状态；未触发的站点登记NOT_TRIGGERED和审查依据，不伪造运行reason，也不要求为凑全量故意触发所有skip。一处站点可影响多个nodeid，一次collection skip也不能虚构未收集用例数。必需适用suite/case被skip仍按交付门禁阻断。
 
 reason字面量分组不是人工根因归因。SKIP_SITES记录路径/行/机制/reason/condition/hash，root_cause统一待复核；故239/190/52等历史差额不再作为当前结论。不得混用估算/重叠家族加总成全量归因。
 
@@ -50,7 +52,7 @@ CLI快照声明234叶子，commands233、skipped=[server]；分类84顶层/21类
 | GAP-13 | v6 BUILD_ENV | 历史wiimu/Zig路径与当前环境混用 | E按profile核构建来源 |
 | GAP-14 | mcp_full_schema.json vs源码/矩阵 | 两个环检测工具名已陈旧；总数相等掩盖集合漂移 | A重新提取真实schema、逐字段核验，不改当前上游源 |
 | GAP-15 | task_collab_lifecycle.rs:1516–1524、task_collab_tests_core.rs:885–920 vs role-protocol.md:192–196 | returned同事务整改的源码/静态测试合同与协议“不自动追加”冲突，运行结果未知 | A解决权威语义冲突；D按冻结合同真实验证projection/steps/assignment、provenance、幂等与冲突 |
-| GAP-16 | SKIP_SITES.json 实测 | 468 站点中 186（40%）reason 非字面量（f-string/拼接/importorskip 模块名），静态无法归因；精确字面量只覆盖 282（60%） | A 阶段账本须显式标注 literal/expression 字段分布；runtime 阶段跑出真实 reason 后回填，禁止以 60% 字面量冒充全量归因 |
+| GAP-16 | SKIP_SITES.json 静态扫描 | reason字面量282、表达式167、缺省19；全部468处根因尚未复核，语法分布不等于归因率 | A0逐站点源码/适用性复核；运行阶段关联实际reason/nodeid/collection，未触发登记依据；不伪造全量runtime归因 |
 
 不再将“CI执行量0/全ERROR”称本轮实测：配置可推断前置风险，但部分静态测试不依赖daemon，具体数量需CI/JUnit。历史T2 157/72/0/14、T3 70/114/18/31只是旧叙述，非当前revision证据。
 
