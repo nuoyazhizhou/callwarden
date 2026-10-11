@@ -357,8 +357,11 @@ Adjudicator 的 `apply`/`close` 使用** reviewer lease（不是 adjudicator lea
 > **角色二分（易错点）**：identity 的 `role` 字段标 `adjudicator`（acting role，你是谁），
 > 但受保护写校验的是 **reviewer 作用域** lease（lease role，daemon 要什么）。daemon 已在
 > `task next-action --json` 响应的 `authorization.lease_role` 字段里投影出正确值（adjudication
-> 阶段为 `reviewer`）；acquire 时 `--role` 传该投影值，identity 各字段仍填 Adjudicator 自己的
-> 注册身份。这是四角色中唯一一条 lease role 与 acting role 不同的命令。
+> 阶段为 `reviewer`）。这是四角色中唯一一条 lease role 与 acting role 不同的命令。
+>
+> **CLI 已内置该解析**：`cw lease acquire/renew/release` 省略 `--role` 时自动取投影的
+> `authorization.lease_role`（adjudicator→reviewer、executor→implementer），故下面的示例
+> 可以不传 `--role`；显式传 `--role` 仍优先于投影（人工覆盖权）。
 
 完整命令序列（按 `acquire → apply → 验证 applied_pending_close → close → 验证 completed →
 release` 顺序执行）：
