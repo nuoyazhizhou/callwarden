@@ -352,10 +352,25 @@ Structured_Reason 并以非零 RC 退出（无本地 SQLite 回退、无静默�
 ### Adjudicator 的受保护收尾
 
 Adjudicator 的 `apply`/`close` 使用** reviewer lease（不是 adjudicator lease）**，并携带真实
-`--lease-token <token> --fencing-counter <n>` 以及完整 identity。完整命令序列（按
-`apply → 验证 applied_pending_close → close → 验证 completed → release` 顺序执行）：
+`--lease-token <token> --fencing-counter <n>` 以及完整 identity。
+
+> **角色二分（易错点）**：identity 的 `role` 字段标 `adjudicator`（acting role，你是谁），
+> 但受保护写校验的是 **reviewer 作用域** lease（lease role，daemon 要什么）。daemon 已在
+> `task next-action --json` 响应的 `authorization.lease_role` 字段里投影出正确值（adjudication
+> 阶段为 `reviewer`）；acquire 时 `--role` 传该投影值，identity 各字段仍填 Adjudicator 自己的
+> 注册身份。这是四角色中唯一一条 lease role 与 acting role 不同的命令。
+
+完整命令序列（按 `acquire → apply → 验证 applied_pending_close → close → 验证 completed →
+release` 顺序执行）：
 
 ```powershell
+# 1. 取得 reviewer 作用域 lease（--role 是 reviewer，identity 全填 Adjudicator 自己的注册身份）
+& C:\Python314\python.exe C:/git_work/callwarden/cw.py lease acquire <task_id> --role reviewer `
+  --agent-id <registered-adjudicator-agent> --agent-instance-id <registered-adjudicator-instance> `
+  --session-id "$env:CW_AGENT_SESSION_ID" --model-id workbuddy
+# 记住返回的 raw token（只出现一次）与 fencing counter
+
+# 2. apply（identity 的 --role 仍是 adjudicator，lease token 是上一步取得的 reviewer lease）
 & C:\Python314\python.exe C:/git_work/callwarden/cw.py task apply <task_id> `
   --agent-id <registered-adjudicator-agent> --agent-instance-id <registered-adjudicator-instance> `
   --session-id "$env:CW_AGENT_SESSION_ID" --model-id workbuddy --role adjudicator `
@@ -369,11 +384,14 @@ Adjudicator 的 `apply`/`close` 使用** reviewer lease（不是 adjudicator lea
   --session-id "$env:CW_AGENT_SESSION_ID" --model-id workbuddy --role adjudicator `
   --lease-token <reviewer lease token> --fencing-counter <n>
 
+# 3. release（--role 是 reviewer，identity 仍用 Adjudicator 自己的注册身份——
+#    daemon 逐字段比对 acquire 时落库的 holder identity，用 reviewer 身份会 E_LEASE_HOLDER_MISMATCH）
 & C:\Python314\python.exe C:/git_work/callwarden/cw.py lease release <task_id> --role reviewer `
   --token <reviewer lease token> `
-  --agent-id <registered-reviewer-agent> --agent-instance-id <registered-reviewer-instance> `
+  --agent-id <registered-adjudicator-agent> --agent-instance-id <registered-adjudicator-instance> `
   --session-id "$env:CW_AGENT_SESSION_ID" --model-id workbuddy
 ```
 
 成功后立即 release reviewer lease，再重新查询同一 task_id。
-任何 `E_LEASE_REQUIRED`、`E_LEASE_TOKEN_MISMATCH`、`E_LEASE_EXPIRED` 或 `E_LEASE_FENCING_STALE` 都不是完成，不能绕过。
+任何 `E_LEASE_REQUIRED`、`E_LEASE_NOT_FOUND`、`E_LEASE_TOKEN_MISMATCH`、`E_LEASE_HOLDER_MISMATCH`、
+`E_LEASE_EXPIRED` 或 `E_LEASE_FENCING_STALE` 都不是完成，不能绕过。

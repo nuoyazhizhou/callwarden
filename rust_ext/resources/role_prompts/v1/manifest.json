@@ -60,7 +60,7 @@
         "READY/ADJUDICATE"
       ],
       "path": "current/adjudicator_v4.md",
-      "content_sha256": "sha256:ec62b2bd7988018527ae181ad40c0d13db50879f452d782680df11a63ffcd32c"
+      "content_sha256": "sha256:9819b0383ff608a3b9a11115d712ddf8d02299e683f3b587cec169b70bb4ef5a"
     },
     {
       "template_id": "cw.aprime.planner.startup.v1",
