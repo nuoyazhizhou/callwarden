@@ -1,11 +1,11 @@
 {
  "schema": "frozen-inventory/v1",
  "card": "TP-08F",
- "frozen_at": "2026-10-12T17:36:26",
- "source_revision": "db006eca4372192a0ef018187bd4e74b692752b9",
+ "frozen_at": "2026-10-12T21:22:38",
+ "source_revision": "5c8a55c5391fceae3ace33ddd404d62061023e65",
  "profile": "P-COMMITTED-windows-amd64-py314",
  "version_binding": {
-  "cli_tree_sha256": "f5966510a7aef1aac6e36145d572b9a105c0e1443cf8fb4139356e1538432e23",
+  "cli_tree_sha256": "3d1125a3dacdaf8941c36aa7e51af07b946c2f687d332174cd1193855f02215c",
   "mcp_tools_sha256": "4f9b1c221aefff527ab2eeb9d23ccc0a29c367ea7a4b6eb0a32479f410589054",
   "tp01_candidates_sha256": "1029101cbbacc38bfeb34429d15d91a85da2cdc95d5ecf6120aae287295ed778"
  },

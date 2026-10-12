@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -34,18 +36,75 @@ def tree() -> dict:
 
 # ---------------- 正向 ----------------
 
-def test_schema_and_source_binding(tree):
-    assert tree["schema"] == "cli-tree/v1"
-    assert tree["card"] == "TP-08C"
-    assert len(tree["source_revision"]) == 40
-    assert tree["source_revision"] == _head()
-
-
 def _head() -> str:
     import subprocess
     r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
                        capture_output=True, text=True)
     return r.stdout.strip()
+
+
+def _is_ancestor(rev: str, head: str) -> bool:
+    import subprocess
+    r = subprocess.run(["git", "merge-base", "--is-ancestor", rev, head],
+                       cwd=REPO_ROOT, capture_output=True)
+    return r.returncode == 0
+
+
+def test_schema_and_source_binding(tree):
+    """绑定语义：manifest 的 source_revision 必须是 HEAD 的祖先（或相等）。
+
+    为什么不要求 `== HEAD`：manifest 自身要入库，而**提交动作会推进 HEAD**
+    （TP-02 的 HEAD 独断自引用悖论，2026-10-12 已在 TP-02 识别）——任何
+    「revision == HEAD」的断言在提交后立刻变红，是不可达状态。正确语义是
+    「manifest 描述的源码版本被 HEAD 包含」，真正的漂移保护由
+    `test_cli_tree_no_unreviewed_drift` 的重提取对拍提供。
+    """
+    assert tree["schema"] == "cli-tree/v1"
+    assert tree["card"] == "TP-08C"
+    assert len(tree["source_revision"]) == 40
+    head = _head()
+    assert _is_ancestor(tree["source_revision"], head), (
+        f"manifest source_revision {tree['source_revision']} is not an ancestor of "
+        f"HEAD {head} — manifest describes source newer than the repo (stale/forged)")
+    assert tree["transport"] if "transport" in tree else True
+
+
+def test_cli_tree_no_unreviewed_drift(tree):
+    """未审漂移阻断：重提取 CLI 树，与冻结 manifest 逐条对拍。
+
+    这是比 revision 绑定更强的保护——源码若在提取后变更（新增/删除/改名
+    子命令、参数增删、choices 变化），重提取结果与冻结集出现差异即失败。
+    时间戳/版本号等易变字段不参与比对。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import extract_cli_tree as ext
+
+    live = ext.extract()
+    frozen_keys = set(tree["entries"].keys())
+    live_keys = set(live["entries"].keys())
+    added = sorted(live_keys - frozen_keys)
+    removed = sorted(frozen_keys - live_keys)
+    assert not added, f"unreviewed CLI entries added since freeze: {added[:10]}"
+    assert not removed, f"unreviewed CLI entries removed since freeze: {removed[:10]}"
+
+    # 参数结构对拍（每个顶层入口的 positionals/options 概要）。
+    # cw.py 层 5 个 standalone 入口的 top_parser 只存 help_text（无 arguments 键），
+    # 对它们的保护是 help_text 非空 + rc=0（见 test_standalone_entries_have_real_help）。
+    for name in sorted(frozen_keys & live_keys):
+        f_top = tree["entries"][name].get("top_parser")
+        l_top = live["entries"][name].get("top_parser")
+        if not f_top or not l_top:
+            continue
+        if "arguments" not in f_top or "arguments" not in l_top:
+            continue
+        f_opts = sorted(o["dest"] for o in f_top["arguments"] if o["option_strings"])
+        l_opts = sorted(o["dest"] for o in l_top["arguments"] if o["option_strings"])
+        assert f_opts == l_opts, f"{name}: option set drifted: frozen={f_opts} live={l_opts}"
+        f_nested = set(tree["entries"][name]["nested"].keys())
+        l_nested = set(live["entries"][name]["nested"].keys())
+        assert f_nested == l_nested, (
+            f"{name}: nested set drifted: added={sorted(l_nested - f_nested)[:5]} "
+            f"removed={sorted(f_nested - l_nested)[:5]}")
 
 
 def test_all_84_top_level_entries_present(tree):

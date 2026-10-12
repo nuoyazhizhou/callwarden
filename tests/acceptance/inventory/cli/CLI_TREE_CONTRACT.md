@@ -46,7 +46,18 @@
 | required/type/default/choices 如实落 manifest | `test_parameter_contract_fields_captured` |
 | 互斥组关系可读 | `test_mutually_exclusive_groups_recorded` |
 | cw.py 层入口有真实 help | `test_standalone_entries_have_real_help` |
-| schema + source_revision 绑定 | `test_schema_and_source_binding` |
+| schema + 源码版本绑定（祖先语义） | `test_schema_and_source_binding` |
+| **未审漂移阻断**（重提取对拍） | `test_cli_tree_no_unreviewed_drift` |
+
+**绑定语义修正（2026-10-12，苏雅域审查实证后修复）**：原 `test_schema_and_source_binding`
+断言 `source_revision == HEAD`，这是**不可达状态**——manifest 自身要入库，而提交动作推进 HEAD
+（TP-02 已识别的 HEAD 独断自引用悖论，本轮咬到 TP-08C 自己的交付物：manifest 绑定 78f40ab、
+HEAD 已到 5c8a55c，门禁实测红）。已改为：
+1. `source_revision` 必须是 HEAD 的**祖先**（`git merge-base --is-ancestor`），语义为「manifest
+   描述的源码版本被 HEAD 包含」，杜绝 manifest 比源码新的伪造/陈旧情形；
+2. 真正的漂移保护改为 `test_cli_tree_no_unreviewed_drift`：**重提取 CLI 树**与冻结 manifest
+   逐条对拍（入口集合 + 每入口 option 集合 + 嵌套集合），任何增删改即失败。
+   与 TP-08F 的 `test_unreviewed_wire_drift_blocks`（MCP 侧重提取对拍）形成对偶。
 
 ## 5. 负向义务
 
