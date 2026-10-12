@@ -3,7 +3,7 @@
  "status": "static_differences_registered",
  "task_id": "T-1791627786186-a562f188",
  "step_id": "S-1791627786188-a5784358",
- "generated_at": 1791702707.514352,
+ "generated_at": 1791784474.2517424,
  "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
  "baseline_head_reference": "db952964ca49e07d77c033e886298a3e004542af",
  "scope_note": "静态规划账本：只读权威文档与源码，不运行产品测试/构建/联网；不把静态测试写成运行证明；runtime_status=unknown 的项其运行验证属下游任务",
@@ -19,7 +19,7 @@
    "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
    "role": "shared_protocol_single_source",
    "description": "四角色共享协议唯一单源；capability 分层、双轨整改、Handoff 结构",
-   "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+   "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
    "exists": true
   },
   {
@@ -70,7 +70,7 @@
   {
    "file": "cli/main.py",
    "description": "CLI _STRUCTURED_HANDOFF_ROUTES",
-   "sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+   "sha256": "d1e019d5d24a132011a6adb869ff7c6c0f0ed742a32a22e456358d3a0e7ae304",
    "exists": true
   },
   {
@@ -109,7 +109,7 @@
      },
      {
       "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
       "lines": [
        13,
        17
@@ -119,7 +119,7 @@
      },
      {
       "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
       "lines": [
        34,
        34
@@ -129,7 +129,7 @@
      },
      {
       "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
       "lines": [
        108,
        113
@@ -139,7 +139,7 @@
      },
      {
       "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
       "lines": [
        122,
        127
@@ -149,7 +149,7 @@
      },
      {
       "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
       "lines": [
        189,
        198
@@ -334,7 +334,7 @@
     "citations": [
      {
       "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-      "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+      "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
       "lines": [
        193,
        198
@@ -384,7 +384,7 @@
    "citations": [
     {
      "file": "cli/main.py",
-     "sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+     "sha256": "d1e019d5d24a132011a6adb869ff7c6c0f0ed742a32a22e456358d3a0e7ae304",
      "lines": [
       3529,
       3536
@@ -422,7 +422,7 @@
     },
     {
      "file": "cli/main.py",
-     "sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+     "sha256": "d1e019d5d24a132011a6adb869ff7c6c0f0ed742a32a22e456358d3a0e7ae304",
      "lines": [
       3529,
       3536
@@ -468,7 +468,7 @@
    "citations": [
     {
      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-     "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+     "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
      "lines": [
       6,
       25
@@ -497,7 +497,7 @@
    "citations": [
     {
      "file": ".agents/skills/cw-task-loop/references/role-protocol.md",
-     "sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+     "sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
      "lines": [
       13,
       14
@@ -537,5 +537,35 @@
   "implementation_evidence_count": 9,
   "static_test_contract_count": 1,
   "core_gap": "GAP-15"
- }
+ },
+ "refreeze": [
+  {
+   "path": ".agents/skills/cw-task-loop/references/role-protocol.md",
+   "prior_sha256": "15ea34118e5081ba2f526bb46dcbb215adc560df848e07e830c1b4bf4ece72c1",
+   "new_sha256": "088398fbc4b368f5f792118bfd296afbba3c248d7a64c49d8964ddfbe55b5e37",
+   "detected_by": "TP-04 validate_contract.py --self-check (citation sha256 hash mismatch)",
+   "classification": "append-only additions in section 7 (L352-400, lease_role acting/lease role split); all cited segments L6-198 byte-identical to baseline blob",
+   "equivalence_proof": "git show db952964:<path> segment bytes == disk segment bytes for all 8 cited ranges (L6-25, L13-14, L13-17, L34, L108-113, L122-127, L189-198, L193-198); diff hunks confined to L352+",
+   "semantic_sources_still_bound": [
+    "GAP-15-D01 protocol citations",
+    "AL-01..AL-05 aligned citations"
+   ],
+   "authority": "user directive 2026-10-12 (GAP-15 direction A approval prerequisite: re-freeze stale hash bindings)",
+   "rebound_in": "docs/testing/planning/governance/differences.json citations[].sha256"
+  },
+  {
+   "path": "cli/main.py",
+   "prior_sha256": "e2ddafdcb0a88a54611359f55f395a7ae34d9ed5cefc9110ed5f2c98ff15f4dd",
+   "new_sha256": "d1e019d5d24a132011a6adb869ff7c6c0f0ed742a32a22e456358d3a0e7ae304",
+   "detected_by": "TP-04 validate_contract.py --self-check (citation sha256 hash mismatch)",
+   "classification": "addition of _resolve_lease_role_from_projection + --role default None (L15873+); cited segment L3529-3536 byte-identical to baseline blob",
+   "equivalence_proof": "git show db952964:cli/main.py segment bytes == disk segment bytes for cited range L3529-3536; diff hunks confined to L15873+",
+   "semantic_sources_still_bound": [
+    "AL-01 _STRUCTURED_HANDOFF_ROUTES",
+    "AL-02 design-only outcome rejection"
+   ],
+   "authority": "user directive 2026-10-12 (GAP-15 direction A approval prerequisite: re-freeze stale hash bindings)",
+   "rebound_in": "docs/testing/planning/governance/differences.json citations[].sha256"
+  }
+ ]
 }
