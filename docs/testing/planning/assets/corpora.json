@@ -142,7 +142,7 @@
     "files": 1,
     "note": "刻意保持小而多样：模块级函数、类、方法、跨函数调用"
    },
-   "source_revision": "aa5f34ef6b7fc9c1a86758159d19947797cf2034",
+   "source_revision": "1860c15d5ae39c5d2b281b43b5156da5c833451c",
    "license_or_authorization": "仓库内自带种子样本（本仓源码树内）",
    "copy_method": "只读复制到本卡 run 临时根 C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-02/",
    "applicable_cases": [
@@ -214,7 +214,7 @@
    "frozen": false,
    "path": ".",
    "exists": true,
-   "revision": "aa5f34ef6b7fc9c1a86758159d19947797cf2034",
+   "revision": "1860c15d5ae39c5d2b281b43b5156da5c833451c",
    "revision_matches_baseline": true,
    "dirty": true,
    "dirty_entries": 2,
