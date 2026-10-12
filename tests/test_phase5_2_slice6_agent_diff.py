@@ -18,7 +18,13 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+import pytest
 import callwarden_core as cc
+
+# 差分契约守卫：本文件为 Rust/Python 差分对比测试，禁止以返回值代替断言
+# （pytest 忽略非 None 返回值，仅发 PytestReturnNotNoneWarning）。差分不匹配时
+# 以 return all_pass 收尾会结构性永不红，故在此局部将该警告升级为 error。
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestReturnNotNoneWarning")
 
 
 # ============================================================
@@ -202,7 +208,10 @@ def test_d10_agent_params():
         if not ok:
             all_pass = False
     print(f"\nPhase 5-2 Slice 6 D10 差分测试结果：{passed} passed, {total - passed} failed")
-    return all_pass
+    assert all_pass, (
+        "Rust/Python 差分不匹配必须使测试失败"
+        "：不得以 return 值当断言（pytest 忽略非 None 返回值）；逐用例明细见上方 stdout"
+    )
 
 
 if __name__ == "__main__":

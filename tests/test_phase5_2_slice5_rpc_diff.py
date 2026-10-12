@@ -19,7 +19,13 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+import pytest
 import callwarden_core as cc
+
+# 差分契约守卫：本文件为 Rust/Python 差分对比测试，禁止以返回值代替断言
+# （pytest 忽略非 None 返回值，仅发 PytestReturnNotNoneWarning）。差分不匹配时
+# 以 return all_pass 收尾会结构性永不红，故在此局部将该警告升级为 error。
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestReturnNotNoneWarning")
 
 
 # ============================================================
@@ -122,7 +128,10 @@ def test_d7_rpc_params():
         if not ok:
             all_pass = False
     print(f"\nPhase 5-2 Slice 5 D7 差分测试结果：{passed} passed, {total - passed} failed")
-    return all_pass
+    assert all_pass, (
+        "Rust/Python 差分不匹配必须使测试失败"
+        "：不得以 return 值当断言（pytest 忽略非 None 返回值）；逐用例明细见上方 stdout"
+    )
 
 
 # ============================================================
@@ -134,17 +143,20 @@ def test_d8_py_signature():
     print("\n=== D8: PyO3 签名验证 ===")
     ok = hasattr(cc, 'build_rpc_request_py')
     print(f"  {'PASS' if ok else 'FAIL'} build_rpc_request_py exists")
-    if not ok:
-        return False
+    assert ok, "build_rpc_request_py 必须存在于 callwarden_core（PyO3 绑定缺失）"
 
     result = cc.build_rpc_request_py("backup", '{"output_path":"/tmp/b"}')
     ok = isinstance(result, tuple) and len(result) == 2
     print(f"  {'PASS' if ok else 'FAIL'} build_rpc_request_py returns (str, str)")
-    return ok
+    assert ok, f"build_rpc_request_py 必须返回 (str, str) 元组；actual={type(result)} {result!r}"
 
 
 if __name__ == "__main__":
-    d7_ok = test_d7_rpc_params()
-    d8_ok = test_d8_py_signature()
-    print(f"\n总计：{'ALL PASS' if d7_ok and d8_ok else 'SOME FAILED'}")
-    sys.exit(0 if d7_ok and d8_ok else 1)
+    try:
+        test_d7_rpc_params()
+        test_d8_py_signature()
+        print("\n总计：ALL PASS")
+        sys.exit(0)
+    except AssertionError:
+        print("\n总计：SOME FAILED")
+        sys.exit(1)

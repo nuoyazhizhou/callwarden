@@ -18,7 +18,13 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+import pytest
 import callwarden_core as cc
+
+# 差分契约守卫：本文件为 Rust/Python 差分对比测试，禁止以返回值代替断言
+# （pytest 忽略非 None 返回值，仅发 PytestReturnNotNoneWarning）。差分不匹配时
+# 以 return all_pass 收尾会结构性永不红，故在此局部将该警告升级为 error。
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestReturnNotNoneWarning")
 
 
 # ============================================================
@@ -91,7 +97,10 @@ def test_d1_valid_json():
         print("  D1: ALL PASS")
     else:
         print("  D1: FAILED")
-    return all_pass
+    assert all_pass, (
+        "Rust/Python 差分不匹配必须使测试失败"
+        "：不得以 return 值当断言（pytest 忽略非 None 返回值）；逐用例明细见上方 stdout"
+    )
 
 
 # ============================================================
@@ -130,7 +139,10 @@ def test_d2_invalid_json():
         print("  D2: ALL PASS")
     else:
         print("  D2: FAILED")
-    return all_pass
+    assert all_pass, (
+        "Rust/Python 差分不匹配必须使测试失败"
+        "：不得以 return 值当断言（pytest 忽略非 None 返回值）；逐用例明细见上方 stdout"
+    )
 
 
 # ============================================================
@@ -176,7 +188,10 @@ def test_d3_python_alignment():
         print("  D3: ALL PASS")
     else:
         print("  D3: FAILED")
-    return all_pass
+    assert all_pass, (
+        "Rust/Python 差分不匹配必须使测试失败"
+        "：不得以 return 值当断言（pytest 忽略非 None 返回值）；逐用例明细见上方 stdout"
+    )
 
 
 # ============================================================
@@ -254,7 +269,10 @@ def test_d4_real_stats_structure():
         print("  D4: ALL PASS")
     else:
         print("  D4: FAILED")
-    return all_pass
+    assert all_pass, (
+        "Rust/Python 差分不匹配必须使测试失败"
+        "：不得以 return 值当断言（pytest 忽略非 None 返回值）；逐用例明细见上方 stdout"
+    )
 
 
 # ============================================================
