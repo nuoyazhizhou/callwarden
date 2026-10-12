@@ -142,7 +142,7 @@
     "files": 1,
     "note": "刻意保持小而多样：模块级函数、类、方法、跨函数调用"
    },
-   "source_revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "source_revision": "aa5f34ef6b7fc9c1a86758159d19947797cf2034",
    "license_or_authorization": "仓库内自带种子样本（本仓源码树内）",
    "copy_method": "只读复制到本卡 run 临时根 C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-02/",
    "applicable_cases": [
@@ -214,11 +214,11 @@
    "frozen": false,
    "path": ".",
    "exists": true,
-   "revision": "db952964ca49e07d77c033e886298a3e004542af",
+   "revision": "aa5f34ef6b7fc9c1a86758159d19947797cf2034",
    "revision_matches_baseline": true,
    "dirty": true,
-   "dirty_entries": 13,
-   "dirty_note": "dirty 证据需附归属；dirty 状态下 R1 结论须标注工作树归属",
+   "dirty_entries": 2,
+   "dirty_note": "工作树 dirty 项 2 个，均为未跟踪历史备份目录 docs/testing/.backups/ 与 docs/testing/.bak_v5/（v6/v7 文档改版残留，非源码、非测试证据，不参与任何入口语义）；已跟踪源码与文档全部 committed。dirty 状态下 R1 结论须标注工作树归属。",
    "language": "rust+python",
    "scale": {
     "note": "规模未在本轮逐项计量；执行卡冻结时补 files/loc/符号数"
@@ -230,8 +230,7 @@
    ],
    "oracle_source": "预选符号与历史须独立人工核验（TESTING_PLAN §4）",
    "gaps": [
-    "预选符号清单与历史独立核验结果尚未产出（Step 1 oracle_catalog 承接）",
-    "dirty 工作树的归属判定未逐项完成"
+    "预选符号清单与历史独立核验结果尚未产出（Step 1 oracle_catalog 承接）"
    ]
   }
  ],
