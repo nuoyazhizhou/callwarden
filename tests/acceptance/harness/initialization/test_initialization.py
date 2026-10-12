@@ -127,8 +127,56 @@ def test_foreign_owner_workspace_activation_forbidden(env):
     conn.close()
     r = env.run_cli(["workspace", "set", "999009"])
     assert r["rc"] != 0, f"foreign workspace activation must fail: {r['stdout'][:300]}"
-    assert "forbidden" in (r["stdout"] + r["stderr"]).lower(), (
-        f"expected workspace_forbidden, got: {r['stdout'][:200]}{r['stderr'][:200]}")
+    # IDOR 修复（2026-10-13）后 owner 过滤上推到 workspace.list：foreign workspace
+    # （owner_uid=424242 != peer uid）对非 owner **完全不可见**，故 CLI 解析阶段
+    # 即失败（not_found，不确认其存在）。修复前 list 无过滤，CLI 能解析到该
+    # workspace、再在 activate 阶段返回 forbidden。两种结果都是 fail-closed 拒绝：
+    # not_found = 存在性隐藏（更严），forbidden = 可见但拒绝。两者皆可接受。
+    combined = (r["stdout"] + r["stderr"]).lower()
+    assert "forbidden" in combined or "not_found" in combined or "无法解析" in combined, (
+        f"foreign workspace must be rejected (forbidden/not_found), got: {r['stdout'][:200]}{r['stderr'][:200]}")
+
+
+def test_idor_foreign_workspace_invisible_in_list(env):
+    """🔴 IDOR 修复（2026-10-13）：workspace.list 必须按 owner 过滤。
+
+    修复前 live handler 忽略 peer，返回 registry 全量行（含其他 owner 的
+    宿主机路径 client_view_root / host_real_root）。修复后 foreign workspace
+    对非 owner 不可见。本测试插入 owner_uid=424243 的 foreign 行，断言：
+    ① 它不出现在 workspace list 输出中（含路径不泄露）；
+    ② 本 run 注册的自身 workspace 仍然可见（不得过度过滤）。
+    """
+    import sqlite3
+    import time
+    reg = env.run_root / "home" / ".callwarden" / "daemon" / "registry.db"
+    conn = sqlite3.connect(reg)
+    ts = int(time.time())
+    conn.execute(
+        "INSERT OR REPLACE INTO daemon_workspaces (workspace_id, workspace_instance_id,"
+        " snapshot_id, owner_uid, client_view_root, host_real_root, status,"
+        " registered_at, last_active_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (999010, "FOREIGN-INSTANCE-010", "snap-f2", 424243,
+         "C:\\foreign-leak-path", "C:\\foreign-leak-path", "active", ts, ts))
+    conn.commit()
+    conn.close()
+
+    # 自身 workspace 必须先注册（保证列表非空，验证未过度过滤）
+    r_reg = env.run_cli(["workspace", "register", "tp09-own", str(env.workspace_dir)])
+    assert r_reg["rc"] == 0, f"own register failed: {r_reg['stdout'][:200]}"
+
+    r = env.run_cli(["workspace", "list"])
+    assert r["rc"] == 0, f"list failed: {r['stdout'][:200]}{r['stderr'][:200]}"
+    out = r["stdout"]
+    # ① foreign 行的路径与 instance 不得泄露
+    assert "foreign-leak-path" not in out, (
+        f"IDOR: foreign host path leaked into workspace list: {out[:400]}")
+    assert "FOREIGN-INSTANCE-010" not in out, (
+        f"IDOR: foreign instance id leaked into workspace list: {out[:400]}")
+    # ② 自身 workspace 必须可见（过度过滤回归守卫）：列表非空且含本 run 根路径
+    assert "Workspaces (1 total)" in out or "Workspaces (2 total)" in out, (
+        f"own workspace missing from list (over-filtering): {out[:400]}")
+    assert str(env.workspace_dir) in out, (
+        f"own workspace path missing from list (over-filtering): {out[:400]}")
 
 
 def test_task_db_schema_and_migration_ready(env):

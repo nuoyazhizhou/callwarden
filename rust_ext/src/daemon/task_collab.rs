@@ -1763,6 +1763,7 @@ impl TaskCollabStore {
     pub fn unified_workspace_authority(
         &self,
         key: &str,
+        owner_uid: Option<u32>,
     ) -> Result<Option<UnifiedAuthority>, DaemonRpcError> {
         #[cfg(test)]
         let registry_path = match &self.registry_db_path_for_tests {
@@ -1779,14 +1780,36 @@ impl TaskCollabStore {
             .conn
             .lock()
             .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
-        resolve_status_authority(&guard, &registry, key)
+        let auth = resolve_status_authority(&guard, &registry, key)?;
+        // IDOR 修复（2026-10-13）：live `workspace.status` 路径此前完全跳过 owner
+        // 校验（基础实现 `owned_workspace*` 有校验，但被 live handler 遮蔽），
+        // 导致 Linux 多用户 UDS 下任一组员可读取其他用户 workspace 的宿主机路径。
+        // 此处按基础实现同款语义补 owner ACL：registry 行存在且 owner 不匹配 →
+        // workspace_forbidden。registry 行不存在（仅 task-DB capture）时无宿主路径
+        // 泄露，保持返回。
+        if let (Some(want), Some(got)) = (owner_uid, auth.as_ref().and_then(|a| a.registry_owner_uid)) {
+            if got != want as i64 {
+                return Err(DaemonRpcError::workspace_forbidden(
+                    "workspace 不属于当前 UID",
+                ));
+            }
+        }
+        Ok(auth)
     }
 
     /// 跨 registry↔task-DB 统一 workspace 列表（供 `workspace.list`）。
     ///
     /// F-DAEMON-01 修复：同 `unified_workspace_authority()`——registry 路径复用启动期
     /// 注入的 `self.registry_db_path`，禁止请求时 env 重解析 + 硬编码兜底。
-    pub fn list_unified_workspaces(&self) -> Result<Vec<serde_json::Value>, DaemonRpcError> {
+    ///
+    /// IDOR 修复（2026-10-13）：`owner_uid = Some(uid)` 时按 owner 过滤——registry
+    /// 行直接走 `list_workspaces(Some(uid))`，task-DB captures 仅保留该 owner 的
+    /// registry 行对应的 capture（fail-closed：无 registry 对应的孤儿 capture 排除）。
+    /// `None` 保持旧行为（admin/内部列举），供需要全量的场景。
+    pub fn list_unified_workspaces(
+        &self,
+        owner_uid: Option<u32>,
+    ) -> Result<Vec<serde_json::Value>, DaemonRpcError> {
         #[cfg(test)]
         let registry_path = match &self.registry_db_path_for_tests {
             Some(path) => path.clone(),
@@ -1798,7 +1821,7 @@ impl TaskCollabStore {
         let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
             .map_err(|e| DaemonRpcError::new("E_REGISTRY_UNAVAILABLE", format!("registry 只读打开失败: {e}")))?;
         let reg_list = registry
-            .list_workspaces(None)
+            .list_workspaces(owner_uid)
             .map_err(|e| DaemonRpcError::internal_error(format!("registry list 失败: {e}")))?;
 
         let guard = self
@@ -1817,6 +1840,24 @@ impl TaskCollabStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| DaemonRpcError::internal_error(format!("task-DB capture 收集失败: {e}")))?;
 
+        // owner 过滤时：仅保留该 owner 的 registry 行对应的 task-DB capture
+        // （按 instance 与数字 id 双向匹配；孤儿 capture 排除）
+        let allowed: std::collections::HashSet<(Option<i64>, Option<String>)> = if owner_uid.is_some() {
+            reg_list
+                .iter()
+                .map(|r| {
+                    (
+                        r.get("workspace_id").and_then(|v| v.as_i64()),
+                        r.get("workspace_instance_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    )
+                })
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+
         let mut out: Vec<serde_json::Value> = Vec::new();
         for reg in &reg_list {
             let mut e = reg.clone();
@@ -1824,6 +1865,12 @@ impl TaskCollabStore {
             out.push(e);
         }
         for (tid, tinst) in task_rows {
+            if owner_uid.is_some()
+                && !allowed.contains(&(Some(tid), None))
+                && !allowed.contains(&(None, Some(tinst.clone())))
+            {
+                continue;
+            }
             out.push(serde_json::json!({
                 "workspace_id": tid,
                 "workspace_instance_id": tinst,

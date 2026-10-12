@@ -344,13 +344,13 @@ pub trait DaemonStateExt {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params);
+        let _ = params;
         let state = self.daemon_state();
         let store = state
             .task_collab_store
             .as_ref()
             .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
-        let list = store.list_unified_workspaces()?;
+        let list = store.list_unified_workspaces(Some(peer.uid))?;
         Ok(Value::Array(list))
     }
 
@@ -359,7 +359,7 @@ pub trait DaemonStateExt {
         peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let _ = peer;
+        let _ = params;
         let key = params
             .get("workspace_instance_id")
             .or_else(|| params.get("workspace_id"))
@@ -375,7 +375,7 @@ pub trait DaemonStateExt {
             .task_collab_store
             .as_ref()
             .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
-        match store.unified_workspace_authority(key)? {
+        match store.unified_workspace_authority(key, Some(peer.uid))? {
             Some(auth) => Ok(serde_json::to_value(auth).unwrap_or(Value::Null)),
             None => Err(DaemonRpcError::new(
                 "E_WORKSPACE_NOT_FOUND",

@@ -196,6 +196,8 @@ pub fn record_reconciliation_alias(
 pub struct UnifiedAuthority {
     pub registry_workspace_id: Option<i64>,
     pub registry_instance_id: Option<String>,
+    /// registry 行的 owner_uid（用于 live handler 的 owner ACL；不存在为 None）
+    pub registry_owner_uid: Option<i64>,
     pub task_db_workspace_id: Option<i64>,
     pub task_db_instance_id: Option<String>,
     pub client_view_root: Option<String>,
@@ -217,6 +219,7 @@ pub fn resolve_status_authority(
     let mut out = UnifiedAuthority {
         registry_workspace_id: None,
         registry_instance_id: None,
+        registry_owner_uid: None,
         task_db_workspace_id: None,
         task_db_instance_id: None,
         client_view_root: None,
@@ -230,6 +233,7 @@ pub fn resolve_status_authority(
         let id: i64 = key.parse().unwrap();
         if let Ok(Some(reg)) = registry.get_workspace_by_numeric_id(id) {
             out.registry_workspace_id = reg.get("workspace_id").and_then(|v| v.as_i64());
+            out.registry_owner_uid = reg.get("owner_uid").and_then(|v| v.as_i64());
             let rinst = reg.get("workspace_instance_id").and_then(|v| v.as_str()).map(|s| s.to_string());
             out.registry_instance_id = rinst.clone();
             out.client_view_root = reg.get("client_view_root").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -268,6 +272,7 @@ pub fn resolve_status_authority(
         // instance 键
         if let Ok(Some(reg)) = registry.get_workspace_status(key) {
             out.registry_workspace_id = reg.get("workspace_id").and_then(|v| v.as_i64());
+            out.registry_owner_uid = reg.get("owner_uid").and_then(|v| v.as_i64());
             out.registry_instance_id = Some(key.to_string());
             out.client_view_root = reg.get("client_view_root").and_then(|v| v.as_str()).map(|s| s.to_string());
             out.status = reg.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());

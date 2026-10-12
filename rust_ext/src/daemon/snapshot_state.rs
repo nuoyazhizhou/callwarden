@@ -524,7 +524,7 @@ impl DaemonStateExt for SnapshotDaemonState {
 
     fn handle_workspace_list(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         let _ = params;
@@ -533,13 +533,14 @@ impl DaemonStateExt for SnapshotDaemonState {
             .task_collab_store
             .as_ref()
             .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
-        let list = store.list_unified_workspaces()?;
+        // IDOR 修复（2026-10-13）：恢复 owner ACL（基础实现有、live 覆盖此前丢失）
+        let list = store.list_unified_workspaces(Some(peer.uid))?;
         Ok(Value::Array(list))
     }
 
     fn handle_workspace_status(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         // 接受 `workspace_instance_id`（字符串）或 `workspace_id`（数字或字符串）；
@@ -577,7 +578,7 @@ impl DaemonStateExt for SnapshotDaemonState {
             .task_collab_store
             .as_ref()
             .ok_or_else(|| DaemonRpcError::internal_error("task_collab_store 未初始化"))?;
-        match store.unified_workspace_authority(&key)? {
+        match store.unified_workspace_authority(&key, Some(peer.uid))? {
             Some(auth) => Ok(serde_json::to_value(auth).unwrap_or(Value::Null)),
             None => Err(DaemonRpcError::new(
                 "E_WORKSPACE_NOT_FOUND",
