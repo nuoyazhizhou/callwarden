@@ -1,0 +1,51 @@
+{
+ "schema": "tp06-build-results/v1",
+ "card": "TP-06",
+ "run_id": "run-20261012-1",
+ "run_root": "C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw-acceptance\\TP-06",
+ "recorded_at": "2026-10-12T16:03:18",
+ "source": {
+  "revision": "c053763a779f7f872daec1cb0521433b65a7ba1a",
+  "snapshot": "git archive --format=tar HEAD",
+  "snapshot_members": 2839
+ },
+ "toolchain": {
+  "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+  "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+  "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+  "python_abi": "cpython-314",
+  "interpreter": "C:\\Python314\\python.exe",
+  "msvc": "14.44.35207 (link.exe HostX64\\x64)",
+  "windows_sdk": "10.0.26100.0"
+ },
+ "profile": "P-COMMITTED-windows-amd64-py314",
+ "commands": {
+  "daemon": "cargo build --release --manifest-path src/rust_ext/Cargo.toml --no-default-features --bin cw-daemon --offline",
+  "extension": "python release/build.py --rust (cargo build --lib --release, default features)"
+ },
+ "candidates": {
+  "daemon": {
+   "path": "src\\rust_ext\\target\\release\\cw-daemon.exe",
+   "sha256": "6324df120c850e45cee43349e3353e2fb88808e436127cbf9025c9e0a0e8859d",
+   "size": 46621184,
+   "build_log": "reports/build-daemon.log",
+   "version": "cw_daemon 0.3.23"
+  },
+  "extension_dll": {
+   "path": "src\\rust_ext\\target\\release\\callwarden_core.dll",
+   "sha256": "ea65a1c1392570ee815b0d2c504dee774820e634e19162b81e9e4b88f7127a2f",
+   "size": 36686336
+  },
+  "extension_pyd": {
+   "path": "src\\callwarden_core.pyd",
+   "sha256": "ea65a1c1392570ee815b0d2c504dee774820e634e19162b81e9e4b88f7127a2f",
+   "size": 36686336
+  }
+ },
+ "import_test": {
+  "rc": 0,
+  "stdout": "FILE:C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw-acceptance\\TP-06\\src\\callwarden_core.pyd\r\nDOC:''\r\nPY:3.14.3\r\n",
+  "stderr": "",
+  "loaded_from_candidate": true
+ }
+}
