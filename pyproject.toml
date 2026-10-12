@@ -150,7 +150,52 @@ site-package-path = ["C:/Users/wanpi/AppData/Roaming/Python/Python314/site-packa
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["testcode", "build", "dist", "rust_ext", ".git"]
+# 注意：--cov 故意不放进 addopts。pytest-cov 未安装的环境（如本机）会把
+# --cov 当成未识别参数，导致所有 pytest 调用硬失败。覆盖率采集由 CI 的
+# test job 显式传 --cov（见 .github/workflows/ci.yml），本地调试不受影响。
 addopts = "-q --tb=short"
 markers = [
     "xdist_group(name): 将测试分组，避免多个测试同时创建/删除相同临时文件",
 ]
+
+# ============================================================
+# 覆盖率门禁（任务5①，2026-10-13）
+# ============================================================
+# 采集范围与安全门禁（.github/workflows/ci.yml security job 的 bandit）保持
+# 同一「核心生产面」：cli/（84 命令入口）+ server/（MCP 243 工具 + daemon
+# client + autostart）+ 根入口 cw.py/config.py。
+# 不取 "callwarden" 整包的原因：仓库根本身即 callwarden 包
+# （package-dir = { "callwarden" = "." }，从父目录挂载为 callwarden），
+# source 写 "callwarden" 会把整个仓库根（tests/、deliverables/、scripts/、
+# rust_ext/ 等）全算进覆盖率分母，门禁数字失去生产含义。
+# analyzers/parsers/cicd 暂不纳入：parsers/ 明确是开发 reference（生产解析
+# 由 Rust callwarden_core 完成，见上方 P1-G 注释），纳入会惩罚本就不该被
+# 生产测试覆盖的代码；待生产/引用地位界定后再加入本列表。
+[tool.coverage.run]
+source = [
+    "cli",
+    "server",
+    "cw.py",
+    "config.py",
+]
+relative_files = true
+branch = true
+omit = [
+    # 兜底：测试样本与 runner 不计入生产覆盖率
+    "*/tests/*",
+    "*/testcode/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+# 覆盖率阈值：首次接线设保守基线 40%，待 CI 跑出真实全量数字后逐轮抬升
+# （阈值裁定属流程·度量域）。pytest-cov 在未显式传 --cov-fail-under 时会读
+# 此值作为门禁，低于即该步骤失败。
+fail_under = 40
