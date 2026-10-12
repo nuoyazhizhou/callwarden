@@ -1753,15 +1753,26 @@ impl TaskCollabStore {
 
     /// 跨 registry↔task-DB 统一权威解析（供 `workspace.status` / `workspace.list`）。
     /// registry 以只读方式打开，避免与在线 registry writer 争用写锁。
+    ///
+    /// F-DAEMON-01 修复：registry 路径必须复用启动期注入的 `self.registry_db_path`，
+    /// **不得在请求时从 env 重新解析**。旧实现在请求时读 `CW_DAEMON_REGISTRY_DB`，
+    /// env 未设时兜底 `default_registry_db_path()`（硬编码 `/var/lib/callwarden/registry.db`，
+    /// Windows 即 `C:\var\lib\callwarden` = 生产 registry），与 daemon 启动期 `--registry`
+    /// 完全无关——以 `--registry <隔离路径>` 启动的 daemon 其 `workspace.status` 仍读生产库。
+    /// 范式同 `task_collab_lifecycle.rs` 的 snapshot authority 解析。
     pub fn unified_workspace_authority(
         &self,
         key: &str,
     ) -> Result<Option<UnifiedAuthority>, DaemonRpcError> {
-        let registry_path = std::env::var("CW_DAEMON_REGISTRY_DB")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(default_registry_db_path);
+        #[cfg(test)]
+        let registry_path = match &self.registry_db_path_for_tests {
+            Some(path) => path.clone(),
+            // 历史单元 fixture 不启动 registry；保持与生产权威隔离，绝不回落到
+            // env/硬编码默认（那会读到生产 registry）。
+            None => return Ok(None),
+        };
+        #[cfg(not(test))]
+        let registry_path = self.registry_db_path.clone();
         let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
             .map_err(|e| DaemonRpcError::new("E_REGISTRY_UNAVAILABLE", format!("registry 只读打开失败: {e}")))?;
         let guard = self
@@ -1772,12 +1783,18 @@ impl TaskCollabStore {
     }
 
     /// 跨 registry↔task-DB 统一 workspace 列表（供 `workspace.list`）。
+    ///
+    /// F-DAEMON-01 修复：同 `unified_workspace_authority()`——registry 路径复用启动期
+    /// 注入的 `self.registry_db_path`，禁止请求时 env 重解析 + 硬编码兜底。
     pub fn list_unified_workspaces(&self) -> Result<Vec<serde_json::Value>, DaemonRpcError> {
-        let registry_path = std::env::var("CW_DAEMON_REGISTRY_DB")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(default_registry_db_path);
+        #[cfg(test)]
+        let registry_path = match &self.registry_db_path_for_tests {
+            Some(path) => path.clone(),
+            // 历史单元 fixture 不启动 registry；空列表而非回落生产库。
+            None => return Ok(Vec::new()),
+        };
+        #[cfg(not(test))]
+        let registry_path = self.registry_db_path.clone();
         let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
             .map_err(|e| DaemonRpcError::new("E_REGISTRY_UNAVAILABLE", format!("registry 只读打开失败: {e}")))?;
         let reg_list = registry
@@ -1904,6 +1921,16 @@ impl TaskCollabStore {
     pub fn with_registry_db_path(mut self, registry_db_path: impl Into<std::path::PathBuf>) -> Self {
         self.registry_db_path = registry_db_path.into();
         self
+    }
+
+    /// 启动期注入的 registry authority 路径（只读访问器）。
+    ///
+    /// F-DAEMON-01 修复配套：RPC handler 必须经此访问器取路径，**不得**在请求时
+    /// 从 env `CW_DAEMON_REGISTRY_DB` 重新解析（env 未设时兜底
+    /// `default_registry_db_path()` 硬编码 `/var/lib/callwarden/registry.db`，
+    /// 与启动期 `--registry` 无关，会静默读到生产 registry）。
+    pub fn registry_db_path(&self) -> &std::path::Path {
+        &self.registry_db_path
     }
 
     /// 为单元测试绑定隔离 registry；生产构建不编译该入口，避免测试 fixture

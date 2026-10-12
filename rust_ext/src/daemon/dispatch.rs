@@ -3278,17 +3278,19 @@ fn dispatch_inner<S: DaemonStateExt>(
 
         // ---- SRV-003：mcp.backup_restore 双方法（T-1787323460500-b9e232bc）----
         // backup_file 为 admin-only Protected_Mutation（上方授权门禁 + 串行化点自动生效）；
-        // is_rust_backup_rolled_back 为只读查询，registry 路径取
-        // CW_DAEMON_REGISTRY_DB（fallback 默认路径），fail-closed 语义由 handler 保证。
+        // is_rust_backup_rolled_back 为只读查询，registry 路径取**启动期注入值**
+        // （F-DAEMON-01 修复：不再于请求时读 env + 硬编码兜底，那会读到生产 registry），
+        // fail-closed 语义由 handler 保证（空路径 → registry_db_unconfigured）。
         "mcp.backup_restore.backup_file" => {
             super::backup_restore_handlers::handle_backup_file(params)
         }
         "mcp.backup_restore.is_rust_backup_rolled_back" => {
-            let registry_path = std::env::var("CW_DAEMON_REGISTRY_DB")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(super::config::default_registry_db_path);
+            let registry_path = state
+                .daemon_state()
+                .task_collab_store
+                .as_ref()
+                .map(|store| store.registry_db_path().to_path_buf())
+                .unwrap_or_default();
             super::backup_restore_handlers::handle_is_rust_backup_rolled_back(&registry_path)
         }
 

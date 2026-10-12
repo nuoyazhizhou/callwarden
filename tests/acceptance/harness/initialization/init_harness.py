@@ -38,6 +38,15 @@ CW_PY = REPO_ROOT / "cw.py"
 PYTHON = sys.executable
 
 
+def _sha256_of(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class InitializationEnv:
     """TP-09 隔离执行环境：隔离 daemon + 空 workspace 目录 + CLI 隔离 env。"""
 
@@ -50,15 +59,26 @@ class InitializationEnv:
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.daemon: IsolatedDaemon | None = None
         self.workspace_name = workspace_name
+        # TP-09 钉「自己 run 根内部署的候选」的实际散列，而非 TP-06 冻结候选：
+        # TP-06/07 的冻结散列用于发布门禁；TP-09 的义务是隔离面与初始化行为，
+        # 候选随修复演 进（2026-10-12 F-DAEMON-01 修复后部署修复构建）。
+        # manifest 仍由 daemon 自报散列，故此检查依旧证明 manifest 忠实于二进制。
+        pinned = os.environ.get("CW_TP09_DAEMON_SHA256", "")
+        self.expected_sha256 = pinned or _sha256_of(self.daemon_exe)
 
     # ---------- daemon 生命周期 ----------
 
     def start_daemon(self, timeout: float = 90.0) -> dict:
         if self.daemon is not None:
             raise RuntimeError("daemon already started")
-        d = IsolatedDaemon(run_root=self.run_root, daemon_exe=self.daemon_exe)
-        # F-DAEMON-01：daemon 进程内注入 Rust 侧真正读取的 registry 覆盖
-        os.environ["CW_DAEMON_REGISTRY_DB"] = str(d._resolved_registry())
+        d = IsolatedDaemon(run_root=self.run_root, daemon_exe=self.daemon_exe,
+                           expected_sha256=self.expected_sha256)
+        # 🔴 对照实验（2026-10-12 F-DAEMON-01 修复后）：
+        # 修复前这里必须注入 CW_DAEMON_REGISTRY_DB，否则 daemon 的
+        # list_unified_workspaces() 兜底读生产 registry（153 条生产 workspace）。
+        # 修复后 daemon 走启动期 --registry 注入（self.registry_db_path），
+        # 故 daemon 侧 env 注入已移除以验证修复真实生效。CLI 侧注入保留
+        # （cli_env 中 CALLWARDEN_DAEMON_REGISTRY_DB 供客户端路径解析）。
         self.daemon = d
         manifest = d.start(timeout=timeout)
         d.verify_consistency()

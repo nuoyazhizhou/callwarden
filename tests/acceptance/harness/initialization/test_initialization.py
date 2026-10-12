@@ -27,14 +27,14 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 from init_harness import InitializationEnv  # noqa: E402
 
-TP06_DAEMON_SHA256 = "6324df120c850e45cee43349e3353e2fb88808e436127cbf9025c9e0a0e8859d"
-
 
 @pytest.fixture(scope="module")
 def env():
     e = InitializationEnv()
     manifest = e.start_daemon()
-    assert manifest["daemon_binary_sha256"] == TP06_DAEMON_SHA256
+    # 钉 TP-09 自己 run 根内部署的候选散列（harness 现算），而非 TP-06 冻结候选：
+    # F-DAEMON-01 修复（2026-10-12）后 TP-09 候选换成修复构建，冻结散列属 TP-06/07 发布门禁。
+    assert manifest["daemon_binary_sha256"] == e.expected_sha256
     try:
         yield e
     finally:
@@ -150,38 +150,79 @@ def test_no_sql_helper_used(env):
 
 # ---------------- 负向 ----------------
 
-def test_fdaemon01_isolation_guard(env, monkeypatch):
-    """🔴 F-DAEMON-01：不注入 CW_DAEMON_REGISTRY_DB 时 daemon 会兜底到硬编码
-    /var/lib/callwarden/registry.db（生产）。本测试证明该缺陷存在且 harness
-    的注入是必需的——用「run 根 registry 有数据 + 生产 manifest 存在」双探针，
-    不读不断生产库。"""
+def test_fdaemon01_registry_resolution_contract(env, monkeypatch):
+    """F-DAEMON-01 回归守卫：registry 解析必须走「启动期注入」单链。
+
+    2026-10-12 修复前，`task_collab.rs` 的 `list_unified_workspaces()` /
+    `unified_workspace_authority()` 在**请求时**读 env `CW_DAEMON_REGISTRY_DB`，
+    env 未设则兜底 `config.rs` 硬编码 `/var/lib/callwarden/registry.db`（Windows 即
+    `C:\\var\\lib\\callwarden` = 生产 registry），与启动期 `--registry` 无关——
+    实测隔离 daemon 的 `workspace.list` 返回 153 条生产 workspace。
+
+    修复后（路线 1）：两个函数改读 `self.registry_db_path`（`with_registry_db_path()`
+    启动期注入），范式同 `task_collab_lifecycle.rs`。本测试把**正确行为**钉住：
+    ① 两个函数体内不得再出现请求时 env 重解析；
+    ② 必须引用 `self.registry_db_path`；
+    ③ `dispatch.rs` 的 backup_restore 内联解析已改为经 store 访问器；
+    ④ harness 的 env 注入保留作纵深防御（不再是唯一防线）。
+    """
     run_reg = env.run_root / "home" / ".callwarden" / "daemon" / "registry.db"
     assert run_reg.is_file(), "run-root registry must exist (isolation anchor)"
-    count = env.registry_workspace_count()
-    assert count >= 1, "run-root registry should hold this run's workspaces"
+    assert env.registry_workspace_count() >= 1, "run-root registry should hold this run's workspaces"
 
-    # 缺陷探针：若 harness 未注入 CW_DAEMON_REGISTRY_DB，list_unified_workspaces
-    # 会兜底到 /var/lib/callwarden/registry.db。用源码常量做静态断言（不读生产库）。
-    cfg = (REPO_ROOT / "rust_ext" / "src" / "daemon" / "config.rs").read_text(
-        encoding="utf-8", errors="replace")
-    assert 'DEFAULT_DATA_ROOT: &str = "/var/lib/callwarden"' in cfg, (
-        "config.rs default data root changed — F-DAEMON-01 evidence needs re-verification")
     collab = (REPO_ROOT / "rust_ext" / "src" / "daemon" / "task_collab.rs").read_text(
         encoding="utf-8", errors="replace")
-    assert 'CW_DAEMON_REGISTRY_DB' in collab and 'default_registry_db_path' in collab, (
-        "task_collab.rs registry resolution changed — F-DAEMON-01 evidence needs re-verification")
-    # harness 必须注入
-    assert os.environ.get("CW_DAEMON_REGISTRY_DB"), "harness must inject CW_DAEMON_REGISTRY_DB"
+
+    # ① 两个 unified 函数体内不得再出现请求时 env 重解析
+    for fn_name in ("list_unified_workspaces", "unified_workspace_authority"):
+        start = collab.find(f"pub fn {fn_name}(")
+        assert start != -1, f"{fn_name} not found in task_collab.rs"
+        body = collab[start:start + 2200]
+        assert 'std::env::var("CW_DAEMON_REGISTRY_DB")' not in body, (
+            f"{fn_name} still re-parses CW_DAEMON_REGISTRY_DB at request time "
+            "(F-DAEMON-01 regression)")
+        # ② 必须复用启动期注入字段
+        assert "self.registry_db_path" in body, (
+            f"{fn_name} does not reuse injected self.registry_db_path")
+
+    # ③ dispatch 侧 backup_restore 不得再内联 env 解析，须经 store 访问器
+    disp = (REPO_ROOT / "rust_ext" / "src" / "daemon" / "dispatch.rs").read_text(
+        encoding="utf-8", errors="replace")
+    arm = disp[disp.find('"mcp.backup_restore.is_rust_backup_rolled_back" =>'):]
+    arm = arm[:arm.find('"mcp.cli_admin.connection_test" =>')] if '"mcp.cli_admin.connection_test" =>' in arm else arm[:1500]
+    assert 'std::env::var("CW_DAEMON_REGISTRY_DB")' not in arm, (
+        "dispatch.rs backup_restore arm still re-parses env at request time "
+        "(F-DAEMON-01 regression)")
+    assert "registry_db_path()" in arm, (
+        "dispatch.rs backup_restore arm must use the store accessor")
+
+    # ④ 活体对照：daemon 侧**不注入** CW_DAEMON_REGISTRY_DB（见 init_harness
+    # start_daemon 的对照实验注释），workspace.list 仍必须只返回 run 根 workspace——
+    # 这才是修复生效的直接证据（修复前同配置返回 153 条生产 workspace）。
+    assert "CW_DAEMON_REGISTRY_DB" not in os.environ, (
+        "harness must NOT inject CW_DAEMON_REGISTRY_DB into the daemon environment; "
+        "the fix routes registry resolution through startup --registry injection")
+    r = env.run_cli(["workspace", "list"])
+    assert r["rc"] == 0, f"workspace list failed: {r['stdout'][:300]}{r['stderr'][:300]}"
+    listed = r["stdout"]
+    assert "C:\\var\\lib\\callwarden" not in listed and "/var/lib/callwarden" not in listed, (
+        f"workspace list leaked production registry paths (F-DAEMON-01 regression): {listed[:400]}")
 
 
 def test_registry_path_must_stay_inside_run_root(env):
-    """registry 越界（指向生产路径）必须被 harness 拒绝。"""
-    prod_like = Path(os.environ.get("USERPROFILE", "")) / ".callwarden" / "daemon" / "registry.db"
-    resolved = Path(os.environ["CW_DAEMON_REGISTRY_DB"]).resolve()
+    """registry 越界（指向生产路径）必须被 harness 拒绝。
+
+    daemon 侧 env 注入已移除（F-DAEMON-01 修复后走启动期 --registry），
+    故此处改为验证 daemon 实际使用的 registry 落在 run 根内。
+    """
+    # daemon 启动期 --registry 指向 run 根（IsolatedDaemon 解析）
+    daemon_reg = env.daemon._resolved_registry()
+    resolved = Path(daemon_reg).resolve()
     assert str(env.run_root) in str(resolved), (
-        f"registry override escapes run root: {resolved}")
+        f"daemon registry escapes run root: {resolved}")
+    prod_like = Path(os.environ.get("USERPROFILE", "")) / ".callwarden" / "daemon" / "registry.db"
     if prod_like.exists():
-        assert resolved != prod_like.resolve(), "registry override points at production!"
+        assert resolved != prod_like.resolve(), "daemon registry points at production!"
 
 
 def test_repeated_register_is_reproducible(env):
@@ -199,8 +240,13 @@ def test_repeated_register_is_reproducible(env):
 
 
 def test_daemon_candidate_is_frozen_binary(env):
-    """隔离 daemon 必须是 TP-06 冻结候选（非生产 runtime）。"""
+    """隔离 daemon 必须来自 run 根候选（非生产 runtime），且 manifest 忠实报告其散列。"""
     manifest = env.daemon._manifest
-    assert manifest["daemon_binary_sha256"] == TP06_DAEMON_SHA256
+    assert manifest["daemon_binary_sha256"] == env.expected_sha256, (
+        f"manifest sha {manifest['daemon_binary_sha256']} != deployed candidate "
+        f"{env.expected_sha256}")
     assert "cw-acceptance" in manifest["daemon_executable"], (
         f"daemon exe not from run root: {manifest['daemon_executable']}")
+    # 候选必须真实来自 run 根，而非生产 runtime（生产 exe 在 ~/.callwarden/runtime/）
+    assert ".callwarden" not in manifest["daemon_executable"], (
+        f"daemon exe looks like production runtime: {manifest['daemon_executable']}")
