@@ -108,9 +108,83 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff
 
+      # P1 修复（2026-10-13 安全域审查）：--exit-zero + continue-on-error 使 ruff
+      # 形同虚设（永远不红）。改为阻断式门禁。
       - name: Run ruff
-        run: ruff check . --exit-zero
-        continue-on-error: true
+        run: ruff check .
+
+  # ============================================================
+  # 安全门禁（2026-10-13 安全域审查问题 ⑪⑫ 补齐）：
+  # 此前 PR CI 零安全扫描——SAST/SCA/secret-scan 全部缺失，依赖漏洞扫描仅
+  # release 时且只 high（enterprise-release.yml Gate 8），PR 侧无任何拦截。
+  # 本 job 补：bandit(SAST) + semgrep(SAST,secrets/ci 规则) + pip-audit(SCA)
+  # + cargo-audit(SCA/Rust) + gitleaks(secret-scan)，全部阻断式。
+  # ============================================================
+  security:
+    name: Security gates (SAST / SCA / secret-scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks 需要完整历史做 commit 扫描
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # --- SAST: bandit（Python 静态分析，medium+ 阻断）---
+      # 范围先限核心生产面：cli/（CLI 84 命令入口）+ server/（MCP 243 工具 +
+      # daemon client + autostart）+ 根入口 cw.py/config.py。仓库根本身即
+      # `callwarden` 包（pyproject package-dir={"callwarden"="."}），全扫会连带
+      # tests/archive/experiments 等非生产目录产生既有发现而立即阻断所有 PR；
+      # 待基线豁免（.bandit 或 --baseline）建立后再扩面到全仓。
+      - name: Install bandit
+        run: pip install bandit[toml]
+      - name: Run bandit (medium+ blocks)
+        run: bandit -r cli server cw.py config.py -ll
+
+      # --- SAST: semgrep（secrets + ci 规则集，error 级阻断）---
+      # Windows runner 装不了 semgrep（见 e2e-verify-windows-amd64.yml），
+      # 故只在 Linux CI 跑；开发者侧 `cw security scan` 保留 p/default。
+      - name: Install semgrep
+        run: pip install semgrep
+      - name: Run semgrep (secrets + ci rules, errors block)
+        run: semgrep scan --config p/secrets --config p/ci --error
+
+      # --- SCA: pip-audit（依赖漏洞，high+critical 阻断）---
+      # 与 enterprise-release.yml Gate 8 同款 severity 过滤逻辑
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit (high+critical blocks)
+        run: |
+          pip-audit -r requirements.txt -o vuln-audit.json --format=json || true
+          HIGH_VULNS=$(python -c "import json; d=json.load(open('vuln-audit.json')); print(len([v for v in d.get('dependencies',[]) if any(f.get('severity','').lower() in ('high','critical') for f in v.get('vulns',[]))]))")
+          if [ "$HIGH_VULNS" -gt "0" ]; then
+            echo "FAIL: $HIGH_VULNS high/critical-severity vulnerabilities found"
+            cat vuln-audit.json
+            exit 1
+          fi
+          echo "OK: No high/critical-severity vulnerabilities"
+
+      # --- SCA: cargo-audit（Rust 依赖漏洞，任何已知漏洞阻断）---
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo-audit (Rust deps)
+        run: cargo audit --manifest-path rust_ext/Cargo.toml
+
+      # --- secret-scan: gitleaks（全历史提交扫描）---
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz \
+            | tar xz -C /usr/local/bin gitleaks
+      - name: Run gitleaks (repo history + working tree)
+        run: gitleaks detect --source . --redact
 
   rust-unit-test:
     # T7 跨平台审查发现：此前所有 workflow 只 cargo build、从不 cargo test，
