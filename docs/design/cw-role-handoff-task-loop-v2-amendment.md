@@ -58,10 +58,13 @@ executor/reviewer/adjudicator（`cli/main.py::_build_role_contracts`）——这
 | `decision_request_v1` | `decision_request`/`decision.respond` 落库、`waiting_for_decision`/`waiting_for_input` 投影 | 不落库、不投影；多路线决策由当前持棒角色在 handoff/verdict 文本中升级用户 |
 | `adjacent_relation_v1` | `adjacent_defect → related_to` 自动关联 | 由人工在 finding/ledger 中记录关联 |
 
-**明确不在任何 capability 门禁内（当前已实现）**：`reviewer_blocked` 触发 daemon 在同一主任务
-原子追加 provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。
-`adjudicator_returned` 仅固定路由 Executor，不自动追加 step/reopen；当前 CLI/MCP 尚无受支持的
-端到端 remediation bridge，不得把固定路由描述成可执行整改能力。
+**明确不在任何 capability 门禁内（当前已实现）**：`reviewer_blocked` 与 `adjudicator_returned` 两种退回
+均触发 daemon 在同一主任务原子追加 provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有
+verdict 流程行为），任务回到 `in_progress` → `remediation_pending` → Executor 领取。两种退回唯一
+刻意的行为差异是 findings 契约：`reviewer_blocked` 的 block verdict 必须非空，`adjudicator_returned`
+的 pass verdict 允许空数组。daemon 自动路径完整可用；CLI/MCP 显式入口不完整（CLI 无命令、MCP
+`source_findings: str` 与 daemon 的 JSON array 契约不一致），不得把显式入口缺口描述成 daemon
+自动路径不可用。
 
 capability 声明必须走 daemon 公共 capability 通道（v1 §7 0A Capability Authority Amendment 的
 public promote 路径），不得用客户端文档、模板标注或聊天声明代替。客户端查询方式以 daemon
@@ -72,7 +75,7 @@ capability 投影为准；查询不到该 capability 时一律按未声明处理
 | 行为 | pre-cutover（当前） | post-cutover |
 |---|---|---|
 | 新任务规划 | Executor（复杂度预检由其自查）或用户手动拆分 | Planner 领取 `READY/PLAN` |
-| 计划/scope/Contract/架构缺陷 | **临时桥接**（§4）：Reviewer 用 `reviewer_blocked` 提交后由 daemon 追加 `fix_defect`，Executor 按 `owner_route=planner` 复查并以 `executor_blocked_to_user` 升级用户；Adjudicator 用 `adjudicator_returned` 提交后因当前无受支持 remediation bridge，重新查询并如实记录治理实现缺口，不得合成 Executor step | `replan` 路由 Planner（`replanning_pending`） |
+| 计划/scope/Contract/架构缺陷 | **临时桥接**（§4）：Reviewer 用 `reviewer_blocked` 提交后由 daemon 追加 `fix_defect`，Executor 按 `owner_route=planner` 复查并以 `executor_blocked_to_user` 升级用户；Adjudicator 用 `adjudicator_returned` 提交后 daemon 亦同事务追加 `fix_defect`（与 reviewer_blocked 同路径），Executor 领取该 step 复查；若 CLI/MCP 显式入口缺口影响领取，重新查询并如实记录治理实现缺口，不得合成 Executor step | `replan` 路由 Planner（`replanning_pending`） |
 | 实现缺陷 | daemon 追加 `fix_defect` → Executor（现有行为） | 同左（不变） |
 | `decision_request` | 不落库（`decision_request_v1` 未声明）；文本升级 | daemon 落库并投影 `waiting_for_decision` |
 | Planner 模板 | **design-only**，不可作为现行派工入口 | 现行入口 |
@@ -111,11 +114,12 @@ capability 投影为准；查询不到该 capability 时一律按未声明处理
     → daemon 在同一事务原子追加 provenance-bound fix_defect（当前已实现的唯一自动路径）
     → remediation_pending → Executor 领取 → remediation_in_progress
   → Adjudicator 退回：task.handoff adjudicator_returned
-    → daemon 仅持久化 handoff 并固定路由 executor（不自动追加 step、不自动 reopen）
-    → 当前 CLI/MCP 没有受支持的 provenance-bound remediation bridge
-    → 重新查询同一 task；若 next_action 仍按 Reviewer PASS 返回 READY/ADJUDICATE，
-      记录精确 task/verdict/handoff/source-step 治理缺口，交后续 daemon/CLI/MCP 实现任务；
-      不得使用通用 RPC、伪造 step 或自行声称 remediation_pending
+    → daemon 在同一主任务原子追加 provenance-bound fix_defect（与 reviewer_blocked 同路径），
+      任务回到 in_progress → remediation_pending → Executor 领取
+    → daemon 自动路径完整可用；CLI/MCP 显式入口不完整（CLI 无命令、MCP findings 契约错配）
+    → 重新查询同一 task；next_action 应返回 remediation_pending 的 fix_defect step；
+      若显式入口缺口影响领取，记录精确 task/verdict/handoff/source-step 治理缺口，
+      交后续 daemon/CLI/MCP 实现任务；不得使用通用 RPC、伪造 step 或自行声称 remediation_pending
 
 scope/Contract/架构缺陷（计划边界、拆分方式、验收目标、依赖或架构选择错误）
   → post-cutover：replan → replanning_pending → Planner

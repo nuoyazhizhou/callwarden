@@ -153,8 +153,13 @@ PASS 后 raw status 通常仍为 `review`，但治理状态应为 `adjudication_
    独立 scope 且可并行验收的工作才允许创建子任务。
 5. Reviewer `PASS` 后才交给不同 instance/session 的 Adjudicator。Adjudicator 独立复核后只能接受完成，
    或带具体缺口退回 Executor；不得自己补计划或修改实现。Adjudicator 退回用 `adjudicator_returned`：
-   daemon 仅固定路由 Executor（不自动追加整改 step——自动 remediation 仅 `reviewer_blocked` 触发），
-   当前 CLI/MCP 尚无受支持的 provenance-bound remediation bridge。退回后必须重新查询同一 `task_id`；
+   daemon 在同一主任务原子追加一条 provenance-bound `fix_defect`（与 `reviewer_blocked` 同路径），
+   任务回到 `in_progress` → `remediation_pending` → Executor 领取。两种退回唯一刻意的行为差异是
+   findings 契约：`reviewer_blocked` 的 block verdict 必须携带至少一个结构化 finding（非空数组），
+   `adjudicator_returned` 的 pass verdict 允许空 findings 数组（裁决退回可只指向证据缺口）。
+   CLI/MCP 的显式 remediation 入口当前不完整（CLI 无 `cw task remediation` 子命令；MCP
+   `task_remediation_create` 的 `source_findings: str` 与 daemon 要求的 JSON array 契约不一致），
+   但 daemon 内部自动路径完整可用。退回后必须重新查询同一 `task_id`；
    若仍为 `READY/ADJUDICATE`，应记录精确 task/verdict/handoff/source-step 治理缺口，交后续 daemon/CLI/MCP
    实现任务。不得改用通用 RPC、伪造整改 step 或自行声称 `remediation_pending`。
 6. 只有接受完成的 Adjudicator 才可先用 `cw lease status <task_id> --role reviewer` 查看租约，并以真实

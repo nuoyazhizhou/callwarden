@@ -2,7 +2,7 @@
  "schema_version": "governance-acceptance/v1",
  "status": "frozen_oracle_pending_approval",
  "task_id": "T-1791627786186-a562f188",
- "generated_at": 1791784474.2611625,
+ "generated_at": 1791785564.3481915,
  "acceptance_commands": [
   "C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --self-check",
   "C:/Python314/python.exe docs/testing/planning/governance/validate_contract.py --verify-contract"
@@ -154,7 +154,7 @@
  ],
  "aligned_item_count": 5,
  "ledger_binding": {
-  "differences_json_sha256": "2fa19e4a2db3cfd03af29dff0904f62660c6b0a842236923cbdddda437d37551",
+  "differences_json_sha256": "9a1ded1d0d92ff7515e991b665d24d545ff86958ba8654b611a2f24bb11a7b00",
   "alignment_md_sha256": "9531fb0cc3d5a06f9099d0d51c1b5f130821966883e33100a5f068b1621a4cce",
   "source_revision": "db952964ca49e07d77c033e886298a3e004542af"
  },

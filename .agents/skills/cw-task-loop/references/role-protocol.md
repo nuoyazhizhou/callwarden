@@ -10,11 +10,13 @@
 > - **`decision_request_v1`（未声明）**：`decision_request`/`decision.respond` 落库与
 >   `waiting_for_decision`/`waiting_for_input` 投影。
 > - **`adjacent_relation_v1`（未声明）**：`adjacent_defect → related_to` 自动关联。
-> - **当前已实现（无 capability 门禁）**：`reviewer_blocked` 触发 daemon 在同一主任务原子追加
->   provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有 verdict 流程行为）。
->   `adjudicator_returned` **不在此列**：它只固定路由 executor，不自动追加 step/reopen；当前 CLI
->   没有对应命令，MCP adapter 也不满足 daemon 的结构化 findings 契约，因此尚无受支持的端到端
->   remediation bridge。角色不得改用通用 RPC 或自行投影 `remediation_pending`（详见 §3/§4）。
+> - **当前已实现（无 capability 门禁）**：`reviewer_blocked` 与 `adjudicator_returned` 两种退回均触发
+>   daemon 在同一主任务原子追加 provenance-bound `fix_defect`（`task_collab_lifecycle.rs` 现有
+>   verdict 流程行为），任务回到 `in_progress` → `remediation_pending` → Executor 领取。两种退回
+>   唯一刻意的行为差异是 findings 契约：`reviewer_blocked` 的 block verdict 必须非空，
+>   `adjudicator_returned` 的 pass verdict 允许空数组。daemon 自动路径完整可用；但 CLI 无对应命令、
+>   MCP adapter 把 `source_findings` 作为字符串透传而 daemon 要求 JSON array，显式入口尚不完整。
+>   角色不得改用通用 RPC 或自行投影 `remediation_pending`（详见 §3/§4）。
 >
 > 上述 capability 未由 daemon 公共 capability 通道声明前：`task.next_action` 不返回 `READY/PLAN`、
 > 不 emit `planning_*`/`replanning_*`/`waiting_*`；`task.create`/`--role-contracts` 拒绝 `planner`
@@ -31,7 +33,7 @@
 | Planner     | 澄清目标、复杂度预检、拆分 ownership、冻结 Contract/依赖/验收   | Executor；需要选择时 User/控制台                                    | design-only（`planner_governance_v1` 未声明） |
 | Executor    | 实现冻结 scope、整改、回归、证据和 report                       | Reviewer；计划缺陷按 §3 升级                                        | 已实现                                        |
 | Reviewer    | 独立复核实现、回归、影响半径和历史相邻缺陷；只提交 PASS/BLOCKED | Adjudicator；实现缺陷 → Executor；计划缺陷按 §3                     | 已实现                                        |
-| Adjudicator | 独立核验 Reviewer PASS 及最终门禁；接受后 apply/close，或退回   | complete；当前退回固定路由 Executor 但 bridge 未闭合；目标双轨见 §3 | 已实现                                        |
+| Adjudicator | 独立核验 Reviewer PASS 及最终门禁；接受后 apply/close，或退回   | complete；退回同事务追加 fix_defect（与 reviewer_blocked 同路径）；显式入口缺口见 §4 | 已实现                                        |
 
 `cw-task-loop` 不是治理角色，只读调用 `task.next_action` 并原样渲染角色卡。`g0-experiment` 是独立的 G0
 盲审流程，不并入普通 loop。
@@ -106,11 +108,12 @@ Executor 开工前必须重复复杂度预检。发现原 scope 过大、Contrac
       （当前已实现的唯一自动 remediation 路径，task_collab_lifecycle.rs verdict 流程）
     → remediation_pending → Executor 领取 → remediation_in_progress
   → Adjudicator 退回：task.handoff adjudicator_returned
-    → daemon 仅持久化 handoff 并固定路由 executor（不自动追加 step、不自动 reopen）
-    → 当前 CLI/MCP 没有受支持的 provenance-bound remediation bridge
-    → 重新查询同一 task；当前 next_action 可能仍按 Reviewer PASS 返回 READY/ADJUDICATE
-    → 记录精确 task/verdict/handoff/source-step 缺口，交后续 daemon/CLI/MCP 实现任务；
-      不得使用通用 RPC、伪造 step 或自行声称 remediation_pending
+    → daemon 在同一主任务原子追加 provenance-bound fix_defect（与 reviewer_blocked 同路径），
+      任务回到 in_progress → remediation_pending → Executor 领取
+    → daemon 自动路径完整可用；CLI/MCP 显式入口不完整（CLI 无命令、MCP findings 契约错配）
+    → 重新查询同一 task；next_action 应返回 remediation_pending 的 fix_defect step
+    → 若显式入口缺口影响领取，记录精确 task/verdict/handoff/source-step 缺口，
+      交后续 daemon/CLI/MCP 实现任务；不得使用通用 RPC、伪造 step 或自行声称 remediation_pending
 
 scope/Contract/架构缺陷（计划边界、拆分方式、验收目标、依赖或架构选择错误）
   → post-cutover：replan → replanning_pending → Planner
@@ -119,9 +122,10 @@ scope/Contract/架构缺陷（计划边界、拆分方式、验收目标、依�
          finding.owner_route 必须写 planner，不得伪装成实现缺陷；
       2. Executor 领取该 fix_defect 后按 owner_route 复查：确认计划缺陷时不得实施代码、
          不得完成该 step，也不得把技术问题升级给用户；应将精确计划缺口、finding_id 和所需 capability 交 Planner/内部治理维护路径；
-      3. Adjudicator 用 adjudicator_returned 提交后重新查询同一 task；由于当前没有受支持的
-         remediation bridge，若仍为 READY/ADJUDICATE，必须记录治理实现缺口并等待后续
-         daemon/CLI/MCP 修复，不得假装存在可领取的 Executor step。
+      3. Adjudicator 用 adjudicator_returned 提交后重新查询同一 task；daemon 已同事务追加
+         fix_defect，next_action 应返回 remediation_pending 的可领取 Executor step；若显式入口
+         缺口导致无法领取，必须记录治理实现缺口并等待后续 daemon/CLI/MCP 修复，不得假装存在
+         可领取的 Executor step。
     该桥接是 pre-cutover 的临时内部修复路径——Reviewer/Adjudicator 不能冒用
     executor_blocked_to_user（from_role 校验拒绝）；`next_role: user` 仅用于真正的业务决策、外部事实、验收或敏感授权。
 ```
@@ -186,16 +190,16 @@ Reviewer 和 Adjudicator 不只看本次 diff。除任务 scope 外，还要检�
 `owner_route=planner` 的 finding post-cutover 走 `replan` → Planner，pre-cutover 按 §3 临时内部桥接
 （Reviewer BLOCKED → Executor 复查后进入 Planner/治理维护路径；Adjudicator returned → 记录未闭合 bridge 的治理缺口）。
 
-BLOCKED 不是终点。Reviewer 提交 `reviewer_blocked` 后，daemon 在同一主任务原子追加带
-`source_verdict_id`、`finding_id`、`remediation_of_step_id` 的 `fix_defect` 并投影为
-`remediation_pending`（**当前已实现的唯一自动 remediation**，无 capability 门禁）。Adjudicator 的
-`adjudicator_returned` 退回**只持久化 handoff 并固定路由 executor，不自动追加 step/不自动 reopen**
-（`task_collab_lifecycle.rs` 自动整改分支仅匹配 `reviewer_blocked`）。虽然 daemon 内部存在
-`task.remediation.create` handler，当前 CLI 没有对应命令，MCP adapter 又把 `source_findings`
-作为字符串透传，而 daemon 要求 JSON array；该入口也没有完成对 `adjudicator_returned` handoff event
-与 source step 的权威绑定。因此当前不存在角色可合法使用的端到端 bridge。提交退回后必须重新查询并
-如实显示治理缺口；不得改用通用 RPC、伪造整改 step 或自行声称 `remediation_pending`。该闭环属于后续
-daemon/CLI/MCP 实现任务。
+BLOCKED 不是终点。Reviewer 提交 `reviewer_blocked` 与 Adjudicator 提交 `adjudicator_returned` 后，
+daemon 均在同一主任务原子追加带 `source_verdict_id`、`finding_id`、`remediation_of_step_id` 的
+`fix_defect` 并投影为 `remediation_pending`（**已实现的自动 remediation，无 capability 门禁**；
+`task_collab_lifecycle.rs` 自动整改分支匹配两种 outcome）。两种退回唯一刻意的行为差异是 findings
+契约：`reviewer_blocked` 的 block verdict 必须非空，`adjudicator_returned` 的 pass verdict 允许空
+数组（裁决退回可只指向证据缺口）。daemon 内部自动路径完整可用；但显式入口不完整：CLI 无
+`cw task remediation` 子命令，MCP adapter 把 `source_findings` 作为字符串透传而 daemon 要求 JSON
+array，该入口没有完成对 handoff event 与 source step 的权威绑定。**"bridge 缺失"仅指 CLI/MCP
+显式入口维度，daemon 自动路径不受影响。** 提交退回后必须重新查询；不得改用通用 RPC、伪造整改
+step 或自行声称 `remediation_pending`。显式入口闭环属于后续 daemon/CLI/MCP 实现任务。
 `adjacent_defect → related_to` 的自动关联才依赖 `adjacent_relation_v1`（未声明前由人工在
 finding/ledger 中记录关联）。角色不应只在聊天中留下“blocked”，也不得手工改旧 verdict、旧 evidence 或数据库。
 
