@@ -1,8 +1,8 @@
 {
   "op_filter": "ALL",
   "counts": {
-    "PASS": 157,
-    "EXPECTED_BUSINESS": 72,
+    "PASS": 152,
+    "EXPECTED_BUSINESS": 77,
     "DEFECT": 0,
     "SKIP": 14
   },
@@ -11,7 +11,7 @@
       "name": "append_evidence",
       "op": "GOVERNANCE_WRITE",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool append_evidence: invalid_params: 缺少 payload_hash",
+      "detail": "ToolError: Error executing tool append_evidence: E_IDENTITY_REQUIRED: evidence.append 必须携带完整 identity",
       "params_keys": [
         "task_id",
         "step_id",
@@ -85,7 +85,7 @@
       "name": "submit_verdict",
       "op": "GOVERNANCE_WRITE",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool submit_verdict: invalid_params: 缺少 view_manifest_hash",
+      "detail": "ToolError: Error executing tool submit_verdict: E_VERDICT_PHASE_INVALID: phase 必须是 blind_first_pass 或 post_reveal_amendment",
       "params_keys": [
         "task_id",
         "step_id",
@@ -169,8 +169,8 @@
     {
       "name": "detect_cycle",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Unknown tool: detect_cycle",
       "params_keys": [
         "workspace_id"
       ]
@@ -223,8 +223,8 @@
     {
       "name": "publish_interface",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool publish_interface: invalid_params: 缺少字段: workspace_instance_id",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "workspace_id",
         "task_id",
@@ -238,13 +238,14 @@
     {
       "name": "record_artifact_identity",
       "op": "GOVERNANCE_WRITE",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool record_artifact_identity: invalid_params: 缺少字段: workspace_instance_id",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "workspace_id",
         "task_id",
         "contract_id",
         "contract_revision",
+        "artifact_id",
         "artifact_type",
         "artifact_ref",
         "artifact_hash",
@@ -279,8 +280,8 @@
     {
       "name": "check_action_identity",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool check_action_identity: 1 validation error for check_action_identityArguments\nidentity\n  Input should be a valid string [type=string_type, input_value={'agent_id': 'deep-agent'..., 'role': 'implemente",
       "params_keys": [
         "identity",
         "require_role"
@@ -333,7 +334,7 @@
       "name": "record_action_identity",
       "op": "GOVERNANCE_WRITE",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool record_action_identity: invalid_params: 缺少字段: workspace_instance_id",
+      "detail": "ToolError: Error executing tool record_action_identity: 1 validation error for record_action_identityArguments\nidentity\n  Input should be a valid string [type=string_type, input_value={'agent_id': 'deep-agent'..., 'role': 'implemen",
       "params_keys": [
         "action_id",
         "action_type",
@@ -354,7 +355,7 @@
       "name": "assignment_create",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool assignment_create: invalid_params: 缺少字段: workspace_instance_id",
+      "detail": "ToolError: Error executing tool assignment_create: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
       "params_keys": [
         "task_id",
         "role",
@@ -445,8 +446,8 @@
     {
       "name": "detect_cycles",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Unknown tool: detect_cycles",
       "params_keys": [
         "max_depth"
       ]
@@ -454,8 +455,8 @@
     {
       "name": "export_module_graph",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=tuple",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool export_module_graph: invalid_params: 不支持的格式: json",
       "params_keys": [
         "format"
       ]
@@ -719,7 +720,7 @@
       "name": "run_semgrep_scan",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool run_semgrep_scan: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "config",
         "languages",
@@ -730,7 +731,7 @@
       "name": "scan_semgrep_incremental",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool scan_semgrep_incremental: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "base_branch",
         "head",
@@ -794,8 +795,8 @@
     {
       "name": "get_resolved_edges",
       "op": "READ_ONLY",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool get_resolved_edges: 1 validation error for get_resolved_edgesArguments\ncaller_symbol_id\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='seed', ",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "workspace_id",
         "build_context_hash",
@@ -871,7 +872,7 @@
       "name": "detect_cross_repo_deps",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool detect_cross_repo_deps: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "source_workspace",
         "target_workspace"
@@ -881,7 +882,7 @@
       "name": "diff_branches",
       "op": "READ_ONLY",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 源分支不存在: seed",
+      "detail": "error字段: 源分支不存在: seed-branch",
       "params_keys": [
         "source_branch",
         "target_branch"
@@ -890,30 +891,28 @@
     {
       "name": "diff_callees",
       "op": "READ_ONLY",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool diff_callees: invalid_params: 缺少字段: symbol_a",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
-        "left_workspace_id",
-        "right_workspace_id",
-        "qualified_name"
+        "symbol_a",
+        "symbol_b"
       ]
     },
     {
       "name": "diff_callers",
       "op": "READ_ONLY",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool diff_callers: invalid_params: 缺少字段: symbol_a",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
-        "left_workspace_id",
-        "right_workspace_id",
-        "qualified_name"
+        "symbol_a",
+        "symbol_b"
       ]
     },
     {
       "name": "extract_rule_candidates_from_quality_findings",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool extract_rule_candidates_from_quality_findings: invalid_params: 缺少字段: workspace_instance_id",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "task_id",
         "min_occurrences"
@@ -1032,7 +1031,7 @@
       "name": "merge_preview",
       "op": "READ_ONLY",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 源分支不存在: seed",
+      "detail": "error字段: 源分支不存在: seed-branch",
       "params_keys": [
         "source_branch",
         "target_branch"
@@ -1056,13 +1055,13 @@
     {
       "name": "propose_range_patch",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool propose_range_patch: invalid_params: 缺少字段: new_content",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "file_path",
         "start_line",
         "end_line",
-        "replacement",
+        "new_content",
         "agent_task_id",
         "symbol_hash",
         "dry_run",
@@ -1072,11 +1071,11 @@
     {
       "name": "propose_symbol_id_patch",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool propose_symbol_id_patch: invalid_params: 缺少字段: new_content",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "symbol_id",
-        "patch",
+        "new_content",
         "mode",
         "agent_task_id",
         "dry_run",
@@ -1087,12 +1086,12 @@
     {
       "name": "propose_symbol_patch",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool propose_symbol_patch: invalid_params: 缺少字段: qualified_name",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "file_path",
-        "symbol_name",
-        "patch",
+        "qualified_name",
+        "new_content",
         "mode",
         "agent_task_id",
         "dry_run",
@@ -1113,9 +1112,11 @@
       "name": "resolve_gate_findings",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool resolve_gate_findings: invalid_params: 缺少字段: workspace_instance_id",
+      "detail": "ToolError: Error executing tool resolve_gate_findings: gate_not_found: gate gate-seed-0 不存在",
       "params_keys": [
-        "task_id"
+        "gate_id",
+        "task_id",
+        "resolution"
       ]
     },
     {
@@ -1131,7 +1132,7 @@
       "name": "rule_candidate_accept",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool rule_candidate_accept: candidate_not_found: candidate seed 不存在",
+      "detail": "ToolError: Error executing tool rule_candidate_accept: candidate_not_found: candidate cand-seed-0 不存在",
       "params_keys": [
         "candidate_id",
         "reviewer"
@@ -1141,7 +1142,7 @@
       "name": "rule_candidate_create",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool rule_candidate_create: 2 validation errors for rule_candidate_createArguments\nscope\n  Input should be a valid dictionary [type=dict_type, input_value='seed', input_type=str]\n    For further informati",
+      "detail": "ToolError: Error executing tool rule_candidate_create: 1 validation error for rule_candidate_createArguments\nevidence\n  Input should be a valid dictionary [type=dict_type, input_value='seed', input_type=str]\n    For further informa",
       "params_keys": [
         "title",
         "rule_text",
@@ -1166,7 +1167,7 @@
       "name": "rule_candidate_reject",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool rule_candidate_reject: candidate_not_found: candidate seed 不存在或已处理",
+      "detail": "ToolError: Error executing tool rule_candidate_reject: candidate_not_found: candidate cand-seed-0 不存在或已处理",
       "params_keys": [
         "candidate_id",
         "reviewer",
@@ -1207,8 +1208,8 @@
     {
       "name": "run_check_gate",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool run_check_gate: invalid_params: 缺少字段: workspace_instance_id",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "task_id",
         "step_id",
@@ -1227,8 +1228,8 @@
     {
       "name": "embed_single_symbol",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool embed_single_symbol: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "symbol_hash"
       ]
@@ -1236,8 +1237,8 @@
     {
       "name": "embed_symbols",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool embed_symbols: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "force"
       ]
@@ -1352,21 +1353,21 @@
       "name": "import_codeowners",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool import_codeowners: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": []
     },
     {
       "name": "import_git_blame",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool import_git_blame: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": []
     },
     {
       "name": "import_project_dependencies",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool import_project_dependencies: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": []
     },
     {
@@ -1475,8 +1476,8 @@
     {
       "name": "defect_suggest_fix",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool defect_suggest_fix: 1 validation error for defect_suggest_fixArguments\nfinding_id\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='finding-seed-",
       "params_keys": [
         "symbol_hash",
         "finding_id"
@@ -1571,8 +1572,8 @@
     {
       "name": "get_vulnerability_blast_radius",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool get_vulnerability_blast_radius: 1 validation error for get_vulnerability_blast_radiusArguments\nfinding_id\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, in",
       "params_keys": [
         "finding_id",
         "severity_filter",
@@ -1634,7 +1635,7 @@
       "name": "import_coverage",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: 查询 workspace root 失败: Query returned no rows",
+      "detail": "ToolError: Error executing tool import_coverage: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "file_path",
         "format"
@@ -1681,8 +1682,8 @@
     {
       "name": "test_impact_selection",
       "op": "READ_ONLY",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool test_impact_selection: internal_error: tis bfs: Wrong number of parameters passed to query. Got 1, needed 2",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
         "qualified_name"
       ]
@@ -1717,7 +1718,7 @@
       "name": "cancel_job",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool cancel_job: job_not_found: job seed 不存在",
+      "detail": "ToolError: Error executing tool cancel_job: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "job_id"
       ]
@@ -1742,8 +1743,8 @@
     {
       "name": "detect_clones",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool detect_clones: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "file_filter",
         "min_lines",
@@ -1753,8 +1754,8 @@
     {
       "name": "detect_clones_async",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool detect_clones_async: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "file_filter",
         "min_lines",
@@ -1764,8 +1765,8 @@
     {
       "name": "embed_symbols_async",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool embed_symbols_async: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "batch_size",
         "force"
@@ -1784,15 +1785,15 @@
     {
       "name": "get_clone_group_stats",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool get_clone_group_stats: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": []
     },
     {
       "name": "get_clone_stats",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool get_clone_stats: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": []
     },
     {
@@ -1818,15 +1819,15 @@
     {
       "name": "get_job_stats",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool get_job_stats: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": []
     },
     {
       "name": "get_job_status",
       "op": "READ_ONLY",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: job not found: seed",
+      "detail": "ToolError: Error executing tool get_job_status: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "job_id"
       ]
@@ -1905,17 +1906,17 @@
     {
       "name": "get_tested_functions",
       "op": "READ_ONLY",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool get_tested_functions: invalid_params: 缺少字段: qualified_name",
+      "verdict": "PASS",
+      "detail": "type=list",
       "params_keys": [
-        "test_qualified_name"
+        "qualified_name"
       ]
     },
     {
       "name": "link_edit_audit_symbols",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: edit audit has no task id",
+      "detail": "ToolError: Error executing tool link_edit_audit_symbols: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "audit_id",
         "step_id"
@@ -1954,8 +1955,8 @@
     {
       "name": "list_jobs",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool list_jobs: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "job_type",
         "status",
@@ -2000,8 +2001,8 @@
     {
       "name": "semgrep_scan_async",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool semgrep_scan_async: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "config",
         "languages",
@@ -2018,7 +2019,7 @@
       "name": "task_assignment_heartbeat",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_assignment_heartbeat: E_IDENTITY_INCOMPLETE: identity 必须同时包含 agent_id/session_id/model_id/role",
+      "detail": "ToolError: Error executing tool task_assignment_heartbeat: E_ASSIGNMENT_NOT_ACTIVE: assignment 不存在或已结束",
       "params_keys": [
         "task_id",
         "assignment_id",
@@ -2043,7 +2044,7 @@
       "name": "task_capture_diff",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_capture_diff: internal_error: capture-diff 执行失败: multiple active workspaces; pass --workspace-id to avoid ambiguous data",
+      "detail": "ToolError: Error executing tool task_capture_diff: invalid_params: 任务 T-seed-000000000000-00000000 的工作区绑定数为 0（需要恰好 1 个），无法定位 capture-diff 工作区",
       "params_keys": [
         "task_id",
         "step_id",
@@ -2072,8 +2073,8 @@
     {
       "name": "task_create",
       "op": "PROTECTED_MUTATION",
-      "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_create: E_WORKSPACE_AUTHORITY_MISMATCH: task-DB 中不存在 workspace_id=1717 且其 instance=7f9f8e8e9b660527 无 capture；不得用客户端 numeric id 补齐（registry/task-DB 分裂需经 alias 对齐）",
+      "verdict": "PASS",
+      "detail": "type=tuple",
       "params_keys": [
         "title",
         "description",
@@ -2087,7 +2088,7 @@
       "name": "task_create_from_plan",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_create_from_plan: E_WORKSPACE_AUTHORITY_MISMATCH: workspace_id=10 权威 workspace_instance_id=ws-10，请求 7f9f8e8e9b660527 不一致且未在本 workspace capture 链确立；禁止同一 workspace 换 instance / 合成 ws-{id}",
+      "detail": "ToolError: Error executing tool task_create_from_plan: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "title",
         "plan_md",
@@ -2098,7 +2099,7 @@
       "name": "task_create_subtask",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_create_subtask: E_TASK_WORKSPACE_UNBOUND: task=seed 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
+      "detail": "ToolError: Error executing tool task_create_subtask: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "parent_task_id",
         "title",
@@ -2119,8 +2120,8 @@
     {
       "name": "task_list",
       "op": "READ_ONLY",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_list: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "status_filter",
         "limit"
@@ -2130,7 +2131,7 @@
       "name": "task_next_step",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_next_step: E_IDENTITY_INCOMPLETE: identity 必须同时包含 agent_id/session_id/model_id/role",
+      "detail": "ToolError: Error executing tool task_next_step: E_TASK_WORKSPACE_UNBOUND: task=T-seed-000000000000-00000000 未绑定不可变 workspace（task_workspace_bindings 缺失），拒绝操作",
       "params_keys": [
         "task_id",
         "agent_session_id",
@@ -2161,7 +2162,7 @@
       "name": "task_report_step",
       "op": "PROTECTED_MUTATION",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool task_report_step: E_IDENTITY_INCOMPLETE: identity 必须同时包含 agent_id/session_id/model_id/role",
+      "detail": "ToolError: Error executing tool task_report_step: E_TASK_REPORT_SNAPSHOT_REQUIRED: task.report 必须携带非空、daemon authority 发布的 snapshot_id；禁止创建 no_snapshot review 输入",
       "params_keys": [
         "task_id",
         "step_id",
@@ -2187,8 +2188,8 @@
     {
       "name": "task_resolve_quality_finding",
       "op": "PROTECTED_MUTATION",
-      "verdict": "PASS",
-      "detail": "type=list",
+      "verdict": "EXPECTED_BUSINESS",
+      "detail": "ToolError: Error executing tool task_resolve_quality_finding: 1 validation error for task_resolve_quality_findingArguments\nfinding_id\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_",
       "params_keys": [
         "finding_id",
         "resolution",
@@ -2233,7 +2234,7 @@
       "name": "wait_for_job",
       "op": "READ_ONLY",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "error字段: job not found: seed",
+      "detail": "ToolError: Error executing tool wait_for_job: internal_error: 没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）",
       "params_keys": [
         "job_id",
         "timeout",
@@ -2274,7 +2275,7 @@
       "name": "check_file_health",
       "op": "READ_ONLY",
       "verdict": "EXPECTED_BUSINESS",
-      "detail": "ToolError: Error executing tool check_file_health: path_not_found: 不是目录: \\\\?\\C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t2_w7scwlf8\\calc.py",
+      "detail": "ToolError: Error executing tool check_file_health: path_not_found: 不是目录: \\\\?\\C:\\Users\\wanpi\\AppData\\Local\\Temp\\cw_t2_ws_aq077a2v\\calc.py",
       "params_keys": [
         "file_path"
       ]
@@ -2492,13 +2493,22 @@
     }
   ],
   "seed": {
-    "workspace_id": 1717,
-    "workspace_instance_id": "7f9f8e8e9b660527",
+    "workspace_id": 1,
+    "workspace_instance_id": "66e4507b13ce2c14",
     "known_qnames": [
-      "c:/users/wanpi/appdata/local/temp/cw_t2_w7scwlf8/calc.compute"
+      "c:/users/wanpi/appdata/local/temp/cw_t2_ws_aq077a2v/calc.compute"
     ],
     "known_files": [
-      "c:/users/wanpi/appdata/local/temp/cw_t2_w7scwlf8/calc.py"
+      "c:/users/wanpi/appdata/local/temp/cw_t2_ws_aq077a2v/calc.py"
     ]
+  },
+  "meta": {
+    "generated_at": "2026-10-13 05:10:36",
+    "git_head": "c150807",
+    "daemon_binary": "cw-daemon.exe",
+    "daemon_sha256": "f1fa3736a16dbe7dd8eeff30d8d322b1d924485d0beb096d520f7d98d01a7c69",
+    "daemon_endpoint": "http://127.0.0.1:10917",
+    "isolation": "完全隔离 data_root（registry/task DB/manifest/锁），未触碰生产 daemon",
+    "suite": "T2 MCP 243 工具全参数真实调用"
   }
 }
