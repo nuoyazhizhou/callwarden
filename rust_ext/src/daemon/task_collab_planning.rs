@@ -459,6 +459,11 @@ impl TaskCollabStore {
         let root_task_id = generate_task_id();
         let ts = task_now_ts();
 
+        // IDOR 防护（TP-11I I5）：registry owner ACL——与 task.create 面同款
+        // （verify_registry_owner_for_create）。create_from_plan 有独立 INSERT
+        // 路径，不经 resolve_create_authority，故必须显式补此门禁。
+        self.verify_registry_owner_for_create(peer.uid, &workspace_instance_id)?;
+
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .unchecked_transaction()
@@ -714,6 +719,13 @@ impl TaskCollabStore {
                 }
             }
         };
+
+        // IDOR 防护（TP-11I I5）：registry owner ACL——与 task.create /
+        // create_from_plan 同款（verify_registry_owner_for_create）。子任务
+        // instance 继承自父任务 binding，但调用方可传任意 parent_task_id，
+        // 故仍须校验调用者对目标 workspace 的所有权；只读 registry、独立连接，
+        // 不与 task-DB 事务冲突，失败不改变任何 task data。
+        self.verify_registry_owner_for_create(peer.uid, &workspace_instance_id)?;
 
         tx.execute(
             "INSERT INTO tasks

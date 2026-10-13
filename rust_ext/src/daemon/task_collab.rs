@@ -1797,6 +1797,49 @@ impl TaskCollabStore {
         Ok(auth)
     }
 
+    /// IDOR 防护（TP-11I）：`task.create` 的 registry owner ACL。
+    ///
+    /// 与 [`Self::unified_workspace_authority`]（workspace.status / workspace.list
+    /// 面，2026-10-13 IDOR 修复）同款语义：
+    /// - registry 行存在且 `owner_uid` 与 peer 不一致 → `workspace_forbidden`
+    ///   fail-closed。此前 `task.create` 完全不看 registry owner（
+    ///   `resolve_create_authority` 只校验 task-DB captures/workspaces 行），
+    ///   多用户 UDS 下可在他人的 workspace 上建任务（TP-11I I5 观察项）。
+    /// - registry 行不存在（仅 task-DB capture）时无宿主路径泄露，保持放行
+    ///   ——capture 链本身即权威，与 status 面裁决一致。
+    ///
+    /// 只读打开 registry、不持写锁；由调用方在领域写事务**之外**调用，
+    /// 避免与 daemon writer 竞争。
+    pub fn verify_registry_owner_for_create(
+        &self,
+        peer_uid: u32,
+        workspace_instance_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        #[cfg(test)]
+        let registry_path = match &self.registry_db_path_for_tests {
+            Some(path) => path.clone(),
+            // 历史单元 fixture 不启动 registry；保持与既有测试兼容，
+            // 不放行也不拒绝（无 registry 即无 owner 可校验）。
+            None => return Ok(()),
+        };
+        #[cfg(not(test))]
+        let registry_path = self.registry_db_path.clone();
+        let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
+            .map_err(|e| DaemonRpcError::new(
+                "E_REGISTRY_UNAVAILABLE",
+                format!("registry 只读打开失败: {e}"),
+            ))?;
+        if let Ok(Some(row)) = registry.get_workspace_status(workspace_instance_id) {
+            let owner = row.get("owner_uid").and_then(|v| v.as_i64()).unwrap_or(-1);
+            if owner != peer_uid as i64 {
+                return Err(DaemonRpcError::workspace_forbidden(
+                    "workspace 不属于当前 UID",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// 跨 registry↔task-DB 统一 workspace 列表（供 `workspace.list`）。
     ///
     /// F-DAEMON-01 修复：同 `unified_workspace_authority()`——registry 路径复用启动期
@@ -2879,6 +2922,13 @@ impl TaskCollabStore {
 
         let ts = task_now_ts();
         let seq = self.next_seq();
+
+        // IDOR 防护（TP-11I I5）：registry owner ACL——禁跨用户在他人 workspace
+        // 上建任务。与 workspace.status/list 面（unified_workspace_authority）
+        // 同款语义：registry 行存在且 owner 不匹配 → workspace_forbidden；
+        // 行不存在（仅 task-DB capture）时无宿主路径泄露，保持放行。
+        // 只读 registry、在写事务之外执行，失败不改变任何 task data。
+        self.verify_registry_owner_for_create(peer.uid, &workspace_instance_id)?;
 
         let mut conn = self.conn.lock().unwrap();
         let tx = conn

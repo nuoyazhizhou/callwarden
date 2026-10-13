@@ -57,13 +57,17 @@ CW_PY = REPO_ROOT / "cw.py"
 
 # 验收基准：TP-11G 复用 TP-10/src 已验收候选（247b9a16049ec4d7…，含 91ae8dc
 # 路由三件套修复）。换基准经 CW_TP11G_DAEMON_SRC 显式指定。
+# I5 修复后基线（ab3347d1…，含 task.create 三路径 registry owner ACL）：默认
+# 指向 run 根之外的 candidates/i5-fix（run 根会被自清洁整体删除，候选必须
+# 放在外面）；旧基线经 CW_TP11G_DAEMON_SRC 显式指定。
 DEFAULT_DAEMON_SRC = Path(
     os.environ.get(
         "CW_TP11G_DAEMON_SRC",
-        r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-10/src/cw-daemon.exe"))
+        r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/candidates/i5-fix/cw-daemon.exe"))
 KNOWN_DAEMON_SHA256_PREFIXES: Tuple[str, ...] = (
     "f1fa3736a16dbe7d",
     "247b9a16049ec4d7",
+    "ab3347d186b35b8b",
 )
 DEFAULT_RUN_ROOT = Path(
     os.environ.get("CW_TP11G_RUN_ROOT",

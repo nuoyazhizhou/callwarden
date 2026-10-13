@@ -212,37 +212,63 @@ def test_i4_archived_semantics(env):
     assert st2.get("status") == "active"
 
 
-def test_i5_task_create_owner_acl_observation(env):
-    """I5 观察项（待裁决）：task.create 不校验 registry owner ACL。
+def test_i5_task_create_owner_acl(env):
+    """I5（已修复）：task.create 三条路径均校验 registry owner ACL。
 
-    实测：capture 已存在时，把 registry 行 owner 翻成 foreign 后 task.create
-    **仍然成功**——create 路径只校验 task-DB workspaces 行存在性与 capture 链
-    一致（bind_task_to_workspace / resolve_create_authority），不比对
-    registry owner_uid。
-    本测试如实固化该行为并标 `待裁决`：既不判通过（隔离面在 create 路径有
-    缺口可能），也不判缺陷（task-DB 为 host 级共享库、任务本身按
-    workspace_instance_id 绑定，是否为缺口需 daemon owner 结合 UDS 多用户
-    威胁模型裁决）。
+    修复前 create 路径只校验 task-DB workspaces 行存在性与 capture 链一致
+    （bind_task_to_workspace / resolve_create_authority），不比对 registry
+    owner_uid → 跨用户可在他人 workspace 上建任务（IDOR）。
+    修复（verify_registry_owner_for_create）：registry 行存在且 owner 不匹配 →
+    workspace_forbidden；行不存在（仅 task-DB capture）时无宿主路径泄露，放行。
+    覆盖三条独立 INSERT 路径：task.create、task.create_from_plan、
+    task.create_subtask（instance 继承自父任务 binding，但调用方可传任意
+    parent_task_id，故同样必须校验）。
     """
-    _, own_inst = env.setup_workspace()
-    # 先在自己 workspace 上建任务，确立 capture 链
+    own_num, own_inst = env.setup_workspace()
+    # 先在自己 workspace 上建任务，确立 capture 链（这是修复前能成功、
+    # 修复后仍应成功的基线）
     base = env.task_create("tp11g i5 base", "i5",
                            steps=[{"action": "annotate",
                                    "target_file": "docs/note.md"}])
     assert base.ok, f"基线 create 应成功：{base!r}"
 
-    # 翻 owner 为 foreign 后再建任务
     env.set_registry_owner(own_inst, FOREIGN_OWNER_UID)
     try:
+        # --- 路径 1：task.create（capture 已存在的强情形）---
         again = env.task_create("tp11g i5 foreign owner", "i5",
                                 steps=[{"action": "annotate",
                                         "target_file": "docs/note.md"}])
-        # 固化观察：create 不因 foreign owner 被拒
-        assert again.ok, (
-            "观察项行为变化：task.create 现在会因 foreign owner 被拒——"
-            "若这是有意加固，请把本测试从「待裁决观察」升级为正向断言")
-        assert again.get("workspace_id") == env.setup_workspace()[0] or \
-            again.get("workspace_instance_id") == own_inst
+        assert not again.ok and again.code == "workspace_forbidden", \
+            f"foreign-owner workspace 的 create 必须被拒：{again!r}"
+
+        # --- 路径 2：task.create_from_plan（独立 INSERT，不经 resolve_authority）---
+        plan = env.rpc("task.create_from_plan", {
+            "title": "tp11g i5 plan foreign",
+            "plan_file": "plan.md",
+            "workspace_id": own_num,
+            "workspace_instance_id": own_inst,
+        })
+        assert not plan.ok and plan.code == "workspace_forbidden", \
+            f"foreign-owner workspace 的 create_from_plan 必须被拒：{plan!r}"
+
+        # --- 路径 3：task.create_subtask（instance 继承自父任务 binding）---
+        sub = env.rpc("task.create_subtask", {
+            "parent_task_id": base.get("task_id") or "",
+            "title": "tp11g i5 subtask foreign",
+            "steps": [{"action": "annotate", "target_file": "docs/note.md"}],
+        })
+        assert not sub.ok and sub.code == "workspace_forbidden", \
+            f"foreign-owner workspace 的 create_subtask 必须被拒：{sub!r}"
+
+        # 被拒不改变任何 task data（fail-closed 在写入前）：基线任务仍在
+        st = env.task_status(base.get("task_id") or "")
+        assert st.ok, f"被拒后基线任务应仍可查：{st!r}"
     finally:
         # 恢复 owner，避免影响同模块后续测试
         env.set_registry_owner(own_inst, HTTP_PEER_UID)
+
+    # 恢复后 create 重新可用（registry 行 owner 回到本 peer）
+    after = env.task_create("tp11g i5 restored", "i5",
+                            steps=[{"action": "annotate",
+                                    "target_file": "docs/note.md"}])
+    assert after.ok, f"恢复 owner 后 create 应重新可用：{after!r}"
