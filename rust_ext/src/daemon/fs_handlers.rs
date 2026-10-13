@@ -822,11 +822,19 @@ pub fn handle_file_grep(
         return Err(DaemonRpcError::invalid_params("pattern 不能为空"));
     }
     let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    // P0-CR2 同源修复：base 是目录作用域（缺省即 workspace 根，也是目录），
+    // 此前误用 require_file=true 导致传子目录一律报 `path_not_found: 不是文件`，
+    // file.grep 的 path 剪枝参数从未真正可用。改 require_file=false（要目录）。
+    // 根内校验第二层修复：`real` 是 canonicalize 后的（Windows 带 \\?\ 前缀、
+    // 反斜杠），与未规范化的 `root_str`（正斜杠）字符串比较恒不匹配 → path_escape
+    // 误拒。改用 Path 组件级比较，root 同样 canonicalize（与 build_directory 同式）。
+    // 第四层：默认分支（无 path 参数）也必须用 root_canon —— scan_files(base)
+    // 产出的路径与 strip_prefix 参照必须同为规范路径。
+    let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let base: PathBuf = match get_str_param(params, "path") {
         Some(p) if !p.is_empty() => {
-            let real = PathBuf::from(validate_owned_path(p, peer.uid, true)?);
-            let root_str = root.to_string_lossy().to_string();
-            if !(real == root || real.starts_with(format!("{root_str}/"))) {
+            let real = PathBuf::from(validate_owned_path(p, peer.uid, false)?);
+            if !real.starts_with(&root_canon) {
                 return Err(DaemonRpcError::new(
                     "path_escape",
                     "path 不在 workspace 根内".to_string(),
@@ -834,11 +842,14 @@ pub fn handle_file_grep(
             }
             real
         }
-        _ => root.clone(),
+        _ => root_canon.clone(),
     };
     let glob = get_str_param(params, "glob").unwrap_or("").to_string();
     let head_limit = get_int_param_or(params, "head_limit", 50).max(1) as usize;
     let skip = load_ignore_dir_names(&root);
+    // 第三层修复：files 来自 canonicalize 后的 base，用未规范化的 root 做
+    // strip_prefix 必失败 → fallback 输出绝对路径（file_path 字段返回绝对路径，
+    // 违反契约且让 glob 相对匹配失效）。
     let files = scan_files(&base, true, &skip);
     let needle = pattern.to_lowercase();
     let mut matches: Vec<Value> = Vec::new();
@@ -847,7 +858,7 @@ pub fn handle_file_grep(
             break;
         }
         let rel = path
-            .strip_prefix(&root)
+            .strip_prefix(&root_canon)
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
         if !glob.is_empty() && !glob_match(&rel, &glob) {
@@ -878,24 +889,36 @@ pub fn handle_file_list(
 ) -> Result<Value, DaemonRpcError> {
     let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
     let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    // P0-CR2 同源修复：base 是目录作用域（缺省即 workspace 根，也是目录），
+    // 此前误用 require_file=true 导致传子目录一律报 `path_not_found: 不是文件`，
+    // file.list 的 path 剪枝参数从未真正可用。改 require_file=false（要目录）。
+    // 根内校验第二层修复：canonicalize 后的 real 与未规范化的 root_str 字符串比较
+    // 恒不匹配（Windows \\?\ 前缀 + 斜杠方向）→ path_escape 误拒。改 Path 组件级
+    // 比较，root 同样 canonicalize（与 build_directory 同式）。
+    // 第四层：默认分支（无 path 参数）也必须用 root_canon —— entry.path() 来自
+    // read_dir(base)，base 与 strip_prefix 参照必须同为规范路径，否则 fallback
+    // 输出绝对路径（且 Windows 上会丢成全小写）。
+    let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let base: PathBuf = match get_str_param(params, "path") {
         Some(p) if !p.is_empty() => {
-            let real = PathBuf::from(validate_owned_path(p, peer.uid, true)?);
-            let root_str = root.to_string_lossy().to_string();
-            if !(real == root || real.starts_with(format!("{root_str}/"))) {
+            let real = PathBuf::from(validate_owned_path(p, peer.uid, false)?);
+            if !real.starts_with(&root_canon) {
                 return Err(DaemonRpcError::new("path_escape", "path 不在 workspace 根内".to_string()));
             }
             real
         }
-        _ => root.clone(),
+        _ => root_canon.clone(),
     };
     let glob = get_str_param(params, "glob").unwrap_or("").to_string();
+    // 第三层修复：base 是 canonicalize 后的路径，用未规范化的 root 做 strip_prefix
+    // 必失败 → fallback 输出绝对路径（rel_path 字段返回绝对路径，违反契约且让
+    // glob 相对匹配失效）。
     let mut rows: Vec<Value> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
             let path = entry.path();
             let rel = path
-                .strip_prefix(&root)
+                .strip_prefix(&root_canon)
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
             if !glob.is_empty() && !glob_match(&rel, &glob) {

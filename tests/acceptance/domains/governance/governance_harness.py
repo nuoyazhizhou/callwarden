@@ -58,18 +58,23 @@ CW_PY = REPO_ROOT / "cw.py"
 # 验收基准：TP-11G 复用 TP-10/src 已验收候选（247b9a16049ec4d7…，含 91ae8dc
 # 路由三件套修复）。换基准经 CW_TP11G_DAEMON_SRC 显式指定。
 # I5 修复后基线（ab3347d1…，含 task.create 三路径 registry owner ACL）；
-# TP-11J 作业落库修复后当前基线 97f0eed7（含异步作业可观测性）。默认指向
-# run 根之外的 candidates（run 根会被自清洁整体删除，候选必须放外面）；
+# TP-11J 作业落库修复后基线 97f0eed7（含异步作业可观测性）；
+# TP-11W 修复后基线 85da91ef（file.list/file.grep 的 path 子目录剪枝可用）。
+# 默认指向 run 根之外的 candidates（run 根会被自清洁整体删除，候选必须放外面）；
 # 旧基线经 CW_TP11G_DAEMON_SRC 显式指定。
 DEFAULT_DAEMON_SRC = Path(
     os.environ.get(
         "CW_TP11G_DAEMON_SRC",
-        r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/candidates/jobs-fix/cw-daemon.exe"))
+        r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/candidates/incr-fix/cw-daemon.exe"))
 KNOWN_DAEMON_SHA256_PREFIXES: Tuple[str, ...] = (
     "f1fa3736a16dbe7d",
     "247b9a16049ec4d7",
     "ab3347d186b35b8b",
     "97f0eed734137f76",
+    "85da91efa1c75fb6",
+    "4cdc6c16543f74a6",
+    "8b3b32f80e6fc395",
+    "ace30cd3588f1fb4",
 )
 DEFAULT_RUN_ROOT = Path(
     os.environ.get("CW_TP11G_RUN_ROOT",
