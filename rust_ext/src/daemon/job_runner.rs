@@ -20,7 +20,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use rusqlite::Connection;
+
 use super::dispatch::{get_int_param_or, get_str_param_or, DaemonRpcError};
+use super::job_executor_handlers::JOBS_SCHEMA_DDL;
 
 /// job 状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +71,8 @@ struct JobEntry {
     created_at: f64,
     started_at: Option<f64>,
     finished_at: Option<f64>,
+    /// 落库目标 DB（jobs 表所在库，与读面同源）。None → 纯内存运行。
+    db: Option<PathBuf>,
 }
 
 /// 进程级 job 注册表（单实例 daemon 内全局唯一）。
@@ -92,6 +97,78 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
+// ---------------------------------------------------------------------------
+// jobs 表落库（TP-11J 修复：异步作业可观测性）
+// ---------------------------------------------------------------------------
+//
+// 修复前 `task.job_submit` 只写进程内 `JobRunner.jobs`（内存 HashMap），
+// **从不落 jobs 表**，导致：
+// - `task.job_status` / `task.list_jobs` / `task.wait_for_job` / `task.job_stats`
+//   （snapshot_state 读面，按 workspace_id 查 jobs 表）永远观测不到已提交作业
+//   ——提交成功却查不到，wait_for_job 对已提交 job 直接返回 "job not found"；
+// - `health_check_handlers::handle_recover_stale_jobs`（重启时把 status='running'
+//   的作业置 failed）永远匹配不到行，成为死代码。
+//
+// 落库全部 **fail-soft**：DB 不可用/DDL 失败只影响可观测性，不阻断内存状态机
+// 与作业执行（与 mcp.job_executor.start 的 fail-soft 语义一致）。
+
+/// 打开 jobs DB 并确保 schema 就绪（幂等 DDL）。
+fn open_jobs_db(path: Option<&PathBuf>) -> Option<Connection> {
+    let p = path?;
+    if p.as_os_str().is_empty() {
+        return None;
+    }
+    let conn = Connection::open(p).ok()?;
+    let _ = conn.execute_batch("PRAGMA busy_timeout=5000;");
+    let _ = conn.execute_batch(JOBS_SCHEMA_DDL);
+    Some(conn)
+}
+
+/// 提交落库：status='pending'（jobs 表词汇，与 job_stats 的 pending 计数对齐）。
+fn persist_submit(db: Option<&PathBuf>, job_id: &str, workspace_id: i64,
+                  job_type: &str, params: &Value, created_at: f64) {
+    let Some(conn) = open_jobs_db(db) else { return };
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO jobs \
+         (job_id, workspace_id, job_type, status, progress, params, created_at) \
+         VALUES (?1, ?2, ?3, 'pending', 0.0, ?4, ?5)",
+        rusqlite::params![job_id, workspace_id, job_type,
+                          params.to_string(), created_at],
+    );
+}
+
+/// 状态推进落库。started=true 写 started_at（进入 running），否则写终态字段。
+fn persist_status(db: Option<&PathBuf>, job_id: &str, status: &str,
+                  progress: f64, error: &str, result: Option<&Value>,
+                  started: bool) {
+    let Some(conn) = open_jobs_db(db) else { return };
+    let ts = now_ts();
+    let res = if started {
+        conn.execute(
+            "UPDATE jobs SET status=?2, started_at=?3, progress=?4 WHERE job_id=?1",
+            rusqlite::params![job_id, status, ts, progress],
+        )
+    } else {
+        let summary = result.map(|v| v.to_string()).unwrap_or_default();
+        conn.execute(
+            "UPDATE jobs SET status=?2, finished_at=?3, progress=?4, \
+             error=?5, result_summary=?6 WHERE job_id=?1",
+            rusqlite::params![job_id, status, ts, progress, error, summary],
+        )
+    };
+    let _ = res;
+}
+
+/// 取消落库：cancel_requested=1（协作式取消的持久化信号）+ 终态。
+fn persist_cancel(db: Option<&PathBuf>, job_id: &str) {
+    let Some(conn) = open_jobs_db(db) else { return };
+    let _ = conn.execute(
+        "UPDATE jobs SET cancel_requested=1, status='cancelled', \
+         finished_at=?2 WHERE job_id=?1",
+        rusqlite::params![job_id, now_ts()],
+    );
+}
+
 impl JobRunner {
     /// 提交 job。`sync=true` 时同步执行（等价同步工具），否则立即返回 job_id。
     pub fn submit(
@@ -105,6 +182,11 @@ impl JobRunner {
         let runner = global_runner();
         let id = format!("job-{:06}", runner.next_id.fetch_add(1, Ordering::SeqCst));
         let cancel_flag = Arc::new(AtomicBool::new(false));
+        // 落库目标与读面（snapshot_state 的 task.job_status / list_jobs /
+        // wait_for_job / job_stats）同源：submit 收到的 codegraph_db 在本部署
+        // 下即主机级单库（config.rs:168 空模板回退），与 jobs 表所在库一致。
+        let db = codegraph_db.clone();
+        let created_at = now_ts();
         let ctx = JobContext {
             job_id: id.clone(),
             job_type: job_type.to_string(),
@@ -126,14 +208,19 @@ impl JobRunner {
                     result: None,
                     error: None,
                     cancel_flag: Arc::clone(&cancel_flag),
-                    created_at: now_ts(),
+                    created_at,
                     started_at: None,
                     finished_at: None,
+                    db: db.clone(),
                 },
             );
         }
+        // TP-11J：提交即落库（status='pending'），使读面可观测已提交作业
+        persist_submit(db.as_ref(), &id, workspace_id, job_type, params, created_at);
 
         if sync {
+            // 同步执行：进入 running → 终态（两次落库）
+            persist_status(db.as_ref(), &id, "running", 0.0, "", None, true);
             let outcome = execute_job(&ctx);
             runner.finish(&id, outcome);
             let entry = runner.status(&id)?;
@@ -141,9 +228,12 @@ impl JobRunner {
         }
 
         let id_for_thread = id.clone();
+        let db_for_thread = db.clone();
         std::thread::Builder::new()
             .name(format!("cw-job-{}", id))
             .spawn(move || {
+                persist_status(db_for_thread.as_ref(), &id_for_thread,
+                               "running", 0.0, "", None, true);
                 let outcome = execute_job(&ctx);
                 global_runner().finish(&id_for_thread, outcome);
             })
@@ -163,11 +253,17 @@ impl JobRunner {
             match outcome {
                 Ok(value) => {
                     entry.status = JobStatus::Completed;
-                    entry.result = Some(value);
+                    entry.result = Some(value.clone());
                     entry.progress = 1.0;
+                    // TP-11J：终态落库（读面/统计面可观测）
+                    persist_status(entry.db.as_ref(), id, "completed", 1.0, "",
+                                   Some(&value), false);
                 }
                 Err(e) => {
                     entry.status = JobStatus::Failed;
+                    // TP-11J：终态落库（含 error，wait_for_job 回显）
+                    persist_status(entry.db.as_ref(), id, "failed",
+                                   entry.progress, &e, None, false);
                     entry.error = Some(e);
                 }
             }
@@ -191,6 +287,9 @@ impl JobRunner {
         entry.cancel_flag.store(true, Ordering::SeqCst);
         entry.status = JobStatus::Cancelled;
         entry.finished_at = Some(now_ts());
+        // TP-11J：取消落库（cancel_requested=1 + status='cancelled'），
+        // 使协作式取消在 DB 面也可观测（终态幂等分支已提前返回，不改写）。
+        persist_cancel(entry.db.as_ref(), id);
         Ok(json!({ "job_id": id, "status": "cancelled" }))
     }
 

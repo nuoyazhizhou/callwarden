@@ -26,7 +26,10 @@ use super::dispatch::{get_str_param, DaemonRpcError};
 
 /// jobs schema DDL：逐字对齐 `db/db_jobs.py::JOBS_SCHEMA_DDL`
 ///（jobs 表 + 4 索引）。
-const JOBS_SCHEMA_DDL: &str = r#"
+///
+/// pub(crate)：`job_runner` 的生命周期落库复用同一份 DDL，保持单一真源
+///（禁在 job_runner 内复制 DDL）。
+pub(crate) const JOBS_SCHEMA_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id TEXT NOT NULL UNIQUE,
