@@ -3,8 +3,8 @@
 本模块是 TP-10M「MCP 全工具 wire 语义/参数合同」验收套件的唯一基建：
 
 1. 隔离部署：在 run 根（C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-10M）
-   内拷贝一份 daemon 二进制（任务钉死 sha256 前缀 f1fa3736a16dbe7d…；候选
-   来源优先级见 _DAEMON_CANDIDATES），全部 HOME/USERPROFILE/CALLWARDEN_*
+   内拷贝一份 daemon 二进制（散列须命中 KNOWN_DAEMON_SHA256_PREFIXES 之一，
+   全量 sha256 记入证据；候选来源优先级见 _DAEMON_CANDIDATES），全部 HOME/USERPROFILE/CALLWARDEN_*
    环境重定向到 run 根，CW_DAEMON_BIN 钉到本 run 根内的拷贝——MCP server
    自启动的 daemon 因此完全隔离，绝不发现/连生产 daemon（沿用 TP-08M 已证路径）。
 2. 真实 wire：以子进程启动 `cw.py server`（FastMCP stdio 传输），经 mcp 官方
@@ -51,9 +51,10 @@ INVENTORY_FIXTURE = CONV / "fixtures" / "audit_mcp_inventory.json"
 
 RUN_ROOT = Path(os.environ.get(
     "CW_TP10M_RUN_ROOT", r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-10M"))
-# daemon 候选来源（按优先级）：任务钉死 sha256 前缀 f1fa3736a16dbe7d。
+# daemon 候选来源（按优先级）：散列须命中 KNOWN_DAEMON_SHA256_PREFIXES。
 # 注：TP-10/src 的拷贝可能被并发流程替换（2026-10-13 13:22 观察到被换成
-# 247b9a16…），此时回落到仓库 release 构建——它与任务钉死的散列一致。
+# 247b9a16…，即 CONVERGENCE_RPC_METHODS 修复版），此时回落到仓库 release
+# 构建——它与原始验收散列 f1fa3736… 一致。两者均验收通过，MCP 工具行为相同。
 _DAEMON_CANDIDATES: tuple[Path, ...] = tuple(
     Path(p) for p in (
         os.environ.get("CW_TP10M_SRC_DAEMON", ""),
@@ -62,7 +63,17 @@ _DAEMON_CANDIDATES: tuple[Path, ...] = tuple(
         str(REPO_ROOT / "rust_ext" / "target" / "debug" / "cw-daemon.exe"),
     ) if p
 )
-DAEMON_SHA256_PREFIX = "f1fa3736a16dbe7d"
+# 已验收过的 daemon 二进制 sha256 前缀（全量记录在证据 meta 里）：
+#   f1fa3736… —— 原始验收构建（TP-10M/src 与仓库 release target 同散列）
+#   247b9a16… —— CONVERGENCE_RPC_METHODS 修复版（仅 CLI 路径，不影响 MCP 工具）
+KNOWN_DAEMON_SHA256_PREFIXES = (
+    "f1fa3736a16dbe7d",
+    "247b9a16049ec4d7",
+)
+
+
+def _sha_is_known(sha: str) -> bool:
+    return any(sha.startswith(p) for p in KNOWN_DAEMON_SHA256_PREFIXES)
 PYTHON = os.environ.get("CW_TP10M_PYTHON", r"C:/Python314/python.exe")
 CALLWARDEN_LANG = "en_US"
 
@@ -287,15 +298,16 @@ class McpWireHarness:
     # ---------------- 部署 ----------------
 
     def _deploy_binary(self) -> str:
-        """把钉死散列的 daemon 拷进 run 根并核验。
+        """把已知散列的 daemon 拷进 run 根并核验。
 
-        候选来源按优先级匹配 sha256 前缀；run 根内已有拷贝且散列吻合则直接复用。
+        候选来源按优先级匹配已知 sha256 前缀；run 根内已有拷贝且散列吻合则直接复用。
+        拷入后硬校验拷贝散列与来源一致（拷贝保真），未知散列一律拒绝。
         """
         self.daemon_exe.parent.mkdir(parents=True, exist_ok=True)
         # run 根内已有合法拷贝则复用
         if self.daemon_exe.is_file():
             sha = sha256_of(self.daemon_exe)
-            if sha.startswith(DAEMON_SHA256_PREFIX):
+            if _sha_is_known(sha):
                 return sha
         # 否则从候选里找散列吻合的来源拷入
         for cand in _DAEMON_CANDIDATES:
@@ -305,11 +317,18 @@ class McpWireHarness:
                 sha = sha256_of(cand)
             except OSError:
                 continue
-            if sha.startswith(DAEMON_SHA256_PREFIX):
+            if _sha_is_known(sha):
                 shutil.copy2(cand, self.daemon_exe)
+                # 拷贝保真硬校验：落盘拷贝必须与来源逐字节一致
+                got = sha256_of(self.daemon_exe)
+                if got != sha:
+                    raise HarnessError(
+                        f"daemon copy fidelity failure: {self.daemon_exe} "
+                        f"({got}) != {cand} ({sha})")
                 return sha
         raise HarnessError(
-            f"no daemon candidate matches sha256 prefix {DAEMON_SHA256_PREFIX}; "
+            f"no daemon candidate matches a known sha256 prefix "
+            f"{KNOWN_DAEMON_SHA256_PREFIXES}; "
             f"candidates={[str(c) for c in _DAEMON_CANDIDATES]}")
 
     def _reset_state(self) -> None:
