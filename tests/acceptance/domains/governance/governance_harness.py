@@ -276,7 +276,11 @@ class GovernanceEnv(InitializationEnv):
 
     def rpc(self, method: str, params: Optional[Dict[str, Any]] = None,
             request_id: str = "") -> RpcResult:
-        """daemon RPC 直调；业务拒绝（DaemonRemoteError）转为 RpcResult(ok=False)。"""
+        """daemon RPC 直调；业务拒绝（DaemonRemoteError）转为 RpcResult(ok=False)。
+
+        超时走客户端默认（慢方法前缀自动放宽）。需要更长超时的外部依赖类
+        方法（semgrep / LSP / 向量）由子类自持慢客户端（见 ExternalEnv）。
+        """
         try:
             res = self._client().call(method, params or {},
                                       request_id=request_id or None)
