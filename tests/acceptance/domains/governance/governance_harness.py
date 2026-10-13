@@ -349,6 +349,10 @@ class GovernanceEnv(InitializationEnv):
         时计算（workspace.rs:437）；空 provenance → snapshot_id=None →
         snapshot.publish 无 id → task.report 的 E_TASK_REPORT_SNAPSHOT_REQUIRED。
         remote 用本地 file:// URL（不联网、零外部依赖）。
+
+        🔴 自愈：只查 `.git` 目录存在不够——run 根 wipe 残留的**坏 .git**
+        （rmtree 被占用句柄部分删除）会让 is_dir()=True 但 rev-parse 失败。
+        故以 rev-parse 结果为权威，不可用则删 .git 重建。
         """
         import subprocess
         wd = str(self.workspace_dir)
@@ -357,7 +361,15 @@ class GovernanceEnv(InitializationEnv):
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=60)
 
-        if not (self.workspace_dir / ".git").is_dir():
+        def _repo_ok() -> bool:
+            return (self.workspace_dir / ".git").is_dir() and \
+                git("rev-parse", "HEAD").returncode == 0
+
+        if not _repo_ok():
+            git_dir = self.workspace_dir / ".git"
+            if git_dir.exists():
+                import shutil
+                shutil.rmtree(git_dir, ignore_errors=True)
             git("init", "-q")
             (self.workspace_dir / "README.md").write_text(
                 "# tp11g governance isolation workspace\n", encoding="utf-8")
@@ -595,12 +607,15 @@ class GovernanceEnv(InitializationEnv):
 
     # ---------- Snapshot（verdict 前置：snapshot_id 必填） ----------
 
-    def snapshot_publish(self, request_id: str = "") -> RpcResult:
+    def snapshot_publish(self, request_id: str = "",
+                         instance_id: str = "") -> RpcResult:
         """发布 review snapshot，返回含 snapshot_id 的响应。
 
         db_path 须绝对路径（不支持 ~ 展开）；workspace_instance_id 必带。
+        instance_id 非空时对指定 workspace 发布（默认主 workspace）。
         """
         ws_id, inst = self.setup_workspace()
+        inst = instance_id or inst
         db = self.run_root / "home" / ".callwarden" / "callwarden.db"
         return self.rpc("snapshot.publish", {
             "workspace_instance_id": inst,
