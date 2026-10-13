@@ -2784,6 +2784,8 @@ impl DaemonStateExt for SnapshotDaemonState {
         use super::query_compat_handlers as query_compat;
         // C-13：semgrep CLI 专用 handler（CLI-061 产物，本卡接入 dispatch）。
         use super::semgrep_handlers as semgrep;
+        // CLI-067：cw tests 专用 handler（此前死代码，本卡补注册）。
+        use super::cli_handle_tests_handlers as tests;
 
         // 解析 workspace codegraph DB 路径（daemon 权威写库）。
         // 2026-09-05 修正：模板为空时回退**主机级单库** ~/.callwarden/callwarden.db
@@ -2875,6 +2877,23 @@ impl DaemonStateExt for SnapshotDaemonState {
                 fs::handle_refresh_file(&self.base.registry, &peer, params, db.as_deref())
             }
             "workspace.file.health" => fs::handle_file_health(&self.base.registry, &peer, params),
+
+            // ---- CLI tests 面（CLI-067：db/db_tests.py → Rust daemon）----
+            // 🔴 此前 handler 已写好但未声明模块、未注册路由，导致 CLI
+            // `tests --import` / `tests compute` 报 method_not_found
+            //（TP-10C C1 预检 DEFECT，2026-10-13）。
+            "import_test_results" => {
+                let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) =
+                    self.open_codegraph_db_write(peer, workspace_instance_id)?;
+                tests::handle_import_test_results(&conn, workspace_id, params)
+            }
+            "build_test_relations" => {
+                let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+                let (workspace_id, conn) =
+                    self.open_codegraph_db_write(peer, workspace_instance_id)?;
+                tests::handle_build_test_relations(&conn, workspace_id, params)
+            }
 
             // ---- MCP common 面（SRV-001：Python authority → Rust daemon）----
             "mcp.common.get_db_path_for_daemon" => mcp::handle_get_db_path_for_daemon(params),

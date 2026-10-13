@@ -2630,6 +2630,14 @@ pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
     "rebuild_fts_index",
     "gc_archive",
     "detect_clones",
+    // CLI tests 面（CLI-067：db/db_tests.py → Rust daemon）。
+    // 🔴 此前 handler 已写好、mod.rs 已声明、handle_convergence_rpc 已注册 match 臂，
+    // 但方法名未登记进本名单 → dispatch 的 is_convergence_rpc 返回 false →
+    // 恒 method_not_found（TP-10C C1 预检 DEFECT，2026-10-13 行为级 A/B 探测定性）。
+    // import_test_results 为写（JUnit XML 入库，PROTECTED_MUTATION），
+    // build_test_relations 为写（全量扫描 test 符号建关系）。
+    "import_test_results",
+    "build_test_relations",
 ];
 
 /// 判断 method 是否为收敛架构 RPC。

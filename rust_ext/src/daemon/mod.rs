@@ -190,6 +190,13 @@ pub mod query_compat_handlers;
 ///（`mcp.cli_admin.{connection_test,open_readonly_conn,read_pragmas,read_task_dependencies,scan_hash_databases}`）。
 pub mod cli_admin_handlers;
 
+/// 3.23b: CLI tests 面 handler（SRV-004b：db/db_tests.py → Rust daemon）。
+/// 复刻 `build_test_relations` / `import_test_results`（quick-xml 解析 JUnit
+/// 写入 test_runs）。🔴 该文件此前**未在 mod.rs 声明、未进 dispatch 路由**，
+/// 导致 CLI `tests --import` 与 `tests compute` 报 method_not_found
+///（TP-10C C1 预检 DEFECT，2026-10-13 定性为「写好的 handler 是死代码」）。
+pub mod cli_handle_tests_handlers;
+
 /// 3.24: daemon autostart 面 handler（SRV-005：server daemon autostart Python authority → Rust daemon）
 /// 对应 `server/daemon_autostart.py` 三个 socket connect 权威探测函数的 Rust 下沉
 ///（`mcp.daemon_autostart.{try_connect_tcp,try_connect_unix,try_http_connect}`，探测语义）。
