@@ -633,45 +633,6 @@ mod tests {
     fn setup_db(root: &Path, db_path: &Path) -> Connection {
         let conn = Connection::open(db_path).unwrap();
         init_codegraph_schema(&conn).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE file_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_instance_id INTEGER NOT NULL,
-                version_num INTEGER NOT NULL,
-                content_hash TEXT NOT NULL,
-                mtime REAL NOT NULL,
-                total_lines INTEGER DEFAULT 0,
-                parsed_at REAL NOT NULL,
-                is_current INTEGER DEFAULT 1,
-                is_deleted INTEGER DEFAULT 0,
-                commit_hash TEXT DEFAULT '',
-                ast_cache BLOB DEFAULT NULL
-            );
-            CREATE TABLE file_symbol_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_version_id INTEGER NOT NULL,
-                symbol_hash TEXT NOT NULL,
-                qualified_name TEXT NOT NULL,
-                start_line INTEGER NOT NULL,
-                end_line INTEGER NOT NULL,
-                module_path TEXT DEFAULT '',
-                depth INTEGER DEFAULT -1,
-                is_deleted INTEGER DEFAULT 0
-            );
-            CREATE TABLE call_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_version_id INTEGER NOT NULL,
-                caller_qualified TEXT NOT NULL,
-                caller_hash TEXT DEFAULT '',
-                callee_name TEXT NOT NULL,
-                callee_module TEXT DEFAULT '',
-                callee_qualified TEXT DEFAULT '',
-                callee_file TEXT DEFAULT '',
-                call_line INTEGER DEFAULT 0,
-                is_cross_file INTEGER DEFAULT 0
-            );",
-        )
-        .unwrap();
         conn.execute(
             "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'ws', ?1, 0)",
             params![root.to_string_lossy()],

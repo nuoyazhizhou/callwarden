@@ -3364,15 +3364,6 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_codegraph_schema(&conn).unwrap();
         ensure_manifest_schema(&conn).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE file_versions (\
-                id INTEGER PRIMARY KEY,\
-                file_instance_id INTEGER NOT NULL,\
-                is_current INTEGER DEFAULT 1,\
-                is_deleted INTEGER DEFAULT 0\
-             );",
-        )
-        .unwrap();
         conn.execute(
             "INSERT INTO workspaces (id, name, root_path, created_at) \
              VALUES (1, 'ws1', '/ws1', 0), (2, 'ws2', '/ws2', 0)",
@@ -3417,8 +3408,14 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO file_versions (id, file_instance_id, is_current, is_deleted) \
-             VALUES (1, 10, 1, 0), (2, 20, 1, 0)",
+            // 列集与生产 11 列 file_versions 对齐：NOT NULL 无默认值的
+            // version_num/content_hash/mtime/parsed_at 必须显式供值，
+            // 否则删掉 4 列精简桩后会转成 NOT NULL 约束失败。
+            "INSERT INTO file_versions \
+             (id, file_instance_id, version_num, content_hash, mtime, parsed_at, \
+              is_current, is_deleted) \
+             VALUES (1, 10, 1, 'shared-content', 0, 0, 1, 0), \
+                    (2, 20, 1, 'shared-content', 0, 0, 1, 0)",
             [],
         )
         .unwrap();
