@@ -98,12 +98,15 @@ def evaluate(collected_path: str, manifest_path: str,
     baseline_available = False
     if baseline_ref:
         try:
-            import subprocess
-            rel = os.path.relpath(manifest_path, repo_root_of(manifest_path))
+            # 必须先把 manifest 路径解析为绝对路径再求相对路径：
+            # os.path.relpath('docs/x', 'C:/repo') 会把两者当同级算出错误结果；
+            # 且 git show 只认 '/' 分隔符（Windows 的 relpath 会给 '\'）。
+            abs_manifest = str(Path(manifest_path).resolve())
+            root = repo_root_of(abs_manifest)
+            rel = os.path.relpath(abs_manifest, root).replace("\\", "/")
             out = subprocess.run(
                 ["git", "show", f"{baseline_ref}:{rel}"],
-                capture_output=True, text=True, timeout=60,
-                cwd=repo_root_of(manifest_path))
+                capture_output=True, text=True, timeout=60, cwd=root)
             if out.returncode == 0 and out.stdout.strip():
                 baseline_available = True
                 base = [ln.strip() for ln in out.stdout.splitlines()
