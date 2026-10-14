@@ -1,0 +1,19 @@
+# 交付门禁相关路径的所有者约束（TESTING_PLAN §8「清单」门禁的治理防护）
+#
+# 目的：防「改门禁绕过门禁」。selector 清单、门禁脚本、skip 站点台账
+# 三类资产的变更必须经维护者审批——否则「删一个测试 + 同步删 manifest
+# 一行」会让 check_ci_gates 全绿通过（审查发现 Q2）。
+#
+# ⚠️ 部署前必须替换：把下面 @OWNER 换成实际的 GitHub 用户名或团队名
+#    （形如 @wanpi 或 @callwarden/maintainers）。GitHub 对无效 owner 不报错，
+#    但规则会被静默忽略——未替换等于本文件未生效。
+
+# 门禁脚本
+/cicd/                       @OWNER
+# 冻结的 selector 清单（增删即等效于增删验收义务）
+/docs/testing/expected_selectors/  @OWNER
+# skip 站点台账（改 root_cause 即等效于改适用义务判定）
+/docs/testing/SKIP_SITES.json      @OWNER
+# CI 门禁接线
+/.github/workflows/acceptance-gates.yml  @OWNER
+/.github/workflows/ci.yml                @OWNER

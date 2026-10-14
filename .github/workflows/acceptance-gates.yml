@@ -7,12 +7,23 @@ name: Acceptance Gates
 #   （full profile = 127 selector）；
 # - release：同候选 hash 全部必需 profile + artifact E2E（干净安装 + 真实入口）。
 #
-# 门禁判据由 cicd/check_ci_gates.py 独立裁决（JUnit 递归 + selector 完备性 +
-# 元数据新鲜度），cicd/check_skip_rate.py 只作辅助统计（skip 率非硬门禁）。
+# 门禁判据由两个独立脚本裁决，**两道都必须过**：
+#   1. cicd/check_selector_manifest.py —— manifest ↔ 源码实际测试一致性
+#      （防「删测试 + 改 manifest」绕过门禁，见 Q2）
+#   2. cicd/check_ci_gates.py —— JUnit 递归 + selector 完备性 + revision 新鲜度
+#      （防「结果集与清单漂移」，见 Q1）
+#   3. cicd/check_skip_rate.py —— 仅辅助统计，**非硬门禁**（§8：零 unexpected
+#      skip 硬门禁不能被总 skip≤5% 抵消）
+#
+# ⚠️ checkout 必须显式 ref：PR 事件下默认检出 merge commit，与 github.sha
+#    （PR 头）不等，会让 revision 校验恒红或（若对齐成同一表达式）恒真。
+# ⚠️ collect-only **不要加 -q**：pytest 9 的 -q 只输出每文件计数，不输出 nodeid。
 
 on:
   pull_request:
     branches: [main, master]
+  push:
+    tags: ['v*']
   schedule:
     - cron: "0 18 * * *" # nightly（UTC 18:00）
   workflow_dispatch:
@@ -34,6 +45,12 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Q1 修复：PR 事件下 checkout 默认给 merge commit，与 github.sha（PR 头）
+          # 不等 → revision 校验恒红。显式 ref 让二者对齐，校验才有意义。
+          ref: ${{ github.sha }}
+          # baseline 比对（manifest 相对 origin/main 的增删可见性）需要完整历史
+          fetch-depth: 0
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
@@ -55,6 +72,23 @@ jobs:
         run: python release/build.py --rust
         shell: bash
 
+      # Q2 修复：manifest ↔ 源码一致性（collect-only 不加 -q）
+      - name: Collect PR profile selectors (source of truth)
+        run: >
+          python -m pytest tests/acceptance/domains/
+          --ignore=tests/acceptance/domains/external
+          --collect-only --no-header > reports/collected_pr.txt
+        shell: bash
+
+      - name: Gate 1/2 — selector manifest vs source (anti-tamper)
+        run: >
+          python -m cicd.check_selector_manifest
+          --collected reports/collected_pr.txt
+          --manifest docs/testing/expected_selectors/domains_pr.txt
+          --baseline-ref origin/${{ github.event.pull_request.base.ref }}
+          --json-out reports/manifest_verdict.json
+        shell: bash
+
       - name: Run PR profile (domains minus external network deps)
         env:
           CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
@@ -64,7 +98,7 @@ jobs:
           -q --no-header --junitxml=reports/junit_pr.xml
         shell: bash
 
-      - name: Gate (JUnit + frozen selectors + revision freshness)
+      - name: Gate 2/2 — JUnit + selectors + revision freshness
         run: >
           python -m cicd.check_ci_gates
           --junit reports/junit_pr.xml
@@ -77,7 +111,8 @@ jobs:
         run: >
           python -m cicd.check_skip_rate
           --junit reports/junit_pr.xml
-          --collected docs/testing/expected_selectors/domains_pr.txt
+          --collected reports/collected_pr.txt
+          --collect-only-out reports/collected_pr.txt
           --json-out reports/skip_rate_pr.json
         shell: bash
 
@@ -96,6 +131,9 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
@@ -112,6 +150,19 @@ jobs:
       - name: Build daemon candidate (same checkout)
         run: python release/build.py --rust
         shell: bash
+      - name: Collect full profile selectors (source of truth)
+        run: >
+          python -m pytest tests/acceptance/domains/
+          --collect-only --no-header > reports/collected_full.txt
+        shell: bash
+      - name: Gate 1/2 — selector manifest vs source (anti-tamper)
+        run: >
+          python -m cicd.check_selector_manifest
+          --collected reports/collected_full.txt
+          --manifest docs/testing/expected_selectors/domains_full.txt
+          --baseline-ref origin/main
+          --json-out reports/manifest_verdict.json
+        shell: bash
       - name: Run full profile (all domains incl. external)
         env:
           CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
@@ -120,7 +171,7 @@ jobs:
           pytest tests/acceptance/domains/
           -q --no-header --junitxml=reports/junit_full.xml
         shell: bash
-      - name: Gate (full profile)
+      - name: Gate 2/2 — JUnit + selectors + revision freshness
         run: >
           python -m cicd.check_ci_gates
           --junit reports/junit_full.xml
@@ -138,11 +189,20 @@ jobs:
 
   release-artifact:
     name: Release artifact E2E (clean install + real entries)
-    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'release'
+    # Q6 修复：打 tag 发版必须跑门禁。原实现只在 workflow_dispatch 且
+    # inputs.profile=release 时触发，而 enterprise-release.yml 走 tags: v*
+    # → 真实发版路径完全绕过验收门禁。现 tag 与手动 dispatch 都触发，
+    # 且先跑 full profile 门禁再跑产物 E2E。
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.profile == 'release')
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
@@ -154,6 +214,35 @@ jobs:
         run: |
           python release/build.py --rust
           python -m pip wheel . --no-build-isolation --no-deps -w dist
+        shell: bash
+      - name: Collect full profile selectors (source of truth)
+        run: >
+          python -m pytest tests/acceptance/domains/
+          --collect-only --no-header > reports/collected_full.txt
+        shell: bash
+      - name: Gate 1/2 — selector manifest vs source
+        run: >
+          python -m cicd.check_selector_manifest
+          --collected reports/collected_full.txt
+          --manifest docs/testing/expected_selectors/domains_full.txt
+          --baseline-ref origin/main
+          --json-out reports/manifest_verdict.json
+        shell: bash
+      - name: Run full profile (release 档跑全部必需 profile)
+        env:
+          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          CW_TP11G_ALLOW_FRESH_BUILD: "1"
+        run: >
+          pytest tests/acceptance/domains/
+          -q --no-header --junitxml=reports/junit_full.xml
+        shell: bash
+      - name: Gate 2/2 — JUnit + selectors + revision freshness
+        run: >
+          python -m cicd.check_ci_gates
+          --junit reports/junit_full.xml
+          --manifest docs/testing/expected_selectors/domains_full.txt
+          --expect-revision ${{ github.sha }}
+          --json-out reports/verdict_full.json
         shell: bash
       - name: Artifact E2E (clean venv install + isolated daemon + CLI + MCP wire)
         env:

@@ -22,8 +22,14 @@ CI 交付门禁独立校验器（TESTING_PLAN §9 登记待实现职责的本体
 5. **重复拒绝**：同一 nodeid 多次出现 → 拒（幂等键）；
 6. **结果门禁**：FAIL/ERROR/UNKNOWN = 0；必需适用 case 的
    SKIP/XFAIL = 0（§8 结果门禁；skip 率本身仅辅助，见 check_skip_rate）；
-7. **元数据新鲜度**：提供了 --expect-revision/--expect-hash 时必须
-   与声明一致（拒过期/版本不符）。
+7. **元数据新鲜度（最先判定）**：--expect-revision 与 `git rev-parse HEAD`
+   不一致即拒。该校验**前置于**其余判定——证据不属于本次运行时，后续
+   selector/结果判定都无意义（旧版把它放在最后，会被 selector 失败的
+   early-return 短路，构成 fail-open）。
+
+产物 hash 校验**不在本脚本职责内**：artifact hash 由 `cicd/artifact_e2e.py`
+的 verdict 承载（它对 wheel 与 daemon exe 实算 sha256）。本脚本不提供
+「只登记不校验」的 hash 参数——那样等于宣称假能力。
 
 输出：JSON verdict（stdout 或 --json-out），字段含 ok/exit_reason/
 stats/missing/unexpected/duplicated/failures/errors/collections。
@@ -136,13 +142,32 @@ def load_junit(paths: List[str]) -> Tuple[List[ET.Element], List[ET.Element]]:
 
 
 def evaluate(junit_paths: List[str], manifest_path: str,
-             expect_revision: str = "", expect_hash: str = "") -> dict:
+             expect_revision: str = "") -> dict:
     verdict: Dict = {
         "ok": False, "exit_reason": "", "stats": {},
         "missing": [], "unexpected": [], "duplicated": [],
         "failures": [], "errors": [], "skipped_required": [],
         "collection_errors": [], "stale": [],
     }
+
+    # ---- 0: 元数据新鲜度（**最先判定**）----
+    # 它是「本次证据是否属于本次运行」的前置条件：若 revision 已经对不上，
+    # 后面所有 selector/结果判定都失去意义。原先放在最后会被 selector 失败
+    # 的 early-return 短路（fail-open 结构），故前移。
+    if expect_revision:
+        try:
+            cur = subprocess.run(
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                timeout=30, cwd=str(Path.cwd())).stdout.strip()
+        except Exception:
+            cur = ""
+        if cur != expect_revision:
+            verdict["stale"].append(
+                f"revision 不符：期望 {expect_revision[:12]}，"
+                f"当前 {cur[:12] or '未知'}")
+    if verdict["stale"]:
+        verdict["exit_reason"] = "元数据过期/版本不符（证据不属于本次运行）"
+        return verdict
 
     # ---- 1/2/3: JUnit 载入 + collection error ----
     suites, cases = load_junit(junit_paths)
@@ -212,26 +237,6 @@ def evaluate(junit_paths: List[str], manifest_path: str,
             f"必需适用 case 存在 SKIP/XFAIL {len(verdict['skipped_required'])}")
         return verdict
 
-    # ---- 7: 元数据新鲜度 ----
-    if expect_revision:
-        try:
-            cur = subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
-                timeout=30, cwd=str(Path.cwd())).stdout.strip()
-        except Exception:
-            cur = ""
-        if cur != expect_revision:
-            verdict["stale"].append(
-                f"revision 不符：期望 {expect_revision[:12]}，"
-                f"当前 {cur[:12] or '未知'}")
-    if expect_hash:
-        # artifact hash 由调用方以 --expect-hash 传入与证据 meta 比对；
-        # 此处仅登记声明值，供上层核对（本脚本不重算产物）。
-        verdict.setdefault("declared_hash", expect_hash)
-    if verdict["stale"]:
-        verdict["exit_reason"] = "元数据过期/版本不符"
-        return verdict
-
     verdict["stats"] = {
         "suites": len(suites), "cases": len(cases),
         "expected": len(expected), "unique_outcomes": len(outcomes),
@@ -253,16 +258,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--manifest", required=True,
                     help="冻结的 expected selector 清单（nodeid 每行一条）")
     ap.add_argument("--expect-revision", default="",
-                    help="期望 git revision（不匹配 → 过期拒绝）")
-    ap.add_argument("--expect-hash", default="",
-                    help="声明的 artifact hash（登记用）")
+                    help="期望 git revision（不匹配 → 过期拒绝；建议 CI 必传）")
     ap.add_argument("--json-out", default="", help="verdict JSON 输出路径")
     args = ap.parse_args(argv)
 
     try:
         verdict = evaluate(args.junit, args.manifest,
-                           expect_revision=args.expect_revision,
-                           expect_hash=args.expect_hash)
+                           expect_revision=args.expect_revision)
     except GateError as e:
         print(json.dumps({"ok": False, "exit_reason": f"usage/input: {e}",
                           "stats": {}}, ensure_ascii=False, indent=2))

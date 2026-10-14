@@ -83,7 +83,7 @@ def load_cases(path: str) -> List[ET.Element]:
 
 
 def evaluate(junit_path: str, collected_path: str,
-             collect_junit: str = "") -> dict:
+             collect_only_out: str = "") -> dict:
     run_cases = load_cases(junit_path)
 
     cfp = Path(collected_path)
@@ -98,26 +98,38 @@ def evaluate(junit_path: str, collected_path: str,
 
     skipped: List[str] = []
     ran: List[str] = []
+    unterminated: List[str] = []   # 既无终态也未跳过 → 未触发/中断信号
     outside: List[str] = []
     for tc in run_cases:
         nid = _nodeid_of(tc)
         if nid not in collected_set:
             outside.append(nid)  # 跑了清单外的 → 选择器漂移信号
             continue
-        (ran if _is_ran(tc) else ran).append(nid)
         if _is_skipped(tc):
             skipped.append(nid)
+        elif _is_ran(tc):
+            ran.append(nid)
+        else:
+            unterminated.append(nid)
 
     ran_set = set(ran)
     skip_set = set(skipped)
     not_triggered = sorted(collected_set - ran_set - skip_set)
 
     # collection 阶段 skip 单列（不计入运行 skip 率）
+    # 口径：pytest --collect-only --no-header 输出里被标记 SKIPPED 的行。
+    # 未提供该输入时**如实标注不完整**，不得用空列表冒充「collection 无 skip」。
     collection_skips: List[str] = []
-    if collect_junit:
-        for tc in load_cases(collect_junit):
-            if _is_skipped(tc):
-                collection_skips.append(_nodeid_of(tc))
+    collect_incomplete = True
+    if collect_only_out:
+        collect_incomplete = False
+        for ln in Path(collect_only_out).read_text(
+                encoding="utf-8", errors="replace").splitlines():
+            s = ln.strip()
+            if "SKIPPED" in s and "::" not in s:
+                collection_skips.append(s.rsplit(" ", 1)[-1] if " " in s else s)
+            elif "::" in s and "SKIPPED" in s:
+                collection_skips.append(s.split("::")[0])
 
     applicable = len(collected_set)
     skip_rate = (len(skip_set) / applicable) if applicable else 0.0
@@ -128,12 +140,17 @@ def evaluate(junit_path: str, collected_path: str,
         "skipped": len(skip_set),
         "skipped_nodeids": sorted(skip_set),
         "collection_phase_skips": collection_skips,
+        "collection_phase_complete": not collect_incomplete,
         "not_triggered": not_triggered,
+        "unterminated": sorted(set(unterminated)),
         "outside_collected": sorted(set(outside)),
         "skip_rate": round(skip_rate, 6),
         "note": ("skip 率仅辅助指标；硬门禁见 check_ci_gates "
                  "（必需适用 case SKIP/XFAIL=0），"
-                 "零 unexpected skip 不能被总 skip≤5% 抵消"),
+                 "零 unexpected skip 不能被总 skip≤5% 抵消"
+                 + ("" if not collect_incomplete else
+                    "；⚠️ 未提供 --collect-only-out，collection 阶段 skip 未统计"
+                    "（该列表不完整，不得读作「无 collection skip」）")),
     }
 
 
@@ -143,15 +160,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         description="运行 skip 率统计（实际 collected nodeid + 运行结果口径）")
     ap.add_argument("--junit", required=True, help="运行结果 JUnit XML")
     ap.add_argument("--collected", required=True,
-                    help="实际适用 collected nodeid 清单（pytest --collect-only -q）")
-    ap.add_argument("--collect-junit", default="",
-                    help="collect-only 阶段 JUnit（其 skip 单列，不计入运行率）")
+                    help="实际适用 collected nodeid 清单"
+                         "（pytest <path> --collect-only --no-header；"
+                         "注意：pytest 9 的 -q 只输出每文件计数，不要加 -q）")
+    ap.add_argument("--collect-only-out", default="",
+                    help="collect-only 文本输出（其 SKIPPED 行单列为 collection "
+                         "阶段 skip，不计入运行率）；不提供则如实标注不完整")
     ap.add_argument("--json-out", default="", help="统计 JSON 输出路径")
     args = ap.parse_args(argv)
 
     try:
         report = evaluate(args.junit, args.collected,
-                          collect_junit=args.collect_junit)
+                          collect_only_out=args.collect_only_out)
     except SkipRateError as e:
         print(json.dumps({"ok": False, "error": f"usage/input: {e}"},
                          ensure_ascii=False, indent=2))
