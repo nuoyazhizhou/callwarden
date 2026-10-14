@@ -16,7 +16,9 @@ P0-CR2 同源缺陷，那次只修了 build_directory / build_graph，漏了这�
 - file.symbol_content 是唯一吃**相对路径**的（SQL 按 fi.rel_path 精确匹配，
   fs_handlers.rs:930）；
 - file.list / file.grep 的作用域参数叫 `path`（不是 directory），另有 `glob`；
-- file.health 只接受目录（传文件 → path_not_found: 不是目录）。
+- file.health 按文档合同工作（文件：exists/size/mtime/readable）；目录亦被
+  忍；越根一律 path_escape（TP-11A D4 修复；此前"只接受目录"是
+  require_file 误用，现存 quirk 已被 TP-11A 定性为缺陷并修复）。
 """
 
 from __future__ import annotations
@@ -129,7 +131,8 @@ def test_w3_build_directory_contract(env, ws):
     - 参数名是 dir_path（harness 已归一）；
     - 绝对路径目录 → 正常扫描；
     - 不存在的目录 → path_not_found（fail-closed）；
-    - 相对路径 → 静默 scanned=0（不报错，是易误判的陷阱，此处固化）。
+    - 相对路径 → fail-closed 拒绝（path_escape/path_not_found），绝不静默
+      成功（TP-11A 修复前是「静默 scanned=0」的易误判陷阱）。
     """
     ok = ws.build_directory("src")
     assert ok.ok, f"build_directory(abs src) 失败：{ok!r}"
@@ -144,11 +147,12 @@ def test_w3_build_directory_contract(env, ws):
     assert not missing.ok and missing.code == "path_not_found", \
         f"不存在的目录应 path_not_found：{missing!r}"
 
-    # 陷阱固化：相对路径不报错，静默 scanned=0
+    # 相对路径按 daemon CWD 解析（不相对 workspace 根拼接），解析结果落在
+    # workspace 外或不存在 → fail-closed 拒绝。TP-11A 修复前是静默 scanned=0
+    # （易误判为「构建成功但没文件」），已由根目录限制收敛为显式拒绝。
     rel = ws.fs_call("workspace.build_directory", dir_path="src", recursive=True)
-    assert rel.ok, f"相对路径不报错（静默）：{rel!r}"
-    assert (rel.result or {}).get("scanned") == 0, \
-        f"相对路径应静默扫到 0（绝对路径契约）：{rel.result}"
+    assert not rel.ok and rel.code in ("path_escape", "path_not_found"), \
+        f"相对路径不得静默成功：{rel!r}"
 
 
 # ---------------------------------------------------------------- W4 读面结构
@@ -234,10 +238,12 @@ def test_w8_fail_closed_on_bad_params(env, ws):
         r = ws.fs_call(m, file_path=ghost)
         assert not r.ok and r.code == "path_not_found", f"{m} 幽灵路径应拒绝：{r!r}"
 
-    # file.health 只接受目录
+    # file.health：文档合同是文件健康检查（TP-11A D4 修复后文件可用，
+    # 此前 require_file 误用导致传文件恒报"不是目录"）
     h_file = ws.file_health("src/sample.py")
-    assert not h_file.ok and h_file.code == "path_not_found", \
-        f"file.health 传文件应拒绝：{h_file!r}"
+    assert h_file.ok, f"file.health(文件) 应可用：{h_file!r}"
+    assert (h_file.result or {}).get("exists") is True and \
+        (h_file.result or {}).get("readable") is True, h_file.result
     h_dir = ws.file_health("src")
     assert h_dir.ok, f"file.health(目录) 应可用：{h_dir!r}"
     assert (h_dir.result or {}).get("exists") is True, h_dir.result

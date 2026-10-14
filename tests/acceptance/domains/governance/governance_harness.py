@@ -76,6 +76,8 @@ KNOWN_DAEMON_SHA256_PREFIXES: Tuple[str, ...] = (
     "8b3b32f80e6fc395",
     "ace30cd3588f1fb4",
     "39d70a27173fe578",  # L5/L5b/X3c 修复（resolve_workspace canonical + 版本化镜像 + save_findings）
+    "714532bb4fd38d88",  # TP-11A fs 根目录限制（无 D5 索引清理，被 59a83204 取代）
+    "59a83204ed4c4f25",  # TP-11A fs 根目录限制 + 审计列修正 + remove 索引 FK 级联清理
 )
 DEFAULT_RUN_ROOT = Path(
     os.environ.get("CW_TP11G_RUN_ROOT",

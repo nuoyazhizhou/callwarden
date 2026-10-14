@@ -181,16 +181,21 @@ fn resolve_workspace(
     Ok((workspace_id, root))
 }
 
-/// 校验路径必须在 workspace 根内，返回规范化绝对路径（String，validate_owned_path 契约）。
-fn resolve_owned_path(
-    registry: &WorkspaceRegistry,
-    peer: &PeerCredential,
-    workspace_instance_id: &str,
-    file_path: &str,
-) -> Result<String, DaemonRpcError> {
-    let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
-    let real = validate_owned_path(file_path, peer.uid, true)?;
-    let real_root = std::fs::canonicalize(&root).unwrap_or(root);
+/// 校验已规范化路径必须位于 workspace 根内（组件级前缀校验，fail-closed）。
+///
+/// TP-11A（D1/D3/D4）：fs RPC 家族统一根目录限制。file.read 经
+/// `resolve_owned_path`、file.grep/file.list 经内联 `starts_with` 此前已有
+/// 同款检查，而 file.remove / file.refresh_file / build_directory /
+/// build_graph(scan_root) / file.health 只做了 owner 校验
+/// （`validate_owned_path[_any]`）——owner ≠ workspace 根：全部本用户拥有
+/// 的宿主文件都能过 owner 关，导致越根删除/读取/索引/信息泄露。本 helper
+/// 把限制逻辑收敛为一处，根与目标同为 canonicalize 产物（真实大小写 +
+/// `\\?\` 前缀），比较语义与 `resolve_owned_path` 完全一致。
+fn ensure_root_containment(
+    root: &std::path::Path,
+    real: &str,
+) -> Result<(), DaemonRpcError> {
+    let real_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let real_root_str = real_root.to_string_lossy().to_string();
     let sep = std::path::MAIN_SEPARATOR.to_string();
     let ok = real == real_root_str || real.starts_with(&format!("{real_root_str}{sep}"));
@@ -200,6 +205,19 @@ fn resolve_owned_path(
             format!("路径不在 workspace 根内：{real}"),
         ));
     }
+    Ok(())
+}
+
+/// 校验路径必须在 workspace 根内，返回规范化绝对路径（String，validate_owned_path 契约）。
+fn resolve_owned_path(
+    registry: &WorkspaceRegistry,
+    peer: &PeerCredential,
+    workspace_instance_id: &str,
+    file_path: &str,
+) -> Result<String, DaemonRpcError> {
+    let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    let real = validate_owned_path(file_path, peer.uid, true)?;
+    ensure_root_containment(&root, &real)?;
     Ok(real)
 }
 
@@ -705,6 +723,10 @@ pub fn handle_build_graph(
         }
         _ => root.clone(),
     };
+    // TP-11A D3：显式 scan_root 必须限制在 workspace 根内
+    // （owner 校验不构成根限制；越根扫描会把本用户任意目录索引进库）
+    let scan_root_str = scan_root.to_string_lossy().to_string();
+    ensure_root_containment(&root, &scan_root_str)?;
     // rel 计算基于 canonical root（client_view_root 可能与真实路径大小写/前缀不一致）
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     // ignore 契约剪枝（.callwardenignore/.gitignore，workspace 根语义）
@@ -788,7 +810,10 @@ pub fn handle_build_directory(
     let _ = registry_ws_id;
     // P0-CR2 修复：dir_path 允许目录（此前 require_file=true 报"path_not_found: 不是文件"，
     // 目录递归建图 RPC 从未真正可用）
+    // TP-11A D3：叠加根目录限制（与 file.read 同款 path_escape 契约），
+    // 阻断越根目录递归扫描与索引
     let real_dir = PathBuf::from(validate_owned_path_any(dir_path, peer.uid)?);
+    ensure_root_containment(&root, &real_dir.to_string_lossy())?;
     let recursive = params.get("recursive").and_then(Value::as_bool).unwrap_or(false);
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     // ignore 契约剪枝（.callwardenignore/.gitignore，workspace 根语义）
@@ -1056,6 +1081,9 @@ pub fn handle_file_remove(
     let file_path = require_str_param(params, "file_path")?;
     let (registry_ws_id, _root) = resolve_workspace(registry, peer, workspace_instance_id)?;
     let real = validate_owned_path(file_path, peer.uid, true)?;
+    // TP-11A D1：owner 校验之外必须叠加根目录限制，否则任意本用户文件
+    // 可被越根删除（file.read 同款 path_escape 契约）
+    ensure_root_containment(&_root, &real)?;
     std::fs::remove_file(Path::new(&real)).map_err(|e| {
         DaemonRpcError::new("file_remove_failed", format!("删除 {real} 失败: {e}"))
     })?;
@@ -1063,12 +1091,66 @@ pub fn handle_file_remove(
         if let Ok(conn) = rusqlite::Connection::open(db) {
             let workspace_id = ensure_workspace_row_by_root(&conn, _root.as_path()).unwrap_or(registry_ws_id);
             let rel = real.replace('\\', "/");
+            // TP-11A D5（S7 实证）：file_instances 被 symbols/file_versions/
+            // semgrep_findings 以 FK 引用（daemon 开 foreign_keys=ON），此前
+            // 单条 DELETE 恒被 FK 约束中止且 `let _ =` 吞错 → 被删文件的
+            // 索引行（含 L5b 版本化镜像）全部残留。按依赖序先清子表：
+            // calls→symbols→file_symbol_versions/call_versions→file_versions
+            // →semgrep_findings，最后清 file_instances 本身。
+            let ids: Vec<i64> = match conn
+                .prepare(
+                    "SELECT id FROM file_instances \
+                     WHERE workspace_id = ?1 AND (rel_path = ?2 OR abs_path = ?3)",
+                ) {
+                Ok(mut st) => match st.query_map(
+                    rusqlite::params![workspace_id, rel, real],
+                    |r| r.get::<_, i64>(0),
+                ) {
+                    Ok(it) => it.filter_map(|v| v.ok()).collect(),
+                    Err(_) => Vec::new(),
+                },
+                Err(_) => Vec::new(),
+            };
+            for id in &ids {
+                let _ = conn.execute(
+                    "DELETE FROM calls WHERE caller_id IN \
+                     (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+                    rusqlite::params![id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM file_symbol_versions WHERE file_version_id IN \
+                     (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+                    rusqlite::params![id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM call_versions WHERE file_version_id IN \
+                     (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+                    rusqlite::params![id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM file_versions WHERE file_instance_id = ?1",
+                    rusqlite::params![id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM symbols WHERE file_instance_id = ?1",
+                    rusqlite::params![id],
+                );
+                let _ = conn.execute(
+                    "DELETE FROM semgrep_findings WHERE file_instance_id = ?1",
+                    rusqlite::params![id],
+                );
+            }
             let _ = conn.execute(
                 "DELETE FROM file_instances WHERE workspace_id = ?1 AND (rel_path = ?2 OR abs_path = ?3)",
                 rusqlite::params![workspace_id, rel, real],
             );
+            // TP-11A D2：destructive_operations 真实列无 target_path
+            // （表为 git 系破坏性操作列：local_ref/local_sha/remote_ref/
+            // remote_sha/commit_hash/task_id/blocked/message/created_at）；
+            // 此前 INSERT 引用不存在的列恒失败且被 `let _ =` 吞错，
+            // file.remove 的审计行从未写入。被删路径落 `message`（人类可读描述列）。
             let _ = conn.execute(
-                "INSERT INTO destructive_operations (workspace_id, operation_type, target_path, created_at)
+                "INSERT INTO destructive_operations (workspace_id, operation_type, message, created_at)
                  VALUES (?1, 'file_remove', ?2, ?3)",
                 rusqlite::params![workspace_id, rel, now_ts_secs()],
             );
@@ -1092,7 +1174,10 @@ pub fn handle_refresh_file(
     let workspace_id = ensure_workspace_row_by_root(&conn, &root)
         .map_err(|e| DaemonRpcError::internal_error(format!("workspace 行映射失败: {e}")))?;
     let _ = registry_ws_id;
+    // TP-11A D3：单文件刷新同样必须限制在 workspace 根内
+    // （此前仅 owner 校验 → 越根文件内容被读取并落库符号）
     let real = PathBuf::from(validate_owned_path(file_path, peer.uid, true)?);
+    ensure_root_containment(&root, &real.to_string_lossy())?;
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let rel = real
         .strip_prefix(&root_canon)
@@ -1151,7 +1236,14 @@ pub fn handle_file_health(
 ) -> Result<Value, DaemonRpcError> {
     let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
     let file_path = require_str_param(params, "file_path")?;
-    let real = validate_owned_path(file_path, peer.uid, false)?;
+    // TP-11A D4：此前 validate_owned_path(require_file=false) 实为"必须是目录"
+    // → 文件恒报"不是目录"（文档合同是文件健康检查，且 exists=false 优雅
+    // 分支因 canonicalize 先行失败成为死代码）。改 any 变体（存在即可）+
+    // 根目录限制：根内文件按合同返回 exists/size/mtime/readable，越根
+    // 一律 path_escape（此前越根目录会泄漏 exists/size/mtime）。
+    let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
+    let real = validate_owned_path_any(file_path, peer.uid)?;
+    ensure_root_containment(&root, &real)?;
     let real_path = Path::new(&real);
     let mut m = Map::new();
     m.insert("file_path".into(), Value::String(file_path.to_string()));

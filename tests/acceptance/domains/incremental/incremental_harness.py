@@ -124,7 +124,11 @@ class IncrementalEnv(IsolationEnv):
         return self.fs_call("workspace.file.grep", pattern=pattern, **extra)
 
     def file_health(self, rel_path: str = "") -> Any:
-        """file.health 只接受目录（传文件 → path_not_found: 不是目录）。"""
+        """file.health 文件健康检查（exists/size/mtime/readable）。
+
+        TP-11A D4 修复后：文件按合同可用（此前 require_file 误用导致传文件
+        恒报"不是目录"）；目录仍被忍受；越根一律 path_escape。
+        """
         return self.fs_call("workspace.file.health",
                             file_path=self.abs_path(rel_path) if rel_path else "")
 
@@ -135,7 +139,8 @@ class IncrementalEnv(IsolationEnv):
                             file_path=rel_path, symbol_name=symbol_name)
 
     # 🔴 build_directory 的参数名是 dir_path（不是 directory），且同样要绝对路径：
-    # 传相对路径会静默返回 scanned=0（不报错，极易误判为「构建成功但没文件」）。
+    # 传相对路径会相对 daemon CWD 解析 → 落在 workspace 外 → path_escape
+    # （TP-11A 修复前是静默 scanned=0，极易误判为「构建成功但没文件」）。
     def build_directory(self, rel_dir: str = "", recursive: bool = True,
                         **extra: Any) -> Any:
         return self.fs_call("workspace.build_directory",
