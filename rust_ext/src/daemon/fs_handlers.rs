@@ -1429,7 +1429,8 @@ mod tests {
         )
         .unwrap();
         assert!(fid > 0);
-        let (syms, calls) = parse_and_store_symbols(&conn, fid, &src, "m.py").unwrap();
+        let (syms, calls) =
+            parse_and_store_symbols(&conn, fid, &src, "m.py", &hash, 0.0, 4).unwrap();
         assert!(syms >= 2, "expected >=2 symbols, got {syms}");
         assert!(calls >= 1, "expected >=1 call, got {calls}");
         let n: i64 = conn
@@ -1437,7 +1438,8 @@ mod tests {
             .unwrap();
         assert_eq!(n as usize, syms);
         // 幂等重建：再跑一次不重复累积
-        let (syms2, _calls2) = parse_and_store_symbols(&conn, fid, &src, "m.py").unwrap();
+        let (syms2, _calls2) =
+            parse_and_store_symbols(&conn, fid, &src, "m.py", &hash, 0.0, 4).unwrap();
         assert_eq!(syms2, syms);
         let n2: i64 = conn
             .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
@@ -1469,7 +1471,7 @@ mod tests {
         )
         .unwrap();
         let (syms, _calls) =
-            parse_and_store_symbols(conn, fid, &src, rel).unwrap();
+            parse_and_store_symbols(conn, fid, &src, rel, &hash, 0.0, 0).unwrap();
         assert!(syms >= 1, "expected symbols in {rel}");
         fid
     }

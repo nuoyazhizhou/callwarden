@@ -206,6 +206,33 @@ jobs:
       - name: Run gitleaks (repo history + working tree)
         run: gitleaks detect --source . --redact
 
+  # 🔴 TP-11G 实测（2026-10-14，Windows 本机）：把 ci.yml 原样命令拿来跑是
+  # **EXIT=101 编译失败**（`daemon/fs_handlers.rs` 的 parse_and_store_symbols
+  # 生产侧 7 参 / `#[cfg(test)]` 调用点 4 参，E0061 ×3）。过滤器
+  # `daemon::compat_native_handlers` **只过滤运行、不过滤编译** → 整个 lib
+  # test 二进制编不出来，Rust 层 CI 有效信号长期为 **0**（不是 6/2073）。
+  # 更糟的是它红在「编译失败」，极易被误读成「那 6 个测试有问题」。
+  # 故新增本 job 把编译失败顶到最前面、单独成门禁。
+  rust-compile-gate:
+    name: Rust test binaries compile gate (fail-fast)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Compile all test binaries (lib + tests + bins, no run)
+        # 只编译不运行：把 E0061 这类「生产签名改了但测试调用点没同步」的
+        # 错误在最便宜的地方暴露出来。
+        run: >-
+          cargo test --manifest-path rust_ext/Cargo.toml
+          --no-default-features --lib --tests --bins --no-run
+
   rust-unit-test:
     # T7 跨平台审查发现：此前所有 workflow 只 cargo build、从不 cargo test，
     # Rust daemon 单元测试（如 daemon::compat_native_handlers 的 gc_restore 全扫 /
@@ -215,6 +242,21 @@ jobs:
     # 范围限定 daemon::compat_native_handlers：这些测试用 in-memory SQLite、
     # 无环境依赖、稳定可重复。未纳入 daemon:: 全模块是因为 snapshot_state 等
     # 既有测试依赖进程单例/真实环境，并行跑会挂起（既有问题，另行治理）。
+    #
+    # 🔴 以上「并行跑会挂起」经 TP-11G 实测**是反的**：
+    #   cargo test --no-default-features --lib（默认并行，= 删掉过滤器）
+    #   → 1905 passed / 10 failed / 1327.86s（22.1 分钟）**不挂死**；
+    #   而 `daemon::workspace`(147) 与 `daemon::snapshot_state`(58) 串行
+    #   900s 只分别跑完 27 / 17 个 → **串行才是跑不完的原因**。
+    #   故扩面时 CI **不应加 --test-threads=1**。
+    #
+    # 扩面前置条件（未完成前不得改本 job 的过滤器，否则 10 个失败会直接红）：
+    #   1. 4 个平台无关确定性缺陷：CREATE TABLE file_versions 缺 IF NOT EXISTS
+    #      （cli/refresh.rs:637 ×3、daemon/cas_merge.rs:3368 ×1）
+    #   2. 4 个非密闭用例：cli/router.rs:146 is_daemon_available 的 windows
+    #      分支忽略 socket_path、直接探测真实命名管道 → 生产缺陷（TP-11G G8b）
+    #   3. 2 个待 Linux 复核：daemon::task_prompt::bundle_tests golden 漂移
+    # 详见 C:/Users/wanpi/cw-review/TP11G_rust_ci_range.md。
     name: Rust unit tests (daemon compat handlers)
     runs-on: ubuntu-latest
     timeout-minutes: 30
