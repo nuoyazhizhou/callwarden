@@ -633,11 +633,15 @@ mod tests {
     fn setup_db(root: &Path, db_path: &Path) -> Connection {
         let conn = Connection::open(db_path).unwrap();
         init_codegraph_schema(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO workspaces (id, name, root_path, created_at) VALUES (1, 'ws', ?1, 0)",
-            params![root.to_string_lossy()],
-        )
-        .unwrap();
+        // 必须用生产同款入口建 workspaces 行：ensure_workspace_row_by_root
+        // 内部会把 root_path 归一化（反斜杠→正斜杠、盘符小写）。若此处直接
+        // INSERT 原始形态路径，生产的归一化键将匹配不上而另起新行（id=2），
+        // file_instances 全部写到 ws=2，所有按 workspace_id=1 断言的用例都会
+        // 假失败（TP-47 实证：Windows 上归一化非恒等故必现；Linux 上归一化
+        // 是恒等所以反而掩过——这正是它多年没被发现的原因）。
+        let ws_id =
+            crate::daemon::fs_handlers::ensure_workspace_row_by_root(&conn, root).unwrap();
+        assert_eq!(ws_id, 1, "setup_db 期望 workspace id=1（全新库首行）");
         conn
     }
 
