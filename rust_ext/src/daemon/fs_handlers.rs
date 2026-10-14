@@ -147,6 +147,20 @@ pub fn ensure_workspace_row_by_root(
 }
 
 /// 解析 workspace 行并返回 (workspace_id, host_real_root)。
+///
+/// 🔴 返回的 root 用于**文件系统操作**（扫描/strip_prefix/建图），不是身份键。
+/// registry 行的 `host_real_root` 是 `normalize_identity_root` 的产物
+/// （workspace.rs:222：Windows 上全路径 ASCII 小写 + `\`→`/`），只服务于
+/// instance-id 哈希/去重。把它当文件系统根用会丢失真实大小写：
+/// `handle_build_graph` 以它为扫描种子 → 遍历出的路径前缀全小写 →
+/// `strip_prefix(&root_canon)`（canonicalize：真实大小写 + `\\?\` 前缀）
+/// 必失败 → rel 退化为**全小写绝对路径**写进 `file_instances.rel_path`，
+/// 进而连锁击穿 query.file（L5）、run_semgrep_and_save 的 FK 挂接（X3c）、
+/// 以及权威库 `workspaces.root_path` 的大小写。
+///
+/// 注册时该值已由 `validate_owned_path` 规范化（canonical），此处再
+/// `canonicalize` 仅还原大小写与前缀（对已规范路径幂等，无 symlink 旁路）。
+/// 失败时回退原值（不阻断只读语义）。
 fn resolve_workspace(
     registry: &WorkspaceRegistry,
     peer: &PeerCredential,
@@ -163,6 +177,7 @@ fn resolve_workspace(
         .or_else(|| workspace.get("client_view_root").and_then(Value::as_str))
         .map(PathBuf::from)
         .ok_or_else(|| DaemonRpcError::internal_error("workspace 缺少 host_real_root".to_string()))?;
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
     Ok((workspace_id, root))
 }
 
@@ -313,11 +328,21 @@ fn parser_lang_id(rel_path: &str) -> Option<&'static str> {
 ///    建图收尾时批量解析为已挂接边；同轮重建场景配合 CR12 降级重挂）。
 ///
 /// 返回 (symbols_stored, calls_stored)。语言不支持或解析为空时 (0, 0)。
+///
+/// 🔴 除 `symbols`/`calls`/`symbol_contents` 外，必须**同步镜像**到版本化
+/// schema（`file_versions` + `file_symbol_versions`）：`query.symbol` /
+/// `query.symbol_location` 等读面走 `query_symbol_detail`
+/// （symbol_query.rs:13，JOIN file_symbol_versions ↔ file_versions ↔
+/// file_instances），而非 `symbols` 表。P0-CR1 随行落库此前只写 symbols，
+/// 导致这些读面对 daemon 建起来的图恒返回 null（L5b 根因）。
 fn parse_and_store_symbols(
     conn: &rusqlite::Connection,
     file_instance_id: i64,
     abs_path: &Path,
     rel: &str,
+    content_hash: &str,
+    mtime: f64,
+    total_lines: i64,
 ) -> Result<(usize, usize), DaemonRpcError> {
     let Some(lang_id) = parser_lang_id(rel) else {
         return Ok((0, 0));
@@ -433,6 +458,42 @@ fn parse_and_store_symbols(
             if s.local_id > 0 && row_id > 0 {
                 local_id_map.insert(s.local_id, row_id);
             }
+        }
+
+        // 3.5 镜像到版本化 schema（query.symbol 等读面的数据源，见函数文档）。
+        //     幂等重建：先清该文件旧版本行（与步骤 2 的 symbols DELETE 对齐），
+        //     再插入一条 is_current=1 的新版本 + 其 file_symbol_versions。
+        conn.execute(
+            "DELETE FROM file_symbol_versions WHERE file_version_id IN \
+             (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+            rusqlite::params![file_instance_id],
+        )?;
+        conn.execute(
+            "DELETE FROM file_versions WHERE file_instance_id = ?1",
+            rusqlite::params![file_instance_id],
+        )?;
+        conn.execute(
+            "INSERT INTO file_versions \
+             (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted) \
+             VALUES (?1, 1, ?2, ?3, ?4, ?5, 1, 0)",
+            rusqlite::params![file_instance_id, content_hash, mtime, total_lines, now_ts_secs()],
+        )?;
+        let fv_id = conn.last_insert_rowid();
+        for s in &result.symbols {
+            conn.execute(
+                "INSERT OR IGNORE INTO file_symbol_versions \
+                 (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+                rusqlite::params![
+                    fv_id,
+                    s.symbol_hash,
+                    s.qualified_name,
+                    s.start_line,
+                    s.end_line,
+                    if s.module_path.is_empty() { &module_path } else { &s.module_path },
+                    s.depth,
+                ],
+            )?;
         }
 
         // 4. 写 raw calls（caller 必须能挂到本文件符号；顶层裸调用暂缺 synthetic
@@ -687,7 +748,9 @@ pub fn handle_build_graph(
         )?;
         if parsed {
             // P0-CR1：符号抽取随建图落库（tree-sitter 管线）
-            let (sym, calls) = parse_and_store_symbols(&conn, fid, &path, &rel)?;
+            let (sym, calls) = parse_and_store_symbols(
+                &conn, fid, &path, &rel, &hash, mtime, total_lines,
+            )?;
             symbol_total += sym;
             call_total += calls;
             inserted += 1;
@@ -764,7 +827,9 @@ pub fn handle_build_directory(
             &conn, workspace_id, &rel, &path, &hash, mtime, total_lines, parsed,
         )?;
         if parsed {
-            let (sym, calls) = parse_and_store_symbols(&conn, fid, &path, &rel)?;
+            let (sym, calls) = parse_and_store_symbols(
+                &conn, fid, &path, &rel, &hash, mtime, total_lines,
+            )?;
             symbol_total += sym;
             call_total += calls;
         }
@@ -1060,7 +1125,7 @@ pub fn handle_refresh_file(
         &conn, workspace_id, &rel, &real, &hash, mtime, total_lines, parsed,
     )?;
     let (symbol_count, call_count) = if parsed {
-        parse_and_store_symbols(&conn, fid, &real, &rel)?
+        parse_and_store_symbols(&conn, fid, &real, &rel, &hash, mtime, total_lines)?
     } else {
         (0, 0)
     };

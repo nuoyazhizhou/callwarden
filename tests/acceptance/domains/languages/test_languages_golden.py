@@ -328,20 +328,16 @@ def test_l4c_query_search_param_validation(env):
 
 
 # ===================================================================
-# L5 已知产品缺陷（xfail 固化：不冒充通过，修复后会显式 XPASS）
+# L5 查询面（此前为已知产品缺陷，2026-10-14 修复后转正）
+# 根因：resolve_workspace 返回的是 registry 的身份归一化串（全小写绝对
+# 路径）而非文件系统根 → build_graph 的 strip_prefix 全部失败 →
+# file_instances.rel_path 退化为全小写绝对路径 → query.file 的
+# normalize_workspace_path 归一出的相对路径永不相等。修复点见
+# fs_handlers.rs:resolve_workspace 的 canonicalize 还原。
 # ===================================================================
 
-@pytest.mark.xfail(
-    reason="已知缺陷：file_instances.rel_path 存的是绝对路径，而 query.file "
-           "的 normalize_workspace_path 会把入参归一为 workspace 相对路径，"
-           "两者永不相等 → 任何路径形态都 0 命中。修复后本例 XPASS。",
-    strict=False)
 def test_l5_query_file_should_return_file_symbols(env, symbols):
-    """L5（缺陷记录）：query.file 应能按文件取回该文件的符号。
-
-    实测：相对路径 / 绝对路径 / 小写绝对路径三种形态均返回空数组，
-    而同一符号能被 query.search 正常检出（见 symbols fixture）。
-    """
+    """L5：query.file 按文件取回该文件的符号（相对路径入参）。"""
     rel = "golden/golden_python.py"
     r = env.query_file(rel)
     assert r.ok, f"query.file 失败：{r!r}"
@@ -350,13 +346,15 @@ def test_l5_query_file_should_return_file_symbols(env, symbols):
         f"query.file({rel}) 应回 alpha_probe；实际 {names}"
 
 
-@pytest.mark.xfail(
-    reason="已知缺陷：query.symbol 对 query.search 明明能检出的 "
-           "qualified_name 仍返回 null（symbol_query::query_symbol_detail "
-           "与 store 索引不同源）。修复后本例 XPASS。",
-    strict=False)
 def test_l5b_query_symbol_should_return_symbol_detail(env, symbols):
-    """L5b（缺陷记录）：query.symbol 应返回符号详情而非 null。"""
+    """L5b：query.symbol 返回符号详情（此前为已知缺陷，2026-10-14 修复）。
+
+    根因：P0-CR1 随行落库只写 symbols/calls/symbol_contents，而
+    query.symbol 走 query_symbol_detail（JOIN file_symbol_versions ↔
+    file_versions）；版本化 schema 从未被写入 → 恒 null。修复：
+    parse_and_store_symbols 现同步镜像到 file_versions +
+    file_symbol_versions（fs_handlers.rs）。
+    """
     qn = env.qname_prefix() + "golden_python.alpha_probe"
     assert qn in symbols, f"golden 符号 {qn} 未检出：{sorted(symbols)[:5]}"
     r = env.query_symbol(qn)

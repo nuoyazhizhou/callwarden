@@ -3,9 +3,9 @@
 在完全隔离的 daemon 上验证「外部依赖面」的**真实可达性与真实响应**：
 每个 method 断言真实结构或真实拒绝码，不写「调用成功即通过」的占位断言。
 
-🔴 X3 的 semgrep 保存缺陷（xfail 固化，非假 PASS）：
-`run_semgrep_and_save` 永久返回 saved_findings=0，根因链（实测+源码+手动 INSERT
-三重确认）：
+🔴 X3 的 semgrep 保存缺陷（2026-10-14 修复，此前 xfail 固化）：
+`run_semgrep_and_save` 永久返回 saved_findings=0，根因链（实测+源码+手动
+INSERT 三重确认）：
 1. semgrep 返回 `path = "ext\\unsafe.py"`（相对 workspace 根、Windows 反斜杠）；
 2. save_findings 用 `path.trim_start_matches('/')` 归一化 → 不处理反斜杠；
 3. 查 file_instances.rel_path 0 命中 —— 因为 rel_path 实际存的是**全小写绝对
@@ -16,12 +16,14 @@
    静默吞掉** → execute 返回 Ok(0) → inserted 不增；
 6. 结果：semgrep_scans 有行、semgrep_findings 永久空 → 所有 semgrep 读面
    （query.semgrep_stats / query.semgrep_findings）永久空。
-修复后本例 XPASS。
+修复：(a) resolve_workspace 还原 canonical 根 → rel_path 存相对路径；
+(b) save_findings 反斜杠转义 + 未入索引显式跳过（不再静默吞 FK）+
+用 abs_path 算真实内容哈希。
 
 🔴 MCP 工具名 ≠ RPC method：run_semgrep_scan / embed_symbols /
 import_git_history 是 MCP/CLI 名，RPC 通道是 task.job_submit（job_type=
 semgrep_scan / embed / git_history）；裸名调用 → method_not_found。
-本域 X1 即该类缺陷的回归护栏（项目已踩过：handler 写了、match 臂注册了、
+本域 X1 即该类缺陷的回归护栏（项目已踩过：handler 写了、match 臂注册了，
 但收敛名单未登记 → 恒 method_not_found）。
 """
 
@@ -181,14 +183,15 @@ def test_x3b_semgrep_bogus_config_reports_error(env):
     assert rr.get("errors"), f"坏规则必须报 errors：{rr}"
 
 
-@pytest.mark.xfail(
-    reason="已知缺陷：save_findings 的 path 归一化不处理 Windows 反斜杠 + "
-           "file_instances.rel_path 存的是全小写绝对路径（L5 同源）→ 关联 0 命中 → "
-           "file_instance_id=0 违反 FK（daemon 开 PRAGMA foreign_keys=ON），而 "
-           "INSERT OR IGNORE 把 FK 违约静默吞掉 → saved_findings 恒 0、"
-           "semgrep 读面永久空。修复后本例 XPASS。")
 def test_x3c_semgrep_save_persists_findings(env):
-    """X3c：run_semgrep_and_save 必须把 finding 落库，读面随后可见。"""
+    """X3c：run_semgrep_and_save 必须把 finding 落库，读面随后可见。
+
+    此前为已知缺陷（xfail）：save_findings 的 path 归一化不处理 Windows
+    反斜杠 + file_instances.rel_path 存全小写绝对路径（L5 同源）→ 关联 0
+    命中 → file_instance_id=0 违反 FK（daemon 开 PRAGMA foreign_keys=ON），
+    而 INSERT OR IGNORE 把 FK 违约静默吞掉 → saved_findings 恒 0。
+    2026-10-14 修复（详见本文件头注释）。
+    """
     env.write_semgrep_rule()
     scan = env.run_semgrep()
     assert (scan.result or {}).get("total_findings", 0) >= 1, \
@@ -316,7 +319,8 @@ def test_x5b_semantic_search_returns_ranked_results(env):
 
 def test_x5c_find_similar_functions_contract(env):
     """X5c：find_similar 按 qualified_name 检索；短名 0 命中、全名有结果。"""
-    # 🔴 qualified_name 是全路径（含全小写绝对路径前缀，L5 同源），短名查不到
+    # 🔴 qualified_name 是全路径（module_path_of(rel) 派生，rel 为 workspace
+    # 相对路径，如 `ext/beta.alpha`），短名查不到
     short = env.find_similar_functions("beta")
     assert short.ok, f"find_similar 失败：{short!r}"
     assert (short.result or []) == [], \

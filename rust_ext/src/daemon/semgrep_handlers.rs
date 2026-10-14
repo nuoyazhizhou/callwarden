@@ -266,17 +266,38 @@ fn save_findings(
         .map_err(|e| DaemonRpcError::internal_error(format!("semgrep_scans insert: {e}")))?;
     let scan_id = conn.last_insert_rowid();
     let mut inserted = 0i64;
+    // 未入索引文件的 finding 计数（不再静默吞 FK 违约；仅观测，不改变返回契约）
+    let mut _skipped_unindexed = 0i64;
     for f in &findings {
         let path = f.get("path").and_then(Value::as_str).unwrap_or("");
-        let rel = path.trim_start_matches('/');
-        let file_instance_id: Option<i64> = conn
+        // 🔴 X3c 根因（实测+源码+手动 INSERT 三重确认）：
+        // 1. Windows 下 semgrep 回显相对路径用**反斜杠**（`ext\unsafe.py`），
+        //    而 file_instances.rel_path 统一正斜杠（与 build_graph 的
+        //    strip_prefix 归一化一致）——必须先转义再关联，否则 0 命中。
+        let rel = path.replace('\\', "/");
+        let rel = rel.trim_start_matches('/');
+        // 2. 关联失败时不再兜底 file_instance_id=0：semgrep_findings 的
+        //    file_instance_id 是 NOT NULL + FK，daemon 开 PRAGMA
+        //    foreign_keys=ON，插 0 必被拒；此前的 INSERT OR IGNORE 把该
+        //    FK 违约与真正的 UNIQUE 去重一并静默吞掉（execute 返回 Ok(0)），
+        //    表现为 saved_findings 恒 0。现在显式跳过并计数。
+        //    同时取 abs_path 用于算真实内容哈希（此前用相对路径相对 daemon
+        //    CWD 读取，几乎必然读空 → content_hash 恒为空串哈希）。
+        let resolved = conn
             .query_row(
-                "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2 LIMIT 1",
+                "SELECT id, abs_path FROM file_instances \
+                 WHERE workspace_id = ?1 AND rel_path = ?2 LIMIT 1",
                 rusqlite::params![workspace_id, rel],
-                |row| row.get(0),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
             )
             .ok();
-        let file_instance_id = file_instance_id.unwrap_or(0);
+        let (file_instance_id, abs_path) = match resolved {
+            Some(v) => v,
+            None => {
+                _skipped_unindexed += 1;
+                continue;
+            }
+        };
         let rule_id = f.get("rule_id").and_then(Value::as_str).unwrap_or("unknown");
         let message = f.get("message").and_then(Value::as_str).unwrap_or("");
         let severity = f.get("severity").and_then(Value::as_str).unwrap_or("INFO").to_uppercase();
@@ -284,7 +305,7 @@ fn save_findings(
         let end_line = f.get("end_line").and_then(Value::as_i64).unwrap_or(start_line);
         let language = f.get("language").and_then(Value::as_str).unwrap_or("");
         let content_hash = crate::daemon::fs_handlers::sha256_hex(
-            std::fs::read(std::path::Path::new(path)).unwrap_or_default().as_slice(),
+            std::fs::read(std::path::Path::new(&abs_path)).unwrap_or_default().as_slice(),
         );
         let res = conn.execute(
             "INSERT OR IGNORE INTO semgrep_findings

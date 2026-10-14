@@ -485,11 +485,12 @@ class LanguagesEnv(IsolationEnv):
     def qname_prefix(self) -> str:
         """golden 符号 qualified_name 的公共前缀。
 
-        实测形态：`<workspace_dir 小写 + 正斜杠>/golden/<文件名去扩展名>.<符号名>`。
-        workspace_dir 是 `C:/.../TP-11L/ws`，盘符与全路径均小写。
+        🔴 修复后形态（rel_path 根因修复，2026-10-14）：qualified_name 由
+        module_path_of(rel) 派生，rel 现为 workspace 相对路径（此前是全小写
+        绝对路径，见 fs_handlers.rs:resolve_workspace 的修复注释）。
+        故前缀 = `golden/`，完整形如 `golden/golden_python.alpha_probe`。
         """
-        return str(self.workspace_dir).replace("\\", "/").rstrip("/").lower() \
-            + f"/{GOLDEN_DIR}/"
+        return f"{GOLDEN_DIR}/"
 
     def collect_symbols(self, queries: Optional[List[str]] = None,
                         limit: int = 200) -> Dict[str, Dict[str, Any]]:

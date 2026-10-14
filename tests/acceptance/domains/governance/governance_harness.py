@@ -65,7 +65,7 @@ CW_PY = REPO_ROOT / "cw.py"
 DEFAULT_DAEMON_SRC = Path(
     os.environ.get(
         "CW_TP11G_DAEMON_SRC",
-        r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/candidates/incr-fix/cw-daemon.exe"))
+        r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/candidates/l5-fix/cw-daemon.exe"))
 KNOWN_DAEMON_SHA256_PREFIXES: Tuple[str, ...] = (
     "f1fa3736a16dbe7d",
     "247b9a16049ec4d7",
@@ -75,6 +75,7 @@ KNOWN_DAEMON_SHA256_PREFIXES: Tuple[str, ...] = (
     "4cdc6c16543f74a6",
     "8b3b32f80e6fc395",
     "ace30cd3588f1fb4",
+    "39d70a27173fe578",  # L5/L5b/X3c 修复（resolve_workspace canonical + 版本化镜像 + save_findings）
 )
 DEFAULT_RUN_ROOT = Path(
     os.environ.get("CW_TP11G_RUN_ROOT",
