@@ -1,0 +1,171 @@
+name: Acceptance Gates
+
+# TESTING_PLAN §9「CI与命令」的本体：PR / nightly / release 三档验收门禁。
+# - PR：清单/文档一致性 + 适用快速测试 + 真实隔离协议 + 关键写/负面
+#   （domains PR profile = 除 external 网络依赖域外的 114 selector）；
+# - nightly：全仓库 + 恢复/并发 + 外部（Git/Semgrep/LSP/向量）+ 性能
+#   （full profile = 127 selector）；
+# - release：同候选 hash 全部必需 profile + artifact E2E（干净安装 + 真实入口）。
+#
+# 门禁判据由 cicd/check_ci_gates.py 独立裁决（JUnit 递归 + selector 完备性 +
+# 元数据新鲜度），cicd/check_skip_rate.py 只作辅助统计（skip 率非硬门禁）。
+
+on:
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: "0 18 * * *" # nightly（UTC 18:00）
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "pr | full | release"
+        required: false
+        default: "pr"
+
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pr-acceptance:
+    name: PR acceptance (isolation protocol + key write/negative)
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+          pip install pytest-xdist pytest-timeout
+        shell: bash
+
+      - name: Build daemon candidate (same checkout)
+        run: python release/build.py --rust
+        shell: bash
+
+      - name: Run PR profile (domains minus external network deps)
+        env:
+          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          CW_TP11G_ALLOW_FRESH_BUILD: "1"
+        run: >
+          pytest tests/acceptance/domains/ --ignore=tests/acceptance/domains/external
+          -q --no-header --junitxml=reports/junit_pr.xml
+        shell: bash
+
+      - name: Gate (JUnit + frozen selectors + revision freshness)
+        run: >
+          python -m cicd.check_ci_gates
+          --junit reports/junit_pr.xml
+          --manifest docs/testing/expected_selectors/domains_pr.txt
+          --expect-revision ${{ github.sha }}
+          --json-out reports/verdict_pr.json
+        shell: bash
+
+      - name: Skip rate (auxiliary, non-blocking)
+        run: >
+          python -m cicd.check_skip_rate
+          --junit reports/junit_pr.xml
+          --collected docs/testing/expected_selectors/domains_pr.txt
+          --json-out reports/skip_rate_pr.json
+        shell: bash
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-pr-evidence
+          path: reports/
+          if-no-files-found: warn
+
+  nightly-full:
+    name: Nightly full profile (recovery/concurrency/external/performance)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+          pip install pytest-xdist pytest-timeout
+        shell: bash
+      - name: Build daemon candidate (same checkout)
+        run: python release/build.py --rust
+        shell: bash
+      - name: Run full profile (all domains incl. external)
+        env:
+          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          CW_TP11G_ALLOW_FRESH_BUILD: "1"
+        run: >
+          pytest tests/acceptance/domains/
+          -q --no-header --junitxml=reports/junit_full.xml
+        shell: bash
+      - name: Gate (full profile)
+        run: >
+          python -m cicd.check_ci_gates
+          --junit reports/junit_full.xml
+          --manifest docs/testing/expected_selectors/domains_full.txt
+          --expect-revision ${{ github.sha }}
+          --json-out reports/verdict_full.json
+        shell: bash
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-nightly-evidence
+          path: reports/
+          if-no-files-found: warn
+
+  release-artifact:
+    name: Release artifact E2E (clean install + real entries)
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'release'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build wheel + daemon candidate
+        run: |
+          python release/build.py --rust
+          python -m pip wheel . --no-build-isolation --no-deps -w dist
+        shell: bash
+      - name: Artifact E2E (clean venv install + isolated daemon + CLI + MCP wire)
+        env:
+          CW_ARTIFACT_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+        run: >
+          python -m cicd.artifact_e2e
+          --json-out reports/artifact_verdict.json
+        shell: bash
+      - name: Upload artifact evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-release-evidence
+          path: reports/
+          if-no-files-found: warn
