@@ -251,8 +251,12 @@ jobs:
     #   故扩面时 CI **不应加 --test-threads=1**。
     #
     # 扩面前置条件（未完成前不得改本 job 的过滤器，否则 10 个失败会直接红）：
-    #   1. 4 个平台无关确定性缺陷：CREATE TABLE file_versions 缺 IF NOT EXISTS
-    #      （cli/refresh.rs:637 ×3、daemon/cas_merge.rs:3368 ×1）
+    #   1. 4 个平台无关确定性缺陷：裸 CREATE TABLE 无 IF NOT EXISTS
+    #      （cli/refresh.rs:637/650/661 三张表、daemon/cas_merge.rs:3368；
+    #       行号已 sed 实测核实）。根因是两条不同 SQL 作用于同一张表：
+    #      :635 init_codegraph_schema 已用 IF NOT EXISTS 建表成功，夹具又
+    #      裸 CREATE 同名表。修复方向=删除冗余夹具 batch，不加 IF NOT EXISTS
+    #      掩盖；cas_merge.rs:3368 更不能机械加（4 列桩 vs 生产 11 列）。
     #   2. 4 个非密闭用例：cli/router.rs:146 is_daemon_available 的 windows
     #      分支忽略 socket_path、直接探测真实命名管道 → 生产缺陷（TP-11G G8b）
     #   3. 2 个待 Linux 复核：daemon::task_prompt::bundle_tests golden 漂移
