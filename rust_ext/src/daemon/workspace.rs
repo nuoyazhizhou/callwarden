@@ -4767,8 +4767,18 @@ mod tests {
     fn test_validate_owned_path_rejects_non_owner_uid() {
         let current = unsafe { libc::getuid() };
         if current == 0 {
-            // root 跳过 ACL，无法测试拒绝路径
-            return;
+            // #63 / F-OWNER-01 P3-2：原写法在此**静默 return** —— 测试绿但零覆盖，
+            // 且连「被跳过」这件事都没有记录，比 skip/xfail 更隐蔽。
+            //
+            // 重新核对语义：ACL 跳过条件是 `peer_uid == 0`，而不是「进程是 root」。
+            // 下面伪造的 peer_uid = current + 1 ≠ 0，因此即使以 root 运行，
+            // check_path_owner 仍会比较 owner_uid(0) 与 peer_uid，拒绝路径照样成立。
+            // 故删除静默早退、保留断言（覆盖不丢），只留一条显式说明。
+            eprintln!(
+                "[no-silent-skip] 以 root(uid=0) 运行：伪造 peer_uid={} 非 0，\
+                 ACL 比较仍然生效，本用例继续断言拒绝路径",
+                current + 1
+            );
         }
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().to_str().unwrap();
