@@ -300,20 +300,3 @@ fn task_prompt_golden_manifest_hash_drift_guard() {
 }
 }
 
-/// TP-11G 2a-P0-B：manifest_hash 漂移守卫（无声漂移 → 可操作早期失败）。
-///
-/// manifest.json 的任何变更都会经 build.rs 改变 ROLE_PROMPTS_MANIFEST_SHA256，
-/// 进而传播到全部 7 个 golden 的 context_hash/bundle_hash（2026-10-15 37c825b
-/// 实证）。序断言在第一个 golden panic 即中止，后续漂移被掩盖。本守卫在任何
-/// golden 断言之前失败，把无声漂移变成可操作早期失败。
-#[test]
-fn task_prompt_golden_manifest_hash_drift_guard() {
-    assert_eq!(
-        ROLE_PROMPTS_MANIFEST_SHA256,
-        GOLDEN_MANIFEST_HASH_AT_FREEZE,
-        "manifest 已变更 → 须同步重冻结全部 7 个 golden \
-         （policy/body/prompt 不变、context/bundle 变是 manifest-only 正常形态）；\
-         流程：GOLDEN_* 置 None → print_unfrozen_values 取新值 → 更新 7 常量 \
-         + GOLDEN_MANIFEST_HASH_AT_FREEZE"
-    );
-}
