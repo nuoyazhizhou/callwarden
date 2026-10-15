@@ -1004,7 +1004,20 @@ pub fn validate_owned_path_any(path: &str, peer_uid: u32) -> Result<String, Daem
     #[cfg(not(unix))]
     {
         let _ = peer_uid; // Windows 不使用 Unix UID
-        if !is_current_user_admin() {
+        // #63 / F-OWNER-01 P1-1：探测失败必须可观测（告警），且仍按非 admin 继续走严格比较，
+        // fail-closed 方向不变（原来是静默 false，现在只是把「为什么是 false」暴露出来）。
+        let admin = match probe_admin_membership() {
+            Ok(v) => v,
+            Err(reason) => {
+                eprintln!(
+                    "[warn] workspace 属主校验：探测 Administrators 启用状态失败，\
+                     按非 admin 继续走严格属主比较: {}",
+                    reason
+                );
+                false
+            }
+        };
+        if !admin {
             let peer_sid = super::peercred::get_current_user_sid().map_err(|e| {
                 DaemonRpcError::new("path_forbidden", format!("无法获取当前用户 SID: {}", e))
             })?;
@@ -1087,13 +1100,21 @@ fn get_file_owner_sid(path: &str) -> Result<String, String> {
     Ok(sid_string)
 }
 
-/// Windows：检查当前用户是否属于 Administrators 组（等价 Unix root 跳过）。
+/// Windows：探测当前**进程令牌**中 BUILTIN\Administrators (S-1-5-32-544) 是否处于**启用**状态。
 ///
+/// #63 / F-OWNER-01（P1-1）：原 `is_current_user_admin() -> bool` 在两个失败出口静默
+/// `return false`，使「admin 跳过」分支是否生效不可观测——`daemon::workspace` 在 Windows
+/// runner 红 10 例时，无法区分「确实不是 admin」与「探测本身失败」。改为返回 `Result`：
+/// - `Ok(true)`：令牌中 Administrators 处于启用状态（等价 Unix root 跳过）；
+/// - `Ok(false)`：探测成功但未启用（UAC 过滤令牌下该 SID 为 deny-only，不豁免）；
+/// - `Err(reason)`：探测失败，调用方须告警后按 `false` 继续走严格比较（fail-closed 不变）。
+///
+/// 判定对象是「当前进程令牌中 Administrators 是否**启用**」，不是「用户是否为 Administrators 成员」。
 /// 使用 CheckTokenMembership 检查 BUILTIN\Administrators (S-1-5-32-544)。
 #[cfg(not(unix))]
-fn is_current_user_admin() -> bool {
+fn probe_admin_membership() -> Result<bool, String> {
     use std::ptr;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
     use windows_sys::Win32::Security::{
         AllocateAndInitializeSid, CheckTokenMembership, FreeSid, SECURITY_NT_AUTHORITY, TOKEN_QUERY,
     };
@@ -1118,23 +1139,38 @@ fn is_current_user_admin() -> bool {
             &mut admin_sid,
         ) == 0
         {
-            return false;
+            let err = GetLastError();
+            return Err(format!(
+                "AllocateAndInitializeSid 构造 S-1-5-32-544 失败 (GetLastError={})",
+                err
+            ));
         }
 
         // 获取进程令牌
         let mut token: HANDLE = ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            let err = GetLastError();
             FreeSid(admin_sid);
-            return false;
+            return Err(format!(
+                "OpenProcessToken(TOKEN_QUERY) 失败 (GetLastError={})",
+                err
+            ));
         }
 
         // 检查令牌是否包含 Administrators SID
         let mut is_member: i32 = 0;
         let ok = CheckTokenMembership(token, admin_sid, &mut is_member);
+        let last_err = GetLastError();
         CloseHandle(token);
         FreeSid(admin_sid);
 
-        ok != 0 && is_member != 0
+        if ok == 0 {
+            return Err(format!(
+                "CheckTokenMembership 失败 (GetLastError={})",
+                last_err
+            ));
+        }
+        Ok(is_member != 0)
     }
 }
 
@@ -4576,12 +4612,23 @@ mod tests {
         assert!(me.starts_with("S-1-"), "当前用户 SID 格式无效: {}", me);
     }
 
-    /// Windows: 验证 is_current_user_admin 不 panic 且返回布尔值
+    /// Windows: 验证 probe_admin_membership 不 panic，且失败时给出非空原因
+    ///
+    /// #63 / F-OWNER-01 P1-1：原用例只调用 `is_current_user_admin()` 并丢弃返回值，
+    /// 对「静默 return false」这种失效形态零覆盖（绿但什么都不验）。改为断言契约：
+    /// - `Ok(_)`：探测成功，返回布尔值（取值取决于运行环境，不断言具体值）；
+    /// - `Err(reason)`：探测失败，原因字符串必须非空 —— 否则调用方无法告警，
+    ///   退化回「失效不可知」。
     #[cfg(not(unix))]
     #[test]
-    fn test_windows_is_current_user_admin_does_not_panic() {
-        // 只验证函数可调用且不 panic，不断言结果（取决于测试环境）
-        let _ = is_current_user_admin();
+    fn test_windows_probe_admin_membership_returns_diagnosable_result() {
+        match probe_admin_membership() {
+            Ok(_) => {}
+            Err(reason) => assert!(
+                !reason.trim().is_empty(),
+                "探测失败必须携带非空原因，否则调用方无法告警诊断"
+            ),
+        }
     }
 
     /// Windows: validate_owned_path 对当前用户创建的目录应通过
