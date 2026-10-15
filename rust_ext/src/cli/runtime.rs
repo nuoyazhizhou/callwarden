@@ -82,7 +82,7 @@ impl RuntimeOptions {
     ) -> Self {
         Self {
             mode: mode.unwrap_or_else(get_daemon_mode),
-            socket_path: socket_path.unwrap_or_else(daemon_socket_path),
+            socket_path: socket_path.unwrap_or_else(|| daemon_socket_path(None)),
             db_path: db_path.unwrap_or_else(default_user_db_path),
             workspace_id,
             timeout: Duration::from_secs(timeout_secs),

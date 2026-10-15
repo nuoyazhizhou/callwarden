@@ -110,11 +110,19 @@ impl RouteDecision {
 ///
 /// 对齐 Python `config.py:DAEMON_SOCKET_PATH` (L1319-1321)
 ///
-/// 优先级：`CW_DAEMON_SOCKET` 环境变量 > 默认 `/run/callwarden/callwarden.sock`
-pub fn daemon_socket_path() -> PathBuf {
-    std::env::var(DAEMON_SOCKET_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_DAEMON_SOCKET))
+/// 优先级：显式注入 `endpoint` > `CW_DAEMON_SOCKET` 环境变量 >
+/// 默认 `/run/callwarden/callwarden.sock`
+///
+/// TP-11G 2a 尾批参数化（注入优先于全局状态变异）：此前测试为验证
+/// env 覆盖直接改写全局环境，与 router 并行测试竞态（test_d5_1 间歇
+/// FAIL）；参数化后测试直传 endpoint，env 断言改只读一致性检查。
+pub fn daemon_socket_path(endpoint: Option<&str>) -> PathBuf {
+    match endpoint {
+        Some(e) => PathBuf::from(e),
+        None => std::env::var(DAEMON_SOCKET_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_DAEMON_SOCKET)),
+    }
 }
 
 /// 获取当前 daemon 模式。
@@ -338,7 +346,7 @@ pub fn is_daemon_available_py(socket_path: &str, platform: &str) -> bool {
 /// 对齐 Python `config.py:DAEMON_SOCKET_PATH`
 #[pyfunction]
 pub fn daemon_socket_path_py() -> String {
-    daemon_socket_path().to_string_lossy().to_string()
+    daemon_socket_path(None).to_string_lossy().to_string()
 }
 
 /// Python 暴露的 route_command。
@@ -682,30 +690,38 @@ mod tests {
     }
 
     // D5: daemon_socket_path
+    //
+    // TP-11G 2a 尾批（P2 竞态修复）：原 test_d5_1/test_d5_2 直接改写全局
+    // `CW_DAEMON_SOCKET`，与 router 并行测试竞态（cli::router 单独 3 跑
+    // 1 FAIL）。参数化注入后测试直传 endpoint，env 断言改**只读一致性**
+    // 检查——不再有任何全局状态变异。
 
     #[test]
-    fn test_d5_1_env_override() {
-        // 保存原值，设置后恢复
-        let orig = env::var(DAEMON_SOCKET_ENV).ok();
-        env::set_var(DAEMON_SOCKET_ENV, "/tmp/x.sock");
-        assert_eq!(daemon_socket_path(), PathBuf::from("/tmp/x.sock"));
-        // 恢复
-        match orig {
-            Some(v) => env::set_var(DAEMON_SOCKET_ENV, v),
-            None => env::remove_var(DAEMON_SOCKET_ENV),
+    fn test_d5_1_endpoint_injection() {
+        // 注入优先于全局状态变异：Some(endpoint) 恒生效，与 env/默认值无关
+        assert_eq!(
+            daemon_socket_path(Some("/tmp/x.sock")),
+            PathBuf::from("/tmp/x.sock")
+        );
+        // env 一致性（只读）：注入 None 时，env 已设则遵循之，未设则默认
+        match env::var(DAEMON_SOCKET_ENV) {
+            Ok(v) => assert_eq!(daemon_socket_path(None), PathBuf::from(v)),
+            Err(_) => assert_eq!(
+                daemon_socket_path(None),
+                PathBuf::from(DEFAULT_DAEMON_SOCKET)
+            ),
         }
     }
 
     #[test]
     fn test_d5_2_default_path() {
-        // 不设置环境变量时应返回默认路径
-        let orig = env::var(DAEMON_SOCKET_ENV).ok();
-        env::remove_var(DAEMON_SOCKET_ENV);
-        assert_eq!(daemon_socket_path(), PathBuf::from(DEFAULT_DAEMON_SOCKET));
-        // 恢复
-        match orig {
-            Some(v) => env::set_var(DAEMON_SOCKET_ENV, v),
-            None => {}
+        // 只读断言：env 未设时注入 None 应得默认端点；
+        // env 已设的场景由 test_d5_1 的一致性断言覆盖（本用例不变异全局状态）
+        if env::var(DAEMON_SOCKET_ENV).is_err() {
+            assert_eq!(
+                daemon_socket_path(None),
+                PathBuf::from(DEFAULT_DAEMON_SOCKET)
+            );
         }
     }
 
