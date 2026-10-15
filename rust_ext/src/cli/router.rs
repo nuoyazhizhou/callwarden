@@ -153,6 +153,22 @@ pub fn is_daemon_required() -> bool {
 /// # 参数
 /// - `socket_path`: daemon socket 路径（或命名管道路径）
 /// - `platform`: 平台名（`std::env::consts::OS` 或测试指定值）
+///
+/// # 已知局限与职责边界（TP-11G 2a/2b，勿把 RPC 塞回本层）
+///
+/// 1. **WaitNamedPipeW 对未 arm 实例假阳性**（tp48 注入测试实证；台账
+///    TP11G_rust_ci_range.md §A5）：「存在即可用」不成立——占位者只建不
+///    监听即可让本函数误判 True。可用性判定止步于此是**决策层的边界**，
+///    不是可用性的完整定义。
+/// 2. **归属 / 活性 / 共存校验归 client 协议层**（2a 批次已落地：
+///    Python `daemon_client._verify_pipe_creator_attribution` 与 Rust
+///    `client.rs verify_pipe_creator_attribution`，ping 响应 daemon_pid
+///    vs `GetNamedPipeServerProcessId` 创建者交叉校验，失配 fail-closed）。
+///    本层无 pid 概念、无应答能力语义——把 RPC 级校验塞回 WaitNamedPipeW
+///    是语义倒置（协议层是唯一判别器，2204315 改动 1 同此结论）。
+/// 3. **机制依据**：台账 §A5（未 arm 实例可被连上 + 探测即消耗且与返回值
+///    无关）、§A6（verbatim 形态同破坏）——Windows 管道上任何路径语义
+///    探测都不可用作判别器，只能走实例/协议语义。
 pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
     match platform {
         // Linux：UDS socket 文件存在即认为 daemon 可用
