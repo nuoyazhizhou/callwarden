@@ -12,56 +12,57 @@ use crate::daemon::task_prompt::canonical::canonical_json;
 use crate::daemon::task_prompt::render_tests::{
     fixture_context, GOLDEN_GENERATED_AT, ADJ_V1_HASH, EXEC_V1_HASH, EXEC_V4_HASH, REV_V1_HASH,
 };
+use crate::daemon::task_prompt::route::ROLE_PROMPTS_MANIFEST_SHA256;
 
 /// Golden 冻结 hash（spec §11.2）。首次运行打印，随后冻结。
 const GOLDEN_EXECUTOR_LEGACY: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:59a459f7786097c671d48fbeec6e361c12d7a95bdec4e3722169d68d5d6a73f6",
-    "sha256:9b836c6b1dee0a9d39a07b2b7445ca3613bf63b492d72441a159a45203dd2bab",
+    "sha256:3d0acfa7f5ee514f3d0dfde9fe82654326e9a044e9c67f90f006a4eec59e1442",
     "sha256:1af10505b9319819c6c44a867478622c1bf05cc93417610bd143d46cc6df2d95",
-    "sha256:c330f08c225ce46deabe94fe6489de44947728c471aa67addd411ba7b778f259",
+    "sha256:0dc9159272340ca1671270ba3ce3c3b87f54a38bb18073377458ade66456d9e8",
 ));
 const GOLDEN_REVIEWER_LEGACY: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:6415033d8f134392de16fca130bfb762cb6c70d9f466c770ec18a20fc4ce139e",
-    "sha256:775d34140b5bd2225839c93568092025f7bd7e58008a07b2a8a80b6652291b5c",
+    "sha256:285bb73801b5fb1090b20c56f749f801d1c6378935a1be131fd19182e983e3d9",
     "sha256:1eac28014ac0c1aa8fc14ab8e03898283a646c1ebfb3baf7e69a3646c02de857",
-    "sha256:f9d1bbd76ec30a0704b5c8374e77b3721e244921e882bea1fc9fd92b4fbbc977",
+    "sha256:2f534cd01bd56e65be947f2f3770872183e23d6f82a6b28f6d773b191c4bc7ef",
 ));
 const GOLDEN_ADJUDICATOR_LEGACY: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:42a5f1defa81008b009058c1baf5d1a14b3ef4521e291b7b55c19bb473a77c3e",
-    "sha256:9bffdea1b4c00cee1ae64269feaab2bf3296e4a425e3f05f0be5f4f3dbd0a9b3",
+    "sha256:92b7122528664573a0c66b419d346ef5fb73b0e5f34db084e05d134c34e75048",
     "sha256:69c477c47acb68925c4f981e08553cb3f6856c6d2c926c4e141bd9d00f83ada6",
-    "sha256:e5e5034295274843953699014ee4091b66db7d90ef624a5f15c569e6ee5a4767",
+    "sha256:2e0f4291f9c013938651bd783668cad7bfa07a9ed21aeb00992456e0d46494ad",
 ));
 const GOLDEN_EXECUTOR_CURRENT: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:5f22f9bef05ec51a998311bdf4485315eb8fe1f4a092d01fd2e6bd86cc4a8164",
-    "sha256:9f2bcaf53f82e37585346772a1ab06cc9a69a73b105866cc29e05b7c61614b78",
+    "sha256:b24e29d318f3bbac7cb5f9eb3930138ed18b9e0a125eb415b216860cfa3d7c67",
     "sha256:5a962f893e4cae68f3a7423a0384e834084bab959cc311c2ba14e677da029503",
-    "sha256:1aac184bd7b85de2e93678ac16827a6f6bcb691e5a411f79a24e478cc96cce46",
+    "sha256:c078174b6d3f9ec099297d7e22c45e356b7eac0e4f97845fc926e99f81076d1f",
 ));
 const GOLDEN_BLOCKED: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:80805d678832126ca1c5cad76cc474b0b896e9431182ffdea9f023078b9c3b85",
-    "sha256:4bd1b7df573ae45e6bbae6dcba8358bac5c7e6168e3776be3fdf61ef70399685",
+    "sha256:4d3fe34866454ae10d8995ea4c7c5f97696c1d572db68b841d86463c615d2ee4",
     "sha256:b462a9eefbf8fa012a2ef9c9bed22465e6bd4fe2ec066b9ff8e279da19a1af6a",
-    "sha256:c861c1f16137678f7146c6b882c7449bd8e09a6d8d7ec18b26a87ed73306d8a0",
+    "sha256:01baec3b5c7bb1d352a31898437b42e4ee5800faeb36f010a48660a483228cb3",
 ));
 const GOLDEN_WAITING: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:56874c7329c9c62bac92ddd4be9720a04417a585f904de1d484f8abc7653f56b",
-    "sha256:6651c0ef98195fdb17cad49665ea8777bedb5baf1330e590b95e9acbb12c94ae",
+    "sha256:fb479539158636717585c0865d510926e8b7a9e40942398f55f325494d5b1189",
     "sha256:64f19dfebb58fc43fb64235aebb34dc2a9d275937b5ff4d808e35920f7fc4b63",
-    "sha256:a0e6653e09320f4c41ec32aed8f537db72aa8990b0c77415e77a2763406dd238",
+    "sha256:5a383d8145e076281b589bbd322cbc96408169a0f464de0c621855e3c9933b38",
 ));
 const GOLDEN_TERMINAL: Option<(&str, &str, &str, &str, &str)> = Some((
     "sha256:663807e4ab7567fe44c39d96df38e45a698d08166409c3fbc52c2740e19a567d",
     "sha256:450a850620529dd9a2fa1b1f6e791a6a2f4de6cfcac2d1affbe4473142d6257a",
-    "sha256:dca98412fb04545ac0a07a0eabe2ff18fd695503882f4443943169787d33d7b0",
+    "sha256:2ae710caf185440093fed0656c49eed38e14715faaa7b06ecfa40bdf9c99dbb7",
     "sha256:6f030c61d770be7a6474a07db7b9586500b64d42e1d46af4d8c985ab980faa11",
-    "sha256:4ff7fb8517912d1c075284484083be68ead1d8a9d334ed8900dac5b55ed4ce9c",
+    "sha256:14b3974f85b1f3b52a0935f257a187fa263c5b7b1d2a4879ea6b400ce5de5028",
 ));
 
 fn bundle_for(context: &Value) -> Value {
@@ -185,6 +186,21 @@ fn task_prompt_renderer_bundle_hash_covers_minimal_closure_only() {
 
 // ---------------------------------------------------------------- goldens
 
+// ⚠️ Golden 生命周期警告（TP-11G 2a-P0-B，2026-10-15）：
+// manifest.json 的任何变更都会经 build.rs 改变 ROLE_PROMPTS_MANIFEST_SHA256
+// → template.manifest_hash → **全部 7 个 golden** 的 context_hash/bundle_hash
+// 漂移（policy/body/prompt 三件不变即 manifest-only 漂移的签名；序断言在
+// 第一个 golden panic 即中止，后续漂移被掩盖——CI 只看得见第一个）。
+// 重冻结流程：GOLDEN_* 全部置 None → 跑 print_unfrozen_values 取新值 →
+// 更新下方 7 个常量 **和** GOLDEN_MANIFEST_HASH_AT_FREEZE → 守卫测试
+// task_prompt_golden_manifest_hash_drift_guard 同步更新。缺任何一步，
+// 守卫测试会以可操作提示先行失败。
+
+/// manifest_hash 冻结记录值（重冻结时与 ROLE_PROMPTS_MANIFEST_SHA256 同步更新）。
+/// 当前值 = 37c825b（adjudicator lease_role 提示词修复）之后的 manifest 裸字节 hash。
+const GOLDEN_MANIFEST_HASH_AT_FREEZE: &str =
+    "sha256:bc6af6c4925e960974d16c842a1e3fed495e8f862d9984666c5dd8270f49fb94";
+
 fn assert_golden(
     name: &str,
     frozen: Option<(&str, &str, &str, &str, &str)>,
@@ -264,4 +280,40 @@ fn task_prompt_renderer_same_snapshot_100x_byte_determinism() {
         assert_eq!(first.bundle["bundle_hash"], again.bundle["bundle_hash"]);
         assert_eq!(first.bundle["context_hash"], again.bundle["context_hash"]);
     }
+
+/// TP-11G 2a-P0-B：manifest_hash 漂移守卫（无声漂移 → 可操作早期失败）。
+///
+/// manifest.json 的任何变更都会经 build.rs 改变 ROLE_PROMPTS_MANIFEST_SHA256，
+/// 进而传播到全部 7 个 golden 的 context_hash/bundle_hash（2026-10-15 37c825b
+/// 实证）。序断言在第一个 golden panic 即中止，后续漂移被掩盖。本守卫在任何
+/// golden 断言之前失败，把无声漂移变成可操作早期失败。
+#[test]
+fn task_prompt_golden_manifest_hash_drift_guard() {
+    assert_eq!(
+        ROLE_PROMPTS_MANIFEST_SHA256,
+        GOLDEN_MANIFEST_HASH_AT_FREEZE,
+        "manifest 已变更 → 须同步重冻结全部 7 个 golden \
+         （policy/body/prompt 不变、context/bundle 变是 manifest-only 正常形态）；\
+         流程：GOLDEN_* 置 None → print_unfrozen_values 取新值 → 更新 7 常量 \
+         + GOLDEN_MANIFEST_HASH_AT_FREEZE"
+    );
+}
+}
+
+/// TP-11G 2a-P0-B：manifest_hash 漂移守卫（无声漂移 → 可操作早期失败）。
+///
+/// manifest.json 的任何变更都会经 build.rs 改变 ROLE_PROMPTS_MANIFEST_SHA256，
+/// 进而传播到全部 7 个 golden 的 context_hash/bundle_hash（2026-10-15 37c825b
+/// 实证）。序断言在第一个 golden panic 即中止，后续漂移被掩盖。本守卫在任何
+/// golden 断言之前失败，把无声漂移变成可操作早期失败。
+#[test]
+fn task_prompt_golden_manifest_hash_drift_guard() {
+    assert_eq!(
+        ROLE_PROMPTS_MANIFEST_SHA256,
+        GOLDEN_MANIFEST_HASH_AT_FREEZE,
+        "manifest 已变更 → 须同步重冻结全部 7 个 golden \
+         （policy/body/prompt 不变、context/bundle 变是 manifest-only 正常形态）；\
+         流程：GOLDEN_* 置 None → print_unfrozen_values 取新值 → 更新 7 常量 \
+         + GOLDEN_MANIFEST_HASH_AT_FREEZE"
+    );
 }
