@@ -298,6 +298,29 @@ pub mod windows {
     };
     use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
 
+    /// TP-11G 2b 验收修复：HANDLE RAII guard（句柄生命周期纪律化）。
+    ///
+    /// call() 重排把 JSON 解析移入句柄存活窗口后，`?` 早退路径曾泄漏句柄
+    /// （关屿验收阻断 1：合法帧 + 畸形 JSON，client 驻留 MCP 长进程内累积
+    /// → 资源耗尽）。6 处手动 close 收敛为 Drop 单点，防未来重排再漏——
+    /// 与 CancelIoEx 死锁修复（2204315 改动 2）同属句柄生命周期纪律。
+    struct RawHandleGuard(HANDLE);
+
+    impl RawHandleGuard {
+        fn new(handle: HANDLE) -> Self {
+            Self(handle)
+        }
+        fn raw(&self) -> HANDLE {
+            self.0
+        }
+    }
+
+    impl Drop for RawHandleGuard {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
     /// Windows Named Pipe RPC Client。
     #[derive(Debug, Clone)]
     pub struct WindowsDaemonRpcClient {
@@ -451,12 +474,15 @@ pub mod windows {
                     source: std::io::Error::last_os_error(),
                 });
             }
+            // RAII：自此刻起句柄由 guard 持有，任何路径退出（含 `?` 早退）自动关闭。
+            // （2b 验收阻断 1 修复：解析前移后畸形 JSON 的 `?` 早退曾泄漏句柄。）
+            let handle = RawHandleGuard::new(handle);
 
             // 5. 发送请求帧
             let mut written: u32 = 0;
             let ok_write = unsafe {
                 WriteFile(
-                    handle,
+                    handle.raw(),
                     frame.as_ptr(),
                     frame.len() as u32,
                     &mut written,
@@ -464,7 +490,6 @@ pub mod windows {
                 )
             };
             if ok_write == 0 {
-                unsafe { CloseHandle(handle) };
                 return Err(ClientError::ConnectFailed {
                     path: self.pipe_name.clone(),
                     source: std::io::Error::last_os_error(),
@@ -478,10 +503,9 @@ pub mod windows {
                 let mut n: u32 = 0;
                 let ptr = unsafe { header.as_mut_ptr().add(header_read as usize) };
                 let ok = unsafe {
-                    ReadFile(handle, ptr, 4 - header_read, &mut n, std::ptr::null_mut())
+                    ReadFile(handle.raw(), ptr, 4 - header_read, &mut n, std::ptr::null_mut())
                 };
                 if ok == 0 || n == 0 {
-                    unsafe { CloseHandle(handle) };
                     return Err(ClientError::ConnectFailed {
                         path: self.pipe_name.clone(),
                         source: std::io::Error::new(
@@ -494,7 +518,6 @@ pub mod windows {
             }
             let resp_len = u32::from_be_bytes(header) as usize;
             if resp_len > self.max_message_bytes {
-                unsafe { CloseHandle(handle) };
                 return Err(ClientError::Protocol(
                     super::super::protocol::ProtocolError::MessageTooLarge {
                         actual: resp_len,
@@ -509,7 +532,7 @@ pub mod windows {
                 let ptr = unsafe { resp.as_mut_ptr().add(resp_read as usize) };
                 let ok = unsafe {
                     ReadFile(
-                        handle,
+                        handle.raw(),
                         ptr,
                         (resp_len as u32) - resp_read,
                         &mut n,
@@ -517,7 +540,6 @@ pub mod windows {
                     )
                 };
                 if ok == 0 || n == 0 {
-                    unsafe { CloseHandle(handle) };
                     return Err(ClientError::ConnectFailed {
                         path: self.pipe_name.clone(),
                         source: std::io::Error::new(
@@ -529,23 +551,18 @@ pub mod windows {
                 resp_read += n;
             }
 
-            // 7. 解析响应（前移到 CloseHandle 之前：归属交叉校验需要
-            //    result.pid 与**存活句柄**——句柄关闭后 creator 查询即失效）
+            // 7. 解析响应（前移到句柄关闭之前：归属交叉校验需要
+            //    result.pid 与**存活句柄**——句柄关闭后 creator 查询即失效。
+            //    早退路径由 RawHandleGuard::drop 兜底关闭，不再泄漏。）
             let parsed: Value = serde_json::from_slice(&resp)
                 .map_err(|e| ClientError::Protocol(super::super::protocol::ProtocolError::Other(
                     format!("响应 JSON 解析失败: {}", e),
                 )))?;
 
-            // 8. TP-11G 2b 层 4：ping 归属交叉校验（句柄存活窗口内查询创建者）。
-            //    失配路径自行 CloseHandle 后返回；正常路径落到统一 CloseHandle。
-            if let Err(e) = Self::verify_pipe_creator_attribution(handle, method, &parsed) {
-                unsafe { CloseHandle(handle) };
-                return Err(e);
-            }
+            // 8. TP-11G 2b 层 4：ping 归属交叉校验（句柄存活窗口内查询创建者）
+            Self::verify_pipe_creator_attribution(handle.raw(), method, &parsed)?;
 
-            unsafe { CloseHandle(handle) };
-
-            // 9. 解析 RPC 结果
+            // 9. 解析 RPC 结果（guard Drop 于作用域退出时统一关闭句柄）
             parse_rpc_response(&parsed).map_err(ClientError::Remote)
         }
 
@@ -2379,6 +2396,41 @@ mod windows_attribution_tests {
         let client = WindowsDaemonRpcClient::new(&name);
         let result = client.call("ping", json!({})).expect("诚实 pid 应通过交叉校验");
         assert_eq!(result["pid"].as_u64(), Some(creator as u64));
+        let _ = jh.join();
+    }
+
+    #[test]
+    fn test_malformed_json_early_return_no_leak() {
+        // 2b 验收阻断 1 的回归：合法帧 + 畸形 JSON → Protocol 错误 `?` 早退。
+        // 修复前该路径泄漏句柄（guard Drop 现已兜底——句柄关闭是结构性保证，
+        // 本用例锁定的是早退路径的行为形态：不挂起、返回 Protocol 错误）。
+        let name = isotest_name("badjson");
+        let jh = {
+            let name = name.clone();
+            std::thread::spawn(move || {
+            let h = create_pipe_sync(&name);
+            if unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) } == 0 {
+                let e = unsafe { GetLastError() };
+                if e != 535 {
+                    unsafe { CloseHandle(h) };
+                    return;
+                }
+            }
+            let _frame = read_frame_sync(h);
+            write_frame_sync(h, b"{not-json"); // 帧长正确 + payload 畸形
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            unsafe { DisconnectNamedPipe(h) };
+            unsafe { CloseHandle(h) };
+            })
+        };
+        let client = WindowsDaemonRpcClient::new(&name);
+        let err = client
+            .call("ping", json!({}))
+            .expect_err("畸形 JSON 应报协议错误");
+        assert!(
+            matches!(err, ClientError::Protocol(_)),
+            "应为 Protocol 错误，实际 {err:?}"
+        );
         let _ = jh.join();
     }
 }
