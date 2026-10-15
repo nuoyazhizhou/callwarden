@@ -940,7 +940,8 @@ pub fn normalize_path_key(path: &str) -> String {
 /// - require_file=false：要求是目录
 ///
 /// Unix：文件 st_uid == peer_uid（root 跳过）
-/// Windows：文件 owner SID == 当前用户 SID（Administrators 跳过）；
+/// Windows：文件 owner SID == 当前用户 SID；当前**进程令牌**中 BUILTIN\Administrators
+/// 处于**启用**状态时跳过（等价 Unix root 跳过；UAC 过滤令牌中该 SID 为 deny-only，不豁免）。
 /// 命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
 pub fn validate_owned_path(
     path: &str,
@@ -1000,14 +1001,21 @@ pub fn validate_owned_path_any(path: &str, peer_uid: u32) -> Result<String, Daem
 
     // Windows SID ACL 检查（Req 14.9：对端令牌 SID 与文件 owner SID 比较）
     // 命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
-    // Administrators 组成员跳过（等价 Unix root 跳过）。
+    // 当前**进程令牌**中 BUILTIN\Administrators 处于**启用**状态时跳过
+    // （等价 Unix root 跳过；UAC 过滤令牌中该 SID 为 deny-only，不豁免）。
+    //
+    // #63 / F-OWNER-01 契约：这里的比较恒为 `file_owner_sid != peer_sid → 拒绝`（严格相等）。
+    // Windows runner 红 10 例的成因不是这条比较写错，而是「属主来自环境（如 Administrators 组）」
+    // 叠加「admin 判定失效不可知」。放宽为「owner 是 peer 所属组则放行」会引入新放行面
+    // （owner=Users/Guests/Authenticated Users/Everyone 时 owner-only 边界实质失效），已被安全域否决。
     #[cfg(not(unix))]
     {
         let _ = peer_uid; // Windows 不使用 Unix UID
         // #63 / F-OWNER-01 P1-1：探测失败必须可观测（告警），且仍按非 admin 继续走严格比较，
         // fail-closed 方向不变（原来是静默 false，现在只是把「为什么是 false」暴露出来）。
-        let admin = match probe_admin_membership() {
-            Ok(v) => v,
+        let admin_probe = probe_admin_membership();
+        let admin = match &admin_probe {
+            Ok(v) => *v,
             Err(reason) => {
                 eprintln!(
                     "[warn] workspace 属主校验：探测 Administrators 启用状态失败，\
@@ -1028,9 +1036,21 @@ pub fn validate_owned_path_any(path: &str, peer_uid: u32) -> Result<String, Daem
                 )
             })?;
             if file_owner_sid != peer_sid {
+                // #63 / F-OWNER-01 P1-2：拒绝信息补「定性 + 处置提示」，让用户可自助，
+                // 而不是只拿到两个无从下手的 SID。**比较逻辑本身不变**（仍为严格相等，
+                // 不引入组放行/白名单）。
+                let owner_kind = if file_owner_sid.starts_with("S-1-5-32-") {
+                    "owner 为组 SID"
+                } else {
+                    "owner 为其他主体 SID"
+                };
                 return Err(DaemonRpcError::new(
                     "path_forbidden",
-                    format!("路径 owner_sid={}，peer_sid={}", file_owner_sid, peer_sid),
+                    format!(
+                        "路径 owner_sid={}，peer_sid={}（{}，属主校验按严格相等执行；\
+                         admin_probe={:?}；可在提权会话中运行，或用 takeown 将属主改为当前用户）",
+                        file_owner_sid, peer_sid, owner_kind, admin_probe
+                    ),
                 ));
             }
         }
