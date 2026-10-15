@@ -1087,7 +1087,11 @@ fn check_path_owner(real_path_str: &str, peer_uid: u32) -> Result<(), DaemonRpcE
                 // **这是有意取舍**：命名管道是 loopback + owner-only SDDL（Req 14.18），
                 // 对端已是本机同用户（已授权）进程，泄漏面可忽略；而「为什么按非 admin
                 // 处理」的诊断价值极高 —— #63 正是靠它抓到 CheckTokenMembership 恒失败
-                // （1309，主令牌传给要求 impersonation token 的 API）。勿当作疏漏删掉。
+                // （1309，主令牌传给要求 impersonation token 的 API）。
+                //
+                // 更硬的保留理由（关屿）：**当初若把它判定成「泄露内部细节」删掉，
+                // 我们今天连根因都拿不到**。这不是「风险可接受」的消极判断，
+                // 而是诊断价值**已兑现**的实证。勿当作疏漏删掉。
                 return Err(DaemonRpcError::new(
                     "path_forbidden",
                     format!(
@@ -5125,6 +5129,10 @@ mod tests {
     ///   CI run 38790144325 正是这样红的，属于「断言比当前代码状态超前一步」）。
     /// - 可复现 fixture：任意 Windows 会话下 `tempfile::tempdir()` 即可；提权态需在提升
     ///   会话或 GH runner 上复现。
+    /// - **反例判读（F-OWNER-02 取证用）**：修好后 runner 上期望 `Ok(true)`（提升 ⇒
+    ///   Administrators 成员启用）。**若仍是 `Ok(false)`，说明 runner 其实并非提升会话**
+    ///   ⇒ 「owner=544 ⇒ 令牌提升」这条推论要回头重审，10 条红的成因也得重判。
+    ///   因此 `[diag] admin=` 这一行**无论如何都要从 runner 上取回**。
     ///
     /// **必须同时打印 canonicalize 前后两个路径**：GH Windows runner 的 `D:\a` ↔ `C:\a`
     /// 是已知 junction 布局，`validate_owned_path_any` 第一步就 canonicalize，
