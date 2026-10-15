@@ -4019,6 +4019,7 @@ mod tests {
     /// 严禁写成 `if result.is_err() { assert_eq!(code, "path_forbidden") }`：那样
     /// 「放行」与「拒绝」都通过，对「是否具备放行能力」零覆盖 —— 流程域（何序）判定为
     /// MASKING，判据是「把这个用例改绿之后，同一个缺陷能不能再次变红」，容错版不能。
+    #[derive(Debug)]
     enum TestPathOwnership {
         SelfOwned,
         GroupOwned(String),
@@ -4053,6 +4054,46 @@ mod tests {
                 "属主探针失败：环境事实不可知，不得静默放行 (path={}): {}",
                 canonical_path, e
             ),
+        }
+    }
+
+    /// #63 / F-OWNER-01 P2：**owner 校验放行契约的唯一落点**（政策只在此定义一份）。
+    ///
+    /// **当前政策：放行 ⟺ SelfOwned。**
+    /// 依据：admin 判定是**结构性失效**的 —— `CheckTokenMembership` 被传入主令牌，
+    /// 而该 API 要求 impersonation token ⇒ 恒失败 `ERROR_NO_IMPERSONATION_TOKEN(1309)`
+    /// ⇒ admin 恒 false ⇒ 生产恒走 `file_owner_sid != peer_sid → 拒绝` 的严格比较
+    /// ⇒ 只有 owner == peer（SelfOwned）才放行，GroupOwned / Alien 一律 fail-closed。
+    ///
+    /// ⚠️ **政策变更只改本函数**，两种情形：
+    /// 1. **F-OWNER-02 修好 admin 判定** ⇒ 提升会话会 skip 属主校验，届时 GroupOwned
+    ///    在**提升**环境也须判为放行（需按 `is_elevated` 分叉 + 双态取证）；
+    /// 2. **产品决策放行 Administrators 白名单** ⇒ `GroupOwned("S-1-5-32-544")` 判为放行。
+    /// 改完必须同步更新 `check_path_owner` 的契约注释。
+    ///
+    /// 为什么必须收敛：政策若散在 N 个用例里，变更时改一处漏一处 ⇒ 同一契约出现 N 个
+    /// 版本，那本身就是 MASKING 温床（关屿 P2，且为 F-OWNER-02 的前置项）。
+    fn ownership_allows(ownership: &TestPathOwnership) -> bool {
+        matches!(ownership, TestPathOwnership::SelfOwned)
+    }
+
+    /// 断言「生产对该属主类别的实际结果」符合契约（三处纯 `validate_owned_path` 用例用）。
+    ///
+    /// 保持**唯一性**：SelfOwned ⇒ 必须放行；非 SelfOwned ⇒ 必须拒绝。
+    /// 不得退化成「两种结果都过」的容错形态。
+    fn assert_ownership_contract(ownership: &TestPathOwnership, allowed: bool, ctx: &str) {
+        if ownership_allows(ownership) {
+            assert!(
+                allowed,
+                "{}: SelfOwned 必须放行（契约：放行 ⟺ SelfOwned），实际被拒",
+                ctx
+            );
+        } else {
+            assert!(
+                !allowed,
+                "{}: 非 SelfOwned（{:?}）当前必须 fail-closed 拒绝（契约：放行 ⟺ SelfOwned）",
+                ctx, ownership
+            );
         }
     }
 
@@ -4700,31 +4741,24 @@ mod tests {
         // #63 / F-OWNER-01 P1-3：先探测环境属主事实，再按类别断言**唯一**结果。
         // 原写法无条件 assert!(is_ok())，隐含前提「tempdir 一定属于当前用户」——
         // 该前提在 Windows runner（属主 = S-1-5-32-544、peer = S-1-5-21-...-500）上不成立。
-        match probe_test_path_ownership(&real, 0) {
-            TestPathOwnership::SelfOwned => assert!(
-                result.is_ok(),
-                "SelfOwned 必须放行，实际被拒: {:?}",
-                result.err()
-            ),
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                let err = result.expect_err("非 SelfOwned 当前必须 fail-closed 拒绝");
-                assert_eq!(err.code, "path_forbidden", "owner={}", sid);
-                // 生产当前对「owner 为组 SID / 其他主体」一律 fail-closed 拒绝。
-                // 若产品决策改为放行 Administrators 白名单，必须同步改本断言
-                // 与 check_path_owner 的契约注释。
-                #[cfg(not(unix))]
-                {
-                    assert!(
-                        err.message.contains("owner_sid="),
-                        "拒绝信息须带 owner_sid=: {}",
-                        err.message
-                    );
-                    assert!(
-                        err.message.contains("peer_sid="),
-                        "拒绝信息须带 peer_sid=: {}",
-                        err.message
-                    );
-                }
+        // 契约断言走唯一落点 ownership_allows()/assert_ownership_contract()，
+        // 政策变更只需改那一个函数，不在这里重复定义。
+        let ownership = probe_test_path_ownership(&real, 0);
+        assert_ownership_contract(&ownership, result.is_ok(), "accepts_existing_directory");
+        if let Err(err) = &result {
+            assert_eq!(err.code, "path_forbidden", "{:?}", ownership);
+            #[cfg(not(unix))]
+            {
+                assert!(
+                    err.message.contains("owner_sid="),
+                    "拒绝信息须带 owner_sid=: {}",
+                    err.message
+                );
+                assert!(
+                    err.message.contains("peer_sid="),
+                    "拒绝信息须带 peer_sid=: {}",
+                    err.message
+                );
             }
         }
     }
@@ -4751,23 +4785,21 @@ mod tests {
         std::fs::write(&file_path, "hello").unwrap();
         let real = canonical_str(file_path.to_str().unwrap());
         let result = validate_owned_path(file_path.to_str().unwrap(), 0, true);
-        match probe_test_path_ownership(&real, 0) {
-            TestPathOwnership::SelfOwned => assert!(
-                result.is_ok(),
-                "SelfOwned 必须放行，实际被拒: {:?}",
-                result.err()
-            ),
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                let err = result.expect_err("非 SelfOwned 当前必须 fail-closed 拒绝");
-                assert_eq!(err.code, "path_forbidden", "owner={}", sid);
-                #[cfg(not(unix))]
-                {
-                    assert!(
-                        err.message.contains("owner_sid="),
-                        "拒绝信息须带 owner_sid=: {}",
-                        err.message
-                    );
-                }
+        let ownership = probe_test_path_ownership(&real, 0);
+        assert_ownership_contract(
+            &ownership,
+            result.is_ok(),
+            "accepts_file_when_file_required",
+        );
+        if let Err(err) = &result {
+            assert_eq!(err.code, "path_forbidden", "{:?}", ownership);
+            #[cfg(not(unix))]
+            {
+                assert!(
+                    err.message.contains("owner_sid="),
+                    "拒绝信息须带 owner_sid=: {}",
+                    err.message
+                );
             }
         }
     }
@@ -5212,49 +5244,46 @@ mod tests {
 
         // #63 / F-OWNER-01 P1-3：tempdir 属主决定 register 能不能成功，
         // 也就决定后面「非 owner 查询被拒」这条链还发不发生。
-        match probe_test_path_ownership(&real, owner_peer.uid) {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(resp["ok"], true, "owner 注册应成功: {:?}", resp);
-                let instance_id = resp["result"]["workspace_instance_id"]
-                    .as_str()
-                    .unwrap()
-                    .to_string();
+        let ownership = probe_test_path_ownership(&real, owner_peer.uid);
+        if ownership_allows(&ownership) {
+            assert_eq!(resp["ok"], true, "owner 注册应成功: {:?}", resp);
+            let instance_id = resp["result"]["workspace_instance_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
 
-                // 用非 owner 尝试 status 查询
-                let other_peer = make_other_peer();
-                let params2 = json!({ "workspace_instance_id": &instance_id });
-                let resp2 =
-                    dispatch(&mut state, other_peer, "workspace.status", &params2, &[]);
-                // 应返回错误（workspace_forbidden）
-                assert_eq!(resp2["ok"], false, "非 owner 应被拒绝: {:?}", resp2);
-                assert_eq!(resp2["error"]["code"].as_str(), Some("workspace_forbidden"));
+            // 用非 owner 尝试 status 查询
+            let other_peer = make_other_peer();
+            let params2 = json!({ "workspace_instance_id": &instance_id });
+            let resp2 = dispatch(&mut state, other_peer, "workspace.status", &params2, &[]);
+            // 应返回错误（workspace_forbidden）
+            assert_eq!(resp2["ok"], false, "非 owner 应被拒绝: {:?}", resp2);
+            assert_eq!(resp2["error"]["code"].as_str(), Some("workspace_forbidden"));
 
-                // 状态不变：owner 仍可查询
-                let resp3 = dispatch(&mut state, owner_peer, "workspace.status", &params2, &[]);
-                assert_eq!(resp3["ok"], true, "owner 状态应不变: {:?}", resp3);
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    resp["ok"], false,
-                    "非 SelfOwned 时注册必须被拒 (owner={}): {:?}",
-                    sid, resp
-                );
-                assert_eq!(resp["error"]["code"].as_str(), Some("path_forbidden"));
-                // 状态不变：注册被拒 ⇒ 一个 workspace 行都没有，任何 peer 都查不到
-                assert_eq!(
-                    state.registry.count_workspaces().unwrap(),
-                    0,
-                    "注册被拒后不应产生任何 workspace 行"
-                );
-                let other_resp = dispatch(
-                    &mut state,
-                    make_other_peer(),
-                    "workspace.status",
-                    &json!({ "workspace_instance_id": "not-registered" }),
-                    &[],
-                );
-                assert_eq!(other_resp["ok"], false, "未注册 ⇒ 任何 peer 都查不到");
-            }
+            // 状态不变：owner 仍可查询
+            let resp3 = dispatch(&mut state, owner_peer, "workspace.status", &params2, &[]);
+            assert_eq!(resp3["ok"], true, "owner 状态应不变: {:?}", resp3);
+        } else {
+            assert_eq!(
+                resp["ok"], false,
+                "非 SelfOwned 时注册必须被拒 ({:?}): {:?}",
+                ownership, resp
+            );
+            assert_eq!(resp["error"]["code"].as_str(), Some("path_forbidden"));
+            // 状态不变：注册被拒 ⇒ 一个 workspace 行都没有，任何 peer 都查不到
+            assert_eq!(
+                state.registry.count_workspaces().unwrap(),
+                0,
+                "注册被拒后不应产生任何 workspace 行"
+            );
+            let other_resp = dispatch(
+                &mut state,
+                make_other_peer(),
+                "workspace.status",
+                &json!({ "workspace_instance_id": "not-registered" }),
+                &[],
+            );
+            assert_eq!(other_resp["ok"], false, "未注册 ⇒ 任何 peer 都查不到");
         }
     }
 
@@ -5373,23 +5402,21 @@ mod tests {
 
         // #63 / F-OWNER-01 P1-3：原用例隐含「tempdir 属主 == 当前 peer」，
         // Windows runner 上该前提不成立（属主 = S-1-5-32-544）⇒ 整批红。
-        match probe_test_path_ownership(&real, peer.uid) {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(response["ok"], true, "SelfOwned 注册应成功: {:?}", response);
-                assert_eq!(response["result"]["owner_uid"], current_uid());
-                assert_eq!(response["result"]["status"], "active");
-                // host_real_root 应该被 canonicalize 处理
-                assert!(response["result"]["host_real_root"].as_str().unwrap().len() > 0);
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    response["ok"], false,
-                    "非 SelfOwned 时注册必须被拒 (owner={}): {:?}",
-                    sid, response
-                );
-                assert_eq!(response["error"]["code"].as_str(), Some("path_forbidden"));
-                assert_eq!(state.registry.count_workspaces().unwrap(), 0);
-            }
+        let ownership = probe_test_path_ownership(&real, peer.uid);
+        if ownership_allows(&ownership) {
+            assert_eq!(response["ok"], true, "SelfOwned 注册应成功: {:?}", response);
+            assert_eq!(response["result"]["owner_uid"], current_uid());
+            assert_eq!(response["result"]["status"], "active");
+            // host_real_root 应该被 canonicalize 处理
+            assert!(response["result"]["host_real_root"].as_str().unwrap().len() > 0);
+        } else {
+            assert_eq!(
+                response["ok"], false,
+                "非 SelfOwned 时注册必须被拒 ({:?}): {:?}",
+                ownership, response
+            );
+            assert_eq!(response["error"]["code"].as_str(), Some("path_forbidden"));
+            assert_eq!(state.registry.count_workspaces().unwrap(), 0);
         }
     }
 
@@ -5408,22 +5435,19 @@ mod tests {
         // #63 / F-OWNER-01 P1-3：先探测属主事实。非 SelfOwned 时注册本身就会被拒，
         // 拿不到 instance_id，后续 status 分支无从发生 —— 断言「注册被拒」这唯一结果。
         let ownership = probe_test_path_ownership(&real, peer.uid);
-        match ownership {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    reg_response["ok"], false,
-                    "非 SelfOwned 注册必须被拒 (owner={}): {:?}",
-                    sid, reg_response
-                );
-                assert_eq!(
-                    reg_response["error"]["code"].as_str(),
-                    Some("path_forbidden")
-                );
-                return;
-            }
+        if ownership_allows(&ownership) {
+            assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
+        } else {
+            assert_eq!(
+                reg_response["ok"], false,
+                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                ownership, reg_response
+            );
+            assert_eq!(
+                reg_response["error"]["code"].as_str(),
+                Some("path_forbidden")
+            );
+            return;
         }
 
         let instance_id = reg_response["result"]["workspace_instance_id"]
@@ -5474,22 +5498,20 @@ mod tests {
         );
         // #63 / F-OWNER-01 P1-3：非 SelfOwned 时注册被 ACL 拒，后续「非 owner 查询
         // 被拒」无从发生；断言「注册被拒」这一唯一结果。
-        match probe_test_path_ownership(&real, peer_owner.uid) {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    reg_response["ok"], false,
-                    "非 SelfOwned 注册必须被拒 (owner={}): {:?}",
-                    sid, reg_response
-                );
-                assert_eq!(
-                    reg_response["error"]["code"].as_str(),
-                    Some("path_forbidden")
-                );
-                return;
-            }
+        let ownership = probe_test_path_ownership(&real, peer_owner.uid);
+        if ownership_allows(&ownership) {
+            assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
+        } else {
+            assert_eq!(
+                reg_response["ok"], false,
+                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                ownership, reg_response
+            );
+            assert_eq!(
+                reg_response["error"]["code"].as_str(),
+                Some("path_forbidden")
+            );
+            return;
         }
         let instance_id = reg_response["result"]["workspace_instance_id"]
             .as_str()
@@ -5526,23 +5548,21 @@ mod tests {
         );
         // #63 / F-OWNER-01 P1-3：非 SelfOwned 时注册被 ACL 拒，拿不到 instance_id，
         // remove/activate 的 owner-only 分支无从发生；断言「注册被拒 + 无 workspace 行」。
-        match probe_test_path_ownership(&real, peer_owner.uid) {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    reg_response["ok"], false,
-                    "非 SelfOwned 注册必须被拒 (owner={}): {:?}",
-                    sid, reg_response
-                );
-                assert_eq!(
-                    reg_response["error"]["code"].as_str(),
-                    Some("path_forbidden")
-                );
-                assert_eq!(state.registry.count_workspaces().unwrap(), 0);
-                return;
-            }
+        let ownership = probe_test_path_ownership(&real, peer_owner.uid);
+        if ownership_allows(&ownership) {
+            assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
+        } else {
+            assert_eq!(
+                reg_response["ok"], false,
+                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                ownership, reg_response
+            );
+            assert_eq!(
+                reg_response["error"]["code"].as_str(),
+                Some("path_forbidden")
+            );
+            assert_eq!(state.registry.count_workspaces().unwrap(), 0);
+            return;
         }
         let instance_id = reg_response["result"]["workspace_instance_id"]
             .as_str()
@@ -5601,26 +5621,24 @@ mod tests {
         );
 
         // health 统计与注册结果强绑定：属主决定注册能不能成功，也就决定 count。
-        match probe_test_path_ownership(&real1, peer.uid) {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(r1["ok"], true, "{:?}", r1);
-                assert_eq!(r2["ok"], true, "{:?}", r2);
-                let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
-                assert_eq!(response["ok"], true);
-                assert_eq!(response["result"]["workspace_count"], 2);
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    r1["ok"], false,
-                    "非 SelfOwned 注册必须被拒 (owner={}): {:?}",
-                    sid, r1
-                );
-                assert_eq!(r1["error"]["code"].as_str(), Some("path_forbidden"));
-                assert_eq!(r2["ok"], false, "{:?}", r2);
-                let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
-                assert_eq!(response["ok"], true);
-                assert_eq!(response["result"]["workspace_count"], 0);
-            }
+        let ownership = probe_test_path_ownership(&real1, peer.uid);
+        if ownership_allows(&ownership) {
+            assert_eq!(r1["ok"], true, "{:?}", r1);
+            assert_eq!(r2["ok"], true, "{:?}", r2);
+            let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
+            assert_eq!(response["ok"], true);
+            assert_eq!(response["result"]["workspace_count"], 2);
+        } else {
+            assert_eq!(
+                r1["ok"], false,
+                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                ownership, r1
+            );
+            assert_eq!(r1["error"]["code"].as_str(), Some("path_forbidden"));
+            assert_eq!(r2["ok"], false, "{:?}", r2);
+            let response = dispatch(&mut state, peer, "health", &json!({}), &[]);
+            assert_eq!(response["ok"], true);
+            assert_eq!(response["result"]["workspace_count"], 0);
         }
     }
 
@@ -5675,22 +5693,20 @@ mod tests {
         );
         // #63 / F-OWNER-01 P1-3：owner 侧 2 行能否注册成功取决于属主事实，
         // 故 list 长度也按属主分支断言唯一值（other 那 1 行是直接注入的，与属主无关）。
-        let owner_ws_count = match probe_test_path_ownership(&real1, owner_uid) {
-            TestPathOwnership::SelfOwned => {
-                assert_eq!(reg1["ok"], true, "{:?}", reg1);
-                assert_eq!(reg2["ok"], true, "{:?}", reg2);
-                2
-            }
-            TestPathOwnership::GroupOwned(sid) | TestPathOwnership::Alien(sid) => {
-                assert_eq!(
-                    reg1["ok"], false,
-                    "非 SelfOwned 注册必须被拒 (owner={}): {:?}",
-                    sid, reg1
-                );
-                assert_eq!(reg1["error"]["code"].as_str(), Some("path_forbidden"));
-                assert_eq!(reg2["ok"], false, "{:?}", reg2);
-                0
-            }
+        let ownership = probe_test_path_ownership(&real1, owner_uid);
+        let owner_ws_count = if ownership_allows(&ownership) {
+            assert_eq!(reg1["ok"], true, "{:?}", reg1);
+            assert_eq!(reg2["ok"], true, "{:?}", reg2);
+            2
+        } else {
+            assert_eq!(
+                reg1["ok"], false,
+                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                ownership, reg1
+            );
+            assert_eq!(reg1["error"]["code"].as_str(), Some("path_forbidden"));
+            assert_eq!(reg2["ok"], false, "{:?}", reg2);
+            0
         };
 
         // other_uid 不拥有任何 tempdir，无法通过 dispatch 的 path ACL 检查。
