@@ -833,8 +833,15 @@ mod tests {
 
     #[test]
     fn enterprise_params_include_generation_and_trusted_hash_input() {
+        // TP-11G P1-D（CI Linux 红根因）：路径分隔符是平台相关的——Windows 的
+        // Path 组件认反斜杠，POSIX 不认（反斜杠在 POSIX 是合法文件名字符）。
+        // 原测试硬喂 Windows 风格 "src\lib.rs" 期望 "src/lib.rs"，Linux 上
+        // normalize_rel_path 的 Path 组件不拆分反斜杠 → 必红（纯测试可移植性
+        // 缺陷，非生产问题：生产 rel_path 由 refresh_one_local 从 canonical
+        // 路径剥离产生，已是当前平台形态）。喂当前平台的分隔符形态，断言不变。
+        let input_rel = if cfg!(windows) { "src\\lib.rs" } else { "src/lib.rs" };
         let params =
-            build_enterprise_refresh_params("ws-1", "src\\lib.rs", "session-1", 4, 9, b"abc");
+            build_enterprise_refresh_params("ws-1", input_rel, "session-1", 4, 9, b"abc");
         assert_eq!(params["workspace_instance_id"], "ws-1");
         assert_eq!(params["rel_path"], "src/lib.rs");
         assert_eq!(params["agent_session_id"], "session-1");
