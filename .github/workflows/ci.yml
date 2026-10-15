@@ -361,6 +361,10 @@ jobs:
         # 全线程栈定位而非静默挂满 timeout。
         run: |
           python -m pip install pytest
+          # conftest 导入 callwarden 包（CI 三跑实证：缺此步则
+          # ModuleNotFoundError: No module named 'callwarden'）——装基础包
+          # 及基础依赖（不拉 [all]/torch extras，本组用例不需要）。
+          python -m pip install -e .
           python -u -m pytest tests/test_tp49_false_positive_probe.py tests/test_tp11g_d5_creator_crosscheck.py -q -o faulthandler_timeout=90
 
   rust-unit-test-windows-workspace:
