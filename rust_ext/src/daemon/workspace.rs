@@ -4919,36 +4919,49 @@ mod tests {
         );
     }
 
-    /// owner = Administrators 组 SID (S-1-5-32-544) ⇒ 按当前产品语义必须拒绝
+    /// owner ≠ 当前 peer SID ⇒ 按当前产品语义必须拒绝（**确定性负向 fixture**）
     ///
-    /// #63 / F-OWNER-01：产品决策（是否承认「owner 是 Administrators 组 = 合法属主」
-    /// 并放行）**尚未拍板**，已由主理人上报用户。拍板前按当前生产语义断言：
-    /// 必须 Err 且 code == path_forbidden（生产当前 fail-closed）。
+    /// #63 / F-OWNER-01 实施记录（重要，别再走一遍弯路）：
+    /// 本卡原计划显式把属主构造成 Administrators 组 SID (S-1-5-32-544)。
+    /// **实测不可行**：非提权会话下调 SetNamedSecurityInfoW 把属主设为**组 SID**
+    /// 一律返回 ERROR_INVALID_OWNER(1307) —— Windows 只允许把属主设为「调用方
+    /// 令牌中的**用户** SID」，设为组 SID 需要 SeRestorePrivilege。
+    /// 已实测两个别名组（Administrators=544、Users=545）均以同一错误失败。
+    ///
+    /// 因此改用**只读系统目录**（%SystemRoot%，属主恒为 TrustedInstaller
+    /// `S-1-5-80-...`，与当前用户必然不同）作为「属主不是我」的负向 fixture：
+    /// 不需要任何特权，全 Windows 确定性，且不涉及任何写操作。
+    /// runner 上的真实形态（属主 = Administrators 组 S-1-5-32-544）由那批
+    /// **环境分支断言**覆盖 —— GroupOwned ⇒ path_forbidden，它们在 runner 上会真的跑到。
+    ///
+    /// 产品决策（是否承认「owner 是 peer 所属组 = 合法属主」并放行）**尚未拍板**，
+    /// 已由主理人上报用户。拍板前按当前生产语义断言：必须 Err 且 code == path_forbidden。
     /// **断言值由产品决策决定，不由「让它先绿起来」决定。**
-    ///
-    /// 若产品决策改为放行 Administrators 白名单（单 SID S-1-5-32-544 +
-    /// CheckTokenMembership 返回 TRUE 以排除 deny-only），必须同步改本断言
-    /// 与 check_path_owner 的契约注释。
     #[cfg(not(unix))]
     #[test]
-    fn test_validate_owned_path_owner_is_peer_group() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let real = canonical_str(path);
+    fn test_validate_owned_path_rejects_dir_owned_by_other_principal() {
+        let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        let owner = get_file_owner_sid(&sys_root)
+            .unwrap_or_else(|e| panic!("读取系统目录 {} 属主失败: {}", sys_root, e));
+        let me = crate::daemon::peercred::get_current_user_sid().unwrap();
+        // fixture 自检：负向 fixture 的前提是「属主确实不是我」，否则断言验的不是这个事实
+        assert_ne!(
+            owner, me,
+            "fixture 失效：系统目录 {} 的属主就是当前用户，不能作为负向 fixture",
+            sys_root
+        );
 
-        set_file_owner_or_panic(&real, "S-1-5-32-544");
-        // fixture 自检：确认 owner 确实已是组 SID，否则后面的断言验的就不是这个事实
-        match probe_path_ownership(&real) {
-            Ok(PathOwnership::GroupOwned(sid)) => assert_eq!(sid, "S-1-5-32-544"),
-            other => panic!("fixture 未把 owner 设为组 SID，实际探测: {:?}", other),
-        }
-
-        let result = validate_owned_path(path, 0, false);
-        let err = result.expect_err("owner 为组 SID 时生产当前必须 fail-closed 拒绝");
+        let result = validate_owned_path(&sys_root, 0, false);
+        let err = result.expect_err("owner ≠ peer 时生产当前必须 fail-closed 拒绝");
         assert_eq!(err.code, "path_forbidden");
         assert!(
-            err.message.contains("owner_sid=S-1-5-32-544"),
+            err.message.contains(&format!("owner_sid={}", owner)),
             "拒绝信息须带实际 owner_sid: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("peer_sid="),
+            "拒绝信息须带 peer_sid: {}",
             err.message
         );
     }
@@ -5093,6 +5106,16 @@ mod tests {
         eprintln!("[diag] path           = {}", env.path);
         eprintln!("[diag] canonicalized  = {}", env.canonicalized);
         eprintln!("[diag] reparse_diff   = {}", env.reparse_differs);
+        // 注意：Windows 上 std::fs::canonicalize 恒加 `\\?\` 前缀，故 reparse_differs
+        // 为 true 属**正常**，不代表重解析；真正的「被重解析到别处」要看剥掉前缀后的
+        // 路径**主体**是否变化 —— 那才是候选成因 (b)/(c) 的判据。
+        let strip_verbatim = |s: &str| s.strip_prefix(r"\\?\").unwrap_or(s).to_string();
+        let body_differs =
+            strip_verbatim(&env.path) != strip_verbatim(&env.canonicalized);
+        eprintln!(
+            "[diag] reparse_body_diff = {}（剥掉 \\\\?\\ 前缀后的主体比较；true 才是真重解析）",
+            body_differs
+        );
         eprintln!(
             "[diag] owner          = {} (is_group={})",
             env.owner_sid, env.owner_is_group
