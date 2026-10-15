@@ -319,10 +319,10 @@ pub fn is_daemon_available_py(socket_path: &str, platform: &str) -> bool {
         );
         if platform == "linux"
             && host != "linux"
-            && socket_path
-                .replace('\\', "/")
-                .to_ascii_lowercase()
+            && (socket_path.replace('\\', "/").to_ascii_lowercase()
                 .starts_with("//./pipe/")
+                || socket_path.replace('\\', "/").to_ascii_lowercase()
+                    .starts_with("//?/pipe/"))
         {
             eprintln!(
                 "[callwarden] REFUSED: linux availability semantics on non-linux host against a pipe-shaped endpoint — contact destroys pipe instances"
@@ -583,6 +583,18 @@ mod tests {
         std::fs::write(&tmp, b"x").unwrap();
         assert!(is_daemon_available_py(tmp.to_str().unwrap(), "linux"));
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_tp49_pywrapper_refuses_verbatim_pipe_semantics() {
+        // 关屿验收 P2：verbatim 前缀 `\\?\pipe\` 归一后为 `//?/pipe/`，
+        // 原 matcher 只认 `//./pipe/` → verbatim 形态绕过 guard 落入
+        // linux exists()（属性类打开，对管道同样接触即破坏——语义推导
+        // 待 tp11g 实测验证，guard 先行封死）。扩展 matcher 后：
+        // verbatim 管道形态 + linux 语义 → 拒绝 false。
+        let verbatim = r"\\?\pipe\callwarden-isotest-verbatim-tp49";
+        assert!(!is_daemon_available_py(verbatim, "linux"));
     }
 
     #[test]
