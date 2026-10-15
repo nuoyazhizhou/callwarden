@@ -362,9 +362,26 @@ jobs:
         run: |
           python -m pip install pytest
           # conftest 导入 callwarden 包（CI 三跑实证：缺此步则
-          # ModuleNotFoundError: No module named 'callwarden'）——装基础包
-          # 及基础依赖（不拉 [all]/torch extras，本组用例不需要）。
-          python -m pip install -e .
+          # ModuleNotFoundError: No module named 'callwarden'）。
+          #
+          # 必须 --no-deps：默认 `pip install -e .` 会解析 pyproject 的
+          # dependencies（含 semgrep>=1.50），windows-latest 上 semgrep 无
+          # 可用 wheel → 走 sdist 构建 → 实测失败：
+          #   ERROR: Failed to build 'semgrep' when getting requirements to build wheel
+          # 进而包没装上，报 No module named 'callwarden'（run 38752482872）。
+          #
+          # --no-deps 安全性已逐条核验（不靠推断）：本组两个用例的导入链
+          # 只触及 callwarden.config / db.db_base / server.daemon_client，
+          # 其模块级导入全为 stdlib + 包内模块；唯一第三方 pathspec 位于
+          # analyzers/ignore_spec.py 的 try/except ImportError 内（可降级）。
+          # 本机干净 venv（仅 pytest + `pip install -e . --no-deps`）实证：
+          # 7 passed in 3.68s。故不装 semgrep/numpy/mcp/watchdog 是正确的，
+          # 而非「恰好跑过」。
+          #
+          # 注：本 job 只需 callwarden 包内上述纯 Python 模块，不需要
+          # callwarden_core.pyd（setup.py 的 ext_modules 为 sources=[] 的
+          # 预构建桩，--no-deps 不触发 Rust 编译）。
+          python -m pip install -e . --no-deps
           python -u -m pytest tests/test_tp49_false_positive_probe.py tests/test_tp11g_d5_creator_crosscheck.py -q -o faulthandler_timeout=90
 
   rust-unit-test-windows-workspace:
