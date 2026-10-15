@@ -180,7 +180,12 @@ pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
 #[cfg(windows)]
 fn windows_endpoint_available(socket_path: &Path) -> bool {
     let raw = socket_path.to_string_lossy();
-    if raw.starts_with(r"\\.\pipe\") || raw.replace('\\', "/").starts_with("//./pipe/") {
+    // 前缀匹配对 ASCII 大小写不敏感（TP-48 复核信息项）：Win32 管道名本身
+    // 不区分大小写，运维配置 `\\.\PIPE\foo` 与 `\\.\pipe\foo` 语义等价，都应
+    // 进分支 1。原先大写形态静默落分支 3 → false，是「忽略显式端点」缺陷的
+    // 残留形态。探测时仍传原始形态（WaitNamedPipeW 大小写不敏感）。
+    let normalized = raw.replace('\\', "/").to_ascii_lowercase();
+    if normalized.starts_with("//./pipe/") {
         return wait_named_pipe(&raw);
     }
     if socket_path == Path::new(DEFAULT_DAEMON_SOCKET) {
@@ -419,6 +424,99 @@ mod tests {
             windows_named_pipe_available(),
             "未显式配置（Unix 默认路径）时保留默认管道探测，保 Windows 生产行为"
         );
+    }
+
+    // ============================================================
+    // TP-48 N-a（何序复核）：分支 1（显式管道路径）真实注入测试。
+    // 4 个原失败用例全走分支 3（fail-closed），分支 1 此前零覆盖。
+    // 起真实管道服务端验证「探测的是注入管道本身」，Q11 注入终态落地。
+    // 仅 Windows 编译；Linux 上不存在（不计 skip）。
+    // ============================================================
+
+    /// 起一次性命名管道服务端（默认安全属性即可——测试不需要 daemon 的
+    /// SDDL 隔离，只要名字存在且处于 listening 态，WaitNamedPipeW 即命中）。
+    #[cfg(windows)]
+    fn spawn_pipe_server(pipe_name: &str) -> windows_sys::Win32::Foundation::HANDLE {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
+        };
+        use windows_sys::Win32::System::Pipes::{CreateNamedPipeW, PIPE_TYPE_BYTE, PIPE_WAIT};
+
+        let wide: Vec<u16> = pipe_name.encode_utf16().chain(Some(0)).collect();
+        let handle = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_WAIT,
+                1, // 单实例：本测试独占
+                1024,
+                1024,
+                0, // 默认超时
+                std::ptr::null(),
+            )
+        };
+        assert_ne!(
+            handle, INVALID_HANDLE_VALUE,
+            "CreateNamedPipeW 失败: {pipe_name}"
+        );
+        handle
+    }
+
+    #[cfg(windows)]
+    fn unique_pipe_name(tag: &str) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!(
+            r"\\.\pipe\callwarden-test-{}-{}-{}",
+            tag,
+            std::process::id(),
+            nanos
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_tp48_branch1_explicit_pipe_probed_not_bypassed() {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
+        let pipe_name = unique_pipe_name("b1");
+        let server = spawn_pipe_server(&pipe_name);
+
+        // 分支 1：显式管道路径 → 探测**该管道**（listening 实例在）→ true。
+        assert!(
+            is_daemon_available(Path::new(&pipe_name), "windows"),
+            "显式管道路径必须探测该管道本身"
+        );
+
+        // 大写前缀形态 `\\.\PIPE\` 也必须走分支 1（大小写不敏感匹配）→ true。
+        // 若静默落分支 3（fail-closed）会得到 false，本断言即失败。
+        let upper = pipe_name.replacen(r"\\.\pipe\", r"\\.\PIPE\", 1);
+        assert!(
+            is_daemon_available(Path::new(&upper), "windows"),
+            "大写 PIPE 前缀必须被识别为管道路径（Win32 管道名大小写不敏感）"
+        );
+
+        // 服务端销毁 → 管道名消失 → false。若实现仍旁路默认管道（旧缺陷），
+        // 本机真实 daemon 会让它得到 true，本断言即失败——同时证明密闭。
+        unsafe {
+            CloseHandle(server);
+        }
+        assert!(
+            !is_daemon_available(Path::new(&pipe_name), "windows"),
+            "管道销毁后必须不可用（证明探测的是注入管道而非默认管道）"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_tp48_branch1_nonexistent_pipe_fails_closed() {
+        // 从未存在的管道名 → ERROR_FILE_NOT_FOUND → 立即 false（不触发 5s 等待）。
+        let missing = unique_pipe_name("missing");
+        assert!(!is_daemon_available(Path::new(&missing), "windows"));
     }
 
     #[test]
