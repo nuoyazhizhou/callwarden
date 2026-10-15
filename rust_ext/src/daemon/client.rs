@@ -61,6 +61,8 @@ pub enum ClientError {
     Protocol(#[from] super::protocol::ProtocolError),
     #[error("远端错误: {0}")]
     Remote(#[from] super::protocol::DaemonRemoteError),
+    #[error("管道归属交叉校验失败（拒绝服务：Unavailable 优于错误归属）: ping.daemon_pid={daemon_pid} != 管道创建者 pid={creator_pid}，当前连接落在非创建者实例上（共存检出）")]
+    AttributionMismatch { daemon_pid: u32, creator_pid: u32 },
 }
 
 // ============================================
@@ -294,7 +296,7 @@ pub mod windows {
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
-    use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+    use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
 
     /// Windows Named Pipe RPC Client。
     #[derive(Debug, Clone)]
@@ -326,6 +328,58 @@ pub mod windows {
             self
         }
 
+        /// TP-11G 2b 层 4（Rust 镜像，与 Python daemon_client 对称）：ping 响应
+        /// daemon_pid 与管道创建者交叉校验。
+        ///
+        /// §A7 实测（2/2）：`GetNamedPipeServerProcessId` 对 client/server 句柄
+        /// 均返回**管道最初创建者** PID，与句柄类型无关。不变量：daemon_pid
+        /// （ping 响应现成字段，dispatch.rs:275）== 创建者。
+        /// - 失配 → `AttributionMismatch`（fail-closed：Unavailable 优于错误归属）
+        /// - 查询不可得 → 告警放行（stage 区分 query_failed/no_capability），
+        ///   由服务端层 3 与 D5 回归兜底
+        /// - 响应无 pid 字段（旧版本 daemon）→ 无从校验，放行
+        fn verify_pipe_creator_attribution(
+            handle: HANDLE,
+            method: &str,
+            response: &Value,
+        ) -> Result<(), ClientError> {
+            if method != "ping" {
+                return Ok(()); // 仅 ping 携带 pid 字段
+            }
+            let daemon_pid = response
+                .get("result")
+                .and_then(|r| r.get("pid"))
+                .and_then(|p| p.as_u64());
+            let daemon_pid = match daemon_pid {
+                Some(p) if p > 0 && p <= u32::MAX as u64 => p as u32,
+                _ => return Ok(()),
+            };
+            let mut creator: u32 = 0;
+            let ok = unsafe { GetNamedPipeServerProcessId(handle, &mut creator) };
+            if ok == 0 {
+                let err = std::io::Error::last_os_error();
+                eprintln!(
+                    "[cw_client] [WARN] [TP-11G 2b 层4] creator 查询不可得 \
+                     (query_failed, err={err})，告警放行：由服务端层 3 兜底"
+                );
+                return Ok(());
+            }
+            if creator == 0 {
+                eprintln!(
+                    "[cw_client] [WARN] [TP-11G 2b 层4] creator 不可得 \
+                     (no_capability)，告警放行：由服务端层 3 兜底"
+                );
+                return Ok(());
+            }
+            if creator != daemon_pid {
+                return Err(ClientError::AttributionMismatch {
+                    daemon_pid,
+                    creator_pid: creator,
+                });
+            }
+            Ok(())
+        }
+
         /// 调用 RPC 方法。
         ///
         /// 流程：
@@ -334,6 +388,7 @@ pub mod windows {
         /// 3. 发送 `[4 字节大端长度][JSON 请求]` 帧
         /// 4. 读取 `[4 字节大端长度][JSON 响应]` 帧
         /// 5. `parse_rpc_response` 解析响应
+        /// 6. ping 归属交叉校验（TP-11G 2b 层 4，见 verify_pipe_creator_attribution）
         pub fn call(&self, method: &str, params: Value) -> Result<Value, ClientError> {
             // 1. 构建请求帧：{method, params} → [4 字节大端长度][JSON]
             let request = build_request(method, params);
@@ -473,13 +528,24 @@ pub mod windows {
                 }
                 resp_read += n;
             }
-            unsafe { CloseHandle(handle) };
 
-            // 7. 解析响应
+            // 7. 解析响应（前移到 CloseHandle 之前：归属交叉校验需要
+            //    result.pid 与**存活句柄**——句柄关闭后 creator 查询即失效）
             let parsed: Value = serde_json::from_slice(&resp)
                 .map_err(|e| ClientError::Protocol(super::super::protocol::ProtocolError::Other(
                     format!("响应 JSON 解析失败: {}", e),
                 )))?;
+
+            // 8. TP-11G 2b 层 4：ping 归属交叉校验（句柄存活窗口内查询创建者）。
+            //    失配路径自行 CloseHandle 后返回；正常路径落到统一 CloseHandle。
+            if let Err(e) = Self::verify_pipe_creator_attribution(handle, method, &parsed) {
+                unsafe { CloseHandle(handle) };
+                return Err(e);
+            }
+
+            unsafe { CloseHandle(handle) };
+
+            // 9. 解析 RPC 结果
             parse_rpc_response(&parsed).map_err(ClientError::Remote)
         }
 
@@ -2181,5 +2247,138 @@ mod tests {
         let mut session = AgentSession::new("agent-test".to_string());
         assert_eq!(session.next_seq("ws-auto"), 1);
         assert!(!session.is_active("ws-auto")); // epoch 仍为 0
+    }
+}
+
+// ============ TP-11G 2b 层 4 回归：client 归属交叉校验（win32-only）============
+// 隔离名，零生产接触。mock server：同步模式管道 + 生产帧（`!I` 长度前缀 + JSON），
+// `reported_pid` 可注入错误值模拟「非创建者实例应答」（共存场景下诚实第二实例
+// 自报自身 PID，非创建者 = creator 不变）。
+#[cfg(all(windows, test))]
+mod windows_attribution_tests {
+    use super::windows::WindowsDaemonRpcClient;
+    use super::ClientError;
+    use serde_json::json;
+    use std::io::Write as _;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        ReadFile, WriteFile, PIPE_ACCESS_DUPLEX,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_MESSAGE,
+        PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
+
+    fn isotest_name(tag: &str) -> String {
+        format!(
+            r"\\.\pipe\callwarden-isotest-2b-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )
+    }
+
+    fn create_pipe_sync(name: &str) -> HANDLE {
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let h = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX, // 同步模式（mock 无需 overlapped）
+                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+                PIPE_UNLIMITED_INSTANCES,
+                65536,
+                65536,
+                0,
+                std::ptr::null_mut(), // NULL 安全属性：同用户连接足够（mock 非生产保真对象）
+            )
+        };
+        assert!(h != INVALID_HANDLE_VALUE && !h.is_null(), "mock 管道创建失败");
+        h
+    }
+
+    fn read_frame_sync(handle: HANDLE) -> Vec<u8> {
+        let mut buf = vec![0u8; 65536];
+        let mut n: u32 = 0;
+        let ok = unsafe { ReadFile(handle, buf.as_mut_ptr(), 65536, &mut n, std::ptr::null_mut()) };
+        assert!(ok != 0, "mock ReadFile 失败: {}", unsafe { GetLastError() });
+        buf[..n as usize].to_vec()
+    }
+
+    fn write_frame_sync(handle: HANDLE, payload: &[u8]) {
+        let mut frame = Vec::with_capacity(4 + payload.len());
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(payload);
+        let mut n: u32 = 0;
+        let ok = unsafe {
+            WriteFile(handle, frame.as_ptr(), frame.len() as u32, &mut n, std::ptr::null_mut())
+        };
+        assert!(ok != 0, "mock WriteFile 失败: {}", unsafe { GetLastError() });
+    }
+
+    /// mock server：应答一次 ping，`pid` 字段报 `reported_pid`（可注入错误值）。
+    fn spawn_mock_server(
+        name: String,
+        reported_pid: u32,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let h = create_pipe_sync(&name);
+            // ConnectNamedPipe 阻塞等 client；535 = ERROR_PIPE_CONNECTED（正常）
+            if unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) } == 0 {
+                let e = unsafe { GetLastError() };
+                if e != 535 {
+                    eprintln!("[mock] ConnectNamedPipe 失败: {e}");
+                    unsafe { CloseHandle(h) };
+                    return;
+                }
+            }
+            let frame = read_frame_sync(h);
+            let req: serde_json::Value =
+                serde_json::from_slice(&frame[4..]).expect("mock 解析请求失败");
+            let resp = json!({
+                "id": req.get("id").cloned().unwrap_or(serde_json::Value::Null),
+                "ok": true,
+                "result": {"status": "ok", "pid": reported_pid},
+            });
+            write_frame_sync(h, resp.to_string().as_bytes());
+            std::thread::sleep(std::time::Duration::from_millis(200)); // 给 client 读取留窗口
+            unsafe { DisconnectNamedPipe(h) };
+            unsafe { CloseHandle(h) };
+        })
+    }
+
+    #[test]
+    fn test_attribution_mismatch_fails_closed() {
+        let name = isotest_name("mismatch");
+        let creator = std::process::id(); // mock 管道由本进程创建 → 创建者 = 本进程
+        let jh = spawn_mock_server(name.clone(), creator.wrapping_add(777)); // 冒充非创建者
+        let client = WindowsDaemonRpcClient::new(&name);
+        let err = client
+            .call("ping", json!({}))
+            .expect_err("失配应 fail-closed（Unavailable 优于错误归属）");
+        match err {
+            ClientError::AttributionMismatch {
+                daemon_pid,
+                creator_pid,
+            } => {
+                assert_eq!(daemon_pid, creator.wrapping_add(777), "daemon_pid 应为 mock 自报值");
+                assert_eq!(creator_pid, creator, "creator 应为管道最初创建者（本进程）");
+            }
+            other => panic!("应为 AttributionMismatch，实际 {other:?}"),
+        }
+        let _ = jh.join();
+    }
+
+    #[test]
+    fn test_attribution_honest_pid_passes() {
+        let name = isotest_name("honest");
+        let creator = std::process::id();
+        let jh = spawn_mock_server(name.clone(), creator); // 诚实：自报创建者自身
+        let client = WindowsDaemonRpcClient::new(&name);
+        let result = client.call("ping", json!({})).expect("诚实 pid 应通过交叉校验");
+        assert_eq!(result["pid"].as_u64(), Some(creator as u64));
+        let _ = jh.join();
     }
 }
