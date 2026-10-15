@@ -171,6 +171,77 @@ def _is_bridge_rpc_transport() -> bool:
     return is_bridge_transport()
 
 
+# TP-11G 2a 层 4：client 侧归属交叉校验（设计文档 v3.2 §2/§4）。
+# 限频告警标记：creator 查询不可得时只告警一次，不逐请求刷日志。
+_pipe_creator_check_warned = False
+
+
+def _windows_pipe_creator_pid(conn: object) -> Optional[int]:
+    """取命名管道创建者 PID（GetNamedPipeServerProcessId）。
+
+    §A7 实测（2/2）：该 API 对 client/server 句柄均返回**管道最初创建者**
+    PID，与句柄类型无关。非 Windows 或非直连管道连接（bridge/TCP）返回 None。
+    查询不可得（API 失败/句柄不可得）返回 None——由调用方告警放行。
+    """
+    if sys.platform != "win32":
+        return None
+    handle = getattr(conn, "_handle", None)
+    if handle is None:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.GetNamedPipeServerProcessId.restype = wintypes.BOOL
+        kernel32.GetNamedPipeServerProcessId.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        creator = wintypes.DWORD(0)
+        if not kernel32.GetNamedPipeServerProcessId(
+            wintypes.HANDLE(handle), ctypes.byref(creator)
+        ):
+            return None
+        return int(creator.value)
+    except Exception:
+        return None
+
+
+def _verify_pipe_creator_attribution(conn: object, response: Any) -> None:
+    """ping 响应的 daemon_pid 与管道创建者交叉校验（TP-11G 2a 层 4）。
+
+    不变量：daemon_pid（ping 响应现成字段，dispatch.rs:275）== 管道创建者
+    （GetNamedPipeServerProcessId，§A7 实测恒返回最初创建者）。
+    - 失配 → DaemonUnavailableError（双 PID 诊断，fail-closed）：当前连接
+      落在非创建者实例上——共存检出，Unavailable 优于错误归属；
+    - creator 查询不可得 → unknown 告警放行（限频一次），不阻断；
+    - 响应无可用 pid 字段（旧版本 daemon）→ 无从校验，放行。
+    """
+    global _pipe_creator_check_warned
+    if sys.platform != "win32":
+        return
+    result = response.get("result") if isinstance(response, dict) else None
+    daemon_pid = result.get("pid") if isinstance(result, dict) else None
+    if not isinstance(daemon_pid, int) or daemon_pid <= 0:
+        return
+    creator_pid = _windows_pipe_creator_pid(conn)
+    if creator_pid is None:
+        if not _pipe_creator_check_warned:
+            _pipe_creator_check_warned = True
+            logger.warning(
+                "[TP-11G 2a 层4] 管道创建者查询不可得，跳过归属交叉校验"
+                "（限频告警一次）"
+            )
+        return
+    if creator_pid != daemon_pid:
+        raise DaemonUnavailableError(
+            "[TP-11G 2a 层4] 管道归属交叉校验失败（拒绝服务：Unavailable 优于"
+            f"错误归属）: ping.daemon_pid={daemon_pid} != 管道创建者 "
+            f"pid={creator_pid}，当前连接落在非创建者实例上（共存检出）"
+        )
+
+
 class UnixDaemonRpcClient:
     """每次请求建立一个 IPC 连接（UDS 或 Windows Named Pipe）的轻量 RPC client。"""
 
@@ -661,6 +732,10 @@ class UnixDaemonRpcClient:
                     request["bridge_token"] = token
                 send_message(conn, request, self.max_message_bytes)
                 response = recv_message(conn, self.max_message_bytes)
+                # TP-11G 2a 层 4：ping 响应 daemon_pid 与管道创建者交叉校验
+                # （仅 ping 携带 pid 字段；bridge/TCP 连接无 _handle 自然跳过）
+                if method == "ping":
+                    _verify_pipe_creator_attribution(conn, response)
         except (OSError, socket.timeout) as exc:
             raise DaemonUnavailableError(
                 f"无法连接 daemon endpoint {self.socket_path}: {exc}"
@@ -982,6 +1057,8 @@ class UnixDaemonRpcClient:
         if response.get("id") != request_id:
             raise DaemonUnavailableError("daemon readiness 响应 request id 不匹配")
         parse_response(response)
+        # TP-11G 2a 层 4：readiness 探针同样做归属交叉校验（失配 → fail-closed）
+        _verify_pipe_creator_attribution(conn, response)
         return True
 
     def probe(self) -> bool:
