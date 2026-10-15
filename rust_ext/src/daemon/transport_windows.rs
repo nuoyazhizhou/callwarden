@@ -33,8 +33,8 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-    ImpersonateNamedPipeClient, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES,
-    PIPE_WAIT,
+    GetNamedPipeServerProcessId, ImpersonateNamedPipeClient, PIPE_READMODE_MESSAGE,
+    PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, OpenProcessToken, ResetEvent, SetEvent, WaitForMultipleObjects,
@@ -250,6 +250,53 @@ unsafe fn create_pipe_instance(
 }
 
 // ============================================
+// TP-11G 2a 层 3：arm 前创建者自检（设计文档 v3.2 §1.1）
+// ============================================
+
+/// arm 前创建者自检结果。
+///
+/// 实测依据 §A7（2/2，pre/post 一致）：`GetNamedPipeServerProcessId` 对
+/// server/client 句柄均返回**管道最初创建者** PID，与句柄类型无关。
+/// 合法单实例 daemon：creator == self；事故性第二实例：creator == 最初创建者 ≠ 自身。
+#[derive(Debug)]
+enum CreatorCheck {
+    /// 创建者 == 自身：合法（本进程即管道首建者）
+    Ok,
+    /// 创建者 != 自身：检出共存实例（拒绝服务——Unavailable 优于错误归属）
+    Mismatch { creator_pid: u32 },
+    /// 查询不可得：告警放行（与 Mismatch 严格区分——「无法判断」不当「已确认异常」）
+    Unknown { stage: &'static str, error: u32 },
+}
+
+/// 自检指定管道句柄的创建者是否为本进程。
+///
+/// `self_pid` 必须传调用方进程的真实 PID（`std::process::id()`）。
+/// 放置层级：NamedPipeListener 服务层（bind 预创建 / replenish），
+/// 低层 `PipeInstance::arm()` 保持中性（取证与测量路径需要能 arm 非创建者实例）。
+fn check_pipe_creator_self(handle: HANDLE, self_pid: u32) -> CreatorCheck {
+    let mut creator = 0u32;
+    let ok = unsafe { GetNamedPipeServerProcessId(handle, &mut creator) };
+    if ok == 0 {
+        return CreatorCheck::Unknown {
+            stage: "query_failed",
+            error: unsafe { GetLastError() },
+        };
+    }
+    if creator == 0 {
+        // API 成功但创建者不可得：不应发生于已创建实例，防御性分支
+        return CreatorCheck::Unknown {
+            stage: "no_capability",
+            error: 0,
+        };
+    }
+    if creator == self_pid {
+        CreatorCheck::Ok
+    } else {
+        CreatorCheck::Mismatch { creator_pid: creator }
+    }
+}
+
+// ============================================
 // NamedPipeListener
 // ============================================
 
@@ -389,6 +436,37 @@ impl NamedPipeListener {
         let mut instances = Vec::<Box<PipeInstance>>::with_capacity(MIN_PIPE_INSTANCES);
         for i in 0..MIN_PIPE_INSTANCES {
             let mut instance = Box::new(PipeInstance::new(&pipe_name, &sa, i == 0)?);
+            // TP-11G 2a 层 3：arm 前创建者自检（防御纵深：flag 回归时的最后防线）。
+            // 首实例由 FIRST_PIPE_INSTANCE 保证 creator==self，此处自检恒过；其余实例
+            // 理论上也应 creator==self（本进程即首建者），失配即拒绝服务。
+            match check_pipe_creator_self(instance.handle, std::process::id()) {
+                CreatorCheck::Ok => {}
+                CreatorCheck::Mismatch { creator_pid } => {
+                    instance.close();
+                    for inst in instances.iter_mut() {
+                        inst.close();
+                    }
+                    if !shutdown_event.is_null() {
+                        unsafe { CloseHandle(shutdown_event) };
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!(
+                            "[TP-11G 2a 层3] 管道创建者自检失败（拒绝服务：Unavailable 优于错误归属）: \
+                             管道 {pipe_name} 创建者 pid={creator_pid} != 本进程 pid={}，检出共存实例；\
+                             先占场景应由 FIRST_PIPE_INSTANCE 在首实例创建处拦截",
+                            std::process::id()
+                        ),
+                    ));
+                }
+                CreatorCheck::Unknown { stage, error } => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] [TP-11G 2a 层3] bind creator 自检不可得 \
+                         (stage={stage}, err={error})，告警放行：本次无法判断共存，\
+                         由 client 侧交叉校验兜底"
+                    );
+                }
+            }
             if let Err(e) = instance.arm() {
                 instance.close();
                 for inst in instances.iter_mut() {
@@ -420,6 +498,31 @@ impl NamedPipeListener {
     fn replenish_instance(&mut self) -> io::Result<()> {
         // 同名追加（keep-alive 补建），不可带 FIRST_PIPE_INSTANCE
         let mut instance = Box::new(PipeInstance::new(&self.pipe_name, &self.sa, false)?);
+        // TP-11G 2a 层 3：补建实例 arm 前创建者自检（与 bind 同一防线）。
+        // Mismatch = 本进程已不是管道创建者（异常共存态）→ 拒绝补建，
+        // 保留现有监听实例继续服务（降级不扩面），双 PID 响亮诊断。
+        match check_pipe_creator_self(instance.handle, std::process::id()) {
+            CreatorCheck::Ok => {}
+            CreatorCheck::Mismatch { creator_pid } => {
+                instance.close();
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "[TP-11G 2a 层3] replenish 创建者自检失败（拒绝补建：Unavailable 优于错误归属）: \
+                         管道 {} 创建者 pid={creator_pid} != 本进程 pid={}，检出共存实例",
+                        self.pipe_name,
+                        std::process::id()
+                    ),
+                ));
+            }
+            CreatorCheck::Unknown { stage, error } => {
+                eprintln!(
+                    "[cw_daemon] [WARN] [TP-11G 2a 层3] replenish creator 自检不可得 \
+                     (stage={stage}, err={error})，告警放行：本次无法判断共存，\
+                     由 client 侧交叉校验兜底"
+                );
+            }
+        }
         if let Err(e) = instance.arm() {
             instance.close();
             return Err(e);
@@ -970,5 +1073,95 @@ mod tests {
             .expect("B2: 无 flag 同名追加应成功（keep-alive 依赖）");
         unsafe { CloseHandle(h3) };
         unsafe { CloseHandle(h2) };
+    }
+
+    // ============ 回归用例 4a（TP-11G 2a 层 3 行为断言）：非创建者实例自检必须判 Mismatch ============
+    // 拓扑：子进程先建实例（成为管道创建者并持有 3s）；本进程对同名追加实例跑自检
+    // → creator(=子进程) ≠ self → Mismatch，即「拒绝 arm/服务」的判据实测锁定。
+    // 合法侧（creator==self）由 Case B 型全新名字实例覆盖。
+
+    #[test]
+    fn test_creator_check_refuses_non_creator() {
+        // 子进程角色：创建实例并持有（成为管道最初创建者）
+        if let Ok(role) = std::env::var("CW_FORENSIC_ROLE") {
+            if role == "holder" {
+                let name = std::env::var("CW_FORENSIC_NAME").unwrap_or_default();
+                if name.is_empty() {
+                    return;
+                }
+                let sddl =
+                    build_pipe_sddl(&get_current_user_sid().expect("sid"), false);
+                let sa = unsafe { create_security_attributes(&sddl) }.expect("sddl");
+                let inst = PipeInstance::new(&name, &sa, false).expect("holder create");
+                // 持有 3s，给测试进程留出自检窗口
+                std::thread::sleep(std::time::Duration::from_millis(3000));
+                drop(inst);
+                return;
+            }
+            return; // 其他角色不适用本用例
+        }
+
+        // ---- 编排（父进程 = 追加实例的非创建者）----
+        let exe = std::env::current_exe().unwrap();
+        let name = format!(
+            r"\\.\pipe\callwarden-isotest-cc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
+        let mut child = std::process::Command::new(&exe)
+            .args([
+                "--exact",
+                "daemon::transport_windows::tests::test_creator_check_refuses_non_creator",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("CW_FORENSIC_ROLE", "holder")
+            .env("CW_FORENSIC_NAME", &name)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn holder");
+        std::thread::sleep(std::time::Duration::from_millis(1200)); // 等 holder 建好
+
+        // 本进程对同名追加实例（creator = holder 子进程）
+        let sddl = build_pipe_sddl(&get_current_user_sid().expect("sid"), false);
+        let sa = unsafe { create_security_attributes(&sddl) }.expect("sddl");
+        let inst = PipeInstance::new(&name, &sa, false).expect("append create");
+        match check_pipe_creator_self(inst.handle, std::process::id()) {
+            CreatorCheck::Mismatch { creator_pid } => {
+                assert_ne!(
+                    creator_pid,
+                    std::process::id(),
+                    "creator 应为 holder 子进程而非本进程"
+                );
+                println!(
+                    "D5-4a(行为): Mismatch 判定成立 creator_pid={creator_pid} != self={} \
+                     → 拒绝服务判据实测锁定",
+                    std::process::id()
+                );
+            }
+            other => panic!("应判 Mismatch，实际 {other:?}"),
+        }
+        drop(inst);
+        let _ = child.wait();
+
+        // 合法侧对照：全新名字自建实例 → creator==self → Ok
+        let name_ok = format!(
+            r"\\.\pipe\callwarden-isotest-cc-ok-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
+        let inst_ok = PipeInstance::new(&name_ok, &sa, false).expect("ok create");
+        match check_pipe_creator_self(inst_ok.handle, std::process::id()) {
+            CreatorCheck::Ok => println!("D5-4a(行为): 合法侧 Ok 判定成立（creator==self）"),
+            other => panic!("合法侧应判 Ok，实际 {other:?}"),
+        }
+        drop(inst_ok);
     }
 }
