@@ -433,10 +433,25 @@ mod tests {
     // 仅 Windows 编译；Linux 上不存在（不计 skip）。
     // ============================================================
 
+    /// RAII 句柄守卫（何序 N-c）：断言 panic 时也能 CloseHandle，
+    /// 不泄漏监听实例至进程退出。
+    #[cfg(windows)]
+    struct PipeHandleGuard(windows_sys::Win32::Foundation::HANDLE);
+
+    #[cfg(windows)]
+    impl Drop for PipeHandleGuard {
+        fn drop(&mut self) {
+            use windows_sys::Win32::Foundation::CloseHandle;
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
     /// 起一次性命名管道服务端（默认安全属性即可——测试不需要 daemon 的
     /// SDDL 隔离，只要名字存在且处于 listening 态，WaitNamedPipeW 即命中）。
     #[cfg(windows)]
-    fn spawn_pipe_server(pipe_name: &str) -> windows_sys::Win32::Foundation::HANDLE {
+    fn spawn_pipe_server(pipe_name: &str) -> PipeHandleGuard {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
@@ -460,7 +475,7 @@ mod tests {
             handle, INVALID_HANDLE_VALUE,
             "CreateNamedPipeW 失败: {pipe_name}"
         );
-        handle
+        PipeHandleGuard(handle)
     }
 
     #[cfg(windows)]
@@ -481,8 +496,6 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_tp48_branch1_explicit_pipe_probed_not_bypassed() {
-        use windows_sys::Win32::Foundation::CloseHandle;
-
         let pipe_name = unique_pipe_name("b1");
         let server = spawn_pipe_server(&pipe_name);
 
@@ -502,9 +515,13 @@ mod tests {
 
         // 服务端销毁 → 管道名消失 → false。若实现仍旁路默认管道（旧缺陷），
         // 本机真实 daemon 会让它得到 true，本断言即失败——同时证明密闭。
-        unsafe {
-            CloseHandle(server);
-        }
+        //
+        // 🔴 判别力依赖（何序附录 E）：本断言的「能抓住旁路缺陷」依赖**本机
+        // 有真实 daemon 在跑**（旁路 + 有 daemon → true → 失败）；在干净
+        // CI runner 上旁路缺陷同样得 false，本断言退化为平凡通过。
+        // **核心判别由断言 1/2 承担**（任何机器都以真实注入管道证明走分支 1），
+        // 本断言是开发机加成，勿误读为「CI 上也验证了不旁路」。
+        drop(server);
         assert!(
             !is_daemon_available(Path::new(&pipe_name), "windows"),
             "管道销毁后必须不可用（证明探测的是注入管道而非默认管道）"
