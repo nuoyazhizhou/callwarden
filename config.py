@@ -1722,9 +1722,15 @@ def _windows_daemon_probe_ok(conn) -> bool:
         return False
 
 
-def is_daemon_available() -> bool:
-    """检测 daemon 是否可用（endpoint 是否存在且可连接）。"""
-    endpoint = get_default_daemon_endpoint()
+def is_daemon_available(endpoint: Optional[str] = None) -> bool:
+    """检测 daemon 是否可用（endpoint 存在、可连接且能应答协议）。
+
+    TP-11G 2a D3.3 参数化：``endpoint`` 为 None 时探测默认端点；显式传入
+    （diff 测试镜像、route_command 决策层等）则探测指定端点——与 Rust
+    ``windows_endpoint_available(socket_path)``（#48 三分支）对齐，消除
+    「py 镜像忽略 socket_path」的镜像语义分歧（2204315 已知残留）。
+    """
+    endpoint = endpoint or get_default_daemon_endpoint()
     if sys.platform == "win32":
         from callwarden.server.daemon_autostart import try_connect
         conn = try_connect(endpoint)

@@ -177,3 +177,37 @@ def test_mismatch_direct_helper() -> None:
         assert str(wrong) in str(excinfo.value)
     finally:
         kernel32.CloseHandle(handle)
+
+
+def test_is_daemon_available_endpoint_parameterized() -> None:
+    """D3.3 参数化（config.is_daemon_available(endpoint)）：端点被消费。
+
+    - armed isotest 实例 → True（协议探针通过）
+    - un-armed isotest 实例 → False（批次 1：连接成功 != 可用）
+    - 不存在的非管道路径 → False（与 rs windows_endpoint_available 一致）
+    - None → 默认端点 smoke（仅验证可调用，不假设本机 daemon 状态）
+    """
+    from callwarden import config as cw_config
+
+    # armed：mock server 已 ConnectNamedPipe 挂起监听并可应答协议 ping
+    name_armed = _isotest_pipe_name("param-armed")
+    MockPipeServer(name_armed, reported_pid=os.getpid())
+    assert cw_config.is_daemon_available(name_armed) is True
+
+    # un-armed：只建不监听（批次 1 场景 C：连接成功但协议探针失败 → fail-closed）
+    name_unarmed = _isotest_pipe_name("param-unarmed")
+    handle = _create_pipe(name_unarmed)
+    try:
+        assert cw_config.is_daemon_available(name_unarmed) is False
+    finally:
+        kernel32.CloseHandle(handle)
+
+    # 不存在的非管道路径（与 rs windows_endpoint_available 的 false 分支一致）
+    assert (
+        cw_config.is_daemon_available("C:\\callwarden\\isotest-nonexistent.sock")
+        is False
+    )
+
+    # None → 默认端点 smoke
+    assert isinstance(cw_config.is_daemon_available(None), bool)
+    assert isinstance(cw_config.is_daemon_available(), bool)

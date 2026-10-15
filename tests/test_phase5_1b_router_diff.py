@@ -42,37 +42,22 @@ def py_is_daemon_required() -> bool:
     return py_get_daemon_mode() == "enterprise"
 
 
-def _windows_named_pipe_available() -> bool:
-    """现状：Windows 下 daemon 可用性 = Named Pipe 真实探测。
-
-    stale 依据（A 类：测试侧陈旧期望）：早期真相源模型假定「非 Linux（Windows/macOS）
-    恒为 False（UDS 仅 Linux）」。生产演进后两端都改为 Windows 命名管道探测：
-    Rust `rust_ext/src/cli/router.rs:146-181` 的
-    `windows_named_pipe_available()`（WaitNamedPipeW 探测
-    `\\\\.\\pipe\\callwarden-<sid>`），Python `config.py:1691-1704` 的
-    `is_daemon_available()` 在 win32 分支 `try_connect(endpoint)`。
-    故 Windows 可用性不再是与 socket_path 无关的常量，而是运行时探测结果。
-    """
-    if sys.platform != "win32":
-        # 与 Rust `#[cfg(not(windows))] windows_named_pipe_available() -> false` 对齐
-        return False
-    try:
-        from callwarden.config import is_daemon_available as _prod_is_daemon_available
-        return bool(_prod_is_daemon_available())
-    except Exception:
-        return False
-
-
 def py_is_daemon_available(socket_path: str, platform: str) -> bool:
-    """Python 真相源：config.py:is_daemon_available() (L1691-1704)
+    """Python 真相源：config.py:is_daemon_available(endpoint)（2a D3.3 参数化）
 
     参数化版本。现状（生产演进后）：
-    - Windows：委托命名管道探测（见 _windows_named_pipe_available）
+    - Windows：委托生产函数（协议探针，TP-49 假阳性卡）并**消费 socket_path**
+      ——与 rs ``windows_endpoint_available(socket_path)``（#48 三分支）对齐，
+      消除「py 镜像忽略 socket_path」的镜像语义分歧（2204315 已知残留）；
     - macOS：false（UDS/Named Pipe 均不可用）
-    - Linux：socket_path 文件存在性
+    - Linux：socket_path 文件存在性（模拟；生产 linux 分支同为 exists()）
     """
     if platform == "windows":
-        return _windows_named_pipe_available()
+        try:
+            from callwarden.config import is_daemon_available as _prod_fn
+            return bool(_prod_fn(socket_path))
+        except Exception:
+            return False
     if platform != "linux":
         return False
     return os.path.exists(socket_path)
@@ -237,14 +222,15 @@ def test_d3_is_daemon_available():
     tmp = Path(tempfile.gettempdir()) / "cw_test_socket_d3.sock"
     tmp.write_bytes(b"")
 
-    # stale 修正：Windows 行期望由「恒 False」改为运行时命名管道探测结果
-    # （生产演进：router.rs:146-181 / config.py:1691-1704 已改为真实探测）。
-    win_avail = _windows_named_pipe_available()
+    # 2a D3.3 参数化：Windows 行改为「显式 socket_path 的探测结果」——
+    # py/rs 均消费 socket_path（#48 三分支 + config 参数化），非管道且
+    # 不存在的路径两端一致为 False（此前 py 探测默认管道、rs 探测
+    # socket_path，daemon 运行时 py=True/rs=False 必红的镜像分歧就此消除）。
     test_cases = [
         # (socket_path, platform, expected)
         (str(tmp), "linux", True),              # D3.1
         ("/run/callwarden/nonexistent.sock", "linux", False),  # D3.2
-        ("C:\\callwarden\\socket.sock", "windows", win_avail),  # D3.3
+        ("C:\\callwarden\\socket.sock", "windows", False),      # D3.3（非管道路径，两端 False）
         ("/tmp/callwarden.sock", "macos", False),               # D3.4
     ]
 
@@ -278,20 +264,18 @@ def test_d4_route_command():
     tmp = Path(tempfile.gettempdir()) / "cw_test_socket_d4.sock"
     tmp.write_bytes(b"")
 
-    # stale 修正：Windows 行期望由静态常量改为运行时命名管道探测结果
-    # （生产演进：router.rs:146-181 / config.py:1691-1704 已改为真实探测）。
-    win_avail = _windows_named_pipe_available()
+    # 2a D3.3 参数化：Windows 行期望改为固定 False 分支值——py/rs 均消费
+    # socket_path（#48 三分支 + config 参数化），`C:\socket.sock` 非管道且
+    # 不存在 → 两端一致 False（不再依赖默认管道的运行时探测结果）。
     test_cases = [
         # (mode, socket_path, platform, expected)
         ("local", str(tmp), "linux", "local"),                # D4.1
         ("enterprise", str(tmp), "linux", "enterprise"),      # D4.2
         ("enterprise", "/run/cw/nonexistent.sock", "linux", "unavailable"),  # D4.3
-        ("enterprise", "C:\\socket.sock", "windows",
-         "enterprise" if win_avail else "unavailable"),       # D4.4
+        ("enterprise", "C:\\socket.sock", "windows", "unavailable"),  # D4.4
         ("auto", str(tmp), "linux", "enterprise"),            # D4.5
         ("auto", "/run/cw/nonexistent.sock", "linux", "local"),                # D4.6
-        ("auto", "C:\\socket.sock", "windows",
-         "enterprise" if win_avail else "local"),             # D4.7
+        ("auto", "C:\\socket.sock", "windows", "local"),             # D4.7
         ("local", "C:\\socket.sock", "windows", "local"),      # D4.8
         # 额外：未知 mode → auto fail-soft
         ("unknown", str(tmp), "linux", "enterprise"),
