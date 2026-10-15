@@ -1,0 +1,6 @@
+# Role prompt 资产必须 LF（build gate 要求，跨平台 CI 防 autocrlf 转换）
+# GitHub Windows runner 的 Git for Windows 默认 core.autocrlf=true，
+# checkout 会把 LF blob 转成 CRLF → role prompt build gate
+# E_ASSET_BYTES_INVALID + E_ASSET_HASH_MISMATCH → 全部 Rust job 构建失败
+# （TP-11G CI 首跑实证：21 issues）。manifest 哈希按 LF 计算，故强制 eol=lf。
+rust_ext/resources/role_prompts/v1/** text eol=lf
