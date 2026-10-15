@@ -5,7 +5,8 @@
 //!
 //! 测试策略：
 //! - 每个测试用独立的临时 socket/registry 路径，并行安全
-//! - 通过 Cargo 环境变量定位 cw_daemon binary（cargo test 自动设置 CARGO_BIN_EXE）
+//! - 通过 Cargo 环境变量定位 cw-daemon binary（cargo test 自动设置
+//!   CARGO_BIN_EXE_cw-daemon——bin 名原样带连字符，见 Cargo 环境变量参考）
 //! - 跳过 cross-UID ACL（需 sudo 切换用户，不适合自动化测试）
 
 #![cfg(unix)]
@@ -19,9 +20,14 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-/// 定位 cw_daemon binary（cargo test 自动注入 CARGO_BIN_EXE_cw_daemon）
+/// 定位 cw-daemon binary（cargo test 自动注入 CARGO_BIN_EXE_cw-daemon）
 fn bin_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_cw_daemon"))
+    // TP-11G P0-A：P0-3 发布修复（3f62fb7）把 bin 从 cw_daemon 改名为
+    // cw-daemon 后，CARGO_BIN_EXE_<name> 按 bin 名**原样**注入（连字符不
+    // 转换）——旧下划线形式在本文件（#![cfg(unix)]，仅 Linux 编译）里
+    // 直到 CI 编译门禁（ubuntu）才暴露。Windows 侧本文件被 cfg 掉，
+    // 故本地全绿也发现不了。
+    PathBuf::from(env!("CARGO_BIN_EXE_cw-daemon"))
 }
 
 /// 临时测试 fixture：唯一 socket + registry 路径 + daemon 子进程管理
