@@ -8,8 +8,15 @@
 //!
 //! 跨平台 ACL（D0 3.4，Req 14.5, 14.9）：
 //! - Unix：文件 st_uid == peer_uid（root 跳过）
-//! - Windows：文件 owner SID == 当前用户 SID（Administrators 跳过）；
-//!   命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
+//! - Windows：文件 owner SID == 当前用户 SID；当前**进程令牌**中 BUILTIN\Administrators
+//!   处于**启用**状态时跳过（等价 Unix root 跳过；UAC 过滤令牌中该 SID 为 deny-only，
+//!   不豁免）。命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
+//!
+//! ⚠️ 截至 #63 / F-OWNER-01：**上面这个「Administrators 跳过」分支从未真正生效**。
+//! `probe_admin_membership()` 把 `OpenProcessToken` 拿到的**主令牌**直接传给
+//! `CheckTokenMembership`，而该 API 要求 **impersonation token**，于是恒失败
+//! （`ERROR_NO_IMPERSONATION_TOKEN=1309`）⇒ admin 判定恒为 false ⇒ 严格比较恒执行。
+//! 修复另开 F-OWNER-02。**在那之前，不要照本注释假设「提升会话会跳过属主校验」**。
 //! 本模块覆盖 `workspace.register` / `workspace.list` / `workspace.status` /
 //! `workspace.connect` / `workspace.file.refresh` / `workspace.recover`。
 //! `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore` 在 R6 的
@@ -1076,6 +1083,11 @@ fn check_path_owner(real_path_str: &str, peer_uid: u32) -> Result<(), DaemonRpcE
                 } else {
                     "owner 为其他主体 SID"
                 };
+                // admin_probe 会把 `GetLastError` 这类内部细节带进 RPC 错误信息。
+                // **这是有意取舍**：命名管道是 loopback + owner-only SDDL（Req 14.18），
+                // 对端已是本机同用户（已授权）进程，泄漏面可忽略；而「为什么按非 admin
+                // 处理」的诊断价值极高 —— #63 正是靠它抓到 CheckTokenMembership 恒失败
+                // （1309，主令牌传给要求 impersonation token 的 API）。勿当作疏漏删掉。
                 return Err(DaemonRpcError::new(
                     "path_forbidden",
                     format!(
@@ -1233,7 +1245,10 @@ fn probe_admin_membership() -> Result<bool, String> {
 /// 现在把环境事实显式探测出来，用例按类别断言**唯一**结果，杜绝
 /// `if result.is_err() { assert_eq!(code, "path_forbidden") }` 这种
 /// 「两种结果都过」的容错形态 —— 那是 MASKING：会让「无放行能力」的缺陷永久绿。
-#[cfg(not(unix))]
+// #63 / F-OWNER-01 P3：这两个探针目前**只被测试**使用（生产判定不读它，它也不参与放行），
+// 故额外加 `cfg(test)` —— 否则非 test 的 Windows 构建会报 `dead_code`（实测确认）。
+// 若 F-OWNER-02 之后生产侧也要用它做判定，去掉这里的 `test` 条件即可。
+#[cfg(all(not(unix), test))]
 #[derive(Debug)]
 pub(crate) enum PathOwnership {
     /// owner 就是当前进程用户 SID：生产应当放行
@@ -1250,7 +1265,7 @@ pub(crate) enum PathOwnership {
 /// 传重解析前的路径会与生产 `check_path_owner` 读取的对象不一致（生产在 canonicalize
 /// 之后读 owner），进而把 SelfOwned / GroupOwned / Alien 判错 —— GH Windows runner 的
 /// `D:\a` ↔ `C:\a` junction 就可能让两者不等。
-#[cfg(not(unix))]
+#[cfg(all(not(unix), test))]
 pub(crate) fn probe_path_ownership(canonical_path: &str) -> Result<PathOwnership, String> {
     let owner = get_file_owner_sid(canonical_path)?;
     let me = crate::daemon::peercred::get_current_user_sid().map_err(|e| e.to_string())?;
