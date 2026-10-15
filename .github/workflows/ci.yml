@@ -359,29 +359,48 @@ jobs:
         # fail-closed / 查询不可得放行 / D3.3 端点参数化）。
         # faulthandler_timeout=90：若探针路径死锁（回归），60/90s 转储
         # 全线程栈定位而非静默挂满 timeout。
+        #
+        # ---------------- 为什么不能 `pip install -e .`（两轮 CI 实证） ----------------
+        # run 4（38752482872）：`pip install -e .` 解析 pyproject 的
+        #   dependencies（含 semgrep>=1.50），windows-latest + Python 3.14 无
+        #   可用 wheel → sdist 构建失败：
+        #     ERROR: Failed to build 'semgrep' when getting requirements to build wheel
+        #   → 包没装上 → No module named 'callwarden'。
+        # run 5（38758644068）：改 `--no-deps` 绕开 semgrep 后，撞上第二个
+        #   硬阻塞——PrebuiltBuildExt（setup.py:68）校验预编译产物存在：
+        #     error: 预编译二进制不存在: D:\a\callwarden\callwarden\callwarden_core.pyd
+        #   全新检出没有该产物（本地仓库有历史构建产物，故本地装得上也跑得通，
+        #   这正是「本地实证通过 ≠ CI 能过」的陷阱）。与 --no-deps 无关，
+        #   即 **本 job 不能装包**。
+        #
+        # ---------------- 替代方案：不装包，让仓库根以 callwarden 之名可导入 ----------------
+        # setup.py 把**仓库根**映射为 callwarden 包（package_dir，
+        # egg-info top_level.txt = callwarden/callwarden_core）。这里用目录
+        # 联接把仓库根挂成 <pkgroot>/callwarden 再进 PYTHONPATH，效果等同
+        # 于可编辑安装，且不触发 build_ext。
+        # 用联接而非「PYTHONPATH 指向检出目录的父目录」：后者依赖检出目录
+        # 名恰好是 callwarden，fork/改名即静默失效。
+        #
+        # 依赖安全性已逐条核验（非推断）：两个用例的导入链只触及
+        # callwarden.config / db.db_base / server.daemon_client，模块级导入
+        # 全为 stdlib + 包内；唯一第三方 pathspec 位于
+        # analyzers/ignore_spec.py 的 try/except ImportError 内（可降级）。
+        # 本机干净 venv（仅 pytest，不装包）+ 本联接方案实证：7 passed。
+        shell: pwsh
         run: |
           python -m pip install pytest
-          # conftest 导入 callwarden 包（CI 三跑实证：缺此步则
-          # ModuleNotFoundError: No module named 'callwarden'）。
-          #
-          # 必须 --no-deps：默认 `pip install -e .` 会解析 pyproject 的
-          # dependencies（含 semgrep>=1.50），windows-latest 上 semgrep 无
-          # 可用 wheel → 走 sdist 构建 → 实测失败：
-          #   ERROR: Failed to build 'semgrep' when getting requirements to build wheel
-          # 进而包没装上，报 No module named 'callwarden'（run 38752482872）。
-          #
-          # --no-deps 安全性已逐条核验（不靠推断）：本组两个用例的导入链
-          # 只触及 callwarden.config / db.db_base / server.daemon_client，
-          # 其模块级导入全为 stdlib + 包内模块；唯一第三方 pathspec 位于
-          # analyzers/ignore_spec.py 的 try/except ImportError 内（可降级）。
-          # 本机干净 venv（仅 pytest + `pip install -e . --no-deps`）实证：
-          # 7 passed in 3.68s。故不装 semgrep/numpy/mcp/watchdog 是正确的，
-          # 而非「恰好跑过」。
-          #
-          # 注：本 job 只需 callwarden 包内上述纯 Python 模块，不需要
-          # callwarden_core.pyd（setup.py 的 ext_modules 为 sources=[] 的
-          # 预构建桩，--no-deps 不触发 Rust 编译）。
-          python -m pip install -e . --no-deps
+          $pkgroot = Join-Path $env:RUNNER_TEMP 'cw_pkgroot'
+          New-Item -ItemType Directory -Force -Path $pkgroot | Out-Null
+          $link = Join-Path $pkgroot 'callwarden'
+          if (-not (Test-Path $link)) {
+            New-Item -ItemType Junction -Path $link -Target $env:GITHUB_WORKSPACE | Out-Null
+          }
+          $env:PYTHONPATH = $pkgroot
+          # 自检：包必须解析到仓库根，否则下面的 ModuleNotFoundError 又会
+          # 变成一处无上下文的失败（run 3/4 的教训）。
+          # 必须 realpath：联接下 __file__ 是 <pkgroot>\callwarden\__init__.py，
+          # 只有解析联接后才是 GITHUB_WORKSPACE 下的真实路径（本地实测）。
+          python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); print('callwarden ->', p); assert p.startswith(os.path.realpath(os.environ['GITHUB_WORKSPACE'])), 'callwarden 未解析到仓库根: '+p"
           python -u -m pytest tests/test_tp49_false_positive_probe.py tests/test_tp11g_d5_creator_crosscheck.py -q -o faulthandler_timeout=90
 
   rust-unit-test-windows-workspace:
