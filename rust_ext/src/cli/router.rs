@@ -135,13 +135,15 @@ pub fn is_daemon_required() -> bool {
 
 /// 检测 daemon 是否可用。
 ///
-/// 对齐 Python `config.py:is_daemon_available()` (L1376-1383)
+/// 对齐 Python `config.py:is_daemon_available()`
 ///
-/// - Windows/macOS → false（UDS 不可用）
 /// - Linux → `socket_path.exists()`
+/// - macOS → false（UDS 不可用，且未实现 Named Pipe）
+/// - Windows → `windows_endpoint_available(socket_path)`（尊重传入端点，
+///   见该函数的三分支与残留局限说明）
 ///
 /// # 参数
-/// - `socket_path`: daemon socket 路径
+/// - `socket_path`: daemon socket 路径（或命名管道路径）
 /// - `platform`: 平台名（`std::env::consts::OS` 或测试指定值）
 pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
     match platform {
@@ -149,40 +151,82 @@ pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
         "linux" => socket_path.exists(),
         // macOS：UDS 不可用，且未实现 Named Pipe，返回 false
         "macos" => false,
-        // Windows：探测 daemon 命名管道 \\.\pipe\callwarden-<user-sid>
-        "windows" => windows_named_pipe_available(),
+        // Windows：按传入端点判定（TP-11G #48 / F-ROUTER-01）
+        "windows" => windows_endpoint_available(socket_path),
         // 未知平台 fail-closed
         _ => false,
     }
+}
+
+/// Windows 端点可用性判定（TP-11G #48 / F-ROUTER-01 修复）。
+///
+/// 三分支，fail-closed 优先：
+/// 1. `socket_path` 为命名管道形态（`\\.\pipe\...`）→ 探测**该管道**：
+///    尊重运维显式配置的端点，测试也可注入隔离管道；
+/// 2. `socket_path` 等于 `DEFAULT_DAEMON_SOCKET`（未显式配置——注意该默认值
+///    是 Unix 式路径 `/run/callwarden/callwarden.sock`，在 Windows 上永不
+///    存在）→ 退化为探测本用户默认管道（保留既有生产行为，见下）；
+/// 3. 其他显式路径（UDS 式文件路径，Windows 不支持）→ **false**（fail-closed：
+///    该端点在当前平台不可能存在）。
+///
+/// 为何分支 2 保留环境派生探测：Windows 上 daemon 数据通道默认走 HTTP
+/// loopback（`runtime.rs` 对 `\\.\pipe\` 前缀的特判即为此），管道探测只是
+/// 「本用户是否有 daemon 在跑」的活性代理。若分支 2 也判 false，Windows
+/// 生产上 Enterprise 将恒 Unavailable、路由全断。
+///
+/// 残留局限（**未闭环，另行立项**）：未显式配置时仍无法识别「默认管道属于
+/// 另一个实例」的跨实例混淆；彻底消除需改为探测真实数据通道（HTTP
+/// endpoint），而非旁路管道活性。
+#[cfg(windows)]
+fn windows_endpoint_available(socket_path: &Path) -> bool {
+    let raw = socket_path.to_string_lossy();
+    if raw.starts_with(r"\\.\pipe\") || raw.replace('\\', "/").starts_with("//./pipe/") {
+        return wait_named_pipe(&raw);
+    }
+    if socket_path == Path::new(DEFAULT_DAEMON_SOCKET) {
+        return windows_named_pipe_available();
+    }
+    false
+}
+
+#[cfg(not(windows))]
+fn windows_endpoint_available(_socket_path: &Path) -> bool {
+    false
 }
 
 /// Windows 下探测 daemon 命名管道是否可用。
 ///
 /// 管道名与 daemon 绑定一致：`\\.\pipe\callwarden-<user-sid>`
 /// （见 `daemon/transport_windows.rs:get_current_user_sid` + 管道名派生）。
-///
-/// 通过 `WaitNamedPipeW` 探测：返回非 0 表示存在可用实例（daemon 已启动）；
-/// 返回 0 表示管道不存在（daemon 未启动）。
 #[cfg(windows)]
 fn windows_named_pipe_available() -> bool {
     let sid = match crate::daemon::transport_windows::get_current_user_sid() {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let pipe_name = format!(r"\\.\pipe\callwarden-{}", sid);
-    let wide: Vec<u16> = std::path::Path::new(&pipe_name)
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    // WaitNamedPipeW 返回非 0 ⇒ 存在可用管道实例（daemon 已就绪）。
-    // timeout=0：立即返回不阻塞；daemon 未启动（管道不存在）时返回 0。
-    unsafe { windows_sys::Win32::System::Pipes::WaitNamedPipeW(wide.as_ptr(), 0) != 0 }
+    wait_named_pipe(&format!(r"\\.\pipe\callwarden-{}", sid))
 }
 
 #[cfg(not(windows))]
 fn windows_named_pipe_available() -> bool {
     false
+}
+
+/// 以 `WaitNamedPipeW` 探测指定管道：返回非 0 表示存在可用实例。
+///
+/// 超时统一 **5000ms**，与 `cw_client.rs` / `cw_daemon.rs` /
+/// `daemon/client.rs` 三处探针一致（TP-11G 关屿 N3）。
+/// Win32 语义纠正：`NMPWAIT_USE_DEFAULT_WAIT = 0` 表示「等待服务端
+/// `CreateNamedPipe` 时声明的默认超时」，**并非**「立即返回」；原注释
+/// 「timeout=0：立即返回不阻塞」属误导性契约。
+#[cfg(windows)]
+fn wait_named_pipe(pipe_name: &str) -> bool {
+    let wide: Vec<u16> = std::path::Path::new(pipe_name)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    unsafe { windows_sys::Win32::System::Pipes::WaitNamedPipeW(wide.as_ptr(), 5000) != 0 }
 }
 
 // ============================================================
@@ -358,12 +402,22 @@ mod tests {
 
     #[test]
     fn test_d3_3_windows_probes_named_pipe() {
-        let path = Path::new("C:\\callwarden\\socket.sock");
-        // Windows 分支必须委托给命名管道探测，而非 UDS socket_path.exists()；
-        // 与 windows_named_pipe_available() 保持一致，且不依赖 daemon 运行时状态。
+        // TP-11G #48（F-ROUTER-01）：Windows 分支必须**尊重传入端点**。
+        // 原实现无条件探测本用户默认管道、丢弃 socket_path，导致：
+        //   - Enterprise fail-closed 可被未认证方满足；
+        //   - 测试隔离失效（探针打到真实生产 daemon）；
+        //   - 与 Linux 分支语义不对称。
+        // 本用例原先把该缺陷行为写成期望契约（断言「任意路径 == 默认管道探测」），
+        // 现按新契约改写。
+        let explicit = Path::new("C:\\callwarden\\socket.sock");
+        assert!(
+            !is_daemon_available(explicit, "windows"),
+            "显式配置的非管道端点在 Windows 上必须 fail-closed（不再旁路到默认管道）"
+        );
         assert_eq!(
-            is_daemon_available(path, "windows"),
-            windows_named_pipe_available()
+            is_daemon_available(Path::new(DEFAULT_DAEMON_SOCKET), "windows"),
+            windows_named_pipe_available(),
+            "未显式配置（Unix 默认路径）时保留默认管道探测，保 Windows 生产行为"
         );
     }
 
