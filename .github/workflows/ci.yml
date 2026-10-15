@@ -348,7 +348,7 @@ jobs:
           --no-default-features --lib --
           daemon::transport_windows daemon::peercred
           cli::router cli::runtime cli::refresh
-          daemon::cas_merge
+          daemon::cas_merge daemon::client
 
       - name: Run Python false-positive probe + D5 creator crosscheck tests (TP-49/2a 反证用例)
         # F-CI-01 延伸（关屿验收）：假阳性卡的全部价值压在这两条反证
