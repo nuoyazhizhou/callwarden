@@ -198,9 +198,15 @@ impl Drop for SecurityAttributesGuard {
 /// 创建单个命名管道实例。
 ///
 /// 使用 FILE_FLAG_OVERLAPPED 以支持超时等待和 shutdown 打断。
+///
+/// `first_instance`：为 true 时追加 `FILE_FLAG_FIRST_PIPE_INSTANCE`，若管道名已存在
+/// 则以 ERROR_ACCESS_DENIED 失败 —— bind 用它做 fail-closed 的先占检测（TP-11G 2a）。
+/// **只能加在首个实例上**：keep-alive「先补建后服务」依赖同名追加，补建实例必须传 false，
+/// 否则补建路径 ERROR_ACCESS_DENIED、竞态防护（Req 14.19）失效。
 unsafe fn create_pipe_instance(
     pipe_name: &str,
     sa: &SecurityAttributesGuard,
+    first_instance: bool,
 ) -> io::Result<HANDLE> {
     let wide: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -211,9 +217,16 @@ unsafe fn create_pipe_instance(
         bInheritHandle: 0,
     };
 
+    let first_pipe_instance_flag = if first_instance {
+        windows_sys::Win32::Storage::FileSystem::FILE_FLAG_FIRST_PIPE_INSTANCE
+    } else {
+        0
+    };
     let handle = CreateNamedPipeW(
         wide.as_ptr(),
-        PIPE_ACCESS_DUPLEX | windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED,
+        PIPE_ACCESS_DUPLEX
+            | windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED
+            | first_pipe_instance_flag,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
         PIPE_UNLIMITED_INSTANCES,
         PIPE_BUFFER_SIZE,
@@ -258,8 +271,12 @@ struct PipeInstance {
 }
 
 impl PipeInstance {
-    fn new(pipe_name: &str, sa: &SecurityAttributesGuard) -> io::Result<Self> {
-        let handle = unsafe { create_pipe_instance(pipe_name, sa)? };
+    fn new(
+        pipe_name: &str,
+        sa: &SecurityAttributesGuard,
+        first_instance: bool,
+    ) -> io::Result<Self> {
+        let handle = unsafe { create_pipe_instance(pipe_name, sa, first_instance)? };
         let event = unsafe { CreateEventW(ptr::null(), TRUE, 0, ptr::null()) };
         if event.is_null() {
             unsafe { CloseHandle(handle) };
@@ -367,9 +384,11 @@ impl NamedPipeListener {
         }
 
         // 预创建 ≥2 个管道实例并全部 arm（Req 14.19：全实例监听）
+        // 首实例带 FIRST_PIPE_INSTANCE（2a：bind 时发现先占即 fail-closed）；
+        // 其余为同名追加，**不能**带 flag（keep-alive 补建依赖，见 create_pipe_instance 文档）。
         let mut instances = Vec::<Box<PipeInstance>>::with_capacity(MIN_PIPE_INSTANCES);
-        for _ in 0..MIN_PIPE_INSTANCES {
-            let mut instance = Box::new(PipeInstance::new(&pipe_name, &sa)?);
+        for i in 0..MIN_PIPE_INSTANCES {
+            let mut instance = Box::new(PipeInstance::new(&pipe_name, &sa, i == 0)?);
             if let Err(e) = instance.arm() {
                 instance.close();
                 for inst in instances.iter_mut() {
@@ -399,7 +418,8 @@ impl NamedPipeListener {
     /// 必须在返回已接受连接**之前**调用，保证任意时刻都有 ≥ MIN_PIPE_INSTANCES
     /// 个实例处于监听状态。
     fn replenish_instance(&mut self) -> io::Result<()> {
-        let mut instance = Box::new(PipeInstance::new(&self.pipe_name, &self.sa)?);
+        // 同名追加（keep-alive 补建），不可带 FIRST_PIPE_INSTANCE
+        let mut instance = Box::new(PipeInstance::new(&self.pipe_name, &self.sa, false)?);
         if let Err(e) = instance.arm() {
             instance.close();
             return Err(e);
@@ -905,5 +925,50 @@ mod tests {
     fn test_instance_keepalive_invariant() {
         // Req 14.19：预创建 ≥2 个实例
         assert!(MIN_PIPE_INSTANCES >= 2);
+    }
+
+    // ============ 用例 9（TP-11G 2a-flag）：FIRST_PIPE_INSTANCE 语义锁定 ============
+    // 隔离名，零生产接触。锁两组语义：
+    //   A. 名字已存在（无 flag 先建）→ 带 flag 的 create 必须失败且错误码为
+    //      ERROR_ACCESS_DENIED(5) —— 这是 bind fail-closed 先占检测的机制基础；
+    //   B. 带 flag 首建成功，且随后的无 flag 同名追加成功 —— 证明 flag 只约束
+    //      携带它的那次 create，不破坏 keep-alive「先补建后服务」的补建路径。
+
+    #[test]
+    fn test_first_pipe_instance_flag_semantics() {
+        let owner_sid = get_current_user_sid().expect("get_current_user_sid");
+        let sddl = build_pipe_sddl(&owner_sid, false);
+        let sa = unsafe { create_security_attributes(&sddl) }.expect("sddl");
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        // Case A：无 flag 先建 → 带 flag 再建 → ERROR_ACCESS_DENIED(5)
+        let name_a = format!(
+            r"\\.\pipe\callwarden-isotest-fpi-a-{}-{ts}",
+            std::process::id()
+        );
+        let h1 = unsafe { create_pipe_instance(&name_a, &sa, false) }
+            .expect("A1: 无 flag 首建应成功");
+        let err_a = unsafe { create_pipe_instance(&name_a, &sa, true) }
+            .expect_err("A2: 名字已存在时带 flag 的 create 应失败");
+        assert!(
+            err_a.to_string().contains("error 5)"),
+            "A2 应为 ERROR_ACCESS_DENIED(5)，实际: {err_a}"
+        );
+        unsafe { CloseHandle(h1) };
+
+        // Case B：带 flag 首建成功 → 无 flag 追加成功（keep-alive 兼容）
+        let name_b = format!(
+            r"\\.\pipe\callwarden-isotest-fpi-b-{}-{ts}",
+            std::process::id()
+        );
+        let h2 = unsafe { create_pipe_instance(&name_b, &sa, true) }
+            .expect("B1: 带 flag 首建应成功（全新名字）");
+        let h3 = unsafe { create_pipe_instance(&name_b, &sa, false) }
+            .expect("B2: 无 flag 同名追加应成功（keep-alive 依赖）");
+        unsafe { CloseHandle(h3) };
+        unsafe { CloseHandle(h2) };
     }
 }
