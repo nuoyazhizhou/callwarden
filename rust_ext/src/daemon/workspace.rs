@@ -4953,6 +4953,186 @@ mod tests {
         );
     }
 
+    // ---- #63 / F-OWNER-01 I1: Windows 属主校验环境不变式（同时充当 runner 诊断）----
+
+    /// 属主校验环境事实快照（诊断用；只读，**不参与任何放行判定**）
+    #[cfg(not(unix))]
+    #[derive(Debug)]
+    struct OwnerCheckEnv {
+        path: String,          // tempdir 原始路径
+        canonicalized: String, // canonicalize 之后的实际路径
+        reparse_differs: bool, // ★ 候选成因 (c) 的判据
+        owner_sid: String,
+        owner_is_group: bool,  // owner 是否为 S-1-5-32-* 别名组
+        peer_sid: String,
+        admin: bool,
+        admin_probe: String,   // probe_admin_membership() 原始结果（Err 时含原因）
+        elevation_type: i32,   // 1=Default 2=Full 3=Lua(受限)
+        is_elevated: bool,     // TokenIsElevated
+        integrity_rid: u32,    // 0x2000=Medium 0x3000=High
+        temp_dir: String,
+        temp_owner_sid: String,
+    }
+
+    /// 探测令牌提升类型 / 是否已提升 / 完整性级别 RID。
+    ///
+    /// 句柄与缓冲写法照抄 `peercred.rs:192-240`、`:306-330`（本仓已有 GetTokenInformation 先例）。
+    #[cfg(not(unix))]
+    fn probe_token_elevation() -> (i32, bool, u32) {
+        use std::mem;
+        use std::ptr;
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::Security::{
+            GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenElevation,
+            TokenElevationType, TokenIntegrityLevel, TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL,
+            TOKEN_QUERY,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        unsafe {
+            let mut token: HANDLE = ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return (-1, false, 0);
+            }
+            let mut needed: u32 = 0;
+
+            let mut etype: i32 = -1;
+            GetTokenInformation(
+                token,
+                TokenElevationType,
+                &mut etype as *mut _ as *mut _,
+                mem::size_of::<i32>() as u32,
+                &mut needed,
+            );
+
+            let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
+            GetTokenInformation(
+                token,
+                TokenElevation,
+                &mut elev as *mut _ as *mut _,
+                mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut needed,
+            );
+
+            let mut il_rid = 0u32;
+            let mut len = 0u32;
+            GetTokenInformation(token, TokenIntegrityLevel, ptr::null_mut(), 0, &mut len);
+            if len > 0 {
+                let mut buf = vec![0u8; len as usize];
+                if GetTokenInformation(
+                    token,
+                    TokenIntegrityLevel,
+                    buf.as_mut_ptr() as *mut _,
+                    len,
+                    &mut len,
+                ) != 0
+                {
+                    let label = buf.as_ptr() as *const TOKEN_MANDATORY_LABEL;
+                    let sid = (*label).Label.Sid;
+                    if !sid.is_null() {
+                        let count = *GetSidSubAuthorityCount(sid) as u32;
+                        if count > 0 {
+                            il_rid = *GetSidSubAuthority(sid, count - 1);
+                        }
+                    }
+                }
+            }
+            CloseHandle(token);
+            (etype, elev.TokenIsElevated != 0, il_rid)
+        }
+    }
+
+    /// Windows 属主校验环境不变式 I1（同时充当 runner 诊断，**不改生产行为**）
+    ///
+    /// I1：若当前进程新建的目录 owner == S-1-5-32-544（Administrators），
+    /// 则 `probe_admin_membership()` 必须为 `Ok(true)`。
+    /// 两者互斥说明「admin 跳过」分支与「属主是 Administrators」对不上，候选成因：
+    /// - (a) 走了静默早退（P1-1 已改为 Err 可见，若这里仍是 Err 即为 (a) 复现）；
+    /// - (b) canonicalize 把 tempdir **重解析到环境预置目录**，于是读到解析目标的属主；
+    /// - (c) UAC 过滤令牌 + 属主继承自镜像预置父目录（两者叠加）。
+    ///
+    /// **必须同时打印 canonicalize 前后两个路径**：GH Windows runner 的 `D:\a` ↔ `C:\a`
+    /// 是已知 junction 布局，`validate_owned_path_any` 第一步就 canonicalize，
+    /// 可能把 tempdir 重解析到镜像预置目录（由提升进程创建 ⇒ 属主 Administrators）。
+    /// 若两者不等，成因即为 (b)/(c)，修复方向是归一化链（同源 P1-C `01211fa`），
+    /// **不是属主判定**。
+    #[cfg(not(unix))]
+    #[test]
+    fn test_windows_owner_check_environment_invariants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        let canonicalized = canonical_str(&path);
+
+        let owner_sid = get_file_owner_sid(&canonicalized).unwrap();
+        let peer_sid = crate::daemon::peercred::get_current_user_sid().unwrap();
+        let admin_probe = probe_admin_membership();
+        let admin = matches!(admin_probe, Ok(true));
+        let (elevation_type, is_elevated, integrity_rid) = probe_token_elevation();
+
+        let temp_dir = std::env::temp_dir();
+        let temp_canon = std::fs::canonicalize(&temp_dir).unwrap();
+        let temp_owner_sid = get_file_owner_sid(&temp_canon.to_string_lossy())
+            .unwrap_or_else(|e| format!("<获取失败: {}>", e));
+
+        let env = OwnerCheckEnv {
+            reparse_differs: path != canonicalized,
+            owner_is_group: owner_sid.starts_with("S-1-5-32-"),
+            admin_probe: format!("{:?}", admin_probe),
+            temp_dir: temp_canon.to_string_lossy().to_string(),
+            path,
+            canonicalized,
+            owner_sid,
+            peer_sid,
+            admin,
+            elevation_type,
+            is_elevated,
+            integrity_rid,
+            temp_owner_sid,
+        };
+
+        eprintln!("[diag] path           = {}", env.path);
+        eprintln!("[diag] canonicalized  = {}", env.canonicalized);
+        eprintln!("[diag] reparse_diff   = {}", env.reparse_differs);
+        eprintln!(
+            "[diag] owner          = {} (is_group={})",
+            env.owner_sid, env.owner_is_group
+        );
+        eprintln!("[diag] me             = {}", env.peer_sid);
+        eprintln!("[diag] admin          = {} ({})", env.admin, env.admin_probe);
+        eprintln!(
+            "[diag] elevation      = type={:?} is_elevated={} integrity=0x{:04X}",
+            env.elevation_type, env.is_elevated, env.integrity_rid
+        );
+        eprintln!(
+            "[diag] TEMP           = {} owner={}",
+            env.temp_dir, env.temp_owner_sid
+        );
+
+        if env.owner_sid == "S-1-5-32-544" {
+            assert!(
+                env.admin,
+                "不变式 I1 被违反：新建目录 owner=Administrators(S-1-5-32-544) \
+                 但 admin 判定不为 true\n\
+                 \n  me={} admin_probe={} elevation_type={:?} is_elevated={} integrity=0x{:04X}\n\
+                 \n  path={} canonicalized={} reparse_differs={}\n\
+                 \n  TEMP={} TEMP.owner={}\n\
+                 \n  候选成因: (a) 静默早退（现应为 Err 可见）; \
+                 (b) canonicalize 重解析到镜像预置目录; \
+                 (c) UAC 过滤令牌 + 属主继承自预置父目录",
+                env.peer_sid,
+                env.admin_probe,
+                env.elevation_type,
+                env.is_elevated,
+                env.integrity_rid,
+                env.path,
+                env.canonicalized,
+                env.reparse_differs,
+                env.temp_dir,
+                env.temp_owner_sid
+            );
+        }
+    }
+
     /// 跨平台: dispatch 层 workspace.register 使用非 owner peer 时状态不变
     #[test]
     fn test_dispatch_register_non_owner_state_unchanged() {
