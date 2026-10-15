@@ -239,9 +239,12 @@ jobs:
     # gc_purge 审计 / build_defect_knowledge fixes 关联逻辑）在 CI 完全无覆盖，
     # Rust 层逻辑回归 CI 抓不到（违背 AGENTS 规则 24）。本 job 补上 cargo test。
     #
-    # 范围限定 daemon::compat_native_handlers：这些测试用 in-memory SQLite、
-    # 无环境依赖、稳定可重复。未纳入 daemon:: 全模块是因为 snapshot_state 等
-    # 既有测试依赖进程单例/真实环境，并行跑会挂起（既有问题，另行治理）。
+    # 现范围（TP-11G 扩面后）= 既有 compat_native_handlers + 五目标模块，
+    # 见下方过滤器。历史勘误：曾仅跑 compat_native_handlers，理由是
+    # 「snapshot_state 等依赖进程单例/真实环境，daemon:: 全模块并行跑会挂起」
+    # ——该挂起声明经 TP-11G 实测**为误**（勘误依据见下「🔴」段），故未作为
+    # 本 job 维持窄过滤器的依据；实际未扩到全 --lib 的原因是下述三项前置
+    # 条件（1/2 已解除，3 由本 job 实证裁决）。
     #
     # 🔴 以上「并行跑会挂起」经 TP-11G 实测**是反的**：
     #   cargo test --no-default-features --lib（默认并行，= 删掉过滤器）
@@ -262,8 +265,10 @@ jobs:
     #   3. ⏳ 2 个 golden（daemon::task_prompt::bundle_tests）漂移：
     #      Windows 实机红，Linux 预期绿（归一化恒等推断）。
     #      **本 job 纳入 bundle_tests 即是该项的 Linux 实证复核**：
-    #      绿 → 桶 ③ 清零；红 → 推断被证伪，需修 golden（两者都是有价值的
-    #      真信号，不掩盖）。
+    #      绿 → 桶 ③ 清零；红 → **必须根因修复**（大概率是跨平台归一化
+    #      行为分歧，与 F-ROUTER-01 同类的路径语义问题），
+    #      **禁止改期望文件去匹配实际输出**（关屿口径：那是 MASKING，
+    #      与本仓 468 条 skip 中 28 条同款坏味道）。
     # Windows 平台 job 见 rust-unit-test-windows（不含 bundle_tests——
     # golden 漂移在 Windows 已知红，不得把已知红烘进 CI）。
     name: Rust unit tests (TP-11G target modules)
@@ -302,19 +307,26 @@ jobs:
     #
     # 范围（安全关键路径，Windows 实机实测全绿）：
     #   - daemon::transport_windows  管道 SDDL / SID / peer identity（7 例）
+    #   - daemon::peercred           授权身份根（ImpersonateNamedPipeClient
+    #                                取对端 SID → workspace owner ACL 输入；
+    #                                P1 补选，关屿复核：回归即全越权校验
+    #                                输入错误，8 例）
     #   - cli::router                路由决策 + is_daemon_available 三分支
-    #                                （含分支 1 真实管道注入测试，26 例）
+    #                                （含分支 1 真实管道注入测试 2 例，26 例）
     #   - cli::runtime               可用性注入式判定（密闭，真分支 3）
     #   - cli::refresh               刷新/回滚（夹具已按生产契约归一化）
     #   - daemon::cas_merge          CAS 合并（INSERT 已补齐生产 11 列）
+    # 合计 83 例（Windows 本机预演 83 passed / 0 failed）。
     #
     # 不含 daemon::task_prompt::bundle_tests：golden 漂移在 Windows 已知红
     # （待 Linux 复核桶，见 rust-unit-test 注记）——把已知红烘进 CI 只会
     # 让信号失真，不作为本 job 范围。
+    # daemon::workspace（147 例重夹具，本地实测大量单测 >60s）拆到
+    # rust-unit-test-windows-workspace，避免拖慢本 job 的安全回归反馈。
     #
     # timeout 45min：windows-latest 冷构建（tree-sitter/numpy 等）显著慢于
-    # ubuntu（本地 MSVC 隔离冷构建 ~950s ≈ 16min），测试本体 <1min，
-    # 按 TP-11G 保守取值再加余量。
+    # ubuntu（本地 MSVC 隔离冷构建 ~950s ≈ 16min），本集测试本体 ~1min；
+    # 若首跑超时，优先加 Rust 构建缓存而非继续加 timeout（关屿口径）。
     name: Rust unit tests (Windows security-critical paths)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -334,6 +346,38 @@ jobs:
         run: >-
           cargo test --manifest-path rust_ext/Cargo.toml
           --no-default-features --lib --
-          daemon::transport_windows
+          daemon::transport_windows daemon::peercred
           cli::router cli::runtime cli::refresh
           daemon::cas_merge
+
+  rust-unit-test-windows-workspace:
+    # P2 补选（关屿复核）：daemon::workspace 的 Windows 身份归一化测试
+    # （verbatim 前缀剥离 / 盘符大小写收敛 / CR7 前分裂行）是 owner ACL
+    # 匹配的前提——若路径拼写产生分裂身份，owner ACL 作用域即失效，与
+    # golden 桶的归一化恒等推断同根，Windows 实机验证价值高。
+    #
+    # 独立成 job 的原因：daemon::workspace 147 例为重夹具测试，本地实测
+    # 865s（含 peercred），其中 82 例单测 >60s；windows-latest CPU 更少
+    # 更慢，测试时长预计 2-4 倍膨胀，与快集合跑会拖慢安全回归反馈。
+    #
+    # timeout 90min：冷构建 ~16-48min + 测试 28-58min（估算），留余量；
+    # 若超时先加 Rust 构建缓存再评估拆分。
+    name: Rust unit tests (workspace, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust unit tests (workspace identity normalization, Windows)
+        run: >-
+          cargo test --manifest-path rust_ext/Cargo.toml
+          --no-default-features --lib -- daemon::workspace
