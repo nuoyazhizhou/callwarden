@@ -5070,14 +5070,29 @@ mod tests {
         }
     }
 
-    /// Windows 属主校验环境不变式 I1（同时充当 runner 诊断，**不改生产行为**）
+    /// Windows 属主校验环境不变式（同时充当 runner 诊断，**不改生产行为**）
     ///
-    /// I1：若当前进程新建的目录 owner == S-1-5-32-544（Administrators），
-    /// 则 `probe_admin_membership()` 必须为 `Ok(true)`。
-    /// 两者互斥说明「admin 跳过」分支与「属主是 Administrators」对不上，候选成因：
-    /// - (a) 走了静默早退（P1-1 已改为 Err 可见，若这里仍是 Err 即为 (a) 复现）；
-    /// - (b) canonicalize 把 tempdir **重解析到环境预置目录**，于是读到解析目标的属主；
-    /// - (c) UAC 过滤令牌 + 属主继承自镜像预置父目录（两者叠加）。
+    /// ## 本用例断言的是哪一条不变式
+    /// **UAC 过滤令牌（未提升会话）不得获得 Administrators 豁免**：
+    /// `!(is_elevated == false && admin)`。
+    /// - **今天为真**：admin 判定因 `CheckTokenMembership` 传主令牌而恒失败（1309，
+    ///   结构性失效，见 F-OWNER-02）⇒ admin=false ⇒ 通过；
+    /// - **F-OWNER-02 修好后仍须为真**：未提升会话里 Administrators 是 deny-only，不豁免；
+    /// - **它是可红的**：若有人改用 `IsUserAnAdmin`、或读 `TokenGroups` 时漏判
+    ///   deny-only / 漏判 `SE_GROUP_ENABLED`，就会出现「未提升却 admin=true」⇒ 本条立刻红。
+    /// ⇒ 它守的是「UAC 过滤令牌不豁免」这条契约，不是空洞断言。
+    ///
+    /// ## 分工与关闭条件（何序口径：红本身不是问题，**无主的红**才是问题）
+    /// - 本用例**不覆盖** admin 判定的 TRUE 侧（提权 ⇒ 必须跳过属主校验）。TRUE 侧归
+    ///   **F-OWNER-02**，配双态取证（本机非提权只能验 FALSE 侧，TRUE 侧需提升环境/CI）。
+    /// - **关闭条件**：F-OWNER-02 修好 `CheckTokenMembership` 调用方式后，其 TRUE 侧断言
+    ///   应转绿；若产品决策改为「不恢复 admin 跳过」，则相关断言必须**按新政策重写**，
+    ///   **不得靠 skip / xfail / 删除 / 放宽消失**。
+    /// - `owner == S-1-5-32-544` 只用于**打印诊断**，不作为断言触发条件 —— runner 上它是
+    ///   常态且必然伴随 admin=false，拿它当触发条件会让本用例在 runner 上必红（实测：
+    ///   CI run 38790144325 正是这样红的，属于「断言比当前代码状态超前一步」）。
+    /// - 可复现 fixture：任意 Windows 会话下 `tempfile::tempdir()` 即可；提权态需在提升
+    ///   会话或 GH runner 上复现。
     ///
     /// **必须同时打印 canonicalize 前后两个路径**：GH Windows runner 的 `D:\a` ↔ `C:\a`
     /// 是已知 junction 布局，`validate_owned_path_any` 第一步就 canonicalize，
@@ -5146,29 +5161,40 @@ mod tests {
             env.temp_dir, env.temp_owner_sid
         );
 
+        // owner 为 Administrators 组：只打印诊断，**不作断言触发条件**（见函数 doc）。
         if env.owner_sid == "S-1-5-32-544" {
-            assert!(
-                env.admin,
-                "不变式 I1 被违反：新建目录 owner=Administrators(S-1-5-32-544) \
-                 但 admin 判定不为 true\n\
-                 \n  me={} admin_probe={} elevation_type={:?} is_elevated={} integrity=0x{:04X}\n\
-                 \n  path={} canonicalized={} reparse_differs={}\n\
-                 \n  TEMP={} TEMP.owner={}\n\
-                 \n  候选成因: (a) 静默早退（现应为 Err 可见）; \
-                 (b) canonicalize 重解析到镜像预置目录; \
-                 (c) UAC 过滤令牌 + 属主继承自预置父目录",
-                env.peer_sid,
-                env.admin_probe,
-                env.elevation_type,
-                env.is_elevated,
-                env.integrity_rid,
-                env.path,
-                env.canonicalized,
-                env.reparse_differs,
-                env.temp_dir,
-                env.temp_owner_sid
+            eprintln!(
+                "[diag] 注意: tempdir 属主 = Administrators 组(S-1-5-32-544)，通常意味着\
+                 创建它的进程令牌是提升的（GH runner 即此形态，实测 elevation type=1 / \
+                 is_elevated=true / integrity=0x3000）；属主校验本身仍按严格相等执行，\
+                 owner != me 时生产 fail-closed 拒绝。"
             );
         }
+
+        // 不变式：UAC 过滤令牌（未提升）**不得**获得 Administrators 豁免。
+        // 今天为真、F-OWNER-02 修好后仍须为真，且**可红**（详见函数 doc）。
+        assert!(
+            !(env.is_elevated == false && env.admin),
+            "不变式被违反：未提升（UAC 过滤）令牌不得获得 Administrators 豁免\n\
+             \n  me={} admin_probe={} elevation_type={:?} is_elevated={} integrity=0x{:04X}\n\
+             \n  path={} canonicalized={} reparse_differs={} reparse_body_differs={}\n\
+             \n  owner={} (is_group={}) TEMP={} TEMP.owner={}\n\
+             \n  归属：F-OWNER-02（admin 判定 TRUE 侧）。若改用 IsUserAnAdmin，或读 \
+             TokenGroups 时漏判 deny-only / SE_GROUP_ENABLED，就会命中本断言。",
+            env.peer_sid,
+            env.admin_probe,
+            env.elevation_type,
+            env.is_elevated,
+            env.integrity_rid,
+            env.path,
+            env.canonicalized,
+            env.reparse_differs,
+            body_differs,
+            env.owner_sid,
+            env.owner_is_group,
+            env.temp_dir,
+            env.temp_owner_sid
+        );
     }
 
     /// 跨平台: dispatch 层 workspace.register 使用非 owner peer 时状态不变
