@@ -350,16 +350,18 @@ jobs:
           cli::router cli::runtime cli::refresh
           daemon::cas_merge
 
-      - name: Run Python false-positive probe tests (TP-49 反证用例)
+      - name: Run Python false-positive probe + D5 creator crosscheck tests (TP-49/2a 反证用例)
         # F-CI-01 延伸（关屿验收）：假阳性卡的全部价值压在这两条反证
         # 用例上，而 windows job 此前只跑 cargo——pytest 用例存在但从不
         # 执行（与「测试存在但从不执行」同款缺口）。变体 1/2 均 win32
         # 限定，ubuntu job 全 skip，故放 windows job 守护。
+        # 2a 层 4（D5）：归属交叉校验用例同守护（诚实 pid 通过 / 失配
+        # fail-closed / 查询不可得放行 / D3.3 端点参数化）。
         # faulthandler_timeout=90：若探针路径死锁（回归），60/90s 转储
         # 全线程栈定位而非静默挂满 timeout。
         run: |
           python -m pip install pytest
-          python -u -m pytest tests/test_tp49_false_positive_probe.py -q -o faulthandler_timeout=90
+          python -u -m pytest tests/test_tp49_false_positive_probe.py tests/test_tp11g_d5_creator_crosscheck.py -q -o faulthandler_timeout=90
 
   rust-unit-test-windows-workspace:
     # P2 补选（关屿复核）：daemon::workspace 的 Windows 身份归一化测试
