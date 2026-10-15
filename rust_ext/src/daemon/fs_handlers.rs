@@ -78,17 +78,31 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 ///
 /// 剥离 Windows verbatim 前缀（`\\?\` → 归一化后为 `//?/`）、反斜杠转正斜杠、
 /// 盘符字母小写，与 Python 权威库既有行（如 `c:/git_work/TokenSlim`）对齐。
+///
+/// TP-11G P1-C（CI Windows 双测试红根因）：**先 canonicalize 再词法归一化**。
+/// 纯词法归一化把同一目录的短名（8.3，如 CI 的 `RUNNER~1`）与长名形态
+/// 算作两个键——workspace.register 用一个形态、refresh 的 canonicalize
+/// 路径用另一个形态时，`ensure_workspace_row_by_root` 会为同一目录建两行
+/// （file_instances 分裂，按 workspace_id 的查询 QueryReturnedNoRows）。
+/// canonicalize 把 8.3 短名/符号链接/大小写收敛到同一实体路径；**失败
+/// （路径不存在）时退回原词法归一化**，不破坏既有的不存在路径查找语义。
 fn normalize_root_for_authority(root: &Path) -> String {
-    let s = root.to_string_lossy().replace('\\', "/");
-    let s = s.strip_prefix("//?/").map(str::to_string).unwrap_or(s);
-    // 仅 Windows 盘符模式（如 `C:/...`）小写首字母；POSIX 路径不受影响
-    let bytes = s.as_bytes();
-    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        let mut owned = s.clone();
-        owned[..1].make_ascii_lowercase();
-        return owned;
+    let lexical = |p: &Path| -> String {
+        let s = p.to_string_lossy().replace('\\', "/");
+        let s = s.strip_prefix("//?/").map(str::to_string).unwrap_or(s);
+        // 仅 Windows 盘符模式（如 `C:/...`）小写首字母；POSIX 路径不受影响
+        let bytes = s.as_bytes();
+        if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+            let mut owned = s.clone();
+            owned[..1].make_ascii_lowercase();
+            return owned;
+        }
+        s.to_string()
+    };
+    match std::fs::canonicalize(root) {
+        Ok(canonical) => lexical(&canonical),
+        Err(_) => lexical(root),
     }
-    s.to_string()
 }
 
 /// 将 host 真实根目录映射/登记到权威单库 workspaces 行，返回其自增 id。
@@ -1569,5 +1583,57 @@ mod tests {
             .unwrap();
         assert!(raw_back >= 1, "demoted edge must stay raw when callee gone");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// TP-11G P1-C 回归守卫：同一目录的 8.3 短名形态与长名形态必须映射到
+    /// 同一 workspace 行（canonicalize 收敛）。修复前：纯词法归一化把两种
+    /// 形态算作两个键 → ensure 建两行 → file_instances 分裂 → 按
+    /// workspace_id 查询 QueryReturnedNoRows（CI Windows 双测试红根因）。
+    /// CI 的 TMPDIR 含 RUNNER~1 短名，本地长名 tempdir 不复现——故本测试
+    /// 显式构造短名路径复现并锁定。仅 Windows（8.3 短名是 Windows 概念）。
+    #[cfg(windows)]
+    #[test]
+    fn normalize_root_short_and_long_form_share_one_workspace_row() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+        let long_base = std::env::temp_dir().join(format!(
+            "cw_shortname_guard_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&long_base).unwrap();
+        let mut short_buf = [0u16; 260];
+        let long_wide: Vec<u16> = long_base
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let n = unsafe { GetShortPathNameW(long_wide.as_ptr(), short_buf.as_mut_ptr(), 260) };
+        assert!(n > 0, "GetShortPathNameW 失败（卷未启用 8.3 生成时跳过无意义）");
+        let short_base =
+            std::path::PathBuf::from(String::from_utf16_lossy(&short_buf[..n as usize]));
+        assert_ne!(
+            long_base.to_string_lossy().to_lowercase(),
+            short_base.to_string_lossy().to_lowercase(),
+            "短名应与长名不同（否则本测试无意义）"
+        );
+
+        // 归一化键必须相同（canonicalize 收敛 8.3 短名）
+        assert_eq!(
+            normalize_root_for_authority(&short_base),
+            normalize_root_for_authority(&long_base),
+            "短名/长名必须归一化到同一键"
+        );
+
+        // 端到端：两种形态 ensure 必须得到同一行 id（而非两个）
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::daemon::cas_merge::init_codegraph_schema(&conn).unwrap();
+        let id_short = ensure_workspace_row_by_root(&conn, &short_base).unwrap();
+        let id_long = ensure_workspace_row_by_root(&conn, &long_base).unwrap();
+        assert_eq!(id_short, id_long, "同一目录的两种路径形态必须同一 workspace 行");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "不得为同一目录建第二行");
     }
 }
