@@ -13,6 +13,7 @@ import re
 import socket
 import sys
 import tempfile
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 # === PyInstaller 冻结环境检测 ===
@@ -1688,6 +1689,39 @@ def get_task_write_policy() -> str:
     return policy if policy in ("shared", "isolated") else "shared"
 
 
+def _windows_daemon_probe_ok(conn) -> bool:
+    """对已连接的 Windows 管道做协议级最小校验（TP-49 假阳性卡）。
+
+    CreateFileW 对「存在但未 arm」的管道实例同样返回成功（假阳性）——
+    占位者只建不监听即可让 try_connect 连上，故可用性判定不能止步于
+    连接成功，必须让对端证明它能应答协议。非协议占位者无法应答 ping
+    → 判不可用。探针超时 1.0s（与 daemon_client readiness 探针同款，
+    短于查询的 30s，失败快速返回）。
+    """
+    from callwarden.server.daemon_protocol import (
+        DEFAULT_MAX_MESSAGE_BYTES,
+        parse_response,
+        recv_message,
+        send_message,
+    )
+
+    try:
+        conn.settimeout(1.0)
+        request_id = f"probe-{uuid.uuid4().hex}"
+        send_message(
+            conn,
+            {"id": request_id, "method": "ping", "params": {}},
+            DEFAULT_MAX_MESSAGE_BYTES,
+        )
+        response = recv_message(conn, DEFAULT_MAX_MESSAGE_BYTES)
+        if response.get("id") != request_id:
+            return False
+        parse_response(response)
+        return True
+    except Exception:
+        return False
+
+
 def is_daemon_available() -> bool:
     """检测 daemon 是否可用（endpoint 是否存在且可连接）。"""
     endpoint = get_default_daemon_endpoint()
@@ -1696,10 +1730,14 @@ def is_daemon_available() -> bool:
         conn = try_connect(endpoint)
         if conn is not None:
             try:
-                conn.close()
-            except Exception:
-                pass
-            return True
+                # TP-49 假阳性卡：连接成功 != 可用（未 arm 占位者可被连上）。
+                # 协议探针通过才算可用；探针失败/异常 = 不可用（fail-closed）。
+                return _windows_daemon_probe_ok(conn)
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return False
     return os.path.exists(endpoint)
 

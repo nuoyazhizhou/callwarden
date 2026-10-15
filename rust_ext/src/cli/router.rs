@@ -302,8 +302,34 @@ pub fn is_daemon_required_py() -> bool {
 ///
 /// 参数 `socket_path` 和 `platform` 由 Python 传入（便于测试），
 /// 默认值由 Python 端 `daemon_socket_path_py()` + `sys.platform` 提供。
+///
+/// **边界校验（TP-49 假阳性卡）**：`platform` 与当前 OS 不一致时 eprintln
+/// 告警；其中**破坏性组合**（非 linux 实机喂 linux 语义 + 管道形态路径）
+/// 直接拒绝返回 false——linux 分支的 `socket_path.exists()` 对 Windows
+/// 管道名「接触即破坏」（属性查询打开消耗 armed 实例，与返回值无关），
+/// 实证见台账 §A4/A5。其余不一致组合（macos/windows 语义在异机恒
+/// false，无文件系统接触）保留模拟，维持 diff 测试的显式平台注入能力。
+/// **不做自动纠正**：纠正会摧毁跨平台语义模拟（测试依赖）并掩盖调用方 bug。
 #[pyfunction]
 pub fn is_daemon_available_py(socket_path: &str, platform: &str) -> bool {
+    let host = std::env::consts::OS;
+    if platform != host {
+        eprintln!(
+            "[callwarden] WARNING: is_daemon_available_py platform mismatch: got '{platform}', host is '{host}'"
+        );
+        if platform == "linux"
+            && host != "linux"
+            && socket_path
+                .replace('\\', "/")
+                .to_ascii_lowercase()
+                .starts_with("//./pipe/")
+        {
+            eprintln!(
+                "[callwarden] REFUSED: linux availability semantics on non-linux host against a pipe-shaped endpoint — contact destroys pipe instances"
+            );
+            return false;
+        }
+    }
     is_daemon_available(Path::new(socket_path), platform)
 }
 
@@ -534,6 +560,29 @@ mod tests {
         // 从未存在的管道名 → ERROR_FILE_NOT_FOUND → 立即 false（不触发 5s 等待）。
         let missing = unique_pipe_name("missing");
         assert!(!is_daemon_available(Path::new(&missing), "windows"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_tp49_pywrapper_refuses_linux_semantics_on_pipe() {
+        // PyO3 边界（TP-49 假阳性卡）：非 linux 实机喂 linux 语义 + 管道形态
+        // 路径 → 拒绝。若无此校验，linux 分支 exists()（fs::metadata）会对
+        // un-armed 实例返回 true 且**消耗掉它**（接触即破坏，§A4/A5 实证）。
+        let pipe_name = unique_pipe_name("b4");
+        let _server = spawn_pipe_server(&pipe_name);
+
+        // 拒绝 → false（而非破坏性 exists() 的 true）
+        assert!(!is_daemon_available_py(&pipe_name, "linux"));
+
+        // 实例未被消耗（windows 语义探测仍命中）——证明拒绝发生在接触之前
+        assert!(is_daemon_available(Path::new(&pipe_name), "windows"));
+
+        // 非管道形态路径 + linux 语义 → 模拟保留（diff 测试依赖）：
+        // 真实临时文件 exists() = true
+        let tmp = std::env::temp_dir().join("tp49_probe_sim_file");
+        std::fs::write(&tmp, b"x").unwrap();
+        assert!(is_daemon_available_py(tmp.to_str().unwrap(), "linux"));
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]

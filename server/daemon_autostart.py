@@ -363,9 +363,15 @@ class _WindowsPipeSocket:
     使调用方无需区分 Unix socket 和 Windows pipe。
     """
 
+    # TP-49 假阳性卡：默认超时必须有界。此前 None（无限阻塞）——调用方若
+    # 忘记 settimeout（如 ensure_daemon_running readiness None 分支原样
+    # 返回的 conn），下游 I/O 对无响应对端将永久挂起。30.0 与
+    # DaemonClient.timeout 默认值一致；显式 settimeout 仍可覆盖。
+    DEFAULT_TIMEOUT: float = 30.0
+
     def __init__(self, handle: int):
         self._handle = handle
-        self._timeout: Optional[float] = None
+        self._timeout: Optional[float] = self.DEFAULT_TIMEOUT
 
     def settimeout(self, timeout: Optional[float]) -> None:
         self._timeout = timeout
@@ -434,6 +440,24 @@ class _WindowsPipeSocket:
 
         threading.Thread(target=worker, name="cw-pipe-io", daemon=True).start()
         if not done.wait(self._timeout):
+            # TP-49 实证（faulthandler 栈）：同步句柄（FlagsAndAttributes=0）
+            # 上有未决阻塞 ReadFile/WriteFile 时，另一线程的 CloseHandle 会
+            # **等 I/O 完成才返回**——对静默对端（占位者/挂死 daemon）就是
+            # 死锁：worker 永远等数据，close 永远等 worker。此前 docstring
+            # 「关闭句柄使阻塞调用结束」对同步句柄不成立。
+            # CancelIoEx(handle, NULL) 取消**任意线程**在该句柄上的未决 I/O，
+            # worker 的 ReadFile 立即以 ERROR_OPERATION_ABORTED 失败退出，
+            # 之后 close 才安全。该死锁同样影响主 RPC 路径的 30s 超时兜底
+            # （daemon 应答挂起场景），此处修复即全路径生效。
+            try:
+                import ctypes
+
+                ctypes.windll.kernel32.CancelIoEx(
+                    ctypes.c_void_p(self._handle), None
+                )
+            except Exception:
+                pass  # CancelIoEx 不可用（<Vista）时退回旧行为（可能死锁）
+            done.wait(1.0)  # 给 worker 一点时间以 ABORTED 错误退出
             self.close()
             raise socket.timeout("Windows named pipe I/O timed out")
         if "error" in result:
