@@ -250,18 +250,23 @@ jobs:
     #   900s 只分别跑完 27 / 17 个 → **串行才是跑不完的原因**。
     #   故扩面时 CI **不应加 --test-threads=1**。
     #
-    # 扩面前置条件（未完成前不得改本 job 的过滤器，否则 10 个失败会直接红）：
-    #   1. 4 个平台无关确定性缺陷：裸 CREATE TABLE 无 IF NOT EXISTS
-    #      （cli/refresh.rs:637/650/661 三张表、daemon/cas_merge.rs:3368；
-    #       行号已 sed 实测核实）。根因是两条不同 SQL 作用于同一张表：
-    #      :635 init_codegraph_schema 已用 IF NOT EXISTS 建表成功，夹具又
-    #      裸 CREATE 同名表。修复方向=删除冗余夹具 batch，不加 IF NOT EXISTS
-    #      掩盖；cas_merge.rs:3368 更不能机械加（4 列桩 vs 生产 11 列）。
-    #   2. 4 个非密闭用例：cli/router.rs:146 is_daemon_available 的 windows
-    #      分支忽略 socket_path、直接探测真实命名管道 → 生产缺陷（TP-11G G8b）
-    #   3. 2 个待 Linux 复核：daemon::task_prompt::bundle_tests golden 漂移
-    # 详见 C:/Users/wanpi/cw-review/TP11G_rust_ci_range.md。
-    name: Rust unit tests (daemon compat handlers)
+    # TP-11G 扩面前置条件（原 3 项）状态：
+    #   1. ✅ 4 个平台无关确定性缺陷（裸 CREATE TABLE）已修复：
+    #      1854255（cli/refresh.rs 冗余夹具 batch 删除 + cas_merge.rs 4 列桩
+    #      删除/INSERT 补齐 11 列）+ 223d89a（夹具 root_path 归一化，
+    #      何序定位 + 主理人调试实证：夹具存原始路径致生产归一化匹配
+    #      不上另起新行，file_instances 全写 ws=2）。
+    #   2. ✅ 4 个非密闭用例（cli/router.rs is_daemon_available windows 分支
+    #      忽略 socket_path）已修复：a805db5（三分支判定 + 超时 5000）+
+    #      8694e17（大小写不敏感 + 分支 1 真实管道注入测试）+ d31efce。
+    #   3. ⏳ 2 个 golden（daemon::task_prompt::bundle_tests）漂移：
+    #      Windows 实机红，Linux 预期绿（归一化恒等推断）。
+    #      **本 job 纳入 bundle_tests 即是该项的 Linux 实证复核**：
+    #      绿 → 桶 ③ 清零；红 → 推断被证伪，需修 golden（两者都是有价值的
+    #      真信号，不掩盖）。
+    # Windows 平台 job 见 rust-unit-test-windows（不含 bundle_tests——
+    # golden 漂移在 Windows 已知红，不得把已知红烘进 CI）。
+    name: Rust unit tests (TP-11G target modules)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -276,9 +281,59 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run Rust daemon compat-handler unit tests
+      - name: Run Rust daemon unit tests (TP-11G target set)
         # --no-default-features 关闭 extension-module，让 PyO3 链接 libpython
         # （Cargo.toml [features] 注释明确此为测试模式）。setup-python 提供 libpython。
+        # 过滤器 = 既有 compat_native_handlers + TP-11G 五目标模块。
+        # 多过滤器必须放 `--` 之后（libtest 对多个位置参数做 OR 匹配）。
+        # 注意 cfg(windows) 测试（router 管道注入 2 例）在 Linux 不编译，不计 skip。
         run: >-
           cargo test --manifest-path rust_ext/Cargo.toml
-          --no-default-features --lib daemon::compat_native_handlers
+          --no-default-features --lib --
+          daemon::compat_native_handlers
+          cli::router cli::runtime cli::refresh
+          daemon::cas_merge daemon::task_prompt::bundle_tests
+
+  rust-unit-test-windows:
+    # F-CI-01（关屿 / TP-11G #49）：Windows 安全关键路径此前 CI 零覆盖
+    # ——所有 job 都在 ubuntu 上，named pipe 传输（SDDL 安全描述符、
+    # SID 派生）、is_daemon_available 的 windows 分支（TP-11G #48 刚修复
+    # 的 fail-closed 缺陷）等平台关键代码的回归只有开发者本机可见。
+    #
+    # 范围（安全关键路径，Windows 实机实测全绿）：
+    #   - daemon::transport_windows  管道 SDDL / SID / peer identity（7 例）
+    #   - cli::router                路由决策 + is_daemon_available 三分支
+    #                                （含分支 1 真实管道注入测试，26 例）
+    #   - cli::runtime               可用性注入式判定（密闭，真分支 3）
+    #   - cli::refresh               刷新/回滚（夹具已按生产契约归一化）
+    #   - daemon::cas_merge          CAS 合并（INSERT 已补齐生产 11 列）
+    #
+    # 不含 daemon::task_prompt::bundle_tests：golden 漂移在 Windows 已知红
+    # （待 Linux 复核桶，见 rust-unit-test 注记）——把已知红烘进 CI 只会
+    # 让信号失真，不作为本 job 范围。
+    #
+    # timeout 45min：windows-latest 冷构建（tree-sitter/numpy 等）显著慢于
+    # ubuntu（本地 MSVC 隔离冷构建 ~950s ≈ 16min），测试本体 <1min，
+    # 按 TP-11G 保守取值再加余量。
+    name: Rust unit tests (Windows security-critical paths)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust unit tests (security-critical, Windows)
+        run: >-
+          cargo test --manifest-path rust_ext/Cargo.toml
+          --no-default-features --lib --
+          daemon::transport_windows
+          cli::router cli::runtime cli::refresh
+          daemon::cas_merge
