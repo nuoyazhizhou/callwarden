@@ -4172,6 +4172,12 @@ mod tests {
     ///
     /// ⚠️ **政策变更只改本函数**；改完必须同步更新 `check_path_owner` 的契约注释。
     ///
+    /// **政策镜像（防漂移交叉引用）**：生产侧同一政策的实现是纯函数
+    /// `owner_check_decision`（`admin || owner_sid == peer_sid`，`check_path_owner`
+    /// 的 `if !admin` 块内调用点）。本函数与它是同一政策的**镜像双点结构**，固有漂移
+    /// 风险——未来政策变更**必须两处同步**（测试侧政策定义见本 doc，生产侧镜像见
+    /// `owner_check_decision` 的 doc）。
+    ///
     /// 历史脉络：#63 / F-OWNER-01 期间 admin 判定曾**结构性失效**（CheckTokenMembership
     /// 被传入主令牌 ⇒ 恒 1309 ⇒ admin 恒 false），当时政策退化为「放行 ⟺ SelfOwned」。
     /// F-OWNER-02 修复 1309 后本函数恢复 admin 分支；该修复的**双向**性质变化
@@ -5032,6 +5038,44 @@ mod tests {
                 "探测失败必须携带非空原因，否则调用方无法告警诊断"
             ),
         }
+    }
+
+    /// F-OWNER-02 / 关屿 must-have：`owner_check_decision` 四组合矩阵（环境无关穷举）
+    ///
+    /// 修复后 Windows CI（提升 runner）上 admin=true ⇒ `check_path_owner` 的
+    /// `if !admin` 外壳整块跳过 ⇒ 属主比较在真实路径上**零覆盖**；Linux 只盖
+    /// `#[cfg(unix)]` 那一段（另一段代码）。本矩阵把决策函数的四种输入组合
+    /// 逐一钉期望值，不依赖任何会话/文件状态——生产单点 + 测试镜像单点对称：
+    /// - admin=false × owner==peer → 放行
+    /// - admin=false × owner≠peer → 拒绝（安全主线；含组 SID，钉死「无组放行」）
+    /// - admin=true  × owner==peer → 放行
+    /// - admin=true  × owner≠peer → 放行（root 等价跳过；生产惰性外壳里跑不到，
+    ///   由这格钉——关屿 close 前必须项 (i) 的落点）
+    #[cfg(not(unix))]
+    #[test]
+    fn test_windows_owner_check_decision_matrix() {
+        let peer = "S-1-5-21-9-1-500";
+        assert!(
+            owner_check_decision(peer, peer, false),
+            "非 admin + owner==peer ⇒ 放行"
+        );
+        // 安全主线 + 无组放行/白名单：544（Administrators）、545（Users）均拒绝
+        for group in ["S-1-5-32-544", "S-1-5-32-545"] {
+            assert!(
+                !owner_check_decision(group, peer, false),
+                "非 admin + owner≠peer({}) ⇒ 拒绝（owner-only 边界，无组放行）",
+                group
+            );
+        }
+        assert!(
+            owner_check_decision(peer, peer, true),
+            "admin + owner==peer ⇒ 放行"
+        );
+        // 生产惰性外壳下跑不到的象限：admin=true + owner≠peer ⇒ root 等价跳过放行
+        assert!(
+            owner_check_decision("S-1-5-32-544", peer, true),
+            "admin + owner≠peer ⇒ 放行（root 等价跳过；真实路径零覆盖，由本格钉）"
+        );
     }
 
     // #63 / F-OWNER-01：原 `test_windows_validate_owned_path_accepts_own_directory` 已删除。
