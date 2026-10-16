@@ -5291,8 +5291,8 @@ mod tests {
         let params = json!({ "client_view_root": path });
         let resp = dispatch(&mut state, owner_peer, "workspace.register", &params, &[]);
 
-        // #63 / F-OWNER-01 P1-3：tempdir 属主决定 register 能不能成功，
-        // 也就决定后面「非 owner 查询被拒」这条链还发不发生。
+        // #63 / F-OWNER-01 P1-3：tempdir 属主（或 admin 提升跳过）决定 register
+        // 能不能成功，也就决定后面「非 owner 查询被拒」这条链还发不发生。
         let ownership = probe_test_path_ownership(&real, owner_peer.uid);
         if ownership_allows(&ownership) {
             assert_eq!(resp["ok"], true, "owner 注册应成功: {:?}", resp);
@@ -5315,7 +5315,7 @@ mod tests {
         } else {
             assert_eq!(
                 resp["ok"], false,
-                "非 SelfOwned 时注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, resp
             );
             assert_eq!(resp["error"]["code"].as_str(), Some("path_forbidden"));
@@ -5453,7 +5453,7 @@ mod tests {
         // Windows runner 上该前提不成立（属主 = S-1-5-32-544）⇒ 整批红。
         let ownership = probe_test_path_ownership(&real, peer.uid);
         if ownership_allows(&ownership) {
-            assert_eq!(response["ok"], true, "SelfOwned 注册应成功: {:?}", response);
+            assert_eq!(response["ok"], true, "政策允许（SelfOwned 或 admin 提升跳过）时注册应成功: {:?}", response);
             assert_eq!(response["result"]["owner_uid"], current_uid());
             assert_eq!(response["result"]["status"], "active");
             // host_real_root 应该被 canonicalize 处理
@@ -5461,7 +5461,7 @@ mod tests {
         } else {
             assert_eq!(
                 response["ok"], false,
-                "非 SelfOwned 时注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, response
             );
             assert_eq!(response["error"]["code"].as_str(), Some("path_forbidden"));
@@ -5481,15 +5481,16 @@ mod tests {
         let reg_params = json!({"client_view_root": dir_path});
         let reg_response = dispatch(&mut state, peer, "workspace.register", &reg_params, &[]);
 
-        // #63 / F-OWNER-01 P1-3：先探测属主事实。非 SelfOwned 时注册本身就会被拒，
-        // 拿不到 instance_id，后续 status 分支无从发生 —— 断言「注册被拒」这唯一结果。
+        // #63 / F-OWNER-01 P1-3：先探测属主事实。非 SelfOwned 且未获 admin 提升跳过时
+        // 注册本身就会被拒，拿不到 instance_id，后续 status 分支无从发生 ——
+        // 断言「注册被拒」这唯一结果。
         let ownership = probe_test_path_ownership(&real, peer.uid);
         if ownership_allows(&ownership) {
             assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
         } else {
             assert_eq!(
                 reg_response["ok"], false,
-                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, reg_response
             );
             assert_eq!(
@@ -5545,15 +5546,15 @@ mod tests {
             &reg_params,
             &[],
         );
-        // #63 / F-OWNER-01 P1-3：非 SelfOwned 时注册被 ACL 拒，后续「非 owner 查询
-        // 被拒」无从发生；断言「注册被拒」这一唯一结果。
+        // #63 / F-OWNER-01 P1-3：非 SelfOwned 且未获 admin 提升跳过时注册被 ACL 拒，
+        // 后续「非 owner 查询被拒」无从发生；断言「注册被拒」这一唯一结果。
         let ownership = probe_test_path_ownership(&real, peer_owner.uid);
         if ownership_allows(&ownership) {
             assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
         } else {
             assert_eq!(
                 reg_response["ok"], false,
-                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, reg_response
             );
             assert_eq!(
@@ -5595,15 +5596,16 @@ mod tests {
             &json!({"client_view_root": dir_path}),
             &[],
         );
-        // #63 / F-OWNER-01 P1-3：非 SelfOwned 时注册被 ACL 拒，拿不到 instance_id，
-        // remove/activate 的 owner-only 分支无从发生；断言「注册被拒 + 无 workspace 行」。
+        // #63 / F-OWNER-01 P1-3：非 SelfOwned 且未获 admin 提升跳过时注册被 ACL 拒，
+        // 拿不到 instance_id，remove/activate 的 owner-only 分支无从发生；
+        // 断言「注册被拒 + 无 workspace 行」。
         let ownership = probe_test_path_ownership(&real, peer_owner.uid);
         if ownership_allows(&ownership) {
             assert_eq!(reg_response["ok"], true, "{:?}", reg_response);
         } else {
             assert_eq!(
                 reg_response["ok"], false,
-                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, reg_response
             );
             assert_eq!(
@@ -5669,7 +5671,8 @@ mod tests {
             &[],
         );
 
-        // health 统计与注册结果强绑定：属主决定注册能不能成功，也就决定 count。
+        // health 统计与注册结果强绑定：属主（或 admin 提升跳过）决定注册能不能成功，
+        // 也就决定 count。
         let ownership = probe_test_path_ownership(&real1, peer.uid);
         if ownership_allows(&ownership) {
             assert_eq!(r1["ok"], true, "{:?}", r1);
@@ -5680,7 +5683,7 @@ mod tests {
         } else {
             assert_eq!(
                 r1["ok"], false,
-                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, r1
             );
             assert_eq!(r1["error"]["code"].as_str(), Some("path_forbidden"));
@@ -5740,8 +5743,9 @@ mod tests {
             }),
             &[],
         );
-        // #63 / F-OWNER-01 P1-3：owner 侧 2 行能否注册成功取决于属主事实，
-        // 故 list 长度也按属主分支断言唯一值（other 那 1 行是直接注入的，与属主无关）。
+        // #63 / F-OWNER-01 P1-3：owner 侧 2 行能否注册成功取决于属主事实（含 admin
+        // 提升跳过），故 list 长度也按属主分支断言唯一值（other 那 1 行是直接注入的，
+        // 与属主无关）。
         let ownership = probe_test_path_ownership(&real1, owner_uid);
         let owner_ws_count = if ownership_allows(&ownership) {
             assert_eq!(reg1["ok"], true, "{:?}", reg1);
@@ -5750,7 +5754,7 @@ mod tests {
         } else {
             assert_eq!(
                 reg1["ok"], false,
-                "非 SelfOwned 注册必须被拒 ({:?}): {:?}",
+                "非 SelfOwned 且未获 admin 提升跳过时注册必须被拒 ({:?}): {:?}",
                 ownership, reg1
             );
             assert_eq!(reg1["error"]["code"].as_str(), Some("path_forbidden"));
