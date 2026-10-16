@@ -4016,9 +4016,9 @@ mod tests {
 
     /// 测试专用属主类别（把 Unix UID / Windows SID 归一成同一三态）。
     ///
-    /// 用例先探测环境事实，再按类别断言**唯一**结果：
-    /// - `SelfOwned` ⇒ 生产必须放行（`is_ok()`）；
-    /// - `GroupOwned` / `Alien` ⇒ 生产当前一律 fail-closed 拒绝（`path_forbidden`）。
+    /// 只描述「属主是谁」，**不**含会话 admin 状态——admin 由 `TestOwnershipProbe`
+    /// 一并携带（F-OWNER-02）。用例不直接按本枚举断言，只把探测结果交给
+    /// `ownership_allows()`（政策唯一落点）。
     ///
     /// 严禁写成 `if result.is_err() { assert_eq!(code, "path_forbidden") }`：那样
     /// 「放行」与「拒绝」都通过，对「是否具备放行能力」零覆盖 —— 流程域（何序）判定为
@@ -4030,27 +4030,48 @@ mod tests {
         Alien(String),
     }
 
-    /// 探测 **canonicalize 之后**路径的属主类别（Unix: UID 比较；Windows: SID 比较）。
+    /// `probe_test_path_ownership()` 的返回：属主类别 + 当前会话 admin 状态。
+    ///
+    /// F-OWNER-02：admin 状态必须随探测结果一起流动、由 `ownership_allows()`
+    /// 统一消费——**绝不允许各用例自行调 `probe_admin_membership()`**，否则
+    /// #63 P2 收敛起来的政策唯一落点会被重新散开（关屿 F-OWNER-02 前置要求）。
+    /// `admin = probe_admin_membership() == Ok(true)`；Err 按 false（与生产
+    /// `check_path_owner` 的回退一致：fail-closed 方向不变，只是告警原因）。
+    #[derive(Debug)]
+    struct TestOwnershipProbe {
+        ownership: TestPathOwnership,
+        admin: bool,
+    }
+
+    /// 探测 **canonicalize 之后**路径的属主类别 + 会话 admin 状态
+    /// （Unix: UID 比较、无 Administrators 概念 ⇒ admin 恒 false；Windows: SID 比较 +
+    /// `probe_admin_membership()`）。
     #[cfg(unix)]
-    fn probe_test_path_ownership(canonical_path: &str, peer_uid: u32) -> TestPathOwnership {
+    fn probe_test_path_ownership(canonical_path: &str, peer_uid: u32) -> TestOwnershipProbe {
         use std::os::unix::fs::MetadataExt;
         // peer_uid=0 时 check_path_owner 走 root 跳过，必然放行
         if peer_uid == 0 {
-            return TestPathOwnership::SelfOwned;
+            return TestOwnershipProbe {
+                ownership: TestPathOwnership::SelfOwned,
+                admin: false,
+            };
         }
         let owner_uid = std::fs::metadata(canonical_path)
             .map(|m| m.uid())
             .unwrap_or(u32::MAX);
-        if owner_uid == peer_uid {
-            TestPathOwnership::SelfOwned
-        } else {
-            TestPathOwnership::Alien(owner_uid.to_string())
+        TestOwnershipProbe {
+            ownership: if owner_uid == peer_uid {
+                TestPathOwnership::SelfOwned
+            } else {
+                TestPathOwnership::Alien(owner_uid.to_string())
+            },
+            admin: false,
         }
     }
 
     #[cfg(not(unix))]
-    fn probe_test_path_ownership(canonical_path: &str, _peer_uid: u32) -> TestPathOwnership {
-        match probe_path_ownership(canonical_path) {
+    fn probe_test_path_ownership(canonical_path: &str, _peer_uid: u32) -> TestOwnershipProbe {
+        let ownership = match probe_path_ownership(canonical_path) {
             Ok(PathOwnership::SelfOwned) => TestPathOwnership::SelfOwned,
             Ok(PathOwnership::GroupOwned(sid)) => TestPathOwnership::GroupOwned(sid),
             Ok(PathOwnership::Alien(sid)) => TestPathOwnership::Alien(sid),
@@ -4058,45 +4079,65 @@ mod tests {
                 "属主探针失败：环境事实不可知，不得静默放行 (path={}): {}",
                 canonical_path, e
             ),
-        }
+        };
+        // F-OWNER-02：连同 admin 状态一起采（Err → false 并告警，与生产 check_path_owner
+        // 回退一致）。1309 修复前（F-OWNER-01 形态）这里恒为 Err(1309) → false，
+        // 与今天的生产行为等价，故本笔提交是**中间态全绿**的纯政策扩展。
+        let admin = match probe_admin_membership() {
+            Ok(v) => v,
+            Err(reason) => {
+                eprintln!(
+                    "[warn] 测试属主探针：探测 Administrators 启用状态失败，按非 admin 采信: {}",
+                    reason
+                );
+                false
+            }
+        };
+        TestOwnershipProbe { ownership, admin }
     }
 
-    /// #63 / F-OWNER-01 P2：**owner 校验放行契约的唯一落点**（政策只在此定义一份）。
+    /// #63 / F-OWNER-01 P2 + F-OWNER-02：**owner 校验放行契约的唯一落点**
+    /// （政策只在此定义一份）。
     ///
-    /// **当前政策：放行 ⟺ SelfOwned。**
-    /// 依据：admin 判定是**结构性失效**的 —— `CheckTokenMembership` 被传入主令牌，
-    /// 而该 API 要求 impersonation token ⇒ 恒失败 `ERROR_NO_IMPERSONATION_TOKEN(1309)`
-    /// ⇒ admin 恒 false ⇒ 生产恒走 `file_owner_sid != peer_sid → 拒绝` 的严格比较
-    /// ⇒ 只有 owner == peer（SelfOwned）才放行，GroupOwned / Alien 一律 fail-closed。
+    /// **当前政策：放行 ⟺ SelfOwned || admin。**
+    /// - `SelfOwned`（owner == 当前用户）⇒ 放行；
+    /// - `admin`（当前进程令牌中 BUILTIN\Administrators **启用**，等价 Unix root）⇒ 放行。
+    ///   生产 `check_path_owner` 里 admin=true 时**跳过整个属主比较**（owner 无关，
+    ///   与 Unix root 跳过同语义）。GH runner 提升会话的典型观测是
+    ///   `GroupOwned("S-1-5-32-544") && admin`（提升进程新建对象默认属主 = Administrators），
+    ///   但那是本政策的**观测实例**，不是穷尽条件——admin 放行不限定 owner 类别。
+    /// - 其余（GroupOwned / Alien 且非 admin）⇒ fail-closed 拒绝。
     ///
-    /// ⚠️ **政策变更只改本函数**，两种情形：
-    /// 1. **F-OWNER-02 修好 admin 判定** ⇒ 提升会话会 skip 属主校验，届时 GroupOwned
-    ///    在**提升**环境也须判为放行（需按 `is_elevated` 分叉 + 双态取证）；
-    /// 2. **产品决策放行 Administrators 白名单** ⇒ `GroupOwned("S-1-5-32-544")` 判为放行。
-    /// 改完必须同步更新 `check_path_owner` 的契约注释。
+    /// ⚠️ **政策变更只改本函数**；改完必须同步更新 `check_path_owner` 的契约注释。
+    ///
+    /// 历史脉络：#63 / F-OWNER-01 期间 admin 判定曾**结构性失效**（CheckTokenMembership
+    /// 被传入主令牌 ⇒ 恒 1309 ⇒ admin 恒 false），当时政策退化为「放行 ⟺ SelfOwned」。
+    /// F-OWNER-02 修复 1309 后本函数恢复 admin 分支；该修复的**双向**性质变化
+    /// （过滤令牌侧硬化 / 提升会话侧放宽）见 `probe_admin_membership` 的 doc 与
+    /// F-OWNER-02 commit message。
     ///
     /// 为什么必须收敛：政策若散在 N 个用例里，变更时改一处漏一处 ⇒ 同一契约出现 N 个
     /// 版本，那本身就是 MASKING 温床（关屿 P2，且为 F-OWNER-02 的前置项）。
-    fn ownership_allows(ownership: &TestPathOwnership) -> bool {
-        matches!(ownership, TestPathOwnership::SelfOwned)
+    fn ownership_allows(probe: &TestOwnershipProbe) -> bool {
+        matches!(probe.ownership, TestPathOwnership::SelfOwned) || probe.admin
     }
 
-    /// 断言「生产对该属主类别的实际结果」符合契约（三处纯 `validate_owned_path` 用例用）。
+    /// 断言「生产对该探测结果的实际行为」符合契约（三处纯 `validate_owned_path` 用例用）。
     ///
-    /// 保持**唯一性**：SelfOwned ⇒ 必须放行；非 SelfOwned ⇒ 必须拒绝。
+    /// 保持**唯一性**：政策允许 ⇒ 必须放行；政策拒绝 ⇒ 必须拒绝。
     /// 不得退化成「两种结果都过」的容错形态。
-    fn assert_ownership_contract(ownership: &TestPathOwnership, allowed: bool, ctx: &str) {
-        if ownership_allows(ownership) {
+    fn assert_ownership_contract(probe: &TestOwnershipProbe, allowed: bool, ctx: &str) {
+        if ownership_allows(probe) {
             assert!(
                 allowed,
-                "{}: SelfOwned 必须放行（契约：放行 ⟺ SelfOwned），实际被拒",
-                ctx
+                "{}: 政策允许（SelfOwned 或 admin 提升跳过）必须放行，实际被拒 ({:?})",
+                ctx, probe
             );
         } else {
             assert!(
                 !allowed,
-                "{}: 非 SelfOwned（{:?}）当前必须 fail-closed 拒绝（契约：放行 ⟺ SelfOwned）",
-                ctx, ownership
+                "{}: 政策拒绝（非 SelfOwned 且未获 admin 提升跳过）时必须 fail-closed 拒绝 ({:?})",
+                ctx, probe
             );
         }
     }
