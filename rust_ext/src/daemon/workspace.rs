@@ -5014,7 +5014,9 @@ mod tests {
     //
     // 它的覆盖面由下面两个**自带确定性 fixture** 的用例接手：
     // - test_validate_owned_path_accepts_dir_owned_by_peer_sid（owner = 当前 SID ⇒ 必须放行）
-    // - test_validate_owned_path_owner_is_peer_group（owner = S-1-5-32-544 ⇒ 当前必须拒绝）
+    // - test_validate_owned_path_rejects_dir_owned_by_other_principal
+    //   （owner = TrustedInstaller：F-OWNER-02 双态化后，admin=false ⇒ 必须拒绝，
+    //    admin=true ⇒ 生产按 root 等价跳过 ⇒ 必须放行）
 
     /// owner = 当前 peer SID ⇒ 必须放行（fixture 自造属主，与 runner 是谁无关）
     ///
@@ -5040,7 +5042,8 @@ mod tests {
         );
     }
 
-    /// owner ≠ 当前 peer SID ⇒ 按当前产品语义必须拒绝（**确定性负向 fixture**）
+    /// owner ≠ 当前 peer SID 的**双态 fixture**（确定性：属主恒 TrustedInstaller，
+    /// 与会话状态无关；期望值随 admin 状态分叉）
     ///
     /// #63 / F-OWNER-01 实施记录（重要，别再走一遍弯路）：
     /// 本卡原计划显式把属主构造成 Administrators 组 SID (S-1-5-32-544)。
@@ -5050,14 +5053,22 @@ mod tests {
     /// 已实测两个别名组（Administrators=544、Users=545）均以同一错误失败。
     ///
     /// 因此改用**只读系统目录**（%SystemRoot%，属主恒为 TrustedInstaller
-    /// `S-1-5-80-...`，与当前用户必然不同）作为「属主不是我」的负向 fixture：
+    /// `S-1-5-80-...`，与当前用户必然不同）作为「属主不是我」的确定性对象：
     /// 不需要任何特权，全 Windows 确定性，且不涉及任何写操作。
-    /// runner 上的真实形态（属主 = Administrators 组 S-1-5-32-544）由那批
-    /// **环境分支断言**覆盖 —— GroupOwned ⇒ path_forbidden，它们在 runner 上会真的跑到。
+    /// runner 上的真实形态（tempdir 属主 = Administrators 组 S-1-5-32-544）由那批
+    /// **环境分支断言**覆盖 —— F-OWNER-02 后它们在 runner 上的分叉是
+    /// `GroupOwned("544") && admin=true ⇒ 放行`（观测实例，不进谓词）。
     ///
-    /// 产品决策（是否承认「owner 是 peer 所属组 = 合法属主」并放行）**尚未拍板**，
-    /// 已由主理人上报用户。拍板前按当前生产语义断言：必须 Err 且 code == path_forbidden。
-    /// **断言值由产品决策决定，不由「让它先绿起来」决定。**
+    /// # F-OWNER-02 双态化
+    /// - admin=true（GH runner 提升会话）⇒ 生产按 root 等价跳过属主比较 ⇒ 必须 `Ok`；
+    /// - admin=false（过滤令牌，本机常态）⇒ 必须 `Err(path_forbidden)` 且消息带
+    ///   实际 owner_sid/peer_sid。
+    ///
+    /// ⚠️ **doc 规则（关屿 F-OWNER-02 非协商）**：分支选择的 admin **必须来自独立
+    /// 探针 `probe_test_path_ownership()`，绝不允许从生产结果反推**——「生产放行 ⇒
+    /// 断言放行」立即退化为「两种结果都过」，正是被删掉的 :4590 MASKING 形态。
+    /// 这是「忠实记录」与「MASKING」之间唯一的分界线；同一规则也管
+    /// `ownership_allows()` 的所有调用点。
     #[cfg(not(unix))]
     #[test]
     fn test_validate_owned_path_rejects_dir_owned_by_other_principal() {
@@ -5072,19 +5083,30 @@ mod tests {
             sys_root
         );
 
+        // F-OWNER-02：期望值由**独立探针**决定（禁结果反推，见函数 doc 规则）
+        let probe = probe_test_path_ownership(&canonical_str(&sys_root), 0);
         let result = validate_owned_path(&sys_root, 0, false);
-        let err = result.expect_err("owner ≠ peer 时生产当前必须 fail-closed 拒绝");
-        assert_eq!(err.code, "path_forbidden");
-        assert!(
-            err.message.contains(&format!("owner_sid={}", owner)),
-            "拒绝信息须带实际 owner_sid: {}",
-            err.message
-        );
-        assert!(
-            err.message.contains("peer_sid="),
-            "拒绝信息须带 peer_sid: {}",
-            err.message
-        );
+        if ownership_allows(&probe) {
+            assert!(
+                result.is_ok(),
+                "admin=true 时生产按 root 等价跳过属主比较，必须放行: {:?}",
+                result.err()
+            );
+        } else {
+            let err = result
+                .expect_err("非 admin（过滤令牌）时 owner ≠ peer 必须 fail-closed 拒绝");
+            assert_eq!(err.code, "path_forbidden");
+            assert!(
+                err.message.contains(&format!("owner_sid={}", owner)),
+                "拒绝信息须带实际 owner_sid: {}",
+                err.message
+            );
+            assert!(
+                err.message.contains("peer_sid="),
+                "拒绝信息须带 peer_sid: {}",
+                err.message
+            );
+        }
     }
 
     // ---- #63 / F-OWNER-01 I1: Windows 属主校验环境不变式（同时充当 runner 诊断）----
