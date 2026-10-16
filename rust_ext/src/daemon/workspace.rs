@@ -4158,8 +4158,13 @@ mod tests {
         TestOwnershipProbe { ownership, admin }
     }
 
-    /// #63 / F-OWNER-01 P2 + F-OWNER-02：**owner 校验放行契约的唯一落点**
-    /// （政策只在此定义一份）。
+    /// #63 / F-OWNER-01 P2 + F-OWNER-02：**owner 校验放行契约的测试侧唯一落点**
+    /// （政策在**测试**里只在此定义一份）。
+    ///
+    /// ⚠️ **定性（关屿 close gate 第 1 项）**：本函数是**生产政策的镜像、不是独立
+    /// 决策**——生产侧权威实现是纯函数 `owner_check_decision`（本 doc 下方「政策
+    /// 镜像」段）。本函数存在的意义是让断言侧只维护一份期望值，而不是在 N 个用例
+    /// 里散开；**政策变更的权威点是生产侧，本函数必须同步跟随**。
     ///
     /// **当前政策：放行 ⟺ SelfOwned || admin。**
     /// - `SelfOwned`（owner == 当前用户）⇒ 放行；
@@ -5430,6 +5435,47 @@ mod tests {
             env.owner_is_group,
             env.temp_dir,
             env.temp_owner_sid
+        );
+    }
+
+    /// **L3 守卫：提升会话必须获得 Administrators 豁免**（TRUE 侧契约，F-OWNER-02 / 关屿）
+    ///
+    /// 断言 `!(is_elevated == true && !admin)`——与 L2（I1：未提升**不得**豁免）
+    /// 对称的另一半。GH Windows runner（提升会话）上 is_elevated=true 且 F-OWNER-02
+    /// 修复后 `probe_admin_membership()` = Ok(true) ⇒ 通过；本机（过滤令牌）
+    /// is_elevated=false ⇒ 前提假，形式上通过（TRUE 侧本机跑不到，由 L2 的 FALSE 侧
+    /// + D 步矩阵单测钉环境无关象限）。
+    ///
+    /// ## 可红性（关屿 F-OWNER-02：三层守卫各交注入证据）
+    /// 本机注入 `read_elevation_for_guard()` 返回 is_elevated=true + 真实
+    /// admin=Ok(false) ⇒ 本断言立刻红（注入实验在**影子副本**做，改 seam 一行、
+    /// `probe_token_elevation` 禁动项零改动、实验后还原；证据见 F-OWNER-02 报告）。
+    ///
+    /// ## 反事实读法（关屿非协商）
+    /// runner 上本条红 = 令牌确实提升（is_elevated=true）而 admin 判定坏在 Ok(false)
+    /// （1309 复发、探针退化等）⇒ **立即上报，不得靠放宽 / skip / 删除本断言消失**。
+    #[cfg(not(unix))]
+    #[test]
+    fn test_windows_admin_exempt_must_hold_on_elevated_token() {
+        let admin_probe = probe_admin_membership();
+        let admin = matches!(admin_probe, Ok(true));
+        let (elevation_type, is_elevated, integrity_rid) = read_elevation_for_guard();
+
+        eprintln!(
+            "[diag] L3 guard: admin={} ({:?}) elevation_type={:?} is_elevated={} integrity=0x{:04X}",
+            admin, admin_probe, elevation_type, is_elevated, integrity_rid
+        );
+
+        assert!(
+            !(is_elevated && !admin),
+            "L3 被违反：令牌已提升(is_elevated=true)却未获得 Administrators 豁免\n\
+             \n  admin_probe={:?} elevation_type={:?} is_elevated={} integrity=0x{:04X}\n\
+             \n  反事实读法：修复后提升会话应得 Ok(true)；此处 Ok(false) + is_elevated=true\n\
+             ⇒ admin 判定坏（或 1309 复发/探针退化），立即上报，不得靠放宽/删除本断言消失。",
+            admin_probe,
+            elevation_type,
+            is_elevated,
+            integrity_rid
         );
     }
 
