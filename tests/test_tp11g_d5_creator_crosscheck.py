@@ -26,6 +26,15 @@ from ctypes import wintypes
 
 import pytest
 
+if sys.platform != "win32":
+    # 模块级 SKIP（pytestmark skipif 的必要补充）：:36 起的 ctypes.windll
+    # 是**模块级** Windows-only 初始化——pytestmark 只跳测试执行、不跳
+    # collect 时的模块级代码，Linux collect 在 ctypes.windll 处
+    # AttributeError 击穿 collect 门（CI-DEBT CD-1，CI run 38927663848
+    # 实证）。docstring 已注明「仅 win32 可跑」，此处让 skip 语义覆盖
+    # 模块加载期。pytestmark 保留作为 win32 内的二次防护。
+    pytest.skip("Windows 命名管道归属校验，仅 win32", allow_module_level=True)
+
 from callwarden.server import daemon_client as dc
 
 pytestmark = pytest.mark.skipif(
