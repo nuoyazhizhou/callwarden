@@ -1020,6 +1020,39 @@ pub fn validate_owned_path_any(path: &str, peer_uid: u32) -> Result<String, Daem
 /// - `validate_owned_path_any`：canonicalize + 存在性 + 本函数。
 ///
 /// 共用同一份判定，保证「类型检查放在 ACL 前还是后」不会让属主判定分叉。
+/// Windows 生产属主校验决策（**纯函数**，环境无关 ⇒ 可矩阵穷举单测）。
+///
+/// 放行 ⟺ `admin || owner_sid == peer_sid`（严格相等，无组放行/白名单）。
+///
+/// # F-OWNER-02 / 关屿 must-have：修复后提升 runner 上 admin=true ⇒ `check_path_owner`
+/// 的 `if !admin` 外壳整块跳过 ⇒ 属主比较（原 `:1077` 的 `file_owner_sid != peer_sid`）
+/// 在 Windows CI 零覆盖；Linux 只盖 `#[cfg(unix)]` 那一段（另一段代码）。抽出本纯函数后，
+/// 四种输入组合可环境无关地钉期望值——生产单点 + 测试镜像单点对称。
+///
+/// **行为保持型重构**：`!owner_check_decision(o, p, admin)` 与原
+/// `!admin && o != p → 拒绝` 逐字等价。「一字不动」约束按主理人修订口径：
+/// 比较语义逐字保持（`admin || 严格相等`），允许的仅是「抽为纯函数以获得
+/// 环境无关覆盖」这一件事，比较逻辑本身一处不改。
+///
+/// **惰性保持**：调用点留在 `check_path_owner` 的 `if !admin` 块内——admin=true 时
+/// 仍不得提前取 peer_sid/owner_sid（`get_current_user_sid` 失败会改变错误行为）；
+/// 那里 admin 恒 false，admin=true 象限由矩阵单测钉（见
+/// `test_windows_owner_check_decision_matrix`）。
+///
+/// **政策镜像（防漂移交叉引用）**：本函数是生产侧决策点；测试侧同一政策的另一定义在
+/// `tests` 模块的 `ownership_allows`（放行 ⟺ `SelfOwned || admin`）。两处是同一政策的
+/// **镜像双点结构**，固有漂移风险——未来政策变更**必须两处同步**（政策定义见
+/// `ownership_allows` 的 doc，生产侧镜像见本函数）。
+///
+/// **接线盲点声明**：本函数是 `check_path_owner` 属主比较（`if !admin` 块内调用点）
+/// 的**唯一实现**——矩阵单测只钉函数本身；若将来有人在调用点绕过本函数（内联比较、
+/// 新增分支等），矩阵仍会绿。**调用点改动须与 `test_windows_owner_check_decision_matrix`
+/// 同步审查**，让漂移有书面锚点。
+#[cfg(not(unix))]
+fn owner_check_decision(owner_sid: &str, peer_sid: &str, admin: bool) -> bool {
+    admin || owner_sid == peer_sid
+}
+
 fn check_path_owner(real_path_str: &str, peer_uid: u32) -> Result<(), DaemonRpcError> {
     // Unix UID ACL 检查（root 跳过）
     #[cfg(unix)]
@@ -1079,7 +1112,7 @@ fn check_path_owner(real_path_str: &str, peer_uid: u32) -> Result<(), DaemonRpcE
                     format!("无法获取文件 owner SID: {} ({})", e, real_path_str),
                 )
             })?;
-            if file_owner_sid != peer_sid {
+            if !owner_check_decision(&file_owner_sid, &peer_sid, admin) {
                 // #63 / F-OWNER-01 P1-2：拒绝信息补「定性 + 处置提示」，让用户可自助，
                 // 而不是只拿到两个无从下手的 SID。**比较逻辑本身不变**（仍为严格相等，
                 // 不引入组放行/白名单）。
