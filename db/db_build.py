@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import pickle
 import re
+import sqlite3
 import subprocess
 import sys
 import time

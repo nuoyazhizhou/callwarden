@@ -128,7 +128,8 @@ def main():
         db_path = str(home / ".callwarden" / "daemon_config.db")
 
     # 查找 Experiment_Batch_Config
-    config_path = find_experiment_batch_config(args.workspace)
+    # CD-2 真修：函数名单复数对齐（本模块 :34 定义的是复数形式）
+    config_path = find_experiment_batch_configs(args.workspace)
     if config_path is None:
         print("未找到 Experiment_Batch_Config，无需迁移。")
         return

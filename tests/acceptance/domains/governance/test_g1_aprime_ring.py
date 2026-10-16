@@ -118,7 +118,7 @@ def test_g1_ring_execute_to_review(env):
 
     # snapshot 必须先发布：report 的 snapshot_id 前置
     snap = env.snapshot_publish()
-    assert snap.ok, f"snapshot.publish 失败：{sn!r}"
+    assert snap.ok, f"snapshot.publish 失败：{snap!r}"
     snap_id = snap.get("snapshot_id")
     assert snap_id, f"git provenance 下 publish 必须返回 snapshot_id：{snap.result}"
     env._g1_snapshot_id = snap_id

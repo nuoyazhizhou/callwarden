@@ -20,6 +20,8 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..analyzers import IssueAnalyzerMixin
+
 
 class CrossRepoMixin:
     """跨仓库分析 Mixin
