@@ -5275,33 +5275,57 @@ mod tests {
         }
     }
 
+    /// L2/L3 守卫测试的 is_elevated 读数入口（**注入缝**）。
+    ///
+    /// 直接包 `probe_token_elevation()`——I1 诊断机从此只被本函数单一引用，
+    /// 禁动保护更强。三层守卫测试统一从本函数读提升状态：
+    /// - L2（I1 不变式）：`!(is_elevated == false && admin)`；
+    /// - L3（TRUE 侧）：`!(is_elevated == true && !admin)`（紧随 I1 用例之后）。
+    ///
+    /// **注入缝定位（关屿 F-OWNER-02 要求）**：L3 的可红性实验在**影子副本**里
+    /// 临时改本函数的返回（伪造 is_elevated=true），`probe_token_elevation`（I1
+    /// 诊断机，禁动）本身一处不动。本函数只在 `mod tests` 内，生产二进制零注入面。
+    #[cfg(not(unix))]
+    fn read_elevation_for_guard() -> (i32, bool, u32) {
+        probe_token_elevation()
+    }
+
     /// Windows 属主校验环境不变式（同时充当 runner 诊断，**不改生产行为**）
     ///
     /// ## 本用例断言的是哪一条不变式
     /// **UAC 过滤令牌（未提升会话）不得获得 Administrators 豁免**：
     /// `!(is_elevated == false && admin)`。
-    /// - **今天为真**：admin 判定因 `CheckTokenMembership` 传主令牌而恒失败（1309，
-    ///   结构性失效，见 F-OWNER-02）⇒ admin=false ⇒ 通过；
-    /// - **F-OWNER-02 修好后仍须为真**：未提升会话里 Administrators 是 deny-only，不豁免；
+    /// - **F-OWNER-02 修复前**：admin 判定因 `CheckTokenMembership` 传主令牌而恒失败
+    ///   （1309，结构性失效）⇒ admin 恒 false ⇒ 本条因前提恒假而**形式上**通过；
+    /// - **F-OWNER-02 修复后（当下）仍须为真**：未提升会话里 Administrators 是
+    ///   deny-only，`CheckTokenMembership(NULL)` 返回 Ok(false)（已验证的否定），
+    ///   本条现在才真正被检验；
     /// - **它是可红的**：若有人改用 `IsUserAnAdmin`、或读 `TokenGroups` 时漏判
     ///   deny-only / 漏判 `SE_GROUP_ENABLED`，就会出现「未提升却 admin=true」⇒ 本条立刻红。
     /// ⇒ 它守的是「UAC 过滤令牌不豁免」这条契约，不是空洞断言。
     ///
     /// ## 分工与关闭条件（何序口径：红本身不是问题，**无主的红**才是问题）
-    /// - 本用例**不覆盖** admin 判定的 TRUE 侧（提权 ⇒ 必须跳过属主校验）。TRUE 侧归
-    ///   **F-OWNER-02**，配双态取证（本机非提权只能验 FALSE 侧，TRUE 侧需提升环境/CI）。
-    /// - **关闭条件**：F-OWNER-02 修好 `CheckTokenMembership` 调用方式后，其 TRUE 侧断言
-    ///   应转绿；若产品决策改为「不恢复 admin 跳过」，则相关断言必须**按新政策重写**，
-    ///   **不得靠 skip / xfail / 删除 / 放宽消失**。
+    /// - 本用例（**L2**）**不覆盖** admin 判定的 TRUE 侧（提权 ⇒ 必须跳过属主校验）。
+    ///   TRUE 侧由两处接手（均属 F-OWNER-02，已落地）：**D 步**的环境无关矩阵单测
+    ///   `test_windows_owner_check_decision_matrix`（admin=true 象限）+ **C 步**的
+    ///   L3 守卫 `test_windows_admin_exempt_must_hold_on_elevated_token`（runner
+    ///   提升环境上的反事实读法）。本机非提权只能验 FALSE 侧。
+    /// - **关闭条件（F-OWNER-02 已履约）**：`CheckTokenMembership` 首参 NULL 已修复，
+    ///   TRUE 侧断言随修复转绿（CI 取证 pending）；若产品决策改为「不恢复 admin
+    ///   跳过」，则相关断言必须**按新政策重写**，**不得靠 skip / xfail / 删除 /
+    ///   放宽消失**。
     /// - `owner == S-1-5-32-544` 只用于**打印诊断**，不作为断言触发条件 —— runner 上它是
     ///   常态且必然伴随 admin=false，拿它当触发条件会让本用例在 runner 上必红（实测：
     ///   CI run 38790144325 正是这样红的，属于「断言比当前代码状态超前一步」）。
     /// - 可复现 fixture：任意 Windows 会话下 `tempfile::tempdir()` 即可；提权态需在提升
     ///   会话或 GH runner 上复现。
-    /// - **反例判读（F-OWNER-02 取证用）**：修好后 runner 上期望 `Ok(true)`（提升 ⇒
-    ///   Administrators 成员启用）。**若仍是 `Ok(false)`，说明 runner 其实并非提升会话**
-    ///   ⇒ 「owner=544 ⇒ 令牌提升」这条推论要回头重审，10 条红的成因也得重判。
-    ///   因此 `[diag] admin=` 这一行**无论如何都要从 runner 上取回**。
+    /// - **反例判读（F-OWNER-02 修复后）**：runner（提升会话）上期望 `Ok(true)`
+    ///   （提升 ⇒ Administrators 成员启用）。**若仍是 `Ok(false)`**，两种可能：
+    ///   (a) runner 并非提升会话 ⇒ 「owner=544 ⇒ 令牌提升」这条推论要回头重审，
+    ///   10 条红的成因也得重判；(b) 令牌确实提升（is_elevated=true）而 admin 判定
+    ///   坏 ⇒ **L3 守卫红**，按关屿反事实读法立即上报，**不得放宽**。区分 (a)/(b)
+    ///   靠 `[diag] elevation`（is_elevated）读数——因此 `[diag] admin=` 与
+    ///   `[diag] elevation` 两行**无论如何都要从 runner 上取回**。
     ///
     /// **必须同时打印 canonicalize 前后两个路径**：GH Windows runner 的 `D:\a` ↔ `C:\a`
     /// 是已知 junction 布局，`validate_owned_path_any` 第一步就 canonicalize，
@@ -5319,7 +5343,9 @@ mod tests {
         let peer_sid = crate::daemon::peercred::get_current_user_sid().unwrap();
         let admin_probe = probe_admin_membership();
         let admin = matches!(admin_probe, Ok(true));
-        let (elevation_type, is_elevated, integrity_rid) = probe_token_elevation();
+        // is_elevated 读数走注入缝（L2/L3 守卫统一入口；L3 可红性实验改 seam，
+        // 诊断机 probe_token_elevation 本身不动）。
+        let (elevation_type, is_elevated, integrity_rid) = read_elevation_for_guard();
 
         let temp_dir = std::env::temp_dir();
         let temp_canon = std::fs::canonicalize(&temp_dir).unwrap();
@@ -5381,7 +5407,8 @@ mod tests {
         }
 
         // 不变式：UAC 过滤令牌（未提升）**不得**获得 Administrators 豁免。
-        // 今天为真、F-OWNER-02 修好后仍须为真，且**可红**（详见函数 doc）。
+        // F-OWNER-02 修复前因前提恒假形式上通过；修复后（当下）为真，且**可红**
+        // （详见函数 doc）。
         assert!(
             !(env.is_elevated == false && env.admin),
             "不变式被违反：未提升（UAC 过滤）令牌不得获得 Administrators 豁免\n\
