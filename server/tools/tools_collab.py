@@ -437,7 +437,7 @@ def register(mcp: FastMCP) -> None:
 _COLLAB_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
 
 
-def _bind_readonly_db(ctx: CompatCallContext) -> "CodeGraphDB":
+def _bind_readonly_db(ctx: CompatCallContext) -> "CodeGraphDB":  # noqa: F821 -- P1-1 惰性引用
     """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
 
     与 tools_query.py / tools_summary.py / tools_security.py 同款：ctx.conn 由

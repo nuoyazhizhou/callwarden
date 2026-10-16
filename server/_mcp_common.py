@@ -16,7 +16,7 @@ import os
 from typing import Any, Dict, Optional
 
 
-_db_instance: Optional[CodeGraphDB] = None
+_db_instance: Optional[CodeGraphDB] = None  # noqa: F821 -- P1-1 惰性引用
 
 
 def _get_daemon_client():
@@ -63,7 +63,7 @@ def _get_db_path_for_daemon() -> str:
     return result or ""
 
 
-def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
+def get_db(workspace: Optional[str] = None) -> CodeGraphDB:  # noqa: F821 -- P1-1 惰性引用
     """获取数据库单例（T03：仅保留配置读取能力，不执行业务 SQL）。
 
     .. deprecated:: db/ 退休验收③

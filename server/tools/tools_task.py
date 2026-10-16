@@ -1096,7 +1096,7 @@ def register(mcp: FastMCP) -> None:
 _TASK_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
 
 
-def _bind_readonly_db(ctx: CompatCallContext) -> "CodeGraphDB":
+def _bind_readonly_db(ctx: CompatCallContext) -> "CodeGraphDB":  # noqa: F821 -- P1-1 惰性引用
     """轻量只读绑定（任务组副本）：绕过 CodeGraphDB.__init__，注入 worker 只读连接。
 
     与 tools_query._bind_readonly_db 同款实现；两模块各自持有副本避免循环依赖。

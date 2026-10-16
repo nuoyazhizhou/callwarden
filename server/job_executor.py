@@ -92,7 +92,7 @@ class JobContext:
     def __init__(
         self,
         conn: sqlite3.Connection,
-        job: Job,
+        job: Job,  # noqa: F821 -- P1-3 惰性名
         conn_lock: threading.RLock,
     ):
         self._conn = conn
@@ -101,7 +101,7 @@ class JobContext:
         self._cancelled = False
 
     @property
-    def job(self) -> Job:
+    def job(self) -> Job:  # noqa: F821 -- P1-3 惰性名
         return self._job
 
     @property
@@ -136,7 +136,7 @@ class JobContext:
             return
         try:
             with self._conn_lock:
-                update_job_progress(
+                update_job_progress(  # noqa: F821 -- P1-3 惰性名
                     self._conn, self._job.job_id, progress, message)
         except Exception:
             # 进度更新失败不应中断任务
@@ -151,7 +151,7 @@ class JobContext:
             return True
         try:
             with self._conn_lock:
-                self._cancelled = is_cancelled(self._conn, self._job.job_id)
+                self._cancelled = is_cancelled(self._conn, self._job.job_id)  # noqa: F821 -- P1-3 惰性名
         except Exception:
             self._cancelled = False
         return self._cancelled
@@ -248,7 +248,7 @@ class JobExecutor:
         # db/ 退休验收③（P1-3）：填充 db_jobs 懒加载名字到模块全局
         _ensure_db_jobs_loaded()
         # 确保 jobs schema 存在
-        init_jobs_schema(self._conn)
+        init_jobs_schema(self._conn)  # noqa: F821 -- P1-3 惰性名
         self._started = True
 
     def stop(self, wait: bool = True) -> None:
@@ -277,7 +277,7 @@ class JobExecutor:
         job_type: str,
         params: Optional[Dict[str, Any]] = None,
         workspace_id: Optional[int] = None,
-    ) -> Job:
+    ) -> Job:  # noqa: F821 -- P1-3 惰性名
         """提交任务
 
         参数：
@@ -300,13 +300,13 @@ class JobExecutor:
 
         # 创建 job 记录（加锁，避免与 worker 线程的 conn 访问冲突）
         with self._conn_lock:
-            job = submit_job(self._conn, workspace_id, job_type, params)
+            job = submit_job(self._conn, workspace_id, job_type, params)  # noqa: F821 -- P1-3 惰性名
 
         # 检查 handler 是否注册
         handler = self._handlers.get(job_type)
         if handler is None:
             with self._conn_lock:
-                fail_job(self._conn, job.job_id,
+                fail_job(self._conn, job.job_id,  # noqa: F821 -- P1-3 惰性名
                          f"No handler registered for job_type: {job_type}")
             return job
 
@@ -328,14 +328,14 @@ class JobExecutor:
         if not self._started:
             return False
         with self._conn_lock:
-            return cancel_job(self._conn, job_id)
+            return cancel_job(self._conn, job_id)  # noqa: F821 -- P1-3 惰性名
 
-    def get_status(self, job_id: str) -> Optional[Job]:
+    def get_status(self, job_id: str) -> Optional[Job]:  # noqa: F821 -- P1-3 惰性名
         """查询任务状态"""
         if not self._started:
             return None
         with self._conn_lock:
-            return get_job(self._conn, job_id)
+            return get_job(self._conn, job_id)  # noqa: F821 -- P1-3 惰性名
 
     def list_pending(self) -> list:
         """列出 pending 状态的任务（供调试）"""
@@ -344,7 +344,7 @@ class JobExecutor:
         with self._conn_lock:
             rows = self._conn.execute(
                 "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC",
-                (JOB_PENDING,),
+                (JOB_PENDING,),  # noqa: F821 -- P1-3 惰性名
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -375,18 +375,18 @@ class JobExecutor:
         """
         # 1. 标记 running
         with self._conn_lock:
-            if not mark_job_running(self._conn, job_id):
+            if not mark_job_running(self._conn, job_id):  # noqa: F821 -- P1-3 惰性名
                 # 已经不是 pending 了（可能被取消或被其他 worker 拾取）
                 return
 
         with self._conn_lock:
-            job = get_job(self._conn, job_id)
+            job = get_job(self._conn, job_id)  # noqa: F821 -- P1-3 惰性名
         if job is None:
             return
 
         # 2. 再次检查取消（避免在 mark_running 之前被取消）
         with self._conn_lock:
-            cancelled_before_start = is_cancelled(self._conn, job_id)
+            cancelled_before_start = is_cancelled(self._conn, job_id)  # noqa: F821 -- P1-3 惰性名
         if cancelled_before_start:
             self._mark_cancelled(job_id)
             return
@@ -417,7 +417,7 @@ class JobExecutor:
                 # 注意：Python 无法强制 kill 线程，handler 仍会继续运行
                 # 但 job 状态已变 failed，外部不可见
                 with self._conn_lock:
-                    fail_job(
+                    fail_job(  # noqa: F821 -- P1-3 惰性名
                         self._conn,
                         job_id,
                         f"Job exceeded max_duration_seconds={self._max_duration}",
@@ -425,7 +425,7 @@ class JobExecutor:
                 return
             # 检查取消（让 handler 有机会退出）
             with self._conn_lock:
-                cancel_flag = is_cancelled(self._conn, job_id)
+                cancel_flag = is_cancelled(self._conn, job_id)  # noqa: F821 -- P1-3 惰性名
             if cancel_flag:
                 # 等待 handler 自行退出（最多 5 秒）
                 handler_thread.join(timeout=5.0)
@@ -435,7 +435,7 @@ class JobExecutor:
         # 6. handler 完成，检查结果
         if result_holder.get("error"):
             with self._conn_lock:
-                fail_job(self._conn, job_id, str(result_holder["error"]))
+                fail_job(self._conn, job_id, str(result_holder["error"]))  # noqa: F821 -- P1-3 惰性名
             return
 
         if result_holder.get("cancelled"):
@@ -444,14 +444,14 @@ class JobExecutor:
 
         # 6.1 再次检查是否被取消（handler 可能正常返回但期间被取消）
         with self._conn_lock:
-            was_cancelled = is_cancelled(self._conn, job_id)
+            was_cancelled = is_cancelled(self._conn, job_id)  # noqa: F821 -- P1-3 惰性名
         if was_cancelled:
             self._mark_cancelled(job_id)
             return
 
         summary = result_holder.get("result", {})
         with self._conn_lock:
-            complete_job(self._conn, job_id, summary)
+            complete_job(self._conn, job_id, summary)  # noqa: F821 -- P1-3 惰性名
 
     def _run_handler_inner(
         self,
@@ -478,7 +478,7 @@ class JobExecutor:
                    SET status = ?, cancel_requested = 1, finished_at = ?,
                        message = 'cancelled during execution'
                    WHERE job_id = ? AND status = ?""",
-                (JOB_CANCELLED, now, job_id, JOB_RUNNING),
+                (JOB_CANCELLED, now, job_id, JOB_RUNNING),  # noqa: F821 -- P1-3 惰性名
             )
             self._conn.commit()
 
