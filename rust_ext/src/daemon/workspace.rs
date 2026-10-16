@@ -1179,14 +1179,48 @@ fn get_file_owner_sid(path: &str) -> Result<String, String> {
 ///
 /// 判定对象是「当前进程令牌中 Administrators 是否**启用**」，不是「用户是否为 Administrators 成员」。
 /// 使用 CheckTokenMembership 检查 BUILTIN\Administrators (S-1-5-32-544)。
+///
+/// # F-OWNER-02：TokenHandle 传 NULL（一行修复）
+///
+/// #63 定位的历史 bug：此前传 `OpenProcessToken(GetCurrentProcess(), …)` 的**主令牌**，
+/// 而 CheckTokenMembership 要求 impersonation token ⇒ 恒失败
+/// `ERROR_NO_IMPERSONATION_TOKEN(1309)` ⇒ admin 恒 false ⇒ 文档承诺的
+/// 「提升会话跳过属主校验」从未真正生效（#63 时期模块头的警告即指此，F-OWNER-02
+/// 后模块头已更新为「已真正生效」）。
+///
+/// 修复：首个实参改传 `ptr::null_mut()`。NULL 时由系统提供有效令牌
+/// （对照实验验证，MSDN 原文见 TokenHandle 参数说明）：
+///
+/// ```text
+/// [EXPERIMENT-1309] before: CheckTokenMembership(<primary token>) ok=0 GetLastError=1309 is_member=0
+/// [EXPERIMENT-1309] after : CheckTokenMembership(NULL)            ok=1 GetLastError=6 is_member=0
+/// ```
+/// （同进程、同 S-1-5-32-544 SID，仅切首个实参。after 行的 GetLastError=6 是
+/// 成功调用后的**残留** GLE——ok=1 时返回值才是权威；现有代码 `let last_err =
+/// GetLastError();` 只在 `ok == 0` 分支使用，成功路径不会把它带进 `Ok`。）
+///
+/// ## 双面性：边界变更，不是纯 bugfix
+/// - **过滤令牌侧是硬化**：admin 判定从「Err(1309) 不可知、回退 false」变为
+///   「Ok(false) 已验证的否定」（UAC 过滤令牌中 Administrators 为 deny-only）；
+///   且有 L2 不变式（I1：`!(is_elevated == false && admin)`）守着这侧——
+///   任何 IsUserAnAdmin 式捷径（未提升却报 admin=true）会立刻红。
+/// - **提升会话侧是放宽**：恢复「等价 Unix root 跳过」（见 :1043-1044 与 Req 14.9）。
+///   但这是**恢复已记录的设计意图**：1309 让 admin 恒 false，生产从未真正执行过
+///   跳过；相对用户实际经历过的行为，它仍是行为变更。
+/// - Unix 侧早有同义先例：`peer_uid == 0` 跳过属主校验（:4038-4039），root
+///   访问不属于自己的路径被断言为放行，从来没人认为这是边界违反——Windows
+///   admin 是同一条语义的对称面（parity），不是新放宽。
+///
+/// 随之失效的 OpenProcessToken/CloseHandle 脚手架同 hunk 移除（死代码清理，
+/// 非功能变更）。`probe_token_elevation()`（I1 诊断机）有独立 `use` 与调用链，
+/// **不在本 hunk 范围内**。
 #[cfg(not(unix))]
 fn probe_admin_membership() -> Result<bool, String> {
     use std::ptr;
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+    use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Security::{
-        AllocateAndInitializeSid, CheckTokenMembership, FreeSid, SECURITY_NT_AUTHORITY, TOKEN_QUERY,
+        AllocateAndInitializeSid, CheckTokenMembership, FreeSid, SECURITY_NT_AUTHORITY,
     };
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
         // 构造 BUILTIN\Administrators SID (S-1-5-32-544)
@@ -1214,22 +1248,10 @@ fn probe_admin_membership() -> Result<bool, String> {
             ));
         }
 
-        // 获取进程令牌
-        let mut token: HANDLE = ptr::null_mut();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-            let err = GetLastError();
-            FreeSid(admin_sid);
-            return Err(format!(
-                "OpenProcessToken(TOKEN_QUERY) 失败 (GetLastError={})",
-                err
-            ));
-        }
-
-        // 检查令牌是否包含 Administrators SID
+        // F-OWNER-02：TokenHandle 传 ptr::null_mut()（见函数 doc：NULL 时由系统提供有效令牌）
         let mut is_member: i32 = 0;
-        let ok = CheckTokenMembership(token, admin_sid, &mut is_member);
+        let ok = CheckTokenMembership(ptr::null_mut(), admin_sid, &mut is_member);
         let last_err = GetLastError();
-        CloseHandle(token);
         FreeSid(admin_sid);
 
         if ok == 0 {
