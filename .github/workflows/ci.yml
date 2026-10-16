@@ -44,6 +44,9 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install ".[all,dev]"
           pip install pytest-xdist pytest-timeout
+          # CD-1：db/ 是仅测试支持层、不进 wheel，其模块级依赖 psutil 未随
+          # extras 装入（CI Successfully installed 实测无 psutil），在此补装
+          pip install psutil
 
       - name: Debug package structure
         run: |
@@ -72,6 +75,37 @@ jobs:
                   print(f"Error: {type(e).__name__}: {e}")
           PYEOF
           pytest /tmp/test_debug_worker.py -v -s -n 2
+
+      # CD-1（CI-DEBT）：把仓库根以 callwarden 之名暴露为可导入，修 Linux
+      # Python job collect 阶段 exit 4。根因：db/ 退休验收③（路线 B）降级 db/
+      # 为仅测试支持层、不进生产 wheel（pyproject packages 无 callwarden.db，
+      # purity 由 tests/convergence/test_db_retire_prod_purity.py 锁定），但
+      # tests/conftest.py:5 import callwarden.db.db_base ⇒ wheel 无 db ⇒ 5 个
+      # Linux job 全部 ModuleNotFoundError。对称 windows job（958db6b）：不
+      # 重装包（两轮实证：semgrep 无 py3.14 wheel + PrebuiltBuildExt 校验预
+      # 编译产物，皆否），用联接把仓库根挂成 <pkgroot>/callwarden 再进
+      # PYTHONPATH，效果同可编辑安装、不触发 build_ext。用联接而非
+      # 「PYTHONPATH 指父目录」：后者依赖检出目录名恰好为 callwarden，
+      # fork/改名即静默失效。
+      # 分阶段（R2）：本步只求 collect 越过 db 导入解析；run 阶段（daemon
+      # 二进制可用性、平台差异、fixture 行为）是 Linux job 此前从未涉足的
+      # 未知领域——「collect 绿 ≠ 问题解决」，run 失败须另卡。
+      # i18n 双副本（R1）：db/ 的 3 处无点导入（from i18n import t）要求仓库
+      # 根也在 sys.path，故 PYTHONPATH 一并含仓库根——此时 top-level i18n
+      # 与 callwarden.i18n 是两个独立模块对象（本机实证 is 判定为 False）。
+      # 既有代码缺陷，本步不预改；若 run 阶段因此失败再评估 db 3 处改相对
+      # 导入（另批）。Debug 步骤（wheel 结构验证）刻意在本步之前执行，
+      # 保持其验证已装 wheel 的语义不被源码树覆盖失焦。
+      - name: Expose repo root as importable package (CD-1)
+        shell: bash
+        run: |
+          pkgroot="$RUNNER_TEMP/cw_pkgroot"
+          mkdir -p "$pkgroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
+          # 自检：包必须解析到仓库根（run 3/4 无上下文失败的教训）
+          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); print('callwarden ->', p); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
+          # 持久化到后续 step（Collect tests / Run tests / coverage gate）
+          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Collect tests (fast import gate)
         run: |
