@@ -87,9 +87,16 @@ _TRUSTED_FROZEN_COPIES = (
 )
 
 if "Python314" not in PYTHON and not os.environ.get("CW_TP10C_ALLOW_OTHER_PY"):
-    raise RuntimeError(
+    # 模块级 SKIP（非 raise）：TP-10C 验收依赖 cp314 PyO3 扩展
+    # （C:/Python314/python.exe），Linux CI 等非该解释器环境整模块跳过，
+    # 不阻断 pytest collect（CI-DEBT CD-1：collect 门不应被本地解释器
+    # 假设的硬性守卫击穿；真正需跳过的语义用 skip 表达）
+    import pytest
+
+    pytest.skip(
         f"TP-10C 需要 C:/Python314/python.exe（callwarden_core 为 cp314 PyO3 扩展），"
-        f"当前解释器为 {PYTHON}")
+        f"当前解释器为 {PYTHON}",
+        allow_module_level=True)
 
 
 # ------------------------------------------------------------------ 清单
