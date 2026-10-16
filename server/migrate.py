@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import time
@@ -145,7 +146,18 @@ def migrate_to_single_db(
                 continue
 
             # ATTACH 旧库
+            # CD-3 真修（关屿 B608 判据）：attach_name 由 basename 进入 f-string
+            # 拼接 SQL（ATTACH/SELECT/DETACH），若无校验，路径中的 SQL 元字符
+            # 即注入面。白名单与下行生成式（legacy_ + basename）严格对齐——
+            # 仅允许 [A-Za-z0-9_.-]，不匹配者记错误并跳过（与 ATTACH 失败同走
+            # skip 语义，保持原迁移「坏库跳过、继续其余」行为）。
             attach_name = f"legacy_{os.path.basename(legacy_dir)}"
+            if not re.fullmatch(r"legacy_[A-Za-z0-9_.-]+", attach_name):
+                result["errors"].append(
+                    f"跳过 {legacy_db_path}：legacy 目录名含非法字符"
+                    f"（attach_name={attach_name!r}，仅允许 [A-Za-z0-9_.-]）"
+                )
+                continue
             try:
                 main_conn.execute(f"ATTACH DATABASE ? AS {attach_name}", (legacy_db_path,))
             except sqlite3.OperationalError as e:
