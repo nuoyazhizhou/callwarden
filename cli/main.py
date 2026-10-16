@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode, get_project_db_path, expand_tilde
 from ..server.watcher import FileWatcher
