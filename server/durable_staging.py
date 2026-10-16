@@ -237,8 +237,10 @@ class DurableStagingLog:
             params.append(state)
 
         where = " AND ".join(conditions) if conditions else "1=1"
+        # nosec B608：where 仅由代码内常量条件（"workspace_id = ?" / "state = ?"
+        # 或 "1=1"）拼接，不含用户输入；过滤值走下行 ? 参数化（params + [limit]）。
         rows = self._conn.execute(
-            f"SELECT * FROM staging_entries WHERE {where} "
+            f"SELECT * FROM staging_entries WHERE {where} "  # nosec B608
             f"ORDER BY lsn LIMIT ?",
             params + [limit],
         ).fetchall()

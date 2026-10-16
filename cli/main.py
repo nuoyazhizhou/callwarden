@@ -8140,10 +8140,13 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
     from ..server.cli_admin import scan_hash_databases
 
     # 系统临时目录特征（用于检测 pytest 残留）
+    # nosec B108："/tmp/" 等是**检测特征常量**——_is_orphan 用
+    # `marker in rp_lower` 子串匹配判定孤儿库（见下方），本函数不创建、
+    # 不写入任何临时目录；B108 启发式无法区分「硬编码使用」与「模式匹配」。
     _temp_dir = tempfile.gettempdir().lower().replace("\\", "/")
     _temp_markers = (
         _temp_dir,
-        "/tmp/",
+        "/tmp/",  # nosec B108
         "\\temp\\",
         "/appdata/local/temp/",
         "pytest-",

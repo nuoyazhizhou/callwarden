@@ -2392,9 +2392,12 @@ class HttpDaemonRpcClient:
 
     def _http_get(self, url: str) -> Any:
         """GET 请求；返回解析后的 JSON。连接失败抛 DaemonUnavailableError。"""
+        # nosec B310：url 为本地 daemon endpoint（manifest 注册的
+        # unix-socket / 127.0.0.1:port），非用户输入；B310 黑名单对本地 RPC
+        # 客户端为误报，请求经 Request 封装且带超时。
         try:
             req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # nosec B310
                 raw = resp.read()
             return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
@@ -2486,7 +2489,9 @@ class HttpDaemonRpcClient:
                 url, data=body, method="POST",
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:
+            # nosec B310：url = 本地 daemon endpoint + "/v1/rpc"（见上行拼接），
+            # 非用户输入；B310 对本地 RPC 客户端为误报。
+            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:  # nosec B310
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:
@@ -2578,7 +2583,9 @@ class HttpDaemonRpcClient:
                 url, data=body, method="POST",
                 headers={"Content-Type": content_type},
             )
-            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:
+            # nosec B310：url = 本地 daemon endpoint + "/v1/rpc/multipart"（见
+            # 上行拼接），非用户输入；B310 对本地 RPC 客户端为误报。
+            with urllib.request.urlopen(req, timeout=self._timeout_for(method)) as resp:  # nosec B310
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:

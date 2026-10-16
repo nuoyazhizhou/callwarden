@@ -167,8 +167,10 @@ def migrate_to_single_db(
             try:
                 # 4.1 迁移 workspaces 表（按 root_path 去重）
                 if _table_exists(main_conn, f"{attach_name}.workspaces"):
+                    # nosec B608：标识符拼接（attach_name），已过本函数 :154 白名单
+                    # 校验；表名为代码常量，非用户输入。
                     cur = main_conn.execute(
-                        f"SELECT * FROM {attach_name}.workspaces"
+                        f"SELECT * FROM {attach_name}.workspaces"  # nosec B608
                     )
                     for row in cur.fetchall():
                         root_path = row["root_path"] or ""
@@ -200,7 +202,9 @@ def migrate_to_single_db(
 
                 # 4.2 迁移 tasks 表（全局表，按 id 去重）
                 if _table_exists(main_conn, f"{attach_name}.tasks"):
-                    cur = main_conn.execute(f"SELECT * FROM {attach_name}.tasks")
+                    # nosec B608：标识符拼接（attach_name），已过本函数 :154 白名单
+                    # 校验；表名为代码常量。
+                    cur = main_conn.execute(f"SELECT * FROM {attach_name}.tasks")  # nosec B608
                     cols = _get_table_columns(main_conn, "tasks")
                     col_list = ", ".join(cols)
                     placeholders = ", ".join(["?"] * len(cols))
@@ -215,15 +219,20 @@ def migrate_to_single_db(
                             continue
                         if not dry_run:
                             values = [row[c] for c in cols]
+                            # nosec B608：col_list 来自 _get_table_columns（PRAGMA
+                            # 表元数据），placeholders 为 "?"*len(cols)，均为进程
+                            # 内生成；数据值走 ? 参数化（下行 values）。
                             main_conn.execute(
-                                f"INSERT INTO tasks ({col_list}) VALUES ({placeholders})",
+                                f"INSERT INTO tasks ({col_list}) VALUES ({placeholders})",  # nosec B608
                                 values,
                             )
                         result["migrated_tasks"] += 1
 
                 # 4.3 迁移 task_steps 表（按 id 去重）
                 if _table_exists(main_conn, f"{attach_name}.task_steps"):
-                    cur = main_conn.execute(f"SELECT * FROM {attach_name}.task_steps")
+                    # nosec B608：标识符拼接（attach_name），已过本函数 :154 白名单
+                    # 校验；表名为代码常量。
+                    cur = main_conn.execute(f"SELECT * FROM {attach_name}.task_steps")  # nosec B608
                     cols = _get_table_columns(main_conn, "task_steps")
                     col_list = ", ".join(cols)
                     placeholders = ", ".join(["?"] * len(cols))
@@ -238,8 +247,11 @@ def migrate_to_single_db(
                             continue
                         if not dry_run:
                             values = [row[c] for c in cols]
+                            # nosec B608：col_list 来自 _get_table_columns（PRAGMA
+                            # 表元数据），placeholders 为 "?"*len(cols)，均为进程
+                            # 内生成；数据值走 ? 参数化（下行 values）。
                             main_conn.execute(
-                                f"INSERT INTO task_steps ({col_list}) VALUES ({placeholders})",
+                                f"INSERT INTO task_steps ({col_list}) VALUES ({placeholders})",  # nosec B608
                                 values,
                             )
                         result["migrated_steps"] += 1
