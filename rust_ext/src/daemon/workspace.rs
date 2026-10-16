@@ -12,11 +12,11 @@
 //!   处于**启用**状态时跳过（等价 Unix root 跳过；UAC 过滤令牌中该 SID 为 deny-only，
 //!   不豁免）。命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
 //!
-//! ⚠️ 截至 #63 / F-OWNER-01：**上面这个「Administrators 跳过」分支从未真正生效**。
-//! `probe_admin_membership()` 把 `OpenProcessToken` 拿到的**主令牌**直接传给
-//! `CheckTokenMembership`，而该 API 要求 **impersonation token**，于是恒失败
-//! （`ERROR_NO_IMPERSONATION_TOKEN=1309`）⇒ admin 判定恒为 false ⇒ 严格比较恒执行。
-//! 修复另开 F-OWNER-02。**在那之前，不要照本注释假设「提升会话会跳过属主校验」**。
+//! F-OWNER-02 已修复上述 1309（`probe_admin_membership()` 首个实参传 NULL），
+//! 「Administrators 跳过」**现在真正生效**：提升会话跳过属主校验（等价 Unix root）；
+//! 过滤令牌侧仍是 Ok(false)（已验证的否定）+ 严格比较。
+//! 该修复是**边界变更而非纯 bugfix**——过滤令牌侧硬化 / 提升会话侧放宽，
+//! 详见 `probe_admin_membership` 的 doc 与 F-OWNER-02 commit message。
 //! 本模块覆盖 `workspace.register` / `workspace.list` / `workspace.status` /
 //! `workspace.connect` / `workspace.file.refresh` / `workspace.recover`。
 //! `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore` 在 R6 的
@@ -1042,11 +1042,16 @@ fn check_path_owner(real_path_str: &str, peer_uid: u32) -> Result<(), DaemonRpcE
     // 命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
     // 当前**进程令牌**中 BUILTIN\Administrators 处于**启用**状态时跳过
     // （等价 Unix root 跳过；UAC 过滤令牌中该 SID 为 deny-only，不豁免）。
+    // F-OWNER-02 修复后该跳过**真正生效**（此前 CheckTokenMembership 传主令牌
+    // 恒 1309 而从未生效；修复与双面性见 `probe_admin_membership` 的 doc）。
     //
-    // #63 / F-OWNER-01 契约：这里的比较恒为 `file_owner_sid != peer_sid → 拒绝`（严格相等）。
-    // Windows runner 红 10 例的成因不是这条比较写错，而是「属主来自环境（如 Administrators 组）」
-    // 叠加「admin 判定失效不可知」。放宽为「owner 是 peer 所属组则放行」会引入新放行面
-    // （owner=Users/Guests/Authenticated Users/Everyone 时 owner-only 边界实质失效），已被安全域否决。
+    // #63 / F-OWNER-01 契约（F-OWNER-02 更新）：比较**逻辑**恒为严格相等
+    // （`file_owner_sid != peer_sid → 拒绝`，无组放行/白名单）；但 admin=true 时
+    // 整个比较块被跳过。Windows runner 红 10 例的成因不是这条比较写错，而是
+    // 「属主来自环境（如 Administrators 组）」叠加「admin 判定失效不可知」
+    // —— 后者已由 F-OWNER-02 修复。放宽为「owner 是 peer 所属组则放行」会引入
+    // 新放行面（owner=Users/Guests/Authenticated Users/Everyone 时 owner-only
+    // 边界实质失效），已被安全域否决。
     #[cfg(not(unix))]
     {
         let _ = peer_uid; // Windows 不使用 Unix UID
@@ -1087,7 +1092,9 @@ fn check_path_owner(real_path_str: &str, peer_uid: u32) -> Result<(), DaemonRpcE
                 // **这是有意取舍**：命名管道是 loopback + owner-only SDDL（Req 14.18），
                 // 对端已是本机同用户（已授权）进程，泄漏面可忽略；而「为什么按非 admin
                 // 处理」的诊断价值极高 —— #63 正是靠它抓到 CheckTokenMembership 恒失败
-                // （1309，主令牌传给要求 impersonation token 的 API）。
+                // （1309，主令牌传给要求 impersonation token 的 API）；该根因已由
+                // F-OWNER-02 修复（首个实参传 NULL，修复后 admin 探针极少失败），
+                // 但保留理由不变（见下）。
                 //
                 // 更硬的保留理由（关屿）：**当初若把它判定成「泄露内部细节」删掉，
                 // 我们今天连根因都拿不到**。这不是「风险可接受」的消极判断，
