@@ -249,7 +249,12 @@ jobs:
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz \
             | tar xz -C /usr/local/bin gitleaks
       - name: Run gitleaks (repo history + working tree)
-        run: gitleaks detect --source . --redact
+        # 272 findings 实证全部为假阳性（token_hash 单向哈希产物 + 脱密功能
+        # 测试夹具，triage 见 .gitleaks.toml 文件头注释；semgrep p/secrets
+        # 交叉验证 0 finding）。gitleaks v8.18.4 不会自动发现源目录的
+        # .gitleaks.toml，必须显式 --config；默认规则集经 useDefault=true
+        # 全量保留，真实泄漏仍被捕获。
+        run: gitleaks detect --source . --config .gitleaks.toml --redact
 
   # 🔴 TP-11G 实测（2026-10-14，Windows 本机）：把 ci.yml 原样命令拿来跑是
   # **EXIT=101 编译失败**（`daemon/fs_handlers.rs` 的 parse_and_store_symbols
