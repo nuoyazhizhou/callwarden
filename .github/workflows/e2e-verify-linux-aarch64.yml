@@ -199,12 +199,19 @@ jobs:
           cat abi-manifest-aarch64.json
 
       - name: Run local bundle E2E (8 steps)
+        env:
+          # 布尔输入经 env 注入再引用：inputs 声明 type: boolean，渲染为
+          # true/false 字面量本不可注入，但走 env 后断言面统一为零豁免
+          # （semgrep run-shell-injection 缓解，与 enterprise-release 的
+          # REF_NAME/DRY_RUN 同一处置口径）
+          SKIP_STEP5: ${{ inputs.skip_step5 }}
+          SKIP_STEP7: ${{ inputs.skip_step7 }}
         run: |
           EXTRA_ARGS=()
-          if [ "${{ inputs.skip_step5 }}" = "true" ]; then
+          if [ "$SKIP_STEP5" = "true" ]; then
             EXTRA_ARGS+=("--skip-step5")
           fi
-          if [ "${{ inputs.skip_step7 }}" = "true" ]; then
+          if [ "$SKIP_STEP7" = "true" ]; then
             EXTRA_ARGS+=("--skip-step7")
           fi
 
