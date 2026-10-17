@@ -209,7 +209,11 @@ jobs:
       - name: Install semgrep
         run: pip install semgrep
       - name: Run semgrep (secrets + ci rules, errors block)
-        run: semgrep scan --config p/secrets --config p/ci --error
+        # --timeout：每规则每文件的超时秒数（默认仅 5s）。基线 run
+        # 38933176545 有 2 处规则超时 warning（cli/main.py、db/db_stdlib.py
+        # 的 python.boto3.security.hardcoded-token）——超时的规则不报错也不
+        # 出 finding，构成扫描盲区，提超时到 60s 去盲。
+        run: semgrep scan --config p/secrets --config p/ci --error --timeout 60
 
       # --- SCA: pip-audit（依赖漏洞，high+critical 阻断）---
       # 与 enterprise-release.yml Gate 8 同款 severity 过滤逻辑
