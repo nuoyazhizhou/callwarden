@@ -16,6 +16,7 @@
 """
 
 import os
+import re
 
 import pytest
 
@@ -99,20 +100,55 @@ class TestG1020MemfdValidation:
             "G10/G20: workspace.rs 未使用 DEFAULT_MAX_FD_READ_BYTES"
         )
 
-    def test_g1020_workspace_no_read_to_end(self):
-        """workspace.rs FD 路径不应再使用 read_to_end 无界读。"""
+    def test_g1020_workspace_read_to_end_is_bounded(self):
+        """workspace.rs 中 read_to_end 必须出现在有界读取函数体内（.take() 限容）。
+
+        断言收窄说明（2026-10-17，CD-5 D3）：原断言是「任何非注释行出现
+        read_to_end 即 fail」，这是纯词法扫描，无法识别有界语义变体——
+        decompress_gz_bounded（workspace.rs）用 GzDecoder::new(gz)
+        .take(cap as u64) 先把读取流量限容再 read_to_end，事后还检查
+        out.len() > max_out 拒绝，是防解压炸弹的有界读，不应判红。
+        收窄后：定位 read_to_end 所在函数体（向上找最近 fn 签名行，取其
+        行首缩进，同缩进的 } 为函数体闭合），函数体内须含 ``.take(``。
+        take() 被删除时本断言会再次变红（同一缺陷可再红，非 MASKING）。
+        """
         source = _read_daemon_module("workspace.rs")
-        # read_to_end 应该只在注释中出现（历史说明），不在生产代码
-        # 找 read_to_end 在实际代码（非注释）中的出现
         lines = source.split("\n")
+        fn_re = re.compile(r"\bfn\s+\w+\s*\(")
+        violations = []
         for i, line in enumerate(lines):
             stripped = line.lstrip()
             if stripped.startswith("//"):
                 continue
-            if "read_to_end" in stripped:
-                pytest.fail(
-                    f"G10/G20: workspace.rs L{i+1} 仍在使用 read_to_end: {line.strip()}"
-                )
+            if "read_to_end" not in line:
+                continue
+            # 定位 read_to_end 所属函数：向上找最近的 fn 签名行
+            fn_idx = None
+            for j in range(i, -1, -1):
+                if fn_re.search(lines[j]):
+                    fn_idx = j
+                    break
+            if fn_idx is None:
+                violations.append(f"L{i+1} 无法定位所属函数（fn 签名缺失）")
+                continue
+            indent = lines[fn_idx][:len(lines[fn_idx]) - len(lines[fn_idx].lstrip())]
+            # 同缩进闭合 } 为函数体末行
+            end_idx = None
+            for k in range(i + 1, len(lines)):
+                if lines[k] == indent + "}":
+                    end_idx = k
+                    break
+            if end_idx is None:
+                violations.append(
+                    f"L{i+1} 无法定位函数体闭合（fn 行 L{fn_idx+1}）")
+                continue
+            body = "\n".join(lines[fn_idx:end_idx + 1])
+            if ".take(" not in body:
+                violations.append(
+                    f"L{i+1} 的函数（fn 行 L{fn_idx+1}）使用 read_to_end "
+                    f"但函数体内没有 .take( 限容：非有界读取")
+        if violations:
+            pytest.fail("G10/G20: " + "; ".join(violations))
 
     def test_g1020_workspace_supports_expected_sha256(self):
         """workspace.rs FD 路径应支持客户端传入 expected_sha256 参数。"""
