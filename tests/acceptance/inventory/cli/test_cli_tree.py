@@ -15,10 +15,8 @@ selector: tests/acceptance/inventory/cli/test_cli_tree.py
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -170,15 +168,31 @@ def test_standalone_entries_have_real_help(tree):
 
 # ---------------- 负向 ----------------
 
-def test_no_production_write_during_extraction():
-    """提取不得触发 auto-setup / 不得改动生产 db mtime。"""
-    home = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or "")
-    marker = home / ".callwarden" / ".auto_setup_marker"
-    assert not marker.exists(), "extraction triggered lazy auto-setup (production write)"
-    db = home / ".callwarden" / "callwarden.db"
-    if db.is_file():
-        mtime = db.stat().st_mtime
-        assert mtime < time.time() - 60, "production db mtime is fresh — extraction may have written"
+def test_no_production_write_during_extraction(tmp_path, monkeypatch):
+    """提取不得有生产副作用（auto-setup / 本地 db 任何写入）。
+
+    在本测试内把提取子进程的 HOME 隔离到 tmp_path 后受控执行一次
+    extract()：提取若触发 lazy auto-setup 或初始化本地 db，产物只会
+    落在隔离目录。隔离 home 下 .callwarden 未被创建即提取零生产写；
+    该判据确定性强——并行 xdist worker / 后台 daemon 都看不到隔离目录。
+
+    修正旧版两个缺陷：
+    ① marker 断言检查的文件名写错（.auto_setup_marker vs 实际
+       config.py 定义的 .auto_setup_done），旧断言恒真（死断言）；
+    ② 「db mtime 60s 内不新鲜」启发式在全新 CI runner 上必假性失败
+       （套件自身并行建库/写库，fresh 与提取无关）。
+    """
+    import extract_cli_tree as ext
+    iso_home = tmp_path / "iso_home"
+    iso_home.mkdir()
+    monkeypatch.setattr(ext, "_EXTRACTION_ENV_OVERRIDE",
+                        {"USERPROFILE": str(iso_home), "HOME": str(iso_home)})
+    live = ext.extract()
+    produced = iso_home / ".callwarden"
+    assert not produced.exists(), (
+        f"提取产生生产侧写入: {[str(p) for p in produced.rglob('*')][:10]}；"
+        f"提取错误数={live.get('error_count')}, err={live.get('errors')[:3]}"
+    )
 
 
 def test_pending_entries_explicit_not_silent(tree):

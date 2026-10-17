@@ -125,15 +125,36 @@ def subcommands_of(parser_dict: dict) -> list[str]:
     return []
 
 
+# 提取子进程 env 覆盖钩子：供 test_no_production_write_during_extraction
+# 注入隔离 HOME（USERPROFILE/HOME → tmp）做零生产写判定；默认 None=不覆盖
+_EXTRACTION_ENV_OVERRIDE: dict | None = None
+
+
+def _capture_env() -> dict:
+    """构造提取子进程 env。
+
+    继承当前进程 env，并强制 CALLWARDEN_SKIP_AUTO_SETUP=1：提取是只读
+    测量行为，子进程 help 路径若触发 lazy auto-setup 会往 $HOME 写 13 个
+    MCP 配置文件（开发机探得 AI 工具时）。
+    """
+    env = os.environ.copy()
+    env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
+    if _EXTRACTION_ENV_OVERRIDE:
+        env.update(_EXTRACTION_ENV_OVERRIDE)
+    return env
+
+
 def capture_cw_py_entry(entry: str) -> tuple[dict | None, str | None]:
     """cw.py 层 standalone 入口（install/server/test/setup/daemon）的真实 --help。
 
     这些入口在 cw.py main() 内分发，不经过 cli.main._dispatch_subcommand，
-    因此用真实子进程取 help 文本（`cw.py <entry> --help`）。
+    因此用真实子进程取 help 文本（`cw.py <entry> --help`）。env 走
+    _capture_env()（见其 docstring 的副作用说明）。
     """
     argv = [sys.executable, str(REPO_ROOT / "cw.py"), entry, "--help"]
     r = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=90)
+                       encoding="utf-8", errors="replace", timeout=90,
+                       env=_capture_env())
     text = (r.stdout or "") + (r.stderr or "")
     if r.returncode != 0 and not text.strip():
         return None, f"rc={r.returncode} with empty output"
@@ -235,7 +256,8 @@ def capture_standalone(script: str) -> tuple[dict | None, str | None]:
         return None, f"entry file missing: {exe}"
     r = subprocess.run([sys.executable, str(exe), "--help"],
                        cwd=REPO_ROOT, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=60)
+                       encoding="utf-8", errors="replace", timeout=60,
+                       env=_capture_env())
     if r.returncode != 0:
         return None, f"rc={r.returncode} err={r.stderr[:200]}"
     return {"help_text": r.stdout[:4000], "rc": 0}, None
