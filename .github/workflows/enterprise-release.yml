@@ -54,13 +54,13 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0   # N-1 升级需要 git history
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       - name: Build Rust extension
         run: python release/build.py --rust
       - name: Install dependencies
@@ -81,7 +81,7 @@ jobs:
         run: python -m pytest tests/ -v --tb=short -x -n auto
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: test-results-source
           path: |
@@ -111,11 +111,11 @@ jobs:
             rust_target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           targets: ${{ matrix.rust_target }}
       - name: Build Rust extension (release)
@@ -128,7 +128,7 @@ jobs:
         run: |
           ls -la release/dist/*.whl || dir release\dist\*.whl
           python -c "import zipfile,sys; z=zipfile.ZipFile(__import__('glob').glob('release/dist/*.whl')[0]); print('Wheel contents OK:', len(z.namelist()), 'files')"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: wheel-${{ matrix.os }}
           path: release/dist/*.whl
@@ -148,11 +148,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: wheel-${{ matrix.os }}
           path: wheels/
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
       - name: Install wheel in clean venv
@@ -211,13 +211,13 @@ jobs:
     needs: [gate3-wheel-blackbox, gate1-source-tests]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
       - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: wheel-windows-latest
           path: release/dist/
@@ -330,7 +330,7 @@ jobs:
             Write-Host \"MSI: \$(\$msi.Name), Size: \$([math]::Round(\$msi.Length/1MB, 2)) MB\"
           "
         shell: bash
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: windows-msi
           path: |
@@ -342,15 +342,15 @@ jobs:
     needs: gate3-wheel-blackbox
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: wheel-macos-latest
           path: release/dist/
@@ -390,7 +390,7 @@ jobs:
             echo "Production mode: signature check required"
             pkgutil --check-signature release/dist/*.pkg
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: macos-pkg
           path: release/dist/*.pkg
@@ -400,8 +400,8 @@ jobs:
     needs: gate3-wheel-blackbox
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
       - name: Install deb build tools
@@ -409,7 +409,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y dpkg-dev fakeroot systemd
       - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: wheel-ubuntu-latest
           path: release/dist/
@@ -449,7 +449,7 @@ jobs:
             exit 1
           }
           echo "=== Offline bundle verified ==="
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: linux-debs
           path: |
@@ -467,7 +467,7 @@ jobs:
     needs: gate4a-windows-msi
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: windows-msi
           path: installers/
@@ -494,7 +494,7 @@ jobs:
     needs: gate4b-macos-pkg
     runs-on: macos-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: macos-pkg
           path: installers/
@@ -516,7 +516,7 @@ jobs:
     needs: gate4c-linux-deb
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: linux-debs
           path: debs/
@@ -562,14 +562,14 @@ jobs:
     if: github.event.inputs.skip_n1_upgrade != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
       - name: Download current debs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: linux-debs
           path: debs-current/
@@ -590,7 +590,7 @@ jobs:
           fi
       - name: Download N-1 debs from GitHub releases
         if: steps.prev_tag.outputs.skip != 'true'
-        uses: dsaltares/fetch-gh-release-asset@1.1.1
+        uses: dsaltares/fetch-gh-release-asset@a40c8b4a0471f9ab81bdf73a010f74cc51476ad4  # 1.1.1
         with:
           repo: ${{ github.repository }}
           version: ${{ steps.prev_tag.outputs.prev_tag }}
@@ -655,9 +655,9 @@ jobs:
     environment: signing
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts/
       - name: Sign Windows MSI (Authenticode)
@@ -701,7 +701,7 @@ jobs:
           echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
             --passphrase-fd 0 --detach-sign --armor checksums.txt
           ls -la checksums.txt checksums.txt.sig
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: signed-artifacts
           path: |
@@ -722,8 +722,8 @@ jobs:
     if: always() && (needs.gate7-signing.result == 'success' || needs.gate7-signing.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
       - name: Install SBOM tools
@@ -769,9 +769,9 @@ jobs:
           fi
           echo "OK: No high-severity vulnerabilities"
       - name: Generate provenance (SLSA, 可选)
-        uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic.slsa@v2.0.0
+        uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic.slsa@5a775b367a56d5bd118a224a811bba288150a563  # v2.0.0
         continue-on-error: true  # SLSA 是可选增强，失败不阻断门禁
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: sbom-and-audit
           path: |
@@ -794,12 +794,12 @@ jobs:
     environment: staging
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts/
       - name: Build artifact manifest
@@ -816,7 +816,7 @@ jobs:
           "
           cat artifacts/artifact-manifest.json
       - name: Create GitHub Release (draft)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           draft: true
           prerelease: true
@@ -876,9 +876,9 @@ jobs:
     environment: production
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Promote staging release to production
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           draft: false
           prerelease: false
