@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -52,8 +53,22 @@ class InitializationEnv:
 
     def __init__(self, run_root: Path | None = None, workspace_name: str = "tp09-ws"):
         self.run_root = Path(run_root or (DEFAULT_RUN_ROOT.parent / "TP-09"))
-        self.daemon_exe = self.run_root / "src" / "cw-daemon.exe"
+        # 显式指定候选（绝对路径）：设了就以它为准（缺失仍硬错）；未设则用
+        # run 根内部署的默认候选。
+        explicit_src = os.environ.get("CW_TP09_DAEMON_EXE", "")
+        self.daemon_exe = (Path(explicit_src) if explicit_src
+                           else self.run_root / "src" / "cw-daemon.exe")
         if not self.daemon_exe.is_file():
+            # 未显式指定候选且默认候选缺失 → skip（与 TP-11G D2 / TP-07
+            # 同族处置）：Linux CI 的全量 pytest job 不构建 daemon 候选，
+            # TP-09 用例仅在有候选时真跑（acceptance-gates 构建候选后
+            # 运行）；显式指定仍缺失 → 硬错（fail-loud）。
+            if not explicit_src:
+                pytest.skip(
+                    f"daemon 候选缺失且未显式指定 CW_TP09_DAEMON_EXE"
+                    f"（{self.daemon_exe}）：本机/Linux CI 无已验收候选，"
+                    f"TP-09 用例仅在有候选时真跑；acceptance-gates 或本地"
+                    f"经 CW_TP09_DAEMON_EXE 注入候选后运行")
             raise FileNotFoundError(f"daemon candidate missing: {self.daemon_exe}")
         self.workspace_dir = self.run_root / "ws"
         self.workspace_dir.mkdir(parents=True, exist_ok=True)

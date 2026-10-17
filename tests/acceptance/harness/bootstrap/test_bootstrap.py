@@ -32,6 +32,18 @@ from daemon_bootstrap import (
 DAEMON_EXE = Path(os.environ.get(
     "CW_TP07_DAEMON_EXE",
     r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/TP-07/src/cw-daemon.exe"))
+# CW_TP07_DAEMON_EXE 是否被显式设置：缺失时区分两种处置（与 TP-11G D2
+# 同族）——未显式设置且默认候选缺失（Linux CI 全量 pytest job 不构建
+# daemon 候选）→ 模块级 skip（带环境范围声明）；显式设置仍缺失 →
+# 保持 FileNotFoundError 硬错（fail-loud，acceptance-gates 注入候选后
+# 缺失仍是真缺陷）。
+if not DAEMON_EXE.is_file() and "CW_TP07_DAEMON_EXE" not in os.environ:
+    pytest.skip(
+        f"daemon 候选缺失且未显式指定 CW_TP07_DAEMON_EXE"
+        f"（{DAEMON_EXE}）：本机/Linux CI 无已验收候选，TP-07 底座用例"
+        f"仅在有候选时真跑；acceptance-gates 或本地经 CW_TP07_DAEMON_EXE"
+        f" 注入候选后运行",
+        allow_module_level=True)
 
 
 def _run_root_for(name: str) -> Path:
