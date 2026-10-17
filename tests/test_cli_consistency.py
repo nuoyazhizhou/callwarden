@@ -119,11 +119,13 @@ def test_subcommand_parses_and_executes(argv):
     (b) 属环境性失败（本地有 daemon 时 exit 0），不在本测试范围。
     """
     returncode, stdout, stderr = _run_cw(argv, timeout=60)
-    if returncode == 2:
-        assert stderr.strip(), (
-            f"{' '.join(argv)} exit 2 但 stderr 为空——非 argparse 错误"
-            f"（CLI 业务 fail-closed，cprint 到 stdout）；stdout 首段={stdout[:300]}"
-        )
+    # 仅 argparse 错误判红：rc==2 且 stderr 非空。
+    # rc==2 但 stderr 空 = (b) 业务 fail-closed，属环境性失败（本地有
+    # daemon 时 exit 0），放行；rc!=2 全部放行。
+    is_argparse_error = returncode == 2 and bool(stderr.strip())
+    assert not is_argparse_error, (
+        f"{' '.join(argv)} 触发 argparse 错误 (exit 2): stderr={stderr[:500]}"
+    )
 
 
 # 抽样已删除的顶层 flag，验证它们已不再被接受
