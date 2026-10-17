@@ -361,7 +361,7 @@ jobs:
           # 但 build_pkg.sh 读取 CW_APPLE_DEVID/CW_APPLE_APP_PASSWORD/CW_APPLE_TEAM_ID/CW_APPLE_ID，
           # 导致签名/公证永远 skipped（即使 secrets 已配置）。
           # 现已对齐：所有 Apple 凭证统一 CW_APPLE_* 前缀。
-          # P0-4 修复（2026-07-22）：原代码 CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run || 'true' }}
+          # 修复（commit 0171603，2026-07-22）：原代码 CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run || 'true' }}
           # tag push 事件没有 workflow_dispatch.inputs.dry_run，|| 'true' 会让 tag release 也跳过签名/公证。
           # 改为 == 'true' 比较：仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认签名+公证。
           CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run == 'true' }}
@@ -371,12 +371,19 @@ jobs:
           CW_APPLE_APP_PASSWORD: ${{ secrets.CW_APPLE_APP_PASSWORD }}
         run: bash release/macos/build_pkg.sh
       - name: Verify pkg
+        env:
+          # 修复（commit 0171603，2026-07-22）：原代码 github.event.inputs.dry_run || 'true'
+          # 在 tag push 时恒为 'true'，导致 tag release 也跳过签名验证。改为 == 'true' 比较：
+          # 仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认验证签名。
+          # 【维护纪律·禁形变三条】① 禁止恢复 `|| 'true'` 之类默认值（tag push 时 input
+          # 为空恒真 ⇒ 2026-07-22 的旧 bug 复活）；② 禁止改回在 run 内直接内插
+          # ${{ github.event.inputs.* }} 判真值（重新引入 run-shell-injection 面）；
+          # ③ 禁止删除本注释（此处是不变量唯一记录）。台账/验收一律引锚点哈希
+          # 0171603；「P0-4」编号与 WiX v4→v3.14 工具链修复撞车，勿用编号引用。
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
         run: |
           ls -la release/dist/*.pkg
-          # P0-4 修复（2026-07-22）：原代码 github.event.inputs.dry_run || 'true' 在 tag push 时
-          # 恒为 'true'，导致 tag release 也跳过签名验证。改为 == 'true' 比较：
-          # 仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认验证签名。
-          if [ "${{ github.event.inputs.dry_run == 'true' }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             echo "Dry run mode: signature check skipped"
             pkgutil --check-signature release/dist/*.pkg || echo "  (unsigned, expected in dry_run)"
           else
@@ -722,8 +729,6 @@ jobs:
       - name: Install SBOM tools
         run: |
           pip install pip-licenses pip-audit cyclonedx-bom
-          # syft 用于二进制 SBOM
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
       - name: Install package
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -732,8 +737,18 @@ jobs:
         run: |
           cyclonedx-py environment -o sbom-python.spdx.json --schema-version 1.5
       - name: Generate SBOM (binary, syft)
-        run: |
-          syft dir:. -o spdx-json=sbom-binary.spdx.json
+        # P1（CD-4）：原为 `curl ... install.sh | sh` 安装 syft 再 shell 调用，触发
+        # semgrep gha-curl-pipe-shell（纯模式匹配，URL pin 无法消除）。改为官方
+        # anchore/sbom-action 并 SHA pin（v0.24.3 = 66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c，
+        # 2026-10-02）：curl|sh 模式整体移除 + 本条 mutable-tag 一并消除。
+        # upgrade：改 uses 的 SHA 到新版本 commit，并在 anchore/sbom-action 的
+        # release notes 复核 path/format/output-file 语义未变。
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          path: .
+          format: spdx-json
+          output-file: sbom-binary.spdx.json
+          upload-artifact: false  # 由本 job 末尾 upload-artifact 步骤统一上传
       - name: License audit
         run: |
           pip-licenses --format=json --output-file=licenses.json
@@ -873,7 +888,11 @@ jobs:
           make_latest: true
       - name: Notify release channels
         if: always()
+        env:
+          # ref_name 经 env 注入再引用，避免 run 块内直接内插 ${{ github.* }}
+          # （semgrep run-shell-injection 缓解：env 块渲染为字面量，无注入面）
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          echo "Production release ${{ github.ref_name }} published"
+          echo "Production release $REF_NAME published"
           # Slack/Teams 通知可在此扩展
-          # curl -X POST $SLACK_WEBHOOK -d "{\"text\": \"Call Warden ${{ github.ref_name }} released\"}"
+          # curl -X POST $SLACK_WEBHOOK -d "{\"text\": \"Call Warden $REF_NAME released\"}"
