@@ -723,7 +723,7 @@ fn parse_cobertura(
                     .attributes()
                     .flatten()
                     .find(|attr| attr.key.as_ref() == b"filename")
-                    .and_then(|attr| attr.unescape_value().ok().map(|value| value.into_owned()));
+                    .and_then(|attr| attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok().map(|value| value.into_owned()));
                 current_lines.clear();
             }
             Ok(Event::Empty(event)) if event.name().as_ref() == b"line" => {
@@ -732,12 +732,12 @@ fn parse_cobertura(
                 for attr in event.attributes().flatten() {
                     if attr.key.as_ref() == b"number" {
                         number = attr
-                            .unescape_value()
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .ok()
                             .and_then(|v| v.parse::<i64>().ok());
                     } else if attr.key.as_ref() == b"hits" {
                         hits = attr
-                            .unescape_value()
+                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .ok()
                             .and_then(|v| v.parse::<i64>().ok());
                     }

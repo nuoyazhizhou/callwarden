@@ -282,10 +282,10 @@ pub fn handle_import_test_results(
                 let mut time_str = String::from("0");
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"name" => name = attr.unescape_value().unwrap_or_default().into_owned(),
-                        b"classname" => classname = attr.unescape_value().unwrap_or_default().into_owned(),
-                        b"file" => file = attr.unescape_value().unwrap_or_default().into_owned(),
-                        b"time" => time_str = attr.unescape_value().unwrap_or_default().into_owned(),
+                        b"name" => name = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
+                        b"classname" => classname = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
+                        b"file" => file = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
+                        b"time" => time_str = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
                         _ => {}
                     }
                 }
@@ -298,10 +298,10 @@ pub fn handle_import_test_results(
                 let mut time_str = String::from("0");
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"name" => name = attr.unescape_value().unwrap_or_default().into_owned(),
-                        b"classname" => classname = attr.unescape_value().unwrap_or_default().into_owned(),
-                        b"file" => file = attr.unescape_value().unwrap_or_default().into_owned(),
-                        b"time" => time_str = attr.unescape_value().unwrap_or_default().into_owned(),
+                        b"name" => name = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
+                        b"classname" => classname = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
+                        b"file" => file = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
+                        b"time" => time_str = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned(),
                         _ => {}
                     }
                 }
@@ -316,7 +316,7 @@ pub fn handle_import_test_results(
                 if let Some(tc) = current_tc.as_mut() {
                     tc.5 = String::from("failed");
                     if let Some(msg) = e.attributes().flatten().find(|a| a.key.as_ref() == b"type") {
-                        tc.6 = msg.unescape_value().unwrap_or_default().into_owned();
+                        tc.6 = msg.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned();
                     }
                 }
             }
@@ -324,7 +324,7 @@ pub fn handle_import_test_results(
                 if let Some(tc) = current_tc.as_mut() {
                     tc.5 = String::from("error");
                     if let Some(msg) = e.attributes().flatten().find(|a| a.key.as_ref() == b"type") {
-                        tc.6 = msg.unescape_value().unwrap_or_default().into_owned();
+                        tc.6 = msg.normalized_value(quick_xml::XmlVersion::Implicit1_0).unwrap_or_default().into_owned();
                     }
                 }
             }
@@ -342,7 +342,7 @@ pub fn handle_import_test_results(
                 // 收集 failure/error 文本（错误信息）
                 if let Some(tc) = current_tc.as_mut() {
                     if tc.5 == "failed" || tc.5 == "error" {
-                        let text = t.unescape().unwrap_or_default().trim().to_string();
+                        let text = t.decode().unwrap_or_default().trim().to_string();
                         if !text.is_empty() {
                             if tc.4.len() < 500 {
                                 tc.4.push_str(&text);
