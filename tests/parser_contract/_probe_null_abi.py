@@ -1,4 +1,4 @@
-"""P0-2 验证 probe：检查 ParseFact NULL ABI。
+r"""P0-2 验证 probe：检查 ParseFact NULL ABI。
 
 复审 §P0-2：lib.rs lexical_parent_local_id/caller_local_id 已改为 Option<u32>。
 需确认隔离 wheel 的 JSON 输出：

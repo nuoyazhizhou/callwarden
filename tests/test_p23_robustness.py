@@ -100,7 +100,7 @@ class TestToLongPath(unittest.TestCase):
         self.assertEqual(to_long_path(path), path)
 
     def test_already_prefixed(self):
-        """已有 \\?\ 前缀不重复添加"""
+        r"""已有 \\?\ 前缀不重复添加"""
         path = "\\\\?\\C:\\very\\long\\path"
         self.assertEqual(to_long_path(path), path)
 

@@ -48,7 +48,7 @@ def build_test_db(db_path: str, target_symbols: int = 1000000,
             if count >= target_symbols * 0.9:
                 print(f"  数据库已存在，{count:,} 符号，跳过构建")
                 return
-        except:
+        except Exception:
             pass
         finally:
             conn.close()
@@ -247,7 +247,7 @@ def bench_graphstore_queries(db_path: str, n_queries: int = 100) -> dict:
     for qname in qnames:
         try:
             store.get_callees(qname)
-        except:
+        except Exception:
             pass
     t_gs_callees = time.perf_counter() - t0
 
@@ -267,7 +267,7 @@ def bench_graphstore_queries(db_path: str, n_queries: int = 100) -> dict:
     for term in search_terms:
         try:
             store.search_symbols(term, "", 100)
-        except:
+        except Exception:
             pass
     t_gs_search = time.perf_counter() - t0
 
@@ -305,7 +305,7 @@ def bench_graphstore_queries(db_path: str, n_queries: int = 100) -> dict:
         try:
             result = store.get_call_chain_down(qname, 5)
             gs_chain_results += len(result) if result else 0
-        except:
+        except Exception:
             pass
     t_gs_chain = time.perf_counter() - t0
 

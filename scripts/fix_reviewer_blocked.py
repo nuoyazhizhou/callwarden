@@ -138,7 +138,7 @@ def classify(entry):
         cited.append(("cli/main.py", r"_agent_start|UnixDaemonRpcClient"))
     if "next-action" in reason or "next_action" in reason or "lease" in reason or "WAITING" in reason or "wait_for_current_lease" in reason:
         cats.append("lease_nextaction_consistency")
-    if "no_steps" in reason or "no_snapshot" in reason or "verdicts=\[\]" in reason or "snapshot" in reason:
+    if "no_steps" in reason or "no_snapshot" in reason or "verdicts=[]" in reason or "snapshot" in reason:
         cats.append("missing_projection_evidence")
     if "Gate" in reason or "gate" in reason:
         cats.append("gate_precondition")
