@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import pytest
 import shutil
 import sys
 from pathlib import Path
@@ -66,6 +67,10 @@ DEFAULT_DAEMON_SRC = Path(
     os.environ.get(
         "CW_TP11G_DAEMON_SRC",
         r"C:/Users/wanpi/AppData/Local/Temp/cw-acceptance/candidates/l5-fix/cw-daemon.exe"))
+# CW_TP11G_DAEMON_SRC 是否被显式设置：deploy_daemon 据此区分两种处置——
+# 未显式设置且默认候选缺失（如 Linux CI 全量 pytest 不构建 daemon 候选）
+# → 显式 skip（带平台/环境范围声明）；显式设置仍缺失 → 硬错（fail-loud）。
+_DAEMON_SRC_ENV_EXPLICIT = "CW_TP11G_DAEMON_SRC" in os.environ
 KNOWN_DAEMON_SHA256_PREFIXES: Tuple[str, ...] = (
     "f1fa3736a16dbe7d",
     "247b9a16049ec4d7",
@@ -237,6 +242,17 @@ class GovernanceEnv(InitializationEnv):
         本地/生产路径仍强校验。
         """
         if not src.is_file():
+            # 未显式指定候选（env 与调用方均未给）且默认候选缺失 → skip：
+            # Linux CI 的全量 pytest job 不构建 daemon 候选，本治理域及
+            # 所有继承 IsolationEnv 的 domain 用例只应在有候选时真跑
+            # （acceptance-gates.yml 在 windows-latest 上构建候选并经
+            # CW_TP11G_DAEMON_SRC 显式注入，此时缺失仍是硬错）。
+            if src == DEFAULT_DAEMON_SRC and not _DAEMON_SRC_ENV_EXPLICIT:
+                pytest.skip(
+                    f"daemon 候选缺失且未显式指定 CW_TP11G_DAEMON_SRC"
+                    f"（src={src}）：本机/Linux CI 无已验收候选，"
+                    f"治理域用例仅在有候选时真跑；acceptance-gates 或本地"
+                    f"经 CW_TP11G_DAEMON_SRC 注入候选后运行")
             raise FileNotFoundError(f"daemon candidate missing: {src}")
         sha = _sha256_of(src)
         allow_fresh = os.environ.get("CW_TP11G_ALLOW_FRESH_BUILD", "") == "1"
