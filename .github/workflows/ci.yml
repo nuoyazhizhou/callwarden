@@ -231,10 +231,17 @@ jobs:
           echo "OK: No high/critical-severity vulnerabilities"
 
       # --- SCA: cargo-audit（Rust 依赖漏洞，任何已知漏洞阻断）---
+      # 版本锁：cargo install 默认取最新发布版，CLI 会随版本漂移（v0.22.2 的
+      # usage 是 `cargo audit [OPTIONS] [COMMAND]`，无 --manifest-path；本步骤
+      # 此前因 --manifest-path 被 v0.22.2 拒绝 exit 2）。锁 0.22.2 = 已验证
+      # --file 可用的版本；升级须改此版本号并重跑本 job 验证。
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --locked --version 0.22.2
+      # --file 指向已提交的 rust_ext/Cargo.lock（cargo-audit 只接受 lockfile
+      # 路径：v0.22.2 src/commands/audit.rs 的 -f/--file，
+      # help="Cargo lockfile to inspect"）。
       - name: Run cargo-audit (Rust deps)
-        run: cargo audit --manifest-path rust_ext/Cargo.toml
+        run: cargo audit --file rust_ext/Cargo.lock
 
       # --- secret-scan: gitleaks（全历史提交扫描）---
       - name: Install gitleaks
