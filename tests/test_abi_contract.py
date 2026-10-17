@@ -28,7 +28,9 @@ _MULTI_LANG_RS = _PKG_ROOT / "rust_ext" / "src" / "multi_lang.rs"
 _GRAPH_RS = _PKG_ROOT / "rust_ext" / "src" / "graph.rs"
 _ABI_CONTRACT_RS = _PKG_ROOT / "rust_ext" / "src" / "abi_contract.rs"
 _SCHEMA_PY = _PKG_ROOT / "db" / "schema.py"
-_DB_CAS_PY = _PKG_ROOT / "db" / "db_cas.py"
+# db/ 退休 phase-3：CAS 存储层已整体搬迁至 server/cas_schema.py，
+# db/db_cas.py 仅剩重导出壳（无业务字面量），CAS 契约断言须指向真实实现模块。
+_CAS_SCHEMA_PY = _PKG_ROOT / "server" / "cas_schema.py"
 
 
 def _read(path: Path) -> str:
@@ -237,25 +239,25 @@ def test_contract_schema_version_matches_schema_py():
 
 
 def test_cas_state_constants_in_db_cas():
-    """契约 §3.4 CAS 状态必须在 db_cas.py 中使用。"""
-    db_cas = _read(_DB_CAS_PY)
+    """契约 §3.4 CAS 状态必须在 cas_schema.py 中使用（db/ 退休 phase-3 搬迁）。"""
+    db_cas = _read(_CAS_SCHEMA_PY)
     # 'ready' 在 cas_lookup 中使用
     assert "state = 'ready'" in db_cas, (
-        "db_cas.py 缺少 state = 'ready' 查询"
+        "cas_schema.py 缺少 state = 'ready' 查询"
     )
     # 'building' 在 cas_publish 阶段 1 使用
     assert "building" in db_cas, (
-        "db_cas.py 缺少 'building' 状态"
+        "cas_schema.py 缺少 'building' 状态"
     )
     # 'partial' 应该在 publish_with_status 或相关方法中使用
     # （Python 侧可能尚未实现 partial，但契约文档已记录）
 
 
 def test_cas_key_computation_in_db_cas():
-    """契约 §3.5 CAS key 计算必须在 db_cas.py 中实现。"""
-    db_cas = _read(_DB_CAS_PY)
+    """契约 §3.5 CAS key 计算必须在 cas_schema.py 中实现。"""
+    db_cas = _read(_CAS_SCHEMA_PY)
     assert "compute_cas_key_v1" in db_cas, (
-        "db_cas.py 缺少 compute_cas_key_v1 函数"
+        "cas_schema.py 缺少 compute_cas_key_v1 函数"
     )
     # CAS key 包含 7 个字段
     assert "content_hash" in db_cas
@@ -268,13 +270,13 @@ def test_cas_key_computation_in_db_cas():
 
 
 def test_file_generations_table_in_db_cas():
-    """契约 §3.6 file_generations 表必须在 db_cas.py 中定义。"""
-    db_cas = _read(_DB_CAS_PY)
+    """契约 §3.6 file_generations 表必须在 cas_schema.py 中定义。"""
+    db_cas = _read(_CAS_SCHEMA_PY)
     assert "file_generations" in db_cas, (
-        "db_cas.py 缺少 file_generations 表"
+        "cas_schema.py 缺少 file_generations 表"
     )
     assert "FILE_GENERATIONS_DDL" in db_cas, (
-        "db_cas.py 缺少 FILE_GENERATIONS_DDL"
+        "cas_schema.py 缺少 FILE_GENERATIONS_DDL"
     )
     # 关键字段
     assert "latest_committed_generation" in db_cas
