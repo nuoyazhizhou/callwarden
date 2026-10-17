@@ -25,6 +25,7 @@ import asyncio
 import hashlib
 import json
 import os
+import pytest
 import shutil
 import subprocess
 import sys
@@ -326,6 +327,18 @@ class McpWireHarness:
                         f"daemon copy fidelity failure: {self.daemon_exe} "
                         f"({got}) != {cand} ({sha})")
                 return sha
+        # CW_TP10M_SRC_DAEMON 未显式设置且无已知散列候选 → skip（与
+        # TP-07/TP-09 D2 同族两态处置）：Linux CI 全量 pytest job 不构建
+        # daemon 候选，本地新编译 daemon 散列亦未入验收白名单——TP-10M
+        # MCP wire 用例仅在有已验收候选时真跑。显式设置 CW_TP10M_SRC_DAEMON
+        # 后仍失败 → 保持 HarnessError 硬错（fail-loud，acceptance-gates
+        # 注入候选验收，缺失/未知散列仍是真缺陷）。
+        if "CW_TP10M_SRC_DAEMON" not in os.environ:
+            pytest.skip(
+                f"无已知散列 daemon 候选且未显式指定 CW_TP10M_SRC_DAEMON"
+                f"（candidates={[str(c) for c in _DAEMON_CANDIDATES]}）："
+                f"TP-10M MCP wire 用例仅在有已验收候选时真跑；"
+                f"acceptance-gates 或本地经 CW_TP10M_SRC_DAEMON 注入候选后运行")
         raise HarnessError(
             f"no daemon candidate matches a known sha256 prefix "
             f"{KNOWN_DAEMON_SHA256_PREFIXES}; "
