@@ -17,7 +17,13 @@ jobs:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
     steps:
+      # 契约/验收测试（如 tests/acceptance/inventory/cli/test_cli_tree.py 的
+      # _is_ancestor）需 git 历史做 merge-base 祖先校验；shallow clone
+      # （默认 fetch-depth=1）下任何非 HEAD 提交都不可达，断言必假性失败。
+      # gitleaks job 同样因历史需求使用 fetch-depth: 0。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
