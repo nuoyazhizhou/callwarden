@@ -12,7 +12,22 @@ Python 侧已通过 route_task_read(task.list) 路由到 Rust daemon；Rust 侧
 import pytest
 
 import callwarden.cli.main as main_mod
+from callwarden.i18n import set_language, get_language
 from callwarden.server.daemon_client import DaemonUnavailableError
+
+
+@pytest.fixture(autouse=True)
+def _pin_zh_cn():
+    """钉死中文 + 退出恢复（i18n 进程级全局单例，防跨测试语言泄漏）。
+
+    _handle_task list 的现行输出为中文（=== 任务列表 === / 任务总数），
+    旧断言 'Total tasks: 2' 为英文 i18n 时代的残留。fixture 保证进入=
+    中文、退出=恢复进入前值，不泄漏到后续测试。
+    """
+    _prev = get_language()
+    set_language("zh_CN")
+    yield
+    set_language(_prev)
 
 
 def test_cli092_task_list_routes_to_daemon(monkeypatch, capsys):
@@ -42,7 +57,8 @@ def test_cli092_task_list_routes_to_daemon(monkeypatch, capsys):
     assert calls[0] == "task.list", "首个读取调用必须是 task.list"
     assert calls.count("task.list") == 1
     out = capsys.readouterr().out
-    assert "Total tasks: 2" in out
+    # 现行中文输出契约（英文断言 'Total tasks: 2' 为 i18n 化前残留）
+    assert "任务总数: 2" in out
 
 
 def test_cli092_task_list_daemon_unavailable_fail_closed(monkeypatch):

@@ -27,10 +27,26 @@ if _PKG_PARENT not in sys.path:
 
 from callwarden.cli import main as cli_main
 from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names
-from callwarden.i18n import set_language
+from callwarden.i18n import set_language, get_language
 from callwarden.db import CodeGraphDB
 
 set_language("zh_CN")
+
+
+@pytest.fixture(autouse=True)
+def _pin_zh_cn():
+    """钉死中文 + 退出恢复（i18n 是进程级全局单例）。
+
+    本文件断言基于中文输出。模块级 set_language 在收集期执行，会被同
+    worker 其他文件执行期的语言切换覆盖；且本文件函数内 set 若不恢复
+    会污染后续断言英文/他语言的测试（连环污染，CI 实测 cli_092 因
+    zh_CN 泄漏读到中文输出与英文断言不符）。fixture 保证：进入=中文，
+    退出=恢复进入前值。
+    """
+    _prev = get_language()
+    set_language("zh_CN")
+    yield
+    set_language(_prev)
 
 
 def _main_help_text() -> str:
@@ -177,9 +193,7 @@ class TestRemovedSubcommandsReject:
     def test_coverage_test_registered(self, db, capsys):
         """coverage test 自 T10 阶段2.5 重新注册（原 --test-coverage flag 并入，
         cli/main.py:12154-12156），应正常执行而非报 invalid choice"""
-        # i18n 模块级 set_language 在收集期执行，跨文件其他测试执行时
-        # 切换的语言会覆盖它——断言中文输出的测试须在函数内显式钉死
-        set_language("zh_CN")
+        # 语言由 _pin_zh_cn autouse fixture 钉死（防 i18n 全局单例污染）
         cli_main._handle_coverage(["test"], db)  # 不应抛 SystemExit
         assert "测试覆盖率统计" in capsys.readouterr().out
 

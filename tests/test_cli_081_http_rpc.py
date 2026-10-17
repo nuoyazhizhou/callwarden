@@ -19,9 +19,18 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from callwarden.cli import main as main_mod  # noqa: E402
-from callwarden.i18n import set_language  # noqa: E402
+from callwarden.i18n import set_language, get_language  # noqa: E402
 
 set_language("zh_CN")
+
+
+@pytest.fixture(autouse=True)
+def _pin_zh_cn():
+    """钉死中文 + 退出恢复（i18n 进程级全局单例，防跨测试语言泄漏）。"""
+    _prev = get_language()
+    set_language("zh_CN")
+    yield
+    set_language(_prev)
 
 
 def _handle_completion_review(task_id="T-1", step_id="", **extra_argv):

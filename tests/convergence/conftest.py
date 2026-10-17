@@ -40,13 +40,34 @@ _RELEASE_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-dae
 _DEBUG_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
 
 
+# 显式候选入口：设置后以其为准（缺失/无效仍 RuntimeError 硬错，fail-loud）
+_EXPLICIT_BIN = os.environ.get("CW_CONVERGENCE_DAEMON_BIN", "")
+
+
 def _pick_bin() -> str:
-    """优先 release 二进制（与生产 runtime 一致）；缺失回退 debug。"""
+    """优先显式候选，其次 release 二进制（与生产 runtime 一致）；缺失回退 debug。
+
+    两态处置（与 TP-07/TP-09 B1、TP-10M 同族）：Linux CI 全量 pytest job
+    不构建 daemon 二进制——未显式指定 CW_CONVERGENCE_DAEMON_BIN 且默认
+    候选缺失 → pytest.skip（带环境范围声明，convergence M3/M4 用例仅在
+    有候选时真跑）；显式指定仍缺失 → RuntimeError 硬错（fail-loud，
+    acceptance-gates 构建候选后缺失仍是真缺陷）。
+    """
+    if _EXPLICIT_BIN:
+        if os.path.isfile(_EXPLICIT_BIN):
+            return _EXPLICIT_BIN
+        raise RuntimeError(
+            f"显式指定的 CW_CONVERGENCE_DAEMON_BIN 不存在: {_EXPLICIT_BIN}")
     if os.path.isfile(_RELEASE_BIN):
         return _RELEASE_BIN
     if os.path.isfile(_DEBUG_BIN):
         return _DEBUG_BIN
-    raise RuntimeError("cw-daemon.exe 未构建（需 cargo build --bin cw-daemon）")
+    pytest.skip(
+        f"cw-daemon 二进制候选缺失且未显式指定 CW_CONVERGENCE_DAEMON_BIN"
+        f"（release={_RELEASE_BIN}, debug={_DEBUG_BIN}）：本机/Linux CI"
+        f" 全量 pytest job 不构建 Rust 二进制，convergence M3/M4 用例"
+        f"仅在有候选时真跑；acceptance-gates 或本地经"
+        f" CW_CONVERGENCE_DAEMON_BIN 注入候选后运行")
 
 
 @pytest.fixture(scope="module")
