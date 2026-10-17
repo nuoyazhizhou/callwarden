@@ -13287,12 +13287,25 @@ def _try_exec_rust_cw_client(argv: list):
     import subprocess as _subprocess
     import sys as _sys
 
+    # 自递归守卫（与 run_daemon_mode 同族）：PATH 上的 cw-client 可能是
+    # 本包 pip console script，exec 它会无限派生自身；CW_USE_RUST_CLIENT=1
+    # 且无真实 Rust 二进制的环境（pip-only 安装）下即触发。
+    if _os.environ.get("CW_CLIENT_EXEC_DEPTH", "0") != "0":
+        print(
+            "ERROR: cw-client 入口自递归（PATH 上的 cw-client 是 Python console "
+            "script 而非 Rust 二进制）；请构建 rust_ext 二进制，或显式置 "
+            "CW_CLIENT_BIN 指向真实二进制，或清除 CW_USE_RUST_CLIENT 回退 Python。",
+            file=_sys.stderr,
+        )
+        return 2
+
     binary = _find_cw_client_binary()
     if binary is None:
         return None
 
     # 透传环境变量 + 参数
     env = _os.environ.copy()
+    env["CW_CLIENT_EXEC_DEPTH"] = "1"
     try:
         proc = _subprocess.run([str(binary), *argv], env=env)
         return proc.returncode
@@ -13325,10 +13338,12 @@ def _find_cw_client_binary():
     if env_bin and _os.path.isfile(env_bin):
         return _Path(env_bin)
 
-    # 2. PATH 查找
+    # 2. PATH 查找（跳过本包 pip console script：其 entry 回到
+    # run_client_mode/_try_exec_rust_cw_client，exec 它会无限自递归——
+    # 与 _find_cw_daemon_binary 同族缺陷）
     for name in names:
         found = _shutil.which(name)
-        if found:
+        if found and not _is_python_entry_shim(found):
             return _Path(found)
 
     # PyInstaller 冻结包内的 binary
@@ -13702,6 +13717,20 @@ def run_daemon_mode(argv: list) -> int:
         print("ERROR: cw-daemon is only supported on Linux/Windows/macOS.", file=_sys.stderr)
         return 2
 
+    # 自递归守卫：PATH 上的 cw-daemon 可能是本包自己的 pip console script
+    # （entry = callwarden.cli.daemon:main → run_daemon_mode），exec 它会
+    # 无限派生自身进程（CI pytest job 即如此：pip 装了 Python 包但无 Rust
+    # 二进制，which(cw-daemon) 命中脚本）。首层 exec 前置 CW_DAEMON_EXEC_DEPTH=1，
+    # 再次进入本函数即 fail-closed，不再挂死。
+    if _os.environ.get("CW_DAEMON_EXEC_DEPTH", "0") != "0":
+        print(
+            "ERROR: cw-daemon 入口自递归（PATH 上的 cw-daemon 是 Python console "
+            "script 而非 Rust 二进制）；请安装 callwarden-daemon 包、构建 "
+            "rust_ext 二进制，或显式置 CW_DAEMON_BIN 指向真实二进制。",
+            file=_sys.stderr,
+        )
+        return 2
+
     binary = _find_cw_daemon_binary()
     if binary is None:
         print(
@@ -13718,11 +13747,29 @@ def run_daemon_mode(argv: list) -> int:
     try:
         env = _os.environ.copy()
         env.setdefault("CW_DAEMON_MODE", "enterprise")
+        env["CW_DAEMON_EXEC_DEPTH"] = "1"
         proc = _subprocess.run([str(binary), *argv], env=env)
         return proc.returncode
     except OSError as e:
         print(f"ERROR: failed to exec cw_daemon binary: {e}", file=_sys.stderr)
         return 1
+
+
+def _is_python_entry_shim(path) -> bool:
+    """识别 PATH 上的 cw-daemon 是否为本包的 pip console script（Python 垫片）。
+
+    pip 按 pyproject ``[project.scripts] cw-daemon = "callwarden.cli.daemon:main"``
+    生成的 console script 是以 shebang 开头的 Python 脚本，其入口回到
+    ``run_daemon_mode``——把它当二进制 exec 会形成无限自递归，必须当作
+    「不是 daemon 二进制」跳过（Windows 的 exe 垫片无法按此识别，由
+    ``run_daemon_mode`` 的 CW_DAEMON_EXEC_DEPTH 守卫兜底）。
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return False
+    return head.startswith(b"#!") and b"callwarden" in head
 
 
 def _find_cw_daemon_binary():
