@@ -60,6 +60,9 @@ def test_cli083_routes_findings_to_daemon_with_filters(monkeypatch, capsys):
 
 def test_cli083_empty_or_invalid_result_is_graceful(monkeypatch, capsys):
     """invalid input：daemon 返回空数组时，CLI 输出无发现且不触发本地查询。"""
+    # 断言中文输出须显式钉死语言（i18n 全局单例，模块级 set_language
+    # 在收集期执行，会被其他测试执行期的语言切换覆盖——CI 曾因此读 en_US）
+    set_language("zh_CN")
     monkeypatch.setattr(main_mod, "route_task_read", lambda method, params, fallback: [])
     assert _handle_findings() is True
     assert "(无质量发现)" in capsys.readouterr().out

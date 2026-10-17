@@ -33,19 +33,20 @@ class TestBug1SymbolMethod(unittest.TestCase):
                         "get_symbol 应存在——这是正确的公共方法")
 
     def test_cli_calls_get_symbol_not_get_symbol_detail(self):
-        """cli/main.py 中 --symbol 分支应调用 get_symbol 而非 get_symbol_detail"""
+        """cli/main.py 中 symbol 分支应调用 get_symbol 而非 get_symbol_detail"""
         cli_main_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "cli", "main.py"
         )
         with open(cli_main_path, "r", encoding="utf-8") as f:
             content = f.read()
-        # 确认不再调用 get_symbol_detail
-        self.assertNotIn("get_symbol_detail(args.symbol)", content,
+        # 确认不再调用 get_symbol_detail（任何形式——RPC 投影时代亦不得出现）
+        self.assertNotIn("get_symbol_detail", content,
                         "不应再调用 get_symbol_detail")
-        # 确认调用 get_symbol
-        self.assertIn("db.get_symbol(args.symbol)", content,
-                     "应调用 db.get_symbol(args.symbol)")
+        # 确认调用 get_symbol（_handle_symbol 现以 opts.name 作参数名：
+        # 旧断言字符串 db.get_symbol(args.symbol) 为参数名重命名前的形式）
+        self.assertIn("db.get_symbol(opts.name)", content,
+                     "应调用 db.get_symbol（_handle_symbol 以 opts.name 查询）")
 
 
 class TestBug2RefreshUniqueConstraint(unittest.TestCase):

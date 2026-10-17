@@ -310,10 +310,15 @@ def test_i18n_keys_bilingual():
 def test_print_main_help_callable(capsys):
     """_print_main_help() 可被独立调用且输出非空"""
     set_language("en_US")
-    cli_main._print_main_help()
-    captured = capsys.readouterr()
-    assert captured.out, "_print_main_help 输出不应为空"
-    assert "Call Warden CLI" in captured.out
+    try:
+        cli_main._print_main_help()
+        captured = capsys.readouterr()
+        assert captured.out, "_print_main_help 输出不应为空"
+        assert "Call Warden CLI" in captured.out
+    finally:
+        # i18n 是进程级全局单例：不恢复会污染后续断言中文输出的测试
+        # （CI 上曾导致 test_cli_c9/083 的中文断言读到 en_US 而失败）
+        set_language("zh_CN")
 
 
 def test_print_main_help_returns_no_exception(capsys):

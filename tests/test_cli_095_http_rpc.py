@@ -63,20 +63,31 @@ def test_cli095_workspace_register_routes_to_daemon(monkeypatch):
 
 
 def test_cli095_workspace_activate_routes_to_daemon(monkeypatch):
-    """success：set_active_workspace 经 route_rpc 调用 workspace.activate。"""
+    """success：set_active_workspace 经 route_rpc 调用 workspace.activate。
+
+    与 B2 test_cli_072 同一遗留项2 FIX（2026-09-30）：set_active_workspace
+    不再返回裸 True / 二查 workspace.status（CWD 注入会返回错 workspace），
+    直接返回 daemon workspace.activate 响应映射后的 workspace 行。
+    """
     captured = {}
 
     def _fake_route(method, params, mode):
         captured["method"] = method
         captured["params"] = params
         captured["mode"] = mode
+        # daemon workspace.activate 返回激活后的目标 workspace 行
+        if method == "workspace.activate":
+            return {"workspace_id": 42, "name": "proj-a",
+                    "client_view_root": "C:/git_work/proj-a",
+                    "status": "active"}
         return True
 
     monkeypatch.setattr(main_mod, "route_rpc", _fake_route)
 
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/proj-a")
     ok = proxy.set_active_workspace(42)
-    assert ok is True
+    # 遗留项2 修复后返回激活后的 workspace 行（_map_workspace_row 映射），非裸 True
+    assert isinstance(ok, dict) and ok["id"] == 42 and ok["is_active"] is True
     assert captured.get("method") == "workspace.activate"
     assert captured.get("mode") == "PROTECTED_MUTATION"
     assert captured["params"].get("workspace_id_or_name") == "42"

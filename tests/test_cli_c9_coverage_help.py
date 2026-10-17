@@ -177,6 +177,9 @@ class TestRemovedSubcommandsReject:
     def test_coverage_test_registered(self, db, capsys):
         """coverage test 自 T10 阶段2.5 重新注册（原 --test-coverage flag 并入，
         cli/main.py:12154-12156），应正常执行而非报 invalid choice"""
+        # i18n 模块级 set_language 在收集期执行，跨文件其他测试执行时
+        # 切换的语言会覆盖它——断言中文输出的测试须在函数内显式钉死
+        set_language("zh_CN")
         cli_main._handle_coverage(["test"], db)  # 不应抛 SystemExit
         assert "测试覆盖率统计" in capsys.readouterr().out
 
