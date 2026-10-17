@@ -114,7 +114,7 @@ jobs:
       - name: Run tests
         if: matrix.python-version != '3.12'
         run: |
-          pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread
+          pytest tests/ -n auto --tb=short --maxfail=6 --timeout=300 --timeout-method=thread
 
       # 覆盖率门禁（任务5①）：只在 Python 3.12 单版本采集，避免矩阵 5 个版本
       # 产出 5 个不同覆盖率数字（各版本 skip 情况不同）。阈值取自 pyproject.toml
@@ -124,7 +124,7 @@ jobs:
       - name: Run tests (coverage gate)
         if: matrix.python-version == '3.12'
         run: >-
-          pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread
+          pytest tests/ -n auto --tb=short --maxfail=6 --timeout=300 --timeout-method=thread
           --cov --cov-report=term-missing --cov-report=xml:coverage.xml
 
       - name: Upload coverage report
