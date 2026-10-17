@@ -168,10 +168,15 @@ def _make_cas_db(tmp_path):
 
 class TestOverlayMerge:
     def test_merge_writes_snapshot_no_history_dirty_manifest(self, tmp_path):
-        """C2/C6：overlay merge 写当前快照 + dirty manifest，不写 file_versions 历史。
+        """C2/C6：overlay merge 写当前快照 + dirty manifest，且不向
+        file_versions 写历史行（行为级断言见下）。
 
-        init_codegraph_schema 不建 file_versions 表（daemon overlay 语义）；
-        workspace_manifests 由 merge 私有写 is_dirty=1。
+        F-014（commit 199882d）：init_codegraph_schema 有意建 4 张
+        canonical 新表（file_versions / file_symbol_versions /
+        call_versions / semgrep_findings），供 batch_file_versions_query /
+        semgrep 等只读路径使用避免 schema 漂移——旧前提「schema 不含
+        file_versions」已过期；workspace_manifests 由 merge 私有写
+        is_dirty=1 不变。
         """
         cas_db = _make_cas_db(tmp_path)
         cg_db = str(tmp_path / "codegraph.db")
@@ -197,11 +202,19 @@ class TestOverlayMerge:
                 "WHERE fi.workspace_id = 1"
             ).fetchone()
             assert sym["n"] == 1
-            # overlay schema 不含 file_versions（无历史）
-            has_history = cg.execute(
-                "SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'file_versions'"
+            # F-014：4 张 canonical 新表必须存在（只读路径依赖）
+            for _tbl in ("file_versions", "file_symbol_versions",
+                         "call_versions", "semgrep_findings"):
+                _has_tbl = cg.execute(
+                    "SELECT COUNT(*) AS n FROM sqlite_master"
+                    " WHERE type = 'table' AND name = ?", (_tbl,)
+                ).fetchone()
+                assert _has_tbl["n"] == 1, f"F-014: canonical 表 {_tbl} 须存在"
+            # C2/C6 不变量（行为级）：merge 自身不写 file_versions 历史行
+            _fv = cg.execute(
+                "SELECT COUNT(*) AS n FROM file_versions"
             ).fetchone()
-            assert has_history["n"] == 0
+            assert _fv["n"] == 0, "merge 不得写 file_versions 历史行"
             # merge 私有写 manifest：is_dirty=1
             m = cg.execute(
                 "SELECT content_hash, cas_key, is_dirty FROM workspace_manifests "

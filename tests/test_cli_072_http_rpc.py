@@ -72,14 +72,17 @@ def test_cli072_workspace_register_routes(monkeypatch, capsys):
 
 
 def test_cli072_workspace_set_routes(monkeypatch, capsys):
-    """set：route_rpc workspace.activate PROTECTED_MUTATION，随后 workspace.status。"""
+    """set：route_rpc workspace.activate PROTECTED_MUTATION，直接返回激活行（遗留项2 修复后不再二查 workspace.status）。"""
     calls = []
 
     def _fake_route(method, params, op_class):
         calls.append((method, params, op_class))
-        if method == "workspace.status":
-            return {"workspace_id": 1, "name": "w1", "client_view_root": "C:/repo1",
-                    "status": "active"}
+        # daemon workspace.activate 直接返回激活后的目标 workspace 行
+        # （全量测试遗留项2 修复 2026-09-30：此前 set 后再查 workspace.status
+        # 会按 CWD 返回错误 workspace，故 CLI 改为直接用 activate 响应）
+        if method == "workspace.activate":
+            return {"workspace_id": 1, "name": "w1",
+                    "client_view_root": "C:/repo1", "status": "active"}
         return True
 
     monkeypatch.setattr(main_mod, "route_rpc", _fake_route)
@@ -88,7 +91,8 @@ def test_cli072_workspace_set_routes(monkeypatch, capsys):
     assert rc is True
     methods = [c[0] for c in calls]
     assert "workspace.activate" in methods
-    assert "workspace.status" in methods
+    # 遗留项2 修复后 set 不再二次调 workspace.status（CWD 注入会返回错 workspace）
+    assert "workspace.status" not in methods
     activate_call = next(c for c in calls if c[0] == "workspace.activate")
     assert activate_call[2] == "PROTECTED_MUTATION"
     assert activate_call[1].get("workspace_id_or_name") == "w1"

@@ -201,7 +201,8 @@ class TestCrossFaceContract:
         revoke_row = next(
             line for line in mcp.splitlines() if line.startswith("| `assignment_revoke` |")
         )
-        assert "| `assignment_id` |" in revoke_row, (
+        # 表格行可能被 markdown 对齐重新填充（单元格内多空格），断言须容忍 padding
+        assert re.search(r"\|\s*`assignment_id`\s*\|", revoke_row), (
             "docs/mcp_tools.md: assignment_revoke 参数面必须为 assignment_id"
         )
         assert "`{ok: True, assignment_id, revoked_at}`" in revoke_row, (
