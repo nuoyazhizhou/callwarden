@@ -23,6 +23,62 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..analyzers import IssueAnalyzerMixin
 
 
+# 跨仓依赖检测专用的扩展名 → 语言映射（键为 _IMPORT_PATTERNS 支持的语言）。
+# .js/.jsx 等映射到 typescript：_IMPORT_PATTERNS 无独立 javascript 键，
+# JS 与 TS 共用同一组 import 模式（含 require()）。
+_CROSS_REPO_EXT_TO_LANG = {
+    ".py": "python",
+    ".pyi": "python",
+    ".rs": "rust",
+    ".go": "go",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".js": "typescript",
+    ".jsx": "typescript",
+    ".mjs": "typescript",
+    ".cjs": "typescript",
+}
+
+
+def _cross_repo_module_language(module_path: str) -> str:
+    """跨仓库依赖检测专用的 module_path 语言推断（模块级函数，不经 self 分发）。
+
+    为什么不能用 self._detect_language_from_module_path（生产 MRO 遮蔽实证）：
+    真实 CodeGraphDB 的 MRO 共 47 类，IssueAnalyzerMixin 在 #12、
+    CrossRepoMixin 在 #22——detect_cross_repo_deps 内经 self 调用时实际
+    分发到 IssueAnalyzerMixin 版本（__qualname__ 实证）。该版本服务
+    「缺陷检测规则选择」：子串匹配扩展名（'analyzers.coverage' 命中
+    ".c" 子串误判为 c）、无扩展名兜底 rust（issues.py:210-247）。而生产
+    symbols.module_path 实测为模块路径无扩展名（如 analyzers.coverage、
+    src.main），python 仓的 import 语句被错配到 rust/c 模式，系统性 0 命中。
+    模块级函数不经 MRO 分发，彻底规避该遮蔽。
+
+    语义（与 CrossRepoMixin wrapper 自带简化版一致）：
+    - 无扩展名 → 'python'（跨仓 import 匹配面以 python 为主）
+    - 含 "::" → 'rust'（Rust 模块路径特征）
+    - 有扩展名 → 按 _CROSS_REPO_EXT_TO_LANG 映射
+    - 未知扩展名 → 'python'（默认）
+
+    分工：本函数只服务 detect_cross_repo_deps 的 import 模式选择；
+    wrapper _detect_language_from_module_path 继续服务「缺陷检测规则
+    选择」的委托语义（471e3a4 的类型检查修复保留不动，勿回退）。
+    """
+    mp = (module_path or "").strip()
+    if not mp:
+        return "python"
+    # Rust 模块路径特征：无扩展名但含 "::" → rust
+    if "::" in mp:
+        return "rust"
+    # 取最后一段路径组件的扩展名（兼容 "/" 与 "\\" 分隔）
+    base = mp.replace("\\", "/").rsplit("/", 1)[-1]
+    if "." in base:
+        ext = "." + base.rsplit(".", 1)[-1].lower()
+        return _CROSS_REPO_EXT_TO_LANG.get(ext, "python")
+    return "python"
+
+
 class CrossRepoMixin:
     """跨仓库分析 Mixin
 
@@ -31,6 +87,12 @@ class CrossRepoMixin:
     - symbols / symbol_contents 表：跨仓库符号去重
     - cross_repo_deps 表：跨仓库依赖关系持久化
     """
+
+    # 跨仓检测专用语言推断：模块级函数经 staticmethod 暴露到实例面，
+    # 不经 self 方法分发——生产 MRO 中 IssueAnalyzerMixin(#12) 会遮蔽
+    # 本类(#22)的 wrapper（'analyzers.coverage' 被子串误判为 'c'、
+    # 无扩展名兜底 'rust'），详见 _cross_repo_module_language docstring。
+    _cross_repo_module_language = staticmethod(_cross_repo_module_language)
 
     # 跨仓库 import 语句的正则模式（多语言支持）
     _IMPORT_PATTERNS = {
@@ -163,8 +225,11 @@ class CrossRepoMixin:
             if not content:
                 continue
 
-            # 推断语言
-            lang = self._detect_language_from_module_path(sym.get("module_path", ""))
+            # 推断语言（跨仓检测专用模块级推断，不经 self 分发：
+            # 生产 MRO 中 IssueAnalyzerMixin(#12) 会遮蔽 CrossRepoMixin(#22)
+            # 的 wrapper——'analyzers.coverage' 命中 ".c" 子串误判为 'c'、
+            # 无扩展名兜底 'rust'，python 仓 import 模式错配 0 命中）
+            lang = _cross_repo_module_language(sym.get("module_path", ""))
             patterns = self._IMPORT_PATTERNS.get(lang, [])
 
             for pattern in patterns:
@@ -576,10 +641,18 @@ class CrossRepoMixin:
     def _detect_language_from_module_path(self, module_path: str) -> str:
         """从 module_path 推断语言。
 
-        优先复用 IssueAnalyzerMixin 的实现（当本类与其他 Mixin 组合、其
-        MRO 覆盖了本方法时），否则用自带简化版（无扩展名默认 python）。
+        分工说明（471e3a4 修复 + 生产 MRO 遮蔽升级）：
+        - 本 wrapper 服务「缺陷检测规则选择」的委托语义：当本类与其他
+          Mixin 组合、其 MRO 覆盖了本方法时，委托 IssueAnalyzerMixin
+          版本（rust 兜底服务缺陷检测，issues.py:210-247）。
+        - 跨仓库依赖检测（detect_cross_repo_deps）不使用本 wrapper——
+          生产 CodeGraphDB MRO 共 47 类，IssueAnalyzerMixin 在 #12、
+          CrossRepoMixin 在 #22，经 self 调用实际分发到 IssueAnalyzerMixin
+          版本，其子串匹配（'analyzers.coverage' → 'c'）与 rust 兜底会
+          使 python 仓 import 模式错配 0 命中；跨仓检测改用模块级
+          _cross_repo_module_language（不经 MRO 分发）。
         判据用「解析目标是否为本类自带实现」而非 hasattr——后者恒真
-        （self 上即定义着本方法），曾导致永不到达简化版：IssueAnalyzerMixin
+        （self 上即定义着本方法），曾导致永不到达自带简化版：IssueAnalyzerMixin
         的无扩展名兜底是 rust（服务缺陷检测规则选择，issues.py:216），
         与跨仓依赖检测场景冲突，python 仓（生产 module_path 实测无扩展名，
         如 analyzers.coverage）被系统性误判，import 模式错配 0 命中。
@@ -594,14 +667,5 @@ class CrossRepoMixin:
                 return IssueAnalyzerMixin._detect_language_from_module_path(self, module_path)
             except Exception:
                 pass
-        # 自带简化版
-        mp = (module_path or "").lower()
-        if ".py" in mp:
-            return "python"
-        if ".rs" in mp or "::" in mp:
-            return "rust"
-        if ".go" in mp:
-            return "go"
-        if ".ts" in mp or ".js" in mp:
-            return "typescript"
-        return "python"  # 默认
+        # 自带简化版（与跨仓检测专用 _cross_repo_module_language 同源）
+        return _cross_repo_module_language(module_path)

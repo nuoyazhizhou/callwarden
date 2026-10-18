@@ -14,6 +14,7 @@
 import os
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -321,6 +322,200 @@ def test_d7_db_cross_repo_end_to_end_writes_real_hash():
 
     finally:
         pass
+
+
+# ============================================================
+# D7 生产升级：跨仓检测语言推断 MRO 遮蔽修复
+# （471e3a4 只覆盖 FakeDB/独立 Mixin 场景；生产 CodeGraphDB 的
+#  MRO 共 47 类，IssueAnalyzerMixin 在 #12、CrossRepoMixin 在 #22，
+#  self._detect_language_from_module_path 实际分发到
+#  IssueAnalyzerMixin 版本：'analyzers.coverage' 命中 ".c" 子串误判为
+#  'c'、无扩展名兜底 'rust'，python 仓 import 模式错配 0 命中。
+#  修复：detect_cross_repo_deps 改调模块级 _cross_repo_module_language，
+#  不经 MRO 分发；wrapper 的类型检查修复（471e3a4）保留不动。）
+# ============================================================
+
+def test_d7_prod_cross_repo_module_language_semantics():
+    """D7 生产升级：_cross_repo_module_language 语义——无扩展名→python，
+    'analyzers.coverage'→python（不再被子串误判为 'c'），扩展名路径语义不变。"""
+    from callwarden.db.db_cross_repo import _cross_repo_module_language
+
+    # 生产形态：symbols.module_path 实测为模块路径无扩展名
+    assert _cross_repo_module_language("analyzers.coverage") == "python"
+    assert _cross_repo_module_language("src.main") == "python"
+    assert _cross_repo_module_language("") == "python"
+    assert _cross_repo_module_language(None) == "python"
+    # 扩展名路径语义不变（与 wrapper 自带简化版一致）
+    assert _cross_repo_module_language("src.rs") == "rust"
+    assert _cross_repo_module_language("a/b.rs") == "rust"
+    assert _cross_repo_module_language("foo.py") == "python"
+    assert _cross_repo_module_language("x.go") == "go"
+    assert _cross_repo_module_language("y.ts") == "typescript"
+    assert _cross_repo_module_language("y.tsx") == "typescript"
+    # Rust 模块路径特征：无扩展名但含 "::" → rust
+    assert _cross_repo_module_language("mod::sub") == "rust"
+
+
+def test_d7_prod_codegraphdb_module_language_via_instance(tmp_path):
+    """D7 生产升级：真实 CodeGraphDB 实例面上 _cross_repo_module_language 可用
+    （CrossRepoMixin 经 staticmethod 暴露，不经 self 方法分发，无 MRO 遮蔽）。"""
+    from callwarden.db import CodeGraphDB
+
+    db = CodeGraphDB(str(tmp_path / "test.db"))
+
+    # 生产误判形态 'analyzers.coverage' 必须为 python（MRO 分发下会是 'c'）
+    assert db._cross_repo_module_language("analyzers.coverage") == "python"
+    # 扩展名路径语义不变
+    assert db._cross_repo_module_language("src.rs") == "rust"
+
+
+def test_d7_prod_codegraphdb_cross_repo_detects_python_import(tmp_path):
+    """D7 生产升级 MASKING 把守：真实 CodeGraphDB + 无扩展名 module_path 的
+    python 内容必须检出跨仓依赖（471e3a4 未覆盖的生产场景）。
+
+    生产缺陷实证：MRO #12 IssueAnalyzerMixin 的
+    _detect_language_from_module_path 经 self 分发遮蔽 CrossRepoMixin #22
+    的 wrapper——'analyzers.coverage' 命中 ".c" 子串误判为 'c'、
+    'src.main' 无扩展名兜底 'rust'，import target_module 错配 0 命中。
+    本测试在未修复 HEAD 下必须红（total_deps=0）。
+    """
+    from callwarden.db import CodeGraphDB
+
+    db = CodeGraphDB(str(tmp_path / "test.db"))
+
+    # 注册两个仓库（source 依赖 target）
+    ws_a = db.register_workspace("source", str(tmp_path / "a"))
+    ws_b = db.register_workspace("target", str(tmp_path / "b"))
+    assert ws_a > 0 and ws_b > 0
+
+    now = time.time()
+
+    # ---- 源仓库文件 1：module_path='analyzers.coverage'（无扩展名，生产实测形态）----
+    db.conn.execute(
+        "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) VALUES (?, ?, ?, ?)",
+        ("hash-file-src1", "python", 10, now),
+    )
+    db.conn.execute(
+        """INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash,
+           mtime, total_lines, last_parsed, status, module_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ws_a, "analyzers/coverage.py", "analyzers/coverage.py", "hash-file-src1",
+         now, 10, now, "parsed", "analyzers.coverage"),
+    )
+    file_a1 = db.conn.execute(
+        "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+        (ws_a, "analyzers/coverage.py"),
+    ).fetchone()["id"]
+
+    # ---- 源仓库文件 2：module_path='src.main'（无扩展名，另一误判形态：兜底 rust）----
+    db.conn.execute(
+        "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) VALUES (?, ?, ?, ?)",
+        ("hash-file-src2", "python", 10, now),
+    )
+    db.conn.execute(
+        """INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash,
+           mtime, total_lines, last_parsed, status, module_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ws_a, "src/main.py", "src/main.py", "hash-file-src2",
+         now, 10, now, "parsed", "src.main"),
+    )
+    file_a2 = db.conn.execute(
+        "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+        (ws_a, "src/main.py"),
+    ).fetchone()["id"]
+
+    # ---- 目标仓库文件 + 符号：target_module（被依赖方）----
+    db.conn.execute(
+        "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) VALUES (?, ?, ?, ?)",
+        ("hash-file-tgt", "python", 5, now),
+    )
+    db.conn.execute(
+        """INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash,
+           mtime, total_lines, last_parsed, status, module_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ws_b, "lib/utils.py", "lib/utils.py", "hash-file-tgt",
+         now, 5, now, "parsed", "lib.utils"),
+    )
+    file_b = db.conn.execute(
+        "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+        (ws_b, "lib/utils.py"),
+    ).fetchone()["id"]
+    db.conn.execute(
+        """INSERT INTO symbol_contents (content_hash, name, kind, content, signature, qualified_name)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("hash-sym-target", "target_module", "fn", "def target_module(): pass",
+         "def target_module()", "lib.utils::target_module"),
+    )
+    db.conn.execute(
+        """INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, start_line, end_line,
+           module_path, qualified_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (file_b, "hash-sym-target", "target_module", "fn", 1, 2, "lib.utils",
+         "lib.utils::target_module"),
+    )
+
+    # ---- 源仓库两个符号：python import 内容，module_path 均无扩展名 ----
+    for sym_hash, name, qn, file_id in (
+        ("hash-sym-src1", "source_func_a", "analyzers.coverage::source_func_a", file_a1),
+        ("hash-sym-src2", "source_func_b", "src.main::source_func_b", file_a2),
+    ):
+        db.conn.execute(
+            """INSERT INTO symbol_contents (content_hash, name, kind, content, signature, qualified_name)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (sym_hash, name, "fn",
+             f"import target_module\ndef {name}(): pass",
+             f"def {name}()", qn),
+        )
+        db.conn.execute(
+            """INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, start_line, end_line,
+               module_path, qualified_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (file_id, sym_hash, name, "fn", 1, 2,
+             "analyzers.coverage" if file_id == file_a1 else "src.main", qn),
+        )
+    db.conn.commit()
+
+    # 执行跨仓检测（未修复 HEAD：两个源符号语言分别误判为 'c'/'rust'，total_deps=0）
+    result = db.detect_cross_repo_deps("source")
+    assert result["total_deps"] == 2, (
+        f"两个无扩展名 module_path 的 python 源符号都应检出跨仓依赖，实际：{result}"
+    )
+
+    # cross_repo_deps 表写入真实 target_symbol_hash（D7 原修复语义不回归）
+    rows = db.conn.execute(
+        "SELECT source_symbol_hash, target_symbol_hash, dependency_type FROM cross_repo_deps"
+    ).fetchall()
+    assert len(rows) == 2
+    for row in rows:
+        assert row["target_symbol_hash"] == "hash-sym-target", (
+            f"target_symbol_hash 应为目标符号 hash，实际：{row['target_symbol_hash']!r}"
+        )
+        assert row["dependency_type"] == "import"
+
+
+def test_d7_wrapper_delegation_semantics_preserved():
+    """D7：471e3a4 的 wrapper 类型检查修复保留——独立 Mixin 走自带简化版
+    （无扩展名→python），与 IssueAnalyzerMixin 组合且排在前列时委托
+    （rust 兜底语义，服务缺陷检测规则选择）。"""
+    from callwarden.analyzers import IssueAnalyzerMixin
+    from callwarden.db.db_cross_repo import CrossRepoMixin
+
+    class FakeDB(CrossRepoMixin):
+        def __init__(self):
+            pass
+
+    # 独立 Mixin：type(self) 解析到本类自带实现 → 自带简化版
+    assert FakeDB()._detect_language_from_module_path("src") == "python"
+    assert FakeDB()._detect_language_from_module_path("src.rs") == "rust"
+
+    class CombinedDB(IssueAnalyzerMixin, CrossRepoMixin):
+        """模拟生产 MRO 次序：IssueAnalyzerMixin 在前（#12 < #22）。"""
+
+        def __init__(self):
+            pass
+
+    # 组合场景：type(self) 解析到 IssueAnalyzerMixin 实现 → 委托（rust 兜底）
+    assert CombinedDB()._detect_language_from_module_path("src") == "rust"
 
 
 if __name__ == "__main__":
