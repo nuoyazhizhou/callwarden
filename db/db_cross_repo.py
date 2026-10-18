@@ -574,14 +574,27 @@ class CrossRepoMixin:
         return row["id"] if row else None
 
     def _detect_language_from_module_path(self, module_path: str) -> str:
-        """从 module_path 推断语言（复用 IssueAnalyzerMixin 的逻辑，若可用）"""
-        if hasattr(self, "_detect_language_from_module_path"):
-            # 优先用 IssueAnalyzerMixin 的实现（如果已加载）
+        """从 module_path 推断语言。
+
+        优先复用 IssueAnalyzerMixin 的实现（当本类与其他 Mixin 组合、其
+        MRO 覆盖了本方法时），否则用自带简化版（无扩展名默认 python）。
+        判据用「解析目标是否为本类自带实现」而非 hasattr——后者恒真
+        （self 上即定义着本方法），曾导致永不到达简化版：IssueAnalyzerMixin
+        的无扩展名兜底是 rust（服务缺陷检测规则选择，issues.py:216），
+        与跨仓依赖检测场景冲突，python 仓（生产 module_path 实测无扩展名，
+        如 analyzers.coverage）被系统性误判，import 模式错配 0 命中。
+        """
+        own_impl = CrossRepoMixin._detect_language_from_module_path
+        cls_impl = getattr(type(self), "_detect_language_from_module_path", None)
+        cls_impl_fn = getattr(cls_impl, "__func__", cls_impl)
+        own_impl_fn = getattr(own_impl, "__func__", own_impl)
+        if cls_impl_fn is not own_impl_fn:
+            # 仅当 type(self) 解析到的实现不是本类自带版本时才委托
             try:
                 return IssueAnalyzerMixin._detect_language_from_module_path(self, module_path)
             except Exception:
                 pass
-        # 简化版
+        # 自带简化版
         mp = (module_path or "").lower()
         if ".py" in mp:
             return "python"
