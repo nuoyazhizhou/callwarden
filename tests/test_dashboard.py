@@ -102,6 +102,16 @@ class TestDashboardBasic:
     def test_code_quality_full_mode(self, db_with_data):
         """full 模式（quick=False）计算圈复杂度"""
         cq = db_with_data.get_project_dashboard(quick=False)["code_quality"]
+        # instrument：db/db_dashboard.py full 分支裸调 get_code_metrics_summary()，
+        # 异常被其 except 吞成 {"error": str(e)} 降级结构（无 quick_mode 键），
+        # 上层断言只能报无因果的 KeyError。此处先把被吞异常原文翻到失败消息里
+        # （收紧而非放宽：正常路径无 error 键，instrument 不生效）。
+        if "error" in cq:
+            pytest.fail(
+                "code_quality section 返回降级结构：full 模式 "
+                "get_code_metrics_summary() 的异常被 db/db_dashboard.py 的 "
+                f"except 吞成 error 键，根因原文 = {cq['error']!r}"
+            )
         assert cq["quick_mode"] is False
         assert cq["avg_complexity"] is not None
         assert cq["max_complexity"] >= 5  # fn_complex 至少有 5+ 分支
