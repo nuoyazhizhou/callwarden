@@ -259,7 +259,7 @@
     },
     {
       "tool_name": "import_envelope_dependencies",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 17,
       "module": "db_task_evidence",
       "python_entry": "server.tools.tools_p2_graph.import_envelope_dependencies",
@@ -281,7 +281,7 @@
     },
     {
       "tool_name": "record_artifact_identity",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 45,
       "module": "db_task_evidence",
       "python_entry": "server.tools.tools_p2_graph.record_artifact_identity",
@@ -303,7 +303,7 @@
     },
     {
       "tool_name": "get_artifact_freshness",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 73,
       "module": "db_task_evidence",
       "python_entry": "server.tools.tools_p2_graph.get_artifact_freshness",
@@ -325,7 +325,7 @@
     },
     {
       "tool_name": "publish_interface",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 87,
       "module": "db_toolchain",
       "python_entry": "server.tools.tools_p2_graph.publish_interface",
@@ -347,7 +347,7 @@
     },
     {
       "tool_name": "get_interface_providers",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 108,
       "module": "db_toolchain",
       "python_entry": "server.tools.tools_p2_graph.get_interface_providers",
@@ -369,7 +369,7 @@
     },
     {
       "tool_name": "select_interface_provider",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 122,
       "module": "db_toolchain",
       "python_entry": "server.tools.tools_p2_graph.select_interface_provider",
@@ -391,7 +391,7 @@
     },
     {
       "tool_name": "build_hard_dependency_edges",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 142,
       "module": "db_toolchain",
       "python_entry": "server.tools.tools_p2_graph.build_hard_dependency_edges",
@@ -412,16 +412,16 @@
       ]
     },
     {
-      "tool_name": "detect_cycle",
-      "source_file": "server\\tools\\tools_p2_graph.py",
-      "line_number": 158,
+      "tool_name": "detect_dependency_cycle",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
+      "line_number": 168,
       "module": "db_toolchain",
-      "python_entry": "server.tools.tools_p2_graph.detect_cycle",
+      "python_entry": "server.tools.tools_dependency_graph.detect_dependency_cycle",
       "cli_entry": "none",
-      "daemon_rpc_method": "none",
+      "daemon_rpc_method": "detect_cycle",
       "rust_handler": "none",
       "backend": "python_compat",
-      "route": "/mcp/tools/detect_cycle",
+      "route": "/mcp/tools/detect_dependency_cycle",
       "direct_sqlite_access": false,
       "operation_class": "read_only",
       "workspace_scope": "workspace_scoped",
@@ -435,7 +435,7 @@
     },
     {
       "tool_name": "validate_revision_dependencies",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 170,
       "module": "db_toolchain",
       "python_entry": "server.tools.tools_p2_graph.validate_revision_dependencies",
@@ -457,7 +457,7 @@
     },
     {
       "tool_name": "get_dependency_edges",
-      "source_file": "server\\tools\\tools_p2_graph.py",
+      "source_file": "server\\tools\\tools_dependency_graph.py",
       "line_number": 187,
       "module": "db_toolchain",
       "python_entry": "server.tools.tools_p2_graph.get_dependency_edges",
@@ -479,7 +479,7 @@
     },
     {
       "tool_name": "record_action_identity",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 77,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.record_action_identity",
@@ -501,7 +501,7 @@
     },
     {
       "tool_name": "get_action_identity",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 134,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.get_action_identity",
@@ -523,7 +523,7 @@
     },
     {
       "tool_name": "check_action_identity",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 158,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.check_action_identity",
@@ -545,7 +545,7 @@
     },
     {
       "tool_name": "check_session_separation",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 187,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.check_session_separation",
@@ -567,7 +567,7 @@
     },
     {
       "tool_name": "get_attestation_validity",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 221,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.get_attestation_validity",
@@ -589,7 +589,7 @@
     },
     {
       "tool_name": "list_attestation_revocations",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 256,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.list_attestation_revocations",
@@ -611,7 +611,7 @@
     },
     {
       "tool_name": "register_attestation_revocation",
-      "source_file": "server\\tools\\tools_p3_identity.py",
+      "source_file": "server\\tools\\tools_identity.py",
       "line_number": 289,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p3_identity.register_attestation_revocation",
@@ -633,7 +633,7 @@
     },
     {
       "tool_name": "lease_acquire",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 52,
       "module": "db_task_leases",
       "python_entry": "server.tools.tools_p4_lease.lease_acquire",
@@ -653,7 +653,7 @@
     },
     {
       "tool_name": "lease_renew",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 102,
       "module": "db_task_leases",
       "python_entry": "server.tools.tools_p4_lease.lease_renew",
@@ -673,7 +673,7 @@
     },
     {
       "tool_name": "lease_release",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 152,
       "module": "db_task_leases",
       "python_entry": "server.tools.tools_p4_lease.lease_release",
@@ -693,7 +693,7 @@
     },
     {
       "tool_name": "lease_status",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 198,
       "module": "db_task_leases",
       "python_entry": "server.tools.tools_p4_lease.lease_status",
@@ -713,7 +713,7 @@
     },
     {
       "tool_name": "lease_list_events",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 222,
       "module": "db_task_leases",
       "python_entry": "server.tools.tools_p4_lease.lease_list_events",
@@ -733,7 +733,7 @@
     },
     {
       "tool_name": "assignment_create",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 244,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p4_lease.assignment_create",
@@ -755,7 +755,7 @@
     },
     {
       "tool_name": "assignment_show",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 281,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p4_lease.assignment_show",
@@ -777,7 +777,7 @@
     },
     {
       "tool_name": "assignment_revoke",
-      "source_file": "server\\tools\\tools_p4_lease.py",
+      "source_file": "server\\tools\\tools_lease.py",
       "line_number": 302,
       "module": "db_task_identity",
       "python_entry": "server.tools.tools_p4_lease.assignment_revoke",
@@ -1172,16 +1172,16 @@
       ]
     },
     {
-      "tool_name": "detect_cycles",
+      "tool_name": "detect_call_cycles",
       "source_file": "server\\tools\\tools_query.py",
-      "line_number": 245,
+      "line_number": 240,
       "module": "db_query",
-      "python_entry": "server.tools.tools_query.detect_cycles",
+      "python_entry": "server.tools.tools_query.detect_call_cycles",
       "cli_entry": "cw --detect_cycles",
       "daemon_rpc_method": "query.detect_cycles",
       "rust_handler": "rust_ext/src/daemon/dispatch.rs::handle_query_detect_cycles",
       "backend": "rust_native",
-      "route": "/mcp/tools/detect_cycles",
+      "route": "/mcp/tools/detect_call_cycles",
       "direct_sqlite_access": false,
       "operation_class": "read_only",
       "workspace_scope": "workspace_scoped",
