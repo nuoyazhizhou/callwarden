@@ -371,7 +371,12 @@ def test_pre_commit_hook_has_sleep_between_retries():
 
 
 def test_pre_commit_hook_has_trae_sandbox_diagnostics():
-    """pre-commit hook 失败时打印 TRAE 沙箱排查建议。"""
+    """pre-commit hook 失败时打印 TRAE 沙箱排查建议。
+
+    注意：停 MCP Server 的提示断言的是 hook echo 文案（"停止 MCP Server" /
+    "结束占用 DB 的 MCP 进程"），不是 CLI 命令——CLI 没有 cw server 子命令
+    （argparse 会 unrecognized arguments），不要改回断言 `cw server --stop`。
+    """
     installer = CallWardenInstaller()
     content = installer._pre_commit_hook()
     # 必须提及 TRAE 沙箱（根因之一）
@@ -380,8 +385,10 @@ def test_pre_commit_hook_has_trae_sandbox_diagnostics():
     # 必须给出绕过建议（PowerShell + --no-verify）
     assert "PowerShell" in content, "hook 必须给出 PowerShell 替代方案"
     assert "--no-verify" in content, "hook 必须提及 --no-verify 绕过方式"
-    # 必须提示停 MCP Server
-    assert "cw server --stop" in content, "hook 必须提示停止 MCP Server"
+    # 必须提示停 MCP Server（实现文案：IDE 中停止/重载或结束占用 DB 的进程；
+    # CLI 无 cw server 子命令，不断言不存在的命令）
+    assert "停止 MCP Server" in content, "hook 必须提示停止 MCP Server"
+    assert "结束占用 DB 的 MCP 进程" in content, "hook 必须给出结束占用 DB 的 MCP 进程的具体手段"
 
 
 def test_pre_commit_hook_preserves_check_task_soft_gate():
