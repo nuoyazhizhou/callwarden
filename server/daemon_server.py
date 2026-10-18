@@ -1408,6 +1408,33 @@ class EnterpriseDaemonService:
             except Exception as e:
                 raise DaemonRpcError("recover_failed", str(e))
 
+        # SRV-006（T-1787323460500 系列）：checkpoint authority 端点下沉 Rust
+        # daemon 后 client 两段式调用的第一段。Rust dispatch.rs:3375 有该路由
+        # （daemon_client_handlers.rs:1014 handle_publish_snapshot）；compat
+        # 侧缺失导致穿透下方 query 门报 snapshot_not_ready（CI run 5/6 连续红）。
+        # 契约与 Rust handler 对齐：busy_timeout 等待 + PASSIVE checkpoint +
+        # 归一化绝对路径 payload（不发布 snapshot，snapshot.publish 由客户端
+        # 第二段经既有 RPC 发起）。
+        if method == "mcp.daemon_client.publish_snapshot":
+            workspace_id = str(params.get("workspace_instance_id") or "")
+            if not workspace_id:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_instance_id")
+            db_path = self._validate_owned_path(
+                str(params.get("db_path") or ""), uid, require_file=True
+            )
+            with sqlite3.connect(db_path, timeout=5.0) as db_conn:
+                db_conn.execute("PRAGMA busy_timeout=5000")
+                # PASSIVE checkpoint：返回 (busy, log, checkpointed) 行，
+                # busy 时不抛错（对齐 C4/S8 策略与 Rust 侧 rows.next().is_some()）。
+                row = db_conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+            return {
+                "checkpointed": row is not None,
+                "db_path": os.path.abspath(db_path),
+                "workspace_instance_id": workspace_id,
+                "build_context_hash": str(params.get("build_context_hash") or ""),
+                "transport": "db_path",
+            }
+
         if method in ("snapshot.publish", "workspace.refresh"):
             received_fds = received_fds or []
             if received_fds:
