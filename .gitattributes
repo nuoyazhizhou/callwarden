@@ -4,3 +4,10 @@
 # E_ASSET_BYTES_INVALID + E_ASSET_HASH_MISMATCH → 全部 Rust job 构建失败
 # （TP-11G CI 首跑实证：21 issues）。manifest 哈希按 LF 计算，故强制 eol=lf。
 rust_ext/resources/role_prompts/v1/** text eol=lf
+
+# MCP 237 工具矩阵契约基线：matrix-sha256.txt 的哈希/大小按 CRLF 工作副本记录
+# （Windows 生成）。core.autocrlf=input 会把 CRLF 规范成 LF blob，Linux CI 检出
+# 即 LF 字节 → test_legacy_237_tools_baseline.py 的 SHA-256/大小校验必失败。
+# 钉 eol=crlf 保证任意平台检出均为原始 CRLF 字节（role_prompts 先例的反向场景：
+# 那边哈希按 LF 算钉 lf，这边哈希按 CRLF 算钉 crlf）。
+.trae-cn/evidence/mcp-tool-matrix-baseline.json text eol=crlf

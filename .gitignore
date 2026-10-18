@@ -102,7 +102,13 @@ target/
 # AI 辅助工具元数据（不入仓库）
 # ------------------------------------------
 .trae/
-.trae-cn/
+.trae-cn/*
+!.trae-cn/evidence/
+.trae-cn/evidence/*
+!.trae-cn/evidence/mcp-tool-matrix-baseline.json
+!.trae-cn/evidence/legacy-237-baseline-B1/
+.trae-cn/evidence/legacy-237-baseline-B1/*
+!.trae-cn/evidence/legacy-237-baseline-B1/matrix-sha256.txt
 .claude/
 .cursor/
 .codex/
