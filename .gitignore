@@ -106,6 +106,7 @@ target/
 !.trae-cn/evidence/
 .trae-cn/evidence/*
 !.trae-cn/evidence/mcp-tool-matrix-baseline.json
+!.trae-cn/evidence/http-daemon-capability-matrix.json
 !.trae-cn/evidence/legacy-237-baseline-B1/
 .trae-cn/evidence/legacy-237-baseline-B1/*
 !.trae-cn/evidence/legacy-237-baseline-B1/matrix-sha256.txt
