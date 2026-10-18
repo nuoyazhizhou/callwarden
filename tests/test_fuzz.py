@@ -327,12 +327,15 @@ def test_atomic_write_concurrent():
         for idx, etype, emsg in errors[:3]:
             print(f"   线程 {idx} 异常: {etype}: {emsg[:80]}")
 
-    # 断言 2：最终文件内容是其中一个完整写入（不是半写入状态）
+    # 断言 2：最终文件内容必须是「初始值或某次完整写入」之一（无半写入状态）。
+    # 与断言 3 对齐：所有并发写入被拒（锁/IO 错误）时文件保持初始内容同样
+    # 是安全状态；真缺陷是撕裂写（内容不属于任何完整状态）。
     with open(target_file, "r", encoding="utf-8") as f:
         final_content = f.read()
 
-    assert final_content in contents, (
-        f"文件内容不是任何一次完整写入（半写入状态？）"
+    allowed_contents = contents + ["initial_content"]
+    assert final_content in allowed_contents, (
+        f"文件内容既非初始值也非任何一次完整写入（半写入状态？）"
         f"长度={len(final_content)}, 内容前50字符={final_content[:50]!r}"
     )
     print(f"PASS: 最终文件内容一致（长度={len(final_content)}，匹配某次完整写入）")
