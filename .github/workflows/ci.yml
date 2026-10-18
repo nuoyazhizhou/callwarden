@@ -47,6 +47,17 @@ jobs:
         # --no-default-features --bin 形态可建（本 step 不跑测试，仅构建）。
         run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon
 
+      - name: Create callwarden-clients group (P0-3 socket_group fail-closed)
+        # w3 live daemon 测试（cli_084/085/086/cli01/cli02 共 20 个）的隔离
+        # daemon 默认 socket_group='callwarden-clients'（daemon config.rs:178），
+        # P0-3 v2 fail-closed：组不存在/chown 失败均拒绝启动（server.rs:316-378）。
+        # CI runner 无此组 → daemon 启动末期退出（HTTP manifest 先发布→组检查
+        # 失败→exit 1）→ 客户端 Connection reset。groupadd 是 daemon 错误消息
+        # 自指引的生产安装步骤；usermod 让 runner 入组满足 chown 要求。
+        run: |
+          sudo groupadd -f callwarden-clients
+          sudo usermod -a -G callwarden-clients runner
+
       - name: Clean build artifacts
         # 清理 dist/ build/ egg-info 防止旧缓存导致 wheel 包含已删除文件
         run: |
@@ -137,8 +148,7 @@ jobs:
 
       - name: Run tests
         if: matrix.python-version != '3.12'
-        run: |
-          pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread
+        run: sg callwarden-clients -c "pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread"
 
       # 覆盖率门禁（任务5①）：只在 Python 3.12 单版本采集，避免矩阵 5 个版本
       # 产出 5 个不同覆盖率数字（各版本 skip 情况不同）。阈值取自 pyproject.toml
@@ -148,8 +158,7 @@ jobs:
       - name: Run tests (coverage gate)
         if: matrix.python-version == '3.12'
         run: >-
-          pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread
-          --cov --cov-report=term-missing --cov-report=xml:coverage.xml
+          sg callwarden-clients -c "pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread --cov --cov-report=term-missing --cov-report=xml:coverage.xml"
 
       - name: Upload coverage report
         if: matrix.python-version == '3.12'
