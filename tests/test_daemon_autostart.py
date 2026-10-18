@@ -437,8 +437,17 @@ class TestDaemonClientAutoRoute:
                             request = recv_message(conn, 8 * 1024 * 1024)
                             method = request.get("method")
                             result = {"status": "ok"} if method == "ping" else {"files": 7}
+                            # 生产 wire 合同要求成功响应必须带 "ok": true——
+                            # rust_ext/src/daemon/protocol.rs:197-202 make_ok_response
+                            # （{"ok": true, "result": ...}）；缺 ok 时 protocol.rs:166-169
+                            # parse_response 默认 ok=false，且无 error 对象 →
+                            # ("daemon_error", "unknown daemon error")；
+                            # server/daemon_protocol.py:337-338 同样以 ok is True 判定。
+                            # 该 fake 曾因缺 ok 使 autostart readiness 探针恒失败，
+                            # 不可退回去掉 ok 键。
                             send_message(conn, {
                                 "id": request.get("id"),
+                                "ok": True,
                                 "result": result,
                             }, 8 * 1024 * 1024)
                         except (OSError, ValueError):
