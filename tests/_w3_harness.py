@@ -772,7 +772,21 @@ def setup_w3_client(data_root, root_path, ws_id=1):
 
         return client, inst, endpoint, proc
     except Exception:
-        proc.kill()
+        # instrument（CI 取证）：manifest 后死亡（本机/CI 实证失败模式）——
+        # daemon 先发 manifest（wait_manifest 成功返回），随后在 setup 后续
+        # 调用（workspace.register / snapshot.publish）前死亡，异常在此冒泡。
+        # 输出 daemon stdout/stderr 尾部定位死因（本机实证：CreateNamedPipe
+        # 失败 error 5，pipe 名按 SID 派生未按 data_root 隔离）。
+        # 行为零变化：打印后仍原样 raise，不吞异常、不改 skip 语义。
+        try:
+            out, err = proc.communicate(timeout=5)
+        except Exception:
+            proc.kill()
+            out, err = proc.communicate()
+        print(f"[w3_harness] daemon died after manifest during setup; "
+              f"poll={proc.poll()}; "
+              f"stdout tail={out.decode('utf-8', 'replace')[-1500:]!r}; "
+              f"stderr tail={err.decode('utf-8', 'replace')[-2000:]!r}")
         raise
 
 
