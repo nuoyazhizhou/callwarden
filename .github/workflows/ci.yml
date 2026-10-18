@@ -37,6 +37,16 @@ jobs:
       - name: Build Rust extension
         run: python release/build.py --rust
 
+      - name: Build cw-daemon binary (H4C real-process gate)
+        # H4C-1/2/3 真实进程门（test_http_combined_worker_cutover.py 4 个 +
+        # test_http_compat_worker_batch.py 2 个）setup 用 pytest.fail（非 skip）
+        # 要求 rust_ext/target/debug/cw-daemon 存在；test job 此前只建 --lib
+        # 扩展，二进制缺席 → 6 ERROR。作者刻意选择 fail-loud 纪律，正解是构建
+        # 二进制而非改 skip（改 skip 构成 MASKING）。debug profile 与门的
+        # _find_daemon_binary 首选候选一致；compile-gate job 已实证
+        # --no-default-features --bin 形态可建（本 step 不跑测试，仅构建）。
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon
+
       - name: Clean build artifacts
         # 清理 dist/ build/ egg-info 防止旧缓存导致 wheel 包含已删除文件
         run: |
