@@ -721,7 +721,17 @@ def setup_w3_client(data_root, root_path, ws_id=1):
     try:
         m, man_file = wait_manifest(data_root, proc)
         if m is None:
-            proc.kill()
+            # instrument（CI 取证）：daemon 在 manifest 前死亡/超时，输出其
+            # stdout/stderr 尾部，便于定位死因（本机实证：HTTP pre-bound 后
+            # 传输组件初始化失败致退出，CI 死因待此 instrument 捕获）。
+            try:
+                out, err = proc.communicate(timeout=5)
+            except Exception:
+                proc.kill()
+                out, err = proc.communicate()
+            print(f"[w3_harness] daemon exited poll={proc.poll()} before manifest; "
+                  f"stdout tail={out.decode('utf-8', 'replace')[-1500:]!r}; "
+                  f"stderr tail={err.decode('utf-8', 'replace')[-2000:]!r}")
             return None, None, None, None
         endpoint = m["endpoint"]
         # manifest_path=隔离 manifest：避免 discover() 读真实 HOME 的 stale
