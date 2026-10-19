@@ -146,11 +146,19 @@ class TestCli004Success:
         assert "version" in r or "schema_version" in r
 
     def test_http_rpc_health_success(self, live_daemon):
-        """health()：返回健康状态（worker_status 为 healthy）。"""
+        """health()：返回健康状态（worker_status 为两种正常态之一）。
+
+        H3 止血（审计问题 3）后 COMPAT_ROUTE_WHITELIST 已清零（方法全迁
+        rust_native）→ 白名单为空 → daemon 跳过 compat worker 启动，
+        worker_status 明确报 "disabled_no_compat_routes"（非故障，表达
+        "无需 worker"）；白名单非空时为 "healthy"（worker 健康运行）。
+        两种取值都是正常态，均不得判红（Rust 权威：
+        rust_ext/src/daemon/http_server.rs:417-428）。
+        """
         c = live_daemon
         r = c.health()
         assert isinstance(r, dict)
-        assert r.get("worker_status") == "healthy"
+        assert r.get("worker_status") in ("healthy", "disabled_no_compat_routes")
 
     def test_http_rpc_capability_success(self, live_daemon):
         """capabilities()：返回 capability 列表。"""
