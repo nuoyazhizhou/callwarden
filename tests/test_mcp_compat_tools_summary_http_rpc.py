@@ -9,13 +9,19 @@ get_clone_aware_impact / review_readiness / cross_layer_impact /
 evolution_frequency / hotspot_evolution / defect_learn
 从 python_compat 迁移 rust_native 后的契约验证（live daemon 直连）。
 
-写面语义（probeproven 2026-09-10）：guardrail_scan / guardrail_list_rules /
-defect_learn（有 qualifying 变更时）走只读快照连接必拒 → Rust fail-closed
-internal_error，消息对齐 Python worker OperationalError parity。
+读面语义（2026-09-27 起，c004d17 list_rules 只读化 / f8669e6 scan
+detect-only）：guardrail_scan / guardrail_list_rules 已由写面 fail-closed
+stub 改为纯只读实现——scan 为 detect-only（findings 附 persisted=false，
+不落 guardrail_findings 表）；list_rules 直接 SELECT guardrail_rules 表
+（缺表返回 []，builtin 不再随读初始化）。写面（builtin seed / 持久化）
+职责归写面调用点（CLI，rust_ext/src/cli/security.rs:399、bin/cw_cli.rs:2211）。
+原 fail-closed 恒 internal_error 实为 F-014 缺陷症状而非设计契约，Rust
+单测已按新语义固化。defect_learn 写面语义不变（无 qualifying 变更时返回
+零结果不触写面；有 qualifying 变更时只读快照连接仍 fail-closed）。
 """
 import pytest
 
-from callwarden.server.daemon_client import DaemonRemoteError, HttpDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.config import get_http_authority_id
 
 CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
@@ -144,7 +150,7 @@ def test_hotspot_evolution_desc_sorted(client):
 
 
 # ---------------------------------------------------------------
-# 写面 fail-closed（parity：Python ro worker OperationalError）
+# 只读契约（2026-09-27 起：scan detect-only / list_rules 纯读）
 # ---------------------------------------------------------------
 
 @pytest.mark.parametrize("method,params", [
@@ -153,10 +159,22 @@ def test_hotspot_evolution_desc_sorted(client):
     ("guardrail_list_rules", {}),
     ("guardrail_list_rules", {"category_filter": "db_safety"}),
 ])
-def test_guardrail_write_face_fail_closed(client, method, params):
-    with pytest.raises(DaemonRemoteError) as ei:
-        _call(client, method, params)
-    assert "write-face" in str(ei.value)
+def test_guardrail_read_only_detect_contract(client, method, params):
+    """guardrail_scan / guardrail_list_rules 为纯只读：返回 list 不抛错。
+
+    2026-09-27 起两个方法均由写面 fail-closed stub 改为只读实现：
+    - scan：detect-only，w3 快照唯一 file_instances 行的 abs_path
+      （/w3/src/w3_seed.py）不存在于磁盘 → 读盘跳过 → []；若返回非空，
+      每项 finding 必须附 persisted=False（读实现不落库）。
+    - list_rules：直接 SELECT guardrail_rules，w3 快照无该表 / 无 CLI
+      seed → []（builtin 不再随读初始化）。
+    """
+    r = _call(client, method, params)
+    assert isinstance(r, list)
+    assert r == [], f"{method} 在 w3 空快照下应返回 []"
+    if method == "guardrail_scan":
+        for f in r:  # 空列表时循环体不执行；非空时逐项校验只读不持久化契约
+            assert f.get("persisted") is False, f"读实现 finding 不得持久化: {f}"
 
 
 def test_defect_learn_no_qualifying_change_zero(client):

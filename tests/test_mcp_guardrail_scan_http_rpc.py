@@ -5,11 +5,15 @@ live-daemon HTTP 往返模式（同 MCP-033~049）：
 1. 复用 dev cw-daemon（HTTP manifest 已在 ~/.callwarden）
 2. HttpDaemonRpcClient 走 /v1/rpc 调用 guardrail_scan（P0-H：显式 workspace_instance_id）
 
-写面语义（probeproven 2026-09-10）：
-- guardrail_scan 首行 `_init_builtin_rules` 含 INSERT → 只读快照连接必拒。
-- Rust fail-closed 返回 internal_error，消息对齐 Python worker 的
-  `OperationalError attempt to write a readonly database` parity；
-  错误类型 + "write-face" 关键字即 fail-closed 证据。
+读面语义（2026-09-27 起，f8669e6 scan detect-only）：
+- guardrail_scan 已由写面 fail-closed stub 改为纯只读 detect-only 实现：
+  枚举 snapshot file_instances + 读盘检测（不可读文件跳过，对齐 Python
+  content None 分支），findings 附 file_path 与 persisted=false，不写
+  guardrail_findings 表；写面（builtin seed / 持久化）职责归写面调用点
+  （rust_ext/src/cli/security.rs:399、bin/cw_cli.rs:2211）。
+- 原 fail-closed 语义（只读快照连接恒 internal_error）实为 F-014「恒
+  internal_error」缺陷的症状而非设计契约；Rust 单测已按新语义固化
+  （query_compat_handlers.rs 测试区断言只读返回 findings 且 persisted=false）。
 
 Rust 权威：query_compat_handlers.rs::handle_summary_guardrail_scan。
 """
@@ -23,7 +27,6 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import (  # noqa: E402
-    DaemonRemoteError,
     DaemonUnavailableError,
     HttpDaemonRpcClient,
 )
@@ -51,11 +54,20 @@ def _call(rpc, method, params):
 
 
 @pytest.mark.parametrize("params", [{}, {"file_filter": "server"}])
-def test_guardrail_scan_write_face_fail_closed(rpc, params):
-    """写面方法 → 只读快照连接拒绝（fail-closed，与 Python ro worker parity）。"""
-    with pytest.raises(DaemonRemoteError) as ei:
-        _call(rpc, "guardrail_scan", params)
-    assert "write-face" in str(ei.value)
+def test_guardrail_scan_read_only_detect(rpc, params):
+    """guardrail_scan 为 detect-only 纯读：调用成功返回 list（不抛错）。
+
+    2026-09-27 起 guardrail_scan 不再走写面（findings 不落库）；只读快照
+    连接上返回检测结果。w3 快照唯一 file_instances 行的 abs_path
+    （/w3/src/w3_seed.py）不存在于磁盘 → 读盘跳过 → 恒 `[]`。
+    强契约（快照将来有可读文件时仍成立）：读实现 finding 必须附
+    persisted=False——持久化职责归写面调用点（CLI）。
+    """
+    r = _call(rpc, "guardrail_scan", params)
+    assert isinstance(r, list)
+    assert r == [], "w3 快照无可读文件，detect-only 应返回空列表"
+    for f in r:  # 空列表时循环体不执行；非空时逐项校验只读不持久化契约
+        assert f.get("persisted") is False, f"读实现 finding 不得持久化: {f}"
 
 
 def test_guardrail_scan_daemon_unavailable_fail_closed():
