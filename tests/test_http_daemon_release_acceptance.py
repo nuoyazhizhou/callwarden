@@ -56,7 +56,14 @@ from callwarden.config import (  # noqa: E402
 from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 
 _RUNTIME_ROOT = os.path.join(os.path.expanduser("~"), ".callwarden", "runtime")
-_CURRENT_DAEMON = os.path.join(_RUNTIME_ROOT, "current", "cw-daemon.exe")
+# 平台分支：Windows 产物带 .exe，Linux/macOS 不带（与生产
+# server/daemon_autostart.py:608-612 _find_daemon_binary 的
+# "cw-daemon.exe" if win32 else "cw-daemon" 分支一致）。此前硬编码
+# Windows 名 → CI Linux runner 无 cw-daemon.exe，test_runtime_current_daemon_exists
+# 必然失败；分支后 Linux 断言真实文件（ci.yml test job 的 install step 提供）。
+_CURRENT_DAEMON = os.path.join(
+    _RUNTIME_ROOT, "current", "cw-daemon.exe" if os.name == "nt" else "cw-daemon"
+)
 _EVIDENCE_DIR = os.path.join(_RUNTIME_ROOT, "evidence")
 
 # ------------------------------------------------------------

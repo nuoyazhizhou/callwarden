@@ -58,6 +58,19 @@ jobs:
           sudo groupadd -f callwarden-clients
           sudo usermod -a -G callwarden-clients runner
 
+      - name: Install cw-daemon to runtime/current (release acceptance)
+        # test_http_daemon_release_acceptance.py 的
+        # test_runtime_current_daemon_exists 断言生产部署位
+        # ~/.callwarden/runtime/current/cw-daemon（Linux 名无 .exe，与
+        # daemon_autostart.py:608-612 平台分支一致）存在；CI fresh runner
+        # 无 deb 部署 → 该位缺席 → run 12 失败。此 step 把上方 "Build
+        # cw-daemon binary"（df092cf）的 debug 产物装到生产位，使分支在 CI
+        # 有真实覆盖（存在性断言是 release acceptance 的核心，不改 skip）。
+        # 二进制与 autostart _find_daemon_binary 的项目构建候选同源同内容，
+        # 不改变其他测试的 daemon 解析行为。~ 在 GH Actions run: 展开为
+        # /home/runner（bash 默认），显式写 $HOME 更稳。
+        run: install -D rust_ext/target/debug/cw-daemon $HOME/.callwarden/runtime/current/cw-daemon
+
       - name: Clean build artifacts
         # 清理 dist/ build/ egg-info 防止旧缓存导致 wheel 包含已删除文件
         run: |
