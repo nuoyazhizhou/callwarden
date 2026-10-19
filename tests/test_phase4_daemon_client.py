@@ -10,7 +10,10 @@
 
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -194,7 +197,154 @@ class TestRoutingStats:
         DaemonClient.reset_instance()
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _find_isolated_daemon_binary() -> Path | None:
+    """定位隔离 spawn 用的 cw-daemon 二进制。
+
+    CI 侧由 test job 的 "Build cw-daemon binary" step（df092cf）构建于
+    rust_ext/target/debug/cw-daemon；CW_DAEMON_BIN 可显式覆盖（与
+    tests/_w3_harness.py find_daemon_binary 的候选约定一致）。
+    """
+    candidates = []
+    env_bin = os.environ.get("CW_DAEMON_BIN", "").strip()
+    if env_bin:
+        candidates.append(Path(env_bin))
+    candidates.append(_repo_root() / "rust_ext" / "target" / "debug" / "cw-daemon")
+    candidates.append(_repo_root() / "rust_ext" / "target" / "release" / "cw-daemon")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+@pytest.fixture
+def daemon_route_ready(tmp_path, monkeypatch):
+    """保证 TestDaemonRoutingWithRust 六例有可用 daemon：生产端点优先，连不上则自起隔离 daemon。
+
+    设计意图（类 docstring）：这些测试测的是 DaemonClient 的 daemon 优先路由
+    （fail-loud：不允许静默 SQL 回退），daemon 是手段不是对象——故只要求路由
+    统计 daemon_hits>=1 / daemon_ready is True，不断言「哪个 daemon 应答」。
+
+    - 生产端点优先：先以协议级探针（UnixDaemonRpcClient.probe，不触发
+      autostart）试生产端点。Windows 本机常驻 daemon（named pipe）在场，
+      探针即过，行为与修改前完全一致。
+    - 连不上时（Linux CI fresh runner：无 deb 部署无 daemon，autostart 的
+      _start_daemon_linux 只试 systemctl --user，unit 不存在 → 10s 后失败）：
+      按 tests/test_w2_3_query_uds_e2e.py:213-260 real_rust_daemon 的同款形态
+      spawn 隔离 cw-daemon（tmp socket/registry/data root/task db + HOME
+      重定向 + CALLWARDEN_SKIP_AUTO_SETUP），等 socket 就绪后经
+      CW_DAEMON_SOCKET 注入 socket 路径（wsl-local/linux-system authority 的
+      resolve_daemon_endpoint_for_authority 读该 env，config.py:1661），
+      DaemonClient 单例重置后连隔离 daemon。
+    - 二进制未构建（CI 之外环境）：skip 附原因，不 fail。
+
+    Windows 不触发隔离分支：Windows 隔离 named-pipe 有历史 error 5 冲突
+    问题；生产端点不可用时维持 fail-loud 原行为（测试自身以
+    DaemonUnavailableError 失败，与修改前一致）。
+    """
+    from callwarden.server.daemon_client import DaemonClient
+
+    DaemonClient.reset_instance()
+    client = DaemonClient.get_instance()
+    try:
+        client._rpc.probe()
+    except Exception:
+        pass
+    else:
+        # 生产端点可用：直接用（Windows 本机路径）
+        try:
+            yield
+        finally:
+            DaemonClient.reset_instance()
+        return
+    DaemonClient.reset_instance()
+
+    if sys.platform == "win32":
+        # 不尝试隔离 named-pipe spawn（历史 error 5 冲突），维持 fail-loud
+        try:
+            yield
+        finally:
+            DaemonClient.reset_instance()
+        return
+
+    binary = _find_isolated_daemon_binary()
+    if binary is None:
+        pytest.skip(
+            "cw-daemon 二进制未构建（rust_ext/target/{debug,release}/cw-daemon 不存在）"
+        )
+
+    socket_path = tmp_path / "callwarden.sock"
+    registry_path = tmp_path / "registry.db"
+    data_root = tmp_path / "data"
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "CW_DAEMON_SOCKET": str(socket_path),
+            "CW_DAEMON_REGISTRY_DB": str(registry_path),
+            "CW_DAEMON_DATA_ROOT": str(data_root),
+            "CW_DAEMON_TASK_DB": str(tmp_path / "task.db"),
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONHOME": "",
+            "PYTHONPATH": str(_repo_root()),
+        }
+    )
+    log_path = tmp_path / "daemon.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        daemon = subprocess.Popen(
+            [
+                str(binary),
+                "--socket",
+                str(socket_path),
+                "--registry",
+                str(registry_path),
+                "serve",
+            ],
+            cwd=str(_repo_root()),
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if daemon.poll() is not None:
+                pytest.fail(
+                    "隔离 cw-daemon 早亡:\n"
+                    + log_path.read_text(encoding="utf-8", errors="replace")
+                )
+            if socket_path.exists():
+                break
+            time.sleep(0.2)
+        else:
+            pytest.fail(
+                "隔离 cw-daemon 未创建 UDS:\n"
+                + log_path.read_text(encoding="utf-8", errors="replace")
+            )
+        # 注入隔离端点：resolve_daemon_endpoint_for_authority（config.py:1660-1661）
+        # 在 wsl-local/linux-system authority 下读 CW_DAEMON_SOCKET；单例重置后
+        # DaemonClient 重新解析端点即连隔离 daemon。
+        monkeypatch.setenv("CW_DAEMON_SOCKET", str(socket_path))
+        DaemonClient.reset_instance()
+        yield
+    finally:
+        DaemonClient.reset_instance()
+        if daemon.poll() is None:
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+                daemon.wait(timeout=10)
+
+
 @pytest.mark.skipif(not HAS_RUST, reason="callwarden_core not available")
+@pytest.mark.usefixtures("daemon_route_ready")
 class TestDaemonRoutingWithRust:
     """Rust 后端可用时的 daemon 路由测试。"""
 
