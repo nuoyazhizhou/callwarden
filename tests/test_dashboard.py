@@ -60,6 +60,161 @@ def db_with_data():
             pass
 
 
+def _locate_corrupt_content_rows(db):
+    """定位 symbol_contents 中无法按 UTF-8 解码的损坏行（full 模式降级取证）。
+
+    CI/Linux 上 sqlite3 默认 text_factory=str 读 symbol_contents.content
+    遇非法 UTF-8 字节会抛 OperationalError（run 12 根因原文：
+    "Could not decode to UTF-8 column 'content' with text 'def fn_big():...'"），
+    被 db/db_dashboard.py 的 except 吞成 {"error": ...} 降级结构；本机 fixture
+    为纯 ASCII 不触发（CI/Linux 特异）。此处以 bytes 方式（text_factory=bytes）
+    逐行 decode 找第一处损坏行，返回定位信息供失败消息取证。
+
+    Returns:
+        dict: {"total": symbol_contents 总行数,
+               "corrupt": 损坏行数（按 content_hash 去重）,
+               "rows": [损坏行定位信息...],
+               "error": 取证查询本身失败的原因或 None}
+               error 非 None 时 total/corrupt 为 None、rows 为 []——
+               取证失败不得掩盖原始降级根因。
+    """
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return {"total": None, "corrupt": None, "rows": [],
+                "error": "db 实例无 .conn 属性，无法执行取证查询"}
+    old_text_factory = conn.text_factory
+    conn.text_factory = bytes  # 绕过 Python 侧 UTF-8 解码，直接拿原始字节
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) AS c FROM symbol_contents").fetchone()["c"]
+        # LEFT JOIN：stdlib seed 等无 symbols 对应行的孤儿 content 也要能定位
+        # （CI 疑点之一即 stdlib import 阶段写入的 content 损坏）
+        rows = conn.execute(
+            """SELECT s.qualified_name AS sym_qn, s.symbol_hash AS sym_hash,
+                      sc.qualified_name AS sc_qn, sc.content_hash AS content_hash,
+                      length(sc.content) AS clen,
+                      hex(substr(sc.content, 1, 64)) AS head_hex_sql,
+                      hex(substr(sc.content, -64)) AS tail_hex_sql,
+                      sc.content AS content
+               FROM symbol_contents sc
+               LEFT JOIN symbols s ON s.symbol_hash = sc.content_hash"""
+        ).fetchall()
+    except Exception as e:
+        return {"total": None, "corrupt": None, "rows": [],
+                "error": f"{type(e).__name__}: {e}"}
+    finally:
+        conn.text_factory = old_text_factory
+
+    def _text(v):
+        if v is None:
+            return None
+        if isinstance(v, bytes):
+            return v.decode("utf-8", "replace")
+        return str(v)
+
+    corrupt_by_hash = {}
+    for r in rows:
+        raw = r["content"]
+        if raw is None:
+            continue
+        if isinstance(raw, str):  # text_factory 理论上已切 bytes，防御性兜底
+            raw = raw.encode("utf-8", "surrogateescape")
+        decode_err = None
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError as e:
+            decode_err = e
+        if decode_err is None:
+            continue
+        ch = _text(r["content_hash"])
+        entry = corrupt_by_hash.get(ch)
+        if entry is None:
+            bad = raw[decode_err.start:decode_err.start + 1]
+            entry = corrupt_by_hash[ch] = {
+                "content_hash": ch,
+                "source_symbols": [],
+                "sc_qualified_name": _text(r["sc_qn"]),
+                "clen_sql": r["clen"],
+                "clen_bytes": len(raw),
+                "head_hex": raw[:64].hex(),
+                "tail_hex": raw[-64:].hex(),
+                "head_hex_sql": _text(r["head_hex_sql"]),
+                "tail_hex_sql": _text(r["tail_hex_sql"]),
+                "bad_offset": decode_err.start,
+                "bad_byte_hex": bad.hex() if bad else "(空)",
+                "decode_error": str(decode_err),
+                "context_hex": raw[max(0, decode_err.start - 16):
+                                   decode_err.start + 16].hex(),
+            }
+        qn = _text(r["sym_qn"])
+        if qn and qn not in entry["source_symbols"]:
+            entry["source_symbols"].append(qn)
+
+    return {"total": total, "corrupt": len(corrupt_by_hash),
+            "rows": list(corrupt_by_hash.values()), "error": None}
+
+
+def _full_mode_degrade_message(cq_error, db):
+    """组装 full 模式降级时的 pytest.fail 消息。
+
+    在既有「翻出被吞根因原文」基础上追加 symbol_contents 取证
+    （损坏行的来源符号/hex/第一个非法字节位置/总行数/损坏行数），
+    让 CI 下一轮失败直接带出根因修复所需的精确坐标。
+    """
+    lines = [
+        "code_quality section 返回降级结构：full 模式 "
+        "get_code_metrics_summary() 的异常被 db/db_dashboard.py 的 "
+        f"except 吞成 error 键，根因原文 = {cq_error!r}",
+        "",
+        "[UTF-8 取证] 以 text_factory=bytes 逐行 decode symbol_contents.content"
+        "（run 12 CI/Linux 根因形态：sqlite3.OperationalError "
+        "\"Could not decode to UTF-8 column 'content'\"）：",
+    ]
+    report = _locate_corrupt_content_rows(db)
+    if report["error"] is not None:
+        lines.append(
+            f"  取证查询本身失败（不掩盖上方根因）：{report['error']}")
+        return "\n".join(lines)
+    lines.append(f"  symbol_contents 总行数 = {report['total']}")
+    lines.append(f"  损坏行数（按 content_hash 去重）= {report['corrupt']}")
+    if not report["rows"]:
+        lines.append(
+            "  未定位到损坏行：全部 content 均可按 UTF-8 解码——降级根因不在 "
+            "symbol_contents 持久化数据（疑读取路径其他表/内存态/环境差异），"
+            "请结合上方根因原文进一步定位。")
+        return "\n".join(lines)
+    for i, row in enumerate(report["rows"][:5], 1):
+        lines.append(f"  损坏行 #{i}:")
+        lines.append(f"    content_hash       = {row['content_hash']!r}")
+        src = row["source_symbols"] or ["（无 symbols 行命中，孤儿 content）"]
+        lines.append(f"    来源符号(JOIN)     = {src}")
+        if row["sc_qualified_name"]:
+            lines.append(
+                "    sc.qualified_name  = "
+                f"{row['sc_qualified_name']!r}")
+        lines.append(f"    SQL length()       = {row['clen_sql']}")
+        lines.append(f"    实际字节数         = {row['clen_bytes']}")
+        lines.append(
+            f"    第一个非法字节     : offset={row['bad_offset']} "
+            f"byte=0x{row['bad_byte_hex']}")
+        lines.append(f"    decode 错误        : {row['decode_error']}")
+        lines.append(f"    上下文 hex(±16B)  : {row['context_hex']}")
+        lines.append(f"    头部 hex(首64B)    : {row['head_hex']}")
+        lines.append(f"    尾部 hex(末64B)    : {row['tail_hex']}")
+        if (row["head_hex_sql"] is not None
+                and row["head_hex_sql"].lower() != row["head_hex"]) or (
+                row["tail_hex_sql"] is not None
+                and row["tail_hex_sql"].lower() != row["tail_hex"]):
+            lines.append(
+                f"    SQL hex(substr)    : head={row['head_hex_sql']} "
+                f"tail={row['tail_hex_sql']}"
+                "（与原始字节不一致，提示 TEXT 存储类下 SQLite 字符口径偏移）")
+    if len(report["rows"]) > 5:
+        lines.append(
+            f"  （还有 {len(report['rows']) - 5} 个损坏 content_hash，已截断）")
+    return "\n".join(lines)
+
+
 class TestDashboardBasic:
     """基础结构测试"""
 
@@ -106,12 +261,15 @@ class TestDashboardBasic:
         # 异常被其 except 吞成 {"error": str(e)} 降级结构（无 quick_mode 键），
         # 上层断言只能报无因果的 KeyError。此处先把被吞异常原文翻到失败消息里
         # （收紧而非放宽：正常路径无 error 键，instrument 不生效）。
+        # run 12 CI/Linux：原文实为 sqlite3.OperationalError
+        # "Could not decode to UTF-8 column 'content' with text 'def fn_big():...'"
+        # ——Python text_factory=str 读 symbol_contents.content 遇非法 UTF-8 字节
+        # （本机 fixture 纯 ASCII 不触发，CI/Linux 特异；疑 fn_big content 后段
+        # 或 stdlib import 阶段写入损坏）。降级时追加取证：以 bytes 方式逐行
+        # decode 定位损坏行的来源符号/hex/第一个非法字节位置/总行数/损坏行数，
+        # 给根因修复提供精确坐标。
         if "error" in cq:
-            pytest.fail(
-                "code_quality section 返回降级结构：full 模式 "
-                "get_code_metrics_summary() 的异常被 db/db_dashboard.py 的 "
-                f"except 吞成 error 键，根因原文 = {cq['error']!r}"
-            )
+            pytest.fail(_full_mode_degrade_message(cq["error"], db_with_data))
         assert cq["quick_mode"] is False
         assert cq["avg_complexity"] is not None
         assert cq["max_complexity"] >= 5  # fn_complex 至少有 5+ 分支
