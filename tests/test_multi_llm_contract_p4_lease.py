@@ -18,6 +18,7 @@ import pytest
 from callwarden.db import CodeGraphDB
 from callwarden.db.db_task_leases import (
     ERR_LEASE_ACTIVE_EXISTS,
+    ERR_LEASE_CLOCK_UNAVAILABLE,
     ERR_LEASE_EXPIRED,
     ERR_LEASE_FENCING_STALE,
     ERR_LEASE_HOLDER_MISMATCH,
@@ -31,11 +32,20 @@ def _identity(agent_id="agent-a", session_id="sess-1", model_id="model-x", role=
 
 
 @pytest.fixture()
-def db(tmp_path):
+def db(tmp_path, monkeypatch):
+    # 生产路径 _clock() 通过 Daemon RPC ping 读取 Authoritative_Clock（Req 14.11），
+    # daemon 不可用时 acquire 按 Req 14.30 fail closed 返回
+    # ERR_LEASE_CLOCK_UNAVAILABLE。本套件测的是 lease 生命周期逻辑（原子比较/
+    # counter/renew/release/expiry），不应依赖常驻 daemon——CI fresh runner 无
+    # daemon 会令首个 acquire 即失败。故 fixture 注入默认时钟（客户端 wall clock，
+    # 与 daemon 时钟在测试时间尺度等价）；fail-closed 语义由
+    # test_acquire_fails_closed_when_clock_unavailable 专项把守。与测试族既有
+    # 模式一致（下方 monkeypatch 注入的 fake_clock 会覆盖此默认值，teardown 自动恢复）。
     os.environ["CW_USE_RUST_STORAGE"] = "0"
     d = CodeGraphDB(str(tmp_path / "p4lease.db"))
     d.register_workspace("lease-ws", str(tmp_path))
     d.set_active_workspace("lease-ws")
+    monkeypatch.setattr(d, "_clock", lambda: time.time())
     yield d
     try:
         d.conn.close()
@@ -63,6 +73,28 @@ def test_acquire_different_role_independent(db):
     ok, r = db.acquire_lease("T-1", "reviewer", _identity(role="reviewer"))
     assert ok, "不同 role 的 lease 相互独立（Req 11.1 角色粒度）"
     assert r["fencing_counter"] == 1
+
+
+def test_acquire_fails_closed_when_clock_unavailable(db, monkeypatch):
+    """Req 14.30 fail-closed 把守：_clock 不可用时 acquire 必须拒绝且不得回退客户端时钟。
+
+    fixture 默认注入 wall clock 保证其余逻辑测试无 daemon 可跑；本测试显式把
+    _clock 覆盖为抛 LeaseClockUnavailableError（模拟 CI fresh runner 无 daemon 的
+    原始失败形态），断言 acquire 返回 (False, E_LEASE_CLOCK_UNAVAILABLE)。
+    该语义原先在无 daemon 的 CI 环境反而无测试覆盖（首个 acquire 即失败，
+    后续断言全部挂掉），本测试把守它不回归。
+    """
+    from callwarden.db.db_task_leases import LeaseClockUnavailableError
+
+    def no_clock():
+        raise LeaseClockUnavailableError(
+            {"code": ERR_LEASE_CLOCK_UNAVAILABLE, "message_key": "x", "detail": "probe"}
+        )
+
+    monkeypatch.setattr(db, "_clock", no_clock)
+    ok, r = db.acquire_lease("T-1", "implementer", _identity())
+    assert ok is False
+    assert r["code"] == ERR_LEASE_CLOCK_UNAVAILABLE
 
 
 # ---------------------------------------------------------------
