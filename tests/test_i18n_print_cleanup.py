@@ -149,27 +149,32 @@ def test_i18n_key_translations_contain_placeholders():
 # ----------------------------------------------------------------------
 
 def test_cw_entry_point_uses_t():
-    """cw.py 的入口提示应通过 t() 获取翻译文本。
+    """i18n 职责由 cli/main.py 承担：T04 收敛后 cw.py 为纯 shim。
 
-    stale 修正：
-    - 依据 cw.py:138，现为相对导入 `from .i18n import t`（不再是绝对导入）。
-    - 依据 cw.py:18-21 T04 收敛，`_check_entry_point_sqlite` 与
-      `entry_point_sqlite_error` 已随「移除 entry_point sqlite 检测」删除；
-      现存的 t() 调用为 `t("cli_test_usage")`（cw.py:139）。
+    T04（cw-rust-client-convergence）后 cw.py 不再静态 import i18n——
+    仅 importlib 动态委派 cli.main 与动态取 t（cw.py:156），i18n 导入
+    实际在 cli/main.py:39（`from ..i18n import t`，**两点**相对导入，
+    逐字按实际源码）。断言对象随实现迁移：
+    - cli/main.py 必须含 i18n 导入与 t() 调用（入口帮助译文走 i18n）；
+    - cw.py 保留「不得硬编码中文错误文案」断言（纯 shim 无业务文案）。
+    旧断言（cw.py 含 `from .i18n import t` / `t("cli_test_usage")` 字面量）
+    是 T04 重构前的过时期望，已随收敛失效。
     """
-    cw_py = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "cw.py",
-    )
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    main_py = os.path.join(root, "cli", "main.py")
+    with open(main_py, "r", encoding="utf-8") as f:
+        main_source = f.read()
+    # 必须包含 i18n 导入（相对两点导入，与 cli/ 包层级一致）
+    assert "from ..i18n import t" in main_source, \
+        "cli/main.py 应通过 from ..i18n import t 获取翻译"
+    # 必须包含 t() 调用（入口帮助译文走 i18n）
+    assert 't("cli.messages.main_help_title")' in main_source, \
+        "cli/main.py 应通过 t() 获取入口帮助译文"
+    # 不应再硬编码中文错误文案（cw.py 为纯 shim，断言保留）
+    cw_py = os.path.join(root, "cw.py")
     with open(cw_py, "r", encoding="utf-8") as f:
-        source = f.read()
-    # 必须包含 t() 调用（相对导入）
-    assert "from .i18n import t" in source, \
-        "cw.py 应通过 from .i18n import t 获取翻译"
-    assert 't("cli_test_usage")' in source, \
-        "cw.py 应通过 t() 获取入口提示译文"
-    # 不应再硬编码中文错误文案
-    assert '"错误：通过 cw.exe 启动时' not in source, \
+        cw_source = f.read()
+    assert '"错误：通过 cw.exe 启动时' not in cw_source, \
         "cw.py 不应再硬编码中文错误文案"
 
 
