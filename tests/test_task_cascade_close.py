@@ -47,9 +47,17 @@ def cleanup_cascade_trees():
     """
     yield
     conn = sqlite3.connect(str(DB))
-    for t in ("action_identities", "task_events", "task_contract_revisions", "task_steps"):
-        conn.execute(f"DELETE FROM {t} WHERE task_id LIKE 'T-CSC-%'")
-    conn.execute("DELETE FROM tasks WHERE id LIKE 'T-CSC-%'")
+    # 存在性守卫：CI fresh runner 的库可能尚未建全部表（如 action_identities
+    # 属较新 schema 版本），本地全迁移库则有——清理须容忍缺表，否则 teardown
+    # 报 no such table 把已通过的测试染红。
+    for t in ("action_identities", "task_events", "task_contract_revisions",
+              "task_steps", "tasks"):
+        col = "id" if t == "tasks" else "task_id"
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (t,)
+        ).fetchone()
+        if exists:
+            conn.execute(f"DELETE FROM {t} WHERE {col} LIKE 'T-CSC-%'")
     conn.commit()
     conn.close()
 

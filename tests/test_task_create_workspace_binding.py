@@ -19,6 +19,8 @@ A4  daemon unavailable never creates a local task
 - cli/main._handle_task create 分支（转发 + provenance 渲染 + readback 对比）
 """
 
+import sys
+
 import pytest
 
 from callwarden.cli.main import (
@@ -74,6 +76,8 @@ def _canonical_status(registry_id, instance_id, task_db_id=1,
     }
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立")
 def test_resolve_pair_returns_current_root_canonical_pair(monkeypatch):
     """A1：忽略别的项目和旧注册行，只接收当前根目录的一致 binding。"""
     canonical = "canonical-callwarden"
@@ -97,6 +101,8 @@ def test_resolve_pair_returns_current_root_canonical_pair(monkeypatch):
         "workspace.list", "workspace.status", "workspace.status"]
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立")
 def test_resolve_pair_missing_current_root_fails_closed(monkeypatch):
     """A1：注册表没有当前项目根目录时 fail-closed，绝不读全局 active 行。"""
     fake = _FakeClient(
@@ -109,6 +115,8 @@ def test_resolve_pair_missing_current_root_fails_closed(monkeypatch):
         resolve_workspace_pair_from_daemon(r"C:\work\callwarden")
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立")
 def test_resolve_pair_unreconciled_candidate_fails_closed(monkeypatch):
     """A1：registry 与 task DB instance 不一致时绝不合成或回退。"""
     fake = _FakeClient(
@@ -121,6 +129,8 @@ def test_resolve_pair_unreconciled_candidate_fails_closed(monkeypatch):
         resolve_workspace_pair_from_daemon(r"C:\work\callwarden")
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="fixture 硬编码 C:////work////* 路径，路径解析语义仅 Windows 成立")
 def test_resolve_pair_multiple_canonical_candidates_fails_closed(monkeypatch):
     """A1：存在多个一致候选时 fail-closed，不任选一个。"""
     fake = _FakeClient(

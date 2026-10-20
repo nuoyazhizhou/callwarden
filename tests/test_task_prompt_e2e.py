@@ -41,8 +41,12 @@ from test_http_daemon_release_acceptance import (  # noqa: E402
     _wait_manifest,
 )
 
-_RELEASE_BIN = os.path.join(REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
-_DEBUG_BIN = os.path.join(REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
+# 平台分支（与 daemon_autostart._find_daemon_binary / release acceptance 同形）：
+# Windows 产物带 .exe，Linux 不带——CI Linux runner 上硬编码 .exe 会误判
+# 「未构建」（二进制实为 cargo build 产出的 cw-daemon）。
+_DAEMON_BIN_NAME = "cw-daemon.exe" if sys.platform == "win32" else "cw-daemon"
+_RELEASE_BIN = os.path.join(REPO_ROOT, "rust_ext", "target", "release", _DAEMON_BIN_NAME)
+_DEBUG_BIN = os.path.join(REPO_ROOT, "rust_ext", "target", "debug", _DAEMON_BIN_NAME)
 
 # A' 三 legacy 模板（production manifest 冻结字节，RP-02）；spec §9.3
 # 唯一合法 wire form = sha256: 前缀（裸 64-hex 会被 §8.3 redaction 拒绝）
@@ -93,7 +97,7 @@ def _pick_bin() -> str:
     """优先最新构建的二进制（task.prompt.compile 资产自 RP-02 起内嵌）。"""
     candidates = [(p, os.path.getmtime(p)) for p in (_RELEASE_BIN, _DEBUG_BIN) if os.path.isfile(p)]
     if not candidates:
-        pytest.fail("cw-daemon.exe 未构建（需 cargo build --bin cw-daemon）")
+        pytest.fail(f"{_DAEMON_BIN_NAME} 未构建（需 cargo build --bin cw-daemon）")
     return max(candidates, key=lambda x: x[1])[0]
 
 
