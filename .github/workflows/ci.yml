@@ -248,7 +248,9 @@ jobs:
       # config A：phase7 ×8 disk I/O error —— 关闭 Rust schema 初始化。
       # JobExecutor 的第二条 Python 连接 executescript 在 Rust 初始化过的库上
       # 失败；若转绿则 schema 初始化侧的双实例写入是 IOERR 根因。
+      # if: always()——单配置失败不阻断其余配置取证（A/B 各自独立判读）。
       - name: Probe A - phase7 (rust storage init off)
+        if: always()
         env:
           CW_USE_RUST_STORAGE: "0"
         run: pytest tests/test_phase7_job_result.py -q --tb=line -p no:cacheprovider
@@ -258,6 +260,7 @@ jobs:
       # 的 env 门）。若转绿则 checkpoint 与 Python autocheckpoint 的交错回写
       # 是撕裂页根因（=方案 B 实锤）。
       - name: Probe B - build path (rust open checkpoint off)
+        if: always()
         env:
           CW_RUST_OPEN_CHECKPOINT: "0"
         run: pytest tests/test_p15_lang_presort.py tests/test_p15_multiprocess_parse.py tests/test_incremental_parse.py tests/test_dashboard.py -q --tb=line -p no:cacheprovider
@@ -266,10 +269,20 @@ jobs:
       # （tests/_wal_ab_probe_plugin.py 注入 rollback_config 行）。若转绿则
       # Rust 写入路径是 fts 根因；仍红则排除写入路径。
       - name: Probe C - fts (rust batch writes rolled back)
+        if: always()
         env:
           PYTHONPATH: "${{ env.PYTHONPATH }}:$GITHUB_WORKSPACE/tests"
           CW_WAL_AB_ROLLBACK_RUST_BATCH: "1"
         run: pytest tests/test_p7_batch_calls.py -q --tb=line -p no:cacheprovider -p _wal_ab_probe_plugin
+
+      # config D：最小复现 + 修复对照（tests/_wal_ab_dual_conn_repro.py）。
+      # Probe A 已证 phase7 IOERR 与 Rust 无关；此处把「同进程双 Python 连接
+      # + WAL + DDL」拆成最小实验：pragma_block / bare / mmap 三个双连接变体
+      # 对照 shared_conn 单连接变体。判读：双连接变体红 + 单连接绿 =
+      # 根因钉死为同进程双连接，连接合并（DI 注入）是修复方向。
+      - name: Probe D - dual-connection minimal repro
+        if: always()
+        run: pytest tests/_wal_ab_dual_conn_repro.py -v --tb=short -p no:cacheprovider
 
   lint:
     name: Lint check
