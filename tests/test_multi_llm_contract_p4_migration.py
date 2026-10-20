@@ -32,11 +32,21 @@ def _identity(agent_id="agent-a", session_id="sess-1", model_id="model-x", role=
 
 
 @pytest.fixture()
-def db(tmp_path):
+def db(tmp_path, monkeypatch):
+    # 生产路径 _clock() 通过 Daemon RPC ping 读取 Authoritative_Clock（Req 14.11），
+    # daemon 不可用时 acquire/create_assignment 等按 Req 14.30 fail closed 返回
+    # ERR_LEASE_CLOCK_UNAVAILABLE。本套件测的是 schema 迁移与 lease 存储语义
+    # （raw token 不落库/fencing 单调/事件 append-only 等），不应依赖常驻
+    # daemon——CI fresh runner 无 daemon 会令首个 acquire 即失败。故 fixture
+    # 注入默认时钟（客户端 wall clock，与 daemon 时钟在测试时间尺度等价），
+    # 与同族 test_multi_llm_contract_p4_lease.py（commit a1d8409）、
+    # test_p4_lease_smoke.py:47 先例一致；fail-closed 语义由
+    # test_multi_llm_contract_p4_protected_mutation.py 的把守测试覆盖。
     os.environ["CW_USE_RUST_STORAGE"] = "0"
     d = CodeGraphDB(str(tmp_path / "p4mig.db"))
     d.register_workspace("mig-ws", str(tmp_path))
     d.set_active_workspace("mig-ws")
+    monkeypatch.setattr(d, "_clock", lambda: time.time())
     yield d
     try:
         d.conn.close()

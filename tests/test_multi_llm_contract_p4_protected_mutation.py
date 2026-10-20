@@ -18,6 +18,7 @@ import pytest
 from callwarden.db import CodeGraphDB
 from callwarden.db.db_task_leases import (
     ERR_LEASE_ACTIVE_EXISTS,
+    ERR_LEASE_CLOCK_UNAVAILABLE,
     ERR_LEASE_EXPIRED,
     ERR_LEASE_FENCING_STALE,
     ERR_LEASE_HOLDER_MISMATCH,
@@ -41,6 +42,16 @@ def db(tmp_path, monkeypatch):
     d = CodeGraphDB(str(tmp_path / "p4mut.db"))
     d.register_workspace("mut-ws", str(tmp_path))
     d.set_active_workspace("mut-ws")
+    # 生产路径 _clock() 通过 Daemon RPC ping 读取 Authoritative_Clock（Req 14.11），
+    # daemon 不可用时 acquire/受保护写校验按 Req 14.30 fail closed 返回
+    # ERR_LEASE_CLOCK_UNAVAILABLE。本套件测的是受保护写拒绝语义（旧持有者复活/
+    # 并发 acquire/过期/越权/Evidence Gate），不应依赖常驻 daemon——CI fresh
+    # runner 无 daemon 会令首个 acquire 即失败。故 fixture 注入默认时钟
+    # （客户端 wall clock，与 daemon 时钟在测试时间尺度等价），与同族
+    # test_multi_llm_contract_p4_lease.py（commit a1d8409）、
+    # test_p4_lease_smoke.py:47 先例一致；fail-closed 语义由
+    # test_acquire_fails_closed_when_clock_unavailable 专项把守。
+    monkeypatch.setattr(d, "_clock", lambda: time.time())
     yield d
     try:
         d.conn.close()
@@ -110,6 +121,33 @@ def _inject_contract(db, task_id, contract_id="C-p4mut-001"):
         ),
     )
     db.conn.commit()
+
+
+def test_acquire_fails_closed_when_clock_unavailable(db, monkeypatch):
+    """Req 14.30 fail-closed 把守：_clock 不可用时 acquire 必须拒绝且不得回退客户端时钟。
+
+    fixture 默认注入 wall clock 保证其余逻辑测试无 daemon 可跑；本测试显式把
+    _clock 覆盖为抛 LeaseClockUnavailableError（模拟 CI fresh runner 无 daemon 的
+    原始失败形态），断言 acquire 返回 (False, E_LEASE_CLOCK_UNAVAILABLE) 且不
+    落任何 lease 行。该语义原先在无 daemon 的 CI 环境反而无测试覆盖（首个
+    acquire 即失败，后续断言全部挂掉），本测试把守它不回归；与
+    tests/test_multi_llm_contract_p4_lease.py:78 的把守测试同构（那里已覆盖
+    renew/release 路径的同一契约，此处聚焦 acquire 入口）。
+    """
+    from callwarden.db.db_task_leases import LeaseClockUnavailableError
+
+    def no_clock():
+        raise LeaseClockUnavailableError(
+            {"code": ERR_LEASE_CLOCK_UNAVAILABLE, "message_key": "x", "detail": "probe"}
+        )
+
+    monkeypatch.setattr(db, "_clock", no_clock)
+    ok, r = db.acquire_lease("T-1", "implementer", _identity())
+    assert ok is False
+    assert r["code"] == ERR_LEASE_CLOCK_UNAVAILABLE
+    # fail-closed 不得留下任何半成品 lease 行（Req 14.30 不改变状态）
+    cnt = db.conn.execute("SELECT COUNT(*) c FROM task_leases").fetchone()["c"]
+    assert cnt == 0
 
 
 def test_old_holder_resurrection_rejected(db):

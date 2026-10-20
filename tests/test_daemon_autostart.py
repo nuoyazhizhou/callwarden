@@ -337,10 +337,23 @@ class TestFindDaemonBinary:
         assert result is None
 
     def test_finds_via_path(self):
-        """通过 PATH 找到。"""
+        """通过 PATH 找到。
+
+        runtime 候选（~/.callwarden/runtime/current/）优先于 PATH 是**有意设计**
+        （AGENTS.md §43；server/daemon_autostart.py:604-612 注释：autostart 必须拉起
+        已部署 runtime 而非 PATH 的开发产物）。CI test job 的 install step
+        （commit 3bcfb14，install -D rust_ext/target/debug/cw-daemon
+        $HOME/.callwarden/runtime/current/cw-daemon）使该候选在 CI 上真实存在，
+        且 Linux 上 os.environ 被 clear 后 os.path.expanduser 经 pwd 回落真实
+        home，候选②命中，本测试（纯 PATH 分支断言）会拿到 runtime 路径而挂。
+        故隔离 os.path.isfile（env 候选已被 env clear 隔离，runtime 候选由
+        isfile=False 隔离），把 PATH 查找路径从 runtime 候选存在性中解耦；
+        查找链完整性（全落空 → None）由 test_returns_none_when_not_found 佐证。
+        """
         with mock.patch.dict(os.environ, {}, clear=True):
             with mock.patch("shutil.which", return_value="/usr/local/bin/cw_daemon"):
-                result = _find_daemon_binary()
+                with mock.patch("os.path.isfile", return_value=False):
+                    result = _find_daemon_binary()
         assert result == "/usr/local/bin/cw_daemon"
 
 
