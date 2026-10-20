@@ -27,14 +27,111 @@ jobs:
       - name: Build Rust extension
         run: python release/build.py --rust
 
+      # ↓ 以下三步逐行对齐 ci.yml「Test on Python ${{ matrix.python-version }}」
+      #   job（.github/workflows/ci.yml:40-72）。Bootstrap Gate 自 2026-08-22
+      #   CLI-02（a32ff56）起是纯 RPC 客户端，需要一个真实 cw-daemon 作为
+      #   唯一 authority；本门此前只建 --lib 扩展、无 daemon 生命周期。
+      - name: Build cw-daemon binary (H4C real-process gate)
+        # 与 ci.yml 同源同形：debug profile 与 daemon_autostart._find_daemon_binary
+        # 的项目构建候选一致；--no-default-features 避免 pyo3 extension-module
+        # 特征（compile-gate job 已实证该形态可建）。
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon
+
+      - name: Create callwarden-clients group (P0-3 socket_group fail-closed)
+        # daemon 默认 socket_group='callwarden-clients'（daemon config.rs:178），
+        # P0-3 v2 fail-closed：组不存在/chown 失败均拒绝启动（server.rs:316-390）。
+        # usermod 只影响新登录会话，当前 step 的 shell 仍无该附加组，故下方
+        # 启动 daemon 时与 ci.yml 的 pytest 步一致用 sg 补组。
+        run: |
+          sudo groupadd -f callwarden-clients
+          sudo usermod -a -G callwarden-clients runner
+
+      - name: Install cw-daemon to runtime/current (release acceptance)
+        # 同时让 daemon_autostart._find_daemon_binary 命中生产部署位
+        # ~/.callwarden/runtime/current/cw-daemon（daemon_autostart.py:604-612）。
+        run: install -D rust_ext/target/debug/cw-daemon $HOME/.callwarden/runtime/current/cw-daemon
+
       - name: Install Call Warden
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[all]"
 
+      - name: Start cw-daemon (daemon authority for refresh)
+        # 失败根因：CLI-02 起 `cw refresh --all` 是纯 RPC 客户端
+        # （RpcDBProxy.build_full_graph → route_rpc("workspace.build_graph") →
+        # HttpDaemonRpcClient.discover → resolve_http_endpoint_and_manifest）。
+        # 未设 CW_DAEMON_HTTP_ENDPOINT 且 authority-scoped manifest
+        # （~/.callwarden/http-daemon.<authority>.manifest.json）缺席时，
+        # 该函数按设计抛 E_HTTP_MANIFEST_MISSING fail-closed
+        # （daemon_autostart.py:1132；不回退 Named Pipe/UDS/SQLite 是 db-retire
+        # 治理方向，不可为 CI 便利而恢复）。故正解是在门侧补 daemon 生命周期，
+        # 而非改 CLI。
+        #
+        # 启动器用 `cw daemon start`（→ daemon_autostart.spawn_http_daemon）：
+        # 定位二进制（_find_daemon_binary 首候选即上一步的 runtime/current
+        # 部署位）、显式 CW_DAEMON_TRANSPORT=http + CW_DAEMON_TASK_DB=config.DB_PATH、
+        # detached spawn，并轮询 resolve_http_endpoint_and_manifest(validate=True)
+        # + try_http_connect 至就绪——不另造等待逻辑。
+        #
+        # 存储路径按 docs/design/daemon-deploy-runbook.md §10.4（WSL local
+        # daemon 同款非 root 形态）覆盖到 $HOME：daemon 默认 /run/callwarden、
+        # /var/lib/callwarden、/var/log/callwarden 在 GH runner 上不可写，
+        # ensure_directories 直接 exit 1（config.rs:330-349）。用 run: + export
+        # 而非 step env:，因为 GH Actions 的 env: 值不做 shell 展开，
+        # 字面 "$HOME" 会原样传给 daemon。task_db / codegraph / toolchain
+        # 保持默认 ~/.callwarden/callwarden.db（权威单库三角色同路径豁免），
+        # 与后续 bootstrap_check 的 CodeGraphDB 默认库同文件。
+        run: |
+          set -euo pipefail
+          export CW_DAEMON_SOCKET="$HOME/.callwarden/run/callwarden.sock"
+          export CW_DAEMON_DATA_ROOT="$HOME/.callwarden/daemon"
+          export CW_DAEMON_REGISTRY_DB="$HOME/.callwarden/daemon/registry.db"
+          export CW_DAEMON_AUDIT_DB="$HOME/.callwarden/daemon/audit.log"
+          mkdir -p "$(dirname "$CW_DAEMON_SOCKET")" "$CW_DAEMON_DATA_ROOT"
+          # sg 补 P0-3 附加组（usermod 对当前会话无效，见上方 group 步注释）
+          sg callwarden-clients -c "cw daemon start --wait 120"
+          # manifest 在 HTTP 预绑定阶段即发布（cw_daemon.rs:298-345，早于 accept
+          # loop），故 spawn_http_daemon 的 TCP 探针可能先于服务真正可用返回。
+          # 再轮询 cw daemon health（GET /health，Rust 权威）确认 accept loop 已起，
+          # 避免 refresh 撞上 E_HTTP_REQUEST_TIMEOUT。
+          for i in $(seq 1 60); do
+            if cw daemon health >/dev/null 2>&1; then
+              echo "cw-daemon 就绪（第 ${i} 次探测）"
+              echo "--- cw daemon health ---"
+              cw daemon health
+              echo "--- cw daemon manifest ---"
+              cw daemon manifest
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::cw-daemon 启动后 60s 内未通过 /health 探测"
+          exit 1
+
       - name: Refresh code graph
         run: |
           cw refresh --all
+
+      - name: Stop cw-daemon (teardown)
+        # 必须先于 bootstrap gate：bootstrap_check.main() 直接
+        # `from ..db import CodeGraphDB` 打开同一 ~/.callwarden/callwarden.db
+        # 并做 PRAGMA WAL + schema 迁移（写操作），与 daemon 的唯一写点并发
+        # 争同一文件会命中 database is locked（见 cli/main.py:1231-1235 同款
+        # 判据）。always() 保证 refresh 失败也回收进程。
+        if: always()
+        run: |
+          set -uo pipefail
+          pkill -x cw-daemon || true
+          for i in $(seq 1 30); do
+            pgrep -x cw-daemon >/dev/null || break
+            sleep 1
+          done
+          if pgrep -x cw-daemon >/dev/null; then
+            pkill -9 -x cw-daemon || true
+          fi
+          # 清掉死 PID manifest：validate_http_manifest 会对其报
+          # E_HTTP_MANIFEST_STALE（cw_daemon.rs 模块文档同款陷阱）。
+          rm -f "$HOME"/.callwarden/http-daemon.*.manifest.json
 
       - name: Run bootstrap gate
         run: |
