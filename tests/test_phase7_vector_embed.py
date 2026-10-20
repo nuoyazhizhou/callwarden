@@ -434,7 +434,11 @@ class TestEndToEndJob:
             db.conn.commit()
 
             # 创建 executor 并注册 handlers
-            ex = JobExecutor(db_path=db.db_path, max_concurrent_jobs=1, max_duration_seconds=30)
+            # CI-DEBT 深水区修复（2026-10-20）：注入 db.conn 而非让 executor 自开第二条连接。
+            # 同进程双 sqlite3 连接在 Linux（fcntl 锁按进程分配）下无法互斥 WAL-index，
+            # executor.start() 的 executescript 抛 disk I/O error。单连接后该 hazard 消除；
+            # 连接生命周期仍归 db（executor 不关闭注入连接）。
+            ex = JobExecutor(db_path=db.db_path, max_concurrent_jobs=1, max_duration_seconds=30, conn=db.conn)
             register_default_handlers(ex)
             ex.start()
 
@@ -470,7 +474,11 @@ class TestEndToEndJob:
             init_jobs_schema(db.conn)
             db.conn.commit()
 
-            ex = JobExecutor(db_path=db.db_path, max_concurrent_jobs=1, max_duration_seconds=30)
+            # CI-DEBT 深水区修复（2026-10-20）：注入 db.conn 而非让 executor 自开第二条连接。
+            # 同进程双 sqlite3 连接在 Linux（fcntl 锁按进程分配）下无法互斥 WAL-index，
+            # executor.start() 的 executescript 抛 disk I/O error。单连接后该 hazard 消除；
+            # 连接生命周期仍归 db（executor 不关闭注入连接）。
+            ex = JobExecutor(db_path=db.db_path, max_concurrent_jobs=1, max_duration_seconds=30, conn=db.conn)
             register_default_handlers(ex)
             ex.start()
 
@@ -496,7 +504,11 @@ class TestEndToEndJob:
             init_jobs_schema(db.conn)
             db.conn.commit()
 
-            ex = JobExecutor(db_path=db.db_path, max_concurrent_jobs=1, max_duration_seconds=30)
+            # CI-DEBT 深水区修复（2026-10-20）：注入 db.conn 而非让 executor 自开第二条连接。
+            # 同进程双 sqlite3 连接在 Linux（fcntl 锁按进程分配）下无法互斥 WAL-index，
+            # executor.start() 的 executescript 抛 disk I/O error。单连接后该 hazard 消除；
+            # 连接生命周期仍归 db（executor 不关闭注入连接）。
+            ex = JobExecutor(db_path=db.db_path, max_concurrent_jobs=1, max_duration_seconds=30, conn=db.conn)
             register_default_handlers(ex)
             ex.start()
             try:

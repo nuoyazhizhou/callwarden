@@ -177,6 +177,7 @@ class JobExecutor:
         db_path: str,
         max_concurrent_jobs: int = 2,
         max_duration_seconds: int = 1800,
+        conn: Optional[sqlite3.Connection] = None,
     ):
         """初始化 JobExecutor
 
@@ -184,6 +185,17 @@ class JobExecutor:
             db_path: SQLite 数据库路径
             max_concurrent_jobs: 最大并发任务数
             max_duration_seconds: 单任务最大执行时长（秒）
+            conn: 外部注入的 SQLite 连接（可选）。
+
+                **同进程双连接 WAL  Hazard（CI-DEBT 深水区，2026-10-20）**：
+                POSIX（Linux）fcntl 锁按**进程**分配而非句柄——同一进程内
+                两条 sqlite3 连接无法互斥 WAL-index，第二条连接做 DDL 写
+                （executescript）时实测抛 `sqlite3.OperationalError: disk
+                I/O error`（CI py3.10/3.11/3.13/3.14 全版本确定性复现，
+                phase7_job_result ×8）。调用方（如已持 CodeGraphDB 连接的
+                上层）应注入既有连接，使进程内保持单连接；注入后本实例
+                不再开关该连接（stop() 不关闭），亦不重复施加 PRAGMA 批次
+                （连接属主已配置）。未注入时维持旧行为（自开自关）。
         """
         self._db_path = db_path
         self._max_concurrent = max(1, max_concurrent_jobs)
@@ -196,7 +208,9 @@ class JobExecutor:
         # _conn_lock 保护所有 self._conn 的访问（多线程共享连接）
         self._conn_lock = threading.RLock()
         self._started = False
-        self._conn: Optional[sqlite3.Connection] = None
+        # 注入连接时复用（单连接）；未注入时 start() 自开、stop() 自关
+        self._conn: Optional[sqlite3.Connection] = conn
+        self._owns_conn: bool = conn is None
 
     def register_handler(self, job_type: str, handler: JobHandler) -> None:
         """注册 job handler
@@ -226,25 +240,30 @@ class JobExecutor:
             max_workers=self._max_concurrent,
             thread_name_prefix="job-executor",
         )
-        self._conn = sqlite3.connect(
-            self._db_path,
-            timeout=30.0,
-            check_same_thread=False,
-        )
-        self._conn.row_factory = sqlite3.Row
-        # WAL 模式：与 MCP server 并发读安全
-        # 批次10（P2 性能优化）：补全 synchronous=NORMAL / cache_size / mmap_size
-        # / temp_store=MEMORY / wal_autocheckpoint，与 daemon 子连接配置对齐
-        try:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA busy_timeout=5000")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute("PRAGMA wal_autocheckpoint=1000")
-            self._conn.execute("PRAGMA cache_size=-262144")  # 256MB
-            self._conn.execute("PRAGMA mmap_size=268435456")  # 256MB
-            self._conn.execute("PRAGMA temp_store=MEMORY")
-        except Exception:
-            pass
+        if self._conn is None:
+            # 未注入连接：自开一条（旧行为）。同进程双连接 WAL Hazard 见
+            # __init__ conn 参数文档——注入连接可避免；本分支仅用于进程内
+            # 无第二条连接的场景（如 test_phase7_job_executor fixture 先
+            # close 再启动）。
+            self._conn = sqlite3.connect(
+                self._db_path,
+                timeout=30.0,
+                check_same_thread=False,
+            )
+            self._conn.row_factory = sqlite3.Row
+            # WAL 模式：与 MCP server 并发读安全
+            # 批次10（P2 性能优化）：补全 synchronous=NORMAL / cache_size / mmap_size
+            # / temp_store=MEMORY / wal_autocheckpoint，与 daemon 子连接配置对齐
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA busy_timeout=5000")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+                self._conn.execute("PRAGMA wal_autocheckpoint=1000")
+                self._conn.execute("PRAGMA cache_size=-262144")  # 256MB
+                self._conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+                self._conn.execute("PRAGMA temp_store=MEMORY")
+            except Exception:
+                pass
         # db/ 退休验收③（P1-3）：填充 db_jobs 懒加载名字到模块全局
         _ensure_db_jobs_loaded()
         # 确保 jobs schema 存在
@@ -264,12 +283,13 @@ class JobExecutor:
                 self._executor.shutdown(wait=True)
             else:
                 self._executor.shutdown(wait=False)
-        if self._conn is not None:
+        # 仅关闭自开连接；注入连接的属主（如 CodeGraphDB）负责其生命周期
+        if self._conn is not None and self._owns_conn:
             try:
                 self._conn.close()
             except Exception:
                 pass
-            self._conn = None
+        self._conn = None
         self._started = False
 
     def submit(

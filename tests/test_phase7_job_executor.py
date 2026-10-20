@@ -448,3 +448,32 @@ class TestStartStop:
         ex = JobExecutor(db_path=db_path)
         with pytest.raises(RuntimeError, match="not started"):
             ex.submit("test", workspace_id=ws_id)
+
+    def test_injected_conn_is_shared_and_not_closed(self, executor_db):
+        """CI-DEBT 深水区修复回归（2026-10-20）：注入连接的三个不变量。
+
+        背景：同进程双 sqlite3 连接在 Linux（POSIX fcntl 锁按进程分配）
+        下无法互斥 WAL-index——executor 自开第二条连接时 start() 的
+        executescript 抛 disk I/O error（CI py3.10/3.11/3.13/3.14 全版本
+        确定性复现，phase7_job_result ×8）。修复：JobExecutor 支持 conn
+        注入，进程内保持单连接。
+
+        不变量：
+        1. 注入后 executor 复用该连接（不自开第二条）
+        2. executor 不拥有注入连接（stop 不关闭）
+        3. stop 后注入连接仍可用（属主生命周期不受影响）
+        """
+        db_path, ws_id = executor_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        ex = JobExecutor(db_path=db_path, conn=conn)
+        ex.start()
+        try:
+            assert ex._conn is conn, "注入连接必须被复用，不得自开第二条"
+            assert ex._owns_conn is False, "注入连接不得被 executor 占有"
+            assert conn.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            ex.stop(wait=True)
+            # stop 后注入连接仍可用——未被 executor 关闭
+            assert conn.execute("SELECT 1").fetchone()[0] == 1
+            conn.close()
