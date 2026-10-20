@@ -38,7 +38,12 @@ fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
         .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
+    // 实例在 Linux 上 fcntl 锁按进程分配无法互斥，open 时 checkpoint 与 Python
+    // 侧 autocheckpoint 交错可产生撕裂页。默认保持原行为；env=0 仅供 CI 定性。
+    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    }
     // 显式关闭 FK 检查（与 Python db_base.py L2178 一致）
     // 注意：pragma_update(None, "foreign_keys", "OFF") 传字符串会被 SQLite 解释为
     // 非空字符串（truthy=1），FK 仍启用。必须用 execute_batch 传裸 OFF 关键字，

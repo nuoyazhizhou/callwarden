@@ -87,13 +87,20 @@ fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
     // synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync（与 Python 一致）
     // foreign_keys=OFF：入库期间关闭外键检查（与 Python db_base.py:2178 一致）
     // wal_checkpoint(PASSIVE)：确保 Rust 连接能读到 Python 写入的最新 WAL 数据
+    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
+    // 实例（Python 系统 libsqlite3 + 本 bundled rusqlite）在 Linux 上 fcntl 锁
+    // 按进程分配，两实例无法互斥；open 时立即 checkpoint 把 WAL 帧回写主库，
+    // 与 Python 侧 autocheckpoint 交错可产生撕裂页（database disk image is
+    // malformed / disk I/O error）。默认保持原行为；env=0 仅供 CI 定性实验。
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| PyIOError::new_err(format!("设置 WAL 模式失败: {}", e)))?;
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| PyIOError::new_err(format!("设置 synchronous 失败: {}", e)))?;
     conn.pragma_update(None, "foreign_keys", "OFF")
         .map_err(|e| PyIOError::new_err(format!("设置 foreign_keys 失败: {}", e)))?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    }
     Ok(conn)
 }
 
