@@ -268,12 +268,14 @@ jobs:
       # config C：fts ×2 stale read —— 回滚 build 路径全部 6 个 Rust 写短路
       # （tests/_wal_ab_probe_plugin.py 注入 rollback_config 行）。若转绿则
       # Rust 写入路径是 fts 根因；仍红则排除写入路径。
+      # 注意：PYTHONPATH 必须在 shell 级拼接——env: 块里 $GITHUB_WORKSPACE
+      # 不展开、${{ env.PYTHONPATH }} 读不到 GITHUB_ENV 的运行时值
+      # （表达式 env 上下文只含静态 env），两者都踩过坑。
       - name: Probe C - fts (rust batch writes rolled back)
         if: always()
         env:
-          PYTHONPATH: "${{ env.PYTHONPATH }}:$GITHUB_WORKSPACE/tests"
           CW_WAL_AB_ROLLBACK_RUST_BATCH: "1"
-        run: pytest tests/test_p7_batch_calls.py -q --tb=line -p no:cacheprovider -p _wal_ab_probe_plugin
+        run: PYTHONPATH="$PYTHONPATH:$GITHUB_WORKSPACE/tests" pytest tests/test_p7_batch_calls.py -q --tb=short -p no:cacheprovider -p _wal_ab_probe_plugin
 
       # config D：最小复现 + 修复对照（tests/_wal_ab_dual_conn_repro.py）。
       # Probe A 已证 phase7 IOERR 与 Rust 无关；此处把「同进程双 Python 连接
