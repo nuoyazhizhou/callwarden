@@ -1,6 +1,7 @@
 """主任务线程与原地 remediation 的 focused 回归测试。"""
 
 import json
+import time
 
 from callwarden.db import CodeGraphDB
 
@@ -90,8 +91,12 @@ def test_no_pending_does_not_fake_review_while_failed_history_unresolved(tmp_pat
         db.close()
 
 
-def test_python_parity_appends_reviewer_remediation_to_same_task(tmp_path):
+def test_python_parity_appends_reviewer_remediation_to_same_task(tmp_path, monkeypatch):
     db = _new_db(tmp_path)
+    # _clock 经 Daemon RPC 取权威时钟（Req 14.11），CI fresh runner 无 daemon
+    # 时 acquire_lease 按 Req 14.30 fail closed——本测试测 reviewer remediation
+    # 线程语义，注入默认时钟隔离 daemon 依赖（同 a1d8409/8d9e219 模式）。
+    monkeypatch.setattr(db, "_clock", lambda: time.time())
     try:
         task_id = db.task_create(
             "review remediation",

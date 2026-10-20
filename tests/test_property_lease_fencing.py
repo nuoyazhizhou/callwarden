@@ -10,6 +10,7 @@ Property：对任意 lease 获取/续租/释放/重新获取序列，一旦新 c
 """
 import os
 import random
+import time
 
 import pytest
 
@@ -26,11 +27,20 @@ def _identity(agent_id="agent-a", session_id="sess-1", model_id="model-x", role=
 
 
 @pytest.fixture()
-def db(tmp_path):
+def db(tmp_path, monkeypatch):
     os.environ["CW_USE_RUST_STORAGE"] = "0"
     d = CodeGraphDB(str(tmp_path / "p4prop.db"))
     d.register_workspace("prop-ws", str(tmp_path))
     d.set_active_workspace("prop-ws")
+    # 生产路径 _clock() 经 Daemon RPC ping 读取权威时钟（Req 14.11），
+    # daemon 不可用时 acquire/renew 按 Req 14.30 fail closed 返回
+    # ERR_LEASE_CLOCK_UNAVAILABLE。本套件测 fencing 安全属性（counter
+    # 单调/token 校验），不应依赖常驻 daemon——CI fresh runner 无 daemon
+    # 会令首个 acquire 即失败。注入默认时钟（测试时间尺度等价），与
+    # test_multi_llm_contract_p4_lease.py（a1d8409）、p4_migration/
+    # p4_protected_mutation（8d9e219）同模式；fail-closed 语义由
+    # p4_protected_mutation 的把守测试覆盖。
+    monkeypatch.setattr(d, "_clock", lambda: time.time())
     yield d
     try:
         d.conn.close()
