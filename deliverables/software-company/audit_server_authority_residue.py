@@ -59,11 +59,11 @@ RETIRED_LEGACY_FILES: dict[str, str] = {
     "server/tools/tools_collab.py":
         "残留全在 compat _h_* 处理器区间（check_client_purity 实测 0 违例）；"
         "HTTP 模式走 Rust dispatch.handle_collab_rpc",
-    "server/tools/tools_p2_graph.py":
+    "server/tools/tools_dependency_graph.py":
         "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust query.* 路由",
-    "server/tools/tools_p3_identity.py":
+    "server/tools/tools_identity.py":
         "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust identity 路由",
-    "server/tools/tools_p4_lease.py":
+    "server/tools/tools_lease.py":
         "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust lease 路由",
     "server/tools/tools_security.py":
         "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust 安全路由",

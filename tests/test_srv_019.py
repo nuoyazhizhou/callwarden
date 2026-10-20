@@ -48,6 +48,16 @@ def rpc():
 PY314 = Path(r"C:\Python314\python.exe")
 
 
+def server_py_count() -> int:
+    """server/ 下实际 .py 文件数（排除 __pycache__）。
+
+    与 audit_server_authority_residue.audit_python_authority 的 `files` 口径
+    完全一致（`root.rglob("*.py")` + `"__pycache__" not in p.parts`），是
+    `scanned_files` 的真相源——避免陈旧魔法数随 server 模块增减而失效。
+    """
+    return len([p for p in (ROOT / "server").rglob("*.py") if "__pycache__" not in p.parts])
+
+
 def run_audit() -> dict:
     """执行 repository-wide authority 审计（客户端侧扫描器，显式 Python314）。
 
@@ -75,9 +85,10 @@ def test_success_final_gate_passed():
     assert report["passed"] is True
     assert report["finding_count"] == 0
     assert report["files_with_findings"] == 0
-    # stale 修正：审计脚本实际扫描 server/ 53 个文件（新纳入 1 个模块），
-    # 原硬编码 52 已过期。真相源 = deliverables/.../audit_server_authority_residue.py 实扫结果。
-    assert report["scanned_files"] == 53  # server/ 全量（与 SRV-019 failed 口径一致）
+    # 审计脚本实扫口径自洽：scanned_files 应等于 server/ 下实际 .py 数（排除 __pycache__）
+    actual_py = server_py_count()
+    assert report["scanned_files"] == actual_py
+    assert actual_py >= 53  # 下界回归保护：server 模块只增不减
 
 
 def test_success_retired_files_14():
@@ -107,7 +118,7 @@ def test_success_final_gate_rpc(rpc):
     """daemon 侧 final gate RPC 接受 0 残留申报并返回 passed。"""
     res = rpc.call(FINAL_GATE, {
         "source": "repository-wide",
-        "scanned_files": 52,
+        "scanned_files": server_py_count(),
         "finding_count": 0,
         "files_with_findings": 0,
     })
@@ -125,7 +136,7 @@ def test_invalid_nonzero_findings_blocked(rpc):
     with pytest.raises(Exception) as ei:
         rpc.call(FINAL_GATE, {
             "source": "repository-wide",
-            "scanned_files": 52,
+            "scanned_files": server_py_count(),
             "finding_count": 3,
             "files_with_findings": 2,
         })
@@ -137,7 +148,7 @@ def test_invalid_wrong_source_rejected(rpc):
     with pytest.raises(Exception) as ei:
         rpc.call(FINAL_GATE, {
             "source": "server-only",
-            "scanned_files": 10,
+            "scanned_files": server_py_count(),
             "finding_count": 0,
             "files_with_findings": 0,
         })
@@ -213,7 +224,7 @@ def test_unavailable_final_gate_no_local_fallback(rpc):
     """final gate 的 authority 判定必须来自 daemon，无本地 Python 降级。"""
     res = rpc.call(FINAL_GATE, {
         "source": "repository-wide",
-        "scanned_files": 52,
+        "scanned_files": server_py_count(),
         "finding_count": 0,
         "files_with_findings": 0,
     })
@@ -238,7 +249,7 @@ def test_restart_final_gate_replay_idempotent(rpc):
     """final gate RPC 重复申报 0 残留幂等通过。"""
     params = {
         "source": "repository-wide",
-        "scanned_files": 52,
+        "scanned_files": server_py_count(),
         "finding_count": 0,
         "files_with_findings": 0,
     }
