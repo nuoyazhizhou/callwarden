@@ -245,6 +245,14 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
           echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      # Probe E（排最前避开日志截断）：metrics CLI 测试的 CI-only 失败取证。
+      # 内联脚本已验证同 env 下 patch 生效、RC=0——失败只发生在 pytest
+      # 上下文。此处直接跑真实测试文件（小文件，输出必完整可读），拿
+      # pytest 内的失败全貌（含 captured stderr 的 daemon RPC 失败原文）。
+      - name: Probe E - metrics pytest-context forensics
+        if: always()
+        run: pytest tests/test_phase8_metrics_endpoint.py -v --tb=long -p no:cacheprovider 2>&1 | tail -60
+
       # config A：phase7 ×8 disk I/O error —— 关闭 Rust schema 初始化。
       # JobExecutor 的第二条 Python 连接 executescript 在 Rust 初始化过的库上
       # 失败；若转绿则 schema 初始化侧的双实例写入是 IOERR 根因。
