@@ -15,10 +15,70 @@ import json
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 # 确保能 import callwarden
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT.parent))
+
+
+# _import_main_module() 会**无条件替换** sys.modules 的
+# "callwarden.cli.daemon_commands" / "callwarden.cli.main" 条目为全新
+# 加载的模块副本。若不恢复，同 worker 后续测试（实测
+# test_phase8_metrics_endpoint ×4）发生模块绑定与 patch 目标错位：
+# 那些测试在 collection 期绑定的 run_daemon_command 属**原**模块对象，
+# 运行期 mock.patch("callwarden.cli.daemon_commands.
+# UnixDaemonRpcClient") 却经 sys.modules 解析到**新副本**——patch 打
+# 不中执行体，真 UnixDaemonRpcClient 被使用 → CI 无 daemon →
+# run_daemon_command 返回 rc=2。本 fixture 快照/恢复四个 key 与属性
+# 挂载链，把替换限制在单测试内。
+_SYS_MODULES_KEYS = (
+    "callwarden",
+    "callwarden.cli",
+    "callwarden.cli.daemon_commands",
+    "callwarden.cli.main",
+)
+_ATTR_LINKS = (
+    ("callwarden", "cli"),
+    ("callwarden.cli", "daemon_commands"),
+    ("callwarden.cli", "main"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_sys_modules_mutation():
+    """把 _import_main_module 的 sys.modules 替换限制在单测试内。"""
+    snapshot = {k: sys.modules.get(k) for k in _SYS_MODULES_KEYS}
+    attr_snapshot = []
+    for parent, child in _ATTR_LINKS:
+        p = sys.modules.get(parent)
+        if p is not None and hasattr(p, child):
+            attr_snapshot.append((p, child, getattr(p, child)))
+    yield
+    for k, v in snapshot.items():
+        if v is None:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = v
+    for parent, child in _ATTR_LINKS:
+        p = sys.modules.get(parent)
+        if p is None:
+            continue
+        orig = next(((po, co, cv) for po, co, cv in attr_snapshot
+                     if po is p and co == child), None)
+        if orig is not None:
+            try:
+                setattr(p, child, orig[2])
+            except Exception:
+                pass
+        elif hasattr(p, child):
+            # 快照时不存在（本测试新增的合成挂载）→ 摘除，避免 import
+            # 系统经陈旧合成父模块解析后续 import
+            try:
+                delattr(p, child)
+            except Exception:
+                pass
 
 
 def _import_main_module():
