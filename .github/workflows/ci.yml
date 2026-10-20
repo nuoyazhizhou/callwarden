@@ -286,6 +286,14 @@ jobs:
         if: always()
         run: pytest tests/_wal_ab_dual_conn_repro.py -v --tb=short -p no:cacheprovider
 
+      # config E：metrics CLI 测试的 CI-only 失败取证（run 15 新暴露 ×4，
+      # 本地全绿）。测试 patch 了 UnixDaemonRpcClient 但 CI 上 rc=2——
+      # 用 --tb=long -s 拿 fake 未生效的直接证据（stderr 的
+      # "ERROR: daemon RPC 失败（...）" 消息会揭示真实异常）。
+      - name: Probe E - metrics CLI CI-only failure forensics
+        if: always()
+        run: pytest tests/test_phase8_metrics_endpoint.py -v --tb=long -s -p no:cacheprovider
+
   lint:
     name: Lint check
     runs-on: ubuntu-latest
