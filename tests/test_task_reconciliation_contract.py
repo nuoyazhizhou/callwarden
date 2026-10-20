@@ -69,7 +69,13 @@ def cleanup_trees():
             conn.execute(f"DELETE FROM {t} WHERE task_id LIKE 'T-RECON-NEG-%'")
         except Exception:
             pass
-    conn.execute("DELETE FROM tasks WHERE id LIKE 'T-RECON-NEG-%'")
+    # tasks 主表删除同样需容忍缺表：CI fresh runner 上 runtime 段整体 skip
+    # 时库可能从未建 schema（无 daemon 交互），teardown 直接 DELETE 会以
+    # no such table 把已通过/已跳过的测试染红（同 cascade_close 族）。
+    try:
+        conn.execute("DELETE FROM tasks WHERE id LIKE 'T-RECON-NEG-%'")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

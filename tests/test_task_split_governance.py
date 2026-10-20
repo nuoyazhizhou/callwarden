@@ -120,7 +120,16 @@ def _subtask_defs():
 
 @pytest.fixture(scope="module")
 def client():
-    return UnixDaemonRpcClient()
+    # daemon 不可达时 runtime 段整体 skip（与 test_srv_019 /
+    # test_task_cascade_close 的 rpc fixture 同型）：CI fresh runner 无
+    # 常驻 daemon，直接调用会以 OSError(endpoint 不可连接) 染红；
+    # 静态门禁（handler 归属/参数契约断言）不依赖 daemon，仍执行。
+    c = UnixDaemonRpcClient()
+    try:
+        c.call("ping", {})
+    except Exception:
+        pytest.skip("daemon 不可用：runtime 段跳过（静态门禁仍执行）")
+    return c
 
 
 def test_split_success_full_governance(client):
