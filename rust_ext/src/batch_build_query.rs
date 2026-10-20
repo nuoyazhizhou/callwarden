@@ -22,7 +22,6 @@
 //! `_save_symbols_for_version` 在 `all_symbols` 为空时直接 return（不 DELETE）。
 //! Rust 实现以 Python 真相源为准，空列表时直接返回空结果，不执行任何 SQL。
 
-use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::Bound;
@@ -71,38 +70,17 @@ impl Default for BatchSaveResult {
     }
 }
 
-/// 打开读写连接（CodeGraph DB 用）
-///
-/// - 默认 OpenFlags（READWRITE + CREATE）
-/// - busy_timeout=5000（与 cas_merge_query 一致）
-/// - PRAGMA 与 Python db_base.py 完全对齐，避免两个 SQLite 实例
-///   对 WAL 文件操作不一致导致 database disk image is malformed
-fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
-    // busy_timeout 必须在任何 SQL 之前设置
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    // WAL 模式是数据库持久化设置，但显式设置确保一致性
-    // synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync（与 Python 一致）
-    // foreign_keys=OFF：入库期间关闭外键检查（与 Python db_base.py:2178 一致）
-    // wal_checkpoint(PASSIVE)：确保 Rust 连接能读到 Python 写入的最新 WAL 数据
-    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
-    // 实例（Python 系统 libsqlite3 + 本 bundled rusqlite）在 Linux 上 fcntl 锁
-    // 按进程分配，两实例无法互斥；open 时立即 checkpoint 把 WAL 帧回写主库，
-    // 与 Python 侧 autocheckpoint 交错可产生撕裂页（database disk image is
-    // malformed / disk I/O error）。默认保持原行为；env=0 仅供 CI 定性实验。
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| PyIOError::new_err(format!("设置 WAL 模式失败: {}", e)))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")
-        .map_err(|e| PyIOError::new_err(format!("设置 synchronous 失败: {}", e)))?;
-    conn.pragma_update(None, "foreign_keys", "OFF")
-        .map_err(|e| PyIOError::new_err(format!("设置 foreign_keys 失败: {}", e)))?;
-    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    }
-    Ok(conn)
-}
+// CI-DEBT 深水区：本模块原用 `open_readwrite` 每次调用 `Connection::open` 建短连接，
+// 与同进程 Python 主连接构成双 SQLite 实例。POSIX 上 fcntl 锁按进程分配，两实例
+// 无法互斥 WAL-index，短连接 drop 时的 checkpoint 与 Python 侧 autocheckpoint
+// 交错可产生撕裂页（database disk image is malformed，CI ubuntu 独有；Windows
+// 按句柄加锁故本地免疫）。
+//
+// 现统一改用 `crate::conn_pool::with_pooled_conn(db_path, |conn| ...)` 取用进程级
+// 长活连接：checkpoint 每进程只发生一次，且连接不再随调用 drop。
+// PRAGMA 序列（busy_timeout=5s / journal_mode=WAL / synchronous=NORMAL /
+// foreign_keys=OFF / wal_checkpoint(PASSIVE)）在 `conn_pool::open_pooled` 内，
+// 与 Python db_base.py 对齐；CW_RUST_OPEN_CHECKPOINT=0 门保留。
 
 /// 从 Python dict 提取 SymbolInfo
 ///
@@ -359,30 +337,30 @@ pub fn batch_save_symbols<'py>(
         }
     };
 
-    // 2. 释放 GIL 做文件 IO + SQL 操作
+    // 2. 释放 GIL 做文件 IO + SQL 操作（连接取自进程级池，长活，不随调用 drop）
     let result = py.detach(|| -> Result<BatchSaveResult, String> {
-        let conn = open_readwrite(codegraph_db_path)
-            .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?;
+        crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+            // BEGIN IMMEDIATE 事务
+            conn.execute_batch("BEGIN IMMEDIATE;")
+                .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;
 
-        // BEGIN IMMEDIATE 事务
-        conn.execute_batch("BEGIN IMMEDIATE;")
-            .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;
+            let inner_result =
+                batch_save_symbols_inner(conn, file_instance_id, file_version_id, &symbols_info);
 
-        let inner_result =
-            batch_save_symbols_inner(&conn, file_instance_id, file_version_id, &symbols_info);
-
-        match inner_result {
-            Ok(r) => {
-                conn.execute_batch("COMMIT;")
-                    .map_err(|e| format!("COMMIT 失败: {}", e))?;
-                Ok(r)
+            match inner_result {
+                Ok(r) => {
+                    conn.execute_batch("COMMIT;")
+                        .map_err(|e| format!("COMMIT 失败: {}", e))?;
+                    Ok(r)
+                }
+                Err(e) => {
+                    // 失败时 ROLLBACK
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    Err(format!("batch_save_symbols 失败: {}", e))
+                }
             }
-            Err(e) => {
-                // 失败时 ROLLBACK
-                let _ = conn.execute_batch("ROLLBACK;");
-                Err(format!("batch_save_symbols 失败: {}", e))
-            }
-        }
+        })
+        .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?
     });
 
     match result {

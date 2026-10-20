@@ -70,16 +70,14 @@ fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
     crate::cas_query::open_readonly_bounded(db_path)
 }
 
-/// 打开用于短写事务的连接。
-fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
-        .map_err(|e| PyIOError::new_err(format!("设置写入模式失败: {}", e)))?;
-    Ok(conn)
-}
+// CI-DEBT 深水区：manifest 写路径原 `open_readwrite` 每次调用建短连接，与同进程
+// Python 主连接构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
+// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
+//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接
+//（`crate::conn_pool::with_pooled_conn`）。
+//
+// 只读连接保持短连接（`open_readonly`）：只读经 WAL + `-shm` 天然读到最新已提交
+// 数据，不做 checkpoint（见下方注释与 AGENTS.md 规则 32），不参与撕裂页成因。
 
 fn sqlite_write_error(operation: &str, error: rusqlite::Error) -> PyErr {
     PyIOError::new_err(format!("{}失败: {}", operation, error))
@@ -88,16 +86,23 @@ fn sqlite_write_error(operation: &str, error: rusqlite::Error) -> PyErr {
 /// 幂等创建 manifest 相关 schema。
 #[pyfunction]
 pub fn manifest_init_schema(db_path: &str) -> PyResult<()> {
-    let conn = open_readwrite(db_path)?;
-    conn.execute_batch("BEGIN IMMEDIATE;")
-        .map_err(|e| sqlite_write_error("开始 manifest schema 事务", e))?;
-    if let Err(error) = conn.execute_batch(MANIFEST_SCHEMA_DDL) {
-        let _ = conn.execute_batch("ROLLBACK;");
-        return Err(sqlite_write_error("初始化 manifest schema", error));
-    }
-    conn.execute_batch("COMMIT;")
-        .map_err(|e| sqlite_write_error("提交 manifest schema 事务", e))?;
-    Ok(())
+    // CI-DEBT 深水区：取用进程级池连接（见 crate::conn_pool）。
+    // 原实现每次调用建短连接，与同进程 Python 主连接构成双 SQLite 实例，
+    // POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，drop 时 checkpoint 与
+    // Python autocheckpoint 交错可产生撕裂页（database disk image is
+    // malformed，CI ubuntu 独有）。
+    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE;")
+            .map_err(|e| sqlite_write_error("开始 manifest schema 事务", e))?;
+        if let Err(error) = conn.execute_batch(MANIFEST_SCHEMA_DDL) {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(sqlite_write_error("初始化 manifest schema", error));
+        }
+        conn.execute_batch("COMMIT;")
+            .map_err(|e| sqlite_write_error("提交 manifest schema 事务", e))?;
+        Ok(())
+    })
+    .map_err(|e| sqlite_write_error("打开 manifest 数据库", e))?
 }
 
 /// 原子写入 workspace manifest。
@@ -117,37 +122,39 @@ pub fn manifest_upsert(
     mtime_ns: i64,
     is_dirty: bool,
 ) -> PyResult<()> {
-    let conn = open_readwrite(db_path)?;
-    conn.execute_batch("BEGIN IMMEDIATE;")
-        .map_err(|e| sqlite_write_error("开始 manifest 写入事务", e))?;
-    let result = conn.execute(
-        "INSERT OR REPLACE INTO workspace_manifests
-         (workspace_id, rel_path, content_hash, cas_key, raw_hash,
-          source_encoding, bom_kind, newline_style, file_size, mtime_ns,
-          is_dirty, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        rusqlite::params![
-            workspace_id,
-            rel_path,
-            content_hash,
-            cas_key,
-            raw_hash,
-            source_encoding,
-            bom_kind,
-            newline_style,
-            file_size,
-            mtime_ns,
-            i64::from(is_dirty),
-            unix_timestamp(),
-        ],
-    );
-    if let Err(error) = result {
-        let _ = conn.execute_batch("ROLLBACK;");
-        return Err(sqlite_write_error("写入 manifest", error));
-    }
-    conn.execute_batch("COMMIT;")
-        .map_err(|e| sqlite_write_error("提交 manifest 写入事务", e))?;
-    Ok(())
+    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE;")
+            .map_err(|e| sqlite_write_error("开始 manifest 写入事务", e))?;
+        let result = conn.execute(
+            "INSERT OR REPLACE INTO workspace_manifests
+             (workspace_id, rel_path, content_hash, cas_key, raw_hash,
+              source_encoding, bom_kind, newline_style, file_size, mtime_ns,
+              is_dirty, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                workspace_id,
+                rel_path,
+                content_hash,
+                cas_key,
+                raw_hash,
+                source_encoding,
+                bom_kind,
+                newline_style,
+                file_size,
+                mtime_ns,
+                i64::from(is_dirty),
+                unix_timestamp(),
+            ],
+        );
+        if let Err(error) = result {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(sqlite_write_error("写入 manifest", error));
+        }
+        conn.execute_batch("COMMIT;")
+            .map_err(|e| sqlite_write_error("提交 manifest 写入事务", e))?;
+        Ok(())
+    })
+    .map_err(|e| sqlite_write_error("打开 manifest 数据库", e))?
 }
 
 /// 原子写入 snapshot 到文件的映射。
@@ -159,22 +166,24 @@ pub fn manifest_link_to_snapshot(
     content_hash: &str,
     cas_key: &str,
 ) -> PyResult<()> {
-    let conn = open_readwrite(db_path)?;
-    conn.execute_batch("BEGIN IMMEDIATE;")
-        .map_err(|e| sqlite_write_error("开始 snapshot 映射事务", e))?;
-    let result = conn.execute(
-        "INSERT OR REPLACE INTO workspace_snapshot_map
-         (snapshot_id, rel_path, content_hash, cas_key)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![snapshot_id, rel_path, content_hash, cas_key],
-    );
-    if let Err(error) = result {
-        let _ = conn.execute_batch("ROLLBACK;");
-        return Err(sqlite_write_error("写入 snapshot 映射", error));
-    }
-    conn.execute_batch("COMMIT;")
-        .map_err(|e| sqlite_write_error("提交 snapshot 映射事务", e))?;
-    Ok(())
+    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE;")
+            .map_err(|e| sqlite_write_error("开始 snapshot 映射事务", e))?;
+        let result = conn.execute(
+            "INSERT OR REPLACE INTO workspace_snapshot_map
+             (snapshot_id, rel_path, content_hash, cas_key)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![snapshot_id, rel_path, content_hash, cas_key],
+        );
+        if let Err(error) = result {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(sqlite_write_error("写入 snapshot 映射", error));
+        }
+        conn.execute_batch("COMMIT;")
+            .map_err(|e| sqlite_write_error("提交 snapshot 映射事务", e))?;
+        Ok(())
+    })
+    .map_err(|e| sqlite_write_error("打开 manifest 数据库", e))?
 }
 
 fn unix_timestamp() -> f64 {

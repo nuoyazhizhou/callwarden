@@ -23,7 +23,6 @@
 //! - norm_path（Python 预计算 rel_path/abs_path 传入）
 //! - _load_file_result_from_db（已在 Phase 2-6-1 通过 PyO3 暴露）
 
-use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::Bound;
@@ -56,27 +55,14 @@ struct RegisterResult {
 // 工具函数
 // ===========================================================================
 
-/// 打开读写连接（与 incremental_build_query.rs 一致）
-///
-/// 关键：foreign_keys=OFF，与 Python db_base.py L2178 对齐。
-/// 原因：INSERT file_instances 时 current_content_hash='' 不是 file_contents 的真实 FK，
-/// 若开启 FK 检查会触发 IntegrityError。
-fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
-    // 实例在 Linux 上 fcntl 锁按进程分配无法互斥，open 时 checkpoint 与 Python
-    // 侧 autocheckpoint 交错可产生撕裂页。默认保持原行为；env=0 仅供 CI 定性。
-    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    }
-    // 显式关闭 FK 检查（与 Python db_base.py L2178 一致）
-    conn.execute_batch("PRAGMA foreign_keys = OFF;")
-        .map_err(|e| PyIOError::new_err(format!("关闭 foreign_keys 失败: {}", e)))?;
-    Ok(conn)
-}
+// CI-DEBT 深水区：原 `open_readwrite` 每次调用建短连接，与同进程 Python 主连接
+// 构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，短连接
+// drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
+//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接。
+//
+// 注意：foreign_keys=OFF 的理由保留在本模块注释——INSERT file_instances 时
+// current_content_hash='' 不是 file_contents 的真实 FK，开 FK 检查会 IntegrityError。
+// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -154,19 +140,15 @@ pub fn batch_register_files<'py>(
         return Ok(dict);
     }
 
-    // 2. 打开 DB 连接
-    let conn = match open_readwrite(codegraph_db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            dict.set_item("error", format!("{}", e))?;
-            return Ok(dict);
-        }
-    };
-
+    // 2. 取用进程级池连接
     // 3. BEGIN IMMEDIATE → 预处理语句 → 循环执行 → COMMIT/ROLLBACK
-    let tx_result: Result<Vec<RegisterResult>, rusqlite::Error> = conn
-        .execute_batch("BEGIN IMMEDIATE")
-        .and_then(|_| {
+    //    原实现依赖 Connection drop 自动回滚；池连接长活，drop 不再触发，
+    //    故失败分支必须显式 ROLLBACK，否则事务会悬挂到下一次调用。
+    let tx_result: Result<Vec<RegisterResult>, rusqlite::Error> =
+        match crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+            let tx_result_inner = conn
+                .execute_batch("BEGIN IMMEDIATE")
+                .and_then(|_| {
             // 预处理 4 条 SQL 语句
             let mut stmt_select_instance = conn.prepare(
                 "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2",
@@ -252,7 +234,21 @@ pub fn batch_register_files<'py>(
             Ok(results)
         });
 
-    // 4. 错误处理（ROLLBACK 在 drop 时自动执行）
+            if tx_result_inner.is_err() {
+                // 池连接长活，drop 不再自动回滚——必须显式 ROLLBACK
+                let _ = conn.execute_batch("ROLLBACK");
+            }
+            tx_result_inner
+        }) {
+            Ok(inner) => inner,
+            Err(e) => {
+                dict.set_item("success", false)?;
+                dict.set_item("error", format!("打开 CodeGraph 数据库失败: {}", e))?;
+                return Ok(dict);
+            }
+        };
+
+    // 4. 错误处理（失败分支已在闭包内显式 ROLLBACK）
     match tx_result {
         Ok(results) => {
             // 构建 results 列表（回到 GIL 内构建 PyDict）

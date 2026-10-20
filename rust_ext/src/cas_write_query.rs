@@ -7,7 +7,7 @@
 use pyo3::exceptions::{PyIOError, PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use std::thread;
 use std::time::Duration;
 
@@ -15,20 +15,29 @@ use crate::daemon::cas::{
     CasImportInput, CasPublishError, CasPublishInput, CasRawCallInput, CasStore, CasSymbolInput,
 };
 
-/// 打开只含 file_generations 语义的短连接（不向目标 DB 注入 CAS_SCHEMA_DDL）。
+/// 取用进程级池连接，并幂等确保 `file_generations` 表存在。
+///
+/// 打开只含 file_generations 语义的连接（不向目标 DB 注入 CAS_SCHEMA_DDL）。
 ///
 /// 供 Python daemon（legacy replicator）对 workspace DB 的 file_generations
 /// 两阶段写复用 CasStore inner 逻辑；目标 DB 的 file_generations 表
 /// 由 Python `init_session_schema` 或本函数幂等创建。
-fn open_file_generations_conn(db_path: &str) -> Result<Connection, CasPublishError> {
-    let conn = Connection::open(db_path)
-        .map_err(|e| CasPublishError::Sqlite(e))?;
-    conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| CasPublishError::Sqlite(e))?;
-    // WAL 模式：与 MCP/CLI 长连接并发安全（只读连接总能读到最新已提交数据）
-    let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
-    CasStore::ensure_file_generations_table(&conn)?;
-    Ok(conn)
+///
+/// CI-DEBT 深水区：原实现每次调用 `Connection::open` 建短连接，与同进程 Python
+/// 主连接构成双 SQLite 实例。POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
+/// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
+///（database disk image is malformed，CI ubuntu 独有）。现改为经
+/// `crate::conn_pool` 取用长活连接；WAL 模式与 busy_timeout 在
+/// `conn_pool::open_pooled` 内设置。
+fn with_file_generations_conn<T>(
+    db_path: &str,
+    f: impl FnOnce(&Connection) -> T,
+) -> Result<T, CasPublishError> {
+    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+        CasStore::ensure_file_generations_table(conn)?;
+        Ok(f(conn))
+    })
+    .map_err(CasPublishError::Sqlite)?
 }
 
 fn required_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -294,30 +303,31 @@ pub fn cas_file_generation_seen(
     seq: i64,
 ) -> PyResult<bool> {
     let incoming_gen = format!("{}:{}", epoch, seq);
-    let conn = open_file_generations_conn(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
-    let result = CasStore::file_generation_seen_inner(
-        &conn,
-        workspace_id,
-        rel_path,
-        session_id,
-        epoch,
-        seq,
-        &incoming_gen,
-    );
-    match result {
-        Ok(seen) => {
-            conn.execute_batch("COMMIT")
-                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
-            Ok(seen)
+    with_file_generations_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+        let result = CasStore::file_generation_seen_inner(
+            conn,
+            workspace_id,
+            rel_path,
+            session_id,
+            epoch,
+            seq,
+            &incoming_gen,
+        );
+        match result {
+            Ok(seen) => {
+                conn.execute_batch("COMMIT")
+                    .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+                Ok(seen)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(PyIOError::new_err(format!("file_generation_seen 失败: {}", e)))
+            }
         }
-        Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(PyIOError::new_err(format!("file_generation_seen 失败: {}", e)))
-        }
-    }
+    })
+    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?
 }
 
 /// Local CAS 两阶段第二阶段 committed：条件 UPDATE 确认 manifest 已提交。
@@ -333,29 +343,33 @@ pub fn cas_file_generation_committed(
     seq: i64,
 ) -> PyResult<bool> {
     let incoming_gen = format!("{}:{}", epoch, seq);
-    let conn = open_file_generations_conn(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
-    let result = CasStore::file_generation_committed_inner(
-        &conn,
-        workspace_id,
-        rel_path,
-        epoch,
-        seq,
-        &incoming_gen,
-    );
-    match result {
-        Ok(committed) => {
-            conn.execute_batch("COMMIT")
-                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
-            Ok(committed)
+    with_file_generations_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+        let result = CasStore::file_generation_committed_inner(
+            conn,
+            workspace_id,
+            rel_path,
+            epoch,
+            seq,
+            &incoming_gen,
+        );
+        match result {
+            Ok(committed) => {
+                conn.execute_batch("COMMIT")
+                    .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+                Ok(committed)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(PyIOError::new_err(format!(
+                    "file_generation_committed 失败: {}",
+                    e
+                )))
+            }
         }
-        Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(PyIOError::new_err(format!("file_generation_committed 失败: {}", e)))
-        }
-    }
+    })
+    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?
 }
 
 /// Local CAS 回滚 committed：仅清除 latest_committed_generation 匹配的行，
@@ -367,22 +381,26 @@ pub fn cas_file_generation_uncommit(
     workspace_id: i64,
     rel_path: &str,
 ) -> PyResult<bool> {
-    let conn = open_file_generations_conn(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
-    let result = CasStore::file_generation_uncommit_inner(&conn, workspace_id, rel_path);
-    match result {
-        Ok(uncommitted) => {
-            conn.execute_batch("COMMIT")
-                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
-            Ok(uncommitted)
+    with_file_generations_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+        let result = CasStore::file_generation_uncommit_inner(conn, workspace_id, rel_path);
+        match result {
+            Ok(uncommitted) => {
+                conn.execute_batch("COMMIT")
+                    .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+                Ok(uncommitted)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(PyIOError::new_err(format!(
+                    "file_generation_uncommit 失败: {}",
+                    e
+                )))
+            }
         }
-        Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(PyIOError::new_err(format!("file_generation_uncommit 失败: {}", e)))
-        }
-    }
+    })
+    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?
 }
 
 /// 会话级重置：新 session 建立后把 workspace 所有 file_generations 的
@@ -395,22 +413,23 @@ pub fn cas_file_generation_reset(
     session_id: &str,
     epoch: i64,
 ) -> PyResult<()> {
-    let conn = open_file_generations_conn(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
-    let result = CasStore::file_generation_reset_inner(&conn, workspace_id, session_id, epoch);
-    match result {
-        Ok(()) => {
-            conn.execute_batch("COMMIT")
-                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
-            Ok(())
+    with_file_generations_conn(db_path, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+        let result = CasStore::file_generation_reset_inner(conn, workspace_id, session_id, epoch);
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")
+                    .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(PyIOError::new_err(format!("file_generation_reset 失败: {}", e)))
+            }
         }
-        Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(PyIOError::new_err(format!("file_generation_reset 失败: {}", e)))
-        }
-    }
+    })
+    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?
 }
 
 /// Global CAS 垃圾回收：回收超过 grace_days 未被引用的文件块。

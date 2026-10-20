@@ -27,7 +27,6 @@
 //! - S1: fresh DB → init_codegraph_schema 幂等建表
 //! - S2: 已有 schema → 幂等，不报错
 
-use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -45,26 +44,16 @@ fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
     crate::cas_query::open_readonly_bounded(db_path)
 }
 
-/// 打开读写连接（CodeGraph DB 用）
-///
-/// - 默认 OpenFlags（READWRITE + CREATE）
-/// - busy_timeout=5000（与 Python db_cas_merge.py 一致）
-/// - PRAGMA 与 Python db_base.py 完全对齐，避免两个 SQLite 实例
-///   对 WAL 文件操作不一致导致 database disk image is malformed
-fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| PyIOError::new_err(format!("设置 WAL 模式失败: {}", e)))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")
-        .map_err(|e| PyIOError::new_err(format!("设置 synchronous 失败: {}", e)))?;
-    conn.pragma_update(None, "foreign_keys", "OFF")
-        .map_err(|e| PyIOError::new_err(format!("设置 foreign_keys 失败: {}", e)))?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    Ok(conn)
-}
+// CI-DEBT 深水区：merge 写路径原 `open_readwrite` 每次调用建短连接，与同进程
+// Python 主连接构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
+// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
+//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接
+//（`crate::conn_pool::with_pooled_conn`）。
+//
+// 注意：pool 的 Mutex 仅在单次 `with_pooled_conn` 调用期间持有。下方三处
+// open_readwrite 调用分属**顺序**的独立 `py.detach` 块，非嵌套，故不会重入自锁。
+// 只读连接保持短连接（`open_readonly`）：只读经 WAL + `-shm` 读到最新已提交数据，
+// 不做 checkpoint（见 AGENTS.md 规则 32），不参与撕裂页成因。
 
 /// CAS→CodeGraph DB 合并主入口
 ///
@@ -122,36 +111,36 @@ pub fn cas_merge_to_codegraph<'py>(
     dict.set_item("calls_resolved", 0usize)?;
     dict.set_item("error", ())?;
 
-    // 1. 打开 cas_conn（只读）+ codegraph_conn（读写）
+    // 1. 打开 cas_conn（只读，短连接）
+    //    codegraph_conn 取自进程级池（见 crate::conn_pool）
     //    释放 GIL 做文件 IO + SQL 操作
     let result = py.detach(
         || -> Result<crate::daemon::cas_merge::MergeResult, String> {
             let cas_conn =
                 open_readonly(cas_db_path).map_err(|e| format!("打开 CAS 数据库失败: {}", e))?;
-            let codegraph_conn = open_readwrite(codegraph_db_path)
-                .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?;
 
             // 2. fresh DB 场景：先 init_codegraph_schema（幂等，CREATE IF NOT EXISTS）
             //    与 Python db_base.init_schema 行为一致
-            crate::daemon::cas_merge::init_codegraph_schema(&codegraph_conn)
-                .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
-
             // 3. 调用 merge_cas_to_codegraph
             //    内部已完成 BEGIN IMMEDIATE → 全部 SQL → COMMIT
             //    失败时内部已 ROLLBACK
-            let merge_result = crate::daemon::cas_merge::merge_cas_to_codegraph(
-                &cas_conn,
-                &codegraph_conn,
-                cas_key,
-                workspace_id,
-                rel_path,
-                abs_path,
-                content_hash,
-                language,
-                workspace_root_path,
-            )?;
+            crate::conn_pool::with_pooled_conn(codegraph_db_path, |codegraph_conn| {
+                crate::daemon::cas_merge::init_codegraph_schema(codegraph_conn)
+                    .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
 
-            Ok(merge_result)
+                crate::daemon::cas_merge::merge_cas_to_codegraph(
+                    &cas_conn,
+                    codegraph_conn,
+                    cas_key,
+                    workspace_id,
+                    rel_path,
+                    abs_path,
+                    content_hash,
+                    language,
+                    workspace_root_path,
+                )
+            })
+            .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?
         },
     );
 
@@ -162,21 +151,20 @@ pub fn cas_merge_to_codegraph<'py>(
             //    释放 GIL 做只读查询
             let calls_resolved: usize = if merge_result.file_instance_id > 0 {
                 py.detach(|| -> usize {
-                    let conn = match open_readwrite(codegraph_db_path) {
-                        Ok(c) => c,
-                        Err(_) => return 0,
-                    };
-                    let count: Option<i64> = conn
-                        .query_row(
-                            "SELECT COUNT(*) FROM calls \
+                    crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+                        let count: Option<i64> = conn
+                            .query_row(
+                                "SELECT COUNT(*) FROM calls \
                              WHERE caller_id IN \
                              (SELECT id FROM symbols WHERE file_instance_id = ?1) \
                              AND callee_id > 0",
-                            rusqlite::params![merge_result.file_instance_id],
-                            |row| row.get(0),
-                        )
-                        .ok();
-                    count.unwrap_or(0) as usize
+                                rusqlite::params![merge_result.file_instance_id],
+                                |row| row.get(0),
+                            )
+                            .ok();
+                        count.unwrap_or(0) as usize
+                    })
+                    .unwrap_or(0)
                 })
             } else {
                 0
@@ -219,11 +207,12 @@ pub fn cas_merge_to_codegraph<'py>(
 pub fn cas_merge_init_schema(py: Python<'_>, codegraph_db_path: &str) -> bool {
     // 释放 GIL 做文件 IO + SQL
     let result = py.detach(|| -> Result<(), String> {
-        let conn = open_readwrite(codegraph_db_path)
-            .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?;
-        crate::daemon::cas_merge::init_codegraph_schema(&conn)
-            .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
-        Ok(())
+        crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+            crate::daemon::cas_merge::init_codegraph_schema(conn)
+                .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
+            Ok(())
+        })
+        .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?
     });
     result.is_ok()
 }

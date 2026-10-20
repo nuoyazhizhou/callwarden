@@ -42,6 +42,15 @@ def _isolate_db_path(tmp_path, monkeypatch):
     _isolated_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_cw_config, "CALLWARDEN_DIR", str(_isolated_dir))
     yield
+    # CI-DEBT 深水区：Rust 侧 SQLite 连接池单例化后，连接在进程内长活，
+    # 不再随每次调用 drop。Windows 上句柄不释放会让 tmp_path 下的
+    # test_isolated.db 无法删除，故每个测试结束必须关闭池连接。
+    # 这是资源清理，不是测试放宽——ImportError 仅在扩展未构建时兜底。
+    try:
+        from callwarden_core import close_pooled_connections
+        close_pooled_connections(None)
+    except ImportError:
+        pass
 
 
 class RouteStub:

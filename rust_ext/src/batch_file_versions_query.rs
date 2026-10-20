@@ -22,7 +22,6 @@
 //! - detect_language_from_path（Python 预计算 language 传入）
 //! - os.path.getmtime（Python 预计算 mtime 传入）
 
-use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::Bound;
@@ -96,36 +95,11 @@ impl Default for BatchSaveVersionsResult {
 // 工具函数
 // ===========================================================================
 
-/// 打开读写连接（CodeGraph DB 用）
-///
-/// - 默认 OpenFlags（READWRITE + CREATE）
-/// - busy_timeout=5000（与 batch_build_query 一致）
-/// - PRAGMA 与 Python db_base.py 完全对齐，避免两个 SQLite 实例
-///   对 WAL 文件操作不一致导致 database disk image is malformed
-fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
-    // busy_timeout 必须在任何 SQL 之前设置
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    // WAL 模式是数据库持久化设置，但显式设置确保一致性
-    // synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync（与 Python 一致）
-    // foreign_keys=OFF：入库期间关闭外键检查（与 Python db_base.py:2178 一致）
-    // wal_checkpoint(PASSIVE)：确保 Rust 连接能读到 Python 写入的最新 WAL 数据
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| PyIOError::new_err(format!("设置 WAL 模式失败: {}", e)))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")
-        .map_err(|e| PyIOError::new_err(format!("设置 synchronous 失败: {}", e)))?;
-    conn.pragma_update(None, "foreign_keys", "OFF")
-        .map_err(|e| PyIOError::new_err(format!("设置 foreign_keys 失败: {}", e)))?;
-    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
-    // 实例在 Linux 上 fcntl 锁按进程分配无法互斥，open 时 checkpoint 与 Python
-    // 侧 autocheckpoint 交错可产生撕裂页。默认保持原行为；env=0 仅供 CI 定性。
-    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    }
-    Ok(conn)
-}
+// CI-DEBT 深水区：原 `open_readwrite` 每次调用建短连接，与同进程 Python 主连接
+// 构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，短连接
+// drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
+//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接，
+// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -459,43 +433,42 @@ pub fn batch_save_file_versions<'py>(
         }
     };
 
-    // 2. 打开 DB 连接
-    let conn = match open_readwrite(codegraph_db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            dict.set_item("error", format!("{}", e))?;
-            return Ok(dict);
-        }
-    };
+    // 2. 取用进程级池连接 → 3. 检测 ast_cache 字段（v28+） → 4. BEGIN IMMEDIATE → COMMIT/ROLLBACK
+    //    ROLLBACK 必须在闭包内完成：池连接是长活的，出闭包后不能再补发事务控制语句，
+    //    否则失败的 BEGIN IMMEDIATE 会把事务悬挂到下一次调用上。
+    let tx_result: Result<BatchSaveVersionsResult, String> =
+        match crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+            // 检测 ast_cache 字段是否存在（v28+）
+            let ast_cache_exists = check_ast_cache_column_exists(conn)?;
 
-    // 3. 检测 ast_cache 字段是否存在（v28+）
-    let ast_cache_exists = match check_ast_cache_column_exists(&conn) {
-        Ok(exists) => exists,
-        Err(e) => {
-            dict.set_item("error", format!("检测 ast_cache 字段失败: {}", e))?;
-            return Ok(dict);
-        }
-    };
+            let tx = conn.execute_batch("BEGIN IMMEDIATE").and_then(|_| {
+                let mut result = BatchSaveVersionsResult::default();
 
-    // 4. BEGIN IMMEDIATE → 处理所有文件 → COMMIT/ROLLBACK
-    let tx_result: Result<BatchSaveVersionsResult, rusqlite::Error> =
-        conn.execute_batch("BEGIN IMMEDIATE").and_then(|_| {
-            let mut result = BatchSaveVersionsResult::default();
-
-            for info in &infos {
-                let save_result = save_single_file_version(&conn, info, ast_cache_exists)?;
-                if save_result.is_new_version {
-                    result.new_versions += 1;
-                } else {
-                    result.short_circuited += 1;
+                for info in &infos {
+                    let save_result = save_single_file_version(conn, info, ast_cache_exists)?;
+                    if save_result.is_new_version {
+                        result.new_versions += 1;
+                    } else {
+                        result.short_circuited += 1;
+                    }
+                    result.files_processed += 1;
+                    result.results.push(save_result);
                 }
-                result.files_processed += 1;
-                result.results.push(save_result);
-            }
 
-            conn.execute_batch("COMMIT")?;
-            Ok(result)
-        });
+                conn.execute_batch("COMMIT")?;
+                Ok(result)
+            });
+
+            if tx.is_err() {
+                // 失败时 ROLLBACK（忽略 ROLLBACK 自身错误）
+                let _ = conn.execute_batch("ROLLBACK");
+            }
+            tx
+        }) {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(format!("数据库错误: {}", e)),
+            Err(e) => Err(format!("打开 CodeGraph 数据库失败: {}", e)),
+        };
 
     match tx_result {
         Ok(result) => {
@@ -520,11 +493,9 @@ pub fn batch_save_file_versions<'py>(
             dict.set_item("results", results_list)?;
             dict.set_item("error", ())?;
         }
-        Err(e) => {
-            // ROLLBACK（忽略 ROLLBACK 自身的错误）
-            let _ = conn.execute_batch("ROLLBACK");
+        Err(msg) => {
             dict.set_item("success", false)?;
-            dict.set_item("error", format!("数据库错误: {}", e))?;
+            dict.set_item("error", msg)?;
         }
     }
 

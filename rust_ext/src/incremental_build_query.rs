@@ -24,34 +24,14 @@ use pyo3::types::{PyBool, PyDict, PyList};
 use pyo3::Bound;
 use rusqlite::params;
 
-/// 打开读写连接（CodeGraph DB 用，写操作）
-///
-/// 与 batch_build_query.rs 一致：
-/// - 默认 OpenFlags（READWRITE + CREATE）
-/// - busy_timeout=5000
-/// - WAL checkpoint 前置（确保读到最新数据）
-/// - foreign_keys=OFF（与 Python 生产环境 db_base.py L2178 一致：
-///   入库期间关闭外键检查，避免每次 INSERT 触发引用完整性校验；
-///   rusqlite bundled 默认启用 FK，需显式关闭以对齐 Python 行为）
-fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open(db_path)
-        .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
-    // 实例在 Linux 上 fcntl 锁按进程分配无法互斥，open 时 checkpoint 与 Python
-    // 侧 autocheckpoint 交错可产生撕裂页。默认保持原行为；env=0 仅供 CI 定性。
-    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    }
-    // 显式关闭 FK 检查（与 Python db_base.py L2178 一致）
-    // 注意：pragma_update(None, "foreign_keys", "OFF") 传字符串会被 SQLite 解释为
-    // 非空字符串（truthy=1），FK 仍启用。必须用 execute_batch 传裸 OFF 关键字，
-    // 或用 pragma_update 传整数 0。此处用 execute_batch 与 Python 行为完全对齐。
-    conn.execute_batch("PRAGMA foreign_keys = OFF;")
-        .map_err(|e| PyIOError::new_err(format!("关闭 foreign_keys 失败: {}", e)))?;
-    Ok(conn)
-}
+// CI-DEBT 深水区：读写路径原 `open_readwrite` 每次调用建短连接，与同进程 Python
+// 主连接构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
+// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
+//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接，
+// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
+//
+// 只读路径 `open_readonly` 保持短连接：它经 WAL + `-shm` 天然读到最新已提交数据，
+// 不做 checkpoint（见下方注释与 AGENTS.md 规则 32），故不参与撕裂页成因。
 
 /// 打开只读连接（CodeGraph DB 用，只读查询）
 ///
@@ -100,49 +80,47 @@ pub fn compute_and_apply_symbol_diff<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let result_dict = PyDict::new(py);
 
-    // 打开读写连接
-    let conn = match open_readwrite(codegraph_db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            result_dict.set_item("success", false)?;
-            result_dict.set_item("removed_count", 0usize)?;
-            result_dict.set_item("removed_names", Vec::<String>::new())?;
-            result_dict.set_item("error", format!("打开数据库失败: {}", e))?;
-            return Ok(result_dict);
+    // 取用进程级池连接 + BEGIN IMMEDIATE 事务
+    // （显式 ROLLBACK 已在本就位；池连接长活，不能依赖 drop 回滚）
+    let outcome = crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+        if let Err(e) = conn.execute_batch("BEGIN IMMEDIATE;") {
+            return Err(format!("BEGIN IMMEDIATE 失败: {}", e));
         }
-    };
 
-    // BEGIN IMMEDIATE 事务
-    if let Err(e) = conn.execute_batch("BEGIN IMMEDIATE;") {
-        result_dict.set_item("success", false)?;
-        result_dict.set_item("removed_count", 0usize)?;
-        result_dict.set_item("removed_names", Vec::<String>::new())?;
-        result_dict.set_item("error", format!("BEGIN IMMEDIATE 失败: {}", e))?;
-        return Ok(result_dict);
-    }
-
-    match compute_symbol_diff_inner(&conn, prev_version_id, curr_version_id) {
-        Ok((removed_count, removed_names)) => {
-            // COMMIT
-            if let Err(e) = conn.execute_batch("COMMIT;") {
-                result_dict.set_item("success", false)?;
-                result_dict.set_item("removed_count", 0usize)?;
-                result_dict.set_item("removed_names", Vec::<String>::new())?;
-                result_dict.set_item("error", format!("COMMIT 失败: {}", e))?;
-                return Ok(result_dict);
+        match compute_symbol_diff_inner(conn, prev_version_id, curr_version_id) {
+            Ok((removed_count, removed_names)) => {
+                if let Err(e) = conn.execute_batch("COMMIT;") {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    return Err(format!("COMMIT 失败: {}", e));
+                }
+                Ok((removed_count, removed_names))
             }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK;");
+                Err(format!("{}", e))
+            }
+        }
+    });
+
+    match outcome {
+        Ok(Ok((removed_count, removed_names))) => {
             result_dict.set_item("success", true)?;
             result_dict.set_item("removed_count", removed_count)?;
             result_dict.set_item("removed_names", removed_names)?;
             Ok(result_dict)
         }
-        Err(e) => {
-            // ROLLBACK
-            let _ = conn.execute_batch("ROLLBACK;");
+        Ok(Err(msg)) => {
             result_dict.set_item("success", false)?;
             result_dict.set_item("removed_count", 0usize)?;
             result_dict.set_item("removed_names", Vec::<String>::new())?;
-            result_dict.set_item("error", format!("{}", e))?;
+            result_dict.set_item("error", msg)?;
+            Ok(result_dict)
+        }
+        Err(e) => {
+            result_dict.set_item("success", false)?;
+            result_dict.set_item("removed_count", 0usize)?;
+            result_dict.set_item("removed_names", Vec::<String>::new())?;
+            result_dict.set_item("error", format!("打开数据库失败: {}", e))?;
             Ok(result_dict)
         }
     }
