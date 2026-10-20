@@ -4,9 +4,15 @@ These tests cover the production HTTP thin-client boundary without opening a
 local SQLite connection or mutating the shared daemon registry.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient, route_rpc
+
+# 仓库根动态推断（测试文件位于 tests/ 下）：route_rpc 的 workspace 兜底绑定
+# 的是调用进程项目根，CI 检出路径为 /home/runner/work/callwarden/callwarden，
+# 与开发机盘符不同。断言绑定的是仓库根本身，不再硬编码盘符。
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
 
 def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeypatch):
@@ -41,13 +47,13 @@ def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeyp
         lambda: "enterprise",
     )
     monkeypatch.setattr(
-        "callwarden.config.PROJECT_ROOT", r"C:\git_work\callwarden"
+        "callwarden.config.PROJECT_ROOT", _REPO_ROOT
     )
 
     result = route_rpc("workspace.status", {})
 
     assert result["snapshot_id"] == "snap-1"
-    client.configure_workspace.assert_called_once_with(r"C:\git_work\callwarden")
+    client.configure_workspace.assert_called_once_with(_REPO_ROOT)
     client._ensure_remote_snapshot.assert_called_once_with(
         r"C:\authority\callwarden.db"
     )
@@ -57,17 +63,17 @@ def test_http_route_binds_project_root_and_publishes_snapshot_for_status(monkeyp
     )
     # stale（PYT 回归卡 step#4 · A 桶）：route_rpc 的 workspace 权威注入块除
     # workspace_instance_id 外，还会补 workspace_root。生产依据：
-    # server/daemon_client.py:3955-3959 在非 task-scoped 请求上
+    # server/daemon_client.py:4346-4347 在非 task-scoped 请求上
     # `params.setdefault("workspace_root", client._project_root)`（compat 面
     # Python worker 需按 root_path 解析权威数字 id，2026-09-05 修 get_impact 等
     # compat 方法 "没有 active workspace" fail-closed）。此处 _project_root 由
-    # configure_workspace 置为 C:\git_work\callwarden，故 workspace.status 的
-    # params 多出 workspace_root 键（旧断言仅含单键，已陈旧）。
+    # configure_workspace 置为仓库根（_REPO_ROOT 动态推断，不硬编码盘符），
+    # 故 workspace.status 的 params 多出 workspace_root 键（旧断言仅含单键，已陈旧）。
     assert client.call.call_args_list[1].args == (
         "workspace.status",
         {
             "workspace_instance_id": "authority-ws-1",
-            "workspace_root": r"C:\git_work\callwarden",
+            "workspace_root": _REPO_ROOT,
         },
     )
 

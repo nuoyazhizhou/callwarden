@@ -394,13 +394,17 @@ def _fake_tcp_connect(endpoint: str):
     return socket.create_connection((host, int(port)), timeout=10)
 
 
-def _run_fake_bridge(port: int, captured: dict, response: dict):
+def _run_fake_bridge(port: int, captured: dict, response: dict, ready: threading.Event):
     """fake TCP bridge：接收 4 字节大端长度前缀 + JSON 帧 → 记录 → 回响应。
-    payload 为空（客户端在发帧前断开）时静默返回，不抛异常。"""
+    payload 为空（客户端在发帧前断开）时静默返回，不抛异常。
+    ready：bind+listen 完成后 set，供测试主体等待（消除 start→call 竞态：
+    CI 慢机器上线程尚未 listen 时客户端 connect 会 Connection refused，
+    走不到预期的 token 检查分支）。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("127.0.0.1", port))
         srv.listen(1)
+        ready.set()
         srv.settimeout(15)
         conn, _ = srv.accept()
         with conn:
@@ -455,7 +459,12 @@ def test_production_client_sends_top_level_token_frame(
         port = reservation.getsockname()[1]
 
     captured: dict = {}
-    t = threading.Thread(target=_run_fake_bridge, args=(port, captured, _PING_OK), daemon=True)
+    ready = threading.Event()
+    t = threading.Thread(
+        target=_run_fake_bridge,
+        args=(port, captured, _PING_OK, ready),
+        daemon=True,
+    )
 
     monkeypatch.setattr(dc, "try_connect", _fake_tcp_connect)
     monkeypatch.setenv("CW_DAEMON_TRANSPORT", "windows-bridge")
@@ -463,6 +472,9 @@ def test_production_client_sends_top_level_token_frame(
 
     client = dc.UnixDaemonRpcClient(socket_path=f"tcp://127.0.0.1:{port}", timeout=10)
     t.start()
+    # 确定性同步：等 bridge 完成 bind/listen 再连接（CI 慢机器上线程调度
+    # 可能晚于客户端 connect，导致 Connection refused 而非预期行为）。
+    assert ready.wait(timeout=10), "fake bridge 未在 10s 内完成 bind/listen"
     try:
         result = client.call("ping", {})
     finally:
@@ -487,9 +499,10 @@ def test_production_client_missing_token_fail_closed(
 
     # fake bridge 正常监听：连接成功后才走到 token 检查（token 缺失 → fail-closed）
     captured: dict = {}
+    ready = threading.Event()
     t = threading.Thread(
         target=_run_fake_bridge,
-        args=(port, captured, _PING_OK),
+        args=(port, captured, _PING_OK, ready),
         daemon=True,
     )
 
@@ -499,6 +512,10 @@ def test_production_client_missing_token_fail_closed(
 
     client = dc.UnixDaemonRpcClient(socket_path=f"tcp://127.0.0.1:{port}", timeout=10)
     t.start()
+    # 确定性同步：等 bridge 完成 bind/listen 再连接。否则 CI 慢机器上客户端
+    # connect 先失败报 Connection refused，走不到预期的 token 缺失 fail-closed
+    # 分支（DaemonUnavailableError match "bridge token"）。
+    assert ready.wait(timeout=10), "fake bridge 未在 10s 内完成 bind/listen"
     try:
         with pytest.raises(dc.DaemonUnavailableError, match="bridge token"):
             client.call("ping", {})
