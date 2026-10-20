@@ -165,6 +165,11 @@ class GCMixin:
         try:
             matcher = self._build_ignore_matcher()
             ws_id = self._get_active_workspace_id()
+            # 批量分片的 chunk 大小：本方法内所有 IN(...) 分页查询/批量更新共用。
+            # 定义在此处保证 files_to_check 为空时后续 not dry_run 分支的
+            # range(..., batch_size) 也不会触发 NameError（空集仍要求 batch_size
+            # 已绑定——range 求值第三参数先于空区间短路）。
+            batch_size = 500
 
             # 查询所有 active 文件（force=True）或仅 pending 状态（增量 GC）
             # 增量模式：只扫描 status='pending' 的文件（最近 build 新增或更新的）
@@ -194,7 +199,6 @@ class GCMixin:
             already_archived_ids = set()
             if files_to_check:
                 fi_ids = [fi["id"] for fi in files_to_check]
-                batch_size = 500
                 for i in range(0, len(fi_ids), batch_size):
                     chunk = fi_ids[i:i + batch_size]
                     placeholders = ",".join("?" * len(chunk))
