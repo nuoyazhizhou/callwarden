@@ -135,7 +135,7 @@ def main():
     args = ap.parse_args()
 
     print("=" * 72)
-    print(f"T6 性能基准 — 生产 daemon + 真实 callwarden workspace")
+    print("T6 性能基准 — 生产 daemon + 真实 callwarden workspace")
     print(f"iters={args.iters} warmup={args.warmup}")
     print("=" * 72)
 

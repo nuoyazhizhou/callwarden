@@ -188,7 +188,7 @@ def bench_graphstore(db_path: str, snap_path: str) -> dict:
 
     # 4. 内存分解
     mem = stats.get("memory", {})
-    print(f"  内存分解:")
+    print("  内存分解:")
     for k, v in mem.items():
         if isinstance(v, (int, float)) and v > 1024 * 1024:
             print(f"    {k}: {v / 1024 / 1024:.1f}MB")
@@ -337,7 +337,7 @@ def main():
     from callwarden.db.db import CodeGraphDB
 
     # 确保 workspace 存在
-    print(f"=== linux E2E 基准测试 ===")
+    print("=== linux E2E 基准测试 ===")
     print(f"linux root: {LINUX_ROOT}")
     if args.subdir:
         print(f"子目录: {args.subdir}/")
@@ -460,25 +460,25 @@ def _print_comparison_summary(report: dict):
     gs = report.get("graphstore", {})
     cmp = report.get("v3_comparison", {})
 
-    print(f"\n规模:")
+    print("\n规模:")
     print(f"  文件数: {dist.get('file_count', 0)}")
     print(f"  符号数: {dist.get('symbol_count', 0)}")
     print(f"  调用边: {dist.get('call_count', 0)}")
 
     calls_cmp = cmp.get("calls_per_symbol", {})
-    print(f"\n调用边/符号:")
+    print("\n调用边/符号:")
     print(f"  linux 真实: {calls_cmp.get('linux_real', 0)}")
     print(f"  v3 合成:   {calls_cmp.get('v3_synthetic', 0)}")
     print(f"  偏差: {calls_cmp.get('deviation_pct', 0)}%")
 
     gs_timing = gs.get("timing", {})
     gs_mem = gs.get("memory", {})
-    print(f"\nGraphStore 性能:")
+    print("\nGraphStore 性能:")
     print(f"  load_from_sqlite: {gs_timing.get('load_from_sqlite_s', 0)}s (v3 {cmp.get('load_from_sqlite', {}).get('v3_1M_s', 'N/A')}s)")
     print(f"  load_from_file:   {gs_timing.get('load_from_file_s', 0)}s (v3 {cmp.get('load_from_file', {}).get('v3_1M_s', 'N/A')}s)")
     print(f"  GraphStore RSS:   {gs_mem.get('graphstore_rss_mb', 0)}MB")
 
-    print(f"\n符号类型分布:")
+    print("\n符号类型分布:")
     for kind, cnt in list(dist.get("kind_distribution", {}).items())[:5]:
         print(f"  {kind}: {cnt}")
 

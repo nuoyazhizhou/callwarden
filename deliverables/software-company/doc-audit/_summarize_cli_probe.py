@@ -1,4 +1,5 @@
-import json, os
+import json
+import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 first = json.load(open(os.path.join(HERE, "probe_cli_result.json"), encoding="utf-8"))
 recheck = json.load(open(os.path.join(HERE, "recheck_cli_fails_result.json"), encoding="utf-8"))

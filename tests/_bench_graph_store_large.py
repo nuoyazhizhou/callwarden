@@ -442,16 +442,16 @@ def main():
 
         # 1. 生成合成数据库
         db_path = os.path.join(tmpdir, f"synth_{scale_name}.db")
-        print(f"  生成合成数据...")
+        print("  生成合成数据...")
         gen_info = generate_synthetic_db(db_path, n_symbols)
 
         # 2. Rust 加载性能
-        print(f"  Rust GraphStore 加载...")
+        print("  Rust GraphStore 加载...")
         rust_load = bench_rust_load(db_path)
         print(f"    加载时间: {rust_load['load_time_ms']:.1f}ms ({rust_load['symbols']:,} 符号, {rust_load['edges']:,} 边)")
 
         # 3. Rust 查询性能
-        print(f"  Rust 查询性能...")
+        print("  Rust 查询性能...")
         rust_query = bench_rust_queries(db_path)
         print(f"    get_callers  x20: {rust_query['get_callers_x20_avg_us']:,.0f} us avg")
         print(f"    get_callees  x20: {rust_query['get_callees_x20_avg_us']:,.0f} us avg")
@@ -459,7 +459,7 @@ def main():
         print(f"    topo_order:    {rust_query['topo_order_ms']:.1f} ms ({rust_query['topo_order_count']:,} nodes)")
 
         # 4. Python SQL 查询性能（基准）
-        print(f"  Python SQL 查询性能...")
+        print("  Python SQL 查询性能...")
         py_query = bench_python_queries(db_path)
         print(f"    get_callers  x20: {py_query['get_callers_x20_avg_us']:,.0f} us avg")
         print(f"    get_callees  x20: {py_query['get_callees_x20_avg_us']:,.0f} us avg")
@@ -470,7 +470,7 @@ def main():
         callees_speedup = py_query["get_callees_x20_avg_us"] / rust_query["get_callees_x20_avg_us"] if rust_query["get_callees_x20_avg_us"] > 0 else 0
         search_speedup = py_query["search_symbols_x5_avg_ms"] / rust_query["search_symbols_x5_avg_ms"] if rust_query["search_symbols_x5_avg_ms"] > 0 else 0
 
-        print(f"  加速比:")
+        print("  加速比:")
         print(f"    get_callers:    {callers_speedup:.2f}x")
         print(f"    get_callees:    {callees_speedup:.2f}x")
         print(f"    search_symbols: {search_speedup:.2f}x")

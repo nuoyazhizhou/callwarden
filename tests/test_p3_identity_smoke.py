@@ -64,7 +64,7 @@ def main():
             # 4. validate_action_identity
             ok, result = db.validate_action_identity(identity, require_role="implementer")
             assert ok, f"validate_action_identity 失败: {result}"
-            print(f"[4/8] validate_action_identity 通过")
+            print("[4/8] validate_action_identity 通过")
 
             # 5. validate_session_separation
             reviewer_identity = {
@@ -75,7 +75,7 @@ def main():
             }
             ok, result = db.validate_session_separation(reviewer_identity, identity)
             assert ok, f"validate_session_separation 失败: {result}"
-            print(f"[5/8] validate_session_separation 通过")
+            print("[5/8] validate_session_separation 通过")
 
             # 6. issue_attestation
             ok, result = db.issue_attestation(

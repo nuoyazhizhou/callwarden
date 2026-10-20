@@ -92,7 +92,7 @@ def build_markdown_plan(count, lineage):
         lines.append(f"## A″-{i:02d}: P0-L 后续 remediation 子任务 {i}")
         lines.append("")
         lines.append("- action: fix_defect")
-        lines.append(f"- target: rust_ext/src/daemon/")
+        lines.append("- target: rust_ext/src/daemon/")
         lines.append(
             f"- role_contract_lineage: {lineage['role_contract_lineage_id']}"
         )

@@ -561,7 +561,7 @@ def generate_report(all_results: Dict, runs: int, mismatch_samples: Optional[Dic
     lines = []
     lines.append("# A/B 对比评估：cw CLI vs Grep\n")
     lines.append(f"测试时间：{time.strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"测试对象：callwarden 自身（6113 符号，10079 调用边）")
+    lines.append("测试对象：callwarden 自身（6113 符号，10079 调用边）")
     lines.append(f"重复次数：{runs} 次（取中位数）\n")
 
     # 总览表
@@ -745,7 +745,7 @@ def main():
                         help="输出报告路径")
     args = parser.parse_args()
 
-    print(f"A/B 对比评估：cw CLI vs Grep")
+    print("A/B 对比评估：cw CLI vs Grep")
     print(f"测试函数数：{min(args.funcs, len(TEST_FUNCTIONS))}")
     print(f"场景数：{len(SCENARIOS)}")
     print(f"重复次数：{args.runs}")

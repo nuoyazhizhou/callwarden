@@ -204,7 +204,7 @@ def _bench_rust(files: List[Dict[str, Any]], db_path: str) -> float:
 
 def _run_bench(n_files: int = 200, n_runs: int = 5) -> None:
     """运行性能压测"""
-    print(f"===== Phase 2-6-3 批量注册性能压测 =====")
+    print("===== Phase 2-6-3 批量注册性能压测 =====")
     print(f"文件数: {n_files}")
     print(f"重复次数: {n_runs}")
     print()

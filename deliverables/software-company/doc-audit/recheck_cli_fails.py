@@ -4,7 +4,11 @@
 首轮 probe_cli_cmds.py 并发/连续跑时 17 个命令记 TIMEOUT。但单独跑 cw status 仅 0.47s。
 本脚本逐个串行跑(每个给 60s),拿真实行为,区分:真挂起 vs 首轮假超时。
 """
-import json, os, subprocess, sys, time
+import json
+import os
+import subprocess
+import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))

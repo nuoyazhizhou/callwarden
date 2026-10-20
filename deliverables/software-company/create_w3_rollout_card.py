@@ -6,7 +6,10 @@
 真残留仅 9（分类见卡 step0）。C-02(§W9) 属独立 rust_ext 产品代码卡，不在本卡。
 """
 from __future__ import annotations
-import hashlib, json, os, sys
+import hashlib
+import json
+import os
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

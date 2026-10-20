@@ -541,14 +541,14 @@ def main():
             only_arg = sys.argv[i + 1]
     only_set = set(only_arg.split(",")) if only_arg else None
 
-    print(f"=" * 70)
+    print("=" * 70)
     print(f"  入库策略对比测试 ({target_symbols:,} 符号)")
-    print(f"=" * 70)
+    print("=" * 70)
 
     tmp_dir = tempfile.mkdtemp(prefix="cw_strategies_")
     try:
         # 1. 生成数据（共享）
-        print(f"\n[0/5] 生成合成数据到内存...", flush=True)
+        print("\n[0/5] 生成合成数据到内存...", flush=True)
         t0 = time.perf_counter()
         files, symbols, calls = generate_data(target_symbols)
         t_gen = time.perf_counter() - t0
@@ -559,7 +559,7 @@ def main():
 
         # 2. 基线（原方式）
         if only_set is None or "baseline" in only_set:
-            print(f"\n[1/6] 基线（先建索引 + 每批 commit）...", flush=True)
+            print("\n[1/6] 基线（先建索引 + 每批 commit）...", flush=True)
             t0 = time.perf_counter()
             results["baseline"] = strategy_baseline(
                 os.path.join(tmp_dir, "baseline.db"), files, symbols, calls
@@ -569,7 +569,7 @@ def main():
 
         # 3. 方案 A
         if only_set is None or "A" in only_set:
-            print(f"\n[2/6] 方案 A（单线程 + 最后建索引）...", flush=True)
+            print("\n[2/6] 方案 A（单线程 + 最后建索引）...", flush=True)
             t0 = time.perf_counter()
             results["A"] = strategy_a(
                 os.path.join(tmp_dir, "strategy_a.db"), files, symbols, calls
@@ -579,7 +579,7 @@ def main():
 
         # 3.5 方案 A+checkpoint（容错版）
         if only_set is None or "A_ckpt" in only_set:
-            print(f"\n[2.5/6] 方案 A+checkpoint（单线程 + 每10批commit + 最后建索引）...", flush=True)
+            print("\n[2.5/6] 方案 A+checkpoint（单线程 + 每10批commit + 最后建索引）...", flush=True)
             t0 = time.perf_counter()
             results["A_ckpt"] = strategy_a_checkpoint(
                 os.path.join(tmp_dir, "strategy_a_ckpt.db"), files, symbols, calls
@@ -589,7 +589,7 @@ def main():
 
         # 4. 方案 B（4 workers）
         if only_set is None or "B_4w" in only_set:
-            print(f"\n[3/5] 方案 B（4 workers 并行 + ATTACH 合并）...", flush=True)
+            print("\n[3/5] 方案 B（4 workers 并行 + ATTACH 合并）...", flush=True)
             t0 = time.perf_counter()
             results["B_4w"] = strategy_b(
                 os.path.join(tmp_dir, "strategy_b_4w.db"), files, symbols, calls, n_workers=4
@@ -599,7 +599,7 @@ def main():
 
         # 5. 方案 B（8 workers）
         if only_set is None or "B_8w" in only_set:
-            print(f"\n[4/5] 方案 B（8 workers 并行 + ATTACH 合并）...", flush=True)
+            print("\n[4/5] 方案 B（8 workers 并行 + ATTACH 合并）...", flush=True)
             t0 = time.perf_counter()
             results["B_8w"] = strategy_b(
                 os.path.join(tmp_dir, "strategy_b_8w.db"), files, symbols, calls, n_workers=8
@@ -609,7 +609,7 @@ def main():
 
         # 6. 方案 C
         if only_set is None or "C" in only_set:
-            print(f"\n[5/5] 方案 C（内存批量 + 单次大写入 + 最后建索引）...", flush=True)
+            print("\n[5/5] 方案 C（内存批量 + 单次大写入 + 最后建索引）...", flush=True)
             t0 = time.perf_counter()
             results["C"] = strategy_c(
                 os.path.join(tmp_dir, "strategy_c.db"), files, symbols, calls

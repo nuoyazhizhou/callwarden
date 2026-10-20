@@ -85,7 +85,7 @@ def generate_synthetic_repo(root: str, num_files: int = 5000, funcs_per_file: in
             else:
                 # 最后一个文件的最后一个函数
                 lines.append(f"def {fn_name}(x):")
-                lines.append(f"    return x")
+                lines.append("    return x")
                 lines.append("")
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -168,7 +168,7 @@ class TestPerf10MSymbols:
 
     def test_small_scale_validation(self, small_repo):
         """小规模验证：确保脚本正确运行"""
-        print(f"\n=== 小规模验证 ===")
+        print("\n=== 小规模验证 ===")
         print(f"仓库路径: {small_repo}")
 
         db = _setup_db(small_repo)
@@ -249,12 +249,12 @@ class TestPerf10MSymbols:
         repo = str(repo_dir)
 
         print(f"\n{'='*60}")
-        print(f"千万级符号性能测试")
+        print("千万级符号性能测试")
         print(f"目标: {PERF_TARGET_SYMBOLS:,} 符号 ({PERF_NUM_FILES} 文件 × {PERF_FUNCS_PER_FILE} 函数/文件)")
         print(f"{'='*60}")
 
         # ========== 0. 生成合成代码 ==========
-        print(f"\n--- 0. 生成合成代码 ---")
+        print("\n--- 0. 生成合成代码 ---")
         gen_start = time.time()
         generate_synthetic_repo(repo, PERF_NUM_FILES, PERF_FUNCS_PER_FILE)
         gen_elapsed = time.time() - gen_start
@@ -269,7 +269,7 @@ class TestPerf10MSymbols:
         print(f"磁盘占用: {_format_bytes(total_size)}")
 
         # ========== 1. build_full_graph ==========
-        print(f"\n--- 1. build_full_graph ---")
+        print("\n--- 1. build_full_graph ---")
         rss_before = _get_rss_mb()
         print(f"起始 RSS: {rss_before:.0f} MB")
 
@@ -289,7 +289,7 @@ class TestPerf10MSymbols:
         }
 
         # ========== 2. get_stats ==========
-        print(f"\n--- 2. get_stats ---")
+        print("\n--- 2. get_stats ---")
         t0 = time.time()
         stats = db.get_stats()
         stats_elapsed = time.time() - t0
@@ -304,7 +304,7 @@ class TestPerf10MSymbols:
         }
 
         # ========== 3. search_symbols ==========
-        print(f"\n--- 3. search_symbols ---")
+        print("\n--- 3. search_symbols ---")
         search_target = f"fn_{PERF_NUM_FILES // 2}_{PERF_FUNCS_PER_FILE // 2:06d}"
         t0 = time.time()
         search_results = db.search_symbols(search_target)
@@ -319,8 +319,8 @@ class TestPerf10MSymbols:
         }
 
         # ========== 4. get_callers ==========
-        print(f"\n--- 4. get_callers ---")
-        callers_target = f"fn_0_000002"
+        print("\n--- 4. get_callers ---")
+        callers_target = "fn_0_000002"
         t0 = time.time()
         callers = db.get_callers(callers_target)
         callers_elapsed = time.time() - t0
@@ -334,8 +334,8 @@ class TestPerf10MSymbols:
         }
 
         # ========== 5. get_callees ==========
-        print(f"\n--- 5. get_callees ---")
-        callees_target = f"fn_0_000001"
+        print("\n--- 5. get_callees ---")
+        callees_target = "fn_0_000001"
         t0 = time.time()
         callees = db.get_callees(callees_target)
         callees_elapsed = time.time() - t0
@@ -349,9 +349,9 @@ class TestPerf10MSymbols:
         }
 
         # ========== 6. get_call_chain_up（等价于 MCP get_impact）==========
-        print(f"\n--- 6. get_call_chain_up (MCP get_impact) ---")
+        print("\n--- 6. get_call_chain_up (MCP get_impact) ---")
         # 从 search_symbols 结果中拿到真实 qualified_name，避免 QN 格式不匹配
-        chain_up_target = f"fn_0_000010"
+        chain_up_target = "fn_0_000010"
         try:
             chain_up_results = db.search_symbols(chain_up_target) or []
             if chain_up_results:
@@ -374,8 +374,8 @@ class TestPerf10MSymbols:
         }
 
         # ========== 7. get_call_chain_down ==========
-        print(f"\n--- 7. get_call_chain_down ---")
-        chain_down_target = f"fn_0_000001"
+        print("\n--- 7. get_call_chain_down ---")
+        chain_down_target = "fn_0_000001"
         try:
             chain_down_results = db.search_symbols(chain_down_target) or []
             if chain_down_results:
@@ -398,9 +398,9 @@ class TestPerf10MSymbols:
         }
 
         # ========== 8. blast_radius（变更影响半径）==========
-        print(f"\n--- 8. blast_radius ---")
+        print("\n--- 8. blast_radius ---")
         # 先查询目标符号的 symbol_hash（按短名 search 后取 QN）
-        blast_target_qname = f"fn_0_000005"
+        blast_target_qname = "fn_0_000005"
         blast_symbol_hash = ""
         try:
             blast_results = db.search_symbols(blast_target_qname) or []
@@ -443,7 +443,7 @@ class TestPerf10MSymbols:
             results["metrics"]["blast_radius"] = {"skipped": True, "reason": "symbol not found"}
 
         # ========== 9. detect_clones（克隆检测，限定 file_filter 避免 O(N²)）==========
-        print(f"\n--- 9. detect_clones ---")
+        print("\n--- 9. detect_clones ---")
         # 限定单个文件，避免大规模下 O(N²) 爆炸
         clone_file_filter = f"mod_{PERF_NUM_FILES // 2:06d}.py"
         t0 = time.time()
@@ -470,7 +470,7 @@ class TestPerf10MSymbols:
             results["metrics"]["detect_clones"] = {"error": str(e), "elapsed_s": round(clone_elapsed, 3)}
 
         # ========== 10. SQLite 数据库文件大小 ==========
-        print(f"\n--- 10. SQLite 数据库文件大小 ---")
+        print("\n--- 10. SQLite 数据库文件大小 ---")
         db_path = db.db_path if hasattr(db, 'db_path') else getattr(db, '_db_path', '')
         db_size_mb = 0.0
         if db_path and os.path.exists(db_path):

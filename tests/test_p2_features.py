@@ -168,7 +168,7 @@ def test_f5_safe_edit():
     # 查询统计
     stats = db.get_edit_stats(time_window="30d")
     assert isinstance(stats, dict), "应返回字典"
-    print(f"PASS F5.6: get_edit_stats 返回正确结构")
+    print("PASS F5.6: get_edit_stats 返回正确结构")
     print("PASS F5: 安全文件编辑完成\n")
 
 

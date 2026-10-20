@@ -267,7 +267,7 @@ def run_e2e(db_path: str, target_symbols: int, commit_every: int = 10):
     # 查询 1：通过 qualified_name 索引查找
     row = conn.execute(
         "SELECT * FROM symbols WHERE qualified_name = ? LIMIT 1",
-        (f"module_0.func_0",)
+        ("module_0.func_0",)
     ).fetchone()
     assert row is not None, "索引验证失败：无法通过 qualified_name 查找符号"
 
@@ -331,19 +331,19 @@ def main():
                                f"_e2e_{args.symbols // 1000000}m.db")
 
     print(f"\n{'='*60}")
-    print(f"千万级端到端压测：正式代码 P12 优化验证")
+    print("千万级端到端压测：正式代码 P12 优化验证")
     print(f"{'='*60}")
     print(f"  目标符号数：{args.symbols:,}")
     print(f"  数据库路径：{db_path}")
     print(f"  commit 频率：每 {args.commit_every} 批")
-    print(f"  schema：正式 SCHEMA_TABLES_SQL + SCHEMA_INDEXES_SQL")
-    print(f"  PRAGMA：cache_size=-64000 (64MB), mmap=256MB, WAL, synch=NORMAL")
+    print("  schema：正式 SCHEMA_TABLES_SQL + SCHEMA_INDEXES_SQL")
+    print("  PRAGMA：cache_size=-64000 (64MB), mmap=256MB, WAL, synch=NORMAL")
     print()
 
     result = run_e2e(db_path, args.symbols, args.commit_every)
 
     print(f"\n{'='*60}")
-    print(f"压测结果")
+    print("压测结果")
     print(f"{'='*60}")
     t = result["timing"]
     print(f"  数据生成      : {t['gen_s']:8.2f}s")
@@ -352,18 +352,18 @@ def main():
     print(f"  建索引+触发器 : {t['index_s']:8.2f}s  (P12: 延迟建索引)")
     print(f"  WAL checkpoint: {t['checkpoint_s']:8.2f}s")
     print(f"  正确性验证    : {t['verify_s']:8.4f}s")
-    print(f"  ─────────────────────────────")
+    print("  ─────────────────────────────")
     print(f"  总耗时        : {t['total_s']:8.2f}s")
     print()
-    print(f"  数据量：")
+    print("  数据量：")
     print(f"    文件     : {result['n_files']:,}")
     print(f"    符号     : {result['actual_symbols']:,}")
     print(f"    调用边   : {result['actual_calls']:,}")
-    print(f"  存储：")
+    print("  存储：")
     print(f"    DB 大小  : {result['db_size_mb']:,.1f} MB")
     print(f"    WAL 大小 : {result['wal_size_mb']:,.1f} MB")
     print(f"    SHM 大小 : {result['shm_size_mb']:,.1f} MB")
-    print(f"  索引/触发器：")
+    print("  索引/触发器：")
     print(f"    建索引前 : {result['indexes_before']} indexes, {result['triggers_before']} triggers")
     print(f"    建索引后 : {result['indexes_after']} indexes, {result['triggers_after']} triggers")
     print()

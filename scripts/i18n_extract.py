@@ -362,7 +362,7 @@ def main():
 
     # 输出前 10 条待处理的样本
     todo_items = [r for r in results if r["status"] == "todo"]
-    print(f"📝 前 10 条待处理样本:")
+    print("📝 前 10 条待处理样本:")
     for item in todo_items[:10]:
         text_preview = item["text"][:70]
         vars_str = f" vars={item['var_names']}" if item["var_names"] else ""

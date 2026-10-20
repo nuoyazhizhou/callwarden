@@ -59,7 +59,7 @@ class TestFnv1a:
         script = tmp_path / "check_fnv.py"
         script.write_text(
             "from callwarden.db.db_clone_detection import _fnv1a_32\n"
-            f"print(_fnv1a_32(b'test_token_123'))\n"
+            "print(_fnv1a_32(b'test_token_123'))\n"
         )
         # 主进程计算
         main_val = _fnv1a_32(b"test_token_123")
@@ -108,7 +108,7 @@ class TestStableTokenHash:
         script = tmp_path / "check_token.py"
         script.write_text(
             "from callwarden.db.db_clone_detection import _stable_token_hash\n"
-            f"print(_stable_token_hash('my_function_token'))\n"
+            "print(_stable_token_hash('my_function_token'))\n"
         )
         main_val = _stable_token_hash("my_function_token")
         result = subprocess.run(

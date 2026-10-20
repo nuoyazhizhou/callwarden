@@ -514,7 +514,7 @@ def test_eight_sources_claim_single_winner_via_bridge(authority):
 
     # 3. 断言 A：0 个 'database is locked'
     for out_p, err_p in cli_results:
-        assert "database is locked" not in (out_p + err_p), f"CLI 子进程出现数据库锁冲突"
+        assert "database is locked" not in (out_p + err_p), "CLI 子进程出现数据库锁冲突"
     for status, msg in mcp_results:
         assert "database is locked" not in msg, f"MCP 调用出现数据库锁冲突: {msg}"
 

@@ -64,20 +64,20 @@ def generate_synthetic_c_repo(root: str, num_files: int = 100, funcs_per_file: i
                 callee = f"fn_{file_idx}_{fn_idx + 1:06d}"
                 lines.append(f"int {fn_name}(int x) {{")
                 lines.append(f"    return {callee}(x + 1);")
-                lines.append(f"}}")
+                lines.append("}")
                 lines.append("")
             elif file_idx + 1 < num_files:
                 # 最后一个函数调用下一个文件的第一个函数
                 callee = f"fn_{file_idx + 1:06d}_000000"
                 lines.append(f"int {fn_name}(int x) {{")
                 lines.append(f"    return {callee}(x + 1);")
-                lines.append(f"}}")
+                lines.append("}")
                 lines.append("")
             else:
                 # 最后一个文件的最后一个函数
                 lines.append(f"int {fn_name}(int x) {{")
-                lines.append(f"    return x;")
-                lines.append(f"}}")
+                lines.append("    return x;")
+                lines.append("}")
                 lines.append("")
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -248,7 +248,7 @@ def bench_python_path(repo: str):
     print(f"  db_size: {db_size_mb:.2f} MB")
     print(f"  RSS: {rss_before:.1f} → {rss_after:.1f} MB (+{rss_after - rss_before:.1f} MB)")
     if stage_t:
-        print(f"  阶段分解:")
+        print("  阶段分解:")
         for k in ["register", "parse", "symbol_write", "call_resolve_write", "depth", "commit"]:
             v = stage_t.get(k, 0)
             if isinstance(v, (int, float)) and v > 0.001:
@@ -296,14 +296,14 @@ def main():
     funcs_per_file = int(os.environ.get("F11_FUNCS_PER_FILE", "10"))
     num_threads = int(os.environ.get("F11_THREADS", "4"))
 
-    print(f"F11 方案 A 验证基准")
+    print("F11 方案 A 验证基准")
     print(f"规模: {num_files} 文件 × {funcs_per_file} 函数 = {num_files * funcs_per_file:,} 符号")
     print(f"线程数: {num_threads}")
 
     # 准备合成 C 代码
     tmpdir = tempfile.mkdtemp(prefix="cw_f11_")
     repo = os.path.join(tmpdir, "synth_repo")
-    print(f"\n[0] 生成合成 C 代码...")
+    print("\n[0] 生成合成 C 代码...")
     generate_synthetic_c_repo(repo, num_files, funcs_per_file)
 
     # 路径 A: Rust

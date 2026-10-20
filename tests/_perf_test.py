@@ -253,10 +253,10 @@ def _print_stage_baseline_comparison(repo_name: str, timings: dict):
     baseline = _load_perf_baseline()
     repo_baseline = baseline.get(repo_name, {}).get("stage_timings", {})
     if not repo_baseline:
-        print(f"  (无基线对比，运行 --update-baseline 创建基线)")
+        print("  (无基线对比，运行 --update-baseline 创建基线)")
         return
 
-    print(f"\n  ── 基线对比 ──")
+    print("\n  ── 基线对比 ──")
     has_regression = False
     for stage, current_val in timings.items():
         if stage in ("files_total", "files_parsed", "files_unchanged"):
@@ -272,9 +272,9 @@ def _print_stage_baseline_comparison(repo_name: str, timings: dict):
             has_regression = True
 
     if has_regression:
-        print(f"\n  ⚠ 检测到性能回归！请检查上述标记的阶段。")
-        print(f"    常见原因：热循环 SQL 回潮（如 _write_calls_db 逐条 INSERT）、")
-        print(f"    FTS 触发器未禁用、_from_db 未跳过重写等。")
+        print("\n  ⚠ 检测到性能回归！请检查上述标记的阶段。")
+        print("    常见原因：热循环 SQL 回潮（如 _write_calls_db 逐条 INSERT）、")
+        print("    FTS 触发器未禁用、_from_db 未跳过重写等。")
 
 
 def _update_perf_baseline(results: list):
@@ -386,10 +386,10 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
         write_ignore_file(repo_root, cfg["ignore_rules"])
         result["steps"].append({"step": "write_ignore", "rules_count": len(cfg["ignore_rules"])})
     else:
-        print(f"\n[1/6] 无需 .callwardenignore（规模小）")
+        print("\n[1/6] 无需 .callwardenignore（规模小）")
 
     # 2. 打开 DB + 注册/激活 workspace
-    print(f"[2/6] 打开 DB + 注册 workspace...")
+    print("[2/6] 打开 DB + 注册 workspace...")
     db_size_before = get_db_size_mb(db_path)
     print(f"  DB 初始大小: {db_size_before:.2f} MB")
 
@@ -400,7 +400,7 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
 
     # 3. refresh-all（核心性能指标）
     if not skip_refresh:
-        print(f"[3/6] refresh-all（构建代码图谱）...")
+        print("[3/6] refresh-all（构建代码图谱）...")
         # 确保忽略规则被加载：CodeGraphDB 在构造时已读取 .callwardenignore
         # build_full_graph 会自动扫描文件
         try:
@@ -425,10 +425,10 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
             print(f"  refresh-all 失败: {e}")
             result["refresh"] = {"elapsed_sec": 0, "error": str(e)[:500]}
     else:
-        print(f"[3/6] 跳过 refresh-all（使用已有数据）")
+        print("[3/6] 跳过 refresh-all（使用已有数据）")
 
     # 4. 统计信息
-    print(f"[4/6] 获取统计信息...")
+    print("[4/6] 获取统计信息...")
     try:
         stats, elapsed = timed(db.get_stats)
         symbols = stats.get("total_symbols", 0)
@@ -447,7 +447,7 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
         result["stats"] = {"error": str(e)[:300]}
 
     # 5. 核心查询性能测试
-    print(f"[5/6] 核心查询性能测试...")
+    print("[5/6] 核心查询性能测试...")
     queries = {}
 
     # 5a. search（模糊搜索）
@@ -485,7 +485,7 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
             print(f"  get_callers 失败: {e}")
             queries["get_callers"] = {"error": str(e)[:300]}
     else:
-        print(f"  get_callers 跳过（无可用符号）")
+        print("  get_callers 跳过（无可用符号）")
 
     # 5c. get_callees（某符号调用谁）
     if first_symbol:
@@ -501,7 +501,7 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
             print(f"  get_callees 失败: {e}")
             queries["get_callees"] = {"error": str(e)[:300]}
     else:
-        print(f"  get_callees 跳过（无可用符号）")
+        print("  get_callees 跳过（无可用符号）")
 
     # 5d. get_topological_order（拓扑排序，测试全图遍历性能）
     try:
@@ -516,10 +516,10 @@ def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool 
 
     # 6. clone detect（on-demand，不影响 refresh 性能；默认跳过，用 --clone 显式开启）
     if skip_clone:
-        print(f"[6/6] clone detect（跳过，使用 --clone 开启）")
+        print("[6/6] clone detect（跳过，使用 --clone 开启）")
         queries["clone_detect"] = {"skipped": True}
     else:
-        print(f"[6/6] clone detect（克隆检测）...")
+        print("[6/6] clone detect（克隆检测）...")
         try:
             clones, elapsed = timed(db.detect_clones, min_lines=5, similarity_threshold=0.8)
             total_pairs = clones.get("total_pairs", 0)

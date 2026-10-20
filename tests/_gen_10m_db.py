@@ -136,7 +136,7 @@ def main():
     print()
 
     # 1. 用 CodeGraphDB 初始化 schema
-    print(f'[1/5] 初始化 DB schema...')
+    print('[1/5] 初始化 DB schema...')
     t0 = time.perf_counter()
     db = CodeGraphDB(db_path=db_path, workspace_root=f'tests/_gen/{LABEL}')
     ws_id = db.register_workspace(LABEL, f'tests/_gen/{LABEL}')
@@ -145,7 +145,7 @@ def main():
     print(f'  schema 初始化完成 ({time.perf_counter() - t0:.1f}s)')
 
     # 2. 直接批量 INSERT file_instances + symbols
-    print(f'[2/5] 批量 INSERT file_instances + symbols...')
+    print('[2/5] 批量 INSERT file_instances + symbols...')
     t0 = time.perf_counter()
     conn = sqlite3.connect(db_path)
     conn.execute('BEGIN')
@@ -216,7 +216,7 @@ def main():
     print(f'  完成: {total_files_inserted:,} 文件, {total_sym_inserted:,} 符号 ({time.perf_counter() - t0:.1f}s)')
 
     # 3. 构建 file_local name -> id 映射（用于生成 calls）
-    print(f'[3/5] 构建 file-local 符号映射...')
+    print('[3/5] 构建 file-local 符号映射...')
     t0 = time.perf_counter()
     conn.row_factory = sqlite3.Row
     cur = conn.execute(
@@ -231,7 +231,7 @@ def main():
     print(f'  加载 {len(file_to_syms):,} 文件的符号映射 ({time.perf_counter() - t0:.1f}s)')
 
     # 4. 生成 + INSERT calls
-    print(f'[4/5] 生成 + 批量 INSERT calls...')
+    print('[4/5] 生成 + 批量 INSERT calls...')
     t0 = time.perf_counter()
     conn.execute('BEGIN')
     sql = """INSERT INTO calls
@@ -268,7 +268,7 @@ def main():
     print(f'  完成: {total_calls:,} calls ({time.perf_counter() - t0:.1f}s)')
 
     # 5. 创建索引 + VACUUM
-    print(f'[5/5] 创建索引 + VACUUM...')
+    print('[5/5] 创建索引 + VACUUM...')
     t0 = time.perf_counter()
     conn.execute('CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name)')
@@ -282,14 +282,14 @@ def main():
 
     print()
     print('=' * 60)
-    print(f'10M DB 生成完成:')
+    print('10M DB 生成完成:')
     print(f'  files: {total_files_inserted:,}')
     print(f'  symbols: {total_sym_inserted:,}')
     print(f'  calls: {total_calls:,}')
     print(f'  DB size: {db_size:.2f} MB')
     print('=' * 60)
     print()
-    print(f'下一步: python tests/_perf_scale.py --root tests/_gen/10m --label 10m --skip-refresh')
+    print('下一步: python tests/_perf_scale.py --root tests/_gen/10m --label 10m --skip-refresh')
 
 
 if __name__ == '__main__':

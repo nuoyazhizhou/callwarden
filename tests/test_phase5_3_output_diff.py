@@ -150,13 +150,13 @@ def test_d1_colorize():
 
     test_cases = [
         # (text, color, use_color, expected)
-        ("hello", "red", True, f"\033[31mhello\033[0m"),      # D1.1
+        ("hello", "red", True, "\033[31mhello\033[0m"),      # D1.1
         ("hello", "red", False, "hello"),                      # D1.2
         ("hello", "unknown", True, "hello"),                   # D1.3
-        ("", "red", True, f"\033[31m\033[0m"),                 # D1.4
-        ("test", "green", True, f"\033[32mtest\033[0m"),
-        ("test", "bold", True, f"\033[1mtest\033[0m"),
-        ("test", "bright_cyan", True, f"\033[96mtest\033[0m"),
+        ("", "red", True, "\033[31m\033[0m"),                 # D1.4
+        ("test", "green", True, "\033[32mtest\033[0m"),
+        ("test", "bold", True, "\033[1mtest\033[0m"),
+        ("test", "bright_cyan", True, "\033[96mtest\033[0m"),
     ]
 
     all_match = True
@@ -217,12 +217,12 @@ def test_d3_predefined_messages():
 
     test_cases = [
         # (function_name, msg, use_color, expected)
-        ("success", "done", True, f"\033[32m\u2713 done\033[0m"),    # D3.1
-        ("error", "fail", True, f"\033[31m\u2717 fail\033[0m"),     # D3.2
-        ("warning", "warn", True, f"\033[33m\u26a0 warn\033[0m"),   # D3.3
-        ("info", "info", True, f"\033[34m\u2139 info\033[0m"),       # D3.4
-        ("dim", "dim", True, f"\033[2mdim\033[0m"),                 # D3.5
-        ("bold", "bold", True, f"\033[1mbold\033[0m"),               # D3.6
+        ("success", "done", True, "\033[32m\u2713 done\033[0m"),    # D3.1
+        ("error", "fail", True, "\033[31m\u2717 fail\033[0m"),     # D3.2
+        ("warning", "warn", True, "\033[33m\u26a0 warn\033[0m"),   # D3.3
+        ("info", "info", True, "\033[34m\u2139 info\033[0m"),       # D3.4
+        ("dim", "dim", True, "\033[2mdim\033[0m"),                 # D3.5
+        ("bold", "bold", True, "\033[1mbold\033[0m"),               # D3.6
         ("success", "done", False, "\u2713 done"),                   # D3.7
     ]
 

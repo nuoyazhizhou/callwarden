@@ -362,7 +362,7 @@ def main():
     print(f"\n[done] processed {processed} new task(s) this run; total tracked={len(state)- (1 if TRACKER_KEY in state else 0)}")
     # 更新本地可读状态
     with open(STATUS_MD, "w", encoding="utf-8") as f:
-        f.write(f"# reviewer_blocked 修正进度（本地可读镜像，非权威；权威在 cw tracker + .rb_progress.json）\n\n")
+        f.write("# reviewer_blocked 修正进度（本地可读镜像，非权威；权威在 cw tracker + .rb_progress.json）\n\n")
         f.write(f"更新时间: {time.strftime('%Y-%m-%d %H:%M:%S')}  模式: {mode}\n\n")
         for tid, info in state.items():
             if tid == TRACKER_KEY:

@@ -58,7 +58,7 @@ def build_card(group_key: str, client_files: list[str], methods: list[dict]) -> 
             "action": "port_rust_handler",
             "target_file": RUST_TARGETS,
             "check_items": (
-                f"逐方法复刻 Python 真相源 SQL 语义（server/tools/ + db/）；"
+                "逐方法复刻 Python 真相源 SQL 语义（server/tools/ + db/）；"
                 "dispatch handle_collab_rpc 加 arm + capability-list；"
                 "http_server capability 行 backend 改 rust_native"
             ),

@@ -269,7 +269,7 @@ def main():
     print(f"环境：SQLite {env['sqlite_version']}, Python {env['python_version']}")
     print(f"      RAM {env.get('ram_total_gb', '?')}GB, available {env.get('ram_available_mb', '?')}MB")
     print(f"      Disk free {env.get('disk_free_gb', '?')}GB")
-    print(f"参数：cache=256MB, mmap=256MB, page=8KB, temp=MEMORY, mode=deferred")
+    print("参数：cache=256MB, mmap=256MB, page=8KB, temp=MEMORY, mode=deferred")
     print(f"规模：{args.symbols:,} 符号 × {args.runs} 次")
     print()
 
@@ -311,7 +311,7 @@ def main():
             idx_list = sqlite_result.get("index_timings") or []
             slowest = sorted(idx_list, key=lambda x: -x.get("time_s", 0))[:5]
             if slowest:
-                print(f"  最慢 5 个索引:")
+                print("  最慢 5 个索引:")
                 for idx in slowest:
                     print(f"    {idx['name']}: {idx['time_s']}s")
             print(f"  SQLite 阶段耗时：{time.time() - t_start:.1f}s")
@@ -331,7 +331,7 @@ def main():
                       f"(snap={gs_result['storage']['snap_size_mb']}MB)")
                 print(f"  load_from_file: {t['load_from_file_s']}s")
                 print(f"  GraphStore RSS: {m['graphstore_rss_mb']}MB")
-                print(f"  查询延迟（ms/op）:")
+                print("  查询延迟（ms/op）:")
                 print(f"    get_symbol:    GS={q['gs_get_symbol']:.3f}  SQL={q['sql_get_symbol']:.3f}  "
                       f"加速={q['sql_get_symbol']/max(q['gs_get_symbol'],0.001):.1f}x")
                 print(f"    get_callers:   GS={q['gs_get_callers']:.3f}  SQL={q['sql_get_callers']:.3f}  "
@@ -343,7 +343,7 @@ def main():
                 # 内存分解 Top 5
                 mb = gs_result["memory_breakdown_mb"]
                 top5 = sorted(mb.items(), key=lambda x: -x[1])[:5]
-                print(f"  内存 Top 5:")
+                print("  内存 Top 5:")
                 for k, v in top5:
                     print(f"    {k}: {v}MB")
                 print(f"  GraphStore 阶段耗时：{time.time() - t_start:.1f}s")
@@ -389,7 +389,7 @@ def main():
 
     # SQLite 汇总
     if not args.skip_sqlite:
-        print(f"\nSQLite 构建：")
+        print("\nSQLite 构建：")
         print(f"  schema_s:      {med('timing.schema_s', 'sqlite'):.2f}s")
         print(f"  insert_s:      {med('timing.insert_s', 'sqlite'):.2f}s")
         print(f"  index_s:       {med('timing.index_s', 'sqlite'):.2f}s")
@@ -401,14 +401,14 @@ def main():
 
     # GraphStore 汇总
     if not args.skip_graphstore:
-        print(f"\nGraphStore：")
+        print("\nGraphStore：")
         print(f"  load_from_sqlite: {med('timing.load_from_sqlite_s', 'graphstore'):.2f}s")
         print(f"  dump_to_file:     {med('timing.dump_to_file_s', 'graphstore'):.2f}s")
         print(f"  load_from_file:   {med('timing.load_from_file_s', 'graphstore'):.2f}s")
         print(f"  snap_size:        {med('storage.snap_size_mb', 'graphstore'):.1f}MB")
         print(f"  GraphStore RSS:   {med('memory.graphstore_rss_mb', 'graphstore'):.1f}MB")
 
-        print(f"\n查询延迟（ms/op 中位数）:")
+        print("\n查询延迟（ms/op 中位数）:")
         print(f"  {'查询':<22} {'GraphStore':>12} {'SQL':>12} {'加速比':>10}")
         print(f"  {'-'*58}")
         for gs_key, sql_key, qname in [

@@ -8,7 +8,14 @@
 输出 JSON 报告到 tests/_bench_report.json
 """
 from __future__ import annotations
-import os, sys, time, json, tempfile, shutil, io, re
+import os
+import sys
+import time
+import json
+import tempfile
+import shutil
+import io
+import re
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
@@ -41,7 +48,8 @@ def _run_build(db, name, root):
 
 def _debug_one(root):
     """调试单个项目：打印 workspace_root 和扫描结果"""
-    import tempfile, os
+    import tempfile
+    import os
     db = CodeGraphDB(db_path=os.path.join(tempfile.gettempdir(), "_debug.db"), workspace_root=root)
     print(f"  workspace_root = {db.workspace_root}")
     files = db._scan_supported_files()
@@ -55,7 +63,8 @@ def _debug_one(root):
 
 def _debug_run(root, name):
     """调试 _run_build 方式"""
-    import tempfile, os
+    import tempfile
+    import os
     db = CodeGraphDB(db_path=os.path.join(tempfile.gettempdir(), "_debug2.db"), workspace_root=root)
     print(f"  before register: workspace_root = {db.workspace_root}")
     ws = db.register_workspace(name, root)
@@ -70,7 +79,8 @@ def _debug_run(root, name):
 
 def _debug_build(root, name):
     """调试 _run_build + build_full_graph"""
-    import tempfile, os
+    import tempfile
+    import os
     db = CodeGraphDB(db_path=os.path.join(tempfile.gettempdir(), "_debug3.db"), workspace_root=root)
     elapsed, log = _run_build(db, name, root)
     stats = db.get_stats()
@@ -169,7 +179,7 @@ def main():
     with_problems = len(problems)
 
     print(f"\n{'='*60}")
-    print(f"汇总:")
+    print("汇总:")
     print(f"  项目数: {total}")
     print(f"  总文件: {total_files}")
     print(f"  总符号: {total_symbols}")
@@ -180,7 +190,7 @@ def main():
     print(f"{'='*60}")
 
     if problems:
-        print(f"\n有问题的项目（前 30 个）:")
+        print("\n有问题的项目（前 30 个）:")
         for p in problems[:30]:
             if "error" in p:
                 print(f"  [{p['idx']:4d}] ERROR  {p['name']:40s} {p['error'][:80]}")
@@ -201,7 +211,7 @@ def main():
         by_lang[l]["elapsed"] += r.get("elapsed_sec", 0)
         by_lang[l]["failed"] += r.get("failed", 0)
 
-    print(f"\n按语言汇总:")
+    print("\n按语言汇总:")
     print(f"  {'lang':12s} {'count':>6s} {'files':>8s} {'symbols':>8s} {'failed':>6s} {'elapsed':>8s}")
     for l, d in sorted(by_lang.items(), key=lambda x: -x[1]["count"]):
         print(f"  {l:12s} {d['count']:6d} {d['files']:8d} {d['symbols']:8d} {d['failed']:6d} {d['elapsed']:7.0f}s")

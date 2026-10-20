@@ -24,7 +24,7 @@ DB_PATH = os.path.join(DB_DIR, 'callwarden.db')
 
 
 def main():
-    print(f'P27 优化后 1M refresh 实测')
+    print('P27 优化后 1M refresh 实测')
     print(f'  源码: {GEN_ROOT}')
     print(f'  DB:   {DB_PATH}')
     print()
@@ -42,7 +42,7 @@ def main():
     print(f'[setup] DB 初始化: {time.perf_counter() - t0:.1f}s')
 
     # 全量 refresh
-    print(f'[refresh] 开始全量构建...')
+    print('[refresh] 开始全量构建...')
     t1 = time.perf_counter()
     db.build_full_graph()
     elapsed = time.perf_counter() - t1
@@ -63,7 +63,7 @@ def main():
     print()
     print('=' * 60)
     print(f'结论: P27 优化后 1M refresh = {elapsed:.1f}s')
-    print(f'      优化前: 卡死 22+ 分钟（未完成）')
+    print('      优化前: 卡死 22+ 分钟（未完成）')
     print('=' * 60)
 
 

@@ -193,7 +193,7 @@ class TokenSavingsMixin:
             FROM token_savings_ledger{where_sql}
             GROUP BY operation
             ORDER BY total_saved DESC
-            """ + (f" AND operation = ?" if operation_filter and not where_clauses else ""),
+            """ + (" AND operation = ?" if operation_filter and not where_clauses else ""),
             params if not operation_filter else (params + [operation_filter]) if operation_filter and not where_clauses else params,
         )
         # 简化分组查询（避免 WHERE 子句重复）

@@ -18,7 +18,14 @@ A′ review 卡幂等 reviewer 循环驱动。
   python review_aprime_cards.py validate --task T-XXXX   # 单卡全链路验证
   python review_aprime_cards.py run [--limit N]     # 循环提交（幂等）
 """
-import sys, os, json, hashlib, sqlite3, time, uuid, argparse
+import sys
+import os
+import json
+import hashlib
+import sqlite3
+import time
+import uuid
+import argparse
 
 REPO = r"C:\git_work"
 sys.path.insert(0, REPO)

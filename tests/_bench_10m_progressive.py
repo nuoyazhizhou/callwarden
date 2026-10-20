@@ -295,7 +295,7 @@ def bench_scale(scale: dict, tmpdir: str) -> dict:
         if os.path.exists(p):
             os.remove(p)
 
-    print(f"\n[0/4] 生成合成数据库...")
+    print("\n[0/4] 生成合成数据库...")
     rss0 = get_rss_mb()
     t0 = time.perf_counter()
     gen_info = generate_synthetic_db(db_path, n_symbols)
@@ -314,7 +314,7 @@ def bench_scale(scale: dict, tmpdir: str) -> dict:
         return result
 
     # ---- Stage A: GraphStore.load_from_sqlite ----
-    print(f"\n[A/4] GraphStore.load_from_sqlite（加载到 CSR）...")
+    print("\n[A/4] GraphStore.load_from_sqlite（加载到 CSR）...")
     gc.collect()
     rss_before = get_rss_mb()
     t0 = time.perf_counter()
@@ -344,7 +344,7 @@ def bench_scale(scale: dict, tmpdir: str) -> dict:
         return result
 
     # ---- Stage B: compute_depth_all ----
-    print(f"\n[B/4] compute_depth_all（拓扑深度计算）...")
+    print("\n[B/4] compute_depth_all（拓扑深度计算）...")
     gc.collect()
     rss_before = get_rss_mb()
     t0 = time.perf_counter()
@@ -369,7 +369,7 @@ def bench_scale(scale: dict, tmpdir: str) -> dict:
         result["stage_b_depth"] = {"error": str(e)}
 
     # ---- Stage C: 查询性能 ----
-    print(f"\n[C/4] 查询性能测试...")
+    print("\n[C/4] 查询性能测试...")
     import sqlite3
     conn = sqlite3.connect(db_path)
 
@@ -439,7 +439,7 @@ def bench_scale(scale: dict, tmpdir: str) -> dict:
     gc.collect()
     rss_final = get_rss_mb()
     db_size = os.path.getsize(db_path) / (1024 * 1024)
-    print(f"\n[D/4] 内存占用汇总")
+    print("\n[D/4] 内存占用汇总")
     print(f"  最终 RSS: {rss_final:.1f} MB")
     print(f"  DB 大小:  {db_size:.1f} MB")
     print(f"  内存/符号: {rss_final / max(gen_info['symbols'], 1) * 1024:.2f} KB")

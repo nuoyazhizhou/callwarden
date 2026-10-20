@@ -77,21 +77,21 @@ def discover():
                 print(f"\n{'='*60}")
                 print(f"Language: {lang}")
                 if sym_diff:
-                    print(f"\n  SYMBOL diff (missing_in_rs + missing_in_py):")
+                    print("\n  SYMBOL diff (missing_in_rs + missing_in_py):")
                     for key, cnt in sorted(sym_diff.items()):
                         print(f"    {cnt}: {key}")
                 if call_diff:
-                    print(f"\n  CALL diff (missing_in_rs + missing_in_py):")
+                    print("\n  CALL diff (missing_in_rs + missing_in_py):")
                     for key, cnt in sorted(call_diff.items()):
                         print(f"    {cnt}: {key}")
 
                 # Print as Counter literal for copy-paste
                 if sym_diff:
-                    print(f"\n  SYMBOL Counter literal:")
+                    print("\n  SYMBOL Counter literal:")
                     items = ", ".join(f"{key}: {cnt}" for key, cnt in sorted(sym_diff.items()))
                     print(f"    Counter({{{items}}})")
                 if call_diff:
-                    print(f"\n  CALL Counter literal:")
+                    print("\n  CALL Counter literal:")
                     items = ", ".join(f"{key}: {cnt}" for key, cnt in sorted(call_diff.items()))
                     print(f"    Counter({{{items}}})")
     finally:

@@ -135,20 +135,20 @@ def insert_calls_direct(db_path: str, batch_size: int = 5000) -> dict:
         统计信息 dict
     """
     t0 = time.perf_counter()
-    print(f'加载 symbols...')
+    print('加载 symbols...')
     by_file = load_symbols_by_file(db_path)
     total_files = len(by_file)
     total_symbols = sum(len(s) for s in by_file.values())
     print(f'  files={total_files}, symbols={total_symbols}')
 
-    print(f'生成 calls 数据...')
+    print('生成 calls 数据...')
     all_calls = []
     for fid, symbols in by_file.items():
         calls = gen_calls_for_file(symbols)
         all_calls.extend(calls)
     print(f'  生成 {len(all_calls):,} 条 calls')
 
-    print(f'清空 calls + call_versions 表...')
+    print('清空 calls + call_versions 表...')
     conn = sqlite3.connect(db_path)
     conn.execute('DELETE FROM calls')
     conn.execute('DELETE FROM call_versions')
@@ -171,7 +171,7 @@ def insert_calls_direct(db_path: str, batch_size: int = 5000) -> dict:
             print(f'  [{i + len(batch):,}/{len(all_calls):,}] {pct:.0f}% {elapsed:.1f}s')
 
     # 创建索引（如果不存在）
-    print(f'创建索引...')
+    print('创建索引...')
     try:
         conn.execute('CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id)')
     except Exception as e:
@@ -184,7 +184,7 @@ def insert_calls_direct(db_path: str, batch_size: int = 5000) -> dict:
     conn.execute('COMMIT')
 
     # VACUUM 减小文件大小
-    print(f'VACUUM...')
+    print('VACUUM...')
     conn.execute('VACUUM')
 
     db_size = os.path.getsize(db_path) / (1024 * 1024)

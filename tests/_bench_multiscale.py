@@ -69,7 +69,7 @@ def generate_synthetic_repo(root: str, num_files: int, funcs_per_file: int) -> i
                 lines.append("")
             else:
                 lines.append(f"def {fn_name}(x):")
-                lines.append(f"    return x")
+                lines.append("    return x")
                 lines.append("")
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -286,7 +286,7 @@ def run_scale(num_files: int, funcs_per_file: int, tmpdir: str) -> dict:
 # ============================================
 
 def main():
-    print(f"Call Warden 多规模性能基准")
+    print("Call Warden 多规模性能基准")
     print(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"平台: {platform.platform()}")
     print(f"Python: {platform.python_version()}")

@@ -341,7 +341,7 @@ def check_task_lifecycle(failures, nid):
         return
 
     # publish snapshot + reviewer verdict
-    pub = cw("collab", "publish", f"--workspace=C:/git_work/callwarden")
+    pub = cw("collab", "publish", "--workspace=C:/git_work/callwarden")
     snap = re.search(r"[0-9a-f]{16,}", pub.stdout)
     snap_id = snap.group(0) if snap else None
     # acquire reviewer lease

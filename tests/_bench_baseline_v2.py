@@ -455,7 +455,7 @@ def run_single(
     t0 = time.perf_counter()
     row = conn.execute(
         "SELECT * FROM symbols WHERE qualified_name = ? LIMIT 1",
-        (f"module_0.func_0",)
+        ("module_0.func_0",)
     ).fetchone()
     assert row is not None, "验证失败：qualified_name 查询无结果"
 
@@ -576,16 +576,16 @@ def main():
 
     env = collect_env_info()
     print(f"\n{'='*70}")
-    print(f"压测基准体系 v2")
+    print("压测基准体系 v2")
     print(f"{'='*70}")
-    print(f"环境信息：")
+    print("环境信息：")
     print(f"  SQLite: {env['sqlite_version']}, Python: {env['python_version']}")
     print(f"  OS: {env['os']}")
     print(f"  CPU: {env['cpu']} ({env['cpu_cores']} cores)")
     if 'ram_total_gb' in env:
         print(f"  RAM: {env['ram_total_gb']}GB total, {env['ram_available_mb']}MB available")
         print(f"  Disk: {env['disk_total_gb']}GB total, {env['disk_free_gb']}GB free")
-    print(f"\n参数：")
+    print("\n参数：")
     print(f"  目标符号数：{args.symbols:,}")
     print(f"  运行次数：{args.runs}（取中位数）")
     print(f"  模式：{args.mode}")
@@ -678,7 +678,7 @@ def main():
         print(f"  {key:<23} {d_str:>15} {e_str:>15}")
 
     # 查询延迟
-    print(f"\n查询延迟（最后一次运行）：")
+    print("\n查询延迟（最后一次运行）：")
     print(f"  {'指标':<25} {'deferred':>15} {'eager':>15}")
     ql_d = all_results.get("deferred", {}).get("median", {}).get("query_latency", {})
     ql_e = all_results.get("eager", {}).get("median", {}).get("query_latency", {})
@@ -692,7 +692,7 @@ def main():
     # 逐索引耗时
     idx_timings = all_results.get("deferred", {}).get("median", {}).get("index_timings")
     if idx_timings:
-        print(f"\n逐索引耗时（仅最后一次 deferred 运行）：")
+        print("\n逐索引耗时（仅最后一次 deferred 运行）：")
         sorted_timings = sorted([t for t in idx_timings if t["time_s"] > 0], key=lambda x: -x["time_s"])
         total_idx_time = sum(t["time_s"] for t in sorted_timings)
         cum = 0

@@ -3,7 +3,10 @@
 """Report P0-F fix_defect step completion via daemon RPC, then handoff to reviewer.
 Usage: PYTHONPATH=C:/git_work python scripts/_report_p0f.py
 """
-import sys, os, json, uuid
+import sys
+import os
+import json
+import uuid
 sys.path.insert(0, r"C:\git_work\callwarden")
 
 TID = "T-1787310376068-44eb5f20"

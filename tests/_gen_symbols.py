@@ -61,8 +61,8 @@ def gen_file_lines(module_name: str, file_idx: int, cross_modules: list) -> list
         lines.append(f'def func_{i}():')
         if i == 0:
             # 入口：调用同文件 func_1 + func_50 + 第一个跨模块函数
-            lines.append(f'    return func_1() + func_50()' +
-                         (f' + ext_fn_0()' if cross_imports else ''))
+            lines.append('    return func_1() + func_50()' +
+                         (' + ext_fn_0()' if cross_imports else ''))
         elif i == SYMBOLS_PER_FILE - 1:
             # 末尾函数：叶子节点，返回常量
             lines.append(f'    return {i}')
@@ -160,14 +160,14 @@ def main():
 
     if args.clean and os.path.exists(args.out):
         import shutil
-        print(f'清空输出目录...')
+        print('清空输出目录...')
         shutil.rmtree(args.out, ignore_errors=True)
 
     stats = gen_project(args.out, target_symbols, num_modules, files_per_module)
 
     print()
     print('=' * 50)
-    print(f'生成完成:')
+    print('生成完成:')
     print(f'  文件数: {stats["total_files"]:,}')
     print(f'  预估符号数: {stats["estimated_symbols"]:,}')
     print(f'  模块数: {stats["modules"]:,}')

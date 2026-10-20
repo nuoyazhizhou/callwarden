@@ -475,7 +475,7 @@ class TestMCPSmokeCall:
         # 1. 过滤跳过列表
         testable_tools = [t for t in mcp_tools if t.name not in SKIP_MCP_TOOLS]
         skipped = [t.name for t in mcp_tools if t.name in SKIP_MCP_TOOLS]
-        print(f"\n=== MCP 冒烟测试范围 ===")
+        print("\n=== MCP 冒烟测试范围 ===")
         print(f"  总工具数: {len(mcp_tools)}")
         print(f"  跳过（写/重型）: {len(skipped)}")
         print(f"  实际测试: {len(testable_tools)}")
@@ -572,7 +572,7 @@ class TestMCPSmokeCall:
             for _, name, _ in timeout_list:
                 print(f"  {name}")
 
-        print(f"\n=== MCP 冒烟测试汇总 ===")
+        print("\n=== MCP 冒烟测试汇总 ===")
         print(f"  测试: {total}（跳过 {len(skipped)} 个写/重型工具）")
         print(f"  成功: {len(ok_list)}")
         print(f"  结构化业务错误（可接受）: {len(structured_list)}")

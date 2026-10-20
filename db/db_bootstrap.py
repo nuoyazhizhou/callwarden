@@ -137,7 +137,7 @@ class BootstrapMixin:
             if xy == "??":
                 combined = "untracked"
             elif x and y:
-                combined = f"staged+worktree"
+                combined = "staged+worktree"
             elif x:
                 combined = f"staged-{x}"
             elif y:

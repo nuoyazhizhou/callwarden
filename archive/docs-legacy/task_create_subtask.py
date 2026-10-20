@@ -102,7 +102,7 @@ def main():
                 ("closed", now, now, task_id),
             )
             db.conn.commit()
-            print(f"    → Closed (已完成)")
+            print("    → Closed (已完成)")
 
     print(f"\n共创建 {created} 个新任务，{len(tasks_to_mount) - created} 个已存在")
     db.conn.close()

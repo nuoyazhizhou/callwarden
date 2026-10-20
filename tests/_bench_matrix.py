@@ -62,7 +62,7 @@ def main():
         matrix = [m for m in MATRIX if m[0] in names]
 
     print(f"\n{'='*70}")
-    print(f"参数矩阵实验")
+    print("参数矩阵实验")
     print(f"{'='*70}")
     print(f"环境：SQLite {env['sqlite_version']}, Python {env['python_version']}")
     print(f"      RAM {env.get('ram_total_gb', '?')}GB, available {env.get('ram_available_mb', '?')}MB")
@@ -194,7 +194,7 @@ def main():
               f"{speedup:>6.2f}x")
 
     # 查询延迟对比
-    print(f"\n查询延迟：")
+    print("\n查询延迟：")
     print(f"  {'组合':<25} {'cold_qname':>12} {'cold_callee':>12} "
           f"{'hot_qname':>12} {'hot_callee':>12}")
     print(f"  {'─'*80}")
@@ -208,7 +208,7 @@ def main():
               f"{ql['hot_callee_name_ms']:>10.2f}ms")
 
     # calls 表 3 个索引耗时对比（关键发现验证）
-    print(f"\ncalls 表 3 个索引耗时对比（关键瓶颈）：")
+    print("\ncalls 表 3 个索引耗时对比（关键瓶颈）：")
     print(f"  {'组合':<25} {'idx_calls_caller':>18} {'idx_calls_callee':>18} "
           f"{'idx_calls_callee_q':>20} {'3 索引合计':>14} {'占 index_s':>10}")
     print(f"  {'─'*110}")
@@ -232,7 +232,7 @@ def main():
               f"{callee_q_t:>18.2f}s {total_3:>12.2f}s {pct:>8.1f}%")
 
     # 边际收益分析
-    print(f"\n边际收益分析（相对 baseline）：")
+    print("\n边际收益分析（相对 baseline）：")
     print(f"  {'变量':<25} {'storage_build':>15} {'收益':>10} {'index_s':>10} {'收益':>10}")
     print(f"  {'─'*75}")
     b = all_results[baseline_name]["median"]

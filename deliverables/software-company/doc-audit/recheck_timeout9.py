@@ -4,7 +4,11 @@
 Task7 串行复测时 30s 超时;Task9-A 复查发现 status 现在 0.3s 返回(超时是间歇的)。
 本脚本逐个串行复测这 9 个,拿当前行为:超时是否消失、是否有稳定业务错误。
 """
-import json, os, subprocess, sys, time
+import json
+import os
+import subprocess
+import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))

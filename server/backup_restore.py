@@ -653,7 +653,7 @@ class RestoreManager:
                     restored_files.append({
                         "name": file_name,
                         "status": "failed",
-                        "reason": f"sha256 mismatch",
+                        "reason": "sha256 mismatch",
                     })
                     continue
 

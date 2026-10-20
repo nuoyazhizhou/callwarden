@@ -51,7 +51,7 @@ def check_wxs():
             print("  [FAIL] 未找到 <Product> 元素")
             return False
 
-        print(f"  [OK] XML 解析成功")
+        print("  [OK] XML 解析成功")
         print(f"  Product Id={product.get('Id')} Name={product.get('Name')} "
               f"Version={product.get('Version')} Manufacturer={product.get('Manufacturer')}")
 
@@ -103,7 +103,7 @@ def check_bash_script(script_path: Path, label: str) -> bool:
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
-            print(f"  [OK] bash -n 语法检查通过 (WSL)")
+            print("  [OK] bash -n 语法检查通过 (WSL)")
             # 统计行数和关键命令
             content = script_path.read_text(encoding="utf-8", errors="ignore")
             lines = content.splitlines()
@@ -120,14 +120,14 @@ def check_bash_script(script_path: Path, label: str) -> bool:
             print(f"  [FAIL] bash -n 失败 (WSL): {result.stderr.strip()}")
             return False
     except FileNotFoundError:
-        print(f"  [SKIP] WSL 不可用，跳过 bash -n 检查")
+        print("  [SKIP] WSL 不可用，跳过 bash -n 检查")
         # 退到简单文本检查
         content = script_path.read_text(encoding="utf-8", errors="ignore")
         lines = content.splitlines()
         print(f"  总行数: {len(lines)} (未做语法检查)")
         return True
     except subprocess.TimeoutExpired:
-        print(f"  [FAIL] bash -n 超时")
+        print("  [FAIL] bash -n 超时")
         return False
 
 
@@ -195,7 +195,7 @@ def check_ci_yaml():
     try:
         with open(yaml_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        print(f"  [OK] YAML 解析成功")
+        print("  [OK] YAML 解析成功")
         print(f"  name: {data.get('name')}")
 
         # 解析 on 触发器（YAML 1.1 中 on 可能被解析为 True）
@@ -269,7 +269,7 @@ def check_manifest():
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
-        print(f"  [OK] JSON 解析成功")
+        print("  [OK] JSON 解析成功")
         print(f"  product: {manifest.get('product')}")
         print(f"  version: {manifest.get('version')}")
         print(f"  build_time: {manifest.get('build_time')}")
@@ -292,7 +292,7 @@ def check_wheel_metadata():
     dist_dir = RELEASE_DIR / "dist"
     wheels = list(dist_dir.glob("*.whl"))
     if not wheels:
-        print(f"  [FAIL] dist/ 下无 .whl 文件")
+        print("  [FAIL] dist/ 下无 .whl 文件")
         return False
 
     wheel = wheels[0]
@@ -487,7 +487,7 @@ def check_light_bundle_compressed_diff():
 
     local_artifact = _make_compressed_artifact(LOCAL_BUNDLE_DIR, suffix)
     if local_artifact is None:
-        print(f"  [SKIP] local bundle 压缩失败")
+        print("  [SKIP] local bundle 压缩失败")
         return True
 
     local_compressed = local_artifact.stat().st_size
@@ -496,7 +496,7 @@ def check_light_bundle_compressed_diff():
     if sys.platform.startswith("linux") and client_exists:
         client_artifact = _make_compressed_artifact(CLIENT_BUNDLE_DIR, suffix)
         if client_artifact is None:
-            print(f"  [SKIP] client bundle 压缩失败")
+            print("  [SKIP] client bundle 压缩失败")
             try:
                 local_artifact.unlink(missing_ok=True)
             except OSError:
@@ -515,7 +515,7 @@ def check_light_bundle_compressed_diff():
         except OSError:
             pass
     elif sys.platform.startswith("linux"):
-        print(f"  [SKIP] Linux 上未找到 client bundle，无法度量压缩包差值")
+        print("  [SKIP] Linux 上未找到 client bundle，无法度量压缩包差值")
     else:
         print(f"  client 压缩包: N/A（{sys.platform} 不构建 client/agent）")
 

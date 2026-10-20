@@ -132,7 +132,7 @@ def test_cr1_detect_cross_repo_deps():
     # 这是预期行为（模块名 != 函数名）
     # 验证至少方法能正常运行且返回结构正确
     assert isinstance(result["detected_deps"], list), "detected_deps 应为列表"
-    print(f"PASS CR1.3: detect_cross_repo_deps 执行成功（结构正确）\n")
+    print("PASS CR1.3: detect_cross_repo_deps 执行成功（结构正确）\n")
 
 
 def test_cr1_find_shared_symbols():
@@ -190,7 +190,7 @@ def test_cr1_find_shared_symbols():
     assert shared["content_hash"] == "hash-shared-func"
     assert shared["workspace_a"] == "repo-shared-a" or shared["workspace_b"] == "repo-shared-a"
     print(f"  find_shared_symbols 返回: total_shared={result['total_shared']}，找到共享符号 shared_func")
-    print(f"PASS CR1.4: find_shared_symbols 端到端验证成功\n")
+    print("PASS CR1.4: find_shared_symbols 端到端验证成功\n")
 
 
 def test_cr1_cross_repo_summary():
@@ -210,7 +210,7 @@ def test_cr1_cross_repo_summary():
     assert "deps_by_type" in result, "应返回 deps_by_type"
     assert result["total_repos"] >= 2, f"应至少有 2 个仓库，实际 {result['total_repos']}"
     print(f"  cross_repo_summary: repos={result['total_repos']}, deps={result['total_cross_deps']}, shared={result['total_shared_symbols']}")
-    print(f"PASS CR1.5: cross_repo_summary 验证成功\n")
+    print("PASS CR1.5: cross_repo_summary 验证成功\n")
 
 
 def test_cr1_cross_repo_impact():
@@ -227,7 +227,7 @@ def test_cr1_cross_repo_impact():
     assert "risk_level" in result, "应返回 risk_level"
     assert result["risk_level"] == "none", f"不存在符号的 risk_level 应为 none，实际 {result['risk_level']}"
     print(f"  cross_repo_impact(不存在符号): risk_level={result['risk_level']}")
-    print(f"PASS CR1.6: cross_repo_impact 验证成功\n")
+    print("PASS CR1.6: cross_repo_impact 验证成功\n")
 
 
 # ================================================================
@@ -268,12 +268,12 @@ def test_lsp1_check_available():
     assert "rust" in result["available_servers"], "应包含 rust"
     print(f"  lsp_check_available: {result['available_servers']}")
     print(f"  total_available={result['total_available']}")
-    print(f"PASS LSP1.2: lsp_check_available 返回结构正确\n")
+    print("PASS LSP1.2: lsp_check_available 返回结构正确\n")
 
     # 单语言检查
     result_py = db.lsp_check_available(language="python")
     assert "python" in result_py["available_servers"], "单语言检查应只包含 python"
-    print(f"PASS LSP1.2b: 单语言检查正常\n")
+    print("PASS LSP1.2b: 单语言检查正常\n")
 
 
 def test_lsp1_hover_graceful_degradation():
@@ -294,7 +294,7 @@ def test_lsp1_hover_graceful_degradation():
     assert "contents" in result, "应返回 contents 字段"
     # LSP 未安装时 available 应为 False
     print(f"  lsp_hover: available={result['available']}, contents长度={len(result.get('contents', ''))}")
-    print(f"PASS LSP1.3: LSP 优雅降级正常（LSP 不可用时返回 available=False）\n")
+    print("PASS LSP1.3: LSP 优雅降级正常（LSP 不可用时返回 available=False）\n")
 
 
 def test_lsp1_definition_graceful():
@@ -313,7 +313,7 @@ def test_lsp1_definition_graceful():
     assert "definitions" in result, "应返回 definitions"
     assert isinstance(result["definitions"], list), "definitions 应为列表"
     print(f"  lsp_definition: available={result['available']}, definitions数量={len(result['definitions'])}")
-    print(f"PASS LSP1.4: lsp_definition 优雅降级正常\n")
+    print("PASS LSP1.4: lsp_definition 优雅降级正常\n")
 
 
 def test_lsp1_references_graceful():
@@ -332,7 +332,7 @@ def test_lsp1_references_graceful():
     assert "references" in result, "应返回 references"
     assert "total" in result, "应返回 total"
     print(f"  lsp_references: available={result['available']}, total={result['total']}")
-    print(f"PASS LSP1.5: lsp_references 优雅降级正常\n")
+    print("PASS LSP1.5: lsp_references 优雅降级正常\n")
 
 
 def test_lsp1_diagnostics_graceful():
@@ -351,7 +351,7 @@ def test_lsp1_diagnostics_graceful():
     assert "diagnostics" in result, "应返回 diagnostics"
     assert "total" in result, "应返回 total"
     print(f"  lsp_diagnostics: available={result['available']}, total={result['total']}")
-    print(f"PASS LSP1.6: lsp_diagnostics 优雅降级正常\n")
+    print("PASS LSP1.6: lsp_diagnostics 优雅降级正常\n")
 
 
 def test_lsp1_completion_graceful():
@@ -370,7 +370,7 @@ def test_lsp1_completion_graceful():
     assert "completions" in result, "应返回 completions"
     assert "total" in result, "应返回 total"
     print(f"  lsp_completion: available={result['available']}, total={result['total']}")
-    print(f"PASS LSP1.7: lsp_completion 优雅降级正常\n")
+    print("PASS LSP1.7: lsp_completion 优雅降级正常\n")
 
 
 def test_lsp1_path_uri_conversion():
@@ -389,7 +389,7 @@ def test_lsp1_path_uri_conversion():
 
     print(f"  路径 → URI: C:\\git_work\\callwarden\\test.py → {uri}")
     print(f"  URI → 路径: {uri} → {path}")
-    print(f"PASS LSP1.8: 路径 ↔ URI 转换正确\n")
+    print("PASS LSP1.8: 路径 ↔ URI 转换正确\n")
 
 
 def test_lsp1_shutdown():
@@ -401,7 +401,7 @@ def test_lsp1_shutdown():
 
     # 没有启动任何 LSP 进程时 shutdown 应该无副作用
     db.lsp_shutdown()
-    print(f"PASS LSP1.9: lsp_shutdown 无异常\n")
+    print("PASS LSP1.9: lsp_shutdown 无异常\n")
 
 
 # ================================================================

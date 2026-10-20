@@ -96,7 +96,7 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
     print(f'{"=" * 60}')
 
     # 1. 打开 DB + 注册 workspace
-    print(f'[1/7] 打开 DB + 注册 workspace...')
+    print('[1/7] 打开 DB + 注册 workspace...')
     rss_before = get_rss_mb()
     db_size_before = get_db_size_mb(db_path)
     db = CodeGraphDB(db_path=db_path, workspace_root=root)
@@ -111,7 +111,7 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
 
     # 2. refresh-all（核心性能指标）
     if not skip_refresh:
-        print(f'[2/7] refresh-all（构建代码图谱）...')
+        print('[2/7] refresh-all（构建代码图谱）...')
         try:
             _, elapsed = timed(db.build_full_graph, force=False)
             db_size_after = get_db_size_mb(db_path)
@@ -130,7 +130,7 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
             stage_timings = getattr(db, '_stage_timings', None)
             if stage_timings:
                 result['refresh']['stage_timings'] = stage_timings
-                print(f'  阶段耗时:')
+                print('  阶段耗时:')
                 for k, v in stage_timings.items():
                     if isinstance(v, float):
                         print(f'    {k:25s}: {v:.2f}s')
@@ -142,11 +142,11 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
             db.close()
             return result
     else:
-        print(f'[2/7] 跳过 refresh（使用已有 DB）')
+        print('[2/7] 跳过 refresh（使用已有 DB）')
         result['refresh'] = {'skipped': True}
 
     # 3. 统计信息
-    print(f'[3/7] 获取统计信息...')
+    print('[3/7] 获取统计信息...')
     try:
         stats, elapsed = timed(db.get_stats)
         symbols = stats.get('total_symbols', 0)
@@ -164,7 +164,7 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
         files = 0
 
     # 4. 核心查询性能测试
-    print(f'[4/7] 核心查询性能测试...')
+    print('[4/7] 核心查询性能测试...')
     queries = {}
 
     # 4a. search（FTS5 模糊搜索）— 测索引查询
@@ -223,10 +223,10 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
 
     # 5. clone detect（可选，默认跳过）
     if skip_clone:
-        print(f'[5/7] clone detect（跳过，使用 --clone 开启）')
+        print('[5/7] clone detect（跳过，使用 --clone 开启）')
         queries['clone_detect'] = {'skipped': True}
     else:
-        print(f'[5/7] clone detect（克隆检测）...')
+        print('[5/7] clone detect（克隆检测）...')
         try:
             clones, elapsed = timed(db.detect_clones,
                                       min_lines=5, similarity_threshold=0.8)
@@ -242,7 +242,7 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
             queries['clone_detect'] = {'error': str(e)[:300]}
 
     # 6. DB VACUUM 后大小（测实际存储占用）
-    print(f'[6/7] DB 大小统计...')
+    print('[6/7] DB 大小统计...')
     rss_final = get_rss_mb()
     db_size_final = get_db_size_mb(db_path)
     print(f'  DB: {db_size_final:.2f} MB | RSS: {rss_final:.1f} MB')
@@ -251,7 +251,7 @@ def run_test(root: str, label: str, skip_refresh: bool = False,
     }
 
     # 7. 关闭 DB
-    print(f'[7/7] 关闭 DB')
+    print('[7/7] 关闭 DB')
     db.close()
 
     result['queries'] = queries

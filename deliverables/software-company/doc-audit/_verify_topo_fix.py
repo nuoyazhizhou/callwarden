@@ -1,6 +1,7 @@
 """直接验证 _handle_topo 修复:喂 str 列表(daemon RPC 实际返回)和 dict 列表(旧本地),
 确认两种都不再抛 'str' object has no attribute 'get'。"""
-import os, sys
+import os
+import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.dirname(REPO))
 os.environ["PYTHONUTF8"] = "1"

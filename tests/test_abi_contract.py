@@ -185,8 +185,8 @@ def test_lazy_batch_classes_in_graph_rs():
         assert f"struct {cls}" in graph_rs, (
             f"graph.rs 缺少懒批量类: struct {cls}"
         )
-        assert f"fn __len__" in graph_rs or f"fn count" in graph_rs, (
-            f"graph.rs 缺少懒批量方法 __len__/count"
+        assert "fn __len__" in graph_rs or "fn count" in graph_rs, (
+            "graph.rs 缺少懒批量方法 __len__/count"
         )
 
 

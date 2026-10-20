@@ -251,11 +251,11 @@ def main():
               f"漏 {result['rust_missing_symbols']}，多 {result['rust_extra_symbols']}"
               f"  [{t_elapsed:.1f}s]")
         if result["samples_missing"]:
-            print(f"    漏提取样本（前 3）:")
+            print("    漏提取样本（前 3）:")
             for s in result["samples_missing"][:3]:
                 print(f"      {s['file']}: {s['missing']}")
         if result["samples_extra"]:
-            print(f"    多提取样本（前 3）:")
+            print("    多提取样本（前 3）:")
             for s in result["samples_extra"][:3]:
                 print(f"      {s['file']}: {s['extra']}")
         alignment_results.append(result)
@@ -277,12 +277,12 @@ def main():
         print(f"\n  {project['name']} ({len(files)} 文件):")
 
         # Rust 批量
-        print(f"    Rust batch (8 threads) ...", end=" ", flush=True)
+        print("    Rust batch (8 threads) ...", end=" ", flush=True)
         rust_time, rust_sym, rust_calls = benchmark_rust_batch(files, num_threads=8)
         print(f"{rust_time:.2f}s, {rust_sym} symbols, {rust_calls} calls")
 
         # Python 串行
-        print(f"    Python serial         ...", end=" ", flush=True)
+        print("    Python serial         ...", end=" ", flush=True)
         py_time, py_sym, py_calls = benchmark_python_serial(files)
         print(f"{py_time:.2f}s, {py_sym} symbols, {py_calls} calls")
 
@@ -310,7 +310,7 @@ def main():
         total_perfect = sum(r["perfect_match"] for r in alignment_results)
         total_missing = sum(r["rust_missing_symbols"] for r in alignment_results)
         total_extra = sum(r["rust_extra_symbols"] for r in alignment_results)
-        print(f"\n对齐度:")
+        print("\n对齐度:")
         print(f"  采样文件: {total_sampled}")
         print(f"  完美匹配: {total_perfect} ({total_perfect/total_sampled*100:.1f}%)")
         print(f"  Rust 漏提取符号总数: {total_missing}")
@@ -324,7 +324,7 @@ def main():
         total_rust_sym = sum(r["rust"]["symbols"] for r in perf_results)
         total_py_sym = sum(r["python"]["symbols"] for r in perf_results)
         overall_speedup = total_py_time / total_rust_time if total_rust_time > 0 else 0
-        print(f"\n性能:")
+        print("\n性能:")
         print(f"  总文件: {total_files}")
         print(f"  Rust 总耗时: {total_rust_time:.1f}s ({total_rust_sym} symbols)")
         print(f"  Python 总耗时: {total_py_time:.1f}s ({total_py_sym} symbols)")

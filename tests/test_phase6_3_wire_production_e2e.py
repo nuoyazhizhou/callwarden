@@ -207,7 +207,7 @@ def _populate_test_data(db: _StubDB, num_symbols: int = 10, dim: int = 64) -> No
             "name, kind, module_path, visibility, start_line, end_line) "
             "VALUES (?, ?, ?, ?, 'fn', ?, 'public', ?, ?)",
             (symbol_hash, file_id, qualified_name, f"fn_{i}",
-             f"module", i * 10 + 1, i * 10 + 5),
+             "module", i * 10 + 1, i * 10 + 5),
         )
 
         # 插入 content + summary

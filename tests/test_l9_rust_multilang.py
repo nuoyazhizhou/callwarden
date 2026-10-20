@@ -286,9 +286,9 @@ provider "aws" {
         assert "aws" in symbol_names, f"应找到 aws provider，实际 {symbol_names}"
 
         # kind 验证（HCL 块类型映射）
-        assert symbol_kinds["aws_instance.web"] == "resource", f"aws_instance.web kind 应为 resource"
-        assert symbol_kinds["region"] == "variable", f"region kind 应为 variable"
-        assert symbol_kinds["aws"] == "provider", f"aws kind 应为 provider"
+        assert symbol_kinds["aws_instance.web"] == "resource", "aws_instance.web kind 应为 resource"
+        assert symbol_kinds["region"] == "variable", "region kind 应为 variable"
+        assert symbol_kinds["aws"] == "provider", "aws kind 应为 provider"
 
         # qualified_name 验证（HCL 块的 qualified_name 与 name 相同）
         symbol_quals = {s["name"]: s["qualified_name"] for s in symbols}

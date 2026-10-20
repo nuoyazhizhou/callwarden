@@ -12,7 +12,9 @@
 输出人工可判读的分类清单,不做自动裁决。
 """
 from __future__ import annotations
-import json, os, re
+import json
+import os
+import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))

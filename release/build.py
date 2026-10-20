@@ -104,7 +104,7 @@ def _ensure_rust_ext_at_root():
     src_path = ROOT / "rust_ext" / "target" / "release" / src_name
     if not src_path.exists():
         print(f"  [FAIL] Rust extension not built: {src_path}")
-        print(f"  请先运行 'python release/build.py --rust' 或 'cd rust_ext && cargo build --release'")
+        print("  请先运行 'python release/build.py --rust' 或 'cd rust_ext && cargo build --release'")
         sys.exit(1)
 
     import shutil
@@ -126,14 +126,14 @@ def _verify_rust_extension_present():
     binary_path = ROOT / binary_name
     if not binary_path.exists():
         print(f"  [FAIL] Rust extension binary missing: {binary_path}")
-        print(f"  拒绝构建 wheel：先运行 'python release/build.py --rust' 构建 Rust 扩展")
+        print("  拒绝构建 wheel：先运行 'python release/build.py --rust' 构建 Rust 扩展")
         sys.exit(1)
 
     # 验证文件非空（防止复制失败留下 0 字节文件）
     size = binary_path.stat().st_size
     if size < 1024:
         print(f"  [FAIL] Rust extension binary too small ({size} bytes): {binary_path}")
-        print(f"  可能是构建失败或复制被截断，请重新运行 'python release/build.py --rust'")
+        print("  可能是构建失败或复制被截断，请重新运行 'python release/build.py --rust'")
         sys.exit(1)
 
     print(f"  [OK] Rust extension binary present: {binary_name} ({size} bytes)")
@@ -181,10 +181,10 @@ def _verify_wheel_contains_rust_extension(wheel_path):
         ]
         if not rust_files:
             print(f"  [FAIL] Wheel does not contain callwarden_core binary: {wheel_path}")
-            print(f"  Wheel contents (first 20 entries):")
+            print("  Wheel contents (first 20 entries):")
             for n in names[:20]:
                 print(f"    {n}")
-            print(f"  评审 P0-3：pyproject.toml 中 py-modules=['callwarden_core'] 是否配置正确？")
+            print("  评审 P0-3：pyproject.toml 中 py-modules=['callwarden_core'] 是否配置正确？")
             sys.exit(1)
         print(f"  [OK] Wheel contains Rust extension: {rust_files[0]}")
 

@@ -205,7 +205,7 @@ def main():
     print("=" * 70)
 
     # 收集 C 文件
-    print(f"\n[1/3] 收集 testcode/repos 下的 C 文件...")
+    print("\n[1/3] 收集 testcode/repos 下的 C 文件...")
     c_files = _collect_c_files(testcode_root, max_files=2000)
     print(f"  发现 {len(c_files)} 个 C 文件")
 
@@ -214,7 +214,7 @@ def main():
         return
 
     # 1. Rust benchmark
-    print(f"\n[2/3] Rust batch_parse_c_files benchmark...")
+    print("\n[2/3] Rust batch_parse_c_files benchmark...")
     rust_result = benchmark_rust_parse(c_files, num_threads=8)
 
     # 清理内存
@@ -222,7 +222,7 @@ def main():
     gc.collect()
 
     # 2. Python benchmark
-    print(f"\n[3/3] Python ProcessPoolExecutor benchmark...")
+    print("\n[3/3] Python ProcessPoolExecutor benchmark...")
     py_result = benchmark_python_parse(c_files, num_workers=4)
 
     # 对比

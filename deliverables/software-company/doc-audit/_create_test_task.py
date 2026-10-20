@@ -1,4 +1,8 @@
-import subprocess, os, sys, datetime, json
+import subprocess
+import os
+import sys
+import datetime
+import json
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 PY = os.environ.get("PYTHON", sys.executable)

@@ -8575,7 +8575,7 @@ def _doctor_check(db):
             import subprocess
             result = subprocess.run(
                 ["powershell", "-Command",
-                 f"Get-MpPreference | Select-Object -ExpandProperty ExclusionPath"],
+                 "Get-MpPreference | Select-Object -ExpandProperty ExclusionPath"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             exclusions = result.stdout.strip()
@@ -8589,7 +8589,7 @@ def _doctor_check(db):
                        default="    Exclusion directory: {path}", path=callwarden_dir), "dim")
                 cprint(t("cli.messages.doctor_defender_command",
                        default="    Add command (requires admin):"), "dim")
-                cprint(f"      cw doctor --add-defender-exclusion", "dim")
+                cprint("      cw doctor --add-defender-exclusion", "dim")
                 cprint(t("cli.messages.doctor_defender_manual",
                        default="    Or run manually:"), "dim")
                 cprint(f"      powershell -Command \"Add-MpPreference -ExclusionPath '{callwarden_dir}'\"",
@@ -8673,7 +8673,7 @@ def _doctor_add_defender_exclusion(db):
             print()
             print(t("cli.messages.doctor_verify_hint",
                   default="  Verify success with:"))
-            cprint(f"    cw doctor", "cyan")
+            cprint("    cw doctor", "cyan")
         except Exception as e:
             cprint(t("cli.messages.doctor_uac_failed",
                    default="✗ UAC elevation failed: {error}", error=e), "red")
@@ -9198,9 +9198,9 @@ def _handle_dashboard(args, db):
         print(f"    Root:         {ov.get('root_path', '?')}")
         print(f"    Git HEAD:     {ov.get('git_head') or '(not a git repo)'}")
         if ov.get('db_stale'):
-            cprint(f"    DB 状态:      ⚠ 滞后于 git HEAD（建议 cw refresh --all）", "red")
+            cprint("    DB 状态:      ⚠ 滞后于 git HEAD（建议 cw refresh --all）", "red")
         else:
-            cprint(f"    DB 状态:      ✓ 同步", "green")
+            cprint("    DB 状态:      ✓ 同步", "green")
         lb = ov.get('last_build_ts', 0)
         if lb:
             ago = _format_ago(lb)
@@ -9279,7 +9279,7 @@ def _handle_dashboard(args, db):
                 cprint(
                     f"    循环调用:     ⚠ {cyc} 个（cw detect-cycles 查看）", "red")
             else:
-                cprint(f"    循环调用:     ✓ 无循环", "green")
+                cprint("    循环调用:     ✓ 无循环", "green")
         orphans = cg.get('orphans_count', 0)
         if orphans > 0:
             print(f"    孤立函数:     {orphans}（未被任何函数调用）")
@@ -9302,7 +9302,7 @@ def _handle_dashboard(args, db):
         if bf > 0:
             cprint(f"    阻塞 findings: ⚠ {bf} 条（cw task findings 查看）", "red")
         else:
-            cprint(f"    阻塞 findings: ✓ 无", "green")
+            cprint("    阻塞 findings: ✓ 无", "green")
         print(f"    open findings: {of}")
         pc = tr.get('pending_rule_candidates', 0)
         if pc > 0:
@@ -9320,7 +9320,7 @@ def _handle_dashboard(args, db):
         if broken > 0:
             cprint(f"    审计链损坏:   ⚠ {broken} 条（cw audit verify 查看）", "red")
         else:
-            cprint(f"    审计链:       ✓ 完整", "green")
+            cprint("    审计链:       ✓ 完整", "green")
 
     # ── 7. 演化趋势 ─────────────────────────────────────────────────
     ev = dashboard.get("evolution")
@@ -9949,7 +9949,7 @@ def _handle_tests(args, db):
                     print(f"    {msg[:100]}")
 
         if result['by_test']:
-            print(f"\nBy test (pass/total):")
+            print("\nBy test (pass/total):")
             # 按通过率升序（最不稳定的在前）
             sorted_tests = sorted(
                 result['by_test'].items(),
@@ -9967,7 +9967,7 @@ def _handle_tests(args, db):
     # --build 模式：重建关联表
     if opts.build:
         stats = db.build_test_relations(force=opts.force)
-        print(f"Test relations built:")
+        print("Test relations built:")
         print(f"  Total test functions scanned: {stats['total_test_fns']}")
         print(f"  direct_call relations:     {stats.get('direct_call', 0)}")
         print(
@@ -10865,7 +10865,7 @@ def _handle_graph(args, db):
     scan_t = _time.perf_counter() - t0
 
     if not c_files:
-        print(f"  未找到任何 .c 文件")
+        print("  未找到任何 .c 文件")
         return True
 
     print(f"  扫描到 {len(c_files)} 个 .c 文件（耗时 {scan_t:.2f}s）")
@@ -10921,7 +10921,7 @@ def _handle_graph(args, db):
                 for c in callers[:5]:
                     print(f"    - {c}")
             else:
-                print(f"  未找到 callers（符号不存在或无调用方）")
+                print("  未找到 callers（符号不存在或无调用方）")
         except Exception as e:
             print(f"WARNING: 自检查询失败：{e}", file=sys.stderr)
 
@@ -10993,7 +10993,7 @@ def _handle_config(args, db):
                 print(f"ERROR: 无法 import config_loader: {e}", file=_sys.stderr)
                 return False
         else:
-            print(f"ERROR: release/ 目录不存在", file=_sys.stderr)
+            print("ERROR: release/ 目录不存在", file=_sys.stderr)
             return False
 
     if opts.action == "explain":
@@ -11001,7 +11001,7 @@ def _handle_config(args, db):
         config = load_config()
         explained = config.explain()
         print(f"# N4 分层配置（来源：{config_loader}）")
-        print(f"# 优先级：CLI > env(CW_*) > user_config > system_config > default")
+        print("# 优先级：CLI > env(CW_*) > user_config > system_config > default")
         print()
         print(f"{'Key':<30} {'Value':<40} {'Source'}")
         print(f"{'-'*30} {'-'*40} {'-'*20}")
@@ -12544,7 +12544,7 @@ def _handle_toolchain(args, db):
             print(
                 f"Toolchain '{tc.get('name', opts.toolchain_name)}' bound to workspace {opts.workspace_id}")
         else:
-            print(f"Failed to bind (already bound?)")
+            print("Failed to bind (already bound?)")
             return False
 
     elif opts.action == "list-bound":
@@ -12841,7 +12841,7 @@ def _handle_build_context(args, db):
         print(f"  defines: {len(ctx.get('defines') or {})} macros")
         print(f"  includes: {len(ctx.get('include_paths') or [])} paths")
         if opts.activate:
-            print(f"  (set as active)")
+            print("  (set as active)")
 
     elif opts.action == "list":
         ctxs = route_rpc("build_context.list", {"workspace_id": opts.workspace_id},
@@ -12911,7 +12911,7 @@ def _handle_build_context(args, db):
         if result is not None and result is not False:
             print(f"Activated: {ctx.get('name', '')} ({str(full_hash)[:16]})")
         else:
-            print(f"Failed to activate")
+            print("Failed to activate")
             return False
 
     elif opts.action == "delete":
@@ -12930,7 +12930,7 @@ def _handle_build_context(args, db):
         if result is not None and result is not False:
             print(f"Deleted: {ctx.get('name', '')} ({str(full_hash)[:16]})")
         else:
-            print(f"Failed to delete")
+            print("Failed to delete")
             return False
 
     elif opts.action == "import-compile-commands":
@@ -12969,7 +12969,7 @@ def _handle_build_context(args, db):
             print(f"Build context registered: {ctx.get('name', opts.name)}")
             print(f"  hash: {ctx.get('build_context_hash', '')}")
         if opts.activate:
-            print(f"  (set as active)")
+            print("  (set as active)")
 
         # 如果检测到编译器，提示注册 toolchain
         if agg.get("compiler_path"):
@@ -13027,7 +13027,7 @@ def _handle_build_context(args, db):
         }, "READ_ONLY")
         edges = edges if isinstance(edges, list) else []
         if not edges:
-            print(f"No resolved edges found")
+            print("No resolved edges found")
             return True
         print(f"Resolved edges ({len(edges)} shown):")
         print(

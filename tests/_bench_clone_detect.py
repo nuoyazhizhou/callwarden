@@ -71,7 +71,7 @@ def main():
     result = db.detect_clones(min_lines=5, similarity_threshold=0.8)
     elapsed = time.time() - t1
 
-    print(f"\n=== P1 Clone Detect 性能结果 ===", flush=True)
+    print("\n=== P1 Clone Detect 性能结果 ===", flush=True)
     print(f"耗时: {elapsed:.3f}s", flush=True)
     print(f"总对数: {result['total_pairs']}", flush=True)
     print(f"  Type-1: {result['type1_pairs']}", flush=True)

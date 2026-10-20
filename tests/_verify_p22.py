@@ -1,6 +1,9 @@
 """P22 验证：抽样几个项目，用 cw 的 build_full_graph 验证 P21 自动 ignore 效果"""
 from __future__ import annotations
-import os, sys, time, tempfile
+import os
+import sys
+import time
+import tempfile
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:

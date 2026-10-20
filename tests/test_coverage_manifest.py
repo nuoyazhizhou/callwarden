@@ -125,7 +125,7 @@ def test_cli_top_count_is_84(entries: list) -> None:
     """当前事实锚点：84 顶层。增减命令时本用例与真相源同步更新。"""
     n = sum(1 for e in entries if e["kind"] == "cli_top")
     assert n == 84, f"CLI 顶层命令数漂移: {n} != 84（若为合法增减，"
-    f"请同步 cli/categories.py 与本锚点）"
+    "请同步 cli/categories.py 与本锚点）"
 
 
 def test_cli_leaf_parents_registered(entries: list) -> None:
@@ -170,7 +170,7 @@ def test_mcp_count_is_243(entries: list) -> None:
     """当前事实锚点：243 工具。增减工具时本用例与真相源同步更新。"""
     n = sum(1 for e in entries if e["kind"] == "mcp")
     assert n == 243, f"MCP 工具数漂移: {n} != 243（若为合法增减，"
-    f"请同步 server/tools/_categories.py 与本锚点）"
+    "请同步 server/tools/_categories.py 与本锚点）"
 
 
 def test_mcp_op_classes_valid(entries: list) -> None:

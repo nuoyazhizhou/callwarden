@@ -345,12 +345,12 @@ def verify_algorithm():
     # 当前系统资源
     avail = _get_available_memory_mb()
     cpu = os.cpu_count() or 4
-    print(f"\n系统资源：")
+    print("\n系统资源：")
     print(f"  CPU 核心数:        {cpu}")
     print(f"  可用内存:          {avail:.0f} MB" if avail else "  可用内存:          无法检测")
     print(f"  当前进程 RSS:      {_format_mb(_get_rss_mb())}")
     print(f"  进程树 RSS:        {_format_mb(_get_process_tree_rss_mb())}")
-    print(f"\n算法参数：")
+    print("\n算法参数：")
     print(f"  worker 预算:       {_WORKER_MEM_BUDGET_MB} MB/worker（含 AST 峰值）")
     print(f"  保留内存:          {_HOST_RESERVED_MEM_MB} MB（给宿主机）")
     print(f"  规模阈值:          {_SCALE_LARGE_FILE_THRESHOLD} / "
@@ -358,7 +358,7 @@ def verify_algorithm():
           f"{_SCALE_HUGE_FILE_THRESHOLD} 文件")
 
     # 各 file_count 下的 worker 决策
-    print(f"\n各 file_count 下的 worker 决策：")
+    print("\n各 file_count 下的 worker 决策：")
     print(f"  {'file_count':>12} | {'workers':>8} | {'scale_cap':>10} | 说明")
     print(f"  {'-'*12} | {'-'*8} | {'-'*10} | {'-'*30}")
 
@@ -389,14 +389,14 @@ def verify_algorithm():
         print(f"  {fc:>12,} | {workers:>8} | {cap:>10} | {desc}")
 
     # 回归验证：原崩溃场景必须返回 1
-    print(f"\n[P28 回归验证] 原崩溃场景（150K 文件 + 32GB 机器空闲 13GB）：")
+    print("\n[P28 回归验证] 原崩溃场景（150K 文件 + 32GB 机器空闲 13GB）：")
     crash_workers = _detect_optimal_workers(150000)
     status = "PASS" if crash_workers == 1 else "FAIL"
     print(f"  _detect_optimal_workers(150000) = {crash_workers}  [{status}]")
     if crash_workers == 1:
-        print(f"  原崩溃场景（4 worker）现已修复，强制 1 worker")
+        print("  原崩溃场景（4 worker）现已修复，强制 1 worker")
     else:
-        print(f"  警告：算法未正确限制大场景 worker 数！")
+        print("  警告：算法未正确限制大场景 worker 数！")
 
     print("=" * 60)
     print()
@@ -408,11 +408,11 @@ def build_baseline_db(batch_size=50):
     约束：只读 testcode，不增删改任何文件。
     P28 验证：不强制 CW_MP_WORKERS，让 _detect_optimal_workers 动态决策。
     """
-    print(f"[baseline] 分批构建 testcode/repos 基线 DB")
+    print("[baseline] 分批构建 testcode/repos 基线 DB")
     print(f"  root:       {TESTCODE_ROOT}")
     print(f"  DB:         {DB_PATH}")
     print(f"  batch_size: {batch_size} 项目/批")
-    print(f"  workers:    动态（P28 算法决策，不强制 1）")
+    print("  workers:    动态（P28 算法决策，不强制 1）")
     print(f"  [mem] 初始 RSS: {_format_mb(_get_rss_mb())} "
           f"tree={_format_mb(_get_process_tree_rss_mb())}")
     print()
@@ -423,7 +423,7 @@ def build_baseline_db(batch_size=50):
     os.makedirs(DB_DIR, exist_ok=True)
 
     # 扫描子项目
-    print(f"[1/4] 扫描子项目...")
+    print("[1/4] 扫描子项目...")
     t0 = time.perf_counter()
     projects = scan_subprojects(TESTCODE_ROOT, max_depth=2)
     print(f"  发现 {len(projects)} 个子项目 ({time.perf_counter() - t0:.1f}s)")
@@ -435,7 +435,7 @@ def build_baseline_db(batch_size=50):
     print()
 
     # 创建 DB + 注册 workspace
-    print(f"[2/4] 初始化 DB...")
+    print("[2/4] 初始化 DB...")
     db = CodeGraphDB(db_path=DB_PATH, workspace_root=TESTCODE_ROOT)
     ws_id = db.register_workspace("testcode_repos_baseline", TESTCODE_ROOT,
                                    "testcode/repos 合并入库基线")
@@ -568,7 +568,7 @@ def build_baseline_db(batch_size=50):
         for r in batch_records:
             w = r["algo_workers"]
             workers_dist[w] = workers_dist.get(w, 0) + 1
-        print(f"[P28 算法验证总结]")
+        print("[P28 算法验证总结]")
         print(f"  最大单批文件数:    {max_new:,}")
         print(f"  最大 RSS:          {_format_mb(max_rss)} (峰值 {_format_mb(_peak_memory_mb)})")
         print(f"  最大进程树 RSS:    {_format_mb(max_tree_rss)} "
@@ -620,10 +620,10 @@ def run_query_tests():
     """在已有 DB 上运行查询性能测试。"""
     if not os.path.exists(DB_PATH):
         print(f"[error] DB 不存在: {DB_PATH}")
-        print(f"        请先运行: python tests/_perf_testcode_baseline.py --refresh")
+        print("        请先运行: python tests/_perf_testcode_baseline.py --refresh")
         return None
 
-    print(f"[query] 在基线 DB 上运行查询性能测试")
+    print("[query] 在基线 DB 上运行查询性能测试")
     print(f"  DB: {DB_PATH}")
 
     db = CodeGraphDB(db_path=DB_PATH, workspace_root=TESTCODE_ROOT)
@@ -644,7 +644,7 @@ def run_query_tests():
     print()
 
     # 1. search_symbols
-    print(f"[1/5] search_symbols...")
+    print("[1/5] search_symbols...")
     for term in ["main", "test", "handle", "create", "get"]:
         try:
             t0 = time.perf_counter()
@@ -660,7 +660,7 @@ def run_query_tests():
             results["queries"][f"search_{term}"] = {"error": str(e)[:200]}
 
     # 2. get_callers
-    print(f"\n[2/5] get_callers (短名)...")
+    print("\n[2/5] get_callers (短名)...")
     try:
         cur = db.conn.execute(
             "SELECT callee_name, COUNT(*) as c FROM calls "
@@ -689,7 +689,7 @@ def run_query_tests():
             results["queries"][f"get_callers_{callee_name}"] = {"error": str(e)[:200]}
 
     # 3. get_callees
-    print(f"\n[3/5] get_callees (短名)...")
+    print("\n[3/5] get_callees (短名)...")
     try:
         cur = db.conn.execute(
             "SELECT caller_name, COUNT(*) as c FROM calls "
@@ -718,7 +718,7 @@ def run_query_tests():
             results["queries"][f"get_callees_{caller_name}"] = {"error": str(e)[:200]}
 
     # 4. get_topological_order
-    print(f"\n[4/5] get_topological_order...")
+    print("\n[4/5] get_topological_order...")
     try:
         t0 = time.perf_counter()
         topo = db.get_topological_order(limit=5000)
@@ -733,7 +733,7 @@ def run_query_tests():
         results["queries"]["topological_order"] = {"error": str(e)[:200]}
 
     # 5. get_impact
-    print(f"\n[5/5] get_impact (变更影响)...")
+    print("\n[5/5] get_impact (变更影响)...")
     if top_callers:
         target = top_callers[0][0]
         try:
@@ -782,7 +782,7 @@ def main():
     if "--incremental" in sys.argv:
         if not os.path.exists(DB_PATH):
             print(f"[error] DB 不存在: {DB_PATH}")
-            print(f"        请先运行: python tests/_perf_testcode_baseline.py --refresh")
+            print("        请先运行: python tests/_perf_testcode_baseline.py --refresh")
             return
         # 增量构建：不删 DB，直接构建（build_directory 会跳过已解析文件）
         _build_incremental(batch_size=batch_size)
@@ -806,10 +806,10 @@ def _build_incremental(batch_size=50):
 
     用于在已有 batch 1-4 基础上继续，验证动态算法在剩余批次的安全性。
     """
-    print(f"[baseline] 增量构建（不删旧 DB，继续剩余批次）")
+    print("[baseline] 增量构建（不删旧 DB，继续剩余批次）")
     print(f"  DB:         {DB_PATH}")
     print(f"  batch_size: {batch_size} 项目/批")
-    print(f"  workers:    动态（P28 算法决策）")
+    print("  workers:    动态（P28 算法决策）")
     print(f"  [mem] 初始 RSS: {_format_mb(_get_rss_mb())} "
           f"tree={_format_mb(_get_process_tree_rss_mb())}")
     print()
@@ -818,13 +818,13 @@ def _build_incremental(batch_size=50):
     verify_algorithm()
 
     # 扫描子项目
-    print(f"[1/3] 扫描子项目...")
+    print("[1/3] 扫描子项目...")
     projects = scan_subprojects(TESTCODE_ROOT, max_depth=2)
     print(f"  发现 {len(projects)} 个子项目")
     print()
 
     # 打开已有 DB（不重建）
-    print(f"[2/3] 打开已有 DB（增量模式）...")
+    print("[2/3] 打开已有 DB（增量模式）...")
     db = CodeGraphDB(db_path=DB_PATH, workspace_root=TESTCODE_ROOT)
     stats_before = db.get_stats()
     print(f"  已有: files={stats_before.get('total_files', 0):,} "
@@ -935,7 +935,7 @@ def _build_incremental(batch_size=50):
         for r in batch_records:
             w = r["algo_workers"]
             workers_dist[w] = workers_dist.get(w, 0) + 1
-        print(f"\n[P28 算法验证总结]")
+        print("\n[P28 算法验证总结]")
         print(f"  最大单批文件数:    {max_new:,}")
         print(f"  最大 RSS:          {_format_mb(max_rss)} (峰值 {_format_mb(_peak_memory_mb)})")
         print(f"  最大进程树 RSS:    {_format_mb(max_tree_rss)} "

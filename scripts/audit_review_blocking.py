@@ -95,7 +95,7 @@ def main():
         (SUB_EPIC,),
     ).fetchone()[0]
     c.close()
-    print(f"\n=== 治理前提覆盖 ===")
+    print("\n=== 治理前提覆盖 ===")
     print(f"  有 workspace binding: {have_binding} / {len(ids)}")
     print(f"  有 role contract:     {have_contract} / {len(ids)}")
 
