@@ -83,7 +83,10 @@ class TestWaitForJob:
                 deadline = start + 10.0
                 result = None
                 while time.time() < deadline:
-                    job_obj = db.get_job(job.job_id)
+                    # CI-DEBT：轮询走 executor 的加锁访问器（_conn_lock）。注入共享连接后，
+                    # 主线程与 executor 工作线程共用同一 sqlite3 连接，必须全部经锁序列化——
+                    # 裸 db.get_job() 与 handler 的 cursor 迭代并发会抛 InterfaceError。
+                    job_obj = ex.get_status(job.job_id)
                     if job_obj and job_obj.is_terminal:
                         result = {
                             "job_id": job.job_id,
@@ -135,7 +138,7 @@ class TestWaitForJob:
                 deadline = start + timeout
                 result = None
                 while time.time() < deadline:
-                    job_obj = db.get_job(job.job_id)
+                    job_obj = ex.get_status(job.job_id)
                     if job_obj and job_obj.is_terminal:
                         result = {
                             "status": job_obj.status,
@@ -146,7 +149,7 @@ class TestWaitForJob:
 
                 if result is None:
                     # 超时
-                    job_obj = db.get_job(job.job_id)
+                    job_obj = ex.get_status(job.job_id)
                     result = {
                         "status": "timeout",
                         "progress": job_obj.progress if job_obj else 0.0,
@@ -199,7 +202,7 @@ class TestWaitForJob:
                 # 模拟 wait_for_job 的轮询
                 start = time.time()
                 while time.time() - start < 10.0:
-                    job_obj = db.get_job(job.job_id)
+                    job_obj = ex.get_status(job.job_id)
                     if job_obj and job_obj.is_terminal:
                         elapsed = time.time() - start
                         break
