@@ -25,7 +25,6 @@ from daemon_bootstrap import (
     IsolatedDaemon,
     TP06_DAEMON_SHA256,
     production_manifest_dir,
-    sha256_of,
     snapshot_dir,
 )
 
@@ -153,7 +152,6 @@ def test_stale_manifest_not_adopted(daemon):
 def test_force_kill_cleanup(daemon):
     """强杀后进程必须真正消失，且 run 根可完整清理（不留孤儿）。"""
     daemon.start()
-    pid = daemon.proc.pid
     daemon.proc.kill()
     daemon.proc.wait(timeout=10)
     assert daemon.proc.poll() is not None

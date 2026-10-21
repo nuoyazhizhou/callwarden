@@ -300,7 +300,7 @@ class TestLeaseRpcRoundTrip:
     def test_status_hides_raw_token(self, lease_env):
         client, _tmp, _task_db, _proc = lease_env
         task_id = "T-LEASE-RPC-9"
-        acq = client.lease_acquire(task_id, "implementer", identity=_identity(), ttl_seconds=3600.0)
+        _acq = client.lease_acquire(task_id, "implementer", identity=_identity(), ttl_seconds=3600.0)
 
         status = client.lease_status(task_id, "implementer")
         assert status["status"] == "active"

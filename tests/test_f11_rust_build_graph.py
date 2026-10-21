@@ -143,7 +143,6 @@ def bench_rust_path(repo: str, num_threads: int = 4):
     print(f"  RSS: {rss_before:.1f} → {rss_after:.1f} MB (+{rss_after - rss_before:.1f} MB)")
 
     # 2. 查询性能（直接走 Rust CSR，零 SQLite）
-    target_qname = "mod_000000.fn_0_000000"
 
     # get_callers
     t0 = time.perf_counter()
@@ -159,7 +158,7 @@ def bench_rust_path(repo: str, num_threads: int = 4):
 
     # get_stats
     t0 = time.perf_counter()
-    stats = store.stats_rust() if hasattr(store, 'stats_rust') else None
+    _stats = store.stats_rust() if hasattr(store, 'stats_rust') else None
     stats_t = time.perf_counter() - t0
     print(f"  stats_rust: {stats_t:.4f}s")
 
@@ -266,7 +265,7 @@ def bench_python_path(repo: str):
     print(f"  search_symbols('fn_0'): {search_t:.4f}s, 结果数: {len(results) if results else 0}")
 
     t0 = time.perf_counter()
-    stats = db.get_stats()
+    _stats = db.get_stats()
     stats_t = time.perf_counter() - t0
     print(f"  get_stats: {stats_t:.4f}s")
 

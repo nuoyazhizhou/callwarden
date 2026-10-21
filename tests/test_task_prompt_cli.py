@@ -178,7 +178,7 @@ def test_card_renders_bundle_fields_without_fabrication(
     assert "bundle_hash: sha256:33" in out
     assert "Valid for claim: False" in out
     # 缺失字段占位（不伪造）：构造缺 routing 的 bundle
-    broken = {k: v for k, v in BUNDLE.items() if k != "routing"}
+    _broken = {k: v for k, v in BUNDLE.items() if k != "routing"}
     ctp.run_task_prompt(TASK_ID, fmt="card")  # 上一个 bundle_route 仍返回全量
 
 

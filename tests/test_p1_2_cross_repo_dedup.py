@@ -360,7 +360,7 @@ def test_p1_2_detect_is_idempotent_no_duplicate_rows():
     assert count_after_first == 1, f"第一次调用后应只有 1 条，实际：{count_after_first}"
 
     # 第二次调用（重复扫描）
-    r2 = db.detect_cross_repo_deps("source")
+    _r2 = db.detect_cross_repo_deps("source")
     cur = conn.execute("SELECT COUNT(*) FROM cross_repo_deps")
     count_after_second = cur.fetchone()[0]
     assert count_after_second == 1, (

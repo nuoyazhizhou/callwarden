@@ -26,15 +26,6 @@ from contextlib import ExitStack
 from unittest import mock
 
 import pytest
-
-# Windows 下 os.open 默认以文本模式打开，需加 O_BINARY 才能正确处理二进制数据
-# （文本模式下 0x1a 被视为 EOF，导致读取截断）
-_READ_FLAGS = os.O_RDONLY
-_WRITE_FLAGS = os.O_RDWR | os.O_CREAT | os.O_TRUNC
-if hasattr(os, "O_BINARY"):
-    _READ_FLAGS |= os.O_BINARY
-    _WRITE_FLAGS |= os.O_BINARY
-
 from callwarden.server.ipc_transport import (
     MAX_MEMFD_BYTES,
     MAX_MSG_BYTES,
@@ -53,6 +44,15 @@ from callwarden.server.ipc_transport import (
     send_msg,
     send_via_memfd,
 )
+
+# Windows 下 os.open 默认以文本模式打开，需加 O_BINARY 才能正确处理二进制数据
+# （文本模式下 0x1a 被视为 EOF，导致读取截断）
+_READ_FLAGS = os.O_RDONLY
+_WRITE_FLAGS = os.O_RDWR | os.O_CREAT | os.O_TRUNC
+if hasattr(os, "O_BINARY"):
+    _READ_FLAGS |= os.O_BINARY
+    _WRITE_FLAGS |= os.O_BINARY
+
 
 
 # ============================================================

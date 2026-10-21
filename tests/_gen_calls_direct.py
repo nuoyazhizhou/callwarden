@@ -78,7 +78,7 @@ def gen_calls_for_file(symbols: list) -> list:
     module_path = parts[0] if len(parts) > 1 else ''
     # 提取 mod_NNNN（跨模块调用的目标模块前缀）
     mod_parts = module_path.split('.')
-    mod_name = mod_parts[0] if mod_parts else ''
+    _mod_name = mod_parts[0] if mod_parts else ''
 
     for i in range(100):
         caller_name = f'func_{i}'

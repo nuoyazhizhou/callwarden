@@ -475,7 +475,6 @@ class CSharpParser(BaseParser):
 
         # 收集 modifier 之后、parameter_list 之前的非 modifier 节点作为返回类型
         ret_parts = []
-        seen_modifier_end = False
         for child in node.named_children:
             if child.type == "modifier":
                 continue

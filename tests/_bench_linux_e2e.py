@@ -351,7 +351,7 @@ def main():
         db.set_active_workspace(ws_name)
     except Exception:
         # 如果自动注册的 name 不同，尝试用 root_path 注册
-        ws_id = db.register_workspace(ws_name, LINUX_ROOT, "linux kernel E2E test")
+        ws_id = db.register_workspace(ws_name, LINUX_ROOT, "linux kernel E2E test")  # noqa: F841 —— try 赋值 + except 同名兜底,删除会 NameError
         db.set_active_workspace(ws_name)
     print(f"  workspace_root: {db.workspace_root}")
 
@@ -402,25 +402,22 @@ def main():
 def _compare_with_v3(stats_result, graphstore_result) -> dict:
     """对比 v3 合成基准"""
     sym_count = stats_result.get("symbol_count", 0)
-    call_count = stats_result.get("call_count", 0)
+    _call_count = stats_result.get("call_count", 0)
     calls_per_sym = stats_result.get("calls_per_symbol", 0)
 
     # 找到最接近的 v3 规模
     if sym_count < 500000:
         v3_scale = "1M"
-        v3_storage_build = 73.17
         v3_load_sqlite = 10.78
         v3_load_file = 3.69
         v3_rss = 727.2
     elif sym_count < 1500000:
         v3_scale = "1M"
-        v3_storage_build = 73.17
         v3_load_sqlite = 10.78
         v3_load_file = 3.69
         v3_rss = 727.2
     else:
         v3_scale = "2M"
-        v3_storage_build = 123.21
         v3_load_sqlite = 16.21
         v3_load_file = 6.48
         v3_rss = 1465.1

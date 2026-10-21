@@ -64,7 +64,7 @@ def self_check() -> list:
         check(e.get("status") == "frozen_inventory",
               f"{e['entry_id']}: status must be frozen_inventory", f)
 
-    cli = [e for e in entries if e["surface"] == "cli"]
+    _cli = [e for e in entries if e["surface"] == "cli"]
     mcp = [e for e in entries if e["surface"] == "mcp"]
     check(len(mcp) == 243, f"mcp entries must be 243, got {len(mcp)}", f)
     check(d["counts"]["total"] == len(entries), "counts.total mismatch", f)

@@ -235,9 +235,9 @@ class TestBackupManagerList:
     def test_list_backups_sorted_by_time_desc(self, setup_daemon_env):
         cfg, backup_root = setup_daemon_env
         mgr = BackupManager(cfg, backup_root=backup_root)
-        r1 = mgr.backup_full()
+        _r1 = mgr.backup_full()
         time.sleep(0.01)
-        r2 = mgr.backup_full()
+        _r2 = mgr.backup_full()
 
         backups = mgr.list_backups()
         assert backups[0]["timestamp"] >= backups[1]["timestamp"]
@@ -602,7 +602,7 @@ class TestBackupEdgeCases:
         conn.close()
 
         mgr = BackupManager(cfg)
-        result = mgr.backup_full()
+        _result = mgr.backup_full()
 
         expected_root = os.path.join(data_root, "backups")
         assert os.path.isdir(expected_root)

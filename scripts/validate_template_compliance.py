@@ -640,7 +640,6 @@ def _break_doc(raw: str, case: str) -> str:
 
 def run_self_test() -> tuple[int, int]:
     protocol = DEFAULT_PROTOCOL
-    agents = DEFAULT_AGENTS
     executor_tpl = TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Executor v4.md"
     planner_tpl = TEMPLATE_DIR / "Callwarden 无人值守循环启动模板：Planner v1.md"
     protocol_raw = read_text(protocol)

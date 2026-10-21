@@ -192,7 +192,6 @@ def test_status_redacts_raw_token(db):
 
 def test_error_responses_redact_raw_token(db):
     ok, r = db.acquire_lease("T-1", "implementer", _identity())
-    raw = r["token"]
     ok, res = db.renew_lease("T-1", "implementer", "bad-token")
     assert not ok
     assert "bad-token" not in str(res)

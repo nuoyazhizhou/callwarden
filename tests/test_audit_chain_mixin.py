@@ -255,7 +255,7 @@ def test_verify_audit_chain_detects_chain_broken():
     """检测链断裂（prev_signature 不匹配）"""
     db, _root = _db_with_audit()
     try:
-        r1 = db.sign_audit_record("test_table", "1", {"key": "v1"})
+        _r1 = db.sign_audit_record("test_table", "1", {"key": "v1"})
         db.sign_audit_record("test_table", "2", {"key": "v2"})
 
         # 篡改第二条记录的 prev_signature，使其不匹配第一条的 record_signature

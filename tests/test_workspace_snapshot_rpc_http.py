@@ -163,7 +163,7 @@ class TestHttpSnapshotConvenienceMethods:
         """db_path=None 时不发布（Rust 返回 snapshot_not_ready，fail-closed）。"""
         client, calls = _SnapshotHarness._make_client(monkeypatch)
 
-        result = client.snapshot_stats()
+        _result = client.snapshot_stats()
 
         methods = [m for m, _ in calls]
         assert methods == ["workspace.register", "snapshot.stats"], \

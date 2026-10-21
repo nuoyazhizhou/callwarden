@@ -20,7 +20,7 @@ from callwarden.server import compat_registry
 
 def test_int001_stats_top_files_retired_from_python_compat():
     """结构不变量：stats_top_files 不再注册 python_compat 路由。"""
-    reg = compat_registry.get_compat_registry()
+    _reg = compat_registry.get_compat_registry()
     route = compat_registry.compat_route("stats_top_files")
     assert route is None, (
         "stats_top_files 已迁移 rust_native，Python 默认 registry 不得再注册"

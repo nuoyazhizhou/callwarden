@@ -35,8 +35,6 @@ def _create_unarmed_pipe(pipe_name: str) -> int:
     语义下的单实例）创建一个**未 arm**（从不 ConnectNamedPipe）的管道实例，
     返回服务端句柄。调用方负责 CloseHandle。"""
     kernel32 = ctypes.windll.kernel32
-    GENERIC_READ = 0x80000000
-    GENERIC_WRITE = 0x40000000
     PIPE_ACCESS_DUPLEX = 0x3
     FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
     PIPE_TYPE_BYTE = 0x4

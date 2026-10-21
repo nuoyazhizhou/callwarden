@@ -418,12 +418,6 @@ def test_contract_performance_metrics():
 def test_contract_regression_thresholds():
     """契约 §4.3 必须包含 4 个回归阈值。"""
     content = _read(_CONTRACT_MD)
-    required_thresholds = [
-        "1.5x",  # P50
-        "2.0x",  # P95
-        "1.5x",  # RSS（重复，只验证一次）
-        "1.2x",  # 二进制
-    ]
     for threshold in ["1.5x", "2.0x", "1.2x"]:
         assert threshold in content, f"契约文档缺少回归阈值: {threshold}"
 
@@ -438,7 +432,7 @@ def test_perf_targets_python_rust_consistent():
     rust_content = _read(_DIFF_BASELINE_RS)
 
     # 从契约文档提取目标值（| parse_p50_ms | < 100ms |）
-    contract_targets = re.findall(r"< (\d+)ms", contract)
+    _contract_targets = re.findall(r"< (\d+)ms", contract)
 
     # 从 Rust 模块提取常量值
     rust_targets = re.findall(r"pub const \w+: f64 = (\d+(?:\.\d+)?)", rust_content)

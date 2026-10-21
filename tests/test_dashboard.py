@@ -307,7 +307,7 @@ class TestProjectRisks:
     def test_quick_mode_is_fast(self, db_with_data):
         """quick 模式应在 200ms 内完成"""
         t0 = time.time()
-        risks = db_with_data.get_project_risks(quick=True)
+        _risks = db_with_data.get_project_risks(quick=True)
         elapsed_ms = (time.time() - t0) * 1000
         assert elapsed_ms < 200, f"quick mode took {elapsed_ms:.1f}ms, expected < 200ms"
 

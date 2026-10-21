@@ -219,7 +219,6 @@ def _task_db_steps(task_db: str, task_id: str):
 @_requires_bin
 def test_cli_split_plan_persists_steps(isolated_daemon):
     """S4：cw task split --plan 后子任务必须有完整 steps（非 0）。"""
-    pipe = isolated_daemon["pipe"]
     task_db = isolated_daemon["task_db"]
 
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}

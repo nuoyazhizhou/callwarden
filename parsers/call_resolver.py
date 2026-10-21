@@ -160,7 +160,7 @@ class CallResolver:
     def resolve_call(self, caller_file: str, caller_module: str, callee_name: str,
                      callee_path: str, is_qualified: bool) -> Optional[Dict[str, Any]]:
         """解析一个调用，返回被调用方的完整信息"""
-        caller_crate = caller_module.split("::")[0] if "::" in caller_module else caller_module
+        _caller_crate = caller_module.split("::")[0] if "::" in caller_module else caller_module
 
         if is_qualified:
             # 有路径限定：crate::xxx, super::xxx, self::xxx, or_mod::xxx

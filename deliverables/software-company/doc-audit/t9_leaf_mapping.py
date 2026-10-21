@@ -65,9 +65,9 @@ def parse_doc_mapping():
 def main():
     matrix = json.load(open(MATRIX, encoding="utf-8"))
     real_tools = {t["name"] for t in matrix["tools"]}
-    tool_meta = {t["name"]: t for t in matrix["tools"]}
+    _tool_meta = {t["name"]: t for t in matrix["tools"]}
 
-    cli = json.load(open(CLI_INV, encoding="utf-8"))
+    _cli = json.load(open(CLI_INV, encoding="utf-8"))
 
     doc_rows = parse_doc_mapping()
     doc_mcp_names = [r[1] for r in doc_rows]

@@ -107,7 +107,7 @@ class PerfEnv(IsolationEnv):
         src = self.workspace_dir / "src"
         src.mkdir(parents=True, exist_ok=True)
         files: List[Path] = []
-        per_pkg = max(1, n_py // max(1, n_pkg))
+        _per_pkg = max(1, n_py // max(1, n_pkg))
         for i in range(n_py):
             pkg = f"pkg{i % n_pkg:02d}"
             pkg_dir = src / pkg

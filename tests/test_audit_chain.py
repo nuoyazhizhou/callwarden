@@ -376,9 +376,9 @@ def test_audit_chain_continuity_across_multiple_signings():
         task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
 
         # 写入 3 条 finding，对应 3 条 audit_chain 记录
-        f1 = db.record_task_quality_finding(task_id, message="m1")
-        f2 = db.record_task_quality_finding(task_id, message="m2")
-        f3 = db.record_task_quality_finding(task_id, message="m3")
+        _f1 = db.record_task_quality_finding(task_id, message="m1")
+        _f2 = db.record_task_quality_finding(task_id, message="m2")
+        _f3 = db.record_task_quality_finding(task_id, message="m3")
 
         # 查询 audit_chain 中 task_quality_findings 表的所有记录
         cur = db.conn.execute(

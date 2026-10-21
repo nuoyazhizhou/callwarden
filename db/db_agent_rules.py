@@ -790,7 +790,7 @@ class AgentRulesMixin:
         for row in cur:
             finding_type = row["finding_type"] or "unknown"
             severity_raw = row["severity"] or "info"
-            source_raw = row["source"] or "task_quality"
+            _source_raw = row["source"] or "task_quality"
             occurrences = int(row["occurrences"] or 0)
             sample = row["sample_message"] or ""
             finding_ids_str = row["finding_ids"] or ""

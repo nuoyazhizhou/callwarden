@@ -340,7 +340,7 @@ def test_compute_cas_resolution_exact_match(temp_db):
 
     # 文件 A：caller
     fi_a = _insert_file(conn, ws_id, "a.py")
-    caller_id = _insert_symbol(conn, fi_a, "func_a", "mod.func_a", 1)
+    _caller_id = _insert_symbol(conn, fi_a, "func_a", "mod.func_a", 1)
 
     # 文件 B：callee（qualified_name = "mod.func_b"）
     fi_b = _insert_file(conn, ws_id, "b.py")
@@ -386,7 +386,7 @@ def test_compute_cas_resolution_unresolved(temp_db):
     bch = ctx.build_context_hash
 
     fi_a = _insert_file(conn, ws_id, "a.py")
-    caller_id = _insert_symbol(conn, fi_a, "func_a", "func_a", 1)
+    _caller_id = _insert_symbol(conn, fi_a, "func_a", "func_a", 1)
 
     cas_key = "cas_x"
     upsert_manifest(conn, ws_id, "a.py", "hash_x", cas_key=cas_key)
@@ -428,9 +428,9 @@ def test_compute_cas_resolution_same_file(temp_db):
 
     # 同一文件有两个同名 helper（不同 qualified_name）
     fi_a = _insert_file(conn, ws_id, "a.py")
-    caller_id = _insert_symbol(conn, fi_a, "func", "func", 1)
-    helper1_id = _insert_symbol(conn, fi_a, "helper", "ClassA.helper", 10)
-    helper2_id = _insert_symbol(conn, fi_a, "helper", "ClassB.helper", 20)
+    _caller_id = _insert_symbol(conn, fi_a, "func", "func", 1)
+    _helper1_id = _insert_symbol(conn, fi_a, "helper", "ClassA.helper", 10)
+    _helper2_id = _insert_symbol(conn, fi_a, "helper", "ClassB.helper", 20)
     # 另一文件也有 helper（使简名非全局唯一）
     fi_b = _insert_file(conn, ws_id, "b.py")
     _insert_symbol(conn, fi_b, "helper", "Other.helper", 5)
@@ -496,7 +496,7 @@ def test_store_and_query_resolved_edges(temp_db):
     assert result["count"] == 1
 
     # 先清旧再写入
-    deleted = delete_resolved_edges(conn, ws_id, bch)
+    _deleted = delete_resolved_edges(conn, ws_id, bch)
     stored = store_resolved_edges(conn, ws_id, bch, result["edges"])
     assert stored == 1
 

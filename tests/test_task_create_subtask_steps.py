@@ -374,7 +374,7 @@ def test_daemon_create_subtask_persists_steps(isolated_daemon):
 def test_daemon_claim_returns_step_details(isolated_daemon):
     """S1/S3：真实 daemon task.claim 返回下一步骤详情（含 step_id/action/target_file/...）。"""
     pipe = isolated_daemon["pipe"]
-    env = _env_with_daemon(pipe)
+    _env = _env_with_daemon(pipe)
     from callwarden.server.daemon_client import UnixDaemonRpcClient
     client = UnixDaemonRpcClient(socket_path=pipe)
 
@@ -433,7 +433,7 @@ def test_cli_task_show_displays_steps(isolated_daemon):
 def test_mcp_create_subtask_roundtrip(isolated_daemon):
     """S9：真实 MCP task_create_subtask 走 daemon 返回归一化 task_id（修复前误判为类型错误）。"""
     pipe = isolated_daemon["pipe"]
-    env = _env_with_daemon(pipe)
+    _env = _env_with_daemon(pipe)
     import asyncio
     import re as _re
 

@@ -295,7 +295,7 @@ def test_record_task_quality_finding_serializes_evidence():
     try:
         task_id = _create_task_with_step(db)
         evidence = {"rule_id": "python-unused", "line": 10}
-        fid = db.record_task_quality_finding(
+        _fid = db.record_task_quality_finding(
             task_id=task_id, message="x", evidence=evidence
         )
         findings = db.get_task_quality_findings(task_id)
@@ -313,7 +313,7 @@ def test_get_task_quality_findings_filters():
     try:
         task_id = _create_task_with_step(db)
         # 写入 3 个 finding：warn-open, error-open, warn-resolved
-        f1 = db.record_task_quality_finding(task_id, severity="warn", message="m1")
+        _f1 = db.record_task_quality_finding(task_id, severity="warn", message="m1")
         f2 = db.record_task_quality_finding(task_id, severity="error", message="m2")
         f3 = db.record_task_quality_finding(task_id, severity="warn", message="m3")
         db.resolve_task_quality_finding(f3)
@@ -537,7 +537,7 @@ def test_record_finding_with_step_id():
     try:
         task_id = _create_task_with_step(db)
         step = db.task_next_step(task_id)
-        fid = db.record_task_quality_finding(
+        _fid = db.record_task_quality_finding(
             task_id=task_id,
             step_id=step["step_id"],
             message="x",
@@ -616,7 +616,7 @@ def test_run_task_completion_review_scoped_by_step_id():
             {"action": "edit", "target_file": "b.py"},
         ])
         s1 = db.task_next_step(task_id)
-        s2 = db.task_next_step(task_id) if False else None  # 只领第一个
+        _s2 = db.task_next_step(task_id) if False else None  # 只领第一个
         # 实际上 task_next_step 一次只领一个，s1 是第一个
         # 在 s1 上记录 error finding
         db.record_task_quality_finding(

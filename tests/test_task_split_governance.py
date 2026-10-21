@@ -95,7 +95,7 @@ def _create_parent(client, steps=None):
     steps = steps or [
         {"action": "port_rust_authority", "target_file": "rust_ext/src/daemon/task_collab_planning.rs"},
     ]
-    r = client.call("task.create", {
+    _r = client.call("task.create", {
         "task_id": tid, "title": "split 父任务", "description": "test",
         "steps": steps, "creator": "test",
         "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],

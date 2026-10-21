@@ -469,7 +469,7 @@ def test_gc_archive_list_returns_backup_metadata():
     db, _root = _db_with_workspace()
     try:
         # 创建两个备份
-        b1 = db._create_gc_db_backup("retention")
+        _b1 = db._create_gc_db_backup("retention")
         time.sleep(1.1)  # 确保 mtime 不同
         b2 = db._create_gc_db_backup("unit")
 

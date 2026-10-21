@@ -516,7 +516,6 @@ class TestDaemonServerBlockedBranch:
         res = service._get_workspace_resources(ws_id)
 
         captured = []
-        orig_append = res["staging_log"].append
         res["staging_log"].append = lambda entry: captured.append(entry)
 
         class _NoReplicateReplicator:

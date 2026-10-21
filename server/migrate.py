@@ -138,7 +138,6 @@ def migrate_to_single_db(
         # 需要迁移的表（全局表，不带 workspace_id 或 workspace_id 可重映射）
         # workspaces: 按 root_path 去重
         # tasks / task_steps: 全局表，按 id 去重
-        migrate_tables = ["workspaces", "tasks", "task_steps"]
 
         for legacy_dir in legacy_dirs:
             legacy_db_path = os.path.join(legacy_dir, "callwarden.db")

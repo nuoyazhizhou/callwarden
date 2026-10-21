@@ -441,7 +441,6 @@ class DefectKbMixin:
         """
         rule_id = ""
         finding_fix = ""
-        snippet = ""
 
         # ---- 获取具体的 finding 信息 ----
         if finding_id > 0:
@@ -455,7 +454,6 @@ class DefectKbMixin:
             if f_row:
                 rule_id = f_row["rule_id"] or ""
                 finding_fix = f_row["fix"] or ""
-                snippet = f_row["snippet"] or ""
         else:
             # 通过 symbol_hash 查找相关 finding
             sym_row = self.conn.execute(
@@ -476,7 +474,6 @@ class DefectKbMixin:
                 if f_row:
                     rule_id = f_row["rule_id"] or ""
                     finding_fix = f_row["fix"] or ""
-                    snippet = f_row["snippet"] or ""
             else:
                 # 退化：直接按 content_hash 匹配 semgrep_findings
                 f_row = self.conn.execute(
@@ -491,7 +488,6 @@ class DefectKbMixin:
                 if f_row:
                     rule_id = f_row["rule_id"] or ""
                     finding_fix = f_row["fix"] or ""
-                    snippet = f_row["snippet"] or ""
 
         # ---- 通过 rule_id 匹配 defect_patterns ----
         pattern_id = ""

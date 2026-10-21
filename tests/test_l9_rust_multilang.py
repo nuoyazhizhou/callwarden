@@ -364,7 +364,6 @@ def test_hcl_python_parser_still_works():
 
         assert result["language"] == "hcl"
         symbols = result["symbols"]
-        symbol_names = [s["name"] for s in symbols]
         assert len(symbols) >= 1, f"应找到至少 1 个 block，实际 {len(symbols)}"
     finally:
         os.unlink(hcl_path)

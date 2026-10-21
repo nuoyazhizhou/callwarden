@@ -267,9 +267,7 @@ def bench_rust_queries(db_path: str, n_iterations: int = 20) -> dict:
     store.load_from_sqlite(db_path)
 
     # 获取统计
-    stats = store.stats()
-    n_symbols = stats["symbol_count"]
-    n_edges = stats["edge_count"]
+    _stats = store.stats()
 
     # 准备测试数据：取 20 个有调用者的函数名
     conn = _connect_readonly(db_path)
@@ -315,7 +313,7 @@ def bench_rust_queries(db_path: str, n_iterations: int = 20) -> dict:
     t0 = time.perf_counter()
     for _ in range(5):
         for q in search_queries:
-            results_list = store.search_symbols(q, None, 50)
+            _results_list = store.search_symbols(q, None, 50)
     elapsed = time.perf_counter() - t0
     results["search_symbols_x5_avg_ms"] = round(elapsed * 1000 / 5, 2)
 

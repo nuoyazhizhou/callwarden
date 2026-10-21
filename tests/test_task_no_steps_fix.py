@@ -20,8 +20,6 @@ import tempfile
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.schema import (
     TASK_STATUS_OPEN,
-    TASK_STATUS_IN_PROGRESS,
-    TASK_STATUS_REVIEW,
     TASK_STATUS_APPLIED,
     TASK_STATUS_CLOSED,
 )
@@ -101,7 +99,7 @@ def test_apply_parent_task_with_subtasks_still_rejected():
     db, _root = _db_with_workspace()
     try:
         parent_id = db.task_create(title="父任务", steps=[])
-        sub_id = db.task_create_subtask(parent_id, title="子任务", steps=[])
+        _sub_id = db.task_create_subtask(parent_id, title="子任务", steps=[])
         assert _get_status(db, parent_id) == TASK_STATUS_OPEN
 
         # 父任务有子任务，即使无 steps 也禁止手动 apply

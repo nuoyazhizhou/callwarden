@@ -364,7 +364,7 @@ def test_inspector_rejects_duplicate_callwarden_core(tmp_path):
     )
     # _write_bundle 已在 _internal 下放置一份 callwarden_core
     # 再添加第二份（模拟 PyInstaller 重复收集场景）
-    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    _core_ext = ".pyd" if sys.platform == "win32" else ".so"
     # 模拟 binaries 收集的根级副本（PyInstaller --onedir 中 binaries='.' 会放到 _internal/）
     # 同时模拟 hiddenimports 收集的带 ABI 后缀副本
     abi_name = (

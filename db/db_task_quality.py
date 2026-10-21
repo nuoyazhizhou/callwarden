@@ -714,7 +714,7 @@ class TaskQualityMixin:
             symbol_name = ch.get("symbol_name", "") or ""
             hash_before = ch.get("symbol_hash_before", "") or ""
             hash_after = ch.get("symbol_hash_after", "") or ""
-            file_path = ch.get("file_path", "") or ""
+            _file_path = ch.get("file_path", "") or ""
 
             # 无 before/after hash 无法比较，跳过
             if not hash_before or not hash_after:

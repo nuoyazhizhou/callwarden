@@ -872,7 +872,7 @@ class Replicator:
             )
 
             # 2. 合并 delta（目前简单汇总，实际可做更复杂的 merge）
-            merged = self._merge_deltas(pending)
+            _merged = self._merge_deltas(pending)
 
             # 3. 发布新 generation
             if self.snapshot_service is not None and db_path:

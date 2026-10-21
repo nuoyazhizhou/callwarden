@@ -159,7 +159,7 @@ class QueryMixin:
         ws = self.get_active_workspace()
         stats = self.get_stats()
 
-        now = _time.time()
+        _now = _time.time()
         scanned_files = self._scan_supported_files()
         current_set = set(scanned_files)
 

@@ -330,7 +330,7 @@ class ImpactMixin:
             }
         source_id = row["id"]
         source_qn = row["qualified_name"] or ""
-        source_info = {
+        _source_info = {
             "symbol_hash": row["symbol_hash"],
             "qualified_name": source_qn,
             "name": row["name"],
@@ -912,7 +912,7 @@ class ImpactMixin:
                 }
             }
         """
-        ws_id = self._get_active_workspace_id()
+        _ws_id = self._get_active_workspace_id()
 
         # 1. 查询 Semgrep findings
         if finding_id > 0:
@@ -990,12 +990,11 @@ class ImpactMixin:
             if symbol_hash:
                 br = self.blast_radius(symbol_hash, depth=depth)
                 impacted_count = br.get("total_impacted", 0)
-                by_layer = br.get("by_layer", {})
+                _by_layer = br.get("by_layer", {})
             else:
                 # 无符号关联的漏洞，影响范围无法计算
                 br = {"layers": [], "total_impacted": 0, "by_layer": {"code": 0, "db": 0, "api": 0, "config": 0}}
                 impacted_count = 0
-                by_layer = br["by_layer"]
 
             # 收集受影响符号（用于全局去重统计）
             for layer in br.get("layers", []):

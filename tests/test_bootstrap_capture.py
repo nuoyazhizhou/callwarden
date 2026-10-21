@@ -279,7 +279,7 @@ def test_get_latest_scan_run_returns_most_recent():
     db, _root = _db_with_workspace()
     try:
         import time as _time
-        sid1 = db.record_workspace_scan_run(purpose="bootstrap")
+        _sid1 = db.record_workspace_scan_run(purpose="bootstrap")
         _time.sleep(0.05)
         sid2 = db.record_workspace_scan_run(purpose="bootstrap")
 
@@ -921,7 +921,7 @@ def test_cli_task_capture_diff_apply_passes_dry_run_false():
         try:
             tid = db.task_create("cli-apply-test", "desc", [])
             call_log = {"kwargs": None}
-            original = db.task_capture_diff
+            _original = db.task_capture_diff
 
             def spy(*args, **kwargs):
                 call_log["kwargs"] = kwargs

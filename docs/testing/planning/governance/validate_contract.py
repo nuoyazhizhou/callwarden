@@ -550,7 +550,7 @@ def main():
         return 1
 
     print()
-    total = pass_count + fail_count
+    _total = pass_count + fail_count
     print(f"RESULT: {pass_count} pass / {fail_count} fail / {warn_count} warn")
     if fail_count > 0:
         print("VERDICT: FAIL")

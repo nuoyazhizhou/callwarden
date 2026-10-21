@@ -52,7 +52,7 @@ def clean_fixture(path):
     if not gaps:
         return 0
 
-    original_count = len(gaps)
+    _original_count = len(gaps)
     kept = []
     removed = []
     for gap in gaps:
