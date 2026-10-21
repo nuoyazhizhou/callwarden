@@ -15,6 +15,7 @@
 //! - DELETE calls 分批 500（SQLite 999 参数限制）
 //! - INSERT calls/call_versions 顺序与 file_results.raw_calls 遍历顺序一致
 
+use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
@@ -124,11 +125,28 @@ struct BatchSaveCallsResult {
 // 工具函数
 // ===========================================================================
 
-// CI-DEBT 深水区：原 `open_readwrite` 每次调用建短连接，与同进程 Python 主连接
-// 构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配，两实例无法互斥 WAL-index，
-// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-// （database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接，
-// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
+/// 打开读写连接（与 batch_build_query.rs 一致）
+/// PRAGMA 与 Python db_base.py 完全对齐，避免两个 SQLite 实例
+/// 对 WAL 文件操作不一致导致 database disk image is malformed
+fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| PyIOError::new_err(format!("设置 WAL 模式失败: {}", e)))?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| PyIOError::new_err(format!("设置 synchronous 失败: {}", e)))?;
+    conn.pragma_update(None, "foreign_keys", "OFF")
+        .map_err(|e| PyIOError::new_err(format!("设置 foreign_keys 失败: {}", e)))?;
+    // CI-DEBT 深水区 A/B（CW_RUST_OPEN_CHECKPOINT=0 可关闭）：同进程双 SQLite
+    // 实例在 Linux 上 fcntl 锁按进程分配无法互斥，open 时 checkpoint 与 Python
+    // 侧 autocheckpoint 交错可产生撕裂页。默认保持原行为；env=0 仅供 CI 定性。
+    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    }
+    Ok(conn)
+}
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -1020,32 +1038,32 @@ pub fn batch_resolve_and_save_calls<'py>(
         let sym_idx = build_symbol_indexes(&all_symbols_info);
         let ext_idx = build_ext_indexes(&ext_symbols_info);
 
-        // 取用进程级池连接 + BEGIN IMMEDIATE
-        crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
-            conn.execute_batch("BEGIN IMMEDIATE;")
-                .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;
+        // 打开 DB + BEGIN IMMEDIATE
+        let conn = open_readwrite(codegraph_db_path)
+            .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?;
 
-            let inner_result = batch_resolve_and_save_calls_inner(
-                conn,
-                &file_infos,
-                &sym_idx,
-                &ext_idx,
-                &changed_file_instance_ids,
-            );
+        conn.execute_batch("BEGIN IMMEDIATE;")
+            .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;
 
-            match inner_result {
-                Ok(r) => {
-                    conn.execute_batch("COMMIT;")
-                        .map_err(|e| format!("COMMIT 失败: {}", e))?;
-                    Ok(r)
-                }
-                Err(e) => {
-                    let _ = conn.execute_batch("ROLLBACK;");
-                    Err(format!("batch_resolve_and_save_calls 失败: {}", e))
-                }
+        let inner_result = batch_resolve_and_save_calls_inner(
+            &conn,
+            &file_infos,
+            &sym_idx,
+            &ext_idx,
+            &changed_file_instance_ids,
+        );
+
+        match inner_result {
+            Ok(r) => {
+                conn.execute_batch("COMMIT;")
+                    .map_err(|e| format!("COMMIT 失败: {}", e))?;
+                Ok(r)
             }
-        })
-        .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK;");
+                Err(format!("batch_resolve_and_save_calls 失败: {}", e))
+            }
+        }
     });
 
     match result {
