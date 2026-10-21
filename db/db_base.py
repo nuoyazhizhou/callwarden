@@ -9,29 +9,21 @@ db.py
 """
 
 from __future__ import annotations
-from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
-from ..analyzers import CallChainMixin, IssueAnalyzerMixin, CoverageMixin
 # R5-P0-1: 彻底断开顶层 parsers 导入（frozen bundle 排除 callwarden.parsers）
 # ModuleResolver / CallResolver / RustParser 都在 _try_init_resolvers /
 # _try_init_rust_parser 中懒加载。frozen 包无 callwarden.parsers 时，
 # CodeGraphDB 仍可初始化，仅 Rust mod_decls 提取降级。
-from .schema import SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
+from .schema import SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
 from .. import config as _config_module
-import sys
 
 import os
 import sqlite3
-import subprocess
 import threading
 import time
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from ..config import (
-    norm_path, read_file_normalized,
-    detect_language_from_path, get_supported_extensions, compute_content_hash,
-    detect_project_root, get_default_workspace_name, get_project_db_path,
+    norm_path, detect_project_root, get_default_workspace_name, get_project_db_path,
 )
 from ..i18n import t
 
