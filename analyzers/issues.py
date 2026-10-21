@@ -3,7 +3,7 @@
 提供函数级别的缺陷检测（基于正则规则）和 Semgrep 多语言静态分析功能。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import  Dict, List, Optional
 import os
 import json
 import time
@@ -440,7 +440,6 @@ class IssueAnalyzerMixin:
             Semgrep 扫描结果（结构化 JSON）
         """
         import subprocess
-        import shutil
         
         # 找到 Semgrep CLI 路径
         semgrep_path = self._find_semgrep_cli()

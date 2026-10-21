@@ -17,7 +17,6 @@ import json
 import os
 import re
 
-import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

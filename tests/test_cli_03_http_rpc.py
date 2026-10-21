@@ -17,7 +17,6 @@ from callwarden.server.daemon_client import (
     HttpDaemonRpcClient,
     DaemonUnavailableError,
 )
-from callwarden.server.daemon_protocol import DaemonRemoteError
 
 A_PRIME_EPIC = "T-1787293451688-c14b1e44"
 CLI_02_TASK = "T-1787321708568-d292ab3c"

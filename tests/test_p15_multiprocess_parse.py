@@ -8,15 +8,11 @@
 - fallback 机制（pickle 失败时降级）
 - 多进程 vs 多线程结果一致性
 """
-import os
-import sys
-import tempfile
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.db_build import (
-    _parse_file_worker, _init_worker_parsers, _get_or_create_parser, _worker_parsers
+    _parse_file_worker, _init_worker_parsers, _get_or_create_parser
 )
 
 
@@ -190,7 +186,6 @@ def test_mp_workers_dynamic_detection():
 
 def test_worker_function_is_module_level():
     """_parse_file_worker 应是模块级函数（可 pickle，ProcessPoolExecutor 要求）。"""
-    import callwarden.db.db_build as db_build_mod
     # 模块级函数的 __qualname__ 不含 <locals>
     assert "<locals>" not in _parse_file_worker.__qualname__
     # 应能 pickle

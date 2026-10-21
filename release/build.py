@@ -20,7 +20,6 @@ parser ABI 的 artifact manifest（设计：rust-only-parser-cutover-plan.md
                                         # 构建 PyInstaller 角色产物并运行 bundle inspector
 """
 
-import os
 import subprocess
 import sys
 from pathlib import Path

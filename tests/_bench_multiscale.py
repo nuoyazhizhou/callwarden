@@ -30,7 +30,6 @@ import json
 import shutil
 import tempfile
 import platform
-import subprocess
 
 # 确保能导入 callwarden
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

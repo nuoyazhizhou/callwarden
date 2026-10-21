@@ -17,8 +17,6 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import get_db
-from callwarden.server.daemon_client import route_worker_call
 
 # H4C-2 第三批（T-1786747295227-b876fddf）：p2 依赖图/环检测只读工具接入
 # compat worker。注意：必须用顶层 `server.compat_registry` 导入，与

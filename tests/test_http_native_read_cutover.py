@@ -47,11 +47,10 @@ import os
 import re
 import subprocess
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.tools import tools_query, tools_workspace
 from callwarden.config import (  # noqa: E402

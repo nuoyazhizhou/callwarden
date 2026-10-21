@@ -18,9 +18,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from callwarden.server.cas_schema import (
-    init_cas_schema, cas_publish, cas_publish_with_retry, cas_lookup,
-    cas_pin, cas_gc, file_generation_seen, file_generation_committed,
-    _flock_exclusive, _flock_shared, _flock_unlock, _HAS_FCNTL
+    init_cas_schema, cas_publish, cas_publish_with_retry,
+     cas_gc, file_generation_seen, file_generation_committed,
+    _flock_exclusive, _flock_shared, _flock_unlock
 )
 
 

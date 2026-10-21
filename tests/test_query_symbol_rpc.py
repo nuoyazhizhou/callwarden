@@ -557,7 +557,6 @@ class _HttpInjectionHarness:
 class TestHttpClientWorkspaceInjection:
     # ---- query.symbol ----
     def test_http_get_symbol_registers_and_injects_instance_id(self, monkeypatch):
-        from callwarden.server.daemon_client import HttpDaemonRpcClient
         client, calls = _HttpInjectionHarness._make_client(monkeypatch)
         db_path = os.path.join(os.getcwd(), "snap.db")
 
@@ -617,7 +616,6 @@ class TestHttpClientWorkspaceInjection:
 
     # ---- query.symbol_location ----
     def test_http_get_symbol_location_registers_and_injects_instance_id(self, monkeypatch):
-        from callwarden.server.daemon_client import HttpDaemonRpcClient
         client, calls = _HttpInjectionHarness._make_client(monkeypatch)
         db_path = os.path.join(os.getcwd(), "snap.db")
 

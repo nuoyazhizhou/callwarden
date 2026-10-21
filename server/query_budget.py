@@ -26,7 +26,7 @@ Rust 失败时 fail-soft 降级到 Python 路径。
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Any, List, Dict
+from typing import Optional,  Any, List, Dict
 
 
 # ============================================

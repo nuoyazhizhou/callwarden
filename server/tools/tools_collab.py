@@ -26,16 +26,12 @@ wire 后经 `verdict.submit` / `evidence.append` RPC 透传（_collab_write_rpc�
 
 # [L13] 多 LLM 契约协同——只读 MCP 查询工具面（Req 14.17, D0 任务 3.15）
 
-import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import _get_daemon_client, get_db
 from ...i18n import t
-from callwarden.server.daemon_client import DaemonUnavailableError, route_worker_call
-from callwarden.server.daemon_protocol import DaemonRemoteError
 
 # H4C-2 第三批（T-1786747295227-b876fddf）：collab 组只读工具接入 compat worker。
 # 注意：必须用顶层 `server.compat_registry` 导入，与 compat_worker.py 保持同一
@@ -43,7 +39,6 @@ from callwarden.server.daemon_protocol import DaemonRemoteError
 from server.compat_registry import (  # noqa: E402
     SCOPE_WORKSPACE,
     CompatCallContext,
-    register_compat_routes,
 )
 
 from ..daemon_client import route_rpc as _route

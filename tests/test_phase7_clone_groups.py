@@ -4,7 +4,6 @@ Phase 7.0: Clone Groups 存储测试
 测试 db_clone_groups.py 的 group 存储、查询、清理。
 """
 
-import os
 import sys
 import sqlite3
 import time

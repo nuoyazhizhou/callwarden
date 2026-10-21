@@ -35,7 +35,6 @@ from callwarden.server.daemon_client import (  # noqa: E402
     DaemonUnavailableError,
     HttpDaemonRpcClient,
 )
-from callwarden.config import get_http_authority_id
 
 
 

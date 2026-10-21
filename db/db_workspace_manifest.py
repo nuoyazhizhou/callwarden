@@ -6,7 +6,6 @@ dirty workspace：独立 manifest + dirty overlay
 
 import sqlite3
 import time
-import hashlib
 from typing import Optional, List, Dict, Any
 
 

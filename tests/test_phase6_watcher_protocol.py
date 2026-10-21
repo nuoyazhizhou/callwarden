@@ -3,11 +3,6 @@
 任务：T-1783974522648-e2d3 Steps #0-#3
 """
 
-import json
-import os
-import sqlite3
-import tempfile
-import time
 
 import pytest
 
@@ -101,7 +96,7 @@ class TestEventCoalescing:
     """事件合并规则测试。"""
 
     def _make_event(self, kind, seq=1):
-        from callwarden.server.watcher_protocol import WatcherEvent, EventKind
+        from callwarden.server.watcher_protocol import WatcherEvent
         return WatcherEvent(
             workspace_instance_id="ws_1",
             agent_session_id="sess_1",

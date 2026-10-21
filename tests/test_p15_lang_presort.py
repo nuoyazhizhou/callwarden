@@ -8,7 +8,6 @@
 """
 import inspect
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 

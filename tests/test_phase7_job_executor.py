@@ -4,12 +4,8 @@ Phase 7.0: JobExecutor 测试
 测试 server/job_executor.py 的线程池执行、取消、超时、进度上报。
 """
 
-import os
-import sys
 import sqlite3
-import tempfile
 import time
-from pathlib import Path
 
 import pytest
 
@@ -19,14 +15,12 @@ from callwarden.db.db_jobs import (
     init_jobs_schema,
     get_job,
     JOB_PENDING,
-    JOB_RUNNING,
     JOB_COMPLETED,
     JOB_CANCELLED,
     JOB_FAILED,
 )
 from callwarden.server.job_executor import (
     JobExecutor,
-    JobContext,
     JobCancelled,
 )
 

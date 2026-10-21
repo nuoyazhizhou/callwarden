@@ -10,9 +10,7 @@
 - 参数定制（user/port/memory/cpu）
 """
 
-import os
 
-import pytest
 
 from callwarden.cicd.systemd_unit import (
     generate_enterprise_daemon_unit,

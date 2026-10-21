@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_registry_overlay_loading(tmp_path):
     """外部 JSON 叠加层应正确扩展和覆盖内置 Agent"""
-    from cli.agent_registry import load_registry_overlay, get_merged_specs, AGENT_SPECS
+    from cli.agent_registry import load_registry_overlay, get_merged_specs
 
     # 创建临时 overlay 文件
     overlay = [

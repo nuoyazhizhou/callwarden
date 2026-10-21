@@ -19,7 +19,6 @@ r"""P0-G G5：task-bound reviewer verdict 全链路校验脚本（projection→l
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 

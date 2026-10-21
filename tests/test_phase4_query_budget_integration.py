@@ -4,9 +4,8 @@
 原本无 budget 限制，现已补上。
 """
 import inspect
-import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 class TestQueryBudgetIntegration(unittest.TestCase):

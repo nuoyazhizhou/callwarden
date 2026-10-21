@@ -40,12 +40,10 @@ stale 依据（daemon authority / HTTP thin-client 迁移）
 - `TestCLISmokeHelp`（`--help` 注册校验）不依赖 daemon，保持原样。
 """
 import asyncio
-import json
 import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest

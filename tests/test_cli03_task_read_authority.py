@@ -14,7 +14,6 @@
 - 所有失败 fail-closed 返回稳定且可区分的结构化错误，绝不降级到本地 SQLite。
 """
 
-import os
 
 import pytest
 

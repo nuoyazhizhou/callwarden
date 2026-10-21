@@ -11,9 +11,7 @@ server/query_budget.py）的行为一致性。
 - D5: budget_create / budget_preset
 - D6: budget_tracker 行为
 """
-import os
 import sys
-import time
 import pytest
 from pathlib import Path
 

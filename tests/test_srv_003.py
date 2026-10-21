@@ -17,7 +17,6 @@
 """
 
 import ast
-import os
 import types
 
 import pytest

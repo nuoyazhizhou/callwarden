@@ -30,7 +30,7 @@ CI 门禁脚本：聚合 bootstrap_status 健康摘要，决定是否阻断合�
 from __future__ import annotations
 
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from ..i18n import t
 

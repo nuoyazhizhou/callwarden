@@ -7,11 +7,7 @@
 - 文件不存在 / 无法读取
 - _parse_file_worker 对资源文件返回 skip_resource
 """
-import os
-import sys
-import tempfile
 
-import pytest
 
 from callwarden.db.db_build import (
     _is_resource_file,

@@ -16,9 +16,7 @@
 from __future__ import annotations
 
 import os
-import sys
 import time
-from unittest import mock
 
 import pytest
 
@@ -47,7 +45,6 @@ class TestG13MeasureRpcDefinition:
     def test_measure_rpc_is_context_manager(self):
         """measure_rpc 是 contextmanager（可 with 调用）"""
         from callwarden.server.metrics import measure_rpc
-        import contextlib
         # contextmanager 装饰器返回的是 _GeneratorContextManager
         # 验证 measure_rpc(method) 可以作为 with 语句的目标
         with measure_rpc("test.method"):

@@ -19,11 +19,6 @@ from callwarden.db import CodeGraphDB
 from callwarden.db.db_task_leases import (
     ERR_LEASE_ACTIVE_EXISTS,
     ERR_LEASE_CLOCK_UNAVAILABLE,
-    ERR_LEASE_EXPIRED,
-    ERR_LEASE_FENCING_STALE,
-    ERR_LEASE_HOLDER_MISMATCH,
-    ERR_LEASE_NOT_FOUND,
-    ERR_LEASE_TOKEN_MISMATCH,
 )
 
 
@@ -159,7 +154,7 @@ def test_old_holder_resurrection_rejected(db):
 
     # 新持有者获取新 lease（counter 递增）
     ok, r2 = db.acquire_lease(task_id, "implementer", _identity("agent-b"))
-    raw2, c2 = r2["token"], r2["fencing_counter"]
+    _raw2, c2 = r2["token"], r2["fencing_counter"]
     assert c2 == c1 + 1
 
     before = _task_status(db, task_id)

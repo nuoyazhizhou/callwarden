@@ -21,7 +21,7 @@ P1 扩展（Req 1.3, 6.4–6.5, 6.11–6.12, 7.1–7.3）：
 import re
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional,  Tuple
 
 from .task_snapshot import WorkspaceSnapshot
 

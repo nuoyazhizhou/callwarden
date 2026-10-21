@@ -487,7 +487,6 @@ class TestHttpClientWorkspaceInjection:
         return client, calls
 
     def test_http_get_file_symbols_registers_and_injects_instance_id(self, monkeypatch):
-        from callwarden.server.daemon_client import HttpDaemonRpcClient
         client, calls = self._make_client(monkeypatch)
         db_path = os.path.join(os.getcwd(), "snap.db")
 

@@ -12,9 +12,7 @@ import importlib
 import inspect
 import json
 import os
-import sys
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 

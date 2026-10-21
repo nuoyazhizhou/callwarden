@@ -8,10 +8,9 @@
 在不给实现的前提下,判断它能否正确理解并生成合法调用参数。
 """
 from __future__ import annotations
-import json
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 

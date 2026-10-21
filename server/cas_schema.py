@@ -12,17 +12,11 @@
 from __future__ import annotations
 
 import sqlite3
-import hashlib
 import time
 import os
 
 from callwarden.server.replicator import (
     FILE_GENERATIONS_DDL,
-    _compute_cas_key_v1 as compute_cas_key_v1,
-    _python_cas_lookup as cas_lookup,
-    _python_cas_pin as cas_pin,
-    _python_cas_publish as cas_publish,
-    _python_cas_publish_with_retry as cas_publish_with_retry,
 )
 
 # CAS schema DDL（原 db_cas.CAS_SCHEMA_DDL，逐行保持一致）

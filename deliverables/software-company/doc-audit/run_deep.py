@@ -4,7 +4,6 @@
 import asyncio
 import json
 import os
-import subprocess
 import sys
 
 sys.path.insert(0, r"C:\git_work\callwarden")

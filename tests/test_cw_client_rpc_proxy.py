@@ -11,8 +11,6 @@
 测试通过 mock sys.platform 模拟 Linux / 不受支持平台，避免在 Windows 上跳过测试。
 """
 import argparse
-import os
-import sys
 from unittest import mock
 
 import pytest

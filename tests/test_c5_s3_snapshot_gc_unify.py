@@ -13,10 +13,8 @@ C4 GC 面：Python `SnapshotManagerService.gc_snapshots` 与 Rust
 
 import threading
 
-import pytest
 
 from callwarden.server.daemon_client import (
-    DaemonUnavailableError,
     UnixDaemonRpcClient,
 )
 from callwarden.server.snapshot_manager import SnapshotManagerService

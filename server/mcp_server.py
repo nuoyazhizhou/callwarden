@@ -10,9 +10,7 @@ mcp_server.py
 
 import os
 import sys
-import time
 import threading
-from typing import Any, Dict, Optional
 
 # 确保可以导入 callwarden 模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,7 +23,7 @@ except ImportError as exc:
     HAS_FASTMCP = False
     _FASTMCP_IMPORT_ERROR = exc
 
-from ..config import PROJECT_ROOT, get_project_db_path
+from ..config import PROJECT_ROOT
 from ..i18n import t
 
 

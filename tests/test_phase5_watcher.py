@@ -8,10 +8,7 @@
 - 默认扩展名列表
 """
 
-import os
 import time
-import tempfile
-from pathlib import Path
 
 import pytest
 

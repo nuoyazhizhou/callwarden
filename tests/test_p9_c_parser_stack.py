@@ -10,7 +10,6 @@ import os
 import sys
 import tempfile
 
-import pytest
 
 from callwarden.parsers.c_parser import CParser, CppParser
 from callwarden.db.db import CodeGraphDB

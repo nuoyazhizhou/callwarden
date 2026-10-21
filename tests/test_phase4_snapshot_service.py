@@ -8,16 +8,12 @@
 - Rust 不可用时降级（None / []）
 """
 
-import os
 import sqlite3
-import threading
-from pathlib import Path
 
 import pytest
 
 from callwarden.server.snapshot_manager import (
     SnapshotManagerService,
-    get_snapshot_service,
     publish_workspace_snapshot,
     get_workspace_snapshot_stats,
 )

@@ -16,12 +16,11 @@ import sys
 import json
 import time
 import argparse
-from pathlib import Path
 
 # 复用 v2 的 run_single 和工具函数
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bench_baseline_v2 import (
-    run_single, collect_env_info, median, split_index_statements
+    run_single, collect_env_info, median
 )
 
 

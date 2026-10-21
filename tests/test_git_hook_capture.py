@@ -17,7 +17,6 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 
-import pytest
 
 from callwarden.install import CallWardenInstaller
 

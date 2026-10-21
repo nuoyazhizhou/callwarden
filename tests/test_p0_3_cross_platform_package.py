@@ -19,7 +19,6 @@ import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -371,7 +370,6 @@ def test_end_to_end_wheel_contains_rust_extension():
     # 直接用 setuptools 构建一个 wheel 到临时目录
     import subprocess
     import tempfile
-    import shutil
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # 构建 wheel

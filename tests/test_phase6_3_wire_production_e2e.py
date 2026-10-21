@@ -23,9 +23,6 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-import tempfile
-from typing import Any, Dict, List
-from unittest.mock import patch
 
 import pytest
 

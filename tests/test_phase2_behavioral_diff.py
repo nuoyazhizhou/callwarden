@@ -38,8 +38,6 @@ from __future__ import annotations
 import os
 import sys
 import sqlite3
-import tempfile
-from typing import Any, Dict, Optional
 
 import pytest
 

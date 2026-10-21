@@ -5,7 +5,6 @@ Phase 6.4: 构建系统配置解析器测试
 """
 
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path

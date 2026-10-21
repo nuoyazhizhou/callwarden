@@ -13,11 +13,8 @@
     python release/_check_artifacts.py
 """
 import json
-import os
 import subprocess
 import sys
-import tarfile
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

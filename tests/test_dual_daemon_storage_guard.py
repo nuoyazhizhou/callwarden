@@ -12,8 +12,6 @@ validate_internal_storage / validate_no_storage_overlap，返回 E_AUTHORITY_STO
 3. 标注 Rust 侧单测（config.rs::tests::test_validate_*）需 Linux runner 执行。
 """
 import os
-import sys
-import tempfile
 
 import pytest
 

@@ -54,7 +54,6 @@ import unicodedata
 import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
-from callwarden.server.daemon_client import DaemonUnavailableError
 
 _PY_EXE = r"C:\Python314\python.exe"
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

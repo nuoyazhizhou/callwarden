@@ -438,7 +438,6 @@ def verify_manifests() -> list[str]:
 # ---------------------------------------------------------------- 内联样本
 def _base_docs():
     """构造内部自洽的最小四件套（负向样本在此上注入单一缺陷）。"""
-    import copy
     seed_sha = sha256_of(repo_path("tests/convergence/seed_sample/calc.py"))
     head = git_head()
     profiles = {
@@ -513,7 +512,6 @@ def run_inline_examples() -> list[str]:
     负向覆盖卡片点名的六类：缺仓库、错commit/hash、未知语言、偷换平台、
     缺外部依赖资产、未批准N/A，外加预算/复核状态等自洽项。
     """
-    import copy
 
     def run(label, mutate, expect=None):
         p, c, o, b = _base_docs()

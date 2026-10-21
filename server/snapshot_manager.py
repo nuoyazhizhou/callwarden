@@ -22,7 +22,6 @@ Phase 4.6: 加入 QueryBudget 控制 depth/limit/timeout/frontier
 """
 
 import logging
-import os
 import threading
 from typing import Optional, List, Dict, Any
 

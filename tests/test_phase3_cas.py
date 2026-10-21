@@ -3,7 +3,6 @@
 import os
 import tempfile
 import sqlite3
-import hashlib
 import pytest
 
 from callwarden.db.db_cas import (

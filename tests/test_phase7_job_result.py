@@ -12,12 +12,9 @@
 """
 
 import os
-import sqlite3
 import tempfile
-import threading
 import time
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.db_jobs import init_jobs_schema, JOB_COMPLETED

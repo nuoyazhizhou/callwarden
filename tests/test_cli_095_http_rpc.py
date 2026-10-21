@@ -11,7 +11,6 @@ Python 侧已通过 route_rpc 路由到 Rust daemon；Rust 侧 workspace.* handl
 （dispatch.rs / http_server.rs / cli_run_subcommand_mode_handlers.rs）由其它 agent 核验。
 """
 
-import pytest
 
 import callwarden.cli.main as main_mod
 

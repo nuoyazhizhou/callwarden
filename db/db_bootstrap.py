@@ -31,7 +31,6 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..config import read_file_normalized
-from ..i18n import t
 
 
 class BootstrapMixin:

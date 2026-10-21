@@ -13,17 +13,13 @@
 
 import ast
 import os
-import textwrap
 
 import pytest
 
 from callwarden.server.audit_log import (
     AuditEventType,
-    AuditResult,
     AuditEvent,
     AuditLogger,
-    get_audit_logger,
-    reset_audit_logger,
 )
 from callwarden.server.daemon_client import DaemonUnavailableError
 

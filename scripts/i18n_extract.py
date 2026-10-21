@@ -15,7 +15,6 @@ import re
 import json
 import sys
 import os
-import ast
 
 
 def is_chinese(text: str) -> bool:

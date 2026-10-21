@@ -23,9 +23,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import  Optional
 
 # ============================================
 # 性能基线常量（镜像 rust_ext/src/differential_baseline.rs）

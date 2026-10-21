@@ -48,7 +48,6 @@ embed_symbols_async docstring 仍写 `"job_type": "vector_embed"`，代码实值
 `"embed"`（daemon SUPPORTED_JOB_TYPES 亦为 `"embed"`）。
 """
 
-import ast
 import os
 import re
 

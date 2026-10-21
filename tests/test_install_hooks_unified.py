@@ -21,7 +21,6 @@ import tempfile
 from contextlib import contextmanager
 from unittest import mock
 
-import pytest
 
 from callwarden.install import CallWardenInstaller
 

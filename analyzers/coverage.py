@@ -7,7 +7,7 @@ coverage.py
 提供注释覆盖率、未注释符号列表、函数调用频率热力图、测试覆盖率等统计分析功能。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import  Dict, List, Optional
 
 
 class CoverageMixin:

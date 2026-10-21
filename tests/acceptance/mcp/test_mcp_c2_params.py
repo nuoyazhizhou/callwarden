@@ -17,7 +17,6 @@ selector: tests/acceptance/mcp/test_mcp_c2_params.py
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -34,7 +33,6 @@ _CONV = Path(__file__).resolve().parents[2] / "tests" / "convergence"
 if str(_CONV) not in sys.path:
     sys.path.insert(0, str(_CONV))
 
-import t2_mcp_runner as t2r  # noqa: E402
 
 # 破坏性工具不参与 C2 的「类型错配」实测（即便校验先于执行，也无需冒写风险）；
 # 「缺 required」对所有工具都安全（校验层先拒绝）。

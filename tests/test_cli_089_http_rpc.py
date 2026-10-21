@@ -8,7 +8,6 @@ Python 侧已通过 route_task_write/route_task_read 路由到 Rust daemon；Rus
 `task.split` handler（dispatch.rs / http_server.rs）的实现与编译由其它 agent 核验。
 """
 
-import pytest
 
 import callwarden.cli.main as main_mod
 

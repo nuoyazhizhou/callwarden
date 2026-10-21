@@ -18,7 +18,6 @@ P3 Identity 验证、Attestation 签发与撤销派生 Mixin。
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple

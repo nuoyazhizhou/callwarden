@@ -22,7 +22,6 @@ import json
 import os
 import subprocess
 import sys
-from unittest import mock
 
 import pytest
 
@@ -36,7 +35,6 @@ I18N_DIR = os.path.join(_PKG_PARENT, "i18n")
 MCP_AUDIT = os.path.join(_PKG_PARENT, ".mcp_audit.md")
 MCP_SERVER = os.path.join(_PKG_PARENT, "server", "mcp_server.py")
 
-from callwarden.cli import main as cli_main
 
 
 # ============================================

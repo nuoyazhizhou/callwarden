@@ -7,7 +7,6 @@
 输出：按 blocking_conditions 分类的精确分布 + 每类样例任务 ID。
 """
 import sqlite3
-import sys
 from collections import Counter, defaultdict
 
 from callwarden.server.daemon_client import UnixDaemonRpcClient

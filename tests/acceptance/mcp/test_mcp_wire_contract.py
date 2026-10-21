@@ -18,8 +18,6 @@ tools/list 翻页）上校验 MCP 表面的协议级合同：
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 

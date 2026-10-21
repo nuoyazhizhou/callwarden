@@ -13,9 +13,6 @@ import os
 import sys
 import time
 import json
-import ctypes
-import tempfile
-import shutil
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
@@ -146,7 +143,6 @@ def benchmark_python_parse(c_files, num_workers=8):
     rss_before, _ = _get_rss_mb()
 
     from concurrent.futures import ProcessPoolExecutor
-    import pickle
     os.environ["CW_MP_WORKERS"] = str(num_workers)
 
     t0 = time.perf_counter()

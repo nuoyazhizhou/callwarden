@@ -29,7 +29,6 @@ import tempfile
 import time
 import pytest
 
-from callwarden.config import get_daemon_mode
 from callwarden.server.daemon_client import UnixDaemonRpcClient, DaemonUnavailableError, route_task_write, route_task_read
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.daemon_autostart import get_default_endpoint

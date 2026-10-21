@@ -25,13 +25,6 @@ from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from callwarden.server.daemon_client import (
-    is_http_transport_enabled,
-    route_task_write,
-    route_task_read,
-    route_worker_call,
-)
 
 # H4C-3（T-1786716190783-ba187c88 步骤#1）：任务组只读工具接入 compat worker。
 # 必须用顶层 `server.compat_registry` 导入，与 compat_worker.py 保持同一模块

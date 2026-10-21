@@ -15,7 +15,6 @@ selector: tests/acceptance/inventory/cli/test_cli_tree.py
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 

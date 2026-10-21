@@ -18,7 +18,6 @@ import re
 import subprocess
 import sys
 
-import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _MATRIX = os.path.join(_REPO_ROOT, "deliverables", "software-company",

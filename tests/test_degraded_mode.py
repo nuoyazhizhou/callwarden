@@ -6,16 +6,13 @@
 import os
 import sys
 
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from server.degraded_mode import (
     GOVERNANCE_WRITE_OPS,
     INDEX_WRITE_OPS,
-    DegradedRoutingDecision,
     OperationClass,
-    OperationComponent,
     StructuredReason,
     can_advance_state,
     classify_operation,

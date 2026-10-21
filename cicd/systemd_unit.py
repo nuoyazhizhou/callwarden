@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import posixpath
-from typing import Dict, Optional
+from typing import Dict
 
 
 def generate_systemd_unit(

@@ -11,7 +11,6 @@ import sys
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 class TestBug1SymbolMethod(unittest.TestCase):

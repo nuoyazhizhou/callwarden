@@ -12,7 +12,6 @@
 import os
 import sys
 
-import pytest
 
 # 项目根目录
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -1,6 +1,5 @@
 """MCP 启动期 daemon 唤起的最小契约测试。"""
 
-import sys
 
 
 def test_mcp_startup_probe_skips_local_mode(monkeypatch):

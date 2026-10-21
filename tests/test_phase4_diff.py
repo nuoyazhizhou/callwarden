@@ -9,11 +9,7 @@
 - 一侧未发布 snapshot 时的错误处理
 """
 
-import os
 import sqlite3
-import sys
-import tempfile
-from pathlib import Path
 
 import pytest
 

@@ -12,9 +12,7 @@
 """
 
 import os
-import sys
 import socket
-import tempfile
 
 import pytest
 
@@ -33,7 +31,6 @@ class TestLocalMode:
         env["CW_DAEMON_SOCKET"] = "/tmp/nonexistent-daemon.sock"
 
         # 验证 local 模式不会抛出连接错误
-        from callwarden.server.daemon_client import DaemonClient
         # 不实际连接，只验证模式设置
         assert env["CW_DAEMON_MODE"] == "local"
 

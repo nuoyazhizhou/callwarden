@@ -1,5 +1,4 @@
 """按功能域注册全部 MCP 工具（保持 mcp_server.py 原行号顺序）"""
-from typing import List
 
 from mcp.server.fastmcp import FastMCP
 

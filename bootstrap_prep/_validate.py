@@ -1,6 +1,5 @@
 import json
 import hashlib
-import os
 BP = r"C:\git_work\callwarden\bootstrap_prep"
 REQ = ["objective","interfaces","allowed_edit_scope","acceptance_clauses","risks","rollback","dependencies"]
 PROFILES = {"research","design","code_change","high_risk","review"}

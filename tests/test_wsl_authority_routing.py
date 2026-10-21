@@ -333,7 +333,6 @@ def test_daemon_client_injects_bridge_token():
 
     def _fake_recv(conn, max_bytes):
         # 返回匹配 id 的响应
-        import json as _json
 
         req = json.loads(fake_conn.sent)
         return {"id": req["id"], "ok": True, "result": {"pong": True}}
@@ -396,7 +395,6 @@ def test_daemon_client_transport_override_forces_token():
     fake_conn = _FakeConn()
 
     def _fake_recv(conn, max_bytes):
-        import json as _json
 
         req = json.loads(fake_conn.sent)
         return {"id": req["id"], "ok": True, "result": {"pong": True}}
@@ -478,7 +476,6 @@ def test_daemon_client_no_token_in_uds_mode():
     fake_conn = _FakeConn()
 
     def _fake_recv(conn, max_bytes):
-        import json as _json
 
         req = json.loads(fake_conn.sent)
         return {"id": req["id"], "ok": True, "result": {"pong": True}}

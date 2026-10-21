@@ -10,7 +10,6 @@
 import os
 import time
 import tempfile
-from unittest.mock import patch, MagicMock
 from collections import defaultdict
 
 import pytest

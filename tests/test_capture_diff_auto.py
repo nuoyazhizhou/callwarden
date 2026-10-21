@@ -368,7 +368,6 @@ def test_cli_capture_diff_auto_exception_returns_true():
 def test_cli_capture_diff_manual_missing_task_id_errors():
     """手动模式（未传 --auto）且未指定 task_id 时报错。"""
     import sys
-    from unittest import mock
     from callwarden.cli import main as cli_main
 
     with tempfile.TemporaryDirectory() as tmpdir:

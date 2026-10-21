@@ -18,13 +18,10 @@ H4B-C（T-1786590214634-9e740cdc-h4b-compat-read）：compatibility read HTTP cu
 # [L2] 语义搜索工具（semantic_search / find_similar_functions / embed_*）
 # [L11] 外部符号与 GC 备份审计工具（get_project_dependencies / gc_archive_list 等）
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import get_db
-from ...i18n import t
-from callwarden.server.daemon_client import route_worker_call
 
 # H4C-2 第二批（T-1786747295213-64204cce）：语义/外部符号组只读工具接入 compat
 # worker。注意：必须用顶层 `server.compat_registry` 导入，与 compat_worker.py

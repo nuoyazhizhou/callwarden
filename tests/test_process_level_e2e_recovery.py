@@ -9,13 +9,11 @@
 
 import os
 import json
-import socket
 import sys
 import time
 import tempfile
 from pathlib import Path
 import subprocess
-import shutil
 import sqlite3
 import pytest
 

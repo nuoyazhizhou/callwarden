@@ -21,8 +21,6 @@ stub 改为纯只读实现——scan 为 detect-only（findings 附 persisted=fa
 """
 import pytest
 
-from callwarden.server.daemon_client import HttpDaemonRpcClient
-from callwarden.config import get_http_authority_id
 
 CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
 _CANONICAL_ENDPOINT = None  # 隔离 daemon endpoint，由 w3_live fixture 注入

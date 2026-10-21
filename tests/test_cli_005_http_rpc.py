@@ -12,7 +12,6 @@
 
 import inspect
 
-import pytest
 
 import callwarden.cli.main as main_mod
 from callwarden.server import daemon_client

@@ -11,7 +11,6 @@ Phase 0 完成门要求暴露的 4 个语言缺口（TypeScript/PHP/Scala/HCL）
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -197,7 +196,6 @@ def test_inspector_forbid_distribution_gate(tmp_path):
         CALLWARDEN_PARSERS_DISTRIBUTION,
         inspect_bundle,
     )
-    import ast
 
     bundle = tmp_path / "callwarden"
     internal = bundle / "_internal"

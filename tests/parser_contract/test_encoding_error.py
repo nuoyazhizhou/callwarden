@@ -35,7 +35,6 @@ if _TESTS_DIR not in sys.path:
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from test_p31_multi_lang import _has_rust_ext  # noqa: E402
 from callwarden.parsers import create_parser  # noqa: E402
 
 # Rust 侧 canonicalize 入口（Python 暴露名为 canonicalize_source_py）

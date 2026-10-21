@@ -37,7 +37,6 @@ class ModuleResolver:
 
     def resolve_all(self, parser):
         """解析整个 src 目录的模块结构"""
-        from .rust import RustParser
         # 从 lib.rs 和 main.rs 开始
         crate_roots = []
 

@@ -6,10 +6,8 @@
 - _get_available_memory_mb 跨平台内存检测
 """
 import os
-import sys
 import inspect
 
-import pytest
 
 from callwarden.db.db_build import (
     _get_or_create_parser,
@@ -19,7 +17,6 @@ from callwarden.db.db_build import (
     _HOST_RESERVED_MEM_MB,
     _MAX_WORKERS_CAP,
     _MIN_WORKERS,
-    _worker_parsers,
 )
 
 

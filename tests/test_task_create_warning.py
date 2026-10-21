@@ -17,7 +17,6 @@ import os
 import sys
 import tempfile
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 

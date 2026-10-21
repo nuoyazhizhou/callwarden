@@ -31,7 +31,7 @@ import importlib.util
 import json
 import os
 import sys
-from typing import Any, List, Optional, Tuple
+from typing import Any, List,  Tuple
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CLI_DOC = os.path.join(_REPO_ROOT, "docs", "cli_reference.md")

@@ -18,7 +18,6 @@ workspace,捕获 rc/stdout/stderr。argv 由 param_provider.build_cli_argv 生�
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys

@@ -5,11 +5,8 @@ Phase 5.5: 局部 depth/cycle/impact 更新 测试
 """
 import os
 import sys
-import time
-import tempfile
 from pathlib import Path
 
-import pytest
 
 # 设置 PYTHONPATH
 os.environ.setdefault("PYTHONPATH", "")

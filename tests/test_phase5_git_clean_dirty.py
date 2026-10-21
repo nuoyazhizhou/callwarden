@@ -25,8 +25,6 @@ import os
 import shutil
 import sqlite3
 import subprocess
-import tempfile
-import time
 
 import pytest
 

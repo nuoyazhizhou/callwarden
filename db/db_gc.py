@@ -36,8 +36,6 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 from ..analyzers.ignore_spec import IgnoreMatcher
-from ..cli.console import cprint
-from ..config import norm_path
 from ..i18n import t
 
 

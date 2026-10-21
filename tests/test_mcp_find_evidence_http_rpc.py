@@ -16,8 +16,6 @@
 expect 与 Python `db_task_reviews.evidence.query` 语义一致的 items/count 投影。
 """
 
-import hashlib
-import json
 
 import pytest
 
@@ -25,7 +23,6 @@ from callwarden.server.daemon_client import (
     HttpDaemonRpcClient,
     DaemonUnavailableError,
 )
-from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.config import get_http_authority_id
 
 EVIDENCE_TASK = "T-1785767529976-1760c608"

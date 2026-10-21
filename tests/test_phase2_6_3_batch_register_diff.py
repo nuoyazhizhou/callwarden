@@ -44,7 +44,6 @@ import os
 import sqlite3
 import statistics
 import sys
-import tempfile
 import time
 from typing import Any, Dict, List, Optional
 

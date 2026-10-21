@@ -17,7 +17,6 @@ bootstrap_status / get_complexity_hotspots 等），输出一份项目级驾驶�
 from __future__ import annotations
 
 import os
-import time
 from typing import Any, Dict, List, Optional
 
 

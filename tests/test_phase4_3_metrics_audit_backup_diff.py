@@ -9,10 +9,7 @@
 
 import hashlib
 import json
-import os
 import hmac as py_hmac
-import tempfile
-from pathlib import Path
 
 import pytest
 

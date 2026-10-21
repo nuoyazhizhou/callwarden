@@ -26,7 +26,7 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import Dict, List, Set, Tuple
+from typing import  List, Set, Tuple
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

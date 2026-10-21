@@ -12,7 +12,6 @@
 import os
 import sys
 import tempfile
-import time
 
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _PKG_PARENT not in sys.path:

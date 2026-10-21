@@ -15,7 +15,6 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 if str(_PKG_ROOT) not in sys.path:

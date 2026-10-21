@@ -35,7 +35,6 @@ r"""B3（T-1786590722456-db00d074-sub-3）五类查询 legacy 基线核对。
 import ast
 import os
 import re
-import sys
 
 import pytest
 

@@ -12,10 +12,7 @@ Phase 7.1: MinHash/LSH 稳定 hash 和 shingle 测试
 import os
 import subprocess
 import sys
-import tempfile
-import time
 
-import pytest
 
 from callwarden.db.db_clone_detection import (
     _fnv1a_32,
@@ -24,9 +21,6 @@ from callwarden.db.db_clone_detection import (
     _lsh_buckets,
     _normalize_token_sequence,
     _MAX_BUCKET_SIZE,
-    _HASH_A_NP,
-    _HASH_B_NP,
-    _MASK_32,
 )
 
 

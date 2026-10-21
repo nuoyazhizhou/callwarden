@@ -9,9 +9,6 @@ windows-wsl-daemon-coexistence-task-plan.md 子任务5。
 - 重连成功后复用 request_id 提交（daemon 侧 dedup 返回已提交结果）；
 - 重连失败时 DaemonUnavailableError（fail-closed，不盲目重复）。
 """
-import os
-import socket
-import time
 
 import pytest
 

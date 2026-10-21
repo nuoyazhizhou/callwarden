@@ -9,7 +9,6 @@
 输出：tests/fixtures/matrix4_resolved_edges_report.md
 """
 import json
-import os
 import subprocess
 import sys
 import time

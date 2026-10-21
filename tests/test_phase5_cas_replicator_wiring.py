@@ -27,10 +27,8 @@ stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
 import hashlib
 import os
 import sqlite3
-import tempfile
 import threading
 import time
-import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -1114,7 +1112,6 @@ class TestBatch10DaemonServerUsesPragmas:
 
     def test_cas_conn_actually_has_pragmas_applied(self, tmp_path):
         """端到端验证：通过 _get_workspace_resources 创建的 cas_conn 必须有 cache_size 等配置。"""
-        import sqlite3
         import os
         import threading
         from unittest.mock import MagicMock

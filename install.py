@@ -475,7 +475,6 @@ class CallWardenInstaller:
         Returns:
             已配置的 Agent key 列表；空列表表示未执行任何配置
         """
-        from datetime import datetime, timezone
         from .config import AUTO_SETUP_MARKER
 
         # 检查标记文件是否已存在（幂等保护）

@@ -27,15 +27,10 @@ get_metrics 不依赖 db.conn（走 UnixDaemonRpcClient / 本地 MetricsCollecto
 
 # 只读查询工具；写操作（register/bind/import）走 CLI 避免与 MCP 长连接撞锁
 
-import os
-import time
-from typing import Any, Dict, Optional
+from typing import   Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from callwarden.config import is_http_transport_enabled
-from callwarden.server.daemon_client import route_worker_call
 from ..daemon_client import route_rpc as _route
 
 

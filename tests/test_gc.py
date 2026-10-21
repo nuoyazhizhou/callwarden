@@ -19,7 +19,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from callwarden.db import CodeGraphDB
-from callwarden.analyzers.ignore_spec import IgnoreMatcher, parse_ignore_line
+from callwarden.analyzers.ignore_spec import IgnoreMatcher
 
 
 def setup_test_workspace():

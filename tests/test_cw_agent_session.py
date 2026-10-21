@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 import threading
 from pathlib import Path
 
@@ -34,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "rust_ext" / "target" / "p
 
 from callwarden.server.agent_session import (
     AgentSession,
-    DEFAULT_AGENT_SESSION_FILE,
 )
 
 

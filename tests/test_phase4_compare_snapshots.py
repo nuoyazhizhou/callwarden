@@ -10,11 +10,7 @@
 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 / §12.4
 """
 
-import os
 import sqlite3
-import threading
-import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -284,7 +280,6 @@ class TestCompareSnapshotsSync:
 class TestDaemonClientCompareSnapshots:
     def test_daemon_client_compare_snapshots(self, two_version_dbs):
         """DaemonClient.compare_snapshots 应返回包含 changes 的 dict。"""
-        from callwarden_core import PySnapshotCache
         from callwarden.server.daemon_client import DaemonClient
         from callwarden.server.snapshot_manager import SnapshotManagerService
 
@@ -307,7 +302,6 @@ class TestDaemonClientCompareSnapshots:
 
     def test_daemon_client_count_symbols_in_scope(self, two_version_dbs):
         """DaemonClient.count_symbols_in_scope 应返回符号数量。"""
-        from callwarden_core import PySnapshotCache
         from callwarden.server.daemon_client import DaemonClient
         from callwarden.server.snapshot_manager import SnapshotManagerService
 
@@ -326,7 +320,6 @@ class TestDaemonClientCompareSnapshots:
 
     def test_daemon_client_count_file_scope(self, two_version_dbs):
         """DaemonClient.count_symbols_in_scope 文件级 scope。"""
-        from callwarden_core import PySnapshotCache
         from callwarden.server.daemon_client import DaemonClient
         from callwarden.server.snapshot_manager import SnapshotManagerService
 
@@ -351,7 +344,6 @@ class TestDaemonClientCompareSnapshots:
 class TestSnapshotDiffHandler:
     def test_handler_returns_stats(self, two_version_dbs):
         """snapshot_diff_handler 应返回按 change_kind 分类的统计。"""
-        from callwarden_core import PySnapshotCache
         from callwarden.server.snapshot_manager import SnapshotManagerService
         from callwarden.server.job_handlers import snapshot_diff_handler
 
@@ -390,7 +382,6 @@ class TestSnapshotDiffHandler:
 
     def test_handler_file_scope(self, two_version_dbs):
         """snapshot_diff_handler 文件级 scope。"""
-        from callwarden_core import PySnapshotCache
         from callwarden.server.snapshot_manager import SnapshotManagerService
         from callwarden.server.job_handlers import snapshot_diff_handler
 
@@ -418,7 +409,6 @@ class TestSnapshotDiffHandler:
 
     def test_handler_unchanged(self, tmp_path):
         """snapshot_diff_handler 对完全相同的 snapshot 应返回 0 changes。"""
-        from callwarden_core import PySnapshotCache
         from callwarden.server.snapshot_manager import SnapshotManagerService
         from callwarden.server.job_handlers import snapshot_diff_handler
 

@@ -7,7 +7,7 @@ AGENTS.md、README 或其他说明文件当成替代真相源。详细语义仍�
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, Mapping
+from typing import Dict, Iterable
 
 
 TRUTH_SOURCE_PATHS = (

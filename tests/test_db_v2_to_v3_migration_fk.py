@@ -29,7 +29,6 @@ import sqlite3
 import sys
 import tempfile
 
-import pytest
 
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:

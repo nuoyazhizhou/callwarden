@@ -36,7 +36,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..config import norm_path, read_file_text
+from ..config import  read_file_text
 from ..i18n import t
 from .rust_parser_facade import RustParserFacade
 

@@ -15,7 +15,7 @@ db_summary.py
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import  Dict,  Optional
 
 
 class SummaryMixin:

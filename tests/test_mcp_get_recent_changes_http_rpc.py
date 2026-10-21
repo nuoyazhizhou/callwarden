@@ -79,7 +79,7 @@ def test_get_recent_changes_daemon_unavailable_fail_closed():
 # restart：新 client 实例重查仍稳定
 # ---------------------------------------------------------------------------
 def test_get_recent_changes_new_client_instance_stable(w3_live):
-    c2, inst, endpoint = (HttpDaemonRpcClient(endpoint=w3_live["endpoint"],
+    c2, inst, _endpoint = (HttpDaemonRpcClient(endpoint=w3_live["endpoint"],
                           authority_id=get_http_authority_id()),
                           w3_live["inst"], w3_live["endpoint"])
     r = c2.call("get_recent_changes", {"workspace_instance_id": inst})

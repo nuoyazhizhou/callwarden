@@ -312,7 +312,6 @@ def _try_connect_windows(endpoint: str) -> Optional[socket.socket]:
         from ctypes import wintypes
 
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        from ctypes import wintypes
 
         # 64 位进程必须显式声明 restype/argtypes，否则 HANDLE 返回被截断为 32 位，
         # 失败的 CreateFileW 会被误判为成功（低 32 位 -1 != 64 位 -1）。
@@ -947,7 +946,6 @@ def validate_http_endpoint_loopback(endpoint: str) -> str:
     """
     from callwarden.config import (
         E_HTTP_MVP_LOOPBACK_ONLY,
-        HTTP_MVP_TRANSPORT_PROFILE,
         is_loopback_host,
         parse_http_endpoint_host,
     )
@@ -985,12 +983,10 @@ def validate_http_manifest(
     from callwarden.config import (
         E_HTTP_MANIFEST_HASH_MISMATCH,
         E_HTTP_MANIFEST_STALE,
-        E_HTTP_MVP_LOOPBACK_ONLY,
         E_PROTOCOL_VERSION_UNSUPPORTED,
         HTTP_MANIFEST_SCHEMA_VERSION,
         HTTP_MVP_TRANSPORT_PROFILE,
         HTTP_PROTOCOL_VERSION,
-        SUPPORTED_HTTP_PROTOCOL_VERSIONS,
         compute_http_manifest_hash,
         norm_path,
     )

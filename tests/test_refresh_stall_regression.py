@@ -31,7 +31,7 @@ import sqlite3
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any,  List
 
 import pytest
 

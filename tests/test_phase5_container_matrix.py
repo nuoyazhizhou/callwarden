@@ -25,10 +25,7 @@ import hashlib
 import os
 import socket
 import sqlite3
-import subprocess
 import sys
-import tempfile
-import time
 
 import pytest
 

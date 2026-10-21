@@ -14,7 +14,6 @@
 不在 setup.py 中重复 name/version/description，避免双真相源。
 """
 
-import os
 import shutil
 import sys
 from pathlib import Path

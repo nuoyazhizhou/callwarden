@@ -32,7 +32,6 @@ Phase 7.0: 后台任务执行器
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import threading
 import time

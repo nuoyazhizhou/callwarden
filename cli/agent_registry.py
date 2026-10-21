@@ -10,11 +10,10 @@ AGENT_DETECT_SPECS（探测规则）合并为单一数据源。
 - load_registry_overlay / get_merged_specs：外部 JSON 扩展机制
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Tuple, List
+from dataclasses import dataclass
+from typing import Optional, Dict, Tuple
 import json
 import os
-import sys
 
 
 # ---------------------------------------------------------------------------

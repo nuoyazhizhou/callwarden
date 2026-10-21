@@ -4,13 +4,10 @@ Phase 6.0: Toolchain CAS 测试
 测试 toolchain 注册、查询、绑定、探测、fingerprint 计算。
 """
 
-import os
 import sys
 import sqlite3
-import tempfile
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

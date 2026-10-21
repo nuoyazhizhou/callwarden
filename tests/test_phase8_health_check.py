@@ -13,8 +13,6 @@
 import os
 import time
 import sqlite3
-import json
-import pytest
 
 from callwarden.server.health_check import (
     HealthStatus,

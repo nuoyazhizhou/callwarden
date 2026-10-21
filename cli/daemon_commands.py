@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import time
 import sys
 from typing import Any, Dict, Optional, Sequence
 

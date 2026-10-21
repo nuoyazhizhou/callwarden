@@ -5,7 +5,6 @@
 
 import os
 import sys
-import json
 from pathlib import Path
 
 import pytest
@@ -190,7 +189,7 @@ class TestConfigLoader:
             del os.environ["CW_LOG_LEVEL"]
 
     def test_explain_hides_secrets(self):
-        from release.config_loader import load_config, ConfigValue
+        from release.config_loader import load_config
         config = load_config(cli_overrides={"api_key": "secret123", "log_level": "debug"})
         explanation = config.explain()
         api_entry = next((e for e in explanation if e["key"] == "api_key"), None)

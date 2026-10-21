@@ -6,10 +6,8 @@
 - P12: clone detect 从 _perf_test.py 拆出（默认跳过，--clone 开启）
 """
 import os
-import sys
 import tempfile
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 

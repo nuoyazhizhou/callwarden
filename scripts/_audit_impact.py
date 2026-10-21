@@ -1,6 +1,5 @@
 """从映射表中提取 _handle_impact 模块的条目，生成审核报告"""
 import json
-import sys
 
 with open('scripts/i18n_cli_main_map.json', 'r', encoding='utf-8') as f:
     mapping = json.load(f)

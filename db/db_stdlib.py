@@ -15,11 +15,9 @@ db_stdlib.py
 from __future__ import annotations
 
 import inspect
-import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from ..config import norm_path
 from ..i18n import t
 
 

@@ -6,7 +6,6 @@
 使 daemon 与 `cw task` CLI 共享同一套任务状态。
 """
 
-import os
 import sys
 
 import pytest

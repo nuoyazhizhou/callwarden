@@ -8,7 +8,6 @@ import os
 import tempfile
 import sqlite3
 import hashlib
-import shutil
 from unittest import mock
 
 import pytest

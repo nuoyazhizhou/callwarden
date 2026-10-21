@@ -16,7 +16,6 @@ import os
 import sys
 import time
 import json
-import glob
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:

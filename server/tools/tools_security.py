@@ -24,11 +24,6 @@ from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from callwarden.server.daemon_client import (
-    is_http_transport_enabled,
-    route_worker_call,
-)
 
 # H4C-2 第三批（T-1786747295227-49c90d68）：安全/分支/跨仓库/LSP/规则组只读工具
 # 接入 compat worker。注意：必须用顶层 `server.compat_registry` 导入，与

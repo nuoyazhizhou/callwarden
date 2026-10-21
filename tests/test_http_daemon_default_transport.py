@@ -36,7 +36,6 @@ docs/design/http-daemon-mvp-compatibility-contract.md §2.2（迁移期临时例
 import hashlib
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys

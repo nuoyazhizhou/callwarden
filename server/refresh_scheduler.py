@@ -13,11 +13,10 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 from callwarden.server.watcher_protocol import (
-    EventKind,
     WatcherEvent,
     coalesce_events,
 )

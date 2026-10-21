@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import tree_sitter_kotlin as tskotlin
-from tree_sitter import Language, Parser
 
 from .base import BaseParser
 

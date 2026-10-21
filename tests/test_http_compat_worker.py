@@ -24,12 +24,10 @@ worker 通过 authority 配置解析到临时 DB，不触碰真实用户数据�
 from __future__ import annotations
 
 import io
-import json
 import os
 import sqlite3
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest

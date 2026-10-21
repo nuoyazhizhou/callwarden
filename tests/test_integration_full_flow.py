@@ -25,7 +25,6 @@ import subprocess
 import tempfile
 import time
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 

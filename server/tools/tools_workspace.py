@@ -19,12 +19,10 @@ H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查�
 # [L4] 代码度量与健康检查工具（get_code_metrics_summary / get_code_health_check 等）
 # [L8] Git 集成工具（import_git_history / get_git_commits / get_commit_changes 等）
 
-import os
 from typing import Dict, Optional, TypedDict
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import _call_daemon_rpc, get_db
 
 from ..daemon_client import route_rpc as _route
 

@@ -10,13 +10,9 @@
 注：测试需要构建后的 callwarden_core 扩展（maturin develop 或 pip install wheel）。
 """
 
-import os
-import shutil
 import sqlite3
-import tempfile
 import threading
 import time
-from pathlib import Path
 
 import pytest
 

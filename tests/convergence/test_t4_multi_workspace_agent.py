@@ -17,7 +17,6 @@ create 无丢失、request_id 幂等、lease 争用单 winner、fencing、apply 
 from __future__ import annotations
 
 import concurrent.futures
-import os
 import shutil
 import tempfile
 import uuid

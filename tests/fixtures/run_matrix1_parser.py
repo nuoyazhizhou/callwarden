@@ -9,7 +9,6 @@
 输出：tests/fixtures/matrix1_parser_report.md
 """
 import json
-import os
 import subprocess
 import sys
 import time

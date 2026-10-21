@@ -17,7 +17,6 @@ registry：读 env `CW_DAEMON_REGISTRY_DB`，未设则兜底
 
 from __future__ import annotations
 
-import json
 import os
 import pytest
 import subprocess
@@ -32,7 +31,6 @@ if str(BOOTSTRAP_DIR) not in sys.path:
 from daemon_bootstrap import (  # noqa: E402
     DEFAULT_RUN_ROOT,
     IsolatedDaemon,
-    TP06_DAEMON_SHA256,
 )
 
 CW_PY = REPO_ROOT / "cw.py"

@@ -4,7 +4,6 @@
 Usage: PYTHONPATH=C:/git_work python scripts/_report_p0f.py
 """
 import sys
-import os
 import json
 import uuid
 sys.path.insert(0, r"C:\git_work\callwarden")

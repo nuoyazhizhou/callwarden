@@ -14,8 +14,6 @@
 """
 import os
 import time
-import tempfile
-import shutil
 import pytest
 
 # 设置 PYTHONPATH 以加载 Rust 扩展

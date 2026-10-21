@@ -12,13 +12,10 @@ transport 由 `CW_DAEMON_TRANSPORT` 读取（is_http_transport_enabled），两�
 """
 from __future__ import annotations
 
-import os
-import sys
 
 import pytest
 
 from callwarden.cli.dispatcher import CliDispatcher, DaemonUnavailableError, call_daemon
-from callwarden.server.daemon_protocol import DaemonRemoteError
 
 
 @pytest.fixture(autouse=True)

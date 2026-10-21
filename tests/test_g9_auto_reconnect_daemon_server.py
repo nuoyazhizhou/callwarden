@@ -292,7 +292,6 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
     def test_hex_decode_success(self, daemon_service, mock_resources):
         """canonical_bytes_hex 成功解码并传给 daemon_handle_refresh。"""
-        from callwarden.server.replicator import daemon_handle_refresh
 
         canonical = b"# Python source\nprint('hello')\n"
         hex_str = canonical.hex()
@@ -462,7 +461,6 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
         G10 批次7：客户端提供 content_hash 时必须校验 sha256。
         """
-        import hashlib
 
         from callwarden.server.daemon_server import DaemonRpcError
 
