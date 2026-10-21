@@ -124,11 +124,12 @@ struct BatchSaveCallsResult {
 // 工具函数
 // ===========================================================================
 
-// CI-DEBT 深水区：原 `open_readwrite` 每次调用建短连接，与同进程 Python 主连接
-// 构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配，两实例无法互斥 WAL-index，
-// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-// （database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接，
-// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
+// CI-DEBT 深水区：本模块与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
+// 锁按进程分配，两实例无法互斥 WAL-index。长活连接跨整个 build 持有 WAL 读标记，
+// Python 侧持续提交会让两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页
+// （database disk image is malformed，CI ubuntu 独有）。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain；PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 运维开关同见该模块。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -1021,7 +1022,7 @@ pub fn batch_resolve_and_save_calls<'py>(
         let ext_idx = build_ext_indexes(&ext_symbols_info);
 
         // 取用进程级池连接 + BEGIN IMMEDIATE
-        crate::conn_pool::with_pooled_conn("batch_calls", codegraph_db_path, |conn| {
+        crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;
 

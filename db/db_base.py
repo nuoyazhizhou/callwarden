@@ -4396,14 +4396,9 @@ class CodeGraphBase:
     def close(self):
         """关闭数据库连接，释放底层资源"""
         self.conn.close()
-        # CI-DEBT 深水区：Rust 侧 SQLite 连接池单例化后连接在进程内长活，
-        # 不随调用 drop。若不显式关闭，Windows 上本进程仍持有该 db 的句柄，
-        # 调用方后续删除/替换库文件会失败。ImportError 仅在扩展未构建时兜底。
-        try:
-            from callwarden_core import close_pooled_connections
-            close_pooled_connections(self.db_path)
-        except ImportError:
-            pass
+        # CI-DEBT 深水区正式修法后，Rust 侧 DB 访问一律「每次调用独立短连接 +
+        # 写后 wal_checkpoint(TRUNCATE) drain」（见 rust_ext/src/db_conn.rs），
+        # 进程内不再持有长活连接，句柄随短连接 drop 即释放，无需额外清理。
 
     # --------------------------------------------------------------------
     # 工作区管理方法

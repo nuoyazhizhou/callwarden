@@ -55,14 +55,15 @@ struct RegisterResult {
 // 工具函数
 // ===========================================================================
 
-// CI-DEBT 深水区：原 `open_readwrite` 每次调用建短连接，与同进程 Python 主连接
-// 构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，短连接
-// drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接。
+// CI-DEBT 深水区：本模块与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
+// 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
+// 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain。
 //
 // 注意：foreign_keys=OFF 的理由保留在本模块注释——INSERT file_instances 时
 // current_content_hash='' 不是 file_contents 的真实 FK，开 FK 检查会 IntegrityError。
-// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
+// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 运维开关见 `crate::db_conn`。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -140,12 +141,13 @@ pub fn batch_register_files<'py>(
         return Ok(dict);
     }
 
-    // 2. 取用进程级池连接
+    // 2. 取用短连接
     // 3. BEGIN IMMEDIATE → 预处理语句 → 循环执行 → COMMIT/ROLLBACK
-    //    原实现依赖 Connection drop 自动回滚；池连接长活，drop 不再触发，
-    //    故失败分支必须显式 ROLLBACK，否则事务会悬挂到下一次调用。
+    //    失败分支必须显式 ROLLBACK：闭包返回后 `with_db_conn` 立刻执行
+    //    `wal_checkpoint(TRUNCATE)`，失败事务仍挂着会让 drain 失败、WAL 残留，
+    //    撕裂页防护随之失效。
     let tx_result: Result<Vec<RegisterResult>, rusqlite::Error> =
-        match crate::conn_pool::with_pooled_conn("batch_register", codegraph_db_path, |conn| {
+        match crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             let tx_result_inner = conn
                 .execute_batch("BEGIN IMMEDIATE")
                 .and_then(|_| {
@@ -235,7 +237,8 @@ pub fn batch_register_files<'py>(
         });
 
             if tx_result_inner.is_err() {
-                // 池连接长活，drop 不再自动回滚——必须显式 ROLLBACK
+                // 必须显式 ROLLBACK：闭包返回后立刻 wal_checkpoint(TRUNCATE)，
+                // 失败事务仍挂着会让 drain 失败、WAL 残留
                 let _ = conn.execute_batch("ROLLBACK");
             }
             tx_result_inner

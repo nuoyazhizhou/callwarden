@@ -70,11 +70,11 @@ fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
     crate::cas_query::open_readonly_bounded(db_path)
 }
 
-// CI-DEBT 深水区：manifest 写路径原 `open_readwrite` 每次调用建短连接，与同进程
-// Python 主连接构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
-// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接
-//（`crate::conn_pool::with_pooled_conn`）。
+// CI-DEBT 深水区：manifest 写路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上
+// fcntl 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
+// 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain。
 //
 // 只读连接保持短连接（`open_readonly`）：只读经 WAL + `-shm` 天然读到最新已提交
 // 数据，不做 checkpoint（见下方注释与 AGENTS.md 规则 32），不参与撕裂页成因。
@@ -86,12 +86,11 @@ fn sqlite_write_error(operation: &str, error: rusqlite::Error) -> PyErr {
 /// 幂等创建 manifest 相关 schema。
 #[pyfunction]
 pub fn manifest_init_schema(db_path: &str) -> PyResult<()> {
-    // CI-DEBT 深水区：取用进程级池连接（见 crate::conn_pool）。
-    // 原实现每次调用建短连接，与同进程 Python 主连接构成双 SQLite 实例，
-    // POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，drop 时 checkpoint 与
-    // Python autocheckpoint 交错可产生撕裂页（database disk image is
-    // malformed，CI ubuntu 独有）。
-    crate::conn_pool::with_pooled_conn("manifest", db_path, |conn| {
+    // CI-DEBT 深水区：Rust 侧 DB 访问一律走「每次调用独立短连接 + 写后
+    // wal_checkpoint(TRUNCATE) drain」（见 crate::db_conn 模块文档）。
+    // 长活连接与 Python 主连接共享 -shm 时会撕裂页（database disk image is
+    // malformed，CI ubuntu 独有），本模块是重灾区之一。
+    crate::db_conn::with_db_conn(db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 manifest schema 事务", e))?;
         if let Err(error) = conn.execute_batch(MANIFEST_SCHEMA_DDL) {
@@ -122,7 +121,7 @@ pub fn manifest_upsert(
     mtime_ns: i64,
     is_dirty: bool,
 ) -> PyResult<()> {
-    crate::conn_pool::with_pooled_conn("manifest", db_path, |conn| {
+    crate::db_conn::with_db_conn(db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 manifest 写入事务", e))?;
         let result = conn.execute(
@@ -166,7 +165,7 @@ pub fn manifest_link_to_snapshot(
     content_hash: &str,
     cas_key: &str,
 ) -> PyResult<()> {
-    crate::conn_pool::with_pooled_conn("manifest", db_path, |conn| {
+    crate::db_conn::with_db_conn(db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 snapshot 映射事务", e))?;
         let result = conn.execute(

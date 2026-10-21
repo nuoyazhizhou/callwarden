@@ -70,17 +70,17 @@ impl Default for BatchSaveResult {
     }
 }
 
-// CI-DEBT 深水区：本模块原用 `open_readwrite` 每次调用 `Connection::open` 建短连接，
-// 与同进程 Python 主连接构成双 SQLite 实例。POSIX 上 fcntl 锁按进程分配，两实例
-// 无法互斥 WAL-index，短连接 drop 时的 checkpoint 与 Python 侧 autocheckpoint
-// 交错可产生撕裂页（database disk image is malformed，CI ubuntu 独有；Windows
-// 按句柄加锁故本地免疫）。
+// CI-DEBT 深水区：本模块与同进程 Python 主连接构成双 SQLite 实例（Python 用系统
+// libsqlite3，Rust 用 bundled SQLite）。POSIX 上 fcntl 锁按进程分配，两实例无法
+// 互斥 WAL-index；长活连接跨整个 build 持有 WAL 读标记，Python 侧持续提交会让
+// 两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页（database disk image is
+// malformed，CI ubuntu 独有；Windows 按句柄加锁故本地免疫）。
 //
-// 现统一改用 `crate::conn_pool::with_pooled_conn(db_path, |conn| ...)` 取用进程级
-// 长活连接：checkpoint 每进程只发生一次，且连接不再随调用 drop。
-// PRAGMA 序列（busy_timeout=5s / journal_mode=WAL / synchronous=NORMAL /
-// foreign_keys=OFF / wal_checkpoint(PASSIVE)）在 `conn_pool::open_pooled` 内，
-// 与 Python db_base.py 对齐；CW_RUST_OPEN_CHECKPOINT=0 门保留。
+// 正式修法：Rust 侧一律走「每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain」（`crate::db_conn::with_db_conn`）。Probe I 实测长活 + drain 仍红、
+// 全模块短连接转绿。PRAGMA 序列（busy_timeout=5s / journal_mode=WAL /
+// synchronous=NORMAL / foreign_keys=OFF / wal_checkpoint(PASSIVE)）与
+// CW_RUST_OPEN_CHECKPOINT 运维开关见 `crate::db_conn`。
 
 /// 从 Python dict 提取 SymbolInfo
 ///
@@ -339,7 +339,7 @@ pub fn batch_save_symbols<'py>(
 
     // 2. 释放 GIL 做文件 IO + SQL 操作（连接取自进程级池，长活，不随调用 drop）
     let result = py.detach(|| -> Result<BatchSaveResult, String> {
-        crate::conn_pool::with_pooled_conn("batch_build", codegraph_db_path, |conn| {
+        crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             // BEGIN IMMEDIATE 事务
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;

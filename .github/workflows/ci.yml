@@ -193,7 +193,7 @@ jobs:
           cw install --check
 
   # ============================================================
-  # CI-DEBT 深水区 A/B 定性 probe（2026-10-20，临时 job，定性后删除）
+  # CI-DEBT 深水区 A/B 定性 probe（2026-10-20 建，2026-10-21 转回归门）
   #
   # 背景：run 14 剩余 17 项失败全部疑似同根——同进程双 SQLite 实例
   # （Python 系统 libsqlite3 + Rust bundled rusqlite）在 Linux 上 fcntl 锁
@@ -201,11 +201,12 @@ jobs:
   #   - phase7 ×8 disk I/O error：JobExecutor 第二条 Python 连接 executescript
   #   - malformed ×7：build 路径 Python 读撞撕裂页
   #   - dashboard ×1 UTF-8 / fts ×2：Rust 写入后 Python 读不可见
-  # 本 job 用三个单变量配置定性归属（一次只改一个开关）：
-  #   config A  CW_USE_RUST_STORAGE=0            → phase7（隔离 schema 初始化侧）
-  #   config B  CW_RUST_OPEN_CHECKPOINT=0        → malformed/UTF-8（隔离 open 时 checkpoint）
-  #   config C  CW_WAL_AB_ROLLBACK_RUST_BATCH=1  → fts（隔离 Rust 批量写入路径）
-  # 判读：某配置下对应失败转绿 = 该开关是根因链一环；仍红 = 排除该路径。
+  # 2026-10-21 结论（Probe I 定性，结论已固化进 rust_ext/src/db_conn.rs）：
+  # malformed 一族的根因是 **Rust 侧长活连接与 Python 主连接共享 -shm
+  # WAL-index 时的撕裂页**；正式修法 = Rust 侧一律「每次调用独立短连接 +
+  # 写后 wal_checkpoint(TRUNCATE) drain」，进程级池与三个 CW_RUST_POOL_* 诊断门
+  # 一并移除。本 job 保留下来做 **malform 家族回归门**（Probe F）＋ 其他缺陷
+  # 的取证步骤。
   # ============================================================
   wal-ab-probe:
     name: WAL A/B probe (deep-water root-cause isolation)
@@ -294,134 +295,39 @@ jobs:
         if: always()
         run: pytest tests/_wal_ab_dual_conn_repro.py -v --tb=short -p no:cacheprovider
 
-      # config F：残留 malformed ×12 的**隔离对照**（不改任何产品代码）。
-      # 本地静态取证已证伪 H1：db_build.py:1605 的 ThreadPoolExecutor 块在
-      # 1616 行退出（join 全部 future），Rust 调用在 1680 行；`_parse_one`
-      # （1567-1603）只调 RustParserFacade.parse_file，不碰 db。故「解析线程
-      # 与 Rust 事务并发」不成立，剩余并发嫌疑是同进程 Python 主连接与
-      # Rust 池连接的 WAL-index 交错。
-      # 判读：
-      #   - 逐文件单跑仍红 → 非跨测试干扰，是该路径固有；
-      #   - 单跑全绿、同跑红 → 进程内累积效应（同进程残留连接/池条目）。
-      # 每个文件独立 pytest 进程，且都单独收集 pool（conftest autouse 已做）。
-      - name: Probe F - isolated per-file runs of the 12 malformed failures
+      # config F：malform 家族的**隔离回归门**（正式修法落地后的守门步骤）。
+      #
+      # 背景：CI-only 的 `database disk image is malformed` 一族——c53da76（Rust 侧
+      # 进程级长活池连接）后为 h7 族 7 项 + agent_rules 4 项 + agent_integration 2 项
+      # + e2e_triangle 1 项 + dashboard 12 项；c53da76 之前（Rust 侧每次调用
+      # open→drop）则是 p15 族 6 项 + incremental_parse 1 项。根因是 Rust 侧连接与
+      # 同进程 Python 主连接共享同一 `-shm` WAL-index（POSIX fcntl 锁按进程分配，
+      # 两实例互不排斥；Windows 按句柄加锁故本地免疫）时的撕裂页。
+      #
+      # 正式修法见 rust_ext/src/db_conn.rs：Rust 侧一律「每次调用独立短连接 +
+      # 写后 wal_checkpoint(TRUNCATE) drain」；长活连接即根因载体，故
+      # CW_RUST_POOL_LIFETIME / CW_RUST_POOL_OFF / CW_RUST_POOL_WAL_DRAIN 三个
+      # 诊断门连同进程级池一并移除（Probe G/H/I 步骤同步删除，其结论已固化进
+      # db_conn.rs 模块文档）。
+      #
+      # 判读：逐文件隔离单跑，输出中**不得**再出现 "database disk image is
+      # malformed"；出现即判回归，本 step 直接失败。注：dashboard 的 UTF-8 载荷
+      # 缺陷（"Could not decode to UTF-8 column 'content'"）是另一条独立缺陷
+      # （c53da76 之前即已存在），不由本门覆盖。
+      - name: Probe F - malformed family isolation gate
         if: always()
         run: |
           for f in tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py \
                    tests/test_agent_integration.py tests/test_e2e_triangle_demo.py \
                    tests/test_dashboard.py; do
             echo "===== ISOLATED: $f ====="
-            pytest "$f" -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-            echo "----- rc=$? -----"
+            out=$(pytest "$f" -q --tb=line -p no:cacheprovider 2>&1)
+            echo "$out" | tail -12
+            if echo "$out" | grep -q "database disk image is malformed"; then
+              echo "MALFORM REGRESSION in $f —— 短连接 + 写后 WAL drain 的修法被破坏"
+              exit 1
+            fi
           done
-
-      # config G：连接寿命假设（假设 E）判别。池化相对原实现的唯一行为差异是
-      # 连接寿命——原实现每次调用 open→drop，最后一个连接 close 时 SQLite 自动
-      # checkpoint 并删除 -wal/-shm；池化后连接长活，-wal/-shm 常驻，Python 侧
-      # wal_autocheckpoint 无法重置 WAL。rust_ext/src/conn_pool.rs 的
-      # with_pooled_conn 在 CW_RUST_POOL_LIFETIME=short 时每次调用后即
-      # checkpoint(TRUNCATE)+关闭并从池中移除，回到 open→drop 语义。
-      # 判读：
-      #   - 12 项转绿 → 根因钉死为连接寿命，正式修法是把 Rust 大写路径移出长活池；
-      #   - 仍红     → 排除连接寿命，转向"Rust/Python 混写同一 WAL 的写量与页布局"。
-      # 两个观测点用同一 env 变量（同进程合跑 = 与主 test job 同形；h7 隔离单跑
-      # = 与 Probe F 的 7 红 1 绿基线同形），不引入第二个变量。
-      - name: Probe G - pool lifetime short (open->drop semantics)
-        if: always()
-        env:
-          CW_RUST_POOL_LIFETIME: "short"
-        run: |
-          echo "===== G1: all 5 files in one process ====="
-          pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py \
-                 tests/test_agent_integration.py tests/test_e2e_triangle_demo.py \
-                 tests/test_dashboard.py -q --tb=line -p no:cacheprovider 2>&1 | tail -30
-          echo "===== G2: h7 isolated (baseline was 7 failed 1 passed) ====="
-          pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -20
-          echo "===== G3: immutable-read probe (CW_DIAG_POOL5 hits?) ====="
-          pytest tests/test_agent_rules.py tests/test_e2e_triangle_demo.py -q --tb=no \
-                 -p no:cacheprovider 2>&1 | grep -c "CW_DIAG_POOL5" || echo "0 (immutable read NOT executed)"
-          echo "===== G4: wal/shm residue check ====="
-          python - <<'PYEOF'
-          import os, tempfile
-          from callwarden.db.db import CodeGraphDB
-          root = tempfile.mkdtemp()
-          p = os.path.join(root, "callwarden.db")
-          db = CodeGraphDB(p, workspace_root=root)
-          with open(os.path.join(root, "a.py"), "w", encoding="utf-8") as f:
-              f.write("def foo():\n    return 1\n")
-          db.build_full_graph(force=True)
-          print("files after build:", sorted(os.listdir(root)))
-          print("SHORT MODE:", os.environ.get("CW_RUST_POOL_LIFETIME"))
-          db.close()
-          PYEOF
-
-      # config H：模块二分矩阵（一次 CI 拿全矩阵）。
-      #
-      # 背景：二分①（回退 batch_calls_query.rs 池化）后 12 项 malform 未消除，
-      # 说明 malform 不是 calls 模块自身造成；而 Probe G（CW_RUST_POOL_LIFETIME=short，
-      # 全部模块回到 open→drop）使 h7 隔离 8 passed 全绿，说明根因是「长活连接」
-      # 这一性质本身，而非某个模块的写路径细节。
-      #
-      # 但「长活连接」由谁持有仍需定位：8 个模块各自持有一个长活连接，任意一个
-      # 都可能与 Python 主连接交错 checkpoint。串行回退 8 个模块 = 8 轮 × 约 20 分钟。
-      # 本 probe 用 rust_ext/src/conn_pool.rs 的 CW_RUST_POOL_OFF 门按模块粒度关闭
-      # 池化（命中模块走短连接，PRAGMA 序列不变，只隔离「连接寿命」一个变量），
-      # 一次 CI 跑完整矩阵。
-      #
-      # 判读（h7 隔离单跑，基线 = 7 failed 1 passed）：
-      #   - 某模块单独关闭池化后 h7 8 passed → 该模块的长活连接是 malform 载体；
-      #   - 全部单独关闭后仍红 → malform 需多模块同时长活（叠加效应）；
-      #   - 全部关闭后 h7 8 passed（= Probe G 的结论）→ 矩阵门本身有效。
-      - name: Probe H - module bisect matrix (per-module pool off)
-        if: always()
-        run: |
-          for m in batch_build batch_calls batch_file_versions batch_register \
-                   cas_merge cas_write incremental_build manifest; do
-            echo "===== H: pool OFF for module = $m ====="
-            CW_RUST_POOL_OFF="$m" pytest tests/test_h7_ast_cache_activation.py \
-                   -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-          done
-          echo "===== H: ALL modules pool off (control, expect 8 passed) ====="
-          CW_RUST_POOL_OFF="batch_build,batch_calls,batch_file_versions,batch_register,cas_merge,cas_write,incremental_build,manifest" \
-            pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-          echo "===== H: baseline, nothing off (expect 7 failed 1 passed) ====="
-          pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-
-      # config I：把「长活连接」与「WAL 累积」两个变量分离。
-      #
-      # 已知事实（Probe H 矩阵，run 39570134307 / job 119121942247）：
-      #   - 单独关闭任一模块的池化 → 仍 7 failed 1 passed（malform 未消除）；
-      #   - 全部关闭（回到 c53da76^ 的 open→drop）→ 8 passed 全绿；
-      #   - 失败签名随被关模块而变（BEGIN IMMEDIATE 失败 / 打开 DB 失败 / 调用失败），
-      #     说明库文件在「更早的某一步」就已损坏，calls 模块只是首个读者。
-      # ⇒ malform 由「长活」这一性质本身引起，不是某模块的写路径细节。
-      #
-      # 已知对照：`with_short_conn` 每次调用后做 `wal_checkpoint(TRUNCATE)` 再 drop
-      # 即可全绿；而长活池连接**从不**收尾 WAL。
-      #
-      # 本 probe 三档判读（h7 隔离单跑，基线 7 failed 1 passed）：
-      #   I1 长活 + 每次调用后 TRUNCATE（连接不关）→ 8 passed
-      #        ⇒ 根因 = WAL 累积致 Python autocheckpoint 与 Rust 写事务交错；
-      #          正式修法 = 池连接保留 + 每次调用后收尾 WAL（保留池化收益）。
-      #   I2 长活 + 每次调用后 TRUNCATE → 仍红
-      #        ⇒ 根因 = 长活连接本身持有 WAL 读标记，需改连接架构（不能只调 checkpoint）。
-      #   I3 长活 + open 时不设 journal_mode → 判别「open 期 journal_mode 写操作」
-      #      是否是 malform 肇因（其 PRAGMA 在损坏库上会直接抛 malformed）。
-      - name: Probe I - separate long-lived conn from WAL accumulation
-        if: always()
-        run: |
-          echo "===== I1: long-lived conn + WAL drain after each call ====="
-          CW_RUST_POOL_WAL_DRAIN=truncate pytest tests/test_h7_ast_cache_activation.py \
-            -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-          echo "===== I2: long-lived conn + WAL drain + all modules short (control) ====="
-          CW_RUST_POOL_WAL_DRAIN=truncate \
-          CW_RUST_POOL_OFF="batch_build,batch_calls,batch_file_versions,batch_register,cas_merge,cas_write,incremental_build,manifest" \
-            pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-          echo "===== I4: long-lived conn + PASSIVE drain after each call ====="
-          CW_RUST_POOL_WAL_DRAIN=passive pytest tests/test_h7_ast_cache_activation.py \
-            -q --tb=line -p no:cacheprovider 2>&1 | tail -12
-          echo "===== I3: baseline (expect 7 failed 1 passed) ====="
-          pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
 
       # config E：metrics CLI 测试的 CI-only 失败取证（run 15/16 持续 ×4，
       # 本地全绿）。测试 patch 了 UnixDaemonRpcClient 但 CI 上 rc=2——

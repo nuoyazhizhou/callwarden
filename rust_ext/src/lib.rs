@@ -24,9 +24,10 @@ use tree_sitter::{Language, Node, Parser};
 // F11 方案 A：build_graph_from_c_files 需要访问 graph 模块的 build_csr_public / build_callee_name_index_public / GraphStore::new_with_data
 mod abi_contract;
 pub mod canonicalize;
-// CI-DEBT 深水区：进程级 SQLite 连接池——消除同进程 Python 主连接与 Rust 短连接
-// 双实例 WAL Hazard（database disk image is malformed，CI ubuntu 独有）
-pub mod conn_pool;
+// CI-DEBT 深水区：Rust 侧 DB 连接管理——每次调用独立短连接 + 写后 WAL drain，
+// 消除同进程 Python 主连接与 Rust 连接的 WAL-index 双实例 hazard
+// （database disk image is malformed，CI ubuntu 独有；见 db_conn 模块文档）
+pub mod db_conn;
 // Phase 0 子任务 3 Step 2: Python/Rust 差分对照基线数据结构
 mod differential_baseline;
 // R7: daemon/snapshot 模块需对 cw_daemon binary 可见（bin 与 lib 在同一 crate，但
@@ -1710,28 +1711,8 @@ fn canonical_schema_checksum() -> PyResult<String> {
     storage::canonical_schema_checksum().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
 }
 
-/// 关闭 Rust 侧进程级 SQLite 池连接（见 `conn_pool` 模块文档）。
-///
-/// `db_path=None` 关闭全部池连接；传入路径则只关闭该路径。
-/// 由 Python 侧在 `db_base.close()` 与测试 teardown 调用，使被池连接占用的
-/// 数据库文件（尤其 Windows 上的 tmp 文件）可被删除/替换。
-///
-/// `#[pyo3(name = ...)]` 显式固定 Python 侧可见名——否则 pyo3 会沿用 Rust
-/// 函数名 `close_pooled_connections_py`，与 Python 端 import 的名字不一致，
-/// 导致 `ImportError` 被 conftest/db_base 的兜底 except 静默吞掉（清理失效）。
-#[pyfunction]
-#[pyo3(name = "close_pooled_connections")]
-fn close_pooled_connections_py(db_path: Option<String>) {
-    conn_pool::close_pooled_connections(db_path.as_deref());
-}
-
 #[pymodule]
 fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // CI-DEBT 深水区：释放 Rust 侧池化连接。
-    // db_path=None 关闭全部；给定路径则只关闭该路径。
-    // Python 侧在 db_base.close() 与 tests/conftest.py teardown 调用，
-    // 使 Windows 上被池连接占用的 tmp db 文件可被删除。
-    m.add_function(wrap_pyfunction!(close_pooled_connections_py, m)?)?;
     m.add_function(wrap_pyfunction!(canonical_schema_checksum, m)?)?;
     // P29: parse 热路径
     m.add_function(wrap_pyfunction!(batch_parse_c_files, m)?)?;

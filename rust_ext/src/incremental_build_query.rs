@@ -24,11 +24,11 @@ use pyo3::types::{PyBool, PyDict, PyList};
 use pyo3::Bound;
 use rusqlite::params;
 
-// CI-DEBT 深水区：读写路径原 `open_readwrite` 每次调用建短连接，与同进程 Python
-// 主连接构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
-// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接，
-// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
+// CI-DEBT 深水区：本路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
+// 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像认知
+// 错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain；PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 运维开关同见该模块。
 //
 // 只读路径 `open_readonly` 保持短连接：它经 WAL + `-shm` 天然读到最新已提交数据，
 // 不做 checkpoint（见下方注释与 AGENTS.md 规则 32），故不参与撕裂页成因。
@@ -82,7 +82,7 @@ pub fn compute_and_apply_symbol_diff<'py>(
 
     // 取用进程级池连接 + BEGIN IMMEDIATE 事务
     // （显式 ROLLBACK 已在本就位；池连接长活，不能依赖 drop 回滚）
-    let outcome = crate::conn_pool::with_pooled_conn("incremental_build", codegraph_db_path, |conn| {
+    let outcome = crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
         if let Err(e) = conn.execute_batch("BEGIN IMMEDIATE;") {
             return Err(format!("BEGIN IMMEDIATE 失败: {}", e));
         }

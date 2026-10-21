@@ -95,11 +95,11 @@ impl Default for BatchSaveVersionsResult {
 // 工具函数
 // ===========================================================================
 
-// CI-DEBT 深水区：原 `open_readwrite` 每次调用建短连接，与同进程 Python 主连接
-// 构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，短连接
-// drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接，
-// PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 门见 `crate::conn_pool`。
+// CI-DEBT 深水区：本模块与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
+// 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
+// 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain；PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 运维开关同见该模块。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -433,11 +433,12 @@ pub fn batch_save_file_versions<'py>(
         }
     };
 
-    // 2. 取用进程级池连接 → 3. 检测 ast_cache 字段（v28+） → 4. BEGIN IMMEDIATE → COMMIT/ROLLBACK
-    //    ROLLBACK 必须在闭包内完成：池连接是长活的，出闭包后不能再补发事务控制语句，
-    //    否则失败的 BEGIN IMMEDIATE 会把事务悬挂到下一次调用上。
+    // 2. 取用短连接 → 3. 检测 ast_cache 字段（v28+） → 4. BEGIN IMMEDIATE → COMMIT/ROLLBACK
+    //    ROLLBACK 必须在闭包内完成：闭包返回后 `with_db_conn` 立刻执行
+    //    `wal_checkpoint(TRUNCATE)`，若失败事务仍挂着，drain 会失败、WAL 残留，
+    //    撕裂页防护随之失效（连接 drop 虽会自动回滚，但已来不及救 drain）。
     let tx_result: Result<BatchSaveVersionsResult, String> =
-        match crate::conn_pool::with_pooled_conn("batch_file_versions", codegraph_db_path, |conn| {
+        match crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             // 检测 ast_cache 字段是否存在（v28+）
             let ast_cache_exists = check_ast_cache_column_exists(conn)?;
 

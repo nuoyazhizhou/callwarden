@@ -23,17 +23,16 @@ use crate::daemon::cas::{
 /// 两阶段写复用 CasStore inner 逻辑；目标 DB 的 file_generations 表
 /// 由 Python `init_session_schema` 或本函数幂等创建。
 ///
-/// CI-DEBT 深水区：原实现每次调用 `Connection::open` 建短连接，与同进程 Python
-/// 主连接构成双 SQLite 实例。POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
-/// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-///（database disk image is malformed，CI ubuntu 独有）。现改为经
-/// `crate::conn_pool` 取用长活连接；WAL 模式与 busy_timeout 在
-/// `conn_pool::open_pooled` 内设置。
+/// CI-DEBT 深水区：本路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
+/// 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
+/// 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+/// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+/// drain；WAL 模式与 busy_timeout 在 `db_conn::open_db_conn` 内设置。
 fn with_file_generations_conn<T>(
     db_path: &str,
     f: impl FnOnce(&Connection) -> T,
 ) -> Result<T, CasPublishError> {
-    crate::conn_pool::with_pooled_conn("cas_write", db_path, |conn| {
+    crate::db_conn::with_db_conn(db_path, |conn| {
         CasStore::ensure_file_generations_table(conn)?;
         Ok(f(conn))
     })

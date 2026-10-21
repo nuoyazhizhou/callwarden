@@ -44,14 +44,13 @@ fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
     crate::cas_query::open_readonly_bounded(db_path)
 }
 
-// CI-DEBT 深水区：merge 写路径原 `open_readwrite` 每次调用建短连接，与同进程
-// Python 主连接构成双 SQLite 实例；POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，
-// 短连接 drop 的 checkpoint 与 Python autocheckpoint 交错可产生撕裂页
-//（database disk image is malformed，CI ubuntu 独有）。现改用进程级池连接
-//（`crate::conn_pool::with_pooled_conn`）。
+// CI-DEBT 深水区：merge 写路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上
+// fcntl 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
+// 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
+// drain。
 //
-// 注意：pool 的 Mutex 仅在单次 `with_pooled_conn` 调用期间持有。下方三处
-// open_readwrite 调用分属**顺序**的独立 `py.detach` 块，非嵌套，故不会重入自锁。
+// 注意：下方三处写连接调用分属**顺序**的独立 `py.detach` 块，非嵌套。
 // 只读连接保持短连接（`open_readonly`）：只读经 WAL + `-shm` 读到最新已提交数据，
 // 不做 checkpoint（见 AGENTS.md 规则 32），不参与撕裂页成因。
 
@@ -112,7 +111,7 @@ pub fn cas_merge_to_codegraph<'py>(
     dict.set_item("error", ())?;
 
     // 1. 打开 cas_conn（只读，短连接）
-    //    codegraph_conn 取自进程级池（见 crate::conn_pool）
+    //    codegraph_conn 取自短连接（见 crate::db_conn）
     //    释放 GIL 做文件 IO + SQL 操作
     let result = py.detach(
         || -> Result<crate::daemon::cas_merge::MergeResult, String> {
@@ -124,7 +123,7 @@ pub fn cas_merge_to_codegraph<'py>(
             // 3. 调用 merge_cas_to_codegraph
             //    内部已完成 BEGIN IMMEDIATE → 全部 SQL → COMMIT
             //    失败时内部已 ROLLBACK
-            crate::conn_pool::with_pooled_conn("cas_merge", codegraph_db_path, |codegraph_conn| {
+            crate::db_conn::with_db_conn(codegraph_db_path, |codegraph_conn| {
                 crate::daemon::cas_merge::init_codegraph_schema(codegraph_conn)
                     .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
 
@@ -151,7 +150,7 @@ pub fn cas_merge_to_codegraph<'py>(
             //    释放 GIL 做只读查询
             let calls_resolved: usize = if merge_result.file_instance_id > 0 {
                 py.detach(|| -> usize {
-                    crate::conn_pool::with_pooled_conn("cas_merge", codegraph_db_path, |conn| {
+                    crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
                         let count: Option<i64> = conn
                             .query_row(
                                 "SELECT COUNT(*) FROM calls \
@@ -207,7 +206,7 @@ pub fn cas_merge_to_codegraph<'py>(
 pub fn cas_merge_init_schema(py: Python<'_>, codegraph_db_path: &str) -> bool {
     // 释放 GIL 做文件 IO + SQL
     let result = py.detach(|| -> Result<(), String> {
-        crate::conn_pool::with_pooled_conn("cas_merge", codegraph_db_path, |conn| {
+        crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             crate::daemon::cas_merge::init_codegraph_schema(conn)
                 .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
             Ok(())
