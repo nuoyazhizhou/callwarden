@@ -21,6 +21,8 @@ H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查�
 
 from typing import Dict, Optional, TypedDict
 
+from .._mcp_common import _call_daemon_rpc, get_db  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问（lint 第三批曾误删）
+
 from mcp.server.fastmcp import FastMCP
 
 

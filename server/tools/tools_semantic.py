@@ -20,6 +20,8 @@ H4B-C（T-1786590214634-9e740cdc-h4b-compat-read）：compatibility read HTTP cu
 
 from typing import Any, Dict
 
+from .._mcp_common import get_db  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问（lint 第三批曾误删）
+
 from mcp.server.fastmcp import FastMCP
 
 

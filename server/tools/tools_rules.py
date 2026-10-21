@@ -27,7 +27,9 @@ get_metrics 不依赖 db.conn（走 UnixDaemonRpcClient / 本地 MetricsCollecto
 
 # 只读查询工具；写操作（register/bind/import）走 CLI 避免与 MCP 长连接撞锁
 
-from typing import   Optional
+from typing import Optional
+
+from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问（lint 第三批曾误删）
 
 from mcp.server.fastmcp import FastMCP
 

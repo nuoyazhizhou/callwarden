@@ -23,6 +23,8 @@ H4B-E（T-1786590214634-9e740cdc-h4b-unsupported-error）：governance/unsupport
 
 from typing import Any, Dict, Optional
 
+from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问（lint 第三批曾误删）
+
 from mcp.server.fastmcp import FastMCP
 
 

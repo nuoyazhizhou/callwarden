@@ -29,6 +29,8 @@ wire 后经 `verdict.submit` / `evidence.append` RPC 透传（_collab_write_rpc�
 import json
 from typing import Any, Dict, List
 
+from .._mcp_common import _get_daemon_client, get_db  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问（lint 第三批曾误删）
+
 from mcp.server.fastmcp import FastMCP
 
 from ...i18n import t
