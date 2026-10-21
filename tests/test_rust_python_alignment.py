@@ -37,7 +37,7 @@ if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
 # 复用 test_p31_multi_lang.py 的样本代码和 _has_rust_ext
-from test_p31_multi_lang import _LANGUAGE_SAMPLES, _has_rust_ext  # noqa: E402
+from test_p31_multi_lang import _has_rust_ext  # noqa: E402
 
 from callwarden.parsers import create_parser  # noqa: E402
 

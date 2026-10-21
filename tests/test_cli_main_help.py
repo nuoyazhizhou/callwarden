@@ -20,7 +20,6 @@ import py_compile
 import re
 import subprocess
 import sys
-from unittest import mock
 
 import pytest
 
@@ -29,9 +28,9 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.cli import main as cli_main
-from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names
-from callwarden.i18n import set_language, t
+from callwarden.cli import main as cli_main  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.i18n import set_language, t  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================

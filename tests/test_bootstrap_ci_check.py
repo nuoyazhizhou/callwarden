@@ -33,12 +33,12 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.cicd.bootstrap_check import (
+from callwarden.cicd.bootstrap_check import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     _print_gate_result,
     main,
     run_bootstrap_gate,
 )
-from callwarden.db.db import CodeGraphDB
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================

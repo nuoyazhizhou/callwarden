@@ -30,11 +30,9 @@ stale 依据（daemon authority / HTTP thin-client 迁移）
 """
 import os
 import sys
-import json
 import sqlite3
 import tempfile
 import time
-from pathlib import Path
 
 import pytest
 
@@ -49,30 +47,28 @@ _pyinstall = os.path.join(
 if os.path.isdir(_pyinstall):
     sys.path.insert(0, _pyinstall)
 
-from callwarden.server.cas_schema import (
+from callwarden.server.cas_schema import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     init_cas_schema,
     compute_cas_key_v1,
     cas_lookup,
     cas_publish,
     cas_publish_with_retry,
-    cas_pin,
 )
-from callwarden.server.replicator import (
-    ProtocolError,
+from callwarden.server.replicator import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     daemon_handle_connect,
     daemon_handle_refresh,
     init_session_schema,
 )
-from callwarden.server.query_budget import (
+from callwarden.server.query_budget import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     QueryBudget,
     default_budget,
     shallow_budget,
 )
-from callwarden.server.daemon_config import DaemonConfig
-from callwarden.server.daemon_client import DaemonUnavailableError
-from callwarden.server.daemon_protocol import DaemonRemoteError
-from callwarden.server.schema_migrator import migrate_daemon_dbs
-from callwarden.server.backup_restore import BackupManager, RestoreManager
+from callwarden.server.daemon_config import DaemonConfig  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.daemon_client import DaemonUnavailableError  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.schema_migrator import migrate_daemon_dbs  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.backup_restore import BackupManager, RestoreManager  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # daemon RPC method 命名空间（生产侧见 server/replicator.py:52 /

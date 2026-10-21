@@ -10,7 +10,6 @@ authority，fail-closed），不再有 --local/--reset 进程内降级；--from-
 """
 
 import json
-import subprocess
 import sys
 import os
 from unittest.mock import patch
@@ -22,11 +21,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from callwarden.server.metrics import (
+from callwarden.server.metrics import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     get_metrics_collector,
     reset_metrics_collector,
 )
-from callwarden.cli.daemon_commands import run_daemon_command, _parser
+from callwarden.cli.daemon_commands import run_daemon_command, _parser  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # stale 依据（A 类：测试侧期望陈旧）：metrics CLI 默认路径已改为 daemon RPC

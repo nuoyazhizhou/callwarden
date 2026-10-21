@@ -36,8 +36,8 @@ if _PKG_ROOT not in sys.path:
 # 原强制 1 worker 会绕过算法，无法验证修复效果
 # 如需回退到强制 1 worker，设置环境变量 CW_MP_WORKERS=1 即可
 
-from callwarden.db.db import CodeGraphDB
-from callwarden.db.db_build import (
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.db_build import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     _detect_optimal_workers,
     _get_available_memory_mb,
     _WORKER_MEM_BUDGET_MB,
@@ -46,7 +46,7 @@ from callwarden.db.db_build import (
     _SCALE_VERY_LARGE_FILE_THRESHOLD,
     _SCALE_HUGE_FILE_THRESHOLD,
 )
-from callwarden.config import scan_subprojects
+from callwarden.config import scan_subprojects  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 TESTCODE_ROOT = os.path.join(_PKG_ROOT, "testcode", "repos")
 DB_DIR = os.path.join(_PKG_ROOT, "tests", "_testcode_db")
@@ -447,8 +447,6 @@ def build_baseline_db(batch_size=50):
     print(f"[3/4] 分批构建（每批 {batch_size} 个项目，动态 worker）...")
     total_batches = (len(projects) + batch_size - 1) // batch_size
     t_total = time.perf_counter()
-    total_files = 0
-    total_symbols = 0
     # P28: 记录每批的 worker 决策和内存，用于验证算法
     batch_records = []
 
@@ -490,8 +488,6 @@ def build_baseline_db(batch_size=50):
         peak_tree_rss = mem.peak_tree_rss_mb if mem.peak_tree_rss_mb is not None else tree_rss
         avail_after = _get_available_memory_mb()
 
-        total_files = batch_files
-        total_symbols = batch_symbols
 
         # P28: 推算本批新增文件数（用于验证算法决策）
         if batch_records:
@@ -544,7 +540,7 @@ def build_baseline_db(batch_size=50):
 
     # 最终统计
     stats = db.get_stats()
-    timings = getattr(db, "_stage_timings", {}) or {}
+    _timings = getattr(db, "_stage_timings", {}) or {}
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024)
     final_rss = _get_rss_mb()
     final_tree_rss = _get_process_tree_rss_mb()

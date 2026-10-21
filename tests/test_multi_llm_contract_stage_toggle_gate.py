@@ -30,8 +30,8 @@ _PKG_PARENT = str(Path(__file__).resolve().parents[1].parent)
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db.db import CodeGraphDB
-from callwarden.db.db_task_gate import (
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.db_task_gate import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     P1_NOT_ENABLED,
     P3_NOT_ENABLED,
     GATE_CONTRACT_ENVELOPE_MISSING,
@@ -213,7 +213,7 @@ class TestP1EnabledFailsClosed:
                                  [{"action": "implement", "target_file": "a.py"}],
                                  creator="agent")
             step = db.task_next_step(tid)
-            res = db.task_report_step(tid, step["step_id"], "done", True, None,
+            _res = db.task_report_step(tid, step["step_id"], "done", True, None,
                                       identity=_impl_identity())
             # 缺产物 → step 标记 blocked，任务不推进 review
             assert _step_status(db, step["step_id"]) == "blocked"

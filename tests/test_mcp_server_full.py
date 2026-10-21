@@ -20,7 +20,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
@@ -51,9 +50,9 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.server import _mcp_common as _mcp_common_module
-from callwarden.server.mcp_server import HAS_FASTMCP, create_mcp_server, get_db
-from callwarden.server.tools import tools_query, tools_workspace
+from callwarden.server import _mcp_common as _mcp_common_module  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.mcp_server import HAS_FASTMCP, create_mcp_server, get_db  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.tools import tools_query, tools_workspace  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 pytestmark = pytest.mark.skipif(

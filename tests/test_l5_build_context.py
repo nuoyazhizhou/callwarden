@@ -19,7 +19,6 @@ stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
 import json
 import os
 import sys
-import tempfile
 import pytest
 
 # 确保项目根在 sys.path（callwarden 包已 pip install -e . 安装）
@@ -28,13 +27,12 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # 通过 callwarden 包导入（确保相对导入正确解析）
-from callwarden.analyzers.compile_commands import (
+from callwarden.analyzers.compile_commands import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     parse_compile_commands,
     aggregate_build_context,
     import_compile_commands,
     split_compile_flags,
     CompileEntry,
-    AggregatedBuildContext,
 )
 
 
@@ -183,7 +181,7 @@ class TestAggregateBuildContext:
 
     def test_aggregate_basic(self, sample_compile_commands):
         """基本聚合"""
-        entries = parse_compile_commands.__wrapped__ if hasattr(parse_compile_commands, '__wrapped__') else None
+        _entries = parse_compile_commands.__wrapped__ if hasattr(parse_compile_commands, '__wrapped__') else None
         # 直接用 import_compile_commands
         # 先写临时文件
         import tempfile
@@ -394,8 +392,8 @@ class TestDbToolchain:
         from callwarden.db.db_toolchain import (
             init_toolchain_schema, register_build_context,
             get_build_context, list_build_contexts,
-            set_active_build_context, get_active_build_context,
-            delete_build_context, compute_build_context_hash,
+             get_active_build_context,
+            delete_build_context,
         )
 
         db = CodeGraphDB(str(tmp_path / "test.db"))
@@ -543,7 +541,7 @@ class TestE2E:
         agg = import_compile_commands(str(cc_path), workspace_root=str(tmp_path))
 
         # 4. 注册 build context
-        ctx = register_build_context(
+        _ctx = register_build_context(
             db.conn, ws_id, "firmware-debug",
             compile_flags=agg.compile_flags,
             defines=agg.defines,

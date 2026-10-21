@@ -15,7 +15,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT.parent))
-from callwarden.server.daemon_client import HttpDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 PARENT_ID = "T-1788871227327-45c94bd8"
 WORKSPACE_ID = 1

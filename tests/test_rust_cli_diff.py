@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -20,7 +19,7 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from callwarden.db.db import CodeGraphDB
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 def _inject_gate_pass_records(db_path: Path, task_id: str) -> None:

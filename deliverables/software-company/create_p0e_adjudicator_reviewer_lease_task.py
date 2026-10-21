@@ -11,7 +11,7 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from callwarden.server.daemon_client import get_daemon_client
+from callwarden.server.daemon_client import get_daemon_client  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 PARENT_ID = "T-1787203926824-9f873bfc"
 WORKSPACE_ID = 1

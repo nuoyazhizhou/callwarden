@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_PARENT = ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
-from callwarden.server.daemon_client import get_daemon_client
-from create_aprime_mcp_task import PARENT_ID, WORKSPACE_ID, WORKSPACE_INSTANCE_ID, contracts, task_description
+from callwarden.server.daemon_client import get_daemon_client  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from create_aprime_mcp_task import PARENT_ID, WORKSPACE_ID, WORKSPACE_INSTANCE_ID, contracts, task_description  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 MANIFEST = ROOT / "deliverables" / "software-company" / "aprime_task_factory_manifest.json"
 OUT = ROOT / "deliverables" / "software-company" / "aprime_precreation_receipt.json"

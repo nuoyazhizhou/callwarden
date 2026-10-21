@@ -20,12 +20,10 @@ _PKG_PARENT = str(Path(__file__).resolve().parents[1].parent)
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db.db import CodeGraphDB
-from callwarden.db.db_task_dependencies import (
-    DEP_PROVIDES_INTERFACE,
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.db_task_dependencies import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     DEP_REQUIRES_ARTIFACT,
     DEP_REQUIRES_EXISTING,
-    DEP_REQUIRES_INTERFACE,
 )
 
 

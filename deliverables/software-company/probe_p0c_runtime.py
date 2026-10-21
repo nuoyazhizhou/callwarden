@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PARENT = ROOT.parent
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
-from callwarden.server.daemon_client import UnixDaemonRpcClient
+from callwarden.server.daemon_client import UnixDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 client = UnixDaemonRpcClient()
 result = {"ping": client.call("ping", {})}

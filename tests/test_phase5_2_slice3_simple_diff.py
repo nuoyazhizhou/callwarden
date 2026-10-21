@@ -18,8 +18,8 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-import pytest
-import callwarden_core as cc
+import pytest  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+import callwarden_core as cc  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 # 差分契约守卫：本文件为 Rust/Python 差分对比测试，禁止以返回值代替断言
 # （pytest 忽略非 None 返回值，仅发 PytestReturnNotNoneWarning）。差分不匹配时

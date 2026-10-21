@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT.parent))
-from callwarden.server.daemon_client import HttpDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 HERE = Path(__file__).resolve().parent
 client = HttpDaemonRpcClient()

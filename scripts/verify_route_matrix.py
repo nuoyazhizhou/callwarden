@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Set
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "scripts"))
 
-import gen_route_matrix as gen  # generator 是工具枚举/路由规则的唯一来源
+import gen_route_matrix as gen  # generator 是工具枚举/路由规则的唯一来源  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 _MATRIX_PATH = gen._MATRIX_PATH
 # dispatch / http_server / compat_registry 路径与证据提取函数均以 generator 为

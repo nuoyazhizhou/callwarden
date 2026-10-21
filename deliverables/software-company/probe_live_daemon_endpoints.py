@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))
-from callwarden.server.daemon_client import UnixDaemonRpcClient
+from callwarden.server.daemon_client import UnixDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 endpoints = [
     r"\\.\pipe\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001",

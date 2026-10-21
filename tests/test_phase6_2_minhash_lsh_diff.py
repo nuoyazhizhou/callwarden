@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import List, Tuple
 
 import pytest
 
@@ -69,15 +68,14 @@ except Exception:
 
 # 导入 Python baseline
 sys.path.insert(0, os.path.join(_PKG_PARENT, "callwarden"))
-from callwarden.db.db_clone_detection import (  # type: ignore
+from callwarden.db.db_clone_detection import (  # type: ignore  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     _minhash_signature,
     _lsh_buckets,
     _stable_token_hash,
     _fnv1a_32,
-    _HASH_COEFFS,
 )
 # 重新导入常量（NUM_PERM 可能不在模块顶层）
-from callwarden.db.db_clone_detection import _HASH_COEFFS as PY_HASH_COEFFS  # type: ignore
+from callwarden.db.db_clone_detection import _HASH_COEFFS as PY_HASH_COEFFS  # type: ignore  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================
@@ -165,7 +163,7 @@ class TestMinHashSignatureDiff:
         # 测试多个 token 的 FNV-1a 哈希
         test_tokens = ["hello", "world", "foo", "bar", "123", "ID", "STR", "NUM"]
         for token in test_tokens:
-            py_hash = _stable_token_hash(token)
+            _py_hash = _stable_token_hash(token)
             # Rust 端通过 py_minhash_signature 间接验证：
             # 单 token 的签名应等于 (a * hash + b) mod 2^32 的最小值
             # 但更直接的验证是：Rust 与 Python 对相同 token 集合产出相同签名
@@ -247,7 +245,7 @@ class TestLSHBucketsDiff:
         sig_b = list(callwarden_core.py_minhash_signature(tokens_b))
 
         buckets_a = set(callwarden_core.py_lsh_buckets(sig_a))
-        buckets_b = set(callwarden_core.py_lsh_buckets(sig_b))
+        _buckets_b = set(callwarden_core.py_lsh_buckets(sig_b))
 
         # 高相似签名应至少共享一个桶（LSH 召回）
         # 注意：MinHash 是估算，可能不总有交集，但相似度高时概率很大
@@ -255,7 +253,7 @@ class TestLSHBucketsDiff:
         # 所以不一定有相同桶 — 改为完全相同子集测试
         tokens_c = ["common", "shared", "tokens", "unique_a", "extra"]
         sig_c = list(callwarden_core.py_minhash_signature(tokens_c))
-        buckets_c = set(callwarden_core.py_lsh_buckets(sig_c))
+        _buckets_c = set(callwarden_core.py_lsh_buckets(sig_c))
 
         # 完全相同的签名应产生完全相同的桶
         assert buckets_a == set(callwarden_core.py_lsh_buckets(sig_a))

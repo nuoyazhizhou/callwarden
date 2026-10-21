@@ -11,7 +11,6 @@ _cascade_close_if_ready 检查是否所有子任务都已 closed，如果是则�
 import os
 import sys
 import tempfile
-import time
 
 import pytest
 
@@ -19,15 +18,13 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db import CodeGraphDB
-from callwarden.db.schema import (
+from callwarden.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.schema import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     TASK_STATUS_OPEN,
     TASK_STATUS_IN_PROGRESS,
     TASK_STATUS_REVIEW,
     TASK_STATUS_APPLIED,
     TASK_STATUS_CLOSED,
-    STEP_STATUS_PENDING,
-    STEP_STATUS_DONE,
 )
 
 
@@ -233,7 +230,7 @@ class TestParentWithoutOwnStepsRegression:
             creator="test",
             parent_id=parent_id,
         )
-        child2 = db.task_create(
+        _child2 = db.task_create(
             title="child2",
             steps=[{"action": "edit", "target_file": "f2.py"}],
             creator="test",
@@ -406,7 +403,7 @@ class TestEdgeCases:
             creator="test",
             parent_id=parent_id,
         )
-        child2 = db.task_create(
+        _child2 = db.task_create(
             title="child2",
             steps=[{"action": "edit", "target_file": "f2.py"}],
             creator="test",

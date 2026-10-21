@@ -37,7 +37,6 @@ snapshot。
 from __future__ import annotations
 
 import os
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -72,7 +71,7 @@ def _rust_core_version() -> str:
 # 已下沉至 callwarden.config。此处保留重导出，供 db/ 内部模块与既有引用
 # 在退休过渡期使用；新代码应直接 from callwarden.config import ParseMode。
 
-from callwarden.config import ParseMode  # noqa: F401
+from callwarden.config import ParseMode  # noqa: F401, E402
 
 
 # ────────────────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ pytestmark = pytest.mark.skipif(
 # 确保能导入 callwarden
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from callwarden.db.db import CodeGraphDB
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================

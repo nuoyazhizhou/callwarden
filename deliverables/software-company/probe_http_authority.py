@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))
-from callwarden.server.daemon_client import HttpDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 endpoint = "http://127.0.0.1:14012"
 client = HttpDaemonRpcClient(endpoint=endpoint, verify_health=False, validate_manifest=False, timeout=3.0)

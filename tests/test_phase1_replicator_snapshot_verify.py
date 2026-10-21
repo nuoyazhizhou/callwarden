@@ -7,12 +7,9 @@
 
 同时验证 Replicator.get_pending_count 接入 Rust 短路后的生产行为。
 """
-import os
 import sys
-import json
 import time
 import statistics
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -27,8 +24,8 @@ try:
 except ImportError:
     HAS_RUST = False
 
-from callwarden.server.staging_log import StagingLog, StagingEntry
-from callwarden.server.replicator import Replicator
+from callwarden.server.staging_log import StagingLog, StagingEntry  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.replicator import Replicator  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 @pytest.fixture
@@ -80,7 +77,7 @@ class TestReplicatorQueryPerformance:
     def test_rust_vs_python_latency(self, staging_log_with_pending):
         """Rust 与 Python 路径延迟对比"""
         staging_log, log_path = staging_log_with_pending
-        replicator = Replicator(staging_log=staging_log)
+        _replicator = Replicator(staging_log=staging_log)
 
         rust_times = []
         for _ in range(50):

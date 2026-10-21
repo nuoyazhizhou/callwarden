@@ -23,7 +23,7 @@ _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from callwarden.db.db import CodeGraphDB
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 GEN_DB_DIR = os.path.join(_PKG_ROOT, 'tests', '_gen_db')
 LABEL = '10m'
@@ -123,7 +123,6 @@ def main():
     db_path = os.path.join(db_dir, 'callwarden.db')
 
     # 如果存在旧 DB，先删除
-    import shutil
     if os.path.exists(db_path):
         os.remove(db_path)
 

@@ -21,8 +21,8 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db import CodeGraphDB
-from callwarden.db.schema import (
+from callwarden.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.schema import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     TASK_STATUS_OPEN,
     TASK_STATUS_IN_PROGRESS,
     TASK_STATUS_REVIEW,
@@ -64,14 +64,12 @@ def _create_subtask(db, parent_id, title="subtask", steps=None):
 
 def _complete_task_to_status(db, task_id, target_status):
     """把任务推进到指定状态（open → in_progress → review → applied → closed）"""
-    now = 0  # 占位
 
     if target_status == TASK_STATUS_OPEN:
         return  # 已经是 open
 
     # 添加一个步骤并完成，使任务进入 review
     # 先创建步骤（如果任务没有步骤）
-    import sqlite3
     cur = db.conn.execute(
         "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ?",
         (task_id,),
@@ -154,7 +152,7 @@ class TestTaskCreateReopen:
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         # 挂子任务
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         # 父任务应变为 in_progress
         row = _get_task_status(db, parent_id)
@@ -167,7 +165,7 @@ class TestTaskCreateReopen:
         parent_id = _create_task(db, title="parent")
         _complete_task_to_status(db, parent_id, TASK_STATUS_APPLIED)
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         row = _get_task_status(db, parent_id)
         assert row["status"] == TASK_STATUS_IN_PROGRESS
@@ -178,7 +176,7 @@ class TestTaskCreateReopen:
         parent_id = _create_task(db, title="parent")
         _complete_task_to_status(db, parent_id, TASK_STATUS_REVIEW)
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         row = _get_task_status(db, parent_id)
         assert row["status"] == TASK_STATUS_IN_PROGRESS
@@ -188,7 +186,7 @@ class TestTaskCreateReopen:
         parent_id = _create_task(db, title="parent")
         # 父任务保持 open
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         row = _get_task_status(db, parent_id)
         assert row["status"] == TASK_STATUS_OPEN
@@ -198,7 +196,7 @@ class TestTaskCreateReopen:
         parent_id = _create_task(db, title="parent")
         _complete_task_to_status(db, parent_id, TASK_STATUS_IN_PROGRESS)
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         row = _get_task_status(db, parent_id)
         assert row["status"] == TASK_STATUS_IN_PROGRESS
@@ -222,7 +220,7 @@ class TestRecursiveReopen:
         _complete_task_to_status(db, grandparent_id, TASK_STATUS_CLOSED)
 
         # 在 parent 下挂新子任务
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         # parent 应 reopen
         row = _get_task_status(db, parent_id)
@@ -244,7 +242,7 @@ class TestRecursiveReopen:
         _complete_task_to_status(db, root_id, TASK_STATUS_CLOSED)
 
         # 在 leaf 下挂新子任务
-        new_child_id = _create_subtask(db, leaf_id, title="new_child")
+        _new_child_id = _create_subtask(db, leaf_id, title="new_child")
 
         # 全链应 reopen
         assert _get_task_status(db, leaf_id)["status"] == TASK_STATUS_IN_PROGRESS
@@ -276,7 +274,7 @@ class TestSiblingStatusCheck:
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         # 再挂一个新子任务
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         # 所有兄弟子任务都是 closed → reopen 父任务为 in_progress
         row = _get_task_status(db, parent_id)
@@ -288,12 +286,12 @@ class TestSiblingStatusCheck:
         """父任务 closed + 有兄弟子任务 open → 直接挂，不 reopen 父任务"""
         parent_id = _create_task(db, title="parent")
         # 先挂一个子任务，保持 open 状态
-        sibling_id = _create_subtask(db, parent_id, title="sibling_open")
+        _sibling_id = _create_subtask(db, parent_id, title="sibling_open")
         # 手动把 parent 推到 closed（模拟数据不一致或误操作）
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         # 再挂一个新子任务
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         # 有兄弟子任务是 open → 不 reopen 父任务，保持 closed
         row = _get_task_status(db, parent_id)
@@ -307,7 +305,7 @@ class TestSiblingStatusCheck:
         # 手动把 parent 推到 closed
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         # 有兄弟子任务是 in_progress → 不 reopen 父任务
         row = _get_task_status(db, parent_id)
@@ -319,7 +317,7 @@ class TestSiblingStatusCheck:
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         # 挂第一个子任务
-        child_id = _create_subtask(db, parent_id, title="first_child")
+        _child_id = _create_subtask(db, parent_id, title="first_child")
 
         # 无兄弟子任务 → reopen 父任务
         row = _get_task_status(db, parent_id)
@@ -332,12 +330,12 @@ class TestSiblingStatusCheck:
         sibling1_id = _create_subtask(db, parent_id, title="sibling_closed")
         _complete_task_to_status(db, sibling1_id, TASK_STATUS_CLOSED)
         # 兄弟2：open
-        sibling2_id = _create_subtask(db, parent_id, title="sibling_open")
+        _sibling2_id = _create_subtask(db, parent_id, title="sibling_open")
         # 手动把 parent 推到 closed
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         # 挂新子任务
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         # 有兄弟子任务是 open → 不 reopen 父任务
         row = _get_task_status(db, parent_id)
@@ -354,7 +352,7 @@ class TestSiblingStatusCheck:
         _complete_task_to_status(db, s3, TASK_STATUS_CLOSED)
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         # 所有兄弟子任务都是 closed → reopen 父任务
         row = _get_task_status(db, parent_id)

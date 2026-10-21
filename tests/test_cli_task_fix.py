@@ -20,8 +20,8 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db.db import CodeGraphDB
-from callwarden.cli import main as cli_main
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.cli import main as cli_main  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================
@@ -41,7 +41,7 @@ def test_help_no_db_init():
         db_init_called = {"count": 0}
 
         # 替换 CodeGraphDB.__init__ 让它抛异常，验证 --help 不会触达
-        original_init = CodeGraphDB.__init__
+        _original_init = CodeGraphDB.__init__
 
         def fake_init(self, *args, **kwargs):
             db_init_called["count"] += 1
@@ -197,7 +197,7 @@ def test_task_list_flag_delegates_to_handle_task(route_stub):
         with mock.patch.object(cli_main, "_handle_task", side_effect=spy_handle_task):
             # 直接调用 main 中处理 --task-list 的分支逻辑
             # 由于 main() 解析复杂，直接验证 _handle_task 被正确委派
-            args = FakeArgs()
+            _args = FakeArgs()
             # 调用 main 函数中的 --task-list 处理分支
             # 这里通过直接验证 _handle_task 调用模式来确认委托逻辑
             cli_main._handle_task(["list"], db)

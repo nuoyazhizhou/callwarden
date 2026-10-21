@@ -28,17 +28,16 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional,  Tuple
 
 # 仓库父目录加入 sys.path
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from i18n import t
-from .task_snapshot import (
+from i18n import t  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from .task_snapshot import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     WorkspaceSnapshot,
-    compute_snapshot_id,
 )
 
 
@@ -455,7 +454,7 @@ class TaskEvidenceMixin:
         ) if snapshot.symbol_hashes else ""
 
         # payload JSON
-        payload_json = json.dumps(
+        _payload_json = json.dumps(
             payload, sort_keys=True, ensure_ascii=False
         ) if payload else ""
 

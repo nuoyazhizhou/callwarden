@@ -16,9 +16,9 @@ _PKG_ROOT = os.path.dirname(_TESTS_DIR)
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from test_p31_multi_lang import _LANGUAGE_SAMPLES
-from callwarden.parsers import create_parser
-from callwarden_core import parse_file_lang
+from test_p31_multi_lang import _LANGUAGE_SAMPLES  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.parsers import create_parser  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden_core import parse_file_lang  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 def normalize_symbols(symbols):

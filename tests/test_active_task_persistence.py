@@ -19,15 +19,9 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db import CodeGraphDB
-from callwarden.db.schema import (
-    TASK_STATUS_OPEN,
-    TASK_STATUS_IN_PROGRESS,
+from callwarden.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.schema import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     TASK_STATUS_REVIEW,
-    TASK_STATUS_APPLIED,
-    TASK_STATUS_CLOSED,
-    STEP_STATUS_PENDING,
-    STEP_STATUS_DONE,
 )
 
 
@@ -255,7 +249,7 @@ class TestCaptureDiffAutoPrefersActiveTask:
         with patch.object(db, "task_list", return_value=[fake_task]):
             with patch.object(db, "task_capture_diff") as mock_capture:
                 mock_capture.return_value = {"changed_files": []}
-                result = db.task_capture_diff_auto()
+                _result = db.task_capture_diff_auto()
 
         mock_capture.assert_called_once()
         assert mock_capture.call_args.kwargs["task_id"] == "T-fallback-xxxx"

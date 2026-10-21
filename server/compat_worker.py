@@ -22,7 +22,6 @@ import json
 import os
 import sqlite3
 import sys
-import time
 from typing import Any, Dict, Optional
 
 # 确保 server/ 与仓库根目录可导入（callwarden.config 等）
@@ -54,7 +53,7 @@ import callwarden.server.tools.tools_rules  # noqa: E402   (H4C-2 第三批: too
 import callwarden.server.tools.tools_collab  # noqa: E402  (H4C-2 第三批: collab 组只读 handler 注册)
 import callwarden.server.tools.tools_dependency_graph  # noqa: E402 (依赖图/环检测组只读 handler 注册)
 import callwarden.server.tools.tools_identity  # noqa: E402 (身份/证明组只读 handler 注册)
-import callwarden.server.tools.tools_lease  # noqa: E402 (assignment_show 只读 handler 注册)
+import callwarden.server.tools.tools_lease  # noqa: E402, F401 (assignment_show 只读 handler 注册)
 
 # 帧协议常量（契约 §3.3）
 WORKER_PROTOCOL_VERSION = 1

@@ -6,7 +6,6 @@ Phase 6.1: Rust toolchain 模块测试
 """
 
 import sys
-import math
 from pathlib import Path
 
 import pytest
@@ -27,7 +26,7 @@ except ImportError:
     RUST_AVAILABLE = False
 
 # 同时加载 Python 实现做一致性对比
-import importlib.util
+import importlib.util  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 def _load_module(name, path):

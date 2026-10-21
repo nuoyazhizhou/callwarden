@@ -13,11 +13,7 @@
 """
 from __future__ import annotations
 
-import json
-import os
 import sys
-import tempfile
-import time
 from pathlib import Path
 
 import pytest
@@ -27,8 +23,8 @@ _PKG_PARENT = str(Path(__file__).resolve().parents[1].parent)
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db.db import CodeGraphDB
-from callwarden.db.schema import SCHEMA_VERSION
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.schema import SCHEMA_VERSION  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================

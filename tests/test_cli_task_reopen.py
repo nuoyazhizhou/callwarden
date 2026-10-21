@@ -9,13 +9,10 @@
 - i18n key 完整性
 """
 
-import io
 import json
 import os
 import sys
 import tempfile
-from argparse import Namespace
-from contextlib import redirect_stdout
 
 import pytest
 
@@ -23,16 +20,9 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.cli import main as cli_main
-from callwarden.i18n import set_language
-from callwarden.db import CodeGraphDB
-from callwarden.db.schema import (
-    TASK_STATUS_OPEN,
-    TASK_STATUS_IN_PROGRESS,
-    TASK_STATUS_REVIEW,
-    TASK_STATUS_APPLIED,
-    TASK_STATUS_CLOSED,
-)
+from callwarden.cli import main as cli_main  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.i18n import set_language  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 set_language("zh_CN")
 
@@ -66,8 +56,6 @@ class TestTaskReopenArgparse:
 
     def _get_task_subparser(self):
         """获取 _handle_task 的内部 parser，并返回 subparsers"""
-        import io
-        from callwarden.i18n import t
 
         # 构造 task parser（复制 _handle_task 内部逻辑）
         import argparse
@@ -80,7 +68,6 @@ class TestTaskReopenArgparse:
         """argparse 应注册 reopen 子命令"""
         # 通过实际调用 _handle_task(["reopen", "--help"], db) 验证
         # 检查 task 子命令 choices 包含 reopen
-        captured_choice = False
 
         # 临时 monkeypatch _handle_task 的 parser 创建，捕获 subparsers
         import callwarden.cli.main as m
@@ -90,9 +77,8 @@ class TestTaskReopenArgparse:
 
         def capture_handle(args, db):
             import argparse
-            from callwarden.i18n import t
             parser = argparse.ArgumentParser(prog="cw task")
-            sub = parser.add_subparsers(dest="action", required=True)
+            _sub = parser.add_subparsers(dest="action", required=True)
             # 调用原始函数以注册所有子命令
             # 但我们需要捕获 sub，所以重新构造
             orig_handle(args, db)

@@ -379,9 +379,9 @@ def test_protocol_token_must_be_top_level_not_params():
 # 2. params 内不携带 bridge_token（旧实现回归保护）；
 # 3. token 缺失时 fail-closed（不发出未认证请求）。
 # ============================================================
-import threading
+import threading  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
-import callwarden.server.daemon_client as dc
+import callwarden.server.daemon_client as dc  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 def _fake_tcp_connect(endpoint: str):

@@ -14,7 +14,7 @@ os.environ["CALLWARDEN_LANG"] = "en_US"
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from callwarden.i18n import set_language
+from callwarden.i18n import set_language  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 set_language("en_US")
 
 

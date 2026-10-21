@@ -23,7 +23,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
-from callwarden.config import get_http_authority_id
+from callwarden.config import get_http_authority_id  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 # P0-COMPAT-v3（T-1788963104058-fdb2e848）：Rust native 路由要求显式 workspace 绑定
 CANONICAL_INSTANCE = None  # 隔离 daemon workspace_instance_id，由 w3_live fixture 注入
@@ -85,7 +85,6 @@ def test_get_symbol_change_tasks_row_fields(rpc):
 
 def test_get_symbol_change_tasks_hash_matches_before_or_after(rpc):
     """symbol_hash 过滤：仅返回 hash_before 或 hash_after 等于该值的行。"""
-    import random
 
     # 用不存在的 hash 先确认空返回，避免对真实数据过度假设
     miss = "zz" * 32

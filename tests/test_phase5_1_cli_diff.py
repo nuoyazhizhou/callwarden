@@ -19,10 +19,8 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from release.config_loader import (
+from release.config_loader import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     PlatformPaths,
-    Config,
-    ConfigValue,
     load_config as py_load_config,
     check_role_supported as py_check_role_supported,
 )
@@ -111,7 +109,7 @@ def py_is_readonly_args(args) -> bool:
     return True
 
 
-import callwarden_core as cc
+import callwarden_core as cc  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================================
@@ -163,7 +161,7 @@ def test_d2_load_config():
 
     # D2.1: 无配置文件 + 无 env + 无 CLI → 默认值
     # 清除可能影响测试的环境变量
-    test_env = {k: v for k, v in os.environ.items() if not k.startswith("CW_")}
+    _test_env = {k: v for k, v in os.environ.items() if not k.startswith("CW_")}
 
     # Python 真相源
     py_config = py_load_config(cli_overrides=None, env_prefix="CW_")

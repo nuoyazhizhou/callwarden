@@ -17,15 +17,14 @@ import os
 import re
 import sys
 
-import pytest
 
 # 项目根目录
 _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.cli.categories import COMMAND_CATEGORIES
-from callwarden.server.tools._categories import TOOL_CATEGORIES
+from callwarden.cli.categories import COMMAND_CATEGORIES  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.tools._categories import TOOL_CATEGORIES  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 DOCS_DIR = os.path.join(_PKG_PARENT, "docs")
 CLI_REF = os.path.join(DOCS_DIR, "cli_reference.md")

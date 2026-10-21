@@ -21,15 +21,15 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.db import CodeGraphDB
-from callwarden.db.schema import (
+from callwarden.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.schema import (  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     TASK_STATUS_OPEN,
     TASK_STATUS_IN_PROGRESS,
     TASK_STATUS_REVIEW,
     TASK_STATUS_APPLIED,
     TASK_STATUS_CLOSED,
 )
-from callwarden.cli import main as cli_main
+from callwarden.cli import main as cli_main  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 @pytest.fixture
@@ -155,7 +155,7 @@ class TestEndToEndReopenCycle:
         parent_id = _create_task(db, title="parent")
         _complete_task_to_status(db, parent_id, TASK_STATUS_APPLIED)
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         assert _get_status(db, parent_id) == TASK_STATUS_IN_PROGRESS
 
@@ -164,7 +164,7 @@ class TestEndToEndReopenCycle:
         parent_id = _create_task(db, title="parent")
         _complete_task_to_status(db, parent_id, TASK_STATUS_REVIEW)
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         assert _get_status(db, parent_id) == TASK_STATUS_IN_PROGRESS
 
@@ -172,7 +172,7 @@ class TestEndToEndReopenCycle:
         """端到端：open 父任务 → 挂子任务 → 不改状态"""
         parent_id = _create_task(db, title="parent")
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         assert _get_status(db, parent_id) == TASK_STATUS_OPEN
 
@@ -181,7 +181,7 @@ class TestEndToEndReopenCycle:
         parent_id = _create_task(db, title="parent")
         _complete_task_to_status(db, parent_id, TASK_STATUS_IN_PROGRESS)
 
-        child_id = _create_subtask(db, parent_id, title="child")
+        _child_id = _create_subtask(db, parent_id, title="child")
 
         assert _get_status(db, parent_id) == TASK_STATUS_IN_PROGRESS
 
@@ -255,7 +255,7 @@ class TestRecursiveReopenChain:
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
         _complete_task_to_status(db, grandparent_id, TASK_STATUS_CLOSED)
 
-        new_child_id = _create_subtask(db, parent_id, title="new_child")
+        _new_child_id = _create_subtask(db, parent_id, title="new_child")
 
         assert _get_status(db, parent_id) == TASK_STATUS_IN_PROGRESS
         assert _get_status(db, grandparent_id) == TASK_STATUS_IN_PROGRESS
@@ -270,7 +270,7 @@ class TestRecursiveReopenChain:
         _complete_task_to_status(db, mid_id, TASK_STATUS_CLOSED)
         _complete_task_to_status(db, root_id, TASK_STATUS_CLOSED)
 
-        new_child_id = _create_subtask(db, leaf_id, title="new_child")
+        _new_child_id = _create_subtask(db, leaf_id, title="new_child")
 
         assert _get_status(db, leaf_id) == TASK_STATUS_IN_PROGRESS
         assert _get_status(db, mid_id) == TASK_STATUS_IN_PROGRESS
@@ -312,7 +312,7 @@ class TestSiblingCheckConsistency:
     def test_create_with_open_sibling_does_not_reopen(self, db):
         """task_create：有兄弟 open → 不 reopen 父任务"""
         parent_id = _create_task(db, title="parent")
-        s1 = _create_subtask(db, parent_id, title="s1_open")
+        _s1 = _create_subtask(db, parent_id, title="s1_open")
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         _create_subtask(db, parent_id, title="s2")
@@ -323,7 +323,7 @@ class TestSiblingCheckConsistency:
     def test_manual_reopen_ignores_sibling_status(self, db):
         """task_reopen：手动 reopen 不检查兄弟子任务状态"""
         parent_id = _create_task(db, title="parent")
-        s1 = _create_subtask(db, parent_id, title="s1_open")
+        _s1 = _create_subtask(db, parent_id, title="s1_open")
         _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
 
         # 手动 reopen 父任务，即使有 open 的兄弟子任务

@@ -15,7 +15,6 @@ import json
 import tempfile
 import shutil
 import io
-import re
 
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
@@ -23,8 +22,8 @@ if _PKG_ROOT not in sys.path:
 
 os.environ.setdefault("CW_MP_WORKERS", "4")
 
-from callwarden.config import scan_subprojects
-from callwarden.db.db import CodeGraphDB
+from callwarden.config import scan_subprojects  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 REPOS_DIR = os.path.join(_PKG_ROOT, "testcode", "repos")
 REPORT_PATH = os.path.join(_PKG_ROOT, "tests", "_bench_report.json")
@@ -129,7 +128,7 @@ def main():
             if failed < 0:
                 # 兼容旧版本：files_total - parsed - unchanged（会误算 skipped）
                 failed = max(0, files_total - parsed - unchanged)
-            skipped = timings.get("files_skipped", 0)
+            _skipped = timings.get("files_skipped", 0)
 
             # 从日志提取失败文件路径
             failed_paths = []

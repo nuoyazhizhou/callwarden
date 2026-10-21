@@ -20,10 +20,10 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.cli import main as cli_main
-from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names
-from callwarden.server.tools import _categories as tool_categories_mod
-from callwarden.server.tools._categories import TOOL_CATEGORIES, all_tool_names
+from callwarden.cli import main as cli_main  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.cli.categories import COMMAND_CATEGORIES, all_command_names  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.tools import _categories as tool_categories_mod  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.server.tools._categories import TOOL_CATEGORIES, all_tool_names  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 # cw.py standalone 入口 + cli/main.py 单独分发的入口（不在 _SUBCOMMANDS 中）
 _EXTRA_TOP_LEVEL = {"install", "server", "test", "setup", "daemon"}

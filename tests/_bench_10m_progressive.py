@@ -249,7 +249,7 @@ def generate_synthetic_db(db_path: str, target_symbols: int, seed: int = 42):
 
 # 支持命令行参数指定规模：python _bench_10m_progressive.py 2M
 # 不指定则跑全部 4 个规模
-import argparse
+import argparse  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 _parser = argparse.ArgumentParser()
 _parser.add_argument('scale', nargs='?', default='all',
                      help='指定规模: 2M/5M/7M/10M/all')
@@ -418,7 +418,7 @@ def bench_scale(scale: dict, tmpdir: str) -> dict:
     t0 = time.perf_counter()
     for _ in range(5):
         for q in search_queries:
-            results_list = store.search_symbols(q, None, 50)
+            _results_list = store.search_symbols(q, None, 50)
     elapsed = time.perf_counter() - t0
     query_results["search_symbols_x5_avg_ms"] = round(elapsed * 1000 / 5, 2)
     print(f"  search_symbols x5: {query_results['search_symbols_x5_avg_ms']:>12,.2f} ms avg")

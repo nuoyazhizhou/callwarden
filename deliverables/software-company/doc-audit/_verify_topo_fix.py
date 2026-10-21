@@ -5,7 +5,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.dirname(REPO))
 os.environ["PYTHONUTF8"] = "1"
-import importlib
+import importlib  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 pkg = os.path.basename(REPO)
 main = importlib.import_module(f"{pkg}.cli.main")
 

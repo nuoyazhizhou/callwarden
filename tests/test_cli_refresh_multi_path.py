@@ -10,17 +10,15 @@
 import json
 import os
 import sys
-import tempfile
 
-import pytest
 
 # 让测试能导入 cli/main.py
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from callwarden.cli import main as cli_main
-from callwarden.i18n import set_language
+from callwarden.cli import main as cli_main  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from callwarden.i18n import set_language  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 set_language("zh_CN")
 

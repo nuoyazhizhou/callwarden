@@ -62,7 +62,7 @@ except Exception:
 
 # 导入 Python baseline 工具函数
 sys.path.insert(0, os.path.join(_PKG_PARENT, "callwarden"))
-from callwarden.db.db_clone_detection import (  # type: ignore
+from callwarden.db.db_clone_detection import (  # type: ignore  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
     _minhash_signature,
     _lsh_buckets,
     _jaccard_similarity,

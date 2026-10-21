@@ -78,7 +78,7 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from callwarden.server.daemon_client import HttpDaemonRpcClient
+from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 # 承接来源：PYT 回归卡（其 step#4 = T-1789139378194-02f1f66c, fix_defect）
 PARENT_ID = "T-1788871227327-45c94bd8"

@@ -46,8 +46,7 @@ _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-from callwarden.db.db import CodeGraphDB
-from callwarden.config import get_project_db_path
+from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 # 仓库配置：名称 -> (根路径, 描述, .callwardenignore 规则)
 REPOS = {

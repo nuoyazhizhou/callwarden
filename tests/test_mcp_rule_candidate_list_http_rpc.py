@@ -20,7 +20,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
-from callwarden.config import get_http_authority_id
+from callwarden.config import get_http_authority_id  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 @pytest.fixture()

@@ -90,7 +90,7 @@ def py_route_command(mode: str, socket_path: str, platform: str) -> str:
 # Rust 实现（通过 PyO3 调用）
 # ============================================================
 
-import callwarden_core as cc
+import callwarden_core as cc  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================================

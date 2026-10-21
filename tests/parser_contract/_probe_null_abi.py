@@ -9,7 +9,6 @@ r"""P0-2 验证 probe：检查 ParseFact NULL ABI。
   $env:PYTHONPATH = "rust_ext\target\wheel_extract"
   python tests\parser_contract\_probe_null_abi.py
 """
-import json
 import os
 import sys
 import tempfile
@@ -32,7 +31,7 @@ while _pkg_root in sys.path:
 print(f"[probe] PYTHONPATH first 3: {sys.path[:3]}")
 print(f"[probe] wheel_extract exists: {Path(_wheel_extract).exists()}")
 
-from callwarden_core import parse_file_lang
+from callwarden_core import parse_file_lang  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 # 样本：顶层函数 + 顶层裸调用 + 嵌套函数（有词法父）
 SAMPLE_RUST = """\

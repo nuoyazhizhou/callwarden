@@ -12,7 +12,6 @@
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -137,7 +136,7 @@ def py_json_dumps_pretty(data) -> str:
 # Rust 实现（通过 PyO3 调用）
 # ============================================================
 
-import callwarden_core as cc
+import callwarden_core as cc  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
 
 
 # ============================================================
