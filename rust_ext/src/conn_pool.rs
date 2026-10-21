@@ -308,21 +308,21 @@ mod tests {
 
         close_pooled_connections(None);
 
-        with_pooled_conn(&path, |c| {
+        with_pooled_conn("test", &path, |c| {
             c.execute_batch("CREATE TABLE IF NOT EXISTS t(x INTEGER);")
                 .unwrap();
         })
         .unwrap();
 
         // 第二次调用命中缓存，池内仍只有 1 条
-        with_pooled_conn(&path, |c| {
+        with_pooled_conn("test", &path, |c| {
             c.execute_batch("INSERT INTO t VALUES (1);").unwrap();
         })
         .unwrap();
 
         assert_eq!(pooled_connection_count(), 1);
 
-        let n = with_pooled_conn(&path, |c| {
+        let n = with_pooled_conn("test", &path, |c| {
             c.query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0))
                 .unwrap()
         })
@@ -342,7 +342,7 @@ mod tests {
         let path = db.to_string_lossy().to_string();
         close_pooled_connections(None);
 
-        with_pooled_conn(&path, |c| {
+        with_pooled_conn("test", &path, |c| {
             c.execute_batch("CREATE TABLE IF NOT EXISTS t(x INTEGER);").unwrap();
         })
         .unwrap();
@@ -350,7 +350,7 @@ mod tests {
         // Windows 下大小写/分隔符不同的同一路径必须复用同一连接，
         // 否则池里会留下两个实例——那正是本模块要消除的双实例本身。
         let alt = path.replace('/', "\\").to_uppercase();
-        with_pooled_conn(&alt, |c| {
+        with_pooled_conn("test", &alt, |c| {
             c.execute_batch("INSERT INTO t VALUES (7);").unwrap();
         })
         .unwrap();
@@ -376,11 +376,11 @@ mod tests {
 
         close_pooled_connections(None);
 
-        with_pooled_conn(&pa, |c| {
+        with_pooled_conn("test", &pa, |c| {
             c.execute_batch("CREATE TABLE IF NOT EXISTS a(x);").unwrap();
         })
         .unwrap();
-        with_pooled_conn(&pb, |c| {
+        with_pooled_conn("test", &pb, |c| {
             c.execute_batch("CREATE TABLE IF NOT EXISTS b(x);").unwrap();
         })
         .unwrap();
@@ -403,7 +403,7 @@ mod tests {
 
         // 闭包内再次取池连接：必须快速返回 Err，不能挂死
         let outer =
-            with_pooled_conn(&path, |_outer| with_pooled_conn(&path, |_inner| 42usize)).unwrap();
+            with_pooled_conn("test", &path, |_outer| with_pooled_conn("test", &path, |_inner| 42usize)).unwrap();
 
         assert!(outer.is_err(), "重入必须返回 Err 而非死锁");
         close_pooled_connections(Some(&path));
