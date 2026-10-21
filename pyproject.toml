@@ -200,6 +200,44 @@ select = [
 # 另有 6 条落在未跟踪目录 docs/testing/.backups/ 与 docs/testing/.bak_v5/
 # （F541×4 + F841×2，不入库、CI 不检出），故本地 `ruff check .` 计 1232 条。
 # 其中 E741×38 建议优先（潜在真实 bug 类），其余多为重构清理。
+# ────────────────────────────────────────────────────────────────
+# 第三批清理（2026-10-21，本地 ruff 0.17.0 实测）：
+#   删除（安全项，逐条 AST/tokenize 核查后删）：
+#     F401 未用导入×664（from-name 331 + 整模块标准库 281 + 函数内
+#       重定义遮蔽/推导式变量/kwarg 名误报等 52）
+#     F841 未使用变量×205（纯 RHS 删行 21 + 副作用 RHS 改 _ 前缀 98
+#       + except/with-as 移除 13 + 解包改 _ 5 + try 内死赋值删 68）
+#     E402 导入不在顶部×186（sys.path/环境注入类 184 行内 noqa:E402
+#       + 3 处调序 + 2 处前置调用/重导出位 noqa:E402）
+#     F811 重复定义×17（真重复删前一定义；其余 1 条 try fallback 保留）
+#   显式豁免（逐条列明理由，见下方 per-file-ignores 与行内 noqa）：
+#     F401 try/except 可用性探测导入×23（13 文件，per-file-ignores）
+#     F401 副作用导入×1（server/compat_worker.py:56 handler 注册，行内 noqa）
+#     F841 try 赋值 + except 同名兜底×1（tests/_bench_linux_e2e.py:354，行内 noqa）
+#   剩余未处置（不属本批范围或属他人 WIP，CI 检出态将随之变化）：
+#     db/db_base.py F401×20 —— 该文件正被并行任务修改（文件避让清单），
+#       本批未触碰；其 20 条未用导入待该任务收口后按同一五分类处理。
+#     docs/testing/.backups/ 与 .bak_v5/ 的 F541×4 + F841×2 —— 未跟踪
+#       备份目录，不入库、CI 不检出，按既定约定不动。
+[tool.ruff.lint.per-file-ignores]
+# 下列文件的 F401 全部为「try/except ImportError 可用性探测」条件导入：
+# 导入成败即语义（except 分支置 None 后走 Python/轮询 fallback 路径），
+# 删除会改变运行时行为。逐文件核查确认无其他未用导入混入；将来这些
+# 文件若出现新的未用导入，应删除而非沿用本豁免。
+"server/watcher.py" = ["F401"]          # watchdog 事件类型：探测 watchdog 安装与否，失败走轮询 fallback
+"server/agent_watcher.py" = ["F401"]    # 同上（agent 监听路径）
+"server/daemon_mutex.py" = ["F401"]     # ctypes.wintypes：仅 Windows 可用，探测后走 Unix 分支（命名互斥体）
+"server/metrics.py" = ["F401"]          # ctypes.wintypes：仅 Windows 可用，探测后走 Unix 分支（ETW 指标）
+"cli/main.py" = ["F401"]                # release.config_loader.fail_closed_unsupported：探测 release 子包可用性
+"db/db_lsp.py" = ["F401"]               # pylsp 客户端：探测 LSP server 是否安装
+"tests/_bench_10m_progressive.py" = ["F401"]      # callwarden_core：探测 Rust 扩展是否构建
+"tests/_bench_graph_store_large.py" = ["F401"]    # callwarden_core：同上
+"tests/test_migration_manifest.py" = ["F401"]     # callwarden_core：同上
+"tests/test_phase4_daemon_client.py" = ["F401"]   # callwarden_core：同上
+"tests/test_phase5_delta.py" = ["F401"]           # callwarden_core：同上（PyParseDelta/PyResolveDelta）
+"tests/test_phase5_frontier.py" = ["F401"]        # callwarden_core：同上（含 PyAffectedFrontier）
+"tests/test_phase6_3_wire_production_e2e.py" = ["F401"]  # callwarden_core：同上
+"tests/test_schema_checksum_regression.py" = ["F401"]    # callwarden_core：同上
 
 # ============================================================
 # 覆盖率门禁（任务5①，2026-10-13）
