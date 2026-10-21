@@ -17,6 +17,11 @@ import os
 
 from callwarden.server.replicator import (
     FILE_GENERATIONS_DDL,
+    _compute_cas_key_v1 as compute_cas_key_v1,  # noqa: F401 —— re-export(db_cas/tests 经本模块引用)
+    _python_cas_lookup as cas_lookup,  # noqa: F401 —— re-export(db_cas/tests 经本模块引用)
+    _python_cas_pin as cas_pin,  # noqa: F401 —— re-export(db_cas/tests 经本模块引用)
+    _python_cas_publish as cas_publish,  # noqa: F401 —— re-export(db_cas/tests 经本模块引用)
+    _python_cas_publish_with_retry as cas_publish_with_retry,  # noqa: F401 —— re-export(db_cas/tests 经本模块引用)
 )
 
 # CAS schema DDL（原 db_cas.CAS_SCHEMA_DDL，逐行保持一致）

@@ -37,7 +37,7 @@ if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
 # 复用 test_p31_multi_lang.py 的样本代码和 _has_rust_ext
-from test_p31_multi_lang import _has_rust_ext  # noqa: E402
+from test_p31_multi_lang import _LANGUAGE_SAMPLES as _P31_SAMPLES, _has_rust_ext  # noqa: E402
 
 from callwarden.parsers import create_parser  # noqa: E402
 
@@ -68,7 +68,7 @@ def _all_language_samples() -> list[tuple[str, str, str]]:
     这里直接从同一份 golden sample_source 构造剩余 Kotlin/Swift/HCL/Elixir 样例。
     C 使用 parse_c_file，不加入这个通用 parse_file_lang 参数集。
     """
-    samples = list(_LANGUAGE_SAMPLES)
+    samples = list(_P31_SAMPLES)
     present = {lang for lang, _filename, _content in samples}
     for lang in ("kotlin", "swift", "hcl", "elixir"):
         fixture = _load_golden_fixture(lang)
