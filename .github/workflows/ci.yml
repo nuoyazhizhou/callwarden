@@ -315,6 +315,46 @@ jobs:
             echo "----- rc=$? -----"
           done
 
+      # config G：连接寿命假设（假设 E）判别。池化相对原实现的唯一行为差异是
+      # 连接寿命——原实现每次调用 open→drop，最后一个连接 close 时 SQLite 自动
+      # checkpoint 并删除 -wal/-shm；池化后连接长活，-wal/-shm 常驻，Python 侧
+      # wal_autocheckpoint 无法重置 WAL。rust_ext/src/conn_pool.rs 的
+      # with_pooled_conn 在 CW_RUST_POOL_LIFETIME=short 时每次调用后即
+      # checkpoint(TRUNCATE)+关闭并从池中移除，回到 open→drop 语义。
+      # 判读：
+      #   - 12 项转绿 → 根因钉死为连接寿命，正式修法是把 Rust 大写路径移出长活池；
+      #   - 仍红     → 排除连接寿命，转向"Rust/Python 混写同一 WAL 的写量与页布局"。
+      # 两个观测点用同一 env 变量（同进程合跑 = 与主 test job 同形；h7 隔离单跑
+      # = 与 Probe F 的 7 红 1 绿基线同形），不引入第二个变量。
+      - name: Probe G - pool lifetime short (open->drop semantics)
+        if: always()
+        env:
+          CW_RUST_POOL_LIFETIME: "short"
+        run: |
+          echo "===== G1: all 5 files in one process ====="
+          pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py \
+                 tests/test_agent_integration.py tests/test_e2e_triangle_demo.py \
+                 tests/test_dashboard.py -q --tb=line -p no:cacheprovider 2>&1 | tail -30
+          echo "===== G2: h7 isolated (baseline was 7 failed 1 passed) ====="
+          pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -20
+          echo "===== G3: immutable-read probe (CW_DIAG_POOL5 hits?) ====="
+          pytest tests/test_agent_rules.py tests/test_e2e_triangle_demo.py -q --tb=no \
+                 -p no:cacheprovider 2>&1 | grep -c "CW_DIAG_POOL5" || echo "0 (immutable read NOT executed)"
+          echo "===== G4: wal/shm residue check ====="
+          python - <<'PYEOF'
+          import os, tempfile
+          from callwarden.db.db import CodeGraphDB
+          root = tempfile.mkdtemp()
+          p = os.path.join(root, "callwarden.db")
+          db = CodeGraphDB(p, workspace_root=root)
+          with open(os.path.join(root, "a.py"), "w", encoding="utf-8") as f:
+              f.write("def foo():\n    return 1\n")
+          db.build_full_graph(force=True)
+          print("files after build:", sorted(os.listdir(root)))
+          print("SHORT MODE:", os.environ.get("CW_RUST_POOL_LIFETIME"))
+          db.close()
+          PYEOF
+
       # config E：metrics CLI 测试的 CI-only 失败取证（run 15/16 持续 ×4，
       # 本地全绿）。测试 patch 了 UnixDaemonRpcClient 但 CI 上 rc=2——
       # 内联诊断打印模块路径/patch 前后/rc/stderr/args 分支，定位 fake

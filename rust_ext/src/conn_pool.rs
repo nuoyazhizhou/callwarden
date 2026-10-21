@@ -153,11 +153,26 @@ pub fn with_pooled_conn<T>(
     }
 
     // 借出 &Connection：条目在 map 中，guard 全程持锁，故引用有效期覆盖 f。
-    let conn = guard
-        .get(&key)
-        .expect("池条目刚插入或已存在，缺失说明池内部状态损坏");
+    let out = {
+        let conn = guard
+            .get(&key)
+            .expect("池条目刚插入或已存在，缺失说明池内部状态损坏");
+        f(conn)
+    };
 
-    let out = f(conn);
+    // CI-DEBT 诊断门：CW_RUST_POOL_LIFETIME=short 时每次调用结束即关闭并从池中
+    // 移除该 key 的连接，回到池化前的 open→drop 语义。关闭前按
+    // `close_pooled_connections` 的同款行为先 `wal_checkpoint(TRUNCATE)`
+    // （best-effort，失败忽略）——池化前最后一个连接 close 时 SQLite 也会
+    // 自动 checkpoint 并删除 -wal/-shm。该门只用于 CI 定性"连接寿命"是否为
+    // malformed 根因，不是产品行为。
+    if std::env::var("CW_RUST_POOL_LIFETIME").as_deref() == Ok("short") {
+        if let Some(conn) = guard.remove(&key) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            drop(conn);
+        }
+    }
+
     drop(guard);
     Ok(out)
 }

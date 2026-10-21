@@ -1931,6 +1931,12 @@ impl GraphStore {
             .symbols
             .as_ref()
             .ok_or_else(|| "symbols not ready".to_string())?;
+        // CI-DEBT 诊断观测（零行为影响）：在已有诊断 env 门下打印 immutable 读
+        // 是否真的被执行，供 CI 判定"实验 3（immutable 读撞 checkpoint）"是否适用。
+        // 与 conn_pool 的 CW_RUST_POOL_LIFETIME 门同键复用，不新增变量。
+        if std::env::var("CW_RUST_POOL_LIFETIME").as_deref() == Ok("short") {
+            eprintln!("CW_DIAG_POOL5 _load_calls_from_sqlite executed db={db_path}");
+        }
         let conn = open_immutable_db(db_path)?;
         let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
         self.calls = Some(Arc::new(calls));
