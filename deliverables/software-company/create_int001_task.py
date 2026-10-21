@@ -45,7 +45,8 @@ def main() -> None:
     client = get_daemon_client()
     tree = client.call("task.status_tree", {"task_id": PARENT, "workspace_id": 1, "workspace_instance_id": "ws-1"})
     if any(task.get("title") == TITLE for task in tree.get("subtasks", []) if isinstance(task, dict)):
-        print(json.dumps({"result": "exists", "title": TITLE}, ensure_ascii=False)); return
+        print(json.dumps({"result": "exists", "title": TITLE}, ensure_ascii=False))
+        return
     result = client.call("task.create", {
         "title": TITLE, "description": CONTRACT.read_text(encoding="utf-8"), "creator": "executor-planner",
         "parent_id": PARENT, "workspace_id": 1, "workspace_instance_id": "ws-1",

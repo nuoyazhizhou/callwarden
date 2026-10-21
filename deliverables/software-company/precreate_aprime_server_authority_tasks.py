@@ -117,7 +117,8 @@ def main() -> None:
     for card in manifest["cards"]:
         task_title = title(card)
         if task_title in existing:
-            receipts.append({"key": card["card_key"], "result": "exists"}); continue
+            receipts.append({"key": card["card_key"], "result": "exists"})
+            continue
         try:
             result = client.call("task.create", {"title": task_title, "description": description(card), "creator": "executor-planner", "parent_id": PARENT, "workspace_id": WORKSPACE_ID, "workspace_instance_id": WORKSPACE_INSTANCE_ID, "steps": steps(card), "role_contracts": contracts(card)})
             receipts.append({"key": card["card_key"], "result": "created", "response": result})

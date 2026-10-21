@@ -40,7 +40,8 @@ def main():
     env = dict(os.environ)
     env["USERPROFILE"] = home
     env["HOME"] = home
-    env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     env["CW_DAEMON_TRANSPORT"] = "http"
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env["CALLWARDEN_WORKSPACE"] = _SEED_PROJECT

@@ -33,7 +33,8 @@ _OPT_LINE = re.compile(r"^\s+(-\S+)")
 
 def run_help(argv):
     env = dict(os.environ)
-    env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     env["CW_DAEMON_TRANSPORT"] = "http"
     try:
         p = subprocess.run([_PY, "-u", _CW] + argv + ["--help"], cwd=_REPO,
@@ -52,9 +53,11 @@ def parse_help(text):
     section = None  # 'pos' | 'opt'
     for line in lines:
         if _POS_HDR.match(line):
-            section = "pos"; continue
+            section = "pos"
+            continue
         if _OPT_HDR.match(line):
-            section = "opt"; continue
+            section = "opt"
+            continue
         if section == "pos":
             m = re.match(r"^\s{2,}(\{[^}]+\}|[a-z_][a-z0-9_]*)\b", line)
             if m and not line.strip().startswith("-"):
@@ -94,7 +97,8 @@ def main():
     for top, sub in leaves:
         leaf = f"{top} {sub}".strip()
         if top in SKIP_HELP:
-            skipped.append(leaf); continue
+            skipped.append(leaf)
+            continue
         argv = [top] + ([sub] if sub else [])
         text = run_help(argv)
         if not text.strip():

@@ -39,7 +39,8 @@ def main():
     conn = get_db()
     b = fetch_card_bindings(conn, task_id)
     if not b:
-        print("FATAL: 无 contract binding"); sys.exit(2)
+        print("FATAL: 无 contract binding")
+        sys.exit(2)
     tcr, rc_dict, step_id = b
     rc_hash = compute_role_contract_hash(rc_dict["contract_id"], rc_dict["revision"], task_id, rc_dict)
     print(f"[2] contract={tcr['contract_id']} rev={tcr['revision']} step={step_id} rc_hash={rc_hash[:24]}…")

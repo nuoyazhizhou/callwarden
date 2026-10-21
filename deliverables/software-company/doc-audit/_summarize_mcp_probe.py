@@ -11,7 +11,8 @@ for r in ro["results"] + wr["results"]:
     v = r["verdict"]
     if r["name"] in heavy_timeout and v == "FAIL":
         v = "TIMEOUT_HEAVY_OP"
-        r = dict(r); r["verdict"] = v
+        r = dict(r)
+        r["verdict"] = v
         r["detail"] = "重操作 HTTP 同步超时(应走 async job);路由通,非文档-实现缺陷。" + r.get("detail", "")
     all_results.append(r)
 

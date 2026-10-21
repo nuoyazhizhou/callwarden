@@ -25,7 +25,8 @@ FAILS = [
 
 def run(argv, timeout):
     env = dict(os.environ)
-    env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     env["CW_DAEMON_TRANSPORT"] = "http"
     t0 = time.time()
     try:

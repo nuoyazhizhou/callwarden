@@ -236,23 +236,29 @@ def cmd_diagnose(conn, client):
     for tid, title in cards:
         b = fetch_card_bindings(conn, tid)
         if not b:
-            print(f"  [NO-BINDING] {tid}"); err_n += 1; continue
+            print(f"  [NO-BINDING] {tid}")
+            err_n += 1
+            continue
         cr = completion_review(client, tid)
         dec = cr.get("decision") if isinstance(cr, dict) else None
         if isinstance(cr, dict) and cr.get("error"):
-            print(f"  [ERR] {tid} {title[:40]} :: {cr['error'][:60]}"); err_n += 1
+            print(f"  [ERR] {tid} {title[:40]} :: {cr['error'][:60]}")
+            err_n += 1
         elif dec == "pass":
-            print(f"  [PASS-CAND] {tid} {title[:50]}"); pass_n += 1
+            print(f"  [PASS-CAND] {tid} {title[:50]}")
+            pass_n += 1
         else:
             f = cr.get("findings") if isinstance(cr, dict) else None
-            print(f"  [BLOCK-CAND] {tid} {title[:40]} :: decision={dec} findings={len(f) if isinstance(f,list) else f}"); block_n += 1
+            print(f"  [BLOCK-CAND] {tid} {title[:40]} :: decision={dec} findings={len(f) if isinstance(f,list) else f}")
+            block_n += 1
     print(f"\n分类: PASS候选={pass_n} BLOCK候选={block_n} 错误/无绑定={err_n}")
 
 def cmd_validate(conn, client, task_id):
     print(f"=== 单卡验证 {task_id} ===")
     b = fetch_card_bindings(conn, task_id)
     if not b:
-        print("无契约绑定，无法提交"); return
+        print("无契约绑定，无法提交")
+        return
     tcr, rc_dict, step_id = b
     print(f"step_id={step_id}  contract={tcr['contract_id']} r{int(tcr['revision'])}")
     print(f"role_contract={rc_dict['contract_id']} r{int(rc_dict['revision'])}")
@@ -296,7 +302,8 @@ def cmd_run(conn, client, limit=None, force=False):
         b = fetch_card_bindings(conn, tid)
         if not b:
             processed[tid] = {"status": "skip_no_binding", "ts": time.time()}
-            save_state(st); continue
+            save_state(st)
+            continue
         tcr, rc_dict, step_id = b
         rh = compute_role_contract_hash(rc_dict["contract_id"], rc_dict["revision"], tid, rc_dict)
         session = f"sess-rev-{tid[-6:]}"
@@ -305,10 +312,14 @@ def cmd_run(conn, client, limit=None, force=False):
             cr = completion_review(client, tid)
             dec = cr.get("decision") if isinstance(cr, dict) else None
             if isinstance(cr, dict) and cr.get("error"):
-                overall = "block"; findings = [{"id": "completion_review_error", "severity": "blocker",
-                                                 "detail": cr["error"]}]; clauses=[]
+                overall = "block"
+                findings = [{"id": "completion_review_error", "severity": "blocker",
+                             "detail": cr["error"]}]
+                clauses = []
             elif dec == "pass":
-                overall = "pass"; findings = []; clauses=[{"clause_id":"independent_review","decision":"pass"}]
+                overall = "pass"
+                findings = []
+                clauses=[{"clause_id":"independent_review","decision":"pass"}]
             else:
                 overall = "block"
                 fnd = cr.get("findings") if isinstance(cr, dict) else None
@@ -334,14 +345,16 @@ def cmd_handoff(conn, client, task_id, reason=None):
     """对已被 block verdict 的卡补两段式 handoff（原子追加 fix_defect 整改步）。"""
     b = fetch_card_bindings(conn, task_id)
     if not b:
-        print("无契约绑定，无法 handoff"); return
+        print("无契约绑定，无法 handoff")
+        return
     # 取源 block verdict 的 reviewer identity，逐字复用（handler 要求 agent/session 一致）
     src = conn.execute(
         "SELECT reviewer_identity FROM task_verdict_events "
         "WHERE task_id=? AND overall='block' ORDER BY id DESC LIMIT 1", (task_id,)
     ).fetchone()
     if not src or not src["reviewer_identity"]:
-        print("未找到源 block verdict，无法 handoff"); return
+        print("未找到源 block verdict，无法 handoff")
+        return
     rev_ident = json.loads(src["reviewer_identity"])
     src_agent = rev_ident.get("identity", {}).get("agent_id")
     src_session = rev_ident.get("identity", {}).get("session_id")
@@ -389,13 +402,15 @@ def main():
         cmd_diagnose(conn, client)
     elif args.mode == "validate":
         if not args.task:
-            print("--task 必填"); sys.exit(2)
+            print("--task 必填")
+            sys.exit(2)
         cmd_validate(conn, client, args.task)
     elif args.mode == "run":
         cmd_run(conn, client, args.limit, force=args.force)
     elif args.mode == "handoff":
         if not args.task:
-            print("--task 必填"); sys.exit(2)
+            print("--task 必填")
+            sys.exit(2)
         cmd_handoff(conn, client, args.task, args.reason)
 
 if __name__ == "__main__":

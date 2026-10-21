@@ -167,7 +167,8 @@ def main():
     existing = listing.get("tasks", listing) if isinstance(listing, dict) else listing
     titles = {it.get("title") for it in (existing or []) if isinstance(it, dict)}
     if CARD["title"] in titles:
-        print(json.dumps({"result": "exists", "title": CARD["title"]}, ensure_ascii=False, indent=2)); return
+        print(json.dumps({"result": "exists", "title": CARD["title"]}, ensure_ascii=False, indent=2))
+        return
     description = (f"承接来源：{CARD['origin']}。登记 finding：§W3。\n"
         f"权威 finding 明细见 backlog §W3；本轮实扫与归因见 pyt_w3_rescan_and_ops_20260916.md。\n"
         f"合同边界：仅 tests/** + deliverables + docs/evidence + 台账；禁改 rust_ext/src/**、db/**；"

@@ -115,7 +115,8 @@ def main():
     trace["create"] = create
     log.append(f"create OK task_id={tid}")
     if not tid:
-        print("FATAL create:", json.dumps(create, ensure_ascii=False)[:500]); sys.exit(2)
+        print("FATAL create:", json.dumps(create, ensure_ascii=False)[:500])
+        sys.exit(2)
 
     # steps inserted → pending; pick the step
     step_row = db_query("SELECT id,status FROM task_steps WHERE task_id=? ORDER BY step_index", (tid,))
@@ -150,7 +151,8 @@ def main():
     trace["probe_step_done"] = db_set
     log.append(f"probe step marked done: {db_set}")
     if not db_set:
-        print("FATAL mark step done:", db_set); sys.exit(2)
+        print("FATAL mark step done:", db_set)
+        sys.exit(2)
 
     # ---- Phase B: stage one ----
     ev_rid = f"bridge-ev-{seed}-v1"
@@ -164,7 +166,8 @@ def main():
     trace["stage1"] = {"response": ev1}
     log.append(f"stage1 OK to_status={ev1.get('to_status')}")
     if ev1.get("to_status") != "review":
-        print("FATAL stage1:", json.dumps(ev1, ensure_ascii=False)[:500]); sys.exit(2)
+        print("FATAL stage1:", json.dumps(ev1, ensure_ascii=False)[:500])
+        sys.exit(2)
 
     # replay same request_id (identical params) → same result
     ev_replay = rpc_call(client, "task.bootstrap_executor_evidence", ev_params)

@@ -107,7 +107,8 @@ def main() -> None:
     receipts = []
     for spec in CLI_SPECS:
         if spec["title"] in titles:
-            receipts.append({"key": spec["key"], "result": "exists"}); continue
+            receipts.append({"key": spec["key"], "result": "exists"})
+            continue
         result = client.call("task.create", {
             "title": spec["title"], "description": cli_contract(spec), "creator": "executor-planner",
             "parent_id": PARENT_ID, "workspace_id": WORKSPACE_ID, "workspace_instance_id": WORKSPACE_INSTANCE_ID,
@@ -118,7 +119,8 @@ def main() -> None:
     for card in cards:
         title = mcp_title(card)
         if title in titles:
-            receipts.append({"key": card["card_key"], "result": "exists"}); continue
+            receipts.append({"key": card["card_key"], "result": "exists"})
+            continue
         result = client.call("task.create", {
             "title": title, "description": precreated_description(card), "creator": "executor-planner",
             "parent_id": PARENT_ID, "workspace_id": WORKSPACE_ID, "workspace_instance_id": WORKSPACE_INSTANCE_ID,

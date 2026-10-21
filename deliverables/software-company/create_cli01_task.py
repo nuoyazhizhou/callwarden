@@ -67,7 +67,8 @@ def main() -> None:
     tasks = existing.get("tasks", []) if isinstance(existing, dict) else []
     for task in tasks:
         if isinstance(task, dict) and task.get("title") == TITLE:
-            print(json.dumps({"result": "exists", "task": task}, ensure_ascii=False)); return
+            print(json.dumps({"result": "exists", "task": task}, ensure_ascii=False))
+            return
     result = client.call("task.create", {
         "title": TITLE,
         "description": CONTRACT.read_text(encoding="utf-8"),

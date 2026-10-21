@@ -127,7 +127,8 @@ def main() -> None:
         raise SystemExit(f"拒绝越序建卡：CLI-01 必须 applied/closed，当前={cli01_status}")
     title = f"{card['card_key']} [{'Gate/' + card['port_type'] if card['gate'] else card['port_type']}]：{card['tool']} → Rust daemon native"
     if any(row.get("title") == title for row in sibling_rows if isinstance(row, dict)):
-        print(json.dumps({"result": "exists", "title": title}, ensure_ascii=False)); return
+        print(json.dumps({"result": "exists", "title": title}, ensure_ascii=False))
+        return
     if not card["gate"]:
         gate_rows = [row for row in manifest["cards"] if row["port_type"] == card["port_type"] and row["gate"]]
         port_gate = min(gate_rows, key=lambda row: row["card_key"])

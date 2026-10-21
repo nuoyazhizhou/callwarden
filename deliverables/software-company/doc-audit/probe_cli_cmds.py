@@ -65,7 +65,8 @@ def is_install_agent_leaf(leaf):
 
 def run(argv, timeout=30):
     env = dict(os.environ)
-    env["PYTHONUTF8"] = "1"; env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     env["CW_DAEMON_TRANSPORT"] = env.get("CW_DAEMON_TRANSPORT", "http")
     try:
         p = subprocess.run([_PYTHON, _CW] + argv, cwd=_REPO_ROOT,
@@ -115,7 +116,8 @@ def main():
     prog = open(os.path.join(_HERE, "probe_cli_progress.txt"), "w", encoding="utf-8")
 
     for idx, leaf in enumerate(leaves, 1):
-        prog.write(f"[{idx}/{len(leaves)}] {leaf} ...\n"); prog.flush()
+        prog.write(f"[{idx}/{len(leaves)}] {leaf} ...\n")
+        prog.flush()
         argv = leaf_to_argv(leaf)
         skip_reason = SKIP_LEAF.get(leaf)
         if skip_reason is None and is_install_agent_leaf(leaf):
@@ -152,7 +154,8 @@ def main():
         verdict, detail = classify_run(rc, out, err)
         results.append({"leaf": leaf, "verdict": verdict, "detail": detail + f" | out[:80]={out.strip()[:80]!r}"})
         counts[verdict] = counts.get(verdict, 0) + 1
-        prog.write(f"    -> {verdict}\n"); prog.flush()
+        prog.write(f"    -> {verdict}\n")
+        prog.flush()
 
     prog.close()
     json.dump({"counts": counts, "leaf_total": len(leaves), "results": results},

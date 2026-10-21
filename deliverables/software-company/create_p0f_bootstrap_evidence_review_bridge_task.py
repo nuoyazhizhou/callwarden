@@ -37,7 +37,8 @@ def main() -> None:
     tasks = listing.get("tasks", listing) if isinstance(listing, dict) else listing
     for task in tasks if isinstance(tasks, list) else []:
         if isinstance(task, dict) and task.get("title") == TITLE:
-            print(json.dumps({"result":"exists","task":task}, ensure_ascii=False)); return
+            print(json.dumps({"result":"exists","task":task}, ensure_ascii=False))
+            return
     result = client.call("task.create", {
         "title": TITLE, "description": CONTRACT_PATH.read_text(encoding="utf-8"), "creator":"executor-planner",
         "parent_id":PARENT_ID,"workspace_id":WORKSPACE_ID,"workspace_instance_id":WORKSPACE_INSTANCE_ID,
