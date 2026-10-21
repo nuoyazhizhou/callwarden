@@ -188,6 +188,28 @@ pub fn with_pooled_conn<T>(
         f(conn)
     };
 
+    // CI-DEBT 诊断门：CW_RUST_POOL_WAL_DRAIN=truncate 时，每次调用结束后对该
+    // 连接执行 `wal_checkpoint(TRUNCATE)`——把 WAL 帧回写主库并清空 WAL，
+    // 但**保持连接长活**（不 close、不移出池）。
+    //
+    // 目的：把「长活连接」与「WAL 累积」两个变量分离。
+    // 已知事实（Probe H 矩阵）：单独关闭任一模块的池化仍 malform，全部关闭才
+    // 全绿 ⇒ malform 由「长活」这一性质本身引起，而非某模块的写路径细节。
+    // 已知对照：`with_short_conn` 每次调用后做 TRUNCATE 再 drop 即可全绿。
+    // 若本门（长活 + 每次调用后 TRUNCATE）也全绿 ⇒ 根因是「WAL 累积导致
+    // Python 侧 autocheckpoint 与 Rust 写事务交错」；若仍红 ⇒ 根因是长活连接
+    // 本身持有 WAL 读标记，需改连接架构。
+    if std::env::var("CW_RUST_POOL_WAL_DRAIN").as_deref() == Ok("truncate") {
+        if let Some(conn) = guard.get(&key) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    }
+    if std::env::var("CW_RUST_POOL_WAL_DRAIN").as_deref() == Ok("passive") {
+        if let Some(conn) = guard.get(&key) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+        }
+    }
+
     // CI-DEBT 诊断门：CW_RUST_POOL_LIFETIME=short 时每次调用结束即关闭并从池中
     // 移除该 key 的连接，回到池化前的 open→drop 语义。关闭前按
     // `close_pooled_connections` 的同款行为先 `wal_checkpoint(TRUNCATE)`

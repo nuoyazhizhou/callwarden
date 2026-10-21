@@ -387,6 +387,42 @@ jobs:
           echo "===== H: baseline, nothing off (expect 7 failed 1 passed) ====="
           pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
 
+      # config I：把「长活连接」与「WAL 累积」两个变量分离。
+      #
+      # 已知事实（Probe H 矩阵，run 39570134307 / job 119121942247）：
+      #   - 单独关闭任一模块的池化 → 仍 7 failed 1 passed（malform 未消除）；
+      #   - 全部关闭（回到 c53da76^ 的 open→drop）→ 8 passed 全绿；
+      #   - 失败签名随被关模块而变（BEGIN IMMEDIATE 失败 / 打开 DB 失败 / 调用失败），
+      #     说明库文件在「更早的某一步」就已损坏，calls 模块只是首个读者。
+      # ⇒ malform 由「长活」这一性质本身引起，不是某模块的写路径细节。
+      #
+      # 已知对照：`with_short_conn` 每次调用后做 `wal_checkpoint(TRUNCATE)` 再 drop
+      # 即可全绿；而长活池连接**从不**收尾 WAL。
+      #
+      # 本 probe 三档判读（h7 隔离单跑，基线 7 failed 1 passed）：
+      #   I1 长活 + 每次调用后 TRUNCATE（连接不关）→ 8 passed
+      #        ⇒ 根因 = WAL 累积致 Python autocheckpoint 与 Rust 写事务交错；
+      #          正式修法 = 池连接保留 + 每次调用后收尾 WAL（保留池化收益）。
+      #   I2 长活 + 每次调用后 TRUNCATE → 仍红
+      #        ⇒ 根因 = 长活连接本身持有 WAL 读标记，需改连接架构（不能只调 checkpoint）。
+      #   I3 长活 + open 时不设 journal_mode → 判别「open 期 journal_mode 写操作」
+      #      是否是 malform 肇因（其 PRAGMA 在损坏库上会直接抛 malformed）。
+      - name: Probe I - separate long-lived conn from WAL accumulation
+        if: always()
+        run: |
+          echo "===== I1: long-lived conn + WAL drain after each call ====="
+          CW_RUST_POOL_WAL_DRAIN=truncate pytest tests/test_h7_ast_cache_activation.py \
+            -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+          echo "===== I2: long-lived conn + WAL drain + all modules short (control) ====="
+          CW_RUST_POOL_WAL_DRAIN=truncate \
+          CW_RUST_POOL_OFF="batch_build,batch_calls,batch_file_versions,batch_register,cas_merge,cas_write,incremental_build,manifest" \
+            pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+          echo "===== I4: long-lived conn + PASSIVE drain after each call ====="
+          CW_RUST_POOL_WAL_DRAIN=passive pytest tests/test_h7_ast_cache_activation.py \
+            -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+          echo "===== I3: baseline (expect 7 failed 1 passed) ====="
+          pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+
       # config E：metrics CLI 测试的 CI-only 失败取证（run 15/16 持续 ×4，
       # 本地全绿）。测试 patch 了 UnixDaemonRpcClient 但 CI 上 rc=2——
       # 内联诊断打印模块路径/patch 前后/rc/stderr/args 分支，定位 fake
