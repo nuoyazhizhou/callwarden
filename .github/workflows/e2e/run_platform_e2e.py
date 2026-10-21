@@ -985,7 +985,7 @@ def _count_daemon_processes() -> int:
         return stdout.count("daemon") if rc == 0 else 0
     else:
         rc, stdout, _ = _run_command(["pgrep", "-f", "cw.*daemon"], timeout=10.0)
-        lines = [l for l in stdout.strip().split("\n") if l]
+        lines = [line for line in stdout.strip().split("\n") if line]
         return len(lines)
 
 

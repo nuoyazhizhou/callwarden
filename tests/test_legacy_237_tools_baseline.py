@@ -232,7 +232,7 @@ def test_sha256_matches_record():
         f"（矩阵被修改后必须重新运行 .trae-cn/evidence/B1_fix_fields.py 刷新记录）")
 
     # 文件大小必须与记录一致（防止"约 XXKB"式模糊声明回潮）
-    size_lines = [l for l in lines if l.startswith("文件大小")]
+    size_lines = [line for line in lines if line.startswith("文件大小")]
     assert size_lines, "matrix-sha256.txt 缺少文件大小记录行"
     assert str(actual_size) in size_lines[0], (
         f"文件大小不一致: 记录行 '{size_lines[0]}'，实际 {actual_size} bytes")

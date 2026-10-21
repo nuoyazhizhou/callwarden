@@ -513,5 +513,5 @@ class TestMultiBranchSessionManagement:
             ["git", "log", "--oneline", f"{default}..product-a"],
             cwd=ws, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        ahead_lines = [l for l in log_output.stdout.strip().split("\n") if l.strip()]
+        ahead_lines = [line for line in log_output.stdout.strip().split("\n") if line.strip()]
         assert len(ahead_lines) >= 1, f"product-a should be ahead of {default}, got: {log_output.stdout}"

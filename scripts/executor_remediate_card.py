@@ -87,7 +87,7 @@ def git_log_for_files(files, max_commits=6):
                 capture_output=True, text=True, timeout=20,
             )
             if r.returncode == 0:
-                out.append({"file": f, "commits": [l.strip() for l in r.stdout.strip().splitlines() if l.strip()][:3]})
+                out.append({"file": f, "commits": [commit_line.strip() for commit_line in r.stdout.strip().splitlines() if commit_line.strip()][:3]})
         except Exception:  # noqa: BLE001
             pass
     return out

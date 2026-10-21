@@ -136,9 +136,9 @@ def run_rg(pattern: str, extra_args: List[str] = None, fixed: bool = False) -> T
 
 def count_output_lines(output: str) -> int:
     """统计输出行数（排除空行和 Hint 行）"""
-    lines = [l for l in output.strip().split("\n") if l.strip()]
+    lines = [raw_line for raw_line in output.strip().split("\n") if raw_line.strip()]
     # 排除 Hint 行和 CLIXML 噪音
-    lines = [l for l in lines if not l.startswith("Hint:") and not l.startswith("[Hint]")]
+    lines = [raw_line for raw_line in lines if not raw_line.startswith("Hint:") and not raw_line.startswith("[Hint]")]
     return len(lines)
 
 
@@ -197,7 +197,7 @@ def bench_symbol(short_name: str, qualified_name: str, runs: int) -> Dict[str, A
 
         # rg — 查找函数定义（用 -F 固定字符串避免正则特殊字符问题）
         out, ms = run_rg(f"def {short_name}", fixed=True)
-        grep_lines = [l for l in out.strip().split("\n") if l.strip()] if out.strip() else []
+        grep_lines = [raw_line for raw_line in out.strip().split("\n") if raw_line.strip()] if out.strip() else []
         results["grep"].append({
             "ms": ms,
             "chars": count_output_chars(out),
@@ -231,7 +231,7 @@ def bench_callers(short_name: str, qualified_name: str, runs: int) -> Dict[str, 
         # 用 -F 固定字符串模式，避免多层正则转义问题（PowerShell + Python）
         # 搜索 "<name>(" 可匹配调用形式，但也匹配 def 形如 foo(): 中的部分
         out, ms = run_rg(f"{short_name}(", fixed=True)
-        grep_lines = [l for l in out.strip().split("\n") if l.strip()] if out.strip() else []
+        grep_lines = [raw_line for raw_line in out.strip().split("\n") if raw_line.strip()] if out.strip() else []
         results["grep"].append({
             "ms": ms,
             "chars": count_output_chars(out),
@@ -264,7 +264,7 @@ def bench_callees(short_name: str, qualified_name: str, runs: int) -> Dict[str, 
         # 这里用全文件搜索作为对照（必然包含大量误匹配）
         # 用 -F 固定字符串模式，避免正则转义问题
         out, ms = run_rg(short_name, fixed=True)
-        grep_lines = [l for l in out.strip().split("\n") if l.strip()] if out.strip() else []
+        grep_lines = [raw_line for raw_line in out.strip().split("\n") if raw_line.strip()] if out.strip() else []
         results["grep"].append({
             "ms": ms,
             "chars": count_output_chars(out),
@@ -451,10 +451,10 @@ def bench_grep(short_name: str, qualified_name: str, runs: int) -> Dict[str, Any
     for _ in range(runs):
         # cw grep（默认过滤无符号行，只展示代码符号内的匹配）
         out, ms = run_cw(["grep", short_name, "--fixed", "--limit", "50"])
-        cw_lines = [l for l in out.strip().split("\n") if l.strip()] if out.strip() else []
+        cw_lines = [raw_line for raw_line in out.strip().split("\n") if raw_line.strip()] if out.strip() else []
         # cw grep 输出含标题行和 Total 行，实际匹配行 = 行内含 " [in " 的行
         # （新版本默认过滤 [no symbol]，除非 --include-all）
-        cw_match_lines = [l for l in cw_lines if " [in " in l]
+        cw_match_lines = [raw_line for raw_line in cw_lines if " [in " in raw_line]
         results["cw"].append({
             "ms": ms,
             "chars": count_output_chars(out),
@@ -465,7 +465,7 @@ def bench_grep(short_name: str, qualified_name: str, runs: int) -> Dict[str, Any
 
         # rg 原始匹配（无符号上下文，含文档/注释/import 噪音）
         out, ms = run_rg(short_name, fixed=True)
-        grep_lines = [l for l in out.strip().split("\n") if l.strip()] if out.strip() else []
+        grep_lines = [raw_line for raw_line in out.strip().split("\n") if raw_line.strip()] if out.strip() else []
         results["grep"].append({
             "ms": ms,
             "chars": count_output_chars(out),
@@ -503,7 +503,7 @@ def analyze_grep_mismatch(short_name: str, sample_size: int = 10) -> Dict[str, A
     if not out.strip():
         return {"total": 0, "by_file": {}, "by_type": {}}
 
-    lines = [l for l in out.strip().split("\n") if l.strip()]
+    lines = [raw_line for raw_line in out.strip().split("\n") if raw_line.strip()]
     sample = lines[:sample_size]
 
     by_file = defaultdict(int)

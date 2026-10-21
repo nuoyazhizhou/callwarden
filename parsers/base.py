@@ -296,11 +296,11 @@ class BaseParser:
                 continue
 
             # 计算旧内容区间 [start_byte, old_end_byte)
-            start_byte = sum(len(l) + 1 for l in old_lines[:i1])  # +1 for \n
-            old_end_byte = sum(len(l) + 1 for l in old_lines[:i2])
+            start_byte = sum(len(line) + 1 for line in old_lines[:i1])  # +1 for \n
+            old_end_byte = sum(len(line) + 1 for line in old_lines[:i2])
 
             # 计算新内容区间 [start_byte, new_end_byte)
-            new_end_byte = sum(len(l) + 1 for l in new_lines[:j2])
+            new_end_byte = sum(len(line) + 1 for line in new_lines[:j2])
 
             # 行列信息（基于 0-indexed）
             start_row = i1

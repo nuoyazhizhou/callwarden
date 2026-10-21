@@ -103,7 +103,7 @@ def test_get_applicable_rules_context_match(rpc):
         assert isinstance(labels, list)
         # 全局规则恒为 ["global"]；非全局规则必须携带至少一个非 global 标签
         if labels != ["global"]:
-            assert all(l != "global" for l in labels)
+            assert all(label != "global" for label in labels)
 
 
 def test_get_applicable_rules_limit_respected(rpc):

@@ -202,19 +202,19 @@ def main():
     # 按语言汇总
     by_lang = {}
     for r in results:
-        l = r["lang"]
-        if l not in by_lang:
-            by_lang[l] = {"count": 0, "files": 0, "symbols": 0, "elapsed": 0, "failed": 0}
-        by_lang[l]["count"] += 1
-        by_lang[l]["files"] += r.get("files", 0)
-        by_lang[l]["symbols"] += r.get("symbols", 0)
-        by_lang[l]["elapsed"] += r.get("elapsed_sec", 0)
-        by_lang[l]["failed"] += r.get("failed", 0)
+        lang_key = r["lang"]
+        if lang_key not in by_lang:
+            by_lang[lang_key] = {"count": 0, "files": 0, "symbols": 0, "elapsed": 0, "failed": 0}
+        by_lang[lang_key]["count"] += 1
+        by_lang[lang_key]["files"] += r.get("files", 0)
+        by_lang[lang_key]["symbols"] += r.get("symbols", 0)
+        by_lang[lang_key]["elapsed"] += r.get("elapsed_sec", 0)
+        by_lang[lang_key]["failed"] += r.get("failed", 0)
 
     print("\n按语言汇总:")
     print(f"  {'lang':12s} {'count':>6s} {'files':>8s} {'symbols':>8s} {'failed':>6s} {'elapsed':>8s}")
-    for l, d in sorted(by_lang.items(), key=lambda x: -x[1]["count"]):
-        print(f"  {l:12s} {d['count']:6d} {d['files']:8d} {d['symbols']:8d} {d['failed']:6d} {d['elapsed']:7.0f}s")
+    for lang_key, d in sorted(by_lang.items(), key=lambda x: -x[1]["count"]):
+        print(f"  {lang_key:12s} {d['count']:6d} {d['files']:8d} {d['symbols']:8d} {d['failed']:6d} {d['elapsed']:7.0f}s")
 
     # 保存报告
     report = {

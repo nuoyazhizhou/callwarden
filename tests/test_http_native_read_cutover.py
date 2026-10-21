@@ -336,8 +336,8 @@ class TestToolsWorkspaceRouting:
         # `patch(...get_db)` 断言"不被调用"的语义改由源码级检查保证：
         # get_db 是导入符号，真正的防线是工具体内无 get_db 调用。
         _src = inspect.getsource(tools_workspace)
-        _body_calls = [l for l in _src.splitlines()
-                       if re.search(r'\bget_db\s*\(', l) and not l.strip().startswith(
+        _body_calls = [line for line in _src.splitlines()
+                       if re.search(r'\bget_db\s*\(', line) and not line.strip().startswith(
                            ("from", "import"))]
         assert not _body_calls, \
             "tools_workspace 工具体内不应调用 get_db（本地回退 seam 已下沉 _route）"

@@ -326,8 +326,8 @@ def test_task_list_default_tree_mode(route_stub):
     # 子任务应缩进（前面有更多空格）
     lines = out.split("\n")
     # 找到子任务行
-    child_lines = [l for l in lines if "child-1" in l or "child-2" in l]
-    parent_lines = [l for l in lines if "root-task" in l]
+    child_lines = [line for line in lines if "child-1" in line or "child-2" in line]
+    parent_lines = [line for line in lines if "root-task" in line]
     assert len(child_lines) >= 2, f"应至少有 2 行子任务，实际: {len(child_lines)}"
     assert len(parent_lines) >= 1, "应有 1 行父任务"
     # 子任务的缩进应大于父任务
@@ -368,8 +368,8 @@ def test_task_list_flat_mode(route_stub):
     )
     # 父任务和子任务缩进相同（都是顶级）
     lines = out.split("\n")
-    parent_lines = [l for l in lines if "root-flat" in l]
-    child_lines = [l for l in lines if "child-flat" in l]
+    parent_lines = [line for line in lines if "root-flat" in line]
+    child_lines = [line for line in lines if "child-flat" in line]
     assert parent_lines and child_lines
     # 在 flat 模式下，所有任务起始位置相同
     parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
@@ -406,9 +406,9 @@ def test_task_list_tree_structure(route_stub):
 
         lines = out.split("\n")
         # 找到三行任务行
-        root_line = next((l for l in lines if "ROOT" in l), None)
-        child_line = next((l for l in lines if "CHILD" in l and "GRAND" not in l), None)
-        grand_line = next((l for l in lines if "GRANDCHILD" in l), None)
+        root_line = next((line for line in lines if "ROOT" in line), None)
+        child_line = next((line for line in lines if "CHILD" in line and "GRAND" not in line), None)
+        grand_line = next((line for line in lines if "GRANDCHILD" in line), None)
 
         assert root_line and child_line and grand_line, (
             f"未找到所有三级任务行\nroot={root_line!r}\nchild={child_line!r}\ngrand={grand_line!r}"
@@ -576,8 +576,8 @@ def test_task_show_tree_recursive_grandchild(route_stub):
 
         # 验证缩进递增：孙任务缩进应大于子任务
         lines = out.split("\n")
-        child_line = next((l for l in lines if "GRAND-CHILD" in l), None)
-        grand_line = next((l for l in lines if "GRAND-GRANDCHILD" in l), None)
+        child_line = next((line for line in lines if "GRAND-CHILD" in line), None)
+        grand_line = next((line for line in lines if "GRAND-GRANDCHILD" in line), None)
         assert child_line and grand_line
         child_indent = len(child_line) - len(child_line.lstrip())
         grand_indent = len(grand_line) - len(grand_line.lstrip())

@@ -155,7 +155,7 @@ def main():
 
     # 4c. 单复数/近义命令对（语义易混，人工关注）
     semantic_pairs = []
-    allnames = cli_tops + [l.split()[-1] for l in cli_leaves] + mcp_names
+    allnames = cli_tops + [cli_leaf.split()[-1] for cli_leaf in cli_leaves] + mcp_names
     seen = set()
     for a, b in combinations(sorted(set(allnames)), 2):
         if (a, b) in seen:

@@ -464,7 +464,7 @@ def _base_docs():
         "language_matrix": {
             "declared_total": EXPECTED_LANGUAGE_TOTAL,
             "rust_grammar_count": EXPECTED_GRAMMAR_COUNT,
-            "rust_grammars": [{"language": l} for l in sorted(LANGUAGE_ALLOWLIST)],
+            "rust_grammars": [{"language": lang} for lang in sorted(LANGUAGE_ALLOWLIST)],
         },
         "corpora": [
             {"corpus_id": "C-MIN", "tier": "R0", "status": "available_offline",

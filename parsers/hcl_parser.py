@@ -138,7 +138,7 @@ class HclParser(BaseParser):
             "end_line": node.end_point[0] + 1,
             "start_col": node.start_point[1],
             "end_col": node.end_point[1],
-            "signature": f'{block_type} {" ".join(label_str(l) for l in labels)}',
+            "signature": f'{block_type} {" ".join(label_str(lbl) for lbl in labels)}',
             "has_comment": 1 if bool(comment) else 0,
             "comment_content": comment,
             "module_path": module_path,

@@ -9704,7 +9704,7 @@ def _handle_grep(args, db):
         if opts.fixed:
             # fixed 模式：直接子串匹配
             matches = [
-                (f, l, c) for f, l, c in matches
+                (f, ln, c) for f, ln, c in matches
                 if all(p in c for p in remaining_patterns)
             ]
         else:
@@ -9716,7 +9716,7 @@ def _handle_grep(args, db):
                 print(f"Error: regex error in pattern: {e}")
                 return False
             matches = [
-                (f, l, c) for f, l, c in matches
+                (f, ln, c) for f, ln, c in matches
                 if all(p.search(c) for p in remaining_compiled)
             ]
         if not matches:
@@ -9739,15 +9739,15 @@ def _handle_grep(args, db):
     if not opts.include_all:
         before_no_symbol_filter = len(matches)
         matches = [
-            (f, l, c) for f, l, c in matches
-            if file_line_symbols.get(f, {}).get(l) is not None
+            (f, ln, c) for f, ln, c in matches
+            if file_line_symbols.get(f, {}).get(ln) is not None
         ]
         no_symbol_filtered = before_no_symbol_filter - len(matches)
     # 5b. --kind：过滤指定符号类型
     if opts.kind:
         matches = [
-            (f, l, c) for f, l, c in matches
-            if (file_line_symbols.get(f, {}).get(l) or {}).get("kind") == opts.kind
+            (f, ln, c) for f, ln, c in matches
+            if (file_line_symbols.get(f, {}).get(ln) or {}).get("kind") == opts.kind
         ]
     # 5c. 截断到 limit（此时已过滤无符号行，截断不会丢代码匹配）
     total_before_limit = len(matches)

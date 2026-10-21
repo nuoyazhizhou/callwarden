@@ -37,8 +37,8 @@ def main():
 
     # 定位「各分类工具清单」章节：从 "### 各分类工具清单" 到下一个 "---" 之后的 "> 注"
     start = None
-    for i, l in enumerate(lines):
-        if l.strip().startswith("### 各分类工具清单"):
+    for i, doc_line in enumerate(lines):
+        if doc_line.strip().startswith("### 各分类工具清单"):
             start = i
             break
 

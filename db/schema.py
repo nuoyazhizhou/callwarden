@@ -2192,7 +2192,7 @@ def _split_schema_sql():
     indexes = []
     for stmt in statements:
         # 去除前导空白和注释，取首个有效关键字
-        non_comment_lines = [l for l in stmt.split('\n') if l.strip() and not l.strip().startswith('--')]
+        non_comment_lines = [ln for ln in stmt.split('\n') if ln.strip() and not ln.strip().startswith('--')]
         if not non_comment_lines:
             tables.append(stmt)  # 注释块归入 tables（无害）
             continue
