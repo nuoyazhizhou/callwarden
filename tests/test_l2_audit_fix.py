@@ -230,7 +230,8 @@ class TestL2BehaviorLogic:
             "branch_delete" — new_value 全 0
             "branch_create" — old_value 全 0
         """
-        is_zero_sha = lambda sha: bool(sha) and len(sha) == 40 and set(sha) == {"0"}
+        def is_zero_sha(sha):
+            return bool(sha) and len(sha) == 40 and set(sha) == {"0"}
         is_destructive = "forced" in flags.lower() or is_zero_sha(new_value)
         is_create = is_zero_sha(old_value) and not is_zero_sha(new_value)
 

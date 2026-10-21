@@ -151,7 +151,7 @@ def test_f5_safe_edit():
         dry_run=False,
     )
     assert result2["status"] == "applied", f"实际编辑应返回 applied，实际 {result2['status']}"
-    assert result2["success"] == True, "应成功"
+    assert result2["success"], "应成功"
     print(f"PASS F5.3: 实际编辑成功（status=applied, audit_id={result2.get('audit_id')}）")
 
     # 验证文件内容已更新

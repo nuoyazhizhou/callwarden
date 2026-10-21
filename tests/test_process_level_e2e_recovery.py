@@ -288,21 +288,22 @@ class TestProcessLevelE2ERecovery:
 
             # 模拟崩溃前的事件日志追加
             log_path = os.path.join(tmpdir, "staging.log")
-            entry = lambda rel_path, cas_key: json.dumps({
-                "lsn": 0,
-                "timestamp": time.time(),
-                "workspace_id": "1",
-                "file_path": rel_path,
-                "content_hash": cas_key,
-                "language": "rust",
-                "operation": "refresh",
-                "parse_delta": {},
-                "resolve_delta": {},
-                "frontier": {},
-                "metrics_update": {},
-                "status": "pending",
-                "error": None,
-            })
+            def entry(rel_path, cas_key):
+                return json.dumps({
+                    "lsn": 0,
+                    "timestamp": time.time(),
+                    "workspace_id": "1",
+                    "file_path": rel_path,
+                    "content_hash": cas_key,
+                    "language": "rust",
+                    "operation": "refresh",
+                    "parse_delta": {},
+                    "resolve_delta": {},
+                    "frontier": {},
+                    "metrics_update": {},
+                    "status": "pending",
+                    "error": None,
+                })
             assert staging_log_append(log_path, entry("src/main.rs", "cas_key_001")) == 1
             assert staging_log_append(log_path, entry("src/utils.rs", "cas_key_002")) == 2
 

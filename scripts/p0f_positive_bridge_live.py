@@ -91,7 +91,8 @@ def main():
     client = get_client()
     trace = {}
     log = []
-    rid = lambda p: (p,)
+    def rid(p):
+        return (p,)
 
     seed = uuid.uuid4().hex[:10]
     ws_instance = f"ws-1-bridgelive-{seed}"

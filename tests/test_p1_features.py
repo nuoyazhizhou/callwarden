@@ -118,17 +118,17 @@ def test_cli_6_new_commands(route_stub):
 
     # 测试 vuln-blast 命令（空数据库应正常输出，不崩溃）
     result = _handle_vuln_blast([], db)
-    assert result == True, "_handle_vuln_blast 应返回 True"
+    assert result, "_handle_vuln_blast 应返回 True"
     print("PASS CLI.3: vuln-blast 命令正常执行（空数据库）")
 
     # 测试 symbol-history 命令
     result = _handle_symbol_history(["fake_hash_12345"], db)
-    assert result == True, "_handle_symbol_history 应返回 True"
+    assert result, "_handle_symbol_history 应返回 True"
     print("PASS CLI.4: symbol-history 命令正常执行")
 
     # 测试 task next 命令（空任务 ID 应正常处理）
     result = _handle_task(["next", "fake_task_id"], db)
-    assert result == True, "_handle_task next 应返回 True"
+    assert result, "_handle_task next 应返回 True"
     print("PASS CLI.5: task next 命令正常执行")
     print("PASS CLI: 6 个新命令接线完成\n")
 

@@ -141,7 +141,9 @@ def _ensure_semgrep_rules_cache() -> None:
         from config import SYSTEM_SEMGREP_RULES_DIR, is_system_cache_available
     except ImportError:
         SYSTEM_SEMGREP_RULES_DIR = ""
-        is_system_cache_available = lambda: False
+
+        def is_system_cache_available():
+            return False
 
     semgrep_path = shutil.which("semgrep")
     if not semgrep_path:
