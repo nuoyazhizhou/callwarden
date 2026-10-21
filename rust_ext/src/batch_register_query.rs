@@ -145,7 +145,7 @@ pub fn batch_register_files<'py>(
     //    原实现依赖 Connection drop 自动回滚；池连接长活，drop 不再触发，
     //    故失败分支必须显式 ROLLBACK，否则事务会悬挂到下一次调用。
     let tx_result: Result<Vec<RegisterResult>, rusqlite::Error> =
-        match crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+        match crate::conn_pool::with_pooled_conn("batch_register", codegraph_db_path, |conn| {
             let tx_result_inner = conn
                 .execute_batch("BEGIN IMMEDIATE")
                 .and_then(|_| {

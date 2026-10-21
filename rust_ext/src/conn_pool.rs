@@ -97,6 +97,23 @@ fn pool_key(db_path: &str) -> String {
     }
 }
 
+/// 模块级池开关（CI-DEBT 模块二分诊断门）。
+///
+/// 读环境变量 `CW_RUST_POOL_OFF`，值为逗号分隔的模块名列表（如
+/// `batch_calls,batch_build`）。命中的模块**不使用**进程级长活池连接，而是
+/// 每次调用独立开一个短连接（复现 c53da76 之前的 open→drop 语义）；未命中的
+/// 模块照常走池。
+///
+/// 用途：把「哪个模块的池化引入了 malformed」从「一次 push 判一个模块」
+/// （8 轮 × 约 20 分钟）压缩为「一次 CI 跑完整矩阵」。该门只在 CI 诊断中设置，
+/// 默认不设 = 全部池化 = 当前产品行为，不是产品行为。
+fn module_pool_off(module: &str) -> bool {
+    match std::env::var("CW_RUST_POOL_OFF") {
+        Ok(list) => list.split(',').any(|m| m.trim() == module),
+        Err(_) => false,
+    }
+}
+
 /// 新建连接并执行与 Python `db_base.py` 对齐的 PRAGMA 序列。
 ///
 /// 顺序与各 `open_readwrite` 原实现保持一致：
@@ -130,15 +147,26 @@ fn open_pooled(db_path: &str) -> Result<Connection, rusqlite::Error> {
 /// 连接在整个 `f` 执行期间保持打开且池锁被持有，因此 `f` 内看到的是稳定的
 /// 快照视角，不会被并发 drop 掉另一实例。
 ///
+/// # module 参数（CI-DEBT 模块二分诊断门）
+///
+/// `CW_RUST_POOL_OFF` 列出该模块名时，本函数**不走池**：每次调用独立开一个
+/// 短连接，`f` 结束后即 drop（复现 c53da76 之前的 open→drop 语义）。用于在
+/// 一次 CI 内判定「malformed 来自哪个模块的池化」。未设该 env 时行为不变。
+///
 /// # 错误
 ///
 /// - 池锁已中毒：返回 `rusqlite::Error::InvalidQuery`（不 panic）。
 /// - 同线程重入：返回 `rusqlite::Error::InvalidQuery`（不静默死锁）。
 /// - `open_pooled` 失败：原样透出。
 pub fn with_pooled_conn<T>(
+    module: &str,
     db_path: &str,
     f: impl FnOnce(&Connection) -> T,
 ) -> Result<T, rusqlite::Error> {
+    if module_pool_off(module) {
+        return with_short_conn(db_path, f);
+    }
+
     let _scope = PoolScope::enter()?;
 
     let key = pool_key(db_path);
@@ -177,6 +205,28 @@ pub fn with_pooled_conn<T>(
     Ok(out)
 }
 
+/// 短连接路径（`CW_RUST_POOL_OFF` 命中的模块专用）。
+///
+/// 每次调用独立开一个连接，`f` 结束后即 drop——完全复现 c53da76 之前各模块
+/// 自己的 `open_readwrite` 短连接语义。PRAGMA 序列沿用 `open_pooled`
+/// （busy_timeout / journal_mode=WAL / synchronous=NORMAL / foreign_keys=OFF /
+/// wal_checkpoint(PASSIVE)），与池路径保持一致，使模块二分只隔离「连接寿命」
+/// 这一个变量。
+///
+/// 不取池锁：`f` 内若回调取池连接不会自锁（短连接不参与池的 Mutex）。
+fn with_short_conn<T>(
+    db_path: &str,
+    f: impl FnOnce(&Connection) -> T,
+) -> Result<T, rusqlite::Error> {
+    let conn = open_pooled(db_path)?;
+    let out = f(&conn);
+    // 与 `close_pooled_connections` 同款：drop 前尽力把 WAL 收回主库。
+    // 池化前最后一个连接 close 时 SQLite 也会自动 checkpoint 并删除 -wal/-shm。
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    drop(conn);
+    Ok(out)
+}
+
 /// 关闭并移除池连接。
 ///
 /// - `db_path = Some(p)`：只关闭该路径的连接。
@@ -185,8 +235,7 @@ pub fn with_pooled_conn<T>(
 /// drop 前尽力 `PRAGMA wal_checkpoint(TRUNCATE)`，把 WAL 回收到主库，使调用方
 /// （如测试 tmp_path 清理、`db_base.close()`）随后能安全删除/替换文件。
 /// checkpoint 失败一律忽略——清理路径不应因 checkpoint 失败而抛错，更不得 panic。
-pub fn close_pooled_connections(db_path: Option<&str>) {
-    let mut guard = match pool().lock() {
+pub fn close_pooled_connections(db_path: Option<&str>) {    let mut guard = match pool().lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };

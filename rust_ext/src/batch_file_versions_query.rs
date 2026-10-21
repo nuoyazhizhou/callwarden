@@ -437,7 +437,7 @@ pub fn batch_save_file_versions<'py>(
     //    ROLLBACK 必须在闭包内完成：池连接是长活的，出闭包后不能再补发事务控制语句，
     //    否则失败的 BEGIN IMMEDIATE 会把事务悬挂到下一次调用上。
     let tx_result: Result<BatchSaveVersionsResult, String> =
-        match crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+        match crate::conn_pool::with_pooled_conn("batch_file_versions", codegraph_db_path, |conn| {
             // 检测 ast_cache 字段是否存在（v28+）
             let ast_cache_exists = check_ast_cache_column_exists(conn)?;
 

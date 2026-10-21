@@ -33,7 +33,7 @@ fn with_file_generations_conn<T>(
     db_path: &str,
     f: impl FnOnce(&Connection) -> T,
 ) -> Result<T, CasPublishError> {
-    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+    crate::conn_pool::with_pooled_conn("cas_write", db_path, |conn| {
         CasStore::ensure_file_generations_table(conn)?;
         Ok(f(conn))
     })

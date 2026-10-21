@@ -339,7 +339,7 @@ pub fn batch_save_symbols<'py>(
 
     // 2. 释放 GIL 做文件 IO + SQL 操作（连接取自进程级池，长活，不随调用 drop）
     let result = py.detach(|| -> Result<BatchSaveResult, String> {
-        crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+        crate::conn_pool::with_pooled_conn("batch_build", codegraph_db_path, |conn| {
             // BEGIN IMMEDIATE 事务
             conn.execute_batch("BEGIN IMMEDIATE;")
                 .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;

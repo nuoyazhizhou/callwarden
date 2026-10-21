@@ -82,7 +82,7 @@ pub fn compute_and_apply_symbol_diff<'py>(
 
     // 取用进程级池连接 + BEGIN IMMEDIATE 事务
     // （显式 ROLLBACK 已在本就位；池连接长活，不能依赖 drop 回滚）
-    let outcome = crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+    let outcome = crate::conn_pool::with_pooled_conn("incremental_build", codegraph_db_path, |conn| {
         if let Err(e) = conn.execute_batch("BEGIN IMMEDIATE;") {
             return Err(format!("BEGIN IMMEDIATE 失败: {}", e));
         }

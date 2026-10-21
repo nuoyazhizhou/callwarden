@@ -355,6 +355,38 @@ jobs:
           db.close()
           PYEOF
 
+      # config H：模块二分矩阵（一次 CI 拿全矩阵）。
+      #
+      # 背景：二分①（回退 batch_calls_query.rs 池化）后 12 项 malform 未消除，
+      # 说明 malform 不是 calls 模块自身造成；而 Probe G（CW_RUST_POOL_LIFETIME=short，
+      # 全部模块回到 open→drop）使 h7 隔离 8 passed 全绿，说明根因是「长活连接」
+      # 这一性质本身，而非某个模块的写路径细节。
+      #
+      # 但「长活连接」由谁持有仍需定位：8 个模块各自持有一个长活连接，任意一个
+      # 都可能与 Python 主连接交错 checkpoint。串行回退 8 个模块 = 8 轮 × 约 20 分钟。
+      # 本 probe 用 rust_ext/src/conn_pool.rs 的 CW_RUST_POOL_OFF 门按模块粒度关闭
+      # 池化（命中模块走短连接，PRAGMA 序列不变，只隔离「连接寿命」一个变量），
+      # 一次 CI 跑完整矩阵。
+      #
+      # 判读（h7 隔离单跑，基线 = 7 failed 1 passed）：
+      #   - 某模块单独关闭池化后 h7 8 passed → 该模块的长活连接是 malform 载体；
+      #   - 全部单独关闭后仍红 → malform 需多模块同时长活（叠加效应）；
+      #   - 全部关闭后 h7 8 passed（= Probe G 的结论）→ 矩阵门本身有效。
+      - name: Probe H - module bisect matrix (per-module pool off)
+        if: always()
+        run: |
+          for m in batch_build batch_calls batch_file_versions batch_register \
+                   cas_merge cas_write incremental_build manifest; do
+            echo "===== H: pool OFF for module = $m ====="
+            CW_RUST_POOL_OFF="$m" pytest tests/test_h7_ast_cache_activation.py \
+                   -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+          done
+          echo "===== H: ALL modules pool off (control, expect 8 passed) ====="
+          CW_RUST_POOL_OFF="batch_build,batch_calls,batch_file_versions,batch_register,cas_merge,cas_write,incremental_build,manifest" \
+            pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+          echo "===== H: baseline, nothing off (expect 7 failed 1 passed) ====="
+          pytest tests/test_h7_ast_cache_activation.py -q --tb=line -p no:cacheprovider 2>&1 | tail -12
+
       # config E：metrics CLI 测试的 CI-only 失败取证（run 15/16 持续 ×4，
       # 本地全绿）。测试 patch 了 UnixDaemonRpcClient 但 CI 上 rc=2——
       # 内联诊断打印模块路径/patch 前后/rc/stderr/args 分支，定位 fake

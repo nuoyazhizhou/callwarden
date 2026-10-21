@@ -124,7 +124,7 @@ pub fn cas_merge_to_codegraph<'py>(
             // 3. 调用 merge_cas_to_codegraph
             //    内部已完成 BEGIN IMMEDIATE → 全部 SQL → COMMIT
             //    失败时内部已 ROLLBACK
-            crate::conn_pool::with_pooled_conn(codegraph_db_path, |codegraph_conn| {
+            crate::conn_pool::with_pooled_conn("cas_merge", codegraph_db_path, |codegraph_conn| {
                 crate::daemon::cas_merge::init_codegraph_schema(codegraph_conn)
                     .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
 
@@ -151,7 +151,7 @@ pub fn cas_merge_to_codegraph<'py>(
             //    释放 GIL 做只读查询
             let calls_resolved: usize = if merge_result.file_instance_id > 0 {
                 py.detach(|| -> usize {
-                    crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+                    crate::conn_pool::with_pooled_conn("cas_merge", codegraph_db_path, |conn| {
                         let count: Option<i64> = conn
                             .query_row(
                                 "SELECT COUNT(*) FROM calls \
@@ -207,7 +207,7 @@ pub fn cas_merge_to_codegraph<'py>(
 pub fn cas_merge_init_schema(py: Python<'_>, codegraph_db_path: &str) -> bool {
     // 释放 GIL 做文件 IO + SQL
     let result = py.detach(|| -> Result<(), String> {
-        crate::conn_pool::with_pooled_conn(codegraph_db_path, |conn| {
+        crate::conn_pool::with_pooled_conn("cas_merge", codegraph_db_path, |conn| {
             crate::daemon::cas_merge::init_codegraph_schema(conn)
                 .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
             Ok(())

@@ -91,7 +91,7 @@ pub fn manifest_init_schema(db_path: &str) -> PyResult<()> {
     // POSIX 上 fcntl 锁按进程分配无法互斥 WAL-index，drop 时 checkpoint 与
     // Python autocheckpoint 交错可产生撕裂页（database disk image is
     // malformed，CI ubuntu 独有）。
-    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+    crate::conn_pool::with_pooled_conn("manifest", db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 manifest schema 事务", e))?;
         if let Err(error) = conn.execute_batch(MANIFEST_SCHEMA_DDL) {
@@ -122,7 +122,7 @@ pub fn manifest_upsert(
     mtime_ns: i64,
     is_dirty: bool,
 ) -> PyResult<()> {
-    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+    crate::conn_pool::with_pooled_conn("manifest", db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 manifest 写入事务", e))?;
         let result = conn.execute(
@@ -166,7 +166,7 @@ pub fn manifest_link_to_snapshot(
     content_hash: &str,
     cas_key: &str,
 ) -> PyResult<()> {
-    crate::conn_pool::with_pooled_conn(db_path, |conn| {
+    crate::conn_pool::with_pooled_conn("manifest", db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 snapshot 映射事务", e))?;
         let result = conn.execute(
