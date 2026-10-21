@@ -9,7 +9,6 @@
 - 冻结后不能修改旧批次移动目标线
 - 灰区边界与 fail-safe 暂停
 """
-import json
 import os
 import sys
 import pytest
@@ -26,10 +25,9 @@ from experiments.blind_review_jsonl import (
     build_invalid_sample_record,
 )
 from experiments.blind_review_evaluator import (
-    compute_group_metrics, evaluate_success, evaluate_gray_zone,
+     evaluate_success, evaluate_gray_zone,
     evaluate_pause_conditions, compute_invalid_sample_stats,
-    build_evaluation_report, SampleRecord, GroupMetrics,
-    EvaluatorError, EvaluatorErrorCode,
+    build_evaluation_report,  GroupMetrics,
 )
 
 
@@ -358,7 +356,7 @@ class TestGrayZoneReporting:
         """灰区本身不触发暂停（Req 12.29）。"""
         c = _gm("control", tp=6, misses=2, fp=2, latency=100.0)
         t = _gm("treatment", tp=5, misses=2, fp=3, latency=140.0)
-        thresholds = SuccessThresholds(
+        _thresholds = SuccessThresholds(
             min_valid_tasks=5,
             false_positive_rate_abs_diff_max=0.1,
             median_latency_relative_increase_max=0.25,

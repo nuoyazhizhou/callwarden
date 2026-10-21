@@ -359,7 +359,7 @@ class AgentWatcher:
 
         # 3. 发送 refresh RPC
         from callwarden.server.agent_protocol import (
-            send_refresh_to_daemon, AgentProtocolError,
+             AgentProtocolError,
         )
         try:
             return self._send_refresh(

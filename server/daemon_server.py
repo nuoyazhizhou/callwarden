@@ -25,7 +25,6 @@ from callwarden.server.daemon_registry import (
     register_workspace,
     list_workspaces,
     get_workspace_status,
-    update_workspace_status,
     register_mount_mapping,
     list_mount_mappings,
     delete_mount_mapping,

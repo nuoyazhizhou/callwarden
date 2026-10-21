@@ -120,7 +120,6 @@ from server.daemon_protocol import (  # noqa: E402
     DEFAULT_MAX_MESSAGE_BYTES,
     HEADER,
     DaemonRemoteError,
-    ProtocolError,
     parse_response,
 )
 

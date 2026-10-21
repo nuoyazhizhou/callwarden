@@ -286,7 +286,7 @@ def test_rule_candidate_create_with_full_fields():
     """带完整字段的候选规则创建"""
     with tempfile.TemporaryDirectory() as tmp:
         db = CodeGraphDB(workspace_root=tmp)
-        cid = db.rule_candidate_create(
+        _cid = db.rule_candidate_create(
             title="i18n 规则",
             rule_text="不要硬编码",
             scope={"languages": ["python"], "actions": ["edit"]},
@@ -355,8 +355,8 @@ def test_rule_candidate_list_status_filter():
     with tempfile.TemporaryDirectory() as tmp:
         db = CodeGraphDB(workspace_root=tmp)
         cid1 = db.rule_candidate_create("p1", "r")
-        cid2 = db.rule_candidate_create("p2", "r")
-        cid3 = db.rule_candidate_create("p3", "r")
+        _cid2 = db.rule_candidate_create("p2", "r")
+        _cid3 = db.rule_candidate_create("p3", "r")
 
         # 全部 pending
         pendings = db.rule_candidate_list(status="pending")
@@ -864,7 +864,7 @@ def test_get_applicable_rules_only_returns_active():
         db = CodeGraphDB(workspace_root=tmp)
         cid1 = db.rule_candidate_create("active1", "r")
         cid2 = db.rule_candidate_create("active2", "r")
-        rid1 = db.rule_candidate_accept(cid1)
+        _rid1 = db.rule_candidate_accept(cid1)
         rid2 = db.rule_candidate_accept(cid2)
 
         # 把 rid2 改成 deprecated
@@ -1929,7 +1929,6 @@ def test_cli_rule_subcommand_registered():
 
 def test_cli_handle_rule_dispatches_to_subcommands():
     """_handle_rule 应能分发到 6 个 action 子命令"""
-    import argparse
 
     from callwarden.cli.main import _handle_rule
 

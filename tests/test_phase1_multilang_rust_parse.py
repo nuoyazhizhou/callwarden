@@ -9,7 +9,7 @@
 """
 
 import os
-import tempfile
+from collections import defaultdict
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -17,6 +17,8 @@ import pytest
 from callwarden.db.db_build import (
     _can_use_rust_parse,
     _rust_multilang_parse,
+    _python_parse_single_file,
+    _normalize_rust_symbols,
 )
 
 
@@ -116,7 +118,6 @@ def test_disable_rust_parse_env_sets_rust_langs_empty():
         (1, "b.c", "/abs/b.c", "c", "", 2),
         (2, "c.rs", "/abs/c.rs", "rust", "", 3),
     ]
-    rust_disabled = True
     rust_langs = set()  # rust_disabled=True 时为空
 
     c_files = [x for x in to_parse if x[3] == "c"]
@@ -139,8 +140,6 @@ def test_disable_rust_parse_env_sets_rust_langs_empty():
     assert len(c_files) == 1
 
 
-# 需要导入 defaultdict
-from collections import defaultdict
 
 
 # ----------------------------------------------------------------------
@@ -159,7 +158,6 @@ def test_grouping_c_python_rust():
 
     # 模拟 rust_langs 包含 python/rust/go
     rust_langs = {"python", "rust", "go"}
-    rust_disabled = False
 
     c_files = [x for x in to_parse if x[3] == "c"]
     rust_multilang_files = defaultdict(list)
@@ -243,8 +241,6 @@ def test_small_file_count_uses_multithread_not_rust():
 # 3. _python_parse_single_file 直接验证
 # 4. 小批量 _parse_one Rust 路径决策逻辑
 # ----------------------------------------------------------------------
-
-from callwarden.db.db_build import _python_parse_single_file, _normalize_rust_symbols
 
 
 # ----------------------------------------------------------------------

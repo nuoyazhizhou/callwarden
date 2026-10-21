@@ -11,7 +11,6 @@
 8. _feature_matrix.md: A14 状态改为 ✅ 已修复
 """
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -343,7 +342,7 @@ class TestA14IncrementalBehavior:
         abs_path = os.path.join(str(tmp_path), "test.py")
         with open(abs_path, "w", encoding="utf-8") as f:
             f.write("import os\n")
-        fi_id = db._register_file_db(abs_path, "test")
+        _fi_id = db._register_file_db(abs_path, "test")
 
         # 构造一条 finding（path 使用 rel_path，匹配 file_map 的 key）
         findings = [{

@@ -19,7 +19,6 @@ import os
 import subprocess
 import tempfile
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 
@@ -116,7 +115,7 @@ def log_request(result):
             # 写 .gitignore 排除 db 文件
             _write_file(root, ".gitignore", "callwarden.db*\n*.pyc\n__pycache__/\n")
 
-            initial_commit = _git_commit(root, "Initial commit: app/core.py")
+            _initial_commit = _git_commit(root, "Initial commit: app/core.py")
 
             # 3. 构建符号图谱
             db = CodeGraphDB(workspace_root=root)

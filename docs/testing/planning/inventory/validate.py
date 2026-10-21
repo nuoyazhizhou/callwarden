@@ -466,7 +466,7 @@ def meta_validate_schema(path: Path, label: str) -> list[str]:
         return [f"{exc.code}: {exc.detail}"]
     try:
         from jsonschema import Draft7Validator
-    except ImportError as exc:  # 无 jsonschema 时降级为结构自检，不冒充通过
+    except ImportError:  # 无 jsonschema 时降级为结构自检，不冒充通过
         if not isinstance(schema, dict) or "$schema" not in schema:
             errs.append(f"E_SCHEMA_SHAPE: {label} 不是带 $schema 的 JSON Schema")
         return errs or None  # type: ignore[return-value]

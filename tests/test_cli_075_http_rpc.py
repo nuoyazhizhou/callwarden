@@ -10,7 +10,6 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -37,10 +36,10 @@ def test_cli075_apply_routes_to_daemon_with_lease(monkeypatch, capsys):
         return {"task_id": "T-1", "status": "applied", "applied_at": "2026-08-23T00:00:00Z"}
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    opts = _make_opts(agent_id="a1", session_id="s1", model_id="m1", role="executor",
+    _opts = _make_opts(agent_id="a1", session_id="s1", model_id="m1", role="executor",
                       lease_token="tok-1", fencing_counter="5")
     proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
-    rc = main_mod._handle_task([], proxy) if False else None
+    _rc = main_mod._handle_task([], proxy) if False else None
     # 直接测 apply 分支内部逻辑：模拟 identity 收集 + route_task_write
     # （apply 分支在 _handle_task 内，这里验证 route_task_write 的调用契约）
     result = main_mod.route_task_write("task.apply", {
@@ -65,7 +64,7 @@ def test_cli075_apply_missing_lease_fails_closed(monkeypatch, capsys):
         return {"error": "E_LEASE_REQUIRED"}
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
+    _proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     # lease_kwargs 为空 {} → params 不含 lease 字段
     params = {"task_id": "T-1", "reviewer": "rv-1", "identity": None}
     result = main_mod.route_task_write("task.apply", params, lambda: None)

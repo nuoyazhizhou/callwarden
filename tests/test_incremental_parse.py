@@ -19,7 +19,6 @@ AST 缓存、跨进程元数据持久化等核心功能。
 import os
 import tempfile
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.schema import SCHEMA_VERSION
@@ -188,7 +187,6 @@ def test_parse_file_cumulative_incremental():
     # V1 -> V2 -> V3，每次修改后解析
     versions = [SAMPLE_PY_V1, SAMPLE_PY_V2, SAMPLE_PY_V3]
     expected_subtract_v2 = "subtract"
-    expected_z_param_v3 = "z"
 
     for i, content in enumerate(versions[1:], start=1):
         _write_file(root, "sample.py", content)
@@ -371,7 +369,7 @@ def test_incremental_result_matches_full_parse():
     parser2 = PythonParser()  # 全量后增量
 
     # parser1: 全量解析
-    result_full = parser1.parse_file(path, "sample")
+    _result_full = parser1.parse_file(path, "sample")
     # parser2: 先全量解析 V1，然后修改为 V2，再增量解析 V2
     _ = parser2.parse_file(path, "sample")
     _write_file(root, "sample.py", SAMPLE_PY_V2)

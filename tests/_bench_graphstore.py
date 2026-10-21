@@ -17,12 +17,11 @@ import time
 import json
 import psutil
 import sqlite3
-from pathlib import Path
 
 # 复用 v2 的数据生成和建表逻辑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bench_baseline_v2 import (
-    gen_symbols_stream, gen_calls_stream, split_index_statements,
+    gen_symbols_stream, gen_calls_stream,
     collect_env_info
 )
 
@@ -111,7 +110,6 @@ def build_test_db(db_path: str, target_symbols: int = 1000000,
     )
 
     BATCH = 50000
-    sym_id_offset = 0
     for i, batch in enumerate(gen_symbols_stream(target_symbols, n_files, BATCH)):
         conn.executemany(sym_insert_sql, batch)
         if (i + 1) % 10 == 0:

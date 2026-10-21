@@ -13,10 +13,8 @@
 """
 
 import hashlib
-import os
 import sqlite3
 import time
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -200,7 +198,7 @@ class TestDirtyOverlayIsolation:
     def test_dirty_no_new_clean_keys(self, tmp_path):
         """dirty 文件不新增 Global CAS clean key。"""
         from callwarden.server.cas_schema import (
-            compute_cas_key_v1, init_cas_schema, cas_lookup,
+            compute_cas_key_v1, init_cas_schema,
             cas_publish_with_retry,
         )
         from callwarden.server.shared_benefit_metrics import DirtyOverlayAssertion
@@ -229,7 +227,6 @@ class TestDirtyOverlayIsolation:
         assertion.clean_keys_before = {r["cas_key"] for r in rows_before}
 
         # 模拟 dirty overlay：dirty 内容不进入 CAS clean namespace
-        dirty_content = b"def dirty(): return 'modified'\n"
         # dirty 内容只存在于 workspace overlay，不发布到 Global CAS
         # （验证：CAS 中不应出现 dirty 内容的 key）
 

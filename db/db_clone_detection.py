@@ -27,7 +27,6 @@ except Exception as _exc:  # 平台原生库加载失败时不阻断 CLI/MCP 启
     np = None
     _NUMPY_IMPORT_ERROR = _exc
 
-from ..i18n import t
 
 
 # 克隆类型常量
@@ -542,7 +541,7 @@ class CloneDetectionMixin:
                         candidate_pairs.add(pair)
 
         # 跳过已被 Type-1/2 覆盖的代表对（同 token_hash）
-        covered_token_hashes = {g["token_hash"] for g in groups}
+        _covered_token_hashes = {g["token_hash"] for g in groups}
 
         # Type-3 组：相似度 >= 阈值
         # 把候选对聚合为 group：相同 (token_hash_a, token_hash_b, similarity) 的归为一组

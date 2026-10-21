@@ -16,13 +16,12 @@ rust.py
 
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 import tree_sitter_rust as tsrust
 from tree_sitter import Language, Parser
 
-from ..config import read_file_normalized, norm_path, norm_newlines, compute_content_hash
+from ..config import read_file_normalized,   compute_content_hash
 from .call_filter import should_filter_call
 
 
@@ -481,7 +480,7 @@ class RustParser:
         
         for node in root.children:
             if node.type == "use_declaration":
-                use_text = self._get_text(node, source)
+                _use_text = self._get_text(node, source)
                 # 解析 use xxx::yyy as zzz;
                 # 简化处理：提取完整路径和别名
                 parts = self._parse_use_stmt(node, source)

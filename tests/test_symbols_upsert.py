@@ -18,7 +18,6 @@ import pytest
 
 from callwarden.db.schema import SCHEMA_VERSION, SCHEMA_SQL
 from callwarden.db.db_base import (
-    CodeGraphBase,
     _migrate_v25_to_v26,
 )
 from callwarden.db.db import CodeGraphDB

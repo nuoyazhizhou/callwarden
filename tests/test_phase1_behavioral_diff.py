@@ -35,11 +35,8 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
-import textwrap
 import sqlite3
 from typing import Any, Dict, List
 
@@ -1104,7 +1101,7 @@ class TestManifestCountDiff:
         ]
         # 8 行：4 个 dirty + 4 个 ready
         dirty_count = sum(1 for r in rows if r[5])
-        ready_count = len(rows) - dirty_count
+        _ready_count = len(rows) - dirty_count
         self._setup_db_with_rows(db_path, rows)
         py = self._py_count(db_path, 1, dirty_only=False)
         rust = callwarden_core.manifest_count(str(db_path), 1, False)
@@ -1325,7 +1322,6 @@ def _write_staging_entries(log_path: str, entries: List[Dict[str, Any]]) -> None
         # 读取所有 entries，重写文件以反映 status
         all_entries = log.read(since_lsn=0)
         # 直接覆写文件
-        import json as _json
         with open(log_path, "w", encoding="utf-8") as f:
             for orig, parsed in zip(entries, all_entries):
                 status = orig.get("status", "pending")
@@ -1421,7 +1417,6 @@ class TestReplicatorGetPendingCountDiff:
     @staticmethod
     def _py_get_pending_count(log_path: str, workspace_id):
         """Python 路径：构造 Replicator 并查询 pending 数量"""
-        from callwarden.server.replicator import Replicator
         from callwarden.server.staging_log import StagingLog
         log = StagingLog(log_path)
         # Replicator 构造需要 snapshot_service，差分测试只需要 get_pending_count
@@ -1447,7 +1442,7 @@ class TestReplicatorGetPendingCountDiff:
         """P2: 空 log（无 entry）→ 两端都返回 0"""
         log_path = _make_staging_log_path(tmp_path)
         # 仅创建空文件
-        with open(log_path, "w", encoding="utf-8") as f:
+        with open(log_path, "w", encoding="utf-8"):
             pass
         py = self._py_get_pending_count(log_path, None)
         rust = self._rust_get_pending_count(log_path, None)

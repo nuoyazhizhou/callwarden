@@ -84,8 +84,6 @@ from server.compat_registry import (  # noqa: E402
     INDEX_WRITE,
     GOVERNANCE_WRITE,
     SCOPE_WORKSPACE,
-    SCOPE_SNAPSHOT,
-    SCOPE_AUTHORITY,
     CompatCallContext,
     CompatMethod,
     CompatRegistry,

@@ -24,8 +24,7 @@ from pathlib import Path
 # 复用 v2 的流式数据生成器和工具函数
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bench_baseline_v2 import (
-    run_single, collect_env_info, median, split_index_statements,
-    gen_files_stream, gen_symbols_stream, gen_calls_stream,
+    run_single, collect_env_info, median,
 )
 
 # 加载 GraphStore（callwarden_core）
@@ -164,7 +163,7 @@ def bench_graphstore(db_path: str, snap_path: str) -> dict:
 
     # GraphStore 各组件大小（从 stats 推算字节数）
     sym_count = stats.get("symbol_count", 0)
-    edge_count = stats.get("edge_count", 0)
+    _edge_count = stats.get("edge_count", 0)
     name_pool = stats.get("name_pool_size", 0)
     qname_pool = stats.get("qname_pool_size", 0)
     module_pool = stats.get("module_pool_size", 0)

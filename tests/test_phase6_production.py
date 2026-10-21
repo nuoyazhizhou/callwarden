@@ -22,7 +22,6 @@ stale 依据（daemon authority / HTTP thin-client 迁移，A 类）
 
 import os
 import sqlite3
-import tempfile
 import textwrap
 
 import pytest
@@ -246,7 +245,7 @@ class TestSecurity:
         peer = {"pid": os.getpid(), "uid": uid, "gid": uid}
 
         # 注册 workspace
-        workspace = service.dispatch(peer, "workspace.register", {
+        _workspace = service.dispatch(peer, "workspace.register", {
             "client_view_root": str(tmp_path),
         })
 

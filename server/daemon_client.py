@@ -31,14 +31,11 @@ from typing import Optional, List, Dict, Any
 # 3.28: 自动唤起 + 互斥 + 降级分流接线
 from callwarden.server.daemon_autostart import (
     ensure_daemon,
-    get_default_endpoint,
     resolve_http_endpoint_and_manifest,
     try_connect,
 )
 from callwarden.server.daemon_mutex import DaemonMutex
 from callwarden.server.degraded_mode import (
-    OperationClass,
-    classify_operation,
     route_degraded,
 )
 
@@ -46,11 +43,9 @@ from callwarden.config import (
     HTTP_DEFAULT_TIMEOUT,
     HTTP_MAX_BODY_BYTES,
     HTTP_PROTOCOL_VERSION,
-    HTTP_SLOW_METHOD_TIMEOUT,
     E_HTTP_DAEMON_UNAVAILABLE,
     E_HTTP_MANIFEST_MISSING,
     E_HTTP_MANIFEST_STALE,
-    E_HTTP_MVP_LOOPBACK_ONLY,
     E_HTTP_REQUEST_TIMEOUT,
     E_MODE_DEPRECATED,
     E_PROTOCOL_VERSION_UNSUPPORTED,
@@ -4031,7 +4026,7 @@ def route_task_read(rpc_method: str, params: dict, fallback_func):
             # auto 模式下不得把"远端明确返回的业务结论"降级为本地读（数据可能不一致）
             raise
         exc: BaseException = dre  # 连接/发现级（stale/missing manifest、daemon 不可达）
-    except Exception as exc:
+    except Exception:
         pass
     # 连接级故障统一处理
     if rpc_method in TASK_SUPERSEDE_ROUTE_POLICY:

@@ -305,7 +305,7 @@ def test_install_script():
     from callwarden.install import (
         CallWardenInstaller, PackageSpec,
         CORE_PACKAGES, SUPPORTED_LANGUAGE_PACKAGES,
-        EXTENDED_LANGUAGE_PACKAGES, OPTIONAL_PACKAGES,
+        EXTENDED_LANGUAGE_PACKAGES,
     )
 
     # 验证包定义完整性

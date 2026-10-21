@@ -35,8 +35,7 @@ from experiments.blind_review_jsonl import (
     build_incident_record,
 )
 from experiments.blind_review_evaluator import (
-    is_nontrivial_code_change, SampleRecord, EvaluatorError,
-    EvaluatorErrorCode,
+    is_nontrivial_code_change,
 )
 from callwarden.cli.main import _handle_experiment
 

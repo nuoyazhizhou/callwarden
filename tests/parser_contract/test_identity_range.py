@@ -28,7 +28,6 @@ from __future__ import annotations
 import os
 import sys
 from collections import Counter
-from pathlib import Path
 
 import pytest
 
@@ -186,7 +185,7 @@ def _derive_parent_by_range(
     t_start = target.get("start_line", 0)
     t_end = target.get("end_line", 0)
     t_name = target.get("name", "")
-    t_start_col = target.get("start_col", 0)  # Python 有，Rust 无（默认 0）
+    _t_start_col = target.get("start_col", 0)  # Python 有，Rust 无（默认 0）
 
     best_parent = ""
     best_range = (0, 0)  # (start, end)，越小越接近 target（即越深层嵌套）
@@ -653,7 +652,7 @@ class TestParseFactAbiAlignment:
         # R7-P0-3: local_id 按 byte_start 排序赋值（1-based 连续，0 保留给
         # synthetic module symbol）。第一个真实符号 local_id=1。
         byte_starts = [s["byte_start"] for s in syms]
-        expected_ids = [i for i, _ in sorted(enumerate(byte_starts), key=lambda x: x[1])]
+        _expected_ids = [i for i, _ in sorted(enumerate(byte_starts), key=lambda x: x[1])]
         expected_local_ids = list(range(1, len(syms) + 1))
         actual_by_byte = [s["local_id"] for s in sorted(syms, key=lambda x: x["byte_start"])]
         assert actual_by_byte == expected_local_ids, (

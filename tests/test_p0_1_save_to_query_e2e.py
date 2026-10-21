@@ -26,18 +26,14 @@ E2E；任一步失败不得 mark staging applied。
 import hashlib
 import os
 import sqlite3
-import tempfile
 
 import pytest
 
 from callwarden.db.schema import SCHEMA_SQL
 from callwarden.db.db_cas import (
-    CAS_SCHEMA_DDL,
-    CAS_INDEX_SQL,
     FILE_GENERATIONS_DDL,
     init_cas_schema,
 )
-from callwarden.db.db_daemon import init_daemon_schema, register_workspace
 from callwarden.db.db_workspace_manifest import init_manifest_schema
 from callwarden.server.replicator import init_session_schema, daemon_handle_refresh
 
@@ -246,7 +242,7 @@ class TestStep2CasMerge:
         )
 
         # 第二次 merge（替换为 1 个符号）
-        result = merge_cas_to_codegraph(
+        _result = merge_cas_to_codegraph(
             cas_conn=cas_conn, codegraph_conn=cg_conn, cas_key=cas_key,
             workspace_id=1, rel_path="m.py", abs_path="/m.py",
             content_hash=content_hash, language="python", workspace_root_path="/",

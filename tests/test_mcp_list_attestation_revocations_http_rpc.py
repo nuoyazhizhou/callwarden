@@ -73,7 +73,7 @@ def test_list_attestation_revocations_unknown_workspace(live_daemon):
 def test_list_attestation_revocations_daemon_unavailable_fail_closed():
     c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
                             authority_id=get_http_authority_id())
-    with pytest.raises(DaemonUnavailableError) as ei:
+    with pytest.raises(DaemonUnavailableError):
         c.call("list_attestation_revocations", {"workspace_id": 1})
     # fail-closed 证据即异常类型本身（本机代理会把不可达端口拦成 502/503，
     # 错误消息随网络环境变化，不再钉死错误码字符串）

@@ -23,7 +23,6 @@ WSL 客户端必须使用生产 `UnixDaemonRpcClient` 的 TCP bridge transport�
 """
 
 import asyncio
-import itertools
 import json
 import os
 import shutil
@@ -37,9 +36,6 @@ import pytest
 
 from callwarden.server.daemon_protocol import (
     DaemonRemoteError,
-    parse_response,
-    recv_message,
-    send_message,
 )
 from callwarden.server.daemon_client import UnixDaemonRpcClient
 
@@ -451,7 +447,6 @@ def test_eight_sources_claim_single_winner_via_bridge(authority):
     """
     from callwarden.server.mcp_server import create_mcp_server
 
-    pipe = authority["pipe"]
     task_db = authority["task_db"]
 
     # 1. 创建主任务：经 bridge client RPC 的 task.create（原生 RPC 支持

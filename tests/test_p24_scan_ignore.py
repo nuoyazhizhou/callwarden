@@ -9,15 +9,11 @@ P24.6: auto_generate_ignore --apply 实际写入
 P24.7: auto_generate_ignore 保留用户手写规则
 """
 import os
-import tempfile
-import shutil
 
-import pytest
 
 from callwarden.config import (
     scan_subprojects,
     auto_generate_ignore,
-    _NON_REAL_PROJECT_DIRS,
     _parse_gitmodules,
 )
 
@@ -227,7 +223,7 @@ class TestAutoGenerateIgnore:
         # 添加新目录
         os.makedirs(os.path.join(str(tmp_path), "tests", "fixtures"), exist_ok=True)
 
-        result = auto_generate_ignore(str(tmp_path), dry_run=False)
+        _result = auto_generate_ignore(str(tmp_path), dry_run=False)
 
         content = open(ignore_file, encoding="utf-8").read()
         assert "my_custom_dir/" in content  # 用户规则保留

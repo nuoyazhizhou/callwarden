@@ -16,7 +16,6 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from callwarden.db import CodeGraphDB
 
 
 def test_f2_ask_codebase():
@@ -97,7 +96,7 @@ def test_f4_branch_aware():
     print(f"PASS F4.3: list_branch_workspaces 返回 {len(branches)} 个分支")
 
     # 注册第二个分支
-    result2 = db.register_branch_workspace("feature-x", os.getcwd())
+    _result2 = db.register_branch_workspace("feature-x", os.getcwd())
     branches2 = db.list_branch_workspaces()
     assert len(branches2) >= 2, "应至少有 2 个分支"
     print(f"PASS F4.4: 注册第二个分支后共有 {len(branches2)} 个分支")

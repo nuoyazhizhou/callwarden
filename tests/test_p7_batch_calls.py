@@ -10,7 +10,6 @@
 import os
 import tempfile
 
-import pytest
 
 from callwarden.db.db import CodeGraphDB
 
@@ -134,7 +133,7 @@ def test_from_db_skips_rewrite_on_unchanged_refresh():
 
     db = _build_db(root)
     calls_before = _count_calls(db)
-    cv_before = _count_call_versions(db)
+    _cv_before = _count_call_versions(db)
 
     assert calls_before > 0, "首次构建应有 calls"
 
@@ -142,7 +141,7 @@ def test_from_db_skips_rewrite_on_unchanged_refresh():
     db.build_full_graph()
 
     calls_after = _count_calls(db)
-    cv_after = _count_call_versions(db)
+    _cv_after = _count_call_versions(db)
 
     # calls 不应丢失（_from_db 跳过重写，原有 calls 保留）
     assert calls_after == calls_before, (

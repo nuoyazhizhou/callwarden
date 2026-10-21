@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List,  Tuple
 
 from ..i18n import t
 
@@ -259,7 +259,7 @@ class GitMixin:
 
         # 匹配符号与变更行号范围（重叠即视为变更）
         # change_type 判定：diff 中纯新增 → added，纯删除 → deleted，混合 → modified
-        ws_id = self._get_active_workspace_id()
+        _ws_id = self._get_active_workspace_id()
         for sym in symbols:
             sym_start = sym["start_line"] or 0
             sym_end = sym["end_line"] or 0

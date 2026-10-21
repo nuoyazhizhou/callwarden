@@ -4,10 +4,8 @@ Phase 7.0: 后台任务系统测试
 测试 db_jobs.py 的 job 元数据管理：状态机、进度、取消、清理。
 """
 
-import os
 import sys
 import sqlite3
-import tempfile
 import time
 from pathlib import Path
 
@@ -421,7 +419,7 @@ class TestListAndStats:
         j1 = submit_job(conn, ws_id, "clone_detect")
         j2 = submit_job(conn, ws_id, "clone_detect")
         j3 = submit_job(conn, ws_id, "clone_detect")
-        j4 = submit_job(conn, ws_id, "clone_detect")
+        _j4 = submit_job(conn, ws_id, "clone_detect")
         # j1: completed
         mark_job_running(conn, j1.job_id)
         complete_job(conn, j1.job_id, {})

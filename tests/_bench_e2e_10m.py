@@ -15,14 +15,11 @@
   python tests/_bench_e2e_10m.py --symbols 5000000     # 5M 符号
 """
 import os
-import sys
 import time
 import sqlite3
 import random
-import shutil
 import json
 import argparse
-from pathlib import Path
 
 # 直接加载 schema.py 模块（避免 db/__init__.py 的相对导入链）
 import importlib.util
@@ -272,7 +269,7 @@ def run_e2e(db_path: str, target_symbols: int, commit_every: int = 10):
     assert row is not None, "索引验证失败：无法通过 qualified_name 查找符号"
 
     # 查询 2：通过 calls.callee_name 索引查找
-    callee_count = conn.execute(
+    _callee_count = conn.execute(
         "SELECT COUNT(*) FROM calls WHERE callee_name = ?", ("ext_func_0",)
     ).fetchone()[0]
 

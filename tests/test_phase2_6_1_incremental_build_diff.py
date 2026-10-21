@@ -45,9 +45,7 @@ from __future__ import annotations
 import os
 import sys
 import sqlite3
-import tempfile
 import time
-from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -320,7 +318,7 @@ def _insert_call(db_path, file_instance_id, caller_name="fn1",
                   is_cross_file=0):
     """插入 symbol + call 记录（用于 L1/L6/L7 测试）"""
     conn = sqlite3.connect(str(db_path))
-    now = time.time()
+    _now = time.time()
     # 插入 symbol（caller）
     cur = conn.execute(
         "INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, visibility, "

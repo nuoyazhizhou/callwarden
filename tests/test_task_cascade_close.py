@@ -88,7 +88,6 @@ def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
       不自上而下处理后代；故测试从 mid（中层）触发，由实现向上关闭 root。
     """
     ids = []
-    cur = None
     for i in range(depth + 1):
         tid = f"T-CSC-{uuid.uuid4().hex[:10]}-{i}"
         ids.append(tid)
@@ -226,7 +225,7 @@ def test_identity_policy_autofill(rpc):
 def test_not_all_closed_reject(rpc):
     """子树仍有 open 节点 → cascade 不关闭任何祖先（stop）。"""
     ids = make_tree(rpc, depth=1, with_policy=True)
-    leaf, root = ids[0], ids[1]
+    _leaf, root = ids[0], ids[1]
 
     # 打开一个子任务（模拟未完成）：给 leaf 挂一个 open 兄弟
     open_tid = f"T-CSC-{uuid.uuid4().hex[:10]}-open"
@@ -264,7 +263,7 @@ def test_not_all_closed_reject(rpc):
 def test_idempotent(rpc):
     """重复 cascade-close 幂等：已 closed 节点跳过，不重复写。"""
     ids = make_tree(rpc, depth=1, with_policy=True)
-    leaf, root = ids[0], ids[1]
+    _leaf, root = ids[0], ids[1]
 
     params = {
         "task_id": root,

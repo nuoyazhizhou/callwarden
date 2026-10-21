@@ -47,7 +47,6 @@ from .blind_review_protocol import (
     ObservationWindow,
     PauseTrigger,
     GroupAssignment,
-    Structured_Reason,
     make_reason,
     ExperimentErrorCode,
     ExperimentProtocolError,

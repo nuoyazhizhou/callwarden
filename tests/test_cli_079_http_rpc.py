@@ -11,7 +11,6 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -29,7 +28,7 @@ def test_cli079_close_routes_to_daemon_with_lease(monkeypatch, capsys):
                 "closed_at": "2026-08-23T00:00:00Z"}
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
+    _proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     params = {"task_id": "T-1", "reviewer": "rv-1",
               "identity": {"agent_id": "a1", "session_id": "s1",
                            "model_id": "m1", "role": "reviewer"},
@@ -51,7 +50,7 @@ def test_cli079_close_missing_lease_fails_closed(monkeypatch):
         return {"error": "E_LEASE_REQUIRED"}
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
+    _proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
     params = {"task_id": "T-1", "reviewer": "rv-1", "identity": None}
     result = main_mod.route_task_write("task.close", params, lambda: None)
     assert "E_LEASE_REQUIRED" in str(result.get("error", ""))
@@ -78,7 +77,7 @@ def test_cli079_close_local_fallback_fails_closed(monkeypatch):
         raise AssertionError("fallback 不应执行 legacy db 路径")
 
     monkeypatch.setattr(main_mod, "route_task_write", _fake_route_write)
-    proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
+    _proxy = main_mod.RpcDBProxy(workspace_root="C:/git_work/x")
 
     def _local_close():
         # 与 cli/main.py 的 _local_close 行为一致：thin-client 冻结合同禁止 db 直写

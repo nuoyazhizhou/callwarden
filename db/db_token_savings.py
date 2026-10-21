@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict,  Optional
 
 
 class TokenSavingsMixin:
@@ -197,7 +197,7 @@ class TokenSavingsMixin:
             params if not operation_filter else (params + [operation_filter]) if operation_filter and not where_clauses else params,
         )
         # 简化分组查询（避免 WHERE 子句重复）
-        group_params = [p for p in params]
+        _group_params = [p for p in params]
         cur2 = self.conn.execute(
             f"""
             SELECT

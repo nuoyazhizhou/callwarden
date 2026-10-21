@@ -12,7 +12,6 @@ import os
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -359,7 +358,7 @@ class TestDaemonRoutingWithRust:
 
         client = DaemonClient.get_instance()
         # 修复 workspace_instance_id
-        parent_dir = os.path.basename(os.path.dirname(str(db_path)))
+        _parent_dir = os.path.basename(os.path.dirname(str(db_path)))
         # 使用临时 id
         client._workspace_instance_id = "test_ws_daemon_001"
 

@@ -36,9 +36,7 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 import time
-from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -547,7 +545,7 @@ class TestBatchSaveFileVersionsDiff:
         )
 
         # Python 路径
-        py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
 
         # Rust 路径
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])
@@ -556,7 +554,6 @@ class TestBatchSaveFileVersionsDiff:
         assert rust_result["files_processed"] == 1
         assert rust_result["new_versions"] == 1
         assert rust_result["short_circuited"] == 0
-        rust_vid = rust_result["results"][0]["file_version_id"]
         assert rust_result["results"][0]["is_new_version"] is True
 
         # 差分断言
@@ -597,13 +594,12 @@ class TestBatchSaveFileVersionsDiff:
         )
 
         # Python 路径
-        py_vid2 = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid2 = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
 
         # Rust 路径
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])
         assert rust_result["success"] is True
         assert rust_result["new_versions"] == 1
-        rust_vid2 = rust_result["results"][0]["file_version_id"]
 
         # 差分断言
         py_rows = _query_file_versions(py_db, py_fi)
@@ -688,7 +684,7 @@ class TestBatchSaveFileVersionsDiff:
         )
 
         # Python 路径
-        py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
 
         # Rust 路径
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])
@@ -737,7 +733,7 @@ class TestBatchSaveFileVersionsDiff:
         )
 
         # Python 路径
-        py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
 
         # Rust 路径
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])
@@ -771,7 +767,7 @@ class TestBatchSaveFileVersionsDiff:
         )
 
         # Python 路径（_MinimalDb._cached_head_commit = ""）
-        py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
 
         # Rust 路径
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])
@@ -803,13 +799,13 @@ class TestBatchSaveFileVersionsDiff:
             conn.close()
 
         py_fi = _prep_file_instance(py_db)
-        rust_fi = _prep_file_instance(rust_db)
+        _rust_fi = _prep_file_instance(rust_db)
 
         py_result, rust_fr = _make_file_result(
             py_fi, "ch_exists", 1000.0, 10, 2000.0, commit_hash="abc", tmp_dir=tmp_path,
         )
 
-        py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])
         assert rust_result["success"] is True
 
@@ -962,7 +958,7 @@ class TestBatchSaveFileVersionsDiff:
         )
 
         # Python 路径（_update_ast_cache try/except 降级）
-        py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
+        _py_vid = _py_save_file_version(py_db, py_fi, py_result, commit_hash=rust_fr["commit_hash"])
 
         # Rust 路径（检测 ast_cache 字段不存在时跳过 UPDATE）
         rust_result = _rust_save_file_versions(rust_db, [rust_fr])

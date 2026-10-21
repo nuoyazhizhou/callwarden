@@ -26,10 +26,8 @@ stored checksum 为当前 canonical；存在缺失表（真正 schema 漂移）�
 from __future__ import annotations
 
 import hashlib
-import os
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -129,7 +127,7 @@ class TestChecksumExtractionConsistency:
     def test_expected_table_names_match_python(self):
         """Rust 预期表名集合与 schema.py 实际 CREATE TABLE 表名一致。"""
         rust_names = _expected_table_names()
-        python_names = set(_extract_schema_sql_python_native())
+        _python_names = set(_extract_schema_sql_python_native())
         # Python 侧解析出所有 CREATE TABLE 表名
         import re
         py_tables = set(

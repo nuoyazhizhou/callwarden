@@ -47,8 +47,6 @@ import server.compat_worker as _compat_worker_asm  # noqa: E402,F401
 from server import compat_registry as reg  # noqa: E402
 from callwarden.server.daemon_client import (  # noqa: E402
     DaemonRemoteError,
-    DaemonUnavailableError,
-    E_HTTP_REQUEST_TIMEOUT,
     HttpDaemonRpcClient,
 )
 

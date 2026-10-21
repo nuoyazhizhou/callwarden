@@ -33,7 +33,6 @@ for _d in (str(_HERE), str(_GOV_DIR)):
         sys.path.insert(0, _d)
 
 from governance_harness import (  # noqa: E402
-    DEFAULT_RUN_ROOT,
     GovernanceEnv,
 )
 

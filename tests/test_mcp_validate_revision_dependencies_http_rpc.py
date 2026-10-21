@@ -74,7 +74,7 @@ def test_validate_revision_dependencies_unknown_workspace(live_daemon):
 def test_validate_revision_dependencies_daemon_unavailable_fail_closed():
     c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
                             authority_id=get_http_authority_id())
-    with pytest.raises(DaemonUnavailableError) as ei:
+    with pytest.raises(DaemonUnavailableError):
         c.call("validate_revision_dependencies",
                {"workspace_id": 1, "contract_id": "X"})
     # fail-closed 证据即异常类型本身（本机代理会把 127.0.0.1:9 拦成 502，

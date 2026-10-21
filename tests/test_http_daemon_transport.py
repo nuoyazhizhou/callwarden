@@ -15,12 +15,11 @@ import json
 import os
 import sqlite3
 import subprocess
-import sys
 import time
 
 import pytest
 
-from callwarden.server.daemon_client import HttpDaemonRpcClient, DaemonUnavailableError
+from callwarden.server.daemon_client import HttpDaemonRpcClient
 from callwarden.server.daemon_protocol import DaemonRemoteError
 
 
@@ -218,7 +217,7 @@ def test_manifest_authority_scoped_filename(http_daemon):
     endpoint, manifest, data_root = http_daemon
     from callwarden.config import get_http_authority_id, get_http_manifest_path
 
-    expected_path = get_http_manifest_path(get_http_authority_id())
+    _expected_path = get_http_manifest_path(get_http_authority_id())
     # data_root 下的 manifest 文件名必须为 authority-scoped（P1-3 修复）
     # stale 修复：manifest 落隔离 home（见 _manifest_dir 说明），非 data_root。
     man_dir = _manifest_dir(data_root)

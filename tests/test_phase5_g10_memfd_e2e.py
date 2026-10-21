@@ -15,11 +15,8 @@ import os
 import sys
 import tempfile
 import hashlib
-import json
 import socket
-import struct
 import threading
-import time
 
 import pytest
 
@@ -202,11 +199,10 @@ class TestIsMemfd:
         import ctypes
         import fcntl
         from callwarden.server.ipc_transport import (
-            is_memfd, MFD_CLOEXEC, MFD_ALLOW_SEALING, F_GET_SEALS,
+            is_memfd, MFD_CLOEXEC, MFD_ALLOW_SEALING,
         )
 
         libc = ctypes.CDLL("libc.so.6", use_errno=True)
-        sys_memfd_create = libc.syscall  # memfd_create 是 syscall
         # 直接用 syscall
         import ctypes.util
         libc_path = ctypes.util.find_library("c")
@@ -501,8 +497,6 @@ class TestLinuxMemfdRoundtripE2E:
 
     def test_send_msg_large_payload_uses_memfd(self):
         """send_msg 对大 payload 自动走 memfd 路径。"""
-        import ctypes
-        import ctypes.util
         from callwarden.server.ipc_transport import (
             send_msg, MAX_MSG_BYTES,
         )
@@ -600,7 +594,7 @@ class TestLargeFileE2E:
     def test_256mb_memfd_roundtrip(self):
         """256MB memfd roundtrip（验证 MAX_MEMFD_BYTES 边界）。"""
         from callwarden.server.ipc_transport import (
-            send_msg, recv_via_memfd, MAX_MEMFD_BYTES,
+              MAX_MEMFD_BYTES,
         )
 
         size = MAX_MEMFD_BYTES  # 256MB
@@ -615,7 +609,6 @@ class TestLargeFileE2E:
             block = b"abcdefgh" * 65536  # 512KB
             for _ in range(size // len(block)):
                 h.update(block)
-            expected_hash = h.hexdigest()
 
             # 准备发送（需要流式发送，不能一次性载入 256MB）
             # send_msg 当前实现是接受 bytes，对 256MB 来说会占内存

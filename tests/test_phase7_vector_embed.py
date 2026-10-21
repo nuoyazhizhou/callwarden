@@ -14,7 +14,6 @@
 """
 
 import os
-import sqlite3
 import tempfile
 import threading
 import time
@@ -22,8 +21,8 @@ import time
 import pytest
 
 from callwarden.db.db import CodeGraphDB
-from callwarden.db.db_jobs import init_jobs_schema, get_job, JOB_COMPLETED
-from callwarden.server.job_executor import JobExecutor, JobContext
+from callwarden.db.db_jobs import init_jobs_schema,  JOB_COMPLETED
+from callwarden.server.job_executor import JobExecutor
 from callwarden.server.job_handlers import (
     vector_embed_handler,
     _VectorEmbedWrapper,
@@ -500,7 +499,7 @@ class TestEndToEndJob:
         """register_default_handlers 注册了 vector_embed handler"""
         db, _root = _db_with_workspace()
         try:
-            ws_id = db._get_active_workspace_id()
+            _ws_id = db._get_active_workspace_id()
             init_jobs_schema(db.conn)
             db.conn.commit()
 

@@ -15,16 +15,13 @@
   python tests/_bench_baseline_v2.py --symbols 1000000 --runs 1 --mode both  # A/B 对比
 """
 import os
-import sys
 import time
 import sqlite3
 import random
-import shutil
 import json
 import argparse
 import threading
 import platform
-from pathlib import Path
 from typing import Iterator, List, Tuple
 
 # 直接加载 schema.py 模块（避免 db/__init__.py 的相对导入链）
@@ -131,7 +128,7 @@ def gen_symbols_stream(target_symbols: int, n_files: int, batch_size: int = 5000
 
     关键：生成顺序就是插入顺序，按 sym_id 递增（与正式代码一致）
     """
-    rng = random.Random(seed)
+    _rng = random.Random(seed)
     n_fns = target_symbols * 7 // 10
     n_classes = target_symbols * 2 // 10
     n_structs = target_symbols - n_fns - n_classes
@@ -459,7 +456,7 @@ def run_single(
     ).fetchone()
     assert row is not None, "验证失败：qualified_name 查询无结果"
 
-    callee_count = conn.execute(
+    _callee_count = conn.execute(
         "SELECT COUNT(*) FROM calls WHERE callee_name = ?", ("ext_func_0",)
     ).fetchone()[0]
 

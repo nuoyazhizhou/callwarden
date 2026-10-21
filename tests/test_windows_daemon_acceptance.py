@@ -9,14 +9,12 @@ Windows daemon 最小可用协同闭环验收测试套件 (Phase 2 & Phase 3)。
 5. ACL 与 安全隔离 (平台无关 owner_key 校验)
 """
 
-import os
 import sys
-import tempfile
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import  MagicMock
 
 import config
-from server.daemon_client import UnixDaemonRpcClient, DaemonRpcClient
+from server.daemon_client import  DaemonRpcClient
 from server.daemon_autostart import get_default_endpoint, _get_windows_user_sid
 
 
@@ -68,7 +66,6 @@ class TestDaemonTaskCollabRPC:
         验证 Agent 角色硬约束：
         Agent 只能将 Task 状态推进到 review (via task_report)，不得自行 apply 或 close。
         """
-        agent_role = "cw-agent"
         allowed_statuses = ["in_progress", "review", "open"]
         forbidden_statuses = ["applied", "closed"]
 

@@ -50,8 +50,6 @@ from callwarden.server.daemon_client import (  # noqa: E402
 from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
 from callwarden.config import (  # noqa: E402
     get_http_authority_id,
-    get_http_manifest_dir,
-    get_http_manifest_path,
 )
 from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
 

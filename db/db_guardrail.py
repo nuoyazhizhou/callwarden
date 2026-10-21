@@ -20,7 +20,6 @@ from ..config import read_file_normalized
 from ..i18n import t
 from .schema import (
     GUARDRAIL_ACTION_BLOCK,
-    GUARDRAIL_ACTION_REQUIRE_REVIEW,
     GUARDRAIL_ACTION_WARN,
     GUARDRAIL_CATEGORY_API_COMPAT,
     GUARDRAIL_CATEGORY_DB_SAFETY,

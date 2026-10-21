@@ -13,10 +13,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import tree_sitter_typescript as tstypescript
-from tree_sitter import Language, Parser
 
 from .base import BaseParser
-from ..config import read_file_normalized
 
 
 class TypeScriptParser(BaseParser):
@@ -112,7 +110,7 @@ class TypeScriptParser(BaseParser):
         comment = self._find_prev_comment(node, source)
         has_comment = bool(comment)
 
-        body_node = self._find_child_by_type(node, "statement_block")
+        _body_node = self._find_child_by_type(node, "statement_block")
         content = self._node_text(node, source)
         signature = self._extract_signature(node, source)
 

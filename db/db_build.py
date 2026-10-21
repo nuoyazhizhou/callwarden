@@ -18,7 +18,7 @@ import sys
 import time
 import threading
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..config import (
@@ -698,7 +698,7 @@ def _python_multiprocess_parse(to_parse, mp_workers, file_results,
     failed = failed_ref[0] if failed_ref else 0
 
     cprint(t("cli.messages.db_build_parallel_parse", workers=mp_workers, count=len(to_parse)), "dim")
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures import ProcessPoolExecutor
     mp_args = [(rel_path, abs_path, lang, module_path, file_instance_id)
                for _, rel_path, abs_path, lang, module_path, file_instance_id in to_parse]
     chunksize = max(1, len(mp_args) // (mp_workers * 4))
@@ -938,7 +938,6 @@ class BuildMixin:
         - 目录名后加 / 只匹配目录
         - 以 / 开头匹配根目录
         """
-        import fnmatch
 
         patterns = []
         ignore_file = os.path.join(self.workspace_root, ".callwardenignore")
@@ -1008,7 +1007,6 @@ class BuildMixin:
         path_parts = rel_path.split("/")
 
         for pattern in patterns:
-            orig_pattern = pattern
             p = pattern.rstrip("/")
             match_dir_only = pattern.endswith("/")
 
@@ -2082,7 +2080,7 @@ class BuildMixin:
                 "inline_modules": [],
                 "_from_db": True,  # 标记来自DB（跳过写入）
             }
-        except Exception as e:
+        except Exception:
             return None
 
 
@@ -3301,7 +3299,6 @@ class BuildMixin:
         if not latest_fv:
             return False  # 无 file_versions 记录，走 parse 路径
 
-        db_content_hash = latest_fv["content_hash"]
         metadata = self._read_ast_cache(file_instance_id)
         if not metadata:
             return False  # 无 ast_cache，走 parse 路径
@@ -3481,7 +3478,7 @@ class BuildMixin:
             (curr_version_id,),
         )
         curr_symbols = {row["qualified_name"]: row["symbol_hash"] for row in cur}
-        curr_ids = {row["qualified_name"]: row["id"] for row in cur}
+        _curr_ids = {row["qualified_name"]: row["id"] for row in cur}
 
         # 找出删除的符号（上一版本有，当前版本没有）
         removed_names = set(prev_symbols.keys()) - set(curr_symbols.keys())

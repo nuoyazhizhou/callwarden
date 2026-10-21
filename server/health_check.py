@@ -61,7 +61,6 @@ import os
 import time
 import sqlite3
 import shutil
-import json
 from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 
@@ -540,7 +539,6 @@ class RecoveryHandler:
         """
         # 尝试连接 project DB 中的 jobs 表
         # 如果 jobs 表不存在或 DB 不可访问，跳过
-        data_root = self._config.data_root
 
         # 查找所有 registry DB
         registry_db = self._config.registry_db_path

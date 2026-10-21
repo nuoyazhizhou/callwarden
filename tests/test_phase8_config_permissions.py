@@ -17,8 +17,6 @@
 
 import json
 import os
-import tempfile
-import time
 import pytest
 
 from callwarden.server.daemon_config import (
@@ -717,7 +715,7 @@ class TestTokenValidatorListAndCleanup:
         store = str(tmp_path / "tokens.json")
         validator = TokenValidator(store)
         t1 = validator.generate_token("c1", uid=1000)
-        t2 = validator.generate_token("c2", uid=1001)
+        _t2 = validator.generate_token("c2", uid=1001)
         validator.revoke_token(t1)
 
         tokens = validator.list_tokens()
@@ -859,7 +857,7 @@ class TestAccessCheckerWorkspaceAccess:
     def test_readonly_cannot_register(self):
         cfg = DaemonConfig.load_from_dict({"security": {"admin_uids": [0]}})
         tpl = PermissionTemplate()
-        checker = AccessChecker(cfg, tpl)
+        _checker = AccessChecker(cfg, tpl)
         # readonly 角色不能注册——通过强制使用 readonly 角色测试
         role = tpl.get_role("readonly")
         # 直接验证角色权限
@@ -1068,7 +1066,7 @@ class TestAccessCheckerJobOperation:
     def test_readonly_cannot_submit_jobs(self):
         cfg = DaemonConfig.load_from_dict({"security": {"admin_uids": [0]}})
         tpl = PermissionTemplate()
-        checker = AccessChecker(cfg, tpl)
+        _checker = AccessChecker(cfg, tpl)
         # readonly 角色不能 submit
         role = tpl.get_role("readonly")
         assert role.can_submit_jobs is False

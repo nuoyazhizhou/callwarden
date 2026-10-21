@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import threading
 import time
@@ -37,7 +36,6 @@ from callwarden.server.agent_watcher import (
     _AgentChangeHandler,
     run_agent_watcher_loop,
     HAS_WATCHDOG,
-    HAS_RUST_WATCHER,
     _get_canonicalize_fn,
 )
 
@@ -194,7 +192,7 @@ class TestAgentWatcherHandleFileChange:
         content_bytes = b"print('fallback')\n"
         test_file.write_bytes(content_bytes)
 
-        response = watcher.handle_file_change(str(test_file))
+        _response = watcher.handle_file_change(str(test_file))
 
         # RPC 被调用
         rpc.call.assert_called_once()
@@ -261,7 +259,7 @@ class TestAgentWatcherHandleFileDelete:
         watcher, session, rpc = _make_watcher(tmp_path)
 
         deleted_file = tmp_path / "deleted.py"
-        response = watcher.handle_file_delete(str(deleted_file))
+        _response = watcher.handle_file_delete(str(deleted_file))
 
         rpc.call.assert_called_once_with(
             "workspace.file.delete",

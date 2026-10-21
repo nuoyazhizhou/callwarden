@@ -12,14 +12,12 @@ import pytest
 from callwarden.config import (
     HTTP_MANIFEST_SCHEMA_VERSION,
     HTTP_MVP_TRANSPORT_PROFILE,
-    HTTP_PROTOCOL_VERSION,
     E_HTTP_MVP_LOOPBACK_ONLY,
     E_HTTP_MANIFEST_MISSING,
     E_HTTP_MANIFEST_STALE,
     E_HTTP_MANIFEST_HASH_MISMATCH,
     E_PROTOCOL_VERSION_UNSUPPORTED,
     compute_http_manifest_hash,
-    get_http_authority_id,
     is_loopback_host,
 )
 from callwarden.server import daemon_autostart as da

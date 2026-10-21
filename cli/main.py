@@ -23,7 +23,6 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode, get_project_db_path, expand_tilde
-from ..server.watcher import FileWatcher
 from ..server.daemon_client import (
     route_task_write,
     route_task_read,
@@ -36,7 +35,7 @@ from ..server.daemon_client import (
     is_http_transport_enabled,
     SharedTaskWriterRequiredError,
 )
-from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
+from ..i18n import t, set_language, get_arg_help,  get_error, DEFAULT_LANG
 from .console import cprint
 from .agent_registry import get_merged_specs
 
@@ -3201,7 +3200,7 @@ def _handle_hotspot(args, db):
         defects_h = t("cli_hotspot_col_defects", default="缺陷")
         complexity_h = t("cli_hotspot_col_complexity", default="复杂度")
         label_h = t("cli_hotspot_col_label", default="标签")
-        fn_h = t("cli_hotspot_col_function", default="函数名")
+        _fn_h = t("cli_hotspot_col_function", default="函数名")
         print(t("cli.messages.hotspot_header",
                 hash=hash_h, score=score_h, changes=changes_h, defects=defects_h,
                 complexity=complexity_h, label=label_h))
@@ -6854,7 +6853,7 @@ def _handle_audit(args, db):
     )
 
     # keys：列出签名密钥轮换记录
-    keys_p = sub.add_parser(
+    _keys_p = sub.add_parser(
         "keys",
         help=t("cli_audit_keys_desc",
                default="List all signing key rotation records (key_secret not shown)"),
@@ -7001,7 +7000,7 @@ def _handle_bootstrap(args, db):
     sub = parser.add_subparsers(dest="action", required=True)
 
     # status：自举健康摘要
-    status_p = sub.add_parser(
+    _status_p = sub.add_parser(
         "status",
         help=t("cli_bootstrap_status_desc",
                default="Show bootstrap health summary"),
@@ -8548,7 +8547,7 @@ def _doctor_check(db):
     cprint(t("cli.messages.doctor_wal_title",
            default="[2] WAL file status"), "yellow", bold=True)
     wal_path = db_path + "-wal"
-    shm_path = db_path + "-shm"
+    _shm_path = db_path + "-shm"
     print(t("cli.messages.doctor_wal_file",
           default="  WAL file: {path}", path=wal_path))
     if os.path.exists(wal_path):
@@ -8602,7 +8601,6 @@ def _doctor_check(db):
     # 4. 快速连接测试
     cprint(t("cli.messages.doctor_connection_title",
            default="[4] Database connection test"), "yellow", bold=True)
-    import time
     success, fail = connection_test(db_path, rounds=5)
     if fail == 0:
         cprint(t("cli.messages.doctor_connection_success",
@@ -10035,7 +10033,7 @@ def _handle_tests(args, db):
         method = tc.get("match_method", "?")
         confidence = tc.get("confidence", "?")
         test_qn = tc.get("test_qualified_name", "?")
-        test_name = tc.get("test_name", "")
+        _test_name = tc.get("test_name", "")
         test_file = tc.get("test_file", "")
         test_line = tc.get("test_start_line", 0)
         print(f"[{i}] [{method}] [{confidence}] {test_qn}")
@@ -13382,7 +13380,6 @@ def run_agent_mode(argv: list) -> int:
     - stop：发送 SIGTERM 停止运行中的 agent
     - status：查询 agent 运行状态
     """
-    import os as _os
     import sys as _sys
     if _sys.platform not in ("linux", "win32", "darwin"):
         print("ERROR: cw-agent is only supported on Linux/Windows/macOS.", file=_sys.stderr)
@@ -13670,7 +13667,7 @@ def _agent_status(argv: list) -> int:
             print(f"状态: PID 文件损坏（{e}）")
 
     from callwarden.server.agent_session import (
-        AgentSession, DEFAULT_AGENT_SESSION_FILE,
+         DEFAULT_AGENT_SESSION_FILE,
     )
     print(f"\nSession 文件: {DEFAULT_AGENT_SESSION_FILE}")
     if _os.path.isfile(DEFAULT_AGENT_SESSION_FILE):
@@ -13710,7 +13707,6 @@ def run_daemon_mode(argv: list) -> int:
     打印错误并返回退出码 2。
     """
     import os as _os
-    import shutil as _shutil
     import sys as _sys
     import subprocess as _subprocess
     if _sys.platform not in ("linux", "win32", "darwin"):
@@ -14195,7 +14191,7 @@ def _handle_experiment(args, db):
             value = ToggleValue.ENABLED if opts.value == "on" else ToggleValue.DISABLED
             session_marker = f"cli-{int(time.time())}"
             now_iso = datetime.now(timezone.utc).isoformat()
-            change = config.set_p0_toggle(
+            _change = config.set_p0_toggle(
                 scope, value, session_marker,
                 client_clock_time=now_iso,
                 scope_key=opts.scope_key,
@@ -15668,7 +15664,7 @@ def _governance_gate(task_id, action_label, role=None):
             else rpc_client.call
         )
         projection = call("task.governance_projection.get", {"task_id": task_id})
-    except DaemonRemoteError as exc:
+    except DaemonRemoteError:
         # 投影查询本身的业务错误不阻断（门禁是附加保护，不是新单点）。
         return None
     except Exception:

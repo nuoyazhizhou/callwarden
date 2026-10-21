@@ -39,9 +39,8 @@ from __future__ import annotations
 import os
 import sys
 import sqlite3
-import tempfile
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import pytest
 
@@ -592,7 +591,7 @@ class TestBatchResolveAndSaveCallsDiff:
         }
 
         # 加载 all_symbols（两端从各自 DB 读取）
-        py_all_symbols = _load_all_symbols_from_db(py_db)
+        _py_all_symbols = _load_all_symbols_from_db(py_db)
         rust_all_symbols = _load_all_symbols_from_db(rust_db)
 
         _py_resolve_and_save_calls(py_db, file_results)

@@ -20,7 +20,6 @@ from callwarden.server.daemon_autostart import (
     BACKOFF_BASE,
     BACKOFF_FACTOR,
     BACKOFF_MAX,
-    DEFAULT_WAIT_WINDOW,
     LINUX_SYSTEMD_UNIT,
     MACOS_LAUNCHD_LABEL,
     _find_daemon_binary,
@@ -403,7 +402,6 @@ class TestConfigConstants:
         # 环境变量未设置时应为 10.0
         with mock.patch.dict(os.environ, {}, clear=True):
             # 重新加载模块以获取无环境变量时的默认值
-            import importlib
             import callwarden.server.daemon_autostart as mod
             # DEFAULT_WAIT_WINDOW 在模块加载时读取环境变量
             # 这里直接验证常量值
@@ -526,7 +524,7 @@ class TestEnsureHttpDaemonBoundedWindow:
         result = ensure_http_daemon(
             "http://127.0.0.1:1", window=5.0, readiness_check=flaky_ready
         )
-        elapsed = time.monotonic() - t0
+        _elapsed = time.monotonic() - t0
 
         assert result == "http://127.0.0.1:1"
         assert calls["n"] >= 3

@@ -855,7 +855,7 @@ def step8_performance_report(
                 break
             time.sleep(0.02)
         proc.wait(timeout=10.0)
-    except Exception as exc:
+    except Exception:
         rss_peak_kb = -1  # 标记无法度量
 
     # parse latency（5 次）

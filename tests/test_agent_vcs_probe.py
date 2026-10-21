@@ -29,7 +29,6 @@ from callwarden.server.agent_protocol import (
     send_refresh_to_daemon,
     probe_vcs_info,
     clear_vcs_cache,
-    AgentProtocolError,
 )
 
 

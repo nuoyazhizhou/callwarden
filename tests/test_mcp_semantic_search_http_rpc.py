@@ -65,7 +65,7 @@ def test_semantic_search_missing_params(live_daemon):
 def test_semantic_search_daemon_unavailable_fail_closed():
     c = HttpDaemonRpcClient(endpoint="http://127.0.0.1:9",
                             authority_id=get_http_authority_id())
-    with pytest.raises(DaemonUnavailableError) as ei:
+    with pytest.raises(DaemonUnavailableError):
         c.call("semantic_search", {"workspace_instance_id": CANONICAL_INSTANCE, "query": "x"})
     # fail-closed 证据即异常类型本身（错误消息随传输层实现演进而变化）
 
