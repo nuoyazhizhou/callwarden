@@ -394,7 +394,38 @@ CREATE INDEX IF NOT EXISTS idx_rollback_config_feature ON rollback_config(featur
 CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_flag);
 "#;
 
-/// 建立基础 SQLite 连接，配置标准的 WAL, timeout(5000ms), foreign_keys
+/// 建立基础 SQLite 连接，配置标准的 WAL, timeout(5000ms), foreign_keys。
+///
+/// 这是 **storage 路径专用的 opener**（本仓库第二个 opener），另一条是
+/// `db_conn.rs:231` 的 `open_db_conn`。两者的 PRAGMA 形态必须对齐，否则
+/// 同一 `.db` 上会出现"一个连接加固、另一个连接未加固"的不一致状态。
+///
+/// # 与 `open_db_conn` 的唯一有意差异：`foreign_keys = ON`
+///
+/// storage 路径（`initialize_or_migrate` / `schema_shape_matches_canonical` /
+/// `integrity_check` / `checkpoint`）负责建表与迁移，DDL 依赖外键定义的
+/// 引用完整性语义，故此处**保持 ON**；`db_conn.rs` 面向批量写入短连接，
+/// 为吞吐关闭 FK。这是有意差异，**不要统一**。
+///
+/// # `wal_autocheckpoint = 0` 与 open 期 `PASSIVE` checkpoint 的由来
+///
+/// 二者均对齐 `db_conn.rs:231`，用于消除 storage 路径"读到篡改前旧值"的
+/// **过期快照**：
+///
+/// - `wal_autocheckpoint = 0`：短连接 drop 时的 autocheckpoint 会回收 WAL，
+///   是撕裂同进程其他连接 `-shm` 视图的已知源（POSIX `fcntl` 锁按进程分配，
+///   与 Python 侧连接互不排斥）。
+/// - open 期 `PRAGMA wal_checkpoint(PASSIVE)`：全新短连接面对 Python 侧遗留的
+///   `-wal`/`-shm` 状态时，必须触发一次 wal-index 重建才能拿到一致快照。
+///   缺这一步时，`initialize_or_migrate` 可能读到过期的
+///   `schema_migrations.checksum`（或误判已 DROP 的表仍存在），从而绕过
+///   fail-closed 判决——CI 上
+///   `test_facade_does_not_fallback_after_rust_failure` 的
+///   `DID NOT RAISE` 即指向该路径。
+///
+/// PASSIVE 不阻塞读者，且失败此处刻意忽略（与 `db_conn.rs` 一致）：
+/// checkpoint 只是尽力而为的一致性促进，不应让"打开连接"本身失败。
+/// 诊断回退开关：设 `CW_RUST_OPEN_CHECKPOINT=0` 可关闭该 checkpoint。
 fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open_with_flags(
         path.as_ref(),
@@ -408,6 +439,12 @@ fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection, rusqlite::Erro
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    // 对齐 db_conn.rs:231——禁 autocheckpoint + open 期温和 checkpoint，
+    // 消除 storage 路径的过期快照（见上方文档注释）。
+    conn.pragma_update(None, "wal_autocheckpoint", 0i64)?;
+    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    }
 
     Ok(conn)
 }
