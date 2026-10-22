@@ -210,8 +210,14 @@ jobs:
   # 在本进程内的任何 WAL 回收动作（TRUNCATE drain / drop 时 autocheckpoint /
   # 最后连接删 -shm）都会撕裂 Python 长连接快照**。修法 v2 = 短连接 + 哨兵连接
   # 钉住 -shm + PRAGMA wal_autocheckpoint=0 + 默认零 checkpoint
-  # （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 两诊断门）。本 job 保留做
-  # **malform 家族回归门**（Probe F）＋ 其他缺陷的取证步骤。
+  # （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 两诊断门）。
+  # 2026-10-22 v3（run 39761713228 判读）：v2 翻车——h7 族 12 项以「Rust 侧
+  # 打开数据库即 malformed」失败：全新短连接面对 Python 侧遗留 -wal/-shm 时
+  # 必须靠 **open 期 PASSIVE checkpoint** 触发 wal-index 重建。修法 v3 = v2
+  # 基础上恢复 open 期 PASSIVE（CW_RUST_OPEN_CHECKPOINT 门）＋ 写后改温和
+  # PASSIVE drain（CW_RUST_WAL_DRAIN 门三态：off/passive/truncate）。本 job
+  # 保留做 **malform 家族回归门**（Probe F）＋ v1/v2 复现臂（Probe B/G）＋
+  # 其他缺陷的取证步骤。
   # ============================================================
   wal-ab-probe:
     name: WAL A/B probe (deep-water root-cause isolation)
@@ -269,15 +275,29 @@ jobs:
           CW_USE_RUST_STORAGE: "0"
         run: pytest tests/test_phase7_job_result.py -q --tb=line -p no:cacheprovider
 
-      # config B（v2 复现臂）：malformed 族 + dashboard ×1 —— 显式恢复 v1 行为
-      # （写后 TRUNCATE drain），预期重新出现 malformed；对照同一 step 的默认
-      # 配置（零 checkpoint + 哨兵）应在主测试 job 全绿。该臂用于实时钉死
-      # 「Rust 侧任何 WAL 回收动作都撕裂 Python 长连接快照」这一定性结论。
+      # config B（v1 复现臂）：malformed 族 + dashboard ×1 —— 显式恢复 v1 行为
+      # （写后 TRUNCATE drain），预期重新出现 malformed；对照主测试 job 的
+      # 默认配置（v3：open-PASSIVE + 温和 passive drain + 哨兵）应全绿。该臂
+      # 用于实时钉死「Rust 侧任何 WAL 回收动作都撕裂 Python 长连接快照」。
       - name: Probe B - build path (v1 drain=truncate repr)
         if: always()
         env:
           CW_RUST_WAL_DRAIN: "truncate"
         run: pytest tests/test_p15_lang_presort.py tests/test_p15_multiprocess_parse.py tests/test_incremental_parse.py tests/test_dashboard.py -q --tb=line -p no:cacheprovider
+
+      # config G（v2 复现臂）：h7 族 —— 显式恢复 v2「零 checkpoint」配置
+      # （关 open 期 PASSIVE + 写后 drain=off），预期 h7 族以「Rust 侧打开
+      # 数据库即 malformed」重新失败（run 39761713228 实证 12 项）。与
+      # Probe B（v1 TRUNCATE 复现臂）合起来构成完整经验矩阵：
+      #   默认（v3）= open-PASSIVE + 温和 drain → 全绿（主测试 job 判读）
+      #   truncate（v1）→ p15/incremental 撕裂（B 臂）
+      #   off + 关 open-PASSIVE（v2）→ h7 打开即 malformed（本臂）
+      - name: Probe G - build path (v2 zero-checkpoint repr)
+        if: always()
+        env:
+          CW_RUST_WAL_DRAIN: "off"
+          CW_RUST_OPEN_CHECKPOINT: "0"
+        run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
 
       # config C：fts ×2 stale read —— 回滚 build 路径全部 6 个 Rust 写短路
       # （tests/_wal_ab_probe_plugin.py 注入 rollback_config 行）。若转绿则
@@ -309,14 +329,17 @@ jobs:
       # 同进程 Python 主连接共享同一 `-shm` WAL-index（POSIX fcntl 锁按进程分配，
       # 两实例互不排斥；Windows 按句柄加锁故本地免疫）时的撕裂页。
       #
-      # 正式修法见 rust_ext/src/db_conn.rs（v2）：
-      # ① 短连接（每次 open 重建 WAL-index 视图）——治 c53da76 引入的 h7 族；
-      # ② 哨兵连接钉住 `-shm` + `wal_autocheckpoint=0` + 默认零 checkpoint
-      #   （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 诊断门）——治 v1 写后
-      #   TRUNCATE drain 遗留的 p15 族 + incremental_parse + rust_storage 读路径。
+      # 正式修法见 rust_ext/src/db_conn.rs（v3「温和 drain」）：
+      # ① 短连接 + open 期 PASSIVE checkpoint（CW_RUST_OPEN_CHECKPOINT 门）
+      #   ——治 h7 族（新短连接的 wal-index 重建）；
+      # ② 哨兵连接钉住 `-shm` + `wal_autocheckpoint=0` + 写后温和 PASSIVE
+      #   drain（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 三态门）——治
+      #   v1 写后 TRUNCATE drain 遗留的 p15 族 + incremental_parse +
+      #   rust_storage 读路径。
       # 长活连接即根因载体，故 CW_RUST_POOL_LIFETIME / CW_RUST_POOL_OFF /
       # CW_RUST_POOL_WAL_DRAIN 三个诊断门连同进程级池已于 v1 一并移除
-      # （Probe G/H/I 步骤同步删除，其结论已固化进 db_conn.rs 模块文档）。
+      # （旧 Probe G/H/I 步骤同步删除，其结论已固化进 db_conn.rs 模块文档；
+      # 现 Probe G 为 v2 复现臂，名称复用）。
       #
       # 判读：逐文件隔离单跑，输出中**不得**再出现 "database disk image is
       # malformed"；出现即判回归，本 step 直接失败。注：dashboard 的 UTF-8 载荷
@@ -334,7 +357,7 @@ jobs:
             out=$(pytest "$f" -q --tb=line -p no:cacheprovider 2>&1)
             echo "$out" | tail -12
             if echo "$out" | grep -q "database disk image is malformed"; then
-              echo "MALFORM REGRESSION in $f —— 短连接 + 写后 WAL drain 的修法被破坏"
+              echo "MALFORM REGRESSION in $f —— 短连接 + open-PASSIVE + 温和 drain 的 v3 修法被破坏"
               exit 1
             fi
           done

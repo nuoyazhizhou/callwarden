@@ -152,12 +152,29 @@ Probe I 判读：
   autocheckpoint / 最后连接删 -shm）都撕裂同进程 Python 长连接快照**——
   p15 族 6 项 + incremental_parse 1 项 + rust_storage 读路径 1 项
   （DID NOT RAISE：过期快照把篡改读成原值）。
-- v2 修法（本次提交）：短连接 + **哨兵连接钉住 -shm**
+- v2 修法（d5cfbeb）：短连接 + **哨兵连接钉住 -shm**
   （每 .db 一个永不关闭的空连接）+ `wal_autocheckpoint=0` + 默认零
   checkpoint（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 诊断门；
   默认 sentinel on / drain off）。WAL 增长交 Python 侧 autocheckpoint
   回收（单实例操作安全）。daemon 纯 Rust 进程不经 with_db_conn，不受影响。
+- **v2 翻车（CI run 39761713228）**：5 个 Python 测试 job 全部回退到 c53da76
+  时代的 h7 族签名（12 failed / 2729 passed，maxfail 早停，「malformed」×32），
+  但机制**不同**：失败发生在 Rust 侧**打开数据库时**——
+  `RuntimeError: Rust batch_resolve_and_save_calls 返回失败…打开 CodeGraph
+  数据库失败: database disk image is malformed`。归因：v2 删掉了 open 期
+  PASSIVE checkpoint，全新的 Rust 短连接面对 Python 侧遗留 `-wal`/`-shm`
+  状态时缺少 wal-index 重建，读到过期 wal-index ⇒ 拼出撕裂页。
+  ⇒ v1 能治 h7 的承重件不是「写后 TRUNCATE」，而是 **open 期 PASSIVE
+  checkpoint 触发的 wal-index 重建**。
+- v3 修法（本次提交，「温和 drain」）：短连接 + **open 期 PASSIVE**
+  （CW_RUST_OPEN_CHECKPOINT 门，默认开）+ 哨兵 + `wal_autocheckpoint=0`
+  + **写后 PASSIVE drain**（CW_RUST_WAL_DRAIN 三态门：off/passive/truncate，
+  默认 passive）。PASSIVE 与 TRUNCATE 的判别性差异：不在有读者持有读标记时
+  强行清空 WAL，故不撕 p15；又完成了帧回写，h7 不依赖写后任何动作。
+  CI 经验矩阵由三条臂钉死：默认（v3，主测试 job 期全绿）/
+  Probe B（v1 复现：truncate → p15 撕裂）/ Probe G（v2 复现：off + 关
+  open-PASSIVE → h7 打开即 malformed）。
 - 本取证文件使命完成：三代受害面漂移与根因已定性，结论固化进
   `rust_ext/src/db_conn.rs` 模块文档；后续回归由 ci.yml Probe F
-  （纳入 p15/incremental 5 文件的隔离回归门）与 Probe B（v1 复现臂：
-  CW_RUST_WAL_DRAIN=truncate 应重现 malformed）钉死。
+  （纳入 p15/incremental 5 文件的隔离回归门）与 Probe B / Probe G
+  （v1/v2 复现臂）钉死。

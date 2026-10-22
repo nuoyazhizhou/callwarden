@@ -1,4 +1,4 @@
-//! Rust 侧 SQLite 连接管理（同进程双实例 WAL Hazard 正式修法 v2）
+//! Rust 侧 SQLite 连接管理（同进程双实例 WAL Hazard 正式修法 v3）
 //!
 //! # 缺陷现象（三代受害面漂移）
 //!
@@ -38,24 +38,31 @@
 //! 读路径则以「过期快照」形式受害（rust_storage 的 DID NOT RAISE：Rust
 //! 短连接把已篡改的 checksum 读成截断前的原值，静默返回 Ok）。
 //!
-//! # 正式修法 v2：Rust 侧在本进程内做**零 checkpoint**
+//! # 正式修法 v2/v3：短连接 + 哨兵 + autocheckpoint=0 + 温和 drain
 //!
-//! 三项措施，目标都是「不做任何让 Python 侧 `-shm` 视图失效的动作」：
+//! v2（「零 checkpoint」）在 CI 上翻车：h7 族 12 项以 **Rust 侧打开数据库
+//! 即 malformed** 失败（`batch_resolve_and_save_calls`：打开 CodeGraph
+//! 数据库失败: database disk image is malformed）。原因：全新的 Rust 短连接
+//! 面对一个带着 Python 侧遗留 `-wal`/`-shm` 状态的库时，必须靠 **open 期
+//! PASSIVE checkpoint** 触发 wal-index 重建，否则读到过期 wal-index ⇒ 拼出
+//! 撕裂页。v1 正是靠 open 期 PASSIVE + 写后 TRUNCATE 让 h7 族转绿。
 //!
-//! 1. **哨兵连接**：每个 `.db` 首次访问时常驻一个**永不读取、永不写入、
-//!    永不关闭**的本侧连接。它把 `-shm` 的本侧引用计数钉住 ≥ 1，使任何
-//!    短连接的关闭序列都不会触发「最后连接」的 `-wal`/`-shm` 回收。
-//! 2. **`PRAGMA wal_autocheckpoint=0`**：短连接关闭时不再 autocheckpoint。
-//! 3. **去掉写后 drain 与 open 期 PASSIVE checkpoint**：默认零 checkpoint；
-//!    `CW_RUST_WAL_DRAIN=truncate` 保留为诊断/兼容开关。
+//! v3 在三者间取交集——**温和 drain**：
 //!
-//! WAL 增长由 Python 侧 autocheckpoint（默认 1000 页，单实例操作、无撕裂）
-//! 回收——**单实例回收是安全的，双实例交错回收才是 hazard**。
+//! 1. **短连接**（v1 即 h7 族修复的必要条件；长活池是 c53da76 的根因载体）。
+//! 2. **open 期 `wal_checkpoint(PASSIVE)`**：每次 open 触发 wal-index 重建，
+//!    保住 h7 族（`CW_RUST_OPEN_CHECKPOINT=0` 可关，默认开）。
+//! 3. **哨兵连接**：每个 `.db` 常驻一个永不关闭的本侧连接，钉住 `-shm`
+//!    引用计数 ≥ 1 ⇒ 短连接关闭序列不会触发「最后连接」的 `-wal`/`-shm`
+//!    回收（`CW_RUST_SENTINEL_CONN=0` 可关，默认开）。
+//! 4. **`PRAGMA wal_autocheckpoint=0`**：短连接 drop 不再 autocheckpoint
+//!    （c53da76 之前 p15 族失败的直接撕裂源）。
+//! 5. **写后 PASSIVE drain（默认）**：只回写可安全回写的帧、不强制截断
+//!    ——与 TRUNCATE（v1）的区别在于**不在有读者持有读标记时强行清空
+//!    WAL**。`CW_RUST_WAL_DRAIN=truncate`（v1 行为）/ `off`（v2 行为）
+//!    保留为诊断复现臂（CI Probe B/G 实时对照）。
 //!
-//! 短连接本身（每次 open 重建 WAL-index 视图）仍是 h7 族修复的必要条件：
-//! 长活连接跨整个 build 持有读标记，Python 侧持续提交推进 `mxFrame`，
-//! 两侧对「同一页由哪些帧拼成」错位 ⇒ 撕裂页（Probe I1/I4：长活 + 任一
-//! drain 策略均红）。
+//! WAL 累积由 Python 侧 autocheckpoint（默认 1000 页、单实例操作）回收。
 //!
 //! # 适用范围
 //!
@@ -67,13 +74,12 @@
 //!
 //! # 代价
 //!
-//! 每次调用多一次 open/close；WAL 不再由 Rust 侧回收，长度交给 Python 侧
-//! autocheckpoint 控制（测试场景短暂、无实际增长风险）。相对 v1 省掉了
-//! 每次写后的 TRUNCATE（页拷贝 + 截断）。
+//! 每次调用多一次 open/close；WAL 不由 Rust 侧 TRUNCATE 回收，长度交给
+//! Python 侧 autocheckpoint 控制（测试场景短暂、无实际增长风险）。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -86,9 +92,14 @@ use rusqlite::{Connection, OpenFlags};
 /// 哨兵开关的环境覆盖（TESTS 覆盖时跳过环境读取，保证单测确定性）。
 static SENTINEL_OVERRIDE: AtomicBool = AtomicBool::new(false);
 static SENTINEL_ENABLED: AtomicBool = AtomicBool::new(true);
-/// 写后 TRUNCATE drain 的环境覆盖。
+
+/// 写后 drain 模式：0=off（v2 行为）、1=passive（默认，v3）、2=truncate（v1 行为）。
 static DRAIN_OVERRIDE: AtomicBool = AtomicBool::new(false);
-static DRAIN_TRUNCATE: AtomicBool = AtomicBool::new(false);
+static DRAIN_MODE: AtomicU8 = AtomicU8::new(1);
+
+const DRAIN_OFF: u8 = 0;
+const DRAIN_PASSIVE: u8 = 1;
+const DRAIN_TRUNCATE: u8 = 2;
 
 fn sentinel_enabled() -> bool {
     if SENTINEL_OVERRIDE.load(Ordering::Relaxed) {
@@ -98,11 +109,15 @@ fn sentinel_enabled() -> bool {
     }
 }
 
-fn drain_truncate_enabled() -> bool {
+fn drain_mode() -> u8 {
     if DRAIN_OVERRIDE.load(Ordering::Relaxed) {
-        DRAIN_TRUNCATE.load(Ordering::Relaxed)
+        DRAIN_MODE.load(Ordering::Relaxed)
     } else {
-        std::env::var("CW_RUST_WAL_DRAIN").as_deref() == Ok("truncate")
+        match std::env::var("CW_RUST_WAL_DRAIN").as_deref() {
+            Ok("off") => DRAIN_OFF,
+            Ok("truncate") => DRAIN_TRUNCATE,
+            _ => DRAIN_PASSIVE,
+        }
     }
 }
 
@@ -112,9 +127,14 @@ pub fn set_sentinel_for_tests(enabled: bool) {
     SENTINEL_OVERRIDE.store(true, Ordering::Relaxed);
 }
 
-/// 单测 / 诊断用：编程式覆盖写后 TRUNCATE drain 开关。
-pub fn set_wal_drain_truncate_for_tests(enabled: bool) {
-    DRAIN_TRUNCATE.store(enabled, Ordering::Relaxed);
+/// 单测 / 诊断用：编程式覆盖写后 drain 模式（"off" / "passive" / "truncate"）。
+pub fn set_wal_drain_for_tests(mode: &str) {
+    let m = match mode {
+        "off" => DRAIN_OFF,
+        "truncate" => DRAIN_TRUNCATE,
+        _ => DRAIN_PASSIVE,
+    };
+    DRAIN_MODE.store(m, Ordering::Relaxed);
     DRAIN_OVERRIDE.store(true, Ordering::Relaxed);
 }
 
@@ -162,11 +182,11 @@ pub fn close_sentinel_connections() {
 // ============================================
 
 /// 打开一个专用连接，PRAGMA 与 Python `db_base.py` 对齐，并额外关闭
-/// autocheckpoint。
+/// autocheckpoint；open 期执行一次 PASSIVE checkpoint。
 ///
 /// 顺序与历史各模块自带的 `open_readwrite` 保持一致：
 /// busy_timeout → journal_mode=WAL → synchronous=NORMAL → foreign_keys=OFF
-/// → wal_autocheckpoint=0。
+/// → wal_autocheckpoint=0 → wal_checkpoint(PASSIVE)。
 ///
 /// `foreign_keys` 必须用 `execute_batch` 传裸 `OFF` 关键字：`pragma_update`
 /// 传字符串会被 SQLite 当作 truthy=1，FK 仍启用（见 `incremental_build_query.rs`
@@ -175,6 +195,11 @@ pub fn close_sentinel_connections() {
 /// `wal_autocheckpoint=0`：短连接 drop 时的 autocheckpoint 是 c53da76 之前
 /// p15 族 malformed 的直接撕裂源（POSIX 同进程锁不排除 Python 侧读标记，
 /// drop 时的回写/截断会把 Python 长连接的 `-shm` 视图撕成不一致快照）。
+///
+/// **open 期 PASSIVE checkpoint**（`CW_RUST_OPEN_CHECKPOINT=0` 可关）：
+/// 全新短连接面对 Python 侧遗留的 `-wal`/`-shm` 状态时，必须触发一次
+/// wal-index 重建才能拿到一致快照——v2（零 checkpoint）的 CI 实测中，
+/// h7 族 12 项正是因缺这一步而以「打开数据库即 malformed」失败。
 fn open_db_conn(db_path: &str) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open_with_flags(
         db_path,
@@ -186,17 +211,27 @@ fn open_db_conn(db_path: &str) -> Result<Connection, rusqlite::Error> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "OFF")?;
     conn.pragma_update(None, "wal_autocheckpoint", 0i64)?;
+    if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+    }
     Ok(conn)
 }
 
-/// Rust 侧访问 DB 的**唯一入口**：每次调用独立短连接 + 哨兵保活 + 零 checkpoint。
+/// Rust 侧访问 DB 的**唯一入口**：短连接 + open 期 PASSIVE + 哨兵 +
+/// autocheckpoint=0 + 写后温和 drain（v3）。
 ///
 /// 语义：
 ///
-/// 1. `open_db_conn` 开一个专用短连接（创建文件）。
-/// 2. `ensure_sentinel` 钉住该 `.db` 的 `-shm`（首个短连接关闭后仍存活）。
+/// 1. `open_db_conn` 开一个专用短连接（创建文件）；open 期的 PASSIVE
+///    checkpoint 触发 wal-index 重建——面对 Python 侧遗留的 `-wal`/`-shm`
+///    状态时这是 h7 族不 malformed 的必要步骤（v2 翻车的直接原因）。
+/// 2. `ensure_sentinel` 钉住该 `.db` 的 `-shm`（本侧任何连接关闭序列都
+///    不再触发「最后连接」的 `-wal`/`-shm` 回收）。
 /// 3. 执行 `f`——写路径在闭包内自带 `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`。
-/// 4. 关闭短连接（不做 checkpoint，不触发 `-wal`/`-shm` 回收）。
+/// 4. 写后按 `drain_mode()` 处理：PASSIVE（默认）温和回写不截断；
+///    TRUNCATE（`CW_RUST_WAL_DRAIN=truncate`，v1 诊断复现臂）截断；
+///    off（v2 行为）跳过。
+/// 5. 关闭短连接（`wal_autocheckpoint=0`，drop 不做 autocheckpoint）。
 ///
 /// # 为什么必须短连接
 ///
@@ -206,12 +241,14 @@ fn open_db_conn(db_path: &str) -> Result<Connection, rusqlite::Error> {
 /// 「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页 ⇒ `database disk image is malformed`。
 /// Probe I 实测：长活 + `TRUNCATE` / `PASSIVE` drain 均红；短连接转绿。
 ///
-/// # 为什么必须零 checkpoint
+/// # 为什么 drain 只能温和（v3 对 v1/v2 的修正）
 ///
-/// Rust 侧在本进程内的任何 WAL 回收（TRUNCATE drain / drop 时 autocheckpoint /
-/// 最后连接删除 `-shm`）都会让 Python 长连接的 `-shm` 视图或读标记失效。
-/// 292e684 全套 CI 证明 v1 的写后 TRUNCATE drain 让 p15 族 + incremental_parse
-/// 回归。修法见模块文档。
+/// - v1（写后 TRUNCATE）：撕裂 Python 长连接快照 ⇒ p15 族 + incremental_parse
+///   回归（292e684 全套 CI 实证）。
+/// - v2（零 checkpoint）：h7 族 12 项以「打开即 malformed」失败（open 期缺
+///   wal-index 重建）。
+/// - v3：open 期 PASSIVE 保 h7；写后 PASSIVE 只回写无读者冲突的帧、不强制
+///   截断，故不撕 p15；哨兵 + `wal_autocheckpoint=0` 杜绝 drop 期回收。
 ///
 /// # 错误
 ///
@@ -224,9 +261,16 @@ pub fn with_db_conn<T>(
     let conn = open_db_conn(db_path)?;
     ensure_sentinel(db_path);
     let out = f(&conn);
-    if drain_truncate_enabled() {
-        // 诊断/兼容路径：默认关闭——TRUNCATE 会撕裂 Python 长连接快照。
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    match drain_mode() {
+        DRAIN_TRUNCATE => {
+            // 诊断复现臂（v1 行为）：截断 WAL——会撕裂 Python 长连接快照。
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+        DRAIN_PASSIVE => {
+            // 温和 drain（v3 默认）：回写可安全回写的帧，不强制截断。
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
+        }
+        _ => {}
     }
     drop(conn);
     Ok(out)
@@ -243,8 +287,9 @@ mod tests {
     }
 
     fn restore_gates() {
+        // DRAIN 门由 test_with_db_conn_drain_mode_matrix 单一测试串行独占，
+        // 这里不恢复，避免与并行 drain 矩阵测试的全局门状态竞态。
         set_sentinel_for_tests(true);
-        set_wal_drain_truncate_for_tests(false);
     }
 
     #[test]
@@ -291,8 +336,8 @@ mod tests {
 
     #[test]
     fn test_with_db_conn_reads_back_via_wal_while_sentinel_holds() {
-        // 默认（哨兵开 + drain 关）：数据经 WAL 立即可见，新连接读得到。
-        // 该断言对 drain 开关不敏感（两种设置下都成立），避免与并行单测的
+        // 默认（哨兵开 + passive drain）：数据经 WAL 立即可见，新连接读得到。
+        // 该断言对 drain 开关不敏感（三种设置下都成立），避免与并行单测的
         // 门状态翻转相互干扰。
         let db = tmp_db("wal_visible.db");
         let _ = std::fs::remove_file(&db);
@@ -316,30 +361,65 @@ mod tests {
         let _ = std::fs::remove_file(&db);
     }
     #[test]
-    fn test_with_db_conn_drains_wal_only_when_enabled() {
-        // 诊断门自检：显式开 drain 时，写后 WAL 被截断（断言在哨兵开启下同样
-        // 成立——TRUNCATE 仍会把 WAL 收到 0；只翻 drain 门避免与并行 sentinel
-        // 测试的全局门状态竞态）。
-        set_wal_drain_truncate_for_tests(true);
-        let db = tmp_db("drain_enabled.db");
-        let _ = std::fs::remove_file(&db);
-        let path = db.to_string_lossy().to_string();
+    fn test_with_db_conn_drain_mode_matrix() {
+        // drain 模式矩阵（单测内串行持有 DRAIN 门，避免与并行测试竞态）：
+        // - truncate（v1 诊断臂）：写后 WAL 被截断到 0；
+        // - passive（v3 默认）：帧回写进主库，但 -wal 文件不被截断；
+        // - off（v2 行为）：零 checkpoint 下已提交事务仍立即可读。
+        let mk = |name: &str| {
+            let db = tmp_db(name);
+            let _ = std::fs::remove_file(&db);
+            db.to_string_lossy().to_string()
+        };
+        let write = |path: &str| {
+            with_db_conn(path, |c| {
+                c.execute_batch("CREATE TABLE IF NOT EXISTS t(x INTEGER);")
+                    .unwrap();
+                c.execute_batch("BEGIN IMMEDIATE; INSERT INTO t VALUES (1); COMMIT;")
+                    .unwrap();
+            })
+            .unwrap();
+        };
+        let wal_len = |path: &str| {
+            std::fs::metadata(format!("{}-wal", path))
+                .map(|m| m.len())
+                .unwrap_or(0)
+        };
+        let count = |path: &str| {
+            with_db_conn(path, |c| {
+                c.query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0))
+                    .unwrap()
+            })
+            .unwrap()
+        };
 
-        with_db_conn(&path, |c| {
-            c.execute_batch("CREATE TABLE IF NOT EXISTS t(x INTEGER);")
-                .unwrap();
-            c.execute_batch("BEGIN IMMEDIATE; INSERT INTO t VALUES (1); COMMIT;")
-                .unwrap();
-        })
-        .unwrap();
+        set_wal_drain_for_tests("truncate");
+        let p = mk("drain_truncate.db");
+        write(&p);
+        assert_eq!(wal_len(&p), 0, "TRUNCATE drain 必须把 WAL 收干净");
+        assert_eq!(count(&p), 1, "TRUNCATE 后数据必须可读");
 
-        let wal = std::path::PathBuf::from(format!("{}-wal", path));
-        let wal_len = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
-        assert_eq!(wal_len, 0, "开启 drain 时写后必须把 WAL 收干净");
+        set_wal_drain_for_tests("passive");
+        let p2 = mk("drain_passive.db");
+        write(&p2);
+        assert!(
+            wal_len(&p2) > 0,
+            "PASSIVE drain 只回写不截断——-wal 文件必须保留"
+        );
+        assert_eq!(count(&p2), 1, "PASSIVE drain 后数据必须立即可读");
 
-        set_wal_drain_truncate_for_tests(false);
+        set_wal_drain_for_tests("off");
+        let p3 = mk("drain_off.db");
+        write(&p3);
+        assert_eq!(count(&p3), 1, "零 checkpoint（off）下已提交事务也必须可读");
+
+        set_wal_drain_for_tests("passive");
         close_sentinel_connections();
-        let _ = std::fs::remove_file(&db);
+        for p in [p, p2, p3] {
+            let _ = std::fs::remove_file(&p);
+            let _ = std::fs::remove_file(format!("{}-wal", p));
+            let _ = std::fs::remove_file(format!("{}-shm", p));
+        }
     }
 
     #[test]

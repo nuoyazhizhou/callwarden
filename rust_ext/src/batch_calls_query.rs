@@ -128,8 +128,9 @@ struct BatchSaveCallsResult {
 // 锁按进程分配，两实例无法互斥 WAL-index。长活连接跨整个 build 持有 WAL 读标记，
 // Python 侧持续提交会让两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页
 // （database disk image is malformed，CI ubuntu 独有）。
-// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-// 零 checkpoint 语义与哨兵 / drain 门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN）同见该模块（v2：默认零 checkpoint，drain 仅诊断）。
+// 正式修法见 `crate::db_conn`（v3「温和 drain」）：短连接 + open 期 PASSIVE
+// + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain；诊断门（CW_RUST_SENTINEL_CONN
+// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）同见该模块。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {

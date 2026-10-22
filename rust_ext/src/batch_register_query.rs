@@ -63,7 +63,7 @@ struct RegisterResult {
 //
 // 注意：foreign_keys=OFF 的理由保留在本模块注释——INSERT file_instances 时
 // current_content_hash='' 不是 file_contents 的真实 FK，开 FK 检查会 IntegrityError。
-// PRAGMA 序列与哨兵 / drain 门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN）见 `crate::db_conn`。
+// PRAGMA 序列与哨兵 / drain 门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）见 `crate::db_conn`。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {

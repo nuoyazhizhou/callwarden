@@ -76,11 +76,12 @@ impl Default for BatchSaveResult {
 // 两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页（database disk image is
 // malformed，CI ubuntu 独有；Windows 按句柄加锁故本地免疫）。
 //
-// 正式修法：Rust 侧一律走「每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-// drain」（`crate::db_conn::with_db_conn`）。Probe I 实测长活 + drain 仍红、
-// 全模块短连接转绿。PRAGMA 序列（busy_timeout=5s / journal_mode=WAL /
-// synchronous=NORMAL / foreign_keys=OFF / wal_checkpoint(PASSIVE)）与
-// 哨兵连接（CW_RUST_SENTINEL_CONN）/ drain（CW_RUST_WAL_DRAIN）见 `crate::db_conn`。
+// 正式修法：Rust 侧一律走 `crate::db_conn::with_db_conn`（v3「温和 drain」：
+// 短连接 + open 期 PASSIVE + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain）。
+// Probe I 实测长活 + drain 仍红、全模块短连接转绿。PRAGMA 序列（busy_timeout=5s
+// / journal_mode=WAL / synchronous=NORMAL / foreign_keys=OFF / open 期
+// wal_checkpoint(PASSIVE)）与诊断门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN
+// / CW_RUST_OPEN_CHECKPOINT）见 `crate::db_conn`。
 
 /// 从 Python dict 提取 SymbolInfo
 ///
