@@ -315,17 +315,14 @@ jobs:
                   "WHERE type='table' AND name='task_dependencies'"
               ).fetchone()[0]
               c.close()
-              wal, shm = db_path + "-wal", db_path + "-shm"
               print(f"[{tag}] checksum={row!r}")
               print(f"[{tag}] task_dependencies_exists={bool(td)}")
-              print(
-                  f"[{tag}] -wal exists={os.path.exists(wal)} "
-                  f"size={os.path.getsize(wal) if os.path.exists(wal) else 0}"
-              )
-              print(
-                  f"[{tag}] -shm exists={os.path.exists(shm)} "
-                  f"size={os.path.getsize(shm) if os.path.exists(shm) else 0}"
-              )
+              for ext in ("-wal", "-shm"):
+                  p = db_path + ext
+                  print(
+                      f"[{tag}] {ext} exists={os.path.exists(p)} "
+                      f"size={os.path.getsize(p) if os.path.exists(p) else 0}"
+                  )
               return row[0] if row else None
 
 
@@ -357,11 +354,11 @@ jobs:
               if now == "tampered":
                   print("VERDICT = (a) Rust 读到篡改前旧值，storage.rs:1365 提前 Ok 放行（过期快照）")
               elif now == canon:
-                  print("VERDICT = (b) checksum 被策略A重写 ⇒ schema_shape_matches_canonical 误判 task_dependencies 仍在")
+                  print("VERDICT = (b) checksum 被策略A重写，schema_shape_matches_canonical 误判 task_dependencies 仍在")
               else:
-                  print("VERDICT = 未分类，checksum =", now)
+                  print("VERDICT = 未分类 checksum =", now)
           else:
-              print("VERDICT = 本地/CI 均正常抛错，无需判别")
+              print("VERDICT = 正常抛错，无需判别")
           PYEOF
 
       # Probe E（排最前避开日志截断）：metrics CLI 测试的 CI-only 失败取证。
