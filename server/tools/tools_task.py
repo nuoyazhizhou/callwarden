@@ -37,6 +37,7 @@ from server.compat_registry import (  # noqa: E402
     register_compat_routes,
 )
 
+from ..daemon_client import route_task_read  # noqa: F401 —— re-export facade：tests/test_http_governance_error_cutover.py 经 monkeypatch.setattr 本模块属性
 from ..daemon_client import route_rpc as _route
 
 
