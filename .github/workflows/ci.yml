@@ -271,6 +271,99 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
           echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
+      # ============================================================
+      # Probe J（fail-closed 判别臂）：CI 上
+      # test_facade_does_not_fallback_after_rust_failure 的 DID NOT RAISE
+      # 究竟走 storage.rs 的哪条放行路径。两条路径留下的**痕迹不同**，
+      # 只需在 CodeGraphDB 没抛异常之后从 Python 侧回读一次状态即可一刀切开：
+      #
+      #   (a) 假说「Rust 读到篡改前旧值」：走 storage.rs:1365
+      #       `metadata_current == checksum` 提前 Ok 返回 ⇒ 不写任何东西
+      #       ⇒ 库里 checksum 仍是 'tampered'；
+      #   (b) 假说「shape 校验误判 task_dependencies 仍在」：走 storage.rs:1418
+      #       `shape_ok` 分支 ⇒ 调 update_stored_checksum_to_canonical
+      #       ⇒ 把 checksum 从 'tampered' 重写回 canonical 值。
+      #
+      # ⇒ 回读 checksum 是否等于篡改前记录的 canonical 值，即可唯一确定分支。
+      #   再叠加 task_dependencies 是否真的不存在、以及 -wal/-shm 的存在与
+      #   大小，可判断篡改帧当时是否还躺在未 checkpoint 的 WAL 里。
+      #
+      # 位置：必须在 CD-1 之后、Probe E 之前——Probe F 当前会失败，插在其后
+      # 会被 bash -e 短路而根本跑不到。continue-on-error: true 保证它只
+      # 打印、永不阻断后续步骤。
+      # ============================================================
+      - name: Probe J - fail-closed 判别臂（storage.rs 过期快照 vs shape 误判）
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'PYEOF'
+          import os, sqlite3, tempfile
+          from callwarden.db.db import CodeGraphDB
+          from callwarden.db.schema import SCHEMA_VERSION
+          from callwarden_core import storage_initialize_or_migrate
+
+
+          def probe(tag):
+              c = sqlite3.connect(db_path)
+              row = c.execute(
+                  "SELECT checksum FROM schema_migrations WHERE version=?",
+                  (SCHEMA_VERSION,),
+              ).fetchone()
+              td = c.execute(
+                  "SELECT count(*) FROM sqlite_master "
+                  "WHERE type='table' AND name='task_dependencies'"
+              ).fetchone()[0]
+              c.close()
+              wal, shm = db_path + "-wal", db_path + "-shm"
+              print(f"[{tag}] checksum={row!r}")
+              print(f"[{tag}] task_dependencies_exists={bool(td)}")
+              print(
+                  f"[{tag}] -wal exists={os.path.exists(wal)} "
+                  f"size={os.path.getsize(wal) if os.path.exists(wal) else 0}"
+              )
+              print(
+                  f"[{tag}] -shm exists={os.path.exists(shm)} "
+                  f"size={os.path.getsize(shm) if os.path.exists(shm) else 0}"
+              )
+              return row[0] if row else None
+
+
+          db_path = os.path.join(
+              tempfile.mkdtemp(prefix="cw_failclosed_diag_"), "diag.db"
+          )
+          print("STEP1 rust init:", storage_initialize_or_migrate(db_path, SCHEMA_VERSION))
+          canon = probe("after-init")          # ← 记录篡改前的 canonical 值
+
+          c = sqlite3.connect(db_path)
+          c.execute(
+              "UPDATE schema_migrations SET checksum='tampered' WHERE version=?",
+              (SCHEMA_VERSION,),
+          )
+          c.execute("DROP TABLE IF EXISTS task_dependencies")
+          c.commit()
+          c.close()
+          probe("after-tamper")
+
+          raised = None
+          try:
+              CodeGraphDB(db_path=db_path)
+          except Exception as e:
+              raised = f"{type(e).__name__}: {e}"
+          print("STEP3 CodeGraphDB raised =", raised)
+          now = probe("after-open")
+
+          if raised is None:
+              if now == "tampered":
+                  print("VERDICT = (a) Rust 读到篡改前旧值，storage.rs:1365 提前 Ok 放行（过期快照）")
+              elif now == canon:
+                  print("VERDICT = (b) checksum 被策略A重写 ⇒ schema_shape_matches_canonical 误判 task_dependencies 仍在")
+              else:
+                  print("VERDICT = 未分类，checksum =", now)
+          else:
+              print("VERDICT = 本地/CI 均正常抛错，无需判别")
+          PYEOF
+
       # Probe E（排最前避开日志截断）：metrics CLI 测试的 CI-only 失败取证。
       # 内联脚本已验证同 env 下 patch 生效、RC=0——失败只发生在 pytest
       # 上下文。此处直接跑真实测试文件（小文件，输出必完整可读），拿
