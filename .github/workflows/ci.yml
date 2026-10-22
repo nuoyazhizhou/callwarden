@@ -211,13 +211,17 @@ jobs:
   # 最后连接删 -shm）都会撕裂 Python 长连接快照**。修法 v2 = 短连接 + 哨兵连接
   # 钉住 -shm + PRAGMA wal_autocheckpoint=0 + 默认零 checkpoint
   # （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 两诊断门）。
-  # 2026-10-22 v3（run 39761713228 判读）：v2 翻车——h7 族 12 项以「Rust 侧
-  # 打开数据库即 malformed」失败：全新短连接面对 Python 侧遗留 -wal/-shm 时
-  # 必须靠 **open 期 PASSIVE checkpoint** 触发 wal-index 重建。修法 v3 = v2
-  # 基础上恢复 open 期 PASSIVE（CW_RUST_OPEN_CHECKPOINT 门）＋ 写后改温和
-  # PASSIVE drain（CW_RUST_WAL_DRAIN 门三态：off/passive/truncate）。本 job
-  # 保留做 **malform 家族回归门**（Probe F）＋ v1/v2 复现臂（Probe B/G）＋
-  # 其他缺陷的取证步骤。
+  # 2026-10-22 v3（run 39788826909 判读）：v3 恢复 open 期 PASSIVE + 写后
+  # 改温和 PASSIVE drain，但 **h7 族仍未转绿**（h7 7 + agent_integration 2
+  # + e2e 1 + incremental 1 + dashboard 8 errors，全部 Rust 打开即 malformed，
+  # maxfail 早停，p15 未跑到）。⇒ 旧归因「缺 open 期 PASSIVE」被推翻；v1
+  # （h7 绿）与 v2/v3（h7 红）的差异集 = {哨兵 on/off, autocheckpoint 0/1000,
+  # TRUNCATE/PASSIVE}，核心嫌疑 = **哨兵连接钉 -shm**（Rust 短连接读到
+  # Python 侧 libsqlite3 写入的外来 -shm 视图）。⇒ h7 与 p15 需求互斥：
+  # 哨兵保 p15（防 -shm 删除撕裂）即害 h7；删 -shm 保 h7（v1 路径）即撕 p15。
+  # 根本的唯一交集 = **同进程单一 libsqlite3 实例**（连系统 sqlite 而非
+  # bundled，两侧共用同一 VFS/-shm 映射；Probe D 双 Python 连接绿已旁证
+  # 同库多连接合法）。哨兵隔离臂 Probe H/I + 回归门 Probe F 保留在本 job。
   # ============================================================
   wal-ab-probe:
     name: WAL A/B probe (deep-water root-cause isolation)
@@ -287,16 +291,36 @@ jobs:
 
       # config G（v2 复现臂）：h7 族 —— 显式恢复 v2「零 checkpoint」配置
       # （关 open 期 PASSIVE + 写后 drain=off），预期 h7 族以「Rust 侧打开
-      # 数据库即 malformed」重新失败（run 39761713228 实证 12 项）。与
-      # Probe B（v1 TRUNCATE 复现臂）合起来构成完整经验矩阵：
-      #   默认（v3）= open-PASSIVE + 温和 drain → 全绿（主测试 job 判读）
-      #   truncate（v1）→ p15/incremental 撕裂（B 臂）
-      #   off + 关 open-PASSIVE（v2）→ h7 打开即 malformed（本臂）
+      # 数据库即 malformed」重新失败（与 v2/v3 默认配置同签名——v3 恢复了
+      # open-PASSIVE 但 h7 仍红，见下方 Probe H/I 与 job 头注释）。
       - name: Probe G - build path (v2 zero-checkpoint repr)
         if: always()
         env:
           CW_RUST_WAL_DRAIN: "off"
           CW_RUST_OPEN_CHECKPOINT: "0"
+        run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
+
+      # config H（哨兵隔离开-1）：h7 族 —— 关哨兵 + TRUNCATE drain（≈ v1 配置，
+      # 差 wal_autocheckpoint=0）。判读：若转绿 ⇒ v2/v3 新引入的**哨兵连接**
+      # 才是 h7「打开即 malformed」的驱动（哨兵钉住 -shm ⇒ Rust 后续短连接
+      # 读到的是 Python 侧 libsqlite3 写入的外来 -shm 视图 ⇒ wal-index 错位），
+      # 而非「缺 open 期 PASSIVE」（v3 已证伪该旧归因）。
+      - name: Probe H - h7 (sentinel off + truncate)
+        if: always()
+        env:
+          CW_RUST_SENTINEL_CONN: "0"
+          CW_RUST_WAL_DRAIN: "truncate"
+        run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
+
+      # config I（哨兵隔离开-2）：h7 族 —— 关哨兵 + 默认 passive drain。
+      # 与 H 唯一差异是写后 drain 模式：两臂全绿 ⇒ 哨兵是唯一驱动（h7 与
+      # 哨兵互斥）；H 绿 I 红 ⇒ TRUNCATE 不可替代；两臂皆红 ⇒ 哨兵并非
+      # 驱动，怀疑转向 wal_autocheckpoint=0（v1 为默认 1000，无门可探）。
+      - name: Probe I - h7 (sentinel off + passive)
+        if: always()
+        env:
+          CW_RUST_SENTINEL_CONN: "0"
+          CW_RUST_WAL_DRAIN: "passive"
         run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
 
       # config C：fts ×2 stale read —— 回滚 build 路径全部 6 个 Rust 写短路
@@ -330,21 +354,30 @@ jobs:
       # 两实例互不排斥；Windows 按句柄加锁故本地免疫）时的撕裂页。
       #
       # 正式修法见 rust_ext/src/db_conn.rs（v3「温和 drain」）：
-      # ① 短连接 + open 期 PASSIVE checkpoint（CW_RUST_OPEN_CHECKPOINT 门）
-      #   ——治 h7 族（新短连接的 wal-index 重建）；
+      # ① 短连接 + open 期 PASSIVE checkpoint（CW_RUST_OPEN_CHECKPOINT 门）；
       # ② 哨兵连接钉住 `-shm` + `wal_autocheckpoint=0` + 写后温和 PASSIVE
-      #   drain（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 三态门）——治
-      #   v1 写后 TRUNCATE drain 遗留的 p15 族 + incremental_parse +
-      #   rust_storage 读路径。
+      #   drain（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 三态门）。
+      # **2026-10-22 CI verdict（run 39788826909，b8b05ec）**：v3 未能治好
+      # h7——h7 族 7 + agent_integration 2 + e2e_triangle 1 + incremental 1 +
+      # dashboard 8 errors，全部「Rust 打开即 malformed」，套件 maxfail 早停
+      # （p15 文件未跑到，状态未知）。v1（h7 绿）与 v3（h7 红）的差异集 =
+      # {哨兵 on/off, autocheckpoint 0/1000, TRUNCATE/PASSIVE drain}，旧归因
+      # 「缺 open 期 PASSIVE」已被 v3 推翻；哨兵假说见 Probe H/I（关哨兵后
+      # 短连接 close 会删除 -wal/-shm ⇒下次 open 从干净状态重建 wal-index，
+      # 即 v1 的 h7 治愈路径；代价是删 -shm 撕 Python 长连接 = v1 的 p15
+      # 撕裂路径——h7 与 p15 的需求互斥，见 job 头注释）。
       # 长活连接即根因载体，故 CW_RUST_POOL_LIFETIME / CW_RUST_POOL_OFF /
       # CW_RUST_POOL_WAL_DRAIN 三个诊断门连同进程级池已于 v1 一并移除
       # （旧 Probe G/H/I 步骤同步删除，其结论已固化进 db_conn.rs 模块文档；
-      # 现 Probe G 为 v2 复现臂，名称复用）。
+      # 现 Probe G/H/I 为 v2 复现臂 + 哨兵隔离臂，名称复用）。
       #
       # 判读：逐文件隔离单跑，输出中**不得**再出现 "database disk image is
       # malformed"；出现即判回归，本 step 直接失败。注：dashboard 的 UTF-8 载荷
       # 缺陷（"Could not decode to UTF-8 column 'content'"）是另一条独立缺陷
       # （c53da76 之前即已存在），不由本门覆盖。
+      # 门设计注意：本 job 默认 `set -e`，`out=$(pytest ...)` 任何**非
+      # malformed** 的测试失败也会直接退出且吞掉 tail 输出——必须 `|| true`
+      # 保住诊断输出（b8b05ec run 中本门即在首个文件 h7 上被 set -e 吞输出）。
       - name: Probe F - malformed family isolation gate
         if: always()
         run: |
@@ -354,8 +387,8 @@ jobs:
                    tests/test_p15_lazy_import_and_dyn_workers.py tests/test_incremental_parse.py \
                    tests/test_dashboard.py; do
             echo "===== ISOLATED: $f ====="
-            out=$(pytest "$f" -q --tb=line -p no:cacheprovider 2>&1)
-            echo "$out" | tail -12
+            out=$(pytest "$f" -q --tb=short -p no:cacheprovider 2>&1) || true
+            echo "$out" | tail -15
             if echo "$out" | grep -q "database disk image is malformed"; then
               echo "MALFORM REGRESSION in $f —— 短连接 + open-PASSIVE + 温和 drain 的 v3 修法被破坏"
               exit 1

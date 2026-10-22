@@ -157,24 +157,26 @@ Probe I 判读：
   checkpoint（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 诊断门；
   默认 sentinel on / drain off）。WAL 增长交 Python 侧 autocheckpoint
   回收（单实例操作安全）。daemon 纯 Rust 进程不经 with_db_conn，不受影响。
-- **v2 翻车（CI run 39761713228）**：5 个 Python 测试 job 全部回退到 c53da76
-  时代的 h7 族签名（12 failed / 2729 passed，maxfail 早停，「malformed」×32），
-  但机制**不同**：失败发生在 Rust 侧**打开数据库时**——
-  `RuntimeError: Rust batch_resolve_and_save_calls 返回失败…打开 CodeGraph
-  数据库失败: database disk image is malformed`。归因：v2 删掉了 open 期
-  PASSIVE checkpoint，全新的 Rust 短连接面对 Python 侧遗留 `-wal`/`-shm`
-  状态时缺少 wal-index 重建，读到过期 wal-index ⇒ 拼出撕裂页。
-  ⇒ v1 能治 h7 的承重件不是「写后 TRUNCATE」，而是 **open 期 PASSIVE
-  checkpoint 触发的 wal-index 重建**。
-- v3 修法（本次提交，「温和 drain」）：短连接 + **open 期 PASSIVE**
-  （CW_RUST_OPEN_CHECKPOINT 门，默认开）+ 哨兵 + `wal_autocheckpoint=0`
-  + **写后 PASSIVE drain**（CW_RUST_WAL_DRAIN 三态门：off/passive/truncate，
-  默认 passive）。PASSIVE 与 TRUNCATE 的判别性差异：不在有读者持有读标记时
-  强行清空 WAL，故不撕 p15；又完成了帧回写，h7 不依赖写后任何动作。
-  CI 经验矩阵由三条臂钉死：默认（v3，主测试 job 期全绿）/
-  Probe B（v1 复现：truncate → p15 撕裂）/ Probe G（v2 复现：off + 关
-  open-PASSIVE → h7 打开即 malformed）。
+- **v3 判读（CI run 39788826909，提交 b8b05ec）：v3 未治好 h7。** 主测试
+  job（py3.13）11 failed + 8 errors，全部「Rust 侧打开数据库即 malformed」
+  的 h7 签名（h7 7 + agent_integration 2 + e2e_triangle 1 + incremental 1
+  + dashboard 8 errors），套件 `--maxfail=10` 早停于 3193 passed，**p15 文件
+  未跑到，状态未知**。⇒ v2 的「缺 open 期 PASSIVE」归因被 v3 推翻——
+  v1（h7 绿）与 v2/v3（h7 红）的差异集是 **{哨兵 on/off, autocheckpoint
+  0/1000, TRUNCATE/PASSIVE drain}**，不只是 open-passive。
+- 新的核心嫌疑 = **哨兵连接钉住 -shm**：哨兵使 Rust 后续短连接读到的是
+  Python 侧系统 libsqlite3 写入的外来 `-shm` 视图（两个不同 SQLite 实现
+  各自维护 -shm 缓存），打开时 wal-index 错位 ⇒ 拼撕裂页。v1 无哨兵时，
+  短连接 close 会删除 `-wal`/`-shm`，下次 open 从**干净状态**重建
+  wal-index（h7 治愈路径）；代价正是删 `-shm` 撕 Python 长连接（v1 的
+  p15 撕裂路径）。**h7 与 p15 需求互斥——哨兵保 p15 即害 h7，删 -shm
+  保 h7 即撕 p15，「两族从未同时绿过」在双实例前提下不可逾越。**
+- 根本的唯一交集 = **同进程单一 libsqlite3 实例**：Rust 扩展改为链接
+  系统库 sqlite3（而非 rusqlite bundled 3.45.0），两侧共用同一 VFS 与
+  `-shm` 映射，同进程多连接即为 SQLite 原生支持场景。旁证：Probe D
+  （同进程双 **Python** 连接 + WAL + DDL）在 CI 上持续全绿——同库多连接
+  合法，问题仅在于**两个不同的 SQLite 构建**。
 - 本取证文件使命完成：三代受害面漂移与根因已定性，结论固化进
   `rust_ext/src/db_conn.rs` 模块文档；后续回归由 ci.yml Probe F
-  （纳入 p15/incremental 5 文件的隔离回归门）与 Probe B / Probe G
-  （v1/v2 复现臂）钉死。
+  （纳入 p15/incremental 5 文件的隔离回归门；`set -e` 吞输出的门缺陷
+  已修）与 Probe B/G/H/I 四臂（v1/v2 复现 + 哨兵隔离）钉死。

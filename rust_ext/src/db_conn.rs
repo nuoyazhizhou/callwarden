@@ -64,6 +64,22 @@
 //!
 //! WAL 累积由 Python 侧 autocheckpoint（默认 1000 页、单实例操作）回收。
 //!
+//! ## v3 CI 判读（run 39788826909，2026-10-22）：h7 未转绿
+//!
+//! v3 恢复 open 期 PASSIVE + 写后 PASSIVE 后，h7 族仍以「Rust 侧打开
+//! 数据库即 malformed」失败（h7 7 + agent_integration 2 + e2e_triangle 1
+//! + incremental 1 + dashboard 8 errors；`--maxfail=10` 早停，p15 未跑到）。
+//! ⇒ v2 的「缺 open 期 PASSIVE」归因被推翻：v1（h7 绿）与 v2/v3（h7 红）
+//! 的差异集是 **{哨兵 on/off, autocheckpoint 0/1000, TRUNCATE/PASSIVE}**。
+//! 核心嫌疑 = **哨兵连接钉 -shm**：Rust 后续短连接读到的是 Python 侧系统
+//! libsqlite3 写入的外来 `-shm` 视图 ⇒ 打开时 wal-index 错位。v1 无哨兵时
+//! 短连接 close 删除 `-wal`/`-shm`，下次 open 从干净状态重建 wal-index
+//! （h7 治愈路径），代价是删 `-shm` 撕 Python 长连接（v1 的 p15 撕裂路径）。
+//! **h7 与 p15 需求互斥——双实例前提下「两族从未同时绿过」不可逾越；**
+//! 根本的唯一交集 = 同进程单一 libsqlite3 实例（Rust 侧改链接系统 sqlite3，
+//! 两侧共用同一 VFS/`-shm` 映射；旁证：CI 上同进程双 Python 连接
+//! Probe D 持续全绿）。哨兵隔离臂由 ci.yml Probe H/I 判读。
+//!
 //! # 适用范围
 //!
 //! `with_db_conn` 只被 ext 侧（batch_build / batch_calls / batch_file_versions /
