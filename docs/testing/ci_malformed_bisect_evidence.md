@@ -296,3 +296,49 @@ v4 单实例下锁被正确承认，静默 corruption 转为诚实的 BUSY。
 5 个 Python 版本 0 malformed + h7/p15 首次同时全绿 + 四臂复现失去撕裂面。
 剩余三项：srv_019×4（既有残余）、HTTP RPC fixture 抖动（环境问题）、
 10.5 的 fail-closed 测试失效（v4 特有，需定向探针）。
+
+### 10.7 Probe J 判别（run 39870506204，提交 a28e646）—— 两条假说均被证伪，真凶在测试侧
+
+在 probe job 加判别臂（插在 `Expose repo root` 之后、Probe E 之前，
+`continue-on-error`），脱离 pytest 单独复现同一篡改序列，打印原文：
+
+```
+STEP1 rust init: {'success': True, 'version': 60, 'error': ''}
+[after-tamper] checksum=('tampered',)
+[after-tamper] task_dependencies_exists=False
+[after-tamper] -wal exists=False size=0
+STEP3 CodeGraphDB raised = RuntimeError: MIGRATION_FAILED: schema checksum mismatch
+      for v60: stored=tampered, binary=ac345274..., and DB schema shape differs
+      from canonical (missing tables)
+[after-open] checksum=('tampered',)
+VERDICT = 本地/CI 均正常抛错，无需判别
+```
+
+⇒ **storage.rs 的判决逻辑本身工作正常**；(a)「读到篡改前旧值」与
+(b)「shape 误判」**双双证伪**（`after-open` 的 checksum 仍是 `'tampered'`，
+未被策略 A 重写）。c530b21 保留，不再往 storage.rs 方向投入。
+
+### 10.8 真凶：`CW_USE_RUST_STORAGE` 测试侧环境泄漏（非 Rust 缺陷）
+
+`db/db_base.py:3729`：
+```python
+rust_storage_requested = os.environ.get("CW_USE_RUST_STORAGE", "1").lower() not in {"0","false","no","off"}
+```
+进程内一旦 `CW_USE_RUST_STORAGE=0`，`_initialize_schema` **整体跳过 Rust
+storage**，checksum 校验根本不执行 ⇒ 不抛错。而多个测试在 fixture / 用例体内
+**裸写 `os.environ[...] = "0"` 且不还原**，泄漏给同进程后续用例；pytest-xdist
+下同一 worker 内测试共享环境 ⇒ 全套跑时该测试拿到 `0`。
+
+这解释了全部现象：standalone 抛错、单文件本地通过、全套 CI 不抛错、
+v1 即存在、与 v4 完全无关。
+
+仓库里**已有正确范本**：`tests/test_multi_llm_contract_p4_protected_mutation.py`
+已改用 `monkeypatch.setenv`，其注释原文即记录了这条泄漏。
+
+其余违规点（10 处，改法统一为 `monkeypatch.setenv`）：
+test_p4_lease_smoke.py:40 / test_p4_authoritative_clock.py:38 /
+test_p1_write_path_verdict.py:26 / test_property_lease_fencing.py:31（签名已有
+monkeypatch）/ test_multi_llm_contract_p4_lease.py:44 /
+test_multi_llm_contract_p4_migration.py:45 / test_p3_task_mutation_smoke.py:34 /
+test_p3_gate_smoke.py:38 / test_p3_reviews_smoke.py:21 /
+test_p3_identity_smoke.py:28。
