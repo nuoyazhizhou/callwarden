@@ -190,3 +190,109 @@ Probe I 判读：
   `rust_ext/src/db_conn.rs` 模块文档；后续回归由 ci.yml Probe F
   （纳入 p15/incremental 5 文件的隔离回归门；`set -e` 吞输出的门缺陷
   已修）与 Probe B/G/H/I 四臂（v1/v2 复现 + 哨兵隔离）钉死。
+
+## 十、v4 判读（2026-10-23，CI run 39814732618，提交 69a87f4）—— malformed 根因已根除
+
+### 10.1 切换生效（构建日志实证）
+
+测试 job 与 probe job 的 `python release/build.py --rust` 输出均含：
+
+```
+[v4] system libsqlite3 detected -> linking SYSTEM sqlite3
+```
+
+（ubuntu-24.04 = sqlite 3.45.1 ≥ rusqlite 0.31 的 3.45 基线，版本门命中；
+`--no-default-features --features extension-module` 未带 `sqlite-bundled`。）
+
+### 10.2 主测试 job：malformed 归零，套件首次跑全
+
+| Python | passed | failed | errors | `malformed` 计数 | `database is locked` 计数 | 耗时 |
+|---|---|---|---|---|---|---|
+| 3.10 | 8144 | 5 | 5 | 0 | 0 | 15:20 |
+| 3.11 | 8102 | 5 | 5 | 0 | 0 | 14:13 |
+| 3.12 | 8144 | 5 | 4 | 0 | 0 | 18:01 |
+| 3.13 | 8148 | 5 | 0 | 0 | 0 | 08:44 |
+| 3.14 | 8142 | 5 | 4 | 0 | 0 | 14:07 |
+
+- **5 个版本签名完全一致**：0 malformed、0 locked，`--maxfail=10` 不再早停
+  （对比 v3 卡在 3193 passed）。
+- 5 项 FAILED 在所有版本逐字相同：`test_srv_019.py` ×4（既有残余面，
+  audit 退出码 1）+ `test_rust_storage_service::test_facade_does_not_fallback
+  _after_rust_failure` ×1（见 10.5）。
+- 4~5 项 ERROR 为 HTTP RPC fixture 抖动，**每版本命中的模块都不同**
+  （3.14=test_mcp_get_symbol_history、3.12=test_mcp_get_symbol_commit_history、
+  3.11=test_mcp_rule_candidate_list、3.10=test_mcp_get_vulnerability_blast_radius）
+  ⇒ 与 v4 无关的环境/端口型抖动。
+- 原 292e684 残余面中的 dashboard UTF-8 / FTS stale / metrics **本轮全绿**，
+  实际结果优于预期（三者很可能本就是 malformed 同族症状）。
+
+### 10.3 各 probe 臂：h7 与 p15 首次同时全绿
+
+| 臂 | 环境变量 | 文件 | 结果 |
+|---|---|---|---|
+| p15 臂 | `CW_RUST_WAL_DRAIN=truncate` | p15 ×3 + dashboard | ✅ 54 项全绿 |
+| Probe G | `DRAIN=off`, `OPEN_CHECKPOINT=0` | h7 ×4 | ✅ 133 项全绿 |
+| Probe H | `SENTINEL=0`, `DRAIN=truncate` | h7 ×4 | ✅ 133 项全绿 |
+| Probe I | `SENTINEL=0`, `DRAIN=passive` | h7 ×4 | ✅ 133 项全绿 |
+| 双连接复现 | — | `_wal_ab_dual_conn_repro.py` | ✅ 4/4 全绿 |
+| 隔离循环 | 逐文件 | h7 + p15 ×9 文件 | ✅ 9/9 全绿 |
+| **Probe F** | 默认门 + `-p _wal_ab_probe_plugin` | test_p7_batch_calls | ❌ 7 项 `database is locked`（见 10.4） |
+
+**结论：第九节定性的「h7/p15 结构性互斥」壁垒已被 v4 拆除。** 四臂同时
+绿意味着复现臂彻底失去撕裂面——共享 `-shm` 下连 TRUNCATE drain 都安全。
+
+### 10.4 Probe F 的 `database is locked` —— 探针插件自身缺陷（已本地实证，非 v4 回归）
+
+Probe F 设 `CW_WAL_AB_ROLLBACK_RUST_BATCH=1`，激活 `tests/_wal_ab_probe_
+plugin.py`。本地复现（Windows，同构 SQL）给出完整链条：
+
+```
+PRAGMA foreign_keys = 1                      # CodeGraphDB 启用外键
+rollback_config table exists: True
+in_transaction BEFORE insert: False
+INSERT failed: IntegrityError('FOREIGN KEY constraint failed')
+in_transaction AFTER insert attempt: True    # ← 悬空写事务
+is_feature_rolled_back: False                # ← 注入未生效，Rust 路径照走
+```
+
+机制：插件用 `task_id='wal-ab-probe'` 插 `rollback_config`，该表 `task_id`
+有 `REFERENCES tasks(id)` 外键且库启用 FK ⇒ 插入违约抛 `IntegrityError`；
+插件 `except Exception: pass` 吞掉，**`commit()` 从未执行**，Python sqlite3
+legacy 模式自动开启的隐式事务悬空（持有写锁）。随后 `db_build.py:1207`
+的 `is_feature_rolled_back` 因行不存在返回 False ⇒ 走 Rust 路径 ⇒
+Rust `BEGIN IMMEDIATE` 撞上这把悬空写锁，`busy_timeout(5s)` 用尽 ⇒
+SQLITE_BUSY `database is locked`。7 项 × 5s ≈ 36s，与实测耗时吻合。
+
+**这同时也是 v4 根因模型的第二个独立证据**：该悬空写锁在 v1–v3 一直存在，
+只是双实例时代 Rust 侧 fcntl 锁与之互不排斥、直接覆写（⇒ 撕裂 ⇒ malformed）；
+v4 单实例下锁被正确承认，静默 corruption 转为诚实的 BUSY。
+⇒ Probe F 红属**临时探针自身缺陷**，全套生产路径零 `locked`、零 `malformed`。
+
+### 10.5 遗留：test_facade_does_not_fallback_after_rust_failure（**v1 即存在、v4 未收口**，跟进中）
+
+- 现象：`DID NOT RAISE RuntimeError`，即 Rust 未检出篡改。
+- **非 v4 引入**：本文第九节已记录 v1（292e684 全套 8138 passed）时就有
+  「rust_storage 读路径 1 项（DID NOT RAISE：过期快照把篡改读成原值）」——
+  同一签名、同一机理。v4 只修掉了 corruption，这个「读原值」症状未收口。
+- 本地（Windows，bundled）通过；CI（ubuntu）失败。
+- 判决链定位到 `rust_ext/src/storage.rs:1365`：`metadata_current == checksum`
+  即提前 `Ok` 放行；不 raise 意味着 Rust 的 `open_connection` 读到了**篡改前**
+  的 checksum，或 `schema_shape_matches_canonical` 认为 `task_dependencies` 仍在。
+- **加固盲区（本轮新发现）**：`rust_ext/src/storage.rs:398` 的
+  `open_connection` 是本仓库**第二个、从未加固的 opener**——缺
+  `wal_autocheckpoint=0`、缺 open 期 `PRAGMA wal_checkpoint(PASSIVE)`、
+  不走哨兵；而 `db_conn.rs:231` 的 `open_db_conn` 三样齐全且已被 v2–v4
+  实证为 h7 治愈所需的必要形态。前者被生产路径 storage.rs:592 / 1305
+  （= `initialize_or_migrate`，正是失败路径）/ 1519 / 1564 / 1723 使用。
+  ⇒ storage 路径从未享受过 v2 以来的 WAL 加固，是「过期快照读原值」
+  长期残留的最可能结构性原因。
+- 跟进：已派单对齐 `open_connection` 与 `open_db_conn`（保留 storage 侧
+  有意的 `foreign_keys=ON`），由 CI 判读三项指标（malformed 仍 0 /
+  locked 仍 0 / 该测试是否转绿）。**修改有效性与否由 CI 判定，不预设结论。**
+
+### 10.6 结论
+
+**malformed 根因（同进程双 SQLite 实例撕裂 `-shm`）已由 v4 根除**，判据为
+5 个 Python 版本 0 malformed + h7/p15 首次同时全绿 + 四臂复现失去撕裂面。
+剩余三项：srv_019×4（既有残余）、HTTP RPC fixture 抖动（环境问题）、
+10.5 的 fail-closed 测试失效（v4 特有，需定向探针）。
