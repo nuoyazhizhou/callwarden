@@ -201,12 +201,17 @@ jobs:
   #   - phase7 ×8 disk I/O error：JobExecutor 第二条 Python 连接 executescript
   #   - malformed ×7：build 路径 Python 读撞撕裂页
   #   - dashboard ×1 UTF-8 / fts ×2：Rust 写入后 Python 读不可见
-  # 2026-10-21 结论（Probe I 定性，结论已固化进 rust_ext/src/db_conn.rs）：
-  # malformed 一族的根因是 **Rust 侧长活连接与 Python 主连接共享 -shm
-  # WAL-index 时的撕裂页**；正式修法 = Rust 侧一律「每次调用独立短连接 +
-  # 写后 wal_checkpoint(TRUNCATE) drain」，进程级池与三个 CW_RUST_POOL_* 诊断门
-  # 一并移除。本 job 保留下来做 **malform 家族回归门**（Probe F）＋ 其他缺陷
-  # 的取证步骤。
+  # 2026-10-21 v1（Probe I 定性，固化进 rust_ext/src/db_conn.rs）：malformed
+  # 一族根因是 **Rust 侧长活连接与 Python 主连接共享 -shm WAL-index 时的
+  # 撕裂页**；修法 = 短连接 + 写后 wal_checkpoint(TRUNCATE) drain，进程级池与
+  # 三个 CW_RUST_POOL_* 诊断门一并移除。
+  # 2026-10-22 v2（292e684 全套 CI 判读）：v1 修好了 h7 族 12 项，但 p15 族
+  # 6 项 + incremental_parse 1 项 + rust_storage 读路径 1 项仍在红——**Rust 侧
+  # 在本进程内的任何 WAL 回收动作（TRUNCATE drain / drop 时 autocheckpoint /
+  # 最后连接删 -shm）都会撕裂 Python 长连接快照**。修法 v2 = 短连接 + 哨兵连接
+  # 钉住 -shm + PRAGMA wal_autocheckpoint=0 + 默认零 checkpoint
+  # （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 两诊断门）。本 job 保留做
+  # **malform 家族回归门**（Probe F）＋ 其他缺陷的取证步骤。
   # ============================================================
   wal-ab-probe:
     name: WAL A/B probe (deep-water root-cause isolation)
@@ -264,14 +269,14 @@ jobs:
           CW_USE_RUST_STORAGE: "0"
         run: pytest tests/test_phase7_job_result.py -q --tb=line -p no:cacheprovider
 
-      # config B：malformed ×7 + dashboard ×1 —— 关闭 Rust open 时
-      # wal_checkpoint(PASSIVE)（batch_*_query.rs / incremental_build_query.rs
-      # 的 env 门）。若转绿则 checkpoint 与 Python autocheckpoint 的交错回写
-      # 是撕裂页根因（=方案 B 实锤）。
-      - name: Probe B - build path (rust open checkpoint off)
+      # config B（v2 复现臂）：malformed 族 + dashboard ×1 —— 显式恢复 v1 行为
+      # （写后 TRUNCATE drain），预期重新出现 malformed；对照同一 step 的默认
+      # 配置（零 checkpoint + 哨兵）应在主测试 job 全绿。该臂用于实时钉死
+      # 「Rust 侧任何 WAL 回收动作都撕裂 Python 长连接快照」这一定性结论。
+      - name: Probe B - build path (v1 drain=truncate repr)
         if: always()
         env:
-          CW_RUST_OPEN_CHECKPOINT: "0"
+          CW_RUST_WAL_DRAIN: "truncate"
         run: pytest tests/test_p15_lang_presort.py tests/test_p15_multiprocess_parse.py tests/test_incremental_parse.py tests/test_dashboard.py -q --tb=line -p no:cacheprovider
 
       # config C：fts ×2 stale read —— 回滚 build 路径全部 6 个 Rust 写短路
@@ -304,11 +309,14 @@ jobs:
       # 同进程 Python 主连接共享同一 `-shm` WAL-index（POSIX fcntl 锁按进程分配，
       # 两实例互不排斥；Windows 按句柄加锁故本地免疫）时的撕裂页。
       #
-      # 正式修法见 rust_ext/src/db_conn.rs：Rust 侧一律「每次调用独立短连接 +
-      # 写后 wal_checkpoint(TRUNCATE) drain」；长活连接即根因载体，故
-      # CW_RUST_POOL_LIFETIME / CW_RUST_POOL_OFF / CW_RUST_POOL_WAL_DRAIN 三个
-      # 诊断门连同进程级池一并移除（Probe G/H/I 步骤同步删除，其结论已固化进
-      # db_conn.rs 模块文档）。
+      # 正式修法见 rust_ext/src/db_conn.rs（v2）：
+      # ① 短连接（每次 open 重建 WAL-index 视图）——治 c53da76 引入的 h7 族；
+      # ② 哨兵连接钉住 `-shm` + `wal_autocheckpoint=0` + 默认零 checkpoint
+      #   （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 诊断门）——治 v1 写后
+      #   TRUNCATE drain 遗留的 p15 族 + incremental_parse + rust_storage 读路径。
+      # 长活连接即根因载体，故 CW_RUST_POOL_LIFETIME / CW_RUST_POOL_OFF /
+      # CW_RUST_POOL_WAL_DRAIN 三个诊断门连同进程级池已于 v1 一并移除
+      # （Probe G/H/I 步骤同步删除，其结论已固化进 db_conn.rs 模块文档）。
       #
       # 判读：逐文件隔离单跑，输出中**不得**再出现 "database disk image is
       # malformed"；出现即判回归，本 step 直接失败。注：dashboard 的 UTF-8 载荷
@@ -319,6 +327,8 @@ jobs:
         run: |
           for f in tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py \
                    tests/test_agent_integration.py tests/test_e2e_triangle_demo.py \
+                   tests/test_p15_lang_presort.py tests/test_p15_multiprocess_parse.py \
+                   tests/test_p15_lazy_import_and_dyn_workers.py tests/test_incremental_parse.py \
                    tests/test_dashboard.py; do
             echo "===== ISOLATED: $f ====="
             out=$(pytest "$f" -q --tb=line -p no:cacheprovider 2>&1)

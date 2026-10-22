@@ -80,7 +80,7 @@ impl Default for BatchSaveResult {
 // drain」（`crate::db_conn::with_db_conn`）。Probe I 实测长活 + drain 仍红、
 // 全模块短连接转绿。PRAGMA 序列（busy_timeout=5s / journal_mode=WAL /
 // synchronous=NORMAL / foreign_keys=OFF / wal_checkpoint(PASSIVE)）与
-// CW_RUST_OPEN_CHECKPOINT 运维开关见 `crate::db_conn`。
+// 哨兵连接（CW_RUST_SENTINEL_CONN）/ drain（CW_RUST_WAL_DRAIN）见 `crate::db_conn`。
 
 /// 从 Python dict 提取 SymbolInfo
 ///

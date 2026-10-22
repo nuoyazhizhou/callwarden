@@ -129,7 +129,7 @@ struct BatchSaveCallsResult {
 // Python 侧持续提交会让两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页
 // （database disk image is malformed，CI ubuntu 独有）。
 // 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-// drain；PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 运维开关同见该模块。
+// 零 checkpoint 语义与哨兵 / drain 门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN）同见该模块（v2：默认零 checkpoint，drain 仅诊断）。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {

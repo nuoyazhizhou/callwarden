@@ -28,7 +28,7 @@ use rusqlite::params;
 // 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像认知
 // 错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
 // 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-// drain；PRAGMA 序列与 CW_RUST_OPEN_CHECKPOINT 运维开关同见该模块。
+// 零 checkpoint 语义与哨兵 / drain 门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN）同见该模块（v2：默认零 checkpoint，drain 仅诊断）。
 //
 // 只读路径 `open_readonly` 保持短连接：它经 WAL + `-shm` 天然读到最新已提交数据，
 // 不做 checkpoint（见下方注释与 AGENTS.md 规则 32），故不参与撕裂页成因。
