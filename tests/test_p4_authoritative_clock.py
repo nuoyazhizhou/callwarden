@@ -34,8 +34,14 @@ def _identity(agent_id="agent-a", session_id="sess-1", model_id="model-x", role=
 
 
 @pytest.fixture()
-def db(tmp_path):
-    os.environ["CW_USE_RUST_STORAGE"] = "0"
+def db(tmp_path, monkeypatch):
+    # 隔离说明（A 类：测试侧环境泄漏）：直接写 os.environ 且不还原会把
+    # CW_USE_RUST_STORAGE="0" 泄漏给同进程后续用例，令其跳过 Rust storage 的
+    # schema checksum 校验（db/db_base.py:3729），破坏 fail-closed 语义。
+    # 改用 monkeypatch 于用例结束后自动还原，本用例内语义不变（仍走
+    # Python 兼容迁移路径）。范本见
+    # tests/test_multi_llm_contract_p4_protected_mutation.py:29-36。
+    monkeypatch.setenv("CW_USE_RUST_STORAGE", "0")
     d = CodeGraphDB(str(tmp_path / "p4clock.db"))
     d.register_workspace("clock-ws", str(tmp_path))
     d.set_active_workspace("clock-ws")

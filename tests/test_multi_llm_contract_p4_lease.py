@@ -41,7 +41,11 @@ def db(tmp_path, monkeypatch):
     # 与 daemon 时钟在测试时间尺度等价）；fail-closed 语义由
     # test_acquire_fails_closed_when_clock_unavailable 专项把守。与测试族既有
     # 模式一致（下方 monkeypatch 注入的 fake_clock 会覆盖此默认值，teardown 自动恢复）。
-    os.environ["CW_USE_RUST_STORAGE"] = "0"
+    # 隔离说明（A 类：测试侧环境泄漏）：直接写 os.environ 且不还原会把
+    # CW_USE_RUST_STORAGE="0" 泄漏给同进程后续用例，令其跳过 Rust storage 的
+    # schema checksum 校验（db/db_base.py:3729），破坏 fail-closed 语义。
+    # 改用 monkeypatch 于用例结束后自动还原，本用例内语义不变。
+    monkeypatch.setenv("CW_USE_RUST_STORAGE", "0")
     d = CodeGraphDB(str(tmp_path / "p4lease.db"))
     d.register_workspace("lease-ws", str(tmp_path))
     d.set_active_workspace("lease-ws")
