@@ -43,8 +43,18 @@ path = "src/bin/cw_bridge.rs"
 [features]
 # 默认开启 extension-module：cdylib 构建时不链接 libpython（由 Python host 提供）
 # 测试时使用 `cargo test --no-default-features` 关闭此 feature，让 PyO3 链接 libpython
-default = ["extension-module"]
+default = ["extension-module", "sqlite-bundled"]
 extension-module = ["pyo3/extension-module"]
+# sqlite-bundled：rusqlite 自带 SQLite 3.45.0（跨平台一致、无运行时库依赖）。
+# v4 WAL hazard 正式修法（见 src/db_conn.rs 模块文档 +
+# docs/testing/ci_malformed_bisect_evidence.md）：**Python 扩展在 Linux 上
+# 必须链系统 libsqlite3**，与 Python 同进程共用同一个 SQLite 实例（同一 VFS、
+# 同一 `-shm` 映射），从根上消除双实例撕裂页。Cargo feature 无法负向开关，
+# 故系统库路径 = 构建入口显式不带本 feature（`--no-default-features
+# --features extension-module`，见 release/build.py）。daemon（纯 Rust 进程、
+# 无 Python 共存）与 Windows 构建（LockFileEx 按句柄免疫 + 无系统 sqlite3.lib）
+# 保持 bundled——它们的构建入口统一 `--features sqlite-bundled`。
+sqlite-bundled = ["rusqlite/bundled"]
 
 [dependencies]
 # P29: PyO3 升级到 0.29 以支持 Python 3.14
@@ -76,8 +86,9 @@ tree-sitter-hcl = "1.1"
 rayon = "1.10"
 # 并发原语
 parking_lot = "0.12"
-# B-PoC: rusqlite（bundled 自带 SQLite + FTS5，跨平台一致）
-rusqlite = { version = "0.31", features = ["bundled"] }
+# B-PoC: rusqlite。bundled 由本 crate 的 `sqlite-bundled` feature 提供（默认开启）；
+# ext 在 Linux 上改链系统库的开关见 [features] 注释（v4 WAL hazard 修法）。
+rusqlite = { version = "0.31" }
 # Phase 4: arc-swap 用于 GraphSnapshot 原子发布（无锁读路径）
 arc-swap = "1.7"
 # Phase 2 daemon: libc 用于 SO_PEERCRED（仅 unix）

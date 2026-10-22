@@ -34,6 +34,12 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
 
+      - name: Install system libsqlite3 (v4 single-instance fix)
+        # v4 WAL hazard 正式修法：ext 链系统 libsqlite3（与 Python 同进程共用
+        # 同一 SQLite 实例）。ubuntu-latest(24.04) = sqlite 3.45.1 ≥ rusqlite
+        # 0.31 基线 → build.py 走系统库分支（详见 release/build.py 注释）。
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
       - name: Build Rust extension
         run: python release/build.py --rust
 
@@ -45,7 +51,7 @@ jobs:
         # 二进制而非改 skip（改 skip 构成 MASKING）。debug profile 与门的
         # _find_daemon_binary 首选候选一致；compile-gate job 已实证
         # --no-default-features --bin 形态可建（本 step 不跑测试，仅构建）。
-        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --features sqlite-bundled --bin cw-daemon
 
       - name: Create callwarden-clients group (P0-3 socket_group fail-closed)
         # w3 live daemon 测试（cli_084/085/086/cli01/cli02 共 20 个）的隔离
@@ -240,6 +246,10 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Install system libsqlite3 (v4 single-instance fix)
+        # 同主测试 job：ext 走系统 libsqlite3 分支需要 dev 头。
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - name: Build Rust extension
         run: python release/build.py --rust
@@ -564,7 +574,7 @@ jobs:
         # 错误在最便宜的地方暴露出来。
         run: >-
           cargo test --manifest-path rust_ext/Cargo.toml
-          --no-default-features --lib --tests --bins --no-run
+          --no-default-features --features sqlite-bundled --lib --tests --bins --no-run
 
   rust-unit-test:
     # T7 跨平台审查发现：此前所有 workflow 只 cargo build、从不 cargo test，
@@ -627,7 +637,7 @@ jobs:
         # 注意 cfg(windows) 测试（router 管道注入 2 例）在 Linux 不编译，不计 skip。
         run: >-
           cargo test --manifest-path rust_ext/Cargo.toml
-          --no-default-features --lib --
+          --no-default-features --features sqlite-bundled --lib --
           daemon::compat_native_handlers
           cli::router cli::runtime cli::refresh
           daemon::cas_merge daemon::task_prompt::bundle_tests
@@ -678,7 +688,7 @@ jobs:
       - name: Run Rust unit tests (security-critical, Windows)
         run: >-
           cargo test --manifest-path rust_ext/Cargo.toml
-          --no-default-features --lib --
+          --no-default-features --features sqlite-bundled --lib --
           daemon::transport_windows daemon::peercred
           cli::router cli::runtime cli::refresh
           daemon::cas_merge daemon::client
@@ -766,4 +776,4 @@ jobs:
       - name: Run Rust unit tests (workspace identity normalization, Windows)
         run: >-
           cargo test --manifest-path rust_ext/Cargo.toml
-          --no-default-features --lib -- daemon::workspace
+          --no-default-features --features sqlite-bundled --lib -- daemon::workspace

@@ -182,7 +182,9 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
     echo "Step 1: Building Rust extension + cw-daemon binary"
     cd "$ROOT/rust_ext"
     # P0-3 修复（问题 5）：cw-daemon 是 Cargo [[bin]] name="cw-daemon"
-    cargo build --release --target "$TARGET" --no-default-features --bin cw-daemon
+    # --features sqlite-bundled：daemon 为纯 Rust 进程（无 Python 共存），
+    # v4 系统库切换仅限 Python 扩展，daemon 保持自带 SQLite（deb 无运行时库依赖）。
+    cargo build --release --target "$TARGET" --no-default-features --features sqlite-bundled --bin cw-daemon
 
     # 验证 cw-daemon binary 存在
     CW_DAEMON_BIN="$ROOT/rust_ext/target/$TARGET/release/cw-daemon"

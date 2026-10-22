@@ -45,13 +45,47 @@ def check_versions():
     print()
 
 
+def _use_system_sqlite():
+    """v4 WAL hazard 正式修法：Linux 上 ext 是否链系统 libsqlite3。
+
+    同进程双 SQLite 实例（bundled rusqlite vs Python 系统 libsqlite3）共享
+    `-shm` WAL-index 时会互相撕裂（CI ubuntu 专属 malformed 一族；根因与
+    三代受害面见 rust_ext/src/db_conn.rs 模块文档）。让 ext 链**与 Python
+    同一个**系统库实例后，同进程多连接即 SQLite 原生支持场景，壁垒根除。
+
+    仅在 Linux 上启用，且要求系统 sqlite >= 3.45（rusqlite 0.31 的
+    modern_sqlite 基线；ubuntu-24.04 = 3.45.1 满足，ubuntu-22.04 = 3.37.2
+    不满足 → 安全回退 bundled）。daemon 与 Windows 构建不受本函数影响
+    （它们的构建入口统一 --features sqlite-bundled）。
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        out = subprocess.run(
+            ["pkg-config", "--modversion", "sqlite3"],
+            capture_output=True, text=True, check=True,
+        )
+        parts = out.stdout.strip().split(".")
+        return (int(parts[0]), int(parts[1])) >= (3, 45)
+    except Exception:
+        return False
+
+
 def build_rust_extension():
     """构建 Rust PyO3 扩展。"""
     print("Step 2: Building Rust extension (callwarden_core)")
     rust_ext_dir = ROOT / "rust_ext"
 
     # cargo build --lib --release (限定构建 cdylib 扩展库)
-    run(["cargo", "build", "--lib", "--release"], cwd=rust_ext_dir)
+    # v4：Linux + 系统 sqlite >= 3.45 时不带 sqlite-bundled（链系统库，
+    # 与 Python 同进程共用同一 SQLite 实例）；其余平台/版本保持 bundled。
+    if _use_system_sqlite():
+        extra = ["--no-default-features", "--features", "extension-module"]
+        print("  [v4] system libsqlite3 detected -> linking SYSTEM sqlite3")
+    else:
+        extra = []
+        print("  [v4] using bundled sqlite3 (non-linux or system < 3.45)")
+    run(["cargo", "build", "--lib", "--release", *extra], cwd=rust_ext_dir)
 
     # 查找构建产物
     target_dir = rust_ext_dir / "target" / "release"

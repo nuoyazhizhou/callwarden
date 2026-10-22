@@ -24,6 +24,11 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
 
+      - name: Install system libsqlite3 (v4 single-instance fix)
+        # 同 ci.yml 主测试 job：ext 走系统 libsqlite3 分支需要 dev 头
+        # （ubuntu-latest = 3.45.1 ≥ rusqlite 0.31 基线）。
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
       - name: Build Rust extension
         run: python release/build.py --rust
 
@@ -34,8 +39,9 @@ jobs:
       - name: Build cw-daemon binary (H4C real-process gate)
         # 与 ci.yml 同源同形：debug profile 与 daemon_autostart._find_daemon_binary
         # 的项目构建候选一致；--no-default-features 避免 pyo3 extension-module
-        # 特征（compile-gate job 已实证该形态可建）。
-        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --bin cw-daemon
+        # 特征；--features sqlite-bundled 保持 daemon 链自带 SQLite（v4 系统库
+        # 切换仅限 Python 扩展，daemon 为纯 Rust 进程无 Python 共存）。
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --features sqlite-bundled --bin cw-daemon
 
       - name: Create callwarden-clients group (P0-3 socket_group fail-closed)
         # daemon 默认 socket_group='callwarden-clients'（daemon config.rs:178），
