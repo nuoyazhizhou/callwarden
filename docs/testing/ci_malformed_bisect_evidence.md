@@ -176,6 +176,16 @@ Probe I 判读：
   `-shm` 映射，同进程多连接即为 SQLite 原生支持场景。旁证：Probe D
   （同进程双 **Python** 连接 + WAL + DDL）在 CI 上持续全绿——同库多连接
   合法，问题仅在于**两个不同的 SQLite 构建**。
+- **哨兵假说已由 CI 钉死（run 39795760927，a232967）**：Probe H（关哨兵
+  + TRUNCATE drain）与 Probe I（关哨兵 + passive drain）**双双转绿**，
+  而 Probe F（默认 = 哨兵开）在 h7 首文件即检出 malformed ⇒ **哨兵连接
+  是 h7「打开即 malformed」的唯一驱动，与 drain 模式无关**（truncate/
+  passive 在无哨兵下等价）。h7（需 close 删 `-wal`/`-shm` 重建 wal-index）
+  与 p15（需钉 `-shm` 防删除）在双实例下**互斥不可兼得**——「两族从未
+  同时绿过」正式定性为结构性壁垒，而非任一配置缺陷。
+- v4 方向（待定）：① 单一 libsqlite3（Linux/macOS 链系统库、Windows 保
+  bundled——本地免疫无妨；CI apt 装 libsqlite3-dev）；② 或放弃一族
+  （默认回退关哨兵 = h7 绿 p15 红，回到 v1 代价面）。
 - 本取证文件使命完成：三代受害面漂移与根因已定性，结论固化进
   `rust_ext/src/db_conn.rs` 模块文档；后续回归由 ci.yml Probe F
   （纳入 p15/incremental 5 文件的隔离回归门；`set -e` 吞输出的门缺陷

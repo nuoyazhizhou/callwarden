@@ -80,6 +80,16 @@
 //! 两侧共用同一 VFS/`-shm` 映射；旁证：CI 上同进程双 Python 连接
 //! Probe D 持续全绿）。哨兵隔离臂由 ci.yml Probe H/I 判读。
 //!
+//! ## 哨兵假说已由 CI 钉死（run 39795760927，a232967）
+//!
+//! Probe H（关哨兵 + TRUNCATE drain）与 Probe I（关哨兵 + passive drain）
+//! **双双转绿**；Probe F（默认 = 哨兵开）在 h7 首文件即检出 malformed ⇒
+//! **哨兵连接是 h7「打开即 malformed」的唯一驱动，与 drain 模式无关**
+//! （truncate/passive 在无哨兵下等价——短连接 close 删除 `-wal`/`-shm`，
+//! 下次 open 从干净状态重建 wal-index 即为 v1 的 h7 治愈路径）。
+//! ⇒ h7（需 -shm 删除重建）与 p15（需哨兵钉 -shm）互斥是**结构性壁垒**，
+//! 非任一配置缺陷；默认配置的取舍 = 二选一，除非落 v4 单一 libsqlite3。
+//!
 //! # 适用范围
 //!
 //! `with_db_conn` 只被 ext 侧（batch_build / batch_calls / batch_file_versions /
