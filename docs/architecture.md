@@ -1154,8 +1154,9 @@ daemon 提供四个不可替代的能力，这些能力是 P1 Protected_Mutation
 1. **唯一串行化点**（Requirement 14.6）：daemon 进程内单一请求队列，保证 Protected_Mutation
    全局串行，避免多客户端并发写引发的状态紊乱。
 2. **Peer_Credential → Peer_Identity 派生**（Requirements 14.4–14.5）：内核保证的对端凭据
-   （Linux `SO_PEERCRED` / macOS `LOCAL_PEERCRED` / Windows 命名管道 SID）不可伪造，
-   是 Identity 校验与授权决策的可信输入。
+   （Linux `SO_PEERCRED` / Windows 命名管道 SID）不可伪造，
+   是 Identity 校验与授权决策的可信输入。（macOS `LOCAL_PEERCRED` 源码保留，
+   平台已于 2026-10-23 收口。）
 3. **Authoritative_Clock**（Requirement 14.11）：daemon 单调时钟为 Lease、gate decision、
    Evidence 时间戳提供统一时序基准，客户端时钟不可信。
 4. **Attestation 签发**（Requirement 14.13）：daemon 对 verdict/Evidence 签发 Attestation，
@@ -1166,8 +1167,12 @@ daemon 提供四个不可替代的能力，这些能力是 P1 Protected_Mutation
 | 平台    | 端点类型      | 传输协议                         | Peer_Credential 来源                     | 自动唤起方式         |
 | ------- | ------------- | -------------------------------- | ---------------------------------------- | -------------------- |
 | Linux   | Unix 域套接字 | UDS (`SO_PEERCRED`)              | UID + GID + PID                          | systemd user service |
-| macOS   | Unix 域套接字 | UDS (`LOCAL_PEERCRED`)           | UID + GID（无 PID）                      | launchd user agent   |
+| macOS（已收口） | Unix 域套接字 | UDS (`LOCAL_PEERCRED`)           | UID + GID（无 PID）                      | launchd user agent   |
 | Windows | 命名管道      | `\\.\pipe\callwarden-<user-sid>` | 对端 SID (`GetNamedPipeClientProcessId`) | detached process     |
+
+> macOS 行描述源码保留能力；平台已于 2026-10-23 收口（bundled SQLite 双实例
+> malformed 撕裂面，无修法）。证据：docs/testing/ci_malformed_bisect_evidence.md
+> 十三/十四节。
 
 **Windows 端点决策**（Requirements 14.2, 14.18–14.21）：
 
@@ -1273,15 +1278,14 @@ Independence_Policy（Requirements 5.12–5.17）与 Stage_Toggle 同源，存�
 连接上继续原请求。
 
 **单实例互斥**（Requirement 14.23）：每用户端点仅允许一个 daemon 实例，通过跨进程互斥
-（Windows named mutex / Linux/macOS file lock）保证。互斥确保 Requirement 14.6 的串行化点
+（Windows named mutex / Linux file lock；macOS file lock 源码保留但平台已收口）保证。互斥确保 Requirement 14.6 的串行化点
 唯一性。
 
-**三平台唤起方式**（Requirements 14.24–14.26）：
+**两平台唤起方式**（Requirements 14.24–14.26；macOS 已于 2026-10-23 收口，launchd 源码能力保留但不作为受支持路径）：
 
 | 平台    | 唤起方式                                                    |
 | ------- | ----------------------------------------------------------- |
 | Linux   | systemd user service（`systemctl --user start callwarden`） |
-| macOS   | launchd user agent（`launchctl start <label>`）             |
 | Windows | detached process（`Start-Process -WindowStyle Hidden`）     |
 
 **Degraded_Mode 分流**（Requirements 14.27–14.30）：有界等待窗口耗尽后，按操作类型分级处理：

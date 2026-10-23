@@ -2814,11 +2814,16 @@ C6 引入 GC 清理机制，按**双重过滤策略**删除旧记录，防止表
 
 Call Warden 提供三个角色化入口，分离 daemon 管理、client 调用和 agent 监控职责：
 
-| 入口        | 角色              | 平台                    | 说明                                                                  |
-| ----------- | ----------------- | ----------------------- | --------------------------------------------------------------------- |
-| `cw-daemon` | Enterprise Daemon | Linux / macOS / Windows | 启动 daemon server，管理端点（UDS / 命名管道）、registry DB、snapshot |
-| `cw-client` | RPC Proxy         | Linux / macOS / Windows | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon）           |
-| `cw-agent`  | Watcher Agent     | Linux / macOS / Windows | per-UID 文件监控 agent，启动/停止/状态查询                            |
+| 入口        | 角色              | 平台                          | 说明                                                                  |
+| ----------- | ----------------- | ----------------------------- | --------------------------------------------------------------------- |
+| `cw-daemon` | Enterprise Daemon | Linux / Windows               | 启动 daemon server，管理端点（UDS / 命名管道）、registry DB、snapshot |
+| `cw-client` | RPC Proxy         | Linux / Windows               | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon）           |
+| `cw-agent`  | Watcher Agent     | Linux / Windows               | per-UID 文件监控 agent，启动/停止/状态查询                            |
+
+> **macOS 已收口（2026-10-23）**：macOS 不再是受支持平台（bundled SQLite 双
+> 实例 malformed 撕裂面，无修法）。源码中的 macOS 能力代码保留但不作为受
+> 支持路径。裁决与证据：docs/testing/ci_malformed_bisect_evidence.md
+> 十三/十四节。
 
 ### cw-client 子命令
 
@@ -3154,11 +3159,14 @@ cw config check-role <role>
 
 ### 平台门禁
 
-`cw-client`、`cw-daemon`、`cw-agent` 三个入口在 D0 后支持三平台（Linux / macOS / Windows）：
+`cw-client`、`cw-daemon`、`cw-agent` 三个入口在 D0 后支持两平台（Linux / Windows；macOS 已于 2026-10-23 收口）：
 
 - **Linux**：UDS (SO_PEERCRED) + SCM_RIGHTS FD 传递
-- **macOS**：UDS (LOCAL_PEERCRED，无 PID) + SCM_RIGHTS FD 传递
 - **Windows**：命名管道 (`\\.\pipe\callwarden-<user-sid>`) + `canonical_bytes_b64` 载荷路径
+
+> macOS 的 UDS (LOCAL_PEERCRED) 等源码能力保留，但平台已收口（bundled
+> SQLite 双实例 malformed 撕裂面，无修法）。证据：
+> docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 
 ```
 $ cw-client ping
@@ -3356,14 +3364,13 @@ exit code 1。
 
 客户端无法连接 daemon 端点时，按以下流程处理：
 
-1. **尝试自动唤起**：获取跨进程互斥（Windows named mutex / Linux/macOS file lock），启动 daemon 进程
+1. **尝试自动唤起**：获取跨进程互斥（Windows named mutex / Linux file lock），启动 daemon 进程
 2. **有界等待窗口**：默认 10 秒（客户端时钟），窗口内以指数退避重试连接
 3. **窗口内成功**：在已建立的连接上继续原请求
 4. **窗口耗尽**：进入 Degraded_Mode，按操作类型分级处理（见上表）
 
-**三平台唤起方式**：
+**两平台唤起方式**（macOS 已于 2026-10-23 收口，其 launchd 源码能力保留但不作为受支持路径）：
 - Windows：detached process（存活到客户端进程退出之后）
-- macOS：launchd user agent 激活
 - Linux：systemd user service 激活
 
 **单实例互斥**（Req 14.23）：多个会话并发触发唤起时，互斥原语确保每用户端点至多一个运行中的 daemon 进程，不创建第二个 Protected_Mutation 串行化点。

@@ -79,7 +79,12 @@ class TestMatrixNSectionCorrected:
 
     @pytest.mark.parametrize("mid", ["N5", "N6"])
     def test_n_entries_false_claim(self, matrix_content, mid):
-        """N5/N6 经 P0-3 整改后升级为 🟡 部分修复。"""
+        """N5/N6 经 P0-3 整改后升级为 🟡 部分修复。
+
+        N6 于 2026-10-23 随 macOS 收口进一步降为 ❌（证据：
+        docs/testing/ci_malformed_bisect_evidence.md 十四节）——❌ 同样满足
+        本守卫的「不得虚假声称完成」意图。
+        """
         line_match = re.search(
             rf"^\| {mid} \|.*$", matrix_content, re.MULTILINE)
         assert line_match, f"_feature_matrix.md 必须有 {mid} 行"

@@ -46,17 +46,19 @@ cw workspace status <workspace_id>
 # Linux x86_64
 wget https://github.com/nuoyazhizhou/callwarden/releases/download/v0.3.14/callwarden-linux-amd64.tar.gz
 
-# macOS arm64
-wget https://github.com/callwarden/callwarden/releases/download/v0.3.3/callwarden-macos-arm64.tar.gz
-
 # Windows amd64
 curl -L -o callwarden-windows-amd64.zip https://github.com/callwarden/callwarden/releases/download/v0.3.3/callwarden-windows-amd64.zip
+
+# macOS：已收口（2026-10-23）——不再产出 macOS 压缩包。
+# 根因：bundled SQLite 双实例共享 -wal/-shm 导致 malformed 撕裂面
+# （CI run 39923719831 实证，无可用修法）。
+# 裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 ```
 
 ### 2.2 替换安装目录
 
 ```bash
-# Linux/macOS
+# Linux
 mv callwarden callwarden.old  # 备份旧版本
 tar xzf callwarden-linux-amd64.tar.gz
 ./callwarden/cw --version  # 验证新版本

@@ -252,8 +252,10 @@ SBOM 由 `release/verify_upgrade_rollback_supply_chain.py` 生成。
 - **PyInstaller 在 musl 环境下可能存在兼容性问题**：alpine 容器中 PyInstaller
   构建可能失败，此时只验证 Rust 扩展的 musl 静态链接
 - **client/agent bundle 仅 Linux 构建**：UDS/SO_PEERCRED/SCM_RIGHTS 是 Linux 特有
-- **macOS 暂不支持 x86_64**：当前 CI 只有 macos-latest（arm64），如需 x86_64 支持
-  需要在 macos-13 runner 上单独构建
+- **macOS 已收口（2026-10-23）**：bundled SQLite 双实例共享 -wal/-shm 导致
+  malformed 撕裂面（CI run 39923719831 实证，无可用修法），不再构建/发布
+  macOS 产物；原文「macOS 暂不支持 x86_64」的限制随收口作废。裁决与证据：
+  docs/testing/ci_malformed_bisect_evidence.md 十三/十四节
 
 ## 10. 参考文档
 

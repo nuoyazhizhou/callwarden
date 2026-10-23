@@ -89,7 +89,7 @@ cw install --check
 `cw` 命令通过 `cw.py` 入口脚本运行。建议设置别名以便全局使用：
 
 ```bash
-# Linux/macOS（写入 ~/.bashrc 或 ~/.zshrc）
+# Linux（写入 ~/.bashrc；macOS 已于 2026-10-23 收口，见「Daemon 跨平台部署」）
 alias cw="python /path/to/callwarden/cw.py"
 
 # Windows PowerShell（写入 $PROFILE）
@@ -399,8 +399,15 @@ docker run --rm \
 | 平台 | 端点类型 | 传输协议 | Peer_Credential 来源 | 自动唤起方式 |
 |------|----------|----------|----------------------|-------------|
 | Linux | Unix 域套接字 | UDS (SO_PEERCRED) | UID + GID + PID | systemd user service |
-| macOS | Unix 域套接字 | UDS (LOCAL_PEERCRED) | UID + GID（无 PID） | launchd user agent |
+| macOS（已收口） | Unix 域套接字 | UDS (LOCAL_PEERCRED) | UID + GID（无 PID） | launchd user agent |
 | Windows | 命名管道 | `\\.\pipe\callwarden-<user-sid>` | 对端 SID (GetNamedPipeClientProcessId) | detached process |
+
+> **macOS 已收口（2026-10-23）**：macOS 行描述的是**源码保留**的运行时能力
+> （`LOCAL_PEERCRED` / file lock / launchd 代码未删，与缺陷无因果关系），
+> 但 macOS 已不再是受支持平台——bundled SQLite 双实例共享 -wal/-shm 导致
+> malformed 撕裂面（CI run 39923719831 实证，无可用修法）。发布物、CI
+> 门禁与构建链均已收口，裁决与证据：
+> docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 
 **端点排除决策**（Requirement 14.20–14.21）：
 - **不使用监听 TCP 端口**：操作系统对 TCP 连接不提供 Peer_Credential，无法满足 Requirement 14.5（Peer_Identity 仅从 OS 凭据派生）。
@@ -416,6 +423,9 @@ docker run --rm \
 **多实例保活**（Requirement 14.19）：daemon 维持至少两个命名管道实例；每接受一个连接后立即创建替换实例，确保两次 accept 之间的连接请求不返回 pipe-busy 或 endpoint-absent 错误。
 
 ### macOS launchd 部署
+
+> **已收口（2026-10-23）**：macOS 不再是受支持平台，以下命令仅描述源码保留
+> 的能力，不再作为受支持部署路径。理由与证据见上「平台支持矩阵」注记。
 
 ```bash
 # 安装 launchd user agent（Requirement 14.25）
@@ -445,7 +455,7 @@ cw daemon install --platform linux
 
 **自动唤起**（Requirement 14.22）：客户端无法连接端点时，尝试启动 daemon，在有界等待窗口内以指数退避重试。窗口默认 **10 秒**（客户端时钟测量），可通过配置调整。窗口内重试成功则在已建立的连接上继续原请求。
 
-**单实例互斥**（Requirement 14.23）：多个会话并发触发自动唤起时，通过跨进程互斥原语确保每用户端点至多一个运行中的 daemon 进程——Windows 使用 named mutex，Linux/macOS 使用 file lock。不创建第二个 Protected_Mutation 串行化点（Requirement 14.6）。
+**单实例互斥**（Requirement 14.23）：多个会话并发触发自动唤起时，通过跨进程互斥原语确保每用户端点至多一个运行中的 daemon 进程——Windows 使用 named mutex，Linux 使用 file lock（macOS 的 file lock 代码保留但平台已收口）。不创建第二个 Protected_Mutation 串行化点（Requirement 14.6）。
 
 **Degraded_Mode 分流**（Requirements 14.27–14.30）：有界等待窗口耗尽后，按操作类型分级处理：
 

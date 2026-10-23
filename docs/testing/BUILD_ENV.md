@@ -6,7 +6,7 @@
 
 rust_ext/Cargo.toml默认extension-module，Python扩展使用默认feature；依赖callwarden_core的daemon/test binary需--no-default-features关闭该feature，使PyO3链接libpython。现有Linux E2E和Rust CI均有此用法。关闭feature不等于Python-free，解释器/libpython必须匹配，不能补flag后就宣称构建完成。
 
-Windows按AGENTS规则42用C:\Python314\python.exe并设置PYTHON/PYO3_PYTHON；Linux/macOS使用本平台冻结解释器，不混用Windows.pyd/target。release/build.py --rust构建扩展，不能代替构建daemon。
+Windows按AGENTS规则42用C:\Python314\python.exe并设置PYTHON/PYO3_PYTHON；Linux使用本平台冻结解释器，不混用Windows.pyd/target（macOS 已于 2026-10-23 收口，build.py 在 darwin 上 fail-closed，见 docs/testing/ci_malformed_bisect_evidence.md 十四节）。release/build.py --rust构建扩展，不能代替构建daemon。
 
 本机.tokenslim-context误检测为Node/npm。正式实施前核对并修正探测/允许命令；下列仅候选模板，未执行。CI是否部署TokenSlim及native shell须在profile明确。
 
@@ -24,7 +24,7 @@ tokenslim run cargo test --manifest-path rust_ext/Cargo.toml --no-default-featur
 tokenslim run C:\Python314\python.exe -m pytest <frozen-selectors> --junitxml=<isolated-report>
 ```
 
-## 3. Linux/macOS未来实施模板
+## 3. Linux 未来实施模板（macOS 已收口，2026-10-23）
 
 ```sh
 # 隔离venv中选定冻结解释器，PYO3_PYTHON设其绝对路径。

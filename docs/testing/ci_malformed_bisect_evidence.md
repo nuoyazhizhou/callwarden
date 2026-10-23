@@ -612,3 +612,55 @@ libsqlite3），结论可能不同 —— 属 F1 的延伸待查项，但即便�
 - gate 在首个命中文件即 `exit 1`（fail-fast），故只有首文件的观测数据；
   其余 8 文件未跑（设计如此，与 ubuntu 门同口径）。
 
+
+## 十四、收口裁决（2026-10-23，提交 81852a6 / d8584a0 / 5bca9f6）—— 选项 B 落地
+
+### 14.1 决策
+
+第十三节收敛出的三个选项中，**决策 = B：收口 macOS 支持**。决策输入：
+
+- 路径 A（macOS 切系统 libsqlite3）已被 13.5 取证证明**结构性不可行**（macOS 的 Python sqlite3 静态自包含，runner 上唯一共享库属另一个 Python 且版本不同）；
+- C2（仅 macOS 关哨兵）会把 p15 族换红，属「换一族失败」而非修复，且 macOS 上该 trade-off 未实测；
+- E（显式登记接受）与 13.3 第 1 条冲突（已实证的数据损坏风险不可沉默放任）。
+
+用户（产品负责人）批准的执行口径（三个决策点）：
+
+| 决策点 | 口径 | 落地位置 |
+|---|---|---|
+| 1b | 裁决门 `wal-malformed-gate-macos` 改造为**防回归守卫** `no-macos-artifacts-guard`（runs-on: ubuntu-latest，扫描 `.github/workflows/` 无 macOS runner） | `.github/workflows/ci.yml` |
+| 2 | 冻结包 / wheel / 离线包 / E2E 门**全停** | `enterprise-release.yml` / `release.yml` / `pyinstaller-build.yml` / `e2e-verify-macos-arm64.yml`（整文件删除） |
+| 3b | `release/build.py` 在 darwin 上 **fail-closed**（`_reject_macos_build()` + `_detect_wheel_platform_tag` exit 1） | `release/build.py` |
+
+### 14.2 收口语义（三层）
+
+| 层 | 收口内容 |
+|---|---|
+| 发布物层 | macOS wheel / pkg / PyInstaller 冻结包 / 离线包 / E2E 验证门全停；`release/macos/` 整目录删除（`build_pkg.sh` 489 行） |
+| 配置层 | `release/version.toml` 删 `macos` 平台项；`config_loader.py` / `rust_ext/src/cli/config.rs` 删 darwin 角色支持（Rust/Python 矩阵由 D4 差分测试 `tests/test_phase5_1_cli_diff.py` 锁定一致）；`build.py` / `config_loader.py` / `setup.py` darwin 分支 fail-closed |
+| 声明层 | `docs/deployment.md` / `docs/cli_reference.md` / `docs/architecture.md` / `_feature_matrix.md` / `release-notes-rust-only-parser.md` / `cross-platform-packaging-release-plan.md` 标注收口 |
+
+**源码运行时能力代码不删**：UDS `LOCAL_PEERCRED` / file lock / launchd 代码与缺陷无因果关系（缺陷在「bundled SQLite 双实例共享 -wal/-shm」），保留但文档统一标注「源码保留 / 平台已收口 / 不代表受支持」。
+
+### 14.3 守卫设计（为什么翻绿而不是删门）
+
+历史上 macOS matrix 被反复加回 4 处（`ci.yml` / `release.yml` / `pyinstaller-build.yml` / `enterprise-release.yml`）。删掉裁决门会留下真空：未来 PR 可无声加回 macOS runner 而无人发现。故裁决门翻转为守卫 job：
+
+- `no-macos-artifacts-guard`（`.github/workflows/ci.yml`，runs-on: ubuntu-latest）：`grep -rEn` 扫描 `.github/workflows/` 全目录，命中 `macos-latest|macos-1[0-9]` 即 `::error::` + exit 1；
+- needle 防自匹配：bash 相邻字符串拼接 `needle="macos""-latest|macos-1[0-9]"`——ci.yml 自身文本不匹配该模式（否则守卫第一个就红自己）。
+
+### 14.4 落地清单与验证
+
+| 提交 | 内容 | 验证 |
+|---|---|---|
+| 81852a6 | CI：4 workflow 收口 + 守卫 job；`e2e-verify-macos-arm64.yml` 删除 | 4 文件 `yaml.safe_load` 通过；守卫 needle 全域 0 命中；gate4b/gate5b/macos-pkg 零悬空引用；行尾 100% 保持（ci.yml LF、其余 CRLF）；6 files changed, +58/-535 |
+| d8584a0 | 发布配置与脚本：`build.py` / `config_loader.py` / `version.toml` / `MANIFEST.in` / `setup.py` / `callwarden.spec` / `entry_cw_agent.py` / `_check_artifacts.py` / `inspect_pyinstaller_bundle.py` + `rust_ext/src/cli/config.rs` + D4 期望翻转 | 全文件 Python AST 通过；`cargo test --lib cli::config` 5/5；行为级：矩阵 linux/win32 intact、darwin 全 False、`PlatformPaths.detect()` exit 1、`fail_closed_unsupported()` exit 2 |
+| 5bca9f6 | 测试断言：原「问题 8」build_pkg.sh 功能验证（4 用例，依赖已删除脚本）→ 收口防回归守卫（5 用例）；phase7 / cross-platform 断言改 fail-closed | 三文件回归全绿（1 个既有 Linux-only skip）；D4 差分测试在新建 ext 下 6/6 |
+
+Rust ext 行为级验证（MEMORY 铁律：build 后必须验证二进制含预期改动）：新建 ext（`rust_ext/target/release/callwarden_core.dll`，`PYO3_PYTHON=C:/Python314/python.exe cargo build --lib --release`，36,688,896 bytes）上 `check_role_supported_py` 对全部 5 角色 × {darwin, macos} 返回 False，win32/linux 矩阵 intact。根目录 `callwarden_core.pyd`（36,690,432 bytes，cp314）被运行中进程锁定（Device or resource busy），暂以 sys.modules 预加载方式验证新二进制、未覆盖根 pyd（该文件 gitignored，不影响 CI）。
+
+### 14.5 边界与遗留
+
+- 本结论基于 **GitHub runner 形态**；用户本机 Homebrew Python 形态未测（13.5 已注明：即便本机可行，分发面仍无解——无法要求所有 macOS 用户的 Python 都动态链接同一份 libsqlite3）。
+- 冻结包 `callwarden.spec` 的 `_PARSER_GRAMMAR_EXCLUDES` 使 pkg 100% 依赖 Rust ext 解析 ⇒ macOS 上 ext 即双实例 ⇒ pkg 必须与 wheel 一并停（不存在「只停 wheel」的中间态）。
+- `release/artifact-manifest.json` 未被 git 跟踪（gitignored），其中 stale macOS 条目不动。
+- 合并后 `enterprise-release.yml` 先 `workflow_dispatch`（dry_run=true）验证再打 tag（待办）。

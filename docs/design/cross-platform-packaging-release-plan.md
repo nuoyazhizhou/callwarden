@@ -1,8 +1,12 @@
 # Call Warden 跨平台打包、安装与发布设计
 
-> 状态：待实施
+> 状态：**已废弃（2026-10-23）**——macOS 已裁决收口，本文的「三平台」目标降级为
+> Linux / Windows 两平台。macOS 收口理由：bundled SQLite 双实例共享 -wal/-shm
+> 导致 malformed 撕裂面（CI run 39923719831 实证，无可用修法）。本文保留作
+> 历史设计记录；现行平台口径以 docs/testing/ci_malformed_bisect_evidence.md
+> 十三/十四节为准。
 > 父任务：`T-1783983115204-19fc`
-> 目标平台：Windows、macOS、Linux
+> 目标平台：Windows、Linux（macOS 已收口）
 
 ## 1. 目标
 

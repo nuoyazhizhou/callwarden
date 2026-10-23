@@ -175,7 +175,7 @@ cw status
 $HOME/.callwarden/callwarden.db
 ```
 
-示例（Linux/macOS）：
+示例（Linux；macOS 已于 2026-10-23 收口）：
 
 ```
 /home/user/.callwarden/callwarden.db
