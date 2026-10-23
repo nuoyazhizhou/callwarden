@@ -280,6 +280,157 @@ jobs:
             fi
           done
 
+  # ============================================================
+  # macOS 撕裂面裁决门（2026-10-23 新增，与 ubuntu wal-ab-probe 平行）
+  #
+  # 存在理由（一句话）：裁决「macOS 上 bundled 双 SQLite 实例是否暴露
+  # `database disk image is malformed` 撕裂面」——这是决定 Rust 侧那套防御
+  # 机制（哨兵 + wal_autocheckpoint=0 + open 期 PASSIVE + 写后温和 drain）
+  # 能否退役的唯一缺失证据。
+  #
+  # 为什么 macOS 未被 v4（提交 69a87f4）覆盖：
+  #   - v4 只在 Linux 生效：release/build.py:61-62 的平台门是
+  #     `if sys.platform != "linux": return False` ⇒ macOS 走 **bundled**
+  #     （Cargo.toml:46 默认 features 含 sqlite-bundled）；
+  #   - 即 macOS 上同进程存在**两个不同 SQLite 实现**（Rust 侧 rusqlite
+  #     bundled SQLite 3.45.0 ＋ Python 侧系统 libsqlite3），共享同一 .db
+  #     的 -wal/-shm；
+  #   - macOS 的 fcntl 锁语义与 POSIX 相同（不像 Windows 按句柄加锁免疫）
+  #     ⇒ 双实例互不排斥的前提在 macOS 上客观成立，撕裂面**未被排除**。
+  #
+  # 为什么这很可能真会红：
+  #   ubuntu 在**双实例**时代（v3，默认配置 = 哨兵开 + drain PASSIVE）
+  #   h7 族「打开即 malformed」失败，且「哨兵连接是唯一驱动」已被 CI 钉死
+  #   （见 rust_ext/src/db_conn.rs 模块文档「哨兵假说已由 CI 钉死」段）。
+  #   macOS 当前的默认配置与那个失败的 ubuntu 配置**完全等价**。
+  #
+  # ⚠ 本 job 走的是 **真实双实例** 路径（macOS 必 bundled），
+  #   与 ubuntu 那个 job 的 **v4 单实例** 路径语义不同——两者不可互相替代。
+  # ============================================================
+  wal-malformed-gate-macos:
+    name: WAL malformed regression gate (macOS)
+    runs-on: macos-latest
+    # 60min（ubuntu 同族 job 为 45）：macos-latest 冷构建（bundled SQLite
+    # 的 sqlite3.c + tree-sitter 依赖树）比 ubuntu 慢，且 macOS runner 无
+    # 编译缓存。留余量以免「超时=门没跑完」这种无结论的失败。
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Build Rust extension (macOS => bundled SQLite)
+        # 关键：release/build.py 的平台门只在 Linux 上切到「链系统 libsqlite3」
+        # （v4 单实例修法）；macOS 走 bundled 分支 ⇒ 产出的是
+        # **rusqlite bundled SQLite 3.45.0**，与 Python 侧系统 libsqlite3
+        # 同进程共存 ⇒ 双实例前提成立。这正是本次要验证的场景。
+        # 不修改 build.py（本 job 只观察，不改构建语义）。
+        run: python release/build.py --rust
+
+      - name: Install dependencies (no torch — see below)
+        run: |
+          python -m pip install --upgrade pip
+          # 依赖瘦身：**不装 torch**（与 ubuntu wal-ab-probe job 不同）。
+          # 实测证据（本地 Windows，torch 完全未安装的环境）：
+          #   1) 9 个被 gate 跑的文件里 "torch" 的 grep 命中数 = 0；
+          #   2) db/ server/ cli/ parsers/ analyzers/ 的**模块级** import 中
+          #      无 torch（唯一命中在 testcode/ 下的第三方 ML 脚本，而
+          #      testcode 在 pyproject 的 pytest norecursedirs 里，不进测试面）；
+          #   3) 在无 torch 环境实跑这 9 个文件，torch 相关
+          #      ModuleNotFoundError = 0。
+          # ubuntu job 之所以要装 torch，是因为它装了 `.[all]` extra，而
+          # sentence-transformers（`all` 的一部分）依赖 torch。本 job 改装
+          # `.[dev]`（同样含 parser-reference 全套 tree-sitter grammar），
+          # 去掉 sentence-transformers / sqlite-vec 这两个与本门无关的可选
+          # 能力（vec0 虚拟表尚未落地，见 db/db_vector.py 模块文档）。
+          # 注：mcp 必须 <2（mcp 2.x 把 FastMCP 改名 MCPServer，本仓代码是
+          # v1 API）；pyproject 基础依赖已声明 mcp[rich]>=1.28,<2。
+          pip install ".[dev]"
+          pip install pytest-xdist pytest-timeout
+          # CD-1：db/ 是仅测试支持层、不进 wheel，其模块级依赖 psutil 未随
+          # extras 装入（CI Successfully installed 实测无 psutil），在此补装
+          pip install psutil
+
+      # CD-1：仓库根以 callwarden 之名暴露（与 ubuntu test job 同形，保证
+      # 导入解析一致：db/ 不进 wheel，靠此联接让 from callwarden.db.db import
+      # CodeGraphDB 可解析）。macOS 的 ln -sfn 与 bash 均可用。
+      - name: Expose repo root as importable package (CD-1)
+        shell: bash
+        run: |
+          pkgroot="$RUNNER_TEMP/cw_pkgroot"
+          mkdir -p "$pkgroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
+          # 自检：包必须解析到仓库根（run 3/4 无上下文失败的教训）
+          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); print('callwarden ->', p); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
+          # 持久化到后续 step（gate）
+          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Report SQLite implementation pair (dual-instance precondition, observation only)
+        # 只观测不判定：打印 Python 侧 sqlite3 的真实版本，以及 Rust 扩展的
+        # 动态链接里**是否**出现系统 libsqlite3。
+        # 期望：链接里无 libsqlite3 ⇒ 静态 bundled SQLite 3.45.0 ⇒
+        # 「Rust bundled vs Python 系统」的双实例前提成立（真实撕裂面验证）。
+        # 若 otool / 产物不可用则跳过观测，**不**据此失败（避免环境噪声
+        # 把本门变成另一道门）。
+        run: |
+          python -c "import sqlite3; print('python sqlite3 module :', sqlite3.__file__); print('python sqlite3 version:', sqlite3.sqlite_version)"
+          echo "--- Rust ext linkage (expect NO system libsqlite3 => statically bundled) ---"
+          if command -v otool >/dev/null 2>&1 && [ -f callwarden_core.so ]; then
+            otool -L callwarden_core.so | grep -i sqlite || echo "(no libsqlite3 in linkage => bundled SQLite, dual-instance precondition holds)"
+          else
+            echo "(otool or callwarden_core.so unavailable => observation skipped)"
+          fi
+
+      # malformed 族隔离回归门（macOS）：逐文件隔离单跑（无 xdist）历史上最
+      # 脆弱的 9 个文件——h7 族 4 个 + p15 族 3 个 + incremental_parse +
+      # dashboard。判读口径与 ubuntu wal-ab-probe job **完全一致**：
+      # 输出中**不得**出现 "database disk image is malformed"，出现即判回归。
+      #
+      # 门设计注意：本 job 默认 `set -e`，`out=$(pytest ...)` 任何**非
+      # malformed** 的测试失败也会直接退出且吞掉 tail 输出——必须 `|| true`
+      # 保住诊断输出（b8b05ec run 中 ubuntu 版本门即在首个文件 h7 上被
+      # set -e 吞输出）。
+      #
+      # macOS 专属增补：**同时统计 "database is locked" 的出现次数**。
+      # v4 后该错误是「诚实 BUSY」的正信号（不是撕裂），但**大量**出现也
+      # 说明锁语义/退避有压力 ⇒ 打印出来供判读 macOS 的 fcntl 锁表现。
+      # **只观测不判定**：locked 计数无论多少都不影响本门结论，只有
+      # malformed 计数 > 0 才判失败。
+      - name: malformed family isolation gate (macOS)
+        if: always()
+        run: |
+          total_locked=0
+          for f in tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py \
+                   tests/test_agent_integration.py tests/test_e2e_triangle_demo.py \
+                   tests/test_p15_lang_presort.py tests/test_p15_multiprocess_parse.py \
+                   tests/test_p15_lazy_import_and_dyn_workers.py tests/test_incremental_parse.py \
+                   tests/test_dashboard.py; do
+            echo "===== ISOLATED: $f ====="
+            out=$(pytest "$f" -q --tb=short -p no:cacheprovider 2>&1) || true
+            echo "$out" | tail -15
+            # 计数口径 = **出现次数**（grep -o | wc -l），不是匹配行数。
+            # 末尾 `|| true` 兜住 grep 无命中时的非零退出（防 pipefail 下
+            # set -e 中断）；`tr -d ' '` 去掉 BSD wc 的前导空格。
+            malformed=$(printf '%s' "$out" | grep -o "database disk image is malformed" | wc -l | tr -d ' ' || true)
+            locked=$(printf '%s' "$out" | grep -o "database is locked" | wc -l | tr -d ' ' || true)
+            total_locked=$((total_locked + locked))
+            echo "OBSERVE (not a verdict): $f | malformed_hits=$malformed | database_is_locked_hits=$locked"
+            if [ "$malformed" -gt 0 ]; then
+              echo "MALFORM REGRESSION in $f"
+              exit 1
+            fi
+          done
+          echo "OBSERVE SUMMARY: total 'database is locked' hits across 9 files = $total_locked (observation only, not a verdict)"
+
   lint:
     name: Lint check
     runs-on: ubuntu-latest
