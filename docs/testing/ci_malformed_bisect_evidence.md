@@ -461,3 +461,42 @@ TRUNCATE 仅在诊断复现臂显式开启时才发生）。
 
 该批注释由另一 worker **同步修正为 v4 现状表述**（`rust_ext/` 侧注释 +
 `db/db_base.py` 侧注释）。本节只做**登记与交叉引用**，不重复其改动内容。
+
+### 12.3 注释修正的 CI 判读（run 39894991695，提交 6fb7ccb）
+
+改动面：13 文件 +254/-63，**纯注释、零行为变更**（`git diff --cached`
+非注释行检查 = 空）。
+
+| job | 结论 |
+|---|---|
+| Lint check | ✅ success |
+| WAL malformed regression gate (isolated) | ✅ success |
+| Rust test binaries compile gate | ✅ success |
+| Rust unit tests（TP-11G / workspace Windows / security-critical） | ✅ 全 success |
+| Security gates (SAST/SCA/secret-scan) | ✅ success |
+| Bootstrap Gate Check | ✅ success |
+| Test on Python 3.10 / 3.11 / 3.12 / 3.13 / 3.14 | ❌ failure（**失败面 = 既有残余，非本次引入**，见下） |
+
+5 个 Python 版本的失败面逐项核对（`gh api .../jobs/<id>/logs`）：
+
+| 版本 | 总数 | `FAILED` | `ERROR` | malformed | `database is locked` |
+|---|---|---|---|---|---|
+| 3.10 | 4 failed, 8149 passed | `test_srv_019.py`×4 | 0 | 0 | 0 |
+| 3.11 | 4 failed, 8147 passed, 2 errors | `test_srv_019.py`×4 | `test_mcp_guardrail_list_rules_http_rpc`×2 | 0 | 0 |
+| 3.12 | 4 failed, 8145 passed, 4 errors | `test_srv_019.py`×4 | `test_mcp_guardrail_check_edit_http_rpc`×4 | 0 | 0 |
+| 3.13 | 4 failed, 8147 passed, 2 errors | `test_srv_019.py`×4 | `test_mcp_server_full`×2 | 0 | 0 |
+| 3.14 | 4 failed, 8144 passed, 3 errors | `test_srv_019.py`×4 | `test_mcp_get_test_coverage_http_rpc`×3 | 0 | 0 |
+
+- **`FAILED` 面 5 版本逐字一致 = `test_srv_019.py`×4**（audit 脚本域，他人任务
+  范围）⇒ 与 v4 基线（run 39889450467）**完全一致**，未新增失败。
+- **`ERROR` 面逐版本漂移**（3.11 guardrail_list_rules / 3.12 guardrail_check_edit
+  / 3.13 mcp_server_full / 3.14 get_test_coverage），根因**统一为
+  `DaemonRemoteError: E_HTTP_MANIFEST_STALE`**（manifest executable 与存活 PID
+  不匹配，pid 路径带 `(deleted)`）——CI 环境 daemon 二进制被重编译替换所致，
+  **命中模块每版本都不同 ⇒ 环境/端口型抖动**，与本次纯注释改动无因果关系，
+  且 v4 基线轮次已出现同类漂移。
+- **`malformed` 与 `database is locked` 5 版本全 0** ⇒ v4 根治面未被本次改动
+  破坏。
+- 结论：**注释修正零行为变更已由 CI 证实**（无新增失败、无新增 malformed/
+  locked、非测试 job 全绿）；Python job 的 failure 全部落在既有残余面。
+
