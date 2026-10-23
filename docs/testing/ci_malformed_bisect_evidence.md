@@ -550,19 +550,58 @@ autocheckpoint=0）与 ubuntu v3 时代的失败配置**完全等价**，本门�
 - 剩余路径：**macOS 也必须切到与 Python 同源的 libsqlite3（v4 扩展到
   darwin）**，或**收口 macOS 支持**。二者都是产品决策，需立项。
 
-**macOS 切系统库的已知前置条件**（本次未做、需先查证）：
-1. **`.so` 必须同源**：v4 的有效性前提是 ext 与 Python 的 sqlite3 模块链接
-   **同一个** libsqlite3 文件（同一 VFS、同一 `-shm` 映射）。macOS 上
-   Python 来自 python.org（`.framework`），其 sqlite3 模块链接的
-   libsqlite3 路径需先查证（例如
-   `otool -L "$(python3 -c 'import _sqlite3;print(_sqlite3.__file__)')"`）。
-   若 ext 链了 Homebrew 或 `/usr/lib` 的另一份，则仍双实例，v4 逻辑不成立。
-2. macOS 自带 SQLite 版本与 Homebrew `sqlite` 的 `sqlite3.pc`
-   （`pkg-config --libs sqlite3`）可用性 —— 仓库无记录，需外部查证。
-3. 版本门：build.py 现行门为 `>= (3,45)`；macOS 若命中需确认 Python 侧
-   版本（本 run 实测 3.50.4 ≥ 3.45，满足门控下限）。
+### 13.5 路径 A 可行性取证（提交 785266c）—— **结构性不可行**
 
-### 13.4 本门的边界（不能回答什么）
+为给上述决策补上前置事实，把 macOS 门的观测 step 扩为决策取证
+（F1/F3/F5 + 解开 P4 矛盾）。下一轮 CI（run 39969046247，job id
+120466519237）产出**决定性证据**：
+
+| 观测项 | 实测值 | 推论 |
+|---|---|---|
+| `sys.executable` | `/Library/Frameworks/Python.framework/Versions/3.13/bin/python` | **P4 矛盾解开**：观测与 pytest 实际用的是 framework Python（python.org 安装版），`actions/setup-python` 报告的 `pythonLocation=hostedtoolcache` 并未上到 PATH 首位 ⇒ 此前「hostedtoolcache vs framework」的疑虑消除，证据链自洽 |
+| `_sqlite3` 模块文件 | `.../lib/python3.13/lib-dynload/_sqlite3.cpython-313-darwin.so` | — |
+| `otool -L` 该文件的 sqlite 相关行 | **仅文件自身的两个 arch 头，无任何 libsqlite3 依赖行** | Python 的 SQLite 是**静态编译进 `_sqlite3.so` 的自包含副本**，不依赖任何外部/系统 libsqlite3 |
+| Python `sqlite3.sqlite_version` | **3.50.4** | 静态副本的版本 |
+| `pkg-config --modversion sqlite3` | **3.51.0**（`--libs` = `-lsqlite3`，来自 `PKG_CONFIG_PATH=hostedtoolcache/.../lib/pkgconfig`） | runner 上**唯一**可链接的共享 libsqlite3 属于 hostedtoolcache Python，且**不是运行时 Python 所用的那份** |
+| `sqlite3 --version`（CLI） | 3.50.6 | 第三份（CLI 自带） |
+
+**关键推论（路径 A 生死判据）**：
+
+1. **版本不等即独立证明**：若 `_sqlite3` 动态链接了 pkg-config 所指的
+   共享库，则 `sqlite3.sqlite_version`（3.50.4）必等于
+   `pkg-config --modversion`（3.51.0）。实测不等 ⇒ `_sqlite3` **没有**链
+   那份共享库，与 otool 结果互相印证。
+2. **不存在「可共用的共享 libsqlite3」**：运行时 Python 用静态 3.50.4；
+   runner 上唯一的共享库是 3.51.0（且属另一个 Python）。即使把
+   `build.py:61` 的平台门放开到 darwin，ext 也只能链到 3.51.0 那份
+   ⇒ 与运行时 Python（3.50.4 静态）**仍是两个 SQLite 实例** ⇒ v4 的
+   「同一 .so / 同一 VFS / 同一 `-shm`」前提**不成立**。
+3. 且构建期（hostedtoolcache Python 3.13.16 + 其 sqlite3.pc 3.51.0）与
+   运行期（framework Python 3.13 + 静态 3.50.4）**根本不是同一个 Python** ⇒
+   即使链上共享库，也是「构建时链 A、运行时 B 不加载它」的错配。
+
+⇒ **路径 A（macOS 切系统 libsqlite3）在本 runner 形态下结构性不可行。**
+不是「改动没做」，而是「做了也不生效」：macOS 上 Python 的 sqlite3 是
+静态自包含的，没有可与之共用的共享库。
+
+**因此 macOS 议题的选项收敛为**：
+- **B：收口 macOS 支持**（改动面已全部可枚举：README 无 macOS 字样、
+  pyproject 无 OS classifier；需停 pkg/冻结包 + 清 CI matrix 与
+  `release/macos/` 引用链）；
+- **C2：仅在 macOS 关哨兵**（`CW_RUST_SENTINEL_CONN=0`）——Linux 上
+  Probe H/I 实证可治 h7，但会把 p15 族换红，属「换一族失败」而非修复，
+  且 macOS 上该 trade-off 尚未实测；
+- **E：接受 macOS 为「已知不可用于并发 DB 访问」并显式登记**（最省事但
+  风险沉默，与 13.3 第 1 条冲突）。
+
+**注意**：以上结论基于 **GitHub macos-latest runner 形态**（python.org
+framework Python 静态 sqlite + hostedtoolcache Python 提供 .pc）。用户
+本机若用 Homebrew Python（其 `_sqlite3` 可能动态链接 Homebrew 的
+libsqlite3），结论可能不同 —— 属 F1 的延伸待查项，但即便本机可行，
+**分发面（PyPI wheel / pkg 要跑在万千用户机器上）仍无解**：无法要求
+所有 macOS 用户的 Python 都动态链接同一份 libsqlite3。
+
+### 13.6 本门的边界（不能回答什么）
 
 - 只覆盖**当前默认配置**（哨兵开 + drain PASSIVE + autocheckpoint=0）下
   的 macOS 表现；其它配置组合（如关哨兵）未测。
