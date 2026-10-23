@@ -664,3 +664,32 @@ Rust ext 行为级验证（MEMORY 铁律：build 后必须验证二进制含预�
 - 冻结包 `callwarden.spec` 的 `_PARSER_GRAMMAR_EXCLUDES` 使 pkg 100% 依赖 Rust ext 解析 ⇒ macOS 上 ext 即双实例 ⇒ pkg 必须与 wheel 一并停（不存在「只停 wheel」的中间态）。
 - `release/artifact-manifest.json` 未被 git 跟踪（gitignored），其中 stale macOS 条目不动。
 - 合并后 `enterprise-release.yml` 先 `workflow_dispatch`（dry_run=true）验证再打 tag（待办）。
+
+### 14.6 CI 既有红面登记（非本收口引入，2026-10-23 首轮观测）
+
+ee94853 首轮 CI（run 39988979871）5 个 Python 测试 job 全红。与收口前提交
+fa29f7b（run 39974030340）同 job 日志**逐字比对**确认是既有红，非本链引入：
+
+| 项 | fa29f7b（改前） | ee94853（改后） | 判定 |
+|---|---|---|---|
+| 汇总行（Py 3.13） | 4 failed, 8144 passed, 707 skipped, 1 xfailed, 5 errors | 4 failed, **8145** passed, 707 skipped, 1 xfailed, 5 errors | 失败面逐字一致；passed +1 = 批 3 净增 1 用例 |
+| 失败测试 | test_srv_019 ×4 + test_mcp_get_token_savings_report_http_rpc ×5 | 同左 | 零回归 |
+
+两条既有红登记为 known-red（编号 / 归属 / 关闭条件）：
+
+- **KR-2026-10-23-A**：`tests/test_srv_019.py` 4 用例——residue 审计脚本
+  （`deliverables/software-company/audit_server_authority_residue.py`）实扫
+  `passed=false`：83 findings 集中在 `server/cas_schema.py`(34) /
+  `server/daemon_registry.py`(14) / `server/toolchain_store.py`(31) /
+  `server/migrate.py`(4)，属 server/ Python 权威迁移未完成（SRV 线遗留）。
+  关闭条件：四文件 residue 清零、audit `passed=true`。**断言不放宽**
+  （`finding_count == 0` 保持严格）。
+- **KR-2026-10-23-B**：`tests/test_mcp_get_token_savings_report_http_rpc.py`
+  5 用例——`E_HTTP_MANIFEST_STALE`：manifest 指向的
+  `rust_ext/target/debug/cw-daemon` 已被替换（`(deleted)` 后缀），属 CI 内
+  daemon 生命周期/重建竞态。关闭条件：manifest 校验容忍重建或测试隔离
+  daemon 实例。**断言不放宽**。
+
+首轮观测中已转绿的部分：`no-macos-artifacts-guard`（守卫 job 真实执行，
+日志输出 `OK: no macOS runner in .github/workflows/`）、Lint check、
+Call Warden Bootstrap Gate（success）。
