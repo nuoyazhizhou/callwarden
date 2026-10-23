@@ -13,14 +13,20 @@
 //! 3. **本模块防御机制为何仍保留**：daemon（纯 Rust 进程）不使用本模块的
 //!    `with_db_conn`；但 Windows/macOS 的 Python ext 构建仍显式
 //!    `--features sqlite-bundled` ⇒ **非 Linux 平台仍是双实例**（Windows 按句柄
-//!    加锁免疫，**macOS 的撕裂面未排除**）。故「短连接 + 哨兵 +
+//!    加锁免疫，**macOS 的撕裂面已由 CI 实证坐实**）。故「短连接 + 哨兵 +
 //!    autocheckpoint=0 + open 期 PASSIVE checkpoint + 写后温和 drain」这一整套
 //!    机制**继续保留在代码里**。
 //! 4. **三个 env 门的定位**：`CW_RUST_OPEN_CHECKPOINT` / `CW_RUST_SENTINEL_CONN` /
 //!    `CW_RUST_WAL_DRAIN` 是**诊断复现臂开关**——CI workflow、scripts、Python 侧
 //!    **当前无任何调用方**（全仓 grep 仅命中本模块与单测），仅供本地复现
 //!    v1/v2 历史行为。
-//! 5. **本模块代码不变**：本次仅更新注释，**未改动任何逻辑**。
+//! 5. **macOS 撕裂面已坐实**（2026-10-23，CI run 39923719831，提交 3bfa649）：
+//!    新增的 `wal-malformed-gate-macos` job（macos-latest，走 bundled 构建）
+//!    在首文件 `test_h7_ast_cache_activation.py` 即检出 malformed_hits=14、
+//!    `database is locked`=0——失败签名与 v3 双实例时代逐字一致，哨兵钉
+//!    `-shm` 的机制在 macOS 上原样复现。⇒ **第九节「h7/p15 结构互斥」在
+//!    macOS 上成立**。详见 docs/testing/ci_malformed_bisect_evidence.md §十三。
+//! 6. **本模块代码不变**：历次注释更新均**未改动任何逻辑**。
 //!
 //! # 缺陷现象（三代受害面漂移）——【历史判读，v4 已根治】
 //!
@@ -101,7 +107,7 @@
 //! **【v4 后仍保留：非 Linux 平台仍是双实例】** 上述五条机制在 v4 之后
 //! **全部继续保留**：Windows/macOS 的 Python ext 构建仍显式
 //! `--features sqlite-bundled` ⇒ 仍是双实例（Windows 按句柄加锁免疫，
-//! **macOS 的撕裂面未排除**）。
+//! **macOS 的撕裂面已由 CI 实证坐实**）。
 //!
 //! **三个 env 门（`CW_RUST_OPEN_CHECKPOINT` / `CW_RUST_SENTINEL_CONN` /
 //! `CW_RUST_WAL_DRAIN`）现定位为「诊断复现臂开关」**：CI workflow、scripts、
@@ -152,7 +158,7 @@
 //!
 //! 补充（非 Linux 平台）：Windows/macOS 的 Python ext 构建仍显式
 //! `--features sqlite-bundled` ⇒ 那边仍是双实例，仅 Windows 按句柄加锁免疫，
-//! **macOS 撕裂面未排除** ⇒ 本模块防御机制在非 Linux 平台**仍必须保留**。
+//! **macOS 撕裂面已由 CI 实证坐实** ⇒ 本模块防御机制在非 Linux 平台**仍必须保留**。
 //!
 //! # 代价
 //!
@@ -281,7 +287,7 @@ pub fn close_sentinel_connections() {
 /// **【v3 防御机制，v4 后仍保留】** 上面两条（`wal_autocheckpoint=0` 与
 /// open 期 PASSIVE checkpoint）属于 v3 的双实例防御机制。v4 起 Linux 上
 /// ext 与 Python 共用同一 libsqlite3 实例，但**非 Linux 平台仍是双实例**
-/// （macOS 撕裂面未排除）⇒ 两条**继续保留**。
+/// （macOS 撕裂面已由 CI 实证坐实）⇒ 两条**继续保留**。
 ///
 /// **open 期 PASSIVE checkpoint**（`CW_RUST_OPEN_CHECKPOINT=0` 可关，诊断复现臂
 /// 开关，当前无调用方）：全新短连接面对 Python 侧遗留的 `-wal`/`-shm` 状态时，

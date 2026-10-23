@@ -500,3 +500,76 @@ TRUNCATE 仅在诊断复现臂显式开启时才发生）。
 - 结论：**注释修正零行为变更已由 CI 证实**（无新增失败、无新增 malformed/
   locked、非测试 job 全绿）；Python job 的 failure 全部落在既有残余面。
 
+## 十三、macOS 撕裂面裁决（run 39923719831，提交 3bfa649）—— 坐实
+
+### 13.1 裁决手段
+
+v4 只在 Linux 生效（`release/build.py:61-62` 平台门 `if sys.platform !=
+"linux": return False`）⇒ macOS 走 **bundled**（`Cargo.toml:46` 默认 features
+含 `sqlite-bundled`），同进程存在 Rust bundled SQLite 3.45.0 + Python 系统
+libsqlite3 两个不同实现；macOS 的 `fcntl` 锁语义与 POSIX 相同（不像 Windows
+按句柄免疫）⇒ 撕裂面**此前未被排除，但也从未被验证**（仓库此前无任何
+macOS pytest job / malformed 断言门）。
+
+为此新增平行 job `wal-malformed-gate-macos`（`.github/workflows/ci.yml`）：
+`runs-on: macos-latest`、走 bundled 构建（不改 `build.py`）、逐文件隔离单跑
+（无 xdist）与 ubuntu `wal-ab-probe` job **完全同口径**的 9 文件门
+（`database disk image is malformed` 出现即判失败），并额外**观测**
+`database is locked` 出现次数（只观测不判定）。
+
+### 13.2 裁决结果：**macOS 撕裂面存在（已坐实）**
+
+job 结论 = **failure**。观测证据（job id 120314877034 日志）：
+
+| 观测项 | 值 | 判读 |
+|---|---|---|
+| Python sqlite3 版本 | **3.50.4**（`/Library/Frameworks/Python.framework/...`，系统库） | Python 侧 = 系统 libsqlite3 |
+| Rust ext 链接（`otool -L`） | **`(no libsqlite3 in linkage => bundled SQLite, dual-instance precondition holds)`** | Rust 侧 = 静态 bundled SQLite 3.45.0 ⇒ **双实例前提成立** |
+| `test_h7_ast_cache_activation.py` | **malformed_hits=14**、`database_is_locked_hits=0` | 首文件即命中 |
+| 失败签名 | 7 项 FAILED，逐字为 `RuntimeError: Rust batch_resolve_and_save_calls 返回失败，已拒绝 Python 混合回退: 打开 CodeGraph 数据库失败: database disk image is malformed` | 与 ubuntu **v3 双实例时代**的 h7 族失败签名**完全一致** |
+
+⇒ **第九节定性的「h7/p15 结构性互斥壁垒」在 macOS 上原样复现**：哨兵连接
+钉 `-shm` ⇒ Rust 后续短连接读到 Python 侧写入的外来 `-shm` 视图 ⇒ 打开时
+wal-index 错位 ⇒ malformed。macOS 的默认配置（哨兵开 + drain PASSIVE +
+autocheckpoint=0）与 ubuntu v3 时代的失败配置**完全等价**，本门实测证实
+了这一等价不是理论推断。
+
+`database is locked` = 0 说明 macOS 上连「诚实 BUSY」的中间态都没出现 ——
+撕裂直接发生（与双实例时代 ubuntu 同形）。
+
+### 13.3 处置含义（决策路径已收窄）
+
+本次裁决之前，可选项包括「维持现状 / macOS 切系统库 / 声明不支持 /
+按平台条件化启用防御机制」。**macOS 红之后**：
+
+- 「维持现状（仅注释登记）」**不再是可接受选项** —— 已实证的数据损坏
+  风险不可沉默放任。
+- 「按平台条件化退役防御机制」（仅 Linux 退役、macOS 保留）也**不成立**
+  —— 防御机制（哨兵）在 macOS 双实例下本身就是 h7 的**致害因子**，保留它
+  不能治 macOS，只会复现 v3 的失败面。
+- 剩余路径：**macOS 也必须切到与 Python 同源的 libsqlite3（v4 扩展到
+  darwin）**，或**收口 macOS 支持**。二者都是产品决策，需立项。
+
+**macOS 切系统库的已知前置条件**（本次未做、需先查证）：
+1. **`.so` 必须同源**：v4 的有效性前提是 ext 与 Python 的 sqlite3 模块链接
+   **同一个** libsqlite3 文件（同一 VFS、同一 `-shm` 映射）。macOS 上
+   Python 来自 python.org（`.framework`），其 sqlite3 模块链接的
+   libsqlite3 路径需先查证（例如
+   `otool -L "$(python3 -c 'import _sqlite3;print(_sqlite3.__file__)')"`）。
+   若 ext 链了 Homebrew 或 `/usr/lib` 的另一份，则仍双实例，v4 逻辑不成立。
+2. macOS 自带 SQLite 版本与 Homebrew `sqlite` 的 `sqlite3.pc`
+   （`pkg-config --libs sqlite3`）可用性 —— 仓库无记录，需外部查证。
+3. 版本门：build.py 现行门为 `>= (3,45)`；macOS 若命中需确认 Python 侧
+   版本（本 run 实测 3.50.4 ≥ 3.45，满足门控下限）。
+
+### 13.4 本门的边界（不能回答什么）
+
+- 只覆盖**当前默认配置**（哨兵开 + drain PASSIVE + autocheckpoint=0）下
+  的 macOS 表现；其它配置组合（如关哨兵）未测。
+- 只覆盖 macos-latest（arm64）+ Python 3.13；其它 macOS 架构 / Python
+  版本未测。
+- Windows 未覆盖（Windows 按句柄加锁免疫，且 Windows 侧一直走 bundled，
+  本门不触及）。
+- gate 在首个命中文件即 `exit 1`（fail-fast），故只有首文件的观测数据；
+  其余 8 文件未跑（设计如此，与 ubuntu 门同口径）。
+

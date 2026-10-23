@@ -79,7 +79,7 @@ impl Default for BatchSaveResult {
 // 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 与 Python 侧共用同一实例、
 // 同一 VFS、同一 `-shm` 映射 ⇒ 上述双实例前提已解除（CI run 39814732618 h7 与
 // p15 首次同时全绿）。但非 Linux 平台仍是双实例（Windows 按句柄免疫，macOS
-// 撕裂面未排除）⇒ 防御机制仍保留。
+// 撕裂面已由 CI 实证坐实）⇒ 防御机制仍保留。
 //
 // 正式修法：Rust 侧一律走 `crate::db_conn::with_db_conn`（v3「温和 drain」：
 // 短连接 + open 期 PASSIVE + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain）。

@@ -4404,8 +4404,7 @@ class CodeGraphBase:
         # 共用同一 .so / 同一 VFS / 同一 -shm ⇒ 双实例前提消失，这些防御在
         # Linux 上不再必需；但 Windows/macOS 的 Python ext 构建仍走 bundled，
         # 且 Linux 上系统 sqlite < 3.45（ubuntu-22.04 = 3.37.2）也会安全回退
-        # bundled ⇒ 非上述情形仍是双实例（Windows 按句柄加锁免疫，macOS 撕裂面
-        # 未排除）⇒ 机制保留在代码里。
+        # bundled ⇒ 非上述情形仍是双实例（Windows 按句柄加锁免疫，macOS 撕裂面已由 CI 实证坐实）⇒ 机制保留在代码里。
 
     # --------------------------------------------------------------------
     # 工作区管理方法
