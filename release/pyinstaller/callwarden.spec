@@ -27,7 +27,7 @@ Python parser 保留在源码仓库作为开发 reference，通过 ``pyproject.t
 ``from .db import CodeGraphDB`` 和 ``callwarden/db/__init__.py`` 的同名 import，
 避免拉入 ``db.py → db_build.py → parsers → tree_sitter``。
 
-构建命令（Linux/macOS）：
+构建命令（Linux）：
     cd <repo_root>
     pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
 
@@ -70,7 +70,7 @@ datas = [
 if sys.platform == 'win32':
     rust_ext_name = 'callwarden_core.pyd'
 else:
-    # Linux: .so, macOS: .so（Python 扩展统一 .so 后缀）
+    # Linux: .so（macOS 已收口，2026-10-23 不再产出）
     rust_ext_name = 'callwarden_core.so'
 
 # 开发机上的根目录扩展可能正被 MCP/watcher 加载。允许发布验证从 Cargo
@@ -508,7 +508,7 @@ bundle_local = COLLECT(
 
 # === Analysis 2: client/agent runtime（无 parser，仅 Linux）===
 # 企业 client/agent 依赖 Linux UDS、SO_PEERCRED 和 SCM_RIGHTS。
-# Windows/macOS 不构建 client/agent bundle，只产出 local bundle。
+# Windows 不构建 client/agent bundle，只产出 local bundle（macOS 已收口）。
 if sys.platform.startswith('linux'):
     a_client = Analysis(
         [

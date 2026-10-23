@@ -53,10 +53,10 @@ class PrebuiltBuildExt(build_ext):
 
     def _copy_prebuilt(self, ext_name):
         """复制预编译的二进制到 build_ext 输出目录。"""
+        # macOS 已收口（2026-10-23）：不再有 darwin 分支（原本与 else 同为
+        # .so，属重复分支）；darwin 上 release/build.py 已 fail-closed。
         if sys.platform == "win32":
             binary_name = f"{ext_name}.pyd"
-        elif sys.platform == "darwin":
-            binary_name = f"{ext_name}.so"
         else:
             binary_name = f"{ext_name}.so"
 

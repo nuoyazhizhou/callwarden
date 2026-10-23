@@ -18,6 +18,9 @@ parser ABI 的 artifact manifest（设计：rust-only-parser-cutover-plan.md
     python release/build.py --rust       # 只构建 Rust 扩展
     python release/build.py --pyinstaller [--role local|client|all]
                                         # 构建 PyInstaller 角色产物并运行 bundle inspector
+
+支持平台（2026-10-23 起）：Linux（x86_64 / aarch64）、Windows（win_amd64）。
+macOS 已收口——darwin 上任何构建动作 fail-closed（见 _reject_macos_build）。
 """
 
 import subprocess
@@ -71,8 +74,46 @@ def _use_system_sqlite():
         return False
 
 
+# ============================================================
+# macOS 收口 fail-closed 门（2026-10-23）
+#
+# 根因：macOS 上 Python 的 SQLite **静态编译进 _sqlite3.so**（otool -L 无
+# 任何 libsqlite3 依赖行，且 sqlite3.sqlite_version != pkg-config
+# --modversion ⇒ 版本不等独立证明未链那份共享库），而 Rust 扩展在 macOS
+# 只能 bundled（_use_system_sqlite 平台门只在 Linux 切系统库）⇒ 同进程
+# **两个 SQLite 实例**共享 -wal/-shm ⇒ `database disk image is malformed`
+# 撕裂面已由 CI run 39923719831 实证坐实（malformed_hits=14），且切系统
+# 库路径被 F1/F3 取证证明**结构性不可行**（无可共用的共享 libsqlite3）。
+# 产品裁决 = 收口 macOS 支持：不再构建/发布 macOS wheel 与 pkg。
+#
+# 本门把「在 macOS 上源码构建出危险产物」这条 silent corruption 入口关死：
+# 任何构建动作（--rust / --wheel / --pyinstaller / 完整构建）一律
+# fail-closed。`--check`（只读版本诊断）除外。
+#
+# 证据与裁决：docs/testing/ci_malformed_bisect_evidence.md §十三/§十四；
+# CI 守卫：.github/workflows/ci.yml 的 no-macos-artifacts-guard job。
+# ============================================================
+def _reject_macos_build():
+    """macOS 收口（2026-10-23）：在 darwin 上拒绝任何构建动作。"""
+    if sys.platform != "darwin":
+        return
+    print("=" * 60)
+    print("[FAIL] macOS 构建已收口（2026-10-23），拒绝继续。")
+    print()
+    print("  根因：macOS 上 Python 的 SQLite 静态编译进 _sqlite3.so，Rust")
+    print("  扩展在 macOS 只能 bundled ⇒ 同进程双 SQLite 实例共享 -wal/-shm")
+    print("  ⇒ malformed 撕裂面已由 CI 实证坐实，且切系统库路径结构性不可行")
+    print("  （无可共用的共享 libsqlite3）。")
+    print()
+    print("  支持平台：Linux（x86_64 / aarch64）、Windows（win_amd64）。")
+    print("  裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节")
+    print("=" * 60)
+    sys.exit(1)
+
+
 def build_rust_extension():
     """构建 Rust PyO3 扩展。"""
+    _reject_macos_build()
     print("Step 2: Building Rust extension (callwarden_core)")
     rust_ext_dir = ROOT / "rust_ext"
 
@@ -88,13 +129,12 @@ def build_rust_extension():
     run(["cargo", "build", "--lib", "--release", *extra], cwd=rust_ext_dir)
 
     # 查找构建产物
+    # macOS 已收口（2026-10-23，见 _reject_macos_build）：不再有 darwin
+    # 产物分支；本函数在 darwin 上于开头即 fail-closed 退出。
     target_dir = rust_ext_dir / "target" / "release"
     if sys.platform == "win32":
         lib_file = target_dir / "callwarden_core.dll"
         dest_name = "callwarden_core.pyd"
-    elif sys.platform == "darwin":
-        lib_file = target_dir / "libcallwarden_core.dylib"
-        dest_name = "callwarden_core.so"
     else:
         lib_file = target_dir / "libcallwarden_core.so"
         dest_name = "callwarden_core.so"
@@ -120,12 +160,11 @@ def _ensure_rust_ext_at_root():
     本函数从 rust_ext/target/release/ 查找构建产物并复制到根目录，
     若根目录已存在且非空则跳过。失败时 fail-fast 退出。
     """
+    # macOS 已收口（2026-10-23）：调用方 build_python_wheel() 在 darwin 上
+    # 先经 _reject_macos_build() fail-closed，故此处不再需要 dylib 分支。
     if sys.platform == "win32":
         binary_name = "callwarden_core.pyd"
         src_name = "callwarden_core.dll"
-    elif sys.platform == "darwin":
-        binary_name = "callwarden_core.so"
-        src_name = "libcallwarden_core.dylib"
     else:
         binary_name = "callwarden_core.so"
         src_name = "libcallwarden_core.so"
@@ -175,18 +214,23 @@ def _verify_rust_extension_present():
 def _detect_wheel_platform_tag():
     """P0-3 修复：根据当前平台返回 wheel platform tag。
 
-    让 wheel 标记为平台特定（manylinux2014_x86_64 / win_amd64 / macosx_*），
+    让 wheel 标记为平台特定（manylinux2014_x86_64 / win_amd64），
     而不是默认的 py3-none-any，避免 pip 在不兼容平台误装。
+
+    macOS 已收口（2026-10-23）：不再产出 macOS wheel（bundled 双 SQLite
+    实例 = 已实证 malformed 撕裂面），darwin 上 fail-closed。
+    证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
     """
     if sys.platform == "win32":
         return "win_amd64"
     elif sys.platform == "darwin":
-        # macOS universal2 暂用当前架构 tag，CI 中通过矩阵构建 universal2
-        import platform
-        machine = platform.machine().lower()
-        if machine == "arm64":
-            return "macosx_11_0_arm64"
-        return "macosx_11_0_x86_64"
+        print("=" * 60)
+        print("[FAIL] macOS wheel 已收口（2026-10-23），拒绝生成 macosx_* tag。")
+        print("  根因：bundled 双 SQLite 实例共享 -wal/-shm ⇒ malformed 撕裂面")
+        print("  已由 CI 实证坐实且无可用修法。支持平台：Linux / Windows。")
+        print("  裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节")
+        print("=" * 60)
+        sys.exit(1)
     else:
         # Linux：默认 manylinux2014_x86_64；arm64 由 CI 矩阵覆盖
         import platform
@@ -224,6 +268,7 @@ def _verify_wheel_contains_rust_extension(wheel_path):
 
 def build_python_wheel():
     """构建 Python wheel。"""
+    _reject_macos_build()
     print("Step 3: Building Python wheel")
 
     # P0-3 修复（问题 3）：干净 runner 上 Rust 扩展可能尚未复制到根目录。
@@ -468,7 +513,8 @@ def _resolve_pyz_toc(spec_work_dir, candidates):
     """在 PyInstaller 工作目录下查找 PYZ TOC 文件。
 
     PyInstaller 6 多 COLLECT spec 把不同 Analysis 的 PYZ 写在 build/<specname>/ 下，
-    编号 PYZ-00 / PYZ-01 / ...。Windows/macOS 只构建 local bundle（无 PYZ-01）。
+    编号 PYZ-00 / PYZ-01 / ...。Windows 只构建 local bundle（无 PYZ-01）；
+    macOS 已收口（2026-10-23），不再有 macOS bundle。
     """
     for name in candidates:
         path = spec_work_dir / name
@@ -485,10 +531,15 @@ def build_pyinstaller_bundle(role="all"):
     和 ``tree_sitter*``。本函数只负责调用 PyInstaller，spec 内部完成 fail closed
     排除；fail closed 检查由 ``inspect_bundle_artifacts`` 调用 bundle inspector 完成。
 
+    macOS 已收口（2026-10-23）：darwin 上经 ``_reject_macos_build`` fail-closed。
+    冻结包 100% 依赖 Rust ext 解析（parser 已全部排除），macOS 上 ext 即
+    bundled 双实例 ⇒ 不存在「降级可用」模式，故 pkg/离线包一并停。
+
     Args:
         role: ``local`` / ``client`` / ``all``（默认 ``all``，构建当前平台支持的全部 bundle）。
-            ``client`` bundle 仅在 Linux 上由 spec 生成（Windows/macOS 不构建）。
+            ``client`` bundle 仅在 Linux 上由 spec 生成（Windows 不构建；macOS 已收口）。
     """
+    _reject_macos_build()
     print("Step P1-G: Building PyInstaller role artifacts")
     print(f"  Role: {role}")
     print(f"  Platform: {sys.platform}")
@@ -625,6 +676,9 @@ def main():
     if "--check" in sys.argv:
         check_versions()
         return
+
+    # macOS 收口 fail-closed 门（2026-10-23）：--check 为只读版本诊断，除外。
+    _reject_macos_build()
 
     check_versions()
 

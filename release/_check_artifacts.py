@@ -2,12 +2,15 @@
 
 验证内容：
 - N5 Windows: callwarden.wxs WiX 源文件 XML 语法
-- N6 macOS: build_pkg.sh bash 语法
 - N7 Linux: build_packages.sh + 5 control + 14 maintainer 脚本
 - N8 Release CI: enterprise-release.yml YAML 语法 + 11 门禁 job 列表
 - H14 整体: artifact-manifest.json + wheel 元数据
 - P0-B 轻量包体积度量: local vs client/agent 安装目录差值、压缩包差值、
   三平台报告格式（设计：docs/design/rust-only-parser-cutover-plan.md Phase 1 步骤 5）
+
+注：原 N6 macOS（build_pkg.sh bash 语法）随 macOS 收口移除（2026-10-23）——
+macOS 不再有发布物，release/macos/ 目录已删除。证据：
+docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 
 用法：
     python release/_check_artifacts.py
@@ -229,7 +232,6 @@ def check_ci_yaml():
             "构建 wheel": ["build-wheels", "build_wheels"],
             "黑盒测试": ["blackbox", "wheel-blackbox"],
             "Windows MSI": ["msi", "windows-msi"],
-            "macOS pkg": ["pkg", "macos-pkg"],
             "Linux deb": ["deb", "linux-deb"],
             "安装验证": ["install"],
             "N-1 升级": ["n1-upgrade", "n-minus-1", "upgrade"],
@@ -363,7 +365,7 @@ def _format_bytes(n: int) -> str:
 def _make_compressed_artifact(bundle_dir: Path, suffix: str) -> Path | None:
     """为 bundle 生成临时压缩包用于体积度量。
 
-    Linux 用 tar.gz，Windows/macOS 用 zip。返回压缩包路径，失败返回 None。
+    Linux 用 tar.gz，Windows 用 zip。返回压缩包路径，失败返回 None。
     """
     import tempfile
 
@@ -402,7 +404,7 @@ def check_light_bundle_unpacked_diff():
     度量项：安装目录差值（_internal/ 解压后字节数差异）。
 
     - Linux：两个 bundle 都应存在，计算差值与节省百分比
-    - Windows/macOS：只有 local bundle，client/agent bundle 不构建（UDS Linux 特有），
+    - Windows：只有 local bundle，client/agent bundle 不构建（UDS Linux 特有），
       报告 local bundle 的 parser distribution 占比作为「潜在节省」估算
     - bundle 不存在时打印 SKIP 并返回 True（度量不是发布门禁）
     """
@@ -452,7 +454,7 @@ def check_light_bundle_unpacked_diff():
         print("         （仅 local bundle 构建，未拆分 client/agent）")
         print(f"  预期节省（parser 占比）: ~{_format_bytes(local_parser_bytes)}")
     else:
-        # Windows/macOS: client/agent bundle 不构建
+        # Windows: client/agent bundle 不构建（macOS 已收口，2026-10-23）
         print(f"  client bundle:  N/A（{sys.platform} 不构建 client/agent，UDS 是 Linux 特有）")
         print(f"  预期节省（parser 占比）: ~{_format_bytes(local_parser_bytes)}")
 
@@ -463,7 +465,7 @@ def check_light_bundle_compressed_diff():
     """P0-B 步骤 5: 度量 local vs client/agent 压缩包差值。
 
     度量项：压缩包差值（tar.gz/zip 体积差异）。
-    Linux 用 tar.gz，Windows/macOS 用 zip（与 release/build.py 一致）。
+    Linux 用 tar.gz，Windows 用 zip（与 release/build.py 一致；macOS 已收口）。
 
     bundle 不存在时打印 SKIP 并返回 True。
     """
@@ -526,9 +528,9 @@ def check_light_bundle_compressed_diff():
 def check_light_bundle_three_platform_report():
     """P0-B 步骤 5: 三平台报告格式验证。
 
-    确保报告在 Windows/macOS/Linux 三种平台下都能输出，并且：
+    确保报告在 Windows/Linux 两种平台下都能输出（macOS 已收口，2026-10-23），并且：
     - Linux 报告 local + client 两个 bundle 的差值
-    - Windows/macOS 报告 local bundle + 说明 client/agent 不构建
+    - Windows 报告 local bundle + 说明 client/agent 不构建
     - 报告字段名跨平台一致（便于 CI 自动解析）
     """
     print("\n=== P0-B: 三平台报告格式验证 ===")
@@ -588,7 +590,7 @@ def check_light_bundle_three_platform_report():
               f"但平台 {sys.platform} 期望 {expected_client_supported}")
         return False
 
-    # Windows/macOS 不应有 client bundle
+    # Windows 不应有 client bundle（macOS 已收口，2026-10-23）
     if not expected_client_supported and report["client_exists"]:
         print(f"  [FAIL] {sys.platform} 不应构建 client/agent bundle，"
               f"但 {CLIENT_BUNDLE_DIR} 存在")
@@ -612,12 +614,7 @@ def main():
     # N5 Windows
     results["n5_wxs"] = check_wxs()
 
-    # N6 macOS
-    results["n6_pkg"] = check_bash_script(
-        RELEASE_DIR / "macos" / "build_pkg.sh", "N6 macOS"
-    )
-
-    # N7 Linux
+    # N7 Linux（原 N6 macOS 随平台收口移除，2026-10-23）
     results["n7_deb_main"] = check_bash_script(
         RELEASE_DIR / "linux" / "build_packages.sh", "N7 Linux 主脚本"
     )

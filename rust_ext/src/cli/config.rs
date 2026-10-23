@@ -43,7 +43,10 @@ impl PlatformPaths {
     /// `platform` 参数对齐 Python `sys.platform`：
     /// - `"linux"` → Linux 路径
     /// - `"windows"` → Windows 路径（Python `win32`）
-    /// - `"macos"` → macOS 路径（Python `darwin`）
+    /// - `"macos"` → macOS 路径（Python `darwin`）——**仅路径常量**：macOS
+    ///   已于 2026-10-23 收口（见 `platform_role_support` 与
+    ///   `check_role_supported`，所有角色 fail-closed）；此处保留常量仅为
+    ///   避免 PyO3 API 行为惊变，不代表 macOS 受支持。
     pub fn detect_for_platform(platform: &str) -> Self {
         let home = dirs_home();
         match platform {
@@ -322,13 +325,16 @@ pub const SUPPORTED_ROLES: &[&str] = &["local", "client", "agent", "daemon", "al
 
 /// 平台×角色支持矩阵。
 ///
-/// 对齐 Python `PLATFORM_ROLE_SUPPORT` (L181-185)
+/// 对齐 Python `PLATFORM_ROLE_SUPPORT` (L181-186)
+///
+/// macOS 已收口（2026-10-23）：darwin/macos 不再支持任何角色——bundled 双
+/// SQLite 实例共享 -wal/-shm ⇒ malformed 撕裂面已由 CI 实证坐实且无可用
+/// 修法。证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 ///
 /// 返回 (platform, 支持的角色列表)。
 pub fn platform_role_support(platform: &str) -> Vec<&'static str> {
     match platform {
         "win32" | "windows" => vec!["local", "client"],
-        "darwin" | "macos" => vec!["local", "client"],
         "linux" => vec!["local", "client", "agent", "daemon", "all"],
         _ => vec![],
     }
@@ -527,6 +533,8 @@ mod tests {
         assert!(windows.system_config.ends_with("CallWarden/config.toml"));
         assert!(windows.runtime.is_none());
 
+        // macOS 路径常量保留（detect_for_platform 不判定支持性），但平台本身
+        // 已于 2026-10-23 收口——支持性由 platform_role_support 把关。
         let macos = PlatformPaths::detect_for_platform("darwin");
         assert_eq!(
             macos.system_config,
@@ -547,12 +555,21 @@ mod tests {
         for role in ["local", "client", "agent", "daemon", "all"] {
             assert!(check_role_supported(role, Some("linux")));
         }
-        for platform in ["win32", "darwin"] {
+        for platform in ["win32"] {
             assert!(check_role_supported("local", Some(platform)));
             assert!(check_role_supported("client", Some(platform)));
             assert!(!check_role_supported("agent", Some(platform)));
             assert!(!check_role_supported("daemon", Some(platform)));
             assert!(!check_role_supported("all", Some(platform)));
+        }
+        // macOS 收口（2026-10-23）：任何平台名下均无受支持角色。
+        for platform in ["darwin", "macos"] {
+            for role in ["local", "client", "agent", "daemon", "all"] {
+                assert!(
+                    !check_role_supported(role, Some(platform)),
+                    "macOS 已收口，role={role} platform={platform} 不应受支持"
+                );
+            }
         }
     }
 }

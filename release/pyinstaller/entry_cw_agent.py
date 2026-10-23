@@ -322,7 +322,7 @@ def main():
         print(
             'ERROR: cw-agent is only supported on Linux.\n'
             'Enterprise agent requires SO_PEERCRED, SCM_RIGHTS, and UDS.\n'
-            "On Windows/macOS, use 'cw' in local mode.",
+            "On Windows, use 'cw' in local mode (macOS retired 2026-10-23).",
             file=sys.stderr,
         )
         sys.exit(2)

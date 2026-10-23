@@ -270,7 +270,9 @@ def test_d4_check_role_supported():
         ("local", "unknown", False),   # D4.6
         ("client", "linux", True),
         ("client", "win32", True),
-        ("client", "darwin", True),
+        # macOS 收口（2026-10-23）：darwin 下所有角色均不受支持
+        # （原 True；证据 docs/testing/ci_malformed_bisect_evidence.md 十四节）
+        ("client", "darwin", False),
         ("all", "linux", True),
         ("all", "win32", False),
     ]

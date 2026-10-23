@@ -31,12 +31,10 @@ tree_sitter = "0.26"
 pyo3 = "0.29"
 
 [platforms]
+# macOS 已收口（2026-10-23）：bundled 双 SQLite 实例共享 -wal/-shm ⇒
+# malformed 撕裂面已由 CI 实证坐实且无可用修法 ⇒ 无 macOS 发布物。
+# 证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 windows = ["x64", "arm64"]
-# P0-5 v2 修复（2026-07-22）：macOS 诚实降级为 arm64-only
-# 旧值 ["x86_64", "arm64"] 假装 universal2，但 PyInstaller runtime 是宿主架构，
-# 当前 CI 只有 macos-latest（arm64），无法构建真正的 universal2。
-# 如需 x86_64 支持，需要在 macos-13 runner 上单独构建（未来扩展）。
-macos = ["arm64"]
 linux = ["x86_64", "aarch64"]
 
 [roles]
@@ -46,7 +44,6 @@ linux = ["x86_64", "aarch64"]
 # daemon: Linux cw-daemon + system unit + migration/backup tools
 # all: platform-supported roles (Linux = enterprise meta-package)
 default_windows = "local"
-default_macos = "local"
 default_linux_desktop = "local"
 default_linux_server = "all"
 

@@ -27,10 +27,9 @@ include setup.py
 include README.md
 include LICENSE
 
-# 安装器资源（Windows WiX / macOS pkg / Linux deb）
-# 只包含源码/配置，排除构建产物（.msi/.pkg/.deb/.wixobj 等）
+# 安装器资源（Windows WiX / Linux deb）
+# 只包含源码/配置，排除构建产物（.msi/.deb/.wixobj 等）
 recursive-include release/windows *.wxs
-recursive-include release/macos *.sh
 recursive-include release/linux *.sh *.service *.conf *.postinst *.postrm *.preinst *.preinst
 recursive-include release/linux/deb *
 

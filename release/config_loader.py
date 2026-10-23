@@ -48,12 +48,18 @@ class PlatformPaths:
                 user_data=local_app_data / "CallWarden" / "data",
             )
         elif sys.platform == "darwin":
-            return PlatformPaths(
-                system_config=Path("/Library/Application Support/CallWarden/config.toml"),
-                user_config=Path.home() / "Library" / "Application Support" / "CallWarden" / "config.toml",
-                system_data=Path("/Library/Application Support/CallWarden/data"),
-                user_data=Path.home() / "Library" / "Application Support" / "CallWarden" / "data",
+            # macOS 已收口（2026-10-23）：bundled 双 SQLite 实例共享 -wal/-shm
+            # ⇒ malformed 撕裂面已由 CI 实证坐实且无可用修法 ⇒ 产品裁决收口
+            # macOS 支持（无 wheel/pkg，源码构建在 release/build.py fail-closed）。
+            # 此处运行时同样 fail-closed，避免残留的 macOS 路径被无声使用。
+            # 证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
+            print(
+                "ERROR: macOS 已收口（2026-10-23），Call Warden 不再支持 macOS。\n"
+                "支持平台：Linux / Windows。\n"
+                "裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节",
+                file=sys.stderr,
             )
+            sys.exit(1)
         else:  # Linux
             xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
             xdg_state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
@@ -178,9 +184,11 @@ def _flatten_toml(data: dict, config: Config, source: str, prefix: str):
 
 SUPPORTED_ROLES = {"local", "client", "agent", "daemon", "all"}
 
+# macOS 已收口（2026-10-23）：不再支持任何角色（原 {"local", "client"}）。
+# 根因：bundled 双 SQLite 实例 = 已实证 malformed 撕裂面，无可用修法。
+# 证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 PLATFORM_ROLE_SUPPORT = {
     "win32": {"local", "client"},
-    "darwin": {"local", "client"},
     "linux": {"local", "client", "agent", "daemon", "all"},
 }
 
@@ -197,6 +205,15 @@ def fail_closed_unsupported(role: str, platform: Optional[str] = None) -> None:
     if not check_role_supported(role, platform):
         plat = platform or sys.platform
         supported = PLATFORM_ROLE_SUPPORT.get(plat, set())
+        if not supported:
+            # 平台级不支持（当前唯一情形：macOS 已收口，2026-10-23）
+            print(
+                f"ERROR: 平台 {plat} 不受支持（macOS 已收口，2026-10-23）。\n"
+                f"支持平台：Linux / Windows。\n"
+                f"裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         print(
             f"ERROR: Role '{role}' is not supported on {plat}.\n"
             f"Supported roles: {', '.join(sorted(supported))}\n"

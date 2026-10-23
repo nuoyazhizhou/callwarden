@@ -116,7 +116,7 @@ def _is_callwarden_core_file(filename: str) -> bool:
 
     支持以下命名形式（PEP 3149 / Windows ABI tag）：
     - ``callwarden_core.pyd`` (Windows 无 ABI 后缀)
-    - ``callwarden_core.so`` (Linux/macOS 无 ABI 后缀)
+    - ``callwarden_core.so`` (Linux 无 ABI 后缀；macOS 已收口不再产出)
     - ``callwarden_core.cp314-win_amd64.pyd`` (Windows 带 ABI 后缀)
     - ``callwarden_core.cpython-314-x86_64-linux-gnu.so`` (Linux 带 ABI 后缀)
 
@@ -297,7 +297,7 @@ def _check_callwarden_core_present(bundle: Path) -> list[str]:
     """检查 Rust callwarden_core 扩展是否存在于 bundle 中。
 
     P1-G 后生产解析统一由 Rust callwarden_core 完成，bundle 中必须存在
-    callwarden_core.pyd（Windows）或 callwarden_core.so（Linux/macOS）。
+    callwarden_core.pyd（Windows）或 callwarden_core.so（Linux；macOS 已收口）。
 
     支持带 ABI 后缀的变体（PEP 3149 / Windows ABI tag），例如：
     - ``callwarden_core.cp314-win_amd64.pyd``
