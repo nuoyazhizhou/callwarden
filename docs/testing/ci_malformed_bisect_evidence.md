@@ -342,3 +342,51 @@ monkeypatch）/ test_multi_llm_contract_p4_lease.py:44 /
 test_multi_llm_contract_p4_migration.py:45 / test_p3_task_mutation_smoke.py:34 /
 test_p3_gate_smoke.py:38 / test_p3_reviews_smoke.py:21 /
 test_p3_identity_smoke.py:28。
+
+## 十一、环境泄漏修复判读（提交 0a6f3da + 4453a7c，run 39873640117）
+
+### 11.1 本地实证（Windows，与平台无关，修复前）
+
+用临时探针直接观测 env：
+
+| 运行方式 | `CW_USE_RUST_STORAGE` | 结果 |
+|---|---|---|
+| 单独跑探针 | `'<UNSET>'` | 1 passed |
+| 先跑 `tests/test_p4_lease_smoke.py` 再跑探针 | **`'0'`** | 泄漏确凿 |
+
+配套行为对照：`test_facade_does_not_fallback_after_rust_failure` 单独跑通过、
+与 `test_p4_lease_smoke.py` 同进程跑**转红**（Windows 上主因被 tempdir 清理的
+`PermissionError: WinError 32` 掩盖一层，根因同为 env=0 后不走 Rust 路径）。
+
+### 11.2 范围修正：10 处里只有 6 处真会泄漏
+
+实测发现 `test_p3_gate_smoke.py` 之类是**脚本不是 pytest 测试**——env 写在
+`def main():` 里，pytest 收集该文件得 **0 项用例**，永不执行、不会泄漏。
+故按 `--collect-only` 实测分类后只改 6 个真收集到的文件：
+test_p4_lease_smoke / test_p4_authoritative_clock / test_p1_write_path_verdict /
+test_property_lease_fencing / test_multi_llm_contract_p4_lease /
+test_multi_llm_contract_p4_migration。
+
+### 11.3 CI 判读（0a6f3da）
+
+| 指标 | 结果 |
+|---|---|
+| ① `test_facade_does_not_fallback_after_rust_failure` | **转绿，已从失败清单消失** ✅ |
+| ② `database disk image is malformed` | **0** |
+| ③ `database is locked` | **0** |
+| ④ 新增失败 | 无；总数 `4 failed, 8146 passed`（基线 5 failed） |
+
+剩余仅既有残余：`srv_019`×4 + 3 个 HTTP RPC fixture ERROR
+（本次命中 test_mcp_get_test_coverage_http_rpc，仍为逐版本漂移的抖动）。
+
+⇒ **env 泄漏假说被完整证实并闭环**。该 fail-closed 测试失效自 v1 存在、
+与 v4 无关，至此收口。
+
+### 11.4 修复引入的次生问题与收尾（4453a7c）
+
+改为 `monkeypatch.setenv` 后 `import os` 变未使用，CI **Lint check 转红**
+（ruff F401 ×5）。已字节级删除该 import（避免 CRLF 行尾归一化）：
+test_multi_llm_contract_p4_lease:13 / test_multi_llm_contract_p4_migration:12 /
+test_p1_write_path_verdict:12 / test_p4_lease_smoke:14 /
+test_property_lease_fencing:11。
+验证：`ruff check tests/` → All checks passed；本地 31 项 + 7 项回归全绿。
