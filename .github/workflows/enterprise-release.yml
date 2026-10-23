@@ -768,9 +768,6 @@ jobs:
             exit 1
           fi
           echo "OK: No high-severity vulnerabilities"
-      - name: Generate provenance (SLSA, 可选)
-        uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic.slsa@5a775b367a56d5bd118a224a811bba288150a563  # v2.0.0
-        continue-on-error: true  # SLSA 是可选增强，失败不阻断门禁
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: sbom-and-audit
@@ -780,6 +777,37 @@ jobs:
             licenses.json
             licenses.html
             vuln-audit.json
+
+  # ============================================================
+  # Gate 8b: SLSA Provenance（可选增强，不阻断门禁）
+  # - 原本是 gate8-sbom-audit 里的一个 step，但 reusable workflow
+  #   只能出现在 jobs.*.uses 层；放在 steps 层会让 GitHub 在解析期
+  #   直接拒绝整个 workflow 文件（run 建成但 0 job）。
+  # - 上游路径修正：generator_generic.slsa 在上游任何 tag 都不存在，
+  #   且 .slsa 扩展名会被 GitHub 判为非法 workflow 引用（同样 0 job）；
+  #   v2.0.0 的通用 generator 实为 generator_generic_slsa3.yml，
+  #   仍在同一个 SHA（v2.0.0 tag commit）上，SHA pin 不变。
+  # - 语义保持：上游的 continue-on-error 入参让 SLSA 失败不致红，
+  #   等价于原 step 级 continue-on-error: true；且本 job 不在
+  #   gate9 的 needs 链上，失败不会阻断 11 门禁链。
+  # - if 条件：显式写 always() && needs.gate8-sbom-audit.result ==
+  #   'success'。默认的隐式 success() 会沿 needs 祖先链传播祖先的
+  #   skipped，导致 gate8 成功但 gate8b 被跳过（与原 step 内嵌于
+  #   gate8 的行为不一致）；显式条件把它对齐到「gate8 跑完才产
+  #   provenance」，同时 gate8 失败时不产 provenance（原语义亦然）。
+  # ============================================================
+  gate8b-slsa-provenance:
+    name: "Gate 8b: SLSA Provenance (optional)"
+    needs: gate8-sbom-audit
+    if: always() && needs.gate8-sbom-audit.result == 'success'
+    permissions:
+      actions: read          # 上游 generator 检测 Actions 环境所需
+      id-token: write        # OIDC 无密钥签名
+      contents: write        # 上传 provenance 到 Release
+      attestations: write    # 预留：GitHub attestations API
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@5a775b367a56d5bd118a224a811bba288150a563  # v2.0.0
+    with:
+      continue-on-error: true  # SLSA 是可选增强，失败不阻断门禁
 
   # ============================================================
   # Gate 9: Staging 发布
