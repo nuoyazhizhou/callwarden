@@ -11,7 +11,6 @@
 - 权威时钟（Req 14.11）：时间字段读取 daemon 时钟，客户端时间戳只作参考（Req 14.12）
 - Lease 边界（Req 14.32/11.13）：不提供自动 dispatch/抢占/中央调度
 """
-import os
 import time
 
 import pytest

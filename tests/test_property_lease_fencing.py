@@ -8,7 +8,6 @@ Property：对任意 lease 获取/续租/释放/重新获取序列，一旦新 c
 - 每个 trial 结束后发布新 lease（counter N），断言全部历史 (counter, token) 组合被拒
 - 额外注入：token 被篡改、counter 乱序、跨 trial 混合提交，全部拒绝
 """
-import os
 import random
 import time
 

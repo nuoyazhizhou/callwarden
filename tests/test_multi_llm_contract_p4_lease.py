@@ -10,7 +10,6 @@
   过期判定完全由权威时钟决定；客户端时间戳不参与（API 不接受客户端时钟参数，
   时间字段严格等于权威时钟值）
 """
-import os
 import time
 
 import pytest

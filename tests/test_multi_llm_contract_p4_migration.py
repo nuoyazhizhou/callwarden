@@ -9,7 +9,6 @@
 - 事件追加：acquire/renew/release 顺序追加，且事件账本不记录 token
 - claimed metadata 不获授权：assignment 绑定本身不授予 lease/写权限
 """
-import os
 import sqlite3
 import time
 

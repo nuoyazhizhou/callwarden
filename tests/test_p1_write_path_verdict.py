@@ -9,7 +9,6 @@
   submit_verdict 写入的 verdict（legacy 任务无 contract 时仍判定 pass）
 """
 import json
-import os
 import time
 
 import pytest
