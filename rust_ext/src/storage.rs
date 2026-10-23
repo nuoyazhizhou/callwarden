@@ -409,23 +409,30 @@ CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_
 ///
 /// # `wal_autocheckpoint = 0` 与 open 期 `PASSIVE` checkpoint 的由来
 ///
-/// 二者均对齐 `db_conn.rs:231`，用于消除 storage 路径"读到篡改前旧值"的
-/// **过期快照**：
+/// 【v3 防御机制，v4 后仍保留】二者均对齐 `db_conn.rs:231`，用于消除 storage
+/// 路径"读到篡改前旧值"的**过期快照**：
 ///
 /// - `wal_autocheckpoint = 0`：短连接 drop 时的 autocheckpoint 会回收 WAL，
 ///   是撕裂同进程其他连接 `-shm` 视图的已知源（POSIX `fcntl` 锁按进程分配，
 ///   与 Python 侧连接互不排斥）。
 /// - open 期 `PRAGMA wal_checkpoint(PASSIVE)`：全新短连接面对 Python 侧遗留的
-///   `-wal`/`-shm` 状态时，必须触发一次 wal-index 重建才能拿到一致快照。
+///   `-wal`/`-shm` 状态时，触发一次 wal-index 重建以拿到一致快照。
 ///   缺这一步时，`initialize_or_migrate` 可能读到过期的
 ///   `schema_migrations.checksum`（或误判已 DROP 的表仍存在），从而绕过
 ///   fail-closed 判决——CI 上
 ///   `test_facade_does_not_fallback_after_rust_failure` 的
 ///   `DID NOT RAISE` 即指向该路径。
 ///
+/// **【v4 现状】** v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 与 Python 侧共用
+/// 同一实例、同一 VFS、同一 `-shm` 映射 ⇒ 上述「过期快照」的成因前提已解除。
+/// 但**非 Linux 平台仍是双实例**（Windows 按句柄加锁免疫，**macOS 撕裂面未
+/// 排除**）⇒ 两条配置**继续保留**。
+///
 /// PASSIVE 不阻塞读者，且失败此处刻意忽略（与 `db_conn.rs` 一致）：
 /// checkpoint 只是尽力而为的一致性促进，不应让"打开连接"本身失败。
 /// 诊断回退开关：设 `CW_RUST_OPEN_CHECKPOINT=0` 可关闭该 checkpoint。
+/// 该 env 属**诊断复现臂开关，当前无任何调用方**（CI / scripts / Python 侧零
+/// 匹配），仅供本地复现历史行为。
 fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open_with_flags(
         path.as_ref(),
@@ -441,6 +448,7 @@ fn open_connection<P: AsRef<Path>>(path: P) -> Result<Connection, rusqlite::Erro
     conn.pragma_update(None, "foreign_keys", "ON")?;
     // 对齐 db_conn.rs:231——禁 autocheckpoint + open 期温和 checkpoint，
     // 消除 storage 路径的过期快照（见上方文档注释）。
+    // 【v3 防御机制，v4 后仍保留：非 Linux 平台仍是双实例】
     conn.pragma_update(None, "wal_autocheckpoint", 0i64)?;
     if std::env::var("CW_RUST_OPEN_CHECKPOINT").as_deref() != Ok("0") {
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");

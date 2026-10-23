@@ -26,7 +26,10 @@ mod abi_contract;
 pub mod canonicalize;
 // CI-DEBT 深水区：Rust 侧 DB 连接管理——每次调用独立短连接 + 写后 WAL drain，
 // 消除同进程 Python 主连接与 Rust 连接的 WAL-index 双实例 hazard
-// （database disk image is malformed，CI ubuntu 独有；见 db_conn 模块文档）
+// （database disk image is malformed，CI ubuntu 独有；见 db_conn 模块文档）。
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+// （CI run 39814732618 h7 与 p15 同时全绿）；非 Linux 平台仍是双实例，
+// 故本模块的防御机制仍保留。
 pub mod db_conn;
 // Phase 0 子任务 3 Step 2: Python/Rust 差分对照基线数据结构
 mod differential_baseline;

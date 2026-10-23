@@ -73,8 +73,12 @@ fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
 // CI-DEBT 深水区：manifest 写路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上
 // fcntl 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
 // 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
-// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-// drain。
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+// （CI run 39814732618 h7 与 p15 首次同时全绿）；非 Linux 平台仍是双实例
+// ⇒ 防御机制仍保留。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后温和 drain
+// （默认 `wal_checkpoint(PASSIVE)`——温和回写不截断；TRUNCATE 仅在诊断复现臂
+// `CW_RUST_WAL_DRAIN=truncate` 下发生）。
 //
 // 只读连接保持短连接（`open_readonly`）：只读经 WAL + `-shm` 天然读到最新已提交
 // 数据，不做 checkpoint（见下方注释与 AGENTS.md 规则 32），不参与撕裂页成因。
@@ -86,10 +90,12 @@ fn sqlite_write_error(operation: &str, error: rusqlite::Error) -> PyErr {
 /// 幂等创建 manifest 相关 schema。
 #[pyfunction]
 pub fn manifest_init_schema(db_path: &str) -> PyResult<()> {
-    // CI-DEBT 深水区：Rust 侧 DB 访问一律走「每次调用独立短连接 + 写后
-    // wal_checkpoint(TRUNCATE) drain」（见 crate::db_conn 模块文档）。
+    // CI-DEBT 深水区：Rust 侧 DB 访问一律走「每次调用独立短连接 + 写后温和 drain」
+    // （默认 wal_checkpoint(PASSIVE)——温和回写不截断；TRUNCATE 仅在诊断复现臂下
+    // 发生，见 crate::db_conn 模块文档）。
     // 长活连接与 Python 主连接共享 -shm 时会撕裂页（database disk image is
     // malformed，CI ubuntu 独有），本模块是重灾区之一。
+    // 【v4 现状】Linux 上双实例前提已解除；非 Linux 平台仍是双实例 ⇒ 机制保留。
     crate::db_conn::with_db_conn(db_path, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| sqlite_write_error("开始 manifest schema 事务", e))?;

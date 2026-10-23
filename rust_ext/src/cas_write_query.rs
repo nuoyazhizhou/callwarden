@@ -26,8 +26,13 @@ use crate::daemon::cas::{
 /// CI-DEBT 深水区：本路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
 /// 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
 /// 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
-/// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-/// drain；WAL 模式与 busy_timeout 在 `db_conn::open_db_conn` 内设置。
+/// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+/// （CI run 39814732618 h7 与 p15 首次同时全绿）；非 Linux 平台仍是双实例
+/// ⇒ 防御机制仍保留。
+/// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后温和 drain
+/// （默认 `wal_checkpoint(PASSIVE)`——温和回写不截断；TRUNCATE 仅在诊断复现臂
+/// `CW_RUST_WAL_DRAIN=truncate` 下发生）；WAL 模式与 busy_timeout 在
+/// `db_conn::open_db_conn` 内设置。
 fn with_file_generations_conn<T>(
     db_path: &str,
     f: impl FnOnce(&Connection) -> T,

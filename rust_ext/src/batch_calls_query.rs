@@ -128,9 +128,13 @@ struct BatchSaveCallsResult {
 // 锁按进程分配，两实例无法互斥 WAL-index。长活连接跨整个 build 持有 WAL 读标记，
 // Python 侧持续提交会让两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页
 // （database disk image is malformed，CI ubuntu 独有）。
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+// （CI run 39814732618 h7 与 p15 首次同时全绿）；非 Linux 平台仍是双实例
+// ⇒ 防御机制仍保留。
 // 正式修法见 `crate::db_conn`（v3「温和 drain」）：短连接 + open 期 PASSIVE
 // + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain；诊断门（CW_RUST_SENTINEL_CONN
-// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）同见该模块。
+// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）为诊断复现臂开关，见
+// `crate::db_conn`；当前无调用方。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {

@@ -1,6 +1,28 @@
-//! Rust 侧 SQLite 连接管理（同进程双实例 WAL Hazard 正式修法 v3）
+//! Rust 侧 SQLite 连接管理（v4：同进程单一 libsqlite3 实例；v3 双实例防御机制保留）
 //!
-//! # 缺陷现象（三代受害面漂移）
+//! # v4 现状（2026-10-23 起）
+//!
+//! 1. **v4 做了什么**：CI（ubuntu）一族 `database disk image is malformed` 的
+//!    根因是同进程内**两个不同的 SQLite 实现**指向同一 `.db`。v4 把 Linux 上
+//!    的 ext 改为链接**系统 libsqlite3**（构建开关 `--no-default-features
+//!    --features extension-module`，不带 `sqlite-bundled`），与 Python 的
+//!    sqlite3 模块共用同一 `.so`、同一 VFS、同一 `-shm` 映射
+//!    ⇒ **双实例前提消失**。
+//! 2. **h7 与 p15 首次同时全绿**（CI run 39814732618）：5 个 Python 版本
+//!    8102~8148 passed，`malformed` 0、`database is locked` 0。
+//! 3. **本模块防御机制为何仍保留**：daemon（纯 Rust 进程）不使用本模块的
+//!    `with_db_conn`；但 Windows/macOS 的 Python ext 构建仍显式
+//!    `--features sqlite-bundled` ⇒ **非 Linux 平台仍是双实例**（Windows 按句柄
+//!    加锁免疫，**macOS 的撕裂面未排除**）。故「短连接 + 哨兵 +
+//!    autocheckpoint=0 + open 期 PASSIVE checkpoint + 写后温和 drain」这一整套
+//!    机制**继续保留在代码里**。
+//! 4. **三个 env 门的定位**：`CW_RUST_OPEN_CHECKPOINT` / `CW_RUST_SENTINEL_CONN` /
+//!    `CW_RUST_WAL_DRAIN` 是**诊断复现臂开关**——CI workflow、scripts、Python 侧
+//!    **当前无任何调用方**（全仓 grep 仅命中本模块与单测），仅供本地复现
+//!    v1/v2 历史行为。
+//! 5. **本模块代码不变**：本次仅更新注释，**未改动任何逻辑**。
+//!
+//! # 缺陷现象（三代受害面漂移）——【历史判读，v4 已根治】
 //!
 //! CI（ubuntu）一族 `database disk image is malformed`（Windows 免疫，只能靠
 //! CI 判读）。受害面随「谁先读到撕裂页」漂移：
@@ -11,7 +33,7 @@
 //! | c53da76 | 进程级长活池连接 | h7 族 7 项 + agent_rules 4 项 + agent_integration 2 项 + e2e_triangle 1 项 + dashboard 12 项 |
 //! | a80ca63（v1 修法） | 短连接 + 写后 TRUNCATE drain | h7 族 12 项消失，但全套 CI（292e684，8138 passed）暴露 p15 族 6 项 + incremental_parse 1 项 **回归**，另有 `test_rust_storage_service` 读路径 1 项（DID NOT RAISE） |
 //!
-//! # 根因
+//! # 根因（v4 之前的前提）——【历史判读，v4 已解除】
 //!
 //! 同进程内并存**两个互不相同的 SQLite 实现**指向同一 `.db`：
 //!
@@ -22,7 +44,11 @@
 //! 而非句柄分配，故同进程这两个连接**无法互相排斥**；Windows `LockFileEx`
 //! 按句柄加锁，故本地免疫——这正是「CI 唯一判据」的原因。
 //!
-//! ## v1 修法为何不够（a80ca63 的误判）
+//! **v4 起该前提在 Linux 上不再成立**：ext 链接系统 libsqlite3，与 Python 侧
+//! 同实例同 VFS 共用同一 `-shm` 映射 ⇒ 双实例前提消失。下面各节保留的是
+//! v1/v2/v3 的历史推导链（证据），非当前故障模型。
+//!
+//! ## v1 修法为何不够（a80ca63 的误判）——【历史判读，v4 已取代】
 //!
 //! v1 的结论是「短连接 + 写后 TRUNCATE drain」全绿。但 Probe I2 只验证了
 //! h7 族（8 项 passed）；292e684 全套 CI 证明：**只要 Rust 侧在本进程内做
@@ -38,14 +64,19 @@
 //! 读路径则以「过期快照」形式受害（rust_storage 的 DID NOT RAISE：Rust
 //! 短连接把已篡改的 checksum 读成截断前的原值，静默返回 Ok）。
 //!
-//! # 正式修法 v2/v3：短连接 + 哨兵 + autocheckpoint=0 + 温和 drain
+//! # v2 翻车与 v3 正式修法：短连接 + 哨兵 + autocheckpoint=0 + 温和 drain
 //!
-//! v2（「零 checkpoint」）在 CI 上翻车：h7 族 12 项以 **Rust 侧打开数据库
-//! 即 malformed** 失败（`batch_resolve_and_save_calls`：打开 CodeGraph
-//! 数据库失败: database disk image is malformed）。原因：全新的 Rust 短连接
-//! 面对一个带着 Python 侧遗留 `-wal`/`-shm` 状态的库时，必须靠 **open 期
-//! PASSIVE checkpoint** 触发 wal-index 重建，否则读到过期 wal-index ⇒ 拼出
-//! 撕裂页。v1 正是靠 open 期 PASSIVE + 写后 TRUNCATE 让 h7 族转绿。
+//! 【历史判读，v4 已取代】v2（「零 checkpoint」）在 CI 上翻车：h7 族 12 项以
+//! **Rust 侧打开数据库即 malformed** 失败（`batch_resolve_and_save_calls`：
+//! 打开 CodeGraph 数据库失败: database disk image is malformed）。v2 当时的
+//! 归因是「全新的 Rust 短连接面对一个带着 Python 侧遗留 `-wal`/`-shm` 状态的库
+//! 时，必须靠 **open 期 PASSIVE checkpoint** 触发 wal-index 重建，否则读到过期
+//! wal-index ⇒ 拼出撕裂页」（v1 正是靠 open 期 PASSIVE + 写后 TRUNCATE 让 h7
+//! 族转绿）。
+//!
+//! **该归因已被 CI 实证推翻**（见下方「哨兵假说已由 CI 钉死」）：真因是
+//! **哨兵连接钉住 `-shm`**，而非「缺 open 期 PASSIVE」。此处保留原文仅作
+//! 历史证据，后人**不要照抄该因果链**。
 //!
 //! v3 在三者间取交集——**温和 drain**：
 //!
@@ -62,6 +93,21 @@
 //!    WAL**。`CW_RUST_WAL_DRAIN=truncate`（v1 行为）/ `off`（v2 行为）
 //!    保留为诊断复现臂（CI Probe B/G 实时对照）。
 //!
+//! **【注】** 上文引用的 Probe A/B/C/D/E/G/H/I/F/J 均为 2026-10 的**一次性
+//! 取证诊断臂**，已随取证使命完成从 `ci.yml` 删除（提交 8ecd581）；该 job
+//! 现仅保留一个「逐文件隔离回归门」（9 个历史最脆弱文件，单进程无 xdist，
+//! 出现 malformed 即失败）。故这些 Probe 臂**不可再运行**，仅作历史判读证据。
+//!
+//! **【v4 后仍保留：非 Linux 平台仍是双实例】** 上述五条机制在 v4 之后
+//! **全部继续保留**：Windows/macOS 的 Python ext 构建仍显式
+//! `--features sqlite-bundled` ⇒ 仍是双实例（Windows 按句柄加锁免疫，
+//! **macOS 的撕裂面未排除**）。
+//!
+//! **三个 env 门（`CW_RUST_OPEN_CHECKPOINT` / `CW_RUST_SENTINEL_CONN` /
+//! `CW_RUST_WAL_DRAIN`）现定位为「诊断复现臂开关」**：CI workflow、scripts、
+//! Python 侧**当前无任何调用方**（全仓 grep 仅命中本模块与单测），仅供本地
+//! 复现 v1/v2 历史行为。
+//!
 //! WAL 累积由 Python 侧 autocheckpoint（默认 1000 页、单实例操作）回收。
 //!
 //! ## v3 CI 判读（run 39788826909，2026-10-22）：h7 未转绿
@@ -75,10 +121,15 @@
 //! libsqlite3 写入的外来 `-shm` 视图 ⇒ 打开时 wal-index 错位。v1 无哨兵时
 //! 短连接 close 删除 `-wal`/`-shm`，下次 open 从干净状态重建 wal-index
 //! （h7 治愈路径），代价是删 `-shm` 撕 Python 长连接（v1 的 p15 撕裂路径）。
-//! **h7 与 p15 需求互斥——双实例前提下「两族从未同时绿过」不可逾越；**
-//! 根本的唯一交集 = 同进程单一 libsqlite3 实例（Rust 侧改链接系统 sqlite3，
-//! 两侧共用同一 VFS/`-shm` 映射；旁证：CI 上同进程双 Python 连接
-//! Probe D 持续全绿）。哨兵隔离臂由 ci.yml Probe H/I 判读。
+//! **【历史判读】h7 与 p15 需求互斥——双实例前提下「两族从未同时绿过」
+//! 不可逾越；** 根本的唯一交集 = 同进程单一 libsqlite3 实例（Rust 侧改链接
+//! 系统 sqlite3，两侧共用同一 VFS/`-shm` 映射；旁证：CI 上同进程双 Python
+//! 连接 Probe D 持续全绿）。哨兵隔离臂由 ci.yml Probe H/I 判读。
+//!
+//! **【v4 已拆除该壁垒】** 上述「结构性互斥」结论**仅在双实例前提下成立**。
+//! v4（Linux 链接系统 libsqlite3）已拆除该壁垒：**CI run 39814732618 上
+//! 5 个 Python 版本 8102~8148 passed，`malformed` 0、`database is locked` 0，
+//! h7 与 p15 首次同时全绿**。
 //!
 //! ## 哨兵假说已由 CI 钉死（run 39795760927，a232967）
 //!
@@ -87,16 +138,21 @@
 //! **哨兵连接是 h7「打开即 malformed」的唯一驱动，与 drain 模式无关**
 //! （truncate/passive 在无哨兵下等价——短连接 close 删除 `-wal`/`-shm`，
 //! 下次 open 从干净状态重建 wal-index 即为 v1 的 h7 治愈路径）。
-//! ⇒ h7（需 -shm 删除重建）与 p15（需哨兵钉 -shm）互斥是**结构性壁垒**，
-//! 非任一配置缺陷；默认配置的取舍 = 二选一，除非落 v4 单一 libsqlite3。
+//! ⇒ h7（需 -shm 删除重建）与 p15（需哨兵钉 -shm）互斥是**双实例前提下的**
+//! **结构性壁垒**，非任一配置缺陷；默认配置的取舍 = 二选一，
+//! 除非落 v4 单一 libsqlite3（**v4 已落地，见上节**）。
 //!
 //! # 适用范围
 //!
 //! `with_db_conn` 只被 ext 侧（batch_build / batch_calls / batch_file_versions /
 //! batch_register / incremental_build / cas_merge / cas_write 等模块）调用，
 //! 即**总是运行在 Python 共存进程**里。daemon（纯 Rust 进程，无 Python
-//! 长连接，跨进程 fcntl 正常互斥）不使用本函数，其自身 checkpoint
-//! 策略（replicator 等）不受影响。
+//! 长连接，跨进程 fcntl 正常互斥）**不使用本函数**，故不受双实例撕裂影响，
+//! 其自身 checkpoint 策略（replicator 等）不受影响。
+//!
+//! 补充（非 Linux 平台）：Windows/macOS 的 Python ext 构建仍显式
+//! `--features sqlite-bundled` ⇒ 那边仍是双实例，仅 Windows 按句柄加锁免疫，
+//! **macOS 撕裂面未排除** ⇒ 本模块防御机制在非 Linux 平台**仍必须保留**。
 //!
 //! # 代价
 //!
@@ -222,10 +278,16 @@ pub fn close_sentinel_connections() {
 /// p15 族 malformed 的直接撕裂源（POSIX 同进程锁不排除 Python 侧读标记，
 /// drop 时的回写/截断会把 Python 长连接的 `-shm` 视图撕成不一致快照）。
 ///
-/// **open 期 PASSIVE checkpoint**（`CW_RUST_OPEN_CHECKPOINT=0` 可关）：
-/// 全新短连接面对 Python 侧遗留的 `-wal`/`-shm` 状态时，必须触发一次
-/// wal-index 重建才能拿到一致快照——v2（零 checkpoint）的 CI 实测中，
-/// h7 族 12 项正是因缺这一步而以「打开数据库即 malformed」失败。
+/// **【v3 防御机制，v4 后仍保留】** 上面两条（`wal_autocheckpoint=0` 与
+/// open 期 PASSIVE checkpoint）属于 v3 的双实例防御机制。v4 起 Linux 上
+/// ext 与 Python 共用同一 libsqlite3 实例，但**非 Linux 平台仍是双实例**
+/// （macOS 撕裂面未排除）⇒ 两条**继续保留**。
+///
+/// **open 期 PASSIVE checkpoint**（`CW_RUST_OPEN_CHECKPOINT=0` 可关，诊断复现臂
+/// 开关，当前无调用方）：全新短连接面对 Python 侧遗留的 `-wal`/`-shm` 状态时，
+/// 触发一次 wal-index 重建以拿到一致快照。历史上 v2（零 checkpoint）的 CI 实测
+/// 中 h7 族 12 项以「打开数据库即 malformed」失败——但**该归因已被 CI 推翻**
+/// （真因是哨兵连接钉 `-shm`），此处保留仅作历史证据。
 fn open_db_conn(db_path: &str) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open_with_flags(
         db_path,
@@ -254,27 +316,38 @@ fn open_db_conn(db_path: &str) -> Result<Connection, rusqlite::Error> {
 /// 2. `ensure_sentinel` 钉住该 `.db` 的 `-shm`（本侧任何连接关闭序列都
 ///    不再触发「最后连接」的 `-wal`/`-shm` 回收）。
 /// 3. 执行 `f`——写路径在闭包内自带 `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`。
-/// 4. 写后按 `drain_mode()` 处理：PASSIVE（默认）温和回写不截断；
+/// 4. 写后按 `drain_mode()` 处理：**PASSIVE（默认）温和回写不截断**；
 ///    TRUNCATE（`CW_RUST_WAL_DRAIN=truncate`，v1 诊断复现臂）截断；
 ///    off（v2 行为）跳过。
 /// 5. 关闭短连接（`wal_autocheckpoint=0`，drop 不做 autocheckpoint）。
 ///
 /// # 为什么必须短连接
 ///
-/// 同进程的 Python 主连接与 Rust 连接是两个不同的 SQLite 实现，共享同一个
-/// `-shm`；POSIX `fcntl` 锁按进程分配，两者互不排斥。长活连接跨整个 build
-/// 持有 WAL 读标记与缓存的 WAL-index 视图，Python 侧持续提交会让两侧对
-/// 「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页 ⇒ `database disk image is malformed`。
-/// Probe I 实测：长活 + `TRUNCATE` / `PASSIVE` drain 均红；短连接转绿。
+/// 【历史推导，v4 现状见下】同进程的 Python 主连接与 Rust 连接是两个不同的
+/// SQLite 实现，共享同一个 `-shm`；POSIX `fcntl` 锁按进程分配，两者互不排斥。
+/// 长活连接跨整个 build 持有 WAL 读标记与缓存的 WAL-index 视图，Python 侧
+/// 持续提交会让两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页 ⇒
+/// `database disk image is malformed`。Probe I 实测：长活 + `TRUNCATE` /
+/// `PASSIVE` drain 均红；短连接转绿。
+///
+/// **【v4 现状】** v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 与 Python 侧
+/// 共用同一实例、同一 VFS、同一 `-shm` 映射 ⇒ 上述错位前提不再成立。
+/// 但**非 Linux 平台仍是双实例**（Windows 按句柄加锁免疫，**macOS 撕裂面
+/// 未排除**）⇒ 短连接机制**仍保留**。
 ///
 /// # 为什么 drain 只能温和（v3 对 v1/v2 的修正）
 ///
+/// 【历史推导】
 /// - v1（写后 TRUNCATE）：撕裂 Python 长连接快照 ⇒ p15 族 + incremental_parse
 ///   回归（292e684 全套 CI 实证）。
-/// - v2（零 checkpoint）：h7 族 12 项以「打开即 malformed」失败（open 期缺
-///   wal-index 重建）。
+/// - v2（零 checkpoint）：h7 族 12 项以「打开即 malformed」失败（当时归因为
+///   open 期缺 wal-index 重建；**该归因后被 CI 推翻，真因是哨兵钉 `-shm`**）。
 /// - v3：open 期 PASSIVE 保 h7；写后 PASSIVE 只回写无读者冲突的帧、不强制
 ///   截断，故不撕 p15；哨兵 + `wal_autocheckpoint=0` 杜绝 drop 期回收。
+///
+/// **【v4 现状】** v4 下两侧共享同一 `-shm`，**连 TRUNCATE drain 都不再撕裂**
+/// （CI 实证：run 39814732618 h7 与 p15 同时全绿，malformed 0）。当前默认的
+/// PASSIVE 是**保守选择而非必需**，且在非 Linux 平台仍属必需。
 ///
 /// # 错误
 ///
@@ -289,7 +362,8 @@ pub fn with_db_conn<T>(
     let out = f(&conn);
     match drain_mode() {
         DRAIN_TRUNCATE => {
-            // 诊断复现臂（v1 行为）：截断 WAL——会撕裂 Python 长连接快照。
+            // 诊断复现臂（v1 行为）：截断 WAL。仅在 v4 前的双实例场景会撕裂
+            // Python 长连接快照；v4 起共享 `-shm` 下已安全，此臂仅供复现历史行为。
             let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         }
         DRAIN_PASSIVE => {

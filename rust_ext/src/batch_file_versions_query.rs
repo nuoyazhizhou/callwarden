@@ -98,9 +98,13 @@ impl Default for BatchSaveVersionsResult {
 // CI-DEBT 深水区：本模块与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
 // 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
 // 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+// （CI run 39814732618 h7 与 p15 首次同时全绿）；非 Linux 平台仍是双实例
+// ⇒ 防御机制仍保留。
 // 正式修法见 `crate::db_conn`（v3「温和 drain」）：短连接 + open 期 PASSIVE
 // + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain；诊断门（CW_RUST_SENTINEL_CONN
-// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）同见该模块。
+// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）为诊断复现臂开关，见
+// `crate::db_conn`；当前无调用方。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -435,9 +439,10 @@ pub fn batch_save_file_versions<'py>(
     };
 
     // 2. 取用短连接 → 3. 检测 ast_cache 字段（v28+） → 4. BEGIN IMMEDIATE → COMMIT/ROLLBACK
-    //    ROLLBACK 必须在闭包内完成：闭包返回后 `with_db_conn` 立刻执行
-    //    `wal_checkpoint(TRUNCATE)`，若失败事务仍挂着，drain 会失败、WAL 残留，
-    //    撕裂页防护随之失效（连接 drop 虽会自动回滚，但已来不及救 drain）。
+    //    ROLLBACK 必须在闭包内完成：闭包返回后 `with_db_conn` 立刻执行写后 drain
+    //    （默认 `wal_checkpoint(PASSIVE)`——温和回写不截断；TRUNCATE 仅在诊断复现臂
+    //    `CW_RUST_WAL_DRAIN=truncate` 下发生），若失败事务仍挂着，drain 会失败、
+    //    WAL 残留，撕裂页防护随之失效（连接 drop 虽会自动回滚，但已来不及救 drain）。
     let tx_result: Result<BatchSaveVersionsResult, String> =
         match crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             // 检测 ast_cache 字段是否存在（v28+）

@@ -76,12 +76,18 @@ impl Default for BatchSaveResult {
 // 两侧对「同一页由哪些帧拼成」产生错位 ⇒ 撕裂页（database disk image is
 // malformed，CI ubuntu 独有；Windows 按句柄加锁故本地免疫）。
 //
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 与 Python 侧共用同一实例、
+// 同一 VFS、同一 `-shm` 映射 ⇒ 上述双实例前提已解除（CI run 39814732618 h7 与
+// p15 首次同时全绿）。但非 Linux 平台仍是双实例（Windows 按句柄免疫，macOS
+// 撕裂面未排除）⇒ 防御机制仍保留。
+//
 // 正式修法：Rust 侧一律走 `crate::db_conn::with_db_conn`（v3「温和 drain」：
 // 短连接 + open 期 PASSIVE + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain）。
 // Probe I 实测长活 + drain 仍红、全模块短连接转绿。PRAGMA 序列（busy_timeout=5s
 // / journal_mode=WAL / synchronous=NORMAL / foreign_keys=OFF / open 期
-// wal_checkpoint(PASSIVE)）与诊断门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN
-// / CW_RUST_OPEN_CHECKPOINT）见 `crate::db_conn`。
+// wal_checkpoint(PASSIVE)）见 `crate::db_conn`；诊断门（CW_RUST_SENTINEL_CONN /
+// CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）为诊断复现臂开关，见
+// `crate::db_conn`；当前无调用方。
 
 /// 从 Python dict 提取 SymbolInfo
 ///

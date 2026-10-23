@@ -27,9 +27,13 @@ use rusqlite::params;
 // CI-DEBT 深水区：本路径与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
 // 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像认知
 // 错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+// （CI run 39814732618 h7 与 p15 首次同时全绿）；非 Linux 平台仍是双实例
+// ⇒ 防御机制仍保留。
 // 正式修法见 `crate::db_conn`（v3「温和 drain」）：短连接 + open 期 PASSIVE
 // + 哨兵 + wal_autocheckpoint=0 + 写后温和 drain；诊断门（CW_RUST_SENTINEL_CONN
-// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）同见该模块。
+// / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）为诊断复现臂开关，见
+// `crate::db_conn`；当前无调用方。
 //
 // 只读路径 `open_readonly` 保持短连接：它经 WAL + `-shm` 天然读到最新已提交数据，
 // 不做 checkpoint（见下方注释与 AGENTS.md 规则 32），故不参与撕裂页成因。

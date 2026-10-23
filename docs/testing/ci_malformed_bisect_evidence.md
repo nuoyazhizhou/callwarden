@@ -186,6 +186,12 @@ Probe I 判读：
 - v4 方向（待定）：① 单一 libsqlite3（Linux/macOS 链系统库、Windows 保
   bundled——本地免疫无妨；CI apt 装 libsqlite3-dev）；② 或放弃一族
   （默认回退关哨兵 = h7 绿 p15 红，回到 v1 代价面）。
+  - **【后续定案，2026-10-23】** 本条「待定」已被第十节取代：v4 走方向 ①
+    并已落地，但**平台限定比此处原述更窄**——实测 `release/build.py` 的
+    `_use_system_sqlite()` 门控要求 **Linux 且系统 sqlite ≥ 3.45**；
+    macOS 与 Windows 一律回退 bundled（故 macOS 上「链系统库」并未成立，
+    双实例前提仍在，撕裂面未排除）；CI 侧 ubuntu-24.04（sqlite 3.45.1）
+    命中，ubuntu-22.04（3.37.2）会安全回退 bundled ⇒ 该场景仍是双实例。
 - 本取证文件使命完成：三代受害面漂移与根因已定性，结论固化进
   `rust_ext/src/db_conn.rs` 模块文档；后续回归由 ci.yml Probe F
   （纳入 p15/incremental 5 文件的隔离回归门；`set -e` 吞输出的门缺陷
@@ -408,7 +414,50 @@ test_property_lease_fencing:11。
   malformed 即失败）——覆盖主测试 job 的 xdist 条件所不覆盖的场景。
   步骤数 18 → 8。
 
-未动（需独立 CI 验证的行为变更，不在本次清理范围内）：
+### 12.1 三个 env 诊断门的调用方核实与处置结论（结论已定：保留，不删）
+
 `rust_ext/src/db_conn.rs` 的三个诊断门 `CW_RUST_SENTINEL_CONN` /
-`CW_RUST_WAL_DRAIN` / `CW_RUST_OPEN_CHECKPOINT` 现仅被单测使用，
-是否随 v4 一并移除留作后续议题。
+`CW_RUST_WAL_DRAIN` / `CW_RUST_OPEN_CHECKPOINT`——**全仓调用方核实**
+（本次实测 grep）：
+
+| 位置 | 命中 |
+|---|---|
+| `.github/workflows/` | 0 |
+| `scripts/` | 0 |
+| `tests/` | 0 |
+| Python 侧（`db/`、`*.py`） | 0 |
+| `rust_ext/` 内的 `std::env::var` 读取点 | 仅 `db_conn.rs`（三处读取）与 `storage.rs`（`CW_RUST_OPEN_CHECKPOINT` 一处） |
+| Rust 单测 | **不走 env 路径**，依赖**编程式覆盖 API**：`set_sentinel_for_tests` / `set_wal_drain_for_tests` / `close_sentinel_connections`（均在 `rust_ext/src/db_conn.rs`） |
+
+⇒ **准确表述**：三个 env 门在全仓**无任何调用方**——CI workflow、scripts、
+tests、Python 侧全部零匹配；Rust 单测依赖的是**编程式覆盖 API**，不是 env
+路径。旧表述「现仅被单测使用」不准确：单测并不经由 env 门，env 门是零调用方。
+
+**处置结论（已定）：保留 env 门，不删。** 理由：
+
+1. **v4 只在 Linux 生效**：Windows/macOS 的 Python ext 构建仍走
+   `sqlite-bundled`（`release/build.py` 的 `_use_system_sqlite()` 仅在
+   `sys.platform == "linux"` 且系统 sqlite ≥ 3.45 时返回 True；Linux 上
+   sqlite < 3.45，如 ubuntu-22.04 的 3.37.2，也会安全回退 bundled）
+   ⇒ POSIX 双实例在 macOS 上客观仍存在、撕裂面未排除
+   （Windows 按句柄加锁免疫）。非 Linux 上仍需保留 env 门作为诊断/退化
+   复现开关。
+2. **env 门是唯一的运行时（跨进程）诊断手段**：编程式覆盖 API 只能在
+   进程内生效，无法复现「另一个进程 / 另一个 Python 解释器持有同一 `.db`」
+   这类跨进程场景；env 门可跨进程生效。
+3. **留着零成本、零行为变更**：三个门均以「未设置 = 默认值」读取
+   （sentinel on / drain passive / open checkpoint on），不设置即无影响。
+
+### 12.2 事实性错误债登记（注释层，已由并行 worker 同步修正）
+
+本次核查同时发现并登记一项**事实性错误债**：**约 13 个 Rust 文件 +
+`db/db_base.py`** 的注释仍在用「v1/v2/v3 双实例撕裂模型」解释现状，其中
+**6 处把默认 drain 误写为 `wal_checkpoint(TRUNCATE)`**（审计时点实测命中
+`batch_register_query.rs` / `cas_merge_query.rs` / `cas_write_query.rs` /
+`manifest_query.rs` 两处 + `db/db_base.py`）——与代码默认 **PASSIVE** 直接矛盾
+（`rust_ext/src/db_conn.rs` 的 `with_db_conn` 中
+`DRAIN_PASSIVE => { let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);"); }`；
+TRUNCATE 仅在诊断复现臂显式开启时才发生）。
+
+该批注释由另一 worker **同步修正为 v4 现状表述**（`rust_ext/` 侧注释 +
+`db/db_base.py` 侧注释）。本节只做**登记与交叉引用**，不重复其改动内容。

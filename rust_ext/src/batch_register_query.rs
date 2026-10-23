@@ -58,12 +58,18 @@ struct RegisterResult {
 // CI-DEBT 深水区：本模块与同进程 Python 主连接构成双 SQLite 实例；POSIX 上 fcntl
 // 锁按进程分配无法互斥 WAL-index，长活连接持有的 WAL 读标记会让两侧对页镜像
 // 认知错位 ⇒ 撕裂页（database disk image is malformed，CI ubuntu 独有）。
-// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后 wal_checkpoint(TRUNCATE)
-// drain。
+// 【v4 现状】v4 起 Linux 上 ext 链接系统 libsqlite3 ⇒ 双实例前提已解除
+// （CI run 39814732618 h7 与 p15 首次同时全绿）；非 Linux 平台仍是双实例
+// ⇒ 防御机制仍保留。
+// 正式修法见 `crate::db_conn`：每次调用独立短连接 + 写后温和 drain
+// （默认 `wal_checkpoint(PASSIVE)`——温和回写不截断；TRUNCATE 仅在诊断复现臂
+// `CW_RUST_WAL_DRAIN=truncate` 下发生）。
 //
 // 注意：foreign_keys=OFF 的理由保留在本模块注释——INSERT file_instances 时
 // current_content_hash='' 不是 file_contents 的真实 FK，开 FK 检查会 IntegrityError。
-// PRAGMA 序列与哨兵 / drain 门（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）见 `crate::db_conn`。
+// PRAGMA 序列见 `crate::db_conn`；哨兵 / drain 门（CW_RUST_SENTINEL_CONN /
+// CW_RUST_WAL_DRAIN / CW_RUST_OPEN_CHECKPOINT）为诊断复现臂开关，见
+// `crate::db_conn`；当前无调用方。
 
 /// 从 Python dict 提取 str 字段（必填）
 fn get_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
@@ -143,9 +149,10 @@ pub fn batch_register_files<'py>(
 
     // 2. 取用短连接
     // 3. BEGIN IMMEDIATE → 预处理语句 → 循环执行 → COMMIT/ROLLBACK
-    //    失败分支必须显式 ROLLBACK：闭包返回后 `with_db_conn` 立刻执行
-    //    `wal_checkpoint(TRUNCATE)`，失败事务仍挂着会让 drain 失败、WAL 残留，
-    //    撕裂页防护随之失效。
+    //    失败分支必须显式 ROLLBACK：闭包返回后 `with_db_conn` 立刻执行写后 drain
+    //    （默认 `wal_checkpoint(PASSIVE)`——温和回写不截断；TRUNCATE 仅在诊断复现臂
+    //    `CW_RUST_WAL_DRAIN=truncate` 下发生），失败事务仍挂着会让 drain 失败、WAL
+    //    残留，撕裂页防护随之失效。
     let tx_result: Result<Vec<RegisterResult>, rusqlite::Error> =
         match crate::db_conn::with_db_conn(codegraph_db_path, |conn| {
             let tx_result_inner = conn
@@ -237,7 +244,8 @@ pub fn batch_register_files<'py>(
         });
 
             if tx_result_inner.is_err() {
-                // 必须显式 ROLLBACK：闭包返回后立刻 wal_checkpoint(TRUNCATE)，
+                // 必须显式 ROLLBACK：闭包返回后立刻执行写后 drain（默认
+                // wal_checkpoint(PASSIVE)，TRUNCATE 仅诊断复现臂），
                 // 失败事务仍挂着会让 drain 失败、WAL 残留
                 let _ = conn.execute_batch("ROLLBACK");
             }

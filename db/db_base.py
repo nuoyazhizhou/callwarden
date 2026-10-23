@@ -4389,8 +4389,23 @@ class CodeGraphBase:
         """关闭数据库连接，释放底层资源"""
         self.conn.close()
         # CI-DEBT 深水区正式修法后，Rust 侧 DB 访问一律「每次调用独立短连接 +
-        # 写后 wal_checkpoint(TRUNCATE) drain」（见 rust_ext/src/db_conn.rs），
+        # 写后温和 drain」（见 rust_ext/src/db_conn.rs）：默认 drain 为
+        # wal_checkpoint(PASSIVE)（温和回写、不强制截断）；TRUNCATE / off 仅是
+        # 诊断复现臂（CW_RUST_WAL_DRAIN=truncate / =off）显式开启时才发生。
         # 进程内不再持有长活连接，句柄随短连接 drop 即释放，无需额外清理。
+        #
+        # 历史注解（v3 时代）：当时 Linux 上 Python 侧用系统 libsqlite3、Rust 侧
+        # 用 rusqlite 的 bundled SQLite，同进程两个不同的 SQLite 实现共享同一
+        # -wal/-shm；POSIX fcntl 锁按进程分配 ⇒ 两实例互不排斥 ⇒ 撕裂页 ⇒
+        # database disk image is malformed。上面这套防御机制（短连接 + 哨兵连接 +
+        # wal_autocheckpoint=0 + open 期 PASSIVE checkpoint + 写后温和 drain）
+        # 正是为防止 WAL 回收撕裂 Python 长连接的 -shm 视图而设。
+        # v4 起 Linux 上 ext 改为链接系统 libsqlite3，与 Python 的 sqlite3 模块
+        # 共用同一 .so / 同一 VFS / 同一 -shm ⇒ 双实例前提消失，这些防御在
+        # Linux 上不再必需；但 Windows/macOS 的 Python ext 构建仍走 bundled，
+        # 且 Linux 上系统 sqlite < 3.45（ubuntu-22.04 = 3.37.2）也会安全回退
+        # bundled ⇒ 非上述情形仍是双实例（Windows 按句柄加锁免疫，macOS 撕裂面
+        # 未排除）⇒ 机制保留在代码里。
 
     # --------------------------------------------------------------------
     # 工作区管理方法
