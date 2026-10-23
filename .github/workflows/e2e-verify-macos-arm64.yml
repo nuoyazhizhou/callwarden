@@ -185,8 +185,16 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
 
-      - name: Build Rust extension
-        run: cd rust_ext && cargo build --release
+      - name: Build cw-daemon binary (daemon-collab 只跑 Rust daemon)
+        # 本 job 全部用例走 daemon 协作路径：cw.py daemon start/identity/
+        # methods/ensure 由 server/daemon_autostart.py 在 rust_ext/target/
+        # {release,debug}/ 下定位 cw-daemon 并 spawn。本 job 不使用 Python
+        # 扩展（callwarden_core 导入全部惰性；E2E 不触碰 parse 路径，原步骤
+        # 也未把 .so 复制到仓库根）⇒ 原步骤名 "Build Rust extension" 名不副实。
+        # 按 daemon 规范构建入口（release/linux/build_packages.sh 与 ci.yml
+        # 主测试 job 同口径）：纯 Rust 进程、无 Python 共存 ⇒ 保持 bundled
+        # （rust_ext/Cargo.toml：daemon 构建入口统一 sqlite-bundled）。
+        run: cd rust_ext && cargo build --release --no-default-features --features sqlite-bundled --bin cw-daemon
 
       - name: Install Python dependencies
         run: |

@@ -118,12 +118,20 @@ echo "Source:    $SRC_DIST (Python wheel + Rust ext)"
 # 3. 产物文件名标记 arm64（与实际架构一致）
 # 4. 如需 x86_64 支持，需要在 macos-13 runner 上单独构建（未来扩展）
 echo "Step 1: Building arm64 Rust extension (P0-5 v2: arm64-only)"
-cd "$ROOT/rust_ext"
-cargo build --release --target aarch64-apple-darwin
+# v4 口径统一：Python 扩展构建统一走 release/build.py --rust——这是 v4
+# 平台门（Linux 链系统 libsqlite3 / 其余平台 bundled）的唯一执行点。macOS
+# 上 _use_system_sqlite 的平台门返回 False => 仍走 bundled，与原先直接
+# cargo 默认 features 行为完全等价；将来平台门若对 macOS 打开，本脚本
+# 自动跟随，无需二次修改。
+# 差异说明：build.py --rust 构建 host 默认 target（Gate 4b 的 macos-latest
+# = aarch64-apple-darwin，与原显式 --target 等价），产物由其复制到仓库根
+# callwarden_core.so；下方 lipo -archs arm64 校验保留，非 arm64 host 上
+# 运行将 fail-closed，不会静默产出错误架构。
+python3 "$ROOT/release/build.py" --rust
 
 ARM64_DIR="$SCRIPT_DIR/build/arm64"
 mkdir -p "$ARM64_DIR"
-cp target/aarch64-apple-darwin/release/libcallwarden_core.dylib "$ARM64_DIR/callwarden_core.so"
+cp "$ROOT/callwarden_core.so" "$ARM64_DIR/callwarden_core.so"
 
 # arm64 架构验证
 echo "  Verifying arm64 architecture:"

@@ -118,8 +118,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
         with:
           targets: ${{ matrix.rust_target }}
+      - name: Install system libsqlite3 (v4 single-instance fix)
+        # v4 WAL hazard 正式修法（提交 69a87f4）：Linux 上 Python 扩展必须链
+        # 系统 libsqlite3，与 Python 的 sqlite3 模块同进程共用同一个 SQLite
+        # 实例（同一 .so / 同一 VFS / 同一 -shm），从根上消除双实例撕裂页
+        # （database disk image is malformed）。release/build.py 的
+        # _use_system_sqlite 经 pkg-config 探测 sqlite3 >= 3.45 才切系统库；
+        # ubuntu-24.04 runner 镜像预装 libsqlite3-dev(3.45.1)，此处与 ci.yml
+        # 主测试 job 同口径显式安装，防止镜像变更 / 自托管 runner 上探测失败时
+        # **静默回退 bundled**——那正是本 P1 要消除的缺陷面（静默 fail-open）。
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - name: Build Rust extension (release)
-        run: cd rust_ext && cargo build --release
+        # v4 单实例口径（与 Gate 1「Build Rust extension」步骤、PyPI
+        # release.yml 同口径）：Python 扩展必须经 release/build.py --rust
+        # 构建——Linux 上自动传 --no-default-features --features
+        # extension-module（链系统库），其余平台 bundled。禁止直接
+        # `cd rust_ext && cargo build --release`（默认 features 含
+        # sqlite-bundled ⇒ 企业版 Linux wheel 退化为 bundled 3.45.0 +
+        # Python 系统 3.45.1 双实例，与 v4 修复前同一缺陷面）。
+        # 等价性：Gate 2 的 wheel 只含 Python 扩展（cdylib）；cw-daemon 等
+        # Rust 二进制不进 wheel，由 Gate 4c 的 release/linux/build_packages.sh
+        # 以 daemon 规范入口单独构建 ⇒ --lib 形态对本 job 产物完全等价，
+        # 且跳过 4 个本 job 不使用的二进制（构建更快）。
+        run: python release/build.py --rust
       - name: Build Python wheel
         run: |
           pip install build
@@ -245,9 +267,13 @@ jobs:
         # 产出到 release/dist/windows/ 供 WiX 打包 MSI。
         run: |
           # 构建 Rust 扩展（PyInstaller spec 从项目根目录收集 callwarden_core.pyd）
-          cd rust_ext && cargo build --release
-          cp target/release/callwarden_core.dll ../callwarden_core.pyd
-          cd ..
+          # v4 口径统一：改经 release/build.py --rust 构建。Windows 平台门
+          # 返回 False ⇒ bundled，与直接 cargo 默认 features 完全等价
+          # （Windows 按句柄加锁免疫 + 无系统 sqlite3.lib，bundled 是有意
+          # 设计，见 rust_ext/Cargo.toml [features] 注释）；产物由 build.py
+          # 自动复制到仓库根 callwarden_core.pyd（取代原手工 cp），本步骤
+          # 末尾 rm -f callwarden_core.pyd 的清理路径不变。
+          python release/build.py --rust
 
           # 创建临时 venv，安装经过审计的冻结依赖白名单。
           python -m venv build/venv
