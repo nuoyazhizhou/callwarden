@@ -390,3 +390,25 @@ test_multi_llm_contract_p4_lease:13 / test_multi_llm_contract_p4_migration:12 /
 test_p1_write_path_verdict:12 / test_p4_lease_smoke:14 /
 test_property_lease_fencing:11。
 验证：`ruff check tests/` → All checks passed；本地 31 项 + 7 项回归全绿。
+
+## 十二、临时探针清理（2026-10-23）
+
+取证使命完成，清理 v1–v4 期间堆出的诊断脚手架：
+
+- 删除 CI probe job 的 9 个 A/B 诊断臂：Probe A（rust storage init off）、
+  B（v1 drain=truncate 复现）、C（fts 写短路回滚）、D（双连接最小复现）、
+  E×2（metrics pytest/CLI 取证）、G（v2 零 checkpoint 复现）、
+  H/I（哨兵隔离）、J（fail-closed 判别）。
+- 删除两个自身标注「临时，实验后删除」的探针文件：
+  `tests/_wal_ab_probe_plugin.py`（其 INSERT 触发 `rollback_config` 外键
+  违约、被 `except: pass` 吞成悬空写事务，是 Probe F `database is locked`
+  的真正来源，见 10.4）、`tests/_wal_ab_dual_conn_repro.py`。
+- job 改名为 `WAL malformed regression gate (isolated)`，**只保留一个
+  逐文件隔离回归门**（9 个历史最脆弱文件、无 xdist 单进程跑，出现
+  malformed 即失败）——覆盖主测试 job 的 xdist 条件所不覆盖的场景。
+  步骤数 18 → 8。
+
+未动（需独立 CI 验证的行为变更，不在本次清理范围内）：
+`rust_ext/src/db_conn.rs` 的三个诊断门 `CW_RUST_SENTINEL_CONN` /
+`CW_RUST_WAL_DRAIN` / `CW_RUST_OPEN_CHECKPOINT` 现仅被单测使用，
+是否随 v4 一并移除留作后续议题。

@@ -199,38 +199,22 @@ jobs:
           cw install --check
 
   # ============================================================
-  # CI-DEBT 深水区 A/B 定性 probe（2026-10-20 建，2026-10-21 转回归门）
+  # malformed 族回归门（原 CI-DEBT 深水区 A/B 定性 probe，2026-10-23 收敛）
   #
-  # 背景：run 14 剩余 17 项失败全部疑似同根——同进程双 SQLite 实例
-  # （Python 系统 libsqlite3 + Rust bundled rusqlite）在 Linux 上 fcntl 锁
-  # 按进程分配，两实例无法互斥 WAL：
-  #   - phase7 ×8 disk I/O error：JobExecutor 第二条 Python 连接 executescript
-  #   - malformed ×7：build 路径 Python 读撞撕裂页
-  #   - dashboard ×1 UTF-8 / fts ×2：Rust 写入后 Python 读不可见
-  # 2026-10-21 v1（Probe I 定性，固化进 rust_ext/src/db_conn.rs）：malformed
-  # 一族根因是 **Rust 侧长活连接与 Python 主连接共享 -shm WAL-index 时的
-  # 撕裂页**；修法 = 短连接 + 写后 wal_checkpoint(TRUNCATE) drain，进程级池与
-  # 三个 CW_RUST_POOL_* 诊断门一并移除。
-  # 2026-10-22 v2（292e684 全套 CI 判读）：v1 修好了 h7 族 12 项，但 p15 族
-  # 6 项 + incremental_parse 1 项 + rust_storage 读路径 1 项仍在红——**Rust 侧
-  # 在本进程内的任何 WAL 回收动作（TRUNCATE drain / drop 时 autocheckpoint /
-  # 最后连接删 -shm）都会撕裂 Python 长连接快照**。修法 v2 = 短连接 + 哨兵连接
-  # 钉住 -shm + PRAGMA wal_autocheckpoint=0 + 默认零 checkpoint
-  # （CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 两诊断门）。
-  # 2026-10-22 v3（run 39788826909 判读）：v3 恢复 open 期 PASSIVE + 写后
-  # 改温和 PASSIVE drain，但 **h7 族仍未转绿**（h7 7 + agent_integration 2
-  # + e2e 1 + incremental 1 + dashboard 8 errors，全部 Rust 打开即 malformed，
-  # maxfail 早停，p15 未跑到）。⇒ 旧归因「缺 open 期 PASSIVE」被推翻；v1
-  # （h7 绿）与 v2/v3（h7 红）的差异集 = {哨兵 on/off, autocheckpoint 0/1000,
-  # TRUNCATE/PASSIVE}，核心嫌疑 = **哨兵连接钉 -shm**（Rust 短连接读到
-  # Python 侧 libsqlite3 写入的外来 -shm 视图）。⇒ h7 与 p15 需求互斥：
-  # 哨兵保 p15（防 -shm 删除撕裂）即害 h7；删 -shm 保 h7（v1 路径）即撕 p15。
-  # 根本的唯一交集 = **同进程单一 libsqlite3 实例**（连系统 sqlite 而非
-  # bundled，两侧共用同一 VFS/-shm 映射；Probe D 双 Python 连接绿已旁证
-  # 同库多连接合法）。哨兵隔离臂 Probe H/I + 回归门 Probe F 保留在本 job。
+  # 历史根因：同进程双 SQLite 实例（Python 侧系统 libsqlite3 + Rust 侧
+  # rusqlite bundled）在 Linux 上 fcntl 锁按进程分配、两实例无法互斥 WAL
+  # ⇒ 撕裂页（`database disk image is malformed`）。v1/v2/v3 三代修法始终
+  # 无法让 h7 与 p15 两族同时绿，最终由 v4「同进程单一 libsqlite3 实例」
+  # 根治（ext 在 Linux 上链接系统 sqlite3，与 Python sqlite3 模块同一 .so）。
+  # 完整取证链见 docs/testing/ci_malformed_bisect_evidence.md。
+  #
+  # 本 job 定性取证的使命已完成，故删除全部 A/B 诊断臂
+  # （Probe A/B/C/D/E/G/H/I/J）及其依赖的临时探针插件，只保留下面这一个
+  # **逐文件隔离回归门**：单进程（无 xdist）隔离跑历史上最脆弱的 9 个文件，
+  # 覆盖主测试 job 的 xdist 条件所不覆盖的场景。
   # ============================================================
   wal-ab-probe:
-    name: WAL A/B probe (deep-water root-cause isolation)
+    name: WAL malformed regression gate (isolated)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -271,214 +255,15 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
           echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
-      # ============================================================
-      # Probe J（fail-closed 判别臂）：CI 上
-      # test_facade_does_not_fallback_after_rust_failure 的 DID NOT RAISE
-      # 究竟走 storage.rs 的哪条放行路径。两条路径留下的**痕迹不同**，
-      # 只需在 CodeGraphDB 没抛异常之后从 Python 侧回读一次状态即可一刀切开：
+      # malformed 族隔离回归门：逐文件隔离单跑（无 xdist）历史上最脆弱的
+      # 9 个文件——h7 族 4 个 + p15 族 3 个 + incremental_parse + dashboard。
+      # 判读：输出中**不得**再出现 "database disk image is malformed"；
+      # 出现即判回归，本 step 直接失败。
       #
-      #   (a) 假说「Rust 读到篡改前旧值」：走 storage.rs:1365
-      #       `metadata_current == checksum` 提前 Ok 返回 ⇒ 不写任何东西
-      #       ⇒ 库里 checksum 仍是 'tampered'；
-      #   (b) 假说「shape 校验误判 task_dependencies 仍在」：走 storage.rs:1418
-      #       `shape_ok` 分支 ⇒ 调 update_stored_checksum_to_canonical
-      #       ⇒ 把 checksum 从 'tampered' 重写回 canonical 值。
-      #
-      # ⇒ 回读 checksum 是否等于篡改前记录的 canonical 值，即可唯一确定分支。
-      #   再叠加 task_dependencies 是否真的不存在、以及 -wal/-shm 的存在与
-      #   大小，可判断篡改帧当时是否还躺在未 checkpoint 的 WAL 里。
-      #
-      # 位置：必须在 CD-1 之后、Probe E 之前——Probe F 当前会失败，插在其后
-      # 会被 bash -e 短路而根本跑不到。continue-on-error: true 保证它只
-      # 打印、永不阻断后续步骤。
-      # ============================================================
-      - name: Probe J - fail-closed 判别臂（storage.rs 过期快照 vs shape 误判）
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          python - <<'PYEOF'
-          import os, sqlite3, tempfile
-          from callwarden.db.db import CodeGraphDB
-          from callwarden.db.schema import SCHEMA_VERSION
-          from callwarden_core import storage_initialize_or_migrate
-
-
-          def probe(tag):
-              c = sqlite3.connect(db_path)
-              row = c.execute(
-                  "SELECT checksum FROM schema_migrations WHERE version=?",
-                  (SCHEMA_VERSION,),
-              ).fetchone()
-              td = c.execute(
-                  "SELECT count(*) FROM sqlite_master "
-                  "WHERE type='table' AND name='task_dependencies'"
-              ).fetchone()[0]
-              c.close()
-              print(f"[{tag}] checksum={row!r}")
-              print(f"[{tag}] task_dependencies_exists={bool(td)}")
-              for ext in ("-wal", "-shm"):
-                  p = db_path + ext
-                  print(
-                      f"[{tag}] {ext} exists={os.path.exists(p)} "
-                      f"size={os.path.getsize(p) if os.path.exists(p) else 0}"
-                  )
-              return row[0] if row else None
-
-
-          db_path = os.path.join(
-              tempfile.mkdtemp(prefix="cw_failclosed_diag_"), "diag.db"
-          )
-          print("STEP1 rust init:", storage_initialize_or_migrate(db_path, SCHEMA_VERSION))
-          canon = probe("after-init")          # ← 记录篡改前的 canonical 值
-
-          c = sqlite3.connect(db_path)
-          c.execute(
-              "UPDATE schema_migrations SET checksum='tampered' WHERE version=?",
-              (SCHEMA_VERSION,),
-          )
-          c.execute("DROP TABLE IF EXISTS task_dependencies")
-          c.commit()
-          c.close()
-          probe("after-tamper")
-
-          raised = None
-          try:
-              CodeGraphDB(db_path=db_path)
-          except Exception as e:
-              raised = f"{type(e).__name__}: {e}"
-          print("STEP3 CodeGraphDB raised =", raised)
-          now = probe("after-open")
-
-          if raised is None:
-              if now == "tampered":
-                  print("VERDICT = (a) Rust 读到篡改前旧值，storage.rs:1365 提前 Ok 放行（过期快照）")
-              elif now == canon:
-                  print("VERDICT = (b) checksum 被策略A重写，schema_shape_matches_canonical 误判 task_dependencies 仍在")
-              else:
-                  print("VERDICT = 未分类 checksum =", now)
-          else:
-              print("VERDICT = 正常抛错，无需判别")
-          PYEOF
-
-      # Probe E（排最前避开日志截断）：metrics CLI 测试的 CI-only 失败取证。
-      # 内联脚本已验证同 env 下 patch 生效、RC=0——失败只发生在 pytest
-      # 上下文。此处直接跑真实测试文件（小文件，输出必完整可读），拿
-      # pytest 内的失败全貌（含 captured stderr 的 daemon RPC 失败原文）。
-      - name: Probe E - metrics pytest-context forensics
-        if: always()
-        run: pytest tests/test_phase8_metrics_endpoint.py -v --tb=long -p no:cacheprovider 2>&1 | tail -60
-
-      # config A：phase7 ×8 disk I/O error —— 关闭 Rust schema 初始化。
-      # JobExecutor 的第二条 Python 连接 executescript 在 Rust 初始化过的库上
-      # 失败；若转绿则 schema 初始化侧的双实例写入是 IOERR 根因。
-      # if: always()——单配置失败不阻断其余配置取证（A/B 各自独立判读）。
-      - name: Probe A - phase7 (rust storage init off)
-        if: always()
-        env:
-          CW_USE_RUST_STORAGE: "0"
-        run: pytest tests/test_phase7_job_result.py -q --tb=line -p no:cacheprovider
-
-      # config B（v1 复现臂）：malformed 族 + dashboard ×1 —— 显式恢复 v1 行为
-      # （写后 TRUNCATE drain），预期重新出现 malformed；对照主测试 job 的
-      # 默认配置（v3：open-PASSIVE + 温和 passive drain + 哨兵）应全绿。该臂
-      # 用于实时钉死「Rust 侧任何 WAL 回收动作都撕裂 Python 长连接快照」。
-      - name: Probe B - build path (v1 drain=truncate repr)
-        if: always()
-        env:
-          CW_RUST_WAL_DRAIN: "truncate"
-        run: pytest tests/test_p15_lang_presort.py tests/test_p15_multiprocess_parse.py tests/test_incremental_parse.py tests/test_dashboard.py -q --tb=line -p no:cacheprovider
-
-      # config G（v2 复现臂）：h7 族 —— 显式恢复 v2「零 checkpoint」配置
-      # （关 open 期 PASSIVE + 写后 drain=off），预期 h7 族以「Rust 侧打开
-      # 数据库即 malformed」重新失败（与 v2/v3 默认配置同签名——v3 恢复了
-      # open-PASSIVE 但 h7 仍红，见下方 Probe H/I 与 job 头注释）。
-      - name: Probe G - build path (v2 zero-checkpoint repr)
-        if: always()
-        env:
-          CW_RUST_WAL_DRAIN: "off"
-          CW_RUST_OPEN_CHECKPOINT: "0"
-        run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
-
-      # config H（哨兵隔离开-1）：h7 族 —— 关哨兵 + TRUNCATE drain（≈ v1 配置，
-      # 差 wal_autocheckpoint=0）。判读：若转绿 ⇒ v2/v3 新引入的**哨兵连接**
-      # 才是 h7「打开即 malformed」的驱动（哨兵钉住 -shm ⇒ Rust 后续短连接
-      # 读到的是 Python 侧 libsqlite3 写入的外来 -shm 视图 ⇒ wal-index 错位），
-      # 而非「缺 open 期 PASSIVE」（v3 已证伪该旧归因）。
-      - name: Probe H - h7 (sentinel off + truncate)
-        if: always()
-        env:
-          CW_RUST_SENTINEL_CONN: "0"
-          CW_RUST_WAL_DRAIN: "truncate"
-        run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
-
-      # config I（哨兵隔离开-2）：h7 族 —— 关哨兵 + 默认 passive drain。
-      # 与 H 唯一差异是写后 drain 模式：两臂全绿 ⇒ 哨兵是唯一驱动（h7 与
-      # 哨兵互斥）；H 绿 I 红 ⇒ TRUNCATE 不可替代；两臂皆红 ⇒ 哨兵并非
-      # 驱动，怀疑转向 wal_autocheckpoint=0（v1 为默认 1000，无门可探）。
-      - name: Probe I - h7 (sentinel off + passive)
-        if: always()
-        env:
-          CW_RUST_SENTINEL_CONN: "0"
-          CW_RUST_WAL_DRAIN: "passive"
-        run: pytest tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py tests/test_agent_integration.py tests/test_e2e_triangle_demo.py -q --tb=line -p no:cacheprovider
-
-      # config C：fts ×2 stale read —— 回滚 build 路径全部 6 个 Rust 写短路
-      # （tests/_wal_ab_probe_plugin.py 注入 rollback_config 行）。若转绿则
-      # Rust 写入路径是 fts 根因；仍红则排除写入路径。
-      # 注意：PYTHONPATH 必须在 shell 级拼接——env: 块里 $GITHUB_WORKSPACE
-      # 不展开、${{ env.PYTHONPATH }} 读不到 GITHUB_ENV 的运行时值
-      # （表达式 env 上下文只含静态 env），两者都踩过坑。
-      - name: Probe C - fts (rust batch writes rolled back)
-        if: always()
-        env:
-          CW_WAL_AB_ROLLBACK_RUST_BATCH: "1"
-        run: PYTHONPATH="$PYTHONPATH:$GITHUB_WORKSPACE/tests" pytest tests/test_p7_batch_calls.py -q --tb=short -p no:cacheprovider -p _wal_ab_probe_plugin
-
-      # config D：最小复现 + 修复对照（tests/_wal_ab_dual_conn_repro.py）。
-      # Probe A 已证 phase7 IOERR 与 Rust 无关；此处把「同进程双 Python 连接
-      # + WAL + DDL」拆成最小实验：pragma_block / bare / mmap 三个双连接变体
-      # 对照 shared_conn 单连接变体。判读：双连接变体红 + 单连接绿 =
-      # 根因钉死为同进程双连接，连接合并（DI 注入）是修复方向。
-      - name: Probe D - dual-connection minimal repro
-        if: always()
-        run: pytest tests/_wal_ab_dual_conn_repro.py -v --tb=short -p no:cacheprovider
-
-      # config F：malform 家族的**隔离回归门**（正式修法落地后的守门步骤）。
-      #
-      # 背景：CI-only 的 `database disk image is malformed` 一族——c53da76（Rust 侧
-      # 进程级长活池连接）后为 h7 族 7 项 + agent_rules 4 项 + agent_integration 2 项
-      # + e2e_triangle 1 项 + dashboard 12 项；c53da76 之前（Rust 侧每次调用
-      # open→drop）则是 p15 族 6 项 + incremental_parse 1 项。根因是 Rust 侧连接与
-      # 同进程 Python 主连接共享同一 `-shm` WAL-index（POSIX fcntl 锁按进程分配，
-      # 两实例互不排斥；Windows 按句柄加锁故本地免疫）时的撕裂页。
-      #
-      # 正式修法见 rust_ext/src/db_conn.rs（v3「温和 drain」）：
-      # ① 短连接 + open 期 PASSIVE checkpoint（CW_RUST_OPEN_CHECKPOINT 门）；
-      # ② 哨兵连接钉住 `-shm` + `wal_autocheckpoint=0` + 写后温和 PASSIVE
-      #   drain（CW_RUST_SENTINEL_CONN / CW_RUST_WAL_DRAIN 三态门）。
-      # **2026-10-22 CI verdict（run 39788826909，b8b05ec）**：v3 未能治好
-      # h7——h7 族 7 + agent_integration 2 + e2e_triangle 1 + incremental 1 +
-      # dashboard 8 errors，全部「Rust 打开即 malformed」，套件 maxfail 早停
-      # （p15 文件未跑到，状态未知）。v1（h7 绿）与 v3（h7 红）的差异集 =
-      # {哨兵 on/off, autocheckpoint 0/1000, TRUNCATE/PASSIVE drain}，旧归因
-      # 「缺 open 期 PASSIVE」已被 v3 推翻；哨兵假说见 Probe H/I（关哨兵后
-      # 短连接 close 会删除 -wal/-shm ⇒下次 open 从干净状态重建 wal-index，
-      # 即 v1 的 h7 治愈路径；代价是删 -shm 撕 Python 长连接 = v1 的 p15
-      # 撕裂路径——h7 与 p15 的需求互斥，见 job 头注释）。
-      # 长活连接即根因载体，故 CW_RUST_POOL_LIFETIME / CW_RUST_POOL_OFF /
-      # CW_RUST_POOL_WAL_DRAIN 三个诊断门连同进程级池已于 v1 一并移除
-      # （旧 Probe G/H/I 步骤同步删除，其结论已固化进 db_conn.rs 模块文档；
-      # 现 Probe G/H/I 为 v2 复现臂 + 哨兵隔离臂，名称复用）。
-      #
-      # 判读：逐文件隔离单跑，输出中**不得**再出现 "database disk image is
-      # malformed"；出现即判回归，本 step 直接失败。注：dashboard 的 UTF-8 载荷
-      # 缺陷（"Could not decode to UTF-8 column 'content'"）是另一条独立缺陷
-      # （c53da76 之前即已存在），不由本门覆盖。
       # 门设计注意：本 job 默认 `set -e`，`out=$(pytest ...)` 任何**非
       # malformed** 的测试失败也会直接退出且吞掉 tail 输出——必须 `|| true`
       # 保住诊断输出（b8b05ec run 中本门即在首个文件 h7 上被 set -e 吞输出）。
-      - name: Probe F - malformed family isolation gate
+      - name: malformed family isolation gate
         if: always()
         run: |
           for f in tests/test_h7_ast_cache_activation.py tests/test_agent_rules.py \
@@ -490,44 +275,10 @@ jobs:
             out=$(pytest "$f" -q --tb=short -p no:cacheprovider 2>&1) || true
             echo "$out" | tail -15
             if echo "$out" | grep -q "database disk image is malformed"; then
-              echo "MALFORM REGRESSION in $f —— 短连接 + open-PASSIVE + 温和 drain 的 v3 修法被破坏"
+              echo "MALFORM REGRESSION in $f"
               exit 1
             fi
           done
-
-      # config E：metrics CLI 测试的 CI-only 失败取证（run 15/16 持续 ×4，
-      # 本地全绿）。测试 patch 了 UnixDaemonRpcClient 但 CI 上 rc=2——
-      # 内联诊断打印模块路径/patch 前后/rc/stderr/args 分支，定位 fake
-      # 为何被绕过（输出紧凑，避开日志 API 截断）。
-      - name: Probe E - metrics CLI CI-only failure forensics
-        if: always()
-        run: |
-          python - <<'PYEOF'
-          import sys, io
-          from unittest.mock import patch
-          import callwarden.cli.daemon_commands as m
-          print("MODULE FILE:", m.__file__)
-          print("CLIENT BEFORE:", m.UnixDaemonRpcClient)
-          class Fake:
-              def __init__(self, socket_path=None, **kw): pass
-              def call(self, method, params=None, **kw):
-                  return {"timestamp": 1.0, "uptime": 2.0, "counters": {},
-                          "gauges": {}, "histograms": {}}
-          err = io.StringIO()
-          old_err = sys.stderr
-          sys.stderr = err
-          with patch("callwarden.cli.daemon_commands.UnixDaemonRpcClient", Fake):
-              print("CLIENT PATCHED:", m.UnixDaemonRpcClient)
-              rc = m.run_daemon_command(["metrics", "--format", "json"], include_serve=False)
-          sys.stderr = old_err
-          print("RC:", rc)
-          print("STDERR:", err.getvalue()[:400])
-          args = m._parser(False).parse_args(["metrics", "--format", "json"])
-          print("ARGS ACTION:", args.action, "FORMAT:", args.format, "SOCKET:", args.socket)
-          import callwarden.server.daemon_client as dc
-          print("daemon_client file:", dc.__file__)
-          print("same client class:", dc.UnixDaemonRpcClient is m.UnixDaemonRpcClient)
-          PYEOF
 
   lint:
     name: Lint check
