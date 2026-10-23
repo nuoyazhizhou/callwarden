@@ -82,6 +82,16 @@ def test_build_py_wheel_platform_tag_not_any():
     finally:
         sys.path.pop(0)
 
+    # macOS 已收口（2026-10-23）：darwin 上必须 fail-closed（sys.exit(1)），
+    # 不得产出 macosx_* tag。根因：bundled SQLite 双实例共享 -wal/-shm
+    # ⇒ malformed 撕裂面（CI run 39923719831 实证，无可用修法）。
+    # 裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
+    if sys.platform == "darwin":
+        with pytest.raises(SystemExit) as exc_info:
+            build_module._detect_wheel_platform_tag()
+        assert exc_info.value.code == 1
+        return
+
     plat_tag = build_module._detect_wheel_platform_tag()
 
     # 不能是 pure-python "any"（必须平台特定，注意 "manylinux" 合法包含 "any" 子串）
@@ -92,9 +102,6 @@ def test_build_py_wheel_platform_tag_not_any():
     # 必须匹配当前平台
     if sys.platform == "win32":
         assert plat_tag == "win_amd64", f"Windows 必须是 win_amd64，实际: {plat_tag}"
-    elif sys.platform == "darwin":
-        assert plat_tag.startswith(
-            "macosx_"), f"macOS 必须以 macosx_ 开头，实际: {plat_tag}"
     else:
         assert plat_tag.startswith(
             "manylinux"), f"Linux 必须以 manylinux 开头，实际: {plat_tag}"

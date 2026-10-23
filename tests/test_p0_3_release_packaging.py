@@ -9,7 +9,7 @@
 问题 5（cw-daemon 命名不一致）：Cargo.toml + systemd unit + build_packages.sh 三方统一
 问题 6（cw --version 不支持）：cli/main.py 新增 --version / -V 分支
 问题 7（Windows MSI 缺 PyInstaller）：workflow Gate 4a 加 fail-fast 检查
-问题 8（macOS 环境变量不匹配 + placeholder）：build_pkg.sh 修复 + workflow 对齐
+问题 8（macOS 收口守卫）：release/macos/ 与 workflow macOS job 已移除，改为防回归守卫
 问题 9（参数顺序 + || true）：build_packages.sh 加 --offline-bundle-only flag + workflow 删 || true
 
 设计原则：本测试只验证静态属性（文件存在 / 字符串匹配 / 语法正确），
@@ -280,12 +280,19 @@ class TestP03Issue7WindowsMsiFailFast(unittest.TestCase):
 
 
 # ============================================
-# 问题 8: macOS 环境变量对齐 + placeholder 移除
+# 问题 8: macOS 收口守卫（2026-10-23）
 # ============================================
+#
+# 原「问题 8」验证 build_pkg.sh 的 CW_APPLE_* 环境变量对齐；macOS 已于
+# 2026-10-23 收口——bundled SQLite 双实例共享 -wal/-shm 导致 malformed
+# 撕裂面（CI run 39923719831 实证，无可用修法），release/macos/ 目录、
+# workflow 的 macOS job 与 pkg 产物链全部移除。此处由「功能验证」改写为
+# 「防回归守卫」：macOS 产物链不得回潮。
+# 裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
 
 
-class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
-    """问题 8：build_pkg.sh 修复 placeholder + workflow 环境变量对齐 CW_APPLE_*。"""
+class TestP03Issue8MacosRetiredGuard(unittest.TestCase):
+    """问题 8（改写）：macOS 已收口，验证发布链无 macOS 回潮。"""
 
     def setUp(self):
         self.workflow_path = os.path.join(
@@ -294,50 +301,42 @@ class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
         with open(self.workflow_path, encoding="utf-8") as f:
             self.workflow_content = f.read()
 
-    def test_build_pkg_sh_no_placeholder(self):
-        """build_pkg.sh 不再生成 placeholder 入口脚本。"""
-        script_path = os.path.join(
-            _PKG_PARENT, "release", "macos", "build_pkg.sh")
-        with open(script_path, encoding="utf-8") as f:
-            content = f.read()
-        # P0-3 修复后，placeholder 逻辑已删除，改为 PyInstaller --onedir 打包
-        self.assertIn("Building PyInstaller --onedir bundle", content,
-                      "build_pkg.sh 应使用 PyInstaller --onedir 打包")
+    def test_release_macos_dir_removed(self):
+        """release/macos/ 目录已随收口删除。"""
+        macos_dir = os.path.join(_PKG_PARENT, "release", "macos")
+        self.assertFalse(
+            os.path.isdir(macos_dir),
+            "release/macos/ 应已删除（macOS 收口 2026-10-23）")
 
-    def test_build_pkg_sh_uses_cw_apple_env(self):
-        """build_pkg.sh 读取 CW_APPLE_* 环境变量。"""
-        script_path = os.path.join(
-            _PKG_PARENT, "release", "macos", "build_pkg.sh")
-        with open(script_path, encoding="utf-8") as f:
-            content = f.read()
-        # 应读取 CW_APPLE_DEVID / CW_APPLE_ID / CW_APPLE_TEAM_ID / CW_APPLE_APP_PASSWORD
-        for var in ["CW_APPLE_DEVID", "CW_APPLE_ID",
-                    "CW_APPLE_TEAM_ID", "CW_APPLE_APP_PASSWORD"]:
-            self.assertIn(var, content,
-                          f"build_pkg.sh 应读取环境变量 {var}")
+    def test_workflow_no_macos_runner(self):
+        """enterprise-release.yml 不得再出现 macOS runner。"""
+        self.assertIsNone(
+            re.search(r"macos-latest|macos-1[0-9]", self.workflow_content),
+            "enterprise-release.yml 不应再出现 macOS runner（macOS 收口）")
 
-    def test_build_pkg_sh_supports_cw_build_unsigned(self):
-        """build_pkg.sh 支持 CW_BUILD_UNSIGNED 显式跳过签名。"""
-        script_path = os.path.join(
-            _PKG_PARENT, "release", "macos", "build_pkg.sh")
-        with open(script_path, encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("CW_BUILD_UNSIGNED", content,
-                      "build_pkg.sh 应支持 CW_BUILD_UNSIGNED 环境变量")
+    def test_workflow_no_apple_secrets(self):
+        """workflow 不得再引用 CW_APPLE_* / APPLE_* secrets。"""
+        for var in ["CW_APPLE_DEVID", "CW_APPLE_ID", "CW_APPLE_TEAM_ID",
+                    "CW_APPLE_APP_PASSWORD", "APPLE_DEVELOPER_ID",
+                    "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]:
+            self.assertNotIn(
+                f"secrets.{var}", self.workflow_content,
+                f"workflow 不应再引用 secrets.{var}（macOS 已收口）")
 
-    def test_workflow_uses_cw_apple_secrets(self):
-        """workflow Gate 4b 使用 CW_APPLE_* secrets（不是 APPLE_*）。"""
-        content = self.workflow_content
-        # 不应再引用 APPLE_DEVELOPER_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
-        for old_var in ["APPLE_DEVELOPER_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]:
-            # 仅在 secrets. 引用上下文中检查
-            self.assertNotIn(f"secrets.{old_var}", content,
-                             f"workflow 不应再引用 secrets.{old_var}（应改为 CW_APPLE_*）")
-        # 应引用 CW_APPLE_* secrets
-        for new_var in ["CW_APPLE_DEVID", "CW_APPLE_ID",
-                        "CW_APPLE_TEAM_ID", "CW_APPLE_APP_PASSWORD"]:
-            self.assertIn(f"secrets.{new_var}", content,
-                          f"workflow 应引用 secrets.{new_var}")
+    def test_workflow_no_pkg_artifact(self):
+        """workflow 不得再产出 .pkg 产物。"""
+        self.assertNotIn(
+            "*.pkg", self.workflow_content,
+            "workflow 不应再引用 .pkg 产物（macOS 已收口）")
+
+    def test_build_py_rejects_macos(self):
+        """release/build.py 必须含 _reject_macos_build fail-closed 守卫。"""
+        build_py = os.path.join(_PKG_PARENT, "release", "build.py")
+        with open(build_py, encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn(
+            "_reject_macos_build", content,
+            "build.py 应包含 _reject_macos_build fail-closed 守卫")
 
 
 # ============================================

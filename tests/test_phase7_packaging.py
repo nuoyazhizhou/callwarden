@@ -52,7 +52,6 @@ class TestVersionConsistency:
         assert data["abi"]["snapshot"] >= 1
         assert "platforms" in data
         assert "windows" in data["platforms"]
-        assert "macos" in data["platforms"]
         assert "linux" in data["platforms"]
         assert "roles" in data
         assert "entry_points" in data
@@ -222,11 +221,16 @@ class TestRoleSupport:
         assert check_role_supported("daemon", "win32") is False
         assert check_role_supported("all", "win32") is False
 
-    def test_macos_supports_local_and_client(self):
+    def test_macos_retired_fail_closed(self):
+        """macOS 已收口（2026-10-23）：所有角色在 darwin 上均 fail-closed。
+
+        根因：bundled SQLite 双实例共享 -wal/-shm ⇒ malformed 撕裂面
+        （CI run 39923719831 实证，无可用修法）。
+        裁决与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
+        """
         from release.config_loader import check_role_supported
-        assert check_role_supported("local", "darwin") is True
-        assert check_role_supported("client", "darwin") is True
-        assert check_role_supported("daemon", "darwin") is False
+        for role in ("local", "client", "agent", "daemon", "all"):
+            assert check_role_supported(role, "darwin") is False
 
     def test_linux_supports_all_roles(self):
         from release.config_loader import check_role_supported
