@@ -374,21 +374,55 @@ jobs:
           # 持久化到后续 step（gate）
           echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
-      - name: Report SQLite implementation pair (dual-instance precondition, observation only)
-        # 只观测不判定：打印 Python 侧 sqlite3 的真实版本，以及 Rust 扩展的
-        # 动态链接里**是否**出现系统 libsqlite3。
-        # 期望：链接里无 libsqlite3 ⇒ 静态 bundled SQLite 3.45.0 ⇒
-        # 「Rust bundled vs Python 系统」的双实例前提成立（真实撕裂面验证）。
-        # 若 otool / 产物不可用则跳过观测，**不**据此失败（避免环境噪声
-        # 把本门变成另一道门）。
+      - name: Report SQLite implementation pair + decision prerequisites (observation only)
+        # 只观测不判定。三重目的：
+        # ① 坐实双实例前提（Rust ext 是否静态 bundled / Python 侧版本）——
+        #    期望 ext 链接里无 libsqlite3 ⇒ 静态 bundled SQLite 3.45.0 ⇒
+        #    「Rust bundled vs Python 系统」双实例成立（真实撕裂面验证）。
+        # ② 收集「macOS 是否该切系统 libsqlite3」决策所需的前置事实：
+        #    - F1：Python 的 `_sqlite3` 到底链哪个 libsqlite3 文件
+        #      （路径 A 的生死前提：必须与 ext 将来链的那份**同一个文件**，
+        #       否则仍是双实例、v4 逻辑不成立）；
+        #    - F3：本 runner 上 `pkg-config sqlite3` 的行为（有没有 .pc、
+        #      指向哪）——决定 build.py 的版本门是命中还是静默回退 bundled；
+        #    - F5：Python 侧 `PRAGMA compile_options`（与 bundled 3.45.0 的
+        #      编译选项差异面，FTS5 等）。
+        # ③ 解开 P4 矛盾：run 39923719831 中 `pythonLocation` 指向
+        #    hostedtoolcache，但 `sqlite3.__file__` 却落在
+        #    /Library/Frameworks/... —— 用 sys.executable/base_prefix 钉死
+        #    观测用的 Python 身份，确保证据链自洽。
+        # 任何一条命令失败都只打印、不让本 step 失败（`|| true` / if guard），
+        # 避免环境噪声把观测 step 变成另一道门。
         run: |
-          python -c "import sqlite3; print('python sqlite3 module :', sqlite3.__file__); print('python sqlite3 version:', sqlite3.sqlite_version)"
-          echo "--- Rust ext linkage (expect NO system libsqlite3 => statically bundled) ---"
+          echo "===== python identity (resolve P4: hostedtoolcache vs framework) ====="
+          which -a python python3 2>&1 | head -5 || true
+          python -c "import sys; print('sys.executable  =', sys.executable); print('sys.prefix      =', sys.prefix); print('sys.base_prefix =', sys.base_prefix)" || true
+          python -c "import sqlite3; print('sqlite3.version =', sqlite3.sqlite_version)" || true
+
+          echo "===== F1: which libsqlite3 does Python actually link? ====="
+          if python -c "import _sqlite3,sys; sys.exit(0 if getattr(_sqlite3,'__file__',None) else 1)" 2>/dev/null; then
+            _py_sqlite=$(python -c "import _sqlite3; print(_sqlite3.__file__)")
+            echo "_sqlite3 module file: $_py_sqlite"
+            otool -L "$_py_sqlite" | grep -i sqlite || echo "(_sqlite3 links NO external libsqlite3 => statically built into the interpreter)"
+          else
+            echo "(_sqlite3 has no __file__ => statically built into the interpreter binary)"
+            otool -L "$(python -c 'import sys; print(sys.executable)')" | grep -i sqlite || echo "(no libsqlite3 in interpreter linkage)"
+          fi
+
+          echo "===== Rust ext linkage (expect NO system libsqlite3 => statically bundled) ====="
           if command -v otool >/dev/null 2>&1 && [ -f callwarden_core.so ]; then
-            otool -L callwarden_core.so | grep -i sqlite || echo "(no libsqlite3 in linkage => bundled SQLite, dual-instance precondition holds)"
+            otool -L callwarden_core.so | grep -i sqlite || echo "(no libsqlite3 in ext linkage => bundled SQLite, dual-instance precondition holds)"
           else
             echo "(otool or callwarden_core.so unavailable => observation skipped)"
           fi
+
+          echo "===== F3: pkg-config / system sqlite3 on this runner ====="
+          pkg-config --modversion sqlite3 2>&1 || echo "(no sqlite3.pc => pkg-config cannot resolve sqlite3)"
+          pkg-config --libs sqlite3 2>&1 || true
+          sqlite3 --version 2>&1 || echo "(no sqlite3 CLI on PATH)"
+
+          echo "===== F5: Python-side compile_options ====="
+          python -c "import sqlite3; [print('  '+r[0]) for r in sqlite3.connect(':memory:').execute('PRAGMA compile_options')]" || true
 
       # malformed 族隔离回归门（macOS）：逐文件隔离单跑（无 xdist）历史上最
       # 脆弱的 9 个文件——h7 族 4 个 + p15 族 3 个 + incremental_parse +
