@@ -4,7 +4,7 @@
 # 11 门禁顺序（设计文档 §9）:
 #   1. 源码测试       → 2. canonical wheels → 3. wheel 黑盒测试
 #   4. 平台安装器     → 5. 安装黑盒测试     → 6. N-1 升级/回滚
-#   7. 签名/notarization → 8. SBOM/许可证/漏洞扫描
+#   7. 签名（notarization 随 macOS 收口移除，2026-10-23）→ 8. SBOM/许可证/漏洞扫描
 #   9. staging 发布   → 10. 人工批准        → 11. production 发布
 #
 # 签名密钥只存在受保护 release runner/HSM。普通 PR 生成 unsigned 测试包；
@@ -104,11 +104,12 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            # P0-3 整改（2026-07-22）：universal2-apple-darwin 不是有效的 rustc target，
-            # rustup 不认识。改为 aarch64-apple-darwin（Apple Silicon runner 默认）。
-            # build_pkg.sh 中会 rustup target add x86_64-apple-darwin 并用 lipo 合并为 universal2。
-            rust_target: aarch64-apple-darwin
+          # macOS 已收口（2026-10-23）：不再构建/发布 macOS wheel。
+          # 根因：macOS 上 Python 的 SQLite 静态编译进 _sqlite3.so，Rust 扩展只能
+          # bundled ⇒ 同进程双 SQLite 实例共享 -wal/-shm ⇒ malformed 撕裂面已由
+          # CI 实证坐实且无可用修法。裁决与证据：
+          # docs/testing/ci_malformed_bisect_evidence.md 十三/十四节；
+          # 守卫：ci.yml 的 no-macos-artifacts-guard job。
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -167,7 +168,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
@@ -222,8 +223,8 @@ jobs:
   # ============================================================
   # Gate 4: 平台安装器 (3 平台并行)
   # - Windows MSI (WiX)
-  # - macOS universal2 pkg
   # - Linux deb 5 子包
+  #   （macOS pkg 已随平台收口移除，2026-10-23）
   # ============================================================
   gate4a-windows-msi:
     name: "Gate 4a: Windows MSI"
@@ -290,7 +291,7 @@ jobs:
           build/venv/Scripts/pip install -r release/pyinstaller/requirements-build.txt
           build/venv/Scripts/pip install "$WHEEL_FILE" --no-deps
 
-          # 运行 PyInstaller（spec 文件与 Linux/macOS 共用）
+          # 运行 PyInstaller（spec 文件与 Linux/Windows 共用）
           build/venv/Scripts/python -m PyInstaller release/pyinstaller/callwarden.spec \
             --noconfirm --clean \
             --distpath release/dist/windows \
@@ -362,64 +363,6 @@ jobs:
           path: |
             release/dist/*.msi
             release/dist/windows-bundle-report.json
-
-  gate4b-macos-pkg:
-    name: "Gate 4b: macOS pkg"
-    needs: gate3-wheel-blackbox
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
-        with:
-          python-version: '3.11'
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Download wheel artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          name: wheel-macos-latest
-          path: release/dist/
-      - name: Build universal2 pkg
-        env:
-          # P0-3 修复（问题 8）：环境变量对齐 build_pkg.sh 读取的 CW_APPLE_* 前缀
-          # 原代码传 APPLE_DEVELOPER_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID，
-          # 但 build_pkg.sh 读取 CW_APPLE_DEVID/CW_APPLE_APP_PASSWORD/CW_APPLE_TEAM_ID/CW_APPLE_ID，
-          # 导致签名/公证永远 skipped（即使 secrets 已配置）。
-          # 现已对齐：所有 Apple 凭证统一 CW_APPLE_* 前缀。
-          # 修复（commit 0171603，2026-07-22）：原代码 CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run || 'true' }}
-          # tag push 事件没有 workflow_dispatch.inputs.dry_run，|| 'true' 会让 tag release 也跳过签名/公证。
-          # 改为 == 'true' 比较：仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认签名+公证。
-          CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run == 'true' }}
-          CW_APPLE_DEVID: ${{ secrets.CW_APPLE_DEVID }}
-          CW_APPLE_ID: ${{ secrets.CW_APPLE_ID }}
-          CW_APPLE_TEAM_ID: ${{ secrets.CW_APPLE_TEAM_ID }}
-          CW_APPLE_APP_PASSWORD: ${{ secrets.CW_APPLE_APP_PASSWORD }}
-        run: bash release/macos/build_pkg.sh
-      - name: Verify pkg
-        env:
-          # 修复（commit 0171603，2026-07-22）：原代码 github.event.inputs.dry_run || 'true'
-          # 在 tag push 时恒为 'true'，导致 tag release 也跳过签名验证。改为 == 'true' 比较：
-          # 仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认验证签名。
-          # 【维护纪律·禁形变三条】① 禁止恢复 `|| 'true'` 之类默认值（tag push 时 input
-          # 为空恒真 ⇒ 2026-07-22 的旧 bug 复活）；② 禁止改回在 run 内直接内插
-          # ${{ github.event.inputs.* }} 判真值（重新引入 run-shell-injection 面）；
-          # ③ 禁止删除本注释（此处是不变量唯一记录）。台账/验收一律引锚点哈希
-          # 0171603；「P0-4」编号与 WiX v4→v3.14 工具链修复撞车，勿用编号引用。
-          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' }}
-        run: |
-          ls -la release/dist/*.pkg
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "Dry run mode: signature check skipped"
-            pkgutil --check-signature release/dist/*.pkg || echo "  (unsigned, expected in dry_run)"
-          else
-            echo "Production mode: signature check required"
-            pkgutil --check-signature release/dist/*.pkg
-          fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
-        with:
-          name: macos-pkg
-          path: release/dist/*.pkg
 
   gate4c-linux-deb:
     name: "Gate 4c: Linux deb (5 子包)"
@@ -514,28 +457,6 @@ jobs:
           cw workspace set test
           cw refresh cw.py
         shell: bash
-
-  gate5b-macos-install:
-    name: "Gate 5b: macOS Install Blackbox"
-    needs: gate4b-macos-pkg
-    runs-on: macos-latest
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          name: macos-pkg
-          path: installers/
-      - name: Install pkg
-        run: sudo installer -pkg installers/*.pkg -target /
-      - name: Verify cw on PATH
-        run: |
-          export PATH="/usr/local/bin:$PATH"
-          cw --version
-          cw --help
-      - name: Smoke test - init workspace
-        run: |
-          cw workspace register test $PWD
-          cw workspace set test
-          cw refresh cw.py
 
   gate5c-linux-install:
     name: "Gate 5c: Linux Install Blackbox (5 子包)"
@@ -670,13 +591,13 @@ jobs:
   # ============================================================
   # Gate 7: 签名 / Notarization
   # - Windows Authenticode
-  # - macOS notarization + stapler
   # - Linux GPG sign
+  #   （macOS notarization 随平台收口移除，2026-10-23）
   # - dry_run 时跳过
   # ============================================================
   gate7-signing:
     name: "Gate 7: Signing & Notarization"
-    needs: [gate5a-windows-install, gate5b-macos-install, gate5c-linux-install, gate6-n1-upgrade-rollback]
+    needs: [gate5a-windows-install, gate5c-linux-install, gate6-n1-upgrade-rollback]
     if: startsWith(github.ref, 'refs/tags/v') && github.event.inputs.dry_run != 'true'
     environment: signing
     runs-on: ubuntu-latest
@@ -703,16 +624,6 @@ jobs:
               --kvc "$AZURE_CERT_NAME" \
               -f "$msi"
           done
-      - name: macOS notarization (在 macOS runner 上)
-        # macOS notarization 已在 gate4b build_pkg.sh 中完成
-        # 此步骤验证 notarization 状态
-        run: |
-          echo "macOS notarization verified in Gate 4b"
-          # 验证 stapled ticket
-          for pkg in artifacts/macos-pkg/*.pkg; do
-            echo "Checking: $pkg"
-            # spctl 验证需在 macOS 上执行
-          done
       - name: Generate checksums + GPG sign
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -720,7 +631,7 @@ jobs:
         run: |
           # 生成 checksums
           cd artifacts
-          find . -type f \( -name "*.msi" -o -name "*.pkg" -o -name "*.deb" -o -name "*.tar.zst" \) -exec sha256sum {} \; > checksums.txt
+          find . -type f \( -name "*.msi" -o -name "*.deb" -o -name "*.tar.zst" \) -exec sha256sum {} \; > checksums.txt
           cat checksums.txt
           # GPG 签名 checksums
           echo "$GPG_PRIVATE_KEY" | gpg --import --batch
@@ -879,7 +790,6 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/**/*.msi
-            artifacts/**/*.pkg
             artifacts/**/*.deb
             artifacts/**/*.tar.zst
             artifacts/**/checksums.txt

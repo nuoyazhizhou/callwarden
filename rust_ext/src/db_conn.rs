@@ -11,21 +11,30 @@
 //! 2. **h7 与 p15 首次同时全绿**（CI run 39814732618）：5 个 Python 版本
 //!    8102~8148 passed，`malformed` 0、`database is locked` 0。
 //! 3. **本模块防御机制为何仍保留**：daemon（纯 Rust 进程）不使用本模块的
-//!    `with_db_conn`；但 Windows/macOS 的 Python ext 构建仍显式
-//!    `--features sqlite-bundled` ⇒ **非 Linux 平台仍是双实例**（Windows 按句柄
-//!    加锁免疫，**macOS 的撕裂面已由 CI 实证坐实**）。故「短连接 + 哨兵 +
+//!    `with_db_conn`；但 Windows 的 Python ext 构建仍显式
+//!    `--features sqlite-bundled` ⇒ **Windows 仍是双实例**（按句柄加锁免疫，
+//!    无撕裂面）；macOS 已于 2026-10-23 收口（无发布物 + 源码构建
+//!    fail-closed，见第 5 条）。故「短连接 + 哨兵 +
 //!    autocheckpoint=0 + open 期 PASSIVE checkpoint + 写后温和 drain」这一整套
 //!    机制**继续保留在代码里**。
 //! 4. **三个 env 门的定位**：`CW_RUST_OPEN_CHECKPOINT` / `CW_RUST_SENTINEL_CONN` /
 //!    `CW_RUST_WAL_DRAIN` 是**诊断复现臂开关**——CI workflow、scripts、Python 侧
 //!    **当前无任何调用方**（全仓 grep 仅命中本模块与单测），仅供本地复现
 //!    v1/v2 历史行为。
-//! 5. **macOS 撕裂面已坐实**（2026-10-23，CI run 39923719831，提交 3bfa649）：
-//!    新增的 `wal-malformed-gate-macos` job（macos-latest，走 bundled 构建）
-//!    在首文件 `test_h7_ast_cache_activation.py` 即检出 malformed_hits=14、
-//!    `database is locked`=0——失败签名与 v3 双实例时代逐字一致，哨兵钉
-//!    `-shm` 的机制在 macOS 上原样复现。⇒ **第九节「h7/p15 结构互斥」在
-//!    macOS 上成立**。详见 docs/testing/ci_malformed_bisect_evidence.md §十三。
+//! 5. **macOS 撕裂面已坐实并已收口**（2026-10-23）：
+//!    - 坐实：CI run 39923719831（提交 3bfa649 新增的
+//!      `wal-malformed-gate-macos` job，macos-latest，走 bundled 构建）在首文件
+//!      `test_h7_ast_cache_activation.py` 即检出 malformed_hits=14、
+//!      `database is locked`=0——失败签名与 v3 双实例时代逐字一致，哨兵钉
+//!      `-shm` 的机制在 macOS 上原样复现。⇒ **第九节「h7/p15 结构互斥」在
+//!      macOS 上成立**。
+//!    - 收口：切系统库路径被 F1/F3 取证证明结构性不可行（macOS 上 Python 的
+//!      SQLite 静态编译进 `_sqlite3.so`，无可共用的共享 libsqlite3）⇒ 产品
+//!      裁决收口 macOS 支持：不再构建/发布 macOS wheel 与 pkg，源码构建在
+//!      `release/build.py` 层 fail-closed。该裁决 job 已替换为
+//!      `ci.yml` 的 `no-macos-artifacts-guard`（守卫 workflow 全域不得再出现
+//!      macOS runner）。详见 docs/testing/ci_malformed_bisect_evidence.md
+//!      §十三/§十四。
 //! 6. **本模块代码不变**：历次注释更新均**未改动任何逻辑**。
 //!
 //! # 缺陷现象（三代受害面漂移）——【历史判读，v4 已根治】

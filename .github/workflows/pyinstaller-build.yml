@@ -33,10 +33,8 @@ jobs:
             platform: linux-arm64
             ext: tar.gz
             max_unpacked_mb: 260
-          - os: macos-latest
-            platform: macos-arm64
-            ext: tar.gz
-            max_unpacked_mb: 220
+          # macOS 已收口（2026-10-23）：不再构建/发布 macOS 离线包。
+          # 根因与证据：docs/testing/ci_malformed_bisect_evidence.md 十三/十四节。
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -177,6 +175,5 @@ jobs:
             callwarden-windows-arm64.zip
             callwarden-linux-amd64.tar.gz
             callwarden-linux-arm64.tar.gz
-            callwarden-macos-arm64.tar.gz
           generate_release_notes: true
           prerelease: ${{ contains(github.ref, '-') }}
