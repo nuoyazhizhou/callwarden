@@ -20,6 +20,14 @@ manifest 与门禁脚本同仓同 PR 可改 → 若只靠 check_ci_gates，
 
     pytest <path> --collect-only --no-header > collected.txt
 
+⚠️ 即使不带 `-q`，pytest 9 的 stdout 尾部仍有一行**汇总行**
+（如 `114 tests collected in 0.43s`），被 `>` 一并捕获。它不含 `::`、
+不是 nodeid，若不滤除会被当成「未登记 selector」⇒ 恒红（本仓库
+2026-10-24 实测踩中：collected=115 vs manifest=114）。因此 `_load()`
+统一只保留含 `::` 的行——pytest nodeid 标准形态
+`path/to/test_x.py::Class::test_y`；该规则天然同时排除汇总行
+（`^\\d+ tests? collected`）、`-q` 计数行（无 `::`）、空行与注释行。
+
 输出：JSON verdict；exit 0 通过 / 2 不一致 / 64 输入用法错。
 """
 
@@ -60,8 +68,16 @@ def _load(path: str, what: str) -> List[str]:
     if not fp.is_file():
         raise ManifestError(f"{what} 文件不存在：{path}")
     raw = fp.read_text(encoding="utf-8")
+    # pytest nodeid 标准形态为 `path/to/test_x.py::Class::test_y`（必含 `::`）。
+    # 只保留含 `::` 的行——天然排除（均会被 `>` 捕获进 collected 文本）：
+    #   1. 非 -q 模式的汇总行：`114 tests collected in 0.43s`（pytest 9 仍输出，
+    #      曾致 collected=115 vs manifest=114 恒红，2026-10-24 实测）；
+    #   2. -q 模式每文件计数行：`tests/x.py: 7`（无 `::`）；
+    #   3. 空行与 `#` 注释行。
+    # 不滤除这些行会把它们当成「未登记 selector」⇒ unregistered_new 非空、
+    # ok=false、exit 2 永真。
     lines = [ln.strip() for ln in raw.splitlines()
-             if ln.strip() and not ln.strip().startswith("#")]
+             if ln.strip() and not ln.strip().startswith("#") and "::" in ln]
     if not lines:
         raise ManifestError(f"{what} 为空：{path}")
     return lines
