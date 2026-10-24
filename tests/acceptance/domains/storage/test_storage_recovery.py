@@ -45,6 +45,21 @@ def _submit(env, job_type: str = "codeowners") -> str:
     return r.result.get("job_id")
 
 
+def _wait_job_terminal(env, job_id: str, timeout: float = 30.0) -> dict:
+    """用产品自带的 task.wait_for_job 等到终态。
+
+    `task.job_submit` 是**异步**的（daemon 起后台线程，先落 running 再落终态）。
+    提交后立即读 jobs 行会撞上合法的中间态 running（Windows runner 实测必现），
+    故此处显式等待，而非把 running 当失败。超时则 status='timeout'，交由调用方
+    断言 fail-loud。
+    """
+    r = env.rpc("task.wait_for_job", {
+        "workspace_instance_id": env.setup_workspace()[1],
+        "job_id": job_id, "timeout": timeout, "poll_interval": 0.1})
+    assert r.ok, f"task.wait_for_job 失败：{r!r}"
+    return r.result or {}
+
+
 def test_s1_stale_job_recovery_closes_the_loop(env):
     """S1（核心）：崩溃遗留的 running 作业必须能被回收为 failed。
 
@@ -81,8 +96,11 @@ def test_s1_stale_job_recovery_closes_the_loop(env):
 def test_s1b_recovery_is_idempotent(env):
     """S1b：无 running 作业时回收返回 0（幂等，不误伤终态作业）。"""
     jid = _submit(env)
-    # 终态作业（codeowners 无 CODEOWNERS → failed）
-    assert env.job_row(jid).get("status") in ("completed", "failed", "pending")
+    # 异步作业：显式等到终态（codeowners 无 CODEOWNERS → failed）；
+    # 立即读行会撞上合法中间态 running（实证 run 40107404373）。
+    terminal = _wait_job_terminal(env, jid)
+    assert terminal.get("status") in ("completed", "failed"), \
+        f"作业应在超时前到达终态：{terminal}"
 
     rec = env.recover_stale_jobs(str(env.task_db_path()))
     assert rec.ok, f"recover_stale_jobs 失败：{rec!r}"
