@@ -77,16 +77,18 @@ jobs:
         shell: bash
 
       # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
-      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 3 处裸导入
+      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 2 处裸导入
       # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
       # Windows runner 不支持 ln -s（需 Developer Mode/特权）⇒ 改用：① 复制仓库根
-      # callwarden/db 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      # db/ 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      # ⚠️ 源路径是仓库根 `db/`，不是 `callwarden/db/`：pyproject.toml 的
+      # package-dir = {"callwarden": "."} 把仓库根映射为 callwarden 包本体。
       - name: Expose repo-root test support (CD-1, Windows-safe)
         shell: bash
         run: |
-          python -c "import callwarden, os, shutil; src=os.path.join('callwarden','db'); assert os.path.isdir(src), 'repo callwarden/db 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
-          python -c "from callwarden.db import db_base; print('callwarden.db OK')"
           echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          python -c "import callwarden, os, shutil; src='db'; assert os.path.isdir(src), 'repo db/ 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
+          PYTHONPATH="$GITHUB_WORKSPACE" python -c "from callwarden.db import db_base; print('callwarden.db OK')"
 
       # Q2 修复：manifest ↔ 源码一致性（collect-only 不加 -q）
       - name: Collect PR profile selectors (source of truth)
@@ -176,16 +178,18 @@ jobs:
         shell: bash
 
       # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
-      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 3 处裸导入
+      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 2 处裸导入
       # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
       # Windows runner 不支持 ln -s（需 Developer Mode/特权）⇒ 改用：① 复制仓库根
-      # callwarden/db 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      # db/ 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      # ⚠️ 源路径是仓库根 `db/`，不是 `callwarden/db/`：pyproject.toml 的
+      # package-dir = {"callwarden": "."} 把仓库根映射为 callwarden 包本体。
       - name: Expose repo-root test support (CD-1, Windows-safe)
         shell: bash
         run: |
-          python -c "import callwarden, os, shutil; src=os.path.join('callwarden','db'); assert os.path.isdir(src), 'repo callwarden/db 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
-          python -c "from callwarden.db import db_base; print('callwarden.db OK')"
           echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          python -c "import callwarden, os, shutil; src='db'; assert os.path.isdir(src), 'repo db/ 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
+          PYTHONPATH="$GITHUB_WORKSPACE" python -c "from callwarden.db import db_base; print('callwarden.db OK')"
 
       - name: Collect full profile selectors (source of truth)
         run: |
@@ -259,16 +263,18 @@ jobs:
         shell: bash
 
       # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
-      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 3 处裸导入
+      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 2 处裸导入
       # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
       # Windows runner 不支持 ln -s（需 Developer Mode/特权）⇒ 改用：① 复制仓库根
-      # callwarden/db 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      # db/ 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      # ⚠️ 源路径是仓库根 `db/`，不是 `callwarden/db/`：pyproject.toml 的
+      # package-dir = {"callwarden": "."} 把仓库根映射为 callwarden 包本体。
       - name: Expose repo-root test support (CD-1, Windows-safe)
         shell: bash
         run: |
-          python -c "import callwarden, os, shutil; src=os.path.join('callwarden','db'); assert os.path.isdir(src), 'repo callwarden/db 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
-          python -c "from callwarden.db import db_base; print('callwarden.db OK')"
           echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          python -c "import callwarden, os, shutil; src='db'; assert os.path.isdir(src), 'repo db/ 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
+          PYTHONPATH="$GITHUB_WORKSPACE" python -c "from callwarden.db import db_base; print('callwarden.db OK')"
 
       - name: Collect full profile selectors (source of truth)
         run: |
