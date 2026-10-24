@@ -195,3 +195,16 @@ Windows Python 全量零执行（阮清G2）；MCP wire 无 Windows（阮清G3�
 ---
 
 *报告完。本报告基于 8 位域专家独立审查 + 主理人三项独立复核；所有「未发现」均为扫描未命中而非不存在断言；所有失败均调查至根因。*
+
+---
+
+## 附：批次 1 修复落地记录（2026-10-24，门禁复苏三件套）
+
+| 提交 | 内容 | 独立复验（主理人重跑，非采信工人自证） |
+|---|---|---|
+| `0aca239` | semgrep 移出核心依赖（KR-C 修复；保留 all/semgrep extra，ci.yml:493 安全 job 显式安装不动） | tomllib 断言通过；Windows×cp314 dry-run rc=0 零 semgrep 匹配；tests/ 无依赖断言受影响；附带核实 release-artifact job 走 `--no-deps` 从未被影响 |
+| `3bf9a04` | Gate 1/2 `_load` 加 nodeid（含 `::`）过滤 + `tests/test_cicd_gates.py` 14 用例 | 真实 collect+校验 **exit 0**（114/114；修复前 exit 2 汇总行污染）；删真实 nodeid ⇒ **exit 2** 且 `unregistered_new` 精确定位（门未改瞎）；14 单测绿 |
+| `d349cb3` | known-red 隔离机制：`docs/testing/known_red/`（KR-A/B/C 登记，A/B expiry 2026-11-23、C 2026-10-31）+ `cicd/known_red.py` + 12 单测 + ci.yml 接线（主 job deselect + quarantine job） | `known_red.py` exit 0；deselect 恰 9 nodeid（18 词）；实跑两 KR 文件 **rc=0**（登记用例 0 执行，反证：不加 deselect 则 srv_019 exit 1 四 FAILED）；yaml 10 job 解析通过 |
+| 本提交 | deselect 步显式 `set -euo pipefail` | 实证：`bash -e` 下 rc=64 步失败、无 `-e` 则 SURVIVED 静默放行——原实现依赖 runner 隐式 flag，与 C-2 fail-open 同型，按纪律显式化 |
+
+**复评条件进展**：条件 1（KR-C）、2（Gate 1/2 + 门禁单测）、3（known-red 隔离）代码侧已落地并经独立复验；**CI 行为级证据待下一轮运行实证**（acceptance-gates nightly 安装步可过 + Gate 1/2 出真实 verdict + 主 test job 转绿 + quarantine job 如实报数）。条件 4（KR-A 机制）、5（安全 2 缺口）、6（Rust 集成入 CI）属批次 2–4，未动。

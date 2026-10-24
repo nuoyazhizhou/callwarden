@@ -169,10 +169,14 @@ jobs:
       # status=open 的 nodeid 从主门禁 deselect——主 job 的红此后只表示
       # 「本次改动引入的回归」；既有红（KR-A/KR-B 共 9 nodeid，根因已定性、
       # 修复方案已裁决未落地）由 known-red-quarantine job 单独如实报数，
-      # 到期未关在该 job 红升级。schema 不合格时 $(...) 传播退出码使本步
-      # 失败（exit 64），防半登记流入；deselect 参数与 -n auto 正交兼容。
+      # 到期未关在该 job 红升级。schema 不合格时本步失败（exit 64），防半
+      # 登记流入；deselect 参数与 -n auto 正交兼容。
+      # set -euo pipefail 显式声明：命令替换赋值的退出码传播不得依赖
+      # runner 默认 shell flag（verify 波实测：bash -e 下 rc=64 步失败、
+      # 无 -e 则 SURVIVED 静默放行——与 C-2 fail-open 同型，故显式化）。
       - name: Compute known-red deselect args (T-3 isolation)
         run: |
+          set -euo pipefail
           DESELECT_ARGS=$(python cicd/known_red.py --deselect)
           echo "DESELECT_ARGS=$DESELECT_ARGS" >> "$GITHUB_ENV"
 
