@@ -76,12 +76,24 @@ jobs:
           pip install pytest-xdist pytest-timeout
         shell: bash
 
+      # CD-1（与 main CI 对齐）：wheel 不含 db/（仅测试支持层），但
+      # tests/conftest.py:5 import callwarden.db.db_base ⇒ 从安装 wheel 跑
+      # collect/run 会 ModuleNotFoundError。把仓库根以 callwarden 之名挂入
+      # PYTHONPATH，效果同可编辑安装、不触发 build_ext（不重建 .pyd）。
+      - name: Expose repo root as importable package (CD-1)
+        shell: bash
+        run: |
+          pkgroot="$RUNNER_TEMP/cw_pkgroot"
+          mkdir -p "$pkgroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
+          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
+          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
       # Q2 修复：manifest ↔ 源码一致性（collect-only 不加 -q）
       - name: Collect PR profile selectors (source of truth)
-        run: >
-          python -m pytest tests/acceptance/domains/
-          --ignore=tests/acceptance/domains/external
-          --collect-only --no-header > reports/collected_pr.txt
+        run: |
+          mkdir -p reports
+          python -m pytest tests/acceptance/domains/ --ignore=tests/acceptance/domains/external --collect-only --no-header > reports/collected_pr.txt
         shell: bash
 
       - name: Gate 1/2 — selector manifest vs source (anti-tamper)
@@ -91,6 +103,11 @@ jobs:
           --manifest docs/testing/expected_selectors/domains_pr.txt
           --baseline-ref origin/${{ github.event.pull_request.base.ref }}
           --json-out reports/manifest_verdict.json
+        shell: bash
+
+      # 与 main CI 对齐：显式构建 daemon 二进制（ALLOW_FRESH_BUILD 仅兜底）。
+      - name: Build cw-daemon binary (isolated daemon requirement)
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --features sqlite-bundled --bin cw-daemon
         shell: bash
 
       - name: Run PR profile (domains minus external network deps)
@@ -158,10 +175,23 @@ jobs:
           pip install ".[dev]"
           pip install pytest-xdist pytest-timeout
         shell: bash
+
+      # CD-1（与 main CI 对齐）：wheel 不含 db/，但 tests/conftest.py:5 import
+      # callwarden.db.db_base ⇒ 从安装 wheel 跑 collect/run 会 ModuleNotFoundError。
+      # 把仓库根以 callwarden 之名挂入 PYTHONPATH，效果同可编辑安装、不触发 build_ext。
+      - name: Expose repo root as importable package (CD-1)
+        shell: bash
+        run: |
+          pkgroot="$RUNNER_TEMP/cw_pkgroot"
+          mkdir -p "$pkgroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
+          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
+          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
       - name: Collect full profile selectors (source of truth)
-        run: >
-          python -m pytest tests/acceptance/domains/
-          --collect-only --no-header > reports/collected_full.txt
+        run: |
+          mkdir -p reports
+          python -m pytest tests/acceptance/domains/ --collect-only --no-header > reports/collected_full.txt
         shell: bash
       - name: Gate 1/2 — selector manifest vs source (anti-tamper)
         run: >
@@ -171,6 +201,11 @@ jobs:
           --baseline-ref origin/main
           --json-out reports/manifest_verdict.json
         shell: bash
+      # 与 main CI 对齐：显式构建 daemon 二进制（ALLOW_FRESH_BUILD 仅兜底）。
+      - name: Build cw-daemon binary (isolated daemon requirement)
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --features sqlite-bundled --bin cw-daemon
+        shell: bash
+
       - name: Run full profile (all domains incl. external)
         env:
           CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
@@ -223,10 +258,23 @@ jobs:
           python release/build.py --rust
           python -m pip wheel . --no-build-isolation --no-deps -w dist
         shell: bash
+
+      # CD-1（与 main CI 对齐）：wheel 不含 db/，但 tests/conftest.py:5 import
+      # callwarden.db.db_base ⇒ 从安装 wheel 跑 collect/run 会 ModuleNotFoundError。
+      # 把仓库根以 callwarden 之名挂入 PYTHONPATH，效果同可编辑安装、不触发 build_ext。
+      - name: Expose repo root as importable package (CD-1)
+        shell: bash
+        run: |
+          pkgroot="$RUNNER_TEMP/cw_pkgroot"
+          mkdir -p "$pkgroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
+          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
+          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
       - name: Collect full profile selectors (source of truth)
-        run: >
-          python -m pytest tests/acceptance/domains/
-          --collect-only --no-header > reports/collected_full.txt
+        run: |
+          mkdir -p reports
+          python -m pytest tests/acceptance/domains/ --collect-only --no-header > reports/collected_full.txt
         shell: bash
       - name: Gate 1/2 — selector manifest vs source
         run: >
