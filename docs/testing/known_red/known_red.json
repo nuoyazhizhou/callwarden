@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "description": "known-red 隔离注册表：登记「根因已定性、修复方案已裁决但尚未落地」的既有红。主 CI 通过 cicd/known_red.py --deselect 将 kind=test 且 status=open 的 nodeid 移出主门禁（主门禁的红此后只表示本次改动引入的回归），并由 known-red-quarantine job 单独如实报数；到期未关（expiry_date < 今天且 status=open）使校验 exit 2、quarantine job 红升级。字段语义与流程见同目录 README.md。",
+  "entries": [
+    {
+      "id": "KR-2026-10-23-A",
+      "kind": "test",
+      "nodeids": [
+        "tests/test_srv_019.py::test_success_final_gate_passed",
+        "tests/test_srv_019.py::test_success_retired_files_14",
+        "tests/test_srv_019.py::test_unavailable_client_fail_closed",
+        "tests/test_srv_019.py::test_restart_audit_idempotent"
+      ],
+      "root_cause": "server/ 权威迁移未完成（SRV 线遗留）：residue 审计脚本实扫 passed=false，83 findings 集中在 server/cas_schema.py(34) / server/daemon_registry.py(14) / server/toolchain_store.py(31) / server/migrate.py(4)，前三文件生产权威已由 Rust 1:1 接管（route_matrix status=migrated/stable），migrate.py 对应活命令 cw gc db-migrate-single 无 Rust 等价物。",
+      "owner": "苏雅-2（归因）/ 何序-2（关闭路线裁决）",
+      "closure_criterion": "三个存储文件经第二类 db-retire 过渡声明 residue 清零（冻结基线 file:line:handler:kind 逐条比对、只减不加、日落绑 db-retire 里程碑）；server/migrate.py 以 live_legacy_authority 单独关闭（下沉 Rust 或命令退役，不得白名单/声明豁免）；audit passed=true；MASKING 自检通过（向 cas_schema.py 注入一行 sqlite3.connect 后 audit 必须再 exit 1）；条目关闭（status=closed ⇒ nodeid 移出 deselect 回归主门禁）后主 test job 四用例连续全绿；断言不放宽（finding_count==0 / passed is True / retired_files_count==14 保持严格）。",
+      "registered_date": "2026-10-23",
+      "expiry_date": "2026-11-23",
+      "status": "open"
+    },
+    {
+      "id": "KR-2026-10-23-B",
+      "kind": "test",
+      "nodeids": [
+        "tests/test_mcp_get_token_savings_report_http_rpc.py::test_token_savings_default_window",
+        "tests/test_mcp_get_token_savings_report_http_rpc.py::test_token_savings_custom_window",
+        "tests/test_mcp_get_token_savings_report_http_rpc.py::test_token_savings_all_window",
+        "tests/test_mcp_get_token_savings_report_http_rpc.py::test_token_savings_headline_shape",
+        "tests/test_mcp_get_token_savings_report_http_rpc.py::test_new_client_instance_stable"
+      ],
+      "root_cause": "CI 内 daemon 生命周期竞态：tests/test_w2_3_query_uds_e2e.py 的 _fresh_daemon_binary() 构建缺 --features sqlite-bundled（ci.yml:54 带），feature 集不同触发 cargo 换 fingerprint 重建并原子替换 rust_ext/target/debug/cw-daemon（新 inode），旧 inode 上运行的隔离 daemon /proc/<pid>/exe 带 (deleted) 后缀，daemon_autostart manifest executable 校验 fail-closed 报 E_HTTP_MANIFEST_STALE（本机形态为常驻生产 daemon 顶死命名管道，报 E_HTTP_DAEMON_UNAVAILABLE）。",
+      "owner": "柯砚（归因）",
+      "closure_criterion": "主修 B2 落地：tests/_w3_harness.py Popen 前 os.link 硬链接 + copy2 回落、session 级按 sha256 复用（先例 governance_harness.py），8 个自有 _spawn_isolated_daemon harness 同步收口；辅修 A 剥离 (deleted) 后缀需契约 Owner 裁决后才可并入；条目关闭（status=closed ⇒ nodeid 移出 deselect 回归主门禁）后主 test job 连续 3 轮 × Python 3.10–3.14 全绿（token_savings 回归执行且 0 ERROR、无新红面）；断言不放宽。",
+      "registered_date": "2026-10-23",
+      "expiry_date": "2026-11-23",
+      "status": "open"
+    },
+    {
+      "id": "KR-2026-10-23-C",
+      "kind": "workflow",
+      "nodeids": [],
+      "root_cause": "pyproject.toml:28 的 semgrep>=1.50 位于核心 dependencies，acceptance-gates nightly 跑 windows-latest × py3.14：semgrep 无 cp314 Windows wheel 且其 setup.py 明拒 Windows（Semgrep does not support Windows yet），依赖安装步即败 ⇒ Gate 1/2、Gate 2/2 自 2026-10-19 起从未执行，整个 nightly 验收门零证据产出（workflow 级红，非 pytest nodeid，不进 quarantine 跑）。",
+      "owner": "何序-2（漏登#1）/ ws1-krc-fix（修复实施中）",
+      "closure_criterion": "semgrep 移出核心 dependencies（改 extra + 运行期懒加载，全仓无 Python 代码 import semgrep 故迁移安全），nightly 安装步可过；workflow_dispatch dry_run 实跑通过；连续 2 次 nightly 绿且 Gate 1/2 verdict.json 证据存档。",
+      "registered_date": "2026-10-24",
+      "expiry_date": "2026-10-31",
+      "status": "open"
+    }
+  ]
+}

@@ -165,9 +165,20 @@ jobs:
       - name: Generate coverage manifest (test fixture dependency)
         run: python scripts/gen_coverage_manifest.py
 
+      # known-red 隔离（T-3，docs/testing/known_red/）：把 kind=test 且
+      # status=open 的 nodeid 从主门禁 deselect——主 job 的红此后只表示
+      # 「本次改动引入的回归」；既有红（KR-A/KR-B 共 9 nodeid，根因已定性、
+      # 修复方案已裁决未落地）由 known-red-quarantine job 单独如实报数，
+      # 到期未关在该 job 红升级。schema 不合格时 $(...) 传播退出码使本步
+      # 失败（exit 64），防半登记流入；deselect 参数与 -n auto 正交兼容。
+      - name: Compute known-red deselect args (T-3 isolation)
+        run: |
+          DESELECT_ARGS=$(python cicd/known_red.py --deselect)
+          echo "DESELECT_ARGS=$DESELECT_ARGS" >> "$GITHUB_ENV"
+
       - name: Run tests
         if: matrix.python-version != '3.12'
-        run: sg callwarden-clients -c "pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread"
+        run: sg callwarden-clients -c "pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread $DESELECT_ARGS"
 
       # 覆盖率门禁（任务5①）：只在 Python 3.12 单版本采集，避免矩阵 5 个版本
       # 产出 5 个不同覆盖率数字（各版本 skip 情况不同）。阈值取自 pyproject.toml
@@ -177,7 +188,7 @@ jobs:
       - name: Run tests (coverage gate)
         if: matrix.python-version == '3.12'
         run: >-
-          sg callwarden-clients -c "pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread --cov --cov-report=term-missing --cov-report=xml:coverage.xml"
+          sg callwarden-clients -c "pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread --cov --cov-report=term-missing --cov-report=xml:coverage.xml $DESELECT_ARGS"
 
       - name: Upload coverage report
         if: matrix.python-version == '3.12'
@@ -197,6 +208,111 @@ jobs:
           pip install dist/*.whl --force-reinstall
           cw --help
           cw install --check
+
+  # ============================================================
+  # known-red 隔离 quarantine job（T-3，2026-10-24）
+  #
+  # 主 test job 经 cicd/known_red.py --deselect 把 KR-A/KR-B 共 9 个
+  # nodeid 移出主门禁——主 job 的红此后只表示「本次改动引入的回归」。
+  # 被隔离的既有红不得凭空消失：本 job 单独如实跑这些 nodeid
+  # （--quarantine-list 取清单，不加 -n auto：单进程排除 xdist 干扰），
+  # 结论如实反映。
+  #
+  # 为何 KR 未修期间允许本 job 红：红 = KR 仍未修复，这正是隔离的预期
+  # 状态——把「已知的红」与「未知的回归」分开计价，恢复红灯的信号意义
+  # （红灯疲劳比没有门禁更危险）。故不设 continue-on-error、不吞退出码；
+  # 同时它不阻塞主门禁结论。它绿 = KR 已实际修复 ⇒ 必须立刻走
+  # docs/testing/known_red/README.md 的关闭流程（改 status=closed、
+  # nodeid 自动退出 deselect），否则构成「修了不关」的假账。
+  #
+  # 到期升级：末尾校验步对 open 条目做到期检查，过期 ⇒ exit 2 ⇒ 本步红，
+  # 在「用例红」之外给出明确的「条目过期」失败，逼迫治理决策
+  # （加速修复 / 重估根因 / 显式修订到期日），红不被容忍成永久背景噪声。
+  # kind=workflow 条目（KR-C）非 pytest nodeid，不进本 job 跑，仅由该校
+  # 验步做到期跟踪。
+  #
+  # 环境搭建镜像主 test job：隔离 daemon（w3 harness / HttpDaemonRpcClient
+  # 实跑）要求 debug cw-daemon 二进制（主 job H4C step 同款构建）与
+  # callwarden-clients 组（P0-3 socket_group fail-closed），PYTHONPATH
+  # 走 CD-1 联接。不装 torch 的 CUDA 变体（CPU-only，同主 job 理由）。
+  # ============================================================
+  known-red-quarantine:
+    name: Known-red quarantine (isolated reds, honest reporting)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.13'
+          allow-prereleases: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
+
+      - name: Install system libsqlite3 (v4 single-instance fix)
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Build Rust extension
+        run: python release/build.py --rust
+
+      - name: Build cw-daemon binary (isolated daemon requirement)
+        # w3 harness 的 find_daemon_binary 首选 rust_ext/target/debug/
+        # cw-daemon；release/build.py --rust 只建扩展（--lib --release），
+        # 二进制须本 step 单独构建（与主 test job H4C step 同款）。
+        run: cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --features sqlite-bundled --bin cw-daemon
+
+      - name: Create callwarden-clients group (P0-3 socket_group fail-closed)
+        # 隔离 daemon 默认 socket_group='callwarden-clients'，v2 fail-closed：
+        # 组不存在/chown 失败均拒绝启动。groupadd + usermod + 下方 sg 包裹
+        # 三件套与主 test job 同构（usermod 的组变更只对后续 sg 新会话生效）。
+        run: |
+          sudo groupadd -f callwarden-clients
+          sudo usermod -a -G callwarden-clients runner
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch：避免拉入 ~2GB nvidia 包（同主 test job 理由）
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install ".[all,dev]"
+          pip install pytest-xdist pytest-timeout
+          # CD-1：db/ 仅测试支持层，模块级依赖 psutil 未随 extras 装入
+          pip install psutil
+
+      # CD-1：仓库根以 callwarden 之名暴露（与主 test job 同形，保证导入解析一致）
+      - name: Expose repo root as importable package (CD-1)
+        shell: bash
+        run: |
+          pkgroot="$RUNNER_TEMP/cw_pkgroot"
+          mkdir -p "$pkgroot"
+          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
+          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
+          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+      - name: Run known-red quarantine tests (honest red allowed)
+        # KR 未修期间允许红=隔离的预期状态（见 job 头注释）；不吞退出码。
+        # sg 包裹使 runner 入 callwarden-clients 组（P0-3 chown 要求）。
+        run: |
+          python cicd/known_red.py --quarantine-list > /tmp/quarantine_nodeids.txt
+          if [ ! -s /tmp/quarantine_nodeids.txt ]; then
+            echo "no open known-red test entries; nothing to quarantine"
+            exit 0
+          fi
+          echo "===== quarantine nodeids ($(wc -l < /tmp/quarantine_nodeids.txt)) ====="
+          cat /tmp/quarantine_nodeids.txt
+          # shellcheck disable=SC2046 —— nodeid 无空格，词split安全；无 -n auto 单进程如实报数
+          sg callwarden-clients -c "pytest $(cat /tmp/quarantine_nodeids.txt) -q --tb=short --timeout=300 --timeout-method=thread"
+
+      - name: Known-red registry validation + expiry gate
+        # 到期未关 ⇒ exit 2（kind=workflow 条目同样参与到期跟踪）。
+        # always()：pytest 步已红时也照常跑，给出独立的「条目过期」信号。
+        if: always()
+        run: python cicd/known_red.py
 
   # ============================================================
   # malformed 族回归门（原 CI-DEBT 深水区 A/B 定性 probe，2026-10-23 收敛）
