@@ -185,6 +185,20 @@ jobs:
           pip install pytest-xdist pytest-timeout
         shell: bash
 
+      # full profile 含 external 域，X3 断言的是**真实 semgrep 扫描结果**
+      # （test_x3/x3b/x3c），工具缺失时 daemon 返回 success=false 即红。
+      # semgrep 已移出核心依赖（KR-C）；为避免与 mcp/pydantic 依赖树互相
+      # 降级，这里用独立 venv 只装 CLI，再把 Scripts 目录写入 PATH 供
+      # daemon 的 find_semgrep_cli（semgrep.exe）探测。
+      - name: Install semgrep CLI (external domain requirement)
+        shell: bash
+        run: |
+          python -m venv .semgrep-venv
+          ./.semgrep-venv/Scripts/python.exe -m pip install --upgrade pip
+          ./.semgrep-venv/Scripts/python.exe -m pip install "semgrep>=1.50"
+          echo "$GITHUB_WORKSPACE/.semgrep-venv/Scripts" >> "$GITHUB_PATH"
+          ./.semgrep-venv/Scripts/semgrep.exe --version
+
       # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
       # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 2 处裸导入
       # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
