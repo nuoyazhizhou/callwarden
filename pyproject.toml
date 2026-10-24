@@ -25,7 +25,14 @@ dependencies = [
     "mcp[rich]>=1.28,<2",
     "watchdog>=6.0.0",
     "numpy>=1.24",
-    "semgrep>=1.50",
+    # KR-C（2026-10-24）：semgrep 移出核心 dependencies。semgrep 无
+    # Windows/py3.14 wheel（其 setup.py 明拒 Windows；ci.yml:581-592 记载两轮
+    # 实证：run 4 38752482872 / run 5 38758644068 均因解析 semgrep 令
+    # Windows 安装步失败）。放核心依赖会令 acceptance-gates.yml 三个
+    # windows-latest × Python 3.14 job 的 `pip install ".[dev]"` 安装步即败，
+    # Gate 1/2 从未执行——nightly 验收门自建成起零证据的根因。semgrep 保留于
+    # `all` extra 与专用 `semgrep` extra（Linux 侧按需安装）；安全门禁 job 由
+    # ci.yml:377-378 在 Linux 显式安装，不受影响。
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 classifiers = [
