@@ -74,6 +74,14 @@ def test_s1_stale_job_recovery_closes_the_loop(env):
     assert row is not None, f"提交的作业必须落库（TP-11J 修复点）：{jid}"
     assert row.get("job_id") == jid
 
+    # 先等作业真正跑完再构造崩溃遗留态：task.job_submit 的后台线程在终态才
+    # 落库 status/error，若此刻 recover 抢先写 'daemon restarted'，随后到达的
+    # 终态落库会覆盖它（实证 run 40109238071 偶发红）。等到终态后行不再被写，
+    # fixture 置 running → 回收的断言才是确定性的。
+    terminal = _wait_job_terminal(env, jid)
+    assert terminal.get("status") in ("completed", "failed"), \
+        f"作业应在超时前到达终态：{terminal}"
+
     # 模拟 daemon 崩溃：作业停在 running
     changed = env.force_job_status(jid, "running")
     assert changed == 1, f"fixture 应改写 1 行：{changed}"
