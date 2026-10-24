@@ -33,6 +33,13 @@ on:
         required: false
         default: "pr"
 
+# Windows runner 控制台默认 cp1252，门禁脚本的 verdict/日志含中文，
+# print(json.dumps(..., ensure_ascii=False)) 会 UnicodeEncodeError
+# （实证 run 40103915482 Gate 1/2）。强制 Python 走 UTF-8。
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+
 concurrency:
   group: acceptance-${{ github.ref }}
   cancel-in-progress: false
