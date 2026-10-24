@@ -120,7 +120,8 @@ jobs:
 
       - name: Run PR profile (domains minus external network deps)
         env:
-          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          # 与 main CI 同形：cw-daemon 构建不带 --release ⇒ 产物在 target/debug。
+          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/debug/cw-daemon.exe
           CW_TP11G_ALLOW_FRESH_BUILD: "1"
         run: >
           pytest tests/acceptance/domains/ --ignore=tests/acceptance/domains/external
@@ -218,7 +219,8 @@ jobs:
 
       - name: Run full profile (all domains incl. external)
         env:
-          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          # 与 main CI 同形：cw-daemon 构建不带 --release ⇒ 产物在 target/debug。
+          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/debug/cw-daemon.exe
           CW_TP11G_ALLOW_FRESH_BUILD: "1"
         run: >
           pytest tests/acceptance/domains/
@@ -267,6 +269,9 @@ jobs:
         run: |
           python release/build.py --rust
           python -m pip wheel . --no-build-isolation --no-deps -w dist
+          # 与 main CI 同形：full profile / artifact E2E 都要求隔离 daemon 二进制，
+          # debug 产物在 rust_ext/target/debug/（下方 env 同源）。
+          cargo build --manifest-path rust_ext/Cargo.toml --no-default-features --features sqlite-bundled --bin cw-daemon
         shell: bash
 
       # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
@@ -298,7 +303,7 @@ jobs:
         shell: bash
       - name: Run full profile (release 档跑全部必需 profile)
         env:
-          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          CW_TP11G_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/debug/cw-daemon.exe
           CW_TP11G_ALLOW_FRESH_BUILD: "1"
         run: >
           pytest tests/acceptance/domains/
@@ -314,7 +319,7 @@ jobs:
         shell: bash
       - name: Artifact E2E (clean venv install + isolated daemon + CLI + MCP wire)
         env:
-          CW_ARTIFACT_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/release/cw-daemon.exe
+          CW_ARTIFACT_DAEMON_SRC: ${{ github.workspace }}/rust_ext/target/debug/cw-daemon.exe
         run: >
           python -m cicd.artifact_e2e
           --json-out reports/artifact_verdict.json
