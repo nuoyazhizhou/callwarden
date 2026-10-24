@@ -76,18 +76,17 @@ jobs:
           pip install pytest-xdist pytest-timeout
         shell: bash
 
-      # CD-1（与 main CI 对齐）：wheel 不含 db/（仅测试支持层），但
-      # tests/conftest.py:5 import callwarden.db.db_base ⇒ 从安装 wheel 跑
-      # collect/run 会 ModuleNotFoundError。把仓库根以 callwarden 之名挂入
-      # PYTHONPATH，效果同可编辑安装、不触发 build_ext（不重建 .pyd）。
-      - name: Expose repo root as importable package (CD-1)
+      # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
+      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 3 处裸导入
+      # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
+      # Windows runner 不支持 ln -s（需 Developer Mode/特权）⇒ 改用：① 复制仓库根
+      # callwarden/db 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      - name: Expose repo-root test support (CD-1, Windows-safe)
         shell: bash
         run: |
-          pkgroot="$RUNNER_TEMP/cw_pkgroot"
-          mkdir -p "$pkgroot"
-          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
-          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
-          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          python -c "import callwarden, os, shutil; src=os.path.join('callwarden','db'); assert os.path.isdir(src), 'repo callwarden/db 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
+          python -c "from callwarden.db import db_base; print('callwarden.db OK')"
+          echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       # Q2 修复：manifest ↔ 源码一致性（collect-only 不加 -q）
       - name: Collect PR profile selectors (source of truth)
@@ -176,17 +175,17 @@ jobs:
           pip install pytest-xdist pytest-timeout
         shell: bash
 
-      # CD-1（与 main CI 对齐）：wheel 不含 db/，但 tests/conftest.py:5 import
-      # callwarden.db.db_base ⇒ 从安装 wheel 跑 collect/run 会 ModuleNotFoundError。
-      # 把仓库根以 callwarden 之名挂入 PYTHONPATH，效果同可编辑安装、不触发 build_ext。
-      - name: Expose repo root as importable package (CD-1)
+      # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
+      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 3 处裸导入
+      # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
+      # Windows runner 不支持 ln -s（需 Developer Mode/特权）⇒ 改用：① 复制仓库根
+      # callwarden/db 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      - name: Expose repo-root test support (CD-1, Windows-safe)
         shell: bash
         run: |
-          pkgroot="$RUNNER_TEMP/cw_pkgroot"
-          mkdir -p "$pkgroot"
-          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
-          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
-          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          python -c "import callwarden, os, shutil; src=os.path.join('callwarden','db'); assert os.path.isdir(src), 'repo callwarden/db 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
+          python -c "from callwarden.db import db_base; print('callwarden.db OK')"
+          echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Collect full profile selectors (source of truth)
         run: |
@@ -259,17 +258,17 @@ jobs:
           python -m pip wheel . --no-build-isolation --no-deps -w dist
         shell: bash
 
-      # CD-1（与 main CI 对齐）：wheel 不含 db/，但 tests/conftest.py:5 import
-      # callwarden.db.db_base ⇒ 从安装 wheel 跑 collect/run 会 ModuleNotFoundError。
-      # 把仓库根以 callwarden 之名挂入 PYTHONPATH，效果同可编辑安装、不触发 build_ext。
-      - name: Expose repo root as importable package (CD-1)
+      # CD-1（Windows-safe 版）：wheel 不含 db/（仅测试支持层），但
+      # tests/conftest.py:5 import callwarden.db.db_base，且 db/ 的 3 处裸导入
+      # `from i18n import t` 需仓库根在 sys.path。main CI 在 Linux 用 symlink；
+      # Windows runner 不支持 ln -s（需 Developer Mode/特权）⇒ 改用：① 复制仓库根
+      # callwarden/db 进已装 wheel 的 callwarden 包；② 仓库根入 PYTHONPATH 供裸 i18n 导入。
+      - name: Expose repo-root test support (CD-1, Windows-safe)
         shell: bash
         run: |
-          pkgroot="$RUNNER_TEMP/cw_pkgroot"
-          mkdir -p "$pkgroot"
-          ln -sfn "$GITHUB_WORKSPACE" "$pkgroot/callwarden"
-          PYTHONPATH="$pkgroot:$GITHUB_WORKSPACE" python -c "import callwarden, os; p=os.path.realpath(callwarden.__file__); assert p.startswith(os.path.realpath('$GITHUB_WORKSPACE')), 'callwarden 未解析到仓库根: '+p"
-          echo "PYTHONPATH=$pkgroot:$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          python -c "import callwarden, os, shutil; src=os.path.join('callwarden','db'); assert os.path.isdir(src), 'repo callwarden/db 未找到: '+os.getcwd(); dst=os.path.join(os.path.dirname(callwarden.__file__),'db'); shutil.copytree(src,dst,dirs_exist_ok=True); print('copied db ->',dst)"
+          python -c "from callwarden.db import db_base; print('callwarden.db OK')"
+          echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Collect full profile selectors (source of truth)
         run: |
