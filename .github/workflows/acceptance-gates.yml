@@ -224,7 +224,7 @@ jobs:
           python -m cicd.check_selector_manifest
           --collected reports/collected_full.txt
           --manifest docs/testing/expected_selectors/domains_full.txt
-          --baseline-ref origin/main
+          --baseline-ref origin/${{ github.event.repository.default_branch }}
           --json-out reports/manifest_verdict.json
         shell: bash
       # 与 main CI 对齐：显式构建 daemon 二进制（ALLOW_FRESH_BUILD 仅兜底）。
@@ -316,7 +316,7 @@ jobs:
           python -m cicd.check_selector_manifest
           --collected reports/collected_full.txt
           --manifest docs/testing/expected_selectors/domains_full.txt
-          --baseline-ref origin/main
+          --baseline-ref origin/${{ github.event.repository.default_branch }}
           --json-out reports/manifest_verdict.json
         shell: bash
       - name: Run full profile (release 档跑全部必需 profile)

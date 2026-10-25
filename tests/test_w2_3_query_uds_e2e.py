@@ -53,6 +53,13 @@ def _fresh_daemon_binary() -> Path:
             cargo,
             "build",
             "--no-default-features",
+            # 与 ci.yml / acceptance-gates.yml 的 daemon 构建入口同参：feature 集
+            # 不一致会让 cargo 重新链接 rust_ext/target/debug/cw-daemon，旧 inode
+            # 被 unlink → 已运行的隔离 daemon 在 /proc/<pid>/exe 变为
+            # "<path> (deleted)" → 其他 worker 抛 E_HTTP_MANIFEST_STALE
+            # （实证 ci run 40110299499）。
+            "--features",
+            "sqlite-bundled",
             "--manifest-path",
             str(root / "rust_ext/Cargo.toml"),
             "--bin",

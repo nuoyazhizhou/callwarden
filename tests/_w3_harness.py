@@ -17,6 +17,7 @@
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -668,8 +669,17 @@ def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     env["CW_DAEMON_CODEGRAPH_DB_TEMPLATE"] = os.path.join(
         home, ".callwarden", "callwarden.db"
     )
+    # 隔离二进制：复制到本实例私有目录再启动。共享路径（rust_ext/target/debug/
+    # cw-daemon）可能被其他测试运行期的 cargo build 重新链接覆盖，旧 inode 被
+    # unlink 后 Linux /proc/<pid>/exe 返回 "<path> (deleted)" → 其他 worker 的
+    # validate_http_manifest 判 stale（实证 ci run 40110299499）。必须复制而非
+    # 硬链接：硬链接共享 inode，同样会被替换波及。
+    bin_dir = os.path.join(data_root, "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    private_bin = os.path.join(bin_dir, os.path.basename(bin_path))
+    shutil.copy2(bin_path, private_bin)
     proc = subprocess.Popen(
-        [bin_path, "--http-bind=" + http_bind],
+        [private_bin, "--http-bind=" + http_bind],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
