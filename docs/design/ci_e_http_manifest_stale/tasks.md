@@ -50,7 +50,10 @@
      （`40154268943` 在 `0cffb16` 上同样 success，字段一致。）
   3. 上一轮 `40154241136`（`0cffb16`）的 `Errno 122` 已定位为 T2 初版按用例复制所致，
      已在 `1e12a74` 修正并复验为 0。
-- 未达成：spec §5 要求的「连续 2 次五个 test job 全绿」。阻塞项与本任务无关（见下）。
+- 未达成→已达成（`e35741c`）：`is_memfd` 修好后 run `40179563682` 五个 test job 全部 success
+  （attempt 1 首个 3.13 因 `test_http_combined_worker_cutover` 的 10s manifest 等待在并行负载下
+  超时偶发红，单 job 重跑即绿；attempt 3 一次全绿，全 run 仅 known-red job failure=设计语义）。
+  该 run 的 `E_HTTP_MANIFEST_STALE` / `Disk quota exceeded` 计数均为 0，memfd 用例五版本全绿。
 
 ## 未关闭项（需另立任务/单独批准）
 
