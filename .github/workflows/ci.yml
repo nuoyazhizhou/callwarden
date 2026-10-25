@@ -301,6 +301,9 @@ jobs:
       - name: Run known-red quarantine tests (honest red allowed)
         # KR 未修期间允许红=隔离的预期状态（见 job 头注释）；不吞退出码。
         # sg 包裹使 runner 入 callwarden-clients 组（P0-3 chown 要求）。
+        # nodeid 必须先拼成单行：command substitution 若把文件里的换行原样带进
+        # `sh -c`，每行会被当成独立命令执行，9 个 nodeid 只有第 1 个真正跑了，
+        # 其余报 "No such file or directory" 并以 127 退出（实证 run 40155571488）。
         run: |
           python cicd/known_red.py --quarantine-list > /tmp/quarantine_nodeids.txt
           if [ ! -s /tmp/quarantine_nodeids.txt ]; then
@@ -309,8 +312,9 @@ jobs:
           fi
           echo "===== quarantine nodeids ($(wc -l < /tmp/quarantine_nodeids.txt)) ====="
           cat /tmp/quarantine_nodeids.txt
-          # shellcheck disable=SC2046 —— nodeid 无空格，词split安全；无 -n auto 单进程如实报数
-          sg callwarden-clients -c "pytest $(cat /tmp/quarantine_nodeids.txt) -q --tb=short --timeout=300 --timeout-method=thread"
+          nodeids="$(tr '\n' ' ' < /tmp/quarantine_nodeids.txt)"
+          # shellcheck disable=SC2086 —— nodeid 无空格/通配符，词split安全；无 -n auto 单进程如实报数
+          sg callwarden-clients -c "pytest $nodeids -q --tb=short --timeout=300 --timeout-method=thread"
 
       - name: Known-red registry validation + expiry gate
         # 到期未关 ⇒ exit 2（kind=workflow 条目同样参与到期跟踪）。
