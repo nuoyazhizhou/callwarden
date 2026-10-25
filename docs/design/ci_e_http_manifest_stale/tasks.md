@@ -36,17 +36,34 @@
   通过；CI 中两个 job 的 `manifest_verdict.json` 显示 `baseline_ref=origin/master`、
   `baseline_available=true`。
 
-## T4 回归验证（CI 级）
+## T4 回归验证（CI 级）——已执行，结论见下
 
-- 前置：T1–T3 已提交并 push 到 master。
-- 步骤：
-  1. `gh run watch` 等待 `ci.yml` 一次完整 run，确认 3.10–3.14 五个 test job 全绿、
-     `E_HTTP_MANIFEST_STALE` 计数为 0、`test_w2_3_query_uds_e2e.py` 未 skip。
-  2. `gh workflow run acceptance-gates.yml --ref master -f profile=full`，
-     下载 `reports/verdict_full.json` 与 `reports/manifest_verdict.json`，
-     核对 `ok=true`、`baseline_available=true`。
-  3. 重复第 1 步一次（连续 2 次绿），排除偶发。
-- 完成判据：spec §5 的 5 条全部满足，并保留 run id + verdict JSON 作为证据。
+- 前置：T1–T3 已提交并 push 到 master（`0cffb16` → `1e12a74`）。
+- 结果：
+  1. 主 CI `40155571488`（`1e12a74`，ubuntu26 镜像）：`E_HTTP_MANIFEST_STALE` 计数 **0**、
+     `Disk quota exceeded` 计数 **0**；五个 test job 均仅 1 个失败——
+     `tests/test_phase5_g10_memfd_e2e.py::TestIsMemfd::test_is_memfd_returns_false_for_regular_file`
+     （`assert True is False`），其余 8170 passed / 707 skipped。
+  2. acceptance-gates `40155642199`（`1e12a74`）success：
+     `manifest_verdict.json` → `baseline_ref=origin/master`、`baseline_available=true`、
+     `removed_vs_baseline=[]`、`added_vs_baseline=[]`；`verdict_full.json` → `ok=true`、`stale=[]`。
+     （`40154268943` 在 `0cffb16` 上同样 success，字段一致。）
+  3. 上一轮 `40154241136`（`0cffb16`）的 `Errno 122` 已定位为 T2 初版按用例复制所致，
+     已在 `1e12a74` 修正并复验为 0。
+- 未达成：spec §5 要求的「连续 2 次五个 test job 全绿」。阻塞项与本任务无关（见下）。
+
+## 未关闭项（需另立任务/单独批准）
+
+1. **env drift：ubuntu-latest 已切到 ubuntu26 镜像**
+   （`40110299499` = `ubuntu24/20261012.334`，`40155571488` = `ubuntu26/20261012.163`）。
+   ubuntu26 上 `/tmp` 为 tmpfs，`F_GET_SEALS` 对 tmpfs 普通文件同样成功返回 0，
+   使 `server/ipc_transport.py::is_memfd` 对常规文件误判 True → 五个版本稳定红 1 例。
+   候选修法需评审：生产侧改用 `/proc/self/fd/<n>` 链接名（`/memfd:`）判定，
+   或测试侧改用非 tmpfs 目录；属安全语义变更，未在本轮改动。
+2. **known-red quarantine job 恒红（`0cffb16` 之前已红）**
+   `40110299499` / `40155571488` 均为 failure：`tests/test_srv_019.py::test_success_final_gate_passed`
+   （audit 脚本退出码 1）+ 步骤把 nodeids 当独立 shell 命令执行（`exit 127`）。
+   与本次改动无关，需单独修工作流步骤与该已知红。
 
 ## T5 证据归档与汇报
 
