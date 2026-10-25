@@ -652,6 +652,42 @@ def find_daemon_binary():
     return chosen
 
 
+def _private_daemon_binary(bin_path):
+    """返回可安全 spawn 的 daemon 二进制路径（共享构建产物先落一份快照）。
+
+    共享路径（rust_ext/target/debug/cw-daemon）可能被其他测试运行期的
+    `cargo build` 重新链接覆盖，旧 inode 被 unlink 后 Linux /proc/<pid>/exe
+    返回 "<path> (deleted)" → 其他 worker 的 validate_http_manifest 判 stale
+    （实证 ci run 40110299499）。因此先在 target 下按 (size, mtime_ns) 缓存一份
+    副本，每个构建指纹只复制一次，全部 worker 共享该副本；daemon manifest 记录
+    的是副本路径，共享产物被替换也不会波及已运行进程。
+
+    必须复制而非硬链接：硬链接共享 inode，同样会被替换波及。
+    副本落在 target 内（而非 pytest /tmp）——曾有实现按用例复制到
+    tmp_path，数千个 w3_live_* 叠加 debug 二进制撑爆 /tmp 配额
+    （实证 ci run 40154241136 Errno 122），故改为构建指纹级去重。
+    """
+    real = os.path.abspath(bin_path)
+    rust_target = os.path.abspath(
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "rust_ext", "target"))
+    try:
+        inside_target = os.path.commonpath([real, rust_target]) == rust_target
+    except ValueError:
+        inside_target = False
+    if not inside_target:
+        return bin_path
+    st = os.stat(real)
+    cache_dir = os.path.join(rust_target, ".w3-bin-cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(real))
+    cached = os.path.join(cache_dir, f"{stem}-{st.st_size}-{st.st_mtime_ns}{ext}")
+    if not os.path.exists(cached):
+        staging = f"{cached}.{os.getpid()}.tmp"
+        shutil.copy2(real, staging)
+        os.replace(staging, cached)
+    return cached
+
+
 def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     """启动隔离 daemon（模式A）。返回 (proc, env)。"""
     home = os.path.join(data_root, "userhome")
@@ -669,15 +705,7 @@ def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     env["CW_DAEMON_CODEGRAPH_DB_TEMPLATE"] = os.path.join(
         home, ".callwarden", "callwarden.db"
     )
-    # 隔离二进制：复制到本实例私有目录再启动。共享路径（rust_ext/target/debug/
-    # cw-daemon）可能被其他测试运行期的 cargo build 重新链接覆盖，旧 inode 被
-    # unlink 后 Linux /proc/<pid>/exe 返回 "<path> (deleted)" → 其他 worker 的
-    # validate_http_manifest 判 stale（实证 ci run 40110299499）。必须复制而非
-    # 硬链接：硬链接共享 inode，同样会被替换波及。
-    bin_dir = os.path.join(data_root, "bin")
-    os.makedirs(bin_dir, exist_ok=True)
-    private_bin = os.path.join(bin_dir, os.path.basename(bin_path))
-    shutil.copy2(bin_path, private_bin)
+    private_bin = _private_daemon_binary(bin_path)
     proc = subprocess.Popen(
         [private_bin, "--http-bind=" + http_bind],
         env=env,

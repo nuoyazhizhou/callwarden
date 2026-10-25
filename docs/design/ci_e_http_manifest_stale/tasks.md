@@ -16,12 +16,16 @@
 ## T2 隔离 daemon 二进制副本（纵深防御）
 
 - 文件：`tests/_w3_harness.py`
-- 函数：`spawn_isolated_daemon(bin_path, data_root, ...)`
-- 改动：spawn 前 `shutil.copy2(bin_path, <data_root>/bin/cw-daemon)`（Windows 保留 `.exe` 后缀），
-  用副本路径 spawn；manifest 的 `daemon_executable` 自然指向副本。
+- 函数：`_private_daemon_binary(bin_path)`（新增）+ `spawn_isolated_daemon` 调用它
+- 改动：对位于 `rust_ext/target` 下的构建产物，按 `(size, mtime_ns)` 在
+  `rust_ext/target/.w3-bin-cache/` 缓存一份副本（保留原扩展名），用副本 spawn；
+  manifest 的 `daemon_executable` 自然指向副本。其他路径候选（如 runtime/current）不复制。
 - 约束：必须复制，不得硬链接（硬链接共享 inode，无法防护 `(deleted)`）。
-- 验证：`tests/test_mcp_test_impact_selection_http_rpc.py` 等 live-daemon 用例本地仍全绿；
-  CI 中 manifest 路径变为临时目录下的副本（可作为日志证据）。
+- 实证修正：初版按用例复制到 `data_root/bin` → Linux 主 CI /tmp 配额耗尽
+  （Errno 122，ci run 40154241136 五个测试 job 全红）；改为构建指纹级去重，
+  一次构建只占一份磁盘。
+- 验证：`tests/test_mcp_test_impact_selection_http_rpc.py` 本地全绿，
+  `rust_ext/target/.w3-bin-cache/` 仅一份副本；CI 中 manifest 路径变为缓存副本。
 
 ## T3 基线分支对齐（nightly / release）
 

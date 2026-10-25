@@ -73,13 +73,18 @@
 ### 3.2 修复 B（纵深防御，建议同批）：`tests/_w3_harness.py::spawn_isolated_daemon`
 
 - 文件：`tests/_w3_harness.py`
-- 改动：spawn 前把选中的 daemon 二进制**复制**（`shutil.copy2`，副本按
-  `<data_root>/bin/cw-daemon` 命名）到本实例私有目录，用副本路径 spawn；
-  manifest 中记录的 `daemon_executable` 也随之变为私有副本。
-- 注意：只能用**复制**，不能用硬链接——硬链接共享 inode，`cargo` 替换共享路径后同样出现
+- 改动：spawn 前把选中的 daemon 二进制**复制**一份并按构建指纹缓存：
+  `rust_ext/target/.w3-bin-cache/<name>-<size>-<mtime_ns><ext>`，用该副本路径 spawn；
+  manifest 中记录的 `daemon_executable` 也随之变为副本路径。
+- 注意 1：只能用**复制**，不能用硬链接——硬链接共享 inode，`cargo` 替换共享路径后同样出现
   `(deleted)`，无法防护。
+- 注意 2（实证修正）：初版按用例复制到 `data_root/bin`，导致 Linux 主 CI 数千个
+  `w3_live_*` 各存一份 debug 二进制，/tmp 配额耗尽（`Errno 122`，ci run 40154241136 五个
+  测试 job 全红）。因此改为**构建指纹级去重**：同一 (size, mtime_ns) 只复制一次，
+  所有 worker 共享；副本落在 target 内而非 pytest tmp。仅对位于 `rust_ext/target`
+  下的构建产物启用（其他候选路径如 runtime/current 不复制）。
 - 理由：即使将来任何测试/工具再次覆盖 `rust_ext/target/debug/cw-daemon`，已运行 daemon 的
-  exe 路径仍指向私有副本，`validate_http_manifest` 永不误判；同时让每个隔离 daemon 的
+  exe 路径仍指向快照副本，`validate_http_manifest` 永不误判；同时让隔离 daemon 的
   可执行文件指纹独立可审计。
 
 ### 3.3 修复 C（不做）：放宽 `validate_http_manifest`
