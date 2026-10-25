@@ -54,16 +54,20 @@
 
 ## 未关闭项（需另立任务/单独批准）
 
-1. **env drift：ubuntu-latest 已切到 ubuntu26 镜像**
+1. **env drift：ubuntu-latest 已切到 ubuntu26 镜像**（已修，见下）
    （`40110299499` = `ubuntu24/20261012.334`，`40155571488` = `ubuntu26/20261012.163`）。
    ubuntu26 上 `/tmp` 为 tmpfs，`F_GET_SEALS` 对 tmpfs 普通文件同样成功返回 0，
    使 `server/ipc_transport.py::is_memfd` 对常规文件误判 True → 五个版本稳定红 1 例。
-   候选修法需评审：生产侧改用 `/proc/self/fd/<n>` 链接名（`/memfd:`）判定，
-   或测试侧改用非 tmpfs 目录；属安全语义变更，未在本轮改动。
-2. **known-red quarantine job 恒红（`0cffb16` 之前已红）**
-   `40110299499` / `40155571488` 均为 failure：`tests/test_srv_019.py::test_success_final_gate_passed`
-   （audit 脚本退出码 1）+ 步骤把 nodeids 当独立 shell 命令执行（`exit 127`）。
-   与本次改动无关，需单独修工作流步骤与该已知红。
+   **修法**：`is_memfd` 首选 `/proc/self/fd/<fd>` 链接目标（memfd 恒为
+   `/memfd:<name> (deleted)`，tmpfs 普通文件为真实路径），仅在 /proc 不可用时
+   回落 F_GET_SEALS；非 memfd 链接目标直接判 False，消除 tmpfs 假阳性。
+   影响面：`server/daemon_server.py:1130` 的 memfd 分支判定更严格（真实 memfd 不受影响）。
+2. **known-red quarantine job（工作流步骤已修，红仍为设计语义）**
+   步骤缺陷：`sg ... -c "pytest $(cat ...)"` 把换行带进 `sh -c`，9 个 nodeid 只跑了 1 个，
+   其余报 `No such file or directory` 并以 127 退出。已修（`65620fb`）：`tr '\n' ' '`
+   拼成单行后再执行；验证 run `40171494535` 中 9 条全部真实执行（4 个
+   `test_srv_019.py` 红、5 个 token_savings 通过），`No such file` / `exit 127` 均为 0。
+   该 job 保持 failure 属设计语义（「它绿 = KR 已实际修复」），待 KR-A/B 关闭后自然转绿。
 
 ## T5 证据归档与汇报
 

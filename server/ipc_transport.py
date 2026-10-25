@@ -399,15 +399,33 @@ def send_msg(sock, msg_type: int, payload: dict, canonical_bytes: bytes):
 
 
 def is_memfd(fd: int) -> bool:
-    """检测 FD 是否为 memfd（通过 F_GET_SEALS）。
+    """检测 FD 是否为 memfd。
 
     规范：daemon-ipc-security.md §3.2
     仅 Linux 支持 memfd；非 Linux 或非 memfd FD 返回 False。
-    注意：F_GET_SEALS 成功即表明是 memfd（即使 seals == 0，
-    因为新建 memfd 允许 sealing 但未加 seal 时返回 0）。
-    普通文件/pipe 等会抛 OSError(EINVAL)。
+
+    判定顺序：
+    1. 首选 ``/proc/self/fd/<fd>`` 的链接目标：memfd 恒为
+       ``/memfd:<name> (deleted)``；tmpfs 上的普通文件是真实路径。
+    2. 仅当 /proc 不可用（容器裁剪/权限）时回落 F_GET_SEALS：成功即 memfd
+       （seals 可以为 0）。
+
+    为什么不能单靠 F_GET_SEALS：内核的 shmem 实现会让 **tmpfs 上的普通文件**
+    同样成功返回 0 个 seal，于是 /tmp 为 tmpfs 的环境（如 ubuntu26 runner
+    镜像）会把常规文件误判为 memfd——实证主 CI run 40155571488 的
+    test_is_memfd_returns_false_for_regular_file 稳定红。
     """
     if not _IS_LINUX:
+        return False
+    try:
+        target = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        target = ""
+    if target.startswith("/memfd:"):
+        return True
+    if target:
+        # /proc 可用且链接目标不是 memfd 命名空间 ⇒ 明确不是 memfd
+        # （含 tmpfs 普通文件，避免 F_GET_SEALS 的假阳性）。
         return False
     import fcntl
     try:
