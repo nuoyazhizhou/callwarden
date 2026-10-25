@@ -1,15 +1,21 @@
 """对 server Python 做最终 DB authority 静态审计；发现残留时 fail-closed。"""
 from __future__ import annotations
 
+import argparse
 import ast
 import collections
 import json
+import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVER = ROOT / "server"
 OUT = ROOT / "deliverables" / "software-company" / "server_authority_residue_audit.json"
+TRANSITION_BASELINE = (
+    ROOT / "deliverables" / "software-company" / "db_retire_transition_baseline.json"
+)
 
 SQLITE_MODULES = {"sqlite3", "_sqlite3"}
 DB_METHOD_LEAVES = {
@@ -72,6 +78,113 @@ RETIRED_LEGACY_FILES: dict[str, str] = {
 }
 
 
+TRANSITION_KINDS = {"sqlite_import", "sqlite_connect", "db_helper", "sql_execute"}
+
+
+def _transition_key(row: dict[str, Any]) -> tuple:
+    """第二类条目的比对粒度：file:line:handler:kind（detail 不参与身份）。"""
+    return (row.get("file"), row.get("line"), row.get("handler"), row.get("kind"))
+
+
+def load_transition_declaration(path: Path = TRANSITION_BASELINE) -> dict[str, Any]:
+    """读取并校验第二类 db-retire 过渡声明（冻结基线）。
+
+    声明语义（与 known_red 的反豁免纪律同族）：
+    - 只覆盖已由 Rust 1:1 接管生产权威的 Python 影子存储层；
+    - 条目粒度 file:line:handler:kind，逐条比对、**只减不加**；
+    - 日落条款绑 db-retire 里程碑：过期即 fail-closed；
+    - 条目文件必须在 `files` 中附接管证据（非空长文本），禁止无理由豁免。
+    任一条不符 ⇒ ValueError（调用方按 fail-closed 处理，不静默放行）。
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("过渡声明顶层必须为对象")
+    if data.get("schema_version") != 1:
+        raise ValueError("过渡声明 schema_version 必须为 1")
+
+    sunset = data.get("sunset")
+    if not isinstance(sunset, dict):
+        raise ValueError("过渡声明缺 sunset 对象")
+    if not isinstance(sunset.get("milestone"), str) or not sunset["milestone"].strip():
+        raise ValueError("过渡声明 sunset.milestone 必须为非空字符串")
+    expiry_raw = sunset.get("expiry_date")
+    if not isinstance(expiry_raw, str):
+        raise ValueError("过渡声明 sunset.expiry_date 必须为 YYYY-MM-DD 字符串")
+    try:
+        date.fromisoformat(expiry_raw)
+    except ValueError as e:
+        raise ValueError(f"过渡声明 sunset.expiry_date 非法：{expiry_raw!r}（{e}）")
+
+    files = data.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("过渡声明 files 必须为非空对象（文件 → 接管证据）")
+    for rel, why in files.items():
+        if not isinstance(rel, str) or not isinstance(why, str) or len(why.strip()) < 20:
+            raise ValueError(f"过渡声明 files[{rel!r}] 缺接管证据（value 必须为 ≥20 字字符串）")
+
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("过渡声明 entries 必须为数组")
+    normalized: list[dict[str, Any]] = []
+    seen: set = set()
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(f"过渡声明 entries[{i}] 必须为对象")
+        missing = [f for f in ("file", "line", "handler", "kind") if f not in entry]
+        if missing:
+            raise ValueError(f"过渡声明 entries[{i}] 缺字段：{', '.join(missing)}")
+        if entry["file"] not in files:
+            raise ValueError(f"过渡声明 entries[{i}].file 未在 files 中声明接管证据")
+        if not isinstance(entry["line"], int):
+            raise ValueError(f"过渡声明 entries[{i}].line 必须为整数")
+        if not isinstance(entry["handler"], str) or not entry["handler"]:
+            raise ValueError(f"过渡声明 entries[{i}].handler 必须为非空字符串")
+        if entry["kind"] not in TRANSITION_KINDS:
+            raise ValueError(
+                f"过渡声明 entries[{i}].kind 非法：{entry['kind']!r}"
+                f"（允许 {'/'.join(sorted(TRANSITION_KINDS))}）"
+            )
+        key = _transition_key(entry)
+        if key in seen:
+            raise ValueError(f"过渡声明条目重复：{key}")
+        seen.add(key)
+        normalized.append(
+            {
+                "file": entry["file"],
+                "line": entry["line"],
+                "handler": entry["handler"],
+                "kind": entry["kind"],
+                "detail": entry.get("detail", ""),
+            }
+        )
+
+    return {
+        "sunset": sunset,
+        "evidence": data.get("evidence", {}),
+        "files": files,
+        "entries": normalized,
+    }
+
+
+def prune_transition_baseline(
+    report: dict[str, Any], path: Path = TRANSITION_BASELINE
+) -> int:
+    """把声明收缩到「当前仍存在」的条目（只减不加），返回删除条数。
+
+    仅在无未声明残留时允许收缩；新增残留必须走根因整改，不能靠改基线放行。
+    """
+    if report["finding_count"] or report["transition_declaration_error"]:
+        raise ValueError("存在未声明残留或声明非法，拒绝收缩基线")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    actual = {_transition_key(f) for f in report["transition_findings"]}
+    kept = [e for e in data["entries"] if _transition_key(e) in actual]
+    removed = len(data["entries"]) - len(kept)
+    if removed:
+        data["entries"] = kept
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return removed
+
+
 def dotted(node: ast.AST) -> str:
     if isinstance(node, ast.Name):
         return node.id
@@ -91,12 +204,20 @@ def _finding(path: Path, handler: str, line: int, kind: str, detail: str) -> dic
     }
 
 
-def audit_python_authority(root: Path = SERVER) -> dict[str, Any]:
+def audit_python_authority(
+    root: Path = SERVER,
+    transition_path: Path | None = TRANSITION_BASELINE,
+) -> dict[str, Any]:
     """返回 server 范围的 AST authority 审计结果，只读源码且 fail-closed。
 
     Retired legacy 文件（`RETIRED_LEGACY_FILES`）跳过——其 authority 已由
     Rust daemon 接管（见矩阵文档），保留仅为存量测试基线；扫描结果计入
     `retired_files` 报告，但不阻塞 passed。
+
+    第二类 db-retire 过渡声明（`db_retire_transition_baseline.json`）中的
+    条目同样不阻塞 passed，但**单列**为 `transition_findings`；未声明残留
+    （新文件/新行/新 kind）与基线未收缩（声明条目已不存在）均 fail-closed，
+    日落条款过期同样 fail-closed。
     """
     findings: list[dict[str, Any]] = []
     retired_report: dict[str, str] = {}
@@ -161,17 +282,72 @@ def audit_python_authority(root: Path = SERVER) -> dict[str, Any]:
 
         Visitor().visit(tree)
 
-    by_file = collections.Counter(row["file"] for row in findings if "file" in row)
+    declaration = None
+    declaration_error = ""
+    if transition_path is not None:
+        try:
+            declaration = load_transition_declaration(transition_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            declaration_error = str(exc)
+
+    transition_findings: list[dict[str, Any]] = []
+    undeclared: list[dict[str, Any]] = findings
+    stale_entries: list[dict[str, Any]] = []
+    if declaration is not None:
+        declared_keys = {_transition_key(e) for e in declaration["entries"]}
+        actual_keys = {_transition_key(f) for f in findings}
+        transition_findings = [
+            f for f in findings if _transition_key(f) in declared_keys
+        ]
+        undeclared = [f for f in findings if _transition_key(f) not in declared_keys]
+        stale_entries = [
+            e for e in declaration["entries"] if _transition_key(e) not in actual_keys
+        ]
+
+    by_file = collections.Counter(row["file"] for row in undeclared if "file" in row)
+    transition_by_file = collections.Counter(
+        row["file"] for row in transition_findings if "file" in row
+    )
+    sunset_expired = bool(
+        declaration
+        and date.today() > date.fromisoformat(declaration["sunset"]["expiry_date"])
+    )
+
+    try:
+        transition_ref = (
+            str(transition_path.relative_to(ROOT)).replace("\\", "/")
+            if transition_path is not None
+            else ""
+        )
+    except ValueError:
+        transition_ref = str(transition_path)
+
     return {
         "scope": "server-python",
         "scanned_files": len(files),
-        "finding_count": len(findings),
+        "finding_count": len(undeclared),
         "files_with_findings": len(by_file),
         "retired_files_count": len(retired_report),
         "retired_files": retired_report,
-        "passed": not findings,
+        "passed": (
+            not undeclared
+            and not stale_entries
+            and not declaration_error
+            and not sunset_expired
+        ),
         "by_file": dict(sorted(by_file.items())),
-        "findings": findings,
+        "findings": undeclared,
+        "transition_declaration_path": transition_ref,
+        "transition_declaration_error": declaration_error,
+        "transition_sunset": declaration["sunset"] if declaration else {},
+        "transition_sunset_expired": sunset_expired,
+        "transition_files": declaration["files"] if declaration else {},
+        "transition_evidence": declaration["evidence"] if declaration else {},
+        "transition_finding_count": len(transition_findings),
+        "transition_by_file": dict(sorted(transition_by_file.items())),
+        "transition_findings": transition_findings,
+        "stale_transition_count": len(stale_entries),
+        "stale_transition_entries": stale_entries,
     }
 
 
@@ -180,11 +356,66 @@ def write_report(report: dict[str, Any], output: Path = OUT) -> None:
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="server Python DB authority 审计（未声明残留 fail-closed）"
+    )
+    parser.add_argument(
+        "--prune-baseline",
+        action="store_true",
+        help="把第二类过渡声明收缩到当前仍存在的条目（只减不加；有未声明残留时拒绝）",
+    )
+    args = parser.parse_args(argv)
+
     report = audit_python_authority()
     write_report(report)
-    print(json.dumps({key: report[key] for key in ("scope", "scanned_files", "finding_count", "files_with_findings", "retired_files_count", "passed")}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                key: report[key]
+                for key in (
+                    "scope",
+                    "scanned_files",
+                    "finding_count",
+                    "files_with_findings",
+                    "retired_files_count",
+                    "transition_finding_count",
+                    "stale_transition_count",
+                    "transition_sunset_expired",
+                    "passed",
+                )
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    if args.prune_baseline:
+        try:
+            removed = prune_transition_baseline(report)
+        except ValueError as exc:
+            print(f"prune-baseline 拒绝：{exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"prune-baseline: removed {removed} stale entries")
+        return
+
     if not report["passed"]:
+        if report["transition_declaration_error"]:
+            print(
+                f"transition 声明非法：{report['transition_declaration_error']}",
+                file=sys.stderr,
+            )
+        if report["stale_transition_count"]:
+            print(
+                f"transition 基线未收缩：{report['stale_transition_count']} 条声明条目"
+                "已不存在（只减不加，须 --prune-baseline 收缩）",
+                file=sys.stderr,
+            )
+        if report["transition_sunset_expired"]:
+            print(
+                "transition 日落条款已过期："
+                f"{report['transition_sunset'].get('expiry_date')}（绑 db-retire 里程碑）",
+                file=sys.stderr,
+            )
         raise SystemExit(1)
 
 

@@ -1,6 +1,6 @@
 {
-  "total_leaves": 234,
-  "extracted": 233,
+  "total_leaves": 233,
+  "extracted": 232,
   "skipped": [
     "server"
   ],
@@ -2028,27 +2028,6 @@
         },
         {
           "opt": "--all-but-current",
-          "takes_value": true
-        }
-      ]
-    },
-    "gc db-migrate-single": {
-      "positionals": [],
-      "options": [
-        {
-          "opt": "-h,",
-          "takes_value": false
-        },
-        {
-          "opt": "--dry-run",
-          "takes_value": true
-        },
-        {
-          "opt": "--apply",
-          "takes_value": true
-        },
-        {
-          "opt": "--no-backup",
           "takes_value": true
         }
       ]

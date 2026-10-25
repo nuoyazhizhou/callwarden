@@ -22,8 +22,7 @@ cw --version
 # 备份用户级单库
 cp ~/.callwarden/callwarden.db ~/.callwarden/callwarden.db.bak.$(date +%Y%m%d)
 
-# 或用 cw 自带备份（如果可用）
-cw gc db-migrate-single --apply  # 旧版多库迁移到单库（如适用）
+# 旧版多库迁移命令已退役（手工 ATTACH 指引见 docs/cli_reference.md）
 ```
 
 ### 1.3 检查工作空间状态

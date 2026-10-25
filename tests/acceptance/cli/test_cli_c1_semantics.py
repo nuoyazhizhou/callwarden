@@ -1,8 +1,8 @@
-"""TP-10C · C1 —— CLI 全入口语义验收（265 个冻结入口）。
+"""TP-10C · C1 —— CLI 全入口语义验收（264 个冻结入口）。
 
 selector: tests/acceptance/cli/test_cli_c1_semantics.py
 
-对冻结清单（frozen-inventory/v1）的全部 265 个 CLI 入口做**真实调用**：
+对冻结清单（frozen-inventory/v1）的全部 264 个 CLI 入口做**真实调用**：
 argv 直接由冻结 params 构造（必填位置参数逐个填充、可选项全量携带、
 互斥组只取首个、已展开的 positional_choice 不重复追加选择值），在完全
 隔离的 daemon 上执行，按 t3 分类语义判 PASS / EXPECTED_BUSINESS / DEFECT / SKIP。
@@ -32,7 +32,7 @@ from cli_acceptance_harness import (  # noqa: E402
 )
 
 ENTRIES = load_cli_entries()
-assert len(ENTRIES) == 265, f"冻结 CLI 入口数应为 265，实际 {len(ENTRIES)}"
+assert len(ENTRIES) == 264, f"冻结 CLI 入口数应为 264，实际 {len(ENTRIES)}"
 
 
 @pytest.fixture(scope="module")
@@ -47,7 +47,7 @@ def env():
         yield e
     finally:
         e.write_report("tp10c_c1_cli_semantics.json", {
-            "suite": "TP-10C C1 CLI 全入口语义（265 冻结入口）",
+            "suite": "TP-10C C1 CLI 全入口语义（264 冻结入口）",
             "generated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "git_head": e.git_head(),
             "daemon_binary_sha256": manifest.get("daemon_binary_sha256"),

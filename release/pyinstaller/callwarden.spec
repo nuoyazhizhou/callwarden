@@ -372,7 +372,6 @@ _LOCAL_DB_EXCLUDES = [
     'callwarden.db.db_jobs',
     'callwarden.db.db_lsp',
     'callwarden.db.db_metrics',
-    'callwarden.db.db_migrate',
     'callwarden.db.db_ownership',
     'callwarden.db.db_stdlib',
     'callwarden.db.db_summary',

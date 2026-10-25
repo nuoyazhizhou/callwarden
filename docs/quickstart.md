@@ -186,7 +186,7 @@ $HOME/.callwarden/callwarden.db
 - 多个分支可通过分支感知功能注册为独立工作区
 - ⚠ **禁止删除** `~/.callwarden/callwarden.db` 及其 `-wal`/`-shm` 文件
 
-> 旧版按项目 hash 隔离的多库架构（`~/.callwarden/<16位hash>/callwarden.db`）已废弃，可通过 `cw gc db-migrate-single --apply` 迁移到用户级单库。
+> 旧版按项目 hash 隔离的多库架构（`~/.callwarden/<16位hash>/callwarden.db`）已废弃。`cw gc db-migrate-single` 已退役，手工 SQLite `ATTACH` 迁移指引见 [cli_reference.md](cli_reference.md)。
 
 ## 3. 基本查询
 

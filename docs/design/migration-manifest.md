@@ -43,8 +43,7 @@
 | `db_clone_detection.py` / `db_clone_groups.py` | clone 检测 | 待迁移 | Phase 6 |
 | `db_coverage.py` / `db_tests.py` | 测试覆盖、case 关联 | 待迁移 | Phase 6 |
 | `db_git.py` | Git 历史、blame、commit | 待迁移 | Phase 6 |
-| `db_migrate.py` | schema migration | 待迁移 | Phase 1 |
-| `db_gc.py` | GC、归档、单库迁移 | 待迁移 | Phase 1 |
+| `db_gc.py` | GC、归档 | 待迁移 | Phase 1 |
 | `db_audit_chain.py` | 审计链、签名轮换 | Rust `cli/security.rs` 已完成 E4 CLI verify/rotate/keys；Python MCP adapter 保留 | Phase 4 |
 | `db_lsp.py` | LSP hover/definition/references | 待迁移 | Phase 6 |
 | 其他 Mixin | 见 `db/db_*.py` | 分批迁移 | Phase 1-6 |

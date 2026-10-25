@@ -75,7 +75,7 @@ Before-Edit Contract
 | 3 | `cli/client.py` | Rust client CLI | RPC、重试、错误码 |
 | 4 | `cli/daemon.py`、`daemon_commands.py` | Rust daemon control | start/stop/status/restart |
 | 5 | `cli/agent_registry.py` | Rust registry service | 合并规格、版本兼容 |
-| 6 | `db_base.py`、`schema.py`、`db_migrate.py` | Rust StorageService | schema 幂等、损坏库、WAL |
+| 6 | `db_base.py`、`schema.py` | Rust StorageService | schema 幂等、损坏库、WAL |
 | 7 | `db_build.py` 残余编排 | Rust BuildService | batch parse/write、失败回滚 |
 | 8 | `db_query.py` 残余 SQL | Rust QueryService | 字段、排序、分页、预算 |
 | 9 | `db_impact.py` 残余上层能力 | Rust impact service | review/vuln/diff 语义 |

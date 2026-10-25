@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "exit_reason": "",
+  "stats": {
+    "suites": 1,
+    "cases": 127,
+    "expected": 127,
+    "unique_outcomes": 127,
+    "passed": 127,
+    "failed": 0,
+    "error": 0,
+    "skipped": 0
+  },
+  "missing": [],
+  "unexpected": [],
+  "duplicated": [],
+  "failures": [],
+  "errors": [],
+  "skipped_required": [],
+  "collection_errors": [],
+  "stale": []
+}

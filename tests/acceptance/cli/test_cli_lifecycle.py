@@ -10,7 +10,7 @@ selector: tests/acceptance/cli/test_cli_lifecycle.py
   4. 干净停止；
   5. 断言进程已退出、无孤儿进程、run 根内无端口/锁残留。
 
-覆盖范围说明：冻结清单（frozen-inventory/v1，265 CLI 入口）中的常驻/阻塞
+覆盖范围说明：冻结清单（frozen-inventory/v1，264 CLI 入口）中的常驻/阻塞
 入口为 `server`（cw_py_standalone）与 `daemon start`（nested_subcommand_
 level3）。任务描述提到的 `watch` 在冻结 CLI 面板中不存在可分发入口
 （仅为 cli/main.py `_WRITE_FLAGS` 中的遗留 flag 名，无 add_parser/handler），

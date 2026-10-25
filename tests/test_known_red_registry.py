@@ -6,9 +6,9 @@ CI 无隔离）。本测试锁定隔离机制本身的契约——门禁脚本�
 
 1. schema 缺字段 ⇒ exit 64（防「半登记」流入 CI）；
 2. 伪造到期条目 ⇒ exit 2（到期升级是日落条款的牙齿，必须真实生效）；
-3. --deselect 输出恰好等于登记的 9 个 nodeid（KR-A 4 + KR-B 5）——
+3. --deselect 输出恰好等于登记的 4 个 nodeid（KR-A；KR-B 已 closed）——
    关闭任何条目都须显式改本测试（有意的摩擦，防「修了不关」假账）；
-4. 登记漂移防护：注册表 A/B 的 nodeid 必须真实存在于本机 collect
+4. 登记漂移防护：注册表 open 条目的 nodeid 必须真实存在于本机 collect
    （nodeid 禁手抄；重命名/删除测试而注册表不动 ⇒ 本测试红）；
 5. kind 契约：kind=test 禁空 nodeids、kind=workflow 禁挂 nodeid；
    status=closed 的条目自动退出 deselect/quarantine 集合。
@@ -35,7 +35,7 @@ DRIFT_FILES = (
     "tests/test_srv_019.py",
     "tests/test_mcp_get_token_savings_report_http_rpc.py",
 )
-EXPECTED_NODEID_COUNT = 9  # KR-A 4 + KR-B 5；关闭条目须同步改此常量
+EXPECTED_NODEID_COUNT = 4  # KR-A 4（KR-B 已关闭）；关闭条目须同步改此常量
 
 
 def _load_entries():
@@ -126,6 +126,7 @@ def test_expired_workflow_entry_also_exit_2(tmp_path):
     """到期升级对 kind=workflow 一视同仁（不进 quarantine 跑，但牙齿照常）。"""
     entries = _load_entries()
     entries[2]["expiry_date"] = "2020-01-01"  # KR-C
+    entries[2]["status"] = "open"  # 显式构造「到期未关」形态
     path = _write_registry(tmp_path, entries)
     assert known_red.main(["--registry", str(path)]) == known_red.EXIT_EXPIRED
 
@@ -133,7 +134,7 @@ def test_expired_workflow_entry_also_exit_2(tmp_path):
 # ---------------------------------------------------------------- deselect 正向
 
 def test_deselect_output_exactly_registered_nodeids():
-    """--deselect 输出恰好等于登记的 9 个 nodeid（KR-A 4 + KR-B 5）。
+    """--deselect 输出恰好等于登记的 4 个 nodeid（KR-A；KR-B 已关闭）。
 
     以真实注册表跑 CLI（非内存构造），同时锁定 CLI 输出格式：
     单行、`--deselect <nodeid>` 成对、顺序与注册表一致。
@@ -157,7 +158,7 @@ def test_deselect_output_exactly_registered_nodeids():
 
 
 def test_quarantine_list_one_per_line():
-    """--quarantine-list 每行一个 nodeid，共 9 行。"""
+    """--quarantine-list 每行一个 nodeid，共 4 行（KR-A）。"""
     out = subprocess.run(
         [sys.executable, str(SCRIPT), "--quarantine-list"],
         capture_output=True,
@@ -177,15 +178,15 @@ def test_closed_entry_excluded_from_deselect():
     entries = _load_entries()
     entries[0]["status"] = "closed"  # KR-A 闭环
     args = known_red.deselect_args(entries)
-    assert not any("test_srv_019.py::" in a for a in args)
-    # KR-B 5 个仍在
-    assert len(args) // 2 == 5
+    assert args == []
+    # KR-B 已关闭：其 nodeid 不得再出现在 deselect 中
+    assert not any("test_mcp_get_token_savings_report_http_rpc.py::" in a for a in args)
 
 
 # ---------------------------------------------------------------- 登记漂移防护
 
 def test_registered_nodeids_exist_in_collect():
-    """注册表 A/B 的 nodeid 必须真实存在于本机 collect（防登记漂移）。
+    """注册表 open 条目的 nodeid 必须真实存在于本机 collect（防登记漂移）。
 
     nodeid 禁手抄：测试重命名/删除而注册表不动 ⇒ 本测试红。以
     `pytest --collect-only` 为 ground truth（任务规格口径）。

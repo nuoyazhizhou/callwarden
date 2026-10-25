@@ -237,7 +237,7 @@
 | DaemonMixin            | `db_daemon.py`               | Enterprise daemon workspace registry  |
 | ExternalMixin          | `db_external.py`             | 第三方包解析                          |
 | JobsMixin              | `db_jobs.py`                 | 后台任务系统                          |
-| MigrateMixin           | `db_migrate.py`              | 数据库迁移工具                        |
+| ~~MigrateMixin~~       | ~~`db_migrate.py`~~（已退役） | 旧版多库迁移已下线（KR-2026-10-23-A） |
 | StdlibMixin            | `db_stdlib.py`               | 标准库符号表                          |
 | TaskAttributionMixin   | `db_task_attribution.py`     | 任务-符号变更归因                     |
 | TaskQualityMixin       | `db_task_quality.py`         | 任务质量门禁                          |

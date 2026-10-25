@@ -137,7 +137,7 @@ $HOME/.callwarden/callwarden.db
 
 设计原则：一个用户一个数据库，所有项目通过 `workspaces` 表的 `workspace_id` 字段在业务表中隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。相同文件跨项目只解析一次（Global CAS 共享）。详见 [AGENTS.md §2 数据库路径](AGENTS.md)。
 
-> 旧版按项目 hash 隔离的多库架构（`~/.callwarden/<16位hash>/callwarden.db`）已废弃，可通过 `cw gc db-migrate-single --apply` 迁移到用户级单库。
+> 旧版按项目 hash 隔离的多库架构（`~/.callwarden/<16位hash>/callwarden.db`）已废弃。`cw gc db-migrate-single` 已退役，手工 SQLite `ATTACH` 迁移指引见 [docs/cli_reference.md](docs/cli_reference.md)。
 
 ## 工作目录结构
 

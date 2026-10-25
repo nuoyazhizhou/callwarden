@@ -1,10 +1,10 @@
 {
  "schema": "cli-tree/v1",
  "card": "TP-08C",
- "source_revision": "5c8a55c5391fceae3ace33ddd404d62061023e65",
- "generated_at": "2026-10-12T21:19:45",
+ "source_revision": "0fc6ba2d3c6cf7d377a756c976a07ace0e08e40c",
+ "generated_at": "2026-10-26T00:14:25",
  "top_level_count": 84,
- "nested_total": 144,
+ "nested_total": 143,
  "standalone_entries": {
   "cw-client": {
    "parser": {
@@ -1717,7 +1717,7 @@
    "category": "call_chain",
    "top_parser": {
     "prog": "cw impact",
-    "description": "Change impact radius analysis",
+    "description": "变更影响半径分析",
     "usage": "usage: cw impact [-h] [--depth DEPTH] symbol_hash",
     "arguments": [
      {
@@ -1742,7 +1742,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Source symbol hash",
+      "help": "源符号 hash",
       "metavar": null
      },
      {
@@ -1755,7 +1755,7 @@
       "default": 3,
       "type": "int",
       "choices": null,
-      "help": "Maximum BFS traversal depth (default: 3)",
+      "help": "BFS 遍历最大深度（默认 3）",
       "metavar": null
      }
     ],
@@ -2357,7 +2357,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw evolution",
-    "description": "=== Function Change Frequency ===",
+    "description": "=== 函数变更频率 ===",
     "usage": "usage: cw evolution [-h] [--window WINDOW] [--defects] qualified_name",
     "arguments": [
      {
@@ -2382,7 +2382,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Function qualified name",
+      "help": "函数限定名",
       "metavar": null
      },
      {
@@ -2395,7 +2395,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Time window (for example 30d/90d/1y)",
+      "help": "时间窗口（如 30d/90d/1y）",
       "metavar": null
      },
      {
@@ -2422,7 +2422,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw hotspot",
-    "description": "=== Hotspot Function Ranking ===",
+    "description": "=== 热点函数排名 ===",
     "usage": "usage: cw hotspot [-h] [--module MODULE] [--limit LIMIT]",
     "arguments": [
      {
@@ -2449,7 +2449,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Filter by module path prefix",
+      "help": "模块路径前缀过滤",
       "metavar": null
      },
      {
@@ -2462,7 +2462,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Number of items to show (default: 20)",
+      "help": "显示数量（默认 20）",
       "metavar": null
      }
     ],
@@ -2476,7 +2476,7 @@
    "category": "code_health",
    "top_parser": {
     "prog": "cw churn",
-    "description": "=== Code Churn Analysis ===",
+    "description": "=== 代码流失分析 ===",
     "usage": "usage: cw churn [-h] [--module MODULE] [--window WINDOW]",
     "arguments": [
      {
@@ -2503,7 +2503,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Filter by module path prefix",
+      "help": "模块路径前缀过滤",
       "metavar": null
      },
      {
@@ -2516,7 +2516,7 @@
       "default": "90d",
       "type": "",
       "choices": null,
-      "help": "Time window (default: 90d)",
+      "help": "时间窗口（默认 90d）",
       "metavar": null
      }
     ],
@@ -2677,7 +2677,7 @@
    "category": "task",
    "top_parser": {
     "prog": "cw task",
-    "description": "Task management",
+    "description": "任务管理",
     "usage": "usage: cw task [-h]\n               {create,next,next-action,prompt,assignment-status,assignment-heartbeat,report,handoff,step-resolve,rollback,apply,close,cascade-close,reopen,claim-recover,capture-diff,findings,resolve-finding,list,show,completion-review,split,status-tree,supersede,attest-legacy-workspace-binding,contract-bootstrap,contract-revise,bootstrap-executor-evidence,bootstrap-reviewer-pass,governance-projection,superseded} ...",
     "arguments": [
      {
@@ -2931,7 +2931,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task title",
+        "help": "任务标题",
         "metavar": null
        },
        {
@@ -2944,7 +2944,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Task description",
+        "help": "任务描述",
         "metavar": null
        },
        {
@@ -2957,7 +2957,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Step JSON array, for example [{\"action\":\"annotate\",\"target_file\":\"a.py\"}]",
+        "help": "步骤 JSON 数组，例如 [{\"action\":\"annotate\",\"target_file\":\"a.py\"}]",
         "metavar": null
        },
        {
@@ -2983,7 +2983,7 @@
         "default": 0,
         "type": "int",
         "choices": null,
-        "help": "Explicit daemon workspace id (default: resolved from daemon, fail-closed)",
+        "help": "显式 daemon workspace id（缺省从 daemon 解析，fail-closed）",
         "metavar": null
        },
        {
@@ -2996,7 +2996,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Explicit daemon workspace authority capture instance id (default: resolved from daemon via workspace.status)",
+        "help": "显式 daemon workspace 权威 capture instance id（缺省经 workspace.status 从 daemon 解析）",
         "metavar": null
        },
        {
@@ -3009,7 +3009,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Parent task ID; requires explicit daemon workspace pair and contracts",
+        "help": "父任务 ID；须显式提供 daemon workspace 配对与合同",
         "metavar": null
        },
        {
@@ -3022,7 +3022,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Explicit daemon identity policy (no inferred default for governed create)",
+        "help": "显式 daemon 身份策略；治理创建不推断默认策略",
         "metavar": null
        },
        {
@@ -3035,7 +3035,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task Contract JSON envelope, forwarded unchanged to the daemon",
+        "help": "Task Contract JSON envelope，原样传给 daemon",
         "metavar": null
        },
        {
@@ -3048,7 +3048,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Explicit task ID matching the supplied Task Contract envelope",
+        "help": "与所提供 Task Contract envelope 一致的显式任务 ID",
         "metavar": null
        }
       ],
@@ -3084,7 +3084,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -3110,7 +3110,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3123,7 +3123,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3136,7 +3136,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3149,7 +3149,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -3198,7 +3198,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -3565,7 +3565,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -3576,7 +3576,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Step ID (optional, task-level review if empty)",
+        "help": "步骤 ID（可选，留空则做任务级审查）",
         "metavar": null
        },
        {
@@ -3589,7 +3589,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Result description",
+        "help": "执行结果描述",
         "metavar": null
        },
        {
@@ -3602,7 +3602,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Mark as failed (default: success)",
+        "help": "标记为失败（默认成功）",
         "metavar": null
        },
        {
@@ -3667,7 +3667,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3680,7 +3680,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3693,7 +3693,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3706,7 +3706,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -3937,7 +3937,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3950,7 +3950,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3963,7 +3963,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -3976,7 +3976,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4136,7 +4136,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4149,7 +4149,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4162,7 +4162,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4175,7 +4175,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4250,7 +4250,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4261,7 +4261,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Step ID (used as change_id to locate rollback scope)",
+        "help": "步骤 ID（作为 change_id 定位回滚范围）",
         "metavar": null
        }
       ],
@@ -4297,7 +4297,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4310,7 +4310,7 @@
         "default": "reviewer",
         "type": "",
         "choices": null,
-        "help": "Reviewer identity",
+        "help": "审核人标识",
         "metavar": null
        },
        {
@@ -4323,7 +4323,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4336,7 +4336,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4349,7 +4349,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4362,7 +4362,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4437,7 +4437,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4450,7 +4450,7 @@
         "default": "reviewer",
         "type": "",
         "choices": null,
-        "help": "Reviewer identity",
+        "help": "审核人标识",
         "metavar": null
        },
        {
@@ -4463,7 +4463,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4476,7 +4476,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4489,7 +4489,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4502,7 +4502,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4577,7 +4577,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4590,7 +4590,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4603,7 +4603,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4616,7 +4616,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4629,7 +4629,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4678,7 +4678,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4691,7 +4691,7 @@
         "default": "reviewer",
         "type": "",
         "choices": null,
-        "help": "Reviewer identity",
+        "help": "审核人标识",
         "metavar": null
        },
        {
@@ -4704,7 +4704,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Reason for reopening (optional)",
+        "help": "重新打开原因（可选）",
         "metavar": null
        },
        {
@@ -4717,7 +4717,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4730,7 +4730,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4743,7 +4743,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4756,7 +4756,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4831,7 +4831,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4870,7 +4870,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4883,7 +4883,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4896,7 +4896,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -4909,7 +4909,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -4984,7 +4984,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -4997,7 +4997,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Associated step ID (optional)",
+        "help": "关联步骤 ID（可选）",
         "metavar": null
        },
        {
@@ -5010,7 +5010,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Base commit (empty = latest scan baseline)",
+        "help": "基线 commit（空串 = 最近一次扫描基线）",
         "metavar": null
        },
        {
@@ -5023,7 +5023,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Dry-run mode: only return plan, do not write to DB",
+        "help": "dry-run 模式：只返回计划，不写库",
         "metavar": null
        },
        {
@@ -5036,7 +5036,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Auto mode: detect in_progress task, use HEAD~1 as base, auto apply (fail-soft, does not block git commit)",
+        "help": "自动模式：检测 in_progress 任务，使用 HEAD~1 作为 base，自动 apply（fail-soft，不阻断 git commit）",
         "metavar": null
        },
        {
@@ -5098,7 +5098,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -5111,7 +5111,7 @@
         "default": "open",
         "type": "",
         "choices": null,
-        "help": "Status filter (open/resolved/wontfix/all)",
+        "help": "状态过滤（open/resolved/wontfix/all）",
         "metavar": null
        },
        {
@@ -5124,7 +5124,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Severity filter (info/warn/error/block)",
+        "help": "严重度过滤（info/warn/error/block）",
         "metavar": null
        }
       ],
@@ -5160,7 +5160,7 @@
         "default": null,
         "type": "int",
         "choices": null,
-        "help": "Finding ID",
+        "help": "发现 ID",
         "metavar": null
        },
        {
@@ -5173,7 +5173,7 @@
         "default": "fixed",
         "type": "",
         "choices": null,
-        "help": "Resolution (fixed/wontfix/false_positive)",
+        "help": "解决方式（fixed/wontfix/false_positive）",
         "metavar": null
        },
        {
@@ -5186,7 +5186,7 @@
         "default": "agent",
         "type": "",
         "choices": null,
-        "help": "Resolver (agent/human/system)",
+        "help": "解决者（agent/human/system）",
         "metavar": null
        }
       ],
@@ -5224,7 +5224,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Only show tasks with blocking findings",
+        "help": "仅显示有阻塞发现的任务",
         "metavar": null
        },
        {
@@ -5237,7 +5237,7 @@
         "default": 200,
         "type": "int",
         "choices": null,
-        "help": "Maximum number of tasks to list (default: 200)",
+        "help": "最多列出的任务数量（默认 200）",
         "metavar": null
        },
        {
@@ -5250,7 +5250,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Status filter (open/in_progress/review/applied/closed/reverted)",
+        "help": "状态过滤（open/in_progress/review/applied/closed/reverted）",
         "metavar": null
        },
        {
@@ -5263,7 +5263,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Flat list (no tree indentation)",
+        "help": "扁平展示（不按树形缩进）",
         "metavar": null
        }
       ],
@@ -5299,7 +5299,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -5312,7 +5312,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Flat mode (do not show subtasks recursively)",
+        "help": "扁平模式（不递归展示子任务）",
         "metavar": null
        }
       ],
@@ -5348,7 +5348,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -5361,7 +5361,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Step ID (optional, task-level review if empty)",
+        "help": "步骤 ID（可选，留空则做任务级审查）",
         "metavar": null
        }
       ],
@@ -5397,7 +5397,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -5410,7 +5410,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Markdown plan file path",
+        "help": "Markdown 计划文件路径",
         "metavar": null
        },
        {
@@ -5459,7 +5459,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        }
       ],
@@ -5597,7 +5597,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -5610,7 +5610,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -5623,7 +5623,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -5638,7 +5638,7 @@
         "choices": [
          "adjudicator"
         ],
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -6691,7 +6691,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        }
       ],
@@ -6706,7 +6706,7 @@
    "category": "rule_memory",
    "top_parser": {
     "prog": "cw rule",
-    "description": "Agent Rule Memory: candidate / accept / active / sync",
+    "description": "Agent 规则记忆：候选 / 审核 / 生效 / 同步",
     "usage": "usage: cw rule [-h]\n               {candidate,list,applicable,sync,insert-block,extract,seed-bootstrap,cleanup-sync-log} ...",
     "arguments": [
      {
@@ -6887,7 +6887,7 @@
         "default": "active",
         "type": "",
         "choices": null,
-        "help": "Status: active/deprecated/removed, empty = all",
+        "help": "状态：active/deprecated/removed，空串=所有",
         "metavar": null
        },
        {
@@ -6900,7 +6900,7 @@
         "default": 100,
         "type": "int",
         "choices": null,
-        "help": "Maximum count (default 100)",
+        "help": "返回数量上限（默认 100）",
         "metavar": null
        }
       ],
@@ -6938,7 +6938,7 @@
         "default": "{}",
         "type": "",
         "choices": null,
-        "help": "Context JSON, e.g. {\"languages\":[\"python\"],\"actions\":[\"edit\"]}",
+        "help": "上下文 JSON，例如 {\"languages\":[\"python\"],\"actions\":[\"edit\"]}",
         "metavar": null
        },
        {
@@ -6951,7 +6951,7 @@
         "default": 10,
         "type": "int",
         "choices": null,
-        "help": "Maximum count (default 10)",
+        "help": "返回数量上限（默认 10）",
         "metavar": null
        }
       ],
@@ -6989,7 +6989,7 @@
         "default": "AGENTS.md",
         "type": "",
         "choices": null,
-        "help": "Target AGENTS.md path (relative to workspace or absolute)",
+        "help": "目标 AGENTS.md 路径（相对 workspace 或绝对）",
         "metavar": null
        },
        {
@@ -7002,7 +7002,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Actually write to file (default: dry-run)",
+        "help": "实际写入文件（默认 dry-run）",
         "metavar": null
        },
        {
@@ -7015,7 +7015,7 @@
         "default": "agent",
         "type": "",
         "choices": null,
-        "help": "Actor identifier",
+        "help": "操作者标识",
         "metavar": null
        }
       ],
@@ -7053,7 +7053,7 @@
         "default": "AGENTS.md",
         "type": "",
         "choices": null,
-        "help": "Target AGENTS.md path",
+        "help": "目标 AGENTS.md 路径",
         "metavar": null
        },
        {
@@ -7066,7 +7066,7 @@
         "default": "agent",
         "type": "",
         "choices": null,
-        "help": "Actor identifier",
+        "help": "操作者标识",
         "metavar": null
        }
       ],
@@ -7104,7 +7104,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Task ID (empty = scan all tasks)",
+        "help": "任务 ID（空串=扫描所有任务）",
         "metavar": null
        },
        {
@@ -7117,7 +7117,7 @@
         "default": 2,
         "type": "int",
         "choices": null,
-        "help": "Min occurrences threshold (default 2)",
+        "help": "最小出现次数阈值（默认 2）",
         "metavar": null
        }
       ],
@@ -7155,7 +7155,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Actually write to agent_rules table (default: dry-run)",
+        "help": "实际写入 agent_rules 表（默认 dry-run）",
         "metavar": null
        }
       ],
@@ -7193,7 +7193,7 @@
         "default": 90,
         "type": "int",
         "choices": null,
-        "help": "Records older than N days (default 90)",
+        "help": "超过多少天的记录进入候选（默认 90）",
         "metavar": null
        },
        {
@@ -7206,7 +7206,7 @@
         "default": 100,
         "type": "int",
         "choices": null,
-        "help": "Keep latest N records (default 100)",
+        "help": "保留最近多少条记录不删除（默认 100）",
         "metavar": null
        },
        {
@@ -7219,7 +7219,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Actually delete records (default: dry-run)",
+        "help": "实际执行删除（默认 dry-run）",
         "metavar": null
        }
       ],
@@ -7234,7 +7234,7 @@
    "category": "audit_bootstrap",
    "top_parser": {
     "prog": "cw audit",
-    "description": "Audit chain verification and signing key rotation",
+    "description": "审计签名链验证与签名密钥轮换",
     "usage": "usage: cw audit [-h] {verify,rotate-key,keys} ...",
     "arguments": [
      {
@@ -7320,7 +7320,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Filter by table name (empty = all tables)",
+        "help": "按表名过滤（空串 = 全部表）",
         "metavar": null
        },
        {
@@ -7333,7 +7333,7 @@
         "default": 1000,
         "type": "int",
         "choices": null,
-        "help": "Maximum records to verify (default 1000)",
+        "help": "最大验证记录数（默认 1000）",
         "metavar": null
        }
       ],
@@ -7371,7 +7371,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "New key identifier (unique, e.g. 'key-2026-07')",
+        "help": "新密钥标识（唯一，如 'key-2026-07'）",
         "metavar": null
        },
        {
@@ -7384,7 +7384,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "New key secret (omit to auto-generate a 32-byte random secret)",
+        "help": "新密钥内容（省略时自动生成 32 字节随机密钥）",
         "metavar": null
        }
       ],
@@ -7424,7 +7424,7 @@
    "category": "audit_bootstrap",
    "top_parser": {
     "prog": "cw bootstrap",
-    "description": "Bootstrap health summary",
+    "description": "自举健康摘要",
     "usage": "usage: cw bootstrap [-h] {status} ...",
     "arguments": [
      {
@@ -7500,7 +7500,7 @@
    "category": "audit_bootstrap",
    "top_parser": {
     "prog": "cw check-gate",
-    "description": "Check gate (F6)",
+    "description": "检查门禁（F6）",
     "usage": "usage: cw check-gate [-h] [--resolve] [--step-id STEP_ID] task_id",
     "arguments": [
      {
@@ -7525,7 +7525,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Task ID",
+      "help": "任务 ID",
       "metavar": null
      },
      {
@@ -7538,7 +7538,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Mark gate findings for this task as resolved (call after agent fix)",
+      "help": "标记该任务的门禁发现为已解决（Agent 修复后调用）",
       "metavar": null
      },
      {
@@ -7551,7 +7551,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Related step ID (optional)",
+      "help": "关联步骤 ID（可选）",
       "metavar": null
      }
     ],
@@ -7565,7 +7565,7 @@
    "category": "audit_bootstrap",
    "top_parser": {
     "prog": "cw guardrail",
-    "description": "Production safety guardrails",
+    "description": "生产安全护栏",
     "usage": "usage: cw guardrail [-h] {scan,rules} ...",
     "arguments": [
      {
@@ -7645,7 +7645,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Filter by file path prefix",
+        "help": "文件路径前缀过滤",
         "metavar": null
        },
        {
@@ -7658,7 +7658,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Filter by category (db_safety/api_compat/incident)",
+        "help": "按类别过滤（db_safety/api_compat/incident）",
         "metavar": null
        }
       ],
@@ -7696,7 +7696,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Filter by category",
+        "help": "按类别过滤",
         "metavar": null
        }
       ],
@@ -8149,7 +8149,7 @@
    "category": "git",
    "top_parser": {
     "prog": "cw symbol-history",
-    "description": "Symbol Git change history",
+    "description": "符号 Git 变更历史",
     "usage": "usage: cw symbol-history [-h] [--limit LIMIT] symbol_hash",
     "arguments": [
      {
@@ -8174,7 +8174,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Symbol content hash",
+      "help": "符号内容 hash",
       "metavar": null
      },
      {
@@ -8187,7 +8187,7 @@
       "default": 20,
       "type": "int",
       "choices": null,
-      "help": "Result limit (default: 20)",
+      "help": "返回数量限制（默认 20）",
       "metavar": null
      }
     ],
@@ -8504,7 +8504,7 @@
    "category": "semgrep_defects",
    "top_parser": {
     "prog": "cw defect",
-    "description": "Defect knowledge base",
+    "description": "缺陷知识库",
     "usage": "usage: cw defect [-h] {search,suggest,learn,stats,build} ...",
     "arguments": [
      {
@@ -8602,7 +8602,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Category filter (prefix match)",
+        "help": "类别过滤（前缀匹配）",
         "metavar": null
        },
        {
@@ -8615,7 +8615,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Severity filter (error/warning/info)",
+        "help": "严重度过滤（error/warning/info）",
         "metavar": null
        },
        {
@@ -8628,7 +8628,7 @@
         "default": 20,
         "type": "int",
         "choices": null,
-        "help": "Number of items to show",
+        "help": "显示数量",
         "metavar": null
        }
       ],
@@ -8664,7 +8664,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Symbol content hash",
+        "help": "符号内容 hash",
         "metavar": null
        },
        {
@@ -8677,7 +8677,7 @@
         "default": 0,
         "type": "int",
         "choices": null,
-        "help": "Specific finding ID",
+        "help": "具体 finding ID",
         "metavar": null
        }
       ],
@@ -8713,7 +8713,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Fix commit hash",
+        "help": "修复提交的 commit hash",
         "metavar": null
        }
       ],
@@ -8778,7 +8778,7 @@
    "category": "semgrep_defects",
    "top_parser": {
     "prog": "cw vuln-blast",
-    "description": "Vulnerability blast radius analysis",
+    "description": "漏洞爆炸半径分析",
     "usage": "usage: cw vuln-blast [-h] [--finding-id FINDING_ID] [--severity SEVERITY]\n                     [--depth DEPTH]",
     "arguments": [
      {
@@ -8805,7 +8805,7 @@
       "default": 0,
       "type": "int",
       "choices": null,
-      "help": "Specify Semgrep finding ID (default: scan all)",
+      "help": "指定 Semgrep finding ID（默认扫描全部）",
       "metavar": null
      },
      {
@@ -8818,7 +8818,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Severity filter (ERROR/WARN/INFO)",
+      "help": "严重度过滤（ERROR/WARN/INFO）",
       "metavar": null
      },
      {
@@ -8831,7 +8831,7 @@
       "default": 3,
       "type": "int",
       "choices": null,
-      "help": "Reverse call graph traversal depth (default: 3)",
+      "help": "调用图反向遍历深度（默认 3）",
       "metavar": null
      }
     ],
@@ -8845,7 +8845,7 @@
    "category": "semgrep_defects",
    "top_parser": {
     "prog": "cw review",
-    "description": "=== Review Readiness Report ===",
+    "description": "=== 审查就绪报告 ===",
     "usage": "usage: cw review [-h] symbol_hash",
     "arguments": [
      {
@@ -8870,7 +8870,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Source symbol hash",
+      "help": "源符号 hash",
       "metavar": null
      }
     ],
@@ -9377,7 +9377,7 @@
    "category": "coverage_ownership",
    "top_parser": {
     "prog": "cw test-impact",
-    "description": "Test impact selection",
+    "description": "测试影响选择",
     "usage": "usage: cw test-impact [-h] qualified_name",
     "arguments": [
      {
@@ -9402,7 +9402,7 @@
       "default": null,
       "type": "",
       "choices": null,
-      "help": "Qualified name of the modified function",
+      "help": "被修改函数的限定名",
       "metavar": null
      }
     ],
@@ -9695,8 +9695,8 @@
    "category": "gc",
    "top_parser": {
     "prog": "cw gc",
-    "description": "Code graph GC (archive/restore/purge ignored files)",
-    "usage": "usage: cw gc [-h]\n             {archive,restore,status,purge,policy,retention,archive-list,archive-inspect,audit-list,audit-show,archive-import,db-cleanup,db-migrate-single} ...",
+    "description": "代码图谱 GC（归档/复活/清除被 ignore 的文件）",
+    "usage": "usage: cw gc [-h]\n             {archive,restore,status,purge,policy,retention,archive-list,archive-inspect,audit-list,audit-show,archive-import,db-cleanup} ...",
     "arguments": [
      {
       "option_strings": [
@@ -9731,8 +9731,7 @@
        "audit-list",
        "audit-show",
        "archive-import",
-       "db-cleanup",
-       "db-migrate-single"
+       "db-cleanup"
       ],
       "help": "",
       "metavar": null,
@@ -9748,8 +9747,7 @@
        "audit-list",
        "audit-show",
        "archive-import",
-       "db-cleanup",
-       "db-migrate-single"
+       "db-cleanup"
       ],
       "is_subparsers": true
      }
@@ -9803,10 +9801,6 @@
      {
       "name": "db-cleanup",
       "help": ""
-     },
-     {
-      "name": "db-migrate-single",
-      "help": ""
      }
     ]
    },
@@ -9841,7 +9835,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Full GC: scan all active files (default: only pending)",
+        "help": "Full GC：扫描所有活跃文件（默认只扫描 pending）",
         "metavar": null
        },
        {
@@ -9854,7 +9848,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Dry run: only report counts, do not archive",
+        "help": "预演：只统计不实际归档",
         "metavar": null
        }
       ],
@@ -9892,7 +9886,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Relative path to restore (empty scans all archived files)",
+        "help": "要复活的文件相对路径（为空则扫描所有归档文件）",
         "metavar": null
        },
        {
@@ -9905,7 +9899,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Restore even if still matched by ignore rules",
+        "help": "即使仍命中 ignore 也强制复活",
         "metavar": null
        }
       ],
@@ -9968,7 +9962,7 @@
         "default": 30,
         "type": "int",
         "choices": null,
-        "help": "Purge files archived more than this many days (default: 30)",
+        "help": "归档超过多少天才清除（默认 30）",
         "metavar": null
        }
       ],
@@ -10059,7 +10053,7 @@
         "default": null,
         "type": "int",
         "choices": null,
-        "help": "Prune file versions older than this many days (uses database policy when omitted)",
+        "help": "清理早于多少天的文件版本（不传则使用数据库策略）",
         "metavar": null
        },
        {
@@ -10072,7 +10066,7 @@
         "default": null,
         "type": "int",
         "choices": null,
-        "help": "Keep at least this many recent versions per file (uses database policy when omitted)",
+        "help": "每个文件至少保留最近多少个版本（不传则使用数据库策略）",
         "metavar": null
        },
        {
@@ -10086,7 +10080,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Also prune external package symbols not seen/used for a long time",
+        "help": "同时清理长期未 seen/used 的外部包符号",
         "metavar": null
        },
        {
@@ -10099,7 +10093,7 @@
         "default": null,
         "type": "int",
         "choices": null,
-        "help": "External package stale threshold in days (uses database policy when omitted)",
+        "help": "外部包冷数据阈值天数（不传则使用数据库策略）",
         "metavar": null
        },
        {
@@ -10113,7 +10107,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Create compressed database backup before pruning",
+        "help": "清理前创建压缩数据库备份",
         "metavar": null
        },
        {
@@ -10127,7 +10121,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Run VACUUM after pruning to release disk space",
+        "help": "清理后运行 VACUUM 释放磁盘空间",
         "metavar": null
        },
        {
@@ -10140,7 +10134,7 @@
         "default": true,
         "type": "",
         "choices": null,
-        "help": "Preview only; do not modify database",
+        "help": "预演：只统计不修改数据库",
         "metavar": null
        },
        {
@@ -10153,7 +10147,7 @@
         "default": true,
         "type": "",
         "choices": null,
-        "help": "Apply pruning; default is dry run",
+        "help": "执行清理；默认只预演",
         "metavar": null
        },
        {
@@ -10166,7 +10160,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "Persist provided policy options to the database",
+        "help": "将本次传入的策略参数保存到数据库",
         "metavar": null
        }
       ],
@@ -10213,7 +10207,7 @@
         "default": 20,
         "type": "int",
         "choices": null,
-        "help": "Maximum number of entries to show (default 20)",
+        "help": "最多显示多少条（默认 20）",
         "metavar": null
        }
       ],
@@ -10249,7 +10243,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Backup file path (.db.gz, supports shorthand relative to gc_archives directory)",
+        "help": "备份文件路径（.db.gz，支持相对 gc_archives 目录的简写）",
         "metavar": null
        }
       ],
@@ -10287,7 +10281,7 @@
         "default": 20,
         "type": "int",
         "choices": null,
-        "help": "Maximum number of entries to show (default 20)",
+        "help": "最多显示多少条（默认 20）",
         "metavar": null
        },
        {
@@ -10300,7 +10294,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Filter by operation type (retention/archive/purge)",
+        "help": "按操作类型过滤（retention/archive/purge）",
         "metavar": null
        }
       ],
@@ -10336,7 +10330,7 @@
         "default": null,
         "type": "int",
         "choices": null,
-        "help": "Audit record ID",
+        "help": "审计记录 ID",
         "metavar": null
        }
       ],
@@ -10372,7 +10366,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Backup file path (.db.gz, supports shorthand relative to gc_archives directory)",
+        "help": "备份文件路径（.db.gz，支持相对 gc_archives 目录的简写）",
         "metavar": null
        },
        {
@@ -10385,7 +10379,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Relative file path to import (e.g. src/a.py)",
+        "help": "要导入的文件相对路径（如 src/a.py）",
         "metavar": null
        },
        {
@@ -10398,7 +10392,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "External package name to import",
+        "help": "要导入的外部包名",
         "metavar": null
        },
        {
@@ -10411,7 +10405,7 @@
         "default": true,
         "type": "",
         "choices": null,
-        "help": "Preview only; do not modify database (default)",
+        "help": "预演：只统计不修改数据库（默认）",
         "metavar": null
        },
        {
@@ -10424,7 +10418,7 @@
         "default": true,
         "type": "",
         "choices": null,
-        "help": "Apply import; default is dry run",
+        "help": "执行导入；默认只预演",
         "metavar": null
        }
       ],
@@ -10495,70 +10489,6 @@
       "mutually_exclusive_groups": [],
       "subparsers": []
      }
-    },
-    "db-migrate-single": {
-     "parser": {
-      "prog": "cw gc db-migrate-single",
-      "description": "",
-      "usage": "usage: cw gc db-migrate-single [-h] [--dry-run] [--apply] [--no-backup]",
-      "arguments": [
-       {
-        "option_strings": [
-         "-h",
-         "--help"
-        ],
-        "dest": "help",
-        "nargs": 0,
-        "required": false,
-        "default": "==SUPPRESS==",
-        "type": "",
-        "choices": null,
-        "help": "show this help message and exit",
-        "metavar": null
-       },
-       {
-        "option_strings": [
-         "--dry-run"
-        ],
-        "dest": "dry_run",
-        "nargs": 0,
-        "required": false,
-        "default": true,
-        "type": "",
-        "choices": null,
-        "help": "Preview only (default); do not write",
-        "metavar": null
-       },
-       {
-        "option_strings": [
-         "--apply"
-        ],
-        "dest": "dry_run",
-        "nargs": 0,
-        "required": false,
-        "default": true,
-        "type": "",
-        "choices": null,
-        "help": "Actually migrate data; default is dry run",
-        "metavar": null
-       },
-       {
-        "option_strings": [
-         "--no-backup"
-        ],
-        "dest": "backup",
-        "nargs": 0,
-        "required": false,
-        "default": true,
-        "type": "",
-        "choices": null,
-        "help": "Skip backup of unified database before migration",
-        "metavar": null
-       }
-      ],
-      "mutually_exclusive_groups": [],
-      "subparsers": []
-     }
     }
    },
    "error": null
@@ -10567,7 +10497,7 @@
    "category": "diagnostics",
    "top_parser": {
     "prog": "cw doctor",
-    "description": "Environment diagnostics and maintenance",
+    "description": "环境诊断与维护",
     "usage": "usage: cw doctor [-h] [--add-defender-exclusion]",
     "arguments": [
      {
@@ -10594,7 +10524,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Add .callwarden directory to Windows Defender exclusions (requires admin privileges)",
+      "help": "添加 .callwarden 目录到 Windows Defender 排除项（需管理员权限）",
       "metavar": null
      }
     ],
@@ -10608,7 +10538,7 @@
    "category": "diagnostics",
    "top_parser": {
     "prog": "cw clone",
-    "description": "Duplicate code detection (Type-1/2/3 clones)",
+    "description": "重复代码检测（Type-1/2/3 克隆）",
     "usage": "usage: cw clone [-h] {detect,list,stats,clear} ...",
     "arguments": [
      {
@@ -10700,7 +10630,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "File path prefix filter (e.g. 'src/core/'), empty for all",
+        "help": "文件路径前缀过滤（如 'src/core/'），留空扫描全部",
         "metavar": null
        },
        {
@@ -10713,7 +10643,7 @@
         "default": 5,
         "type": "int",
         "choices": null,
-        "help": "Minimum symbol line count (default: 5, skip shorter symbols)",
+        "help": "最小符号行数（默认 5，跳过更短的符号）",
         "metavar": null
        },
        {
@@ -10726,7 +10656,7 @@
         "default": 0.8,
         "type": "float",
         "choices": null,
-        "help": "Type-3 similarity threshold [0,1] (default: 0.8)",
+        "help": "Type-3 相似度阈值 [0,1]（默认 0.8）",
         "metavar": null
        }
       ],
@@ -10769,7 +10699,7 @@
          2,
          3
         ],
-        "help": "Clone type filter (0=all, 1/2/3=Type-N)",
+        "help": "克隆类型过滤（0=全部，1/2/3=Type-N）",
         "metavar": null
        },
        {
@@ -10782,7 +10712,7 @@
         "default": 0.0,
         "type": "float",
         "choices": null,
-        "help": "Minimum similarity filter (default: 0.0)",
+        "help": "最低相似度过滤（默认 0.0）",
         "metavar": null
        },
        {
@@ -10795,7 +10725,7 @@
         "default": 100,
         "type": "int",
         "choices": null,
-        "help": "Max results (default: 100)",
+        "help": "返回上限（默认 100）",
         "metavar": null
        },
        {
@@ -12243,7 +12173,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -12256,7 +12186,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -12269,7 +12199,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13000,7 +12930,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13026,7 +12956,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13039,7 +12969,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13052,7 +12982,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13091,7 +13021,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13127,7 +13057,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13166,7 +13096,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13179,7 +13109,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13192,7 +13122,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13231,7 +13161,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13267,7 +13197,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13306,7 +13236,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13319,7 +13249,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13332,7 +13262,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13358,7 +13288,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13394,7 +13324,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13420,7 +13350,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13458,7 +13388,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13484,7 +13414,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13583,7 +13513,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13609,7 +13539,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13622,7 +13552,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13635,7 +13565,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13648,7 +13578,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13684,7 +13614,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Task ID",
+        "help": "任务 ID",
         "metavar": null
        },
        {
@@ -13710,7 +13640,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13759,7 +13689,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -13774,7 +13704,7 @@
    "category": "identity",
    "top_parser": {
     "prog": "cw identity",
-    "description": "P3 Identity/Attestation commands (Revocation_Mode required, no default)",
+    "description": "P3 Identity/Attestation 命令（Revocation_Mode 必填，无默认值）",
     "usage": "usage: cw identity [-h] {revoke} ...",
     "arguments": [
      {
@@ -13848,7 +13778,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Attestation issuer identifier",
+        "help": "Attestation issuer 标识",
         "metavar": "S"
        },
        {
@@ -13861,7 +13791,7 @@
         "default": null,
         "type": "",
         "choices": null,
-        "help": "Signing key identifier",
+        "help": "签名密钥标识",
         "metavar": "S"
        },
        {
@@ -13877,7 +13807,7 @@
          "compromised",
          "rotated"
         ],
-        "help": "Revocation_Mode: compromised/rotated (required, no default)",
+        "help": "Revocation_Mode：compromised/rotated（必填，无默认值）",
         "metavar": "MODE"
        },
        {
@@ -13890,7 +13820,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Revocation reason (optional)",
+        "help": "撤销原因（可选）",
         "metavar": "TEXT"
        },
        {
@@ -13903,7 +13833,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Agent ID (P3 structured Identity, Req 10.1)",
+        "help": "Agent ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13916,7 +13846,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Session ID (P3 structured Identity, Req 10.1)",
+        "help": "Session ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13929,7 +13859,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Model ID (P3 structured Identity, Req 10.1)",
+        "help": "Model ID（P3 结构化身份，Req 10.1）",
         "metavar": "ID"
        },
        {
@@ -13942,7 +13872,7 @@
         "default": "",
         "type": "",
         "choices": null,
-        "help": "Role (planner/implementer/reviewer/tester)",
+        "help": "角色（planner/implementer/reviewer/tester）",
         "metavar": "ROLE"
        },
        {
@@ -13955,7 +13885,7 @@
         "default": false,
         "type": "",
         "choices": null,
-        "help": "JSON output",
+        "help": "JSON 输出",
         "metavar": null
        }
       ],
@@ -14351,7 +14281,7 @@
    "category": "setup_install",
    "top_parser": {
     "prog": "cw install-agent",
-    "description": "Generate Call Warden integration files for 23 AI agents (project-level bundle or --global MCP config)",
+    "description": "为 23 个 AI Agent 生成 Call Warden 集成文件（项目级 bundle 或 --global 全局 MCP 配置）",
     "usage": "usage: cw install-agent [-h] [--output-dir OUTPUT_DIR] [--force] [--global]\n                        [--auto-detect] [--registry REGISTRY]\n                        [{claude-code,claude-desktop,cursor,cline,cline-cli,devin-cli,windsurf,trae,gemini-cli,antigravity,codex,opencode,kiro,qoder,jetbrains-junie,zed,pearai,kimi-code,codebuddy-cli,deep-code,comate,grok-build,zcode,all}]",
     "arguments": [
      {
@@ -14401,7 +14331,7 @@
        "zcode",
        "all"
       ],
-      "help": "Target Agent (one of 23 supported agents or 'all')",
+      "help": "目标 Agent（23 个受支持 Agent 之一或 'all'）",
       "metavar": null
      },
      {
@@ -14414,7 +14344,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Output directory, defaults to .callwarden/agent-integrations",
+      "help": "输出目录，默认 .callwarden/agent-integrations",
       "metavar": null
      },
      {
@@ -14427,7 +14357,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Overwrite existing integration files",
+      "help": "覆盖已存在的集成文件",
       "metavar": null
      },
      {
@@ -14440,7 +14370,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Write to user global MCP config instead of project-level bundle",
+      "help": "写入用户全局 MCP 配置而非项目级 bundle",
       "metavar": null
      },
      {
@@ -14480,7 +14410,7 @@
    "category": "setup_install",
    "top_parser": {
     "prog": "cw install-hook",
-    "description": "Install or uninstall Call Warden Git hook",
+    "description": "安装或卸载 Call Warden Git hook",
     "usage": "usage: cw install-hook [-h] [--task-id TASK_ID] [--uninstall] {post-commit}",
     "arguments": [
      {
@@ -14507,7 +14437,7 @@
       "choices": [
        "post-commit"
       ],
-      "help": "Hook name (post-commit: auto capture-diff after commit)",
+      "help": "Hook 名称（post-commit: commit 后自动捕获变更）",
       "metavar": null
      },
      {
@@ -14520,7 +14450,7 @@
       "default": "",
       "type": "",
       "choices": null,
-      "help": "Task ID to hardcode in hook (empty = --auto mode, auto-detect in_progress task via active_task)",
+      "help": "硬编码到 hook 中的任务 ID（为空时使用 --auto 模式自动检测 in_progress 任务）",
       "metavar": null
      },
      {
@@ -14533,7 +14463,7 @@
       "default": false,
       "type": "",
       "choices": null,
-      "help": "Uninstall the hook instead of installing",
+      "help": "卸载 hook（而非安装）",
       "metavar": null
      }
     ],
@@ -14547,7 +14477,7 @@
    "category": "experiment",
    "top_parser": {
     "prog": "cw experiment",
-    "description": "P0 blind-review controlled experiment management",
+    "description": "P0 盲评对照实验管理",
     "usage": "usage: cw experiment [-h]\n                     {batch-create,batch-lock,batch-list,toggle-set,toggle-show,admit,record-metrics,record-verdict,record-reveal,record-invalid,record-incident,pause,report} ...",
     "arguments": [
      {
@@ -15881,7 +15811,7 @@
    "top_parser": {
     "entry": "install",
     "rc": 0,
-    "help_text": "usage: cw [-h] [--all] [--lang LANG [LANG ...]] [--check] [--hooks]\n          [--force-hooks] [--no-post-commit] [--no-optional] [--verbose]\n          [--agent] [--detect-agents] [--force-agent] [--agent-project]\n\nCall Warden one-click install script\n\noptions:\n  -h, --help            show this help message and exit\n  --all                 Install all dependencies (including optional)\n  --lang LANG [LANG ...]\n                        Only install specified language grammars (e.g. csharp\n                        ruby)\n  --check               Only check dependency status, do not install\n  --hooks               Install Call Warden Git hooks into .git/hooks (pre-\n                        commit + pre-push + post-commit)\n  --force-hooks         Overwrite existing non-Call-Warden hooks\n  --no-post-commit      Skip post-commit hook (only install pre-commit + pre-\n                        push)\n  --no-optional         Skip optional dependencies (default behavior,\n                        explicit)\n  --verbose             Show verbose installation logs\n  --agent               Auto-detect and install Call Warden MCP integration\n                        for installed AI agents\n  --detect-agents       Only detect installed AI agents, do not install\n  --force-agent         Force overwrite existing agent MCP configs\n  --agent-project       Install agent integration at project level instead of\n                        global\n\nExamples:\n  cw install              # Install core + all supported languages\n  cw install --all        # Install core + all languages + all optional deps\n  cw install --lang csharp ruby  # Only install specified language grammars\n  cw install --check      # Only check dependency status, do not install\n        \n"
+    "help_text": "usage: cw [-h] [--all] [--lang LANG [LANG ...]] [--check] [--hooks]\n          [--force-hooks] [--no-post-commit] [--no-optional] [--verbose]\n          [--agent] [--detect-agents] [--force-agent] [--agent-project]\n\nCall Warden 一键安装脚本\n\noptions:\n  -h, --help            show this help message and exit\n  --all                 安装全部依赖（含可选依赖）\n  --lang LANG [LANG ...]\n                        仅安装指定语言的 grammar（如 csharp ruby）\n  --check               仅检查依赖状态，不安装\n  --hooks               安装 Call Warden Git hooks 到 .git/hooks（pre-commit +\n                        pre-push + post-commit）\n  --force-hooks         强制覆盖已存在的非 Call Warden hooks\n  --no-post-commit      跳过安装 post-commit hook（仅装 pre-commit + pre-push）\n  --no-optional         跳过可选依赖（默认行为，显式声明）\n  --verbose             显示详细安装日志\n  --agent               Auto-detect and install Call Warden MCP integration\n                        for installed AI agents\n  --detect-agents       Only detect installed AI agents, do not install\n  --force-agent         Force overwrite existing agent MCP configs\n  --agent-project       Install agent integration at project level instead of\n                        global\n\n示例:\n  cw install              # 安装核心 + 全部已支持语言\n  cw install --all        # 安装核心 + 全部语言 + 全部可选依赖\n  cw install --lang csharp ruby  # 仅安装指定语言的 grammar\n  cw install --check      # 仅检查依赖状态，不安装\n        \n"
    },
    "nested": {},
    "error": null,

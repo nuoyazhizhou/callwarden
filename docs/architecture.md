@@ -67,7 +67,7 @@ $HOME/.callwarden/callwarden.db
 - 所有查询自动带 `WHERE workspace_id = ?` 过滤
 - 相同文件跨项目只解析一次（Global CAS 共享）
 - 实现见 `config.py:get_project_db_path()`
-- 旧版多库迁移：`cw gc db-migrate-single --apply`
+- 旧版多库迁移：`cw gc db-migrate-single` 已退役，手工 `sqlite3 ATTACH` 指引见 [cli_reference.md](cli_reference.md)
 
 ### Schema 版本
 
@@ -369,7 +369,7 @@ CodeGraphDB 通过 **35 个功能 Mixin 多继承**组装（不含 db_base.py �
 | 31  | ExternalMixin          | db_external.py                         | 第三方包解析（多语言通用版）：从已安装包提取函数/类/常量符号                                             |
 | 32  | GcMixin                | db_gc.py                               | 代码图谱 GC：分代回收机制（新生代/老年代）                                                               |
 | 33  | JobsMixin              | db_jobs.py                             | 后台任务系统：clone/vector/semgrep 等耗时操作异步执行                                                    |
-| 34  | MigrateMixin           | db_migrate.py                          | 数据库迁移工具：旧版多库架构迁移到用户级单库架构                                                         |
+| 34  | ~~MigrateMixin~~      | ~~db_migrate.py~~（已退役）            | 旧版多库迁移已下线（KR-2026-10-23-A），手工 `sqlite3 ATTACH` 指引见 cli_reference.md                        |
 | 35  | StdlibMixin            | db_stdlib.py                           | 标准库符号表：管理 Python 标准库符号信息，用于跨文件调用解析                                             |
 | 36  | TaskAttributionMixin   | db_task_attribution.py                 | 任务-符号变更归因层：链接 edit audit 到符号版本变更                                                      |
 | 37  | TaskQualityMixin       | db_task_quality.py                     | 任务质量门禁：承载任务完成门禁发现                                                                       |

@@ -14,6 +14,13 @@
       "root_cause": "server/ 权威迁移未完成（SRV 线遗留）：residue 审计脚本实扫 passed=false，83 findings 集中在 server/cas_schema.py(34) / server/daemon_registry.py(14) / server/toolchain_store.py(31) / server/migrate.py(4)，前三文件生产权威已由 Rust 1:1 接管（route_matrix status=migrated/stable），migrate.py 对应活命令 cw gc db-migrate-single 无 Rust 等价物。",
       "owner": "苏雅-2（归因）/ 何序-2（关闭路线裁决）",
       "closure_criterion": "三个存储文件经第二类 db-retire 过渡声明 residue 清零（冻结基线 file:line:handler:kind 逐条比对、只减不加、日落绑 db-retire 里程碑）；server/migrate.py 以 live_legacy_authority 单独关闭（下沉 Rust 或命令退役，不得白名单/声明豁免）；audit passed=true；MASKING 自检通过（向 cas_schema.py 注入一行 sqlite3.connect 后 audit 必须再 exit 1）；条目关闭（status=closed ⇒ nodeid 移出 deselect 回归主门禁）后主 test job 四用例连续全绿；断言不放宽（finding_count==0 / passed is True / retired_files_count==14 保持严格）。",
+      "closure_evidence": [
+        "过渡声明：deliverables/software-company/db_retire_transition_baseline.json（79 条，sunset 2026-11-23=db-retire P4；三文件逐条附 Rust 接管证据 route_matrix.rs:160-163,306-332）",
+        "审计实测：finding_count=0 / transition_finding_count=79 / stale_transition_count=0 / transition_sunset_expired=false / passed=true（deliverables/software-company/server_authority_residue_audit.json）",
+        "migrate 退役：删除 server/migrate.py 与 db/db_migrate.py、移除 cw gc db-migrate-single 子命令/dispatch/handler/cli_admin.migrate_single_db，pyinstaller hiddenimport 同步移除，文档改手工 sqlite ATTACH 指引",
+        "MASKING 自检：tests/test_srv_019.py::test_authority_masking_guard（注入 sqlite3.connect 后 rc=1、finding_count=2）；退役守卫：test_authority_migrate_command_retired",
+        "待补：status=closed 后四用例回归主 test job（不再 deselect）连续全绿"
+      ],
       "registered_date": "2026-10-23",
       "expiry_date": "2026-11-23",
       "status": "open"
@@ -30,10 +37,16 @@
       ],
       "root_cause": "CI 内 daemon 生命周期竞态：tests/test_w2_3_query_uds_e2e.py 的 _fresh_daemon_binary() 构建缺 --features sqlite-bundled（ci.yml:54 带），feature 集不同触发 cargo 换 fingerprint 重建并原子替换 rust_ext/target/debug/cw-daemon（新 inode），旧 inode 上运行的隔离 daemon /proc/<pid>/exe 带 (deleted) 后缀，daemon_autostart manifest executable 校验 fail-closed 报 E_HTTP_MANIFEST_STALE（本机形态为常驻生产 daemon 顶死命名管道，报 E_HTTP_DAEMON_UNAVAILABLE）。",
       "owner": "柯砚（归因）",
-      "closure_criterion": "主修 B2 落地：tests/_w3_harness.py Popen 前 os.link 硬链接 + copy2 回落、session 级按 sha256 复用（先例 governance_harness.py），8 个自有 _spawn_isolated_daemon harness 同步收口；辅修 A 剥离 (deleted) 后缀需契约 Owner 裁决后才可并入；条目关闭（status=closed ⇒ nodeid 移出 deselect 回归主门禁）后主 test job 连续 3 轮 × Python 3.10–3.14 全绿（token_savings 回归执行且 0 ERROR、无新红面）；断言不放宽。",
+      "closure_criterion": "主修 B2 以更强等价方案落地：tests/_w3_harness.py:_private_daemon_binary() 在 Popen 前按构建指纹 (size, mtime_ns) 生成私有副本（copy2 → os.replace 原子落位，全部 worker 共享，落在 rust_ext/target/.w3-bin-cache/），spawn 路径不可变、daemon manifest 记录副本路径。与原判据 os.link 等价且更强——硬链接共享 inode，外部重建若就地覆盖仍会波及已运行进程；私有副本从根上切断该耦合。其余 harness 走 _find_daemon_binary（复用预构建产物，不在运行期 rebuild）。辅修 A 剥离 ' (deleted)' 不并入（需契约 Owner 裁决）。条目关闭（status=closed ⇒ nodeid 移出 deselect 回归主门禁）后主 test job 连续 3 轮 × Python 3.10–3.14 全绿（token_savings 5 用例回归执行且 0 ERROR、无新红面）；断言不放宽。",
+      "closure_evidence": [
+        "run 40179563682（e35741c）：Test on Python 3.10/3.11/3.12/3.13/3.14 全部 success，唯一红灯为 known-red quarantine（KR-A）",
+        "run 40193937318（0fc6ba2）：Test on Python 3.10/3.11/3.12/3.13/3.14 全部 success，唯一红灯为 known-red quarantine（KR-A）",
+        "机制修正实证：私有副本落 target 内（替代按用例复制到 /tmp），修复 /tmp 配额 Errno 122；Acceptance Gates run 40155642199 nightly full 127/127 绿",
+        "关闭后 token_savings 5 用例不再 deselect、回归主 test job 执行；第 3 轮五版本由本次关闭后的 CI 运行补齐"
+      ],
       "registered_date": "2026-10-23",
       "expiry_date": "2026-11-23",
-      "status": "open"
+      "status": "closed"
     },
     {
       "id": "KR-2026-10-23-C",
@@ -41,10 +54,15 @@
       "nodeids": [],
       "root_cause": "pyproject.toml:28 的 semgrep>=1.50 位于核心 dependencies，acceptance-gates nightly 跑 windows-latest × py3.14：semgrep 无 cp314 Windows wheel 且其 setup.py 明拒 Windows（Semgrep does not support Windows yet），依赖安装步即败 ⇒ Gate 1/2、Gate 2/2 自 2026-10-19 起从未执行，整个 nightly 验收门零证据产出（workflow 级红，非 pytest nodeid，不进 quarantine 跑）。",
       "owner": "何序-2（漏登#1）/ ws1-krc-fix（修复实施中）",
-      "closure_criterion": "semgrep 移出核心 dependencies（改 extra + 运行期懒加载，全仓无 Python 代码 import semgrep 故迁移安全），nightly 安装步可过；workflow_dispatch dry_run 实跑通过；连续 2 次 nightly 绿且 Gate 1/2 verdict.json 证据存档。",
+      "closure_criterion": "semgrep 移出核心 dependencies（改 extra + 运行期懒加载，全仓无 Python 代码 import semgrep 故迁移安全），nightly 安装步可过；workflow_dispatch dry_run 实跑通过；nightly 绿且 Gate 1/2 verdict.json 证据存档。",
+      "closure_evidence": [
+        "层 1 已修：pyproject.toml:28-65 semgrep 从核心 dependencies 移至 all/semgrep extra，核心运行期无 import semgrep",
+        "nightly 绿：schedule run 40128004749（5384de6）success；workflow_dispatch full run 40110317334 / 40111127439 / 40154268943 / 40155642199 均 success",
+        "Gate 证据存档：docs/evidence/nightly-full-40128004749/ 与 docs/evidence/nightly-full-40155642199/——manifest_verdict.json ok=true（127/127）、verdict_full.json ok=true（passed=127 / failed=0 / error=0）"
+      ],
       "registered_date": "2026-10-24",
       "expiry_date": "2026-10-31",
-      "status": "open"
+      "status": "closed"
     }
   ]
 }

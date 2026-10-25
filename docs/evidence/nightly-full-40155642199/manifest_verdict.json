@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "exit_reason": "",
+  "stats": {
+    "collected": 127,
+    "manifest": 127,
+    "unique_collected": 127,
+    "unique_manifest": 127
+  },
+  "deleted_or_renamed": [],
+  "unregistered_new": [],
+  "duplicated_in_collected": [],
+  "duplicated_in_manifest": [],
+  "baseline_ref": "origin/master",
+  "baseline_available": true,
+  "removed_vs_baseline": [],
+  "added_vs_baseline": [],
+  "note": "本校验是 check_ci_gates 的前置：前者防「改门禁绕过门禁」，后者防「结果集与清单漂移」；两道都必须过。"
+}

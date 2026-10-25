@@ -175,7 +175,7 @@ symbols_ready → fork_symbols → empty (with shared symbols)
 ### 3.2 Schema 版本契约
 
 - **当前版本**：`SCHEMA_VERSION = 47`（`db/schema.py`；v47 为 Windows daemon TaskCollabStore 权威表 task_events/agent_registrations）
-- **迁移机制**：`db_migrate.py` 启动时根据 `schema_version` 表升级
+- **迁移机制**：`server/schema_migrator.py` 启动时根据 `schema_version` 表升级
 - **CAS schema**：独立 DDL（`db/db_cas.py:CAS_SCHEMA_DDL`），由 `init_cas_schema()` 初始化
 - **不变量**：schema 变更必须同步更新 `SCHEMA_VERSION` + `migration-manifest.md` 第 4 节 + `docs/architecture.md`
 
@@ -350,7 +350,6 @@ except sqlite3.OperationalError as e:
 | 入口 | 模块 | 迁移阶段 |
 |---|---|---|
 | `db/db_base.py` 连接管理 | `StorageService` trait | Phase 1 |
-| `db/db_migrate.py` schema migration | `StorageService` trait | Phase 1 |
 | `db/db_cas.py` CAS 操作 | `CasService` trait | Phase 1 |
 | `db/db_workspace_manifest.py` manifest | `ManifestService` trait | Phase 1 |
 | `server/replicator.py` CAS→DB 复制 | `ReplicatorService` trait | Phase 1 |

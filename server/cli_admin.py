@@ -16,8 +16,8 @@ fail-closed：daemon 不可用时由 `_call_daemon_rpc` 抛错上抛，
 - `read_task_dependencies`→ `mcp.cli_admin.read_task_dependencies`
 - `scan_hash_databases`   → `mcp.cli_admin.scan_hash_databases`
 
-`get_default_db_path` / `migrate_single_db` 不属于 SQLite authority：
-前者为纯路径计算（进程启动配置读取职责），后者委托 `db_migrate` 权威模块。
+`get_default_db_path` 不属于 SQLite authority：它是纯路径计算
+（进程启动配置读取职责）。
 """
 
 from __future__ import annotations
@@ -125,21 +125,6 @@ def scan_hash_databases(callwarden_dir: str = CALLWARDEN_DIR) -> List[Dict[str, 
             f"scan_hash_databases: daemon 返回非预期结果: {result!r}"
         )
     return list(result["databases"])
-
-
-def migrate_single_db(dry_run: bool = True, backup: bool = True) -> Dict[str, Any]:
-    """旧版多库 → 用户级单库迁移（db/ 退休 phase-3：改用本地 server.migrate）。
-
-    Args:
-        dry_run: True 只报告不写入。
-        backup: 迁移前创建备份。
-
-    Returns:
-        migrate_to_single_db 的结果 dict。
-    """
-    from callwarden.server.migrate import migrate_to_single_db
-
-    return migrate_to_single_db(dry_run=dry_run, backup=backup)
 
 
 def read_task_dependencies(

@@ -1,18 +1,18 @@
 {
  "schema": "frozen-inventory/v1",
  "card": "TP-08F",
- "frozen_at": "2026-10-12T21:22:38",
- "source_revision": "5c8a55c5391fceae3ace33ddd404d62061023e65",
+ "frozen_at": "2026-10-26T00:14:41",
+ "source_revision": "0fc6ba2d3c6cf7d377a756c976a07ace0e08e40c",
  "profile": "P-COMMITTED-windows-amd64-py314",
  "version_binding": {
-  "cli_tree_sha256": "3d1125a3dacdaf8941c36aa7e51af07b946c2f687d332174cd1193855f02215c",
+  "cli_tree_sha256": "ab6c8328b532fed9eeb7f12fd1cbe9bbd943d645d2e3f7a884220dc63d89d86e",
   "mcp_tools_sha256": "4f9b1c221aefff527ab2eeb9d23ccc0a29c367ea7a4b6eb0a32479f410589054",
   "tp01_candidates_sha256": "1029101cbbacc38bfeb34429d15d91a85da2cdc95d5ecf6120aae287295ed778"
  },
  "counts": {
-  "cli_entries": 265,
+  "cli_entries": 264,
   "mcp_entries": 243,
-  "total": 508
+  "total": 507
  },
  "obligation_model": {
   "C1": "正常业务语义：有效前置下至少一条正常场景，独立oracle与业务结果一致",
@@ -44,9 +44,11 @@
  ],
  "reconciliation": {
   "cli": {
-   "real": 265,
+   "real": 264,
    "static": 234,
-   "static_only": [],
+   "static_only": [
+    "gc db-migrate-single"
+   ],
    "real_new": [
     "call-heatmap",
     "changes",
@@ -5868,72 +5870,6 @@
       "default": false,
       "flags": [
        "--all-but-current"
-      ]
-     }
-    ],
-    "mutually_exclusive_groups": [],
-    "param_equivalence_classes": []
-   },
-   "obligations": {
-    "C1": "applicable_pending_case",
-    "C2": "applicable_pending_case",
-    "C3": "applicable_pending_case",
-    "C4": "applicable_pending_case",
-    "C5": "applicable_pending_case",
-    "C6": "applicable_pending_case"
-   },
-   "profile": "P-COMMITTED-windows-amd64-py314",
-   "applicability": "applicable",
-   "status": "frozen_inventory",
-   "provenance": {
-    "method": "argparse parser capture (real)",
-    "source": "cli_tree.json"
-   }
-  },
-  {
-   "entry_id": "CLI:gc db-migrate-single",
-   "surface": "cli",
-   "invocation": "gc db-migrate-single",
-   "top_level": "gc",
-   "category": "gc",
-   "entry_kind": "nested_subcommand",
-   "parent": "gc",
-   "params": {
-    "available": true,
-    "prog": "cw gc db-migrate-single",
-    "positionals": [],
-    "options": [
-     {
-      "dest": "dry_run",
-      "nargs": 0,
-      "required": false,
-      "type": "",
-      "choices": null,
-      "default": true,
-      "flags": [
-       "--dry-run"
-      ]
-     },
-     {
-      "dest": "dry_run",
-      "nargs": 0,
-      "required": false,
-      "type": "",
-      "choices": null,
-      "default": true,
-      "flags": [
-       "--apply"
-      ]
-     },
-     {
-      "dest": "backup",
-      "nargs": 0,
-      "required": false,
-      "type": "",
-      "choices": null,
-      "default": true,
-      "flags": [
-       "--no-backup"
       ]
      }
     ],

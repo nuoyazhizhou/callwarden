@@ -1,9 +1,9 @@
 {
   "scope": "server-python",
-  "scanned_files": 58,
-  "finding_count": 87,
-  "files_with_findings": 5,
-  "retired_files_count": 11,
+  "scanned_files": 57,
+  "finding_count": 0,
+  "files_with_findings": 0,
+  "retired_files_count": 14,
   "retired_files": {
     "server/compat_registry.py": "compat 过渡期声明文件（http-daemon-mvp-compatibility-contract §3.3）；生产主链 = Rust dispatch_rpc，registry 仅 _h_* worker 用",
     "server/compat_worker.py": "compat 过渡期 worker（Rust compat_adapter 管理）；check_client_purity 对_h_* 区间豁免（设计 Q5，白名单只减不加）",
@@ -14,18 +14,41 @@
     "server/job_executor.py": "文件头声明：sqlite3.connect 仅供存量 phase7 测试与进程内 executor；Rust task.job_status/list_jobs/job_stats 已由 SnapshotDaemonState 实现",
     "server/replicator.py": "Rust mcp.replicator.* 路由已接管（dispatch.rs:2960-2966）；本文件 sqlite3 实现仅 legacy 复制器使用",
     "server/tools/tools_collab.py": "残留全在 compat _h_* 处理器区间（check_client_purity 实测 0 违例）；HTTP 模式走 Rust dispatch.handle_collab_rpc",
+    "server/tools/tools_dependency_graph.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust query.* 路由",
+    "server/tools/tools_identity.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust identity 路由",
+    "server/tools/tools_lease.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust lease 路由",
     "server/tools/tools_security.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust 安全路由",
     "server/tools/tools_task.py": "残留全在 compat _h_* 处理器区间；HTTP 模式走 Rust task.* 路由"
   },
-  "passed": false,
-  "by_file": {
+  "passed": true,
+  "by_file": {},
+  "findings": [],
+  "transition_declaration_path": "deliverables/software-company/db_retire_transition_baseline.json",
+  "transition_declaration_error": "",
+  "transition_sunset": {
+    "milestone": "db-retire P4：db/ 测试支持层物理下线且 server/ 存储层生产零引用",
+    "expiry_date": "2026-11-23"
+  },
+  "transition_sunset_expired": false,
+  "transition_files": {
+    "server/cas_schema.py": "CAS schema/GC 的 Python 影子实现（db/ 退休 phase-3 迁入 server/）；生产权威由 Rust cas.rs 接管，保留供存量测试与 db/db_cas.py 兼容壳重导出。",
+    "server/daemon_registry.py": "daemon workspace registry 的 Python 影子实现；生产权威由 Rust workspace.rs 接管，保留供存量测试与 db/db_daemon.py 兼容壳重导出。",
+    "server/toolchain_store.py": "toolchain/build-context 存储的 Python 影子实现；生产权威由 Rust toolchain.rs 接管，保留供存量测试与 db/db_toolchain.py 兼容壳重导出。"
+  },
+  "transition_evidence": {
+    "route_matrix": "rust_ext/src/daemon/route_matrix.rs:160-163,306-332（三文件对应工具 status=migrated/stable）",
+    "cas": "rust_ext/src/daemon/cas.rs:130（CAS 存储权威）",
+    "workspace": "rust_ext/src/daemon/workspace.rs:343（daemon workspace registry 权威）",
+    "toolchain": "rust_ext/src/daemon/toolchain.rs:188（toolchain store 权威）",
+    "note": "本声明不引用 docs/evidence/srv019_rust_takeover_matrix_20260829.md（2026-08-29 快照不覆盖这三文件）"
+  },
+  "transition_finding_count": 79,
+  "transition_by_file": {
     "server/cas_schema.py": 34,
     "server/daemon_registry.py": 14,
-    "server/migrate.py": 4,
-    "server/toolchain_store.py": 31,
-    "server/tools/tools_dependency_graph.py": 4
+    "server/toolchain_store.py": 31
   },
-  "findings": [
+  "transition_findings": [
     {
       "file": "server/cas_schema.py",
       "handler": "<module>",
@@ -36,28 +59,35 @@
     {
       "file": "server/cas_schema.py",
       "handler": "init_cas_schema",
-      "line": 125,
+      "line": 124,
       "kind": "sql_execute",
       "detail": "conn.executescript"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "init_cas_schema",
-      "line": 126,
+      "line": 125,
       "kind": "sql_execute",
       "detail": "conn.executescript"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 190,
+      "line": 189,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 193,
+      "line": 192,
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "handler": "cas_gc",
+      "line": 200,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
@@ -73,14 +103,14 @@
       "handler": "cas_gc",
       "line": 202,
       "kind": "sql_execute",
-      "detail": "conn.execute"
+      "detail": "conn.executemany"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 203,
+      "line": 206,
       "kind": "sql_execute",
-      "detail": "conn.executemany"
+      "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
@@ -99,21 +129,21 @@
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 209,
+      "line": 211,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 212,
+      "line": 216,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 217,
+      "line": 221,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
@@ -148,14 +178,14 @@
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 226,
+      "line": 228,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 229,
+      "line": 230,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
@@ -169,98 +199,91 @@
     {
       "file": "server/cas_schema.py",
       "handler": "cas_gc",
-      "line": 232,
-      "kind": "sql_execute",
-      "detail": "conn.execute"
-    },
-    {
-      "file": "server/cas_schema.py",
-      "handler": "cas_gc",
-      "line": 236,
+      "line": 235,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 264,
+      "line": 263,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 267,
+      "line": 266,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 276,
+      "line": 275,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 288,
+      "line": 287,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 294,
+      "line": 293,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 301,
+      "line": 300,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_seen",
-      "line": 305,
+      "line": 304,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_committed",
-      "line": 320,
+      "line": 319,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_committed",
-      "line": 323,
+      "line": 322,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_committed",
-      "line": 331,
+      "line": 330,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_committed",
-      "line": 333,
+      "line": 332,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
     {
       "file": "server/cas_schema.py",
       "handler": "file_generation_committed",
-      "line": 337,
+      "line": 336,
       "kind": "sql_execute",
       "detail": "conn.execute"
     },
@@ -361,34 +384,6 @@
       "line": 224,
       "kind": "sql_execute",
       "detail": "conn.execute"
-    },
-    {
-      "file": "server/migrate.py",
-      "handler": "<module>",
-      "line": 23,
-      "kind": "sqlite_import",
-      "detail": "sqlite3"
-    },
-    {
-      "file": "server/migrate.py",
-      "handler": "_get_table_columns",
-      "line": 43,
-      "kind": "sql_execute",
-      "detail": "conn.execute"
-    },
-    {
-      "file": "server/migrate.py",
-      "handler": "_table_exists",
-      "line": 49,
-      "kind": "sql_execute",
-      "detail": "conn.execute"
-    },
-    {
-      "file": "server/migrate.py",
-      "handler": "migrate_to_single_db",
-      "line": 133,
-      "kind": "sqlite_connect",
-      "detail": "sqlite3.connect"
     },
     {
       "file": "server/toolchain_store.py",
@@ -606,34 +601,8 @@
       "line": 1188,
       "kind": "sql_execute",
       "detail": "conn.execute"
-    },
-    {
-      "file": "server/tools/tools_dependency_graph.py",
-      "handler": "_h_validate_revision_dependencies",
-      "line": 298,
-      "kind": "db_helper",
-      "detail": "db.conn.execute"
-    },
-    {
-      "file": "server/tools/tools_dependency_graph.py",
-      "handler": "_h_validate_revision_dependencies",
-      "line": 339,
-      "kind": "db_helper",
-      "detail": "db.get_interface_providers"
-    },
-    {
-      "file": "server/tools/tools_dependency_graph.py",
-      "handler": "_h_validate_revision_dependencies",
-      "line": 349,
-      "kind": "db_helper",
-      "detail": "db.get_provider_selection"
-    },
-    {
-      "file": "server/tools/tools_dependency_graph.py",
-      "handler": "_h_validate_revision_dependencies",
-      "line": 372,
-      "kind": "db_helper",
-      "detail": "db.conn.execute"
     }
-  ]
+  ],
+  "stale_transition_count": 0,
+  "stale_transition_entries": []
 }

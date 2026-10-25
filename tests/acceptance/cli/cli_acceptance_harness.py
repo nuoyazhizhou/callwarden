@@ -2,7 +2,7 @@
 
 在完全隔离的 daemon（独立 run 根：loopback 随机端口 + run 根内全部状态）
 上，对冻结清单（docs/testing/manifests/frozen/inventory_frozen.json）的
-265 个 CLI 入口做全量真实调用，验证每个入口的语义（C1）、参数合同（C2）、
+264 个 CLI 入口做全量真实调用，验证每个入口的语义（C1）、参数合同（C2）、
 负向容错（C3）与常驻生命周期。
 
 设计要点：
@@ -101,7 +101,7 @@ if "Python314" not in PYTHON and not os.environ.get("CW_TP10C_ALLOW_OTHER_PY"):
 
 # ------------------------------------------------------------------ 清单
 def load_cli_entries() -> List[Dict[str, Any]]:
-    """载入冻结清单的全部 265 个 CLI 入口（按 entry_id 排序，稳定可复现）。"""
+    """载入冻结清单的全部 264 个 CLI 入口（按 entry_id 排序，稳定可复现）。"""
     with open(INVENTORY_PATH, encoding="utf-8") as f:
         inv = json.load(f)
     entries = [e for e in inv.get("entries", []) if e.get("surface") == "cli"]

@@ -475,7 +475,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 2. **数据库路径**：`$HOME/.callwarden/callwarden.db`（用户级单库架构）。一个用户一个数据库，所有项目共用，通过 `workspaces` 表的 `workspace_id` 字段在所有业务表中逻辑隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。相同文件跨项目只解析一次（Global CAS 共享）。**禁止删除 `~/.callwarden/callwarden.db` 及其 `-shm`、`-wal` 文件**，其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。如遇 DB 锁定或 WAL 状态异常，应排查进程持有锁或 WAL checkpoint 时序问题，不得通过删除 DB 文件解决。
 
-   **旧版多库迁移**：旧版按项目 hash 隔离的数据库（`~/.callwarden/<16位hash>/callwarden.db`）可通过 `cw gc db-migrate-single --apply` 迁移到用户级单库（迁移 workspaces/tasks/task_steps 表，符号图谱数据建议迁移后运行 `cw refresh --all` 重建）。迁移后旧 `<hash>/` 目录保留作备份，用户确认后可手动删除。
+   **旧版多库迁移**：`cw gc db-migrate-single` 已退役（KR-2026-10-23-A：`server/` 存储 authority 清零，命令无 Rust 等价实现）。存量旧库（`~/.callwarden/<16位hash>/callwarden.db`）请按 [docs/cli_reference.md](docs/cli_reference.md) 的手工 SQLite `ATTACH` 指引合并 workspaces / tasks / task_steps，随后运行 `cw refresh --all` 重建符号图谱；旧 `<hash>/` 目录保留作备份，确认后可手动删除。
 
 3. **MCP Server 启动**：`cw server` 或 `python -m callwarden.server`，默认 stdio 模式。
 

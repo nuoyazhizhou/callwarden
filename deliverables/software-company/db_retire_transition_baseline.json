@@ -1,0 +1,575 @@
+{
+  "schema_version": 1,
+  "description": "第二类 db-retire 过渡声明：server/ 三个存储层的 Python 影子 authority。生产权威已由 Rust daemon 1:1 接管；这些条目是 db-retire 迁移期的已知过渡残留，冻结基线逐条比对（file:line:handler:kind），只减不加，日落绑 db-retire 里程碑。新增/未声明残留一律 fail-closed，不得以本声明豁免。",
+  "sunset": {
+    "milestone": "db-retire P4：db/ 测试支持层物理下线且 server/ 存储层生产零引用",
+    "expiry_date": "2026-11-23"
+  },
+  "evidence": {
+    "route_matrix": "rust_ext/src/daemon/route_matrix.rs:160-163,306-332（三文件对应工具 status=migrated/stable）",
+    "cas": "rust_ext/src/daemon/cas.rs:130（CAS 存储权威）",
+    "workspace": "rust_ext/src/daemon/workspace.rs:343（daemon workspace registry 权威）",
+    "toolchain": "rust_ext/src/daemon/toolchain.rs:188（toolchain store 权威）",
+    "note": "本声明不引用 docs/evidence/srv019_rust_takeover_matrix_20260829.md（2026-08-29 快照不覆盖这三文件）"
+  },
+  "files": {
+    "server/cas_schema.py": "CAS schema/GC 的 Python 影子实现（db/ 退休 phase-3 迁入 server/）；生产权威由 Rust cas.rs 接管，保留供存量测试与 db/db_cas.py 兼容壳重导出。",
+    "server/daemon_registry.py": "daemon workspace registry 的 Python 影子实现；生产权威由 Rust workspace.rs 接管，保留供存量测试与 db/db_daemon.py 兼容壳重导出。",
+    "server/toolchain_store.py": "toolchain/build-context 存储的 Python 影子实现；生产权威由 Rust toolchain.rs 接管，保留供存量测试与 db/db_toolchain.py 兼容壳重导出。"
+  },
+  "entries": [
+    {
+      "file": "server/cas_schema.py",
+      "line": 14,
+      "handler": "<module>",
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 124,
+      "handler": "init_cas_schema",
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 125,
+      "handler": "init_cas_schema",
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 189,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 192,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 200,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 201,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 202,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.executemany"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 206,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 207,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 208,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 211,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 216,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 221,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 222,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 223,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 224,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 225,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 228,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 230,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 231,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 235,
+      "handler": "cas_gc",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 263,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 266,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 275,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 287,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 293,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 300,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 304,
+      "handler": "file_generation_seen",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 319,
+      "handler": "file_generation_committed",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 322,
+      "handler": "file_generation_committed",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 330,
+      "handler": "file_generation_committed",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 332,
+      "handler": "file_generation_committed",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/cas_schema.py",
+      "line": 336,
+      "handler": "file_generation_committed",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 10,
+      "handler": "<module>",
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 59,
+      "handler": "init_daemon_schema",
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 60,
+      "handler": "init_daemon_schema",
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 83,
+      "handler": "register_workspace",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 95,
+      "handler": "register_workspace",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 106,
+      "handler": "list_workspaces",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 111,
+      "handler": "list_workspaces",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 120,
+      "handler": "get_workspace_status",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 132,
+      "handler": "update_workspace_status",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 169,
+      "handler": "register_mount_mapping",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 176,
+      "handler": "register_mount_mapping",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 196,
+      "handler": "list_mount_mappings",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 204,
+      "handler": "list_mount_mappings",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/daemon_registry.py",
+      "line": 224,
+      "handler": "delete_mount_mapping",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 17,
+      "handler": "<module>",
+      "kind": "sqlite_import",
+      "detail": "sqlite3"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 164,
+      "handler": "init_toolchain_schema",
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 193,
+      "handler": "open_toolchain_db",
+      "kind": "sqlite_connect",
+      "detail": "sqlite3.connect"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 196,
+      "handler": "open_toolchain_db",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 200,
+      "handler": "open_toolchain_db",
+      "kind": "sql_execute",
+      "detail": "conn.executescript"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 565,
+      "handler": "register_toolchain",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 580,
+      "handler": "register_toolchain",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 632,
+      "handler": "get_toolchain",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 636,
+      "handler": "get_toolchain",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 647,
+      "handler": "list_toolchains",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 663,
+      "handler": "delete_toolchain",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 667,
+      "handler": "delete_toolchain",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 691,
+      "handler": "bind_toolchain_to_workspace",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 719,
+      "handler": "get_workspace_toolchains",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 726,
+      "handler": "get_workspace_toolchains",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 827,
+      "handler": "register_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 832,
+      "handler": "register_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 866,
+      "handler": "get_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 875,
+      "handler": "get_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 893,
+      "handler": "list_build_contexts",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 912,
+      "handler": "set_active_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 920,
+      "handler": "set_active_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 925,
+      "handler": "set_active_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 943,
+      "handler": "get_active_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 963,
+      "handler": "delete_build_context",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 1084,
+      "handler": "store_resolved_edges",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 1135,
+      "handler": "get_resolved_edges",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 1155,
+      "handler": "delete_resolved_edges",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 1161,
+      "handler": "delete_resolved_edges",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 1175,
+      "handler": "count_resolved_edges",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    },
+    {
+      "file": "server/toolchain_store.py",
+      "line": 1188,
+      "handler": "list_build_context_edges",
+      "kind": "sql_execute",
+      "detail": "conn.execute"
+    }
+  ]
+}

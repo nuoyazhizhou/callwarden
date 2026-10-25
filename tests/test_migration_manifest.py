@@ -161,7 +161,7 @@ _EXPECTED_DB_MIXINS = {
     "db_workspace_manifest.py", "db_tasks.py", "db_daemon.py", "db_guardrail.py",
     "db_impact.py", "db_evolution.py", "db_vector.py", "db_clone_detection.py",
     "db_clone_groups.py", "db_coverage.py", "db_tests.py", "db_git.py",
-    "db_migrate.py", "db_gc.py", "db_audit_chain.py", "db_lsp.py",
+    "db_gc.py", "db_audit_chain.py", "db_lsp.py",
     "schema.py", "rust_parser_facade.py",
 }
 

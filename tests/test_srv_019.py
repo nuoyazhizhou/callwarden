@@ -30,6 +30,9 @@ from callwarden.server.daemon_client import HttpDaemonRpcClient
 ROOT = Path(__file__).resolve().parent.parent
 AUDIT = ROOT / "deliverables" / "software-company" / "audit_server_authority_residue.py"
 AUDIT_JSON = ROOT / "deliverables" / "software-company" / "server_authority_residue_audit.json"
+TRANSITION_BASELINE = (
+    ROOT / "deliverables" / "software-company" / "db_retire_transition_baseline.json"
+)
 FINAL_GATE = "mcp.final_zero_python_authority_audit"
 MATRIX = ROOT / "docs" / "evidence" / "srv019_rust_takeover_matrix_20260829.md"
 
@@ -112,6 +115,68 @@ def test_success_retired_files_14():
         "server/tools/tools_task.py",
     }
     assert set(report["retired_files"].keys()) == expected
+
+
+def test_success_transition_declaration_bounded():
+    """第二类 db-retire 过渡声明：单列、无陈条、日落未过期（不放宽 finding=0）。"""
+    report = run_audit()
+    baseline = json.loads(TRANSITION_BASELINE.read_text(encoding="utf-8"))
+    assert report["transition_declaration_error"] == ""
+    assert report["transition_declaration_path"] == (
+        "deliverables/software-company/db_retire_transition_baseline.json")
+    assert report["transition_sunset_expired"] is False
+    assert report["stale_transition_count"] == 0
+    assert report["transition_finding_count"] == len(baseline["entries"])
+    assert report["transition_finding_count"] > 0
+    # 过渡条目只覆盖已附接管证据的文件，且不得混入未声明残留
+    assert set(report["transition_by_file"]) == set(baseline["files"])
+    assert report["findings"] == []
+
+
+def test_authority_migrate_command_retired():
+    """`cw gc db-migrate-single` 已退役：活实现与旧实现均不得残留。"""
+    assert not (ROOT / "server" / "migrate.py").exists()
+    assert not (ROOT / "db" / "db_migrate.py").exists()
+    main_src = (ROOT / "cli" / "main.py").read_text(encoding="utf-8")
+    assert "db-migrate-single" not in main_src
+
+
+def test_authority_masking_guard():
+    """MASKING 自检：向受保护文件注入一行 sqlite3.connect 后审计必须再红。
+
+    在临时副本上执行，绝不修改仓库源码。
+    """
+    import shutil
+    import tempfile
+
+    target = ROOT / "server" / "cas_schema.py"
+    with tempfile.TemporaryDirectory() as td:
+        sandbox = Path(td)
+        (sandbox / "server").mkdir()
+        audit_dir = sandbox / "deliverables" / "software-company"
+        audit_dir.mkdir(parents=True)
+        src = target.read_text(encoding="utf-8")
+        (sandbox / "server" / "cas_schema.py").write_text(
+            src + "\n\ndef _masking_probe():\n    import sqlite3\n"
+            "    return sqlite3.connect(':memory:')\n",
+            encoding="utf-8",
+        )
+        # 审计脚本以 __file__ 上两级定位仓库根，故须保持同样的目录层级
+        shutil.copy2(AUDIT, audit_dir / "audit_server_authority_residue.py")
+        shutil.copy2(TRANSITION_BASELINE, audit_dir / "db_retire_transition_baseline.json")
+        exe = str(PY314) if PY314.exists() else sys.executable
+        proc = subprocess.run(
+            [exe, str(audit_dir / "audit_server_authority_residue.py")],
+            capture_output=True, text=True, cwd=str(sandbox), timeout=120,
+        )
+        assert proc.returncode == 1, (
+            f"注入 sqlite3.connect 后审计未 fail-closed（rc={proc.returncode}）："
+            f"{proc.stdout[:300]}{proc.stderr[:300]}"
+        )
+        report = json.loads(
+            (audit_dir / "server_authority_residue_audit.json").read_text(encoding="utf-8"))
+        assert report["passed"] is False
+        assert report["finding_count"] == 2  # 注入的 import + connect 均须被识别
 
 
 def test_success_final_gate_rpc(rpc):

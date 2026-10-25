@@ -234,15 +234,30 @@ cw gc db-cleanup --apply              # 实际删除孤儿数据库
 cw gc db-cleanup --all-but-current    # 除当前 workspace 外全部标记为孤儿
 ```
 
-### `gc db-migrate-single`：旧版多库 → 用户级单库迁移
+### 旧版多库迁移（`gc db-migrate-single` 已退役）
 
-将旧版按项目 hash 隔离的多库（`~/.callwarden/<16位hash>/callwarden.db`）迁移到用户级单库（`~/.callwarden/callwarden.db`），迁移 workspaces / tasks / task_steps 表。默认 dry-run 仅预览；符号图谱数据建议迁移后运行 `cw refresh --all` 重建。迁移后旧 `<hash>/` 目录保留作备份，用户确认后可手动删除。
+`cw gc db-migrate-single` 已下线（KR-2026-10-23-A：`server/` Python 存储 authority 清零，命令无 Rust 等价实现）。存量旧库（`~/.callwarden/<16位hash>/callwarden.db`）请手工用 SQLite `ATTACH` 合并：
 
 ```bash
-cw gc db-migrate-single                       # 预览（默认，不写入）
-cw gc db-migrate-single --apply               # 执行迁移
-cw gc db-migrate-single --apply --no-backup   # 跳过迁移前的单库备份
+# 1) 先备份用户级单库
+cp ~/.callwarden/callwarden.db ~/.callwarden/callwarden.db.bak.$(date +%Y%m%d)
+
+# 2) 逐个 ATTACH 旧 hash 库并合并（workspaces 按 root_path 去重）
+sqlite3 ~/.callwarden/callwarden.db "
+ATTACH DATABASE '/path/to/<16位hash>/callwarden.db' AS legacy;
+INSERT OR IGNORE INTO main.workspaces
+  SELECT * FROM legacy.workspaces
+   WHERE root_path NOT IN (SELECT root_path FROM main.workspaces);
+INSERT OR IGNORE INTO main.tasks SELECT * FROM legacy.tasks;
+INSERT OR IGNORE INTO main.task_steps SELECT * FROM legacy.task_steps;
+DETACH DATABASE legacy;
+"
+
+# 3) 符号图谱是可重建的派生数据，迁移后重建
+cw refresh --all
 ```
+
+旧 `<hash>/` 目录保留作备份，确认无误后可手动删除。
 
 ---
 

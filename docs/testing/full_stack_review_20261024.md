@@ -83,6 +83,37 @@
 - **修复**：semgrep 移出核心依赖改 extra + 运行期懒加载（全仓无 Python 代码 import semgrep，迁移安全）；或 nightly 拆「基础安装/完整安装」两步。
 - **闭环**：连续 2 次 nightly 绿 + Gate 1/2 verdict.json 证据存档。
 
+> **⚠️ 2026-10-24 实证更正（CI 行为级复验）**：KR-C 实际是**两层阻断栈**，原「根因钉死 = semgrep」只命中下层：
+> - **层 1（下层，已修 `0aca239`）**：semgrep 在核心 dependencies ⇒ `windows×py3.14` 解析失败。实证：run `40022399202`（WS1 前）卡在 `Collecting semgrep>=1.50 (from callwarden==0.3.23)` 多版本回退；WS1 后 nightly 依赖解析不再拉 semgrep（run `40081991961` collecting 列表已无 semgrep）。
+> - **层 2（上层，原漏判，已修 `d5d2de9`）**：`pip install ".[dev]"` 触发 wheel 构建，`setup.py` 的 `PrebuiltBuildExt` **硬校验仓库根 `callwarden_core.pyd`**，缺失即中止（`预编译二进制不存在`）。原 workflow 把 `python release/build.py --rust`（产出 .pyd）放在 install **之后** ⇒ install 永远先于扩展构建 ⇒ wheel 构建恒红。实证：run `40081991961` 失败步 = `Building wheel for callwarden ... status 'error'` + `预编译二进制不存在: ...callwarden_core.pyd`。**main CI 之所以能过，是因为 `Build Rust extension`（`release/build.py --rust`）在 `Install dependencies` 之前**（ci.yml:264→281 等），与 acceptance-gates 顺序相反。
+> - **修正动作**：`d5d2de9` 把 pr-acceptance 与 nightly-full 两 job 的「Build Rust extension」提到「Install test dependencies」之前（与 main CI 对齐）；release-artifact job 原本顺序正确未动。验证运行 `40100391768`（profile=full）进行中，预期安装步转绿 + Gate 1/2 出首个真实 verdict。
+> - **教训**：「dry-run 零 semgrep」只证明层 1 修复，不代表安装步可过；门禁复苏必须跑真实 GH runner 安装步才能判定层 2。原「复评条件 1（KR-C）代码侧落地」结论需待 `40100391768` 行为级证据方可确认。
+
+> **📌 2026-10-24 续验（run `40100391768` → `17176ad`）**：`d5d2de9` 后安装步确已转绿，
+> 但 nightly 继续暴露**两层此前因「门禁从未执行」而潜伏的阻断**（M2 零执行型的具体化）：
+> - **层 3（collect 步）**：`python -m pytest ... --collect-only > reports/collected_full.txt`
+>   失败——`reports/` 目录从未创建（`No such file or directory`）。三个 job 的 collect 步加 `mkdir -p reports`。
+> - **层 4（conftest 导入）**：`tests/conftest.py:5` `from callwarden.db import db_base` 在从
+>   安装 wheel 跑时会 `ModuleNotFoundError`——wheel 不含 `db/`（pyproject `packages` 明确排除，
+>   仅测试支持层）。acceptance-gates 原本缺 main CI 的 CD-1 symlink 兜底 ⇒ 补三个 job 的
+>   「Expose repo root as importable package (CD-1)」步（仓库根挂入 PYTHONPATH）。
+>   **⚠️ 再修正（run `40101501449` → `6c71e98`）**：main CI 的 CD-1 symlink **只在 Linux runner
+>   有效**；acceptance-gates 三 job 跑 `windows-latest`，`ln -sfn` 静默失败（需 Developer Mode/特权）
+>   ⇒ `import callwarden` 回落安装 wheel，conftest 的 `callwarden.db` 仍 `ModuleNotFoundError`。
+>   改与平台无关的稳妥做法：复制仓库根 `callwarden/db` 进已装 wheel 的 `callwarden` 包
+>   （`shutil.copytree dirs_exist_ok`）+ `from callwarden.db import db_base` 自检；仓库根入
+>   PYTHONPATH 供 db/ 的 3 处裸导入 `from i18n import t`。**教训：CI 修复不能假设「main CI 某步
+>   可过 ⇒ 同款在另一 runner 平台也可过」——symlink 这类平台相关手段须按目标 runner 选等价实现。**
+> - **层 5（daemon 二进制）**：run 步依赖 `CW_TP11G_DAEMON_SRC=.../cw-daemon.exe`，原 nightly/PR
+>   无显式 daemon 构建步（仅靠 `ALLOW_FRESH_BUILD` 兜底）⇒ 补 `cargo build --bin cw-daemon
+>   --features sqlite-bundled` 于 run 之前（与 main CI 对齐）。
+> - **修正动作**：`17176ad` 一次性补齐层 3/4/5（三个 job 均覆盖；release-artifact 原本顺序正确，
+>   仅补 CD-1 + mkdir）。验证运行 `40101501449`（profile=full）进行中，预期 collect→Gate 1/2→
+>   run→Gate 2/2 全链路贯通并出首个真实 verdict.json。
+> - **总判**：KR-C「nightly 恒红」实为**五层阻断栈**（semgrep 解析 / .pyd 构建顺序 / reports 目录 /
+>   conftest db 导入 / daemon 二进制），前四层皆「门禁从未执行」型潜伏缺陷，靠真实 GH runner
+>   跑通安装步才逐层暴露。这正是报告 M2 零执行型判据的实证注脚。
+
 ---
 
 ## 4. 五要素问题清单（TOP 12）
