@@ -694,12 +694,17 @@ def _find_daemon_binary():
     return None
 
 
-def _wait_manifest(data_root, proc, timeout=10.0):
+def _wait_manifest(data_root, proc, timeout=30.0):
     """等待隔离 daemon 发布 authority-scoped manifest（仅接受 pid 匹配当前进程）。
 
     H6 修复（9d6ca63，2026-08-15）后 manifest 固定写 `USERPROFILE/.callwarden/`
     （http_manifest_dir），隔离 daemon 的 USERPROFILE = data_root/userhome，
     故轮询 data_root/userhome/.callwarden；data_root 根目录不再有 manifest。
+
+    超时取 30s 而非 10s：pytest-xdist 满载（-n auto、数千用例并发）时 debug
+    daemon 冷启动可超过 10s，导致「隔离 daemon 未发布 manifest」偶发红
+    （实证 run 40179563682 的 Python 3.13 首个 attempt，单 job 重跑即绿）。
+    proc.poll() 每轮先判，daemon 真崩溃仍立即返回，不会平白拖长失败路径。
     """
     manifest_dir = os.path.join(data_root, "userhome", ".callwarden")
     deadline = time.time() + timeout
