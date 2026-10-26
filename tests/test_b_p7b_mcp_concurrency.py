@@ -13,6 +13,7 @@ B-P7b MCP 并发安全测试
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -174,6 +175,56 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
             # 每轮应增加 1 个符号
             self.assertEqual(after, base_count + cycle + 1,
                              f"cycle {cycle}: 符号数应为 {base_count + cycle + 1}（实际 {after}）")
+
+    def test_reload_sees_rows_behind_blocked_checkpoint(self):
+        """读者持事务挡住 checkpoint 时，重载仍必须看到刚提交的行。
+
+        回归（CI Python 3.14 job cycle 0 ``12 != 13``）：symbols/calls 曾固定
+        用 immutable=1 连接加载，PASSIVE checkpoint 被读者挡住时看不到 WAL
+        里尚未落主库的新行；快照又会把这份旧内容按发布时间判新鲜，后续轮次
+        继续复用旧快照。本用例先证明 checkpoint 确实被挡住，再断言重载后的
+        符号数包含新行，与调度快慢无关。
+        """
+        store = self.db._get_graph_store()
+        self.assertIsNotNone(store)
+        base_count = store.stats()["symbol_count"]
+
+        # 读者持读事务：PASSIVE checkpoint 无法越过它的快照点
+        reader = sqlite3.connect(self.db_path)
+        try:
+            reader.execute("BEGIN")
+            reader.execute("SELECT COUNT(*) FROM symbols").fetchone()
+
+            ws_id = self.db._get_active_workspace_id()
+            cur = self.db.conn.execute(
+                "INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash, mtime, status) "
+                "VALUES (?, ?, ?, '', ?, 'active')",
+                (ws_id, "blocked_cp.py", "/test/blocked_cp.py", 0.0)
+            )
+            fi_id = cur.lastrowid
+            self.db.conn.execute(
+                "INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, qualified_name, start_line, end_line, depth) "
+                "VALUES (?, '', 'blocked_cp_func', 'fn', 'module.blocked_cp_func', 1, 5, -1)",
+                (fi_id,)
+            )
+            self.db.conn.commit()
+
+            _, log_frames, checkpointed = self.db.conn.execute(
+                "PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+            self.assertLess(
+                checkpointed, log_frames,
+                "前置条件失效：读者没有挡住 PASSIVE checkpoint，"
+                "用例未覆盖 immutable 读丢 WAL 的场景")
+
+            self.db._invalidate_graph_store()
+            store = self.db._get_graph_store()
+            self.assertIsNotNone(store)
+            self.assertEqual(
+                store.stats()["symbol_count"], base_count + 1,
+                "checkpoint 被挡住时重载仍应看到 WAL 中的新符号")
+        finally:
+            reader.rollback()
+            reader.close()
 
     def test_graceful_degradation_when_rust_fails(self):
         """Rust 加载失败时降级到 SQL"""

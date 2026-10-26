@@ -102,8 +102,8 @@ pub struct ParseDiagnostics {
 |---|---|---|
 | `GraphStore.new()` | 构造空 store | 初始状态 `empty` |
 | `load_from_sqlite(db_path, workspace_id=0)` | 加载 symbols + calls | 返回 (symbols, calls) 数量 |
-| `load_symbols_from_sqlite(db_path, workspace_id=0)` | 仅加载符号 | 分级冷启动 |
-| `load_calls_from_sqlite(db_path, workspace_id=0)` | 仅加载 calls | 复用已加载符号层 |
+| `load_symbols_from_sqlite(db_path, workspace_id=0, wal_aware=false)` | 仅加载符号 | 分级冷启动；`wal_aware=true` 用普通只读连接（可见未 checkpoint 的 WAL） |
+| `load_calls_from_sqlite(db_path, workspace_id=0, wal_aware=false)` | 仅加载 calls | 复用已加载符号层；`wal_aware` 语义同上 |
 | `fork_symbols()` | 共享符号层创建新 store | 后台构建调用图 |
 | `load_state()` | 返回 `empty`/`symbols_ready`/`graph_ready` | 查询路径选择 |
 | `get_callers(callee_name, qualified_name=None)` | 反向调用 | 返回 `CallersBatch`（懒批量） |

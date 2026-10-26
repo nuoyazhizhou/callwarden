@@ -417,16 +417,22 @@ impl GraphStore {
     ///
     /// 用于分级冷启动：调用方可先发布 symbols-ready store，
     /// 后台构建完整图后再原子替换。
-    #[pyo3(signature = (db_path, workspace_id=0))]
+    ///
+    /// `wal_aware=true` 时用普通只读连接（可见尚未 checkpoint 的 WAL 帧）；
+    /// 默认 `false` 保留 immutable 快路径（无并发写时更快）。
+    #[pyo3(signature = (db_path, workspace_id=0, wal_aware=false))]
     pub fn load_symbols_from_sqlite(
         &mut self,
         py: Python<'_>,
         db_path: &str,
         workspace_id: i64,
+        wal_aware: bool,
     ) -> PyResult<usize> {
-        py.detach(|| self._load_from_sqlite_stage(db_path, workspace_id, false))
-            .map(|(symbols, _)| symbols)
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)
+        py.detach(|| {
+            self._load_from_sqlite_mode(db_path, workspace_id, false, !wal_aware)
+        })
+        .map(|(symbols, _)| symbols)
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
     /// 创建一个共享当前符号层的新 store，供后台仅构建调用图。
@@ -442,14 +448,17 @@ impl GraphStore {
     }
 
     /// 复用已加载的符号层，仅从 SQLite 加载 calls 并构建 CSR。
-    #[pyo3(signature = (db_path, workspace_id=0))]
+    ///
+    /// `wal_aware=true` 语义同 `load_symbols_from_sqlite`。
+    #[pyo3(signature = (db_path, workspace_id=0, wal_aware=false))]
     pub fn load_calls_from_sqlite(
         &mut self,
         py: Python<'_>,
         db_path: &str,
         workspace_id: i64,
+        wal_aware: bool,
     ) -> PyResult<usize> {
-        py.detach(|| self._load_calls_from_sqlite(db_path, workspace_id))
+        py.detach(|| self._load_calls_from_sqlite(db_path, workspace_id, !wal_aware))
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
@@ -1678,16 +1687,7 @@ impl GraphStore {
         include_calls: bool,
         immutable: bool,
     ) -> Result<(usize, usize), String> {
-        let conn = if immutable {
-            open_immutable_db(db_path)?
-        } else {
-            Connection::open_with_flags(
-                db_path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )
-            .map_err(|error| format!("open readonly graph database failed: {error}"))?
-        };
+        let conn = open_graph_db(db_path, immutable)?;
         // P0-2: 动态构建 WHERE 条件——workspace_id>0 时过滤，=0 时不过滤（兼容）
         let ws_filter = if workspace_id > 0 {
             format!("AND workspace_id = {}", workspace_id)
@@ -1922,16 +1922,20 @@ impl GraphStore {
     }
 
     /// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化）。
+    ///
+    /// `immutable=false` 时走普通只读连接，能看到未 checkpoint 的 WAL 内容
+    /// （B-P7b：PASSIVE checkpoint 被读者挡住时 immutable 读会丢新行）。
     fn _load_calls_from_sqlite(
         &mut self,
         db_path: &str,
         workspace_id: i64,
+        immutable: bool,
     ) -> Result<usize, String> {
         let symbols = self
             .symbols
             .as_ref()
             .ok_or_else(|| "symbols not ready".to_string())?;
-        let conn = open_immutable_db(db_path)?;
+        let conn = open_graph_db(db_path, immutable)?;
         let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
         self.calls = Some(Arc::new(calls));
         Ok(edge_count)
@@ -2765,6 +2769,22 @@ fn build_callee_name_index(
         }
     }
     (sorted_idxs, offsets, positions)
+}
+
+/// 按需打开图加载连接：immutable（mmap 快路径）或普通只读（WAL 可见）。
+///
+/// 普通只读连接会读 `-wal` 中尚未 checkpoint 的帧；`immutable=1` 明确跳过
+/// WAL，只适合「调用方已确认 checkpoint 成功」的场景。
+/// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化）。
+fn open_graph_db(db_path: &str, immutable: bool) -> Result<Connection, String> {
+    if immutable {
+        return open_immutable_db(db_path);
+    }
+    Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("open readonly graph database failed: {error}"))
 }
 
 /// 从边列表构建 CSR 邻接表

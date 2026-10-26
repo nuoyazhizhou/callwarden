@@ -32,7 +32,8 @@ class ControlledGraphStore:
         cls.full_release.clear()
         cls.full_finished.clear()
 
-    def load_symbols_from_sqlite(self, _db_path: str, _workspace_id: int = 0) -> int:
+    def load_symbols_from_sqlite(self, _db_path: str, _workspace_id: int = 0,
+                                 wal_aware: bool = False) -> int:
         self.state = "symbols_ready"
         self.symbol_token = object()
         return 1
@@ -45,7 +46,8 @@ class ControlledGraphStore:
         forked.symbol_token = self.symbol_token
         return forked
 
-    def load_calls_from_sqlite(self, _db_path: str, _workspace_id: int = 0):
+    def load_calls_from_sqlite(self, _db_path: str, _workspace_id: int = 0,
+                               wal_aware: bool = False):
         self.full_started.set()
         if not self.full_release.wait(timeout=5):
             raise TimeoutError("test did not release full graph load")

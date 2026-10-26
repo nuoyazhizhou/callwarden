@@ -3433,7 +3433,10 @@ class CodeGraphBase:
         self._graph_store = None
         self._graph_store_dirty = False
         self._graph_store_lock = threading.RLock()
-        self._graph_store_generation = 0
+        # 快照代次戳（.cwsnap.gen）的继承：跨进程/重启复用快照时沿用上次发布
+        # 的代次。若固定从 0 开始，新进程永远判旧快照失效，P5 mmap 冷启动收益
+        # 在新进程里全部消失。
+        self._graph_store_generation = self._read_snapshot_generation()
         self._graph_store_loading = False
         self._graph_store_load_error: Optional[str] = None
 
@@ -3496,6 +3499,63 @@ class CodeGraphBase:
             return int(self.active_workspace["id"])
         return 0
 
+    def _snapshot_stamp_path(self) -> str:
+        """快照代次戳路径（与 .cwsnap 同目录的侧车文件）。"""
+        return self.db_path + ".cwsnap.gen"
+
+    def _read_snapshot_generation(self) -> int:
+        """读取快照代次戳中的 generation，读不到按 0 处理。
+
+        用于进程启动时继承代次（见 __init__ 中的说明）；戳格式为
+        ``"<generation> <db_mtime_ns>\\n"``。
+        """
+        try:
+            with open(self._snapshot_stamp_path(), "r", encoding="ascii") as fh:
+                return int(fh.read().split()[0])
+        except (OSError, ValueError, IndexError):
+            return 0
+
+    def _snapshot_is_fresh(self) -> bool:
+        """快照是否与当前 DB 状态同源（代次戳 generation + 读取时 mtime）。
+
+        B-P7b 竞态（CI 3.14 cycle 0 ``12 != 13``）：旧实现只比较
+        ``snap_mtime >= db_mtime``，即「快照发布时间」与「当前 DB mtime」。
+        后台线程读的是写入前的旧状态，若在写入提交后才 dump 发布，旧内容
+        反而拿到更新的 mtime → 被判新鲜并被 mmap 加载，新行永久丢失。
+        改为记录「读这台 DB 取快照时的状态」：
+        - generation：同进程写入必走 _invalidate_graph_store 自增，挡住
+          checkpoint 被阻塞（WAL 未落主库、mtime 不变）时的假新鲜；
+        - db_mtime_ns：覆盖跨进程写入（其它进程不会自增本进程代次）。
+        """
+        if not os.path.exists(self.db_path + ".cwsnap"):
+            return False
+        try:
+            with open(self._snapshot_stamp_path(), "r", encoding="ascii") as fh:
+                gen_text, mtime_text = fh.read().split()
+            return (int(gen_text) == self._graph_store_generation
+                    and int(mtime_text) == os.stat(self.db_path).st_mtime_ns)
+        except (OSError, ValueError):
+            return False
+
+    def _write_snapshot_stamp(self, generation: int, db_mtime_ns: int) -> None:
+        """原子写入快照代次戳。
+
+        必须在 ``os.replace`` 发布快照之后写：读者「先见新快照、后见新戳」
+        只会保守判旧并重建；反过来则可能把旧快照认成新的。
+        """
+        stamp_path = self._snapshot_stamp_path()
+        temp_path = f"{stamp_path}.{os.getpid()}.{id(self)}.{generation}.tmp"
+        try:
+            with open(temp_path, "w", encoding="ascii") as fh:
+                fh.write(f"{generation} {db_mtime_ns}\n")
+            os.replace(temp_path, stamp_path)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
     def _get_graph_store(self):
         """B-P7b: 分级懒加载 GraphStore（Rust CSR 内存索引）
 
@@ -3529,7 +3589,9 @@ class CodeGraphBase:
                 return None
 
             try:
-                # immutable=1 跳过 WAL，加载前必须 checkpoint。
+                # 仍先 checkpoint：它会把 WAL 内容并回主库并更新 DB mtime，
+                # 让跨进程写入也能被 _snapshot_is_fresh 的 mtime 项识别。
+                # 干净读由 wal_aware 连接保证，不依赖 checkpoint 成功。
                 self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
                 token = self._graph_store_generation
                 db_mtime_ns = os.stat(self.db_path).st_mtime_ns
@@ -3538,11 +3600,7 @@ class CodeGraphBase:
                 self._sweep_stale_snapshot_tmp(snap_path)
                 store = GraphStore()
 
-                snap_valid = (
-                    os.path.exists(snap_path)
-                    and os.stat(snap_path).st_mtime_ns >= db_mtime_ns
-                )
-                if snap_valid:
+                if self._snapshot_is_fresh():
                     try:
                         store.load_from_file(snap_path)
                         self._graph_store = store
@@ -3552,8 +3610,10 @@ class CodeGraphBase:
                     except Exception:
                         pass
 
+                # wal_aware=True：普通只读连接，能看到 PASSIVE checkpoint 被
+                # 读者挡住时仍留在 WAL 里的新行（immutable=1 看不到）。
                 store.load_symbols_from_sqlite(
-                    self.db_path, self._get_workspace_id())
+                    self.db_path, self._get_workspace_id(), wal_aware=True)
                 full_store = store.fork_symbols()
                 self._graph_store = store
                 self._graph_store_loading = True
@@ -3576,7 +3636,7 @@ class CodeGraphBase:
         """后台复用符号层构建 calls，仅在 generation 和 DB mtime 均未变时发布。"""
         try:
             full_store.load_calls_from_sqlite(
-                self.db_path, self._get_workspace_id())
+                self.db_path, self._get_workspace_id(), wal_aware=True)
         except Exception as exc:
             with self._graph_store_lock:
                 if token == self._graph_store_generation:
@@ -3601,7 +3661,8 @@ class CodeGraphBase:
                     self._graph_store_load_error = str(exc)
             return
 
-        # 快照发布也做代次校验，避免旧图获得更新 mtime。
+        # 快照发布做代次校验 + 写代次戳：戳记录的是「这批数据读自哪一代 /
+        # 哪个 DB mtime」，而不是发布时间，旧内容因此拿不到新鲜标记。
         temp_path = f"{snap_path}.{os.getpid()}.{id(self)}.{token}.tmp"
         try:
             full_store.dump_to_file(temp_path)
@@ -3610,6 +3671,7 @@ class CodeGraphBase:
                         and not self._graph_store_dirty
                         and os.stat(self.db_path).st_mtime_ns == db_mtime_ns):
                     os.replace(temp_path, snap_path)
+                    self._write_snapshot_stamp(token, db_mtime_ns)
         except Exception as exc:
             with self._graph_store_lock:
                 if token == self._graph_store_generation:
