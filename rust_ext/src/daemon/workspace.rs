@@ -7605,12 +7605,18 @@ mod tests {
             "parser_doctor.supported_languages 应为数组"
         );
 
-        // R9-P1-1: parser_metrics 中 latency 应大于 0（真实计时）
+        // R9-P1-1: parser_metrics 的 latency 字段应存在（计时已接入主链）
+        //
+        // 不 assert > 0：本用例走 blocked refresh（no_abs_path），真实 parse 不发生，
+        // 计时只覆盖 session 校验 + CAS 查询，在本地 ext4/快机器上是亚毫秒，
+        // record_parse 的 `latency_ms as u64` 会截断为 0。CI run 40333081522 实测
+        // 为 0（WSL 因 /mnt/c 慢才侥幸 >0）。非零计时由 parser_metrics 单测
+        // （record_parse(10ms) → 10）保证；此处只锚定字段接入。
         let latency_total = first["metrics"]["parse_latency_total_ms"].as_u64();
         assert!(
-            latency_total.is_some() && latency_total.unwrap() > 0,
-            "R9-P1-1: parse_latency_total_ms 应 > 0（真实计时），实际: {:?}",
-            latency_total
+            latency_total.is_some(),
+            "R9-P1-1: parse_latency_total_ms 字段应存在（计时已接入），实际: {:?}",
+            first["metrics"]
         );
     }
 

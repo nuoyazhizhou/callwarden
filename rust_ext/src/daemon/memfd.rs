@@ -10,9 +10,10 @@
 //! 2. **owner UID 校验**（P1-3 新增）：`fstat.st_uid` 必须等于 `peer_uid`，
 //!    防止跨 UID 攻击（peer 传递不属于自己 UID 的 FD，绕过文件系统 ACL）。
 //!    `peer_uid == 0`（root）跳过此校验（root 受 SO_PEERCRED 信任）。
-//! 3. **seals 校验**（P1-3 新增，仅 Linux memfd）：`F_GET_SEALS` 必须包含
-//!    `F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE`。
-//!    非 memfd FD（F_GET_SEALS 返回 EINVAL/ENOTTY）跳过此项，视为普通文件。
+//! 3. **seals 校验**（P1-3 新增，仅 Linux memfd）：先用 `/proc/self/fd/<fd>`
+//!    链接目标判定是否 memfd（`/memfd:` 前缀），仅对 memfd 要求
+//!    `F_GET_SEALS` 包含 `F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE`。
+//!    非 memfd FD（含 tmpfs 上的普通文件）跳过此项，视为普通文件。
 //!    规范：daemon-ipc-security.md §3.2 + server/ipc_transport.py:validate_memfd_fd。
 //! 4. **大小预检**：从 `fstat.st_size` 获取文件大小，0 视为合法（管道/临时文件），
 //!    按 `st_size` 预分配 buf 容量（避免 `read_to_end` 的指数扩容）。
@@ -157,14 +158,39 @@ const S_IFMT: u32 = 0o170_000;
 #[cfg(unix)]
 const S_IFREG: u32 = 0o100_000;
 
+/// P1-3：检测 FD 是否为 memfd（仅 Linux）
+///
+/// 规范：server/ipc_transport.py:is_memfd
+///
+/// 判定顺序（与 Python 一致）：
+/// 1. 首选 `/proc/self/fd/<fd>` 链接目标：memfd 恒为 `/memfd:<name> (deleted)`，
+///    tmpfs 上的普通文件是真实路径。
+/// 2. 仅当 /proc 不可用（容器裁剪 / hidepid / 权限）时回落 `F_GET_SEALS`，
+///    成功即视为 memfd（seals 可以为 0）。
+///
+/// 为什么不能单靠 F_GET_SEALS：内核 shmem 实现让 **tmpfs 上的普通文件** 的
+/// F_GET_SEALS 同样成功，于是 /tmp 为 tmpfs 的机器（如主 CI runner）会把
+/// 常规文件误判为 memfd 并因 seals 不足被拒绝——实证 CI run 40333081522
+/// 的 7 例 memfd 测试红（`SealsInsufficient { actual: 1, required: 15 }`），
+/// Python 侧在 run 40155571488 已踩过同一个坑。
+#[cfg(target_os = "linux")]
+fn is_memfd_fd(fd: RawFd) -> bool {
+    match std::fs::read_link(format!("/proc/self/fd/{fd}")) {
+        // /proc 可用：链接目标以 /memfd: 开头才是 memfd，
+        // 否则（含 tmpfs 普通文件）明确不是，避免 F_GET_SEALS 假阳性。
+        Ok(target) => target.to_string_lossy().starts_with("/memfd:"),
+        // /proc 不可用（容器裁剪/权限）：回落 F_GET_SEALS，成功即 memfd。
+        Err(_) => unsafe { libc::fcntl(fd, F_GET_SEALS) >= 0 },
+    }
+}
+
 /// P1-3 新增：检测 FD 是否为 memfd 并校验 seals（仅 Linux）
 ///
 /// 规范：server/ipc_transport.py:is_memfd + validate_memfd_fd
 ///
 /// 实现策略：
-/// - Linux：调用 fcntl(fd, F_GET_SEALS)，成功返回 seals bitmask
-///   - 非 memfd FD 返回 EINVAL（视为普通文件，跳过校验）
-///   - memfd 但 seals 不足返回 SealsInsufficient
+/// - 先用 `is_memfd_fd` 判定（/proc 优先）：非 memfd 视为普通文件，跳过校验
+/// - memfd 则调用 fcntl(fd, F_GET_SEALS) 取 seals bitmask，不足返回 SealsInsufficient
 /// - 非 Linux：跳过（macOS/BSD 无 memfd_create）
 ///
 /// 返回值：
@@ -173,16 +199,13 @@ const S_IFREG: u32 = 0o100_000;
 /// - Err：memfd 但 seals 不足
 #[cfg(target_os = "linux")]
 fn verify_memfd_seals(fd: RawFd) -> Result<bool, FdReadError> {
+    if !is_memfd_fd(fd) {
+        return Ok(false);
+    }
     let ret = unsafe { libc::fcntl(fd, F_GET_SEALS) };
     if ret < 0 {
-        let err = io::Error::last_os_error();
-        // EINVAL/ENOTTY: 非 memfd（普通文件），跳过 seals 校验
-        // EINVAL 在 Linux 上表示 FD 不支持 seals（普通文件）
-        if err.raw_os_error() == Some(libc::EINVAL) || err.raw_os_error() == Some(libc::ENOTTY) {
-            return Ok(false);
-        }
-        // 其他错误（EBADF 等）视为校验失败
-        return Err(FdReadError::FstatFailed(err));
+        // 已判定为 memfd，此处失败只能是 FD 失效等真实错误
+        return Err(FdReadError::FstatFailed(io::Error::last_os_error()));
     }
     let actual = ret as libc::c_int;
     if (actual & REQUIRED_SEALS) != REQUIRED_SEALS {
