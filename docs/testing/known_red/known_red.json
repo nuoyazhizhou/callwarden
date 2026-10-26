@@ -15,7 +15,7 @@
       "owner": "苏雅-2（归因）/ 何序-2（关闭路线裁决）",
       "closure_criterion": "三个存储文件经第二类 db-retire 过渡声明 residue 清零（冻结基线 file:line:handler:kind 逐条比对、只减不加、日落绑 db-retire 里程碑）；server/migrate.py 以 live_legacy_authority 单独关闭（下沉 Rust 或命令退役，不得白名单/声明豁免）；audit passed=true；MASKING 自检通过（向 cas_schema.py 注入一行 sqlite3.connect 后 audit 必须再 exit 1）；条目关闭（status=closed ⇒ nodeid 移出 deselect 回归主门禁）后主 test job 四用例连续全绿；断言不放宽（finding_count==0 / passed is True / retired_files_count==14 保持严格）。",
       "closure_evidence": [
-        "过渡声明：deliverables/software-company/db_retire_transition_baseline.json（79 条，sunset 2026-11-23=db-retire P4；三文件逐条附 Rust 接管证据 route_matrix.rs:160-163,306-332）",
+        "过渡声明：deliverables/software-company/db_retire_transition_baseline.json（79 条，sunset 修订为 P4a 2026-12-31＝daemon_server 与三存储文件退役；P4b db/ 物理下线另行立项；三文件逐条附 Rust 接管证据 route_matrix.rs:160-163,306-332）",
         "审计实测：finding_count=0 / transition_finding_count=79 / stale_transition_count=0 / transition_sunset_expired=false / passed=true（deliverables/software-company/server_authority_residue_audit.json）",
         "migrate 退役：删除 server/migrate.py 与 db/db_migrate.py、移除 cw gc db-migrate-single 子命令/dispatch/handler/cli_admin.migrate_single_db，pyinstaller hiddenimport 同步移除，文档改手工 sqlite ATTACH 指引",
         "MASKING 自检：tests/test_srv_019.py::test_authority_masking_guard（注入 sqlite3.connect 后 rc=1、finding_count=2）；退役守卫：test_authority_migrate_command_retired",

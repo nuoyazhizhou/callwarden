@@ -2,8 +2,10 @@
   "schema_version": 1,
   "description": "第二类 db-retire 过渡声明：server/ 三个存储层的 Python 影子 authority。生产权威已由 Rust daemon 1:1 接管；这些条目是 db-retire 迁移期的已知过渡残留，冻结基线逐条比对（file:line:handler:kind），只减不加，日落绑 db-retire 里程碑。新增/未声明残留一律 fail-closed，不得以本声明豁免。",
   "sunset": {
-    "milestone": "db-retire P4：db/ 测试支持层物理下线且 server/ 存储层生产零引用",
-    "expiry_date": "2026-11-23"
+    "milestone": "db-retire P4a：server/daemon_server.py 与三存储文件（cas_schema/toolchain_store/daemon_registry）退役、79 条声明清零；P4b（db/ 物理下线）依赖 MCP 读路径 Rust 化，另行立项",
+    "expiry_date": "2026-12-31",
+    "revised_on": "2026-10-26",
+    "revision_note": "原 expiry 2026-11-23 绑定「db/ 测试支持层物理下线」。核查发现该前提不成立：db/ 并非测试支持层——server/mcp_server.py（生产入口 cw server）→ tools/* → _mcp_common.get_db() → db.CodeGraphDB 是生产读路径，且 server/job_executor.py、job_handlers.py 直接 import db.*；db/ 共 53 文件。故按 P4a（本声明 79 条覆盖的范围）/ P4b（db/ 物理下线，需先完成 MCP 读路径 Rust 化）拆分，本次仅顺延到期日，声明条目与冻结比对口径不变。"
   },
   "evidence": {
     "route_matrix": "rust_ext/src/daemon/route_matrix.rs:160-163,306-332（三文件对应工具 status=migrated/stable）",
