@@ -630,6 +630,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
 
+      - name: Create callwarden-clients group (daemon_e2e socket_group fail-closed)
+        # daemon_e2e 启动真实 cw-daemon 子进程，默认 socket_group='callwarden-clients'
+        # （daemon/config.rs 默认值）；P0-3 v2 fail-closed：组不存在/chown 失败拒绝
+        # 启动 → socket 永不就绪。三件套（groupadd + usermod + 下方 sg 包裹）与主
+        # test job 同构（usermod 的组变更只对后续 sg 新会话生效）。
+        run: |
+          sudo groupadd -f callwarden-clients
+          sudo usermod -a -G callwarden-clients runner
+
       - name: Run Rust daemon unit tests (TP-11G target set)
         # --no-default-features 关闭 extension-module，让 PyO3 链接 libpython
         # （Cargo.toml [features] 注释明确此为测试模式）。setup-python 提供 libpython。
@@ -642,6 +651,27 @@ jobs:
           daemon::compat_native_handlers
           cli::router cli::runtime cli::refresh
           daemon::cas_merge daemon::task_prompt::bundle_tests
+
+      - name: Run Rust integration tests (rust_ext/tests)
+        # T-7（full_stack_review 条件 6）：rust_ext/tests/ 此前只在
+        # rust-compile-gate 里 `--no-run` 编译，三个执行 job 全是 `--lib` +
+        # 模块过滤——「存在但从不执行」，kill -9 恢复链 / SIGTERM / 角色提示
+        # 资产门在 CI 无任何防线。本 step 逐个 `--test` 真实执行全部集成目标：
+        #   - daemon_e2e：真 cw-daemon 子进程 + UDS 全 RPC（Unix-only，8 例）
+        #   - p1_f_recovery_e2e：kill -9 恢复链（15 例）
+        #   - role_prompt_assets_golden：生产资产 sha256 门（4 例）
+        #   - role_prompt_e2e / validator positive+negative / test_external_cli
+        # 不用 `--tests`：该选项同时选中 lib target（1905 例，含已知红
+        # bundle_tests，22 分钟），会把本 job 变成全量 lib 重跑。
+        # CARGO_BIN_EXE_cw-daemon 由 cargo test 自动注入；sg 包裹让 runner
+        # 以 callwarden-clients 为组身份满足 socket chown 要求。
+        run: |
+          sg callwarden-clients -c "cargo test --manifest-path rust_ext/Cargo.toml \
+            --no-default-features --features sqlite-bundled \
+            --test daemon_e2e --test p1_f_recovery_e2e \
+            --test role_prompt_assets_golden --test role_prompt_e2e \
+            --test role_prompt_validator_negative \
+            --test role_prompt_validator_positive --test test_external_cli"
 
   rust-unit-test-windows:
     # F-CI-01（关屿 / TP-11G #49）：Windows 安全关键路径此前 CI 零覆盖
