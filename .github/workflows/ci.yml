@@ -167,10 +167,10 @@ jobs:
 
       # known-red 隔离（T-3，docs/testing/known_red/）：把 kind=test 且
       # status=open 的 nodeid 从主门禁 deselect——主 job 的红此后只表示
-      # 「本次改动引入的回归」；既有红（KR-A/KR-B 共 9 nodeid，根因已定性、
-      # 修复方案已裁决未落地）由 known-red-quarantine job 单独如实报数，
-      # 到期未关在该 job 红升级。schema 不合格时本步失败（exit 64），防半
-      # 登记流入；deselect 参数与 -n auto 正交兼容。
+      # 「本次改动引入的回归」；既有红由 known-red-quarantine job 单独如实报数，
+      # 到期未关在该 job 红升级（当前三条目 KR-A/B/C 均 closed，deselect 为
+      # 空串；机制保留供后续新登记使用）。schema 不合格时本步失败（exit 64），
+      # 防半登记流入；deselect 参数与 -n auto 正交兼容。
       # set -euo pipefail 显式声明：命令替换赋值的退出码传播不得依赖
       # runner 默认 shell flag（verify 波实测：bash -e 下 rc=64 步失败、
       # 无 -e 则 SURVIVED 静默放行——与 C-2 fail-open 同型，故显式化）。
@@ -216,11 +216,11 @@ jobs:
   # ============================================================
   # known-red 隔离 quarantine job（T-3，2026-10-24）
   #
-  # 主 test job 经 cicd/known_red.py --deselect 把 KR-A/KR-B 共 9 个
-  # nodeid 移出主门禁——主 job 的红此后只表示「本次改动引入的回归」。
+  # 主 test job 经 cicd/known_red.py --deselect 把 open 状态的
+  # known-red nodeid 移出主门禁——主 job 的红此后只表示「本次改动引入的回归」。
   # 被隔离的既有红不得凭空消失：本 job 单独如实跑这些 nodeid
   # （--quarantine-list 取清单，不加 -n auto：单进程排除 xdist 干扰），
-  # 结论如实反映。
+  # 结论如实反映（当前三条目全 closed ⇒ 清单为空，本步直接通过）。
   #
   # 为何 KR 未修期间允许本 job 红：红 = KR 仍未修复，这正是隔离的预期
   # 状态——把「已知的红」与「未知的回归」分开计价，恢复红灯的信号意义

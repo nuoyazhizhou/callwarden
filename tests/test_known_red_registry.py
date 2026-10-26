@@ -6,10 +6,11 @@ CI 无隔离）。本测试锁定隔离机制本身的契约——门禁脚本�
 
 1. schema 缺字段 ⇒ exit 64（防「半登记」流入 CI）；
 2. 伪造到期条目 ⇒ exit 2（到期升级是日落条款的牙齿，必须真实生效）；
-3. --deselect 输出恰好等于登记的 4 个 nodeid（KR-A；KR-B 已 closed）——
+3. --deselect 输出恰好等于登记的 open test nodeid（当前三条目全 closed ⇒ 空集）——
    关闭任何条目都须显式改本测试（有意的摩擦，防「修了不关」假账）；
 4. 登记漂移防护：注册表 open 条目的 nodeid 必须真实存在于本机 collect
-   （nodeid 禁手抄；重命名/删除测试而注册表不动 ⇒ 本测试红）；
+   （nodeid 禁手抄；重命名/删除测试而注册表不动 ⇒ 本测试红；无 open 条目
+   时该守卫自然空转，但不得因此删除守卫）；
 5. kind 契约：kind=test 禁空 nodeids、kind=workflow 禁挂 nodeid；
    status=closed 的条目自动退出 deselect/quarantine 集合。
 """
@@ -35,7 +36,7 @@ DRIFT_FILES = (
     "tests/test_srv_019.py",
     "tests/test_mcp_get_token_savings_report_http_rpc.py",
 )
-EXPECTED_NODEID_COUNT = 4  # KR-A 4（KR-B 已关闭）；关闭条目须同步改此常量
+EXPECTED_NODEID_COUNT = 0  # KR-A/B/C 全部 closed；关闭条目须同步改此常量
 
 
 def _load_entries():
@@ -109,6 +110,7 @@ def test_expired_entry_exit_2(tmp_path):
     entries = _load_entries()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     entries[0]["expiry_date"] = yesterday
+    entries[0]["status"] = "open"  # KR-A 已关闭，显式构造「到期未关」形态
     path = _write_registry(tmp_path, entries)
     assert known_red.main(["--registry", str(path)]) == known_red.EXIT_EXPIRED
 
@@ -134,7 +136,7 @@ def test_expired_workflow_entry_also_exit_2(tmp_path):
 # ---------------------------------------------------------------- deselect 正向
 
 def test_deselect_output_exactly_registered_nodeids():
-    """--deselect 输出恰好等于登记的 4 个 nodeid（KR-A；KR-B 已关闭）。
+    """--deselect 输出恰好等于登记的 open test nodeid（当前全 closed ⇒ 空集）。
 
     以真实注册表跑 CLI（非内存构造），同时锁定 CLI 输出格式：
     单行、`--deselect <nodeid>` 成对、顺序与注册表一致。
@@ -158,7 +160,7 @@ def test_deselect_output_exactly_registered_nodeids():
 
 
 def test_quarantine_list_one_per_line():
-    """--quarantine-list 每行一个 nodeid，共 4 行（KR-A）。"""
+    """--quarantine-list 每行一个 nodeid（当前全 closed ⇒ 无输出行）。"""
     out = subprocess.run(
         [sys.executable, str(SCRIPT), "--quarantine-list"],
         capture_output=True,
@@ -174,13 +176,17 @@ def test_quarantine_list_one_per_line():
 
 
 def test_closed_entry_excluded_from_deselect():
-    """status=closed 的条目自动退出 deselect 集合（关闭即生效）。"""
+    """status=closed 的条目自动退出 deselect/quarantine 集合（关闭即生效）。"""
     entries = _load_entries()
-    entries[0]["status"] = "closed"  # KR-A 闭环
-    args = known_red.deselect_args(entries)
-    assert args == []
-    # KR-B 已关闭：其 nodeid 不得再出现在 deselect 中
-    assert not any("test_mcp_get_token_savings_report_http_rpc.py::" in a for a in args)
+    # 真实注册表三条目全 closed ⇒ 无任何 deselect / quarantine 输出
+    assert known_red.deselect_args(entries) == []
+    assert known_red.quarantine_nodeids(entries) == []
+    # 同一 nodeid 置回 open 则重新进入 deselect（证明排除依据是 status 而非数据）
+    probe = [dict(entries[0], status="open")]
+    expected = []
+    for nid in entries[0]["nodeids"]:
+        expected.extend(["--deselect", nid])
+    assert known_red.deselect_args(probe) == expected
 
 
 # ---------------------------------------------------------------- 登记漂移防护
@@ -192,7 +198,10 @@ def test_registered_nodeids_exist_in_collect():
     `pytest --collect-only` 为 ground truth（任务规格口径）。
     """
     registered = known_red.quarantine_nodeids(_load_entries())
-    assert registered, "注册表无 open test 条目？"
+    if not registered:
+        # 当前全部条目已关闭：无 open nodeid 可校验，守卫空转；
+        # 新增 open 登记后该守卫自动恢复（不得因空转删除本测试）。
+        return
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", *DRIFT_FILES,
          "--collect-only", "-p", "no:cacheprovider"],
