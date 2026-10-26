@@ -248,6 +248,11 @@ docs/evidence/s5-regression-closure-20260909/
 # === 2026-09-09 根目录清理暂存区（待确认后删除的项先物理移入此处）===
 /.temp/
 
+# === 2026-10-26 triage: 本地临时/备份目录（物理保留，不入库）===
+.tmp_lint/
+docs/testing/.backups/
+docs/testing/.bak_v5/
+
 # === 2026-09-18 triage: Rust 构建旁路产物（可重新生成，体积巨大，不入库）===
 rust_ext/target-nf1/
 rust_ext/target-stage/
