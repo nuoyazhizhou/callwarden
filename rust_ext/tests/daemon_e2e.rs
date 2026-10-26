@@ -56,20 +56,41 @@ impl DaemonFixture {
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        // 隔离：daemon 默认 data_root=/var/lib/callwarden（systemd StateDirectory，
+        // 非 root 不可写）、task/codegraph 库默认在 ~/.callwarden、审计库默认在
+        // /var/log/callwarden。这里全部重定向到本用例的 tmpdir——否则普通用户
+        // 启动即 `创建数据目录失败: Permission denied (os error 13)`，socket
+        // 永不就绪（首轮 CI 实证 9/9 失败）；同时让 9 个用例并行时各自独占
+        // SQLite 文件，避免跨用例锁竞争。
+        .env("CW_DAEMON_DATA_ROOT", tmpdir.path())
+        .env("HOME", tmpdir.path())
+        .env("CW_DAEMON_AUDIT_DB", tmpdir.path().join("audit.log"))
         .env("RUST_LOG", "info");
 
-        let child = cmd.spawn()?;
+        let mut child = cmd.spawn()?;
 
-        // 等待 socket 就绪（最多 5 秒）
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // 等待 socket 就绪（最多 30 秒）。
+        //
+        // 原 5s 在并行执行时不够：9 个用例各自拉起一个独立 daemon，单个在本机
+        // 实测约 4-5s（schema 迁移 v60 + workspace recovery + HTTP 预绑定），
+        // 并发时互相抢 CPU 导致集体超时（CI 首轮 9/9 失败）。
+        //
+        // 超时后必须 kill 子进程：否则孤儿 daemon 仍在继续启动，而本函数的
+        // TempDir 已随返回 Err 被 Drop 删除，它随后在已删除路径上打开 SQLite，
+        // 报 `unable to open database file`——掩盖真正的超时原因。
+        let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if socket.exists() {
                 break;
             }
             if Instant::now() > deadline {
+                unsafe {
+                    libc::kill(child.id() as i32, libc::SIGKILL);
+                }
+                let _ = child.wait();
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
-                    "daemon socket 未在 5 秒内就绪",
+                    "daemon socket 未在 30 秒内就绪",
                 ));
             }
             thread::sleep(Duration::from_millis(50));

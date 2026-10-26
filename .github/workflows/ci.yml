@@ -757,12 +757,14 @@ jobs:
         #
         # 依赖安全性已逐条核验（非推断）：两个用例的导入链只触及
         # callwarden.config / db.db_base / server.daemon_client，模块级导入
-        # 全为 stdlib + 包内；唯一第三方 pathspec 位于
-        # analyzers/ignore_spec.py 的 try/except ImportError 内（可降级）。
-        # 本机干净 venv（仅 pytest，不装包）+ 本联接方案实证：7 passed。
+        # 全为 stdlib + 包内；第三方仅 pathspec（analyzers/ignore_spec.py 的
+        # try/except ImportError 内，可降级）与 defusedxml（db/db_coverage.py
+        # 模块级导入，T-6/GAP-SEC-02 起用于替代 xml.etree，纯 Python 无编译，
+        # 故显式 pip 安装；不装包的前提不变）。
+        # 本机干净 venv（pytest + defusedxml，不装包）+ 本联接方案实证：7 passed。
         shell: pwsh
         run: |
-          python -m pip install pytest
+          python -m pip install pytest defusedxml
           $pkgroot = Join-Path $env:RUNNER_TEMP 'cw_pkgroot'
           New-Item -ItemType Directory -Force -Path $pkgroot | Out-Null
           $link = Join-Path $pkgroot 'callwarden'
