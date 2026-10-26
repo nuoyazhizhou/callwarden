@@ -402,14 +402,20 @@ impl GraphStore {
     /// 用户级单库多 workspace 数据。`workspace_id=0` 表示不过滤（兼容旧测试）。
     /// 生产路径（daemon / db_base）必须传 >0 的 workspace_id，避免 snapshot
     /// 混入其他 workspace 的符号。
-    #[pyo3(signature = (db_path, workspace_id=0))]
+    ///
+    /// `wal_aware=true` 时用普通只读连接（可见尚未 checkpoint 的 WAL 帧）；
+    /// 默认 `false` 保留 immutable 快路径（无并发写时更快）。
+    /// 建图路径（db_build._try_build_depth_rust）必须传 `true`：它刚写完
+    /// symbols/calls，PASSIVE checkpoint 可能被读者挡住，immutable 会读到旧图。
+    #[pyo3(signature = (db_path, workspace_id=0, wal_aware=false))]
     pub fn load_from_sqlite(
         &mut self,
         py: Python<'_>,
         db_path: &str,
         workspace_id: i64,
+        wal_aware: bool,
     ) -> PyResult<(usize, usize)> {
-        py.detach(|| self._load_from_sqlite_stage(db_path, workspace_id, true))
+        py.detach(|| self._load_from_sqlite_mode(db_path, workspace_id, true, !wal_aware))
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 

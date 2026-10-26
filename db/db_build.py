@@ -4022,10 +4022,14 @@ class BuildMixin:
         """尝试用 Rust GraphStore 计算 depth，成功返回 True。
 
         流程：
-        1. WAL checkpoint（确保 immutable 只读连接能看到最新数据）
-        2. GraphStore.load_from_sqlite 加载 symbols + calls 到 Rust CSR
+        1. commit 释放主连接写锁，PASSIVE checkpoint 尝试合并 WAL
+        2. GraphStore.load_from_sqlite(..., wal_aware=True) 加载 symbols + calls
         3. compute_depth_all Kahn BFS（Rust 端，内存 ~160MB）
         4. Python 侧 executemany 批量 UPDATE
+
+        注意 wal_aware=True 是必需的：PASSIVE checkpoint 会被并发读者挡住
+        （返回 checkpointed < log），此时 immutable=1 只读连接会跳过 -wal 读到
+        旧图，把过期 depth 写回 symbols。普通只读连接才能看到 WAL 中的新行。
         """
         try:
             from callwarden_core import GraphStore
@@ -4035,14 +4039,16 @@ class BuildMixin:
         try:
             # 关键：先 commit 释放主连接持有的写锁
             # build_full_graph 在调用 _build_depth 前未 commit，主连接还在事务中，
-            # 会导致 wal_checkpoint 和 Rust immutable=1 打开都失败（SQLITE_LOCKED）
+            # 会导致 wal_checkpoint 和 Rust 只读打开都失败（SQLITE_LOCKED）
             self.conn.commit()
 
-            # WAL checkpoint：确保 immutable 只读连接能看到刚写入的数据
+            # PASSIVE checkpoint 只是尽力而为：被读者挡住时不报错，也不阻塞
             self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
             store = GraphStore()
-            store.load_from_sqlite(self.db_path, self._get_workspace_id())
+            store.load_from_sqlite(
+                self.db_path, self._get_workspace_id(), wal_aware=True
+            )
             depth_updates = store.compute_depth_all()
 
             # 批量 UPDATE（executemany 比逐条快 10x）

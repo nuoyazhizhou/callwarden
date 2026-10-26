@@ -226,6 +226,63 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
             reader.rollback()
             reader.close()
 
+    def test_build_depth_sees_rows_behind_blocked_checkpoint(self):
+        """建图路径计算 depth 时，checkpoint 被读者挡住也必须看到新行。
+
+        回归：db_build._try_build_depth_rust 曾固定用 immutable=1 加载
+        symbols/calls。PASSIVE checkpoint 被并发读者挡住时（checkpointed < log）
+        immutable 连接会跳过 -wal 读到旧图，把过期 depth 写回 symbols。
+        本用例先证明 checkpoint 确实被挡住，再断言新插入的叶子函数 depth=0。
+        把 wal_aware 改回 False 会稳定复现：immutable 连接遇到未 checkpoint 的
+        WAL 直接报 "database disk image is malformed"，Rust 路径返回 False；
+        若读不到新行而静默返回旧图，则新函数 depth 保持 -1，同样被断言抓住。
+        """
+        # 读者持读事务：锁住当前 WAL 快照点
+        reader = sqlite3.connect(self.db_path)
+        try:
+            reader.execute("BEGIN")
+            reader.execute("SELECT COUNT(*) FROM symbols").fetchone()
+
+            ws_id = self.db._get_active_workspace_id()
+            cur = self.db.conn.execute(
+                "INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash, mtime, status) "
+                "VALUES (?, ?, ?, '', ?, 'active')",
+                (ws_id, "depth_behind_cp.py", "/test/depth_behind_cp.py", 0.0)
+            )
+            fi_id = cur.lastrowid
+            cur = self.db.conn.execute(
+                "INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, qualified_name, start_line, end_line, depth) "
+                "VALUES (?, '', 'depth_behind_cp_func', 'fn', 'module.depth_behind_cp_func', 1, 5, -1)",
+                (fi_id,)
+            )
+            new_id = cur.lastrowid
+            self.db.conn.commit()
+
+            # 前置条件：读者确实挡住了 PASSIVE checkpoint
+            _, log_frames, checkpointed = self.db.conn.execute(
+                "PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+            self.assertLess(
+                checkpointed, log_frames,
+                "前置条件失效：读者没有挡住 PASSIVE checkpoint，"
+                "用例未覆盖 immutable 读丢 WAL 的场景")
+
+            # 直接测 _try_build_depth_rust，避免 Rust 失败降级到 Python SQL
+            # 路径（那条路径天然可见 WAL）把断言变成假绿。
+            self.assertTrue(
+                self.db._try_build_depth_rust(),
+                "Rust depth 路径未生效（降级会掩盖本用例）")
+
+            depth = self.db.conn.execute(
+                "SELECT depth FROM symbols WHERE id = ?", (new_id,)
+            ).fetchone()[0]
+            self.assertEqual(
+                depth, 0,
+                "新插入的叶子函数应被 Rust 计算为 depth=0；"
+                "若为 -1 说明建图时没看到 WAL 中的新行")
+        finally:
+            reader.rollback()
+            reader.close()
+
     def test_graceful_degradation_when_rust_fails(self):
         """Rust 加载失败时降级到 SQL"""
         # 模拟加载失败：临时设为无效路径
