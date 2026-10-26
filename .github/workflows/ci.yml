@@ -652,6 +652,21 @@ jobs:
           cli::router cli::runtime cli::refresh
           daemon::cas_merge daemon::task_prompt::bundle_tests
 
+      - name: Run Rust lib tests (full suite)
+        # 全量 lib 单测此前从未在 CI 执行（三个执行 job 全是 --lib + 模块过滤），
+        # 1962 例只被 rust-compile-gate 的 --no-run 编译。
+        # daemon::server::tests 对「同进程并发」敏感：与其它模块并行时偶发
+        # EPIPE/EOF（本机并行 2/2 复现，串行 100% 通过；根因是测试间 fd 级干扰，
+        # 非产品逻辑），故拆两步——全量并行（跳过该模块）+ 该模块串行。
+        # 两段合并即全量覆盖；不按模块白名单裁剪。
+        run: |
+          cargo test --manifest-path rust_ext/Cargo.toml \
+            --no-default-features --features sqlite-bundled --lib \
+            -- --skip daemon::server::tests
+          cargo test --manifest-path rust_ext/Cargo.toml \
+            --no-default-features --features sqlite-bundled --lib \
+            -- daemon::server::tests --test-threads=1
+
       - name: Run Rust integration tests (rust_ext/tests)
         # T-7（full_stack_review 条件 6）：rust_ext/tests/ 此前只在
         # rust-compile-gate 里 `--no-run` 编译，三个执行 job 全是 `--lib` +
@@ -661,8 +676,8 @@ jobs:
         #   - p1_f_recovery_e2e：kill -9 恢复链（15 例）
         #   - role_prompt_assets_golden：生产资产 sha256 门（4 例）
         #   - role_prompt_e2e / validator positive+negative / test_external_cli
-        # 不用 `--tests`：该选项同时选中 lib target（1905 例，含已知红
-        # bundle_tests，22 分钟），会把本 job 变成全量 lib 重跑。
+        # 不用 `--tests`：该选项会同时选中 lib target（1962 例），与上一 step
+        # 重复执行；这里只用显式 `--test` 精确圈定集成目标。
         # CARGO_BIN_EXE_cw-daemon 由 cargo test 自动注入；sg 包裹让 runner
         # 以 callwarden-clients 为组身份满足 socket chown 要求。
         run: |

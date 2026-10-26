@@ -1530,11 +1530,28 @@ mod tests {
 
         let mut handle = start_server(config, state_factory).unwrap();
 
-        // 等待 server 就绪
-        thread::sleep(Duration::from_millis(100));
+        // 等 socket 就绪：有界轮询替代固定 sleep(100ms)。
+        // 固定睡眠在 cargo 并行执行（默认线程数 = CPU 核数）抢占 CPU 时，
+        // 可能 server 尚未 bind 完成就 connect → ECONNREFUSED 假红。
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !socket_path.exists() {
+            assert!(Instant::now() < deadline, "daemon socket 未在 5 秒内就绪");
+            thread::sleep(Duration::from_millis(10));
+        }
 
-        // 客户端连接并发送 ping
-        let mut client = UnixStream::connect(&socket_path).unwrap();
+        // 客户端连接并发送 ping（bind 到 accept 之间仍有窗口，ConnectionRefused 时短重试）
+        let mut client = loop {
+            match UnixStream::connect(&socket_path) {
+                Ok(c) => break c,
+                Err(e) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "connect 到 daemon socket 失败: {e}"
+                    );
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
         let request = json!({
             "id": 42,
             "method": "ping",
@@ -1702,10 +1719,13 @@ mod tests {
         .unwrap();
         let elapsed = start.elapsed();
 
-        // 单连接处理（含 peercred + recv + dispatch + send）应该在 10ms 以内
+        // 单连接处理（含 peercred + recv + dispatch + send）应远低于 100ms。
+        // 原阈值 10ms 是单机空载的微基准：cargo 默认按 CPU 核数并行跑用例，
+        // 同进程其它用例抢占 CPU 时偶发超过 10ms（实测 module 内 16 例并行即复现）。
+        // 本断言的目的是拦住「同步阻塞 I/O / 意外持久化」这类量级回归，100ms 足够判别。
         assert!(
-            elapsed.as_millis() < 10,
-            "单连接处理延迟 {} 超过 10ms",
+            elapsed.as_millis() < 100,
+            "单连接处理延迟 {} 超过 100ms",
             elapsed.as_millis()
         );
 

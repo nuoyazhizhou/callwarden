@@ -3962,8 +3962,10 @@ impl DaemonStateExt for WorkspaceDaemonState {
         // mount.register RPC：注册容器挂载映射
         // 参数：container_id（必填）、container_path（必填）、host_path（必填）、
         //       mapping_type（可选，默认 "bind"，可选值 bind/volume/smb）
-        // ACL：当前实现不限制 UID（mount mapping 是 admin 级配置，daemon 部署时
-        //       通过 socket 文件权限控制谁能连）。如需 admin-only 校验，可在此添加。
+        // ACL：由 dispatch 层统一裁决——mount.register/list/delete 均在
+        // dispatch::ADMIN_ONLY_METHODS 中（P0-2 整改：mount.list 会暴露宿主机
+        // host_path，且 container_mount_mappings 无 owner_uid 列），非 admin
+        // 在进 handler 前即被 fail-closed 拒绝，故此处不再重复校验。
         let container_id = require_str_param(params, "container_id")?;
         let container_path = require_str_param(params, "container_path")?;
         let host_path = require_str_param(params, "host_path")?;
@@ -4030,6 +4032,16 @@ mod tests {
 
     fn make_peer(uid: u32) -> PeerCredential {
         PeerCredential::new_unix(uid, 1000, 12345)
+    }
+
+    /// admin 身份 peer（uid=0）。
+    ///
+    /// 用于 dispatch::ADMIN_ONLY_METHODS 里的方法（backup/restore、gc.*、
+    /// mount.*、toolchain.* 写操作、snapshot.evict 等）：非 admin 会在
+    /// dispatch 层被 fail-closed 拦成 permission_denied，根本进不到 handler，
+    /// 因此这些 RPC 的用例必须以 admin 身份调用。
+    fn make_admin_peer() -> PeerCredential {
+        make_peer(0)
     }
 
     fn make_state() -> WorkspaceDaemonState {
@@ -8571,7 +8583,7 @@ mod tests {
     fn test_dispatch_mount_register_succeeds() {
         // mount.register RPC 成功注册映射
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let params = json!({
             "container_id": "ubuntu_2204",
             "container_path": "/home/user1",
@@ -8594,7 +8606,7 @@ mod tests {
     fn test_dispatch_mount_register_default_mapping_type_is_bind() {
         // 缺省 mapping_type 时，handler 默认填充 "bind"
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let params = json!({
             "container_id": "c1",
             "container_path": "/app",
@@ -8609,7 +8621,7 @@ mod tests {
     fn test_dispatch_mount_register_rejects_invalid_mapping_type() {
         // mapping_type 非 bind/volume/smb 时返回 invalid_params 错误
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let params = json!({
             "container_id": "c1",
             "container_path": "/app",
@@ -8625,7 +8637,7 @@ mod tests {
     fn test_dispatch_mount_register_requires_container_id() {
         // 缺少 container_id 时返回 invalid_params
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let params = json!({
             "container_path": "/app",
             "host_path": "/h1"
@@ -8639,7 +8651,7 @@ mod tests {
     fn test_dispatch_mount_list_returns_empty_initially() {
         // 初始状态下 mount.list 返回空数组
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
         assert!(resp["ok"].as_bool().unwrap_or(false));
         assert!(resp["result"].as_array().unwrap().is_empty());
@@ -8649,7 +8661,7 @@ mod tests {
     fn test_dispatch_mount_list_returns_all_without_filter() {
         // 注册 3 条后，mount.list 无 filter 返回全部
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         for (cid, cpath, hpath, mtype) in [
             ("c1", "/app", "/h1", "bind"),
             ("c2", "/app", "/h2", "bind"),
@@ -8672,7 +8684,7 @@ mod tests {
     fn test_dispatch_mount_list_filters_by_container_id() {
         // mount.list 带 container_id 过滤
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         for (cid, cpath, hpath) in [
             ("c1", "/app", "/h1"),
             ("c2", "/app", "/h2"),
@@ -8704,7 +8716,7 @@ mod tests {
     fn test_dispatch_mount_delete_removes_mapping() {
         // mount.delete 删除存在的映射，返回 deleted=1
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         // 先注册一条
         let _ = dispatch(
             &mut state,
@@ -8736,7 +8748,7 @@ mod tests {
     fn test_dispatch_mount_delete_returns_zero_for_missing() {
         // mount.delete 不存在的映射，返回 deleted=0（不报错）
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let resp = dispatch(
             &mut state,
             peer,
@@ -8752,7 +8764,7 @@ mod tests {
     fn test_dispatch_mount_delete_requires_container_id() {
         // 缺少 container_id 时返回 invalid_params
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let resp = dispatch(
             &mut state,
             peer,
@@ -8768,7 +8780,7 @@ mod tests {
     fn test_dispatch_mount_register_then_upsert() {
         // 同一 (container_id, container_path) 二次注册应替换而非新增
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_admin_peer();
         let params_v1 = json!({
             "container_id": "c1",
             "container_path": "/app",

@@ -5044,7 +5044,12 @@ mod tests {
     /// axum::serve 的 accept loop），返回绑定地址。使用测试运行时可避免独立 runtime
     /// 中 axum::serve 内部 tokio::spawn 的 accept loop 不被驱动、请求无响应的问题。
     async fn spawn_server() -> SocketAddr {
-        let dir = tempfile::tempdir().unwrap();
+        // tempdir 必须活得比 server 久：dedup DB 与 http manifest 都落在它下面。
+        // 原先 `let dir = tempfile::tempdir()` 是函数局部量，spawn_server 返回时
+        // 即被 Drop → 目录删除 → SQLite 无法创建 -wal/-journal，写请求返回
+        // `attempt to write a readonly database`（去重/异步 refresh 3 个用例因此
+        // 假红，且只在真正执行时才暴露）。测试进程内泄漏一个临时目录可接受。
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
         let manifest = dir.path().join("http-manifest.json");
         let cfg = HttpServerConfig::new("127.0.0.1:0".into(), manifest);
         let bound = bind_http(&cfg).unwrap();
