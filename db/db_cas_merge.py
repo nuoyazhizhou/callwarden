@@ -200,12 +200,12 @@ def _replace_symbols_and_calls(
     if old_sym_ids:
         placeholders = ",".join("?" * len(old_sym_ids))
         codegraph_conn.execute(
-            f"DELETE FROM calls WHERE caller_id IN ({placeholders})",
+            f"DELETE FROM calls WHERE caller_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
             old_sym_ids,
         )
         # 旧 symbols 即将被删除，指向它们的入边需置 0 避免悬空引用
         codegraph_conn.execute(
-            f"UPDATE calls SET callee_id = 0 WHERE callee_id IN ({placeholders})",
+            f"UPDATE calls SET callee_id = 0 WHERE callee_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
             old_sym_ids,
         )
 

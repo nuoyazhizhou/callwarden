@@ -34,6 +34,9 @@ dependencies = [
     # `all` extra 与专用 `semgrep` extra（Linux 侧按需安装）；安全门禁 job 由
     # ci.yml:377-378 在 Linux 显式安装，不受影响。
     "tomli>=2.0.0; python_version < '3.11'",
+    # T-6/GAP-SEC-02（2026-10-26）：db/ 的 JUnit/coverage/pom/csproj XML 解析
+    # 统一改用 defusedxml，阻断 XML 实体膨胀/外部实体攻击（B314）。
+    "defusedxml>=0.7",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -249,9 +252,11 @@ select = [
 # ============================================================
 # 覆盖率门禁（任务5①，2026-10-13）
 # ============================================================
-# 采集范围与安全门禁（.github/workflows/ci.yml security job 的 bandit）保持
-# 同一「核心生产面」：cli/（84 命令入口）+ server/（MCP 243 工具 + daemon
-# client + autostart）+ 根入口 cw.py/config.py。
+# 采集范围为「核心生产面」：cli/（84 命令入口）+ server/（MCP 243 工具 +
+# daemon client + autostart）+ 根入口 cw.py/config.py。
+# 注：安全门禁（ci.yml 的 bandit）自 T-6/GAP-SEC-02 起额外覆盖 db/（生产
+# SQL/XML 层）与 scripts/；覆盖率分母仍不含这两处（db/ 为待下线的 Python
+# 存储层，scripts/ 为运维脚本）。
 # 不取 "callwarden" 整包的原因：仓库根本身即 callwarden 包
 # （package-dir = { "callwarden" = "." }，从父目录挂载为 callwarden），
 # source 写 "callwarden" 会把整个仓库根（tests/、deliverables/、scripts/、

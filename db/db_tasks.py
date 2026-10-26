@@ -3123,7 +3123,7 @@ class TaskMixin:
                 WHERE t.status = ?
                 {order_clause}
                 LIMIT ?
-                """,
+                """,  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
                 (status_filter, limit),
             )
         else:
@@ -3135,7 +3135,7 @@ class TaskMixin:
                 FROM tasks t
                 {order_clause}
                 LIMIT ?
-                """,
+                """,  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
                 (limit,),
             )
 

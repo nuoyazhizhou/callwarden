@@ -1110,7 +1110,7 @@ class BuildMixin:
         Returns:
             注册的子仓库数量（已存在的跳过）
         """
-        import xml.etree.ElementTree as ET
+        import defusedxml.ElementTree as ET
 
         repo_dir = os.path.join(self.workspace_root, ".repo")
         if not os.path.isdir(repo_dir):
@@ -2678,7 +2678,7 @@ class BuildMixin:
                 placeholders = ",".join("?" * len(chunk))
                 self.conn.execute(
                     f"DELETE FROM calls WHERE caller_id IN ("
-                    f"SELECT id FROM symbols WHERE file_instance_id IN ({placeholders}))",
+                    f"SELECT id FROM symbols WHERE file_instance_id IN ({placeholders}))",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                     chunk,
                 )
         if calls_to_insert:

@@ -14,7 +14,7 @@ db_coverage.py
 from __future__ import annotations
 
 import time
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from typing import Any, Dict, List, Optional, Set
 
 from ..analyzers.coverage import CoverageMixin as _AnalyzerCoverageMixin
@@ -529,7 +529,7 @@ class CoverageMixin(_AnalyzerCoverageMixin):
                 WHERE fi.workspace_id = ?
                   AND c.callee_id > 0
                   AND c.callee_id IN ({placeholders})
-                """,
+                """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 [ws_id] + current_batch,
             )
 

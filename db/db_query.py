@@ -278,7 +278,7 @@ class QueryMixin:
                                 SELECT s.*, fi.rel_path, fi.abs_path
                                 FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id
                                 WHERE fi.workspace_id = ? AND s.qualified_name IN ({placeholders})
-                            """
+                            """  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                             cur = self.conn.execute(sql, [ws_id] + qnames)
                             by_qname = {row["qualified_name"]: dict(row) for row in cur}
                             res = [by_qname[qn] for qn in qnames if qn in by_qname]
@@ -734,7 +734,7 @@ class QueryMixin:
                           AND s.id IN ({placeholders})
                         ORDER BY s.kind, s.depth DESC, fi.rel_path, s.start_line
                         LIMIT ?
-                    """
+                    """  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                     params = [ws_id] + ids + [limit]
                     cur = self.conn.execute(sql, params)
                     return [dict(row) for row in cur]

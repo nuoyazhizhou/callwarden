@@ -1201,7 +1201,7 @@ class TaskEvidenceMixin:
             cur = self.conn.execute(
                 "SELECT id FROM evidence_retention_config "
                 "WHERE scope = ? AND "
-                + ("workspace_id = ?" if workspace_id is not None else "workspace_id IS NULL"),
+                + ("workspace_id = ?" if workspace_id is not None else "workspace_id IS NULL"),  # nosec B608 - SQL 片段仅由代码内常量构成，值全部参数化
                 (scope, workspace_id) if workspace_id is not None else (scope,),
             )
             existing = cur.fetchone()

@@ -12,7 +12,8 @@ os.chdir(REPO)
 
 
 def run(cmd):
-    return subprocess.check_output(cmd, shell=True, text=True)
+    # 参数一律以 list 传入（B602）：禁止 shell=True 的字符串拼接执行
+    return subprocess.check_output(cmd, shell=False, text=True)
 
 
 def detect_nl(data: bytes) -> bytes:

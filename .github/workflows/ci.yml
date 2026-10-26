@@ -485,15 +485,17 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
 
       # --- SAST: bandit（Python 静态分析，medium+ 阻断）---
-      # 范围先限核心生产面：cli/（CLI 84 命令入口）+ server/（MCP 243 工具 +
-      # daemon client + autostart）+ 根入口 cw.py/config.py。仓库根本身即
-      # `callwarden` 包（pyproject package-dir={"callwarden"="."}），全扫会连带
-      # tests/archive/experiments 等非生产目录产生既有发现而立即阻断所有 PR；
-      # 待基线豁免（.bandit 或 --baseline）建立后再扩面到全仓。
+      # 范围覆盖核心生产面与生产 SQL/XML 层：cli/（CLI 84 命令入口）+
+      # server/（MCP 243 工具 + daemon client + autostart）+ 根入口
+      # cw.py/config.py + db/（生产 SQL 层）+ scripts/（运维脚本）。
+      # T-6/GAP-SEC-02（2026-10-26）：db/ 与 scripts/ 原有 68 条 medium+ 已
+      # 逐条处置——B314×7 改用 defusedxml、B602×1 改 shell=False、B324×1 加
+      # usedforsecurity=False、B608×59 逐行 `# nosec B608` 登记理由（均为
+      # ? 占位符或代码内常量片段）。新增未登记 finding 立即阻断。
       - name: Install bandit
         run: pip install bandit[toml]
       - name: Run bandit (medium+ blocks)
-        run: bandit -r cli server cw.py config.py -ll
+        run: bandit -r cli server db scripts cw.py config.py -ll
 
       # --- SAST: semgrep（secrets + ci 规则集，error 级阻断）---
       # Windows runner 装不了 semgrep（见 e2e-verify-windows-amd64.yml），

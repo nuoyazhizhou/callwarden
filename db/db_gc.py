@@ -201,7 +201,7 @@ class GCMixin:
                     chunk = fi_ids[i:i + batch_size]
                     placeholders = ",".join("?" * len(chunk))
                     cur = self.conn.execute(
-                        f"SELECT file_instance_id FROM archived_files WHERE file_instance_id IN ({placeholders})",
+                        f"SELECT file_instance_id FROM archived_files WHERE file_instance_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         chunk,
                     )
                     for r in cur.fetchall():
@@ -220,7 +220,7 @@ class GCMixin:
                     cur = self.conn.execute(
                         f"""SELECT file_instance_id, COUNT(*) as c
                             FROM symbols WHERE file_instance_id IN ({placeholders})
-                            GROUP BY file_instance_id""",
+                            GROUP BY file_instance_id""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         chunk,
                     )
                     for r in cur.fetchall():
@@ -231,7 +231,7 @@ class GCMixin:
                             FROM calls c
                             JOIN symbols s ON c.caller_id = s.id
                             WHERE s.file_instance_id IN ({placeholders})
-                            GROUP BY s.file_instance_id""",
+                            GROUP BY s.file_instance_id""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         chunk,
                     )
                     for r in cur.fetchall():
@@ -294,7 +294,7 @@ class GCMixin:
                     chunk = archive_fi_ids[i:i + batch_size]
                     placeholders = ",".join("?" * len(chunk))
                     self.conn.execute(
-                        f"UPDATE file_instances SET status = 'archived' WHERE id IN ({placeholders})",
+                        f"UPDATE file_instances SET status = 'archived' WHERE id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         chunk,
                     )
                 # 批量 UPDATE pending → active
@@ -302,7 +302,7 @@ class GCMixin:
                     chunk = active_fi_ids[i:i + batch_size]
                     placeholders = ",".join("?" * len(chunk))
                     self.conn.execute(
-                        f"UPDATE file_instances SET status = 'active' WHERE id IN ({placeholders})",
+                        f"UPDATE file_instances SET status = 'active' WHERE id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         chunk,
                     )
                 # 删除关联数据（_delete_file_associated_data 涉及多表 DELETE，保留逐个调用）
@@ -451,7 +451,7 @@ class GCMixin:
             cur = self.conn.execute(
                 f"""SELECT af.* FROM archived_files af
                     JOIN file_instances fi ON af.file_instance_id = fi.id
-                    WHERE af.workspace_id = ? AND af.rel_path IN ({placeholders})""",
+                    WHERE af.workspace_id = ? AND af.rel_path IN ({placeholders})""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 [ws_id] + rel_paths,
             )
         else:
@@ -617,11 +617,11 @@ class GCMixin:
 
             # 归档时已删除关联数据，这里只需删 file_instances 和 archived_files 记录
             self.conn.execute(
-                f"DELETE FROM archived_files WHERE file_instance_id IN ({placeholders})",
+                f"DELETE FROM archived_files WHERE file_instance_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 fi_ids,
             )
             self.conn.execute(
-                f"DELETE FROM file_instances WHERE id IN ({placeholders})",
+                f"DELETE FROM file_instances WHERE id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 fi_ids,
             )
 
@@ -750,17 +750,17 @@ class GCMixin:
                 if version_ids:
                     placeholders = ",".join("?" for _ in version_ids)
                     cur = self.conn.execute(
-                        f"DELETE FROM call_versions WHERE file_version_id IN ({placeholders})",
+                        f"DELETE FROM call_versions WHERE file_version_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         version_ids,
                     )
                     deleted_call_versions = cur.rowcount if cur.rowcount is not None else 0
                     cur = self.conn.execute(
-                        f"DELETE FROM file_symbol_versions WHERE file_version_id IN ({placeholders})",
+                        f"DELETE FROM file_symbol_versions WHERE file_version_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         version_ids,
                     )
                     deleted_file_symbols = cur.rowcount if cur.rowcount is not None else 0
                     cur = self.conn.execute(
-                        f"DELETE FROM file_versions WHERE id IN ({placeholders})",
+                        f"DELETE FROM file_versions WHERE id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                         version_ids,
                     )
                     deleted_versions = cur.rowcount if cur.rowcount is not None else 0
@@ -1053,12 +1053,12 @@ class GCMixin:
         if version_ids:
             placeholders = ",".join("?" for _ in version_ids)
             cur = self.conn.execute(
-                f"SELECT COUNT(*) as c FROM file_symbol_versions WHERE file_version_id IN ({placeholders})",
+                f"SELECT COUNT(*) as c FROM file_symbol_versions WHERE file_version_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 version_ids,
             )
             approx["file_symbol_versions"] = cur.fetchone()["c"]
             cur = self.conn.execute(
-                f"SELECT COUNT(*) as c FROM call_versions WHERE file_version_id IN ({placeholders})",
+                f"SELECT COUNT(*) as c FROM call_versions WHERE file_version_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 version_ids,
             )
             approx["call_versions"] = cur.fetchone()["c"]
@@ -1066,7 +1066,7 @@ class GCMixin:
             pkg_names = [p["package_name"] for p in external_packages]
             placeholders = ",".join("?" for _ in pkg_names)
             cur = self.conn.execute(
-                f"SELECT COUNT(*) as c FROM external_symbols WHERE package_name IN ({placeholders})",
+                f"SELECT COUNT(*) as c FROM external_symbols WHERE package_name IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 pkg_names,
             )
             approx["external_symbols"] = cur.fetchone()["c"]
@@ -1087,7 +1087,7 @@ class GCMixin:
                 GROUP BY fi.rel_path
                 ORDER BY candidate_versions DESC
                 LIMIT ?
-                """,
+                """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 (*version_ids, top_n),
             )
             for row in cur.fetchall():
@@ -1119,7 +1119,7 @@ class GCMixin:
                 GROUP BY es.package_name, pv.package_version
                 ORDER BY symbol_count DESC
                 LIMIT ?
-                """,
+                """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 (*pkg_names, top_n),
             )
             for row in cur.fetchall():
@@ -1489,7 +1489,7 @@ class GCMixin:
                 tables: List[Dict[str, Any]] = []
                 for tn in table_names:
                     try:
-                        cnt = con.execute(f"SELECT COUNT(*) FROM '{tn}'").fetchone()[0]
+                        cnt = con.execute(f"SELECT COUNT(*) FROM '{tn}'").fetchone()[0]  # nosec B608 - 表名来自 sqlite_master 内部 schema，非外部输入
                     except sqlite3.DatabaseError:
                         cnt = -1
                     tables.append({"name": tn, "rows": cnt})

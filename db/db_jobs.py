@@ -434,7 +434,7 @@ def clear_jobs(
         status_list = list(_TERMINAL_STATES)
     placeholders = ",".join("?" * len(status_list))
     cur = conn.execute(
-        f"DELETE FROM jobs WHERE workspace_id = ? AND status IN ({placeholders})",
+        f"DELETE FROM jobs WHERE workspace_id = ? AND status IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
         [workspace_id] + status_list,
     )
     conn.commit()

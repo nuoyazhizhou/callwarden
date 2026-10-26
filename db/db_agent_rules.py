@@ -1042,7 +1042,7 @@ class AgentRulesMixin:
             placeholders = ",".join("?" * len(rule_ids))
             self.conn.execute(
                 f"UPDATE agent_rules SET synced_to_agents_md = 1, "
-                f"sync_hash = ? WHERE id IN ({placeholders})",
+                f"sync_hash = ? WHERE id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 [after_hash] + rule_ids,
             )
 
@@ -1536,14 +1536,14 @@ class AgentRulesMixin:
             if dry_run:
                 # 预演：用 SELECT COUNT 估算将删除的记录数
                 count_row = self.conn.execute(
-                    f"SELECT COUNT(*) FROM agent_rule_sync_log {sql_where}",
+                    f"SELECT COUNT(*) FROM agent_rule_sync_log {sql_where}",  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
                     params,
                 ).fetchone()
                 deleted = count_row[0] if count_row else 0
             else:
                 # 执行删除
                 cur = self.conn.execute(
-                    f"DELETE FROM agent_rule_sync_log {sql_where}",
+                    f"DELETE FROM agent_rule_sync_log {sql_where}",  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
                     params,
                 )
                 deleted = cur.rowcount

@@ -733,7 +733,7 @@ class BootstrapMixin:
             try:
                 cur = self.conn.execute(
                     f"SELECT rel_path, current_content_hash FROM file_instances "
-                    f"WHERE workspace_id = ? AND rel_path IN ({placeholders})",
+                    f"WHERE workspace_id = ? AND rel_path IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                     [ws_id] + chunk,
                 )
                 for row in cur:

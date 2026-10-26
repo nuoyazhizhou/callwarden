@@ -136,7 +136,7 @@ class TestRelationMixin:
             cur = self.conn.execute(
                 f"""SELECT DISTINCT c.caller_id, c.callee_id
                     FROM calls c
-                    WHERE c.caller_id IN ({placeholders}) AND c.callee_id > 0""",
+                    WHERE c.caller_id IN ({placeholders}) AND c.callee_id > 0""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 chunk,
             )
             for r in cur:
@@ -167,7 +167,7 @@ class TestRelationMixin:
                     JOIN symbols s ON c.caller_id = s.id
                     JOIN file_instances fi ON s.file_instance_id = fi.id
                     WHERE fi.workspace_id = ? AND c.callee_id IN ({placeholders})
-                      AND s.kind IN ('fn', 'method', 'function')""",
+                      AND s.kind IN ('fn', 'method', 'function')""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 [ws_id] + chunk,
             )
             for r in cur:
@@ -343,7 +343,7 @@ class TestRelationMixin:
                               "evidence_appended": bool, "binding": "fresh"/"historical_unbound"}
         """
         import os
-        import xml.etree.ElementTree as ET
+        import defusedxml.ElementTree as ET
 
         ws_id = self._get_active_workspace_id()
         now = time.time()

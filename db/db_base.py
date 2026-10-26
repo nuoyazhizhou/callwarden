@@ -2890,7 +2890,7 @@ def _migrate_v47_to_v48(conn: sqlite3.Connection):
     # 明确不将旧数据归入当前 workspace（无可靠归属依据），也不删除数据（可审计）。
     conn.execute(
         f"UPDATE guardrail_findings SET status = '{GUARDRAIL_STATUS_ORPHANED}' "
-        "WHERE workspace_id = 0 AND status = 'open'"
+        "WHERE workspace_id = 0 AND status = 'open'"  # nosec B608 - SQL 片段仅由代码内常量构成，值全部参数化
     )
 
     try:
@@ -2942,7 +2942,7 @@ def _migrate_v48_to_v49(conn: sqlite3.Connection):
     )
     conn.execute(
         f"UPDATE guardrail_findings SET status = '{GUARDRAIL_STATUS_ORPHANED}' "
-        "WHERE workspace_id = 0 AND status = 'open'"
+        "WHERE workspace_id = 0 AND status = 'open'"  # nosec B608 - SQL 片段仅由代码内常量构成，值全部参数化
     )
 
     try:

@@ -177,7 +177,7 @@ class TokenSavingsMixin:
                 COUNT(*) as total_operations,
                 COALESCE(AVG(savings_pct), 0) as avg_savings_pct
             FROM token_savings_ledger{where_sql}
-            """,
+            """,  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
             params,
         )
         row = cur.fetchone()
@@ -193,7 +193,7 @@ class TokenSavingsMixin:
             FROM token_savings_ledger{where_sql}
             GROUP BY operation
             ORDER BY total_saved DESC
-            """ + (" AND operation = ?" if operation_filter and not where_clauses else ""),
+            """ + (" AND operation = ?" if operation_filter and not where_clauses else ""),  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
             params if not operation_filter else (params + [operation_filter]) if operation_filter and not where_clauses else params,
         )
         # 简化分组查询（避免 WHERE 子句重复）
@@ -208,7 +208,7 @@ class TokenSavingsMixin:
             FROM token_savings_ledger{where_sql}
             GROUP BY operation
             ORDER BY total_saved DESC
-            """,
+            """,  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
             params,
         )
 

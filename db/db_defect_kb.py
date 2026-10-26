@@ -273,7 +273,7 @@ class DefectKbMixin:
             chunk = symbol_hashes[i:i + batch_size]
             placeholders = ",".join("?" * len(chunk))
             cur = self.conn.execute(
-                f"SELECT content_hash, qualified_name FROM symbol_contents WHERE content_hash IN ({placeholders})",
+                f"SELECT content_hash, qualified_name FROM symbol_contents WHERE content_hash IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 chunk,
             )
             for r in cur.fetchall():
@@ -288,7 +288,7 @@ class DefectKbMixin:
             placeholders = ",".join("?" * len(chunk))
             cur = self.conn.execute(
                 f"""SELECT id, rule_id, snippet, fix, content_hash, symbol_qualified
-                    FROM semgrep_findings WHERE symbol_qualified IN ({placeholders})""",
+                    FROM semgrep_findings WHERE symbol_qualified IN ({placeholders})""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 chunk,
             )
             for f in cur.fetchall():
@@ -301,7 +301,7 @@ class DefectKbMixin:
             placeholders = ",".join("?" * len(chunk))
             cur = self.conn.execute(
                 f"""SELECT id, rule_id, snippet, fix, content_hash
-                    FROM semgrep_findings WHERE content_hash IN ({placeholders})""",
+                    FROM semgrep_findings WHERE content_hash IN ({placeholders})""",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 chunk,
             )
             for f in cur.fetchall():
@@ -359,7 +359,7 @@ class DefectKbMixin:
                 for k in chunk:
                     params.extend(k)
                 cur = self.conn.execute(
-                    f"SELECT pattern_id, symbol_hash, before_hash, after_hash FROM defect_fixes WHERE {or_clauses}",
+                    f"SELECT pattern_id, symbol_hash, before_hash, after_hash FROM defect_fixes WHERE {or_clauses}",  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
                     params,
                 )
                 for r in cur.fetchall():

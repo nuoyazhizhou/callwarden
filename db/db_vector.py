@@ -557,7 +557,7 @@ class VectorMixin:
             WHERE fi.workspace_id = ?
               AND s.symbol_hash IN ({placeholders})
             GROUP BY s.symbol_hash
-        """
+        """  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
         cur = self.conn.execute(sql, [ws_id] + [h for h, _ in top])
         info_map: Dict[str, Dict[str, Any]] = {}
         for row in cur:
@@ -675,7 +675,7 @@ class VectorMixin:
             WHERE fi.workspace_id = ?
               AND s.symbol_hash IN ({placeholders})
             GROUP BY s.symbol_hash
-        """
+        """  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
         cur = self.conn.execute(sql, [ws_id] + [h for h, _ in top])
         info_map: Dict[str, Dict[str, Any]] = {}
         for row in cur:

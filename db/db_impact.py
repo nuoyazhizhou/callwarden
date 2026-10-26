@@ -371,7 +371,7 @@ class ImpactMixin:
                     SELECT s.id, s.symbol_hash, s.visibility
                     FROM symbols s
                     WHERE s.id IN ({placeholders})
-                    """,
+                    """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                     other_ids,
                 )
                 for r in cur2:
@@ -502,7 +502,7 @@ class ImpactMixin:
                 WHERE fi.workspace_id = ?
                   AND c.callee_id > 0
                   AND c.callee_id IN ({placeholders})
-                """,
+                """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 [ws_id] + current_batch,
             )
             next_batch: List[int] = []

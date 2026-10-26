@@ -389,7 +389,7 @@ class CloneDetectionMixin:
               AND (s.end_line - s.start_line + 1) >= ?
               {filter_clause}
             ORDER BY s.id
-            """,
+            """,  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
             sql_params,
         )
 
@@ -790,7 +790,7 @@ class CloneDetectionMixin:
               AND s.kind IN ('fn', 'function', 'method', 'test_fn')
               AND (s.end_line - s.start_line + 1) >= ?
             ORDER BY s.id
-            """,
+            """,  # nosec B608 - SQL 片段仅由代码内常量构成，值全部参数化
             sql_params,
         )
 
@@ -1085,7 +1085,7 @@ class CloneDetectionMixin:
             WHERE {" AND ".join(where)}
             ORDER BY cp.similarity DESC, cp.detected_at DESC
             LIMIT ?
-            """,
+            """,  # nosec B608 - SQL 片段仅由代码内常量构成，值全部参数化
             params,
         )
         return [dict(row) for row in cur]

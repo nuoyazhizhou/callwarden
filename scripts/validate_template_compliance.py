@@ -416,7 +416,8 @@ def check_prompt_source_discipline(path: Path, text: str) -> list[Violation]:
 
 
 def git_blob_hash(data: bytes) -> str:
-    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    # 按 git 对象格式计算 blob id，SHA-1 是协议要求而非安全用途（B324）
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
 
 def check_archive_blobs(readme_path: Path, archive_dir: Path) -> list[Violation]:

@@ -402,7 +402,7 @@ class EvolutionMixin:
                     FROM semgrep_findings
                     WHERE file_instance_id = ?
                       AND content_hash IN ({placeholders})
-                    """,
+                    """,  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                     [file_instance_id] + window_hashes,
                 )
                 for frow in cur:

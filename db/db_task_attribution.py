@@ -350,7 +350,7 @@ class TaskAttributionMixin:
             params.append(qualified_name)
         if not clauses:
             return []
-        sql = "SELECT * FROM task_symbol_changes WHERE " + " AND ".join(clauses)
+        sql = "SELECT * FROM task_symbol_changes WHERE " + " AND ".join(clauses)  # nosec B608 - 条件/排序片段仅由代码内常量拼成，值全部参数化
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(limit)
         cur = self.conn.execute(sql, params)

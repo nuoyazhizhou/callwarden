@@ -260,7 +260,7 @@ def query_symbol_hashes(
         placeholders = ",".join("?" * len(batch))
         sql = (
             f"SELECT qualified_name, symbol_hash FROM symbols "
-            f"WHERE qualified_name IN ({placeholders})"
+            f"WHERE qualified_name IN ({placeholders})"  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
         )
         params: list = list(batch)
         if workspace_id is not None:

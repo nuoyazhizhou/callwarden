@@ -278,7 +278,7 @@ class ExternalMixin:
         )
         self.conn.execute(
             f"UPDATE package_versions SET {field} = ?, import_source = COALESCE(NULLIF(import_source, ''), ?) "
-            "WHERE package_name = ? AND package_version = ?",
+            "WHERE package_name = ? AND package_version = ?",  # nosec B608 - field 已白名单校验（last_seen_at/last_used_at），值全部参数化
             (now, import_source, package_name, pkg_ver),
         )
 
@@ -689,7 +689,7 @@ class ExternalMixin:
                         chunk = pending[i:i + batch_size]
                         placeholders = ",".join("?" * len(chunk))
                         cur = self.conn.execute(
-                            f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                            f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                             [item["qualified_name"] for item in chunk],
                         )
                         for row in cur.fetchall():
@@ -912,7 +912,7 @@ class ExternalMixin:
             chunk = candidates[i:i + batch_size]
             placeholders = ",".join("?" * len(chunk))
             cur = self.conn.execute(
-                f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 [c[0] for c in chunk],
             )
             for row in cur.fetchall():
@@ -1512,7 +1512,7 @@ class ExternalMixin:
                 chunk = pending[i:i + batch_size]
                 placeholders = ",".join("?" * len(chunk))
                 cur = self.conn.execute(
-                    f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                    f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                     [item["qualified_name"] for item in chunk],
                 )
                 for row in cur.fetchall():
@@ -1611,7 +1611,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            import xml.etree.ElementTree as ET
+            import defusedxml.ElementTree as ET
 
             # 忽略 maven 命名空间前缀
             content = read_file_text(path)
@@ -1979,7 +1979,7 @@ class ExternalMixin:
         settings_path = os.path.join(m2_dir, "settings.xml")
         if os.path.isfile(settings_path):
             try:
-                import xml.etree.ElementTree as ET
+                import defusedxml.ElementTree as ET
 
                 content = read_file_text(settings_path)
                 # 去除命名空间
@@ -2087,7 +2087,7 @@ class ExternalMixin:
             if not os.path.isfile(config_path):
                 continue
             try:
-                import xml.etree.ElementTree as ET
+                import defusedxml.ElementTree as ET
 
                 content = read_file_text(config_path)
                 content_no_ns = re.sub(
@@ -2241,7 +2241,7 @@ class ExternalMixin:
                             chunk = pending[i:i + batch_size]
                             placeholders = ",".join("?" * len(chunk))
                             cur = self.conn.execute(
-                                f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                                f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                                 [item["qualified_name"] for item in chunk],
                             )
                             for row in cur.fetchall():
@@ -2886,7 +2886,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            import xml.etree.ElementTree as ET
+            import defusedxml.ElementTree as ET
 
             content = read_file_text(path)
             # 去除命名空间
@@ -3455,12 +3455,12 @@ class ExternalMixin:
         elif keep_project_deps:
             placeholders = ",".join("?" for _ in keep)
             cur = self.conn.execute(
-                f"DELETE FROM external_symbols WHERE lower(package_name) NOT IN ({placeholders})",
+                f"DELETE FROM external_symbols WHERE lower(package_name) NOT IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 tuple(keep),
             )
             deleted += cur.rowcount if cur.rowcount is not None else 0
             self.conn.execute(
-                f"DELETE FROM package_versions WHERE lower(package_name) NOT IN ({placeholders})",
+                f"DELETE FROM package_versions WHERE lower(package_name) NOT IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 tuple(keep),
             )
 
