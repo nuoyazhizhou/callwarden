@@ -20,7 +20,7 @@
         "migrate 退役：删除 server/migrate.py 与 db/db_migrate.py、移除 cw gc db-migrate-single 子命令/dispatch/handler/cli_admin.migrate_single_db，pyinstaller hiddenimport 同步移除，文档改手工 sqlite ATTACH 指引",
         "MASKING 自检：tests/test_srv_019.py::test_authority_masking_guard（注入 sqlite3.connect 后 rc=1、finding_count=2）；退役守卫：test_authority_migrate_command_retired",
         "CI 复测（关闭前）：run 40239694327（ceef53c）14/14 job success，Known-red quarantine 实跑 KR-A 四例全部通过（quarantine job 首次转绿）",
-        "关闭后回归：status=closed 后四用例移出 deselect、回归主 test job；关闭提交后的 CI run 五版本全绿为最终验收"
+        "关闭后回归：run 40254981065（6ff640b）14/14 job success——主 test job Python 3.10–3.14 全部绿（四用例已移出 deselect 回归主门禁），quarantine job 日志实证 `no open known-red test entries` + 注册表校验 `open test 0 条 / closed 3 条`"
       ],
       "registered_date": "2026-10-23",
       "expiry_date": "2026-11-23",
