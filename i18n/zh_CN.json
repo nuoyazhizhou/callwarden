@@ -1242,6 +1242,7 @@
             "empty_value": "空",
             "edit_diff_summary": "新增 {added} 行 / 删除 {removed} 行",
             "edit_invalid_operation": "非法操作类型: {operation}（合法值: edit/create/delete）",
+            "edit_path_out_of_workspace": "路径越出 workspace 根目录，已拒绝写入: {path}",
             "edit_hash_mismatch": "文件 hash 不匹配，疑似并发修改，已拒绝写入",
             "edit_write_failed": "文件写入失败: {error_type}",
             "edit_audit_not_found": "审计记录不存在: id={audit_id}",

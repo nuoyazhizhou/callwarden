@@ -198,7 +198,34 @@ def test_propose_edit_malicious():
     assert result.get("status") in ("failed", "error"), (
         f"空 file_path 应返回 failed/error，实际: {result.get('status')}"
     )
-    print(f"PASS: 空 file_path 返回 status={result.get('status')}（不崩溃）")
+
+    # 测试 4：相对路径遍历（GAP-SEC-01 回归锚点）
+    escape_rel = os.path.join(tmpdir, "..", "escape_rel.txt")
+    result = db.propose_edit(
+        file_path=os.path.join("..", "escape_rel.txt"),
+        new_content="pwn",
+        operation="create",
+    )
+    assert result.get("status") == "failed", (
+        f"workspace 外相对路径应被拒绝，实际: {result.get('status')}"
+    )
+    assert result.get("error", "").strip(), "越界写入必须给出拒绝原因"
+    assert not os.path.exists(escape_rel), f"越界写入实际落盘: {escape_rel}"
+    print(f"PASS: 相对穿越 status={result.get('status')}（未落盘 {escape_rel}）")
+
+    # 测试 5：workspace 外绝对路径
+    outside_dir = tempfile.mkdtemp()
+    escape_abs = os.path.join(outside_dir, "escape_abs.txt")
+    result = db.propose_edit(
+        file_path=escape_abs,
+        new_content="pwn",
+        operation="create",
+    )
+    assert result.get("status") == "failed", (
+        f"workspace 外绝对路径应被拒绝，实际: {result.get('status')}"
+    )
+    assert not os.path.exists(escape_abs), f"越界写入实际落盘: {escape_abs}"
+    print(f"PASS: 绝对路径越界 status={result.get('status')}（未落盘 {escape_abs}）")
 
     print("PASS: propose_edit 恶意输入测试完成\n")
 

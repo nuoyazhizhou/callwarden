@@ -121,8 +121,9 @@ def test_f5_safe_edit():
 
     tmpdir = tempfile.mkdtemp()
     db_path = os.path.join(tmpdir, "test.db")
-    db = CodeGraphDB(db_path)
-    db.register_workspace("test-ws", os.getcwd())
+    # 写路径必须落在 workspace_root 内（GAP-SEC-01），故 workspace 指向 tmpdir
+    db = CodeGraphDB(db_path, workspace_root=tmpdir)
+    db.register_workspace("test-ws", tmpdir)
 
     # 创建测试文件
     test_file = os.path.join(tmpdir, "test_edit.txt")

@@ -125,6 +125,21 @@ class EditSafetyMixin:
             return norm_path(file_path)
         return norm_path(os.path.join(self.workspace_root, file_path))
 
+    def _is_within_workspace(self, abs_path: str) -> bool:
+        """判断解析后的绝对路径是否仍在 workspace_root 之内
+
+        realpath 后再比对，同时覆盖 `..` 相对穿越、workspace 外绝对路径与
+        符号链接穿越；commonpath 在跨盘符（Windows）时抛 ValueError ⇒ 判越界。
+        """
+        root = os.path.realpath(self.workspace_root)
+        target = os.path.realpath(abs_path)
+        try:
+            common = os.path.commonpath([root, target])
+        except ValueError:
+            return False
+        # Windows 下 commonpath 返回混合分隔符，normcase 统一大小写与分隔符再比对
+        return os.path.normcase(common) == os.path.normcase(root)
+
     def _resolve_rel_path(self, file_path: str) -> str:
         """将文件路径解析为相对 workspace_root 的路径（用于审计记录）"""
         abs_path = self._resolve_abs_path(file_path)
@@ -225,6 +240,23 @@ class EditSafetyMixin:
 
         # 解析路径
         abs_path = self._resolve_abs_path(file_path)
+        # GAP-SEC-01：写路径必须落在 workspace_root 内（realpath 后再比对，
+        # 同时拦 `..` 穿越、workspace 外绝对路径与符号链接逃逸）。
+        if not self._is_within_workspace(abs_path):
+            return {
+                "audit_id": 0,
+                "file_path": self._resolve_rel_path(file_path),
+                "file_hash_before": "",
+                "file_hash_after": "",
+                "diff_summary": "",
+                "status": EDIT_STATUS_FAILED,
+                "success": False,
+                "error": t(
+                    "cli.messages.edit_path_out_of_workspace",
+                    default="Path escapes workspace root; write rejected: {path}",
+                    path=file_path,
+                ),
+            }
         rel_path = self._resolve_rel_path(file_path)
 
         # 步骤 a：读取并计算编辑前 hash

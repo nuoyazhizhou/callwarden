@@ -1242,6 +1242,7 @@
             "empty_value": "empty",
             "edit_diff_summary": "Added {added} lines / removed {removed} lines",
             "edit_invalid_operation": "Invalid operation: {operation} (valid values: edit/create/delete)",
+            "edit_path_out_of_workspace": "Path escapes workspace root; write rejected: {path}",
             "edit_hash_mismatch": "File hash mismatch; possible concurrent modification, write rejected",
             "edit_write_failed": "File write failed: {error_type}",
             "edit_audit_not_found": "Edit audit record not found: id={audit_id}",
