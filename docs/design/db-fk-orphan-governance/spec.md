@@ -100,14 +100,16 @@
    `git_symbol_changes.symbol_hash`。
 4. 新增 `gc_reap_orphans(dry_run=True, backup=True, operator="cli")`：
    - 受控范围常量 `_REAP_SCOPE_TABLES`（见 §3.4）。
-   - dry-run 只统计；apply：`_create_gc_db_backup("fk-orphans")` → `_start_gc_audit`
-     （operation=`fk-orphans`）→ `PRAGMA foreign_keys=OFF` → 最多 10 轮：
+   - dry-run 复用同一条删除路径：在事务内跑完收敛删除后 `ROLLBACK`，返回
+     `projected_deleted`（真实删除量投影）；apply：`_create_gc_db_backup("fk-orphans")`
+     → `_start_gc_audit`（operation=`fk-orphans`）→ `PRAGMA foreign_keys=OFF` → 最多 10 轮：
      `foreign_key_check` 取范围内 `(table, rowid)` → 分批 `DELETE ... WHERE rowid IN (...)`；
      `gc_runs` / `token_savings_ledger` / `file_edit_audit` 孤儿改
      `UPDATE ... SET workspace_id=NULL`。
    - finally 恢复 `foreign_keys` 原值；commit；再次 `foreign_key_check`
      并断言范围内为 0，否则 `_fail_gc_audit` 抛错。
-   - 返回 `{audit_id, dry_run, backup_path, backup_size, before, after, deleted:{table: n}, scope}`。
+   - 返回 `{audit_id, dry_run, backup_path, backup_size, before, after, deleted:{table: n}, projected_deleted:{table: n}, out_of_scope}`；
+     审计 `deleted_counts` 在 dry-run 下记录投影量。
    - 不进入 CLI/MCP 路由（一次性治理 + 测试入口），避免扩大公开 API。
 
 ### 4.3 `db/db_base.py::delete_workspace`
@@ -134,8 +136,9 @@
    `gc_archive(force=True)` 后 `foreign_key_check()==[]`（覆盖漏删 call_versions 回归）。
 4. `test_gc_purge_leaves_no_orphans`：构造残留版本 + `archived_files`，`gc_purge(0)` 后为空。
 5. `test_reap_orphans_dry_run_and_apply`：`PRAGMA foreign_keys=OFF` 造孤儿（file_versions/
-   call_versions/file_symbol_versions/git_symbol_changes），dry-run 不改数；apply 后
-   `deleted` 计数 >0、受控范围孤儿为 0、合法行保留、备份文件存在。
+   call_versions/file_symbol_versions/git_symbol_changes），dry-run 零副作用（逐表行数、
+   FK 条目与 FK 开关均不变）且 `projected_deleted` 覆盖收敛后才成为孤儿的子行；
+   apply 后 `deleted` 与 dry-run 投影逐表一致、受控范围孤儿为 0、合法行保留、备份文件存在。
 
 ### 4.5 内容表写入改 UPSERT（实现期发现的级联风险）
 

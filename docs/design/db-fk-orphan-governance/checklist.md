@@ -15,6 +15,8 @@
 - [x] `db/db_gc.py::gc_reap_orphans` 默认 dry-run；apply 前 gzip 备份 + `gc_runs` 审计；
       清理期临时关闭 FK 并在 finally 恢复；复验受控范围孤儿为 0 否则抛 `FK_ORPHANS_REMAIN`；
       治理账本孤儿只报告不删。
+- [x] dry-run 复用同一收敛删除路径并在事务内 `ROLLBACK`，返回 `projected_deleted`：
+      线上备份副本验证投影 716,829 与历史实删逐表一致（原实现只报 78,805 违规条目）。
 - [x] `db/db_base.py::delete_workspace` 补齐 `calls`、`git_symbol_changes`、`git_file_changes`、
       `git_commits`、`archived_files`，并把 `gc_runs.workspace_id` 置 NULL。
 - [x] 内容表写入不再用 `INSERT OR REPLACE`（会 DELETE 触发级联）：
