@@ -31,7 +31,7 @@
   再删 `file_instances/workspaces`。
 - 验收：删除一个含归档/git 记录的 workspace 后 `foreign_key_check()` 为空。
 
-## - [ ] T5 [verify] — CI 基线断言
+## - [x] T5 [verify] — CI 基线断言
 - 文件：`tests/test_db_fk_orphans.py`（新增，6 个用例）
 - 验收：任一 GC/清理路径后 `PRAGMA foreign_key_check` 为空；级联 DDL 断言通过；
-  本地 `pytest` 目标套件 + `ruff check` 通过；提交推送后 CI 绿。
+  本地 `pytest` 目标套件 + `ruff check` 通过；提交推送后 CI 绿（f697fdb 全绿）。
