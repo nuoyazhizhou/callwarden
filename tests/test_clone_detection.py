@@ -73,10 +73,17 @@ def _seed_symbol(
     ).fetchone()[0]
 
     # 插入 symbol_contents（关联 content_hash 与源代码内容）
+    # 用 UPSERT 而非 INSERT OR REPLACE：REPLACE=DELETE+INSERT，在
+    # symbols.symbol_hash ON DELETE CASCADE 下会连带删掉已挂接的 symbols 行。
     db.conn.execute(
-        "INSERT OR REPLACE INTO symbol_contents (content_hash, name, kind, content, signature, "
+        "INSERT INTO symbol_contents (content_hash, name, kind, content, signature, "
         "has_comment, comment_content, qualified_name) "
-        "VALUES (?, ?, 'fn', ?, '', 0, '', ?)",
+        "VALUES (?, ?, 'fn', ?, '', 0, '', ?) "
+        "ON CONFLICT(content_hash) DO UPDATE SET name = excluded.name, "
+        "kind = excluded.kind, content = excluded.content, "
+        "signature = excluded.signature, has_comment = excluded.has_comment, "
+        "comment_content = excluded.comment_content, "
+        "qualified_name = excluded.qualified_name",
         (ch, symbol_name, content, symbol_name),
     )
 

@@ -75,9 +75,14 @@ def _seed_symbol(
     ).fetchone()[0]
 
     db.conn.execute(
-        "INSERT OR REPLACE INTO symbol_contents (content_hash, name, kind, content, signature, "
+        "INSERT INTO symbol_contents (content_hash, name, kind, content, signature, "
         "has_comment, comment_content, qualified_name) "
-        "VALUES (?, ?, 'fn', ?, '', 0, '', ?)",
+        "VALUES (?, ?, 'fn', ?, '', 0, '', ?) "
+        "ON CONFLICT(content_hash) DO UPDATE SET name = excluded.name, "
+        "kind = excluded.kind, content = excluded.content, "
+        "signature = excluded.signature, has_comment = excluded.has_comment, "
+        "comment_content = excluded.comment_content, "
+        "qualified_name = excluded.qualified_name",
         (ch, symbol_name, content, qn),
     )
     db.conn.execute(

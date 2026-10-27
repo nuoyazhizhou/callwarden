@@ -114,11 +114,16 @@ def _upsert_file_records(
     now = mtime if mtime is not None else time.time()
     module_path = _module_path_from_rel(rel_path)
 
-    # file_contents：INSERT OR REPLACE（content_hash 主键）
+    # file_contents：UPSERT（content_hash 主键）
+    # 禁用 REPLACE：REPLACE 等价 DELETE+INSERT，在 file_versions.content_hash
+    # ON DELETE CASCADE 下会连带删掉该内容的全部版本历史。
     codegraph_conn.execute(
-        "INSERT OR REPLACE INTO file_contents "
+        "INSERT INTO file_contents "
         "(content_hash, language, total_lines, first_seen_at) "
-        "VALUES (?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(content_hash) DO UPDATE SET "
+        "language = excluded.language, total_lines = excluded.total_lines, "
+        "first_seen_at = excluded.first_seen_at",
         (content_hash, language, int(total_lines), now),
     )
 

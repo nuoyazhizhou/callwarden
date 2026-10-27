@@ -128,8 +128,23 @@
    call_versions/file_symbol_versions/git_symbol_changes），dry-run 不改数；apply 后
    `deleted` 计数 >0、受控范围孤儿为 0、合法行保留、备份文件存在。
 
-## 5. 验证
+### 4.5 内容表写入改 UPSERT（实现期发现的级联风险）
 
+SQLite 的 `INSERT OR REPLACE` 等价 `DELETE + INSERT`，会触发 `ON DELETE CASCADE`。
+`file_contents` 是内容寻址的去重表，`upsert_file_records` 每次注册文件都会 REPLACE
+同一 `content_hash`，在本次给 `file_versions.content_hash` 加上 CASCADE 后会连带
+删掉该内容的**全部版本历史**（数据丢失）。
+
+因此：`db/db_cas_merge.py::upsert_file_records` 与 `rust_ext/src/daemon/cas_merge.rs::
+upsert_file_records` 的 `INSERT OR REPLACE INTO file_contents` 改为
+`INSERT ... ON CONFLICT(content_hash) DO UPDATE SET ...`（结果行与原语义一致，
+但不产生 DELETE，因而不触发级联）。测试夹具（`test_clone_detection.py`、
+`test_static_analysis_capabilities.py` 的 `_seed_symbol`）对 `symbol_contents`
+的 `INSERT OR REPLACE` 同理改 UPSERT。
+
+生产代码其余内容表写入已是 `INSERT OR IGNORE`，无需改动。
+
+## 5. 验证
 - `pytest tests/test_db_fk_orphans.py tests/test_gc.py tests/test_gc_retention.py -q`
 - `ruff check db/schema.py db/db_gc.py db/db_base.py tests/test_db_fk_orphans.py`
 - `pytest tests/test_gc_flow.py`（若存在）与 Rust `cargo test --lib storage`（schema 内嵌校验）。

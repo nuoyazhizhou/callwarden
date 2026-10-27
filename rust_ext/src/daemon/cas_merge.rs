@@ -365,11 +365,16 @@ fn upsert_file_records(
     let now = now_ts();
     let module_path = module_path_from_rel(rel_path, language);
 
-    // file_contents：INSERT OR REPLACE
+    // file_contents：UPSERT（content_hash 主键）
+    // 禁用 REPLACE：REPLACE 等价 DELETE+INSERT，在 file_versions.content_hash
+    // ON DELETE CASCADE 下会连带删掉该内容的全部版本历史。
     codegraph_conn.execute(
-        "INSERT OR REPLACE INTO file_contents \
+        "INSERT INTO file_contents \
          (content_hash, language, total_lines, first_seen_at) \
-         VALUES (?1, ?2, ?3, ?4)",
+         VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(content_hash) DO UPDATE SET \
+         language = excluded.language, total_lines = excluded.total_lines, \
+         first_seen_at = excluded.first_seen_at",
         params![content_hash, language, total_lines, now],
     )?;
 
