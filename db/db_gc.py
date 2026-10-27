@@ -343,6 +343,11 @@ class GCMixin:
     def _delete_file_associated_data(self, file_instance_id: int) -> None:
         """删除文件关联的符号/调用/版本数据（归档时调用，释放空间）
 
+        删除顺序必须严格 child→parent，否则会在 `ON DELETE NO ACTION` 的既有库
+        里沉淀外键孤儿（新库虽已 CASCADE，但老库仍是 NO ACTION）：
+
+            calls → call_versions → file_symbol_versions → symbols → file_versions
+
         Args:
             file_instance_id: 文件实例 ID
         """
@@ -352,12 +357,15 @@ class GCMixin:
                WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?)""",
             (file_instance_id,),
         )
-        # 删除符号
+        # 删除调用版本（引用 file_versions，必须先于 file_versions 删除）
         self.conn.execute(
-            "DELETE FROM symbols WHERE file_instance_id = ?",
+            """DELETE FROM call_versions
+               WHERE file_version_id IN (
+                   SELECT id FROM file_versions WHERE file_instance_id = ?
+               )""",
             (file_instance_id,),
         )
-        # 删除符号版本关联
+        # 删除符号版本关联（引用 file_versions / symbol_contents）
         self.conn.execute(
             """DELETE FROM file_symbol_versions
                WHERE file_version_id IN (
@@ -365,7 +373,12 @@ class GCMixin:
                )""",
             (file_instance_id,),
         )
-        # 删除文件版本
+        # 删除符号（引用 file_instances / symbol_contents）
+        self.conn.execute(
+            "DELETE FROM symbols WHERE file_instance_id = ?",
+            (file_instance_id,),
+        )
+        # 删除文件版本（最后一个子表，删除前其所有子表已清空）
         self.conn.execute(
             "DELETE FROM file_versions WHERE file_instance_id = ?",
             (file_instance_id,),
@@ -615,7 +628,21 @@ class GCMixin:
             purged_calls = sum(r["call_count"] for r in rows)
             placeholders = ",".join("?" * len(fi_ids))
 
-            # 归档时已删除关联数据，这里只需删 file_instances 和 archived_files 记录
+            # 历史归档可能残留版本/调用行（旧版归档只删了部分子表）；即使
+            # 「归档时已删干净」的假设成立，这里也必须按 child→parent 顺序
+            # 逐个补齐，否则删除 file_instances 会沉淀新的外键孤儿。
+            for fi_id in fi_ids:
+                self._delete_file_associated_data(fi_id)
+
+            # 删除 file_instances 前先清掉所有直接引用它的子表
+            self.conn.execute(
+                f"DELETE FROM semgrep_findings WHERE file_instance_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
+                fi_ids,
+            )
+            self.conn.execute(
+                f"DELETE FROM git_file_changes WHERE file_instance_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
+                fi_ids,
+            )
             self.conn.execute(
                 f"DELETE FROM archived_files WHERE file_instance_id IN ({placeholders})",  # nosec B608 - placeholders 仅为 ? 占位符，值全部参数化
                 fi_ids,
@@ -1150,6 +1177,7 @@ class GCMixin:
             WHERE content_hash NOT IN (SELECT symbol_hash FROM symbols)
               AND content_hash NOT IN (SELECT symbol_hash FROM file_symbol_versions)
               AND content_hash NOT IN (SELECT symbol_hash FROM comments)
+              AND content_hash NOT IN (SELECT symbol_hash FROM git_symbol_changes)
               AND content_hash NOT IN (SELECT symbol_hash FROM evolution_metrics)
               AND content_hash NOT IN (SELECT symbol_hash FROM defect_fixes)
               AND content_hash NOT IN (SELECT before_hash FROM defect_fixes)
@@ -1159,6 +1187,183 @@ class GCMixin:
             """
         )
         return cur.rowcount if cur.rowcount is not None else 0
+
+    # 受控孤儿清理范围：仅图/内容/GC 审计表。
+    # 治理/权威账本表（task_workspace_bindings / role_contract_* / rollback_config /
+    # task_operation_ledger / token_savings_ledger / gc_policies / file_edit_audit /
+    # workspace_scan_runs）的孤儿只报告不删除，避免为过 FK check 而销毁审计证据。
+    # 依据：docs/design/db-fk-orphan-governance/spec.md §3.4。
+    _REAP_SCOPE_TABLES = (
+        "file_symbol_versions",
+        "call_versions",
+        "symbols",
+        "calls",
+        "git_symbol_changes",
+        "git_file_changes",
+        "semgrep_findings",
+        "file_versions",
+        "archived_files",
+        "file_instances",
+        "destructive_operations",
+    )
+
+    def gc_reap_orphans(
+        self,
+        dry_run: bool = True,
+        backup: bool = True,
+        operator: str = "cli",
+    ) -> Dict[str, Any]:
+        """受控清理历史外键孤儿（一次性治理入口，默认 dry-run）
+
+        老库的外键仍是 `ON DELETE NO ACTION`（SQLite 无法原地修改），历史 GC
+        又直接删父行，因此 `PRAGMA foreign_key_check` 长期存在大量违规。本方法
+        按「检查 → 分批删违规行 → 再检查」迭代收敛，只处理 `_REAP_SCOPE_TABLES`
+        白名单内的图/内容/审计表：
+
+        - `gc_runs` 孤儿不删除，改置 `workspace_id = NULL`（保留审计记录）；
+        - 治理/权威账本孤儿不删除，仅在结果 `out_of_scope` 中如实报告；
+        - apply 前强制 gzip 备份，并写 `gc_runs` 审计（operation='fk-orphans'）；
+        - 清理期间按既有 bulk 写先例临时关闭外键，结束后恢复并复验。
+
+        Args:
+            dry_run: True=只统计不删除（默认）；False=实际清理
+            backup: apply 时是否创建 gzip 备份（默认 True）
+            operator: 触发者（cli / mcp / agent）
+
+        Returns:
+            {
+                "audit_id": int,
+                "dry_run": bool,
+                "backup_path": str,
+                "backup_size": int,
+                "before": {table: count},
+                "after": {table: count},
+                "deleted": {table: count},
+                "out_of_scope": {table: count},
+            }
+        """
+        scope = set(self._REAP_SCOPE_TABLES)
+
+        def _scan() -> Dict[str, int]:
+            counts: Dict[str, int] = {}
+            for row in self.conn.execute("PRAGMA foreign_key_check"):
+                counts[row[0]] = counts.get(row[0], 0) + 1
+            return counts
+
+        audit_id = self._start_gc_audit(
+            operation="fk-orphans",
+            dry_run=dry_run,
+            policy={
+                "scope": sorted(scope),
+                "backup": backup,
+                "gc_runs_orphans": "workspace_id=NULL",
+            },
+            operator=operator,
+        )
+
+        backup_path = ""
+        backup_size = 0
+        try:
+            before_all = _scan()
+            before = {t: n for t, n in before_all.items() if t in scope}
+            out_of_scope = {t: n for t, n in before_all.items() if t not in scope}
+
+            if not dry_run and (before or before_all.get("gc_runs")):
+                if backup:
+                    info = self._create_gc_db_backup("fk-orphans")
+                    backup_path = info["path"]
+                    backup_size = info["size"]
+
+            deleted: Dict[str, int] = {}
+            if not dry_run:
+                original_fk = self.conn.execute("PRAGMA foreign_keys").fetchone()[0]
+                try:
+                    # PRAGMA foreign_keys 在事务内无效，此处必须先提交再切换
+                    self.conn.commit()
+                    self.conn.execute("PRAGMA foreign_keys=OFF")
+
+                    # gc_runs 是审计记录：孤儿不删，只解除 workspace 归属
+                    cur = self.conn.execute(
+                        """UPDATE gc_runs SET workspace_id = NULL
+                           WHERE workspace_id IS NOT NULL
+                             AND workspace_id NOT IN (SELECT id FROM workspaces)"""
+                    )
+                    if cur.rowcount:
+                        deleted["gc_runs"] = cur.rowcount
+
+                    # 迭代收敛：每轮删当前违规行；删父行产生的二级孤儿下一轮处理。
+                    # 上限 10 轮防御异常 schema 导致的死循环。
+                    for _ in range(10):
+                        scoped_rows = [
+                            r for r in self.conn.execute("PRAGMA foreign_key_check")
+                            if r[0] in scope
+                        ]
+                        if not scoped_rows:
+                            break
+                        by_table: Dict[str, List[int]] = {}
+                        for r in scoped_rows:
+                            by_table.setdefault(r[0], []).append(r[1])
+                        for table, rowids in by_table.items():
+                            # table 来自 PRAGMA 输出且已与 scope 白名单比对，非用户输入
+                            for i in range(0, len(rowids), 500):
+                                chunk = rowids[i:i + 500]
+                                placeholders = ",".join("?" * len(chunk))
+                                cur = self.conn.execute(
+                                    f'DELETE FROM "{table}" WHERE rowid IN ({placeholders})',  # nosec B608 - table 已白名单校验，占位符为 ?
+                                    chunk,
+                                )
+                                if cur.rowcount:
+                                    deleted[table] = deleted.get(table, 0) + cur.rowcount
+
+                    # 内容表：删掉已无引用的 content 行（引用排除清单见
+                    # _delete_orphan_symbol_contents，含 git_symbol_changes）
+                    orphan_contents = self._delete_orphan_symbol_contents()
+                    if orphan_contents:
+                        deleted["symbol_contents"] = orphan_contents
+
+                    self.conn.commit()
+                finally:
+                    # 无论成功/异常都恢复原有外键开关；异常时先回滚未提交删除
+                    try:
+                        self.conn.rollback()
+                        self.conn.commit()
+                        self.conn.execute(
+                            "PRAGMA foreign_keys=%s" % ("ON" if original_fk else "OFF")
+                        )
+                    except sqlite3.Error:
+                        pass
+
+                self._invalidate_graph_store()
+
+            after_all = _scan()
+            after = {t: n for t, n in after_all.items() if t in scope}
+
+            if not dry_run and after:
+                raise RuntimeError(
+                    "FK_ORPHANS_REMAIN: " + json.dumps(after, ensure_ascii=False)
+                )
+
+            self._complete_gc_audit(
+                audit_id=audit_id,
+                candidate_counts=before,
+                deleted_counts=deleted,
+                backup_path=backup_path,
+                backup_size=backup_size,
+            )
+            return {
+                "audit_id": audit_id,
+                "dry_run": dry_run,
+                "backup_path": backup_path,
+                "backup_size": backup_size,
+                "before": before,
+                "after": after,
+                "deleted": deleted,
+                "out_of_scope": out_of_scope,
+            }
+        except Exception as exc:
+            err_msg = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+            self._fail_gc_audit(audit_id, err_msg)
+            raise
 
     def _create_gc_db_backup(self, reason: str) -> Dict[str, Any]:
         """创建压缩 SQLite 备份。"""

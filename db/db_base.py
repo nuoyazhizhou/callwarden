@@ -4626,12 +4626,46 @@ class CodeGraphBase:
             self.conn.execute(
                 "DELETE FROM semgrep_scans WHERE workspace_id = ?", (ws_id,))
 
+            # 删除调用关系（引用 symbols，必须先于 symbols 删除）
+            self.conn.execute("""
+                DELETE FROM calls WHERE caller_id IN (
+                    SELECT id FROM symbols WHERE file_instance_id IN (
+                        SELECT id FROM file_instances WHERE workspace_id = ?
+                    )
+                )
+            """, (ws_id,))
+
             # 删除符号（当前快照）
             self.conn.execute("""
                 DELETE FROM symbols WHERE file_instance_id IN (
                     SELECT id FROM file_instances WHERE workspace_id = ?
                 )
             """, (ws_id,))
+
+            # 删除 git 关联记录（child→parent：symbol_changes/file_changes → commits）
+            self.conn.execute("""
+                DELETE FROM git_symbol_changes WHERE commit_hash IN (
+                    SELECT commit_hash FROM git_commits WHERE workspace_id = ?
+                )
+            """, (ws_id,))
+            self.conn.execute("""
+                DELETE FROM git_file_changes WHERE commit_hash IN (
+                    SELECT commit_hash FROM git_commits WHERE workspace_id = ?
+                ) OR file_instance_id IN (
+                    SELECT id FROM file_instances WHERE workspace_id = ?
+                )
+            """, (ws_id, ws_id))
+            self.conn.execute(
+                "DELETE FROM git_commits WHERE workspace_id = ?", (ws_id,))
+
+            # 删除归档元数据（引用 file_instances / workspaces）
+            self.conn.execute(
+                "DELETE FROM archived_files WHERE workspace_id = ?", (ws_id,))
+
+            # GC 审计保留，只解除已删除 workspace 的归属（workspace_id 允许 NULL）
+            self.conn.execute(
+                "UPDATE gc_runs SET workspace_id = NULL WHERE workspace_id = ?",
+                (ws_id,))
 
             # 删除文件实例
             self.conn.execute(

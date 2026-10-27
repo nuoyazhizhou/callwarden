@@ -63,8 +63,8 @@ CREATE TABLE IF NOT EXISTS symbols (
     module_path TEXT DEFAULT '',
     qualified_name TEXT DEFAULT '',
     depth INTEGER DEFAULT -1,
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
-    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id) ON DELETE CASCADE,
+    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash) ON DELETE CASCADE
 );
 
 -- 调用关系表（当前快照，查询优化用）
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS calls (
     callee_id INTEGER DEFAULT 0,
     call_line INTEGER DEFAULT 0,
     is_cross_file INTEGER DEFAULT 0,
-    FOREIGN KEY (caller_id) REFERENCES symbols(id)
+    FOREIGN KEY (caller_id) REFERENCES symbols(id) ON DELETE CASCADE
 );
 
 -- 注释记录表（按 symbol_hash 关联，同一函数注释全局共享）
@@ -106,8 +106,8 @@ CREATE TABLE IF NOT EXISTS file_versions (
     is_deleted INTEGER DEFAULT 0,
     commit_hash TEXT DEFAULT '',
     ast_cache BLOB DEFAULT NULL,
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
-    FOREIGN KEY (content_hash) REFERENCES file_contents(content_hash)
+    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id) ON DELETE CASCADE,
+    FOREIGN KEY (content_hash) REFERENCES file_contents(content_hash) ON DELETE CASCADE
 );
 
 -- 符号内容表：按 content_hash 唯一，相同内容只存一次（去重）
@@ -133,8 +133,8 @@ CREATE TABLE IF NOT EXISTS file_symbol_versions (
     module_path TEXT DEFAULT '',
     depth INTEGER DEFAULT -1,
     is_deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (file_version_id) REFERENCES file_versions(id),
-    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+    FOREIGN KEY (file_version_id) REFERENCES file_versions(id) ON DELETE CASCADE,
+    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash) ON DELETE CASCADE
 );
 
 -- 调用关系版本表：记录每个文件版本对应的调用关系
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS call_versions (
     callee_file TEXT DEFAULT '',
     call_line INTEGER DEFAULT 0,
     is_cross_file INTEGER DEFAULT 0,
-    FOREIGN KEY (file_version_id) REFERENCES file_versions(id)
+    FOREIGN KEY (file_version_id) REFERENCES file_versions(id) ON DELETE CASCADE
 );
 
 -- Semgrep 缺陷表：存储 Semgrep 扫描发现的问题（按内容去重）
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS semgrep_findings (
     symbol_qualified TEXT DEFAULT '',
     scanned_at REAL DEFAULT 0,
     scan_id INTEGER DEFAULT 0,
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
+    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id) ON DELETE CASCADE,
     UNIQUE(content_hash, rule_id, start_line)
 );
 
@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS git_file_changes (
     lines_added INTEGER DEFAULT 0,
     lines_deleted INTEGER DEFAULT 0,
     FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash),
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id)
+    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS git_symbol_changes (
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS git_symbol_changes (
     old_content TEXT DEFAULT '',
     new_content TEXT DEFAULT '',
     FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash),
-    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash) ON DELETE CASCADE
 );
 
 -- file_versions 表的 commit_hash 字段（v4 新增）
@@ -747,8 +747,8 @@ CREATE TABLE IF NOT EXISTS archived_files (
     call_count INTEGER DEFAULT 0,                   -- 归档时的调用关系数
     archive_reason TEXT DEFAULT '',                 -- 归档原因（如 "matched: .gitignore:build/"）
     archived_at REAL NOT NULL,                      -- 归档时间戳
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id) ON DELETE CASCADE,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_archived_files_instance ON archived_files(file_instance_id);
