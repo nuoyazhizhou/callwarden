@@ -4667,6 +4667,23 @@ class CodeGraphBase:
                 "UPDATE gc_runs SET workspace_id = NULL WHERE workspace_id = ?",
                 (ws_id,))
 
+            # workspace 作用域的运行/审计表：workspace_id NOT NULL 且无级联，
+            # 不删会让 DELETE FROM workspaces 触发 FK 失败（工作区删不掉、继续留孤儿）
+            self.conn.execute(
+                "DELETE FROM destructive_operations WHERE workspace_id = ?", (ws_id,))
+            self.conn.execute(
+                "DELETE FROM gc_policies WHERE workspace_id = ?", (ws_id,))
+            self.conn.execute(
+                "DELETE FROM workspace_scan_runs WHERE workspace_id = ?", (ws_id,))
+
+            # 全局审计账本：只解除归属，保留记录
+            self.conn.execute(
+                "UPDATE token_savings_ledger SET workspace_id = NULL "
+                "WHERE workspace_id = ?", (ws_id,))
+            self.conn.execute(
+                "UPDATE file_edit_audit SET workspace_id = NULL "
+                "WHERE workspace_id = ?", (ws_id,))
+
             # 删除文件实例
             self.conn.execute(
                 "DELETE FROM file_instances WHERE workspace_id = ?", (ws_id,))

@@ -51,15 +51,16 @@
 2. **GC 删除契约对齐**：所有 GC 路径严格按「孙表→子表→父表→内容表」顺序删除。
 3. **受控历史清理**：新增 `gc_reap_orphans`，默认 dry-run；apply 前自动 gzip 备份、
    写 `gc_runs` 审计；按 `foreign_key_check` 驱动、分批删除、收敛后复验。
-4. **清理范围（重要决策）**：仅图/内容/GC 审计表
+4. **清理范围（重要决策）**：仅图/内容/workspace 作用域运行审计表
    （`file_symbol_versions`、`call_versions`、`symbols`、`calls`、`git_symbol_changes`、
    `git_file_changes`、`semgrep_findings`、`file_versions`、`archived_files`、
-   `file_instances`、`file_contents`、`symbol_contents`；`gc_runs`
-   孤儿置 `workspace_id=NULL`、`destructive_operations` 孤儿删除）。
+   `file_instances`、`file_contents`、`symbol_contents`、`destructive_operations`、
+   `gc_policies`、`workspace_scan_runs`）；全局审计账本
+   （`gc_runs`、`token_savings_ledger`、`file_edit_audit`）孤儿置 `workspace_id=NULL`
+   保留记录。
    **治理/权威账本表不自动删除**（`task_workspace_bindings`、`role_contract_lineages`、
    `role_contract_revisions`、`task_step_role_contract_bindings`、`rollback_config`、
-   `task_operation_ledger`、`token_savings_ledger`、`gc_policies`、`file_edit_audit`、
-   `workspace_scan_runs`），仅在结果中报告，避免「为过 FK check 而销毁审计证据」。
+   `task_operation_ledger`），仅在结果中报告，避免「为过 FK check 而销毁审计证据」。
 5. **防回归基线**：新增单测，任何 GC/清理路径执行后 `PRAGMA foreign_key_check` 必须为空；
    新库 schema 的级联动作必须为 `CASCADE`。
 
@@ -102,7 +103,8 @@
    - dry-run 只统计；apply：`_create_gc_db_backup("fk-orphans")` → `_start_gc_audit`
      （operation=`fk-orphans`）→ `PRAGMA foreign_keys=OFF` → 最多 10 轮：
      `foreign_key_check` 取范围内 `(table, rowid)` → 分批 `DELETE ... WHERE rowid IN (...)`；
-     `gc_runs` 孤儿改 `UPDATE ... SET workspace_id=NULL`。
+     `gc_runs` / `token_savings_ledger` / `file_edit_audit` 孤儿改
+     `UPDATE ... SET workspace_id=NULL`。
    - finally 恢复 `foreign_keys` 原值；commit；再次 `foreign_key_check`
      并断言范围内为 0，否则 `_fail_gc_audit` 抛错。
    - 返回 `{audit_id, dry_run, backup_path, backup_size, before, after, deleted:{table: n}, scope}`。
@@ -113,7 +115,14 @@
 在既有 child→parent 删除序列中补齐：
 `git_file_changes`（按 ws 的 file_instances）→ `git_commits`（workspace_id）
 → `archived_files`（workspace_id）→ `UPDATE gc_runs SET workspace_id=NULL`
+→ 删 `destructive_operations` / `gc_policies` / `workspace_scan_runs`（workspace_id）
+→ `UPDATE token_savings_ledger` / `file_edit_audit SET workspace_id=NULL`
 → 再删 `file_instances` / `workspaces`。
+
+原因（实测）：这三张表 `workspace_id NOT NULL` 且外键 `NO ACTION`，不先删会导致
+`DELETE FROM workspaces` 触发 FK 失败、`delete_workspace` 返回 False、工作区删不掉
+并继续产生孤儿。`token_savings_ledger` / `file_edit_audit` 的 `workspace_id` 允许 NULL，
+按审计证据保留策略只解除归属。
 
 ### 4.4 `tests/test_db_fk_orphans.py`（新增）
 
@@ -156,5 +165,5 @@ upsert_file_records` 的 `INSERT OR REPLACE INTO file_contents` 改为
 
 - 不 bump `SCHEMA_VERSION`（避免 Rust/Python 双版本源与冗余迁移）。
 - 不重建既有库表来补 CASCADE（SQLite 需整表复制，风险/收益不匹配）。
-- 不删除治理/权威账本孤儿（只报告）。
+- 不删除治理/权威账本孤儿（只报告）；workspace 作用域运行/审计表与全局审计账本按 §3.4 处理。
 - 不改 CLI/MCP 公开路由。

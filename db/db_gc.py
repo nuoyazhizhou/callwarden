@@ -1188,11 +1188,10 @@ class GCMixin:
         )
         return cur.rowcount if cur.rowcount is not None else 0
 
-    # 受控孤儿清理范围：仅图/内容/GC 审计表。
+    # 受控孤儿清理范围：图/内容表与 workspace 作用域的运行/审计表直接删除。
     # 治理/权威账本表（task_workspace_bindings / role_contract_* / rollback_config /
-    # task_operation_ledger / token_savings_ledger / gc_policies / file_edit_audit /
-    # workspace_scan_runs）的孤儿只报告不删除，避免为过 FK check 而销毁审计证据。
-    # 依据：docs/design/db-fk-orphan-governance/spec.md §3.4。
+    # task_operation_ledger 等）的孤儿只报告不删除，避免为过 FK check 而销毁证据。
+    # 依据：docs/design/db-fk-orphan-governance/spec.md §3.4 §4.6。
     _REAP_SCOPE_TABLES = (
         "file_symbol_versions",
         "call_versions",
@@ -1205,6 +1204,15 @@ class GCMixin:
         "archived_files",
         "file_instances",
         "destructive_operations",
+        "gc_policies",
+        "workspace_scan_runs",
+    )
+
+    # 全局审计账本：孤儿不删，只把 workspace_id 置 NULL 保留记录。
+    _REAP_NULLIFY_WORKSPACE_TABLES = (
+        "gc_runs",
+        "token_savings_ledger",
+        "file_edit_audit",
     )
 
     def gc_reap_orphans(
@@ -1218,9 +1226,10 @@ class GCMixin:
         老库的外键仍是 `ON DELETE NO ACTION`（SQLite 无法原地修改），历史 GC
         又直接删父行，因此 `PRAGMA foreign_key_check` 长期存在大量违规。本方法
         按「检查 → 分批删违规行 → 再检查」迭代收敛，只处理 `_REAP_SCOPE_TABLES`
-        白名单内的图/内容/审计表：
+        白名单内的图/内容表与 workspace 作用域运行/审计表：
 
-        - `gc_runs` 孤儿不删除，改置 `workspace_id = NULL`（保留审计记录）；
+        - `_REAP_NULLIFY_WORKSPACE_TABLES`（gc_runs / token_savings_ledger /
+          file_edit_audit）孤儿不删除，改置 `workspace_id = NULL` 保留记录；
         - 治理/权威账本孤儿不删除，仅在结果 `out_of_scope` 中如实报告；
         - apply 前强制 gzip 备份，并写 `gc_runs` 审计（operation='fk-orphans'）；
         - 清理期间按既有 bulk 写先例临时关闭外键，结束后恢复并复验。
@@ -1243,6 +1252,8 @@ class GCMixin:
             }
         """
         scope = set(self._REAP_SCOPE_TABLES)
+        nullify = set(self._REAP_NULLIFY_WORKSPACE_TABLES)
+        handled = scope | nullify
 
         def _scan() -> Dict[str, int]:
             counts: Dict[str, int] = {}
@@ -1255,8 +1266,8 @@ class GCMixin:
             dry_run=dry_run,
             policy={
                 "scope": sorted(scope),
+                "nullify_workspace_tables": sorted(nullify),
                 "backup": backup,
-                "gc_runs_orphans": "workspace_id=NULL",
             },
             operator=operator,
         )
@@ -1265,10 +1276,10 @@ class GCMixin:
         backup_size = 0
         try:
             before_all = _scan()
-            before = {t: n for t, n in before_all.items() if t in scope}
-            out_of_scope = {t: n for t, n in before_all.items() if t not in scope}
+            before = {t: n for t, n in before_all.items() if t in handled}
+            out_of_scope = {t: n for t, n in before_all.items() if t not in handled}
 
-            if not dry_run and (before or before_all.get("gc_runs")):
+            if not dry_run and before:
                 if backup:
                     info = self._create_gc_db_backup("fk-orphans")
                     backup_path = info["path"]
@@ -1282,14 +1293,15 @@ class GCMixin:
                     self.conn.commit()
                     self.conn.execute("PRAGMA foreign_keys=OFF")
 
-                    # gc_runs 是审计记录：孤儿不删，只解除 workspace 归属
-                    cur = self.conn.execute(
-                        """UPDATE gc_runs SET workspace_id = NULL
-                           WHERE workspace_id IS NOT NULL
-                             AND workspace_id NOT IN (SELECT id FROM workspaces)"""
-                    )
-                    if cur.rowcount:
-                        deleted["gc_runs"] = cur.rowcount
+                    # 全局审计账本：孤儿不删，只解除 workspace 归属（白名单常量表名）
+                    for table in sorted(nullify):
+                        cur = self.conn.execute(
+                            f'UPDATE "{table}" SET workspace_id = NULL '  # nosec B608 - 白名单常量
+                            "WHERE workspace_id IS NOT NULL "
+                            "AND workspace_id NOT IN (SELECT id FROM workspaces)"
+                        )
+                        if cur.rowcount:
+                            deleted[table] = cur.rowcount
 
                     # 迭代收敛：每轮删当前违规行；删父行产生的二级孤儿下一轮处理。
                     # 上限 10 轮防御异常 schema 导致的死循环。
@@ -1336,7 +1348,7 @@ class GCMixin:
                 self._invalidate_graph_store()
 
             after_all = _scan()
-            after = {t: n for t, n in after_all.items() if t in scope}
+            after = {t: n for t, n in after_all.items() if t in handled}
 
             if not dry_run and after:
                 raise RuntimeError(

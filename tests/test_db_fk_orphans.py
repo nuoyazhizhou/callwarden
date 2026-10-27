@@ -293,6 +293,36 @@ def test_reap_orphans_dry_run_and_apply():
             """INSERT INTO git_symbol_changes (commit_hash, symbol_hash, change_type)
                VALUES ('deadbeef', 'missing-sym', 'modified')"""
         )
+        now = time.time()
+        # workspace 作用域运行/审计表：孤儿应被删除
+        db.conn.execute(
+            """INSERT INTO destructive_operations
+               (workspace_id, operation_type, created_at)
+               VALUES (999999, 'force_push', ?)""",
+            (now,),
+        )
+        db.conn.execute(
+            "INSERT INTO gc_policies (workspace_id, updated_at) VALUES (999999, ?)",
+            (now,),
+        )
+        db.conn.execute(
+            "INSERT INTO workspace_scan_runs (workspace_id, started_at) "
+            "VALUES (999999, ?)",
+            (now,),
+        )
+        # 全局审计账本：孤儿应只解除归属、保留记录
+        db.conn.execute(
+            """INSERT INTO token_savings_ledger
+               (operation, workspace_id, created_at)
+               VALUES ('rag_context', 999999, ?)""",
+            (now,),
+        )
+        db.conn.execute(
+            """INSERT INTO file_edit_audit
+               (workspace_id, file_path, operation, created_at)
+               VALUES (999999, 'src/dead.py', 'edit', ?)""",
+            (now,),
+        )
         db.conn.commit()
         db.conn.execute("PRAGMA foreign_keys=ON")
 
@@ -315,6 +345,14 @@ def test_reap_orphans_dry_run_and_apply():
         assert applied["backup_path"] and os.path.exists(applied["backup_path"])
         assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == original_fk
         assert _fk_check(db) == []
+
+        # workspace 作用域的运行/审计表：孤儿删除
+        assert _count(db, "destructive_operations") == 0
+        assert _count(db, "gc_policies") == 0
+        assert _count(db, "workspace_scan_runs") == 0
+        # 全局审计账本：记录保留，归属置空
+        assert _count(db, "token_savings_ledger", "WHERE workspace_id IS NULL") == 1
+        assert _count(db, "file_edit_audit", "WHERE workspace_id IS NULL") == 1
 
         # 合法图数据必须保留
         assert _count(db, "file_instances", "WHERE id = ?", (valid_fi,)) == 1
@@ -361,15 +399,44 @@ def test_delete_workspace_leaves_no_orphans():
                VALUES (?, 'archive', ?, 'completed')""",
             (ws_id, now),
         )
+        db.conn.execute(
+            """INSERT INTO destructive_operations
+               (workspace_id, operation_type, created_at)
+               VALUES (?, 'force_push', ?)""",
+            (ws_id, now),
+        )
+        db.conn.execute(
+            "INSERT INTO gc_policies (workspace_id, updated_at) VALUES (?, ?)",
+            (ws_id, now),
+        )
+        db.conn.execute(
+            "INSERT INTO workspace_scan_runs (workspace_id, started_at) VALUES (?, ?)",
+            (ws_id, now),
+        )
+        db.conn.execute(
+            """INSERT INTO token_savings_ledger (operation, workspace_id, created_at)
+               VALUES ('rag_context', ?, ?)""",
+            (ws_id, now),
+        )
+        db.conn.execute(
+            """INSERT INTO file_edit_audit
+               (workspace_id, file_path, operation, created_at)
+               VALUES (?, 'src/ws.py', 'edit', ?)""",
+            (ws_id, now),
+        )
         db.conn.commit()
 
         assert db.delete_workspace(ws_id) is True
 
         for table in ("file_instances", "file_versions", "file_symbol_versions",
                       "call_versions", "symbols", "calls", "archived_files",
-                      "git_file_changes", "git_commits", "git_symbol_changes"):
+                      "git_file_changes", "git_commits", "git_symbol_changes",
+                      "destructive_operations", "gc_policies",
+                      "workspace_scan_runs"):
             assert _count(db, table) == 0, "%s 删工作区后应清空" % table
-        assert _count(db, "gc_runs", "WHERE workspace_id IS NULL") == 1
+        # 全局审计账本保留，只解除归属
+        for table in ("gc_runs", "token_savings_ledger", "file_edit_audit"):
+            assert _count(db, table, "WHERE workspace_id IS NULL") == 1, table
         assert _fk_check(db) == []
     finally:
         db.close()

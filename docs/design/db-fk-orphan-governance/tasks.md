@@ -35,3 +35,16 @@
 - 文件：`tests/test_db_fk_orphans.py`（新增，6 个用例）
 - 验收：任一 GC/清理路径后 `PRAGMA foreign_key_check` 为空；级联 DDL 断言通过；
   本地 `pytest` 目标套件 + `ruff check` 通过；提交推送后 CI 绿（f697fdb 全绿）。
+
+## - [x] T6 [implement] — workspace 外键审计表孤儿治理（补充）
+- 文件：`db/db_gc.py`、`db/db_base.py`、`tests/test_db_fk_orphans.py`
+- 改动：
+  1. `_REAP_SCOPE_TABLES` 增加 `gc_policies`、`workspace_scan_runs`（连同既有
+     `destructive_operations` 一起删除）。
+  2. 新增 `_REAP_NULLIFY_WORKSPACE_TABLES`（`gc_runs`、`token_savings_ledger`、
+     `file_edit_audit`）：孤儿只置 `workspace_id=NULL`，保留审计记录。
+  3. `delete_workspace` 同步补齐上述五张表（NOT NULL 的删除、可空的解除归属），
+     否则 `DELETE FROM workspaces` 会 FK 失败、工作区删不掉。
+  4. 测试：reap 与 delete_workspace 用例覆盖五张表，断言删除/置空与
+     `foreign_key_check` 为空。
+- 验收：`tests/test_db_fk_orphans.py` 6 例通过；相关套件 69 例通过；ruff 通过。

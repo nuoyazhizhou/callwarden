@@ -27,3 +27,8 @@
       共 105 例全绿。
 - [x] `ruff check` 对全部改动文件通过。
 - [x] 提交推送后 CI 绿（f697fdb：14/14 jobs success，Python 3.10-3.14 全绿）。
+- [x] `gc_reap_orphans` 覆盖 `destructive_operations` / `gc_policies` /
+      `workspace_scan_runs`（删除）与 `gc_runs` / `token_savings_ledger` /
+      `file_edit_audit`（置空保留），`out_of_scope` 仅剩治理/权威账本。
+- [x] `delete_workspace` 同步处理上述五张表，含这些行的工作区可正常删除且
+      `foreign_key_check()` 为空。
