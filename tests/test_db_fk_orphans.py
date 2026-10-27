@@ -331,14 +331,40 @@ def test_reap_orphans_dry_run_and_apply():
         before = len(_fk_check(db))
         assert before > 0
 
+        # dry-run 必须完全无副作用：逐表行数、FK 违规条目与开关都不变
+        snapshot_tables = (
+            "file_instances", "file_versions", "file_symbol_versions",
+            "call_versions", "symbols", "calls", "symbol_contents",
+            "git_symbol_changes", "destructive_operations", "gc_policies",
+            "workspace_scan_runs", "token_savings_ledger", "file_edit_audit",
+        )
+        rows_before = {t: _count(db, t) for t in snapshot_tables}
+
         dry = db.gc_reap_orphans(dry_run=True)
         assert dry["dry_run"] is True
         assert dry["deleted"] == {}
         assert dry["after"] == dry["before"]
         assert len(_fk_check(db)) == before
+        assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == original_fk
+        for table in snapshot_tables:
+            assert _count(db, table) == rows_before[table], (
+                "dry-run 不应改动 %s" % table
+            )
+
+        # 投影必须是「收敛后」的删除量：删掉孤儿 file_versions 后，其子表
+        # 行要到下一轮才变孤儿（当前 PRAGMA 还没把它们算作违规），
+        # 因此投影的覆盖面严格大于 before 里出现的表集合
+        projected = dry["projected_deleted"]
+        assert projected, "存在受控孤儿时 dry-run 应给出非空投影"
+        assert "call_versions" not in dry["before"]
+        assert projected["call_versions"] == 1  # 当前无违规，收敛后才成孤儿
+        for table in dry["before"]:
+            assert projected.get(table, 0) >= 1, "%s 的违规行应在投影中被删" % table
 
         applied = db.gc_reap_orphans(dry_run=False, backup=True)
         assert applied["dry_run"] is False
+        assert applied["projected_deleted"] == {}
+        assert applied["deleted"] == projected, "dry-run 投影必须与实删逐表一致"
         assert sum(applied["deleted"].values()) > 0
         assert applied["after"] == {}
         assert applied["out_of_scope"] == {}

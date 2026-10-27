@@ -1232,10 +1232,13 @@ class GCMixin:
           file_edit_audit）孤儿不删除，改置 `workspace_id = NULL` 保留记录；
         - 治理/权威账本孤儿不删除，仅在结果 `out_of_scope` 中如实报告；
         - apply 前强制 gzip 备份，并写 `gc_runs` 审计（operation='fk-orphans'）；
-        - 清理期间按既有 bulk 写先例临时关闭外键，结束后恢复并复验。
+        - 清理期间按既有 bulk 写先例临时关闭外键，结束后恢复并复验；
+        - dry-run 也走同一条收敛删除路径，但删完即 `ROLLBACK`，用回滚前的
+          行数作为真实删除量投影（否则只统计当前违规条目，会严重低估：
+          删掉孤儿父行后，其子行要到下一轮才成为孤儿）。
 
         Args:
-            dry_run: True=只统计不删除（默认）；False=实际清理
+            dry_run: True=事务内模拟后回滚（默认）；False=实际清理
             backup: apply 时是否创建 gzip 备份（默认 True）
             operator: 触发者（cli / mcp / agent）
 
@@ -1245,9 +1248,11 @@ class GCMixin:
                 "dry_run": bool,
                 "backup_path": str,
                 "backup_size": int,
-                "before": {table: count},
-                "after": {table: count},
-                "deleted": {table: count},
+                "before": {table: count},       # 调用前的当前违规条目数
+                                                # （PRAGMA 按外键计，一行可能计多次）
+                "after": {table: count},        # 调用后的当前违规条目数
+                "deleted": {table: count},      # 实际删除量（dry-run 恒为空）
+                "projected_deleted": {table: count},  # dry-run 投影删除量（apply 恒为空）
                 "out_of_scope": {table: count},
             }
         """
@@ -1260,6 +1265,55 @@ class GCMixin:
             for row in self.conn.execute("PRAGMA foreign_key_check"):
                 counts[row[0]] = counts.get(row[0], 0) + 1
             return counts
+
+        def _delete_scoped() -> Dict[str, int]:
+            """在当前事务内跑一次收敛删除，返回按表删除量。
+
+            调用方负责外键开关与事务边界（apply 提交 / dry-run 回滚），
+            因此 dry-run 与 apply 共用同一条删除路径，预估与实删同构。
+            """
+            removed: Dict[str, int] = {}
+
+            # 全局审计账本：孤儿不删，只解除 workspace 归属（白名单常量表名）
+            for table in sorted(nullify):
+                cur = self.conn.execute(
+                    f'UPDATE "{table}" SET workspace_id = NULL '  # nosec B608 - 白名单常量
+                    "WHERE workspace_id IS NOT NULL "
+                    "AND workspace_id NOT IN (SELECT id FROM workspaces)"
+                )
+                if cur.rowcount:
+                    removed[table] = cur.rowcount
+
+            # 迭代收敛：每轮删当前违规行；删父行产生的二级孤儿下一轮处理。
+            # 上限 10 轮防御异常 schema 导致的死循环。
+            for _ in range(10):
+                scoped_rows = [
+                    r for r in self.conn.execute("PRAGMA foreign_key_check")
+                    if r[0] in scope
+                ]
+                if not scoped_rows:
+                    break
+                by_table: Dict[str, List[int]] = {}
+                for r in scoped_rows:
+                    by_table.setdefault(r[0], []).append(r[1])
+                for table, rowids in by_table.items():
+                    # table 来自 PRAGMA 输出且已与 scope 白名单比对，非用户输入
+                    for i in range(0, len(rowids), 500):
+                        chunk = rowids[i:i + 500]
+                        placeholders = ",".join("?" * len(chunk))
+                        cur = self.conn.execute(
+                            f'DELETE FROM "{table}" WHERE rowid IN ({placeholders})',  # nosec B608 - table 已白名单校验，占位符为 ?
+                            chunk,
+                        )
+                        if cur.rowcount:
+                            removed[table] = removed.get(table, 0) + cur.rowcount
+
+            # 内容表：删掉已无引用的 content 行（引用排除清单见
+            # _delete_orphan_symbol_contents，含 git_symbol_changes）
+            orphan_contents = self._delete_orphan_symbol_contents()
+            if orphan_contents:
+                removed["symbol_contents"] = orphan_contents
+            return removed
 
         audit_id = self._start_gc_audit(
             operation="fk-orphans",
@@ -1286,65 +1340,36 @@ class GCMixin:
                     backup_size = info["size"]
 
             deleted: Dict[str, int] = {}
-            if not dry_run:
-                original_fk = self.conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            projected_deleted: Dict[str, int] = {}
+
+            # dry-run 与 apply 共用同一条删除路径：dry-run 删完回滚，因此投影
+            # 与实删同构（含无引用内容行清理），不受当前是否有违规条目影响。
+            original_fk = self.conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            try:
+                # PRAGMA foreign_keys 在事务内无效，此处必须先提交再切换
+                self.conn.commit()
+                self.conn.execute("PRAGMA foreign_keys=OFF")
+
+                removed = _delete_scoped()
+                if dry_run:
+                    # 模拟结果只用于预估：回滚后库内数据与调用前完全一致
+                    self.conn.rollback()
+                    projected_deleted = removed
+                else:
+                    self.conn.commit()
+                    deleted = removed
+            finally:
+                # 无论成功/异常都恢复原有外键开关；异常时先回滚未提交删除
                 try:
-                    # PRAGMA foreign_keys 在事务内无效，此处必须先提交再切换
+                    self.conn.rollback()
                     self.conn.commit()
-                    self.conn.execute("PRAGMA foreign_keys=OFF")
+                    self.conn.execute(
+                        "PRAGMA foreign_keys=%s" % ("ON" if original_fk else "OFF")
+                    )
+                except sqlite3.Error:
+                    pass
 
-                    # 全局审计账本：孤儿不删，只解除 workspace 归属（白名单常量表名）
-                    for table in sorted(nullify):
-                        cur = self.conn.execute(
-                            f'UPDATE "{table}" SET workspace_id = NULL '  # nosec B608 - 白名单常量
-                            "WHERE workspace_id IS NOT NULL "
-                            "AND workspace_id NOT IN (SELECT id FROM workspaces)"
-                        )
-                        if cur.rowcount:
-                            deleted[table] = cur.rowcount
-
-                    # 迭代收敛：每轮删当前违规行；删父行产生的二级孤儿下一轮处理。
-                    # 上限 10 轮防御异常 schema 导致的死循环。
-                    for _ in range(10):
-                        scoped_rows = [
-                            r for r in self.conn.execute("PRAGMA foreign_key_check")
-                            if r[0] in scope
-                        ]
-                        if not scoped_rows:
-                            break
-                        by_table: Dict[str, List[int]] = {}
-                        for r in scoped_rows:
-                            by_table.setdefault(r[0], []).append(r[1])
-                        for table, rowids in by_table.items():
-                            # table 来自 PRAGMA 输出且已与 scope 白名单比对，非用户输入
-                            for i in range(0, len(rowids), 500):
-                                chunk = rowids[i:i + 500]
-                                placeholders = ",".join("?" * len(chunk))
-                                cur = self.conn.execute(
-                                    f'DELETE FROM "{table}" WHERE rowid IN ({placeholders})',  # nosec B608 - table 已白名单校验，占位符为 ?
-                                    chunk,
-                                )
-                                if cur.rowcount:
-                                    deleted[table] = deleted.get(table, 0) + cur.rowcount
-
-                    # 内容表：删掉已无引用的 content 行（引用排除清单见
-                    # _delete_orphan_symbol_contents，含 git_symbol_changes）
-                    orphan_contents = self._delete_orphan_symbol_contents()
-                    if orphan_contents:
-                        deleted["symbol_contents"] = orphan_contents
-
-                    self.conn.commit()
-                finally:
-                    # 无论成功/异常都恢复原有外键开关；异常时先回滚未提交删除
-                    try:
-                        self.conn.rollback()
-                        self.conn.commit()
-                        self.conn.execute(
-                            "PRAGMA foreign_keys=%s" % ("ON" if original_fk else "OFF")
-                        )
-                    except sqlite3.Error:
-                        pass
-
+            if not dry_run:
                 self._invalidate_graph_store()
 
             after_all = _scan()
@@ -1358,7 +1383,8 @@ class GCMixin:
             self._complete_gc_audit(
                 audit_id=audit_id,
                 candidate_counts=before,
-                deleted_counts=deleted,
+                # dry-run 没有真实删除，审计里记录收敛模拟的投影量
+                deleted_counts=projected_deleted if dry_run else deleted,
                 backup_path=backup_path,
                 backup_size=backup_size,
             )
@@ -1370,6 +1396,7 @@ class GCMixin:
                 "before": before,
                 "after": after,
                 "deleted": deleted,
+                "projected_deleted": projected_deleted,
                 "out_of_scope": out_of_scope,
             }
         except Exception as exc:
