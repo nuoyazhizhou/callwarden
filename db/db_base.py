@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from ..config import (
     norm_path, detect_project_root, get_default_workspace_name, get_project_db_path,
+    workspace_identity_key,
 )
 from ..i18n import t
 
@@ -4387,14 +4388,17 @@ class CodeGraphBase:
             self.active_workspace = dict(refreshed or row)
             return
 
-        # 没有匹配/可复用的活动工作区：根据 workspace_root 创建或查找
+        # 没有匹配/可复用的活动工作区：按 root_path **身份键**查找，找不到才创建。
+        # 旧实现用 `WHERE name = ? OR root_path = ?`（查询侧 norm_path、写入侧
+        # 原始 self.workspace_root），两侧格式不一致 ⇒ 同一目录反复注册成
+        # ws1/ws5/ws6 多行；且 name 不是身份，`c:\...` 这类名字会绕过路径查重。
         workspace_name = get_default_workspace_name(self.workspace_root)
-
-        cur = self.conn.execute(
-            "SELECT * FROM workspaces WHERE name = ? OR root_path = ?",
-            (workspace_name, norm_path(self.workspace_root)),
-        )
-        row = cur.fetchone()
+        target_key = workspace_identity_key(self.workspace_root)
+        row = None
+        for candidate in self.conn.execute("SELECT * FROM workspaces ORDER BY id"):
+            if workspace_identity_key(candidate["root_path"] or "") == target_key:
+                row = candidate
+                break
 
         if row:
             # 已存在，设为活动
@@ -4403,10 +4407,11 @@ class CodeGraphBase:
                 (row["id"],),
             )
         else:
-            # 不存在，创建新工作区
+            # 不存在，创建新工作区（root_path 落库即用归一化后的规范形式）
+            canonical_root = norm_path(os.path.realpath(os.path.abspath(self.workspace_root)))
             cur = self.conn.execute(
                 "INSERT INTO workspaces (name, root_path, created_at, is_active, description) VALUES (?, ?, ?, 1, '')",
-                (workspace_name, self.workspace_root, time.time()),
+                (workspace_name, canonical_root, time.time()),
             )
             new_id = cur.lastrowid
             cur = self.conn.execute(
@@ -4483,20 +4488,18 @@ class CodeGraphBase:
         Returns:
             新工作区 ID
         """
-        root_path = norm_path(os.path.abspath(root_path))
+        canonical_root = norm_path(os.path.realpath(os.path.abspath(root_path)))
+        target_key = workspace_identity_key(canonical_root)
 
-        # 检查是否已存在
-        cur = self.conn.execute(
-            "SELECT id FROM workspaces WHERE name = ? OR root_path = ?",
-            (name, root_path),
-        )
-        row = cur.fetchone()
-        if row:
-            return row["id"]
+        # 查重按 root_path 身份键（realpath + 归一化），name 不参与身份判定：
+        # 历史行可能以 `c:\...` 原始路径作 name，按 name 匹配会漏掉同目录重复行。
+        for candidate in self.conn.execute("SELECT id, root_path FROM workspaces ORDER BY id"):
+            if workspace_identity_key(candidate["root_path"] or "") == target_key:
+                return candidate["id"]
 
         cur = self.conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description) VALUES (?, ?, ?, 0, ?)",
-            (name, root_path, time.time(), description),
+            (name, canonical_root, time.time(), description),
         )
         self.conn.commit()
         return cur.lastrowid

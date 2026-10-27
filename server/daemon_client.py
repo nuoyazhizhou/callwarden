@@ -3774,7 +3774,13 @@ def _inject_workspace_id(params: dict) -> dict:
     if params.get("workspace_id"):
         return params
     client = _get_rpc_client_for_route()
-    result = client.call("mcp.daemon_client.inject_workspace_id", {"params": dict(params)})
+    # cwd 显式上送：daemon 侧按 root_path 匹配解析 workspace（起点优先），
+    # 避免多 active workspace 时静默取最小 id 导致跨项目任务混串
+    # （cwd 在 callwarden 却拿到 TokenSlim 任务的根因）。
+    result = client.call("mcp.daemon_client.inject_workspace_id", {
+        "params": dict(params),
+        "cwd": os.getcwd(),
+    })
     if not isinstance(result, dict) or not isinstance(result.get("params"), dict):
         raise RuntimeError(f"_inject_workspace_id: daemon 返回非对象结果 {result!r}")
     return result["params"]

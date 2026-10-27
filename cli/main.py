@@ -5698,12 +5698,34 @@ def _handle_task(args, db):
             "limit": opts.limit,
         }, _local_task_list) or []
         # daemon 返回 {tasks: [...]}；本地直接返回 list
+        workspace_meta = None
         if isinstance(_list_res, dict):
             tasks = _list_res.get("tasks") or []
+            workspace_meta = _list_res.get("workspace")
         else:
             tasks = _list_res
 
         cprint(t("cli.messages.task_panel_title"), "cyan", bold=True)
+        if isinstance(workspace_meta, dict) and workspace_meta.get("id"):
+            # 归属自证：只给 workspace_id 无法判断项目，错绑/串项目时看不出来
+            cprint(
+                t("cli.messages.task_panel_workspace",
+                  default="  工作区: {name} (#{id})  {root}",
+                  name=workspace_meta.get("name") or "-",
+                  id=workspace_meta.get("id"),
+                  root=workspace_meta.get("root_path") or "-"),
+                "cyan",
+            )
+            desc = workspace_meta.get("description") or ""
+            if desc:
+                auto = workspace_meta.get("description_source") == "auto"
+                cprint(
+                    t("cli.messages.task_panel_workspace_desc",
+                      default="  项目说明: {desc}{auto}",
+                      desc=desc,
+                      auto="（自动兜底：未填写描述）" if auto else ""),
+                    "yellow" if auto else "white",
+                )
         if opts.blocked:
             cprint(t("cli.messages.task_panel_blocked_only"), "yellow")
         if opts.status:

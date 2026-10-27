@@ -27,6 +27,7 @@
 """
 
 import ast
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -220,7 +221,9 @@ def test_success_inject_workspace_id_daemon_injects(fake_daemon):
     assert result == {"foo": "bar", "workspace_id": 7}
     method, params = fake_daemon.calls[-1]
     assert method == "mcp.daemon_client.inject_workspace_id"
-    assert params == {"params": {"foo": "bar"}}  # 嵌套传递
+    assert params["params"] == {"foo": "bar"}  # 嵌套传递
+    # cwd 显式上送：daemon 按 root_path 解析 workspace（多 active 时禁止按 id 猜测）
+    assert params["cwd"] == os.getcwd()
 
 
 def test_success_publish_snapshot_checkpoint_delegated(unix_client, fake_daemon):

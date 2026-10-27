@@ -731,6 +731,10 @@ impl TaskCollabStore {
             "offset".to_string(),
             Value::Number(serde_json::Number::from(offset as i64)),
         );
+        res.insert(
+            "workspace".to_string(),
+            workspace_projection(&conn, workspace_id),
+        );
         Ok(Value::Object(res))
     }
 
@@ -1348,6 +1352,72 @@ fn build_task_tree_node(conn: &Connection, task_id: &str) -> Value {
     res.insert("steps".to_string(), Value::Array(steps));
     res.insert("subtasks".to_string(), Value::Array(subtasks));
     Value::Object(res)
+}
+
+// ======================================================================
+// workspace 归属投影
+// ======================================================================
+
+/// `task.list` 响应中的 workspace 归属投影：让调用方（CLI / MCP / 系统提示词）
+/// 不必只凭 workspace_id 猜项目。`description` 为空时按 root_path 末级目录名
+/// 兜底，并用 `description_source` 标明来源，避免把自动兜底当成人工描述。
+fn workspace_projection(conn: &Connection, workspace_id: i64) -> Value {
+    let row = conn
+        .query_row(
+            "SELECT name, root_path, COALESCE(description, '') FROM workspaces WHERE id = ?1",
+            [workspace_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0).unwrap_or_default(),
+                    r.get::<_, String>(1).unwrap_or_default(),
+                    r.get::<_, String>(2).unwrap_or_default(),
+                ))
+            },
+        )
+        .ok();
+    let mut out = Map::new();
+    out.insert(
+        "id".to_string(),
+        Value::Number(serde_json::Number::from(workspace_id)),
+    );
+    match row {
+        Some((name, root_path, description)) => {
+            let explicit = !description.trim().is_empty();
+            let description = if explicit {
+                description
+            } else {
+                let base = root_path
+                    .trim_end_matches(['/', '\\'])
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                if base.is_empty() {
+                    root_path.clone()
+                } else {
+                    base
+                }
+            };
+            out.insert("name".to_string(), Value::String(name));
+            out.insert("root_path".to_string(), Value::String(root_path));
+            out.insert("description".to_string(), Value::String(description));
+            out.insert(
+                "description_source".to_string(),
+                Value::String(if explicit { "explicit" } else { "auto" }.to_string()),
+            );
+        }
+        None => {
+            // 未注册 workspace：展示占位，避免整份列表因元信息缺失而报错
+            out.insert("name".to_string(), Value::String(String::new()));
+            out.insert("root_path".to_string(), Value::String(String::new()));
+            out.insert("description".to_string(), Value::String(String::new()));
+            out.insert(
+                "description_source".to_string(),
+                Value::String("missing".to_string()),
+            );
+        }
+    }
+    Value::Object(out)
 }
 
 // ============================================

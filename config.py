@@ -1161,6 +1161,24 @@ def norm_path(path: str) -> str:
     return normalized
 
 
+def workspace_identity_key(path: str) -> str:
+    """workspace 身份键：realpath 展开 + norm_path + Windows 全小写。
+
+    与 `rust_ext/src/daemon/workspace.rs::normalize_path_key` 对齐（正斜杠、
+    去尾斜杠、盘符小写），额外做 realpath（展开 symlink）并整体小写化，
+    消除 `C:\\Git_Work\\X` / `c:/git_work/x/` 这类写法差异。
+
+    用途：task-DB `workspaces` 表的注册查重。历史缺陷是查询用 norm_path
+    而落库用未归一化的原始 workspace_root，两侧格式不一致 ⇒ 同一目录被
+    反复注册成多行（ws1/5/6 即此）。
+    """
+    if not path:
+        return ""
+    real = os.path.realpath(os.path.abspath(path))
+    key = norm_path(real)
+    return key.lower() if os.name == "nt" else key
+
+
 def norm_newlines(text: str) -> str:
     """标准化换行符：CRLF/CR -> LF"""
     return text.replace("\r\n", "\n").replace("\r", "\n")

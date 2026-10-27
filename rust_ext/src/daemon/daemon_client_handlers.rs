@@ -93,7 +93,13 @@ fn cell(row: &rusqlite::Row<'_>, idx: usize) -> Value {
 }
 
 /// workspace_id 解析（fail-closed）：显式 `workspace_id > 0` 优先；
-/// 缺失时从 workspaces 表 is_active=1 解析；无 active workspace → internal_error。
+/// 否则按调用方 `cwd` 匹配已注册 `root_path`（起点/最近者优先，与
+/// `cli/runtime.rs::resolve_workspace_by_path` 同语义）。
+///
+/// `is_active` **不参与**路由解析：它是全局单例状态，两个并发 agent/会话会
+/// 互相覆盖，用它推导「当前 workspace」会让 A 会话拿到 B 项目的任务
+/// （cwd 在 callwarden 却列出 TokenSlim 任务的根因）。无 cwd 且无
+/// workspace_id 时直接拒绝，禁止任何猜测性回退。
 fn resolve_workspace_id(conn: &Connection, params: &Value) -> Result<i64, DaemonRpcError> {
     if let Some(n) = get_int_param(params, "workspace_id") {
         if n > 0 {
@@ -103,20 +109,57 @@ fn resolve_workspace_id(conn: &Connection, params: &Value) -> Result<i64, Daemon
             "workspace_id 必须 > 0，禁止回退 workspace 1".to_string(),
         ));
     }
-    let ws: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 1",
-            [],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()
+    if let Some(cwd) = params.get("cwd").and_then(|v| v.as_str()) {
+        if !cwd.trim().is_empty() {
+            if let Some(ws_id) = resolve_workspace_id_by_path(conn, cwd)? {
+                return Ok(ws_id);
+            }
+            return Err(DaemonRpcError::invalid_params(format!(
+                "cwd={cwd} 未匹配任何已注册 workspace root_path；\
+                 请先 `cw workspace register` 或显式传 workspace_id（fail-closed）"
+            )));
+        }
+    }
+    Err(DaemonRpcError::invalid_params(
+        "缺少 workspace 归属：请显式传 workspace_id 或上送 cwd，\
+         daemon 不再按 is_active 猜测（is_active 仅供 UI 展示）"
+            .to_string(),
+    ))
+}
+
+/// 从调用方 cwd 逐级向上匹配已注册 `root_path`（起点目录优先，等价于
+/// Python `fetchone` 的首行语义）。全程只读，无匹配返回 `Ok(None)`。
+fn resolve_workspace_id_by_path(
+    conn: &Connection,
+    start: &str,
+) -> Result<Option<i64>, DaemonRpcError> {
+    let rows = conn
+        .prepare("SELECT id, root_path FROM workspaces ORDER BY id")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1).unwrap_or_default()))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        })
         .map_err(|e| DaemonRpcError::internal_error(format!("workspaces 查询失败: {}", e)))?;
-    ws.ok_or_else(|| {
-        DaemonRpcError::internal_error(
-            "没有 active workspace（is_active=1），拒绝推导 workspace_id（fail-closed）"
-                .to_string(),
-        )
-    })
+
+    let mut current = std::path::PathBuf::from(start);
+    loop {
+        let key = crate::daemon::workspace::normalize_path_key(&current.to_string_lossy());
+        if !key.is_empty() {
+            if let Some(id) = rows
+                .iter()
+                .find(|(_, root_path)| crate::daemon::workspace::normalize_path_key(root_path) == key)
+                .map(|(id, _)| *id)
+            {
+                return Ok(Some(id));
+            }
+        }
+        match current.parent() {
+            Some(parent) if parent != current => current = parent.to_path_buf(),
+            _ => return Ok(None),
+        }
+    }
 }
 
 // ======================================================================
@@ -1131,6 +1174,26 @@ mod tests {
             Value::Object(m) => m,
             _ => Map::new(),
         };
+        // 归属契约已改为 fail-closed（is_active 不参与路由）：夹具库只有一个
+        // workspace 7，这里显式补齐 workspace_id，保持各查询用例的既有语义。
+        // 专门验证「缺归属必须报错」的用例直接构造 params，不走本 helper。
+        if let Some(inner) = m.get_mut("params") {
+            if let Some(obj) = inner.as_object_mut() {
+                obj.entry("workspace_id").or_insert(json!(7));
+            }
+        } else {
+            m.entry("workspace_id").or_insert(json!(7));
+        }
+        m.insert("db_path".to_string(), json!(path));
+        Value::Object(m)
+    }
+
+    /// 注入路径专用：不预置 workspace_id（否则会走 short-circuit，测不到解析逻辑）。
+    fn inject_params(path: &str, extra: Value) -> Value {
+        let mut m = match extra {
+            Value::Object(m) => m,
+            _ => Map::new(),
+        };
         m.insert("db_path".to_string(), json!(path));
         Value::Object(m)
     }
@@ -1150,21 +1213,80 @@ mod tests {
     }
 
     #[test]
-    fn test_inject_fail_closed_no_active_workspace() {
+    fn test_inject_fail_closed_without_cwd_or_workspace_id() {
         let (_conn, path) = tmp_db("inject_empty");
-        let res = handle_inject_workspace_id(&params_with_db(&path, json!({"params": {}})));
+        let res = handle_inject_workspace_id(&inject_params(&path, json!({"params": {}})));
         assert!(res.is_err());
-        assert_eq!(res.unwrap_err().code, "internal_error");
+        assert_eq!(res.unwrap_err().code, "invalid_params");
     }
 
+    /// 无显式 workspace_id 时必须靠 cwd 解析；is_active 不再参与路由。
     #[test]
-    fn test_inject_resolves_active_workspace() {
+    fn test_inject_resolves_workspace_by_cwd() {
         let (conn, path) = tmp_db("inject_ok");
         seed_basic(&conn);
-        let res =
-            handle_inject_workspace_id(&params_with_db(&path, json!({"params": {"q": 1}}))).unwrap();
+        let res = handle_inject_workspace_id(&inject_params(
+            &path,
+            json!({"params": {"q": 1}, "cwd": "/tmp/ws7/src"}),
+        ))
+        .unwrap();
         assert_eq!(res["injected"], json!(true));
         assert_eq!(res["params"]["workspace_id"], json!(7));
+        assert_eq!(res["params"]["q"], json!(1));
+    }
+
+    /// cwd 命中已注册 root_path 时按路径解析，而不是按 is_active 的最小 id。
+    #[test]
+    fn test_inject_ignores_is_active_order() {
+        let (conn, path) = tmp_db("inject_cwd");
+        seed_basic(&conn);
+        // 第二个 workspace id 更小且 is_active=1，旧实现会静默选中它
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name, root_path, created_at, is_active) \
+             VALUES (3, 'ws3', '/tmp/ws3', 1.0, 1);",
+        )
+        .unwrap();
+        let res = handle_inject_workspace_id(&inject_params(
+            &path,
+            json!({"params": {}, "cwd": "/tmp/ws7/src"}),
+        ))
+        .unwrap();
+        assert_eq!(res["params"]["workspace_id"], json!(7));
+    }
+
+    /// 多个 active workspace 且无 cwd 时 fail-closed，禁止按 id 猜测。
+    #[test]
+    fn test_inject_multiple_active_without_cwd_is_fail_closed() {
+        let (conn, path) = tmp_db("inject_multi");
+        seed_basic(&conn);
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name, root_path, created_at, is_active) \
+             VALUES (3, 'ws3', '/tmp/ws3', 1.0, 1);",
+        )
+        .unwrap();
+        let err = handle_inject_workspace_id(&inject_params(&path, json!({"params": {}})))
+            .unwrap_err();
+        assert_eq!(err.code, "invalid_params");
+        let err = handle_inject_workspace_id(&inject_params(
+            &path,
+            json!({"params": {}, "cwd": "/elsewhere/unregistered"}),
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, "invalid_params");
+    }
+
+    /// cwd 不匹配任何 root_path 时即使只有一个 active workspace 也必须报错
+    /// （is_active 不参与路由，避免并发会话拿到别的项目）。
+    #[test]
+    fn test_inject_unmatched_cwd_is_fail_closed() {
+        let (conn, path) = tmp_db("inject_fallback");
+        seed_basic(&conn);
+        let err = handle_inject_workspace_id(&inject_params(
+            &path,
+            json!({"params": {}, "cwd": "/elsewhere/unregistered"}),
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, "invalid_params");
     }
 
     #[test]
