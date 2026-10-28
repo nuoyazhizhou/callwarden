@@ -194,6 +194,226 @@ fn test_unestablished_new_instance_rejected_no_partial_rows() {
     drop(conn);
 }
 
+/// 只建 task-DB workspace 1 行（root_path=/tmp/test-ws），不 seed 任何 capture。
+fn insert_workspace_row_only(store: &TaskCollabStore) {
+    let conn = store.conn.lock().unwrap();
+    conn.execute(
+        "INSERT OR IGNORE INTO workspaces (id, name, root_path, created_at, is_active) \
+         VALUES (1, 'test-ws', '/tmp/test-ws', ?1, 0)",
+        params![1_700_000_000.0_f64],
+    )
+    .unwrap();
+    drop(conn);
+}
+
+/// T6 有界再认证正向：capture 链**全为** legacy `ws-<digits>`，且请求的 canonical
+/// instance 在 registry 中同 owner + 同归一化 root 且 active → 允许追加 canonical
+/// capture（legacy → canonical 收敛），binding 锚定该 canonical instance。
+#[test]
+fn test_legacy_only_chain_adopts_canonical_instance() {
+    let (dir, db_path) = temp_db();
+    let registry_path = dir.path().join("registry.db");
+    let registry = WorkspaceRegistry::open(registry_path.to_str().unwrap()).unwrap();
+    let registered = registry
+        .register_workspace(1000, "/tmp/test-ws", "/tmp/test-ws", "", "", "")
+        .unwrap();
+    let canonical = registered["workspace_instance_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!is_legacy_synthesized_instance(&canonical));
+
+    let store = TaskCollabStore::new(&db_path)
+        .unwrap()
+        .with_registry_db_path_for_tests(&registry_path);
+    insert_workspace_row_only(&store);
+    insert_capture_with_instance(&store, "ws-1", 1);
+    insert_capture_with_instance(&store, "ws-1", 2);
+    let peer = PeerCredential::new_unix(1000, 1000, 1234);
+
+    store
+        .handle_task_create(
+            peer,
+            &serde_json::json!({
+                "workspace_id": 1,
+                "workspace_instance_id": canonical,
+                "task_id": "T-WSA-ADOPT",
+                "title": "legacy chain canonical adoption",
+                "steps": [{"action": "annotate", "target_file": "a.rs"}],
+            }),
+        )
+        .expect("legacy-only 链 + 同根 registry canonical 行必须允许再认证");
+
+    let conn = store.conn.lock().unwrap();
+    let bound_instance: String = conn
+        .query_row(
+            "SELECT workspace_instance_id FROM workspace_authority_captures \
+             WHERE workspace_id = 1 AND workspace_instance_id = ?1 AND capture_revision = 1",
+            params![canonical],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let supersedes: String = conn
+        .query_row(
+            "SELECT supersedes_capture_id FROM workspace_authority_captures \
+             WHERE workspace_id = 1 AND workspace_instance_id = ?1 AND capture_revision = 1",
+            params![canonical],
+            |r| r.get(0),
+        )
+        .unwrap();
+    // 新 instance 的 capture 链必须从 revision=1 起（否则链连续性门禁 COUNT==MAX 断链）。
+    let canonical_chain: (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(MAX(capture_revision), 0) \
+             FROM workspace_authority_captures \
+             WHERE workspace_id = 1 AND workspace_instance_id = ?1",
+            params![canonical],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let binding_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task_workspace_bindings WHERE task_id = 'T-WSA-ADOPT'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    drop(conn);
+    assert_eq!(bound_instance, canonical, "追加 capture 必须是 canonical instance");
+    assert_eq!(
+        supersedes, "cap-wsa-ws-1-2",
+        "canonical capture 必须 supersede legacy 最新一条"
+    );
+    assert_eq!(canonical_chain, (1, 1), "首个 canonical capture 必须恰好 revision=1");
+    assert_eq!(binding_count, 1, "必须恰好一条不可变 binding");
+
+    // 同一 canonical instance 的第二次 create → revision=2（链内单调递增）。
+    store
+        .handle_task_create(
+            peer,
+            &serde_json::json!({
+                "workspace_id": 1,
+                "workspace_instance_id": canonical,
+                "task_id": "T-WSA-ADOPT-2",
+                "title": "legacy chain canonical adoption second",
+                "steps": [{"action": "annotate", "target_file": "b.rs"}],
+            }),
+        )
+        .expect("已确立 canonical instance 的第二次 create 必须允许");
+    let conn = store.conn.lock().unwrap();
+    let (count2, max2): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(MAX(capture_revision), 0) \
+             FROM workspace_authority_captures \
+             WHERE workspace_id = 1 AND workspace_instance_id = ?1",
+            params![canonical],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((count2, max2), (2, 2), "canonical 链必须连续（count == max）");
+}
+
+/// T6 负向：legacy-only 链，但 registry canonical 行的物理根与 task-DB root_path
+/// 不一致（跨项目）→ 不得再认证，保持 E_WORKSPACE_AUTHORITY_MISMATCH 且零部分行。
+#[test]
+fn test_legacy_only_chain_rejects_canonical_from_other_root() {
+    let (dir, db_path) = temp_db();
+    let registry_path = dir.path().join("registry.db");
+    let registry = WorkspaceRegistry::open(registry_path.to_str().unwrap()).unwrap();
+    let registered = registry
+        .register_workspace(1000, "/tmp/other-project", "/tmp/other-project", "", "", "")
+        .unwrap();
+    let other = registered["workspace_instance_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let store = TaskCollabStore::new(&db_path)
+        .unwrap()
+        .with_registry_db_path_for_tests(&registry_path);
+    insert_workspace_row_only(&store);
+    insert_capture_with_instance(&store, "ws-1", 1);
+
+    let peer = PeerCredential::new_unix(1000, 1000, 1234);
+    let err = store
+        .handle_task_create(
+            peer,
+            &serde_json::json!({
+                "workspace_id": 1,
+                "workspace_instance_id": other,
+                "task_id": "T-WSA-ADOPT-OTHER-ROOT",
+                "title": "cross-root adoption must fail",
+                "steps": [{"action": "annotate", "target_file": "a.rs"}],
+            }),
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.code, "E_WORKSPACE_AUTHORITY_MISMATCH",
+        "跨项目 canonical instance 不得被再认证，实际 {}",
+        err.code
+    );
+
+    let conn = store.conn.lock().unwrap();
+    let tasks: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE id = 'T-WSA-ADOPT-OTHER-ROOT'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let caps: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workspace_authority_captures WHERE workspace_id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    drop(conn);
+    assert_eq!(tasks, 0, "不得写 task 行");
+    assert_eq!(caps, 1, "不得追加 capture 行");
+}
+
+/// T6 负向：legacy-only 链 + registry 同根但 owner 不是本 peer → 不得再认证。
+#[test]
+fn test_legacy_only_chain_rejects_canonical_of_other_owner() {
+    let (dir, db_path) = temp_db();
+    let registry_path = dir.path().join("registry.db");
+    let registry = WorkspaceRegistry::open(registry_path.to_str().unwrap()).unwrap();
+    let registered = registry
+        .register_workspace(2000, "/tmp/test-ws", "/tmp/test-ws", "", "", "")
+        .unwrap();
+    let foreign = registered["workspace_instance_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let store = TaskCollabStore::new(&db_path)
+        .unwrap()
+        .with_registry_db_path_for_tests(&registry_path);
+    insert_workspace_row_only(&store);
+    insert_capture_with_instance(&store, "ws-1", 1);
+
+    // peer uid 1000 与 registry owner 2000 不一致：owner ACL 在读事务之外先拒绝。
+    let peer = PeerCredential::new_unix(1000, 1000, 1234);
+    let err = store
+        .handle_task_create(
+            peer,
+            &serde_json::json!({
+                "workspace_id": 1,
+                "workspace_instance_id": foreign,
+                "task_id": "T-WSA-ADOPT-OTHER-OWNER",
+                "title": "cross-owner adoption must fail",
+                "steps": [{"action": "annotate", "target_file": "a.rs"}],
+            }),
+        )
+        .unwrap_err();
+    assert!(
+        err.code == "E_WORKSPACE_AUTHORITY_MISMATCH" || err.code == "workspace_forbidden",
+        "跨 owner 不得再认证，实际 {}",
+        err.code
+    );
+}
+
 /// A′ 标准三角色 legacy role_contracts 模板（与 cli/main.py `_build_role_contracts`
 /// 逐字段一致），触发 task.create 的 governance contract bootstrap。
 fn aprime_role_contracts() -> Vec<serde_json::Value> {

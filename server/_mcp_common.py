@@ -48,6 +48,29 @@ def _call_daemon_rpc(method: str, params: Optional[Dict[str, Any]] = None) -> An
         ) from exc
 
 
+def _resolve_mcp_project_root() -> str:
+    """解析本 MCP server 实例所属的**项目根**（多项目共用 daemon 时的归属锚点）。
+
+    优先级：
+    1. ``CALLWARDEN_WORKSPACE`` 环境变量（项目级 MCP 配置由 install-agent 写入，
+       宿主 cwd 不可靠时仍能锚定项目）；
+    2. 从进程 cwd 向上探测项目根（cursor/trae 等项目级启动的常见形态）；
+    3. ``config.PROJECT_ROOT``——仅作为零配置单项目用户的最后兜底。
+
+    本函数只负责"我是哪个项目"，不解析 workspace 数字 ID；ID 一律由
+    ``resolve_workspace_pair_from_daemon`` 以该根为输入向 daemon 权威解析。
+    """
+    from callwarden.config import PROJECT_ROOT, detect_project_root
+
+    env_root = os.environ.get("CALLWARDEN_WORKSPACE", "").strip()
+    if env_root:
+        return os.path.abspath(env_root)
+    detected = detect_project_root(os.getcwd())
+    if detected:
+        return os.path.abspath(detected)
+    return os.path.abspath(PROJECT_ROOT)
+
+
 def _get_db_path_for_daemon() -> str:
     """经 daemon RPC 获取权威任务库路径（SRV-001：Python authority → Rust daemon）。
 

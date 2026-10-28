@@ -55,7 +55,7 @@ use task_collab_contract_repair::normalize_p0l_repair_envelope;
 
 use crate::canonicalize::sha256_hex;
 use crate::daemon::config::default_registry_db_path;
-use crate::daemon::workspace::WorkspaceRegistry;
+use crate::daemon::workspace::{normalize_identity_root, WorkspaceRegistry};
 use crate::daemon::workspace_reconciliation::{
     ensure_reconciliation_table, resolve_create_authority, resolve_status_authority,
     UnifiedAuthority,
@@ -162,6 +162,54 @@ pub(crate) fn begin_immediate_with_retry<'a>(
 /// 合成 `ws-{id}`（曾掩盖 A′ phantom binding：`ws-1` 在注册表不存在却可绑定）。
 pub(crate) const ERR_TASK_WORKSPACE_INSTANCE_REQUIRED: &str = "E_TASK_WORKSPACE_INSTANCE_REQUIRED";
 
+/// legacy 合成 instance 形态判定：`ws-<digits>`（不含稳定哈希 instance）。
+fn is_legacy_synthesized_instance(instance: &str) -> bool {
+    let body = instance.strip_prefix("ws-").unwrap_or("");
+    !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// 该 workspace 的 capture 链是否**全部**为 legacy `ws-<digits>` 形态。
+///
+/// 空链返回 false（首个 capture 走正常路径，无需 adoption）。任一稳定 instance
+/// 存在即 false——已进入 canonical 权威，不再允许换 instance。
+fn legacy_chain_only(conn: &Connection, workspace_id: i64) -> Result<bool, DaemonRpcError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT workspace_instance_id FROM workspace_authority_captures \
+             WHERE workspace_id = ?1",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("capture 链形态查询准备失败: {e}")))?;
+    let rows = stmt
+        .query_map(params![workspace_id], |r| r.get::<_, String>(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("capture 链形态读取失败: {e}")))?;
+    let mut any = false;
+    for inst in rows {
+        any = true;
+        let inst = inst.map_err(|e| {
+            DaemonRpcError::internal_error(format!("capture 链 instance 解析失败: {e}"))
+        })?;
+        if !is_legacy_synthesized_instance(&inst) {
+            return Ok(false);
+        }
+    }
+    Ok(any)
+}
+
+/// 该 workspace 最新一条 capture 的 `(capture_id, capture_revision)`。
+fn workspace_latest_capture(
+    conn: &Connection,
+    workspace_id: i64,
+) -> Result<Option<(String, i64)>, DaemonRpcError> {
+    conn.query_row(
+        "SELECT workspace_capture_id, capture_revision FROM workspace_authority_captures \
+         WHERE workspace_id = ?1 ORDER BY capture_revision DESC, rowid DESC LIMIT 1",
+        params![workspace_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+    .map_err(|e| DaemonRpcError::internal_error(format!("workspace 最新 capture 读取失败: {e}")))
+}
+
 /// 在 `task.create` 同一事务内追加 workspace authority capture + 不可变 binding
 /// （cw-role-handoff-task-loop.md §8.1.1）。
 ///
@@ -182,6 +230,46 @@ pub(crate) fn bind_task_to_workspace(
     workspace_id: i64,
     workspace_instance_id: &str,
     created_by: &str,
+) -> Result<(String, String), DaemonRpcError> {
+    bind_task_to_workspace_inner(
+        tx,
+        task_id,
+        workspace_id,
+        workspace_instance_id,
+        created_by,
+        false,
+    )
+}
+
+/// 带「legacy-only 链 → canonical 再认证」许可的绑定入口。
+///
+/// 仅 `task.create` handler 在 [`TaskCollabStore::verify_canonical_adoption`]
+/// 逐项证明通过后调用；其它入口（split/plan/supersede 等）仍使用
+/// [`bind_task_to_workspace`]（不允许换 instance）。
+pub(crate) fn bind_task_to_workspace_adopting(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    workspace_id: i64,
+    workspace_instance_id: &str,
+    created_by: &str,
+) -> Result<(String, String), DaemonRpcError> {
+    bind_task_to_workspace_inner(
+        tx,
+        task_id,
+        workspace_id,
+        workspace_instance_id,
+        created_by,
+        true,
+    )
+}
+
+fn bind_task_to_workspace_inner(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    workspace_id: i64,
+    workspace_instance_id: &str,
+    created_by: &str,
+    allow_canonical_adoption: bool,
 ) -> Result<(String, String), DaemonRpcError> {
     // 0. workspace 必须真实存在。
     let ws_exists: i64 = tx
@@ -252,14 +340,24 @@ pub(crate) fn bind_task_to_workspace(
                     ))
                 })?;
             if established == 0 {
-                return Err(DaemonRpcError::new(
-                    "E_WORKSPACE_AUTHORITY_MISMATCH",
-                    format!(
-                        "workspace_id={} 权威 workspace_instance_id={}，请求 {} 不一致且未在\
-                         本 workspace capture 链确立；禁止同一 workspace 换 instance / 合成 ws-{{id}}",
-                        workspace_id, auth_instance, instance_id
-                    ),
-                ));
+                // Bounded legacy→canonical re-attestation:
+                // 仅当现有 capture 链**全部**是 legacy `ws-<digits>`、请求实例非 legacy、
+                // 且调用方已用 daemon registry 证明请求实例属于同一 owner+物理根
+                // （`verify_canonical_adoption`）时，才允许为同一 workspace 追加首个
+                // canonical capture。任一条件不满足仍 fail-closed（含跨项目/phantom）。
+                let legacy_only = allow_canonical_adoption
+                    && !is_legacy_synthesized_instance(instance_id)
+                    && legacy_chain_only(tx, workspace_id)?;
+                if !legacy_only {
+                    return Err(DaemonRpcError::new(
+                        "E_WORKSPACE_AUTHORITY_MISMATCH",
+                        format!(
+                            "workspace_id={} 权威 workspace_instance_id={}，请求 {} 不一致且未在\
+                             本 workspace capture 链确立；禁止同一 workspace 换 instance / 合成 ws-{{id}}",
+                            workspace_id, auth_instance, instance_id
+                        ),
+                    ));
+                }
             }
         }
     }
@@ -331,7 +429,19 @@ pub(crate) fn bind_task_to_workspace(
             prev_revision + 1,
             Some(prev_capture_id.clone()),
         ),
-        None => (format!("wc-{}-{}", instance_id, rand_val()), 1, None),
+        None => {
+            // legacy→canonical 再认证：新 instance 的 capture 链必须从 revision=1 开始，
+            // 否则 `next_action` 的链连续性门禁（COUNT == MAX per instance）会判定断链，
+            // TokenSlim 等被收敛项目的首个任务将永远无法生成治理投影。
+            // `supersedes_capture_id` 可跨 instance 指向本 workspace 最新一条（legacy），
+            // 只表达「本 workspace 权威已切换」，不参与该 instance 的计数连续性。
+            let sup = if allow_canonical_adoption {
+                workspace_latest_capture(tx, workspace_id)?.map(|(prev_id, _)| prev_id)
+            } else {
+                None
+            };
+            (format!("wc-{}-{}", instance_id, rand_val()), 1, sup)
+        }
     };
     let now = authoritative_now_text();
     let registry_identity_payload_json = serde_json::to_string(&serde_json::json!({
@@ -1840,8 +1950,91 @@ impl TaskCollabStore {
         Ok(())
     }
 
-    /// 跨 registry↔task-DB 统一 workspace 列表（供 `workspace.list`）。
+    /// 有界证明：某 workspace 的 legacy-only capture 链是否可再认证到请求的
+    /// canonical instance（供 `task.create` 的 legacy→canonical 迁移使用）。
     ///
+    /// 全部条件成立才返回 `true`（任一不成立返回 `false`，调用方照旧 fail-closed）：
+    /// 1. 请求 instance 不是 legacy `ws-<digits>` 形态；
+    /// 2. 该 workspace 现有 capture 链**全部**是 legacy 形态（空链不适用，首个
+    ///    capture 走正常路径）；
+    /// 3. task-DB `workspaces.id` 存在且可读 root_path；
+    /// 4. daemon registry 中存在该 instance 的 active 行，owner 与 peer 一致；
+    /// 5. registry 行的 `host_real_root`（缺失时退回 `client_view_root`）与
+    ///    task-DB root_path 经同一归一化后逐字节相等——证明同一 owner + 同一物理根，
+    ///    跨项目/跨根一律不成立。
+    ///
+    /// registry 以只读方式打开（与 `verify_registry_owner_for_create` 同款路径注入，
+    /// 禁止请求时 env 重解析/硬编码兜底）。
+    fn verify_canonical_adoption(
+        &self,
+        peer_uid: u32,
+        conn: &Connection,
+        workspace_id: i64,
+        requested_instance: &str,
+    ) -> Result<bool, DaemonRpcError> {
+        if requested_instance.trim().is_empty()
+            || is_legacy_synthesized_instance(requested_instance)
+        {
+            return Ok(false);
+        }
+        if !legacy_chain_only(conn, workspace_id)? {
+            return Ok(false);
+        }
+        let root_path: Option<String> = conn
+            .query_row(
+                "SELECT root_path FROM workspaces WHERE id = ?1",
+                params![workspace_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("adoption workspace 行读取失败: {e}"))
+            })?;
+        let Some(root_path) = root_path else {
+            return Ok(false);
+        };
+
+        #[cfg(test)]
+        let registry_path = match &self.registry_db_path_for_tests {
+            Some(path) => path.clone(),
+            // 无测试 registry 时不做 adoption（保持既有 fixture 语义）。
+            None => return Ok(false),
+        };
+        #[cfg(not(test))]
+        let registry_path = self.registry_db_path.clone();
+        let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
+            .map_err(|e| {
+                DaemonRpcError::new(
+                    "E_REGISTRY_UNAVAILABLE",
+                    format!("registry 只读打开失败: {e}"),
+                )
+            })?;
+        let Some(row) = registry.get_workspace_status(requested_instance).map_err(|e| {
+            DaemonRpcError::internal_error(format!("adoption registry 行读取失败: {e}"))
+        })?
+        else {
+            return Ok(false);
+        };
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let owner = row.get("owner_uid").and_then(|v| v.as_i64()).unwrap_or(-1);
+        if status != "active" || owner != peer_uid as i64 {
+            return Ok(false);
+        }
+        let reg_root = row
+            .get("host_real_root")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| row.get("client_view_root").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        if reg_root.is_empty()
+            || normalize_identity_root(reg_root) != normalize_identity_root(&root_path)
+        {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+
     /// F-DAEMON-01 修复：同 `unified_workspace_authority()`——registry 路径复用启动期
     /// 注入的 `self.registry_db_path`，禁止请求时 env 重解析 + 硬编码兜底。
     ///
@@ -2982,13 +3175,33 @@ impl TaskCollabStore {
         // T-1788392053931-05b8a0e4：instance 取 resolver 产出的 canonical 权威
         // （resolve_create_authority 已完成 numeric→task-DB 对齐），不再直接消费
         // 请求原值，保证一次解析的 canonical authority 贯穿 binding/capture。
-        let (binding_id, capture_id) = bind_task_to_workspace(
+        // T6 有界再认证：仅当该 workspace 的 capture 链全为 legacy `ws-<digits>`，
+        // 且请求的 canonical instance 在 registry 中同 owner + 同归一化 root 且
+        // active 时，才允许以新 instance 追加 capture（legacy → canonical 收敛）。
+        // 其它情况保持原 0c 门禁（禁止同一 workspace 换 instance）。
+        let adopt = self.verify_canonical_adoption(
+            peer.uid,
             &tx,
-            &task_id,
             eff_workspace_id,
             &authority.canonical_instance_id,
-            &peer.owner_key(),
         )?;
+        let (binding_id, capture_id) = if adopt {
+            bind_task_to_workspace_adopting(
+                &tx,
+                &task_id,
+                eff_workspace_id,
+                &authority.canonical_instance_id,
+                &peer.owner_key(),
+            )?
+        } else {
+            bind_task_to_workspace(
+                &tx,
+                &task_id,
+                eff_workspace_id,
+                &authority.canonical_instance_id,
+                &peer.owner_key(),
+            )?
+        };
 
         tx.execute(
             "INSERT INTO task_events 

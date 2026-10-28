@@ -1608,6 +1608,12 @@ def _dispatch_subcommand(argv, db):
                  error=f"{dre.code}: {dre.message}"), "red")
         raise SystemExit(2)
     except Exception as e:
+        # 归属冲突（跨项目配对）是显式拒绝，绝不能被通用分支表达成 RC=0 假成功：
+        # agent/脚本会把被拒的 create 误读为已建卡（AC-3）。仅收窄到该错误码，
+        # 其它 DaemonUnavailableError/DaemonRemoteError 语义维持既有行为。
+        if getattr(e, "code", "") == "E_WORKSPACE_PROJECT_MISMATCH":
+            cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
+            raise SystemExit(2)
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         # CLI 纯 client 化后不再捕获 sqlite3.OperationalError（禁直接 SQLite），
         # 以消息特征判断数据库锁错误保持既有提示语义。
@@ -1651,12 +1657,23 @@ def _dispatch_subcommand(argv, db):
 # 通过 get_merged_specs(overlay_path) 获取合并后的 specs（内置 + 外部 JSON 叠加层）
 
 
-def _mcp_callwarden_entry(root: str) -> dict:
-    """构造 callwarden MCP server 配置条目"""
-    return {
+def _mcp_callwarden_entry(root: str, pin_workspace: bool = False) -> dict:
+    """构造 callwarden MCP server 配置条目
+
+    Args:
+        root: 项目根（cw.py 所在安装根 / 项目根，依调用点而定）
+        pin_workspace: 仅**项目级**配置为 True——写入
+            ``CALLWARDEN_WORKSPACE=<root>``，让该项目的 MCP 实例锚定自己的项目，
+            避免多项目共用一个 daemon 时串项目。全局合并配置（被所有项目共享）
+            必须保持 False：钉死 root 会把所有项目都指向同一项目。
+    """
+    entry = {
         "command": "python",
         "args": [os.path.join(root, "cw.py"), "server"],
     }
+    if pin_workspace:
+        entry["env"] = {"CALLWARDEN_WORKSPACE": os.path.abspath(root)}
+    return entry
 
 
 def _handle_install_agent(args, db):
@@ -2000,7 +2017,7 @@ def _write_codex_plugin_package(base: str, root: str, hook_script: str, force: b
     )
     _write_if_needed(
         os.path.join(plugin_root, ".mcp.json"),
-        json.dumps({"mcpServers": {"callwarden": _mcp_callwarden_entry(root)}},
+        json.dumps({"mcpServers": {"callwarden": _mcp_callwarden_entry(root, pin_workspace=True)}},
                    ensure_ascii=False, indent=2) + "\n",
         force,
         created,
@@ -2077,7 +2094,7 @@ def _write_agent_integration(root: str, out_root: str, agent: str, spec: dict, f
         if spec.get("supports_mcp") and spec.get("project_mcp_relpath"):
             _write_if_needed(
                 os.path.join(base, "mcp.json"),
-                json.dumps({"mcpServers": {"callwarden": _mcp_callwarden_entry(root)}},
+                json.dumps({"mcpServers": {"callwarden": _mcp_callwarden_entry(root, pin_workspace=True)}},
                            ensure_ascii=False, indent=2) + "\n",
                 force,
                 created,
@@ -3675,6 +3692,26 @@ def _verify_create_readback(create_res: dict, workspace_id: int,
             )
 
 
+def _resolve_task_create_project_root(db) -> str:
+    """解析 task.create 的**调用方项目根**（fail-closed）。
+
+    多项目共用一个 daemon 时，绝不能回退到连接/客户端默认项目，否则在
+    TokenSlim 目录下建卡会静默挂到 callwarden（或相反）。优先级：
+    已解析的 `db.client_workspace_root` → cwd 项目根探测 → 拒绝执行。
+    """
+    root = getattr(db, "client_workspace_root", None)
+    if root:
+        return os.path.abspath(str(root))
+    detected = detect_project_root(os.getcwd())
+    if detected:
+        return os.path.abspath(detected)
+    raise DaemonUnavailableError(
+        "E_WORKSPACE_ROOT_REQUIRED: 无法确定调用方项目根，拒绝创建任务；"
+        "请在项目内执行或显式传 --workspace/--root",
+        code="E_WORKSPACE_ROOT_REQUIRED",
+    )
+
+
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
     parser = argparse.ArgumentParser(
@@ -4427,12 +4464,29 @@ def _handle_task(args, db):
             raise DaemonUnavailableError(
                 "Governed task.create requires explicit --workspace-id and "
                 "--workspace-instance-id from daemon authority")
-        if not workspace_id or not workspace_instance_id:
-            _pair = resolve_workspace_pair_from_daemon()
-            if not workspace_id:
-                workspace_id = int(_pair["workspace_id"])
-            if not workspace_instance_id:
-                workspace_instance_id = str(_pair["workspace_instance_id"])
+        # 归属 fail-closed：配对必须由**调用方项目根**解析，而不是连接默认项目。
+        # 显式传入的 workspace 若属于另一个项目，一律拒绝（A 项目不能给 B 项目建卡）。
+        # 未给出的那一半用调用方项目根补齐，agent/脚本无权决定归属。
+        _caller_root = _resolve_task_create_project_root(db)
+        _pair = resolve_workspace_pair_from_daemon(_caller_root)
+        _pair_ws = int(_pair["workspace_id"])
+        _pair_inst = str(_pair["workspace_instance_id"])
+        if workspace_id and workspace_id != _pair_ws:
+            raise DaemonUnavailableError(
+                "E_WORKSPACE_PROJECT_MISMATCH: --workspace-id="
+                f"{workspace_id} 不属于调用方项目（root={_caller_root!r}, "
+                f"该项目 canonical workspace_id={_pair_ws}）",
+                code="E_WORKSPACE_PROJECT_MISMATCH",
+            )
+        if workspace_instance_id and workspace_instance_id != _pair_inst:
+            raise DaemonUnavailableError(
+                "E_WORKSPACE_PROJECT_MISMATCH: --workspace-instance-id="
+                f"{workspace_instance_id} 不属于调用方项目（root={_caller_root!r}, "
+                f"该项目 canonical instance={_pair_inst}）",
+                code="E_WORKSPACE_PROJECT_MISMATCH",
+            )
+        workspace_id = _pair_ws
+        workspace_instance_id = _pair_inst
 
         def _local_create_forbidden():
             # BR-02 acceptance #4：daemon 不可用绝不创建本地任务。

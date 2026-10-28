@@ -3828,8 +3828,13 @@ def resolve_workspace_pair_from_daemon(project_root: Optional[str] = None) -> di
         raise DaemonUnavailableError("RPC client 缺少 call 方法（transport 未就绪）")
 
     if not project_root:
-        from callwarden.config import PROJECT_ROOT
-        project_root = PROJECT_ROOT
+        # 多项目共用一个 daemon 时，任何"默认项目"回退都会把调用方静默绑到
+        # 另一个项目（例如在 TokenSlim 目录下建卡却落到 callwarden）。调用方
+        # 必须显式提供项目根；缺失即 fail-closed。
+        raise DaemonUnavailableError(
+            "E_WORKSPACE_ROOT_REQUIRED: 解析 workspace 配对必须显式提供项目根"
+            "（禁止回退到连接/客户端默认项目）"
+        )
     target_root = _norm_root(os.path.abspath(str(project_root)).replace("\\\\?\\", ""))
 
     rows = call("workspace.list", {})

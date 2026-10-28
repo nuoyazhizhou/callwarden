@@ -23,7 +23,6 @@ except ImportError as exc:
     HAS_FASTMCP = False
     _FASTMCP_IMPORT_ERROR = exc
 
-from ..config import PROJECT_ROOT
 from ..i18n import t
 
 
@@ -45,11 +44,14 @@ def create_mcp_server():
 
     # HTTP daemon 的 workspace identity 不能从 MCP 进程 cwd 推导：宿主会把
     # MCP 进程放在 runtime 日志目录启动，cwd 因而不是当前项目。启动时把
-    # 包解析出的项目根显式交给 thin client；后续 workspace.register 返回的
-    # workspace_instance_id 才能作为唯一权威绑定键。
+    # **本实例所属项目根**显式交给 thin client（CALLWARDEN_WORKSPACE 优先，
+    # 其次 cwd 探测），后续 workspace.register 返回的 workspace_instance_id
+    # 才能作为唯一权威绑定键；多项目共用 daemon 时不得回退到其他项目。
     from .daemon_client import HttpDaemonRpcClient, is_http_transport_enabled
     if is_http_transport_enabled():
-        HttpDaemonRpcClient.get_instance().configure_workspace(PROJECT_ROOT)
+        from ._mcp_common import _resolve_mcp_project_root
+        HttpDaemonRpcClient.get_instance().configure_workspace(
+            _resolve_mcp_project_root())
 
     from .tools import register_all
     register_all(mcp)

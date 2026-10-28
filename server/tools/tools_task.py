@@ -23,7 +23,12 @@ H4B-E（T-1786590214634-9e740cdc-h4b-unsupported-error）：governance/unsupport
 
 from typing import Any, Dict, Optional
 
-from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问（lint 第三批曾误删）
+from .._mcp_common import (
+    _get_daemon_client,  # noqa: F401 —— re-export facade：测试与 legacy HTTP 路径经本模块访问
+    _get_db_path_for_daemon,
+    _resolve_mcp_project_root,
+    get_db,
+)
 
 from mcp.server.fastmcp import FastMCP
 
@@ -39,6 +44,34 @@ from server.compat_registry import (  # noqa: E402
 
 from ..daemon_client import route_task_read  # noqa: F401 —— re-export facade：tests/test_http_governance_error_cutover.py 经 monkeypatch.setattr 本模块属性
 from ..daemon_client import route_rpc as _route
+from ..daemon_client import (
+    DaemonRemoteError,
+    DaemonUnavailableError,
+    resolve_workspace_pair_from_daemon,
+)
+
+
+def _task_create_context_pair():
+    """解析本 MCP 实例所属项目的 canonical workspace 配对（归属锚点）。
+
+    Returns:
+        ``(pair, None)`` 成功；``(None, error_dict)`` 解析失败（fail-closed）。
+        失败时绝不回退到连接默认项目——多项目共用 daemon 会导致串项目建卡。
+    """
+    root = _resolve_mcp_project_root()
+    try:
+        pair = resolve_workspace_pair_from_daemon(root)
+    except (DaemonUnavailableError, DaemonRemoteError) as exc:
+        return None, {
+            "ok": False,
+            "code": "E_WORKSPACE_ROOT_UNRESOLVED",
+            "root": root,
+            "error": (
+                f"无法解析当前项目 workspace 归属（root={root}）；"
+                f"请先 `cw workspace register --root {root}`。原因: {exc}"
+            ),
+        }
+    return pair, None
 
 
 def register(mcp: FastMCP) -> None:
@@ -65,12 +98,48 @@ def register(mcp: FastMCP) -> None:
             description: 任务描述
             steps: 步骤列表，每个元素含 action/target_file/target_symbol/check_items
             creator: 创建者标识
-            workspace_id: 工作区整数 id（workspace.register 签发，必传 >0）
-            workspace_instance_id: 工作区实例 id（workspace.register 签发，必传非空）
+            workspace_id: 工作区整数 id（可选；服务端按当前项目补齐，传入他项目 id 会被拒绝）
+            workspace_instance_id: 工作区实例 id（可选；同上，仅允许当前项目配对）
 
         Returns:
             任务对象字典；task_id 字段为新任务 id
         """
+        # 归属 fail-closed：任务必须挂在本 MCP 实例所属项目下。agent 传入的
+        # workspace 配对只用于"声明"，不能决定归属——与当前项目不一致即拒绝；
+        # 未提供（0/空）时由服务端按当前项目补齐，避免 agent 猜错项目。
+        ctx_pair, ctx_error = _task_create_context_pair()
+        if ctx_error is not None:
+            return ctx_error
+        ctx_ws = int(ctx_pair["workspace_id"])
+        ctx_inst = str(ctx_pair["workspace_instance_id"])
+        if workspace_id and int(workspace_id) != ctx_ws:
+            return {
+                "ok": False,
+                "code": "E_WORKSPACE_PROJECT_MISMATCH",
+                "workspace_id": int(workspace_id),
+                "expected_workspace_id": ctx_ws,
+                "expected_workspace_instance_id": ctx_inst,
+                "root": _resolve_mcp_project_root(),
+                "error": (
+                    f"workspace_id={workspace_id} 不属于本 MCP 实例所在项目"
+                    f"（当前项目 canonical workspace_id={ctx_ws}）；"
+                    "拒绝跨项目创建任务单"
+                ),
+            }
+        if workspace_instance_id and str(workspace_instance_id).strip() != ctx_inst:
+            return {
+                "ok": False,
+                "code": "E_WORKSPACE_PROJECT_MISMATCH",
+                "workspace_instance_id": str(workspace_instance_id),
+                "expected_workspace_id": ctx_ws,
+                "expected_workspace_instance_id": ctx_inst,
+                "root": _resolve_mcp_project_root(),
+                "error": (
+                    "workspace_instance_id 不属于本 MCP 实例所在项目"
+                    f"（当前项目 canonical instance={ctx_inst}）；"
+                    "拒绝跨项目创建任务单"
+                ),
+            }
         return _route(
             "task.create",
             {
@@ -78,8 +147,8 @@ def register(mcp: FastMCP) -> None:
                 "description": description,
                 "steps": steps if steps is not None else [],
                 "creator": creator,
-                "workspace_id": workspace_id,
-                "workspace_instance_id": workspace_instance_id,
+                "workspace_id": ctx_ws,
+                "workspace_instance_id": ctx_inst,
             },
             "PROTECTED_MUTATION",
         )

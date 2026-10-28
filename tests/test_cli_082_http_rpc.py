@@ -40,13 +40,13 @@ def _stub_route_rpc_client(monkeypatch):
     stale 依据（A 桶：薄客户端 RPC seam）：生产已 daemon authority 化。
     `cli/main.py:3798-3811 _verify_create_readback` 在 create 回包为 dict 时经
     `server.daemon_client._get_rpc_client_for_route()` 发 `task.status` readback RPC；
-    `cli/main.py:4589` 在缺显式 workspace pair 时经
-    `resolve_workspace_pair_from_daemon`（server/daemon_client.py:3551-3573）发
-    `workspace.list`。无 live daemon 时二者均 fail-closed
-    `E_HTTP_MANIFEST_MISSING`。本文件只验证 create 分支的
+    `cli/main.py:4471` 对 create 一律按调用方项目根经
+    `resolve_workspace_pair_from_daemon`（server/daemon_client.py:3813）发
+    `workspace.list` + `workspace.status`（T2 后不再是"可跳过"路径）。无 live
+    daemon 时均 fail-closed `E_HTTP_MANIFEST_MISSING`。本文件只验证 create 分支的
     `route_task_write("task.create", ...)` 透传 + 渲染契约，故以替身满足 readback
-    （回 {}；用例回包无 workspace_* 键 → 不参与 provenance 比对），并由
-    `_handle_create` 显式传 workspace pair 跳过 pair 解析 RPC。
+    （回 {}；用例回包无 workspace_* 键 → 不参与 provenance 比对）与配对解析
+    （回与 `_handle_create` 显式 pair 一致的 7 / ws-inst-cli082）。
     """
     from callwarden.server import daemon_client as dc
 
@@ -54,14 +54,23 @@ def _stub_route_rpc_client(monkeypatch):
         def call(self, method, params=None, **kwargs):
             if method == "task.status":
                 return {}
+            if method == "workspace.list":
+                return [{"status": "active",
+                         "client_view_root": "C:/git_work/x",
+                         "workspace_instance_id": "ws-inst-cli082"}]
+            if method == "workspace.status":
+                return {"registry_workspace_id": 7,
+                        "registry_instance_id": "ws-inst-cli082",
+                        "task_db_workspace_id": 7,
+                        "task_db_instance_id": "ws-inst-cli082"}
             raise AssertionError(f"未预期的 RPC: {method}")
 
     monkeypatch.setattr(dc, "_get_rpc_client_for_route", lambda: _StubClient())
 
 
 def _handle_create(title="t", desc="d", steps="[]", **extra_argv):
-    # 显式 workspace pair：跳过 cli/main.py:4589 的 resolve_workspace_pair_from_daemon
-    # （见 _stub_route_rpc_client stale 依据）。
+    # 显式 workspace pair 与 _stub_route_rpc_client 解析出的 caller pair 一致，
+    # create 归属校验通过（cli/main.py:4471-4489）。
     argv = ["create", "--title", title, "--desc", desc, "--steps", steps,
             "--workspace-id=7", "--workspace-instance-id=ws-inst-cli082"]
     argv += [f"--{k}={v}" for k, v in extra_argv.items()]

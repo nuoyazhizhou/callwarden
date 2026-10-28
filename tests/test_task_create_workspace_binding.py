@@ -154,11 +154,14 @@ def test_resolve_pair_multiple_canonical_candidates_fails_closed(monkeypatch):
 # ----------------------------------------------------------------------
 
 def _fake_create_flow(monkeypatch, resolve_pair, create_response, readback_response,
-                      fallback_calls=None):
+                      fallback_calls=None, resolve_roots=None):
     """装配 create 分支的假 daemon 依赖，返回捕获的转发参数。"""
     captured = {}
 
-    def fake_resolve():
+    def fake_resolve(project_root):
+        captured["resolve_root"] = project_root
+        if resolve_roots is not None:
+            resolve_roots.append(project_root)
         return dict(resolve_pair)
 
     def fake_route(method, params, fallback):
@@ -178,6 +181,78 @@ def _fake_create_flow(monkeypatch, resolve_pair, create_response, readback_respo
     monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
                         lambda: _ReadbackClient())
     return captured
+
+
+def test_resolve_pair_without_root_fails_closed(monkeypatch):
+    """不传项目根时绝不回退连接默认项目（多项目串卡根因）。"""
+    fake = _FakeClient(workspace_rows=[], statuses={})
+    monkeypatch.setattr("callwarden.server.daemon_client._get_rpc_client_for_route",
+                        lambda: fake)
+    with pytest.raises(DaemonUnavailableError, match="E_WORKSPACE_ROOT_REQUIRED"):
+        resolve_workspace_pair_from_daemon(None)
+    assert fake.calls == []  # 未发起任何 workspace RPC
+
+
+def test_create_resolves_caller_project_root(monkeypatch, capsys):
+    """create 解析配对时传入的是调用方项目根，而非连接默认项目。"""
+    create_resp = {
+        "task_id": "T-root", "status": "open", "title": "root t",
+        "step_count": 0, "contract_count": 3,
+        "workspace_id": 10, "workspace_instance_id": "inst-10",
+        "workspace_binding_id": "tb-r", "workspace_capture_id": "wc-r",
+        "assignment_id": None,
+    }
+    roots = []
+    _fake_create_flow(
+        monkeypatch,
+        resolve_pair={"workspace_id": 10, "workspace_instance_id": "inst-10"},
+        create_response=create_resp,
+        readback_response=create_resp,
+        resolve_roots=roots,
+    )
+    _handle_task(["create", "--title", "root t"], None)
+    assert roots, "resolve_workspace_pair_from_daemon 必须被调用"
+    assert roots[0]  # 显式传入项目根，非 None
+    assert roots[0].lower().replace("\\", "/").rstrip("/").endswith("callwarden")
+
+
+def test_create_explicit_cross_project_pair_rejected(monkeypatch, capsys):
+    """显式传入他项目配对 → E_WORKSPACE_PROJECT_MISMATCH，且不发 RPC。"""
+    captured = _fake_create_flow(
+        monkeypatch,
+        resolve_pair={"workspace_id": 10, "workspace_instance_id": "tokenslim-inst"},
+        create_response={},
+        readback_response={},
+    )
+    with pytest.raises(DaemonUnavailableError) as exc:
+        _handle_task(["create", "--title", "cross",
+                      "--workspace-id", "1",
+                      "--workspace-instance-id", "callwarden-inst"], None)
+    assert exc.value.code == "E_WORKSPACE_PROJECT_MISMATCH"
+    assert "method" not in captured  # task.create 未被调用
+
+
+def test_create_matching_explicit_pair_forwarded(monkeypatch, capsys):
+    """显式配对与调用方项目一致 → 正常下发同一配对。"""
+    create_resp = {
+        "task_id": "T-match", "status": "open", "title": "match",
+        "step_count": 0, "contract_count": 3,
+        "workspace_id": 10, "workspace_instance_id": "inst-10",
+        "workspace_binding_id": "tb-m", "workspace_capture_id": "wc-m",
+        "assignment_id": None,
+    }
+    captured = _fake_create_flow(
+        monkeypatch,
+        resolve_pair={"workspace_id": 10, "workspace_instance_id": "inst-10"},
+        create_response=create_resp,
+        readback_response=create_resp,
+    )
+    _handle_task(["create", "--title", "match",
+                  "--workspace-id", "10",
+                  "--workspace-instance-id", "inst-10"], None)
+    assert captured["params"]["workspace_id"] == 10
+    assert captured["params"]["workspace_instance_id"] == "inst-10"
+    assert "identity_policy" in captured["params"]
 
 
 def test_create_forwards_exact_daemon_pair(monkeypatch, capsys):
@@ -202,25 +277,19 @@ def test_create_forwards_exact_daemon_pair(monkeypatch, capsys):
     assert "identity_policy" in captured["params"]
 
 
-def test_create_explicit_instance_still_forwarded(monkeypatch, capsys):
-    """A1：显式 --workspace-instance-id 时与 daemon 解析的 workspace_id 合并转发。"""
-    create_resp = {
-        "task_id": "T-br02-test-2", "status": "open", "title": "BR02 t2",
-        "step_count": 0, "contract_count": 3,
-        "workspace_id": 10, "workspace_instance_id": "my-explicit-inst",
-        "workspace_binding_id": "tb-2", "workspace_capture_id": "wc-2",
-        "assignment_id": None,
-    }
+def test_create_explicit_instance_mismatch_rejected(monkeypatch, capsys):
+    """显式 --workspace-instance-id 与调用方项目不一致 → 拒绝（不再"显式值优先"）。"""
     captured = _fake_create_flow(
         monkeypatch,
-        resolve_pair={"workspace_id": 10, "workspace_instance_id": "ignored"},
-        create_response=create_resp,
-        readback_response=create_resp,
+        resolve_pair={"workspace_id": 10, "workspace_instance_id": "inst-10"},
+        create_response={},
+        readback_response={},
     )
-    _handle_task(["create", "--title", "t2",
-                  "--workspace-instance-id", "my-explicit-inst"], None)
-    assert captured["params"]["workspace_id"] == 10      # 缺省 → daemon 解析
-    assert captured["params"]["workspace_instance_id"] == "my-explicit-inst"  # 显式保留
+    with pytest.raises(DaemonUnavailableError) as exc:
+        _handle_task(["create", "--title", "t2",
+                      "--workspace-instance-id", "other-project-inst"], None)
+    assert exc.value.code == "E_WORKSPACE_PROJECT_MISMATCH"
+    assert "method" not in captured
 
 
 # ----------------------------------------------------------------------
@@ -328,7 +397,7 @@ def test_readback_assignment_null_tolerated(monkeypatch):
 
 def test_daemon_unavailable_no_local_task(monkeypatch):
     """A4：resolve 失败（daemon 不可达）→ DaemonUnavailableError，绝不落本地。"""
-    def boom():
+    def boom(project_root):
         raise DaemonUnavailableError("daemon down")
 
     route_called = []
@@ -344,11 +413,44 @@ def test_daemon_unavailable_no_local_task(monkeypatch):
     assert route_called == []  # 未进入任何创建路径（含本地）
 
 
+# ----------------------------------------------------------------------
+# AC-3：跨项目归属冲突必须以非零 RC 终止（不能 RC=0 假成功）
+# ----------------------------------------------------------------------
+
+def test_dispatch_project_mismatch_exits_nonzero(monkeypatch, capsys):
+    """AC-3：E_WORKSPACE_PROJECT_MISMATCH 经 _dispatch_subcommand → SystemExit(2)。"""
+    import callwarden.cli.main as cli_main
+
+    def boom(argv, db):
+        raise DaemonUnavailableError(
+            "E_WORKSPACE_PROJECT_MISMATCH: 跨项目",
+            code="E_WORKSPACE_PROJECT_MISMATCH",
+        )
+
+    monkeypatch.setattr(cli_main, "_handle_task", boom)
+    monkeypatch.setattr(sys, "argv", ["cw", "task"])
+    with pytest.raises(SystemExit) as exc:
+        cli_main._dispatch_subcommand(["create", "--title", "t"], None)
+    assert exc.value.code == 2
+
+
+def test_dispatch_other_daemon_unavailable_keeps_rc_zero(monkeypatch, capsys):
+    """对照：非归属冲突的 DaemonUnavailableError 维持既有 RC 语义（不扩大行为面）。"""
+    import callwarden.cli.main as cli_main
+
+    def boom(argv, db):
+        raise DaemonUnavailableError("daemon down")
+
+    monkeypatch.setattr(cli_main, "_handle_task", boom)
+    monkeypatch.setattr(sys, "argv", ["cw", "task"])
+    assert cli_main._dispatch_subcommand(["create", "--title", "t"], None) is True
+
+
 def test_local_fallback_forbidden(monkeypatch):
     """A4：local 模式走到 fallback 分支时抛错，而非调用 db.task_create 本地建任务。"""
     captured = {"fallback_called": False}
 
-    def fake_resolve():
+    def fake_resolve(project_root):
         return {"workspace_id": 10, "workspace_instance_id": "ws-10"}
 
     def fake_route(method, params, fallback):

@@ -21,8 +21,10 @@ def capture_cli(monkeypatch, response=None, error=None):
         return response or {"task_id": "T-child", **PAIR}
     monkeypatch.setattr(cli, "route_task_write", route)
     monkeypatch.setattr(cli, "_verify_create_readback", lambda *a, **k: None)
+    # T2 后 create 一律按调用方项目根解析配对（不再存在"跳过解析"分支）；
+    # 返回与 BASE 显式 pair 一致的项目，归属校验通过。
     monkeypatch.setattr(cli, "resolve_workspace_pair_from_daemon",
-                        lambda: pytest.fail("governed create must not infer workspace"))
+                        lambda root: dict(PAIR))
     return calls
 
 
