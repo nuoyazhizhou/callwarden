@@ -147,6 +147,9 @@ upsert，再对可解析语言走 tree-sitter 符号落库。返回字段
 `unchanged` 字段语义偏差已先行修正（P3-3），增量化的收益评估从此字段可读。
 实测基线见 §4.3（隔离 ws 与主仓的 scanned/inserted 数值）。
 
+> 更新（2026-10-29）：P3-1 已在 `T-1793263115744-7ac43c98` 步骤#3 落地，
+> 实测证据与连带缺陷修复见 §4.6。
+
 ---
 
 ## 4. 实测证据（本机 2026-10-29）
@@ -279,12 +282,86 @@ workspace 连续三次 `workspace.build_graph`（daemon 已部署本次修复）
 `skipped_unparsed` 字段不存在；现在 `unchanged` 只随真实内容变化翻转，
 `.vue` 稳定计入 `skipped_unparsed`，与 §3.1 契约一致。
 
+### 4.6 P3-1 现场证据（build_graph 增量重建）
+
+实现（`rust_ext/src/daemon/fs_handlers.rs`，T-1793263115744-7ac43c98 步骤#3）：
+
+1. **mtime 快路径**：库内 `status='parsed'` + 内容 hash 非空 + `mtime` 与磁盘一致
+   → 跳过文件读取 / sha256 / tree-sitter 解析（计 `skipped_cached`）。共享 schema
+   （`db/schema.py`，外部契约）无 size 列，本步骤不改 schema，故缓存键取
+   mtime + 内容 hash；mtime 不等即回落 sha256 全量校验（正确性仍以 hash 为准）。
+2. **内容未变但 mtime 变化**（hash 一致）→ 只刷新 `file_instances`，不重解析符号。
+3. **删除感知**：库里存在、磁盘上确实不存在的文件 → 按 FK 依赖序清理
+   `calls` / `file_versions` / `file_symbol_versions` / `call_versions` /
+   `symbols` / `coverage_data` / `file_ownership` / `semgrep_findings` /
+   `file_instances`（计 `deleted`）。判据是**磁盘存在性**而非「本轮扫描到」，
+   因此只扫子目录（`scan_root`）或被 ignore 规则排除但仍存在的文件都不会被误删。
+4. **边重算裁剪**：只对本轮受影响的名字重算（改动文件的旧/新符号名 + 新 raw
+   callee 名 + 删除文件波及的名字）；无改动时 `calls_resolved=0`。
+   裁剪路径走**调用侧驱动**：先按名字集合（每 500 个一块）扫 `calls` 收集目标
+   raw 边行 id，再按 rowid 批量 `UPDATE`。逐名 `UPDATE ... callee_name=? AND
+   caller_id IN (<workspace 符号>)` 的查询计划是
+   `SEARCH calls USING INDEX idx_calls_caller (caller_id=?)`，等于「每个名字 ×
+   workspace 全部 caller 符号」（主仓 4.3 万符号，实测单名 95ms）；名字上千时
+   即为分钟级，是现场主仓增量建图把 HTTP 拖到 600s 超时的根因。
+
+隔离 ws `p31_iso_ws`（`alpha.py` / `beta.py` / `widget.vue`）连续四轮实测
+（daemon 已部署本次修复）：
+
+| 轮次 | scanned | inserted | unchanged | skipped_cached | deleted | skipped_unparsed |
+|---|---|---|---|---|---|---|
+| 首次全建 | 3 | 2 | 0 | 0 | 0 | 1 |
+| 内容未变重建 | 3 | 0 | 2 | 2 | 0 | 1 |
+| 追加 `alpha_two` 后重建 | 3 | 1 | 1 | 1 | 0 | 1 |
+| 删除 `beta.py` 后重建 | 2 | 0 | 1 | 1 | 1 | 1 |
+
+删除后 `beta.py` 的 `file_instances` / `symbols` 行数均为 0；`calls_resolved`
+在无改动轮次为 0（旧实现每轮全库重算）。同构文件集（25 个真实 py 文件）
+冷建 4.86s（`inserted=25`，`calls=9611`，`calls_resolved=1219`）vs
+热建 0.081s（`skipped_cached=25`），**提速 59.8×**。
+
+主仓稳态（`C:\git_work\callwarden`，daemon release 部署后连续两轮）：
+`scanned=1241`。注意该值与 §4.3 的 `gc_retention active_files=2370` 不同源：
+`build` 目录被 `.gitignore` 剪枝、`rust_ext/target` 命中 `SKIP_DIRS`，这些行
+在磁盘上仍存在，因此按「磁盘存在性」判据既不计入 `scanned` 也不会被删除感知
+清理（属既有历史行，非本轮增量语义）。
+
+| 场景 | 耗时 | 关键计数 |
+|---|---|---|
+| 同构集冷建（25 文件） | 4.86s | inserted=25 / calls=9611 |
+| 同构集热建（同集合） | 0.081s | skipped_cached=25 / calls_resolved=0 |
+| 主仓热建#1 | 1.089s | scanned=1241 / skipped_cached=1240 / inserted=1 / calls_resolved=78 |
+| 主仓热建#2 | 0.303s | scanned=1241 / skipped_cached=1241 / calls_resolved=0 |
+
+### 4.6.1 增量化的连带修复（现场暴露的真实缺陷）
+
+- **跨 workspace 误挂边**：`resolve_raw_calls` 的单候选 `UPDATE` 只按
+  `callee_name` 全库更新，会把手写其它 workspace 的 raw 边挂到本 workspace
+  的符号 id 上（悬空引用 + 跨库写）。已加 workspace 作用域并新增单测
+  `test_resolve_raw_calls_scoped_to_workspace`；存量数据一次性修复：重置
+  28,182 条跨 workspace 的已解析边为 raw，复查剩余 0。
+- **重解析 FK 失败**：`parse_and_store_symbols` 重建符号时未先清
+  `coverage_data` / `clone_pairs` / `test_case_relations` / `test_runs` 这些
+  无 CASCADE 的引用行，主仓 `analyzers/compile_commands.py` 必现
+  `FOREIGN KEY constraint failed`。抽出 `purge_symbol_references` 先清子表，
+  新增单测 `test_reparse_clears_restrictive_symbol_references`。
+- **失败自愈**：解析失败时 `file_instances` 已被标成 `parsed`，快路径会让该文件
+  永久跳过；失败分支现回退 `status='pending'`（旧实现靠每轮全量重解析自愈，
+  增量化后必须显式补偿）。
+- **边重算驱动方向（性能缺陷，非功能缺陷）**：增量裁剪最初沿用既有逐名
+  `UPDATE`，查询计划是 `SEARCH calls USING INDEX idx_calls_caller (caller_id=?)`，
+  复杂度为 `名字数 × workspace 符号数`（主仓实测单名 95ms），数千名字即把
+  主仓建图拖到 600s HTTP 超时（现场复现两次）。改为调用侧驱动（分块扫
+  `calls` 收边 + rowid 批量 UPDATE）后，主仓连续两轮稳态 1.089s / 0.303s。
+  `calls` 表无 `callee_name` 索引是既有 schema 事实，本步骤不改 schema，
+  故从驱动方向规避（而非新增索引）。
+
 ---
 
 ## 5. 后续 backlog（未纳入本次步骤）
 
 | 编号 | 项 | 类型 | 状态 |
 |---|---|---|---|
-| P3-1 | build_graph 增量化（哈希跳过 + 删除感知 + 边重算裁剪） | 性能 | 待排期 |
+| P3-1 | build_graph 增量化（哈希跳过 + 删除感知 + 边重算裁剪） | 性能 | 已修（T-1793263115744-7ac43c98 步骤#3） |
 | P3-2 | `workspace_id: int` → `workspace_instance_id` 契约收敛（build_context 族） | 契约 | 已修（T-1793263115744-7ac43c98 步骤#2） |
 | P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 已修（T-1793263115744-7ac43c98 步骤#1） |

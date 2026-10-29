@@ -17,6 +17,7 @@
 
 use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::dispatch::{
@@ -456,6 +457,10 @@ fn parse_and_store_symbols(
             let placeholders = old_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let params: Vec<&dyn rusqlite::ToSql> =
                 old_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            // P3-1：先清无 CASCADE 的符号引用行（coverage/clone/test 映射），
+            // 否则下面的 DELETE FROM symbols 会被 FK 约束中止——主仓
+            // analyzers/compile_commands.py 这类有覆盖率数据的文件必现。
+            purge_symbol_references(conn, &old_ids)?;
             conn.execute(
                 &format!(
                     "UPDATE calls SET callee_id = 0 WHERE callee_id IN ({placeholders})"
@@ -519,6 +524,14 @@ fn parse_and_store_symbols(
         //     再插入一条 is_current=1 的新版本 + 其 file_symbol_versions。
         conn.execute(
             "DELETE FROM file_symbol_versions WHERE file_version_id IN \
+             (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+            rusqlite::params![file_instance_id],
+        )?;
+        // 现场库（旧 DDL 创建）的 call_versions 外键是 NO ACTION，而 canonical
+        // schema 里是 ON DELETE CASCADE；为兼容两种库形态，显式先删子行，
+        // 否则 DELETE FROM file_versions 会报 FOREIGN KEY constraint failed。
+        conn.execute(
+            "DELETE FROM call_versions WHERE file_version_id IN \
              (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
             rusqlite::params![file_instance_id],
         )?;
@@ -596,6 +609,136 @@ fn parse_and_store_symbols(
     }
 }
 
+/// 按调用行 id 批量写回已解析边（分块避免 SQLite 变量数上限）。
+fn update_calls_by_ids(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+    callee_id: i64,
+    is_cross_file: i64,
+) -> Result<usize, rusqlite::Error> {
+    const CHUNK: usize = 500;
+    let mut updated = 0usize;
+    for chunk in ids.chunks(CHUNK) {
+        let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 2);
+        params.push(&callee_id);
+        params.push(&is_cross_file);
+        for id in chunk {
+            params.push(id);
+        }
+        updated += conn.execute(
+            &format!(
+                "UPDATE calls SET callee_id = ?1, is_cross_file = ?2 \
+                 WHERE id IN ({ph}) AND callee_id = 0"
+            ),
+            params.as_slice(),
+        )?;
+    }
+    Ok(updated)
+}
+
+/// P3-1 增量边重算：按名字集合「调用侧驱动」解析（只处理受影响名字）。
+///
+/// 逐名 `UPDATE calls ... WHERE callee_name = ? AND caller_id IN (<workspace 符号>)`
+/// 的查询计划是 `SEARCH calls USING INDEX idx_calls_caller (caller_id=?)`——
+/// 每个名字都要遍历一次 workspace 的**全部** caller 符号（主仓 4.3 万符号，
+/// 实测单名 ~95ms，数千名字即分钟级，曾把主仓增量建图拖到 HTTP 超时）。
+/// 这里反过来驱动：先按名字集合一次性扫 `calls` 收集目标 raw 边行 id
+/// （分块 IN，扫描次数 = 名字数/500），再按 rowid 批量 UPDATE；语句与边数
+/// 线性、与全库规模解耦。
+///
+/// 语义与全量路径保持一致：唯一候选全量解析（同文件边 is_cross_file=0、
+/// 跨文件=1），多候选只挂同文件边，零候选计入 ambiguous。
+fn resolve_filtered_calls(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    filter: &BTreeSet<String>,
+    candidate_stmt: &mut rusqlite::Statement<'_>,
+) -> Result<(usize, usize), rusqlite::Error> {
+    if filter.is_empty() {
+        return Ok((0, 0));
+    }
+    const CHUNK: usize = 500;
+    // name -> [(call_id, caller_file_instance_id)]
+    let mut raw: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
+    let names: Vec<&String> = filter.iter().collect();
+    for chunk in names.chunks(CHUNK) {
+        let ph = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
+        params.push(&workspace_id);
+        for name in chunk {
+            params.push(*name);
+        }
+        let mut stmt = conn.prepare(&format!(
+            "SELECT c.id, c.callee_name, cs.file_instance_id FROM calls c \
+             JOIN symbols cs ON cs.id = c.caller_id \
+             JOIN file_instances cf ON cf.id = cs.file_instance_id \
+             WHERE cf.workspace_id = ?1 AND c.callee_id = 0 AND c.callee_name IN ({ph})"
+        ))?;
+        let rows = stmt.query_map(params.as_slice(), |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows.filter_map(Result::ok) {
+            raw.entry(row.1).or_default().push((row.0, row.2));
+        }
+    }
+
+    let mut resolved = 0usize;
+    let mut ambiguous = 0usize;
+    for name in filter {
+        let candidates: Vec<(i64, i64)> = candidate_stmt
+            .query_map(rusqlite::params![workspace_id, name], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+        let Some(rows) = raw.get(name) else {
+            if candidates.is_empty() {
+                ambiguous += 1;
+            }
+            continue;
+        };
+        match candidates.as_slice() {
+            [] => ambiguous += 1,
+            [(sid, sfid)] => {
+                let same: Vec<i64> = rows
+                    .iter()
+                    .filter(|(_, cfid)| cfid == sfid)
+                    .map(|(id, _)| *id)
+                    .collect();
+                let cross: Vec<i64> = rows
+                    .iter()
+                    .filter(|(_, cfid)| cfid != sfid)
+                    .map(|(id, _)| *id)
+                    .collect();
+                resolved += update_calls_by_ids(conn, &same, *sid, 0)?;
+                resolved += update_calls_by_ids(conn, &cross, *sid, 1)?;
+            }
+            _ => {
+                // 多候选：仅挂接同文件的（每文件取首个候选 id）
+                let mut done_files: Vec<i64> = Vec::new();
+                for (sid, sfid) in &candidates {
+                    if done_files.contains(sfid) {
+                        continue;
+                    }
+                    done_files.push(*sfid);
+                    let ids: Vec<i64> = rows
+                        .iter()
+                        .filter(|(_, cfid)| cfid == sfid)
+                        .map(|(id, _)| *id)
+                        .collect();
+                    resolved += update_calls_by_ids(conn, &ids, *sid, 0)?;
+                }
+            }
+        }
+    }
+    Ok((resolved, ambiguous))
+}
+
 /// CR11（review §5.5）：daemon 侧批量调用边解析（batch resolve）。
 ///
 /// 把 workspace 内 callee_id=0 的 raw 边挂接到符号：
@@ -609,11 +752,33 @@ fn parse_and_store_symbols(
 ///
 /// 返回 (resolved_edges, ambiguous_names)。按 distinct callee_name 逐名
 /// 处理，SQL 语句数 ≈ 2×去重名数，与边数解耦。
+///
+/// P3-1：`names_filter` 提供时只处理给定名字（增量建图的边重算裁剪），
+/// `None` 表示全库扫描（build_directory / refresh_file 仍走全量语义）。
 fn resolve_raw_calls(
     conn: &rusqlite::Connection,
     workspace_id: i64,
 ) -> Result<(usize, usize), DaemonRpcError> {
+    resolve_raw_calls_for_names(conn, workspace_id, None)
+}
+
+fn resolve_raw_calls_for_names(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    names_filter: Option<&BTreeSet<String>>,
+) -> Result<(usize, usize), DaemonRpcError> {
     (|| -> Result<(usize, usize), rusqlite::Error> {
+        let mut candidate_stmt = conn.prepare(
+            "SELECT s.id, s.file_instance_id FROM symbols s \
+             JOIN file_instances fi ON s.file_instance_id = fi.id \
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived' AND s.name = ?2",
+        )?;
+
+        // P3-1 增量路径：按名字集合走「调用侧驱动」（见 resolve_filtered_calls）。
+        if let Some(filter) = names_filter {
+            return resolve_filtered_calls(conn, workspace_id, filter, &mut candidate_stmt);
+        }
+
         let names: Vec<String> = {
             let mut stmt = conn.prepare(
                 "SELECT DISTINCT c.callee_name FROM calls c \
@@ -621,18 +786,10 @@ fn resolve_raw_calls(
                  JOIN file_instances cf ON cs.file_instance_id = cf.id \
                  WHERE cf.workspace_id = ?1 AND c.callee_id = 0 AND c.callee_name != ''",
             )?;
-            let rows = stmt
-                .query_map(rusqlite::params![workspace_id], |r| r.get::<_, String>(0))?
-                .filter_map(Result::ok)
-                .collect();
-            rows
+            let rows = stmt.query_map(rusqlite::params![workspace_id], |r| r.get::<_, String>(0))?;
+            let collected: Vec<String> = rows.filter_map(Result::ok).collect();
+            collected
         };
-
-        let mut candidate_stmt = conn.prepare(
-            "SELECT s.id, s.file_instance_id FROM symbols s \
-             JOIN file_instances fi ON s.file_instance_id = fi.id \
-             WHERE fi.workspace_id = ?1 AND fi.status != 'archived' AND s.name = ?2",
-        )?;
 
         let mut resolved = 0usize;
         let mut ambiguous = 0usize;
@@ -649,14 +806,23 @@ fn resolve_raw_calls(
                 }
                 1 => {
                     let (sid, sfid) = candidates[0];
+                    // P3-1：UPDATE 必须限定到本 workspace 的 caller 符号。
+                    // 此前只按 callee_name 全库 UPDATE，会把手写其它 workspace 的
+                    // raw 边挂到本 workspace 的符号 id 上（跨工作区误挂 + 悬空
+                    // 引用），且要求全表扫描全部 calls。
                     let n = conn.execute(
                         "UPDATE calls SET callee_id = ?1, \
                          is_cross_file = CASE WHEN EXISTS ( \
                            SELECT 1 FROM symbols cs WHERE cs.id = calls.caller_id \
                              AND cs.file_instance_id = ?2 \
                          ) THEN 0 ELSE 1 END \
-                         WHERE callee_id = 0 AND callee_name = ?3",
-                        rusqlite::params![sid, sfid, name],
+                         WHERE callee_id = 0 AND callee_name = ?3 \
+                           AND caller_id IN ( \
+                             SELECT cs.id FROM symbols cs \
+                             JOIN file_instances cfi ON cs.file_instance_id = cfi.id \
+                             WHERE cfi.workspace_id = ?4 \
+                           )",
+                        rusqlite::params![sid, sfid, name, workspace_id],
                     )?;
                     resolved += n;
                 }
@@ -765,14 +931,217 @@ fn classify_build_graph_file(
     }
 }
 
-/// `workspace.build_graph` —— 全量重建文件索引（file_instances upsert）。
+/// P3-1：mtime 快路径命中判定（命中即免文件读取 / sha256 / 解析）。
 ///
-/// 计数契约（P3-3）：
+/// 共享 schema（`db/schema.py` 的 `file_instances`）没有 size 列，本步骤不改
+/// schema（版本号与 Python 端 DDL 均为外部契约），因此缓存键是
+/// 「库内 status='parsed' + 内容 hash 非空 + mtime 与磁盘一致」：
+/// - mtime 为 f64 秒（NTFS 精度 100ns），任何写入都会刷新它；
+/// - 一旦不等就回落 sha256 全量校验，正确性仍以内容 hash 为准（不是 mtime）；
+/// - 同秒内改写且 mtime 恰好不变属极端情形，交由全量重建（`build_graph`
+///   单文件 `refresh_file`）兜底。
+fn is_mtime_cache_hit(
+    stored_status: &str,
+    stored_hash: &str,
+    stored_mtime: f64,
+    disk_mtime: f64,
+) -> bool {
+    stored_status == "parsed"
+        && !stored_hash.is_empty()
+        // 0.5ms 容差：吸收 f64 秒与文件系统时间戳的量化误差
+        && (stored_mtime - disk_mtime).abs() < 0.0005
+}
+
+/// 清理指向给定符号 id 的无 CASCADE 引用行。
+///
+/// `symbols` 重建（parse_and_store_symbols 的幂等 DELETE）或整文件删除前必须
+/// 调用，否则 SQLite 直接报 `FOREIGN KEY constraint failed`
+/// （`clone_pairs` / `test_case_relations` / `test_runs` / `coverage_data`
+/// 对 `symbols(id)` 都是 RESTRICT 语义）。
+fn purge_symbol_references(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+) -> Result<(), rusqlite::Error> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let ph = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let once: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    let mut twice: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(once.len() * 2);
+    twice.extend(once.iter().copied());
+    twice.extend(once.iter().copied());
+    conn.execute(
+        &format!("DELETE FROM clone_pairs WHERE symbol_a_id IN ({ph}) OR symbol_b_id IN ({ph})"),
+        twice.as_slice(),
+    )?;
+    conn.execute(
+        &format!(
+            "DELETE FROM test_case_relations WHERE test_fn_id IN ({ph}) OR tested_fn_id IN ({ph})"
+        ),
+        twice.as_slice(),
+    )?;
+    conn.execute(
+        &format!("DELETE FROM test_runs WHERE test_fn_id IN ({ph})"),
+        once.as_slice(),
+    )?;
+    conn.execute(
+        &format!("DELETE FROM coverage_data WHERE symbol_id IN ({ph})"),
+        once.as_slice(),
+    )?;
+    Ok(())
+}
+
+/// P3-1 删除感知：清理磁盘上已消失文件的所有图行。
+///
+/// 返回「受影响的 callee 名」集合（旧定义名 + 其它文件指向这些符号的已解析
+/// 边的名字），供调用方做增量边重算；清理本身按 FK 依赖序进行
+/// （与 `file.remove` 对齐，另补 `clone_pairs` / `test_case_relations` /
+/// `test_runs` / `coverage_data` / `file_ownership` 这些无 CASCADE 的引用表，
+/// 否则删 `symbols` / `file_instances` 会被 FK 约束中止）。
+fn purge_missing_file_graph(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    rel: &str,
+) -> Result<Vec<String>, DaemonRpcError> {
+    let map_err = |e: rusqlite::Error| DaemonRpcError::internal_error(format!("删除感知清理失败: {e}"));
+    let fid: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2",
+            rusqlite::params![workspace_id, rel],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(map_err)?;
+    let Some(fid) = fid else {
+        return Ok(Vec::new());
+    };
+
+    let mut affected: Vec<String> = Vec::new();
+    let symbol_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id, name FROM symbols WHERE file_instance_id = ?1")
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(rusqlite::params![fid], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(map_err)?
+            .filter_map(Result::ok)
+            .collect::<Vec<(i64, String)>>();
+        for (_, name) in &rows {
+            affected.push(name.clone());
+        }
+        rows.into_iter().map(|(id, _)| id).collect()
+    };
+    if !symbol_ids.is_empty() {
+        let ph = symbol_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            symbol_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        // 其它文件指向本文件符号的已解析边先降级为 raw（随后也被删除，
+        // 但保持「不留悬空 callee_id」的不变量）
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT DISTINCT callee_name FROM calls \
+                 WHERE callee_id IN ({ph}) AND callee_name != ''"
+            ))
+            .map_err(map_err)?;
+        let names = stmt
+            .query_map(params.as_slice(), |r| r.get::<_, String>(0))
+            .map_err(map_err)?
+            .filter_map(Result::ok)
+            .collect::<Vec<String>>();
+        affected.extend(names);
+        conn.execute(
+            &format!("UPDATE calls SET callee_id = 0 WHERE callee_id IN ({ph})"),
+            params.as_slice(),
+        )
+        .map_err(map_err)?;
+        purge_symbol_references(conn, &symbol_ids).map_err(map_err)?;
+    }
+    for sql in [
+        "DELETE FROM calls WHERE caller_id IN \
+         (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+        "DELETE FROM file_symbol_versions WHERE file_version_id IN \
+         (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+        "DELETE FROM call_versions WHERE file_version_id IN \
+         (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+        "DELETE FROM coverage_data WHERE file_instance_id = ?1",
+        "DELETE FROM file_ownership WHERE file_instance_id = ?1",
+        "DELETE FROM semgrep_findings WHERE file_instance_id = ?1",
+        // 现场库的 archived_files / git_file_changes 外键同为 NO ACTION
+        "DELETE FROM archived_files WHERE file_instance_id = ?1",
+        "DELETE FROM git_file_changes WHERE file_instance_id = ?1",
+        "DELETE FROM file_versions WHERE file_instance_id = ?1",
+        "DELETE FROM symbols WHERE file_instance_id = ?1",
+        "DELETE FROM file_instances WHERE id = ?1",
+    ] {
+        conn.execute(sql, rusqlite::params![fid]).map_err(map_err)?;
+    }
+    Ok(affected)
+}
+
+/// 收集单个文件的符号名（供增量边重算的受影响名字集合）。
+fn collect_file_symbol_names(
+    conn: &rusqlite::Connection,
+    fid: i64,
+    out: &mut BTreeSet<String>,
+) -> Result<(), DaemonRpcError> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM symbols WHERE file_instance_id = ?1")
+        .map_err(|e| DaemonRpcError::internal_error(format!("收集符号名失败: {e}")))?;
+    let rows = stmt
+        .query_map(rusqlite::params![fid], |r| r.get::<_, String>(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("收集符号名失败: {e}")))?;
+    for name in rows.filter_map(Result::ok) {
+        out.insert(name);
+    }
+    Ok(())
+}
+
+/// 收集单个文件本轮产生的 raw 调用边 callee 名（供增量边重算）。
+fn collect_file_raw_callee_names(
+    conn: &rusqlite::Connection,
+    fid: i64,
+    out: &mut BTreeSet<String>,
+) -> Result<(), DaemonRpcError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT c.callee_name FROM calls c \
+             JOIN symbols s ON c.caller_id = s.id \
+             WHERE s.file_instance_id = ?1 AND c.callee_id = 0 AND c.callee_name != ''",
+        )
+        .map_err(|e| DaemonRpcError::internal_error(format!("收集 callee 名失败: {e}")))?;
+    let rows = stmt
+        .query_map(rusqlite::params![fid], |r| r.get::<_, String>(0))
+        .map_err(|e| DaemonRpcError::internal_error(format!("收集 callee 名失败: {e}")))?;
+    for name in rows.filter_map(Result::ok) {
+        out.insert(name);
+    }
+    Ok(())
+}
+
+/// `workspace.build_graph` —— 增量重建文件索引（file_instances upsert）。
+///
+/// P3-1 增量语义：
+/// - 快路径：`file_instances.mtime` 与磁盘一致且状态已解析 → 跳过读取/hash/解析
+///   （计 `skipped_cached`，同时计入 `unchanged`）；
+/// - 内容未变但 mtime 变化（hash 一致）→ 只刷新 file_instances，不重解析符号；
+/// - 删除感知：磁盘上已消失的文件同步清理 symbols/calls/file_versions 等
+///   （计 `deleted`）；
+/// - 边重算裁剪：只对本轮受影响的名字（改动文件的旧/新符号名 + raw callee 名
+///   + 删除文件波及的名字）重解析，不再全库扫描 raw 边。
+///
+/// 计数契约（P3-1 在 P3-3 基础上新增两项）：
 /// - `scanned` 本轮访问的可索引文件数；
 /// - `inserted` 首次入库或内容变化、已重新解析的文件数；
-/// - `unchanged` 可解析且内容 hash 与库内一致的文件数（未变化）；
-/// - `skipped_unparsed` 语言无 parser 的文件数（旧实现把它混计进 `unchanged`）；
-/// - `symbols` / `calls` 本轮解析产出的符号/调用总数。
+/// - `unchanged` 可解析且内容未变化的文件数（含快路径命中）；
+/// - `skipped_cached` 其中走 mtime 快路径、未读取文件内容的文件数；
+/// - `deleted` 磁盘上已消失、本轮清理掉图行的文件数；
+/// - `skipped_unparsed` 语言无 parser 的文件数；
+/// - `symbols` / `calls` 本轮解析产出的符号/调用总数；
+/// - `calls_resolved` / `calls_ambiguous` 本轮受影响名字的边重算结果
+///   （无改动时恒为 0，不再全库重算）。
 pub fn handle_build_graph(
     registry: &WorkspaceRegistry,
     peer: &PeerCredential,
@@ -808,44 +1177,69 @@ pub fn handle_build_graph(
     let mut inserted = 0usize;
     let mut unchanged = 0usize;
     let mut skipped_unparsed = 0usize;
+    let mut skipped_cached = 0usize;
+    let mut deleted = 0usize;
     let mut symbol_total = 0usize;
     let mut call_total = 0usize;
     let now = now_ts_secs();
+    // P3-1：本轮磁盘上现存的可索引文件（删除感知差集基准）
+    let mut seen: HashSet<String> = HashSet::new();
+    // P3-1：本轮受影响的名字（边重算裁剪输入）
+    let mut affected_names: BTreeSet<String> = BTreeSet::new();
     for path in files {
         let rel = path
             .strip_prefix(&root_canon)
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+        scanned += 1;
+        seen.insert(rel.clone());
+        // 先取元数据（cheap）：快路径命中时避免读取文件内容
+        let meta = std::fs::metadata(&path).ok();
+        let mtime = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(now);
+        let parsed = parser_lang_id(&rel).is_some();
+        let stored: Option<(String, String, f64)> = conn
+            .query_row(
+                "SELECT current_content_hash, status, mtime FROM file_instances
+                 WHERE workspace_id = ?1 AND rel_path = ?2",
+                rusqlite::params![workspace_id, rel],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 回查失败: {e}")))?;
+        // P3-1 快路径：mtime 未变且已解析 → 免读 / 免 hash / 免解析
+        if parsed {
+            if let Some((stored_hash, status, stored_mtime)) = &stored {
+                if is_mtime_cache_hit(status, stored_hash, *stored_mtime, mtime) {
+                    unchanged += 1;
+                    skipped_cached += 1;
+                    continue;
+                }
+            }
+        }
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(_) => continue,
         };
         let hash = sha256_hex(&bytes);
         let total_lines = bytes.iter().filter(|&&b| b == b'\n').count() as i64;
-        let mtime = std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(now);
-        scanned += 1;
         // P3-3：`unchanged` 的语义收敛为「可解析且内容未变化」。此前它统计的是
         // 「不可解析」文件（vue/svelte/cxx 等无 parser 的扩展名），首次全建就会
         // 返回 unchanged>0，与 Python 契约（unchanged = 未变化文件）相反。
         // 不可解析文件改计入新的 skipped_unparsed，文件清单仍照常登记。
-        let parsed = parser_lang_id(&rel).is_some();
-        let stored: Option<(String, String)> = conn
-            .query_row(
-                "SELECT current_content_hash, status FROM file_instances
-                 WHERE workspace_id = ?1 AND rel_path = ?2",
-                rusqlite::params![workspace_id, rel],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 回查失败: {e}")))?;
         let class = classify_build_graph_file(
             parsed,
-            stored.as_ref().map(|(h, st)| (h.as_str(), st.as_str())),
+            stored.as_ref().map(|(h, st, _)| (h.as_str(), st.as_str())),
             &hash,
         );
         // file_contents upsert
@@ -859,13 +1253,34 @@ pub fn handle_build_graph(
         let fid = upsert_file_instance(
             &conn, workspace_id, &rel, &path, &hash, mtime, total_lines, parsed,
         )?;
-        if parsed {
+        if parsed && class == BuildGraphFileClass::Inserted {
+            // P3-1：重解析前先记录旧符号名——parse_and_store_symbols 内部会把
+            // 其它文件指向这些旧 id 的已解析边降级为 raw，这些名字必须参与重算。
+            collect_file_symbol_names(&conn, fid, &mut affected_names)?;
             // P0-CR1：符号抽取随建图落库（tree-sitter 管线）
-            let (sym, calls) = parse_and_store_symbols(
+            let parse_result = parse_and_store_symbols(
                 &conn, fid, &path, &rel, &hash, mtime, total_lines,
-            )?;
-            symbol_total += sym;
-            call_total += calls;
+            );
+            match parse_result {
+                Ok((sym, calls)) => {
+                    symbol_total += sym;
+                    call_total += calls;
+                }
+                Err(e) => {
+                    // P3-1：解析失败时 file_instances 已被 upsert 成 parsed。
+                    // 若不回退，下一轮的 mtime 快路径会把这行当成「已解析」永久
+                    // 跳过（旧实现每次全量重解析天然自愈，增量化后必须显式补偿）。
+                    let _ = conn.execute(
+                        "UPDATE file_instances SET status = 'pending', last_parsed = 0 \
+                         WHERE id = ?1",
+                        rusqlite::params![fid],
+                    );
+                    return Err(e);
+                }
+            }
+            // 新定义名（其它文件的 raw 边可能因此可解析）+ 本文件新 raw 边名
+            collect_file_symbol_names(&conn, fid, &mut affected_names)?;
+            collect_file_raw_callee_names(&conn, fid, &mut affected_names)?;
         }
         match class {
             BuildGraphFileClass::Inserted => inserted += 1,
@@ -873,13 +1288,49 @@ pub fn handle_build_graph(
             BuildGraphFileClass::SkippedUnparsed => skipped_unparsed += 1,
         }
     }
-    // CR11：建图收尾批量解析 raw 调用边（含本轮重建降级的重挂）
-    let (resolved, ambiguous) = resolve_raw_calls(&conn, workspace_id)?;
+    // P3-1 删除感知：库里存在、磁盘上已消失的文件清理图行。
+    // 以「磁盘上是否真的不存在」为准（而非「本轮是否扫描到」），这样
+    // scan_root 只扫子目录时不会误删目录外文件，也不会误删被 ignore
+    // 规则排除但仍存在于磁盘的文件。
+    let stored_rows: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare("SELECT rel_path, abs_path FROM file_instances WHERE workspace_id = ?1")
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 列表失败: {e}")))?;
+        let rows = stmt
+            .query_map(rusqlite::params![workspace_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 列表失败: {e}")))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    for (rel, abs_path) in stored_rows {
+        if seen.contains(&rel)
+            || root_canon.join(&rel).exists()
+            || Path::new(&abs_path).exists()
+        {
+            continue;
+        }
+        let names = purge_missing_file_graph(&conn, workspace_id, &rel)?;
+        for name in names {
+            affected_names.insert(name);
+        }
+        deleted += 1;
+    }
+    // P3-1 边重算裁剪：只重算本轮受影响的 callee 名（无改动则零成本）。
+    // 全覆盖性论证：会改变解析结果的只有「名字被新增/删除定义」或
+    // 「该名字的 raw 边被新建/降级」，两类名字都已收进 affected_names。
+    let (resolved, ambiguous) = if affected_names.is_empty() {
+        (0usize, 0usize)
+    } else {
+        resolve_raw_calls_for_names(&conn, workspace_id, Some(&affected_names))?
+    };
     let mut m = Map::new();
     m.insert("ok".into(), Value::Bool(true));
     m.insert("scanned".into(), Value::Number(scanned.into()));
     m.insert("inserted".into(), Value::Number(inserted.into()));
     m.insert("unchanged".into(), Value::Number(unchanged.into()));
+    m.insert("skipped_cached".into(), Value::Number(skipped_cached.into()));
+    m.insert("deleted".into(), Value::Number(deleted.into()));
     m.insert("skipped_unparsed".into(), Value::Number(skipped_unparsed.into()));
     m.insert("symbols".into(), Value::Number(symbol_total.into()));
     m.insert("calls".into(), Value::Number(call_total.into()));
@@ -1550,6 +2001,247 @@ mod tests {
             classify_build_graph_file(false, None, &hash),
             BuildGraphFileClass::SkippedUnparsed
         );
+    }
+
+    #[test]
+    fn test_is_mtime_cache_hit_contract() {
+        // 仅「已解析 + hash 非空 + mtime 一致」才可免读取
+        assert!(is_mtime_cache_hit("parsed", "abc", 100.0, 100.0));
+        assert!(is_mtime_cache_hit("parsed", "abc", 100.002, 100.0019));
+        // 未解析过（pending）→ 必须重新解析
+        assert!(!is_mtime_cache_hit("pending", "abc", 100.0, 100.0));
+        // mtime 变化 → 回落 sha256 全量校验
+        assert!(!is_mtime_cache_hit("parsed", "abc", 100.0, 101.0));
+        // hash 为空（异常行）→ 不信任缓存
+        assert!(!is_mtime_cache_hit("parsed", "", 100.0, 100.0));
+    }
+
+    #[test]
+    fn test_purge_missing_file_graph_demotes_and_removes() {
+        // P3-1 删除感知：a.py 从磁盘消失后，其 symbols/file_instances 全清，
+        // b.py 指向 a.py 的已解析边降级为 raw 且名字回传供重算。
+        let tmp = std::env::temp_dir().join(format!(
+            "cw_purge_test_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let db_path = tmp.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES ('t', 'c:/t', 0.0, 0, 'test')",
+            [],
+        )
+        .unwrap();
+        let ws_id = conn.last_insert_rowid();
+        setup_ws_and_parse(&tmp, &conn, ws_id, "a.py", "def helper():\n    return 1\n");
+        setup_ws_and_parse(
+            &tmp, &conn, ws_id, "b.py",
+            "def caller():\n    return helper()\n",
+        );
+        resolve_raw_calls(&conn, ws_id).unwrap();
+        let resolved_before: i64 = conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'helper'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(resolved_before > 0);
+
+        let names = purge_missing_file_graph(&conn, ws_id, "a.py").unwrap();
+        assert!(names.iter().any(|n| n == "helper"), "受影响名字须回传: {names:?}");
+        // a.py 的符号与文件行被清干净
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id
+                 WHERE fi.workspace_id = ?1 AND fi.rel_path = 'a.py'",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_instances WHERE workspace_id = ?1 AND rel_path = 'a.py'",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
+        // b.py 的边降级为 raw，不留悬空 callee_id
+        let demoted: i64 = conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'helper'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(demoted, 0);
+        let dangling: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calls WHERE callee_id > 0 AND callee_id NOT IN (SELECT id FROM symbols)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dangling, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_raw_calls_for_names_prunes_unrelated() {
+        // P3-1 边重算裁剪：过滤器外的 raw 边保持不变（不被全库重算波及）
+        let tmp = std::env::temp_dir().join(format!(
+            "cw_resolve_filter_test_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let db_path = tmp.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES ('t', 'c:/t', 0.0, 0, 'test')",
+            [],
+        )
+        .unwrap();
+        let ws_id = conn.last_insert_rowid();
+        setup_ws_and_parse(&tmp, &conn, ws_id, "a.py", "def helper():\n    return 1\n");
+        setup_ws_and_parse(
+            &tmp, &conn, ws_id, "b.py",
+            "def caller():\n    return helper() + missing()\n",
+        );
+        let filter: BTreeSet<String> = ["helper".to_string()].into_iter().collect();
+        let (resolved, _) =
+            resolve_raw_calls_for_names(&conn, ws_id, Some(&filter)).unwrap();
+        assert_eq!(resolved, 1, "只应解析被过滤的 helper 边");
+        let helper_id: i64 = conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'helper'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(helper_id > 0);
+        let missing_id: i64 = conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'missing'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(missing_id, 0, "过滤器外的名字必须保持 raw");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_resolve_raw_calls_scoped_to_workspace() {
+        // P3-1：单候选解析不得跨 workspace 挂接 raw 边。
+        // ws1 定义 helper，ws2 有一条同名 raw 边；只解析 ws1 时 ws2 必须保持 raw。
+        let tmp = std::env::temp_dir().join(format!(
+            "cw_resolve_scope_test_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let db_path = tmp.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES ('w1', 'c:/w1', 0.0, 0, 't'), ('w2', 'c:/w2', 0.0, 0, 't')",
+            [],
+        )
+        .unwrap();
+        let ws1: i64 = conn
+            .query_row("SELECT id FROM workspaces WHERE root_path = 'c:/w1'", [], |r| r.get(0))
+            .unwrap();
+        let ws2: i64 = conn
+            .query_row("SELECT id FROM workspaces WHERE root_path = 'c:/w2'", [], |r| r.get(0))
+            .unwrap();
+        setup_ws_and_parse(&tmp, &conn, ws1, "a.py", "def helper():\n    return 1\n");
+        setup_ws_and_parse(
+            &tmp, &conn, ws2, "b.py",
+            "def other():\n    return helper()\n",
+        );
+        let filter: BTreeSet<String> = ["helper".to_string()].into_iter().collect();
+        let (resolved, _) = resolve_raw_calls_for_names(&conn, ws1, Some(&filter)).unwrap();
+        assert_eq!(resolved, 0, "ws1 自身没有 raw 边，不应改动任何边");
+        let ws2_edge: i64 = conn
+            .query_row(
+                "SELECT c.callee_id FROM calls c \
+                 JOIN symbols s ON c.caller_id = s.id \
+                 JOIN file_instances fi ON s.file_instance_id = fi.id \
+                 WHERE fi.workspace_id = ?1 AND c.callee_name = 'helper'",
+                rusqlite::params![ws2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ws2_edge, 0, "ws2 的 raw 边不得被 ws1 的解析结果挂接");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_reparse_clears_restrictive_symbol_references() {
+        // P3-1：重解析前的 DELETE FROM symbols 必须先把 coverage_data 等
+        // RESTRICT 引用行清掉，否则主仓这类文件必现 FOREIGN KEY constraint failed。
+        let tmp = std::env::temp_dir().join(format!(
+            "cw_reparse_fk_test_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let db_path = tmp.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES ('t', 'c:/t', 0.0, 0, 'test')",
+            [],
+        )
+        .unwrap();
+        let ws_id = conn.last_insert_rowid();
+        setup_ws_and_parse(&tmp, &conn, ws_id, "a.py", "def helper():\n    return 1\n");
+        let fid: i64 = conn
+            .query_row(
+                "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = 'a.py'",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let sid: i64 = conn
+            .query_row(
+                "SELECT id FROM symbols WHERE file_instance_id = ?1",
+                rusqlite::params![fid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO coverage_data \
+             (file_instance_id, symbol_id, line_start, line_end, hit_count, report_source, imported_at) \
+             VALUES (?1, ?2, 1, 2, 5, 'lcov', ?3)",
+            rusqlite::params![fid, sid, now_ts_secs()],
+        )
+        .unwrap();
+        let bytes = std::fs::read(tmp.join("a.py")).unwrap();
+        let hash = sha256_hex(&bytes);
+        let res = parse_and_store_symbols(
+            &conn, fid, &tmp.join("a.py"), "a.py", &hash, now_ts_secs(), 2,
+        );
+        assert!(res.is_ok(), "重解析不得被 FK 约束中止: {:?}", res.err());
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM coverage_data WHERE symbol_id = ?1",
+                rusqlite::params![sid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "旧符号的覆盖率引用必须被清理");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

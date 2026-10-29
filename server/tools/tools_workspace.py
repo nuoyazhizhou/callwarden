@@ -51,7 +51,7 @@ class CodeMetricsSummary(TypedDict):
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def build_graph(workspace_instance_id: str = "") -> dict:
-        """完整构建代码知识图谱（全量扫描）
+        """完整构建代码知识图谱（增量重建：未变化文件免解析）
 
         Args:
             workspace_instance_id: 目标 workspace 的稳定实例 ID（可选）。
@@ -63,9 +63,12 @@ def register(mcp: FastMCP) -> None:
         Returns:
             daemon 结构化统计：
             scanned（本轮访问的可索引文件数）、inserted（首次入库或内容变化的
-            文件数）、unchanged（可解析且内容 hash 未变化的文件数）、
+            文件数）、unchanged（可解析且内容未变化的文件数）、
+            skipped_cached（其中靠 mtime 缓存直接跳过读取/解析的文件数）、
+            deleted（磁盘上已消失、本轮清理掉图行的文件数）、
             skipped_unparsed（语言无 parser 被跳过的文件数，如 .vue/.svelte）、
-            symbols/calls（本轮解析产出的符号/调用数）。
+            symbols/calls（本轮解析产出的符号/调用数）、
+            calls_resolved/calls_ambiguous（仅针对本轮受影响名字的边重算结果）。
         """
         params = {"workspace_instance_id": workspace_instance_id} if workspace_instance_id else {}
         return _route('workspace.build_graph', params, 'PROTECTED_MUTATION')
