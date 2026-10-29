@@ -61,7 +61,11 @@ def register(mcp: FastMCP) -> None:
                 隔离 ws 场景将耗时数百秒并误把主仓算作目标）。
 
         Returns:
-            daemon 结构化统计（scanned/inserted/unchanged/symbols/calls 等）
+            daemon 结构化统计：
+            scanned（本轮访问的可索引文件数）、inserted（首次入库或内容变化的
+            文件数）、unchanged（可解析且内容 hash 未变化的文件数）、
+            skipped_unparsed（语言无 parser 被跳过的文件数，如 .vue/.svelte）、
+            symbols/calls（本轮解析产出的符号/调用数）。
         """
         params = {"workspace_instance_id": workspace_instance_id} if workspace_instance_id else {}
         return _route('workspace.build_graph', params, 'PROTECTED_MUTATION')

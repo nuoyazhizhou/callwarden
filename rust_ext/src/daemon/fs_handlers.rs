@@ -15,6 +15,7 @@
 //! 文件级全量索引重建（扫描 + file_instances upsert + 内容 hash），保证
 //! daemon 权威写路径可独立重建文件清单，且不引入 Python 双实现。
 
+use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -737,7 +738,41 @@ fn upsert_file_instance(
     .map_err(|e| DaemonRpcError::internal_error(format!("file_instance_id 回查失败: {e}")))
 }
 
+/// build_graph 单文件落库归类（P3-3 契约：`unchanged` = 可解析且内容未变化）。
+#[derive(Debug, PartialEq, Eq)]
+enum BuildGraphFileClass {
+    /// 首次入库或内容变化 → 重新解析并计入 `inserted`
+    Inserted,
+    /// 可解析、内容 hash 与库内一致且已解析过 → 计入 `unchanged`
+    Unchanged,
+    /// 语言无 parser（vue/svelte/cxx 等）→ 计入 `skipped_unparsed`
+    SkippedUnparsed,
+}
+
+fn classify_build_graph_file(
+    parsed: bool,
+    stored: Option<(&str, &str)>,
+    hash: &str,
+) -> BuildGraphFileClass {
+    if !parsed {
+        return BuildGraphFileClass::SkippedUnparsed;
+    }
+    match stored {
+        Some((stored_hash, status)) if stored_hash == hash && status == "parsed" => {
+            BuildGraphFileClass::Unchanged
+        }
+        _ => BuildGraphFileClass::Inserted,
+    }
+}
+
 /// `workspace.build_graph` —— 全量重建文件索引（file_instances upsert）。
+///
+/// 计数契约（P3-3）：
+/// - `scanned` 本轮访问的可索引文件数；
+/// - `inserted` 首次入库或内容变化、已重新解析的文件数；
+/// - `unchanged` 可解析且内容 hash 与库内一致的文件数（未变化）；
+/// - `skipped_unparsed` 语言无 parser 的文件数（旧实现把它混计进 `unchanged`）；
+/// - `symbols` / `calls` 本轮解析产出的符号/调用总数。
 pub fn handle_build_graph(
     registry: &WorkspaceRegistry,
     peer: &PeerCredential,
@@ -772,6 +807,7 @@ pub fn handle_build_graph(
     let mut scanned = 0usize;
     let mut inserted = 0usize;
     let mut unchanged = 0usize;
+    let mut skipped_unparsed = 0usize;
     let mut symbol_total = 0usize;
     let mut call_total = 0usize;
     let now = now_ts_secs();
@@ -793,6 +829,25 @@ pub fn handle_build_graph(
             .map(|d| d.as_secs_f64())
             .unwrap_or(now);
         scanned += 1;
+        // P3-3：`unchanged` 的语义收敛为「可解析且内容未变化」。此前它统计的是
+        // 「不可解析」文件（vue/svelte/cxx 等无 parser 的扩展名），首次全建就会
+        // 返回 unchanged>0，与 Python 契约（unchanged = 未变化文件）相反。
+        // 不可解析文件改计入新的 skipped_unparsed，文件清单仍照常登记。
+        let parsed = parser_lang_id(&rel).is_some();
+        let stored: Option<(String, String)> = conn
+            .query_row(
+                "SELECT current_content_hash, status FROM file_instances
+                 WHERE workspace_id = ?1 AND rel_path = ?2",
+                rusqlite::params![workspace_id, rel],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|e| DaemonRpcError::internal_error(format!("file_instances 回查失败: {e}")))?;
+        let class = classify_build_graph_file(
+            parsed,
+            stored.as_ref().map(|(h, st)| (h.as_str(), st.as_str())),
+            &hash,
+        );
         // file_contents upsert
         conn.execute(
             "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
@@ -801,7 +856,6 @@ pub fn handle_build_graph(
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("file_contents upsert: {e}")))?;
         // 先 upsert file_instances 拿真实 id（语言可解析时标记 parsed），再做符号落库
-        let parsed = parser_lang_id(&rel).is_some();
         let fid = upsert_file_instance(
             &conn, workspace_id, &rel, &path, &hash, mtime, total_lines, parsed,
         )?;
@@ -812,9 +866,11 @@ pub fn handle_build_graph(
             )?;
             symbol_total += sym;
             call_total += calls;
-            inserted += 1;
-        } else {
-            unchanged += 1;
+        }
+        match class {
+            BuildGraphFileClass::Inserted => inserted += 1,
+            BuildGraphFileClass::Unchanged => unchanged += 1,
+            BuildGraphFileClass::SkippedUnparsed => skipped_unparsed += 1,
         }
     }
     // CR11：建图收尾批量解析 raw 调用边（含本轮重建降级的重挂）
@@ -824,6 +880,7 @@ pub fn handle_build_graph(
     m.insert("scanned".into(), Value::Number(scanned.into()));
     m.insert("inserted".into(), Value::Number(inserted.into()));
     m.insert("unchanged".into(), Value::Number(unchanged.into()));
+    m.insert("skipped_unparsed".into(), Value::Number(skipped_unparsed.into()));
     m.insert("symbols".into(), Value::Number(symbol_total.into()));
     m.insert("calls".into(), Value::Number(call_total.into()));
     m.insert("calls_resolved".into(), Value::Number(resolved.into()));
@@ -1459,6 +1516,40 @@ mod tests {
         let h = sha256_hex(b"hello");
         assert_eq!(h.len(), 64);
         assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_classify_build_graph_file_matches_contract() {
+        let hash = sha256_hex(b"def foo(): pass\n");
+        // 首次全建：库内无行 → inserted（不再是 unchanged）
+        assert_eq!(
+            classify_build_graph_file(true, None, &hash),
+            BuildGraphFileClass::Inserted
+        );
+        // 二次重建且内容未变 → unchanged
+        assert_eq!(
+            classify_build_graph_file(true, Some((hash.as_str(), "parsed")), &hash),
+            BuildGraphFileClass::Unchanged
+        );
+        // 内容变化 → inserted
+        assert_eq!(
+            classify_build_graph_file(true, Some((hash.as_str(), "parsed")), &sha256_hex(b"x")),
+            BuildGraphFileClass::Inserted
+        );
+        // 库内存在但未解析过（status=pending）→ 仍需解析入库
+        assert_eq!(
+            classify_build_graph_file(true, Some((hash.as_str(), "pending")), &hash),
+            BuildGraphFileClass::Inserted
+        );
+        // 无 parser 的语言 → skipped_unparsed（不再计入 unchanged）
+        assert_eq!(
+            classify_build_graph_file(false, Some((hash.as_str(), "pending")), &hash),
+            BuildGraphFileClass::SkippedUnparsed
+        );
+        assert_eq!(
+            classify_build_graph_file(false, None, &hash),
+            BuildGraphFileClass::SkippedUnparsed
+        );
     }
 
     #[test]

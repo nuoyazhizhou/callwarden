@@ -125,8 +125,10 @@ instance（`4baea3ff12c2ea5c`）的 ROWID 曾漂移到 `207`/`208`，治理后�
 upsert，再对可解析语言走 tree-sitter 符号落库。返回字段
 `scanned / inserted / unchanged / symbols / calls / calls_resolved / calls_ambiguous`。
 
-注意既有语义偏差：`unchanged` 实际统计的是**非可解析语言文件数**（`parsed=false`
-分支），不是「内容哈希未变的文件数」。因此该字段不能用于增量收益评估。
+注意（P3-3 已修，2026-10-29）：旧实现里 `unchanged` 统计的是**非可解析语言
+文件数**（`parsed=false` 分支），与字段名含义相反。现语义已收敛为「可解析且
+内容 hash 与库内 `current_content_hash` 一致的文件数」，不可解析文件改计入
+新增字段 `skipped_unparsed`（任务 `T-1793263115744-7ac43c98` 步骤#1）。
 
 ### 3.2 结论（性能项，非缺陷；本轮不实现）
 
@@ -139,8 +141,8 @@ upsert，再对可解析语言走 tree-sitter 符号落库。返回字段
 3. `resolve_raw_calls` 的跨文件边重算范围需要按变更集裁剪，否则边解析仍是
    全量、增量化收益被吃掉。
 
-处置：登记为 backlog 性能项（P3），不阻塞本次验收矩阵收口；同时修正
-`unchanged` 字段语义需与 Python 侧契约对齐后再动（避免窄修破坏快照比对）。
+处置：登记为 backlog 性能项（P3-1，见 §5），不阻塞本次验收矩阵收口。
+`unchanged` 字段语义偏差已先行修正（P3-3），增量化的收益评估从此字段可读。
 实测基线见 §4.3（隔离 ws 与主仓的 scanned/inserted 数值）。
 
 ---
@@ -260,6 +262,21 @@ active，消除「多 active workspace」歧义来源。
 > 复测期间隔离 ws（registry ROWID 1711）再次注册，测试结束已 `workspace delete`
 > 归档；当前实测 `total=172 / archived=149 / active=23`，与治理目标一致。
 
+### 4.5 P3-3 现场证据（`unchanged` 语义修正）
+
+隔离 ws `p33_iso_ws`（`alpha.py` 可解析 + `widget.vue` 无 parser），同一
+workspace 连续三次 `workspace.build_graph`（daemon 已部署本次修复）：
+
+| 轮次 | scanned | inserted | unchanged | skipped_unparsed | symbols |
+|---|---|---|---|---|---|
+| 首次全建 | 2 | 1 | 0 | 1 | 1 |
+| 内容未变重建 | 2 | 0 | 1 | 1 | 1 |
+| 追加 `alpha_two` 后重建 | 2 | 1 | 0 | 1 | 2 |
+
+旧实现在「首次全建」这行会返回 `unchanged=1`（把 `.vue` 当未变化）且
+`skipped_unparsed` 字段不存在；现在 `unchanged` 只随真实内容变化翻转，
+`.vue` 稳定计入 `skipped_unparsed`，与 §3.1 契约一致。
+
 ---
 
 ## 5. 后续 backlog（未纳入本次步骤）
@@ -268,4 +285,4 @@ active，消除「多 active workspace」歧义来源。
 |---|---|---|---|
 | P3-1 | build_graph 增量化（哈希跳过 + 删除感知 + 边重算裁剪） | 性能 | 待排期 |
 | P3-2 | `workspace_id: int` → `workspace_instance_id` 契约收敛（build_context 族） | 契约 | 待排期 |
-| P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 待排期 |
+| P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 已修（T-1793263115744-7ac43c98 步骤#1） |
