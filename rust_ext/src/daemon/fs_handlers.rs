@@ -222,6 +222,26 @@ fn ensure_root_containment(
     Ok(())
 }
 
+/// 把路径参数锚定到 workspace 根：相对路径一律 `root.join(path)`。
+///
+/// F-5（跨 workspace 误写）：daemon 是多 workspace 常驻进程，进程 CWD 是
+/// 启动目录（本机为仓库根），与调用方目标 workspace 无关。此前路径参数
+/// 直接交给 `validate_owned_path` / `validate_owned_path_any`，其内部
+/// `std::fs::canonicalize` 对相对串按**进程 CWD** 解析，导致隔离 workspace
+/// 的 `refresh_file("alpha.py")` / `file.remove("alpha.py")` 等实际命中主
+/// workspace 的同名文件（删除/覆写真实仓库文件）。现以 `registry
+/// workspace_instance_id → host_real_root` 为基准解析；绝对路径保持原样，
+/// 后续 owner + `ensure_root_containment` 继续做根内包含校验（越根仍
+/// fail-closed 返回 path_escape）。
+fn anchor_path_to_root(root: &Path, path: &str) -> String {
+    let raw = Path::new(path);
+    if raw.is_absolute() {
+        path.to_string()
+    } else {
+        root.join(raw).to_string_lossy().to_string()
+    }
+}
+
 /// 校验路径必须在 workspace 根内，返回规范化绝对路径（String，validate_owned_path 契约）。
 fn resolve_owned_path(
     registry: &WorkspaceRegistry,
@@ -230,7 +250,8 @@ fn resolve_owned_path(
     file_path: &str,
 ) -> Result<String, DaemonRpcError> {
     let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
-    let real = validate_owned_path(file_path, peer.uid, true)?;
+    let anchored = anchor_path_to_root(&root, file_path);
+    let real = validate_owned_path(&anchored, peer.uid, true)?;
     ensure_root_containment(&root, &real)?;
     Ok(real)
 }
@@ -733,7 +754,9 @@ pub fn handle_build_graph(
     let scan_root: PathBuf = match get_str_param(params, "scan_root") {
         Some(s) if !s.is_empty() => {
             // P0-CR2 修复：scan_root 允许目录（此前 require_file=true 直接报"不是文件"）
-            PathBuf::from(validate_owned_path_any(s, peer.uid)?)
+            // F-5：相对 scan_root 以 workspace 根为基准，不用进程 CWD
+            let anchored = anchor_path_to_root(&root, &s);
+            PathBuf::from(validate_owned_path_any(&anchored, peer.uid)?)
         }
         _ => root.clone(),
     };
@@ -826,7 +849,9 @@ pub fn handle_build_directory(
     // 目录递归建图 RPC 从未真正可用）
     // TP-11A D3：叠加根目录限制（与 file.read 同款 path_escape 契约），
     // 阻断越根目录递归扫描与索引
-    let real_dir = PathBuf::from(validate_owned_path_any(dir_path, peer.uid)?);
+    // F-5：相对 dir_path 以 workspace 根为基准，不用进程 CWD
+    let anchored_dir = anchor_path_to_root(&root, dir_path);
+    let real_dir = PathBuf::from(validate_owned_path_any(&anchored_dir, peer.uid)?);
     ensure_root_containment(&root, &real_dir.to_string_lossy())?;
     let recursive = params.get("recursive").and_then(Value::as_bool).unwrap_or(false);
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
@@ -937,7 +962,9 @@ pub fn handle_file_grep(
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let base: PathBuf = match get_str_param(params, "path") {
         Some(p) if !p.is_empty() => {
-            let real = PathBuf::from(validate_owned_path(p, peer.uid, false)?);
+            // F-5：相对 path 以 workspace 根为基准，不用进程 CWD
+            let anchored = anchor_path_to_root(&root_canon, &p);
+            let real = PathBuf::from(validate_owned_path(&anchored, peer.uid, false)?);
             if !real.starts_with(&root_canon) {
                 return Err(DaemonRpcError::new(
                     "path_escape",
@@ -1005,7 +1032,9 @@ pub fn handle_file_list(
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let base: PathBuf = match get_str_param(params, "path") {
         Some(p) if !p.is_empty() => {
-            let real = PathBuf::from(validate_owned_path(p, peer.uid, false)?);
+            // F-5：相对 path 以 workspace 根为基准，不用进程 CWD
+            let anchored = anchor_path_to_root(&root_canon, &p);
+            let real = PathBuf::from(validate_owned_path(&anchored, peer.uid, false)?);
             if !real.starts_with(&root_canon) {
                 return Err(DaemonRpcError::new("path_escape", "path 不在 workspace 根内".to_string()));
             }
@@ -1094,7 +1123,10 @@ pub fn handle_file_remove(
     let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
     let file_path = require_str_param(params, "file_path")?;
     let (registry_ws_id, _root) = resolve_workspace(registry, peer, workspace_instance_id)?;
-    let real = validate_owned_path(file_path, peer.uid, true)?;
+    // F-5：相对 file_path 以 workspace 根为基准（此前按 daemon 进程 CWD 解析，
+    // 隔离 workspace 的 remove("alpha.py") 会删掉主 workspace 的同名真实文件）
+    let anchored = anchor_path_to_root(&_root, file_path);
+    let real = validate_owned_path(&anchored, peer.uid, true)?;
     // TP-11A D1：owner 校验之外必须叠加根目录限制，否则任意本用户文件
     // 可被越根删除（file.read 同款 path_escape 契约）
     ensure_root_containment(&_root, &real)?;
@@ -1190,7 +1222,9 @@ pub fn handle_refresh_file(
     let _ = registry_ws_id;
     // TP-11A D3：单文件刷新同样必须限制在 workspace 根内
     // （此前仅 owner 校验 → 越根文件内容被读取并落库符号）
-    let real = PathBuf::from(validate_owned_path(file_path, peer.uid, true)?);
+    // F-5：相对 file_path 以 workspace 根为基准，不用进程 CWD
+    let anchored = anchor_path_to_root(&root, file_path);
+    let real = PathBuf::from(validate_owned_path(&anchored, peer.uid, true)?);
     ensure_root_containment(&root, &real.to_string_lossy())?;
     let root_canon = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
     let rel = real
@@ -1256,7 +1290,9 @@ pub fn handle_file_health(
     // 根目录限制：根内文件按合同返回 exists/size/mtime/readable，越根
     // 一律 path_escape（此前越根目录会泄漏 exists/size/mtime）。
     let (_, root) = resolve_workspace(registry, peer, workspace_instance_id)?;
-    let real = validate_owned_path_any(file_path, peer.uid)?;
+    // F-5：相对 file_path 以 workspace 根为基准，不用进程 CWD
+    let anchored = anchor_path_to_root(&root, file_path);
+    let real = validate_owned_path_any(&anchored, peer.uid)?;
     ensure_root_containment(&root, &real)?;
     let real_path = Path::new(&real);
     let mut m = Map::new();
@@ -1337,6 +1373,39 @@ fn glob_match(path: &str, glob: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_anchor_path_to_root_relative_and_absolute() {
+        let root = std::path::Path::new("C:/git_work/callwarden/.workbuddy/scripts/outputs/wt_iso_ws");
+        // 相对路径以 workspace 根为基准（不是 daemon 进程 CWD）
+        let anchored = anchor_path_to_root(root, "alpha.py");
+        assert_eq!(anchored, root.join("alpha.py").to_string_lossy());
+        assert!(std::path::Path::new(&anchored).starts_with(root));
+        // 绝对路径原样保留（根内/根外由 ensure_root_containment 判定）
+        let abs = "C:/git_work/callwarden/cw.py";
+        assert_eq!(anchor_path_to_root(root, abs), abs);
+    }
+
+    #[test]
+    fn test_anchor_path_keeps_root_containment_fail_closed() {
+        let tag = format!("cw_f5_{}", std::process::id());
+        let ws = std::env::temp_dir().join(&tag).join("ws");
+        let outside = std::env::temp_dir().join(&tag).join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(ws.join("alpha.py"), "x\n").unwrap();
+        std::fs::write(outside.join("alpha.py"), "x\n").unwrap();
+        // 相对路径锚定后落在 workspace 根内 → 包含校验通过
+        let anchored = anchor_path_to_root(&ws, "alpha.py");
+        let real = std::fs::canonicalize(&anchored).unwrap();
+        ensure_root_containment(&ws, &real.to_string_lossy()).unwrap();
+        // 根外路径即使 owner 合法也必须 path_escape（写面 fail-closed）
+        let escaped = anchor_path_to_root(&outside, "alpha.py");
+        let escaped_real = std::fs::canonicalize(&escaped).unwrap();
+        let err = ensure_root_containment(&ws, &escaped_real.to_string_lossy()).unwrap_err();
+        assert_eq!(err.code, "path_escape");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join(&tag));
+    }
 
     #[test]
     fn test_load_ignore_dir_names() {

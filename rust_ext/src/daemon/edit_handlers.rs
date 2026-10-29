@@ -15,6 +15,7 @@
 
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
+use std::path::{Path, PathBuf};
 
 use super::dispatch::{get_int_param_or, get_str_param_or, require_str_param, DaemonRpcError};
 
@@ -449,15 +450,19 @@ pub fn handle_rule_candidate_reject(
 }
 
 /// `rule.insert_agents_md_block` —— 插入 AGENTS.md 标记块（写文件 + 同步日志）。
+///
+/// F-5：目标路径以 `workspace_instance_id → registry host_real_root` 为基准
+/// 解析（相对路径 `root.join(path)`），禁止按 daemon 进程 CWD 落地；越根
+/// 目标（含 `..` 逃逸）fail-closed 返回 path_escape。
 pub fn handle_rule_insert_agents_md_block(
     conn: &Connection,
     workspace_id: i64,
     params: &Value,
+    root: &Path,
 ) -> Result<Value, DaemonRpcError> {
     let content = get_str_param_or(params, "content", "");
     let target_path = get_str_param_or(params, "target_path", "AGENTS.md");
-    let root = workspace_root(conn, workspace_id)?;
-    let target = root.join(&target_path);
+    let target = resolve_rule_target_path(root, &target_path)?;
     let marker_start = "<!-- cw-agent-rules:start -->";
     let marker_end = "<!-- cw-agent-rules:end -->";
     let existing = std::fs::read_to_string(&target).unwrap_or_default();
@@ -495,11 +500,12 @@ pub fn handle_rule_sync_agents_md(
     conn: &Connection,
     workspace_id: i64,
     params: &Value,
+    root: &Path,
 ) -> Result<Value, DaemonRpcError> {
     let target_path = get_str_param_or(params, "target_path", "AGENTS.md");
     let dry_run = params.get("dry_run").and_then(Value::as_bool).unwrap_or(true);
-    let root = workspace_root(conn, workspace_id)?;
-    let target = root.join(&target_path);
+    // F-5：与 rule.insert_agents_md_block 同源根内解析
+    let target = resolve_rule_target_path(root, &target_path)?;
     let now = now_ts();
     let mut stmt = conn
         .prepare("SELECT title, rule_text FROM agent_rules WHERE status = 'active' ORDER BY title")
@@ -763,15 +769,50 @@ fn query_set(conn: &Connection, sql: &str, id: i64) -> Result<std::collections::
     Ok(set)
 }
 
-/// 解析 workspace 根目录（从 codegraph DB workspaces 表）。
-fn workspace_root(conn: &Connection, workspace_id: i64) -> Result<std::path::PathBuf, DaemonRpcError> {
-    conn.query_row(
-        "SELECT root_path FROM workspaces WHERE id = ?1",
-        rusqlite::params![workspace_id],
-        |row| row.get::<_, String>(0),
-    )
-    .map(std::path::PathBuf::from)
-    .map_err(|e| DaemonRpcError::internal_error(format!("查询 workspace root 失败: {e}")))
+/// 解析规则文件目标为 workspace 根内的绝对路径（fail-closed）。
+///
+/// - 相对 `target_path` → `root.join(target_path)`；
+/// - 绝对路径允许，但规范化后必须仍位于 root 内；
+/// - 目标尚不存在（新建 AGENTS.md）时规范化父目录再拼回文件名，
+///   `..` 逃逸由父目录规范化 + 根内前缀校验拦截。
+fn resolve_rule_target_path(root: &Path, target_path: &str) -> Result<PathBuf, DaemonRpcError> {
+    let raw = Path::new(target_path);
+    let target = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        root.join(raw)
+    };
+    let real_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let real_target = if target.exists() {
+        std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone())
+    } else {
+        let parent = target.parent().ok_or_else(|| {
+            DaemonRpcError::new(
+                "invalid_params",
+                format!("目标路径缺少父目录: {target_path}"),
+            )
+        })?;
+        let file_name = target.file_name().ok_or_else(|| {
+            DaemonRpcError::new(
+                "invalid_params",
+                format!("目标路径缺少文件名: {target_path}"),
+            )
+        })?;
+        let real_parent = std::fs::canonicalize(parent).map_err(|_| {
+            DaemonRpcError::new(
+                "path_escape",
+                format!("目标目录不存在或不可解析: {}", parent.to_string_lossy()),
+            )
+        })?;
+        real_parent.join(file_name)
+    };
+    if !real_target.starts_with(&real_root) {
+        return Err(DaemonRpcError::new(
+            "path_escape",
+            format!("目标路径不在 workspace 根内: {}", real_target.to_string_lossy()),
+        ));
+    }
+    Ok(real_target)
 }
 
 #[cfg(test)]
@@ -781,6 +822,49 @@ mod tests {
     #[test]
     fn test_now_ts_positive() {
         assert!(now_ts() > 1_700_000_000.0);
+    }
+
+    /// F-5：相对 target_path 必须以 workspace 根为基准（不是 daemon CWD）。
+    #[test]
+    fn test_resolve_rule_target_path_anchors_to_workspace_root() {
+        let tag = format!("cw_f5_rule_{}", std::process::id());
+        let ws = std::env::temp_dir().join(&tag).join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let resolved = resolve_rule_target_path(&ws, "AGENTS.md").unwrap();
+        let real_root = std::fs::canonicalize(&ws).unwrap();
+        assert!(resolved.starts_with(&real_root));
+        assert_eq!(resolved.file_name().unwrap(), "AGENTS.md");
+        // `..` 逃逸必须 fail-closed
+        let err = resolve_rule_target_path(&ws, "../escaped.md").unwrap_err();
+        assert_eq!(err.code, "path_escape");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join(&tag));
+    }
+
+    /// F-5 端到端（handler 级）：insert 写面落在 workspace 根内，
+    /// 绝不在 daemon 进程 CWD 生成同名文件。
+    #[test]
+    fn test_rule_insert_writes_into_workspace_root_not_cwd() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE agent_rule_sync_log (
+                target_path TEXT NOT NULL, rule_ids_json TEXT DEFAULT '[]',
+                before_hash TEXT DEFAULT '', after_hash TEXT DEFAULT '',
+                dry_run INTEGER DEFAULT 0, created_at REAL NOT NULL,
+                actor TEXT DEFAULT '');",
+        )
+        .unwrap();
+        let tag = format!("cw_f5_insert_{}", std::process::id());
+        let ws = std::env::temp_dir().join(&tag).join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let name = format!("f5_probe_{}.py", std::process::id());
+        let params = json!({"content": "no bare except", "target_path": name});
+        let out = handle_rule_insert_agents_md_block(&conn, 1, &params, &ws).unwrap();
+        assert_eq!(out["ok"].as_bool(), Some(true));
+        let written = std::fs::read_to_string(ws.join(&name)).unwrap();
+        assert!(written.contains("cw-agent-rules:start"));
+        // CWD 绝不应出现该文件（此前按进程 CWD 解析会写到这里）
+        assert!(!std::path::Path::new(&name).exists());
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join(&tag));
     }
 
     #[test]

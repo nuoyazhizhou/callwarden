@@ -1201,17 +1201,25 @@ def _workspace_snapshot_metadata(project_root: str) -> Dict[str, str]:
     """
     if not project_root:
         return {}
-    try:
-        remote = subprocess.run(
-            ["git", "-C", project_root, "config", "--get", "remote.origin.url"],
-            capture_output=True, text=True, check=False,
-        ).stdout.strip()
-        head = subprocess.run(
-            ["git", "-C", project_root, "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=False,
-        ).stdout.strip()
-    except (OSError, ValueError):
-        return {}
+
+    # FIX(2026-10-29 B 类重测挂死)：MCP stdio 宿主的 stdin 是一条长期打开、
+    # 由宿主按需写入的 JSON-RPC 管道。子进程默认继承该句柄——`git` 一旦在该
+    # 管道上阻塞读取，`subprocess.run` 永不返回，单线程 MCP server 随之整体
+    # 卡死（表现为所有 tools/call 超时，daemon 侧却全程空闲）。故显式切断
+    # stdin，并加超时兜底：元数据是可选 provenance，取不到就退化为空值，
+    # 绝不阻塞宿主。
+    def _git(args: list) -> str:
+        try:
+            return subprocess.run(
+                ["git", "-C", project_root, *args],
+                capture_output=True, text=True, check=False,
+                stdin=subprocess.DEVNULL, timeout=10,
+            ).stdout.strip()
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return ""
+
+    remote = _git(["config", "--get", "remote.origin.url"])
+    head = _git(["rev-parse", "HEAD"])
     if remote and head:
         return {"git_remote_url": remote, "git_head_commit_sha": head}
     return {}

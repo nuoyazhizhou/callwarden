@@ -330,6 +330,28 @@ impl SnapshotDaemonState {
         Ok((workspace_id, conn))
     }
 
+    /// F-5：解析 registry `workspace_instance_id` → 真相源根（host_real_root）。
+    ///
+    /// 相对路径写面（rule.insert_agents_md_block / rule.sync_agents_md）必须以
+    /// 调用目标的 workspace 根为基准，而不是 daemon 进程 CWD（cwd 是启动目录，
+    /// 与目标 workspace 无关）；owner ACL 与 archived 检查复用 `owned_workspace`。
+    fn workspace_host_root(
+        &self,
+        peer_uid: u32,
+        workspace_instance_id: &str,
+    ) -> Result<std::path::PathBuf, DaemonRpcError> {
+        let workspace = owned_workspace(&self.base.registry, peer_uid, workspace_instance_id)?;
+        let root = workspace
+            .get("host_real_root")
+            .and_then(Value::as_str)
+            .or_else(|| workspace.get("client_view_root").and_then(Value::as_str))
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace 缺少 host_real_root".to_string())
+            })?;
+        Ok(std::fs::canonicalize(&root).unwrap_or(root))
+    }
+
     /// W3-1（T-1786861820150-bfe5e805）：校验 params 中的 `workspace_id` 与
     /// workspace_instance_id 解析出的权威 workspace_id 一致，返回权威值。
     ///
@@ -3576,10 +3598,14 @@ impl DaemonStateExt for SnapshotDaemonState {
                         edit::handle_rule_candidate_reject(&conn, workspace_id, params)
                     }
                     "rule.insert_agents_md_block" => {
-                        edit::handle_rule_insert_agents_md_block(&conn, workspace_id, params)
+                        // F-5：相对路径以目标 workspace 根为基准（registry
+                        // instance → host_real_root），禁止 daemon CWD 解析
+                        let root = self.workspace_host_root(peer.uid, &ws)?;
+                        edit::handle_rule_insert_agents_md_block(&conn, workspace_id, params, &root)
                     }
                     "rule.sync_agents_md" => {
-                        edit::handle_rule_sync_agents_md(&conn, workspace_id, params)
+                        let root = self.workspace_host_root(peer.uid, &ws)?;
+                        edit::handle_rule_sync_agents_md(&conn, workspace_id, params, &root)
                     }
                     "guardrail.add_rule" => {
                         edit::handle_guardrail_add_rule(&conn, workspace_id, params)
