@@ -1,0 +1,35 @@
+{
+  "kind": "legacy_card_disposal_waiver",
+  "task": "T-1789563951668-ba0c338c",
+  "title": "[live-e2e] MCP task_create workspace-pair 验证（勿动）",
+  "successor_scope": "T-1793238551533-2db578bc（[GOV] 9-16 live-e2e 卡处置，看板 T-1793238319341-1dfe8098 子卡）",
+  "reason": "2026-09-16 的 live-e2e 探针卡建在临时 workspace（registry workspace_id=1707，owner_uid=4294967295，host_real_root=c:/users/wanpi/appdata/local/temp/cw-live-e2e-njlsx6r3，该临时目录已不存在）。卡内只有 1 个自动生成的占位步（edit core.py/main，pending），无 Task/Role Contract → workflow_status=governance_blocked，无 claim/report 写路径；其验证目标（显式 workspace 配对转发 + dict 返回不被 pydantic 拒绝）已被 HEAD bd5cd60 的归属 fail-closed 契约与本轮 pytest 覆盖。",
+  "closure_attempts": [
+    {
+      "command": "cw task supersede T-1789563951668-ba0c338c T-1793238551533-2db578bc",
+      "result": "E_SUPERSEDE_CROSS_WORKSPACE: T-1789563951668-ba0c338c (ws=1707) -> T-1793238551533-2db578bc (ws=1)",
+      "note": "旧卡属于已删除的临时 workspace 1707，且 owner_uid=4294967295 不是当前用户；无法在同一 workspace 内开后继卡（临时 root 不存在，create 必 fail-closed）"
+    },
+    {
+      "command": "cw task cascade-close T-1789563951668-ba0c338c",
+      "result": "阻塞于 T-1789563951668-ba0c338c: 叶子卡存在未完成步骤（leaf_steps_pending）",
+      "note": "GOV-FIX-03 的被替代豁免要求先存在 supersede 关系，而 supersede 被跨 workspace 拒绝 → 形成死锁"
+    }
+  ],
+  "disposal_decision": "按 GOVERNANCE_WAIVER 记为已处置：卡不再作为验收矩阵收口条件；scope 由 successor 卡承接。本豁免要求 evidence 文件存在且含 task id（见 scripts/check_e2e_matrix_closure.py LEGACY_WAIVERS）。",
+  "verification": {
+    "pytest": {
+      "command": "C:/Python314/python.exe -m pytest tests/test_tools_task_create_workspace_params.py -q",
+      "result": "7 passed",
+      "date": "2026-10-29"
+    },
+    "covered_cases": {
+      "explicit_pair_forwarded": "test_task_create_forwards_context_pair",
+      "dict_return_accepted": "test_task_create_returns_dict_without_pydantic_rejection",
+      "cross_project_rejected": "test_task_create_rejects_foreign_workspace_id / test_task_create_rejects_foreign_instance",
+      "root_unresolved_fail_closed": "test_task_create_fails_closed_when_root_unresolved"
+    },
+    "historical_evidence": "deliverables/cli-e2e-findings.md（F-010/F-012 修复后 9/24 MCP 243 工具测试 PASS）"
+  },
+  "created_at": "2026-10-29T00:00:00+08:00"
+}

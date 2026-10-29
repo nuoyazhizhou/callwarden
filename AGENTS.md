@@ -724,6 +724,36 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     - **事故恢复路径**（已沉淀，见 `deliverables/software-company/git_recovery_record_20260828.md`）：被 prune 的 loose objects 会进 Windows 回收站，可恢复——解析 `$Recycle.Bin\<SID>\$I*`（offset 28 起 UTF-16LE 原始路径）筛 `.git\objects\`，对 `$R*` 内容做 `zlib 解压 + sha1(header+content)==对象名` 指纹匹配，迭代 `git fsck --full` 写回 `.git/objects/xx/yyy`；
     - **失败留痕**：任何 `git gc`/`prune`/commit 事故必须在当日 memory 日志与任务 report 中记录，禁止静默跳过。
 
+### 6.10 CLI/MCP 验收矩阵收口门禁
+
+49. **CLI/MCP 验收矩阵不得按"父卡已关闭"判定完成，必须过脚本门禁**。2026-09-23 的
+    `T-1790136923625-2803e218`（P0 单实例守卫部署 + CLI/MCP 双入口 E2E 验收测试矩阵）
+    4/4 step 已 done 且卡已 closed，但方案里的 Wave 2 产物（`deliverables/e2e-matrix-*.md`）、
+    Wave 3（治理写路径环）、Wave 4（并发/崩溃/多实例）从未产出，另有 2026-09-16 的
+    `T-1789563951668-ba0c338c`（MCP task_create workspace-pair 验证）长期 open。
+    `task.close` 不校验依赖是否完成，因此**必须**用可执行门禁替代人工记忆：
+
+    - **看板卡唯一**：`[GOV] 9 月 CLI/MCP 验收矩阵收口看板`（callwarden `workspace_id=1` /
+      `workspace_instance_id=4baea3ff12c2ea5c`）。矩阵所有收口项只能作为它的子卡
+      （`cw task create --parent-id <看板卡>`，且必须显式带 workspace 配对）。
+    - **收口条件写死在卡描述里**：①各子卡 `closed` 且步骤全 `done`；②
+      `T-1789563951668-ba0c338c` 已处置（关闭，或按 `LEGACY_WAIVERS` 提供含该 task id
+      的处置证据）；③Wave 2 CLI 矩阵产物落盘。
+      Wave 3/4 属独立 backlog，**不计入**看板关闭条件，但不得从 backlog 消失。
+    - **豁免只给 daemon 关不掉的历史卡**：`scripts/check_e2e_matrix_closure.py` 的
+      `LEGACY_WAIVERS` 仅登记"绑定已删除临时 workspace / owner_uid 非当前用户 /
+      supersede 跨 workspace 被拒 + cascade-close 被 leaf_steps_pending 拒"这类死锁卡
+      （2026-10-29 实证 `T-1789563951668-ba0c338c` 绑定 ws=1707 临时目录）。豁免必须
+      附证据文件路径，且文件正文含该 task id，否则门禁仍判 GAP。**看板子卡不得豁免**。
+    - **脚本门禁（唯一判定手段）**：`python scripts/check_e2e_matrix_closure.py`
+      （只读任务库，`--json` 供 CI/定时任务消费）。退出码 0 才允许 `cw task close` 看板卡；
+      退出码 1 时按输出逐项补齐，**禁止**先关看板卡再补子卡。
+    - **触发时机**：任何触及 `cli/main.py`、`server/tools/`、`rust_ext/src/daemon/`、
+      `deliverables/*e2e*`、`deliverables/*cli*` 的提交前必须运行一次；以及每周至少一次
+      例行核查（可挂定时任务，命令同上）。门禁脚本自身变更需在卡里记录理由。
+    - **新增缺口**：发现矩阵项遗漏时**新建子卡**（禁止只写进文档或口头记录），并把该子卡
+      纳入门禁条件；关闭子卡必须带实证（命令输出、pytest 结果或部署 evidence 文件路径）。
+
 ## 文档索引
 
 ### 治理与角色协议（任务系统权威，改动前先读）

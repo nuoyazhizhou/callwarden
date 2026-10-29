@@ -638,8 +638,9 @@ class TestNextActionCliProcess:
         task_id = "T-5D-CLI-READY"
         _seed_full_chain(task_db, task_id, ws, workspace_id=4)
 
-        proc = _run_cw_cli(["task", "next-action", task_id, "--json"],
-                           _cli_env(pipe), tmp)
+        proc = _run_cw_cli(
+            ["task", "next-action", task_id, "--workspace-instance-id", ws, "--json"],
+            _cli_env(pipe), tmp)
         _assert_ok(proc, f"next-action --json {task_id}")
         try:
             data = json.loads(proc.stdout)
@@ -659,8 +660,9 @@ class TestNextActionCliProcess:
         task_id = "T-5D-CLI-HUMAN"
         _seed_full_chain(task_db, task_id, ws, workspace_id=5)
 
-        proc = _run_cw_cli(["task", "next-action", task_id],
-                           _cli_env(pipe), tmp)
+        proc = _run_cw_cli(
+            ["task", "next-action", task_id, "--workspace-instance-id", ws],
+            _cli_env(pipe), tmp)
         _assert_ok(proc, f"next-action 人类可读 {task_id}")
         out = _all_out(proc)
         assert "系统派工" in out, out
@@ -672,8 +674,11 @@ class TestNextActionCliProcess:
 
     def test_cli_json_error_not_found(self, lease_env):
         client, tmp, _task_db, _proc, pipe = lease_env
-        proc = _run_cw_cli(["task", "next-action", "T-5D-CLI-NOT-EXIST", "--json"],
-                           _cli_env(pipe), tmp)
+        ws = _ws_instance_for_root(tmp)
+        proc = _run_cw_cli(
+            ["task", "next-action", "T-5D-CLI-NOT-EXIST",
+             "--workspace-instance-id", ws, "--json"],
+            _cli_env(pipe), tmp)
         _assert_ok(proc, "next-action --json 不存在任务")
         data = json.loads(proc.stdout)
         assert data["ok"] is False
@@ -681,12 +686,31 @@ class TestNextActionCliProcess:
 
     def test_cli_human_error_not_found(self, lease_env):
         client, tmp, _task_db, _proc, pipe = lease_env
-        proc = _run_cw_cli(["task", "next-action", "T-5D-CLI-NOT-EXIST"],
-                           _cli_env(pipe), tmp)
+        ws = _ws_instance_for_root(tmp)
+        proc = _run_cw_cli(
+            ["task", "next-action", "T-5D-CLI-NOT-EXIST",
+             "--workspace-instance-id", ws],
+            _cli_env(pipe), tmp)
         _assert_ok(proc, "next-action 人类可读不存在任务")
         out = _all_out(proc)
         assert "E_TASK_NOT_FOUND_OR_UNAUTHORIZED" in out, out
         assert "不存在" in out, out
+
+    def test_cli_unresolved_authority_fails_closed(self, lease_env):
+        """项目根可定位但 daemon 无唯一权威配对：前置拒绝，不本地派生 instance。"""
+        client, tmp, _task_db, _proc, pipe = lease_env
+        # 独立子目录 + .git 标记，使项目根可定位；该 daemon registry 未注册它，
+        # resolve_workspace_pair_from_daemon 必然 0 匹配 → fail-closed。
+        proj = os.path.join(tmp, "no-authority-proj")
+        os.makedirs(os.path.join(proj, ".git"), exist_ok=True)
+        proc = _run_cw_cli(
+            ["task", "next-action", "T-5D-NO-AUTHORITY", "--json"],
+            _cli_env(pipe), proj)
+        _assert_ok(proc, "next-action 无权威配对")
+        data = json.loads(proc.stdout)
+        assert data["ok"] is False
+        assert str(data["code"]).startswith("E_WORKSPACE_"), data
+        assert "workspace_instance_id" in data["message"], data
 
     def test_cli_local_mode_fail_closed(self):
         """local 模式无 evaluator：fail-closed 输出 E_DAEMON_UNAVAILABLE，不伪造决策。"""

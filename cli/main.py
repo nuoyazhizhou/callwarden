@@ -27,7 +27,6 @@ from ..server.daemon_client import (
     route_task_write,
     route_task_read,
     route_rpc,
-    derive_workspace_instance_id,
     resolve_workspace_pair_from_daemon,
     DaemonRemoteError,
     DaemonUnavailableError,
@@ -3712,6 +3711,53 @@ def _resolve_task_create_project_root(db) -> str:
     )
 
 
+class _WorkspaceAuthorityUnresolved(DaemonUnavailableError):
+    """调用方项目根可定位，但 daemon 没有唯一权威 workspace 配对（fail-closed）。
+
+    与连接级 `DaemonUnavailableError`（daemon 不可达 / 项目根无法定位）区分：
+    前者说明 authority 本身不可用，next-action / supersede 必须前置拒绝；
+    后者沿用既有路由错误语义（E_DAEMON_UNAVAILABLE 等）。
+    """
+
+    code = "E_WORKSPACE_AUTHORITY_UNAVAILABLE"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=self.code)
+
+
+def _resolve_caller_workspace_instance_id(db) -> str:
+    """解析调用方项目根的 daemon 权威 workspace_instance_id（fail-closed）。
+
+    多项目共享 daemon 时，CLI 绝不能本地推导 instance id：本地公式
+    （`derive_workspace_instance_id`，仅对 root 路径哈希）与 daemon authority
+    公式（`sha256("{owner_uid}|{normalize_identity_root(host_real_root)}")`）
+    不同，必然触发 E_WORKSPACE_AUTHORITY_MISMATCH。统一走 registry/task-DB
+    双侧对账的 `resolve_workspace_pair_from_daemon`；解析失败即拒绝执行
+    （无任何本地回退）。
+    """
+    # 项目根无法定位（E_WORKSPACE_ROOT_REQUIRED）原样上抛：属环境级问题，
+    # 由调用方沿用既有路由错误语义。
+    root = _resolve_task_create_project_root(db)
+    try:
+        pair = resolve_workspace_pair_from_daemon(root)
+    except (DaemonUnavailableError, DaemonRemoteError) as exc:
+        # 仅把确定性的「无唯一权威配对」升级为 authority 错误；连接级失败
+        # （daemon 不可达）保持原异常，避免把环境故障误报为 authority 故障。
+        if not str(exc).startswith("resolve_workspace_pair:"):
+            raise
+        raise _WorkspaceAuthorityUnresolved(
+            "无法从 daemon 解析调用方项目根 "
+            f"{root!r} 的权威 workspace_instance_id（禁止本地推导）：{exc}"
+        ) from exc
+    instance = str(pair.get("workspace_instance_id", "")).strip()
+    if not instance:
+        raise _WorkspaceAuthorityUnresolved(
+            "daemon 未返回调用方项目根 "
+            f"{root!r} 的 workspace_instance_id（fail-closed）"
+        )
+    return instance
+
+
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
     parser = argparse.ArgumentParser(
@@ -4685,14 +4731,27 @@ def _handle_task(args, db):
             )
 
         _na_params = {"task_id": opts.task_id}
-        if getattr(opts, "workspace_instance_id", ""):
-            _na_params["workspace_instance_id"] = opts.workspace_instance_id
+        _na_explicit = (getattr(opts, "workspace_instance_id", "") or "").strip()
+        if _na_explicit:
+            _na_params["workspace_instance_id"] = _na_explicit
         else:
+            # workspace_instance_id 只能由 daemon 权威解析（registry/task-DB 双侧对账）；
+            # CLI 本地推导与 daemon 公式不同，必然 mismatch → 解析失败前置 fail-closed。
             try:
-                _na_root = detect_project_root(os.getcwd()) or os.getcwd()
-                _na_params["workspace_instance_id"] = derive_workspace_instance_id(_na_root)
-            except Exception:
-                # 推导失败时不阻塞请求：daemon 侧按 binding 权威校验 fail-closed
+                _na_params["workspace_instance_id"] = (
+                    _resolve_caller_workspace_instance_id(db))
+            except _WorkspaceAuthorityUnresolved as exc:
+                # 项目根可定位但 daemon 无唯一权威配对：前置拒绝，不发 RPC。
+                if getattr(opts, "json", False):
+                    print(json.dumps(
+                        {"ok": False, "code": exc.code, "message": str(exc)},
+                        ensure_ascii=False, indent=2))
+                else:
+                    cprint(f"[next-action] {exc.code}: {exc}", "red")
+                return True
+            except (DaemonUnavailableError, DaemonRemoteError):
+                # 环境级失败（daemon 不可达 / 项目根无法定位）沿用既有路由
+                # 错误语义（E_DAEMON_UNAVAILABLE 等），不注入 instance。
                 pass
 
         try:
@@ -6029,12 +6088,19 @@ def _handle_task(args, db):
         _sup_session = _resolve_action_session(_sup_id)
         if _sup_session:
             _sup_params["agent_session_id"] = _sup_session
-        # workspace_instance_id：幂等 key 成员（与 task.next_action 同源推导）
+        # workspace_instance_id：幂等 key 成员，只能来自 daemon 权威解析
+        # （registry/task-DB 双侧对账）；CLI 本地推导与 daemon 公式不同，
+        # 会让同一 request_id 落到不同幂等 key → 前置 fail-closed。
         try:
-            _sup_root = detect_project_root(os.getcwd()) or os.getcwd()
-            _sup_params["workspace_instance_id"] = derive_workspace_instance_id(_sup_root)
-        except Exception:
-            pass  # 推导失败由 daemon 按 binding 权威 fail-closed
+            _sup_params["workspace_instance_id"] = (
+                _resolve_caller_workspace_instance_id(db))
+        except _WorkspaceAuthorityUnresolved as exc:
+            # 项目根可定位但 daemon 无唯一权威配对：前置拒绝，不发 RPC。
+            cprint(f"[task-supersede] {exc.code}: {exc}", "red")
+            return True
+        except (DaemonUnavailableError, DaemonRemoteError):
+            # 环境级失败沿用既有路由错误语义，不注入 instance。
+            pass
 
         def _local_supersede_forbidden():
             # supersede 必须经由 daemon 权威写点（独立关系表 + append-only 事件）；

@@ -190,21 +190,132 @@ fn compute_workspace_instance_id(
     hex_encode(&full[..8])
 }
 
-/// 计算 snapshot_id（与 Python db_daemon.py:register_workspace 一致）
-/// 仅当 git_remote_url 和 git_head_commit_sha 均非空时生成。
-/// sha256("git_remote_url|git_head_commit_sha|toolchain_fingerprint")[:16]
+/// 计算 workspace 的权威 snapshot_id（16 位 hex，恒非空）。
+///
+/// - remote + head 均非空：沿用既有公式
+///   `sha256("{git_remote_url}|{git_head_commit_sha}|{toolchain_fingerprint}")[:16]`，
+///   逐字节不变，避免已发布 snapshot 身份漂移；
+/// - 其余（无 `remote.origin.url` 的本地/私有镜像 checkout）：以不可变
+///   `workspace_instance_id` + toolchain 兜底
+///   `sha256("instance:{instance}|{toolchain}")[:16]`，使 `snapshot.publish` /
+///   `task.report` 始终有可绑定的权威 snapshot。兜底分支**不含 head**：无 remote
+///   仓库不因每次 commit 产生 snapshot 漂移（否则 commit 后 report 恒失效）。
 fn compute_snapshot_id(
+    workspace_instance_id: &str,
     git_remote_url: &str,
     git_head_commit_sha: &str,
     toolchain_fingerprint: &str,
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(format!(
-        "{}|{}|{}",
-        git_remote_url, git_head_commit_sha, toolchain_fingerprint
-    ));
+    if !git_remote_url.is_empty() && !git_head_commit_sha.is_empty() {
+        hasher.update(format!(
+            "{}|{}|{}",
+            git_remote_url, git_head_commit_sha, toolchain_fingerprint
+        ));
+    } else {
+        hasher.update(format!(
+            "instance:{}|{}",
+            workspace_instance_id, toolchain_fingerprint
+        ));
+    }
     let full = hasher.finalize();
     hex_encode(&full[..8])
+}
+
+/// 读取既有行的 provenance，入参为空时回退到存量值。
+///
+/// 空 provenance 的 re-register（客户端未探测到 git）不得抹掉已登记的
+/// remote/head/toolchain，也不得把 snapshot 从「有 provenance 的公式」降级为
+/// instance 兜底公式（否则同一 checkout 会反复改写 snapshot 身份）。
+fn effective_provenance(
+    conn: &Connection,
+    workspace_instance_id: &str,
+    git_remote_url: &str,
+    git_head_commit_sha: &str,
+    toolchain_fingerprint: &str,
+) -> Result<(String, String, String), rusqlite::Error> {
+    let stored: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT git_remote_url, git_head_commit_sha, toolchain_fingerprint \
+             FROM daemon_workspaces WHERE workspace_instance_id = ?1",
+            params![workspace_instance_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let (stored_remote, stored_head, stored_fp) = stored.unwrap_or_default();
+    Ok((
+        if git_remote_url.is_empty() {
+            stored_remote
+        } else {
+            git_remote_url.to_string()
+        },
+        if git_head_commit_sha.is_empty() {
+            stored_head
+        } else {
+            git_head_commit_sha.to_string()
+        },
+        if toolchain_fingerprint.is_empty() {
+            stored_fp
+        } else {
+            toolchain_fingerprint.to_string()
+        },
+    ))
+}
+
+/// 把已注册 snapshot 传播到同一物理 checkout 的其余实例行（旧身份公式产物）。
+///
+/// 任务在身份公式迁移前创建时，binding 可能仍指向 legacy 实例；registry 必须
+/// 同时持有该 snapshot，`task.report` 的 authority 校验才能通过。provenance 列
+/// 仅在非空时覆盖，避免空 re-register 抹除历史 provenance。
+#[allow(clippy::too_many_arguments)]
+fn propagate_snapshot_to_siblings(
+    conn: &Connection,
+    owner_uid: u32,
+    norm_root: &str,
+    instance_id: &str,
+    snapshot_id: &str,
+    git_remote_url: &str,
+    git_head_commit_sha: &str,
+    toolchain_fingerprint: &str,
+    now: f64,
+) -> Result<usize, rusqlite::Error> {
+    // 历史行的 host_real_root 是原样写入（可能带 `\\?\` 前缀、反斜杠或大小写
+    // 差异），SQL 精确比较会漏掉这些别名行 → 先按 owner 取候选，再用与身份
+    // 公式同一归一化函数在 Rust 侧比对。
+    let candidates: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT workspace_id, host_real_root FROM daemon_workspaces \
+             WHERE owner_uid = ?1 AND workspace_instance_id <> ?2",
+        )?;
+        let rows = stmt.query_map(params![owner_uid, instance_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let mut affected = 0usize;
+    for (workspace_id, host_root) in candidates {
+        if normalize_identity_root(&host_root) != norm_root {
+            continue;
+        }
+        affected += conn.execute(
+            r#"UPDATE daemon_workspaces
+               SET snapshot_id = ?1,
+                   git_remote_url = CASE WHEN ?2 <> '' THEN ?2 ELSE git_remote_url END,
+                   git_head_commit_sha = CASE WHEN ?3 <> '' THEN ?3 ELSE git_head_commit_sha END,
+                   toolchain_fingerprint = CASE WHEN ?4 <> '' THEN ?4 ELSE toolchain_fingerprint END,
+                   last_active_at = ?5
+               WHERE workspace_id = ?6"#,
+            params![
+                snapshot_id,
+                git_remote_url,
+                git_head_commit_sha,
+                toolchain_fingerprint,
+                now,
+                workspace_id,
+            ],
+        )?;
+    }
+    Ok(affected)
 }
 
 /// 简易 hex 编码（避免引入 hex crate 依赖）
@@ -386,11 +497,20 @@ impl WorkspaceRegistry {
         {
             let now = now_ts();
             let conn = self.conn.lock().unwrap();
+            // 空 provenance 回退到存量值：snapshot 恒非空，且不因空 re-register 降级。
+            let (eff_remote, eff_head, eff_fp) = effective_provenance(
+                &conn,
+                &legacy_id,
+                git_remote_url,
+                git_head_commit_sha,
+                toolchain_fingerprint,
+            )?;
+            let snapshot_id = compute_snapshot_id(&legacy_id, &eff_remote, &eff_head, &eff_fp);
             conn.execute(
                 r#"UPDATE daemon_workspaces SET
                        client_view_root = ?1,
                        host_real_root = ?2,
-                       snapshot_id = CASE WHEN ?3 <> '' THEN ?3 ELSE snapshot_id END,
+                       snapshot_id = ?3,
                        git_remote_url = CASE WHEN ?4 <> '' THEN ?4 ELSE git_remote_url END,
                        git_head_commit_sha = CASE WHEN ?5 <> '' THEN ?5 ELSE git_head_commit_sha END,
                        toolchain_fingerprint = CASE WHEN ?6 <> '' THEN ?6 ELSE toolchain_fingerprint END,
@@ -400,21 +520,25 @@ impl WorkspaceRegistry {
                 params![
                     client_view_root,
                     &norm_root,
-                    if !git_remote_url.is_empty() && !git_head_commit_sha.is_empty() {
-                        compute_snapshot_id(
-                            git_remote_url,
-                            git_head_commit_sha,
-                            toolchain_fingerprint,
-                        )
-                    } else {
-                        String::new()
-                    },
+                    snapshot_id,
                     git_remote_url,
                     git_head_commit_sha,
                     toolchain_fingerprint,
                     now,
                     &legacy_id,
                 ],
+            )?;
+            // 同一物理 checkout 的其余别名行必须共享同一 snapshot 身份。
+            propagate_snapshot_to_siblings(
+                &conn,
+                owner_uid,
+                &norm_root,
+                &legacy_id,
+                &snapshot_id,
+                git_remote_url,
+                git_head_commit_sha,
+                toolchain_fingerprint,
+                now,
             )?;
             return fetch_workspace_by_instance(&conn, &legacy_id);
         }
@@ -424,18 +548,17 @@ impl WorkspaceRegistry {
             git_remote_url,
             git_head_commit_sha,
         );
-        let snapshot_id = if !git_remote_url.is_empty() && !git_head_commit_sha.is_empty() {
-            Some(compute_snapshot_id(
-                git_remote_url,
-                git_head_commit_sha,
-                toolchain_fingerprint,
-            ))
-        } else {
-            None
-        };
-
         let now = now_ts();
         let conn = self.conn.lock().unwrap();
+        // snapshot_id 恒非空：remote+head 齐全走既有公式，否则以不可变 instance 兜底。
+        let (eff_remote, eff_head, eff_fp) = effective_provenance(
+            &conn,
+            &instance_id,
+            git_remote_url,
+            git_head_commit_sha,
+            toolchain_fingerprint,
+        )?;
+        let snapshot_id = compute_snapshot_id(&instance_id, &eff_remote, &eff_head, &eff_fp);
         conn.execute(
             r#"INSERT INTO daemon_workspaces
              (workspace_instance_id, snapshot_id, owner_uid, git_remote_url,
@@ -443,10 +566,7 @@ impl WorkspaceRegistry {
               toolchain_fingerprint, registered_at, last_active_at, status)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')
              ON CONFLICT(workspace_instance_id) DO UPDATE SET
-                snapshot_id = CASE
-                    WHEN excluded.snapshot_id IS NOT NULL THEN excluded.snapshot_id
-                    ELSE daemon_workspaces.snapshot_id
-                END,
+                snapshot_id = excluded.snapshot_id,
                 git_remote_url = CASE
                     WHEN excluded.git_remote_url <> '' THEN excluded.git_remote_url
                     ELSE daemon_workspaces.git_remote_url
@@ -465,7 +585,7 @@ impl WorkspaceRegistry {
                 status = 'active'"#,
             params![
                 instance_id,
-                snapshot_id,
+                &snapshot_id,
                 owner_uid,
                 git_remote_url,
                 git_head_commit_sha,
@@ -486,29 +606,17 @@ impl WorkspaceRegistry {
         // The match is deliberately restricted to owner_uid + host_real_root;
         // a client cannot use a numeric workspace id or a different root to
         // update another workspace's snapshot.
-        if let Some(snapshot_id) = snapshot_id.as_deref() {
-            conn.execute(
-                r#"UPDATE daemon_workspaces
-                   SET snapshot_id = ?1,
-                       git_remote_url = ?2,
-                       git_head_commit_sha = ?3,
-                       toolchain_fingerprint = ?4,
-                       last_active_at = ?5
-                   WHERE owner_uid = ?6
-                     AND host_real_root = ?7
-                     AND workspace_instance_id <> ?8"#,
-                params![
-                    snapshot_id,
-                    git_remote_url,
-                    git_head_commit_sha,
-                    toolchain_fingerprint,
-                    now,
-                    owner_uid,
-                    host_real_root,
-                    instance_id,
-                ],
-            )?;
-        }
+        propagate_snapshot_to_siblings(
+            &conn,
+            owner_uid,
+            &norm_root,
+            &instance_id,
+            &snapshot_id,
+            git_remote_url,
+            git_head_commit_sha,
+            toolchain_fingerprint,
+            now,
+        )?;
         fetch_workspace_by_instance(&conn, &instance_id)
     }
 
@@ -686,10 +794,11 @@ impl WorkspaceRegistry {
             return Ok(false);
         }
         let now = now_ts();
-        // 与 register_workspace_preferred 一致：仅当 remote_url + head 均非空
-        // 时生成 snapshot_id，否则置空保持「无 provenance」语义
+        // 仅当 remote_url 非空（走 provenance 公式）时重算 snapshot_id；
+        // 无 remote 的 checkout 保持 register 时生成的 instance 兜底身份
+        // （否则每次 commit 都会让 report 绑定的 snapshot 失效）。
         let new_snapshot_id = if !remote_url.is_empty() {
-            compute_snapshot_id(&remote_url, head_sha, &toolchain_fp)
+            compute_snapshot_id(workspace_instance_id, &remote_url, head_sha, &toolchain_fp)
         } else {
             String::new()
         };
@@ -4470,13 +4579,26 @@ mod tests {
     }
 
     #[test]
-    fn test_register_workspace_without_git_returns_null_snapshot_id() {
+    fn test_register_workspace_without_git_returns_stable_non_null_snapshot_id() {
         let registry = WorkspaceRegistry::open_in_memory().unwrap();
-        let result = registry
+        let r1 = registry
             .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
             .unwrap();
-        // git_remote_url 和 git_head_commit_sha 都为空时，snapshot_id 应为 null
-        assert!(result["snapshot_id"].is_null());
+        // 无 git provenance 时 snapshot_id 也必须非空（否则 task.report 永久不可用）
+        // 且由不可变 workspace_instance_id 派生 → 同 root 幂等、不同 root 不同。
+        let snap = r1["snapshot_id"].as_str().expect("snapshot_id 不得为 null");
+        assert_eq!(snap.len(), 16);
+        assert!(snap.chars().all(|c| c.is_ascii_hexdigit()));
+
+        let r2 = registry
+            .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        assert_eq!(r2["snapshot_id"].as_str().unwrap(), snap, "同 checkout 幂等");
+
+        let other = registry
+            .register_workspace(1000, "/tmp/cv2", "/var/hr2", "", "", "")
+            .unwrap();
+        assert_ne!(other["snapshot_id"].as_str().unwrap(), snap, "不同 checkout 必须不同");
     }
 
     #[test]
@@ -4546,23 +4668,25 @@ mod tests {
     }
 
     #[test]
-    fn test_update_workspace_vcs_head_without_remote_clears_snapshot_id() {
-        // 注册时无 git provenance（remote 为空）→ snapshot_id 为 null；
-        // 之后 refresh 上报 head，因 remote 仍为空，snapshot_id 保持空
-        // （与 register_workspace_preferred 的 CASE 语义一致）
+    fn test_update_workspace_vcs_head_without_remote_keeps_snapshot_id() {
+        // 注册时无 remote → snapshot 走 instance 兜底（非空）；
+        // 之后 refresh 上报 head 只更新 head，不让 snapshot 漂移
+        // （否则每次 commit 后 task.report 绑定的 snapshot 都会失效）。
         let registry = WorkspaceRegistry::open_in_memory().unwrap();
         let r = registry
             .register_workspace(1000, "/tmp/cv", "/var/hr", "", "", "fp")
             .unwrap();
         let instance = r["workspace_instance_id"].as_str().unwrap();
-        assert!(r["snapshot_id"].is_null());
+        let snap_before = r["snapshot_id"].as_str().expect("snapshot_id 非空").to_string();
 
         assert!(registry.update_workspace_vcs_head(instance, "head-only").unwrap());
         let after = registry.get_workspace_status(instance).unwrap().unwrap();
         assert_eq!(after["git_head_commit_sha"], "head-only");
-        // remote 为空 → 不生成 snapshot_id（空串语义）
-        let snap = after["snapshot_id"].as_str().unwrap_or("");
-        assert!(snap.is_empty(), "remote 为空时 snapshot_id 应为空");
+        assert_eq!(
+            after["snapshot_id"].as_str().unwrap(),
+            snap_before,
+            "无 remote 时 head 变化不得改写 snapshot 身份"
+        );
     }
 
     #[test]
@@ -4611,6 +4735,61 @@ mod tests {
         assert_eq!(adopted["git_remote_url"], "url");
         assert_eq!(adopted["git_head_commit_sha"], "head");
         assert_eq!(registry.count_workspaces().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_register_propagates_snapshot_to_sibling_with_verbatim_root() {
+        // 真机复现：legacy 行的 host_real_root 是 `\\?\` verbatim 原样写入，
+        // 与归一化 root 的 SQL 精确比较不相等 → 注册新身份时必须仍把 snapshot
+        // 传播到该别名行（否则 legacy binding 的 task.report 永远无 authority）。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let now = now_ts();
+        {
+            let conn = registry.conn.lock().unwrap();
+            for (instance, host_root) in [
+                ("canonical-instance", "C:/tmp/cv"),
+                ("legacy-verbatim-instance", "\\\\?\\C:\\tmp\\cv"),
+            ] {
+                conn.execute(
+                    "INSERT INTO daemon_workspaces \
+                     (workspace_instance_id, snapshot_id, owner_uid, git_remote_url, \
+                      git_head_commit_sha, client_view_root, host_real_root, \
+                      toolchain_fingerprint, registered_at, last_active_at, status) \
+                     VALUES (?1, NULL, ?2, '', '', ?3, ?4, '', ?5, ?5, 'active')",
+                    params![instance, 1000, "C:/tmp/cv", host_root, now],
+                )
+                .unwrap();
+            }
+        }
+
+        let preferred = vec!["canonical-instance".to_string()];
+        let adopted = registry
+            .register_workspace_preferred(
+                1000,
+                "C:/tmp/cv",
+                "C:/tmp/cv",
+                "",
+                "",
+                "",
+                &preferred,
+            )
+            .unwrap();
+        assert_eq!(adopted["workspace_instance_id"], "canonical-instance");
+        let snap = adopted["snapshot_id"]
+            .as_str()
+            .expect("snapshot_id 非空")
+            .to_string();
+        assert_eq!(snap.len(), 16);
+
+        let sibling = registry
+            .get_workspace_status("legacy-verbatim-instance")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sibling["snapshot_id"].as_str().unwrap(),
+            snap,
+            "verbatim 路径别名行必须共享同一 snapshot 身份"
+        );
     }
 
     #[test]
@@ -4838,9 +5017,25 @@ mod tests {
 
     #[test]
     fn test_compute_snapshot_id_differs_on_fingerprint() {
-        let id1 = compute_snapshot_id("url", "head", "fp1");
-        let id2 = compute_snapshot_id("url", "head", "fp2");
+        let id1 = compute_snapshot_id("inst", "url", "head", "fp1");
+        let id2 = compute_snapshot_id("inst", "url", "head", "fp2");
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_compute_snapshot_id_is_never_empty_and_preserves_git_formula() {
+        // remote+head 齐全：与迁移前公式逐字节一致（避免已发布身份漂移）
+        let mut legacy = Sha256::new();
+        legacy.update(format!("{}|{}|{}", "url", "head", "fp"));
+        let expected = hex_encode(&legacy.finalize()[..8]);
+        assert_eq!(compute_snapshot_id("inst", "url", "head", "fp"), expected);
+
+        // 无 provenance：instance 兜底，非空且不随 head 变化
+        let a = compute_snapshot_id("inst", "", "head-a", "fp");
+        let b = compute_snapshot_id("inst", "", "head-b", "fp");
+        assert_eq!(a.len(), 16);
+        assert_eq!(a, b, "兜底公式不得随 head 漂移");
+        assert_ne!(a, compute_snapshot_id("inst2", "", "head-a", "fp"));
     }
 
     #[test]
