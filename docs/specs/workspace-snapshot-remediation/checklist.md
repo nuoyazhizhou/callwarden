@@ -44,4 +44,4 @@
       `task report … --snapshot-id 83fdbcf3453ab265` 成功；已 cascade-close
 - [x] callwarden 自身 `task next-action` 无回归
       —— `T-1793238550960-0b8411a4` 返回 `decision=READY`，无 authority 错误
-- [ ] 代码 + spec/tasks/checklist 已提交
+- [x] 代码 + spec/tasks/checklist 已提交（`9a9846a`）

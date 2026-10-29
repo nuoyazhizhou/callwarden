@@ -41,7 +41,7 @@
   - 验收：`python -m pytest tests/test_task_next_action_e2e.py -q` → 5 passed / 11 skipped
     （隔离 daemon 默认管道被生产 daemon 占用，按既有规则 skip）。
 
-- [ ] Task 6 部署 + 真机复验 + 提交（进行中）
+- [x] Task 6 部署 + 真机复验 + 提交
   - `scripts/refresh_shared_runtime.ps1 -TaskId T-1793205026212-74deba38 -RestartMcp -RunSmokeTests`。
   - TokenSlim：`workspace register` / `collab publish` 的 `snapshot_id` 非空。
   - TokenSlim 临时探针卡：`task next-action --json` 无 `E_WORKSPACE_AUTHORITY_MISMATCH`；
