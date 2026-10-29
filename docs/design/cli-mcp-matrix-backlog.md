@@ -110,9 +110,11 @@ instance（`4baea3ff12c2ea5c`）的 ROWID 曾漂移到 `207`/`208`，治理后�
   **权威 id 1 与 registry ROWID 1193 两组 5/5 均无错误**，外来 ROWID 1194
   5/5 fail-closed。原「双契约不一致」不再复现。
 
-> 产品面建议（不入本次改动）：`workspace_id: int` 在 MCP schema 上是
-> 「快照库 id / registry ROWID」二义，长期应收敛为显式
-> `workspace_instance_id`（其余 workspace 域工具已完成该迁移）。
+> 产品面建议（P3-2 已落地，2026-10-29）：`workspace_id: int` 在 MCP schema 上
+> 是「快照库 id / registry ROWID」二义，现 build_context 族 3 个工具已收敛为
+> `workspace_instance_id: str` 优先、`workspace_id` 保留并标注 deprecated。
+> 缺省数字 id 时工具按 instance 经 `workspace.status` 解析 registry 主键补齐；
+> 两者都缺或 instance 归属校验失败即 fail-closed（不猜活动 workspace）。
 
 ---
 
@@ -284,5 +286,5 @@ workspace 连续三次 `workspace.build_graph`（daemon 已部署本次修复）
 | 编号 | 项 | 类型 | 状态 |
 |---|---|---|---|
 | P3-1 | build_graph 增量化（哈希跳过 + 删除感知 + 边重算裁剪） | 性能 | 待排期 |
-| P3-2 | `workspace_id: int` → `workspace_instance_id` 契约收敛（build_context 族） | 契约 | 待排期 |
+| P3-2 | `workspace_id: int` → `workspace_instance_id` 契约收敛（build_context 族） | 契约 | 已修（T-1793263115744-7ac43c98 步骤#2） |
 | P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 已修（T-1793263115744-7ac43c98 步骤#1） |

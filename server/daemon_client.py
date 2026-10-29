@@ -3253,56 +3253,70 @@ class HttpDaemonRpcClient:
         return self.call("edit.stats", params)
 
     def list_build_contexts(self, workspace_id: int,
-                            db_path: Optional[str] = None) -> list:
+                            db_path: Optional[str] = None,
+                            workspace_instance_id: Optional[str] = None) -> list:
         """列出 workspace 的构建上下文（RPC build_context.list）。
 
         W3-1（T-1786861820150-bfe5e805）：HTTP 模式 build_context.list 必须
         携带 workspace_instance_id（Rust handler 强制 require，owned_workspace
         ACL + snapshot_not_ready 保护），并经 `require_bound_workspace_id`
         校验 workspace_id 与权威 workspace_id 一致（不一致 → invalid_params
-        fail-closed，防跨 workspace 越权读取）。先经 `_ensure_remote_snapshot`
-        注入权威 workspace_instance_id。返回结构与 db 层 `list_build_contexts`
-        （db_toolchain.py）一致：list，元素含 workspace_id/build_context_hash/
-        name/compile_flags/defines/include_paths/is_active/created_at，
-        按 created_at 升序。
+        fail-closed，防跨 workspace 越权读取）。未显式传入
+        `workspace_instance_id` 时先经 `_ensure_remote_snapshot` 注入当前
+        workspace 的权威 instance（P3-2：显式传入可定向已发布 snapshot 的
+        workspace）。返回结构与 db 层 `list_build_contexts`（db_toolchain.py）
+        一致：list，元素含 workspace_id/build_context_hash/name/compile_flags/
+        defines/include_paths/is_active/created_at，按 created_at 升序。
         """
         params: Dict[str, Any] = {"workspace_id": workspace_id}
         ws_id = self._ensure_remote_snapshot(db_path)
-        if ws_id is not None:
+        if workspace_instance_id:
+            params["workspace_instance_id"] = workspace_instance_id
+        elif ws_id is not None:
             params["workspace_instance_id"] = ws_id
         return self.call("build_context.list", params)
 
     def get_build_context(self, workspace_id: int, build_context_hash: str,
-                          db_path: Optional[str] = None) -> Optional[dict]:
+                          db_path: Optional[str] = None,
+                          workspace_instance_id: Optional[str] = None) -> Optional[dict]:
         """查询构建上下文详情（RPC build_context.get）。
 
         W3-1（T-1786861820150-bfe5e805）：HTTP 模式 build_context.get 必须
         携带 workspace_instance_id（Rust handler 强制 require + workspace_id
-        绑定校验 fail-closed）。Rust 侧支持短 hash 前缀匹配（唯一前缀才返回，
-        0/多返回 None，复刻 Python db_toolchain.get_build_context）。返回结构
-        与 db 层一致：dict 或 None（不存在时）。
+        绑定校验 fail-closed）。P3-2：显式 `workspace_instance_id` 优先，
+        否则经 `_ensure_remote_snapshot` 注入当前 workspace。Rust 侧支持短
+        hash 前缀匹配（唯一前缀才返回，0/多返回 None，复刻 Python
+        db_toolchain.get_build_context）。返回结构与 db 层一致：dict 或
+        None（不存在时）。
         """
         params: Dict[str, Any] = {
             "workspace_id": workspace_id,
             "build_context_hash": build_context_hash,
         }
         ws_id = self._ensure_remote_snapshot(db_path)
-        if ws_id is not None:
+        if workspace_instance_id:
+            params["workspace_instance_id"] = workspace_instance_id
+        elif ws_id is not None:
             params["workspace_instance_id"] = ws_id
         return self.call("build_context.get", params)
 
     def get_active_build_context(self, workspace_id: int,
-                                 db_path: Optional[str] = None) -> Optional[dict]:
+                                 db_path: Optional[str] = None,
+                                 workspace_instance_id: Optional[str] = None) -> Optional[dict]:
         """查询当前活跃的构建上下文（RPC build_context.active）。
 
         W3-1（T-1786861820150-bfe5e805）：HTTP 模式 build_context.active 必须
         携带 workspace_instance_id（Rust handler 强制 require + workspace_id
-        绑定校验 fail-closed）。返回结构与 db 层 `get_active_build_context`
-        （db_toolchain.py）一致：dict 或 None（无 active 时）。
+        绑定校验 fail-closed）。P3-2：显式 `workspace_instance_id` 优先，
+        否则经 `_ensure_remote_snapshot` 注入当前 workspace。返回结构与 db 层
+        `get_active_build_context`（db_toolchain.py）一致：dict 或 None
+        （无 active 时）。
         """
         params: Dict[str, Any] = {"workspace_id": workspace_id}
         ws_id = self._ensure_remote_snapshot(db_path)
-        if ws_id is not None:
+        if workspace_instance_id:
+            params["workspace_instance_id"] = workspace_instance_id
+        elif ws_id is not None:
             params["workspace_instance_id"] = ws_id
         return self.call("build_context.active", params)
 

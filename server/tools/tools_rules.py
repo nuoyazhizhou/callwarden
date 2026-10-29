@@ -19,6 +19,10 @@ W3-1（T-1786861820150-bfe5e805）：list_build_contexts / get_build_context /
 get_active_build_context / get_resolved_edges / count_resolved_edges 已迁移
 rust_native（HTTP 模式经 daemon client 走 build_context.* RPC，主库只读 +
 require_bound_workspace_id fail-closed），已从 compat 白名单移除。
+P3-2（T-1793263115744-7ac43c98 步骤#2）：list_build_contexts /
+get_build_context / get_active_build_context 新增 workspace_instance_id
+（推荐入口），workspace_id 保留但标 deprecated；缺省数字 id 时按 instance
+经 workspace.status 解析并补齐，instance 归属失败即 fail-closed。
 S2 批次2（T-1787209948470-a59bcf9c）：list_toolchains / get_toolchain /
 get_workspace_toolchains 已迁移 rust_native（读权威 task DB），白名单清空。
 get_metrics 不依赖 db.conn（走 UnixDaemonRpcClient / 本地 MetricsCollector），
@@ -34,6 +38,47 @@ from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db  #
 from mcp.server.fastmcp import FastMCP
 
 from ..daemon_client import route_rpc as _route
+
+
+def _build_context_scope(
+    workspace_id: int,
+    workspace_instance_id: str,
+    **extra,
+) -> dict:
+    """P3-2：build_context 族三个工具的 workspace 定位归一。
+
+    - `workspace_instance_id` 非空时显式下发，route_rpc 不会用活动 workspace 顶替；
+    - `workspace_id <= 0`（deprecated 字段缺省）时按 instance 经
+      `workspace.status` 解析 registry 主键补齐——daemon 侧
+      `require_bound_workspace_id` 接受该 registry ROWID 或快照库权威 id；
+    - 两者都缺失，或 instance 不属于当前用户（workspace.status 拒绝）时直接
+      报错，绝不猜测活动 workspace（fail-closed）。
+    """
+    params = dict(extra)
+    instance = (workspace_instance_id or "").strip()
+    if instance:
+        params["workspace_instance_id"] = instance
+    numeric = int(workspace_id or 0)
+    if numeric > 0:
+        params["workspace_id"] = numeric
+        return params
+    if not instance:
+        raise ValueError(
+            "缺少 workspace 定位参数：请提供 workspace_instance_id（推荐）"
+            "或 deprecated workspace_id"
+        )
+    status = _route("workspace.status", {"workspace_instance_id": instance}, "READ_ONLY")
+    # workspace.status 的 daemon 视图是 registry/task-DB 归一结果，registry 数字
+    # 主键在 `registry_workspace_id`；兼容旧行仍回退 workspace_id。
+    resolved = None
+    if isinstance(status, dict):
+        resolved = status.get("registry_workspace_id", status.get("workspace_id"))
+    if not isinstance(resolved, int) or resolved <= 0:
+        raise ValueError(
+            f"无法从 workspace_instance_id={instance} 解析权威 workspace_id（fail-closed）"
+        )
+    params["workspace_id"] = resolved
+    return params
 
 
 def register(mcp: FastMCP) -> None:
@@ -69,32 +114,45 @@ def register(mcp: FastMCP) -> None:
         return _route('get_workspace_toolchains', {"workspace_id": workspace_id, "build_context_hash": build_context_hash}, 'READ_ONLY')
 
     @mcp.tool()
-    def list_build_contexts(workspace_id: int) -> list:
+    def list_build_contexts(workspace_id: int = 0, workspace_instance_id: str = "") -> list:
         """列出 workspace 的所有构建上下文（build variants）
 
         Args:
-            workspace_id: workspace ID
+            workspace_id: **deprecated（P3-2）**。workspace 数字 ID：快照库
+                `workspaces.id` 或 daemon registry ROWID 二义（ROWID 随注册轮换，
+                不可持久化）。旧调用继续可用；新调用请用 workspace_instance_id。
+            workspace_instance_id: 目标 workspace 的稳定实例 ID（推荐）。缺省时
+                由 route_rpc 注入当前活动 workspace。
         """
-        return _route('build_context.list', {"workspace_id": workspace_id}, 'READ_ONLY')
+        return _route('build_context.list', _build_context_scope(workspace_id, workspace_instance_id), 'READ_ONLY')
 
     @mcp.tool()
-    def get_build_context(workspace_id: int, build_context_hash: str) -> Optional[dict]:
+    def get_build_context(
+        workspace_id: int = 0,
+        build_context_hash: str = "",
+        workspace_instance_id: str = "",
+    ) -> Optional[dict]:
         """查询构建上下文详情（flags + defines + include_paths）
 
         Args:
-            workspace_id: workspace ID
-            build_context_hash: 构建上下文哈希
+            workspace_id: **deprecated（P3-2）**，语义同 list_build_contexts。
+            build_context_hash: 构建上下文哈希（支持唯一前缀）
+            workspace_instance_id: 目标 workspace 的稳定实例 ID（推荐）。
         """
-        return _route('build_context.get', {"workspace_id": workspace_id, "build_context_hash": build_context_hash}, 'READ_ONLY')
+        return _route('build_context.get', _build_context_scope(
+            workspace_id, workspace_instance_id,
+            build_context_hash=build_context_hash,
+        ), 'READ_ONLY')
 
     @mcp.tool()
-    def get_active_build_context(workspace_id: int) -> Optional[dict]:
+    def get_active_build_context(workspace_id: int = 0, workspace_instance_id: str = "") -> Optional[dict]:
         """查询当前活跃的构建上下文
 
         Args:
-            workspace_id: workspace ID
+            workspace_id: **deprecated（P3-2）**，语义同 list_build_contexts。
+            workspace_instance_id: 目标 workspace 的稳定实例 ID（推荐）。
         """
-        return _route('build_context.active', {"workspace_id": workspace_id}, 'READ_ONLY')
+        return _route('build_context.active', _build_context_scope(workspace_id, workspace_instance_id), 'READ_ONLY')
 
     @mcp.tool()
     def get_resolved_edges(

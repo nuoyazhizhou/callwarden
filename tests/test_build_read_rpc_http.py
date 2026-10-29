@@ -375,3 +375,92 @@ class TestToolRouteContract:
         q = _register_tools(tools_rules)
         assert q["list_build_contexts"](workspace_id=101) == {"ok": True}
         assert ("build_context.list", "READ_ONLY") in calls
+
+
+# ============================================================
+# ⑦ P3-2：workspace_instance_id 契约收敛（deprecated workspace_id 兼容）
+# ============================================================
+
+class TestInstanceIdScope:
+    """build_context 族 3 工具：instance 优先 + 缺省数字 id 解析 + fail-closed。"""
+
+    BUILD_CONTEXT_TOOLS = [
+        ("list_build_contexts", "build_context.list", {}),
+        ("get_build_context", "build_context.get", {"build_context_hash": "abc123"}),
+        ("get_active_build_context", "build_context.active", {}),
+    ]
+
+    def _register(self, monkeypatch):
+        calls = []
+
+        def fake_route(method, params, op_class):
+            calls.append((method, dict(params)))
+            if method == "workspace.status":
+                return {"registry_workspace_id": 1193, "registry_instance_id": params["workspace_instance_id"]}
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_rules, "_route", fake_route)
+        return _register_tools(tools_rules), calls
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,extra",
+        BUILD_CONTEXT_TOOLS,
+        ids=[c[0] for c in BUILD_CONTEXT_TOOLS],
+    )
+    def test_explicit_instance_passthrough_without_status_lookup(
+        self, monkeypatch, tool_name, rpc_method, extra
+    ):
+        """显式 instance + 数字 id：两者原样下发，不额外查 workspace.status。"""
+        q, calls = self._register(monkeypatch)
+        assert q[tool_name](workspace_id=101, workspace_instance_id="ws-x", **extra) == {"ok": True}
+        assert [c[0] for c in calls] == [rpc_method]
+        assert calls[0][1] == {"workspace_id": 101, "workspace_instance_id": "ws-x", **extra}
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,extra",
+        BUILD_CONTEXT_TOOLS,
+        ids=[c[0] for c in BUILD_CONTEXT_TOOLS],
+    )
+    def test_missing_numeric_id_resolves_from_instance(
+        self, monkeypatch, tool_name, rpc_method, extra
+    ):
+        """workspace_id 缺省（<=0）+ instance → 按 instance 解析 registry 主键补齐。"""
+        q, calls = self._register(monkeypatch)
+        assert q[tool_name](workspace_instance_id="ws-x", **extra) == {"ok": True}
+        assert [c[0] for c in calls] == ["workspace.status", rpc_method]
+        assert calls[0][1] == {"workspace_instance_id": "ws-x"}
+        assert calls[1][1] == {"workspace_id": 1193, "workspace_instance_id": "ws-x", **extra}
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,extra",
+        BUILD_CONTEXT_TOOLS,
+        ids=[c[0] for c in BUILD_CONTEXT_TOOLS],
+    )
+    def test_both_scope_params_missing_fail_closed(
+        self, monkeypatch, tool_name, rpc_method, extra
+    ):
+        """instance 与数字 id 都缺 → 本地 fail-closed，不发任何 RPC、不猜活动 workspace。"""
+        q, calls = self._register(monkeypatch)
+        with pytest.raises(ValueError):
+            q[tool_name](**extra)
+        assert calls == []
+
+    @pytest.mark.parametrize(
+        "tool_name,rpc_method,extra",
+        BUILD_CONTEXT_TOOLS,
+        ids=[c[0] for c in BUILD_CONTEXT_TOOLS],
+    )
+    def test_instance_ownership_failure_propagates(
+        self, monkeypatch, tool_name, rpc_method, extra
+    ):
+        """workspace.status 拒绝（instance 不属于当前用户）→ 错误原样传播，不降级。"""
+        def fake_route(method, params, op_class):
+            if method == "workspace.status":
+                raise DaemonRemoteError("workspace_not_found", "未注册的 workspace")
+            return {"ok": True}
+
+        monkeypatch.setattr(tools_rules, "_route", fake_route)
+        q = _register_tools(tools_rules)
+        with pytest.raises(DaemonRemoteError):
+            q[tool_name](workspace_instance_id="ws-x", **extra)
+
