@@ -261,7 +261,7 @@ fn resolve_owned_path(
 /// 打开 workspace codegraph DB（写路径，daemon 权威库）。
 /// codegraph_db 为 None 时 fail-closed（daemon 未配置 codegraph 模板）。
 ///
-/// P0-CR3 修复：写路径打开前必须先 `storage::initialize_or_migrate(path, 60)`
+/// P0-CR3 修复：写路径打开前必须先 `storage::initialize_or_migrate(path, SCHEMA_VERSION)`
 /// 确保 schema 就绪——此前 daemon 写图谱前未接 storage 初始化，半成品库
 /// （sqlite_master 为空）残留导致 file_instances upsert 与查询全部报错。
 fn open_codegraph_write(
@@ -273,11 +273,11 @@ fn open_codegraph_write(
             "daemon 未配置 codegraph_db_path_template，无法执行写操作（fail-closed）",
         )
     })?;
-    // fail-fast：入口即确保 schema v60（已就绪时为幂等 no-op）
-    crate::storage::initialize_or_migrate(path, 60).map_err(|e| {
+    // fail-fast：入口即确保 schema 与 storage::SCHEMA_VERSION 一致（已就绪时为幂等 no-op）
+    crate::storage::initialize_or_migrate(path, crate::storage::SCHEMA_VERSION).map_err(|e| {
         DaemonRpcError::new(
             "codegraph_schema_init_failed",
-            format!("codegraph schema 初始化/迁移失败（v60）: {e}"),
+            format!("codegraph schema 初始化/迁移失败（v{}）: {e}", crate::storage::SCHEMA_VERSION),
         )
     })?;
     rusqlite::Connection::open(path).map_err(|e| {
@@ -2027,7 +2027,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
@@ -2101,7 +2101,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
@@ -2149,7 +2149,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
@@ -2196,7 +2196,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
@@ -2268,8 +2268,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        // P0-CR3：fresh DB 自动建 schema（v60）
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        // P0-CR3：fresh DB 自动建 schema（与 storage::SCHEMA_VERSION 同步）
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
@@ -2353,7 +2353,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
@@ -2396,7 +2396,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let db_path = tmp.join("codegraph.db");
-        crate::storage::initialize_or_migrate(&db_path, 60).unwrap();
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
         conn.execute(
             "INSERT INTO workspaces (name, root_path, created_at, is_active, description)

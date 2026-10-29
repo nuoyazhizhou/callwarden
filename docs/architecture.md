@@ -71,7 +71,7 @@ $HOME/.callwarden/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v50**
+当前 Schema 版本：**v61**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）

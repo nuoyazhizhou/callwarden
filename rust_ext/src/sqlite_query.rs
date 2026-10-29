@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-pub const RUST_SCHEMA_VERSION: i64 = 60;
+pub const RUST_SCHEMA_VERSION: i64 = 61;
 
 const EMBEDDED_SCHEMA_SOURCE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../db/schema.py"));
@@ -927,9 +927,9 @@ pub(crate) fn migrate_connection(conn: &Connection) -> Result<i64, String> {
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version, applied_at, description)
              VALUES (?1, ?2, ?3)",
-            rusqlite::params![RUST_SCHEMA_VERSION, now, "Rust schema migration to v59"],
+            rusqlite::params![RUST_SCHEMA_VERSION, now, "Rust schema migration to v61"],
         )
-        .map_err(|error| format!("cannot publish schema version 59: {error}"))?;
+        .map_err(|error| format!("cannot publish schema version 61: {error}"))?;
         Ok::<(), String>(())
     })();
 

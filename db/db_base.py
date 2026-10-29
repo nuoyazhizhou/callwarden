@@ -3325,6 +3325,35 @@ def _verify_supersede_v59_schema(conn: sqlite3.Connection):
             raise RuntimeError(f"task_supersede v59 索引缺失 fail-closed: {idx}")
 
 
+def _migrate_v60_to_v61(conn: sqlite3.Connection):
+    """v60 -> v61: raw 边按名查询加速（P3-4，T-1793284203427-56a164bc）
+
+    新增 idx_calls_callee_name_raw 部分索引 (callee_name) WHERE callee_id = 0，
+    覆盖增量建图边重算与 query 面按名字解析 raw 边；既有库全表扫描 calls 的
+    计划缺陷由此根治。
+
+    幂等：CREATE INDEX IF NOT EXISTS 可重复执行；随后校验索引存在，缺失则
+    fail-closed 抛错由迁移框架回滚。合成/极简测试库可能没有 calls 表，此时
+    跳过建索引（表由 canonical schema 负责）。
+    """
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='calls'"
+    ).fetchone() is None:
+        return
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calls_callee_name_raw "
+        "ON calls(callee_name) WHERE callee_id = 0"
+    )
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+        ("idx_calls_callee_name_raw",),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(
+            "calls v61 索引缺失 fail-closed: idx_calls_callee_name_raw"
+        )
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -4347,6 +4376,10 @@ class CodeGraphBase:
             59: {
                 "description": t("cli.messages.migration_v59", default="task.supersede governance schema: supersede relations/events canonical + workspace/provenance/request/lease/fencing/evidence columns + indexes (idempotent, lossless ALTER ADD COLUMN for existing base tables)"),
                 "func": _migrate_v58_to_v59,
+            },
+            61: {
+                "description": t("cli.messages.migration_v61", default="P3-4 raw-edge lookup index: partial index idx_calls_callee_name_raw on calls(callee_name) WHERE callee_id = 0 (idempotent)"),
+                "func": _migrate_v60_to_v61,
             },
         }
 

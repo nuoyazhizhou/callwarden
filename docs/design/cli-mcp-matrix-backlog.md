@@ -356,6 +356,33 @@ workspace 连续三次 `workspace.build_graph`（daemon 已部署本次修复）
   `calls` 表无 `callee_name` 索引是既有 schema 事实，本步骤不改 schema，
   故从驱动方向规避（而非新增索引）。
 
+### 4.6.2 v61 部分索引实测（P3-4，`T-1793284203427-56a164bc`）
+
+§4.6.1 的驱动方向规避只解决了**已有判定路径**的开销，仍有按 `callee_name`
+找 raw 边（`callee_id = 0`）的查询会全表扫 `calls`。v61 补上部分索引：
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_calls_callee_name_raw
+ON calls(callee_name) WHERE callee_id = 0;
+```
+
+只覆盖 raw 行，已解析边不额外维护键。迁移双端同步（`SCHEMA_VERSION`
+60→61，Python `_migrate_v60_to_v61` + Rust canonical schema 同源），
+`fs_handlers` 写路径改为读取 `storage::SCHEMA_VERSION`（此前硬编码 60，
+v61 库会报 `SCHEMA_TOO_NEW`）。
+
+实测（主仓权威库，`calls=574,892` 行 / `callee_id=0` 的 raw 边 462,272 行）：
+
+| 指标 | 修复前 | v61 后 |
+|---|---|---|
+| `EXPLAIN QUERY PLAN`（`callee_name=? AND callee_id=0`） | `SCAN calls` | `SEARCH calls USING COVERING INDEX idx_calls_callee_name_raw (callee_name=?)` |
+| 按名定位 raw 边（单名） | 95ms（逐名 `UPDATE` 计划） | 0.004ms（100 个 distinct 名字合计 0.000s） |
+| 主仓稳态增量建图 | 1.089s / 0.303s（驱动方向修复后） | 0.252s（`scanned=1241`，全 `unchanged`） |
+
+索引为部分索引（`WHERE callee_id = 0`），`sqlite_master.sql` 断言保留谓词；
+`initialize_or_migrate` 二次调用幂等；新建库、既有 v60 库（Python / Rust
+两条迁移链）、daemon 写路径三处均建出该索引。
+
 ---
 
 ## 5. 后续 backlog（未纳入本次步骤）
@@ -365,4 +392,4 @@ workspace 连续三次 `workspace.build_graph`（daemon 已部署本次修复）
 | P3-1 | build_graph 增量化（哈希跳过 + 删除感知 + 边重算裁剪） | 性能 | 已修（T-1793263115744-7ac43c98 步骤#3） |
 | P3-2 | `workspace_id: int` → `workspace_instance_id` 契约收敛（build_context 族） | 契约 | 已修（T-1793263115744-7ac43c98 步骤#2） |
 | P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 已修（T-1793263115744-7ac43c98 步骤#1） |
-| P3-4 | `calls.callee_name` 部分索引（`WHERE callee_id = 0`，raw 边按名字解析/查询） | 性能/schema | 待办（需 SCHEMA_VERSION 60→61 双端 DDL 同步） |
+| P3-4 | `calls.callee_name` 部分索引（`WHERE callee_id = 0`，raw 边按名字解析/查询） | 性能/schema | 已修（T-1793284203427-56a164bc 步骤#3：SCHEMA_VERSION=61，`idx_calls_callee_name_raw` 部分索引，实测见 §4.6.2） |

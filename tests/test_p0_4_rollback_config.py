@@ -56,8 +56,8 @@ class TestRollbackConfigSchema:
     """验证 rollback_config 表 schema 和 migration。"""
 
     def test_schema_version_is_46(self):
-        """SCHEMA_VERSION 必须为 60（与权威库 schema 版本对齐）。"""
-        assert SCHEMA_VERSION == 60
+        """SCHEMA_VERSION 必须为 61（与权威库 schema 版本对齐）。"""
+        assert SCHEMA_VERSION == 61
 
     def test_table_exists(self, db_with_rollback):
         """rollback_config 表必须存在。"""

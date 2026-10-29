@@ -207,6 +207,10 @@ CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON symbols(file_instance_id, name, start_line);
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_callee_id_resolved ON calls(callee_id) WHERE callee_id > 0;
+-- v61: raw 边（callee_id=0）按 callee_name 解析/查询的部分索引。
+-- 增量建图边重算与 query 面按名查 raw 边此前只能全表扫描 calls；
+-- 部分索引只覆盖 callee_id=0 行，避免为已解析边维护冗余键。
+CREATE INDEX IF NOT EXISTS idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0;
 CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash);
 CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id);
 CREATE INDEX IF NOT EXISTS idx_file_versions_hash ON file_versions(content_hash);
@@ -2140,7 +2144,10 @@ CREATE INDEX IF NOT EXISTS idx_task_supersede_events_workspace
 #      revision id/revision/hash、canonicalization version/hash）与所用
 #      normalization version/hash；历史 verdict/gate/contract 无绑定只读显示
 #      UNVERIFIED，不回填改写。
-SCHEMA_VERSION = 60
+# v61: P3-4 raw 边按名查询加速 — idx_calls_callee_name_raw 部分索引
+#      (callee_name) WHERE callee_id = 0；覆盖增量建图边重算与 query 面按名
+#      解析 raw 边，避免全表扫描 calls。CREATE INDEX IF NOT EXISTS 幂等。
+SCHEMA_VERSION = 61
 
 
 # ============================================

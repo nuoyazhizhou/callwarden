@@ -5,7 +5,7 @@
 //!
 //! 职责：
 //! 1. 成为 SQLite registry 数据库连接、WAL 模式设置、外键与超时预置的唯一真相源。
-//! 2. 全量内嵌 SCHEMA_VERSION = 60 的 Schema SQL 与版本升级 Migration 路径。
+//! 2. 全量内嵌 SCHEMA_VERSION = 61 的 Schema SQL 与版本升级 Migration 路径。
 //! 3. 提供完整性检查 (integrity_check)、迁移灾备备份 (backup_before_migration)、
 //!    WAL checkpoint 和事务 (BEGIN IMMEDIATE / COMMIT / ROLLBACK) 句柄管理。
 //! 4. 暴露 PyO3 接口供 Python db_base.py 的 Facade 安全调用。
@@ -26,7 +26,7 @@ use crate::sqlite_query::{
 };
 
 /// Schema 版本号（真相源对齐 db/schema.py）
-pub const SCHEMA_VERSION: u32 = 60;
+pub const SCHEMA_VERSION: u32 = 61;
 
 // db/schema.py is the repository schema authority.  Embedding its SQL at
 // compile time keeps frozen Rust artifacts independent of a Python checkout
@@ -364,6 +364,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON symbols(file_instance_id
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id);
 CREATE INDEX IF NOT EXISTS idx_calls_caller_name ON calls(caller_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON calls(callee_name);
+-- v61（P3-4）mirror：raw 边按名查询的部分索引（canonical 来源 db/schema.py）
+CREATE INDEX IF NOT EXISTS idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0;
 CREATE INDEX IF NOT EXISTS idx_calls_callee_id ON calls(callee_id);
 CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash);
 CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id);
@@ -1884,6 +1886,44 @@ mod tests {
         assert!(
             table_count >= 40,
             "canonical schema was truncated: {table_count}"
+        );
+    }
+
+    #[test]
+    fn test_storage_v61_raw_edge_index_created_and_used() {
+        // v61（P3-4）：canonical schema 必须建出 raw 边按名查询的部分索引，
+        // 且查询计划命中它（否则增量边重算仍是全表扫描）。
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test_v61_index.db");
+
+        initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+        // 幂等：二次迁移不得报错或丢失索引。
+        initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+
+        let conn = open_connection(&db_path).unwrap();
+        let ddl: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_calls_callee_name_raw'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            ddl.contains("WHERE callee_id = 0"),
+            "v61 index must stay partial: {ddl}"
+        );
+
+        let plan: String = conn
+            .query_row(
+                "EXPLAIN QUERY PLAN \
+                 SELECT id FROM calls WHERE callee_id = 0 AND callee_name = ?1",
+                ["helper"],
+                |row| row.get(3),
+            )
+            .unwrap();
+        assert!(
+            plan.contains("idx_calls_callee_name_raw"),
+            "raw-edge lookup must use v61 partial index, got: {plan}"
         );
     }
 

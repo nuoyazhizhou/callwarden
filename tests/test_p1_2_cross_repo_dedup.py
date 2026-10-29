@@ -143,9 +143,9 @@ def _add_symbol(conn, workspace_id, rel_path, symbol_hash, name, qualified_name,
 # ============================================================
 
 def test_p1_2_schema_version_is_41():
-    """P1-2: SCHEMA_VERSION 已升级到 60（与权威库 schema 版本对齐）。"""
+    """P1-2: SCHEMA_VERSION 已升级到 61（与权威库 schema 版本对齐）。"""
     from callwarden.db.schema import SCHEMA_VERSION
-    assert SCHEMA_VERSION == 60, f"SCHEMA_VERSION 应为 60，实际：{SCHEMA_VERSION}"
+    assert SCHEMA_VERSION == 61, f"SCHEMA_VERSION 应为 61，实际：{SCHEMA_VERSION}"
 
 
 def test_p1_2_schema_has_unique_index_definition():
