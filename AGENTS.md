@@ -757,8 +757,11 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
       三张子卡（`T-1793238550960-0b8411a4` / `T-1793238551533-2db578bc` /
       `T-1793238552053-4cb4e644`）全部 closed，门禁 `python scripts/check_e2e_matrix_closure.py`
       退出码 0。Wave 3/4、67 个 MCP 写工具补测、B 类 5 条双契约重测、F-001 registry
-      数据治理、build_graph 增量化转入遗留卡 `T-1793240742557-50dfd468`（4 步），
-      该卡未关闭前视为矩阵未完成。
+      数据治理、build_graph 增量化转入遗留卡 `T-1793240742557-50dfd468`（4 步）。
+      2026-10-29 该遗留卡已按「逐项承接」收口：4 步全部迁移到承接卡
+      `T-1793248351476-e7d6650c`（SUP-2fa2a68e8ca2fa4a，映射见
+      `docs/evidence/T-1793240742557-50dfd468-backlog-successor-mapping.md`），
+      后续以承接卡为唯一追踪对象，**该卡未关闭前视为矩阵未完成**。
 
 ## 文档索引
 
