@@ -279,6 +279,21 @@ pub trait DaemonStateExt {
         }
     }
 
+    /// 严格 owner ACL：在 Protected_Mutation 入口要求任务已有 canonical workspace
+    /// binding；legacy 无 binding 任务返回 `E_TASK_BINDING_ATTESTATION_REQUIRED`，
+    /// 必须先用 `task.attest_legacy_workspace_binding` 完成 attestation。
+    fn check_task_owner_strict(
+        &self,
+        peer: PeerCredential,
+        task_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.verify_registry_owner_for_task_strict(peer.uid, task_id)
+        } else {
+            Ok(())
+        }
+    }
+
     // ---- 基础方法（R3 默认实现）----
 
     fn handle_ping(&mut self, peer: PeerCredential) -> Result<Value, DaemonRpcError> {
@@ -3025,7 +3040,13 @@ fn dispatch_inner<S: DaemonStateExt>(
     if is_task_owner_scoped_method(method) {
         if let Some(task_id) = params.get("task_id").and_then(|v| v.as_str()) {
             if !task_id.trim().is_empty() {
-                state.check_task_owner(peer, task_id)?;
+                if is_protected_mutation(method) {
+                    // 写面：legacy 无 binding 任务必须先生成 authority attestation。
+                    state.check_task_owner_strict(peer, task_id)?;
+                } else {
+                    // 只读面：保持历史卡可读。
+                    state.check_task_owner(peer, task_id)?;
+                }
             }
         }
     }

@@ -69,3 +69,31 @@ fn test_task_owner_acl_allows_legacy_and_missing_registry_row() {
         .verify_registry_owner_for_task(1001, "T-NO-BINDING")
         .is_ok());
 }
+
+#[test]
+fn test_task_owner_acl_strict_requires_binding_for_mutation() {
+    let (dir, db_path) = temp_db();
+    let registry_path = seed_registry(&dir, "ws-inst-test", 1000);
+    let store = TaskCollabStore::new(&db_path)
+        .unwrap()
+        .with_registry_db_path_for_tests(&registry_path);
+    seed_workspace(&store);
+
+    // 已绑定：同 UID 放行，跨 UID forbidden。
+    assert!(store
+        .verify_registry_owner_for_task_strict(1000, "T-LEASE-1")
+        .is_ok());
+    let err = store
+        .verify_registry_owner_for_task_strict(1001, "T-LEASE-1")
+        .unwrap_err();
+    assert_eq!(err.code, "workspace_forbidden");
+
+    // 未绑定 legacy 卡：写面 fail-closed 要求先 attestation；只读面仍放行。
+    let err = store
+        .verify_registry_owner_for_task_strict(1000, "T-NO-BINDING")
+        .unwrap_err();
+    assert_eq!(err.code, "E_TASK_BINDING_ATTESTATION_REQUIRED");
+    assert!(store
+        .verify_registry_owner_for_task(1000, "T-NO-BINDING")
+        .is_ok());
+}

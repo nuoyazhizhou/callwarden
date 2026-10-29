@@ -1956,7 +1956,7 @@ impl TaskCollabStore {
     /// 通过 `task.claim/report/close` 等入口拿走。本函数以任务自身的不可变
     /// workspace binding 为入口，复用与 create 相同的 registry 只读 owner 比对：
     /// - 无 binding / binding 无 capture / capture 无 instance → 放行。legacy 卡
-    ///   未进入 canonical 权威，keeper 无从校验，保持既有可读写语义；
+    ///   未进入 canonical 权威，keeper 无从校验，保持既有只读语义；
     /// - registry 行存在且 `owner_uid` 与 peer 不一致 → `workspace_forbidden`
     ///   fail-closed；
     /// - registry 无该 instance 行 → 放行（无宿主路径可泄露，与 status 面一致）。
@@ -1964,6 +1964,27 @@ impl TaskCollabStore {
         &self,
         peer_uid: u32,
         task_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        self.verify_task_binding_owner(peer_uid, task_id, false)
+    }
+
+    /// 严格模式：legacy 无 binding 任务在 **Protected_Mutation** 入口 fail-closed，
+    /// 要求先走 `task.attest_legacy_workspace_binding` 完成 authority attestation。
+    ///
+    /// 只读面继续使用 [`Self::verify_registry_owner_for_task`]，避免历史卡不可读。
+    pub fn verify_registry_owner_for_task_strict(
+        &self,
+        peer_uid: u32,
+        task_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        self.verify_task_binding_owner(peer_uid, task_id, true)
+    }
+
+    fn verify_task_binding_owner(
+        &self,
+        peer_uid: u32,
+        task_id: &str,
+        require_binding: bool,
     ) -> Result<(), DaemonRpcError> {
         let instance: Option<String> = {
             let conn = self
@@ -1989,6 +2010,13 @@ impl TaskCollabStore {
             Some(instance) if !instance.trim().is_empty() => {
                 self.verify_registry_owner_for_instance(peer_uid, &instance)
             }
+            _ if require_binding => Err(DaemonRpcError::new(
+                "E_TASK_BINDING_ATTESTATION_REQUIRED",
+                format!(
+                    "任务 {task_id} 无 canonical workspace binding；\
+                     请先执行 cw task attest-legacy-workspace-binding 完成 authority attestation"
+                ),
+            )),
             _ => Ok(()),
         }
     }
