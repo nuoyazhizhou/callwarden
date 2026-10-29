@@ -576,12 +576,14 @@ impl TaskCollabStore {
 
     pub fn handle_task_list(
         &self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         // workspace authority fail-closed：task.list 必须显式传入 workspace_id（>0），
         // 只列出该 workspace 的已绑定任务；无显式 workspace 禁止全表列出（WHERE 1=1）。
         let workspace_id = required_workspace_id_param(params)?;
+        // task-scoped owner ACL：多用户 UDS 下禁止列出他人 workspace 的任务卡。
+        self.verify_registry_owner_for_workspace_id(peer.uid, workspace_id)?;
         let status_filter = params.get("status").and_then(|v| v.as_str());
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
         let offset = get_int_param_or(params, "offset", 0).max(0) as usize;

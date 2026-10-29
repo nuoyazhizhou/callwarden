@@ -265,6 +265,20 @@ pub trait DaemonStateExt {
     /// 返回基础 DaemonState（用于获取 pid / start_time / schema_version）
     fn daemon_state(&self) -> &DaemonState;
 
+    /// task-scoped registry owner ACL（Linux 多用户 / 多 workspace fail-closed）。
+    ///
+    /// dispatch 层统一前置守卫：携带非空 `task_id` 的 task/lease/collab 方法先证明
+    /// 该任务绑定的 workspace 在 daemon registry 中属于当前 peer。store 未装配
+    /// （精简 state / 测试）时放行；语义见
+    /// `TaskCollabStore::verify_registry_owner_for_task`。
+    fn check_task_owner(&self, peer: PeerCredential, task_id: &str) -> Result<(), DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.verify_registry_owner_for_task(peer.uid, task_id)
+        } else {
+            Ok(())
+        }
+    }
+
     // ---- 基础方法（R3 默认实现）----
 
     fn handle_ping(&mut self, peer: PeerCredential) -> Result<Value, DaemonRpcError> {
@@ -2273,6 +2287,41 @@ pub const ADMIN_ONLY_METHODS: &[&str] = &[
     "mcp.backup_restore.backup_file",
 ];
 
+/// task-scoped owner ACL 作用域：这些方法携带的 `task_id` 指向一张**既有任务卡**，
+/// dispatch 层必须在进入 handler 前校验该任务绑定 workspace 的 registry owner。
+///
+/// `task.create`（创建时尚无 task 行，按请求 instance 走专用校验）与 `task.list`
+/// （按 `workspace_id` 走专用校验）不在其中。
+fn is_task_owner_scoped_method(method: &str) -> bool {
+    if matches!(method, "task.create" | "task.list") {
+        return false;
+    }
+    if method.starts_with("task.") || method.starts_with("lease.") {
+        return true;
+    }
+    // Collab P1/P3：对既有任务卡的读写面（无 task_id 参数时守卫自然跳过）。
+    matches!(
+        method,
+        "verdict.submit"
+            | "reveal.submit"
+            | "gate.decide"
+            | "get_role_view"
+            | "role_view.get"
+            | "find_evidence"
+            | "get_freshness_status"
+            | "get_gate_decision"
+            | "get_artifact_freshness"
+            | "get_interface_providers"
+            | "detect_cycle"
+            | "validate_revision_dependencies"
+            | "get_dependency_edges"
+            | "get_action_identity"
+            | "check_action_identity"
+            | "check_session_separation"
+            | "get_attestation_validity"
+    )
+}
+
 /// GATE-1A：`task.create` 严格字段注册（薄注册，无业务逻辑）。
 ///
 /// dispatch 层只负责把 `task.create` 路由到 domain handler
@@ -2967,6 +3016,18 @@ fn dispatch_inner<S: DaemonStateExt>(
             "方法 {} 需要管理员权限（root 或 daemon uid），当前 peer.uid={}",
             method, peer.uid
         )));
+    }
+    // task-scoped owner ACL（fail-closed）：带非空 `task_id` 的 task/lease/collab
+    // 方法在进入 handler 前统一校验任务绑定 workspace 的 registry owner，堵住
+    // Linux 多用户 / 多 workspace 下「拿到别人的卡」。`task.create` 还没有 task
+    // 行（按请求 instance 走专用校验）、`task.list` 按 workspace_id 走专用校验，
+    // 均不在此处拦截。
+    if is_task_owner_scoped_method(method) {
+        if let Some(task_id) = params.get("task_id").and_then(|v| v.as_str()) {
+            if !task_id.trim().is_empty() {
+                state.check_task_owner(peer, task_id)?;
+            }
+        }
     }
     match method {
         // ---- 基础方法（R3 默认实现）----

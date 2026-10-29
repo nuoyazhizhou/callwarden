@@ -1950,6 +1950,115 @@ impl TaskCollabStore {
         Ok(())
     }
 
+    /// task-scoped registry owner ACL（Linux 多用户 / 多 workspace fail-closed）。
+    ///
+    /// `task.create` 只校验「请求 instance」，无法阻止已存在的任务卡被其他 UID
+    /// 通过 `task.claim/report/close` 等入口拿走。本函数以任务自身的不可变
+    /// workspace binding 为入口，复用与 create 相同的 registry 只读 owner 比对：
+    /// - 无 binding / binding 无 capture / capture 无 instance → 放行。legacy 卡
+    ///   未进入 canonical 权威，keeper 无从校验，保持既有可读写语义；
+    /// - registry 行存在且 `owner_uid` 与 peer 不一致 → `workspace_forbidden`
+    ///   fail-closed；
+    /// - registry 无该 instance 行 → 放行（无宿主路径可泄露，与 status 面一致）。
+    pub fn verify_registry_owner_for_task(
+        &self,
+        peer_uid: u32,
+        task_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        let instance: Option<String> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
+            conn.query_row(
+                "SELECT c.workspace_instance_id
+                   FROM task_workspace_bindings b
+                   JOIN workspace_authority_captures c
+                     ON c.workspace_capture_id = b.workspace_capture_id
+                  WHERE b.task_id = ?1
+                  LIMIT 1",
+                params![task_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("task owner binding 查询失败: {e}"))
+            })?
+        };
+        match instance {
+            Some(instance) if !instance.trim().is_empty() => {
+                self.verify_registry_owner_for_instance(peer_uid, &instance)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// workspace 级 registry owner ACL（`task.list` 等以 task-DB `workspaces.id`
+    /// 定位的只读面）。取该 workspace 最新一条 capture 的 instance 再比对 registry
+    /// owner；无 capture / 空 instance / 无 registry 行时放行（与 task 级语义一致）。
+    pub fn verify_registry_owner_for_workspace_id(
+        &self,
+        peer_uid: u32,
+        workspace_id: i64,
+    ) -> Result<(), DaemonRpcError> {
+        let instance: Option<String> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|_| DaemonRpcError::internal_error("task collab store 连接锁 poisoned"))?;
+            conn.query_row(
+                "SELECT workspace_instance_id FROM workspace_authority_captures
+                  WHERE workspace_id = ?1
+                  ORDER BY capture_revision DESC, rowid DESC LIMIT 1",
+                params![workspace_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("workspace owner capture 查询失败: {e}"))
+            })?
+        };
+        match instance {
+            Some(instance) if !instance.trim().is_empty() => {
+                self.verify_registry_owner_for_instance(peer_uid, &instance)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// registry 只读 owner 比对（task-scoped 面共用；与
+    /// [`Self::verify_registry_owner_for_create`] 同款路径注入与裁决语义）。
+    fn verify_registry_owner_for_instance(
+        &self,
+        peer_uid: u32,
+        workspace_instance_id: &str,
+    ) -> Result<(), DaemonRpcError> {
+        #[cfg(test)]
+        let registry_path = match &self.registry_db_path_for_tests {
+            Some(path) => path.clone(),
+            // 历史单元 fixture 不启动 registry：无 owner 可校验，保持放行。
+            None => return Ok(()),
+        };
+        #[cfg(not(test))]
+        let registry_path = self.registry_db_path.clone();
+        let registry = WorkspaceRegistry::open_readonly(registry_path.to_str().unwrap_or_default())
+            .map_err(|e| {
+                DaemonRpcError::new(
+                    "E_REGISTRY_UNAVAILABLE",
+                    format!("registry 只读打开失败: {e}"),
+                )
+            })?;
+        if let Ok(Some(row)) = registry.get_workspace_status(workspace_instance_id) {
+            let owner = row.get("owner_uid").and_then(|v| v.as_i64()).unwrap_or(-1);
+            if owner != peer_uid as i64 {
+                return Err(DaemonRpcError::workspace_forbidden(
+                    "workspace 不属于当前 UID",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// 有界证明：某 workspace 的 legacy-only capture 链是否可再认证到请求的
     /// canonical instance（供 `task.create` 的 legacy→canonical 迁移使用）。
     ///

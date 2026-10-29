@@ -18,6 +18,8 @@ mod projection;
 mod parent_create;
 #[path = "task_collab_tests_ws_authority.rs"]
 mod ws_authority;
+#[path = "task_collab_tests_owner_acl.rs"]
+mod owner_acl;
 #[path = "task_collab_tests_bridge.rs"]
 mod bridge;
 #[path = "task_collab_tests_verdict_compat.rs"]
