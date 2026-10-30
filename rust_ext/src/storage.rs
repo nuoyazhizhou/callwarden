@@ -28,6 +28,14 @@ use crate::sqlite_query::{
 /// Schema 版本号（真相源对齐 db/schema.py）
 pub const SCHEMA_VERSION: u32 = 61;
 
+/// canonical（`db/schema.py`）已删除的历史 calls 全量索引：早期 Rust 独立 DDL
+/// 副本曾建出，open/migrate 时幂等收敛（C8）。见 docs/design/cli-mcp-matrix-backlog.md §8。
+const LEGACY_CALLS_INDEXES: &[&str] = &[
+    "idx_calls_callee_name",
+    "idx_calls_caller_name",
+    "idx_calls_callee_id",
+];
+
 // db/schema.py is the repository schema authority.  Embedding its SQL at
 // compile time keeps frozen Rust artifacts independent of a Python checkout
 // while preventing this service from drifting into a second partial schema.
@@ -66,334 +74,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     description TEXT NOT NULL,
     applied_at REAL NOT NULL
 );
-"#;
-
-/// 建表 SQL (v42 全量表结构)
-pub const SCHEMA_TABLES_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS workspaces (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    root_path TEXT UNIQUE NOT NULL,
-    created_at REAL NOT NULL,
-    is_active INTEGER DEFAULT 0,
-    description TEXT DEFAULT '',
-    active_task_id TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS file_contents (
-    content_hash TEXT PRIMARY KEY,
-    language TEXT DEFAULT '',
-    total_lines INTEGER DEFAULT 0,
-    first_seen_at REAL NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS file_instances (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL,
-    rel_path TEXT NOT NULL,
-    abs_path TEXT NOT NULL,
-    current_content_hash TEXT DEFAULT '',
-    mtime REAL NOT NULL,
-    total_lines INTEGER DEFAULT 0,
-    last_parsed REAL DEFAULT 0,
-    status TEXT DEFAULT 'pending',
-    module_path TEXT DEFAULT '',
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (current_content_hash) REFERENCES file_contents(content_hash),
-    UNIQUE(workspace_id, rel_path)
-);
-
-CREATE TABLE IF NOT EXISTS symbol_contents (
-    content_hash TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    content TEXT NOT NULL,
-    signature TEXT DEFAULT '',
-    has_comment INTEGER DEFAULT 0,
-    comment_content TEXT DEFAULT '',
-    qualified_name TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS symbols (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_instance_id INTEGER NOT NULL,
-    symbol_hash TEXT NOT NULL,
-    name TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    visibility TEXT DEFAULT 'private',
-    start_line INTEGER NOT NULL,
-    end_line INTEGER NOT NULL,
-    start_col INTEGER DEFAULT 0,
-    end_col INTEGER DEFAULT 0,
-    signature TEXT DEFAULT '',
-    has_comment INTEGER DEFAULT 0,
-    comment_status TEXT DEFAULT 'pending',
-    module_path TEXT DEFAULT '',
-    qualified_name TEXT DEFAULT '',
-    depth INTEGER DEFAULT -1,
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
-    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
-);
-
-CREATE TABLE IF NOT EXISTS calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    caller_id INTEGER NOT NULL,
-    caller_name TEXT NOT NULL,
-    caller_module TEXT NOT NULL,
-    callee_name TEXT NOT NULL,
-    callee_module TEXT DEFAULT '',
-    callee_qualified TEXT DEFAULT '',
-    callee_file TEXT DEFAULT '',
-    callee_id INTEGER DEFAULT 0,
-    call_line INTEGER DEFAULT 0,
-    is_cross_file INTEGER DEFAULT 0,
-    FOREIGN KEY (caller_id) REFERENCES symbols(id)
-);
-
-CREATE TABLE IF NOT EXISTS comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol_hash TEXT NOT NULL,
-    comment_type TEXT DEFAULT 'doc',
-    content TEXT DEFAULT '',
-    created_at REAL NOT NULL,
-    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
-);
-
-CREATE TABLE IF NOT EXISTS file_versions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_instance_id INTEGER NOT NULL,
-    version_num INTEGER NOT NULL,
-    content_hash TEXT NOT NULL,
-    mtime REAL NOT NULL,
-    total_lines INTEGER DEFAULT 0,
-    parsed_at REAL NOT NULL,
-    is_current INTEGER DEFAULT 1,
-    is_deleted INTEGER DEFAULT 0,
-    commit_hash TEXT DEFAULT '',
-    ast_cache BLOB DEFAULT NULL,
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
-    FOREIGN KEY (content_hash) REFERENCES file_contents(content_hash)
-);
-
-CREATE TABLE IF NOT EXISTS file_symbol_versions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_version_id INTEGER NOT NULL,
-    symbol_hash TEXT NOT NULL,
-    qualified_name TEXT NOT NULL,
-    start_line INTEGER NOT NULL,
-    end_line INTEGER NOT NULL,
-    module_path TEXT DEFAULT '',
-    depth INTEGER DEFAULT -1,
-    is_deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (file_version_id) REFERENCES file_versions(id),
-    FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
-);
-
-CREATE TABLE IF NOT EXISTS call_versions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_version_id INTEGER NOT NULL,
-    caller_qualified TEXT NOT NULL,
-    caller_hash TEXT DEFAULT '',
-    callee_name TEXT NOT NULL,
-    callee_module TEXT DEFAULT '',
-    callee_qualified TEXT DEFAULT '',
-    callee_file TEXT DEFAULT '',
-    call_line INTEGER DEFAULT 0,
-    is_cross_file INTEGER DEFAULT 0,
-    FOREIGN KEY (file_version_id) REFERENCES file_versions(id)
-);
-
-CREATE TABLE IF NOT EXISTS semgrep_findings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_instance_id INTEGER NOT NULL,
-    content_hash TEXT DEFAULT '',
-    rule_id TEXT NOT NULL,
-    rule_name TEXT DEFAULT '',
-    message TEXT DEFAULT '',
-    severity TEXT DEFAULT 'INFO',
-    confidence TEXT DEFAULT 'UNKNOWN',
-    language TEXT DEFAULT '',
-    start_line INTEGER DEFAULT 0,
-    end_line INTEGER DEFAULT 0,
-    snippet TEXT DEFAULT '',
-    fix TEXT DEFAULT '',
-    symbol_id INTEGER DEFAULT 0,
-    symbol_qualified TEXT DEFAULT '',
-    scanned_at REAL DEFAULT 0,
-    scan_id INTEGER DEFAULT 0,
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
-    UNIQUE(content_hash, rule_id, start_line)
-);
-
-CREATE TABLE IF NOT EXISTS semgrep_scans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_type TEXT DEFAULT 'full',
-    config TEXT DEFAULT '',
-    workspace_id INTEGER DEFAULT 0,
-    started_at REAL NOT NULL,
-    completed_at REAL DEFAULT 0,
-    total_findings INTEGER DEFAULT 0,
-    files_scanned INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'running'
-);
-
-CREATE TABLE IF NOT EXISTS git_commits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL,
-    commit_hash TEXT UNIQUE NOT NULL,
-    author_name TEXT DEFAULT '',
-    author_email TEXT DEFAULT '',
-    committed_at REAL NOT NULL,
-    message TEXT DEFAULT '',
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
-);
-
-CREATE TABLE IF NOT EXISTS git_file_changes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    commit_id INTEGER NOT NULL,
-    file_instance_id INTEGER NOT NULL,
-    change_type TEXT NOT NULL,
-    lines_added INTEGER DEFAULT 0,
-    lines_deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (commit_id) REFERENCES git_commits(id),
-    FOREIGN KEY (file_instance_id) REFERENCES file_instances(id)
-);
-
-CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    status TEXT DEFAULT 'open',
-    workspace_id INTEGER DEFAULT 0,
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL,
-    closed_at REAL DEFAULT 0,
-    applied_at REAL DEFAULT 0,
-    parent_id TEXT DEFAULT '',
-    depth INTEGER DEFAULT 0,
-    sort_order INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS task_steps (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL,
-    step_index INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    target_file TEXT DEFAULT '',
-    target_symbol TEXT DEFAULT '',
-    check_items TEXT DEFAULT '',
-    status TEXT DEFAULT 'pending',
-    result TEXT DEFAULT '',
-    created_at REAL NOT NULL,
-    completed_at REAL DEFAULT 0,
-    FOREIGN KEY (task_id) REFERENCES tasks(id)
-);
-
-CREATE TABLE IF NOT EXISTS task_quality_findings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL,
-    step_id INTEGER DEFAULT 0,
-    finding_type TEXT NOT NULL,
-    severity TEXT DEFAULT 'WARN',
-    message TEXT NOT NULL,
-    details TEXT DEFAULT '',
-    status TEXT DEFAULT 'open',
-    created_at REAL NOT NULL,
-    resolved_at REAL DEFAULT 0,
-    FOREIGN KEY (task_id) REFERENCES tasks(id)
-);
-
-CREATE TABLE IF NOT EXISTS test_case_relations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL,
-    test_fn_id INTEGER NOT NULL,
-    tested_fn_id INTEGER NOT NULL,
-    source TEXT DEFAULT 'import',
-    created_at REAL NOT NULL,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (test_fn_id) REFERENCES symbols(id),
-    FOREIGN KEY (tested_fn_id) REFERENCES symbols(id)
-);
-
-CREATE TABLE IF NOT EXISTS test_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER NOT NULL,
-    test_fn_id INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    duration_ms REAL DEFAULT 0,
-    error_message TEXT DEFAULT '',
-    ci_run_id TEXT DEFAULT '',
-    ci_url TEXT DEFAULT '',
-    run_at REAL NOT NULL,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (test_fn_id) REFERENCES symbols(id)
-);
-
-CREATE TABLE IF NOT EXISTS rollback_config (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id INTEGER,
-    task_id TEXT NOT NULL,
-    feature_name TEXT NOT NULL,
-    phase INTEGER NOT NULL,
-    production_entry TEXT NOT NULL,
-    rollback_entry TEXT NOT NULL,
-    rollback_flag INTEGER NOT NULL DEFAULT 0,
-    rollback_window_until TEXT DEFAULT '',
-    config_blob TEXT DEFAULT '',
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (task_id) REFERENCES tasks(id)
-);
-"#;
-
-/// 索引与触发器 SQL
-pub const SCHEMA_INDEXES_SQL: &str = r#"
-CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active);
-CREATE INDEX IF NOT EXISTS idx_workspaces_active_task ON workspaces(active_task_id);
-CREATE INDEX IF NOT EXISTS idx_file_contents_lang ON file_contents(language);
-CREATE INDEX IF NOT EXISTS idx_file_instances_workspace ON file_instances(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_file_instances_hash ON file_instances(current_content_hash);
-CREATE INDEX IF NOT EXISTS idx_file_instances_relpath ON file_instances(rel_path);
-CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_instance_id);
-CREATE INDEX IF NOT EXISTS idx_symbols_hash ON symbols(symbol_hash);
-CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
-CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
-CREATE INDEX IF NOT EXISTS idx_symbols_kind_file ON symbols(kind, file_instance_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON symbols(file_instance_id, name, start_line);
-CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id);
-CREATE INDEX IF NOT EXISTS idx_calls_caller_name ON calls(caller_name);
-CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON calls(callee_name);
--- v61（P3-4）mirror：raw 边按名查询的部分索引（canonical 来源 db/schema.py）
-CREATE INDEX IF NOT EXISTS idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0;
-CREATE INDEX IF NOT EXISTS idx_calls_callee_id ON calls(callee_id);
-CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash);
-CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id);
-CREATE INDEX IF NOT EXISTS idx_file_versions_hash ON file_versions(content_hash);
-CREATE INDEX IF NOT EXISTS idx_file_versions_current ON file_versions(file_instance_id, is_current);
-CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_version ON file_symbol_versions(file_version_id);
-CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_hash ON file_symbol_versions(symbol_hash);
-CREATE INDEX IF NOT EXISTS idx_call_versions_version ON call_versions(file_version_id);
-CREATE INDEX IF NOT EXISTS idx_call_versions_caller_hash ON call_versions(caller_hash);
-CREATE INDEX IF NOT EXISTS idx_semgrep_file ON semgrep_findings(file_instance_id);
-CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified);
-CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity);
-CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id);
-CREATE INDEX IF NOT EXISTS idx_semgrep_scan ON semgrep_findings(scan_id);
-CREATE INDEX IF NOT EXISTS idx_git_commits_workspace ON git_commits(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_git_file_changes_commit ON git_file_changes(commit_id);
-CREATE INDEX IF NOT EXISTS idx_git_file_changes_file ON git_file_changes(file_instance_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id);
-CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status);
-CREATE INDEX IF NOT EXISTS idx_task_quality_findings_task ON task_quality_findings(task_id);
-CREATE INDEX IF NOT EXISTS idx_test_case_relations_workspace ON test_case_relations(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_test_runs_workspace ON test_runs(workspace_id, run_at);
-CREATE INDEX IF NOT EXISTS idx_rollback_config_task ON rollback_config(task_id);
-CREATE INDEX IF NOT EXISTS idx_rollback_config_feature ON rollback_config(feature_name);
-CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_flag);
 "#;
 
 /// 建立基础 SQLite 连接，配置标准的 WAL, timeout(5000ms), foreign_keys。
@@ -1368,6 +1048,21 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
         ));
     }
 
+    // C8：既有库收敛。canonical 已删除的历史 calls 全量索引若由早期 Rust DDL
+    // 副本建出，此处在 open/migrate 时幂等删除（DROP INDEX IF EXISTS 幂等；
+    // 缺 calls 表时跳过，不影响 v0 全新库）。
+    if current_version > 0
+        && table_exists(&conn, "calls")
+            .map_err(|e| format!("DB_OPEN_FAILED: Failed to inspect calls table: {}", e))?
+    {
+        for legacy in LEGACY_CALLS_INDEXES {
+            conn.execute_batch(&format!("DROP INDEX IF EXISTS {legacy};"))
+                .map_err(|e| {
+                    format!("MIGRATION_FAILED: Failed to drop legacy calls index {legacy}: {e}")
+                })?;
+        }
+    }
+
     let checksum = canonical_schema_checksum()?;
     let metadata_current = if table_exists(&conn, "schema_migrations")
         .map_err(|e| format!("DB_OPEN_FAILED: Failed to inspect schema metadata: {}", e))?
@@ -1925,6 +1620,79 @@ mod tests {
             plan.contains("idx_calls_callee_name_raw"),
             "raw-edge lookup must use v61 partial index, got: {plan}"
         );
+    }
+
+    #[test]
+    fn test_canonical_schema_calls_indexes_single_source() {
+        // C8：Rust 侧不得再维护第二份 DDL 副本（历史 SCHEMA_TABLES_SQL /
+        // SCHEMA_INDEXES_SQL 已删除）。calls 索引集合与谓词只来自 db/schema.py。
+        let sql = canonical_schema_sql().unwrap();
+        assert!(sql.contains("idx_calls_caller ON calls(caller_id)"));
+        assert!(sql.contains(
+            "idx_calls_callee_id_resolved ON calls(callee_id) WHERE callee_id > 0"
+        ));
+        assert!(sql.contains(
+            "idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0"
+        ));
+        // canonical 已删除的全量索引不得回潮（历史 Rust 副本曾保留）
+        assert!(
+            !sql.contains("idx_calls_callee_name ON calls(callee_name)"),
+            "legacy full callee_name index must not reappear in canonical schema"
+        );
+        assert!(
+            !sql.contains("idx_calls_caller_name ON calls(caller_name)"),
+            "legacy caller_name index must not reappear in canonical schema"
+        );
+        assert!(
+            !sql.contains("idx_calls_callee_id ON calls(callee_id)"),
+            "legacy full callee_id index must not reappear in canonical schema"
+        );
+    }
+
+    #[test]
+    fn test_initialize_drops_legacy_duplicate_calls_indexes() {
+        // C8：早期 Rust DDL 副本建过的 canonical 已删索引，须在 open/migrate 时
+        // 幂等收敛；收敛发生在版本匹配的 early-return 之前。
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test_legacy_calls_idx.db");
+        initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+
+        let count_legacy = |conn: &rusqlite::Connection| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN \
+                 ('idx_calls_callee_name','idx_calls_caller_name','idx_calls_callee_id')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+
+        {
+            let conn = open_connection(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE INDEX idx_calls_callee_name ON calls(callee_name);\n\
+                 CREATE INDEX idx_calls_caller_name ON calls(caller_name);\n\
+                 CREATE INDEX idx_calls_callee_id ON calls(callee_id);",
+            )
+            .unwrap();
+            assert_eq!(count_legacy(&conn), 3);
+        }
+
+        // 版本与 checksum 均已匹配：仍须收敛（早退前执行）。
+        initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+
+        let conn = open_connection(&db_path).unwrap();
+        assert_eq!(count_legacy(&conn), 0, "legacy calls indexes must be dropped");
+        // canonical 索引不受影响
+        let canonical: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN \
+                 ('idx_calls_caller','idx_calls_callee_id_resolved','idx_calls_callee_name_raw')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(canonical, 3);
     }
 
     #[test]

@@ -454,6 +454,7 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | P3-5 | `get_callers`/`get_callees` 短名降级分支跨 workspace 泄漏 + 全表扫（C2） | 正确性/性能 | 已修（T-1793317538470-c203e6d4 步骤#3，见 §6） |
 | C1 | 权威库 ignored 行归档缺口（`build/` 残留 77 文件 / 1,467 符号，`archived_files=0`） | 正确性/数据治理 | 已修（T-1793317526334-eea45f3c 步骤#1-#2，见 §4.7） |
 | C7 | 全量 pytest 基线恒红：native/LLM 前置缺失时缺 skip 守卫（CLI 验收 568 ERROR、隔离 daemon 管道冲突、`sqlite3.lib`、外部 LLM） | 测试信噪比 | 卡内已修（T-1793318539212-c2db0418 步骤#1-#2，见 §7）；卡外 daemon 失联族 164 / native 构建族 72 / 未归一 44 待后续卡 |
+| C8 | Rust 内嵌 schema 副本（`SCHEMA_TABLES_SQL` / `SCHEMA_INDEXES_SQL`）仍声明 canonical 已删除的 `idx_calls_callee_name` 等全量索引（审计候选 C3） | 正确性/schema 真相源 | 已修（T-1793342216372-87953754 步骤#1-#2，见 §8） |
 
 ---
 
@@ -623,4 +624,80 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
 管道冲突）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
 `cargo build`/LLM 前置；③ 修 release 验收 evidence 过期与 schema_version 断言。
 
+---
+
+## 8. C8 · Rust 内嵌 schema 副本与 canonical 漂移（2026-10-30）
+
+> 任务卡：`T-1793342216372-87953754`（步骤 #0 triage / #1 对齐 / #2 验证+文档）
+> 审计候选：C3（Rust 引用已删除的 `idx_calls_callee_name`）
+
+### 8.1 现象
+
+`rust_ext/src/storage.rs` 的 `pub const SCHEMA_INDEXES_SQL` 仍声明
+`idx_calls_callee_name`，而 canonical `db/schema.py` 在 P3-4（v61）之后 calls
+表只有 3 个索引。同源漂移另有两处：
+
+| 位置 | canonical `db/schema.py` | Rust 死常量残留 |
+|---|---|---|
+| callee_name | `idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0` | `idx_calls_callee_name ON calls(callee_name)`（全量） |
+| callee_id | `idx_calls_callee_id_resolved ON calls(callee_id) WHERE callee_id > 0` | `idx_calls_callee_id ON calls(callee_id)`（全量） |
+| caller_name | 无 | `idx_calls_caller_name ON calls(caller_name)` |
+
+### 8.2 根因（为什么是隐患而非现网缺陷）
+
+- 运行时**不使用**这两个常量：`initialize_or_migrate` 实际执行的是
+  `include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../db/schema.py"))`
+  抽取的 canonical `SCHEMA_SQL`（`storage.rs` `EMBEDDED_SCHEMA_SOURCE` 与
+  `tx.execute_batch(&canonical_schema_sql()?)`）。用已部署二进制初始化 fresh
+  DB，calls 索引与 canonical 逐字一致 → 现网无漂移。
+- 死常量 `SCHEMA_TABLES_SQL`（原 L72-348）与 `SCHEMA_INDEXES_SQL`（原 L351-397）
+  是历史遗留的「全量 DDL 副本」（早期 Rust 独立建库用），现已全仓无任何引用：`rust_ext/src`
+  仅定义处命中；`lib.rs` pyo3 只导出函数/类，不导出常量；`rust_ext/tests`
+  无引用；Python 侧一律 `from callwarden.db.schema import ...`。
+- 风险点：常量内容过期却仍可编译可复制，任何人误用/照抄即产生第二份 schema
+  真相源（正是本次审计发现的形态）。
+
+### 8.3 处置
+
+- 删除两个死常量（-328 行），`include_str` canonical 成为 Rust 侧唯一真相源。
+- 新增 `const LEGACY_CALLS_INDEXES` 与**既有库幂等收敛**：`initialize_or_migrate`
+  在读取 `current_version` 与 `SCHEMA_TOO_NEW` 检查之后、版本/checksum 匹配的
+  early-return **之前**，当 `current_version > 0` 且 `calls` 表存在时对
+  `idx_calls_callee_name` / `idx_calls_caller_name` / `idx_calls_callee_id`
+  执行 `DROP INDEX IF EXISTS`。`DROP ... IF EXISTS` 本身幂等，缺 `calls` 表
+  时跳过（不影响 v0 全新库），因此该收敛对每次 open 都可安全重放。
+- 新增 `#[test] test_canonical_schema_calls_indexes_single_source`：
+  - 正向断言 3 个 canonical calls 索引存在且谓词正确
+    （`idx_calls_caller`、`idx_calls_callee_id_resolved ... > 0`、
+    `idx_calls_callee_name_raw ... = 0`）；
+  - 负向断言 `idx_calls_callee_name` / `idx_calls_caller_name` /
+    `idx_calls_callee_id` 三个全量索引不得回潮。
+- 新增 `#[test] test_initialize_drops_legacy_duplicate_calls_indexes`：
+  v61 库上手工建回 3 个旧索引（断言 count=3）→ 再次
+  `initialize_or_migrate` 走「版本+checksum 已匹配」早退路径 → 断言旧索引
+  count=0 且 3 个 canonical 索引仍在（覆盖卡面「既有库初始化后旧索引消失」）。
+
+### 8.4 实测
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --lib storage::tests` | 13 passed / 0 failed（含 2 个新单测） |
+| 新增单测 `test_canonical_schema_calls_indexes_single_source` | 1 passed |
+| 新增单测 `test_initialize_drops_legacy_duplicate_calls_indexes` | 1 passed |
+| 编译（`cargo test` 构建 + `refresh_shared_runtime.ps1` release） | 0 error |
+| 部署 evidence | passed；`20261030-160725-6ca7d5030b32-6a55196c.json`；daemon pid 29956；`cw-daemon.exe` sha256 `2923a06b0bbdc6c372703e4cb30dbfe77838a7067d6ee7855d3c5c560a1d2d2c`；ping status ok |
+| fresh DB 探针（部署后） | `idx_calls_caller` / `idx_calls_callee_id_resolved` / `idx_calls_callee_name_raw`，与 canonical 逐字一致，旧索引 0 残留 |
+| 既有库收敛探针（部署后） | init 后手工建回 3 个旧索引（6 个索引）→ 再次 `storage_initialize_or_migrate` → 仅剩 3 个 canonical，旧索引清零 |
+| 既有库 `~/.callwarden/callwarden.db`（v61） | 只有 3 个 canonical 索引（旧名 0 命中），收敛为防御性路径未触发 |
+
+### 8.5 边界与残留
+
+- **不做 schema 版本 bump**：本卡未改 canonical `db/schema.py`，checksum
+  不变；既有库无需版本迁移。旧索引收敛走 open 期条件 DROP，与版本号无关。
+- **旧索引 DROP 收敛已实现且幂等**：仅当某库由「切换 include_str 之前」的
+  Rust 初始化才可能留有旧名索引；本机主仓库与隔离库实测均无，故收敛为
+  防御性措施（`DROP INDEX IF EXISTS` 重复执行无副作用，只回收冗余空间，
+  不影响正确性）。对应单测见 §8.3。
+- `tests/_bench_*.py`（3 个基准脚本）仍自建 `idx_calls_callee_name`：那是
+  bench 专用简化 schema，不在生产路径，未纳入本卡范围。
 
