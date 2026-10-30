@@ -457,6 +457,7 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | C8 | Rust 内嵌 schema 副本（`SCHEMA_TABLES_SQL` / `SCHEMA_INDEXES_SQL`）仍声明 canonical 已删除的 `idx_calls_callee_name` 等全量索引（审计候选 C3） | 正确性/schema 真相源 | 已修（T-1793342216372-87953754 步骤#1-#2，见 §8） |
 | C9 | Schema 版本文档门禁被弱化为仅存在性检查（`tests/test_architecture_doc.py` / `tests/test_abi_contract.py` 的文档↔代码比对）（审计候选 C4） | 治理/门禁有效性 | 已修（T-1793352736346-e6e623a4 步骤#1-#2，见 §9） |
 | C10 | 权威库工作区登记污染：同物理 checkout 多行 active、workspace_id 二义（审计候选 C5） | 正确性/数据治理 | 已修（T-1793353773817-750277f4 步骤#0-#2，见 §10） |
+| C6 | Schema 迁移注册表缺口：`_get_migrations` 缺 v53-v58/v60，`_migrate_schema` 静默跳过导致库被打标 v61 却缺表缺列（审计候选 C6） | 正确性/schema 真相源 | 已修（T-1793368261327-97e8e5fc 步骤#0-#2，见 §11） |
 
 ---
 
@@ -831,4 +832,96 @@ registry 只增不减。数据库侧没有唯一约束能表达「同 owner + �
   `workspace list` 仍可见（无 `[活动]` 标记）。
 - 未迁移存量不一致的 `snapshot_id`（依赖 C6 的迁移 registry 缺口一并处理），
   本卡只收敛 active 基数与 workspace_id 二义。
+
+---
+
+## 11. C6 · Schema 迁移注册表缺口（2026-10-30）
+
+> 任务卡：`T-1793368261327-97e8e5fc`（步骤 #0 triage / #1 实现+单测 / #2 验证+文档）
+> 审计候选：C6
+
+### 11.1 现象
+
+`db_base.CodeGraphBase._get_migrations()` 实测键为 `2..52, 59, 61`（53 条），
+缺 `53/54/55/56/57/58/60`。`_migrate_schema(from, to)` 对未注册版本直接
+`continue`，但仍按版本逐条写入 `schema_version` 行，最终 `MAX(version)=61`。
+
+复现（内存库，`schema_version=52`，执行 `_migrate_schema(52, 61)`）：
+
+| 观测项 | 修复前 |
+|---|---|
+| 实际执行的版本 | `52, 59, 61` |
+| `MAX(version)` | 61 |
+| `workspace_authority_captures` / `task_workspace_bindings`（v53） | 缺失 |
+| `role_contract_lineages` / `role_contract_revisions`（v55） | 缺失 |
+| `task_step_role_contract_bindings`（v56） | 缺失 |
+| `verdict_normalization_rules` / `verdict_normalization_rule_revocations`（v57） | 缺失 |
+
+即库被打标当前版本，但 v53-v57/v60 的治理表与 v57 的 20 个 provenance 列、
+`task_quality_findings.severity` 全部未建——fail-open。
+
+### 11.2 根因
+
+1. v53-v58/v60 的迁移实现（函数）已存在，但注册表漏登记；`_migrate_schema`
+   把「版本未注册」当作「无需迁移」，既不报错也不补建，随后照常插入版本行。
+2. Rust storage 路径 `storage_initialize_or_migrate` 执行 canonical `SCHEMA_SQL`
+   会把缺失表补上，掩盖缺口；纯 Python 路径（`callwarden_core` 缺失或
+   `rust_storage_service` / `sqlite_schema_migration` 被 rollback 关闭）必现。
+3. v60 的 `task_quality_findings.severity` 只有 Rust `apply_quality_findings_v60_compat`
+   兜底，Python 侧无 compat 路径，纯 Python 库迁移后仍缺列。
+4. 迁移函数原本手写 DDL，与 `SCHEMA_SQL` 双写，发布补表/补列时容易漏登记
+   （v58 正是「v57 发布后补入 11 表 + 20 列但未 bump 版本号」的漂移产物）。
+
+### 11.3 处置（仅 `db/db_base.py`）
+
+- **canonical DDL 单一真相源**：新增 `canonical_table_statements()`，从
+  `SCHEMA_TABLES_SQL` 按行尾 `;` 切分并用正则提取 `{表名: CREATE 语句}`（当前 88 张表，
+  懒加载缓存）；迁移不再手写表 DDL。
+- **幂等补建工具**：`ensure_canonical_tables(conn, *names)`（缺 canonical DDL 即
+  fail-closed）、`ensure_table_columns(conn, table, columns)`（PRAGMA 探测 + ALTER，
+  表不存在时跳过以兼容合成库）、`table_exists(conn, name)`。
+- **v57 列常量**：`TASK_CONTRACT_V57_COLUMNS`（`task_contract_revisions` ×2 /
+  `task_verdict_events` ×9 / `task_gate_decisions` ×9）统一供 `_migrate_v56_to_v57`
+  与 `_ensure_compat_columns` 复用，消除两处列清单漂移。
+- **新增迁移条目**：
+  - `_migrate_v52_to_v53`：`workspace_authority_captures` + `task_workspace_bindings`
+  - `_migrate_v53_to_v54`：`task_loop_capability_promotion_events` + 索引
+  - `_migrate_v54_to_v55`：`role_contract_lineages` + `role_contract_revisions`
+  - `_migrate_v55_to_v56`：`task_step_role_contract_bindings` + 2 索引
+  - `_migrate_v56_to_v57`：`verdict_normalization_rules` / `..._revocations` + 20 列
+  - `_migrate_v57_to_v58`：按序重放 v52-v57 幂等补建（表 + 索引 + 列），对齐 v58
+    漂移修复语义
+  - `_migrate_v59_to_v60`：`task_quality_findings.severity` 列/索引 + Role Worker 三表
+- **Role Worker DDL 抽为语句元组**：`ROLE_WORKER_SCHEMA_STATEMENTS` 替代
+  `executescript`（`executescript` 会隐式提交外层事务，破坏 `_migrate_schema`
+  的单一事务与回滚语义）；`ensure_role_worker_schema` 行为不变。
+- **fail-closed 守卫**：`_migrate_schema` 在循环前校验
+  `range(max(from+1, 2), to+1)` 全覆盖；存在缺口即
+  `RuntimeError: schema migration registry missing target versions: ...`，
+  v1 视为基线不计缺口，不再 `continue` 静默跳过。
+
+### 11.4 实测
+
+| 项 | 结果 |
+|---|---|
+| 注册表键数 | 修复前 53 条（`2..52,59,61`）→ 修复后 **60 条**（`2..61` 连续，无缺口） |
+| `canonical_table_statements()` | 提取 88 张表；11 张 v52-v57 治理表 DDL 全部命中 |
+| v52 库 `_migrate_schema(52,61)` | `MAX(version)=61`；11 张治理表、v57 的 20 列、`task_quality_findings.severity` 全部齐备 |
+| 缺口场景（去掉 v55 条目） | `RuntimeError: schema migration registry missing target versions: 55 (from_version=52 to_version=61)` |
+| 幂等 | v52-v58 补建连续重放两次无报错、无重复对象 |
+| 单测 | `tests/test_schema_migration_registry_gap.py` **12 passed** |
+| 回归 | `test_a14_audit_fix` / `test_task_quality_gate` / `test_audit_chain` / `test_db_v2_to_v3_migration_fk` / `test_abi_contract` 共 **202 passed / 0 failed** |
+| 二次回归 | `test_db_task_contracts` / `test_db_tests` / `test_task_supersede_cli` / `test_task_quality_gate` 共 **178 passed / 0 failed** |
+
+### 11.5 边界与残留
+
+- **不额外扩 `_ensure_compat_columns` 的表级兜底**：本卡只复用 v57 列常量，不把
+  v53-v57 建表塞进每次启动的 compat 路径——否则会重新制造「第二真相源」，
+  未来 schema 缺口继续被静默掩盖。已在 v61 打标却缺表的历史库由 Rust canonical
+  迁移或下一次版本迁移补齐；本机权威任务库走 Rust 路径，无现网待修复库。
+- **v58 不重写 checksum**：Python 侧没有 checksum 存储；stored checksum 由
+  Rust storage 迁移负责（见 `docs/design/migration-manifest.md` §4.4）。
+- **v57 初始 rule row 不播种**：`verdict-normalization/v1` 的初始化由 1E/daemon
+  权威路径负责，canonical `SCHEMA_SQL` 同样不含该 INSERT；本卡只补 schema 形状。
+
 

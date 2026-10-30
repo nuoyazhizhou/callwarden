@@ -17,6 +17,7 @@ from .schema import SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
 from .. import config as _config_module
 
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -38,6 +39,59 @@ if not hasattr(_config_module, 'PROJECT_ROOT'):
     _config_module.PROJECT_ROOT = PROJECT_ROOT
 
 
+# Role Worker 三表 DDL（v60 schema compat，Python/Rust 同形）。抽成语句元组而非
+# executescript：executescript 会隐式提交外层事务，破坏 _migrate_schema 原子回滚。
+ROLE_WORKER_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS role_workers (
+        role_worker_id TEXT PRIMARY KEY,
+        owner_key TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('executor','reviewer','adjudicator')),
+        credential_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+        created_at REAL NOT NULL,
+        revoked_at REAL NOT NULL DEFAULT 0,
+        revocation_reason TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_role_workers_owner
+        ON role_workers(owner_key, status)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS role_worker_instances (
+        role_instance_id TEXT PRIMARY KEY,
+        role_worker_id TEXT NOT NULL REFERENCES role_workers(role_worker_id),
+        owner_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at REAL NOT NULL,
+        retired_at REAL NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_role_worker_instances_worker
+        ON role_worker_instances(role_worker_id, status)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS role_runtime_provenance (
+        event_id TEXT PRIMARY KEY,
+        workspace_id INTEGER NOT NULL,
+        task_id TEXT NOT NULL DEFAULT '',
+        action_type TEXT NOT NULL,
+        role_worker_id TEXT NOT NULL,
+        role_instance_id TEXT NOT NULL,
+        role_session_id TEXT NOT NULL,
+        runtime_payload_json TEXT NOT NULL DEFAULT '{}',
+        recorded_at REAL NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_role_runtime_provenance_task
+        ON role_runtime_provenance(task_id, recorded_at)
+    """,
+)
+
+
 def ensure_role_worker_schema(conn: sqlite3.Connection) -> None:
     """P0-L：Role Worker 三表幂等补齐（v60 schema compat，不写授权逻辑）。
 
@@ -45,46 +99,118 @@ def ensure_role_worker_schema(conn: sqlite3.Connection) -> None:
     同形；仅做 schema 兼容（CREATE TABLE IF NOT EXISTS），授权/业务判定一律在
     Rust daemon 权威路径，不在 Python 侧实现。
     """
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS role_workers (
-            role_worker_id TEXT PRIMARY KEY,
-            owner_key TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('executor','reviewer','adjudicator')),
-            credential_hash TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
-            created_at REAL NOT NULL,
-            revoked_at REAL NOT NULL DEFAULT 0,
-            revocation_reason TEXT NOT NULL DEFAULT ''
-        );
-        CREATE INDEX IF NOT EXISTS idx_role_workers_owner
-            ON role_workers(owner_key, status);
-        CREATE TABLE IF NOT EXISTS role_worker_instances (
-            role_instance_id TEXT PRIMARY KEY,
-            role_worker_id TEXT NOT NULL REFERENCES role_workers(role_worker_id),
-            owner_key TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at REAL NOT NULL,
-            retired_at REAL NOT NULL DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_role_worker_instances_worker
-            ON role_worker_instances(role_worker_id, status);
-        CREATE TABLE IF NOT EXISTS role_runtime_provenance (
-            event_id TEXT PRIMARY KEY,
-            workspace_id INTEGER NOT NULL,
-            task_id TEXT NOT NULL DEFAULT '',
-            action_type TEXT NOT NULL,
-            role_worker_id TEXT NOT NULL,
-            role_instance_id TEXT NOT NULL,
-            role_session_id TEXT NOT NULL,
-            runtime_payload_json TEXT NOT NULL DEFAULT '{}',
-            recorded_at REAL NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_role_runtime_provenance_task
-            ON role_runtime_provenance(task_id, recorded_at);
-        """
-    )
+    for statement in ROLE_WORKER_SCHEMA_STATEMENTS:
+        conn.execute(statement)
     conn.commit()
+
+
+# ============================================
+# C6：迁移注册表缺口的共享工具
+# ============================================
+# _get_migrations 曾只登记 2..52、59、61，v53-v58/v60 的迁移实现存在却未注册，
+# 导致 _migrate_schema 静默跳过、库被打标 v61 却缺表缺列（fail-open）。这里把
+# 迁移补建对象的 DDL 收敛到 canonical SCHEMA_TABLES_SQL 单一真相源，避免迁移
+# 手写 DDL 与 schema 双写漂移。
+
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+(?:VIRTUAL\s+)?TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+_CANONICAL_TABLE_STATEMENTS: Optional[Dict[str, str]] = None
+
+# v57 向既有任务协同表补入的 provenance/normalization 列，与 SCHEMA_SQL 同形。
+TASK_CONTRACT_V57_COLUMNS: Dict[str, List[tuple]] = {
+    "task_contract_revisions": [
+        ("normalization_version", "TEXT DEFAULT ''"),
+        ("normalization_rules_hash", "TEXT DEFAULT ''"),
+    ],
+    "task_verdict_events": [
+        ("step_id", "TEXT DEFAULT ''"),
+        ("role_contract_lineage_id", "TEXT DEFAULT ''"),
+        ("role_contract_revision_id", "TEXT DEFAULT ''"),
+        ("role_contract_revision", "INTEGER DEFAULT 0"),
+        ("role_contract_hash", "TEXT DEFAULT ''"),
+        ("canonicalization_version", "TEXT DEFAULT ''"),
+        ("canonicalization_rules_hash", "TEXT DEFAULT ''"),
+        ("normalization_version", "TEXT DEFAULT ''"),
+        ("normalization_rules_hash", "TEXT DEFAULT ''"),
+    ],
+    "task_gate_decisions": [
+        ("step_id", "TEXT DEFAULT ''"),
+        ("role_contract_lineage_id", "TEXT DEFAULT ''"),
+        ("role_contract_revision_id", "TEXT DEFAULT ''"),
+        ("role_contract_revision", "INTEGER DEFAULT 0"),
+        ("role_contract_hash", "TEXT DEFAULT ''"),
+        ("canonicalization_version", "TEXT DEFAULT ''"),
+        ("canonicalization_rules_hash", "TEXT DEFAULT ''"),
+        ("normalization_version", "TEXT DEFAULT ''"),
+        ("normalization_rules_hash", "TEXT DEFAULT ''"),
+    ],
+}
+
+
+def canonical_table_statements() -> Dict[str, str]:
+    """从 canonical SCHEMA_TABLES_SQL 提取 {表名: CREATE 语句}（懒加载缓存）。
+
+    迁移补建的表必须与全新库 canonical 建表逐字一致；以 SCHEMA_TABLES_SQL 为
+    唯一来源，避免迁移侧手写 DDL 漂移（C6 的 v53-v58 缺表即源于此）。
+    """
+    global _CANONICAL_TABLE_STATEMENTS
+    if _CANONICAL_TABLE_STATEMENTS is not None:
+        return _CANONICAL_TABLE_STATEMENTS
+
+    tables: Dict[str, str] = {}
+    buffer: List[str] = []
+    for line in SCHEMA_TABLES_SQL.splitlines():
+        buffer.append(line)
+        if not line.rstrip().endswith(";"):
+            continue
+        statement = "\n".join(buffer).strip()
+        buffer = []
+        match = _CREATE_TABLE_RE.search(statement)
+        if match:
+            tables[match.group(1).lower()] = statement
+    _CANONICAL_TABLE_STATEMENTS = tables
+    return tables
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    """表是否存在（sqlite_master 探测，供幂等迁移/兼容列使用）。"""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def ensure_canonical_tables(conn: sqlite3.Connection, *table_names: str) -> None:
+    """按 canonical DDL 幂等补建指定表（缺失 DDL 即 fail-closed 抛错）。"""
+    statements = canonical_table_statements()
+    unknown = [name for name in table_names if name.lower() not in statements]
+    if unknown:
+        raise RuntimeError(
+            "canonical SCHEMA_TABLES_SQL 缺少表定义 fail-closed: %s"
+            % ", ".join(unknown)
+        )
+    for name in table_names:
+        conn.execute(statements[name.lower()])
+
+
+def ensure_table_columns(
+    conn: sqlite3.Connection, table: str, columns: List[tuple]
+) -> None:
+    """幂等补列：表不存在直接跳过（合成/极简库兼容），已有列不重复 ALTER。"""
+    if not table_exists(conn, table):
+        return
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+    for column, definition in columns:
+        if column not in existing:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, definition))
+
+
+def _ensure_task_contract_v57_columns(conn: sqlite3.Connection) -> None:
+    """为三张任务协同表幂等补齐 v57 provenance/normalization 列。"""
+    for table, columns in TASK_CONTRACT_V57_COLUMNS.items():
+        ensure_table_columns(conn, table, columns)
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection):
@@ -3146,6 +3272,87 @@ def _migrate_v51_to_v52(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v52_to_v53(conn: sqlite3.Connection):
+    """v52 -> v53: Task workspace authority binding（cw-role-handoff-task-loop.md §8.1.1，1A）
+
+    新增 workspace_authority_captures（append-only 权威 capture）与
+    task_workspace_bindings（不可变 task→workspace 归属）两表。
+    幂等：DDL 取自 canonical SCHEMA_TABLES_SQL（单一真相源），CREATE IF NOT EXISTS。
+    """
+    ensure_canonical_tables(
+        conn, "workspace_authority_captures", "task_workspace_bindings"
+    )
+
+
+def _migrate_v53_to_v54(conn: sqlite3.Connection):
+    """v53 -> v54: task_loop 公共能力 promotion 权威账本（§4.3 / §8.1.5，1D3B）。
+
+    新增 task_loop_capability_promotion_events（append-only）+ workspace/request 索引。
+    """
+    ensure_canonical_tables(conn, "task_loop_capability_promotion_events")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_promotion_events_workspace "
+        "ON task_loop_capability_promotion_events(workspace_id, request_id)"
+    )
+
+
+def _migrate_v54_to_v55(conn: sqlite3.Connection):
+    """v54 -> v55: Role Contract lineage/c14n（§8.1.2，1B）。
+
+    新增 role_contract_lineages（(task, workspace, role) 稳定身份）与
+    role_contract_revisions（不可变 revision）。
+    """
+    ensure_canonical_tables(conn, "role_contract_lineages", "role_contract_revisions")
+
+
+def _migrate_v55_to_v56(conn: sqlite3.Connection):
+    """v55 -> v56: step→Role Contract binding（§8.1.4，1C）。
+
+    新增 task_step_role_contract_bindings（唯一 step→Role Contract 真相源）
+    与 current/revision 反查索引。
+    """
+    ensure_canonical_tables(conn, "task_step_role_contract_bindings")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_step_binding_current "
+        "ON task_step_role_contract_bindings("
+        "workspace_id, task_id, step_id, binding_revision DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_step_binding_revision_id "
+        "ON task_step_role_contract_bindings(role_contract_revision_id)"
+    )
+
+
+def _migrate_v56_to_v57(conn: sqlite3.Connection):
+    """v56 -> v57: Verdict/Gate schema 与 legacy fail-closed（§4.2/§8.1，1E）。
+
+    新增 verdict_normalization_rules / verdict_normalization_rule_revocations 两表，
+    并为 task_contract_revisions / task_verdict_events / task_gate_decisions 幂等补齐
+    Role Contract 绑定 provenance 与 normalization 列（表缺失时跳过）。
+    """
+    ensure_canonical_tables(
+        conn,
+        "verdict_normalization_rules",
+        "verdict_normalization_rule_revocations",
+    )
+    _ensure_task_contract_v57_columns(conn)
+
+
+def _migrate_v57_to_v58(conn: sqlite3.Connection):
+    """v57 -> v58: 补 v53-v57 表/列定义漂移（commit 030fd8c 未递增版本号）。
+
+    v57 发布后 canonical SCHEMA_SQL 补入 11 张 v52-v57 表与 20 个新列但未 bump
+    版本号，v57 库因此 checksum 失配且缺表。本迁移按版本顺序重放 v52-v57 的
+    幂等补建逻辑（表 + 索引 + 列），让 v57 库无损推进到 v58（历史行不动）。
+    """
+    _migrate_v51_to_v52(conn)
+    _migrate_v52_to_v53(conn)
+    _migrate_v53_to_v54(conn)
+    _migrate_v54_to_v55(conn)
+    _migrate_v55_to_v56(conn)
+    _migrate_v56_to_v57(conn)
+
+
 def _migrate_v58_to_v59(conn: sqlite3.Connection):
     """v58 -> v59: task.supersede 治理权威 schema（T-1787277487109-758e56d0，P0-H）
 
@@ -3323,6 +3530,25 @@ def _verify_supersede_v59_schema(conn: sqlite3.Connection):
         ).fetchone()
         if row is None:
             raise RuntimeError(f"task_supersede v59 索引缺失 fail-closed: {idx}")
+
+
+def _migrate_v59_to_v60(conn: sqlite3.Connection):
+    """v59 -> v60: A′ quality-gate hardening（severity）+ Role Worker 三表。
+
+    task_quality_findings 幂等补齐 severity 列与索引（canonical 同形）；Role Worker
+    三表为 v60 compat 域（与 Rust `ensure_role_worker_v60_compat` 同形，只补 schema）。
+    合成/极简库缺 task_quality_findings 时跳过该表补列，交由 canonical schema 负责。
+    """
+    if table_exists(conn, "task_quality_findings"):
+        ensure_table_columns(
+            conn, "task_quality_findings", [("severity", "TEXT NOT NULL DEFAULT 'warn'")]
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_task_quality_severity "
+            "ON task_quality_findings(severity)"
+        )
+    for statement in ROLE_WORKER_SCHEMA_STATEMENTS:
+        conn.execute(statement)
 
 
 def _migrate_v60_to_v61(conn: sqlite3.Connection):
@@ -3973,50 +4199,7 @@ class CodeGraphBase:
         # 已负责补列；此处为 Python 兜底（幂等），防止陈旧 .pyd 把缺列库打标为
         # 当前版本时静默放行。放在 guardrail_findings 早退之前，保证即使极简库
         # 没有 guardrail_findings 也能补齐任务协同列。
-        task_contract_compat = {
-            "task_contract_revisions": [
-                ("normalization_version", "TEXT DEFAULT ''"),
-                ("normalization_rules_hash", "TEXT DEFAULT ''"),
-            ],
-            "task_verdict_events": [
-                ("step_id", "TEXT DEFAULT ''"),
-                ("role_contract_lineage_id", "TEXT DEFAULT ''"),
-                ("role_contract_revision_id", "TEXT DEFAULT ''"),
-                ("role_contract_revision", "INTEGER DEFAULT 0"),
-                ("role_contract_hash", "TEXT DEFAULT ''"),
-                ("canonicalization_version", "TEXT DEFAULT ''"),
-                ("canonicalization_rules_hash", "TEXT DEFAULT ''"),
-                ("normalization_version", "TEXT DEFAULT ''"),
-                ("normalization_rules_hash", "TEXT DEFAULT ''"),
-            ],
-            "task_gate_decisions": [
-                ("step_id", "TEXT DEFAULT ''"),
-                ("role_contract_lineage_id", "TEXT DEFAULT ''"),
-                ("role_contract_revision_id", "TEXT DEFAULT ''"),
-                ("role_contract_revision", "INTEGER DEFAULT 0"),
-                ("role_contract_hash", "TEXT DEFAULT ''"),
-                ("canonicalization_version", "TEXT DEFAULT ''"),
-                ("canonicalization_rules_hash", "TEXT DEFAULT ''"),
-                ("normalization_version", "TEXT DEFAULT ''"),
-                ("normalization_rules_hash", "TEXT DEFAULT ''"),
-            ],
-        }
-        for table, columns in task_contract_compat.items():
-            exists = self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (table,),
-            ).fetchone()
-            if not exists:
-                continue
-            existing = {
-                row[1]
-                for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
-            }
-            for column, definition in columns:
-                if column not in existing:
-                    self.conn.execute(
-                        f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
-                    )
+        _ensure_task_contract_v57_columns(self.conn)
 
         cur = self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='guardrail_findings'"
@@ -4132,6 +4315,9 @@ class CodeGraphBase:
     def _migrate_schema(self, from_version: int, to_version: int):
         """按版本顺序执行增量迁移
 
+        注册表缺口 fail-closed：缺失任一目标版本即抛 RuntimeError，绝不静默
+        跳过（C6：v53-v58/v60 未登记曾导致库被打标 v61 却缺表缺列）。
+
         Args:
             from_version: 当前版本
             to_version: 目标版本
@@ -4140,10 +4326,22 @@ class CodeGraphBase:
 
         migrations = self._get_migrations()
 
-        for v in range(from_version + 1, to_version + 1):
-            if v not in migrations:
-                continue
+        # C6 fail-closed：注册表缺口会让 _migrate_schema 静默跳过、库被打标
+        # 目标版本却缺表缺列。这里在任何迁移执行前校验覆盖完整性（v1 为基线，
+        # 无迁移实现，不计入缺口）。
+        missing = [
+            v for v in range(max(from_version + 1, 2), to_version + 1)
+            if v not in migrations
+        ]
+        if missing:
+            raise RuntimeError(
+                "schema migration registry missing target versions: %s "
+                "(from_version=%s to_version=%s)" % (
+                    ",".join(str(v) for v in missing), from_version, to_version
+                )
+            )
 
+        for v in range(from_version + 1, to_version + 1):
             migration = migrations[v]
             print(t("cli.messages.db_base_migration_start",
                   from_version=from_version, to=v, desc=migration['description']))
@@ -4373,9 +4571,37 @@ class CodeGraphBase:
                 "description": t("cli.messages.migration_v52", default="Task-domain operation store: canonicalization_rule_sets/revocations registry + task_operation_ledger authority ledger + operation-params-c14n/v1 seed row (idempotent)"),
                 "func": _migrate_v51_to_v52,
             },
+            53: {
+                "description": t("cli.messages.migration_v53", default="Task workspace authority binding: workspace_authority_captures + immutable task_workspace_bindings (idempotent, canonical DDL)"),
+                "func": _migrate_v52_to_v53,
+            },
+            54: {
+                "description": t("cli.messages.migration_v54", default="task_loop capability promotion authority ledger: task_loop_capability_promotion_events + workspace/request index (idempotent)"),
+                "func": _migrate_v53_to_v54,
+            },
+            55: {
+                "description": t("cli.messages.migration_v55", default="Role Contract lineage/c14n: role_contract_lineages + role_contract_revisions (idempotent)"),
+                "func": _migrate_v54_to_v55,
+            },
+            56: {
+                "description": t("cli.messages.migration_v56", default="step→Role Contract binding: task_step_role_contract_bindings + current/revision indexes (idempotent)"),
+                "func": _migrate_v55_to_v56,
+            },
+            57: {
+                "description": t("cli.messages.migration_v57", default="Verdict/Gate schema: verdict_normalization_rules/revocations + v57 provenance/normalization columns on task_contract_revisions/task_verdict_events/task_gate_decisions (idempotent)"),
+                "func": _migrate_v56_to_v57,
+            },
+            58: {
+                "description": t("cli.messages.migration_v58", default="Repair v53-v57 table/column drift: replay v52-v57 idempotent table/index/column creation (lossless)"),
+                "func": _migrate_v57_to_v58,
+            },
             59: {
                 "description": t("cli.messages.migration_v59", default="task.supersede governance schema: supersede relations/events canonical + workspace/provenance/request/lease/fencing/evidence columns + indexes (idempotent, lossless ALTER ADD COLUMN for existing base tables)"),
                 "func": _migrate_v58_to_v59,
+            },
+            60: {
+                "description": t("cli.messages.migration_v60", default="A′ quality-gate hardening: task_quality_findings.severity column/index + Role Worker v60 compat tables (idempotent)"),
+                "func": _migrate_v59_to_v60,
             },
             61: {
                 "description": t("cli.messages.migration_v61", default="P3-4 raw-edge lookup index: partial index idx_calls_callee_name_raw on calls(callee_name) WHERE callee_id = 0 (idempotent)"),
