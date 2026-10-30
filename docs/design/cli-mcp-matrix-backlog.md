@@ -393,3 +393,67 @@ v61 库会报 `SCHEMA_TOO_NEW`）。
 | P3-2 | `workspace_id: int` → `workspace_instance_id` 契约收敛（build_context 族） | 契约 | 已修（T-1793263115744-7ac43c98 步骤#2） |
 | P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 已修（T-1793263115744-7ac43c98 步骤#1） |
 | P3-4 | `calls.callee_name` 部分索引（`WHERE callee_id = 0`，raw 边按名字解析/查询） | 性能/schema | 已修（T-1793284203427-56a164bc 步骤#3：SCHEMA_VERSION=61，`idx_calls_callee_name_raw` 部分索引，实测见 §4.6.2） |
+| P3-5 | `get_callers`/`get_callees` 短名降级分支跨 workspace 泄漏 + 全表扫（C2） | 正确性/性能 | 已修（T-1793317538470-c203e6d4 步骤#3，见 §6） |
+
+---
+
+## 6. C2 · get_callers/get_callees 短名分支 workspace 收口（2026-10-30）
+
+### 6.1 现象与证据
+
+`rust_ext/src/daemon/daemon_client_handlers.rs` 的 SQL 降级短名分支只按名字过滤：
+callers `WHERE c.callee_name = ?1`、callees `WHERE s.name = ?1`，均无
+`file_instances.workspace_id` 谓词。权威库（14 个 workspace）实测：
+
+- 泄漏：`callee_name = 'helper'` 全局查询唯一命中行的 caller 属于
+  workspace 1720（graphify），而 `workspace_id = 1`（callwarden）查询按旧实现
+  同样返回该行 → 跨 workspace 泄漏。
+- 全表扫：旧短名 callers 计划为 `SCAN c`（calls 574,914 行），实测
+  `helper` 106ms、`get`（35,215 行）235ms。
+
+RPC `mcp.daemon_client.sql_fallback_get_callers/get_callees` 已在
+`dispatch.rs` 注册、`http_server.rs` 放行，CLI/直连 RPC 可达。
+
+### 6.2 方案实测对比（同库，取 3 次最小值）
+
+| 方案 | 查询计划 | `helper` | `main` | `get`(19,200 行) | 语义 |
+|---|---|---|---|---|---|
+| 旧（无 ws 谓词） | `SCAN c` | 106ms（跨 ws 返回 1 行） | 101ms | 235ms（35,215 行，跨 ws） | 文本短名 |
+| A：补 `fi.workspace_id` | `SEARCH fi`(workspace 索引) → `SEARCH s` → `SEARCH c`(idx_calls_caller) | 99ms | 93ms | 150ms | 与原文本短名一致 |
+| B：符号解析走部分索引 | `MULTI-INDEX OR`：`idx_calls_callee_id_resolved` + `idx_calls_callee_name_raw` | 0ms | 2.7ms | 116ms | 改变语义：排除 callee_id 指向异名符号的陈旧边 |
+| C：新增 `calls(callee_name)` 索引 | 全索引 | 未落地 | 未落地 | 未落地 | 需 SCHEMA_VERSION 61→62 双端迁移 |
+
+### 6.3 取舍与修复
+
+采用 **方案 A**：零 schema 变更、语义与旧实现完全一致（只收口归属），
+且已消除 `SCAN c`。
+
+- `query_callers_by_short(conn, ws_id, name)`：`WHERE fi.workspace_id = ?2 AND c.callee_name = ?1`。
+- `handle_sql_fallback_get_callees`：QN 与短名两分支均补
+  `JOIN file_instances fi ON s.file_instance_id = fi.id`
+  与 `fi.workspace_id = ?2`。
+- 方案 B 性能更优但会静默丢弃「callee_id 已解析、但文本短名与目标符号名不一致」
+  的陈旧边，属于语义变更，不在本卡范围；方案 C 的索引收益与迁移成本不对等，
+  留作后续候选。
+
+### 6.4 验证
+
+- Rust 定向单测 `cargo test --lib daemon_client_handlers`：26 passed / 0 failed，
+  新增 `test_callers_short_name_is_workspace_scoped`、
+  `test_callees_short_name_is_workspace_scoped`、
+  `test_callees_qn_is_workspace_scoped`（ws7/ws8 同名 main/helper 夹具）。
+- Python 定向回归 `pytest tests/test_p28b_qualified_name.py tests/test_p7_callee_id_index.py`：11 passed。
+- 权威库 `EXPLAIN QUERY PLAN`：callers/callees 均为 `SEARCH ... USING INDEX`
+  组合，无 `SCAN c`。
+- 部署 + 活体双 workspace 隔离（`refresh_shared_runtime.ps1 -TaskId T-1793317538470-c203e6d4`，
+  权威库 RPC `mcp.daemon_client.sql_fallback_get_callers/get_callees`）：
+  修复前 `workspace_id=1` 与 `1720` 对 `helper` 均返回同一条 graphify 调用边，
+  `main` 的 callees 两 ws 同为 15,760 条；修复后 `helper` ws1=0 / ws1720=1，
+  callees `main` ws1=10,862 / ws1720=144，与按 ws 过滤的 SQL 期望值逐一相等。
+
+### 6.5 残留（未纳入本卡）
+
+Python 本地 SQL 降级 `db/db_query.py::get_callers/get_callees` 的短名分支仍保留
+旧全局语义；CLI/MCP 正常链经 daemon RPC（本卡已收口），仅 enterprise 回退本地
+SQL 时仍可能跨 ws。列为后续候选。
+

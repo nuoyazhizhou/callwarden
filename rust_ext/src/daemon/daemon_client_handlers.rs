@@ -275,22 +275,28 @@ fn query_callers_by_qn(conn: &Connection, ws_id: i64, qn: &str) -> Result<Vec<Va
         .map_err(|e| DaemonRpcError::internal_error(format!("callers QN 行读取失败: {}", e)))
 }
 
-/// 短名分支（对齐 Python：`WHERE c.callee_name = ?`，不带 workspace 过滤）。
-fn query_callers_by_short(conn: &Connection, name: &str) -> Result<Vec<Value>, DaemonRpcError> {
+/// 短名分支（对齐 Python：`WHERE c.callee_name = ?`，但按调用方 workspace 收口，
+/// 避免多 workspace 权威库下同名符号的调用边跨 ws 泄漏）。
+fn query_callers_by_short(
+    conn: &Connection,
+    ws_id: i64,
+    name: &str,
+) -> Result<Vec<Value>, DaemonRpcError> {
     let sql = "SELECT c.id, c.caller_id, s.name, c.caller_module, c.callee_name, \
                c.callee_module, c.callee_qualified, c.callee_file, c.callee_id, \
                c.call_line, c.is_cross_file, fi.rel_path \
                FROM calls c \
                JOIN symbols s ON c.caller_id = s.id \
                JOIN file_instances fi ON s.file_instance_id = fi.id \
-               WHERE c.callee_name = ?1 \
+               WHERE fi.workspace_id = ?2 \
+                 AND c.callee_name = ?1 \
                ORDER BY fi.rel_path, c.call_line";
     let name = name.to_string();
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| DaemonRpcError::internal_error(format!("callers 短名查询准备失败: {}", e)))?;
     let rows = stmt
-        .query_map(rusqlite::params![name], row_to_caller)
+        .query_map(rusqlite::params![name, ws_id], row_to_caller)
         .map_err(|e| DaemonRpcError::internal_error(format!("callers 短名查询失败: {}", e)))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| DaemonRpcError::internal_error(format!("callers 短名行读取失败: {}", e)))
@@ -318,7 +324,7 @@ pub fn handle_sql_fallback_get_callers(params: &Value) -> Result<Value, DaemonRp
         }
     }
     if result.is_empty() {
-        result = query_callers_by_short(&conn, &short_name)?;
+        result = query_callers_by_short(&conn, ws_id, &short_name)?;
     }
     Ok(json!({"callers": result}))
 }
@@ -345,20 +351,22 @@ pub fn handle_sql_fallback_get_callees(params: &Value) -> Result<Value, DaemonRp
     let auto_qn_fallback = explicit_qn.is_none() && auto_qn.is_some();
     let db_path = resolve_db_path(params);
     let conn = open_readonly(&db_path.to_string_lossy())?;
-    // workspace 身份控制：解析 fail-closed（QN 分支 SQL 虽全局匹配，身份解析仍必须成功）
-    let _ws_id = resolve_workspace_id(&conn, params)?;
+    // workspace 身份控制：解析 fail-closed；调用方 workspace 决定调用边可见性
+    // （多 workspace 权威库下同名字符串会跨 ws 命中，必须显式收口）。
+    let ws_id = resolve_workspace_id(&conn, params)?;
     let mut result: Vec<Value> = Vec::new();
     if let Some(qn) = &auto_qn {
         let sql = "SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, \
                    c.is_cross_file FROM calls c \
                    JOIN symbols s ON c.caller_id = s.id \
-                   WHERE s.qualified_name = ?1 ORDER BY c.call_line";
+                   JOIN file_instances fi ON s.file_instance_id = fi.id \
+                   WHERE s.qualified_name = ?1 AND fi.workspace_id = ?2 ORDER BY c.call_line";
         let qn = qn.clone();
         let mut stmt = conn.prepare(sql).map_err(|e| {
             DaemonRpcError::internal_error(format!("callees QN 查询准备失败: {}", e))
         })?;
         let rows = stmt
-            .query_map(rusqlite::params![qn], row_to_callee)
+            .query_map(rusqlite::params![qn, ws_id], row_to_callee)
             .map_err(|e| DaemonRpcError::internal_error(format!("callees QN 查询失败: {}", e)))?;
         result = rows
             .collect::<Result<Vec<_>, _>>()
@@ -371,13 +379,14 @@ pub fn handle_sql_fallback_get_callees(params: &Value) -> Result<Value, DaemonRp
         let sql = "SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, \
                    c.is_cross_file FROM calls c \
                    JOIN symbols s ON c.caller_id = s.id \
-                   WHERE s.name = ?1 ORDER BY c.call_line";
+                   JOIN file_instances fi ON s.file_instance_id = fi.id \
+                   WHERE s.name = ?1 AND fi.workspace_id = ?2 ORDER BY c.call_line";
         let name = short_name.clone();
         let mut stmt = conn.prepare(sql).map_err(|e| {
             DaemonRpcError::internal_error(format!("callees 短名查询准备失败: {}", e))
         })?;
         let rows = stmt
-            .query_map(rusqlite::params![name], row_to_callee)
+            .query_map(rusqlite::params![name, ws_id], row_to_callee)
             .map_err(|e| {
                 DaemonRpcError::internal_error(format!("callees 短名查询失败: {}", e))
             })?;
@@ -1339,6 +1348,86 @@ mod tests {
         .unwrap();
         assert_eq!(res["callees"].as_array().unwrap().len(), 1);
         assert_eq!(res["callees"][0]["callee_name"], json!("helper"));
+    }
+
+    /// 追加第二个 workspace（id=8，b.py）并放入与 ws7 完全同名的
+    /// main/helper 符号与 `main -> helper` 调用边，用于验证短名分支的
+    /// workspace 隔离（同名 ≠ 同 workspace）。
+    fn seed_second_workspace(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name, root_path, created_at, is_active) \
+             VALUES (8, 'ws8', '/tmp/ws8', 2.0, 0); \
+             INSERT INTO file_instances (id, workspace_id, rel_path, abs_path, status) \
+             VALUES (2, 8, 'b.py', '/tmp/ws8/b.py', 'active'); \
+             INSERT INTO symbols (id, file_instance_id, symbol_hash, name, kind, start_line, end_line, \
+             signature, comment_status, qualified_name, depth) VALUES \
+             (3, 2, 'h_main_b', 'main', 'fn', 1, 10, 'def main()', 'done', 'mod.main', 0), \
+             (4, 2, 'h_helper_b', 'helper', 'fn', 12, 20, 'def helper()', 'pending', 'mod.helper', 1); \
+             INSERT INTO calls (caller_id, caller_name, caller_module, callee_name, callee_qualified, \
+             callee_id, call_line, is_cross_file) VALUES \
+             (3, 'main', 'mod', 'helper', 'mod.helper', 4, 5, 0);",
+        )
+        .unwrap();
+    }
+
+    /// 短名 callers：同库两个 workspace 各有 main->helper，按 workspace_id 只返回本 ws 的边。
+    #[test]
+    fn test_callers_short_name_is_workspace_scoped() {
+        let (conn, path) = tmp_db("callers_ws_iso");
+        seed_basic(&conn);
+        seed_second_workspace(&conn);
+        let res = handle_sql_fallback_get_callers(&params_with_db(
+            &path,
+            json!({"callee_name": "helper", "workspace_id": 7}),
+        ))
+        .unwrap();
+        let rows = res["callers"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "ws7 只应看到本 workspace 的调用边");
+        assert_eq!(rows[0]["caller_file"], json!("a.py"));
+        let res = handle_sql_fallback_get_callers(&params_with_db(
+            &path,
+            json!({"callee_name": "helper", "workspace_id": 8}),
+        ))
+        .unwrap();
+        let rows = res["callers"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "ws8 只应看到本 workspace 的调用边");
+        assert_eq!(rows[0]["caller_file"], json!("b.py"));
+    }
+
+    /// 短名 callees：同名 main 在两个 workspace 各有出边，按 workspace_id 隔离。
+    #[test]
+    fn test_callees_short_name_is_workspace_scoped() {
+        let (conn, path) = tmp_db("callees_ws_iso");
+        seed_basic(&conn);
+        seed_second_workspace(&conn);
+        let res = handle_sql_fallback_get_callees(&params_with_db(
+            &path,
+            json!({"caller_name": "main", "workspace_id": 7}),
+        ))
+        .unwrap();
+        assert_eq!(res["callees"].as_array().unwrap().len(), 1);
+        let res = handle_sql_fallback_get_callees(&params_with_db(
+            &path,
+            json!({"caller_name": "main", "workspace_id": 8}),
+        ))
+        .unwrap();
+        assert_eq!(res["callees"].as_array().unwrap().len(), 1);
+    }
+
+    /// 显式/自动 QN callees：两 workspace 同名 qualified_name 时仍按 ws 收口。
+    #[test]
+    fn test_callees_qn_is_workspace_scoped() {
+        let (conn, path) = tmp_db("callees_qn_ws_iso");
+        seed_basic(&conn);
+        seed_second_workspace(&conn);
+        let res = handle_sql_fallback_get_callees(&params_with_db(
+            &path,
+            json!({"caller_name": "mod.main", "workspace_id": 8}),
+        ))
+        .unwrap();
+        let rows = res["callees"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "ws8 的 mod.main 只能看到自己的出边");
+        assert_eq!(rows[0]["call_line"], json!(5));
     }
 
     #[test]
