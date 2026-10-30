@@ -24,7 +24,7 @@ import time
 import unicodedata
 
 from callwarden.config import get_http_authority_id
-from callwarden.server.daemon_client import HttpDaemonRpcClient
+from callwarden.server.daemon_client import DaemonUnavailableError, HttpDaemonRpcClient
 
 
 def sha256_hex(data: bytes) -> str:
@@ -745,12 +745,41 @@ def wait_manifest(data_root, proc, timeout=15.0):
 # workspace authority + snapshot 装配
 # ----------------------------------------------------------------------
 
+# 前置缺失归一判定（C7）：只认「明确前置不可用」——daemon 二进制/进程不可用
+# 或部署冲突（常驻 daemon 占 SID 派生管道名 → CreateNamedPipe error 5）。
+# 真实 RPC/契约失败（E_SHARED_TASK_WRITER_REQUIRED / E_MULTIPART_ROUTE_UNAVAILABLE
+# / 业务错误码 / 断言失败）一律不得降级为 skip。
+_PREREQ_UNAVAILABLE_CODES = ("E_HTTP_DAEMON_UNAVAILABLE", "E_HTTP_MANIFEST_STALE")
+_PREREQ_UNAVAILABLE_MARKERS = (
+    "CreateNamedPipe",
+    "10061",          # WinError 10061：连接被拒绝
+    "10054",          # WinError 10054：连接被重置
+    "actively refused",
+)
+
+
+def _prereq_unavailable_reason(exc, daemon_exited):
+    """前置缺失原因（非 None 即降级 skip）；仅覆盖明确环境前置。"""
+    code = getattr(exc, "code", "")
+    if isinstance(exc, DaemonUnavailableError) and code in _PREREQ_UNAVAILABLE_CODES:
+        return f"daemon 前置不可用（{code}）"
+    if daemon_exited:
+        return f"隔离 daemon 在 setup 期间退出（{type(exc).__name__}: {exc}）"
+    text = str(exc)
+    for marker in _PREREQ_UNAVAILABLE_MARKERS:
+        if marker in text:
+            return f"前置冲突（命中 {marker}）"
+    return None
+
+
 def setup_w3_client(data_root, root_path, ws_id=1):
     """一站式建立 w3 权威栈，返回 (client, workspace_instance_id, endpoint, proc)。
 
     依次：起隔离 daemon → manifest 发现 → workspace.register → seed task-DB
-    `workspaces` → 空 codegraph+publish snapshot。daemon 二进制缺失时返回
-    (None, None, None, None)，由调用方 pytest.skip。
+    `workspaces` → 空 codegraph+publish snapshot。daemon 二进制缺失、进程启动后
+    失联（E_HTTP_DAEMON_UNAVAILABLE）等**明确前置缺失**时返回
+    (None, None, None, None)，由调用方 pytest.skip；其余异常（含断言/契约失败）
+    原样上抛，保持红（C7：禁止把真实回归吞成 skip）。
     """
     bin_path = find_daemon_binary()
     if bin_path is None:
@@ -809,13 +838,13 @@ def setup_w3_client(data_root, root_path, ws_id=1):
                     {"workspace_instance_id": inst, "db_path": cg_db})
 
         return client, inst, endpoint, proc
-    except Exception:
+    except Exception as exc:
         # instrument（CI 取证）：manifest 后死亡（本机/CI 实证失败模式）——
         # daemon 先发 manifest（wait_manifest 成功返回），随后在 setup 后续
         # 调用（workspace.register / snapshot.publish）前死亡，异常在此冒泡。
         # 输出 daemon stdout/stderr 尾部定位死因（本机实证：CreateNamedPipe
         # 失败 error 5，pipe 名按 SID 派生未按 data_root 隔离）。
-        # 行为零变化：打印后仍原样 raise，不吞异常、不改 skip 语义。
+        died_at_exc = proc.poll() is not None
         try:
             out, err = proc.communicate(timeout=5)
         except Exception:
@@ -825,6 +854,11 @@ def setup_w3_client(data_root, root_path, ws_id=1):
               f"poll={proc.poll()}; "
               f"stdout tail={out.decode('utf-8', 'replace')[-1500:]!r}; "
               f"stderr tail={err.decode('utf-8', 'replace')[-2000:]!r}")
+        reason = _prereq_unavailable_reason(exc, died_at_exc)
+        if reason is not None:
+            # C7：明确前置缺失/冲突 → 归一为 (None,...)，由调用方 pytest.skip。
+            print(f"[w3_harness] setup 降级为前置缺失 → skip：{reason}")
+            return None, None, None, None
         raise
 
 

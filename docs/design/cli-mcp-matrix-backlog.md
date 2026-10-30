@@ -453,6 +453,7 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | P3-4 | `calls.callee_name` 部分索引（`WHERE callee_id = 0`，raw 边按名字解析/查询） | 性能/schema | 已修（T-1793284203427-56a164bc 步骤#3：SCHEMA_VERSION=61，`idx_calls_callee_name_raw` 部分索引，实测见 §4.6.2） |
 | P3-5 | `get_callers`/`get_callees` 短名降级分支跨 workspace 泄漏 + 全表扫（C2） | 正确性/性能 | 已修（T-1793317538470-c203e6d4 步骤#3，见 §6） |
 | C1 | 权威库 ignored 行归档缺口（`build/` 残留 77 文件 / 1,467 符号，`archived_files=0`） | 正确性/数据治理 | 已修（T-1793317526334-eea45f3c 步骤#1-#2，见 §4.7） |
+| C7 | 全量 pytest 基线恒红：native/LLM 前置缺失时缺 skip 守卫（CLI 验收 568 ERROR、隔离 daemon 管道冲突、`sqlite3.lib`、外部 LLM） | 测试信噪比 | 卡内已修（T-1793318539212-c2db0418 步骤#1-#2，见 §7）；卡外 daemon 失联族 164 / native 构建族 72 / 未归一 44 待后续卡 |
 
 ---
 
@@ -515,4 +516,111 @@ RPC `mcp.daemon_client.sql_fallback_get_callers/get_callees` 已在
 Python 本地 SQL 降级 `db/db_query.py::get_callers/get_callees` 的短名分支仍保留
 旧全局语义；CLI/MCP 正常链经 daemon RPC（本卡已收口），仅 enterprise 回退本地
 SQL 时仍可能跨 ws。列为后续候选。
+
+---
+
+## 7. C7 · 全量 pytest 基线信噪比：前置缺失 skip 守卫（2026-10-30）
+
+### 7.1 前提修正（卡面假设 vs 实测）
+
+卡面原假设「本机缺 `sqlite3.lib` → `cargo build` 失败 → cw-daemon 二进制不可用」
+与实测不符：C1 已在同一环境成功构建并部署 daemon（`sha256=402ecf52…`、PID 3288），
+`workspace.build_graph` 实跑通过。全量基线恒红的真实前置是以下四类（均可复现）：
+
+1. **冻结候选散列不匹配**：TP-10C 的 `TP-10/src/cw-daemon.exe` 不命中
+   `KNOWN_DAEMON_SHA256_PREFIXES=('f1fa3736a16dbe7d','247b9a16049ec4d7')`，且
+   `_TRUSTED_FROZEN_COPIES` 三个回退副本均不存在 → `_deploy_daemon` 抛错。
+2. **SID 派生命名管道冲突**：常驻 daemon 占用
+   `\\.\pipe\callwarden-S-1-5-21-1583625257-826939952-3615027596-1001`，隔离 daemon
+   依赖相同管道名（未按 `data_root` 派生），发完 manifest 即
+   `CreateNamedPipe 失败 (error 5)` → exit 1 → 客户端 `E_HTTP_DAEMON_UNAVAILABLE`
+   （WinError 10061/10054）。
+3. **外部 LLM 不可达**：`test_t5_llm_understandability` 选对率 0.00 < 基线 0.8；
+   `llm_available()` 只判配置存在、不发探测。
+4. **native 构建失败**：需要由当前源码重建二进制的用例仍走 `cargo build` →
+   `LNK1181: 无法打开输入文件 "sqlite3.lib"`。
+
+### 7.2 分类矩阵（改前 → 改后）
+
+| 文件族 | 观察到的失败 | 真实前置 | 处置 |
+|---|---|---|---|
+| `tests/acceptance/cli/{test_cli_c1_semantics,test_cli_c2_params,…}.py` | 568 ERROR（`RuntimeError` 于 `_deploy_daemon`） | 冻结候选散列不匹配且无可信副本 | ✅ 已归一为 `pytest.skip` |
+| `tests/test_query_*_rpc.py`、`test_cli_08x/09x_http_rpc.py`、`test_mcp_*_http_rpc.py` 等 23 文件（`w3_live` 夹具） | setup 期 `DaemonUnavailableError` | SID 管道冲突 / 隔离 daemon 提前退出 | ✅ 已归一为 `(None,·,·,·)` → `w3_live` skip |
+| `tests/test_c16/c17/c21_*_workspace_authority.py`、`test_rust_cli_diff.py`、`test_http_daemon_*`、`convergence/test_m3/t4` 等 | 164 FAILED/ERROR（自建 `_spawn_isolated_daemon`） | 同上（管道冲突） | ⏳ 卡外文件，保持红；需后续卡统一走共享守卫 |
+| `test_lease_rpc.py`、`test_lease_gate_empirical.py`、`test_cli_task_lease_parity.py`、`test_task_step_resolve_e2e.py`、`test_windows_*_e2e.py` | 70 ERROR + 2 ERROR（`cargo build` / `LNK1181`） | 缺 `sqlite3.lib` | ⏳ 卡外文件，保持红；需后续卡按「构建前置缺失」skip |
+| `convergence/test_t5_llm_understandability.py` | 1 FAILED（0.00 < 0.8） | 外部 LLM 不可达 | ⏳ 卡外文件（`convergence/llm_channel.py`），保持红 |
+
+卡内改动只覆盖上表前两行；后三行属卡外文件（`allowed_edit_scope` 之外），
+按「禁止把真实回归吞成 skip」原则不做静默降级，作为后续卡输入。
+
+### 7.3 改动（仅卡内白名单 2 文件，+60/−13）
+
+- `tests/_w3_harness.py::setup_w3_client`：新增 `_prereq_unavailable_reason(exc,
+  daemon_exited)`，**仅**三类明确前置降级为 `(None,None,None,None)`：
+  (a) `DaemonUnavailableError` 且 `code ∈ {E_HTTP_DAEMON_UNAVAILABLE,
+  E_HTTP_MANIFEST_STALE}`（显式排除 `E_MULTIPART_ROUTE_UNAVAILABLE` /
+  `E_SHARED_TASK_WRITER_REQUIRED`）；(b) 异常发生时隔离 daemon 已退出；
+  (c) 报文命中 `CreateNamedPipe` / `10061` / `10054` / `actively refused`。
+  其余异常原样上抛；`tests/conftest.py::w3_live` 见 `proc is None` 即 `pytest.skip`。
+- `tests/acceptance/cli/cli_acceptance_harness.py`：`_deploy_daemon` 的
+  「候选缺失 / 散列不匹配且无可信副本」由 `RuntimeError`/`FileNotFoundError`
+  改为 `pytest.skip`（仍 fail-closed，不静默换用未冻结二进制）；
+  `start_daemon` 捕获 `daemon_bootstrap.BootstrapError` → `dump_log` 后
+  `pytest.skip`；`verify_consistency()` 一致性失败**保持红**（属验收完整性，
+  非环境前置）。
+
+### 7.4 复测（2026-10-30，`C:/Python314/python.exe`）
+
+前置条件：Windows + `C:/Python314/python.exe`（cp314 PyO3 扩展）+ 常驻 daemon
+（PID 3288）运行时；不改冻结基准、不重启常驻 daemon。
+
+```powershell
+# 全量基线
+C:/Python314/python.exe -m pytest tests -q --tb=no -p no:cacheprovider `
+  --junit-xml=C:/Users/wanpi/AppData/Local/Temp/c7_full_after.xml
+# CLI 验收族（定向）
+C:/Python314/python.exe -m pytest tests/acceptance/cli -q --tb=no
+# w3_live 家族代表文件
+C:/Python314/python.exe -m pytest tests/test_query_file_rpc.py -q --tb=no
+```
+
+| 口径 | 改前（巡检） | 改后（本轮实测） |
+|---|---|---|
+| 全量用例数 | — | 9,515 |
+| passed | — | 7,784 |
+| skipped | — | 1,441 |
+| failed | 168 | 165 |
+| error | 1,210 | **117** |
+| `tests/acceptance/cli` | 568 ERROR | **568 skipped / 0 error** |
+| w3_live 23 文件 | 55 FAILED / 104 ERROR | **184 passed / 100 skipped / 10 failed / 20 error**（残留均在卡外自建 spawn 文件） |
+| 单文件 `test_query_file_rpc.py` | — | 7 passed / 7 skipped |
+
+全量 error 由 1,210 降至 117（−1,093 全部为卡内前置归一），failed 由 168 降至
+165；无「改前通过、改后 skip」样本（降级条件均要求 daemon 已退出/不可达，
+setup 无法产出 client，该类用例改前必然 ERROR）。
+
+### 7.5 残留（卡外，保持红；需单独判定）
+
+- **daemon 失联族（164）**：`test_rust_cli_diff` 35、`test_c17` 22、`test_c21` 22、
+  `test_c16` 10、`test_http_daemon_default_transport` 9、`convergence/test_m3` 8、
+  `test_http_daemon_integration` 7、`convergence/test_t4` 6、`test_task_prompt_e2e` 6、
+  `test_workspace_snapshot_rpc_http` 6 等；均自建 spawn，需后续卡统一守卫。
+- **native 构建族（72）**：`test_lease_gate_empirical` 20、
+  `test_task_step_resolve_e2e` 14、`test_cli_task_lease_parity` 12、
+  `test_lease_rpc` 10、`test_windows_daemon_e2e` 9、`test_windows_wsl_authority_e2e` 4 等。
+- **未归一「其他」44**（非前置、亦非本轮引入）：i18n 输出文案断言漂移 15
+  （`test_cli_055/056/057/058/059/063/065/066/070/076`、`test_i18n_cleanup_c5`）、
+  Windows 临时 SQLite 文件锁 teardown `PermissionError [WinError 32]` 13
+  （`test_phase3_cas`、`test_p10_p11_timing_gc`、`test_p21_auto_ignore`）、
+  `workspace_instance_id` 契约 9（`test_task_cascade_close`、
+  `test_task_reconciliation_contract`、`test_http_index_job_cutover`）、
+  release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
+  60 vs 61）、`test_http_compat_read_cutover` DID NOT RAISE 2、
+  `test_p0b_legacy_attestation_fail_closed` 1、`test_phase2_6_3` 性能 1、
+  `test_task_split_governance` 1。
+
+后续卡建议：① 将「隔离 daemon 按 `data_root` 派生管道名」落到 Rust 侧（根治
+管道冲突）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
+`cargo build`/LLM 前置；③ 修 release 验收 evidence 过期与 schema_version 断言。
+
 

@@ -43,6 +43,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 # ------------------------------------------------------------------ 路径
 REPO_ROOT = Path(__file__).resolve().parents[3]  # tests/acceptance/cli → 仓库根
 BOOTSTRAP_DIR = REPO_ROOT / "tests" / "acceptance" / "harness" / "bootstrap"
@@ -51,7 +53,7 @@ for _d in (str(BOOTSTRAP_DIR), str(CONV_DIR), str(REPO_ROOT)):
     if _d not in sys.path:
         sys.path.insert(0, _d)
 
-from daemon_bootstrap import IsolatedDaemon  # noqa: E402
+from daemon_bootstrap import BootstrapError, IsolatedDaemon  # noqa: E402
 import param_provider as pp  # noqa: E402
 import t3_cli_runner as t3r  # noqa: E402
 
@@ -91,8 +93,6 @@ if "Python314" not in PYTHON and not os.environ.get("CW_TP10C_ALLOW_OTHER_PY"):
     # （C:/Python314/python.exe），Linux CI 等非该解释器环境整模块跳过，
     # 不阻断 pytest collect（CI-DEBT CD-1：collect 门不应被本地解释器
     # 假设的硬性守卫击穿；真正需跳过的语义用 skip 表达）
-    import pytest
-
     pytest.skip(
         f"TP-10C 需要 C:/Python314/python.exe（callwarden_core 为 cp314 PyO3 扩展），"
         f"当前解释器为 {PYTHON}",
@@ -332,7 +332,12 @@ class CLIAcceptanceEnv:
         return any(sha.startswith(p) for p in KNOWN_DAEMON_SHA256_PREFIXES)
 
     def _deploy_daemon(self) -> None:
-        """部署冻结候选到 run 根；散列不匹配则 fail-closed 或回退可信副本。"""
+        """部署冻结候选到 run 根；散列不匹配则 fail-closed 或回退可信副本。
+
+        C7：冻结候选二进制缺失 / 散列不匹配且无可信副本属**明确前置缺失**，
+        按 pytest.skip 归一（原实现 raise RuntimeError → 568 个用例成片 ERROR）。
+        仍保留 fail-closed 语义：不静默换用未冻结二进制（避免产出无意义验收结论）。
+        """
         if self.daemon_exe.is_file():
             return
         self.daemon_exe.parent.mkdir(parents=True, exist_ok=True)
@@ -340,15 +345,15 @@ class CLIAcceptanceEnv:
         if os.environ.get("CW_TP10C_ALLOW_OTHER_BINARY"):
             # 显式放宽（如重新冻结基准后）：直接用指定源
             if not src.is_file():
-                raise FileNotFoundError(f"daemon 候选缺失：{src}")
+                pytest.skip(f"TP-10C 前置缺失：daemon 候选缺失 {src}")
             shutil.copy2(src, self.daemon_exe)
             return
         if not self._is_frozen(src):
             # 指定源不是冻结候选 → 回退到已知可信冻结副本，并记录告警
             fallback = next((p for p in _TRUSTED_FROZEN_COPIES if self._is_frozen(p)), None)
             if fallback is None:
-                raise RuntimeError(
-                    f"daemon 候选 {src} 散列不匹配冻结基准 "
+                pytest.skip(
+                    f"TP-10C 前置缺失：daemon 候选 {src} 散列不匹配冻结基准 "
                     f"{KNOWN_DAEMON_SHA256_PREFIXES}，且无可信冻结副本可用；"
                     f"若确需换基准，设 CW_TP10C_ALLOW_OTHER_BINARY=1 并以 "
                     f"CW_TP10C_DAEMON_SHA256 钉新散列")
@@ -408,7 +413,15 @@ class CLIAcceptanceEnv:
         d = IsolatedDaemon(run_root=self.run_root, daemon_exe=self.daemon_exe,
                            expected_sha256=self.expected_sha256)
         self.daemon = d
-        manifest = d.start(timeout=timeout)
+        try:
+            manifest = d.start(timeout=timeout)
+        except BootstrapError as exc:
+            # C7：daemon 未就绪/启动后失联（本机实证：常驻 daemon 占用 SID 派生
+            # 命名管道 → CreateNamedPipe error 5 → 隔离 daemon 发 manifest 后
+            # 立即 exit 1）属**明确前置冲突**，按 skip 归一；用例内的 RPC/断言
+            # 失败仍保持红。日志落盘供取证。
+            d.dump_log(self.reports_dir / "daemon.log")
+            pytest.skip(f"TP-10C 前置缺失：隔离 daemon 启动失败（{exc}）")
         d.verify_consistency()
         return manifest
 
