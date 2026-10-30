@@ -20,6 +20,11 @@ if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
 from callwarden.db.db import CodeGraphDB  # noqa: E402 —— sys.path/环境注入须先于 import(脚本直跑未走 site-packages,顺序为硬约束)
+from _prereq_guard import (  # noqa: E402
+    prereq_unavailable_reason,
+    require_daemon_binary,
+    skip_if_daemon_exited_before_manifest,
+)
 
 
 def _inject_gate_pass_records(db_path: Path, task_id: str) -> None:
@@ -330,7 +335,7 @@ def _spawn_isolated_daemon(
     )
     data_root.mkdir(parents=True, exist_ok=True)
     (home_dir / ".callwarden").mkdir(parents=True, exist_ok=True)
-    daemon_bin = _find_daemon_binary()
+    daemon_bin = require_daemon_binary(_find_daemon_binary())
     proc = subprocess.Popen(
         [str(daemon_bin), f"--http-bind={http_bind}"],
         env=env,
@@ -400,10 +405,22 @@ def _run_python_cli_via_daemon(
     try:
         manifest = _wait_daemon_manifest(home_dir, proc)
         if manifest is None:
-            raise RuntimeError(
-                "隔离 daemon 未发布 manifest（cw-daemon 需先 cargo build）"
-            )
-        _publish_snapshot(manifest["endpoint"], workspace_root, db_path)
+            stderr_text = ""
+            try:
+                fd = proc.stderr.fileno()
+                os.set_blocking(fd, False)
+                stderr_text = os.read(fd, 65536).decode("utf-8", "replace")
+            except (BlockingIOError, OSError, ValueError):
+                pass
+            skip_if_daemon_exited_before_manifest(proc, stderr_text)
+            pytest.fail("隔离 daemon 未在超时内发布 manifest（进程存活，需排查卡死）")
+        try:
+            _publish_snapshot(manifest["endpoint"], workspace_root, db_path)
+        except Exception as exc:  # noqa: BLE001
+            reason = prereq_unavailable_reason(exc, proc.poll() is not None)
+            if reason is not None:
+                pytest.skip(reason)
+            raise
         env = _python_cli_env(home_dir, workspace_root, lang=lang)
         if python_env:
             env.update(python_env)

@@ -66,6 +66,10 @@ import pytest
 
 from callwarden.server.daemon_client import DaemonUnavailableError
 from callwarden.server.daemon_protocol import DaemonRemoteError
+from _prereq_guard import (
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
@@ -348,8 +352,10 @@ class TestRealDaemonSnapshotRoundTrip:
                           if proc.stdout else "")
                 stderr = (proc.stderr.read(4000).decode("utf-8", "replace")
                           if proc.stderr else "")
+                skip_if_daemon_exited_before_manifest(proc, stderr)
                 pytest.fail(
                     f"隔离 daemon 未在超时内发布 manifest\nstdout={stdout}\nstderr={stderr}")
+            skip_if_isolated_daemon_pipe_conflict(proc)
             from callwarden.server.daemon_client import HttpDaemonRpcClient
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],

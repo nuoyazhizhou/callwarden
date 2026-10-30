@@ -603,16 +603,20 @@ C:/Python314/python.exe -m pytest tests/test_query_file_rpc.py -q --tb=no
 165；无「改前通过、改后 skip」样本（降级条件均要求 daemon 已退出/不可达，
 setup 无法产出 client，该类用例改前必然 ERROR）。
 
-### 7.5 残留（卡外，保持红；需单独判定）
+### 7.5 卡外残留处置（daemon/native 族已由 T-1793377643401-07119ed4 归一）
 
-- **daemon 失联族（164）**：`test_rust_cli_diff` 35、`test_c17` 22、`test_c21` 22、
-  `test_c16` 10、`test_http_daemon_default_transport` 9、`convergence/test_m3` 8、
-  `test_http_daemon_integration` 7、`convergence/test_t4` 6、`test_task_prompt_e2e` 6、
-  `test_workspace_snapshot_rpc_http` 6 等；均自建 spawn，需后续卡统一守卫。
-- **native 构建族（72）**：`test_lease_gate_empirical` 20、
-  `test_task_step_resolve_e2e` 14、`test_cli_task_lease_parity` 12、
-  `test_lease_rpc` 10、`test_windows_daemon_e2e` 9、`test_windows_wsl_authority_e2e` 4 等。
-- **未归一「其他」44**（非前置、亦非本轮引入）：i18n 输出文案断言漂移 15
+- **daemon 失联族（164）→ 已归一**：`test_rust_cli_diff`、`test_c17`、`test_c21`、
+  `test_c16`、`test_http_daemon_default_transport`、`convergence/test_m3`、
+  `test_http_daemon_integration`、`convergence/test_t4`、`test_task_prompt_e2e`、
+  `test_workspace_snapshot_rpc_http` 等自建 spawn 文件，现统一经
+  `tests/_prereq_guard.py` 把「daemon 提前退出 / manifest 后管道冲突退出」降级为
+  `pytest.skip`；判定边界与接入矩阵见 §12。
+- **native 构建族（72）→ 已归一**：`test_lease_gate_empirical`、
+  `test_task_step_resolve_e2e`、`test_cli_task_lease_parity`、`test_lease_rpc`、
+  `test_windows_daemon_e2e`、`test_windows_wsl_authority_e2e` 的 `cargo build`
+  失败，命中 `LNK1181` / `sqlite3.lib` 等原生库缺失标记时降级为 skip；
+  rustc 编译诊断、构建成功但产物缺失仍红。
+- **未归一「其他」44**（非前置、亦非本轮引入，保持原状）：i18n 输出文案断言漂移 15
   （`test_cli_055/056/057/058/059/063/065/066/070/076`、`test_i18n_cleanup_c5`）、
   Windows 临时 SQLite 文件锁 teardown `PermissionError [WinError 32]` 13
   （`test_phase3_cas`、`test_p10_p11_timing_gc`、`test_p21_auto_ignore`）、
@@ -625,7 +629,8 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
 
 后续卡建议：① 将「隔离 daemon 按 `data_root` 派生管道名」落到 Rust 侧（根治
 管道冲突）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
-`cargo build`/LLM 前置；③ 修 release 验收 evidence 过期与 schema_version 断言。
+`cargo build`/LLM 前置（**已完成**，见 §12）；③ 修 release 验收 evidence 过期与
+schema_version 断言。
 
 ---
 
@@ -923,5 +928,131 @@ registry 只增不减。数据库侧没有唯一约束能表达「同 owner + �
   Rust storage 迁移负责（见 `docs/design/migration-manifest.md` §4.4）。
 - **v57 初始 rule row 不播种**：`verdict-normalization/v1` 的初始化由 1E/daemon
   权威路径负责，canonical `SCHEMA_SQL` 同样不含该 INSERT；本卡只补 schema 形状。
+
+---
+
+## 12. C7 后续 · daemon/native 前置守卫（2026-10-31）
+
+> 任务卡：`T-1793377643401-07119ed4`（步骤 #0 triage / #1 实现+单测 / #2 验证+文档）
+> 承接 §7.5 卡外残留：daemon 失联族（164）/ native 构建族（72）。
+
+### 12.1 目标与判定边界
+
+把**明确环境前置缺失**归一为 `pytest.skip`，真实回归保持红：
+
+| 场景 | 判定 | 处置 |
+|---|---|---|
+| 二进制候选缺失 | 无候选 | skip |
+| daemon 在 manifest 前退出（`poll() is not None`） | 启动前置缺失 | skip（带 returncode + stderr 尾部） |
+| manifest 后 daemon 因 SID 级命名管道冲突退出（`CreateNamedPipe error 5` / `10061` / `10054`） | 环境前置冲突 | skip |
+| manifest 超时但进程仍存活 | 可能真实卡死 | **fail** |
+| setup 抛 `DaemonUnavailableError` 且 code ∈ {`E_HTTP_DAEMON_UNAVAILABLE`, `E_HTTP_MANIFEST_STALE`} / 报文命中 markers / daemon 已退出 | 前置缺失 | skip |
+| 其他异常（业务错误码、契约断言） | 真实回归 | 原样上抛 |
+| `cargo build` 失败且命中 `LNK1181` / `sqlite3.lib` / `could not find native static library` / `link.exe not found` | 构建前置缺失 | skip |
+| `cargo build` 失败但为 rustc 诊断（如 `error[E0308]`） | 真实回归 | **fail** |
+| build 成功但产物缺失 | 构建配置异常 | **fail** |
+
+判定来源复用 `tests/_w3_harness.py::_prereq_unavailable_reason`（别名导出
+`prereq_unavailable_reason`），不引入第二套语义。
+
+实测根因（2026-10-31）：生产 daemon 常驻占用 `\\.\pipe\callwarden-<SID>` 时，
+隔离 daemon **先发布 HTTP manifest**（约 0.2s），随后
+`[ERROR] server 启动失败: CreateNamedPipe 失败 (error 5)` 退出；后续 RPC 全部
+`E_HTTP_DAEMON_UNAVAILABLE`（WinError 10061/10054）。此前 manifest 前守卫覆盖不到，
+故新增 manifest 后管道冲突守卫。
+
+### 12.2 守卫 API（`tests/_prereq_guard.py`）
+
+| 函数 | 作用 |
+|---|---|
+| `require_cargo()` | cargo 缺失 → skip；返回路径 |
+| `require_daemon_binary(bin_path)` | 二进制缺失 → skip；否则原样返回 |
+| `skip_if_daemon_exited_before_manifest(proc, stderr_text="", context=...)` | manifest 前已退出 → skip；存活 → 返回 |
+| `read_proc_stderr(proc, limit=4000)` | 仅在进程已退出时读取 stderr 尾部（避免活进程阻塞） |
+| `skip_if_isolated_daemon_pipe_conflict(proc, settle_seconds=3.0, context=...)` | settle 窗口内退出且命中冲突 marker → skip；存活/无关崩溃 → 返回 |
+| `native_build_skip_reason(build)` | build 失败且命中 native 缺失 marker → 原因；否则 None |
+| `skip_if_native_build_prereq_unavailable(build)` | 命中 → skip；否则返回，由调用方 fail |
+| `prereq_unavailable_reason(exc, daemon_exited)` | `_w3_harness` 同名判定别名 |
+
+### 12.3 接入矩阵
+
+daemon 自建 spawn 族（9 文件）：
+
+| 文件 | 接入点 |
+|---|---|
+| `tests/test_rust_cli_diff.py` | spawn 前 `require_daemon_binary`；manifest None 守卫；`_publish_snapshot` 用 `prereq_unavailable_reason` |
+| `tests/test_c16/c17/c21_*_workspace_authority.py` | manifest → endpoint 后、client 构造前 `skip_if_isolated_daemon_pipe_conflict` |
+| `tests/test_http_daemon_default_transport.py` | 两个 `isolated_default_http_daemon` fixture 均加管道冲突守卫 |
+| `tests/test_http_daemon_integration.py` | manifest None 守卫；`http_client` fixture + 自建 spawn 用例加管道冲突守卫；纯结构断言用例改为本地构造 client（不依赖活 daemon） |
+| `tests/test_task_prompt_e2e.py` | 二进制缺失 skip；manifest None + 管道冲突守卫 |
+| `tests/test_workspace_snapshot_rpc_http.py` | manifest None + 管道冲突守卫 |
+| `tests/convergence/conftest.py` | 保留 `E_DAEMON_ALREADY_RUNNING` skip；manifest None + 管道冲突守卫（覆盖 m3/t4） |
+
+native 构建族（6 文件）：`test_lease_rpc` / `test_lease_gate_empirical` /
+`test_cli_task_lease_parity` / `test_task_step_resolve_e2e` /
+`test_windows_daemon_e2e` / `test_windows_wsl_authority_e2e` 的
+`ensure_fresh_binary` / `ensure_fresh_binaries`：`require_cargo()` + build 失败先
+`skip_if_native_build_prereq_unavailable` 再 fail；daemon 失联分支读
+`daemon.log` 尾部后 `skip_if_daemon_exited_before_manifest`，存活超时仍 fail。
+
+### 12.4 改前/改后实测（16 文件定向，248 testcase）
+
+| 指标 | 改前（HEAD 基线） | 改后 |
+|---|---|---|
+| passed | 33 | **33** |
+| skipped | 15 | **215** |
+| failed | 105 | **0** |
+| error | 95 | **0** |
+| testcase 总数 | 248 | 248（无缺失/无新增） |
+| `passed → skipped`（禁止项） | — | **0** |
+| `failed/error → skipped`（预期迁移） | — | **200**（failed 105 + error 95） |
+
+按模块改前状态（改后除 `test_rust_cli_diff` 的 15 项原 skip 与本轮 33 项原 pass
+外，其余全部迁移为 skip）：
+
+| 模块 | 改前 passed/skipped/failed/error |
+|---|---|
+| `convergence`（m3+t4） | 0 / 0 / 2 / 12 |
+| `test_c16_assignment_show_workspace_authority` | 0 / 0 / 10 / 0 |
+| `test_c17_admin_route_workspace_authority` | 0 / 0 / 22 / 0 |
+| `test_c21_edit_rule_route_workspace_authority` | 0 / 0 / 22 / 0 |
+| `test_cli_task_lease_parity` | 0 / 0 / 0 / 12 |
+| `test_http_daemon_default_transport` | 9 / 0 / 1 / 8 |
+| `test_http_daemon_integration` | 3 / 0 / 7 / 0 |
+| `test_lease_gate_empirical` | 0 / 0 / 0 / 20 |
+| `test_lease_rpc` | 0 / 0 / 0 / 10 |
+| `test_rust_cli_diff` | 15 / 15 / 35 / 0 |
+| `test_task_prompt_e2e` | 0 / 0 / 0 / 6 |
+| `test_task_step_resolve_e2e` | 0 / 0 / 0 / 14 |
+| `test_windows_daemon_e2e` | 0 / 0 / 0 / 9 |
+| `test_windows_wsl_authority_e2e` | 0 / 0 / 0 / 4 |
+| `test_workspace_snapshot_rpc_http` | 6 / 0 / 6 / 0 |
+
+矩阵门禁 `scripts/check_e2e_matrix_closure.py --json` → `"ok": true`。
+
+### 12.5 明确不降级（反例，单测覆盖）
+
+- 进程存活但 manifest 超时 / RPC 超时 → 返回不 skip，调用方保持 fail。
+- 已退出但报文无冲突 marker（如 panic）→ 不 skip，保持红。
+- `cargo build` 失败且为 rustc 诊断（`error[E0308]`）→ 不 skip，保持 fail。
+- build 成功（returncode 0）→ 永不 skip。
+- 业务错误码（如 `E_SHARED_TASK_WRITER_REQUIRED`）→ `prereq_unavailable_reason`
+  返回 None，原样上抛。
+
+### 12.6 单测
+
+`tests/test_prereq_guard.py`：18 passed。覆盖 `require_cargo`（有/无）、
+`require_daemon_binary`（缺失/透传）、manifest 前退出（skip 带 returncode）、
+存活不 skip、native marker 参数化（LNK1181 / 静态库缺失 / link.exe 缺失）、
+rustc 诊断不降级、成功构建不 skip、`prereq_unavailable_reason` 别名语义、
+业务错误码保持红、管道冲突 marker 参数化（CreateNamedPipe / 10061 / 10054）、
+存活 daemon 不 skip、无关崩溃不 skip。
+
+### 12.7 残留
+
+- 管道冲突的**根治**仍在 Rust 侧：隔离 daemon 应按 `data_root` 派生管道名，
+  避免与生产 daemon 争用 SID 级 `\\.\pipe\callwarden-<SID>`（见 §7.5 后续卡建议①）。
+- 本卡守卫只降级「明确前置缺失」，不改变 `cargo build` 次数与耗时结构。
+- §7.5「其他 44」保持原状，不在本卡范围。
 
 

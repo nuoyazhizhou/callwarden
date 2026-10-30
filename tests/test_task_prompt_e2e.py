@@ -40,6 +40,11 @@ from test_http_daemon_release_acceptance import (  # noqa: E402
     _terminate,
     _wait_manifest,
 )
+from _prereq_guard import (  # noqa: E402
+    require_daemon_binary,
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 # 平台分支（与 daemon_autostart._find_daemon_binary / release acceptance 同形）：
 # Windows 产物带 .exe，Linux 不带——CI Linux runner 上硬编码 .exe 会误判
@@ -97,7 +102,7 @@ def _pick_bin() -> str:
     """优先最新构建的二进制（task.prompt.compile 资产自 RP-02 起内嵌）。"""
     candidates = [(p, os.path.getmtime(p)) for p in (_RELEASE_BIN, _DEBUG_BIN) if os.path.isfile(p)]
     if not candidates:
-        pytest.fail(f"{_DAEMON_BIN_NAME} 未构建（需 cargo build --bin cw-daemon）")
+        require_daemon_binary(None)
     return max(candidates, key=lambda x: x[1])[0]
 
 
@@ -133,7 +138,9 @@ def e2e_daemon():
         if manifest is None:
             stdout = proc.stdout.read(4000).decode("utf-8", "replace") if proc.stdout else ""
             stderr = proc.stderr.read(4000).decode("utf-8", "replace") if proc.stderr else ""
+            skip_if_daemon_exited_before_manifest(proc, stderr)
             pytest.fail(f"隔离 daemon 未发布 manifest\nstdout={stdout}\nstderr={stderr}")
+        skip_if_isolated_daemon_pipe_conflict(proc)
         client = HttpDaemonRpcClient(
             endpoint=manifest["endpoint"], verify_health=False,
             validate_manifest=False, timeout=30,

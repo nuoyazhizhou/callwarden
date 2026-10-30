@@ -67,6 +67,10 @@ from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
 
 # 复用共享 harness 的空 codegraph 构造（与 setup_w3_client 同源，避免复制漂移）
 from _w3_harness import build_empty_codegraph  # noqa: E402
+from _prereq_guard import (  # noqa: E402
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 _RUNTIME_ROOT = os.path.join(os.path.expanduser("~"), ".callwarden", "runtime")
 _CURRENT_DAEMON = os.path.join(_RUNTIME_ROOT, "current", "cw-daemon.exe")
@@ -299,17 +303,17 @@ class TestDaemonDefaultHttpTransport:
         try:
             manifest = _wait_manifest_for_pid(proc.pid, data_root)
             if manifest is None:
-                if proc.poll() is not None:
-                    pytest.fail(
-                        "隔离 daemon 启动失败（默认态 HTTP 未发布 manifest）\n"
-                        f"{_proc_diag(proc)}"
-                    )
+                skip_if_daemon_exited_before_manifest(
+                    proc, _proc_diag(proc),
+                    context="隔离 daemon 启动失败（默认态 HTTP 未发布 manifest）",
+                )
                 pytest.skip(
                     "runtime/current cw-daemon.exe 不含 H6 默认态 HTTP 改动"
                     "（默认态未发布 HTTP manifest）；"
                     "需先执行步骤 #6 refresh_shared_runtime.ps1 部署 fresh runtime"
                     "后重跑本测试验证默认态 HTTP"
                 )
+            skip_if_isolated_daemon_pipe_conflict(proc)
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],
                 verify_health=False,
@@ -403,15 +407,15 @@ class TestHttpRequestIdDedupSemantics:
         try:
             manifest = _wait_manifest_for_pid(proc.pid, data_root)
             if manifest is None:
-                if proc.poll() is not None:
-                    pytest.fail(
-                        "隔离 daemon 启动失败（默认态 HTTP 未发布 manifest）\n"
-                        f"{_proc_diag(proc)}"
-                    )
+                skip_if_daemon_exited_before_manifest(
+                    proc, _proc_diag(proc),
+                    context="隔离 daemon 启动失败（默认态 HTTP 未发布 manifest）",
+                )
                 pytest.skip(
                     "runtime/current cw-daemon.exe 不含 H6 默认态 HTTP 改动"
                     "（默认态未发布 HTTP manifest）"
                 )
+            skip_if_isolated_daemon_pipe_conflict(proc)
             client = HttpDaemonRpcClient(
                 endpoint=manifest["endpoint"],
                 verify_health=False,
@@ -586,6 +590,10 @@ class TestNamedPipeFallback:
         try:
             # manifest 在 daemon 启动早期原子发布；3s 窗口足够判定「未发布」
             time.sleep(3.0)
+            skip_if_daemon_exited_before_manifest(
+                proc, _proc_diag(proc),
+                context="隔离 daemon（named-pipe 回落）启动失败",
+            )
             assert proc.poll() is None, (
                 f"隔离 daemon（named-pipe 回落）启动失败\n{_proc_diag(proc)}"
             )

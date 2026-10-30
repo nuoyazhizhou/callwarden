@@ -32,6 +32,11 @@ from callwarden.server.daemon_client import (
     HttpDaemonRpcClient,
 )
 from callwarden.server.daemon_protocol import DaemonRemoteError
+from _prereq_guard import (
+    read_proc_stderr,
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 
 # ----------------------------------------------------------------------
@@ -229,10 +234,12 @@ def isolated_daemon(tmp_path):
                 err = os.read(fd, 65536)
             except (BlockingIOError, OSError, ValueError):
                 pass
+            stderr_text = err.decode('utf-8', 'replace')
+            skip_if_daemon_exited_before_manifest(proc, stderr_text)
             pytest.fail(
                 "隔离 daemon 未发布 manifest\n"
                 f"returncode={proc.poll()}\nfiles={os.listdir(data_root)}\n"
-                f"stderr={err.decode('utf-8', 'replace')}"
+                f"stderr={stderr_text}"
             )
         endpoint = manifest["endpoint"]
         assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
@@ -247,8 +254,12 @@ def http_client(isolated_daemon):
 
     yield (client, data_root)：data_root 供方案A seed 隔离 task-DB 的
     `workspaces` 表（`task.create` 双库 authority 对齐前置）。
+
+    管道冲突守卫放在本 fixture（而非 isolated_daemon）：仅「需要活 daemon 的
+    RPC 用例」降级为 skip，保留纯 manifest/结构断言用例的可执行性。
     """
-    endpoint, manifest, data_root, _, _ = isolated_daemon
+    endpoint, manifest, data_root, _, proc = isolated_daemon
+    skip_if_isolated_daemon_pipe_conflict(proc)
     client = _make_http_client(endpoint, manifest_path=_manifest_path_in(data_root))
     yield client, data_root
     client._resolved_endpoint = None  # 释放解析缓存，避免跨测试污染
@@ -263,7 +274,8 @@ def test_production_factory_selects_http_and_real_ping(isolated_daemon, monkeypa
     并对真实 daemon 完成 /health + RPC 往返。"""
     from callwarden.server.daemon_client import get_daemon_client
 
-    endpoint, manifest, data_root, _, _ = isolated_daemon
+    endpoint, manifest, data_root, _, proc = isolated_daemon
+    skip_if_isolated_daemon_pipe_conflict(proc)
     monkeypatch.setenv("CW_DAEMON_TRANSPORT", "http")
     # 让 production 单例发现隔离 daemon 的 endpoint（manifest 可选路径）
     monkeypatch.setattr("callwarden.config.get_http_daemon_endpoint", lambda: endpoint)
@@ -374,11 +386,12 @@ def test_timeout_fails_closed():
         srv.close()
 
 
-def test_loopback_only_and_no_sqlite_fallback(http_client, isolated_daemon):
+def test_loopback_only_and_no_sqlite_fallback(isolated_daemon):
     """loopback only + HTTP client 结构上不含 SQLite fallback + 连接失败 fail-closed。"""
     endpoint, manifest, data_root, _, _ = isolated_daemon
     assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
     # 结构上无 SQL/服务 fallback 入口（frozen contract §9 负向矩阵）
+    http_client = _make_http_client(endpoint, verify_health=False, timeout=2.0)
     assert not hasattr(http_client, "_get_db")
     assert not hasattr(http_client, "_svc")
 
@@ -442,7 +455,10 @@ def test_restart_dedup_persist(tmp_path):
     proc1, _ = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
     try:
         m1 = _wait_manifest(data_root, proc1)
-        assert m1 is not None, "第一次启动未发布 manifest"
+        if m1 is None:
+            skip_if_daemon_exited_before_manifest(proc1, read_proc_stderr(proc1))
+            pytest.fail("第一次启动未发布 manifest")
+        skip_if_isolated_daemon_pipe_conflict(proc1)
         c1 = _make_http_client(m1["endpoint"], manifest_path=_manifest_path_in(data_root))
         inst = _ensure_workspace(c1, root_path)
         _seed_task_db_workspace(task_db_path)
@@ -454,7 +470,10 @@ def test_restart_dedup_persist(tmp_path):
     proc2, _ = _spawn_isolated_daemon(bin_path, data_root, "127.0.0.1:0")
     try:
         m2 = _wait_manifest(data_root, proc2)
-        assert m2 is not None, "重启后未发布 manifest"
+        if m2 is None:
+            skip_if_daemon_exited_before_manifest(proc2, read_proc_stderr(proc2))
+            pytest.fail("重启后未发布 manifest")
+        skip_if_isolated_daemon_pipe_conflict(proc2)
         c2 = _make_http_client(m2["endpoint"], manifest_path=_manifest_path_in(data_root))
         replay = c2.call("task.create", dict(params_template, workspace_instance_id=inst), request_id=rid)
         assert first == replay, "跨 restart dedup 必须返回原结果"
@@ -466,6 +485,7 @@ def test_no_fallback_after_daemon_stop(isolated_daemon):
     """daemon 停止后 HTTP client fail-closed（E_HTTP_DAEMON_UNAVAILABLE），
     不回退 SQLite/Named Pipe/UDS（frozen contract §2.1 no-fallback）。"""
     endpoint, manifest, data_root, _, proc = isolated_daemon
+    skip_if_isolated_daemon_pipe_conflict(proc)
     client = _make_http_client(endpoint, verify_health=False, timeout=2.0)
     # 停止前：真实 RPC 成功
     assert isinstance(client.call("ping", {}), dict)

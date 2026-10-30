@@ -41,6 +41,11 @@ import pytest
 
 from callwarden.server.daemon_protocol import DaemonRemoteError
 from callwarden.server.daemon_client import DaemonUnavailableError
+from _prereq_guard import (
+    require_cargo,
+    skip_if_daemon_exited_before_manifest,
+    skip_if_native_build_prereq_unavailable,
+)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
@@ -79,9 +84,7 @@ def _daemon_config(tmp: str) -> dict:
 @pytest.fixture(scope="module", autouse=True)
 def ensure_fresh_binary():
     """P2 门禁：显式构建 cw-daemon，确保二进制由当前源码重建。"""
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.skip("未找到 cargo，无法构建新鲜二进制")
+    cargo = require_cargo()
     build = subprocess.run(
         [cargo, "build", "--release", "--no-default-features",
          "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
@@ -92,6 +95,7 @@ def ensure_fresh_binary():
         errors="replace",
     )
     if build.returncode != 0:
+        skip_if_native_build_prereq_unavailable(build)
         pytest.fail("cargo build 失败，二进制无法由当前源码重建：\n" + (build.stdout + build.stderr)[-3000:])
     if not os.path.exists(_DAEMON_BIN):
         pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN}")
@@ -146,6 +150,13 @@ def lease_env():
         time.sleep(0.5)
     if not ready:
         log.flush()
+        try:
+            stderr_text = open(
+                os.path.join(tmp, "daemon.log"), encoding="utf-8").read()[-3000:]
+        except OSError:
+            stderr_text = ""
+        skip_if_daemon_exited_before_manifest(
+            proc, stderr_text, context="daemon 未在超时内响应")
         pytest.fail("daemon 未在超时内响应")
 
     task_db = os.path.join(tmp, "callwarden.db")

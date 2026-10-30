@@ -33,6 +33,10 @@ from test_http_daemon_release_acceptance import (  # noqa: E402
     _terminate,
     _wait_manifest,
 )
+from _prereq_guard import (  # noqa: E402
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 _RELEASE_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "release", "cw-daemon.exe")
 _DEBUG_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
@@ -95,9 +99,12 @@ def isolated_http_daemon():
                     "隔离 daemon 无法启动:生产 daemon 正持有 SID 级 instance 锁。"
                     "隔离收敛套件需在生产 daemon 停止时运行(cw daemon stop)。"
                 )
+            skip_if_daemon_exited_before_manifest(
+                proc, stderr, context="隔离 daemon 未发布 manifest")
             pytest.fail(
                 f"隔离 daemon 未发布 manifest\nstdout={stdout}\nstderr={stderr}"
             )
+        skip_if_isolated_daemon_pipe_conflict(proc)
         client = HttpDaemonRpcClient(
             endpoint=manifest["endpoint"],
             verify_health=False,

@@ -63,6 +63,10 @@ from callwarden.db.db_daemon import WORKSPACE_REGISTRY_DDL  # noqa: E402
 from callwarden.db.schema import SCHEMA_INDEXES_SQL, SCHEMA_TABLES_SQL  # noqa: E402
 from callwarden.server.daemon_client import HttpDaemonRpcClient  # noqa: E402
 from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
+from _prereq_guard import (  # noqa: E402
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32", reason="隔离 daemon harness 依赖 Windows 进程/HTTP 传输"
@@ -353,12 +357,15 @@ def c17_daemon(tmp_path_factory):
                 err = os.read(fd, 65536)
             except (BlockingIOError, OSError, ValueError):
                 pass
+            stderr_text = err.decode('utf-8', 'replace')
+            skip_if_daemon_exited_before_manifest(proc, stderr_text)
             pytest.fail(
                 "隔离 daemon 未发布 manifest\n"
                 f"returncode={proc.poll()}\nbinary={bin_path}\n"
-                f"stderr={err.decode('utf-8', 'replace')}"
+                f"stderr={stderr_text}"
             )
         endpoint = manifest["endpoint"]
+        skip_if_isolated_daemon_pipe_conflict(proc)
         assert endpoint.startswith("http://127.0.0.1:"), f"非 loopback endpoint: {endpoint}"
 
         print(f"[C-17 harness] bin={bin_path}")

@@ -21,6 +21,11 @@ import time
 
 import pytest
 
+from _prereq_guard import (  # noqa: E402
+    require_cargo,
+    skip_if_native_build_prereq_unavailable,
+)
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DAEMON_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-daemon.exe")
 _CLIENT_BIN = os.path.join(_REPO_ROOT, "rust_ext", "target", "debug", "cw-client.exe")
@@ -100,9 +105,7 @@ def ensure_fresh_binaries():
     - cargo 缺失 → skip（无法提供新鲜二进制）
     - 构建失败 → fail（源码编译回归，测试必须红）
     """
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.skip("未找到 cargo，无法构建新鲜二进制")
+    cargo = require_cargo()
     build = subprocess.run(
         [cargo, "build", "--no-default-features", "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
          "--bin", "cw-daemon", "--bin", "cw-client"],
@@ -112,6 +115,7 @@ def ensure_fresh_binaries():
         errors="replace",
     )
     if build.returncode != 0:
+        skip_if_native_build_prereq_unavailable(build)
         pytest.fail("cargo build 失败，二进制无法由当前源码重建：\n" + (build.stdout + build.stderr)[-3000:])
     if not (os.path.exists(_DAEMON_BIN) and os.path.exists(_CLIENT_BIN)):
         pytest.fail(f"cargo build 成功但未产出 {_DAEMON_BIN} / {_CLIENT_BIN}")

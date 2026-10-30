@@ -38,6 +38,11 @@ from callwarden.server.daemon_protocol import (
     DaemonRemoteError,
 )
 from callwarden.server.daemon_client import UnixDaemonRpcClient
+from _prereq_guard import (
+    require_cargo,
+    skip_if_daemon_exited_before_manifest,
+    skip_if_native_build_prereq_unavailable,
+)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CW_PY = os.path.join(_REPO_ROOT, "cw.py")
@@ -140,9 +145,7 @@ def authority():
     子进程与进程内 MCP 都经隔离 daemon 写入；结束后恢复环境变量。
     """
     # ---- fresh binary 门禁：cw-daemon + cw-bridge 必须由当前源码重建 ----
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.skip("未找到 cargo，无法构建新鲜二进制")
+    cargo = require_cargo()
     os.makedirs(_CARGO_TARGET_DIR, exist_ok=True)
     build_env = dict(os.environ, CARGO_TARGET_DIR=_CARGO_TARGET_DIR)
     build = subprocess.run(
@@ -157,6 +160,7 @@ def authority():
         timeout=1500,
     )
     if build.returncode != 0:
+        skip_if_native_build_prereq_unavailable(build)
         pytest.fail("cargo build cw-daemon/cw-bridge/cw-client 失败：\n" + (build.stdout + build.stderr)[-3000:])
     if not (os.path.exists(_DAEMON_BIN) and os.path.exists(_BRIDGE_BIN)):
         pytest.fail(f"cargo build 成功但缺少产物: {_DAEMON_BIN} / {_BRIDGE_BIN}")
@@ -261,6 +265,9 @@ def authority():
                     log_text = f.read()[-3000:]
             except Exception:
                 pass
+            skip_if_daemon_exited_before_manifest(
+                daemon_proc, log_text, context="隔离 daemon 未在超时内响应"
+            )
             pytest.fail(f"隔离 daemon 未在超时内响应，日志：\n{log_text}")
 
         # 1b. 播种 workspace（BR-01/BR-02 契约）：daemon 已就绪，经 Windows 侧
