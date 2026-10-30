@@ -456,6 +456,7 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | C7 | 全量 pytest 基线恒红：native/LLM 前置缺失时缺 skip 守卫（CLI 验收 568 ERROR、隔离 daemon 管道冲突、`sqlite3.lib`、外部 LLM） | 测试信噪比 | 卡内已修（T-1793318539212-c2db0418 步骤#1-#2，见 §7）；卡外 daemon 失联族 164 / native 构建族 72 / 未归一 44 待后续卡 |
 | C8 | Rust 内嵌 schema 副本（`SCHEMA_TABLES_SQL` / `SCHEMA_INDEXES_SQL`）仍声明 canonical 已删除的 `idx_calls_callee_name` 等全量索引（审计候选 C3） | 正确性/schema 真相源 | 已修（T-1793342216372-87953754 步骤#1-#2，见 §8） |
 | C9 | Schema 版本文档门禁被弱化为仅存在性检查（`tests/test_architecture_doc.py` / `tests/test_abi_contract.py` 的文档↔代码比对）（审计候选 C4） | 治理/门禁有效性 | 已修（T-1793352736346-e6e623a4 步骤#1-#2，见 §9） |
+| C10 | 权威库工作区登记污染：同物理 checkout 多行 active、workspace_id 二义（审计候选 C5） | 正确性/数据治理 | 已修（T-1793353773817-750277f4 步骤#0-#2，见 §10） |
 
 ---
 
@@ -758,4 +759,76 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   `storage::tests` 与迁移路径覆盖，避免重复门禁带来的维护面。
 - 若文档再次滞后，正确处置是同步文档（docs 现已进入可改范围），
   **不得**再把用例降级为仅存在性检查。
+
+---
+
+## 10. C10 · 权威库工作区登记污染（2026-10-30）
+
+> 任务卡：`T-1793353773817-750277f4`（步骤 #0 triage / #1 实现+单测 / #2 部署+收敛+文档）
+> 审计候选：C5
+
+### 10.1 现象
+
+权威库 `C:\var\lib\callwarden\registry.db` 的 `daemon_workspaces` 在收敛前：
+
+| 指标 | 收敛前 |
+|---|---|
+| 总行数 | 178 |
+| `status='active'` | 28 |
+| `host_real_root` 归一化为 `c:/git_work/callwarden` | 11（**全部 active**） |
+
+同一物理 checkout 上并存 11 行 active，`host_real_root` 写法混合
+（`c:/git_work/callwarden` 与 `\\?\C:\git_work\callwarden`），
+instance id 各异（`f47918fe7f076161` / `38c6bf0d73637f85` / … / `4baea3ff12c2ea5c` /
+`822c031c71488f12`），`workspace_id` 存在二义：`workspace.register` 用
+`INSERT OR REPLACE` 轮换 ROWID，历史行全部留在 active 集合里。
+
+### 10.2 根因
+
+`register_workspace_preferred` 收编旧身份时只把**被收编那一行**置为
+active（`propagate_snapshot_to_siblings` 只传播 `snapshot_id`，不改
+`status`），从不归档同 root 的其余 active 行。每次 git head 变化 / 客户端
+路径写法变化都会派生新的 instance id 并新增一行，旧行永久滞留 active，
+registry 只增不减。数据库侧没有唯一约束能表达「同 owner + 同归一化 root
+只有一行 active」，因为 `host_real_root` 是原样字符串写入，SQL 层无法用
+归一化键做约束。
+
+### 10.3 处置
+
+`rust_ext/src/daemon/workspace.rs`：
+
+- 新增 `archive_alias_rows`：按 `owner_uid` 选出该 owner 下所有
+  `status='active'` 且 `workspace_instance_id <> keep_instance_id` 的行，
+  在 Rust 侧用 `normalize_identity_root` 比对 `host_real_root`（与
+  `propagate_snapshot_to_siblings` 同一策略，规避 SQL 无法归一化的问题），
+  命中者置 `status='archived'` 并刷新 `last_active_at`；archived 行保留原
+  `snapshot_id` 便于审计，重复执行幂等。
+- 收编分支与新建分支均在写入后调用 `archive_alias_rows`，保证「注册即收敛」，
+  不再依赖运维手工清理。
+- 新增单测 `test_register_archives_alias_rows_single_active_per_root`：
+  同 owner 下 `alias-canonical`（`C:/tmp/cv`）与 `alias-verbatim`
+  （`\\?\C:\tmp\cv`）归一化同 root、`other-root` 为不同 root；断言收编行
+  active、同 root 别名行 archived、不同 root 行不受影响。
+
+### 10.4 实测
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --manifest-path rust_ext/Cargo.toml --lib --no-default-features --features sqlite-bundled workspace::tests` | **150 passed / 0 failed** |
+| 部署（`scripts/refresh_shared_runtime.ps1 -TaskId T-1793353773817-750277f4`） | passed，evidence `20261030-182956-b1d7965886d5-b5f1e09b.json`（旧 daemon 已停止、新实例就绪） |
+| 收敛命令 | `python cw.py workspace register callwarden c:\git_work\callwarden` → `ID=1193` |
+| 收敛后总行数 / active | 178 / **19**（同 root 9 行转 archived） |
+| 收敛后同 root active | **2**：owner 4294967295 → `1193`（`4baea3ff12c2ea5c`）；owner 0 → `25` |
+| 按 owner 不变式 | owner 4294967295：同 root 10 行 → active 1；owner 0：同 root 1 行 → active 1 |
+
+### 10.5 边界与残留
+
+- 归档作用域是 **owner_uid + 归一化 root**，不跨 owner 归档：`workspace_instance_id`
+  本身由 `sha256("owner_uid|norm_root")[:16]` 派生，跨 owner 的同一目录是
+  不同 authority，归档别人的行会使其注册失效。收敛后同 root 仍有 2 行 active
+  （owner 0 的 `25` 与 owner 4294967295 的 `1193`），属预期语义而非残留。
+- 归档只改 `status`，不删行：历史行保留 `snapshot_id` 与 provenance 供审计，
+  `workspace list` 仍可见（无 `[活动]` 标记）。
+- 未迁移存量不一致的 `snapshot_id`（依赖 C6 的迁移 registry 缺口一并处理），
+  本卡只收敛 active 基数与 workspace_id 二义。
 

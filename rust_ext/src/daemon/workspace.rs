@@ -318,6 +318,46 @@ fn propagate_snapshot_to_siblings(
     Ok(affected)
 }
 
+/// C10（2026-10-30）：单一 active 不变式——同 owner + 同归一化 root 只留一行 active。
+///
+/// 注册路径收编/新建后，历史身份（每次 git head 变化产生的旧 instance id）与
+/// 当前行共享同一物理 checkout。旧实现只传播 snapshot、从不归档别名行，导致
+/// 同一 root 长期多行 active，放大 workspace_id 二义性并污染权威 registry
+/// （实测同 root 11 行 active）。此处按 owner + 归一化 root 归档其余 active 行；
+/// archived 行保留原 snapshot 便于审计，重复执行幂等。
+fn archive_alias_rows(
+    conn: &Connection,
+    owner_uid: u32,
+    norm_root: &str,
+    keep_instance_id: &str,
+    now: f64,
+) -> Result<usize, rusqlite::Error> {
+    // 与 propagate_snapshot_to_siblings 同理：历史行 root 是原样写入，
+    // 必须在 Rust 侧用同一 normalize_identity_root 比对，不能走 SQL 精确比较。
+    let candidates: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT workspace_id, host_real_root FROM daemon_workspaces \
+             WHERE owner_uid = ?1 AND workspace_instance_id <> ?2 AND status = 'active'",
+        )?;
+        let rows = stmt.query_map(params![owner_uid, keep_instance_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let mut affected = 0usize;
+    for (workspace_id, host_root) in candidates {
+        if normalize_identity_root(&host_root) != norm_root {
+            continue;
+        }
+        affected += conn.execute(
+            "UPDATE daemon_workspaces SET status = 'archived', last_active_at = ?1 \
+             WHERE workspace_id = ?2",
+            params![now, workspace_id],
+        )?;
+    }
+    Ok(affected)
+}
+
 /// 简易 hex 编码（避免引入 hex crate 依赖）
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -540,6 +580,8 @@ impl WorkspaceRegistry {
                 toolchain_fingerprint,
                 now,
             )?;
+            // C10：同 root 其余 active 别名行归档，保持单一 active 不变式。
+            archive_alias_rows(&conn, owner_uid, &norm_root, &legacy_id, now)?;
             return fetch_workspace_by_instance(&conn, &legacy_id);
         }
         let instance_id = compute_workspace_instance_id(
@@ -617,6 +659,8 @@ impl WorkspaceRegistry {
             toolchain_fingerprint,
             now,
         )?;
+        // C10：新建身份写入后同样归档同 root 的其余 active 别名行。
+        archive_alias_rows(&conn, owner_uid, &norm_root, &instance_id, now)?;
         fetch_workspace_by_instance(&conn, &instance_id)
     }
 
@@ -4789,6 +4833,82 @@ mod tests {
             sibling["snapshot_id"].as_str().unwrap(),
             snap,
             "verbatim 路径别名行必须共享同一 snapshot 身份"
+        );
+    }
+
+    #[test]
+    fn test_register_archives_alias_rows_single_active_per_root() {
+        // C10：同 owner + 同归一化 root 的历史别名行必须被归档，只留被收编行 active。
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let now = now_ts();
+        {
+            let conn = registry.conn.lock().unwrap();
+            for (instance, host_root) in [
+                ("alias-canonical", "C:/tmp/cv"),
+                ("alias-verbatim", "\\\\?\\C:\\tmp\\cv"),
+                ("other-root", "C:/tmp/other"),
+            ] {
+                conn.execute(
+                    "INSERT INTO daemon_workspaces \
+                     (workspace_instance_id, snapshot_id, owner_uid, git_remote_url, \
+                      git_head_commit_sha, client_view_root, host_real_root, \
+                      toolchain_fingerprint, registered_at, last_active_at, status) \
+                     VALUES (?1, NULL, ?2, '', '', ?3, ?4, '', ?5, ?5, 'active')",
+                    params![instance, 1000, host_root, host_root, now],
+                )
+                .unwrap();
+            }
+        }
+
+        let preferred = vec!["alias-canonical".to_string()];
+        let adopted = registry
+            .register_workspace_preferred(1000, "C:/tmp/cv", "C:/tmp/cv", "", "", "", &preferred)
+            .unwrap();
+        assert_eq!(adopted["workspace_instance_id"], "alias-canonical");
+
+        let active_for_root: Vec<String> = {
+            let conn = registry.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT workspace_instance_id, host_real_root FROM daemon_workspaces \
+                     WHERE owner_uid = 1000 AND status = 'active'",
+                )
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .unwrap();
+            rows.collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .into_iter()
+                .filter(|(_, root)| normalize_identity_root(root) == "c:/tmp/cv")
+                .map(|(instance, _)| instance)
+                .collect()
+        };
+        assert_eq!(
+            active_for_root,
+            vec!["alias-canonical".to_string()],
+            "同 owner + 同归一化 root 只允许一行 active"
+        );
+
+        let verbatim = registry
+            .get_workspace_status("alias-verbatim")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            verbatim["status"].as_str().unwrap(),
+            "archived",
+            "同 root 别名行必须归档"
+        );
+        let other = registry
+            .get_workspace_status("other-root")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            other["status"].as_str().unwrap(),
+            "active",
+            "不同 root 的行不受影响"
         );
     }
 
