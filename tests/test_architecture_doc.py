@@ -36,15 +36,31 @@ def _read_arch_doc():
         return f.read()
 
 
-def test_doc_schema_version_matches_code():
-    """Schema 版本一致性改为「代码↔代码」比对，docs 仅做结构性存在性检查。
+def _extract_doc_version(text):
+    """从架构文档文本提取「当前 Schema 版本：**vNN**」数值。
 
-    stale 依据（A 类：测试侧陈旧期望）：原断言要求 docs/architecture.md 声明的
-    「当前 Schema 版本」与 db/schema.py 的 SCHEMA_VERSION 数值一致，但该文档停留在
-    v50，已滞后于代码权威源——db/schema.py:2143 与 rust_ext/src/abi_contract.rs:29
-    均为 SCHEMA_VERSION=60。docs/ 不在本次可改范围，故对齐已修复的
-    tests/test_abi_contract.py 做法：数值真相源收敛到代码
-    （db/schema.py ↔ rust_ext/src/abi_contract.rs），文档仅校验仍声明版本字段。
+    缺字段即失败——门禁不允许静默跳过（C9：禁止退化为仅存在性检查）。
+    """
+    m = re.search(r"当前 Schema 版本[：:]\s*\*\*v(\d+)\*\*", text)
+    assert m, "文档中未找到 '当前 Schema 版本：**vNN**' 声明"
+    return int(m.group(1))
+
+
+def _assert_doc_version_matches(text, expected):
+    """文档声明的 Schema 版本必须与代码权威源数值相等（C9 门禁）。"""
+    doc_ver = _extract_doc_version(text)
+    assert doc_ver == expected, (
+        f"docs/architecture.md 声明 v{doc_ver} 与 "
+        f"db/schema.py SCHEMA_VERSION=v{expected} 不一致"
+    )
+
+
+def test_doc_schema_version_matches_code():
+    """Schema 版本门禁：代码↔代码 + 文档↔代码 双重数值比对（C9 恢复）。
+
+    历史：该用例曾因 docs/architecture.md 滞后（v50）被弱化为「文档仅校验仍声明
+    版本字段」。C9 修复时文档已对齐 v61，故恢复严格数值门禁；若文档再次滞后，
+    本用例必须失败，而不是靠人工发现。
     """
     # 1. 权威源比对：代码↔代码
     with open(ABI_CONTRACT_RS, encoding="utf-8") as f:
@@ -57,10 +73,16 @@ def test_doc_schema_version_matches_code():
         f"db/schema.py SCHEMA_VERSION=v{SCHEMA_VERSION} 不一致"
     )
 
-    # 2. docs 仅校验仍声明「当前 Schema 版本：**vNN**」字段（不做数值比对）
-    text = _read_arch_doc()
-    m_doc = re.search(r"当前 Schema 版本[：:]\s*\*\*v(\d+)\*\*", text)
-    assert m_doc, "文档中未找到 '当前 Schema 版本' 声明"
+    # 2. docs 数值必须与代码权威源相等
+    _assert_doc_version_matches(_read_arch_doc(), SCHEMA_VERSION)
+
+
+def test_doc_schema_version_gate_rejects_stale_doc():
+    """负向：文档版本滞后或缺字段时门禁必须失败（防止再次弱化）。"""
+    with pytest.raises(AssertionError):
+        _assert_doc_version_matches("当前 Schema 版本：**v50**", SCHEMA_VERSION)
+    with pytest.raises(AssertionError):
+        _assert_doc_version_matches("（文档未声明版本）", SCHEMA_VERSION)
 
 
 def test_doc_covers_v14_to_v25_versions():

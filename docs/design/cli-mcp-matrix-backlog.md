@@ -455,6 +455,7 @@ ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档�
 | C1 | 权威库 ignored 行归档缺口（`build/` 残留 77 文件 / 1,467 符号，`archived_files=0`） | 正确性/数据治理 | 已修（T-1793317526334-eea45f3c 步骤#1-#2，见 §4.7） |
 | C7 | 全量 pytest 基线恒红：native/LLM 前置缺失时缺 skip 守卫（CLI 验收 568 ERROR、隔离 daemon 管道冲突、`sqlite3.lib`、外部 LLM） | 测试信噪比 | 卡内已修（T-1793318539212-c2db0418 步骤#1-#2，见 §7）；卡外 daemon 失联族 164 / native 构建族 72 / 未归一 44 待后续卡 |
 | C8 | Rust 内嵌 schema 副本（`SCHEMA_TABLES_SQL` / `SCHEMA_INDEXES_SQL`）仍声明 canonical 已删除的 `idx_calls_callee_name` 等全量索引（审计候选 C3） | 正确性/schema 真相源 | 已修（T-1793342216372-87953754 步骤#1-#2，见 §8） |
+| C9 | Schema 版本文档门禁被弱化为仅存在性检查（`tests/test_architecture_doc.py` / `tests/test_abi_contract.py` 的文档↔代码比对）（审计候选 C4） | 治理/门禁有效性 | 已修（T-1793352736346-e6e623a4 步骤#1-#2，见 §9） |
 
 ---
 
@@ -700,4 +701,61 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   不影响正确性）。对应单测见 §8.3。
 - `tests/_bench_*.py`（3 个基准脚本）仍自建 `idx_calls_callee_name`：那是
   bench 专用简化 schema，不在生产路径，未纳入本卡范围。
+
+---
+
+## 9. C9 · Schema 版本文档门禁被弱化为仅存在性检查（2026-10-30）
+
+> 任务卡：`T-1793352736346-e6e623a4`（步骤 #0 triage / #1 恢复门禁 / #2 验证+文档）
+> 审计候选：C4
+
+### 9.1 现象
+
+| 用例 | 弱化后的实际行为 |
+|---|---|
+| `tests/test_architecture_doc.py::test_doc_schema_version_matches_code` | 只断言 `docs/architecture.md` 仍出现「当前 Schema 版本：**vNN**」字段，不与 `db/schema.py` 的 `SCHEMA_VERSION` 比对数值 |
+| `tests/test_abi_contract.py::test_contract_schema_version_matches_schema_py` | 只断言 `docs/design/migration-manifest.md` 仍声明 `SCHEMA_VERSION` 字段，不比对数值 |
+
+后果：把文档版本改成任意滞后值（如 v50 / 59-59），两条用例仍然通过，门禁
+完全失去「文档滞后即红」的效力。
+
+### 9.2 根因
+
+两次 stale 修正（文档停留在 v50 / `RUST_SCHEMA_VERSION=59`，而代码已到 v60）
+选择了「降低门禁强度」而不是「同步文档」：因当时 docs 不在可改范围，把数值
+比对降级为结构性存在性检查。本轮巡检时两份文档均已对齐 v61，降级不再有
+正当理由，属于「用弱化测试掩盖文档滞后」的治理债。
+
+### 9.3 处置
+
+- `tests/test_architecture_doc.py`：抽出 `_extract_doc_version` /
+  `_assert_doc_version_matches`；`test_doc_schema_version_matches_code` 恢复
+  「代码↔代码 + 文档↔代码」双重数值比对；新增负向
+  `test_doc_schema_version_gate_rejects_stale_doc`（v50 与缺字段均必须失败）。
+- `tests/test_abi_contract.py`：抽出 `_extract_version` /
+  `_assert_manifest_versions`；`test_contract_schema_version_matches_schema_py`
+  恢复 `SCHEMA_VERSION`↔`db/schema.py`、`RUST_SCHEMA_VERSION`↔
+  `rust_ext/src/abi_contract.rs` 数值比对；新增负向
+  `test_contract_schema_version_gate_rejects_stale_manifest`（59/59 与缺
+  `RUST_SCHEMA_VERSION` 均必须失败）。
+
+### 9.4 实测
+
+| 项 | 结果 |
+|---|---|
+| 基线（修改前） | 两条用例 2 passed（文档 v61 与代码一致），但对滞后文档不敏感 |
+| `pytest tests/test_abi_contract.py tests/test_architecture_doc.py` | **40 passed / 1 skipped** |
+| 负向用例 | v50 / 缺字段 / 59-59 / 缺 `RUST_SCHEMA_VERSION` 均按预期抛出 `AssertionError` |
+| 端到端模拟滞后（arch doc → v50，随后还原） | `FAILED ... docs/architecture.md 声明 v50 与 db/schema.py SCHEMA_VERSION=v61 不一致` |
+| 端到端模拟滞后（manifest `RUST_SCHEMA_VERSION` → 59，随后还原） | `FAILED ... RUST_SCHEMA_VERSION=59 与 abi_contract.rs SCHEMA_VERSION=61 不一致` |
+| 还原后 `git diff -- docs/architecture.md docs/design/migration-manifest.md` | 空（两份文档字节级未被改动） |
+| `git diff --check` | 0 |
+
+### 9.5 边界与残留
+
+- 不新增第三处镜像门禁（`rust_ext/src/storage.rs` 的 `SCHEMA_VERSION`）：
+  `abi_contract.rs` 已与 Python 权威源强绑，Rust 内部两常量由 C8 的
+  `storage::tests` 与迁移路径覆盖，避免重复门禁带来的维护面。
+- 若文档再次滞后，正确处置是同步文档（docs 现已进入可改范围），
+  **不得**再把用例降级为仅存在性检查。
 

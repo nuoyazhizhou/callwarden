@@ -15,6 +15,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 if str(_PKG_ROOT) not in sys.path:
@@ -223,18 +225,60 @@ def test_schema_version_in_schema_py():
     assert actual_version > 0, f"schema.py SCHEMA_VERSION 必须为正整数，实际 {actual_version}"
 
 
-def test_contract_schema_version_matches_schema_py():
-    """派生文档仍须声明 SCHEMA_VERSION 字段（结构性存在性，不做数值比对）。
+def _extract_version(text, pattern, label):
+    """提取版本号；缺字段即失败（C9：门禁不得退化为仅存在性检查）。"""
+    match = re.search(pattern, text, re.MULTILINE)
+    assert match, f"{label} 未声明版本号"
+    return int(match.group(1))
 
-    stale 修正：migration-manifest.md 记录的版本号已滞后（59 vs 代码 60），
-    数值真相源已收敛到代码（db/schema.py ↔ rust_ext/src/abi_contract.rs）。
-    文档不在本次可改范围，故仅校验其仍声明版本字段，避免数值比对因文档滞后而误报。
+
+def _assert_manifest_versions(manifest, py_version, rust_version):
+    """migration-manifest 的两个版本字段必须与代码权威源数值相等（C9 门禁）。"""
+    manifest_version = _extract_version(
+        manifest, r"^SCHEMA_VERSION\s*=\s*(\d+)", "migration-manifest.md SCHEMA_VERSION"
+    )
+    manifest_rust = _extract_version(
+        manifest, r"^RUST_SCHEMA_VERSION\s*=\s*(\d+)",
+        "migration-manifest.md RUST_SCHEMA_VERSION",
+    )
+    assert manifest_version == py_version, (
+        f"migration-manifest.md SCHEMA_VERSION={manifest_version} 与 "
+        f"db/schema.py SCHEMA_VERSION={py_version} 不一致"
+    )
+    assert manifest_rust == rust_version, (
+        f"migration-manifest.md RUST_SCHEMA_VERSION={manifest_rust} 与 "
+        f"rust_ext/src/abi_contract.rs SCHEMA_VERSION={rust_version} 不一致"
+    )
+
+
+def test_contract_schema_version_matches_schema_py():
+    """派生文档的版本字段必须与代码数值相等（C9 恢复严格门禁）。
+
+    历史：该用例曾因 migration-manifest.md 滞后（59 vs 代码 60）被弱化为「仅校验
+    文档仍声明版本字段」。C9 修复时文档已对齐 v61，故恢复数值比对；文档再次滞后
+    时本用例必须失败。
     """
     manifest = _read(_MANIFEST_MD)
+    schema_py = _read(_SCHEMA_PY)
+    abi_rs = _read(_ABI_CONTRACT_RS)
 
-    # 从 manifest 提取版本字段（仅校验存在性）
-    manifest_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", manifest)
-    assert manifest_match, "migration-manifest.md 未声明 SCHEMA_VERSION"
+    py_version = _extract_version(
+        schema_py, r"^SCHEMA_VERSION\s*=\s*(\d+)", "db/schema.py SCHEMA_VERSION"
+    )
+    rust_version = _extract_version(
+        abi_rs, r"SCHEMA_VERSION:\s*u32\s*=\s*(\d+)", "abi_contract.rs SCHEMA_VERSION"
+    )
+    _assert_manifest_versions(manifest, py_version, rust_version)
+
+
+def test_contract_schema_version_gate_rejects_stale_manifest():
+    """负向：manifest 版本滞后或字段缺失时门禁必须失败（防止再次弱化）。"""
+    with pytest.raises(AssertionError):
+        _assert_manifest_versions(
+            "SCHEMA_VERSION = 59\nRUST_SCHEMA_VERSION = 59\n", 61, 61
+        )
+    with pytest.raises(AssertionError):
+        _assert_manifest_versions("SCHEMA_VERSION = 61\n", 61, 61)
 
 
 def test_cas_state_constants_in_db_cas():
