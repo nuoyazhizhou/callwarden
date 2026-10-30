@@ -1017,6 +1017,28 @@ fn purge_missing_file_graph(
         return Ok(Vec::new());
     };
 
+    let affected = purge_file_graph_rows(conn, fid)?;
+    for sql in [
+        // 现场库的 archived_files / git_file_changes 外键同为 NO ACTION
+        "DELETE FROM archived_files WHERE file_instance_id = ?1",
+        "DELETE FROM file_instances WHERE id = ?1",
+    ] {
+        conn.execute(sql, rusqlite::params![fid]).map_err(map_err)?;
+    }
+    Ok(affected)
+}
+
+/// 删除单个文件的图行（symbols/calls/file_versions 等），保留
+/// `file_instances` 行本身。返回「受影响的 callee 名」集合。
+///
+/// 归档路径（[`archive_ignored_file_graph`]）必须保留 file_instances 行：
+/// `archived_files.file_instance_id` 是 NO ACTION 外键，行删除后归档记录无法
+/// 写入；C1 复用本函数以对齐 `purge_missing_file_graph` 的级联顺序。
+fn purge_file_graph_rows(
+    conn: &rusqlite::Connection,
+    fid: i64,
+) -> Result<Vec<String>, DaemonRpcError> {
+    let map_err = |e: rusqlite::Error| DaemonRpcError::internal_error(format!("图行清理失败: {e}"));
     let mut affected: Vec<String> = Vec::new();
     let symbol_ids: Vec<i64> = {
         let mut stmt = conn
@@ -1069,16 +1091,115 @@ fn purge_missing_file_graph(
         "DELETE FROM coverage_data WHERE file_instance_id = ?1",
         "DELETE FROM file_ownership WHERE file_instance_id = ?1",
         "DELETE FROM semgrep_findings WHERE file_instance_id = ?1",
-        // 现场库的 archived_files / git_file_changes 外键同为 NO ACTION
-        "DELETE FROM archived_files WHERE file_instance_id = ?1",
         "DELETE FROM git_file_changes WHERE file_instance_id = ?1",
         "DELETE FROM file_versions WHERE file_instance_id = ?1",
         "DELETE FROM symbols WHERE file_instance_id = ?1",
-        "DELETE FROM file_instances WHERE id = ?1",
     ] {
         conn.execute(sql, rusqlite::params![fid]).map_err(map_err)?;
     }
     Ok(affected)
+}
+
+/// C1：ignore 契约归档 —— 已入库但当前被剪枝命中的文件行。
+///
+/// `handle_build_graph` 的删除感知只清理「磁盘上已消失」的行；被
+/// `.gitignore`/`.callwardenignore` 剪枝、但文件仍存在于磁盘的旧行（如重构前
+/// 误入库的 `build/lib.win-amd64-cpython-314/` 副本）永远不会离开符号图，
+/// 导致源码与构建副本重复符号污染 `get_callers`/孤儿符号/统计。
+///
+/// 这里迁 `archived_files` + 级联清理图行，保留 `file_instances` 行并置
+/// `status='archived'`（与 `gc_archive_core` 的归档语义一致）。幂等：已有
+/// 归档记录或状态已是 archived 时直接跳过（`archived` 计数不增加）。
+///
+/// 返回 `None` 表示该 rel_path 无库内行；`Some((是否新归档, 受影响名字))`。
+fn archive_ignored_file_graph(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    rel: &str,
+    reason: &str,
+    now: f64,
+) -> Result<Option<(bool, Vec<String>)>, DaemonRpcError> {
+    let map_err = |e: rusqlite::Error| DaemonRpcError::internal_error(format!("ignore 归档失败: {e}"));
+    let row: Option<(i64, String, String, String)> = conn
+        .query_row(
+            "SELECT id, abs_path, current_content_hash, status FROM file_instances
+             WHERE workspace_id = ?1 AND rel_path = ?2",
+            rusqlite::params![workspace_id, rel],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(map_err)?;
+    let Some((fid, abs_path, content_hash, status)) = row else {
+        return Ok(None);
+    };
+    if status == "archived" {
+        return Ok(Some((false, Vec::new())));
+    }
+    let already_archived: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM archived_files WHERE file_instance_id = ?1)",
+            rusqlite::params![fid],
+            |r| r.get(0),
+        )
+        .map_err(map_err)?;
+    if already_archived {
+        return Ok(Some((false, Vec::new())));
+    }
+    let symbol_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM symbols WHERE file_instance_id = ?1",
+            rusqlite::params![fid],
+            |r| r.get(0),
+        )
+        .map_err(map_err)?;
+    let call_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM calls WHERE caller_id IN
+             (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+            rusqlite::params![fid],
+            |r| r.get(0),
+        )
+        .map_err(map_err)?;
+    conn.execute(
+        "INSERT INTO archived_files (file_instance_id, workspace_id, rel_path, abs_path,
+            content_hash, symbol_count, call_count, archive_reason, archived_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            fid,
+            workspace_id,
+            rel,
+            abs_path,
+            content_hash,
+            symbol_count,
+            call_count,
+            reason,
+            now
+        ],
+    )
+    .map_err(map_err)?;
+    let affected = purge_file_graph_rows(conn, fid)?;
+    conn.execute(
+        "UPDATE file_instances SET status = 'archived' WHERE id = ?1",
+        rusqlite::params![fid],
+    )
+    .map_err(map_err)?;
+    Ok(Some((true, affected)))
+}
+
+/// 返回 rel_path 命中的剪枝目录名（只看目录段；剪枝集合来自
+/// [`load_ignore_dir_names`]，即 `.gitignore`/`.callwardenignore` 契约与硬编码
+/// SKIP_DIRS。**不包含** `scan_files` 的隐藏目录启发式——`.github/` 这类目录
+/// 不在 ignore 契约内，Python 管线会正常索引，不能在此归档误伤）。
+fn ignored_dir_of(
+    rel: &str,
+    skip: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let norm = rel.replace('\\', "/");
+    let mut segs: Vec<&str> = norm.split('/').collect();
+    segs.pop();
+    segs.into_iter()
+        .find(|seg| skip.contains(*seg))
+        .map(|seg| seg.to_string())
 }
 
 /// 收集单个文件的符号名（供增量边重算的受影响名字集合）。
@@ -1138,6 +1259,8 @@ fn collect_file_raw_callee_names(
 /// - `unchanged` 可解析且内容未变化的文件数（含快路径命中）；
 /// - `skipped_cached` 其中走 mtime 快路径、未读取文件内容的文件数；
 /// - `deleted` 磁盘上已消失、本轮清理掉图行的文件数；
+/// - `archived` 被 ignore 契约目录剪枝命中但仍存在于磁盘、本轮归档的存量行数
+///   （幂等：已归档行不重复计数）；
 /// - `skipped_unparsed` 语言无 parser 的文件数；
 /// - `symbols` / `calls` 本轮解析产出的符号/调用总数；
 /// - `calls_resolved` / `calls_ambiguous` 本轮受影响名字的边重算结果
@@ -1179,6 +1302,8 @@ pub fn handle_build_graph(
     let mut skipped_unparsed = 0usize;
     let mut skipped_cached = 0usize;
     let mut deleted = 0usize;
+    // C1：ignore 契约目录命中但仍在磁盘的存量行归档数
+    let mut archived = 0usize;
     let mut symbol_total = 0usize;
     let mut call_total = 0usize;
     let now = now_ts_secs();
@@ -1304,10 +1429,28 @@ pub fn handle_build_graph(
         rows.filter_map(Result::ok).collect()
     };
     for (rel, abs_path) in stored_rows {
-        if seen.contains(&rel)
-            || root_canon.join(&rel).exists()
-            || Path::new(&abs_path).exists()
-        {
+        if seen.contains(&rel) {
+            continue;
+        }
+        let exists_on_disk = root_canon.join(&rel).exists() || Path::new(&abs_path).exists();
+        // C1：被剪枝命中但文件仍在磁盘 → 归档（幂等），否则历史行永久残留
+        if let Some(dir) = ignored_dir_of(&rel, &skip) {
+            if exists_on_disk {
+                let reason = format!("ignored path: {dir}");
+                if let Some((newly, names)) =
+                    archive_ignored_file_graph(&conn, workspace_id, &rel, &reason, now)?
+                {
+                    for name in names {
+                        affected_names.insert(name);
+                    }
+                    if newly {
+                        archived += 1;
+                    }
+                    continue;
+                }
+            }
+        }
+        if exists_on_disk {
             continue;
         }
         let names = purge_missing_file_graph(&conn, workspace_id, &rel)?;
@@ -1331,6 +1474,7 @@ pub fn handle_build_graph(
     m.insert("unchanged".into(), Value::Number(unchanged.into()));
     m.insert("skipped_cached".into(), Value::Number(skipped_cached.into()));
     m.insert("deleted".into(), Value::Number(deleted.into()));
+    m.insert("archived".into(), Value::Number(archived.into()));
     m.insert("skipped_unparsed".into(), Value::Number(skipped_unparsed.into()));
     m.insert("symbols".into(), Value::Number(symbol_total.into()));
     m.insert("calls".into(), Value::Number(call_total.into()));
@@ -2088,6 +2232,109 @@ mod tests {
             )
             .unwrap();
         assert_eq!(dangling, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_archive_ignored_file_graph_is_idempotent() {
+        // C1：build/ 等被剪枝目录的存量行走归档路径（迁 archived_files +
+        // 清图行 + status=archived），重复执行幂等，且不误伤未忽略文件。
+        let tmp = std::env::temp_dir().join(format!(
+            "cw_archive_ignored_test_{}_{}",
+            std::process::id(),
+            now_ts_secs() as u64
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join(".gitignore"), "build/\n").unwrap();
+        let db_path = tmp.join("codegraph.db");
+        crate::storage::initialize_or_migrate(&db_path, crate::storage::SCHEMA_VERSION).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description)
+             VALUES ('t', 'c:/t', 0.0, 0, 'test')",
+            [],
+        )
+        .unwrap();
+        let ws_id = conn.last_insert_rowid();
+        setup_ws_and_parse(
+            &tmp, &conn, ws_id, "build/lib/callwarden/a.py",
+            "def helper():\n    return 1\n",
+        );
+        setup_ws_and_parse(
+            &tmp, &conn, ws_id, "callwarden/a.py",
+            "def helper():\n    return 1\n",
+        );
+        let skip = load_ignore_dir_names(&tmp);
+        assert_eq!(
+            ignored_dir_of("build/lib/callwarden/a.py", &skip),
+            Some("build".to_string())
+        );
+        assert_eq!(ignored_dir_of("callwarden/a.py", &skip), None);
+        // 隐藏目录启发式不属于 ignore 契约（`.github/` 会被 Python 管线索引），
+        // 不能仅因 scan_files 跳过而归档
+        assert_eq!(ignored_dir_of(".github/workflows/x.py", &skip), None);
+
+        let (newly, names) = archive_ignored_file_graph(
+            &conn, ws_id, "build/lib/callwarden/a.py", "ignored path: build", 0.0,
+        )
+        .unwrap()
+        .expect("库内应有 build 行");
+        assert!(newly, "首次调用应新归档");
+        assert!(names.iter().any(|n| n == "helper"), "受影响名字须回传: {names:?}");
+        let archived_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM archived_files WHERE workspace_id = ?1",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived_rows, 1);
+        let build_symbols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id
+                 WHERE fi.workspace_id = ?1 AND fi.rel_path LIKE 'build/%'",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(build_symbols, 0, "归档后 build 图行必须清零");
+        let build_status: String = conn
+            .query_row(
+                "SELECT status FROM file_instances WHERE workspace_id = ?1
+                 AND rel_path = 'build/lib/callwarden/a.py'",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(build_status, "archived");
+
+        // 幂等：第二次不再新归档，也不再产生归档记录
+        let (newly2, names2) = archive_ignored_file_graph(
+            &conn, ws_id, "build/lib/callwarden/a.py", "ignored path: build", 0.0,
+        )
+        .unwrap()
+        .expect("库内应有 build 行");
+        assert!(!newly2, "重复执行不得重复归档");
+        assert!(names2.is_empty());
+        let archived_rows2: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM archived_files WHERE workspace_id = ?1",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived_rows2, 1);
+
+        // 未忽略文件不受影响
+        let source_symbols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id
+                 WHERE fi.workspace_id = ?1 AND fi.rel_path = 'callwarden/a.py'",
+                rusqlite::params![ws_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(source_symbols >= 1);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

@@ -383,6 +383,64 @@ v61 库会报 `SCHEMA_TOO_NEW`）。
 `initialize_or_migrate` 二次调用幂等；新建库、既有 v60 库（Python / Rust
 两条迁移链）、daemon 写路径三处均建出该索引。
 
+### 4.7 build/ 索引残留归档（C1，`T-1793317526334-eea45f3c`）
+
+**现象**：权威库 `ws=1`（`c:/git_work/callwarden`）仍有
+`build/lib.win-amd64-cpython-314/` 下 77 条 `file_instances`（全部
+`status=pending`）与 1,467 个符号，而 `archived_files=0`；`.gitignore:27`
+与 `.callwardenignore` 默认基线均声明 `build/` 应忽略。
+
+**根因（归档缺口，不是本轮扫描漏剪）**：
+
+1. `load_ignore_dir_names` 只作用于**本轮扫描**（`scan_files` 递归剪枝）；
+2. 删除感知段（`handle_build_graph`）以「磁盘上是否真的不存在」为准，
+   `root_canon.join(rel).exists()` 为真即跳过——被 ignore 剪枝、但文件仍在
+   磁盘的历史行永不进入 purge 路径；
+3. 既有归档实现 `gc_archive_core` 只在 `gc archive` RPC/CLI 显式调用，
+   `handle_build_graph` 从不触发，故 `archived_files` 长期为 0。
+
+判定为历史残留而非扫描漏剪：残留行 `mtime` 范围
+2026-07-01T16:28:06Z ~ 2026-07-25T12:05:26Z、`last_parsed` 最大
+2026-07-25T12:07:51Z，均早于 ignore 剪枝提交 `0bea95e`（2026-09-14 19:12 +0800）。
+
+**修复**（`rust_ext/src/daemon/fs_handlers.rs`）：
+
+- 抽出 `purge_file_graph_rows`：symbols/calls/file_versions 等级联清理，
+  保留 `file_instances` 行以维持 `archived_files.file_instance_id` 的
+  NO ACTION 外键；`purge_missing_file_graph` 复用该助手后仅额外删
+  `archived_files` / `file_instances`，语义不变；
+- 新增 `archive_ignored_file_graph`：写 `archived_files`（`symbol_count` /
+  `call_count` / `archive_reason="ignored path: <dir>"` / `archived_at`）→
+  级联清图行 → `status='archived'`；以「已归档记录存在」+「状态已 archived」
+  双重短路，重复执行不重复归档；
+- 新增 `ignored_dir_of`：只看目录段（文件名不参与），只命中 ignore 契约
+  目录名（`.gitignore`/`.callwardenignore` + 硬编码 `SKIP_DIRS`）；
+  **不采用 `scan_files` 的隐藏目录启发式**——`.github/` 不在 ignore 契约内，
+  Python 管线正常索引，按隐藏目录归档会误伤源码；
+- `handle_build_graph` 删除感知改为：命中剪枝且文件仍存在 → 归档并跳过；
+  否则维持「磁盘不存在才 cleanup」语义，未忽略文件不受影响；响应新增
+  `archived` 计数。
+
+**复测**（部署后 daemon `workspace.build_graph`，权威库 `ws=1`）：
+
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| `build/` `file_instances` | 77（全 `pending`） | 77 全部 `status='archived'`（0 条非归档行） |
+| `build/` 关联 `symbols` | 1,467 | 0 |
+| `archived_files`（ws=1） | 0 | 88（77 `build` + 11 `target`，均为 ignore 契约目录） |
+| build_graph 响应 | 无 `archived` 字段 | `archived=88`（二次调用 0，幂等） |
+| 未忽略源码 | — | 不受影响（`.github/` 等非契约目录保持 `parsed`） |
+
+首轮实测曾把 `.github/workflows/e2e/run_platform_e2e.py` 误归档（隐藏目录
+启发式），已用 `gc restore` 复活并收窄规则；`gc restore` 只把行翻回
+`pending`，随后 `cw refresh <path>` 重解析恢复为 `parsed` + 21 符号
+（实测 `total_lines=1377`、`archived_files` 无该行）。修正后归档集合只剩
+ignore 契约目录，第二轮全量 `build_graph`（修复版 daemon）归档数不再增长。
+
+回归：Rust `cargo test --lib daemon::fs_handlers::tests` 19 passed（含新增
+`test_archive_ignored_file_graph_is_idempotent`）；Python `tests/test_gc.py`
+9/9 passed（gc_archive/restore/purge 语义未被改动）。
+
 ---
 
 ## 5. 后续 backlog（未纳入本次步骤）
@@ -394,6 +452,7 @@ v61 库会报 `SCHEMA_TOO_NEW`）。
 | P3-3 | `build_graph.unchanged` 字段语义与 Python 契约对齐 | 正确性/可观测 | 已修（T-1793263115744-7ac43c98 步骤#1） |
 | P3-4 | `calls.callee_name` 部分索引（`WHERE callee_id = 0`，raw 边按名字解析/查询） | 性能/schema | 已修（T-1793284203427-56a164bc 步骤#3：SCHEMA_VERSION=61，`idx_calls_callee_name_raw` 部分索引，实测见 §4.6.2） |
 | P3-5 | `get_callers`/`get_callees` 短名降级分支跨 workspace 泄漏 + 全表扫（C2） | 正确性/性能 | 已修（T-1793317538470-c203e6d4 步骤#3，见 §6） |
+| C1 | 权威库 ignored 行归档缺口（`build/` 残留 77 文件 / 1,467 符号，`archived_files=0`） | 正确性/数据治理 | 已修（T-1793317526334-eea45f3c 步骤#1-#2，见 §4.7） |
 
 ---
 
