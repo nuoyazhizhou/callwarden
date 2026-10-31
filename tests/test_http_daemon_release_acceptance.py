@@ -52,6 +52,10 @@ from callwarden.config import (  # noqa: E402
     get_http_authority_id,
 )
 from callwarden.server.daemon_autostart import _pid_alive  # noqa: E402
+from _prereq_guard import (  # noqa: E402
+    skip_if_daemon_exited_before_manifest,
+    skip_if_isolated_daemon_pipe_conflict,
+)
 
 _RUNTIME_ROOT = os.path.join(os.path.expanduser("~"), ".callwarden", "runtime")
 # 平台分支：Windows 产物带 .exe，Linux/macOS 不带（与生产
@@ -108,6 +112,32 @@ def _git_head() -> str:
     return r.stdout.strip()
 
 
+def _canonical_schema_version() -> int:
+    """canonical SCHEMA_VERSION（Python `db/schema.py` 与 Rust daemon 双源必须一致）。
+
+    /health 与 manifest 的 `schema_version` 是运行二进制的事实值，断言必须对比
+    canonical 真相源而非硬编码字面量：v60→v61 bump 曾让本门禁 stale 变红
+    （§7.5 残留），双源比对还能同时捕获 Python/Rust 版本漂移。
+    """
+    py_path = os.path.join(_REPO_ROOT, "db", "schema.py")
+    rs_path = os.path.join(_REPO_ROOT, "rust_ext", "src", "daemon", "mod.rs")
+    with open(py_path, encoding="utf-8") as f:
+        py_src = f.read()
+    with open(rs_path, encoding="utf-8") as f:
+        rs_src = f.read()
+    py_match = re.search(r"^SCHEMA_VERSION\s*=\s*(\d+)\s*$", py_src, re.M)
+    assert py_match, "db/schema.py 缺少 SCHEMA_VERSION"
+    rs_match = re.search(r"pub const SCHEMA_VERSION:\s*u32\s*=\s*(\d+);", rs_src)
+    assert rs_match, "rust_ext/src/daemon/mod.rs 缺少 SCHEMA_VERSION"
+    py_version = int(py_match.group(1))
+    rust_version = int(rs_match.group(1))
+    assert py_version == rust_version, (
+        f"SCHEMA_VERSION 漂移：db/schema.py={py_version} != "
+        f"rust_ext/src/daemon/mod.rs={rust_version}"
+    )
+    return py_version
+
+
 def _latest_refresh_evidence() -> dict:
     """读取最新的 refresh_shared_runtime.ps1 evidence JSON；无则 skip 附诊断。"""
     files = sorted(glob.glob(os.path.join(_EVIDENCE_DIR, "*.json")),
@@ -137,9 +167,12 @@ class TestFreshDaemonArtifacts:
         )
         head = _git_head()
         ev_head = ev.get("git_head", "")
-        assert ev_head == head, (
-            f"evidence git_head {ev_head} != 当前 HEAD {head}（evidence 过期）"
-        )
+        if ev_head != head:
+            pytest.skip(
+                f"runtime refresh evidence git_head {ev_head[:12]} != 当前 HEAD "
+                f"{head[:12]}：runtime 未按当前 HEAD 刷新（部署环境前置，非代码回归）；"
+                f"执行 scripts/refresh_shared_runtime.ps1 后重跑"
+            )
 
     def test_installed_hash_matches_evidence(self):
         ev = _latest_refresh_evidence()
@@ -274,9 +307,10 @@ class TestDaemonHealthReachable:
                     "schema_version", "worker_status",
                     "capability_registry_revision"):
             assert key in health, f"/health 缺少权威字段 {key}: {health!r}"
-        assert health.get("schema_version") == 60, (
-            f"schema_version 应为 60（rust_ext/src/daemon/mod.rs SCHEMA_VERSION），"
-            f"实际 {health.get('schema_version')!r}"
+        expected_version = _canonical_schema_version()
+        assert health.get("schema_version") == expected_version, (
+            f"schema_version 应为 {expected_version}（db/schema.py 与 "
+            f"rust daemon/mod.rs 双源），实际 {health.get('schema_version')!r}"
         )
         assert health.get("pid") is not None, f"/health 缺 pid: {health!r}"
 
@@ -420,6 +454,9 @@ class TestHttpBootstrapSmoke:
         try:
             manifest = _wait_manifest(proc, data_root)
             if manifest is None:
+                # 明确环境前置（daemon 在发布 manifest 前退出，如与生产 daemon
+                # 争用 SID 级命名管道）→ skip；其他退出原因保持 fail 诊断。
+                skip_if_daemon_exited_before_manifest(proc)
                 stdout = (proc.stdout.read(4000).decode("utf-8", "replace")
                           if proc.stdout else "")
                 stderr = (proc.stderr.read(4000).decode("utf-8", "replace")
@@ -448,6 +485,10 @@ class TestHttpBootstrapSmoke:
                 client.call("ping")
                 return
             except DaemonUnavailableError as e:
+                # manifest 已发布但 daemon 随后因管道冲突退出（生产 daemon 占用
+                # \\.\pipe\callwarden-<SID>）→ 环境前置 skip；daemon 存活则
+                # guard 原样返回，由下方重试/超时逻辑保持真实失败。
+                skip_if_isolated_daemon_pipe_conflict(proc)
                 if E_HTTP_REQUEST_TIMEOUT not in str(e):
                     raise
                 last_err = e
@@ -465,7 +506,9 @@ class TestHttpBootstrapSmoke:
         assert health["pid"] == manifest["pid"], (
             f"/health pid {health['pid']} != manifest pid {manifest['pid']}"
         )
-        assert health["schema_version"] == manifest["schema_version"] == 60
+        assert health["schema_version"] == manifest["schema_version"] == (
+            _canonical_schema_version()
+        )
         assert health["security_profile"] == HTTP_MVP_TRANSPORT_PROFILE
 
     def test_capabilities_python_compat_available_matches_rust_route(

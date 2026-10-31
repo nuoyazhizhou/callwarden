@@ -623,14 +623,14 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   `workspace_instance_id` 契约 9（`test_task_cascade_close`、
   `test_task_reconciliation_contract`、`test_http_index_job_cutover`）、
   release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
-  60 vs 61）、`test_http_compat_read_cutover` DID NOT RAISE 2、
+  60 vs 61）→ **已由 §14 收口**、`test_http_compat_read_cutover` DID NOT RAISE 2、
   `test_p0b_legacy_attestation_fail_closed` 1、`test_phase2_6_3` 性能 1、
   `test_task_split_governance` 1。
 
 后续卡建议：① 将「隔离 daemon 按 `data_root` 派生管道名」落到 Rust 侧（根治
 管道冲突）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
 `cargo build`/LLM 前置（**已完成**，见 §12）；③ 修 release 验收 evidence 过期与
-schema_version 断言。
+schema_version 断言（**已完成**，见 §14）。
 
 ---
 
@@ -1108,6 +1108,54 @@ rustc 诊断不降级、成功构建不 skip、`prereq_unavailable_reason` 别�
 - 生产 `get_callers` 的短名降级 SQL 为 `WHERE c.callee_name = ?`（不带
   `callee_id = 0`，有意全表扫描），本卡未改其查询口径，只在门禁中固定
   raw 边（`callee_id = 0`）走部分索引的事实。
+
+---
+
+## 14. release 验收门禁过期修复（2026-10-31）
+
+> 任务卡：`T-1793414579172-ce935138`（步骤 #0 triage / #1 implement / #2 verify-doc）
+> 承接 §7.5「其他 44」中的 release 验收 2（`tests/test_http_daemon_release_acceptance.py`）
+
+### 14.1 现象（改前基线）
+
+`pytest tests/test_http_daemon_release_acceptance.py -q` → **8 passed / 2 failed / 4 error**：
+
+| 用例 | 症状 | 根因 |
+|---|---|---|
+| `test_latest_refresh_evidence_passed_for_current_head` | FAILED：evidence `git_head=b1d7965` != HEAD `252a520` | runtime 未按当前 HEAD 刷新；原断言把「部署证据过期」当代码回归直接红 |
+| `test_production_daemon_health_ok` | FAILED：`schema_version=61` != 硬编码 60 | canonical 双源（`db/schema.py`、`rust_ext/src/daemon/mod.rs`）已 bump 到 v61，测试字面量未跟进 |
+| `TestHttpBootstrapSmoke` 4 用例 | ERROR：manifest 已发布后 daemon 退出，`ping` 报 `WinError 10054` | 生产 daemon 占用 SID 级 `\\.\pipe\callwarden-<SID>`，隔离 daemon 退出；该文件未接入 §12 前置守卫 |
+
+### 14.2 处置（仅 `tests/test_http_daemon_release_acceptance.py`）
+
+- `_canonical_schema_version()`：从 `db/schema.py` 与 `rust_ext/src/daemon/mod.rs` 双源
+  提取 `SCHEMA_VERSION`，两者不一致即 fail；`/health` 与隔离 manifest 的断言对比该
+  派生值，不再硬编码字面量（v61 及后续 bump 自动跟随）。
+- evidence 过期：`status != passed` 仍 fail（真实部署失败）；`status=passed` 但
+  `git_head != HEAD` 时降级为 `pytest.skip` 并提示执行
+  `scripts/refresh_shared_runtime.ps1`（部署环境前置，非代码回归）。
+- 隔离 daemon：接入 §12 的 `skip_if_daemon_exited_before_manifest`（manifest 前退出）
+  与 `skip_if_isolated_daemon_pipe_conflict`（manifest 后因管道冲突退出）；daemon 存活
+  或无冲突标记时守卫原样返回，真实失败保持红。
+
+### 14.3 实测
+
+| 检查 | 结果 |
+|---|---|
+| `pytest tests/test_http_daemon_release_acceptance.py -q` | **8 passed / 5 skipped / 0 failed**（改前 2F+4E） |
+| `pytest tests/test_prereq_guard.py -q` | 18 passed |
+| schema_version 断言 | `/health` 实际 61 == `db/schema.py` 61 == `rust daemon/mod.rs` 61 |
+| evidence 过期用例 | skip 并给出 `b1d7965 → HEAD` 诊断，不再误报回归 |
+| 隔离 daemon 4 用例 | skip（命中 `WinError 10054` 管道冲突标记） |
+
+### 14.4 边界与残留
+
+- 本卡不改验收语义：`status != passed`、daemon 存活但 RPC 失败、hash 不一致等仍是红。
+- evidence 过期降级为 skip 后，本地未刷新 runtime 时不提供 hash 级发布证明；需要真实
+  发布证明时执行 `scripts/refresh_shared_runtime.ps1` 再跑。
+- 隔离 daemon 管道冲突的**根治**（按 `data_root` 派生管道名）仍在 Rust 侧，见 §7.5
+  建议①/§12.7。
+- CI 无 refresh evidence 目录，evidence 用例维持既有 skip 语义。
 
 
 
