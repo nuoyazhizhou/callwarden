@@ -1469,8 +1469,30 @@ daemon 已占用该名，隔离 daemon 启动时 `CreateNamedPipe` 返回
   `HttpDaemonRpcClient` 单例已被前序用例创建，monkeypatch 的非法端点和
   `CW_DAEMON_MODE` 不生效，请求打到常驻 daemon 后返回
   `E_LEGACY_BIND_TASK_NOT_FOUND`。该现象在**本卡改动前**（HEAD 版本
-  `test_task_split_governance.py`）逐字复现，属既有测试隔离/单例污染问题，
-  与本卡三项无关，不在本卡范围。
+  `test_task_split_governance.py`）逐字复现，属既有测试隔离/单例污染问题。
+  → **已由 T-1793453210416-58299ee4 收口**（见 19.6）。
+
+### 19.6 p0b 组合跑单例污染收口（T-1793453210416-58299ee4）
+
+**现象**：三文件同进程组合跑（`test_task_split_governance.py` →
+`test_phase2_6_3_batch_register_diff.py` → `test_p0b_legacy_attestation_fail_closed.py`），
+后者 `test_client_never_falls_back_local_without_daemon` 失败：期望 `E_HTTP_*`
+fail-closed，实际 `E_LEGACY_BIND_TASK_NOT_FOUND`。
+
+**根因（栈取证）**：`UnixDaemonRpcClient.call` → `daemon_protocol.send_message`
+→ `_is_rust_protocol_rolled_back` → `_mcp_common._call_daemon_rpc` →
+`get_daemon_client()`（`server/daemon_client.py:2160`）。HTTP transport 开启时
+该函数返回 `HttpDaemonRpcClient.get_instance()`，实例随后 `discover()` 解析并
+缓存 `_resolved_endpoint`（discover 幂等）。p0b 的 autouse fixture 原先只在
+teardown reset，故本用例 `get_instance()` 拿到的是前序模块创建的已解析实例，
+monkeypatch 的 `CW_DAEMON_HTTP_ENDPOINT=http://127.0.0.1:1` 不生效，请求打到
+真实 daemon。属**测试隔离缺陷**，非产品缺陷（单例与 discover 幂等均为设计）。
+
+**处置**：`tests/test_p0b_legacy_attestation_fail_closed.py` 的
+`_reset_http_singleton` 改为 setup + teardown 双向 `reset_instance()`；
+docstring 记录创建链。断言、产品代码、skip/xfail 均未改动。
+
+**实测**：三文件组合跑 30 passed（改前 1 FAILED）；p0b 单跑 3 passed。
 
 
 

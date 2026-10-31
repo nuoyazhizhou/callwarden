@@ -25,8 +25,20 @@ def _read(path):
 
 @pytest.fixture(autouse=True)
 def _reset_http_singleton():
+    """单例前后双清，消除跨模块用例顺序依赖。
+
+    同进程内前序用例可能已经创建并缓存 HTTP 单例：``UnixDaemonRpcClient.call``
+    → ``daemon_protocol.send_message`` → ``_is_rust_protocol_rolled_back`` →
+    ``_mcp_common._call_daemon_rpc`` → ``get_daemon_client()``（HTTP transport 开启
+    时返回 ``HttpDaemonRpcClient.get_instance()``）。该实例的 ``discover()`` 是幂等的
+    （``_resolved_endpoint`` 一旦解析即缓存），因此仅在 teardown 清理会让本用例
+    monkeypatch 的非法端点不生效，请求实际打到真实 daemon（表现为
+    ``E_LEGACY_BIND_TASK_NOT_FOUND`` 而非 ``E_HTTP_*``）。前置 reset 保证本模块
+    永远按自己的 env 新建实例。
+    """
     from callwarden.server.daemon_client import HttpDaemonRpcClient
 
+    HttpDaemonRpcClient.reset_instance()
     yield
     HttpDaemonRpcClient.reset_instance()
 
