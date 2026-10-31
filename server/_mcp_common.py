@@ -15,6 +15,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
+from ..i18n import t
+
 
 _db_instance: Optional[CodeGraphDB] = None  # noqa: F821 -- P1-1 惰性引用
 
@@ -44,7 +46,12 @@ def _call_daemon_rpc(method: str, params: Optional[Dict[str, Any]] = None) -> An
         raise
     except Exception as exc:
         raise DaemonUnavailableError(
-            f"{E_HTTP_DAEMON_UNAVAILABLE}: daemon RPC 调用失败 ({method}): {exc}"
+            t(
+                "mcp.messages.daemon_rpc_failed",
+                code=E_HTTP_DAEMON_UNAVAILABLE,
+                method=method,
+                error=str(exc),
+            )
         ) from exc
 
 
@@ -133,8 +140,5 @@ def get_db(workspace: Optional[str] = None) -> CodeGraphDB:  # noqa: F821 -- P1-
     # fail-closed：未显式指定 workspace 时，单例必须已绑定 active workspace，
     # 否则拒绝复用（绝不静默沿用上一个项目的 workspace 上下文）。
     if not _db_instance.active_workspace:
-        raise RuntimeError(
-            "没有可用的 active workspace，拒绝复用数据库上下文（fail-closed）；"
-            "请显式传入 workspace 路径/名称"
-        )
+        raise RuntimeError(t("mcp.messages.active_workspace_required"))
     return _db_instance

@@ -31,6 +31,8 @@ from server.compat_registry import (  # noqa: E402
 
 from ..daemon_client import route_rpc as _route
 
+from ...i18n import t
+
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
@@ -327,8 +329,8 @@ def _h_validate_revision_dependencies(ctx: CompatCallContext) -> Any:
             # requires_artifact: target_task_id 是 provider
             if not target_task_id:
                 resolution_errors.append(
-                    f"requires_artifact 依赖缺少 target_task_id "
-                    f"(task={consumer_task_id}, ref={target_ref})"
+                    t("mcp.messages.dep_requires_artifact_missing_target",
+                      task=consumer_task_id, ref=target_ref)
                 )
                 edges_skipped += 1
                 continue
@@ -339,8 +341,8 @@ def _h_validate_revision_dependencies(ctx: CompatCallContext) -> Any:
             providers = db.get_interface_providers(workspace_id, target_ref)
             if not providers:
                 resolution_errors.append(
-                    f"requires_interface '{target_ref}' 无匹配 provider "
-                    f"(task={consumer_task_id})"
+                    t("mcp.messages.dep_interface_no_provider",
+                      ref=target_ref, task=consumer_task_id)
                 )
                 edges_skipped += 1
                 continue
@@ -392,13 +394,15 @@ def _h_validate_revision_dependencies(ctx: CompatCallContext) -> Any:
     errors = list(resolution_errors)
     for conflict in provider_conflicts:
         errors.append(
-            f"interface '{conflict['interface_name']}' 有多个 provider "
-            f"{conflict['providers']} 但无 Planner 显式选择 "
-            f"(consumer={conflict['consumer_task_id']})"
+            t("mcp.messages.dep_interface_provider_conflict",
+              interface=conflict["interface_name"],
+              providers=conflict["providers"],
+              consumer=conflict["consumer_task_id"])
         )
     if cycle_result["has_cycle"]:
         errors.append(
-            f"硬依赖图存在环: {' → '.join(cycle_path)}"
+            t("mcp.messages.dep_cycle_detected",
+              path=" → ".join(cycle_path))
         )
 
     valid = len(errors) == 0 and not provider_conflicts

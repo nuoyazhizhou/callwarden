@@ -1982,5 +1982,26 @@
         "error.attestation_revoked": "Attestation 已被撤销：匹配的撤销记录使其判为 invalid。",
         "error.identity_action_duplicate": "Action Identity 重复：同一 action_id 已记录，不可重复写入。",
         "error.identity_not_wired": "数据库层尚未支持身份参数，动作 fail closed，不回退为自由文本身份（Req 10.5）。"
+    },
+    "mcp": {
+        "messages": {
+            "daemon_http_autostart_ok": "[Daemon] 启动期自动拉起 HTTP daemon 成功 @ {endpoint}",
+            "daemon_http_autostart_failed": "[Daemon] 启动期自动拉起失败: {error}",
+            "daemon_startup_wakeup_failed": "[Daemon] 启动期唤起失败，首次 RPC 将继续重试",
+            "daemon_startup_probe_failed": "[Daemon] 启动期探针失败，首次 RPC 将继续重试: {error}",
+            "daemon_rpc_failed": "{code}: daemon RPC 调用失败 ({method}): {error}",
+            "active_workspace_required": "没有可用的 active workspace，拒绝复用数据库上下文（fail-closed）；请显式传入 workspace 路径/名称",
+            "collab_query_failed": "只读协同查询失败 ({tool}): {detail}",
+            "collab_json_array_required": "{field} 必须是 JSON array",
+            "dep_requires_artifact_missing_target": "requires_artifact 依赖缺少 target_task_id (task={task}, ref={ref})",
+            "dep_interface_no_provider": "requires_interface '{ref}' 无匹配 provider (task={task})",
+            "dep_interface_provider_conflict": "interface '{interface}' 有多个 provider {providers} 但无 Planner 显式选择 (consumer={consumer})",
+            "dep_cycle_detected": "硬依赖图存在环: {path}",
+            "workspace_locator_required": "缺少 workspace 定位参数：请提供 workspace_instance_id（推荐）或 deprecated workspace_id",
+            "workspace_id_unresolved": "无法从 workspace_instance_id={instance} 解析权威 workspace_id（fail-closed）",
+            "task_workspace_root_unresolved": "无法解析当前项目 workspace 归属（root={root}）；请先 `cw workspace register --root {root}`。原因: {error}",
+            "task_workspace_id_mismatch": "workspace_id={workspace_id} 不属于本 MCP 实例所在项目（当前项目 canonical workspace_id={ctx_ws}）；拒绝跨项目创建任务单",
+            "task_workspace_instance_mismatch": "workspace_instance_id 不属于本 MCP 实例所在项目（当前项目 canonical instance={ctx_inst}）；拒绝跨项目创建任务单"
+        }
     }
 }

@@ -50,6 +50,8 @@ from ..daemon_client import (
     resolve_workspace_pair_from_daemon,
 )
 
+from ...i18n import t
+
 
 def _task_create_context_pair():
     """解析本 MCP 实例所属项目的 canonical workspace 配对（归属锚点）。
@@ -66,9 +68,10 @@ def _task_create_context_pair():
             "ok": False,
             "code": "E_WORKSPACE_ROOT_UNRESOLVED",
             "root": root,
-            "error": (
-                f"无法解析当前项目 workspace 归属（root={root}）；"
-                f"请先 `cw workspace register --root {root}`。原因: {exc}"
+            "error": t(
+                "mcp.messages.task_workspace_root_unresolved",
+                root=root,
+                error=str(exc),
             ),
         }
     return pair, None
@@ -120,10 +123,10 @@ def register(mcp: FastMCP) -> None:
                 "expected_workspace_id": ctx_ws,
                 "expected_workspace_instance_id": ctx_inst,
                 "root": _resolve_mcp_project_root(),
-                "error": (
-                    f"workspace_id={workspace_id} 不属于本 MCP 实例所在项目"
-                    f"（当前项目 canonical workspace_id={ctx_ws}）；"
-                    "拒绝跨项目创建任务单"
+                "error": t(
+                    "mcp.messages.task_workspace_id_mismatch",
+                    workspace_id=workspace_id,
+                    ctx_ws=ctx_ws,
                 ),
             }
         if workspace_instance_id and str(workspace_instance_id).strip() != ctx_inst:
@@ -134,10 +137,9 @@ def register(mcp: FastMCP) -> None:
                 "expected_workspace_id": ctx_ws,
                 "expected_workspace_instance_id": ctx_inst,
                 "root": _resolve_mcp_project_root(),
-                "error": (
-                    "workspace_instance_id 不属于本 MCP 实例所在项目"
-                    f"（当前项目 canonical instance={ctx_inst}）；"
-                    "拒绝跨项目创建任务单"
+                "error": t(
+                    "mcp.messages.task_workspace_instance_mismatch",
+                    ctx_inst=ctx_inst,
                 ),
             }
         return _route(

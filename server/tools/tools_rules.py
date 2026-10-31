@@ -39,6 +39,8 @@ from mcp.server.fastmcp import FastMCP
 
 from ..daemon_client import route_rpc as _route
 
+from ...i18n import t
+
 
 def _build_context_scope(
     workspace_id: int,
@@ -63,10 +65,7 @@ def _build_context_scope(
         params["workspace_id"] = numeric
         return params
     if not instance:
-        raise ValueError(
-            "缺少 workspace 定位参数：请提供 workspace_instance_id（推荐）"
-            "或 deprecated workspace_id"
-        )
+        raise ValueError(t("mcp.messages.workspace_locator_required"))
     status = _route("workspace.status", {"workspace_instance_id": instance}, "READ_ONLY")
     # workspace.status 的 daemon 视图是 registry/task-DB 归一结果，registry 数字
     # 主键在 `registry_workspace_id`；兼容旧行仍回退 workspace_id。
@@ -75,7 +74,7 @@ def _build_context_scope(
         resolved = status.get("registry_workspace_id", status.get("workspace_id"))
     if not isinstance(resolved, int) or resolved <= 0:
         raise ValueError(
-            f"无法从 workspace_instance_id={instance} 解析权威 workspace_id（fail-closed）"
+            t("mcp.messages.workspace_id_unresolved", instance=instance)
         )
     params["workspace_id"] = resolved
     return params

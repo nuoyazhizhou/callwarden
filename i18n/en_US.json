@@ -1982,5 +1982,26 @@
         "error.attestation_revoked": "Attestation has been revoked: a matching revocation record renders it invalid.",
         "error.identity_action_duplicate": "Action Identity duplicate: the same action_id has already been recorded and cannot be written twice.",
         "error.identity_not_wired": "Database layer does not yet accept identity arguments; the action fails closed (no fallback to free text)."
+    },
+    "mcp": {
+        "messages": {
+            "daemon_http_autostart_ok": "[Daemon] Startup auto-start of HTTP daemon succeeded @ {endpoint}",
+            "daemon_http_autostart_failed": "[Daemon] Startup auto-start failed: {error}",
+            "daemon_startup_wakeup_failed": "[Daemon] Startup wakeup failed; the first RPC will keep retrying",
+            "daemon_startup_probe_failed": "[Daemon] Startup probe failed; the first RPC will keep retrying: {error}",
+            "daemon_rpc_failed": "{code}: daemon RPC call failed ({method}): {error}",
+            "active_workspace_required": "No active workspace available; refusing to reuse the database context (fail-closed). Pass a workspace path/name explicitly.",
+            "collab_query_failed": "Read-only collaboration query failed ({tool}): {detail}",
+            "collab_json_array_required": "{field} must be a JSON array",
+            "dep_requires_artifact_missing_target": "requires_artifact dependency is missing target_task_id (task={task}, ref={ref})",
+            "dep_interface_no_provider": "requires_interface '{ref}' has no matching provider (task={task})",
+            "dep_interface_provider_conflict": "interface '{interface}' has multiple providers {providers} but no explicit Planner selection (consumer={consumer})",
+            "dep_cycle_detected": "Hard dependency graph contains a cycle: {path}",
+            "workspace_locator_required": "Missing workspace locator: provide workspace_instance_id (recommended) or the deprecated workspace_id",
+            "workspace_id_unresolved": "Cannot resolve authoritative workspace_id from workspace_instance_id={instance} (fail-closed)",
+            "task_workspace_root_unresolved": "Cannot resolve the current project's workspace ownership (root={root}); run `cw workspace register --root {root}` first. Reason: {error}",
+            "task_workspace_id_mismatch": "workspace_id={workspace_id} does not belong to this MCP instance's project (current project canonical workspace_id={ctx_ws}); cross-project task creation refused",
+            "task_workspace_instance_mismatch": "workspace_instance_id does not belong to this MCP instance's project (current project canonical instance={ctx_inst}); cross-project task creation refused"
+        }
     }
 }

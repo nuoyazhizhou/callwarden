@@ -1494,6 +1494,59 @@ docstring 记录创建链。断言、产品代码、skip/xfail 均未改动。
 
 **实测**：三文件组合跑 30 passed（改前 1 FAILED）；p0b 单跑 3 passed。
 
+## 20. MCP 工具内部 i18n 改造（2026-10-31）
+
+> 任务卡：`T-1793458835218-f8812188`（步骤 #0 triage / #1 implement / #2 verify_doc）
+> 承接 `docs/architecture.md` 阶段 3 首项「MCP 工具内部 i18n 改造」：
+> MCP 工具的错误消息/提示统一走 `i18n.t()`，与 CLI 输出一致。
+
+### 20.1 范围与边界
+
+AST 盘点 6 个 MCP 运行时模块的非 docstring 中文字面量，收敛为 **18 条逻辑消息**
+（24 个字符串常量，f-string 分片会拆成多常量），全部改走 `i18n.t()`。
+**排除项（不动）**：模块/函数 docstring、`@mcp.tool()` 描述文本、
+`server/tools/_categories.py` 的分类元数据（供文档生成）、2 处裸 section-marker。
+
+### 20.2 新增 i18n key（`mcp.messages.*`，17 个）
+
+| key | 落点 | 原消息 |
+|---|---|---|
+| `daemon_http_autostart_ok` | `server/mcp_server.py` | `[Daemon] 启动期自动拉起 HTTP daemon 成功 @ {endpoint}` |
+| `daemon_http_autostart_failed` | `server/mcp_server.py` | `[Daemon] 启动期自动拉起失败: {error}` |
+| `daemon_startup_wakeup_failed` | `server/mcp_server.py` | `[Daemon] 启动期唤起失败，首次 RPC 将继续重试` |
+| `daemon_startup_probe_failed` | `server/mcp_server.py` | `[Daemon] 启动期探针失败，首次 RPC 将继续重试: {error}` |
+| `daemon_rpc_failed` | `server/_mcp_common.py` | `{code}: daemon RPC 调用失败 ({method}): {error}` |
+| `active_workspace_required` | `server/_mcp_common.py` | `没有可用的 active workspace，拒绝复用数据库上下文（fail-closed）；请显式传入 workspace 路径/名称` |
+| `collab_query_failed` | `server/tools/tools_collab.py` | `只读协同查询失败 ({tool}): {detail}` |
+| `collab_json_array_required` | `server/tools/tools_collab.py` | `{field} 必须是 JSON array`（原 2 处同文案） |
+| `dep_requires_artifact_missing_target` | `server/tools/tools_dependency_graph.py` | `requires_artifact 依赖缺少 target_task_id (task={task}, ref={ref})` |
+| `dep_interface_no_provider` | `server/tools/tools_dependency_graph.py` | `requires_interface '{ref}' 无匹配 provider (task={task})` |
+| `dep_interface_provider_conflict` | `server/tools/tools_dependency_graph.py` | `interface '{interface}' 有多个 provider {providers} 但无 Planner 显式选择 (consumer={consumer})` |
+| `dep_cycle_detected` | `server/tools/tools_dependency_graph.py` | `硬依赖图存在环: {path}` |
+| `workspace_locator_required` | `server/tools/tools_rules.py` | `缺少 workspace 定位参数：请提供 workspace_instance_id（推荐）或 deprecated workspace_id` |
+| `workspace_id_unresolved` | `server/tools/tools_rules.py` | `无法从 workspace_instance_id={instance} 解析权威 workspace_id（fail-closed）` |
+| `task_workspace_root_unresolved` | `server/tools/tools_task.py` | `无法解析当前项目 workspace 归属（root={root}）；请先 \`cw workspace register --root {root}\`。原因: {error}` |
+| `task_workspace_id_mismatch` | `server/tools/tools_task.py` | `workspace_id={workspace_id} 不属于本 MCP 实例所在项目（当前项目 canonical workspace_id={ctx_ws}）；拒绝跨项目创建任务单` |
+| `task_workspace_instance_mismatch` | `server/tools/tools_task.py` | `workspace_instance_id 不属于本 MCP 实例所在项目（当前项目 canonical instance={ctx_inst}）；拒绝跨项目创建任务单` |
+
+### 20.3 处置要点
+
+- `i18n/zh_CN.json` / `i18n/en_US.json` 新增顶层 `mcp.messages` 分支，
+  **zh 值与旧文案逐字一致**（`DEFAULT_LANG=zh_CN` 下行为零变化），en 补译。
+- 占位符沿用 `t()` 的 `**kwargs`（`{name}` 形式），不引入新格式化机制。
+- 稳定错误码（`E_*`）与 `message` 文案解耦：改文案不改错误码。
+- 未改工具签名、工具描述、`_categories.py`、既有 i18n key。
+
+### 20.4 验证
+
+- AST 复扫：转换后 6 文件仅剩 2 处裸 section-marker，非 docstring 中文运行时字面量归零。
+- 逐字等价回归：17/17 key 的新 `t()` 输出与旧 f-string 拼接结果全等。
+- catalog：两套 JSON 均可 `json.load`，`mcp.messages` key 集合一致、值非空。
+- 新增门禁 `tests/test_mcp_i18n_messages.py`（9 passed）：
+  转换模块无运行时中文 + 两套 catalog 齐备 + 两种语言均可解析出非 key 文本。
+- 相关既有测试全绿：`test_task_verdict_mcp.py` + `test_tools_task_create_workspace_params.py`
+  9 passed；依赖图/build_context 相关 5 个文件 78 passed。
+
 
 
 

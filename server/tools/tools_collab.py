@@ -92,7 +92,8 @@ def register(mcp: FastMCP) -> None:
         """
         msg = t(
             message_key,
-            default=f"只读协同查询失败 ({tool_name}): {detail}",
+            default=t("mcp.messages.collab_query_failed",
+                      tool=tool_name, detail=detail),
             tool=tool_name,
             detail=detail,
         )
@@ -256,9 +257,12 @@ def register(mcp: FastMCP) -> None:
             try:
                 parsed = json.loads(value)
             except (TypeError, json.JSONDecodeError) as exc:
-                raise ValueError(f"{field} 必须是 JSON array") from exc
+                raise ValueError(
+                    t("mcp.messages.collab_json_array_required", field=field)
+                ) from exc
             if not isinstance(parsed, list):
-                raise ValueError(f"{field} 必须是 JSON array")
+                raise ValueError(
+                    t("mcp.messages.collab_json_array_required", field=field))
             return parsed
 
         # daemon parse_action_identity 只接受结构化 identity；保留 MCP 的
