@@ -623,7 +623,8 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   （`test_phase3_cas`、`test_p10_p11_timing_gc`、`test_p21_auto_ignore`）
   → **已由 §15 收口**、
   `workspace_instance_id` 契约 9（`test_task_cascade_close`、
-  `test_task_reconciliation_contract`、`test_http_index_job_cutover`）、
+  `test_task_reconciliation_contract`、`test_http_index_job_cutover`）
+  → **已由 §17 收口**、
   release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
   60 vs 61）→ **已由 §14 收口**、`test_http_compat_read_cutover` DID NOT RAISE 2、
   `test_p0b_legacy_attestation_fail_closed` 1、`test_phase2_6_3` 性能 1、
@@ -1259,6 +1260,76 @@ zh_CN 译文。
 
 - fixture 为模块级自动生效、结束即还原，不泄漏到其它测试模块。
 - 仅固定语言，不改被测行为；如需验证 zh_CN 文案，应另写显式 `zh_CN` 用例。
+
+---
+
+## 17. workspace_instance_id 契约陈旧调用修复（2026-10-31）
+
+> 任务卡：`T-1793430194466-869d3a50`（步骤 #0 triage / #1 implement / #2 verify-doc）
+> 承接 §7.5「其他 44」中的 `workspace_instance_id` 契约 9
+
+### 17.1 现象（改前基线）
+
+`pytest tests/test_task_cascade_close.py tests/test_task_reconciliation_contract.py
+tests/test_http_index_job_cutover.py -q` → **9 FAILED**（15 passed / 3 skipped）：
+
+| 文件 | 失败数 | 错误 |
+|---|---|---|
+| `test_task_cascade_close.py` | 4 | `E_TASK_WORKSPACE_INSTANCE_REQUIRED: task.create 必须显式传入非空 workspace_instance_id；禁止空实例合成 ws-{id}` |
+| `test_task_reconciliation_contract.py` | 4 | `invalid_params: workspace.status 需要 workspace_instance_id 或 workspace_id` |
+| `test_http_index_job_cutover.py` | 1（`[tools_rules]`） | `ValueError: 缺少 workspace 定位参数：请提供 workspace_instance_id（推荐）或 deprecated workspace_id` |
+
+### 17.2 根因
+
+daemon 侧的 workspace 定位契约已收紧为「显式且权威」，三处陈旧调用未跟进：
+
+1. `task.create` 拒绝空 `workspace_instance_id`（`task_loop/create.rs` fail-closed，
+   禁止合成 `ws-{id}`），而 `test_task_cascade_close.make_tree` 只传
+   `workspace_id: 1`；同一请求还残留已退役字段 `creator`（parent-aware 请求的
+   frozen contract 白名单不含该字段，报 `E_TASK_CREATE_UNKNOWN_FIELD`）。
+2. `workspace.status` 不再接受空参数（必须给 `workspace_instance_id` 或
+   `workspace_id`），而 `_make_neg_task` 以 `{}` 探测实例；
+   `_reconcile_apply` 还硬编码合成实例 `ws-1`。
+3. `build_context` 族（P3-2）把 workspace 定位改为可选参数并在两者缺省时
+   `_build_context_scope` fail-closed，而测试的 `_make_call_args` 只填必填参数，
+   于是薄壳路由用例在路由前就被定位校验挡回。
+
+三处均属**测试期望未跟进契约收紧**；被测行为（级联收口、reconcile 负向门禁、
+薄壳路由）没有变化，不是产品缺陷。
+
+### 17.3 处置（仅测试 + 台账）
+
+- `test_task_cascade_close.py`：新增模块级 `ws_instance` fixture，经
+  `workspace.status {"workspace_id": 1}` 取 `task_db_instance_id`（不硬编码）；
+  所有 `task.create` 显式带该实例，同时删除 parent-aware 请求中的退役字段
+  `creator`。
+- `test_task_reconciliation_contract.py`：`workspace.status` 显式传
+  `{"workspace_id": 1}`；`_make_neg_task` 返回 `(task_id, instance)`，
+  `_reconcile_apply` 改用真实实例（不再写 `ws-1`）。
+- `test_http_index_job_cutover.py`：`_make_call_args` 对签名中存在
+  `workspace_id` 且未被必填逻辑填充的工具补正数 `workspace_id=1`，使路由断言
+  不被 fail-closed 定位校验干扰（`_route` 调用次数仍为「每工具恰好一次」）。
+
+未改任何产品代码、未改 Rust 行为、未放宽断言语义。
+
+### 17.4 实测
+
+| 检查 | 改前 | 改后 |
+|---|---|---|
+| 三文件 | 9 FAILED（15 passed / 3 skipped） | **24 passed / 3 skipped** |
+
+3 个 skip 为 `TestRealDaemonIndexJobRpcAlignment` 的 `w3_live` 隔离 daemon 用例
+（未启动隔离 daemon 时按既有前置 guard 跳过），改前同样 skip。
+
+### 17.5 边界
+
+- 实例 ID 一律经 daemon `workspace.status` 解析，不在测试里硬编码（ROWID/实例
+  会随注册轮换）。
+- `test_http_index_job_cutover` 的补参仅用于薄壳路由断言；真实 workspace 绑定
+  语义由 `test_build_read_rpc_http.py` 等专项用例覆盖。
+- `creator` 字段仅在 parent-aware 请求被 frozen contract 拒绝；无父任务的
+  `task.create` 仍容忍该字段，故 reconcile 用例未改动该项。
+
 
 
 

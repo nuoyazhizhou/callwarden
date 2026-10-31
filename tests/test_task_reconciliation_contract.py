@@ -136,14 +136,16 @@ def test_reconciliation_rejects_unsafe_apply_inputs():
 # ============================================================
 
 
-def _make_neg_task(rpc) -> str:
+def _make_neg_task(rpc) -> tuple[str, str]:
     # stale 修正（step6 复核，2026-09-20）：daemon 现强制 task.create 显式传非空
     # workspace_instance_id，禁止空实例合成 ws-{id}
     # （E_TASK_WORKSPACE_INSTANCE_REQUIRED；权威 rust_ext/src/daemon/task_loop/create.rs
     # 的 fail-closed 校验）。旧调用只传 workspace_id=1，在 daemon 收紧后直接被拒。
-    # instance 从 daemon 权威查询（workspace.status），不硬编码。
-    st = rpc.call("workspace.status", {})
+    # instance 从 daemon 权威查询（workspace.status 需显式 workspace_id，空参数
+    # 会被 daemon 拒绝），不硬编码。返回 (task_id, instance) 供 reconcile 复用。
+    st = rpc.call("workspace.status", {"workspace_id": 1})
     inst = st.get("task_db_instance_id") or st.get("workspace_instance_id")
+    assert inst, f"无法解析 workspace 1 的权威 instance: {st}"
     tid = f"T-RECON-NEG-{uuid.uuid4().hex[:8]}"
     rpc.call("task.create", {
         "task_id": tid, "title": "reconcile negative", "description": "d",
@@ -154,7 +156,7 @@ def _make_neg_task(rpc) -> str:
         "workspace_instance_id": inst,
         "request_id": f"mk-{uuid.uuid4().hex[:8]}",
     })
-    return tid
+    return tid, inst
 
 
 def _acquire_reviewer_lease(rpc, tid):
@@ -167,9 +169,9 @@ def _acquire_reviewer_lease(rpc, tid):
     return token, fc
 
 
-def _reconcile_apply(rpc, tid, identity, token=None, fc=0):
+def _reconcile_apply(rpc, tid, instance, identity, token=None, fc=0):
     params = {
-        "root_task_id": tid, "workspace_instance_id": "ws-1",
+        "root_task_id": tid, "workspace_instance_id": instance,
         "apply": True, "request_id": f"rec-{uuid.uuid4().hex[:8]}",
         "identity": identity,
     }
@@ -181,9 +183,9 @@ def _reconcile_apply(rpc, tid, identity, token=None, fc=0):
 
 def test_reconcile_apply_requires_adjudicator_lease(rpc):
     """无 lease → E_LEASE_REQUIRED（任何写入前 fail-closed）。"""
-    tid = _make_neg_task(rpc)
+    tid, inst = _make_neg_task(rpc)
     try:
-        _reconcile_apply(rpc, tid, ADJUDICATOR)
+        _reconcile_apply(rpc, tid, inst, ADJUDICATOR)
     except Exception as e:
         assert "E_LEASE_REQUIRED" in str(e), str(e)
     else:
@@ -192,10 +194,10 @@ def test_reconcile_apply_requires_adjudicator_lease(rpc):
 
 def test_reconcile_apply_rejects_wrong_token(rpc):
     """错误 token → E_LEASE_TOKEN_MISMATCH。"""
-    tid = _make_neg_task(rpc)
+    tid, inst = _make_neg_task(rpc)
     token, fc = _acquire_reviewer_lease(rpc, tid)
     try:
-        _reconcile_apply(rpc, tid, ADJUDICATOR, token="wrong-token", fc=fc)
+        _reconcile_apply(rpc, tid, inst, ADJUDICATOR, token="wrong-token", fc=fc)
     except Exception as e:
         assert "E_LEASE_TOKEN_MISMATCH" in str(e), str(e)
     else:
@@ -204,10 +206,10 @@ def test_reconcile_apply_rejects_wrong_token(rpc):
 
 def test_reconcile_apply_rejects_stale_fencing(rpc):
     """fencing 陈旧 → E_LEASE_FENCING_STALE。"""
-    tid = _make_neg_task(rpc)
+    tid, inst = _make_neg_task(rpc)
     token, fc = _acquire_reviewer_lease(rpc, tid)
     try:
-        _reconcile_apply(rpc, tid, ADJUDICATOR, token=token, fc=fc + 1)
+        _reconcile_apply(rpc, tid, inst, ADJUDICATOR, token=token, fc=fc + 1)
     except Exception as e:
         assert "E_LEASE_FENCING_STALE" in str(e), str(e)
     else:
@@ -216,10 +218,10 @@ def test_reconcile_apply_rejects_stale_fencing(rpc):
 
 def test_reconcile_apply_rejects_non_adjudicator(rpc):
     """非 adjudicator（implementer）→ E_RECONCILE_ADJUDICATOR_ROLE_REQUIRED。"""
-    tid = _make_neg_task(rpc)
+    tid, inst = _make_neg_task(rpc)
     token, fc = _acquire_reviewer_lease(rpc, tid)
     try:
-        _reconcile_apply(rpc, tid, IMPLEMENTER, token=token, fc=fc)
+        _reconcile_apply(rpc, tid, inst, IMPLEMENTER, token=token, fc=fc)
     except Exception as e:
         assert "E_RECONCILE_ADJUDICATOR_ROLE_REQUIRED" in str(e), str(e)
     else:

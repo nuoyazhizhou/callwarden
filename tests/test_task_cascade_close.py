@@ -68,7 +68,20 @@ def db_conn():
     return conn
 
 
-def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
+@pytest.fixture(scope="module")
+def ws_instance(rpc) -> str:
+    """daemon 权威解析 workspace 1 的实例 ID（task.create 强制要求显式实例）。
+
+    v59 之后 `task.create` 拒绝空 `workspace_instance_id`（禁止合成 `ws-{id}`，
+    E_TASK_WORKSPACE_INSTANCE_REQUIRED），故 fixture 必须传入真实实例。
+    """
+    st = rpc.call("workspace.status", {"workspace_id": 1})
+    inst = st.get("task_db_instance_id") or st.get("workspace_instance_id")
+    assert inst, f"无法解析 workspace 1 的权威 instance: {st}"
+    return inst
+
+
+def make_tree(rpc, depth: int, instance: str, with_policy: bool = True) -> list[str]:
     """构造 depth+1 层的任务树，返回 [leaf, mid, root]。
 
     创建顺序 = 先根后叶（i=0 为根，无 parent；i=depth 为叶子，parent 指向
@@ -95,10 +108,11 @@ def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
         parent = ids[-2] if len(ids) >= 2 else None
         params = {
             "task_id": tid, "title": f"cascade test {i}", "description": "d",
-            "steps": steps, "creator": "cascade-test",
+            "steps": steps,
             "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
             "identity_policy": "legacy_identity_v1",
             "workspace_id": 1,
+            "workspace_instance_id": instance,
             "request_id": f"mk-{uuid.uuid4().hex[:8]}",
         }
         if parent:
@@ -128,10 +142,10 @@ def make_tree(rpc, depth: int, with_policy: bool = True) -> list[str]:
 # ============================================================
 
 
-def test_success_cascade_closes_ancestors(rpc):
+def test_success_cascade_closes_ancestors(rpc, ws_instance):
     """叶子 closed 后 cascade-close(mid) → mid + root 自动 closed（自底向上）。"""
     # 构造 3 层：leaf(done, closed) -> mid(review) -> root(review)
-    ids = make_tree(rpc, depth=2)
+    ids = make_tree(rpc, depth=2, instance=ws_instance)
     leaf, mid, root = ids[0], ids[1], ids[2]
 
     # 前置：leaf 已闭环（直写 closed），mid/root 卡在 review
@@ -167,12 +181,12 @@ def test_success_cascade_closes_ancestors(rpc):
 # ============================================================
 
 
-def test_identity_policy_autofill(rpc):
+def test_identity_policy_autofill(rpc, ws_instance):
     """聚合节点缺 identity_policy → cascade 自动追加 revision（legacy 默认）。"""
     # v59 治理硬化后 task.create 强制要求 identity_policy（创建即拒绝缺 policy），
     # autofill 只对存量历史任务有意义：先带 policy 建树，再从最新 revision
     # payload 删除 identity_policy 字段模拟存量缺 policy。
-    ids = make_tree(rpc, depth=1)
+    ids = make_tree(rpc, depth=1, instance=ws_instance)
     leaf, root = ids[0], ids[1]
 
     # 构造前置：删除 root 最新 revision 中的 identity_policy
@@ -222,9 +236,9 @@ def test_identity_policy_autofill(rpc):
 # ============================================================
 
 
-def test_not_all_closed_reject(rpc):
+def test_not_all_closed_reject(rpc, ws_instance):
     """子树仍有 open 节点 → cascade 不关闭任何祖先（stop）。"""
-    ids = make_tree(rpc, depth=1, with_policy=True)
+    ids = make_tree(rpc, depth=1, instance=ws_instance)
     _leaf, root = ids[0], ids[1]
 
     # 打开一个子任务（模拟未完成）：给 leaf 挂一个 open 兄弟
@@ -232,10 +246,10 @@ def test_not_all_closed_reject(rpc):
     rpc.call("task.create", {
         "task_id": open_tid, "title": "open sibling", "description": "d",
         "steps": [{"action": "govern", "target_file": "open.rs"}],
-        "creator": "cascade-test",
         "role_contracts": [{"role": "executor"}, {"role": "reviewer"}, {"role": "adjudicator"}],
         "identity_policy": "legacy_identity_v1",
         "parent_id": root, "workspace_id": 1,
+        "workspace_instance_id": ws_instance,
         "request_id": f"mk-{uuid.uuid4().hex[:8]}",
     })
 
@@ -260,9 +274,9 @@ def test_not_all_closed_reject(rpc):
 # ============================================================
 
 
-def test_idempotent(rpc):
+def test_idempotent(rpc, ws_instance):
     """重复 cascade-close 幂等：已 closed 节点跳过，不重复写。"""
-    ids = make_tree(rpc, depth=1, with_policy=True)
+    ids = make_tree(rpc, depth=1, instance=ws_instance)
     _leaf, root = ids[0], ids[1]
 
     params = {

@@ -95,6 +95,14 @@ def _make_call_args(fn):
         elif p.kind == inspect.Parameter.KEYWORD_ONLY:
             if p.default is inspect.Parameter.empty:
                 kwargs[name] = _default_value(p.annotation, name)
+    # P3-2：build_context 族把 workspace 定位参数改为可选（workspace_id 默认 0、
+    # workspace_instance_id 默认空），两者缺省时 _build_context_scope fail-closed
+    # （raise ValueError）。本测试只验证薄壳路由，故对存在 `workspace_id` 且
+    # 未被必填逻辑填充的工具显式补一个正数 id，避免在路由前被定位校验挡回。
+    if ("workspace_id" in inspect.signature(fn).parameters
+            and "workspace_id" not in kwargs
+            and not any(isinstance(a, int) and a > 0 for a in args)):
+        kwargs["workspace_id"] = 1
     return args, kwargs
 
 
