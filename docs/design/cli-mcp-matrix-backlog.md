@@ -1547,6 +1547,68 @@ AST 盘点 6 个 MCP 运行时模块的非 docstring 中文字面量，收敛为
 - 相关既有测试全绿：`test_task_verdict_mcp.py` + `test_tools_task_create_workspace_params.py`
   9 passed；依赖图/build_context 相关 5 个文件 78 passed。
 
+---
+
+## 21. 文档深度完善（阶段 3 第二项）· 首批章节四段式 + 防漂移门禁
+
+### 21.1 现象
+
+`docs/cli_reference.md` 的 21 大类章节写法不统一：多数 subcommand 只有用法块与
+散文式说明，少数带参数表；`**退出码**` 与 `**示例**` 并非每节都有。直接后果：
+
+- 参数表与实际 argparse 选项漂移（实测 `task capture-diff` 章节写了不存在的
+  `--apply`，同时漏掉真实存在的 `--skip-quality-review`）；
+- 用户无法从文档判断某参数是否必填；
+- 无法用测试锁定，后续改动继续发散。
+
+### 21.2 范围（首批 8 个前缀分类）
+
+| 前缀 | canonical 命令数 | 说明 |
+| --- | --- | --- |
+| `task` | 26 | 含 `task list` / `task show` 另有 1 个合并章节（质量门禁章） |
+| `build-context` | 8 | register/list/show/activate/delete/import-compile-commands/resolve/edges |
+| `workspace` | 5 | list/register/set/delete/generate-ignore |
+| `query` / `search` / `file` | 3 | 单 token 命令 |
+| `status` / `stats` | 2 | 单 token 命令 |
+| **合计** | **44** | 文档中 45 个 `###` 章节（`task list` 合并章节重复 1 次） |
+
+四段式模板（每章节顺序固定）：
+
+1. 用法：`bash` 代码块（可复制命令）；
+2. `**参数**` + `| 参数 | 必填 | 说明 |` 表格（说明取 `cw <cmd> --help` 原文）；
+3. `**退出码**` + 表格，固定三行：`0` 成功 / `1` 运行时失败 / `2` argparse 用法错误；
+4. `**示例**` + `bash` 代码块。
+
+必填判定以 `--help` usage 行的方括号深度为准（位置参数在 `[...]` 外 → 必填；
+`[--x]` → 否）。无参命令保留 `| — | — | 无参数 |` 占位行，避免空表。
+
+### 21.3 处置
+
+- `docs/cli_reference.md`：批量补齐 45 个章节三段缺失内容（+1104 行），并修正
+  `task capture-diff` 章节——删除不存在的 `--apply`、补 `--skip-quality-review`，
+  `--dry-run` 语义按 `cli/main.py` argparse 真相源改为"非默认"。
+- 新增门禁 `tests/test_cli_reference_sections.py`（8 项）：每条首批章节必须具备
+  用法块 / 参数表 / 退出码表（含 0/1/2）/ 非空示例块，四段顺序固定、各只出现一次；
+  同时锁定 `EXPECTED_COMMANDS` 44 条不丢失、首批前缀下不得出现未登记章节。
+- `docs/architecture.md` 阶段 3「文档深度完善」📋 → 🔄，注明首批覆盖范围。
+
+### 21.4 验证
+
+- `pytest tests/test_cli_reference_sections.py -q` → 8 passed。
+- `pytest tests/test_cli_docs_structure.py tests/test_category_source.py -q` → 36 passed
+  （既有骨架与 21 分类真相源校验无回归）。
+- 手工校验脚本：45 个首批章节 bad=0；`search` 章节无重复参数表。
+
+### 21.5 边界与残留
+
+- **其余 13 个分类**（Call Chain / Metrics / Semgrep / Coverage / GC / Git 等）尚未
+  四段式化，由后续任务卡分批推进；扩充时同步追加 `FIRST_BATCH_PREFIXES` 与
+  `EXPECTED_COMMANDS`。
+- 质量门禁章的「`task list` / `task show`：任务列表与详情」合并章节与两个单命令
+  章节内容重叠，本轮两处均已补段；合并/去重登记为文档残留，不在本卡处理
+  （改动面会波及其他交叉引用）。
+- 退出码仅约定 `0/1/2` 三档；细分错误码仍以命令输出正文为准，不进文档表格。
+
 
 
 

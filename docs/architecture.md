@@ -1089,7 +1089,7 @@ Call Warden 把 84 个顶层 CLI 命令和 243 个 MCP 工具按功能聚合为 
 | 工作项                 | 状态 | 说明                                                |
 | ---------------------- | ---- | --------------------------------------------------- |
 | MCP 工具内部 i18n 改造 | ✅    | MCP 工具的错误消息/提示走 i18n.t()，与 CLI 输出一致（18 条运行时消息收敛到 `mcp.messages.*`，见 backlog §20） |
-| 文档深度完善           | 📋    | 补充各 subcommand 的完整参数表、退出码、示例        |
+| 文档深度完善           | 🔄    | 首批 8 个前缀分类（task / build-context / workspace / query / search / file / status / stats，44 个命令）已补齐四段式（用法 / 参数表 / 退出码 / 示例），门禁 `tests/test_cli_reference_sections.py`；其余分类后续卡（见 backlog §21） |
 | 测试覆盖加强           | 📋    | 为 27 个新增 subcommand handler 编写端到端测试      |
 | `--flag` 移除评估      | 📋    | 评估 deprecated `--flag` 的使用率，制定移除时间表   |
 

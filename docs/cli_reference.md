@@ -635,6 +635,27 @@ cw status
 
 显示工作区、文件分布、符号分布、调用关系统计、上次构建时间等。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw status
+```
+
+
 ### `stats`：统计信息（JSON）
 
 ```bash
@@ -642,6 +663,27 @@ cw stats
 ```
 
 以 JSON 格式输出统计信息，便于脚本解析。
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw stats
+```
+
 
 ### `graph build-from-c`：Rust 并行构建 GraphStore（F11）
 
@@ -667,11 +709,28 @@ cw search "User" --kind class
 cw search "handle" --limit 20
 ```
 
-| 参数            | 说明                                                  |
-| --------------- | ----------------------------------------------------- |
-| `<QUERY>`       | 搜索关键词（模糊匹配）                                |
-| `--kind <KIND>` | 类型过滤：fn/method/class/struct/enum/trait/interface |
-| `--limit <N>`   | 返回数量（默认 50）                                   |
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<QUERY>` | 是 | 搜索关键词（模糊匹配） |
+| `--kind <KIND>` | 否 | 类型过滤：fn/method/class/struct/enum/trait/interface |
+| `--limit <N>` | 否 | 返回数量（默认 50） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw search process_payment --kind function --limit 10
+```
+
 
 ### `grep <PATTERN...>`：带符号上下文的文本搜索
 
@@ -711,11 +770,54 @@ cw symbol "my_project::payment::process_payment"
 cw file src/payment/mod.rs
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<path>` | 是 | File path |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw file src/payment/mod.rs
+```
+
+
 ### `query <NAME> <FILE>`：精确查询位置
 
 ```bash
 cw query process_payment src/payment/mod.rs
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<name>` | 是 | Symbol name |
+| `<file>` | 是 | File path |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw query process_payment src/payment/mod.rs
+```
+
 
 ### `callers <NAME>` / `callees <NAME>`
 
@@ -1035,6 +1137,36 @@ cw task create --title "t" --desc "d" --steps '[{"action":"inspect","target_file
 cw task create --title "t" --workspace-id 72 --workspace-instance-id 2bba6e894ee2546f
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--title <TITLE>` | 是 | 任务标题 |
+| `--desc <DESC>` | 否 | 任务描述 |
+| `--steps <STEPS>` | 否 | 步骤 JSON 数组，例如 [{"action":"annotate","target_file":"a.py"}] |
+| `--role-contracts <ROLE_CONTRACTS>` | 否 | JSON array of role contract objects (keys: role, skill_id, skill_version, prompt_template_id, prompt_hash, allowed_paths, forbidden_paths, commands, acceptance_checks, required_evidence, handoff_to, independence). If omitted, the A' standard three-role (executor/reviewer/adjudicator) legacy contract template is used. Tasks are never created without contracts. |
+| `--workspace-id <WORKSPACE_ID>` | 否 | 显式 daemon workspace id（缺省从 daemon 解析，fail-closed） |
+| `--workspace-instance-id <WORKSPACE_INSTANCE_ID>` | 否 | 显式 daemon workspace 权威 capture instance id（缺省经 workspace.status 从 daemon 解析） |
+| `--parent-id <PARENT_ID>` | 否 | 父任务 ID；须显式提供 daemon workspace 配对与合同 |
+| `--identity-policy <IDENTITY_POLICY>` | 否 | 显式 daemon 身份策略；治理创建不推断默认策略 |
+| `--task-contract-envelope <TASK_CONTRACT_ENVELOPE>` | 否 | Task Contract JSON envelope，原样传给 daemon |
+| `--task-id <TASK_ID>` | 否 | 与所提供 Task Contract envelope 一致的显式任务 ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task create --title "修复登录超时" --desc "登录 30s 超时" --steps '[{"action":"fix","target_file":"src/auth.rs"}]'
+```
+
+
 ### `task next`：领取下一步骤
 
 ```bash
@@ -1049,6 +1181,33 @@ cw task next <task_id>
 当前 workspace 的 `active_task_id` 字段，替代 `CALLWARDEN_TASK_ID` 环境变量。
 后续 `cw task capture-diff --auto` 会优先从该字段读取 task_id，无需手动 export。
 连续 claim 多个任务时后者覆盖前者。
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--remediation-step-id <REMEDIATION_STEP_ID>` | 否 | Explicit daemon-issued fix_defect step ID to claim |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task next T-123 --agent-id executor --session-id s-exec --model-id m1 --role executor --agent-instance-id inst-exec
+```
+
 
 ### `task next-action`：查询系统派工（只读）
 
@@ -1082,6 +1241,29 @@ cw task next-action <task_id> --json
   `E_DAEMON_UNAVAILABLE`，local 模式无 evaluator（fail-closed），不会本地推算。
 - `--json` 输出原始决策供脚本/客户端解析；`cw-task-loop` Skill 依此逐字渲染角色卡。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--workspace-instance-id <WORKSPACE_INSTANCE_ID>` | 否 | Workspace authority capture instance id (daemon binding key) |
+| `--json` | 否 | Output raw daemon JSON (machine-readable) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task next-action T-123 --json
+```
+
+
 ### `task prompt`：编译 Role Prompt Bundle（只读薄客户端）
 
 ```bash
@@ -1114,6 +1296,29 @@ canonical 化与 hash，返回可直接供 LLM 使用的 Role Prompt Bundle（§
 - **只读**：`task.prompt.compile` 为 READ_ONLY（单 snapshot 8 表零写入），不产生
   lease、claim 或 lifecycle mutation。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | Task ID |
+| `--format <{llm,card,json}>` | 否 | Local display format only (llm\|card\|json); never sent to daemon |
+| `--expected-workspace-instance-id <EXPECTED_WORKSPACE_INSTANCE_ID>` | 否 | Optional caller authority assertion (spec 4.2); never derived client-side |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task prompt T-123 --format json
+```
+
+
 ### `task report`：回报结果
 
 ```bash
@@ -1130,11 +1335,68 @@ cw task report <task_id> <step_id> --result "文件不存在" --fail
 四参数（全部必填，缺失拒绝）记录执行者 Identity，仅作 actor attribution，
 不等于 assignment/lease/ownership。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `<step_id>` | 是 | 步骤 ID（可选，留空则做任务级审查） |
+| `--result <RESULT>` | 否 | 执行结果描述 |
+| `--fail` | 否 | 标记为失败（默认成功） |
+| `--evidence-path <EVIDENCE_PATH>` | 否 | Task-bound evidence manifest path (daemon authority only) |
+| `--evidence-hash <EVIDENCE_HASH>` | 否 | SHA-256 of the task-bound evidence manifest |
+| `--snapshot-id <SNAPSHOT_ID>` | 否 | Authoritative review snapshot reference (must come from snapshot.publish) |
+| `--changes-json <CHANGES_JSON>` | 否 | JSON array of explicit step-whitelisted file changes |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task report T-123 S-1 --result "完成解析器修复" --snapshot-id <SNAPSHOT_ID> --lease-token <TOKEN> --fencing-counter 1 --agent-id executor --session-id s-exec --model-id m1 --role executor
+```
+
+
 ### `task rollback`：回滚变更
 
 ```bash
 cw task rollback <task_id> <step_id>
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `<step_id>` | 是 | 步骤 ID（作为 change_id 定位回滚范围） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task rollback T-123 S-1
+```
+
 
 ### `task apply`：审核通过任务
 
@@ -1168,6 +1430,35 @@ cw task apply <task_id> [--reviewer <identity>] [--agent-id <A> --session-id <S>
 返回值新增 `cascaded_close: List[str]` 字段（仅触发级联时存在），列出所有自动
 close 的 task_id。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--reviewer <REVIEWER>` | 否 | 审核人标识 |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task apply T-123 --reviewer review-agent --agent-id reviewer --session-id s-rev --model-id m1 --role reviewer --lease-token <TOKEN> --fencing-counter 3
+```
+
+
 ### `task close`：关闭任务
 
 ```bash
@@ -1193,6 +1484,35 @@ cw task close <task_id> [--reviewer <identity>] [--agent-id <A> --session-id <S>
 **active_task 清除**（v30 新增）：`task close` 成功后自动清除当前 workspace
 的 `active_task_id`（防御性：仅当 `active_task == task_id` 时才清除，避免误清除
 后续已 claim 的新任务）。
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--reviewer <REVIEWER>` | 否 | 审核人标识 |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task close T-123 --reviewer review-agent --agent-id adjudicator --session-id s-adj --model-id m1 --role adjudicator --lease-token <TOKEN> --fencing-counter 4
+```
+
 
 ### `task reopen`：重新打开任务
 
@@ -1241,6 +1561,36 @@ cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"] [--agent-
 **i18n key**：`task_reopen_failed`/`task_reopen_success`/`task_reopen_no_need`/
 `task_reopened_at`/`task_reopen_reason_label`。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--reviewer <REVIEWER>` | 否 | 审核人标识 |
+| `--reason <REASON>` | 否 | 重新打开原因（可选） |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task reopen T-123 --reason "回归失败" --reviewer review-agent
+```
+
+
 ### `task findings`：查看任务质量门禁发现
 
 ```bash
@@ -1264,6 +1614,29 @@ cw task findings <task_id> --severity error
 - `error`：错误，阻塞 step 进入 done
 - `block`：阻塞，必须修复后才能继续
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--status <STATUS>` | 否 | 状态过滤（open/resolved/wontfix/all） |
+| `--severity <SEVERITY>` | 否 | 严重度过滤（info/warn/error/block） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task findings T-123 --status open --severity error
+```
+
+
 ### `task resolve-finding`：解决质量门禁发现
 
 ```bash
@@ -1283,6 +1656,29 @@ cw task resolve-finding <finding_id> --by human
 将 finding 状态从 `open` 推进到 `resolved`（fixed）或 `wontfix`
 （wontfix / false_positive）。`error` / `block` 级别的发现被解决后，
 该 step 的阻塞状态才会解除，再次 `task_completion_review` 会重新评估。
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<finding_id>` | 是 | 发现 ID |
+| `--resolution <RESOLUTION>` | 否 | 解决方式（fixed/wontfix/false_positive） |
+| `--by <BY>` | 否 | 解决者（agent/human/system） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task resolve-finding F-1 --resolution fixed --by agent
+```
+
 
 ### `task completion-review`：任务完成质量审查
 
@@ -1312,6 +1708,28 @@ signature mismatch），根据所有 open finding 的严重度给出决策：
 `task_completion_review_counts`/`task_completion_review_findings_title`/
 `task_completion_review_finding_item`。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--step-id <STEP_ID>` | 否 | 步骤 ID（可选，留空则做任务级审查） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task completion-review T-123 --step-id S-2
+```
+
+
 ### `task split`：从 Markdown 计划拆分父子任务树
 
 ```bash
@@ -1332,6 +1750,29 @@ cw task split <task_id> --plan <plan.md>
 **示例计划**：
 ```markdown
 # 根任务
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--plan <PLAN>` | 是 | Markdown 计划文件路径 |
+| `--identity-policy <IDENTITY_POLICY>` | 否 | Subtask identity policy (default legacy_identity_v1) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task split T-123 --plan docs/plan.md
+```
+
 
 ## 子任务1
 实现登录功能
@@ -1358,6 +1799,27 @@ cw task status-tree <task_id>
 （不带 `--flat`）。是 `task show` 的树形别名，方便用户记忆。
 
 **输出格式**：与 `task show` 一致，按 `depth` × 4 空格缩进展示子任务链。
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task status-tree T-123
+```
+
 
 ### `task list`：列出任务
 
@@ -1388,6 +1850,30 @@ cw task list --limit 50
 
 **排序规则**：根任务优先 → `parent_id` 升序 → `sort_order` 升序 → `created_at` 倒序
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--blocked` | 否 | 仅显示有阻塞发现的任务 |
+| `--limit <LIMIT>` | 否 | 最多列出的任务数量（默认 200） |
+| `--status <STATUS>` | 否 | 状态过滤（open/in_progress/review/applied/closed/reverted） |
+| `--flat` | 否 | 扁平展示（不按树形缩进） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task list --status in_progress --limit 20
+```
+
+
 ### `task show`：查看任务详情（含子任务树）
 
 ```bash
@@ -1414,17 +1900,39 @@ daemon 不可用时按兼容模式规则 fail-closed，不用本地 raw status �
 保证新建任务的 Contract revision 可被后续 Executor claim；历史缺少该字段的任务
 仍需由受权治理流程追加新 revision，不能由客户端直接补写。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--flat` | 否 | 扁平模式（不递归展示子任务） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task show T-123 --flat
+```
+
+
 ### `task capture-diff`：捕获外部 Agent 文件改动到审计闭环
 
 ```bash
-# Dry-run（默认）：只返回计划，不写库
+# Dry-run：只返回计划，不写库
+cw task capture-diff <task_id> --dry-run
+
+# 实际写入（默认）：落 change_audit / task_symbol_changes / audit_chain，并触发质量检查
 cw task capture-diff <task_id>
 
-# 实际写入：落 change_audit / task_symbol_changes / audit_chain，并触发质量检查
-cw task capture-diff <task_id> --apply
-
 # 指定关联 step 与 base commit
-cw task capture-diff <task_id> --step-id S-1783... --base HEAD~1 --apply
+cw task capture-diff <task_id> --step-id S-1783... --base HEAD~1
 
 # --auto 模式：自动检测 in_progress 任务，HEAD~1 作为 base，自动 apply（fail-soft）
 # 常用于 post-commit hook 自动调用，task_id 可省略
@@ -1435,20 +1943,17 @@ cw task capture-diff --auto
 直接修改了文件后，调用此命令把这些"真实改动"捕获回 Call Warden 的
 任务/变更/符号/审计闭环，使图谱与磁盘保持一致，并自动生成质量发现。
 
-**参数**：
-- `<task_id>`（可选，`--auto` 模式下可省略）：关联的任务 ID
-- `--step-id <ID>`：关联的 step ID（可选，默认空）
-- `--base <COMMIT>`：基准 commit（可选，默认使用最近一次 `workspace_scan_runs` 的 git_head）
-- `--dry-run`（默认）：只返回计划，不写数据库
-- `--source-commit-hash <HASH>`：引入此次变更的 git commit hash（可选，schema v35+）
-  - 填写后写入 `task_symbol_changes.source_commit_hash` 字段，支持后续 `get_task_commits` / `get_commit_tasks` 三角关联查询
-  - `--auto` 模式自动取当前 HEAD commit hash，无需手动指定
-- `--auto`：自动模式（fail-soft，不阻断 git commit）：
-  - 自动检测当前 `in_progress` 状态的任务
-  - 取 `HEAD~1` 作为 base（commit 后 hook 触发，HEAD 已是新提交）
-  - 自动 apply（`dry_run=False`）
-  - 自动取当前 HEAD commit hash 填入 `source_commit_hash`（v35+ 三角关联）
-  - 双层 fail-soft（DB 层 + CLI 层）确保不影响 git commit
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 否 | 关联的任务 ID（`--auto` 模式下可省略） |
+| `--step-id <STEP_ID>` | 否 | 关联的 step ID（默认空） |
+| `--base <BASE>` | 否 | 基准 commit（空串 = 最近一次 `workspace_scan_runs` 的 git_head） |
+| `--dry-run` | 否 | 只返回计划，不写数据库（默认执行 apply） |
+| `--auto` | 否 | 自动模式（fail-soft，不阻断 git commit）：检测 `in_progress` 任务、取 `HEAD~1` 为 base、自动 apply、自动填 `source_commit_hash`；双层 fail-soft（DB 层 + CLI 层） |
+| `--skip-quality-review` | 否 | 跳过 `run_task_completion_review`（Semgrep + 5 extension checkers）；`--auto` 模式总是跳过，手动模式默认 False |
+| `--source-commit-hash <SOURCE_COMMIT_HASH>` | 否 | 引入此次变更的 git commit hash（schema v35+），写入 `task_symbol_changes.source_commit_hash`，供 `get_task_commits` / `get_commit_tasks` 三角关联查询 |
 
 **输出**：
 - 变更文件清单（含新增 / 修改 / 删除统计）
@@ -1468,6 +1973,21 @@ cw task capture-diff --auto
 > `task capture-diff` 是从磁盘真实变更反向同步到任务上下文，二者配合
 > 构成完整的"声明 + 验证"闭环。
 
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task capture-diff T-123 --step-id S-1 --base HEAD~1
+```
+
+
 ### `task assignment-status`：读取 daemon 派工队列投影（只读）
 
 ```bash
@@ -1483,6 +2003,30 @@ cw task assignment-status <task_id> --json
 - `--json`：输出 daemon 原始 JSON
 - 默认展示 `current_assignment`（assignment_id / step_id / role / status /
   holder_session_id / last_heartbeat_at）与队列历史条数 `history_count`
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | Task ID |
+| `--step-id <STEP_ID>` | 否 | Optional step ID |
+| `--role <ROLE>` | 否 | Optional governance role |
+| `--json` | 否 | Output raw daemon JSON |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task assignment-status T-123 --role executor --json
+```
+
 
 ### `task assignment-heartbeat`：daemon 派工心跳
 
@@ -1500,6 +2044,37 @@ executor 仍持有该派工；仅转发 daemon，客户端不能直接修改队�
 - `--agent-session-id`：Agent 会话 ID（缺省从结构化身份 session 解析）
 - 身份参数：`--agent-id` / `--session-id` / `--model-id` / `--role` /
   `--agent-instance-id`（提供则须完整，否则 fail-closed）；`--json` 输出原始 JSON
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | Task ID |
+| `<assignment_id>` | 是 | Durable assignment ID |
+| `--request-id <REQUEST_ID>` | 是 | Stable replay-safe request ID |
+| `--fencing-counter <FENCING_COUNTER>` | 否 | Current fencing counter |
+| `--agent-session-id <AGENT_SESSION_ID>` | 否 | Agent session ID |
+| `--agent-id <ID>` | 否 | Agent ID |
+| `--session-id <ID>` | 否 | Identity session ID |
+| `--model-id <ID>` | 否 | Model ID |
+| `--role <ROLE>` | 否 | Governance role |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID |
+| `--json` | 否 | Output raw daemon JSON |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task assignment-heartbeat T-123 A-abc --request-id hb-1 --fencing-counter 1 --agent-id executor --session-id s-exec --model-id m1 --role executor --agent-instance-id inst-exec
+```
+
 
 ### `task handoff`：结构化角色交接（task.handoff ledger 事件）
 
@@ -1522,6 +2097,45 @@ cw task handoff <task_id> --from-role executor --outcome blocked \
 - 身份参数与 lease 凭证（`--lease-token` / `--fencing-counter`）可选，
   提供则须完整配对（fail-closed）
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | Task ID |
+| `--from-role <FROM_ROLE>` | 是 | Source governance role |
+| `--outcome <OUTCOME>` | 是 | Structured handoff outcome |
+| `--next-role <NEXT_ROLE>` | 是 | Next governance role |
+| `--next-action <NEXT_ACTION>` | 是 | Next role action |
+| `--reason <REASON>` | 是 | Handoff reason |
+| `--independence-requirement <INDEPENDENCE_REQUIREMENT>` | 是 | Independence requirement |
+| `--request-id <REQUEST_ID>` | 是 | Stable request id |
+| `--step-id <STEP_ID>` | 是 | Completed step id |
+| `--report-request-id <REPORT_REQUEST_ID>` | 是 | Task report request id |
+| `--evidence-path <EVIDENCE_PATH>` | 是 | Evidence path |
+| `--evidence-hash <EVIDENCE_HASH>` | 是 | Evidence hash |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task handoff T-123 --from-role reviewer --outcome reviewer_pass --next-role adjudicator --next-action apply_and_close --reason "复审通过" --independence-requirement required --request-id ho-1 --step-id S-3 --report-request-id req-1 --evidence-path .trae-cn/evidence/pass.json --evidence-hash <SHA256>
+```
+
+
 ### `task step-resolve`：失败步骤 remediation 后回审
 
 ```bash
@@ -1539,6 +2153,40 @@ daemon-only 命令（`task.step.resolve`）：失败步骤经 remediation 步骤
   路径与 SHA-256
 - 必须携带完整结构化身份；支持 `--lease-token` / `--fencing-counter` 与 `--json`
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | Task ID |
+| `<failed_step_id>` | 是 | Original failed step id |
+| `<remediation_step_id>` | 是 | done fix_defect step id |
+| `<request_id>` | 是 | Stable request id (replay-safe) |
+| `--evidence-path <EVIDENCE_PATH>` | 是 | Resolution evidence path (mandatory) |
+| `--evidence-hash <EVIDENCE_HASH>` | 是 | SHA-256 of resolution evidence (mandatory) |
+| `--json` | 否 | Output raw daemon JSON (machine-readable) |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task step-resolve T-123 S-failed S-fix req-1 --evidence-path .trae-cn/evidence/fix.json --evidence-hash <SHA256>
+```
+
+
 ### `task cascade-close`：聚合节点级联收尾
 
 ```bash
@@ -1552,6 +2200,32 @@ cw task cascade-close <task_id>
 - 子树存在未 closed 子卡或叶子步骤未完成时拒绝收尾，退出码 2（GOV-FIX-06）
 - 支持结构化身份参数（`--agent-id` / `--session-id` / `--model-id` / `--role` /
   `--agent-instance-id`）
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task cascade-close T-parent
+```
+
 
 ### `task claim-recover`：释放失联 executor claim
 
@@ -1569,6 +2243,36 @@ cw task claim-recover <task_id> --reason "executor 会话已失联" \
 - 仅限 **adjudicator** 身份（`--role adjudicator`），且必须持有目标任务**独立
   Reviewer** 的 `--lease-token` / `--fencing-counter`（缺失即 fail-closed）
 - `--request-id`：可选，幂等请求 ID（缺省自动生成 `claim-recover-<hex>`）
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | 任务 ID |
+| `--reason <REASON>` | 是 | Why the old claim is considered orphaned/stale (mandatory) |
+| `--request-id <REQUEST_ID>` | 否 | Stable request id for replay-safe dedup (auto- generated if empty) |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+| `--lease-token <TOKEN>` | 否 | Lease raw token (P4 protected mutation) |
+| `--fencing-counter <N>` | 否 | Current fencing counter (P4 protected mutation) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task claim-recover T-123 --reason "executor 失联超过 30 分钟" --agent-id admin --session-id s-admin --model-id m1 --role planner
+```
+
 
 ### `task supersede`：声明任务替代关系
 
@@ -1589,6 +2293,39 @@ append-only 事件 + 独立关系表）。仅 daemon 权威写点，local 模式
 - `--lease-token` / `--fencing-counter`：source（被替代）任务的 reviewer lease
 - `--role` 严格限定 `adjudicator`；身份参数与其他治理命令一致
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<old>` | 是 | Task ID being superseded (old) |
+| `<new>` | 是 | Task ID superseding (new) |
+| `--reason <REASON>` | 否 | Reason for superseding (recorded append-only) |
+| `--request-id <ID>` | 否 | Stable request id for idempotent replay (auto- generated if empty) |
+| `--evidence-path <PATH>` | 否 | Evidence manifest path (required for governance supersede) |
+| `--evidence-hash <HASH>` | 否 | Evidence manifest sha256 (required for governance supersede) |
+| `--lease-token <TOKEN>` | 否 | Reviewer lease token for the source (superseded) task |
+| `--fencing-counter <N>` | 否 | Reviewer lease fencing counter (must equal current value) |
+| `--agent-id <ID>` | 否 | Agent ID（P3 结构化身份，Req 10.1） |
+| `--session-id <ID>` | 否 | Session ID（P3 结构化身份，Req 10.1） |
+| `--model-id <ID>` | 否 | Model ID（P3 结构化身份，Req 10.1） |
+| `--role <ROLE>` | 否 | 角色（planner/implementer/reviewer/tester） |
+| `--agent-instance-id <ID>` | 否 | Agent instance ID (P3 Identity, optional; must match registration if non-empty) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task supersede T-old T-new --reason "拆分到新卡" --request-id sup-1
+```
+
+
 ### `task governance-projection`：查看任务治理投影（只读）
 
 ```bash
@@ -1601,6 +2338,28 @@ fallback）。展示 lifecycle/workflow 状态、当前与下一角色、review 
 Task Contract、当前步骤、Reviewer Role Contract、normalization 规则与阻断原因；
 投影绝不返回 lease token（`lease_raw_token_omitted`）。
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<task_id>` | 是 | Task ID |
+| `--json` | 否 | Output raw daemon JSON (machine-readable) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task governance-projection T-123 --json
+```
+
+
 ### `task superseded`：查询任务被替代状态（只读）
 
 ```bash
@@ -1610,6 +2369,27 @@ cw task superseded <task_id>
 只读查询某任务是否已被其他任务替代（`task.superseded_by`，daemon 权威，无 local
 fallback）。已替代时显示替代者 task_id、reason、actor、supersedence_id、
 reason_code 与 evidence_hash；未被替代时明确提示。
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<id>` | 是 | 任务 ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task superseded T-old
+```
+
 
 ### `audit verify`：验证审计链完整性
 
@@ -1746,6 +2526,30 @@ cw task show <task_id>        # 任务详情（树形模式）
 ```
 
 ---
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `--blocked` | 否 | 仅显示有阻塞发现的任务 |
+| `--limit <LIMIT>` | 否 | 最多列出的任务数量（默认 200） |
+| `--status <STATUS>` | 否 | 状态过滤（open/in_progress/review/applied/closed/reverted） |
+| `--flat` | 否 | 扁平展示（不按树形缩进） |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw task list --status in_progress --limit 20
+```
+
 
 ## 度量命令
 
@@ -2535,11 +3339,54 @@ cw ownership-map
 cw workspace list
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| — | — | 无参数 |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw workspace list
+```
+
+
 ### `workspace register <NAME> <ROOT>`
 
 ```bash
 cw workspace register my_project /path/to/project
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<name>` | 是 | Workspace name |
+| `<root>` | 是 | Workspace root path |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw workspace register demo-root /path/to/project
+```
+
 
 ### `workspace set <ID_OR_NAME>`
 
@@ -2548,11 +3395,53 @@ cw workspace set my_project
 cw workspace set 1
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<id_or_name>` | 是 | Workspace ID or name |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw workspace set demo-root
+```
+
+
 ### `workspace delete <ID_OR_NAME>`
 
 ```bash
 cw workspace delete my_project
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<id_or_name>` | 是 | Workspace ID or name |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw workspace delete old-name
+```
+
 
 ### `workspace generate-ignore`：自动生成 .callwardenignore
 
@@ -2565,6 +3454,28 @@ cw workspace generate-ignore --apply         # 实际写入 .callwardenignore
 ```
 
 ---
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<dir>` | 否 | Directory to scan (default: current workspace root) |
+| `--apply` | 否 | Actually write .callwardenignore (default: dry-run preview) |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw workspace generate-ignore --apply
+```
+
 
 ## 构建上下文命令（构建上下文感知）
 
@@ -2579,6 +3490,32 @@ cw build-context register 1 debug --flags -O0 -g --defines DEBUG=1 --activate
 cw build-context register 1 release --flags -O2 --defines NDEBUG=1
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+| `<name>` | 是 | Context name (e.g. debug, release) |
+| `--flags <[FLAGS ...]>` | 否 | Compile flags (e.g. -O2 -g) |
+| `--defines <[DEFINES ...]>` | 否 | Defines (e.g. DEBUG=1 BOARD=A98) |
+| `--includes <[INCLUDES ...]>` | 否 | Include paths |
+| `--activate` | 否 | Set as active context |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context register 1 debug --flags -O2 -g --defines DEBUG=1 --activate
+```
+
+
 ### `build-context list <WORKSPACE_ID>`
 
 列出某工作区下所有构建上下文。
@@ -2586,6 +3523,27 @@ cw build-context register 1 release --flags -O2 --defines NDEBUG=1
 ```bash
 cw build-context list 1
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context list 1
+```
+
 
 ### `build-context show <WORKSPACE_ID> <HASH>`
 
@@ -2595,6 +3553,28 @@ cw build-context list 1
 cw build-context show 1 3a2f1b8c
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+| `<hash>` | 是 | Build context hash |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context show 1 3f2a9c
+```
+
+
 ### `build-context activate <WORKSPACE_ID> <HASH>`
 
 将指定构建上下文设为活跃。
@@ -2602,6 +3582,28 @@ cw build-context show 1 3a2f1b8c
 ```bash
 cw build-context activate 1 3a2f1b8c
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+| `<hash>` | 是 | Build context hash |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context activate 1 3f2a9c
+```
+
 
 ### `build-context delete <WORKSPACE_ID> <HASH>`
 
@@ -2611,6 +3613,28 @@ cw build-context activate 1 3a2f1b8c
 cw build-context delete 1 3a2f1b8c
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+| `<hash>` | 是 | Build context hash |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context delete 1 3f2a9c
+```
+
+
 ### `build-context import-compile-commands <FILE> <WORKSPACE_ID>`
 
 从 `compile_commands.json` 导入构建上下文（自动提取 flags/defines/includes，按 directory 聚合）。可选 `--name`、`--activate`、`--workspace-root`（路径归一化基准）。
@@ -2618,6 +3642,31 @@ cw build-context delete 1 3a2f1b8c
 ```bash
 cw build-context import-compile-commands build/compile_commands.json 1 --name debug --activate
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<file>` | 是 | Path to compile_commands.json |
+| `<workspace_id>` | 是 | Workspace ID |
+| `--name <NAME>` | 否 | Context name |
+| `--activate` | 否 | Set as active context |
+| `--workspace-root <WORKSPACE_ROOT>` | 否 | Workspace root for path normalization |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context import-compile-commands build/compile_commands.json 1 --name linux-release --activate
+```
+
 
 ### `build-context resolve <WORKSPACE_ID> <HASH>`：计算 resolved_edges
 
@@ -2637,6 +3686,28 @@ Resolved edges computed for: debug
   stored: 5428
 ```
 
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+| `<hash>` | 是 | Build context hash |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context resolve 1 3f2a9c
+```
+
+
 ### `build-context edges <WORKSPACE_ID> <HASH>`
 
 查询已计算的 resolved_edges。可选 `--caller SYM_ID`（按 caller 过滤）、`--limit N`（限制返回条数）。
@@ -2645,6 +3716,30 @@ Resolved edges computed for: debug
 cw build-context edges 1 3a2f1b8c --limit 20
 cw build-context edges 1 3a2f1b8c --caller 42
 ```
+
+**参数**
+
+| 参数 | 必填 | 说明 |
+| ---- | ---- | ---- |
+| `<workspace_id>` | 是 | Workspace ID |
+| `<hash>` | 是 | Build context hash |
+| `--caller <CALLER>` | 否 | Filter by caller symbol ID |
+| `--limit <LIMIT>` | 否 | Max results |
+
+**退出码**
+
+| 退出码 | 含义 |
+| ------ | ---- |
+| 0      | 成功 |
+| 1      | 运行时失败（daemon 不可达 / 校验失败 / 资源不存在等，具体错误码见输出） |
+| 2      | 命令行用法错误（参数缺失或取值非法，由 argparse 统一返回） |
+
+**示例**
+
+```bash
+cw build-context edges 1 3f2a9c --limit 20
+```
+
 
 ### `toolchain list-bound`：列出绑定到 workspace 的工具链
 
