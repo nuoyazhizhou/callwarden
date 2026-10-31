@@ -707,7 +707,8 @@ schema_version 断言。
   防御性措施（`DROP INDEX IF EXISTS` 重复执行无副作用，只回收冗余空间，
   不影响正确性）。对应单测见 §8.3。
 - `tests/_bench_*.py`（3 个基准脚本）仍自建 `idx_calls_callee_name`：那是
-  bench 专用简化 schema，不在生产路径，未纳入本卡范围。
+  bench 专用简化 schema，不在生产路径，未纳入本卡范围。该残留已由 C8 后续卡
+  `T-1793407385525-e7d5f04c` 归一为 canonical 部分索引，见 §13。
 
 ---
 
@@ -1054,5 +1055,59 @@ rustc 诊断不降级、成功构建不 skip、`prereq_unavailable_reason` 别�
   避免与生产 daemon 争用 SID 级 `\\.\pipe\callwarden-<SID>`（见 §7.5 后续卡建议①）。
 - 本卡守卫只降级「明确前置缺失」，不改变 `cargo build` 次数与耗时结构。
 - §7.5「其他 44」保持原状，不在本卡范围。
+
+---
+
+## 13. C8 后续 · 基准脚本 calls 索引收敛（2026-10-31）
+
+> 任务卡：`T-1793407385525-e7d5f04c`（步骤 #0 triage / #1 实现 / #2 验证+文档）
+> 承接 §8.5 残留：`tests/_bench_*.py` 自建已废弃全量 calls 索引
+
+### 13.1 现象
+
+三个基准脚本各自内嵌一份简化 schema，其中 calls 索引仍为已废弃的全量形态，
+与 canonical `db/schema.py`（v61）不一致，构成第二份 schema 真相源：
+
+| 脚本 | 改前 | 改后（canonical v61） |
+|---|---|---|
+| `tests/_bench_insert_strategies.py` | `idx_calls_callee_id ON calls(callee_id)`、`idx_calls_callee_name ON calls(callee_name)` | `idx_calls_callee_id_resolved ... WHERE callee_id > 0`、`idx_calls_callee_name_raw ... WHERE callee_id = 0` |
+| `tests/_bench_graph_store_large.py` | 同上 | 同上 |
+| `tests/_bench_10m_progressive.py` | 同上 | 同上 |
+
+三脚本均保留 `idx_calls_caller ON calls(caller_id)`。
+
+### 13.2 处置
+
+- 三脚本的 calls 索引 DDL 逐字替换为 canonical 两条部分索引，并在脚本内注明
+  「全量索引已在 v33/v61 废弃，基准脚本不得保留第二份真相源」。
+- **不改基准口径**：合成数据规模/seed、查询实现与度量方式保持不变；
+  `_bench_graph_store_large.py` 的 `WHERE c.callee_name = ?` SQL 基线保留，
+  用于对照生产短名降级路径（有意全表扫描）与 GraphStore 路径的差异。
+- `tests/test_p7_callee_id_index.py` 新增防回潮门禁（该文件已在验收矩阵内，
+  不新增测试文件）：
+  - `test_bench_schema_mirrors_canonical_calls_indexes`（参数化 3 脚本）：
+    禁止 `idx_calls_callee_id` / `idx_calls_callee_name` 全量索引名回潮，
+    且必须逐字包含两条 canonical 部分索引。
+  - `test_raw_callee_query_uses_partial_text_index`：
+    `callee_name = ? AND callee_id = 0` 必须命中 `idx_calls_callee_name_raw`。
+
+### 13.3 实测
+
+| 项 | 结果 |
+|---|---|
+| `C:/Python314/python.exe -m pytest tests/test_p7_callee_id_index.py -q` | 8 passed |
+| 三脚本冒烟（2000 符号合成库） | calls 索引 = `idx_calls_callee_id_resolved` / `idx_calls_callee_name_raw` / `idx_calls_caller`，旧名 0 命中 |
+| raw 边查询计划 | `SEARCH calls USING COVERING INDEX idx_calls_callee_name_raw (callee_name=?)` |
+| resolved 边查询计划 | `SEARCH calls USING COVERING INDEX idx_calls_callee_id_resolved (callee_id=?)` |
+
+### 13.4 边界与残留
+
+- 基准脚本仍是**简化 schema**（只含基准所需表/列），本卡只收敛 calls 索引 DDL，
+  不做与 canonical 的全量 schema 对齐。
+- 不改变基准的合成数据规模、随机种子、查询与度量口径，历史基线可比。
+- 生产 `get_callers` 的短名降级 SQL 为 `WHERE c.callee_name = ?`（不带
+  `callee_id = 0`，有意全表扫描），本卡未改其查询口径，只在门禁中固定
+  raw 边（`callee_id = 0`）走部分索引的事实。
+
 
 

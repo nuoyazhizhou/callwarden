@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+
+import pytest
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.db_base import _migrate_v32_to_v33
 from callwarden.db.schema import SCHEMA_INDEXES_SQL, SCHEMA_TABLES_SQL
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# 卡外残留（backlog §8.5）：基准脚本自建简化 schema，但 calls 索引必须与
+# canonical v61 一致，否则合成库的执行计划与生产漂移，且形成第二份真相源。
+BENCH_SCHEMA_FILES = (
+    "tests/_bench_insert_strategies.py",
+    "tests/_bench_graph_store_large.py",
+    "tests/_bench_10m_progressive.py",
+)
+# v33 删除 idx_calls_callee_id（全量 callee_id）、P6/v61 删除 idx_calls_callee_name
+# （全量 callee_name）；两者在 canonical 中不得存在。
+LEGACY_FULL_CALLS_INDEXES = ("idx_calls_callee_id", "idx_calls_callee_name")
 
 
 def _index_names(conn: sqlite3.Connection) -> set[str]:
@@ -70,6 +86,47 @@ def test_symbols_unique_constraint_is_available_before_delayed_indexes():
     names = _index_names(conn)
     assert "idx_symbols_unique" in names
     assert "idx_calls_callee_id_resolved" not in names
+
+
+@pytest.mark.parametrize("rel_path", BENCH_SCHEMA_FILES)
+def test_bench_schema_mirrors_canonical_calls_indexes(rel_path):
+    """基准脚本的 calls 索引 DDL 必须与 canonical v61 逐字一致。"""
+    text = (PROJECT_ROOT / rel_path).read_text(encoding="utf-8")
+    for legacy in LEGACY_FULL_CALLS_INDEXES:
+        assert f"CREATE INDEX {legacy} ON calls(" not in text, (
+            f"{rel_path} 仍声明已废弃的全量索引 {legacy}"
+        )
+    assert (
+        "idx_calls_callee_id_resolved ON calls(callee_id) WHERE callee_id > 0"
+        in text
+    ), f"{rel_path} 缺少 canonical resolved 部分索引"
+    assert (
+        "idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0"
+        in text
+    ), f"{rel_path} 缺少 canonical raw 部分索引"
+
+
+def test_raw_callee_query_uses_partial_text_index():
+    """production raw 边按名查询（callee_name=? AND callee_id=0）必须走部分索引。"""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE calls (
+            id INTEGER PRIMARY KEY,
+            callee_name TEXT DEFAULT '',
+            callee_id INTEGER DEFAULT 0
+        );
+        CREATE INDEX idx_calls_callee_name_raw
+            ON calls(callee_name) WHERE callee_id = 0;
+        """
+    )
+    plan = conn.execute(
+        "EXPLAIN QUERY PLAN "
+        "SELECT id FROM calls WHERE callee_name = ? AND callee_id = 0",
+        ("target",),
+    ).fetchall()
+    detail = " ".join(str(row[3]) for row in plan)
+    assert "idx_calls_callee_name_raw" in detail
 
 
 def _insert_symbol(

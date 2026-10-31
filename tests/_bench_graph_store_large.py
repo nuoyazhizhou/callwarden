@@ -104,8 +104,11 @@ def generate_synthetic_db(db_path: str, target_symbols: int, seed: int = 42):
         CREATE INDEX idx_symbols_name ON symbols(name);
         CREATE INDEX idx_symbols_file ON symbols(file_instance_id);
         CREATE INDEX idx_calls_caller ON calls(caller_id);
-        CREATE INDEX idx_calls_callee_id ON calls(callee_id);
-        CREATE INDEX idx_calls_callee_name ON calls(callee_name);
+        -- calls 索引与 canonical db/schema.py（v61）对齐：已解析边用 callee_id
+        -- 部分索引，raw 边（callee_id=0）用 callee_name 部分索引；全量
+        -- idx_calls_callee_id / idx_calls_callee_name 已废弃，不得回潮。
+        CREATE INDEX idx_calls_callee_id_resolved ON calls(callee_id) WHERE callee_id > 0;
+        CREATE INDEX idx_calls_callee_name_raw ON calls(callee_name) WHERE callee_id = 0;
     """)
 
     # 1. workspace
