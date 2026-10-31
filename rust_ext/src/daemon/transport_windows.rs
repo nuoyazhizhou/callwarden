@@ -131,6 +131,21 @@ unsafe fn sid_to_string(sid: *mut c_void) -> io::Result<String> {
     Ok(result)
 }
 
+/// 解析命名管道端点名。
+///
+/// - 显式 `override_name` 以 `\\.\pipe\` 开头时原样使用：隔离/测试 daemon 可与
+///   常驻 daemon 并存（生产 daemon 传 SID 端点，行为不变）；
+/// - 其余（None、空串、非管道端点）一律派生 `\\.\pipe\callwarden-<owner_sid>`，
+///   保证不会退化为任意端点。
+///
+/// 说明：端点名不参与访问控制，SDDL 始终只授权 owner SID（Req 14.18）。
+pub fn resolve_pipe_name(override_name: Option<&str>, owner_sid: &str) -> String {
+    match override_name {
+        Some(name) if name.starts_with(r"\\.\pipe\") => name.to_string(),
+        _ => format!(r"\\.\pipe\callwarden-{}", owner_sid),
+    }
+}
+
 // ============================================
 // SDDL 安全描述符构建
 // ============================================
@@ -416,11 +431,13 @@ impl NamedPipeListener {
     /// 绑定命名管道端点。
     ///
     /// 1. 获取当前用户 SID
-    /// 2. 派生管道名 `\\.\pipe\callwarden-<user-sid>` 与 SDDL（仅授权 owner SID）
-    /// 3. 预创建 ≥2 个管道实例并全部 arm（挂起 ConnectNamedPipe，Req 14.19）
+    /// 2. 解析管道名：`TransportConfig.pipe_name` 显式覆盖优先（隔离 daemon 共存），
+    ///    否则派生 `\\.\pipe\callwarden-<user-sid>`
+    /// 3. 构建 SDDL（仅授权 owner SID）
+    /// 4. 预创建 ≥2 个管道实例并全部 arm（挂起 ConnectNamedPipe，Req 14.19）
     pub fn bind(config: &TransportConfig) -> io::Result<Self> {
         let owner_sid = get_current_user_sid()?;
-        let pipe_name = format!(r"\\.\pipe\callwarden-{}", owner_sid);
+        let pipe_name = resolve_pipe_name(config.pipe_name.as_deref(), &owner_sid);
         let sddl = build_pipe_sddl(&owner_sid, false);
         let sa = unsafe { create_security_attributes(&sddl)? };
 
@@ -990,6 +1007,23 @@ mod tests {
         assert!(!name.contains("tcp"));
         assert!(!name.contains("https"));
         assert!(!name.contains("unix"));
+    }
+
+    #[test]
+    fn test_resolve_pipe_name_override() {
+        let sid = "S-1-5-21-1000-2000-3000";
+        let name = resolve_pipe_name(Some(r"\\.\pipe\callwarden-iso-abc"), sid);
+        assert_eq!(name, r"\\.\pipe\callwarden-iso-abc");
+    }
+
+    #[test]
+    fn test_resolve_pipe_name_falls_back_to_sid() {
+        let sid = "S-1-5-21-1000-2000-3000";
+        let expected = format!(r"\\.\pipe\callwarden-{}", sid);
+        assert_eq!(resolve_pipe_name(None, sid), expected);
+        // 空串与非管道端点不得作为端点（防退化为任意路径）
+        assert_eq!(resolve_pipe_name(Some(""), sid), expected);
+        assert_eq!(resolve_pipe_name(Some("C:/tmp/pipe"), sid), expected);
     }
 
     #[test]

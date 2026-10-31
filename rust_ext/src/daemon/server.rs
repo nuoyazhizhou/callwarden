@@ -126,6 +126,9 @@ pub struct ServerConfig {
     pub request_timeout: Duration,
     /// accept 循环的超时（用于响应 shutdown 信号）
     pub accept_timeout: Duration,
+    /// 管道名覆盖（`\\.\pipe\...`）。None → 按 owner SID 派生（生产默认）；
+    /// Some → 隔离/测试 daemon 使用独立端点，避免与常驻 daemon 同名冲突。
+    pub pipe_name: Option<String>,
     /// H1: opt-in HTTP MVP transport 配置（仅 dev_loopback_unauthenticated）。
     /// 为 None 时行为与现有 Named Pipe server 完全一致。
     pub http: Option<super::http_server::HttpServerConfig>,
@@ -139,6 +142,7 @@ impl Default for ServerConfig {
             max_workers: 16,
             request_timeout: Duration::from_secs(30),
             accept_timeout: Duration::from_millis(200),
+            pipe_name: None,
             http: None,
         }
     }
@@ -760,6 +764,7 @@ where
         max_workers: config.max_workers,
         request_timeout: config.request_timeout,
         accept_timeout: config.accept_timeout,
+        pipe_name: config.pipe_name.clone(),
     };
     let listener = super::transport::create_listener(&transport_config)?;
     eprintln!(

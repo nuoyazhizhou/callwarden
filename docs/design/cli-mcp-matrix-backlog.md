@@ -626,12 +626,12 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   `test_task_reconciliation_contract`、`test_http_index_job_cutover`）
   → **已由 §17 收口**、
   release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
-  60 vs 61）→ **已由 §14 收口**、`test_http_compat_read_cutover` DID NOT RAISE 2、
-  `test_p0b_legacy_attestation_fail_closed` 1、`test_phase2_6_3` 性能 1、
-  `test_task_split_governance` 1。
+  60 vs 61）→ **已由 §14 收口**、`test_http_compat_read_cutover` DID NOT RAISE 2
+  → **已由 §18 收口**、`test_p0b_legacy_attestation_fail_closed` 1、
+  `test_phase2_6_3` 性能 1、`test_task_split_governance` 1。
 
 后续卡建议：① 将「隔离 daemon 按 `data_root` 派生管道名」落到 Rust 侧（根治
-管道冲突）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
+管道冲突）（**已完成**，见 §18）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
 `cargo build`/LLM 前置（**已完成**，见 §12）；③ 修 release 验收 evidence 过期与
 schema_version 断言（**已完成**，见 §14）。
 
@@ -1329,6 +1329,70 @@ daemon 侧的 workspace 定位契约已收紧为「显式且权威」，三处�
   语义由 `test_build_read_rpc_http.py` 等专项用例覆盖。
 - `creator` 字段仅在 parent-aware 请求被 frozen contract 拒绝；无父任务的
   `task.create` 仍容忍该字段，故 reconcile 用例未改动该项。
+
+---
+
+## 18. 隔离 daemon 管道名按 data_root 派生，COMPAT live 2 收口（2026-10-31）
+
+> 任务卡：`T-1793432943129-7fb83604`（步骤 #0 triage / #1 implement / #2 verify-doc）
+> 承接 §7.5「其他 44」中的 `test_http_compat_read_cutover` DID NOT RAISE 2
+
+### 18.1 现象（改前基线）
+
+`pytest tests/test_http_compat_read_cutover.py -q` → **7 passed / 3 skipped**。3 条
+`w3_live` 用例（`test_compat_registered_method_has_route`、
+`test_summary_pseudo_route_returns_method_not_found`、
+`test_semantic_pseudo_route_returns_method_not_found`）被 `tests/conftest.py` 的
+`w3_live` 前置 guard 跳过，skip 文案为「未找到隔离 `cw-daemon` 二进制」。
+
+在主 daemon 上直接探测契约：`query.stats_top_files` 正常返回（count=10）；
+`summary.repo_map`、`semantic.gc_audit_list` 均返回 `method_not_found`。即台账记录的
+「DID NOT RAISE 2」在当前二进制上已不成立，剩余问题只是 live 用例跑不起来。
+
+### 18.2 根因
+
+Windows 命名管道名默认按当前用户 SID 派生（`\\.\pipe\callwarden-<sid>`）。常驻
+daemon 已占用该名，隔离 daemon 启动时 `CreateNamedPipe` 返回
+`ERROR_ACCESS_DENIED (error 5)` 后立即退出；`spawn_isolated_daemon` 未捕获退出原因，
+`find_daemon_binary()` 也拿不到有效二进制，于是上层把「管道冲突」误报为
+「未找到隔离 cw-daemon 二进制」。`TransportConfig` 此前没有可覆盖端点的字段。
+
+### 18.3 处置
+
+- `rust_ext/src/daemon/transport.rs`：`TransportConfig` 新增 `pipe_name:
+  Option<String>`，`Default` 为 `None`。None 时行为完全不变（按 owner SID 派生）。
+- `rust_ext/src/daemon/transport_windows.rs`：新增纯函数
+  `resolve_pipe_name(override_name, owner_sid)`（仅接受 `\\.\pipe\` 前缀，否则回落
+  SID），`NamedPipeListener::bind` 改用它；补 `test_resolve_pipe_name_override`、
+  `test_resolve_pipe_name_falls_back_to_sid` 两个单测。SDDL 仍只授权 owner SID，
+  覆盖名不改变访问控制。
+- `rust_ext/src/daemon/server.rs`：Windows `ServerConfig` 增加 `pipe_name` 并透传到
+  `TransportConfig`。
+- `rust_ext/src/bin/cw_daemon.rs`：Windows serve 仅当 `config.socket_path` 形如
+  `\\.\pipe\...` 时把它作为覆盖名，生产默认路径（按 SID 派生）不受影响。
+  Unix 侧 `ServerConfig` 无该字段，行为不变。
+- `tests/_w3_harness.py`：Windows 下 `CW_DAEMON_SOCKET` 改为
+  `\\.\pipe\callwarden-iso-<sha256(data_root)[:12]>`，端点由隔离目录唯一派生；
+  Unix 仍用 `data_root/pipe` 文件路径。
+
+未改任何断言语义，未跳过任何用例。
+
+### 18.4 实测
+
+| 检查 | 改前 | 改后 |
+|---|---|---|
+| `test_http_compat_read_cutover.py` | 7 passed / 3 skipped | **10 passed / 0 skipped** |
+| `cargo test --lib resolve_pipe_name` | — | **2 passed** |
+| 相邻 live 回归 `test_http_index_job_cutover` + `test_mcp_ask_codebase_http_rpc` | — | **15 passed** |
+| 相邻 live 回归 `test_http_native_read_cutover` + `test_mcp_compat_tools_summary/security` | — | **73 passed** |
+
+### 18.5 边界
+
+- 覆盖仅在调用方显式提供 `\\.\pipe\` 前缀名时生效；生产 `cw-daemon serve` 默认
+  仍按 SID 派生，无需改配置。
+- 本次只重建 debug 产物供测试使用；release 产物与 `runtime/current` 未切换——
+  默认行为零变化，不影响已部署 daemon，故不触发 `refresh_shared_runtime.ps1`。
+- SDDL/DACL 逻辑未动：隔离端点仍只允许当前用户 SID 连接。
 
 
 

@@ -2606,16 +2606,28 @@ mod windows {
             None
         };
 
-        // 6. 构造 Windows ServerConfig（管道名/ACL 由 transport_windows 内部派生）
+        // 6. 构造 Windows ServerConfig。
+        // 管道名默认按 owner SID 派生；仅当显式端点自身是命名管道
+        // （daemon_autostart 传 `\\.\pipe\callwarden-<sid>` 或隔离 daemon 传独立名）
+        // 时作为覆盖，避免与常驻 daemon 同名冲突（隔离/测试共存）。
+        let pipe_name = {
+            let endpoint = config.socket_path.to_string_lossy();
+            if endpoint.starts_with(r"\\.\pipe\") {
+                Some(endpoint.to_string())
+            } else {
+                None
+            }
+        };
         let server_config = ServerConfig {
             max_message_bytes: callwarden_core::daemon::protocol::DEFAULT_MAX_MESSAGE_BYTES,
             max_workers: config.max_workers,
             request_timeout: config.request_timeout(),
             accept_timeout: Duration::from_millis(200),
+            pipe_name,
             http: None,
         };
 
-        // 7. 启动 server（绑定 \\.\pipe\callwarden-<sid>，SDDL 仅授权 owner）
+        // 7. 启动 server（默认绑定 \\.\pipe\callwarden-<sid>，SDDL 仅授权 owner）
         let mut handle: ServerHandle = match start_server(server_config, state_factory) {
             Ok(h) => h,
             Err(e) => {

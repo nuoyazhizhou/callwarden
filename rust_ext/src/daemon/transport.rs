@@ -120,6 +120,13 @@ pub struct TransportConfig {
     pub request_timeout: std::time::Duration,
     /// accept 循环超时（用于响应 shutdown 信号，默认 200ms）
     pub accept_timeout: std::time::Duration,
+    /// Windows 管道名覆盖（仅 Windows 生效）。
+    ///
+    /// 缺省 `None` → 按 owner SID 派生 `\\.\pipe\callwarden-<sid>`（生产行为）；
+    /// 显式给定且以 `\\.\pipe\` 开头时使用该名，使隔离/测试 daemon 可与常驻
+    /// daemon 共存（避免同名管道 `CreateNamedPipe ERROR_ACCESS_DENIED`）。
+    /// SDDL 仍只授权 owner SID，覆盖名不改变访问控制。Unix 忽略此字段。
+    pub pipe_name: Option<String>,
 }
 
 impl Default for TransportConfig {
@@ -129,6 +136,7 @@ impl Default for TransportConfig {
             max_workers: 16,
             request_timeout: std::time::Duration::from_secs(30),
             accept_timeout: std::time::Duration::from_millis(200),
+            pipe_name: None,
         }
     }
 }

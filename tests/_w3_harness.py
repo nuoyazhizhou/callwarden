@@ -20,6 +20,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 import unicodedata
 
@@ -696,7 +697,15 @@ def spawn_isolated_daemon(bin_path, data_root, http_bind="127.0.0.1:0"):
     env["CW_DAEMON_DATA_ROOT"] = data_root
     env["CW_DAEMON_TASK_DB"] = os.path.join(data_root, "task.db")
     env["CW_DAEMON_REGISTRY_DB"] = os.path.join(data_root, "registry.db")
-    env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
+    if sys.platform == "win32":
+        # 隔离 daemon 必须使用独立命名管道：默认端点按用户 SID 派生，与常驻
+        # daemon 同名会撞 CreateNamedPipe ERROR_ACCESS_DENIED（error 5），
+        # 使 live 用例被前置 guard 降级为 skip。端点名由 data_root 派生，
+        # 天然按隔离目录唯一；SDDL 仍只授权当前用户（见 transport_windows）。
+        iso_tag = hashlib.sha256(data_root.encode("utf-8")).hexdigest()[:12]
+        env["CW_DAEMON_SOCKET"] = rf"\\.\pipe\callwarden-iso-{iso_tag}"
+    else:
+        env["CW_DAEMON_SOCKET"] = os.path.join(data_root, "pipe")
     env["CALLWARDEN_SKIP_AUTO_SETUP"] = "1"
     env["USERPROFILE"] = home
     # 主库（codegraph）路径与快照读面同一物理文件（userhome/.callwarden/
