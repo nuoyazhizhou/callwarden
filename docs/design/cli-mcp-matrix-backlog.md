@@ -617,7 +617,8 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   失败，命中 `LNK1181` / `sqlite3.lib` 等原生库缺失标记时降级为 skip；
   rustc 编译诊断、构建成功但产物缺失仍红。
 - **未归一「其他」44**（非前置、亦非本轮引入，保持原状）：i18n 输出文案断言漂移 15
-  （`test_cli_055/056/057/058/059/063/065/066/070/076`、`test_i18n_cleanup_c5`）、
+  （`test_cli_055/056/057/058/059/063/065/066/070/076`、`test_i18n_cleanup_c5`）
+  → **已由 §16 收口**、
   Windows 临时 SQLite 文件锁 teardown `PermissionError [WinError 32]` 13
   （`test_phase3_cas`、`test_p10_p11_timing_gc`、`test_p21_auto_ignore`）
   → **已由 §15 收口**、
@@ -1209,6 +1210,55 @@ conftest 为进程级生效，后续同类「临时库 teardown」用例一并�
 - 显式设置 `CW_RUST_SENTINEL_CONN=1` 的调用方仍可覆盖（`setdefault` 语义）。
 - 若需要在 Windows 上验证哨兵语义本身，应以独立子进程显式开启，不能依赖主进程默认。
 - `CW_RUST_SENTINEL_CONN` 是 `db_conn.rs` 已文档化的既有诊断门，本卡仅接入测试进程。
+
+---
+
+## 16. i18n 输出文案断言漂移修复（2026-10-31）
+
+> 任务卡：`T-1793425590620-9c0c9414`（步骤 #0 triage / #1 implement / #2 verify-doc）
+> 承接 §7.5「其他 44」中的 i18n 输出文案断言漂移 15
+
+### 16.1 现象（改前基线）
+
+11 个测试文件（`test_cli_055/056/057/058/059/063/065/066/070/076_http_rpc.py`、
+`test_i18n_cleanup_c5.py`）在本机（`DEFAULT_LANG=zh_CN`）**15 FAILED**：断言写的是
+英文文案（`no repeated findings above threshold`、`Inserted marker block`、
+`Dry-Run`、`Applied`、`Dry-run Preview`、`Synced`、`up to date`、`no Git change
+records`、`no related tests found`、`no matching findings`、`Linked symbol change
+records: 1`、`no in_progress task found`、`[OK]`/`[MISS]`），而 CLI 实际输出为
+zh_CN 译文。
+
+### 16.2 根因
+
+`callwarden/i18n/__init__.py` 的 `DEFAULT_LANG = _detect_system_language()`（优先
+`CALLWARDEN_LANG`，其次系统 locale）。这些用例当初在英文环境写成英文断言，未固定
+语言，因此在 zh_CN 宿主机上随 locale 漂移；被测逻辑（RPC 路由/参数透传/结构不变量）
+本身没有变化，属**测试期望的 locale 依赖**，不是产品缺陷。
+
+### 16.3 处置
+
+- 10 个 `test_cli_0xx_http_rpc.py` 模块新增 autouse fixture `_en_us_locale`：
+  `get_language()` 存档 → `set_language("en_US")` → yield → 还原。断言保持原英文
+  文案，且不再受宿主机 locale 或 `CALLWARDEN_LANG` 影响（与 `test_cli_081/082/083`
+  显式 `set_language("zh_CN")` 的既有约定同构）。
+- `test_i18n_cleanup_c5.py::test_install_check_output_unchanged` 为**子进程**用例，
+  进程内 fixture 无效，改为给 `subprocess.run` 传
+  `env=dict(os.environ, CALLWARDEN_LANG="en_US")`，使 `[OK]`/`[MISS]` 标签断言重新
+  成立（该用例本意即验证标签格式不变、中英文均可用）。
+
+未改任何产品代码、未改 i18n 资源、未放宽断言语义。
+
+### 16.4 实测
+
+| 检查 | 改前 | 改后 |
+|---|---|---|
+| 11 个文件（`CALLWARDEN_LANG` 未设置，宿主 zh_CN） | 15 FAILED | **70 passed** |
+| 同上 5 文件子集，显式 `CALLWARDEN_LANG=zh_CN` | — | **57 passed**（证明 locale 无关） |
+
+### 16.5 边界
+
+- fixture 为模块级自动生效、结束即还原，不泄漏到其它测试模块。
+- 仅固定语言，不改被测行为；如需验证 zh_CN 文案，应另写显式 `zh_CN` 用例。
 
 
 

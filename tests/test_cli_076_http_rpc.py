@@ -13,7 +13,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest  # noqa: E402
+
 import callwarden.cli.main as main_mod  # noqa: E402
+from callwarden.i18n import get_language, set_language  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _en_us_locale():
+    """固定输出语言为 en_US：断言基于 i18n 文案，避免宿主机 locale 漂移。"""
+    previous = get_language()
+    set_language("en_US")
+    yield
+    set_language(previous)
 
 
 def test_cli076_capture_auto_routes_to_daemon(monkeypatch, capsys):

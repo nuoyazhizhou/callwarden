@@ -259,6 +259,7 @@ def test_install_check_output_unchanged():
     """cw install --check 输出仍然包含 [OK] 和 [MISS] 标签。"""
     from callwarden.config import PROJECT_ROOT
 
+    env = dict(os.environ, CALLWARDEN_LANG="en_US")
     result = subprocess.run(
         [sys.executable, os.path.join(
             PROJECT_ROOT, "cw.py"), "install", "--check"],
@@ -268,6 +269,7 @@ def test_install_check_output_unchanged():
         errors="replace",
         timeout=120,
         cwd=PROJECT_ROOT,
+        env=env,
     )
     assert result.returncode == 0, f"install --check 失败: {result.stderr}"
     # 应该包含 [OK] 和 [MISS]（如果某个包确实缺失）或至少 [OK]

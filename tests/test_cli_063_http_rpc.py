@@ -13,7 +13,19 @@
 Rust 侧由 cargo 单测覆盖（见 metrics_handlers.rs）。
 """
 
+import pytest
+
 import callwarden.cli.main as main_mod
+from callwarden.i18n import get_language, set_language
+
+
+@pytest.fixture(autouse=True)
+def _en_us_locale():
+    """固定输出语言为 en_US：断言基于 i18n 文案，避免宿主机 locale 漂移。"""
+    previous = get_language()
+    set_language("en_US")
+    yield
+    set_language(previous)
 
 
 def _status_sample():
