@@ -883,12 +883,18 @@ class TestPerformanceDiff:
        foreign_keys=ON），逐项对齐生产。否则 Python 侧停留在 sqlite3 默认
        ``synchronous=FULL`` + delete 日志，commit 的 fsync 次数与日志路径都和
        Rust 不同——测的是 PRAGMA 差异，不是实现差异。
-    4. **建连/关连不计入计时窗口** —— 生产两侧都是长活连接：Python 侧是
-       ``db_base.py`` L3380 持有的 ``self.conn``，Rust 侧是 c53da76 之后的
-       进程级连接池。建连是一次性/进程级开销，不是每次批量注册的开销。
-       故 Python 侧连接在窗口外建立、关闭在窗口外（最后连接关闭会触发
-       WAL checkpoint）；Rust 侧先用同路径的一次预热调用建立池连接
-       （写 ws=2，不触碰被测的 ws=1 数据），再计时正式调用。
+    4. **建连/关连按各自生产形态计入窗口**（2026-10-31 修正）—— 本条原写作
+       「Rust 侧是 c53da76 之后的进程级连接池」，但该池化实现已被 a80ca63
+       （WAL hazard 修法）整体移除：Rust 侧自那时起**每次调用一律自建短连接、
+       调用返回即关闭**（``rust_ext/src/db_conn.rs::with_db_conn``）。
+       继续把 Python 长活连接放在窗口外、而把 Rust 的「完整一次调用」放进
+       窗口，等于拿「已建好的连接」对「建连 + 注册 + 关连」，实测口径差
+       约 20ms/次，且与实现无关：把同一 open + PRAGMA + BEGIN +
+       1 文件 + COMMIT + close 序列用 Python ``sqlite3`` 复刻需 24-44ms，
+       Rust 约 22ms（诊断脚本已清理）。
+       故改为**对等口径**：两侧都测「一次批量注册调用」的完整生命周期——
+       建连、注册、提交、关连全部计入窗口，两侧都从干净的 WAL 库开始。
+       断言阈值不变（``t_rust < t_py * 1.5``）。
     5. **每文件产出对等** —— Rust API 契约 §2.1 要求 ``results`` 每文件返回
        rel_path / file_instance_id / version_id / version_mtime /
        version_content_hash / version_total_lines 六个字段。Python 侧同样
@@ -924,8 +930,10 @@ class TestPerformanceDiff:
 
     # 规模沿用原测试的 200 文件
     _PERF_FILES = 200
-    # 重复轮数：取中位数抗本机/CI 负载抖动
-    _PERF_ROUNDS = 5
+    # 重复轮数：取中位数抗本机/CI 负载抖动。
+    # 对等口径下两侧时间都被 ~20ms/次的建连固定成本主导（每轮实测抖动可达
+    # 22-44ms），5 轮中位数仍偶有漂移；提高到 9 轮（奇数、中位数抗 1-2 个离群轮）。
+    _PERF_ROUNDS = 9
 
     @staticmethod
     def _make_files(round_idx: int, n: int) -> List[Dict[str, Any]]:
@@ -953,31 +961,16 @@ class TestPerformanceDiff:
             _make_codegraph_db(db_python, wal=True)
             _make_codegraph_db(db_rust, wal=True)
 
-            # ---------------- Python 侧 ----------------
-            # 连接在计时窗口外建立（对齐生产长活连接 self.conn）
-            conn_py = _open_python_codegraph_conn(db_python)
-            # 窗口外：预热行写 ws=2（与 Rust 侧预热写入等量，两侧初始状态一致）
-            _python_register_file_db_prod(
-                conn_py, 2, "/proj/__warmup__.py", "warmup", "__warmup__.py", 1.0
-            )
-            conn_py.commit()
-
+            # ---------------- Python 侧：一次批量注册调用的完整生命周期 ----------------
+            # 建连 / 注册 / 提交 / 关连全部计入窗口（与 Rust 每次调用自建短连接对等）
             t_py_start = time.perf_counter()
+            conn_py = _open_python_codegraph_conn(db_python)
             _python_batch_register_files(conn_py, 1, files)
             conn_py.commit()
-            t_py = time.perf_counter() - t_py_start
-            # 关闭在计时窗口外（最后连接关闭会触发 WAL checkpoint）
             conn_py.close()
+            t_py = time.perf_counter() - t_py_start
 
-            # ---------------- Rust 侧 ----------------
-            # 同路径预热调用：建立进程级池连接（窗口外），写 ws=2 不触碰 ws=1
-            callwarden_core.batch_register_files(
-                str(db_rust), 2,
-                [{"rel_path": "__warmup__.py", "abs_path": "/proj/__warmup__.py",
-                  "module_path": "warmup", "mtime": 1.0}],
-                False,
-            )
-
+            # ---------------- Rust 侧：同口径（一次 pyfunction 调用即完整生命周期） ----------------
             t_rust_start = time.perf_counter()
             result = callwarden_core.batch_register_files(str(db_rust), 1, files, False)
             t_rust = time.perf_counter() - t_rust_start

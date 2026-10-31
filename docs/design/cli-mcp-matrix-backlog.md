@@ -616,7 +616,8 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   `test_windows_daemon_e2e`、`test_windows_wsl_authority_e2e` 的 `cargo build`
   失败，命中 `LNK1181` / `sqlite3.lib` 等原生库缺失标记时降级为 skip；
   rustc 编译诊断、构建成功但产物缺失仍红。
-- **未归一「其他」44**（非前置、亦非本轮引入，保持原状）：i18n 输出文案断言漂移 15
+- **未归一「其他」44**（非前置、亦非本轮引入，保持原状；**条目本身已全部收口，
+  本节转为历史台账**）：i18n 输出文案断言漂移 15
   （`test_cli_055/056/057/058/059/063/065/066/070/076`、`test_i18n_cleanup_c5`）
   → **已由 §16 收口**、
   Windows 临时 SQLite 文件锁 teardown `PermissionError [WinError 32]` 13
@@ -628,7 +629,7 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
   release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
   60 vs 61）→ **已由 §14 收口**、`test_http_compat_read_cutover` DID NOT RAISE 2
   → **已由 §18 收口**、`test_p0b_legacy_attestation_fail_closed` 1、
-  `test_phase2_6_3` 性能 1、`test_task_split_governance` 1。
+  `test_phase2_6_3` 性能 1、`test_task_split_governance` 1 → **已由 §19 收口**。
 
 后续卡建议：① 将「隔离 daemon 按 `data_root` 派生管道名」落到 Rust 侧（根治
 管道冲突）（**已完成**，见 §18）；② 抽公共 `daemon_prereq_guard` 覆盖卡外自建 spawn 文件与
@@ -1393,6 +1394,83 @@ daemon 已占用该名，隔离 daemon 启动时 `CreateNamedPipe` 返回
 - 本次只重建 debug 产物供测试使用；release 产物与 `runtime/current` 未切换——
   默认行为零变化，不影响已部署 daemon，故不触发 `refresh_shared_runtime.ps1`。
 - SDDL/DACL 逻辑未动：隔离端点仍只允许当前用户 SID 连接。
+
+---
+
+## 19. §7.5 剩余三条收口（2026-10-31）
+
+> 任务卡：`T-1793439550307-da3b54dc`（步骤 #0 triage / #1 implement / #2 verify_doc）
+> 承接 §7.5「其他 44」最后三条：`test_task_split_governance` 1、
+> `test_phase2_6_3` 性能 1、`test_p0b_legacy_attestation_fail_closed` 1。
+
+### 19.1 现象
+
+| 用例 | 改前 | 说明 |
+|---|---|---|
+| `test_p0b_legacy_attestation_fail_closed.py` | **3 passed** | 台账记的「1」已失效，无需改动 |
+| `test_task_split_governance.py::test_split_rollback_on_unbound_parent` | **1 FAILED** | `AssertionError: E_TASK_BINDING_ATTESTATION_REQUIRED ...` |
+| `test_phase2_6_3_batch_register_diff.py::TestPerformanceDiff::test_performance_rust_faster_than_python` | **1 FAILED** | `Python=2.0ms, Rust=29.6ms`（`t_rust < t_py*1.5`） |
+
+### 19.2 根因
+
+- **split 错误码**：daemon 的 legacy workspace binding 门（`dispatch.rs`）
+  已把拒绝码从 `E_TASK_BINDING_REQUIRED` 演进为
+  `E_TASK_BINDING_ATTESTATION_REQUIRED`（文案附带
+  `cw task attest-legacy-workspace-binding` 指引）。拒绝语义（父任务无
+  canonical binding 即拒绝、不落半成品子任务）未变，测试断言未跟上契约。
+- **perf 口径**：测试 docstring 假定「Rust 侧是 c53da76 之后的进程级连接池」，
+  但池化已被 a80ca63（WAL hazard 修法）整体移除——Rust 侧自那时起
+  **每次调用一律自建短连接、返回即关闭**（`rust_ext/src/db_conn.rs::with_db_conn`）。
+  测试仍把 Python 长活连接置于计时窗口外，只把 Rust 的完整调用放进窗口，
+  等于拿「已建好的连接」对「建连 + 注册 + 关连」。
+  诊断实测：把同一 `open + PRAGMA + BEGIN + 1 文件 + COMMIT + close` 序列用
+  Python `sqlite3` 复刻需 24–44ms，Rust 约 22ms ⇒ 约 20ms/次是**建连固定成本**，
+  与 Rust 实现无关；且该成本与文件数几乎无关（1 / 10 / 50 / 200 文件同量级），
+  诊断门 `CW_RUST_OPEN_CHECKPOINT=0` / `CW_RUST_SENTINEL_CONN=0` /
+  `CW_RUST_WAL_DRAIN=off` 均无法消除。
+- **p0b**：用例已随早前修复转绿，台账条目陈旧。
+
+### 19.3 处置
+
+- `tests/test_task_split_governance.py`：断言改为
+  `E_TASK_BINDING_ATTESTATION_REQUIRED`，保留「幽灵父任务不产生子任务」断言；
+  模块文档与用例 docstring 同步记录错误码演进。
+- `tests/test_phase2_6_3_batch_register_diff.py`：性能用例改为**对等口径**——
+  两侧都测「一次批量注册调用」的完整生命周期（建连 / 注册 / 提交 / 关连全部
+  计入窗口），两侧都从干净的 WAL 库开始；docstring 第 4 条按现状重写。
+  `_PERF_ROUNDS` 5 → 9（对等口径下两侧都被 ~20ms 建连固定成本主导，单轮抖动
+  可达 22–44ms，9 轮中位数抗 1–2 个离群轮）。
+  **断言阈值不变**（`t_rust < t_py * 1.5`），未加 skip、未加平台分支。
+- `docs/design/cli-mcp-matrix-backlog.md`：§7.5 三条标记「已由 §19 收口」，
+  本节转历史台账。
+- 未改任何产品代码（Rust/Python 实现零改动）。
+
+### 19.4 实测
+
+| 检查 | 改前 | 改后 |
+|---|---|---|
+| `test_task_split_governance.py` + `test_phase2_6_3_batch_register_diff.py` | 1 FAILED + 1 FAILED | **27 passed** |
+| `TestPerformanceDiff`（9 轮，本轮实测） | `Python=2.0ms / Rust=29.6ms`（0.07x） | `Python=26.2ms / Rust=25.2ms`（**1.04x**，阈值 1.5x） |
+| `TestPerformanceDiff` 前序 5 轮样本 | — | 0.94x / 1.07x |
+| `test_p0b_legacy_attestation_fail_closed.py` | 3 passed | **3 passed**（无改动） |
+
+### 19.5 边界
+
+- 对等口径下该用例的主信号是「一次调用的建连 + 批处理」，边际每文件成本
+  仅个位数微秒（诊断：Rust 9.1µs/file vs Python 13.6µs/file），落在计时噪声内，
+  故**不以边际值作断言**（会引入不稳定断言）。
+- 契约 §6.2 的绝对预算（460 文件 < 0.10s）仍成立：本机 200 文件一次调用
+  约 25–30ms（其中 ~20ms 为建连固定成本，生产每轮 refresh 只发生一次）。
+- 短连接是 a80ca63 起的**产品级防御**（同进程双 SQLite 实例 WAL-index
+  hazard），不为跑快测试而回退。
+- `test_p0b_legacy_attestation_fail_closed.py` 单跑 3 passed；
+  但「先跑 `test_task_split_governance.py` 再跑它」会让
+  `test_client_never_falls_back_local_without_daemon` 失败——
+  `HttpDaemonRpcClient` 单例已被前序用例创建，monkeypatch 的非法端点和
+  `CW_DAEMON_MODE` 不生效，请求打到常驻 daemon 后返回
+  `E_LEGACY_BIND_TASK_NOT_FOUND`。该现象在**本卡改动前**（HEAD 版本
+  `test_task_split_governance.py`）逐字复现，属既有测试隔离/单例污染问题，
+  与本卡三项无关，不在本卡范围。
 
 
 

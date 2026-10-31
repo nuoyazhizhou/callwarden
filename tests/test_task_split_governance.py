@@ -4,7 +4,8 @@
 要求的矩阵：
   success  —— 有绑定父任务 split → 子任务原子拥有 workspace binding + 3×Role
               Contract + Task Contract（identity_policy）+ step binding，可 claim；
-  rollback —— 父任务无 workspace binding（不存在）→ E_TASK_BINDING_REQUIRED，
+  rollback —— 父任务无 workspace binding（不存在）→
+              E_TASK_BINDING_ATTESTATION_REQUIRED（dispatch.rs legacy binding 门），
               且不留下任何半成品子任务；
   no-bypass —— 子任务治理完整性逐项断言（不允许"有任务有步骤但无合同"残缺态），
               split event 记录真实 workspace_id（非空串）。
@@ -177,14 +178,19 @@ def test_split_success_full_governance(client):
 
 
 def test_split_rollback_on_unbound_parent(client):
-    """rollback：父任务无 workspace binding → E_TASK_BINDING_REQUIRED，且无半成品子任务。"""
+    """rollback：父任务无 workspace binding → E_TASK_BINDING_ATTESTATION_REQUIRED，且无半成品子任务。
+
+    错误码由更早的 E_TASK_BINDING_REQUIRED 演进为更明确的
+    E_TASK_BINDING_ATTESTATION_REQUIRED（dispatch.rs 的 legacy workspace binding
+    门，提示先执行 ``cw task attest-legacy-workspace-binding``）；拒绝语义不变。
+    """
     ghost = "T-NOEXIST-" + uuid.uuid4().hex[:10]
     with pytest.raises(DaemonRemoteError) as ei:
         client.call("task.split", {
             "task_id": ghost, "subtasks": _subtask_defs(),
             "request_id": f"sp-{ghost}-{uuid.uuid4().hex[:8]}",
         })
-    assert "E_TASK_BINDING_REQUIRED" in str(ei.value), str(ei.value)
+    assert "E_TASK_BINDING_ATTESTATION_REQUIRED" in str(ei.value), str(ei.value)
     conn = _db()
     n = conn.execute(
         "SELECT COUNT(*) FROM tasks WHERE parent_id=?", (ghost,)
