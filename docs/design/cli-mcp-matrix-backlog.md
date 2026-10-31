@@ -619,7 +619,8 @@ setup 无法产出 client，该类用例改前必然 ERROR）。
 - **未归一「其他」44**（非前置、亦非本轮引入，保持原状）：i18n 输出文案断言漂移 15
   （`test_cli_055/056/057/058/059/063/065/066/070/076`、`test_i18n_cleanup_c5`）、
   Windows 临时 SQLite 文件锁 teardown `PermissionError [WinError 32]` 13
-  （`test_phase3_cas`、`test_p10_p11_timing_gc`、`test_p21_auto_ignore`）、
+  （`test_phase3_cas`、`test_p10_p11_timing_gc`、`test_p21_auto_ignore`）
+  → **已由 §15 收口**、
   `workspace_instance_id` 契约 9（`test_task_cascade_close`、
   `test_task_reconciliation_contract`、`test_http_index_job_cutover`）、
   release 验收 2（evidence 停在 `6bd1e9ce` < 当前 HEAD `6d45bbd`；schema_version
@@ -1156,6 +1157,59 @@ rustc 诊断不降级、成功构建不 skip、`prereq_unavailable_reason` 别�
 - 隔离 daemon 管道冲突的**根治**（按 `data_root` 派生管道名）仍在 Rust 侧，见 §7.5
   建议①/§12.7。
 - CI 无 refresh evidence 目录，evidence 用例维持既有 skip 语义。
+
+---
+
+## 15. Windows 临时 SQLite 文件锁 teardown 修复（2026-10-31）
+
+> 任务卡：`T-1793420962901-227d0180`（步骤 #0 triage / #1 implement / #2 verify-doc）
+> 承接 §7.5「其他 44」中的 Windows 临时 SQLite 文件锁 teardown 13
+
+### 15.1 现象（改前基线）
+
+`pytest tests/test_phase3_cas.py tests/test_p10_p11_timing_gc.py tests/test_p21_auto_ignore.py -q`
+→ **5 FAILED + 8 ERROR**，全部为 `PermissionError [WinError 32]`：
+
+| 文件 | 症状 | 触发点 |
+|---|---|---|
+| `test_phase3_cas` | 8 ERROR | fixture 末尾 `os.unlink(db_path)` |
+| `test_p10_p11_timing_gc` | 3 FAILED | `TemporaryDirectory.__exit__` 清理 `cw.db` |
+| `test_p21_auto_ignore` | 2 FAILED | `TemporaryDirectory.__exit__` 清理 `callwarden.db` |
+
+### 15.2 根因
+
+进程内 Rust ext（`callwarden_core`）的 `crate::db_conn::with_db_conn` 会为该 `.db`
+保留一条常驻哨兵连接（`rust_ext/src/db_conn.rs` 的
+`static SENTINELS: OnceLock<Mutex<HashMap<PathBuf, Connection>>>`）。Python fixture 的
+`conn.close()` 只释放 Python 侧句柄，Rust 哨兵仍持有同一 `.db` 句柄；Windows 的 unlink
+要求文件无任何打开句柄，故 teardown 必然 `WinError 32`。
+
+该哨兵是 v3 的 POSIX 同进程「Python 长连接 + Rust 短连接」双 SQLite 实例 `-shm`
+撕裂防护（macOS 撕裂面已由 CI 实证）；Windows 按文件句柄加锁，天然免疫该撕裂。
+
+### 15.3 处置（仅 `tests/conftest.py`）
+
+`sys.platform == "win32"` 时在 conftest 导入期执行
+`os.environ.setdefault("CW_RUST_SENTINEL_CONN", "0")`：进程级关闭哨兵，释放临时库
+句柄；`setdefault` 保证调用方显式设置（含 `=1`）优先。不改产品代码、不改 Rust 侧
+默认行为、不降级任何断言。
+
+### 15.4 实测
+
+| 检查 | 改前 | 改后 |
+|---|---|---|
+| 三文件（phase3_cas / p10_p11_timing_gc / p21_auto_ignore） | 5 FAILED / 8 ERROR | **38 passed** |
+| 相邻 DB 回归（`test_migration_manifest` + `test_p7_callee_id_index`） | — | 23 passed / 1 skipped |
+
+conftest 为进程级生效，后续同类「临时库 teardown」用例一并受益，无需逐文件改动。
+
+### 15.5 边界与残留
+
+- 仅 Windows 生效；POSIX 继续启用哨兵，避免重新引入 `-shm` 撕裂面。
+- 显式设置 `CW_RUST_SENTINEL_CONN=1` 的调用方仍可覆盖（`setdefault` 语义）。
+- 若需要在 Windows 上验证哨兵语义本身，应以独立子进程显式开启，不能依赖主进程默认。
+- `CW_RUST_SENTINEL_CONN` 是 `db_conn.rs` 已文档化的既有诊断门，本卡仅接入测试进程。
+
 
 
 

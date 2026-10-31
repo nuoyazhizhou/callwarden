@@ -1,8 +1,20 @@
 """pytest 全局配置：测试数据库隔离（防止污染 ~/.callwarden/callwarden.db）"""
+import os
+import sys
+
 import pytest
 
 from callwarden import config as _cw_config
 from callwarden.db import db_base as _db_base
+
+# Windows：进程内 Rust ext 的哨兵连接（rust_ext/src/db_conn.rs 的 SENTINELS）
+# 会为每个 .db 保留一条常驻连接，钉住文件句柄。临时库（NamedTemporaryFile /
+# TemporaryDirectory）在测试 teardown 清理时因此报 PermissionError
+# [WinError 32]。哨兵是为 POSIX 同进程双 SQLite 实例的 -shm 撕裂防护而设，
+# Windows 按文件句柄加锁免疫该撕裂，故测试进程在 Windows 显式关闭哨兵；
+# CW_RUST_SENTINEL_CONN=0 是 db_conn.rs 的既有诊断门，显式设置者优先。
+if sys.platform == "win32":
+    os.environ.setdefault("CW_RUST_SENTINEL_CONN", "0")
 
 
 @pytest.fixture(scope="module")
