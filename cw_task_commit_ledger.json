@@ -2041,6 +2041,19 @@
       "source": "c24_canonical_role_dual_end_20260916",
       "scope": "rust_ext/src/daemon: task_collab_shared.rs(+runtime_role_variants/role_in_match) / task_collab_lease.rs(B1-B8) / task_loop/lifecycle_lease.rs(A1-A5) / task_collab.rs(H) / report_handoff.rs(F) / verdict_evidence_gate.rs(G) / bootstrap_review_bridge.rs(E1-E2) + tests(lifecycle_lease_test +3, task_collab_tests_lease +1) + deliverables/software-company/c24_canonical_role_inventory.md",
       "note": "C-24 双端归一实现并提交 2eebf41。step 报告：step0 adjudicate(req-8843a6ef1929)/step1 implement(req-e9793e18db69)/step2 test(req-cd245c73b855)。回归 lease 81P/handoff 32P/verdict 30P/bridge 11P/supersede 16P（隔离 test target），cargo check rc=0。边界：task_collab_lifecycle_ops.rs(validate_lease_for_mutation role=?2 + 2 处 reviewer 硬编码)与 task_supersede.rs(2 处 reviewer 硬编码查询)不在本卡 allowed_paths，已 git checkout 回退，缺陷转承接卡。下一步 step3 release_verify：refresh_shared_runtime.ps1 -TaskId 本卡 + live e2e(implementer acquire -> executor handoff/verdict)。"
+    },
+    {
+      "task_id": "T-1793540468063-993d3638",
+      "commit_id": "1b190beeeb9a6cbfe448413db1a3b58c066b0905",
+      "status": "new_in_master",
+      "source": "i18n_placeholder_gate_20261101",
+      "scope": "i18n/zh_CN.json, i18n/en_US.json, install.py, server/mcp_server.py, cli/main.py, db/db_edit.py, db/db_tasks.py, docs/design/cli-mcp-matrix-backlog.md, tests/test_i18n_placeholder_consistency.py",
+      "snapshot_id": "3112a804b32a2f53",
+      "evidence_sha256": "937e2a23fc81a6e32132b9132faa7c0e0a1b98dabae5f13cbb67f2a0f38fe6a4",
+      "view_manifest_sha256": "5bd2e637fe7d4344d8ab823550dcb06ffa1ad53522906f4b434eb120f0330aec",
+      "review_verdict_id": "V-8343a2316fbb5e8cbf17b485",
+      "handoff_event_id": "he-ec74da05a7e57adf797b7e8d",
+      "note": "i18n 占位符漂移第三类收口（backlog §27）：两族多语义 key（install_semgrep_prefetch_skip / semgrep_rules_prefetch_skip）各拆 7 变体（dir/error/binary/permission/oserror/unexpected/copy），原基键移除、16 个调用点全部迁移，两套 catalog 各 +14 键（净叶子 2281→2293，双向 key 集合零差异）；db_edit 5 处补 symbol_id/sid/name/mode/start+end+total，task_not_found 4 处补 id，supersede 两处补 error=\"no response\"，install_hooks_skipped 改 hook=hook_path。新增 tests/test_i18n_placeholder_consistency.py（23 用例：静态 kwargs 覆盖占位符 + 14 变体形状 + 正负样例 + 非标识符花括号豁免 + 扫描自检）。验证：门禁 23P + key 存在性 13P = 36P；6 个定向回归 92 用例 88P/4S/0F；py_compile 5 模块通过；e2e 矩阵收口 PASS；独立扫描真实缺参 24→0。A′ 环：executor 6/6（含 1 个误报回滚的 fix_defect 闭环）-> reviewer verdict pass -> adjudicator apply/close -> completed。残留（§27.5）：6 个非标识符花括号 key、动态 key、_dir 兼载「无写权限」展示语义、en 文案打磨、列表值 6 个 task_constraints_*（§26.5 独立卡）。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
