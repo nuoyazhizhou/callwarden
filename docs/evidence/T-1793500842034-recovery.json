@@ -1,0 +1,45 @@
+{
+  "schema": "cw.governance_supersede_evidence.v1",
+  "superseded_task_id": "T-1793500842034-88eecb60",
+  "superseded_by_task_id": "T-1793504846491-ce17ddf8",
+  "workspace": {
+    "workspace_id": 1,
+    "workspace_instance_id": "4baea3ff12c2ea5c",
+    "workspace_binding_id": "tb-T-1793500842034-88eecb60-4baea3ff12c2ea5c",
+    "workspace_capture_id": "wc-4baea3ff12c2ea5c-2312828620"
+  },
+  "diagnosis": {
+    "created_by_attempt": "首次 governed task.create（携带 --task-id + --task-contract-envelope）在 CLI governed 通道下未注入 A' 默认三角色 legacy role_contracts（cli/main.py:4496-4497 对 governed_create 置空），daemon 仅在 role_contracts 非空时才在同一事务 bootstrap Task Contract（task_collab.rs:3385-3444）。",
+    "observed_projection": "task_contract_revisions=0、role_contracts=0、task_steps=3 全 pending、无 active lease、workflow_status=governance_blocked、blocking_reason=Task Contract 缺失、多版本冲突或 revision 链不连续。",
+    "business_impact": "该卡从未承载任何执行产出（步骤未领取、无 change_audit、无证据），仅为建卡记账残留；真实交付由 T-1793500993792-c74c99ac 承接并已 closed/COMPLETE。"
+  },
+  "recovery_channel_matrix": [
+    {
+      "channel": "task contract-bootstrap",
+      "feasible": false,
+      "reason": "daemon 侧 precondition_role_sources（task_contract_bootstrap.rs:208-225）要求 executor/reviewer/adjudicator 三条 current legacy role contract；本卡 role_contracts=0，且 BOOTSTRAP_ROLE_ALLOWLIST（task_contract_bootstrap.rs:37 起）不含该 task id，故必然以 ERR_BOOTSTRAP_ROLE_SOURCE fail-closed。",
+      "executed": false
+    },
+    {
+      "channel": "task bootstrap-executor-evidence + bootstrap-reviewer-pass",
+      "feasible": false,
+      "reason": "两段 bridge 只补执行证据与 reviewer pass，不创建 Task Contract / Role Contract 链；治理投影仍会因合同缺失保持 BLOCKED，后续 apply/close 无合同可绑定，属半成品投影风险。",
+      "executed": false
+    },
+    {
+      "channel": "task supersede（本卡收编 orphan）",
+      "feasible": true,
+      "reason": "orphan 卡 reviewer lease 可正常 acquire（L-1f463f16dd2fe949，fencing=1），说明 lease 层未被治理阻塞；supersede 是 daemon 提供的唯一 append-only 收编通道，把空投影卡标记为被后续卡替代，无需伪造合同/步骤证据。",
+      "executed": true
+    }
+  ],
+  "decision": {
+    "channel": "supersede",
+    "reason": "不为空投影卡伪造 Task Contract 或执行证据；以 append-only 收编记录其被真实交付卡替代，保持治理链可审计。",
+    "no_product_code_change": true
+  },
+  "verification_plan": {
+    "post_supersede": "回读旧卡 governance-projection 期望 status=superseded（或等价终态）且不再出现在待办；新卡 T-1793504846491-ce17ddf8 正常走 executor/reviewer/adjudicator 闭环",
+    "gate": "python scripts/check_e2e_matrix_closure.py 保持 PASS"
+  }
+}

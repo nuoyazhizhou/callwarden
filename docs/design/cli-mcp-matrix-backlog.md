@@ -1684,6 +1684,59 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
   argparse 层的 2 与成功态的 0，不锁业务失败码，该差异登记为文档残留（阶段 3
   「`--flag` 移除评估」之外的独立项）。
 
+## 23. Orphan 卡清理（空投影恢复）· `T-1793500842034-88eecb60`
+
+### 23.1 现象
+
+- 阶段 3 第三项施工期间，首次以 **governed 通道**建卡（携带 `--task-id` +
+  `--task-contract-envelope`）时，CLI 对 `governed_create` 置空 `role_contracts`
+  （`cli/main.py` 对应分支），而 daemon 仅在 `role_contracts` 非空时于同一事务
+  内 bootstrap Task Contract（`task_collab.rs` 对应分支）。
+- 结果：该卡 `task_contract_revisions=0`、`role_contracts=0`、3 步全 pending、
+  无 active lease，投影恒为 `governance_blocked`，阻塞原因为「Task Contract
+  缺失、多版本冲突或 revision 链不连续」。
+- 该卡从未承载任何执行产出（步骤未领取、无 `change_audit`、无证据）；真实交付
+  由 `T-1793500993792-c74c99ac` 承接并已 `closed/COMPLETE`。
+
+### 23.2 恢复通道矩阵
+
+| 通道 | 可行 | 依据 |
+| --- | --- | --- |
+| `task contract-bootstrap` | 否 | daemon `precondition_role_sources` 要求 executor/reviewer/adjudicator 三条 current legacy role contract；本卡 `role_contracts=0`，且 `BOOTSTRAP_ROLE_ALLOWLIST` 不含该 id，必然 `ERR_BOOTSTRAP_ROLE_SOURCE` |
+| `task bootstrap-executor-evidence` + `bootstrap-reviewer-pass` | 否 | 两段 bridge 只补执行证据与 reviewer pass，不创建 Task/Role Contract 链，投影仍 `BLOCKED`，属半成品投影风险 |
+| `task supersede` | 是 | orphan 卡 reviewer lease 可正常 acquire（fencing=1），supersede 是唯一 append-only 收编通道，无需伪造合同或步骤证据 |
+
+### 23.3 处置
+
+- 以 `trae-reviewer` 持有 orphan 卡的 reviewer lease（`L-85cdee2fefa5edcc`，
+  fencing=2），由 `trae-adjudicator` 以 adjudicator 身份提交 `task supersede`：
+  `SUP-9440d63262a6acb6`，被本卡 `T-1793504846491-ce17ddf8` 收编。
+- 证据：`docs/evidence/T-1793500842034-recovery.json`。
+- 失败尝试按 fail-closed 原样记录，未做参数兼容：
+  - `E_GOVERNANCE_REVIEWER_INVALID`：lease holder（`trae-adjudicator`）非
+    active registered reviewer；
+  - `E_REQUEST_ID_REUSE_MISMATCH`：同一 `request_id` 复用于不同参数组合。
+- 回读旧卡 `task show`：出现 `Superseded by -> T-1793504846491-ce17ddf8`，
+  子命令 `--role` 仅接受 `adjudicator`，reviewer 必须是 lease holder 且与
+  adjudicator 三者（agent/instance/session）分离。
+
+### 23.4 验证
+
+- `cw task show T-1793500842034-88eecb60` → `Superseded by` 段存在，
+  supersedence_id=`SUP-9440d63262a6acb6`。
+- 本卡 3 步（triage/recover/verify_doc）全绿后经 reviewer 独立复核、adjudicator
+  apply/close，投影 `COMPLETE`。
+- `python scripts/check_e2e_matrix_closure.py` 保持 PASS。
+
+### 23.5 边界与残留
+
+- supersede 不重建旧卡合同，只登记「被替代」；旧卡 `workflow_status` 仍会显示
+  `governance_blocked`，判定依据应以 `Superseded by` 段而非 workflow_status 为准，
+  该展示口径差登记为后续投影优化项。
+- 根治方向：governed 建卡通道应在 CLI 侧同样注入 A′ 默认三角色 legacy role
+  contracts（或 daemon 侧显式拒绝并给出可执行提示），避免同类空投影卡再产生；
+  属产品代码改动，不在本卡范围。
+
 
 
 
