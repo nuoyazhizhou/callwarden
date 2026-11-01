@@ -418,7 +418,7 @@ def test_daemon_unavailable_no_local_task(monkeypatch):
 # ----------------------------------------------------------------------
 
 def test_dispatch_project_mismatch_exits_nonzero(monkeypatch, capsys):
-    """AC-3：E_WORKSPACE_PROJECT_MISMATCH 经 _dispatch_subcommand → SystemExit(2)。"""
+    """AC-3：E_WORKSPACE_PROJECT_MISMATCH 经 _dispatch_subcommand → SystemExit(1)。"""
     import callwarden.cli.main as cli_main
 
     def boom(argv, db):
@@ -431,11 +431,11 @@ def test_dispatch_project_mismatch_exits_nonzero(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["cw", "task"])
     with pytest.raises(SystemExit) as exc:
         cli_main._dispatch_subcommand(["create", "--title", "t"], None)
-    assert exc.value.code == 2
+    assert exc.value.code == 1
 
 
-def test_dispatch_other_daemon_unavailable_keeps_rc_zero(monkeypatch, capsys):
-    """对照：非归属冲突的 DaemonUnavailableError 维持既有 RC 语义（不扩大行为面）。"""
+def test_dispatch_other_daemon_unavailable_exits_1(monkeypatch, capsys):
+    """对照：非归属冲突的 DaemonUnavailableError 同为运行时失败 → RC=1。"""
     import callwarden.cli.main as cli_main
 
     def boom(argv, db):
@@ -443,7 +443,9 @@ def test_dispatch_other_daemon_unavailable_keeps_rc_zero(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_main, "_handle_task", boom)
     monkeypatch.setattr(sys, "argv", ["cw", "task"])
-    assert cli_main._dispatch_subcommand(["create", "--title", "t"], None) is True
+    with pytest.raises(SystemExit) as exc:
+        cli_main._dispatch_subcommand(["create", "--title", "t"], None)
+    assert exc.value.code == 1
 
 
 def test_local_fallback_forbidden(monkeypatch):

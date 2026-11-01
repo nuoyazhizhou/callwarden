@@ -109,18 +109,14 @@ def test_subcommand_parses_and_executes(argv):
     - 不因参数解析失败而 exit 2
     - 已删除的顶层 --flag 不再是合法入口（见 test_deprecated_flags_rejected）
 
-    注意 exit 2 被 CLI 两类失败复用：
-    (a) argparse 解析错误——必写 stderr（usage + error:）
-    (b) 业务 fail-closed（无 daemon 环境的 E_HTTP_MANIFEST_MISSING 等）
-        ——cprint 到 stdout，stderr 为空，如 `✗ Subcommand 'stats' failed: ...`
-    本测试契约是 (a) 解析层：仅 (a) 判红（stderr 独立可再红，非 MASKING）；
-    (b) 属环境性失败（本地有 daemon 时 exit 0），不在本测试范围。
+    注意 exit 2 专用于 argparse 解析错误（必写 stderr：usage + error:）；
+    业务 fail-closed / 运行时失败统一为 exit 1（cprint 到 stdout，stderr 为空，
+    如 `✗ Subcommand 'stats' failed: ...`），不再复用 2。
+    本测试契约是解析层：仅 rc==2 判红。
     """
     returncode, stdout, stderr = _run_cw(argv, timeout=60)
-    # 仅 argparse 错误判红：rc==2 且 stderr 非空。
-    # rc==2 但 stderr 空 = (b) 业务 fail-closed，属环境性失败（本地有
-    # daemon 时 exit 0），放行；rc!=2 全部放行。
-    is_argparse_error = returncode == 2 and bool(stderr.strip())
+    # 仅 argparse 错误判红：rc==2。
+    is_argparse_error = returncode == 2
     assert not is_argparse_error, (
         f"{' '.join(argv)} 触发 argparse 错误 (exit 2): stderr={stderr[:500]}"
     )

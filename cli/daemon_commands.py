@@ -471,7 +471,7 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
                      "detail": ("daemon 启动失败或超时未就绪;检查 "
                                 "~/.callwarden/runtime/current/cw-daemon.exe 是否存在、"
                                 "端口是否被占用")})
-        return 2
+        return 1
 
     if args.action == "mode":
         if args.set:
@@ -534,7 +534,7 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         except Exception as e:
             print(f"ERROR: daemon RPC 失败（{e}）；metrics 仅经 daemon 获取，"
                   f"无本地 SQLite 降级", file=sys.stderr)
-            return 2
+            return 1
         if args.format == "prometheus":
             print(rpc_result)
         elif args.name:

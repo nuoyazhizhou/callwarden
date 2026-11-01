@@ -292,6 +292,19 @@ def test_missing_required_arg_exits_2(cli_env):
     assert "the following arguments are required" in result.stderr
 
 
+def test_daemon_business_rejection_exits_1(cli_env):
+    """daemon 业务拒绝（无 lease 的 task apply）→ rc=1，与 argparse 的 rc=2 区分。"""
+    result = _run(
+        ["task", "apply", PROBE_TASK, "--reviewer", "cli-e2e-reviewer"],
+        cli_env["env"], cli_env["root"],
+    )
+    combined = _combined(result)
+    assert result.returncode == 1, f"rc={result.returncode}\n{combined[:800]}"
+    assert "the following arguments are required" not in result.stderr
+    assert "Traceback (most recent call last)" not in combined
+    assert "E_" in combined, f"应渲染 daemon 结构化错误码\n{combined[:800]}"
+
+
 def test_leaf_calls_are_read_only(cli_env):
     """27 条叶子命令只读：跑完后 `tasks` / `task_workspace_bindings` 不变。
 

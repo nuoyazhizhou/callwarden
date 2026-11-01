@@ -101,7 +101,7 @@ def test_agent_start_handshake_success(monkeypatch, tmp_path):
 
 
 def test_agent_start_daemon_unavailable(monkeypatch, tmp_path):
-    """daemon 不可达 -> fail-closed，返回码 2，并清理 PID 文件。"""
+    """daemon 不可达 -> fail-closed，返回码 1，并清理 PID 文件。"""
 
     def _boom(method, params=None):
         raise DaemonUnavailableError("E_HTTP_DAEMON_UNAVAILABLE: connection refused")
@@ -110,7 +110,7 @@ def test_agent_start_daemon_unavailable(monkeypatch, tmp_path):
     client.call = _boom
     _patch_runtime(monkeypatch, tmp_path, client)
     rc = main_mod._agent_start(["--watch-dir", str(tmp_path)])
-    assert rc == 2
+    assert rc == 1
     assert not (tmp_path / "agent.pid").exists(), "失败时应清理 PID 文件"
 
 

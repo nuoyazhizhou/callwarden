@@ -28,13 +28,13 @@ PYT 回归卡 step#4（thin-client / daemon authority 迁移对齐）——本�
 * ``test_cli_shared_task_write_has_nonzero_exit_code`` → **B（subprocess 集成期望过期）**
   生产 ``cli/main.py:3656-3666`` 使 ``task.create`` 总是带 ``identity_policy``，
   必然命中 ``governed_create`` 分支并在 local 模式抛 ``DaemonUnavailableError``
-  （:3660），该异常被 ``_dispatch_subcommand`` 的通用 ``except Exception``
-  （``cli/main.py:1784``）吞掉并 ``return True`` → RC=0。此外旧测试从仓库根 cwd
+  （:3660），该异常此后被 ``_dispatch_subcommand`` 的通用 ``except Exception``
+  按运行时失败统一 ``SystemExit(1)``。此外旧测试从仓库根 cwd
   运行会触发 ``_run_subcommand_mode`` 的 workspace 注册（``cli/main.py:1466-1483``）
   → HTTP manifest 探测失败 → RC=1（环境相关）。改为在隔离中性 cwd 下用非 governed
   的 ``task close`` 触发 ``route_task_write`` local+shared fail-closed 路径
-  （``cli/main.py:5340-5344`` → ``SharedTaskWriterRequiredError`` → ``SystemExit(2)``，
-  由 ``cli/main.py:1771-1773`` 保证 RC=2）。
+  （``cli/main.py:5340-5344`` → ``SharedTaskWriterRequiredError`` → ``SystemExit(1)``，
+  由 ``cli/main.py:1771-1773`` 保证 RC=1）。
 """
 
 import os
@@ -138,5 +138,5 @@ def test_cli_shared_task_write_has_nonzero_exit_code():
         )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-    assert result.returncode == 2
+    assert result.returncode == 1
     assert "E_SHARED_TASK_WRITER_REQUIRED" in result.stdout + result.stderr

@@ -355,13 +355,13 @@ class TestG13CliMetricsCommand:
         return str(path)
 
     def test_metrics_cmd_rpc_unreachable_fails_closed(self, capsys, tmp_path):
-        """daemon RPC 不可达应 fail-closed（rc=2 + ERROR），无本地降级"""
+        """daemon RPC 不可达应 fail-closed（rc=1 + ERROR），无本地降级"""
         from callwarden.cli.daemon_commands import run_daemon_command
         missing = tmp_path / "missing.sock"
         rc = run_daemon_command([
             "--socket", str(missing), "metrics", "--format", "json",
         ])
-        assert rc == 2, "daemon 不可达时 metrics 应 fail-closed（rc=2）"
+        assert rc == 1, "daemon 不可达时 metrics 应 fail-closed（rc=1）"
         err = capsys.readouterr().err
         assert "ERROR" in err
         assert "metrics 仅经 daemon 获取" in err, \

@@ -228,7 +228,7 @@ def _assert_python_fails_closed_no_daemon(
     list_workspaces()/route_rpc() 在找不到 authority-scoped manifest 时抛
     DaemonRemoteError。rc 形态因家族而异（refresh/toolchain 在子命令直连处
     泄漏 traceback rc=1，task/rule 等在 _dispatch_subcommand 捕获为
-    '✗ Subcommand ...' rc=0），故只断言 stdout+stderr 含 fail-closed 错误码，
+    '✗ Subcommand ...' rc=1），故只断言 stdout+stderr 含 fail-closed 错误码，
     不锁定具体 rc；若任一命令改为"绕过 daemon 成功"，此断言即失败。
     """
     combined = (result.stdout or "") + (result.stderr or "")

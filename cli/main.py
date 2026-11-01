@@ -1261,7 +1261,7 @@ def _run_subcommand_mode():
             except Exception as e:
                 if "locked" in str(e).lower():
                     cprint(get_error("db_locked"), "red")
-                    sys.exit(2)
+                    sys.exit(1)
                 # FIX(全量测试T3,2026-09-30):启动阶段自动 workspace 注册遇到
                 # 无效 workspace_root(如 --workspace 传了不存在的路径)时,daemon
                 # 返回 path_not_found/workspace_not_found 等 DaemonRemoteError,此前
@@ -1595,32 +1595,28 @@ def _dispatch_subcommand(argv, db):
             return _handle_assignment(argv, db)
     except SharedTaskWriterRequiredError as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
-        raise SystemExit(2)
+        raise SystemExit(1)
     except DaemonRemoteError as dre:
-        # GOV-FIX-07：daemon 业务拒绝（结构化 error 信封）必须以非零 RC 退出。
-        # HTTP 传输下 route_task_write/route_task_read 把 daemon error 信封统一
-        # 转成 DaemonRemoteError 上抛；此前落通用 except 打 ✗ 后 return True
-        # （RC=0 假成功），波及全部子命令家族（attest/supersede/cascade_close
-        # error 路径等）。仅 daemon 权威拒绝 fail-closed RC=2；普通本地异常
-        # 维持原语义（不扩大化）。
+        # 退出码口径（阶段 3 残差统一）：daemon 业务拒绝属运行时失败，RC=1；
+        # RC=2 仅保留给 argparse 用法错误与本地输入校验。
         cprint(t("cli.messages.subcommand_fail", cmd=cmd,
                  error=f"{dre.code}: {dre.message}"), "red")
-        raise SystemExit(2)
+        raise SystemExit(1)
     except Exception as e:
         # 归属冲突（跨项目配对）是显式拒绝，绝不能被通用分支表达成 RC=0 假成功：
-        # agent/脚本会把被拒的 create 误读为已建卡（AC-3）。仅收窄到该错误码，
-        # 其它 DaemonUnavailableError/DaemonRemoteError 语义维持既有行为。
+        # agent/脚本会把被拒的 create 误读为已建卡（AC-3）。
         if getattr(e, "code", "") == "E_WORKSPACE_PROJECT_MISMATCH":
             cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
-            raise SystemExit(2)
+            raise SystemExit(1)
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         # CLI 纯 client 化后不再捕获 sqlite3.OperationalError（禁直接 SQLite），
         # 以消息特征判断数据库锁错误保持既有提示语义。
         if "locked" in str(e).lower():
             cprint(get_error("db_locked"), "red")
-            sys.exit(2)
+            raise SystemExit(1)
+        # 通用异常一律按运行时失败 RC=1 退出，禁止 RC=0 假成功。
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
-        return True
+        raise SystemExit(1)
 
     return False
 
@@ -4569,7 +4565,7 @@ def _handle_task(args, db):
                 create_res = route_task_write("task.create", create_params, _local_create_forbidden)
             except (DaemonRemoteError, DaemonUnavailableError) as exc:
                 cprint(t("cli.messages.subcommand_fail", cmd="task", error=exc), "red")
-                raise SystemExit(2) from exc
+                raise SystemExit(1) from exc
         else:
             create_res = route_task_write("task.create", create_params, _local_create_forbidden)
         task_id = create_res["task_id"] if isinstance(create_res, dict) and "task_id" in create_res else create_res
@@ -4983,7 +4979,7 @@ def _handle_task(args, db):
             # dispatcher swallow it produced a false zero exit status.
             code = getattr(exc, "code", "E_DAEMON_UNAVAILABLE")
             cprint(f"[task-report] {code}: {exc}", "red")
-            raise SystemExit(2) from exc
+            raise SystemExit(1) from exc
 
         cprint(t("cli.messages.task_report_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -5239,8 +5235,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_apply_failed",
                    error=result["error"]), "red")
             print()
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(t("cli.messages.task_apply_success",
                id=result["task_id"]), "green", bold=True)
         print(t("cli.messages.task_status_label", status=result["status"]))
@@ -5302,8 +5298,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_close_failed",
                    error=result["error"]), "red")
             print()
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(t("cli.messages.task_close_success",
                id=result["task_id"]), "green", bold=True)
         print(t("cli.messages.task_status_label", status=result["status"]))
@@ -5338,13 +5334,13 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_close_failed",
                    error=result["error"]), "red")
             print()
-            # GOV-FIX-06：daemon 拒绝/失败必须以非零 RC 退出（此前 RC=0 假成功）。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/失败属运行时失败，RC=1。
+            sys.exit(1)
 
         closed = result.get("closed") or []
         skipped = result.get("skipped") or []
         # GOV-FIX-06：目标卡真实收尾判定。目标卡既未 closed 也未 skipped（幂等）
-        # 即为门禁拒绝（子树未全闭 / 叶子步骤未完），必须显式报错 + RC=2，
+        # 即为门禁拒绝（子树未全闭 / 叶子步骤未完），必须显式报错 + RC=1，
         # 不得打印 ✓ Task closed。仅凭 closed/skipped 判定，对旧 daemon 同样正确。
         if opts.task_id not in closed and opts.task_id not in skipped:
             blocked = result.get("blocked") or {}
@@ -5363,7 +5359,7 @@ def _handle_task(args, db):
             else:
                 print("无任何节点被收尾（status 未变更）")
             print()
-            sys.exit(2)
+            sys.exit(1)
 
         cprint(t("cli.messages.task_close_success",
                id=result["task_id"]), "green", bold=True)
@@ -5421,8 +5417,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_reopen_failed",
                    error=result["error"]), "red")
             print()
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(
             t("cli.messages.task_reopen_success",
               id=result["task_id"],
@@ -5499,8 +5495,8 @@ def _handle_task(args, db):
                      default="claim recovery 失败：{error}",
                      error=result["error"]), "red")
             print()
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(t("cli.messages.task_claim_recover_success",
                  default="claim 已释放：{id}",
                  id=result.get("task_id", opts.task_id)), "green", bold=True)
@@ -5959,8 +5955,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_completion_review_failed",
                      error=result["error"]), "red")
             print()
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         decision = result.get("decision", "unknown")
         counts = result.get("counts", {})
         decision_color = {"pass": "green", "warn": "yellow",
@@ -6115,15 +6111,15 @@ def _handle_task(args, db):
         if result is None:
             cprint(t("cli.messages.task_supersede_failed",
                      default="task.supersede failed (no response)"), "red")
-            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(t("cli.messages.task_supersede_failed",
                      error=result["error"]), "red")
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(t("cli.messages.task_supersede_success",
                  old=result.get("superseded_task_id", opts.old),
                  new=result.get("superseding_task_id", opts.new),
@@ -6185,16 +6181,15 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.attest_legacy_workspace_binding failed (no response)", "red")
-            # GOV-FIX-07：无响应属通信失败，同样禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.attest_legacy_workspace_binding failed: {result['error']}", "red")
-            # GOV-FIX-07：daemon 拒绝/失败必须以非零 RC 退出
-            # （socket 传输 error dict 路径；HTTP 传输由 _dispatch_subcommand
-            # 的 DaemonRemoteError 分支统一 RC=2）。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/失败属运行时失败，
+            # socket 与 HTTP 传输均由本口径收敛为 RC=1。
+            sys.exit(1)
         cprint(
             "✓ 已追加历史任务 workspace authority attestation："
             f"{result.get('legacy_task_id', opts.legacy_task_id)} "
@@ -6250,14 +6245,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.contract_bootstrap failed (no response)", "red")
-            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.contract_bootstrap failed: {result['error']}", "red")
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(f"✓ 已追加 Task/Role/step governance bootstrap：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  contract: {result.get('contract_id', '')}@{result.get('contract_revision', '')}")
         print(f"  step bindings: {len(result.get('step_binding_ids', []))}")
@@ -6315,14 +6310,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.contract_revise failed (no response)", "red")
-            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.contract_revise failed: {result['error']}", "red")
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(f"✓ 已追加 Task Contract revision：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  contract: {result.get('contract_id', '')} r{result.get('previous_revision', '')}→r{result.get('revision', '')}")
         print(f"  contract_hash: {result.get('contract_hash', '')}")
@@ -6367,14 +6362,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.bootstrap_executor_evidence failed (no response)", "red")
-            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.bootstrap_executor_evidence failed: {result['error']}", "red")
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(f"✓ 已追加 Bootstrap Executor Evidence：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  to_status: {result.get('to_status', '-')}")
         print(f"  evidence_steps: {len(result.get('evidence_steps', []))}")
@@ -6412,14 +6407,14 @@ def _handle_task(args, db):
         )
         if result is None:
             cprint("task.bootstrap_reviewer_pass failed (no response)", "red")
-            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.bootstrap_reviewer_pass failed: {result['error']}", "red")
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         cprint(f"✓ 已签发 Bootstrap Reviewer Pass：{result.get('task_id', opts.task_id)}", "green", bold=True)
         print(f"  status: {result.get('status', '-')}")
         print(f"  bootstrap_reviewer_lease_id: {result.get('bootstrap_reviewer_lease_id', '')}")
@@ -6443,9 +6438,8 @@ def _handle_task(args, db):
             result = {"error": result}
         if "error" in result:
             cprint(f"task.governance_projection.get failed: {result['error']}", "red")
-            # GOV-FIX-08：读路径 daemon 拒绝同样 fail-closed（与 dispatch 层
-            # HTTP DaemonRemoteError RC=2 语义对齐）。
-            sys.exit(2)
+            # 退出码口径统一：读路径 daemon 拒绝同样属运行时失败，RC=1。
+            sys.exit(1)
         if opts.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return True
@@ -6489,15 +6483,15 @@ def _handle_task(args, db):
         if result is None:
             cprint(t("cli.messages.task_superseded_failed",
                      default="task.superseded_by failed (no response)"), "red")
-            # GOV-FIX-08：无响应属通信失败，禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：无响应属通信失败，RC=1。
+            sys.exit(1)
         if isinstance(result, str):
             result = {"error": result}
         if "error" in result:
             cprint(t("cli.messages.task_superseded_failed",
                      error=result["error"]), "red")
-            # GOV-FIX-08：socket 传输失败路径禁止 RC=0 假成功。
-            sys.exit(2)
+            # 退出码口径统一：daemon 拒绝/传输失败属运行时失败，RC=1。
+            sys.exit(1)
         if not result.get("found"):
             cprint(t("cli.messages.task_superseded_none",
                      task_id=opts.id,
@@ -13162,7 +13156,7 @@ def main():
             raise SystemExit(run_daemon_command(sys.argv[2:]))
         except DaemonRemoteError as e:
             _cprint(f"✗ daemon 命令失败: {e}", "red")
-            raise SystemExit(2)
+            raise SystemExit(1)
 
     # --workspace 预扫描：允许 `cw --workspace ROOT task show T-xxx` 形式
     # 提取 --workspace ROOT 到环境变量，从 argv 移除后让 sys.argv[1] 指向真正子命令。
@@ -13278,7 +13272,7 @@ def main():
         # CLI 纯 client 化后不捕获 sqlite3.OperationalError（禁直接 SQLite）。
         if "locked" in str(e).lower():
             cprint(get_error("db_locked"), "red")
-            sys.exit(2)
+            sys.exit(1)
         raise
     finally:
         db.close()
@@ -13610,7 +13604,7 @@ def _agent_start(argv: list) -> int:
             _os.remove(pid_file)
         except OSError:
             pass
-        return 2
+        return 1
 
     try:
         epoch = user_agent_connect(rpc_client, workspace_id, session)
@@ -13621,7 +13615,7 @@ def _agent_start(argv: list) -> int:
             _os.remove(pid_file)
         except OSError:
             pass
-        return 2
+        return 1
 
     # 5. 注册 workspace（如果尚未注册）
     try:
@@ -13646,7 +13640,7 @@ def _agent_start(argv: list) -> int:
             _os.remove(pid_file)
         except OSError:
             pass
-        return 2
+        return 1
 
     stop_event = _threading.Event()
 

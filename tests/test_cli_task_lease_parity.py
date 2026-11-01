@@ -285,7 +285,7 @@ def _assert_ok(proc, what: str):
 
 def _assert_cli_rejected(proc, what: str, *codes: str):
     """CLI 业务拒绝：`_dispatch_subcommand` 顶层打印 `✗ 执行子命令 'task' 失败:
-    <code>: <message>` 并返回 True（exit 0）。断言输出含结构化错误码。"""
+    <code>: <message>` 并按运行时失败 exit 1。断言输出含结构化错误码。"""
     out = _all_out(proc)
     for code in codes:
         assert code in out, f"{what}: 输出缺少错误码 {code}:\n{out}"

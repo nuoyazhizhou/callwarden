@@ -1682,7 +1682,7 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
 - 退出码观测以真实行为为准：daemon 业务拒绝当前渲染为 `rc=2`，与
   `cli_reference.md` 四段式约定的「1=运行时失败」存在口径差；本卡只锁定
   argparse 层的 2 与成功态的 0，不锁业务失败码，该差异登记为文档残留（阶段 3
-  「`--flag` 移除评估」之外的独立项）。
+  「`--flag` 移除评估」之外的独立项；后由 §24 统一为 `rc=1` 闭合）。
 
 ## 23. Orphan 卡清理（空投影恢复）· `T-1793500842034-88eecb60`
 
@@ -1736,6 +1736,106 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
 - 根治方向：governed 建卡通道应在 CLI 侧同样注入 A′ 默认三角色 legacy role
   contracts（或 daemon 侧显式拒绝并给出可执行提示），避免同类空投影卡再产生；
   属产品代码改动，不在本卡范围。
+
+---
+
+## 24. CLI 失败退出码口径统一（阶段 3 残差 · `T-1793505963640-e9540b78`）
+
+### 24.1 现象与口径
+
+`docs/cli_reference.md` 四段式（§21.2）约定 `0` 成功 / `1` 运行时失败 /
+`2` 用法与输入校验错误。§22.5 已登记残差：daemon 业务拒绝与运行时异常仍渲染
+`rc=2`，通用 `except Exception` 甚至 `return True`（`rc=0` 假成功），消费方无法
+按退出码区分「参数写错」与「daemon 拒绝/环境故障」。
+
+按失败来源分类（本卡处置范围）：
+
+| 类别 | 典型出口 | 旧行为 | 新口径 | 判定依据 |
+| --- | --- | --- | --- | --- |
+| 用法 / 参数解析 | argparse 必填缺失、未知 flag、`--from-file` + prometheus 组合 | 2 | **2** | 解析层拒绝，未进入业务 |
+| 输入校验 | `--from-file` 快照缺失/损坏、`--watch-dir` 不存在、`--help` | 2 / 0 | **2** / 0 | 本地输入不合法，非运行时故障 |
+| daemon 业务拒绝（HTTP） | `DaemonRemoteError`、`SharedTaskWriterRequiredError`、`E_WORKSPACE_PROJECT_MISMATCH` | 2 | **1** | daemon 权威拒绝，运行时失败 |
+| daemon 业务拒绝（socket dict） | `_handle_task` 各分支 `{"error": ...}` / `None`（no response）出口 | 2 | **1** | 同属 daemon 拒绝/传输失败 |
+| 运行时 / 环境异常 | 通用 `except Exception`（此前 rc=0）、db locked、metrics RPC 不可达、agent daemon 不可达/握手失败/watchdog 缺失、`daemon start` 失败、`cw daemon` 业务错误 | 0 / 2 | **1** | 非用法错误，必须非零 |
+| 平台 / 部署门禁 | `cw-client`/`cw-agent`/`cw-daemon` 非 Linux、自递归守卫、二进制缺失 | 2 | 2 | 环境前置条件，保持 fail-closed 2 |
+
+保持不变：既有成功路径（`rc=0`）、argparse 层 `rc=2` 与平台/部署门禁 `rc=2`。
+
+### 24.2 受影响测试清单
+
+需由 `2`（或 `0`）改为 `1`：
+
+| 文件 | 用例 | 旧断言 | 新断言 |
+| --- | --- | --- | --- |
+| `tests/test_cli_005_http_rpc.py` | `test_agent_start_daemon_unavailable` | `rc == 2` | `rc == 1` |
+| `tests/test_g13_audit_fix.py` | `test_metrics_cmd_rpc_unreachable_fails_closed` | `rc == 2` | `rc == 1` |
+| `tests/test_shared_task_writer.py` | `test_cli_shared_task_write_has_nonzero_exit_code` | `returncode == 2` | `returncode == 1` |
+| `tests/test_cli_govfix07_daemon_error_rc.py` | dispatch 层 4 用例（DaemonRemoteError / 本地异常 / SharedWriter / attest error dict） | `code == 2` / `return True` | `code == 1` |
+| `tests/test_cli_govfix08_error_dict_rc.py` | socket error dict 9 用例 | `code == 2` | `code == 1` |
+| `tests/test_task_create_workspace_binding.py` | `test_dispatch_project_mismatch_exits_nonzero` / `test_dispatch_other_daemon_unavailable_keeps_rc_zero` | `code == 2` / `return True` | `code == 1` |
+| `tests/test_cli_subcommand_e2e.py` | 新增 daemon 业务拒绝门禁（无 lease 的 `task apply`） | — | `rc == 1` |
+| `tests/test_cli_consistency.py` | 注释口径（业务失败不再复用 2） | 注释称 rc=2 业务 fail-closed | argparse 判定不变，注释改口径 |
+
+保持 `2`（不复改）：`test_phase8_metrics_endpoint.py:111`（`--from-file` 缺失）、
+`test_g13_audit_fix.py:402/412`（prometheus 组合 / 快照缺失）、
+`test_cli_subcommand_e2e.py:291`（argparse 缺参）、`test_cw_client_rpc_proxy.py`
+与 `test_p0_3_cross_platform_package.py`（平台门禁）、`test_release_bundle_inspector.py`
+（独立工具用法）。
+
+文档同步：`docs/cli_reference.md` 中 `task cascade-close`（:2200）与
+`daemon start`（:4100）两处「退出码 2」改为「退出码 1」。
+
+### 24.3 处置
+
+- `cli/main.py`
+  - `_dispatch_subcommand` 五个失败出口统一 `SystemExit(1)`：`SharedTaskWriterRequiredError`、
+    `DaemonRemoteError`、`E_WORKSPACE_PROJECT_MISMATCH`、db locked、通用 `Exception`
+    （后者由 `return True`（rc=0 假成功）改为 `raise SystemExit(1)`）。
+  - `_handle_task` 各运行时出口：apply / close / cascade-close（error 与 gate 拒绝两处）/
+    reopen / claim-recover / completion-review / supersede（error 与 no-response）/
+    attest-legacy-workspace-binding / contract-bootstrap / contract-revise /
+    bootstrap-executor-evidence / bootstrap-reviewer-pass / governance-projection /
+    superseded 的 `{"error": ...}` 与 `None` 分支由 `sys.exit(2)` 改为 `sys.exit(1)`。
+  - governed `task.create` 与 `task.report` 的 daemon 拒绝捕获、启动阶段 workspace
+    注册 db locked、`cw daemon` 业务错误捕获同步改为 `SystemExit(1)`。
+  - `_agent_start` 的 daemon 不可达 / 握手失败 / watchdog 缺失三处运行时失败
+    `return 2` → `return 1`；`--watch-dir` 不存在仍为输入校验 `2`，`--help` 仍为 `0`。
+  - 相关 GOV-FIX-06/07/08 注释按新口径改写，避免「RC=2」陈述漂移。
+- `cli/daemon_commands.py`：`daemon start` 启动失败（`E_DAEMON_START_FAILED`）与
+  `metrics` daemon RPC 不可达两处 `return 2` → `return 1`；`--from-file`
+  缺失/损坏与 `--from-file + prometheus` 组合仍为输入校验 `2`。
+- 测试：`test_cli_govfix07_daemon_error_rc.py`、`test_cli_govfix08_error_dict_rc.py`
+  与 `test_task_create_workspace_binding.py` 改用例名为 `exits_1` 并断言 `1`；
+  `test_cli_005_http_rpc.py` / `test_g13_audit_fix.py` / `test_shared_task_writer.py`
+  同步断言；`test_cli_subcommand_e2e.py` 新增无 lease `task apply` 业务拒绝门禁
+  （`rc=1` 且含 `E_` 错误码）；`test_cli_consistency.py`、`test_cli_task_lease_parity.py`、
+  `test_rust_cli_diff.py` 注释改口径（断言本身不变）。
+- 文档：`docs/cli_reference.md` 两处退出码说明同步为 1。
+
+### 24.4 验证
+
+- `pytest tests/test_cli_govfix07_daemon_error_rc.py tests/test_cli_govfix08_error_dict_rc.py
+  tests/test_task_create_workspace_binding.py tests/test_cli_005_http_rpc.py
+  tests/test_g13_audit_fix.py tests/test_shared_task_writer.py tests/test_cli_consistency.py
+  tests/test_phase8_metrics_endpoint.py tests/test_cli_subcommand_e2e.py`
+  → `158 passed, 1 skipped in 33.81s`（skip 为既有前置守卫，非本卡回归）。
+- 保持 `2` 的守卫用例全绿：`--from-file` 缺失（phase8）、prometheus 组合
+  （g13）、argparse 缺参（e2e:291）、平台门禁（`test_cw_client_rpc_proxy` /
+  `test_p0_3_cross_platform_package`，未改动、本卡未纳入跑单）。
+- HTTP 与 socket/named-pipe 两种传输下的 daemon 拒绝均收敛到 `rc=1`，
+  不再出现同一失败因传输路径不同而 `1/2` 分裂。
+
+### 24.5 边界与残留
+
+- 本地输入校验失败的 `return True`（rc=0）出口未在本卡收口，例如 identity 缺失 /
+  lease 凭证不完整 / `--envelope-path` 读取失败 / `split` 计划文件不存在等；
+  这类应归 `2`（用法/输入校验），但涉及逐命令语义与大量既有测试期望，
+  登记为后续残差卡（本卡只统一 daemon 拒绝与运行时异常）。
+- 平台 / 部署门禁（`cw-client`/`cw-agent`/`cw-daemon` 非 Linux、自递归守卫、
+  二进制缺失）保持 `2`，因为其语义是「环境前置条件不满足」而非运行时故障；
+  若后续要区分，可另立口径，不在本卡扩大改动面。
+- `cw daemon serve` 下线提示的 `return 2` 分支理论上不可达（argparse 不再注册），
+  保持原样，避免为死路径引入噪音。
 
 
 

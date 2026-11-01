@@ -2197,7 +2197,7 @@ cw task cascade-close <task_id>
 经 daemon 权威 `task.cascade_close`，无 local fallback（daemon 不可用 fail-closed）。
 
 - 目标卡已 closed 时幂等跳过（无新增收尾）
-- 子树存在未 closed 子卡或叶子步骤未完成时拒绝收尾，退出码 2（GOV-FIX-06）
+- 子树存在未 closed 子卡或叶子步骤未完成时拒绝收尾，退出码 1（GOV-FIX-06）
 - 支持结构化身份参数（`--agent-id` / `--session-id` / `--model-id` / `--role` /
   `--agent-instance-id`）
 
@@ -4097,7 +4097,7 @@ cw daemon start --force      # 探测到已有 daemon 也强制启动新实例�
 ```
 
 输出 JSON：`ok` / `action` / `status`（`started` / `already_running`）/
-`endpoint`；启动失败退出码 2（`E_DAEMON_START_FAILED`，检查
+`endpoint`；启动失败退出码 1（`E_DAEMON_START_FAILED`，检查
 `~/.callwarden/runtime/current/cw-daemon.exe` 是否存在、端口是否被占用）。
 
 #### `daemon ping`：检查 daemon 连通性
