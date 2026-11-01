@@ -2054,6 +2054,19 @@
       "review_verdict_id": "V-8343a2316fbb5e8cbf17b485",
       "handoff_event_id": "he-ec74da05a7e57adf797b7e8d",
       "note": "i18n 占位符漂移第三类收口（backlog §27）：两族多语义 key（install_semgrep_prefetch_skip / semgrep_rules_prefetch_skip）各拆 7 变体（dir/error/binary/permission/oserror/unexpected/copy），原基键移除、16 个调用点全部迁移，两套 catalog 各 +14 键（净叶子 2281→2293，双向 key 集合零差异）；db_edit 5 处补 symbol_id/sid/name/mode/start+end+total，task_not_found 4 处补 id，supersede 两处补 error=\"no response\"，install_hooks_skipped 改 hook=hook_path。新增 tests/test_i18n_placeholder_consistency.py（23 用例：静态 kwargs 覆盖占位符 + 14 变体形状 + 正负样例 + 非标识符花括号豁免 + 扫描自检）。验证：门禁 23P + key 存在性 13P = 36P；6 个定向回归 92 用例 88P/4S/0F；py_compile 5 模块通过；e2e 矩阵收口 PASS；独立扫描真实缺参 24→0。A′ 环：executor 6/6（含 1 个误报回滚的 fix_defect 闭环）-> reviewer verdict pass -> adjudicator apply/close -> completed。残留（§27.5）：6 个非标识符花括号 key、动态 key、_dir 兼载「无写权限」展示语义、en 文案打磨、列表值 6 个 task_constraints_*（§26.5 独立卡）。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793549305665-435643ec",
+      "commit_id": "c91c9d360e507a6adf21076370ce5f867d7105fc",
+      "status": "new_in_master",
+      "source": "i18n_literal_brace_escape_20261102",
+      "scope": "i18n/zh_CN.json, i18n/en_US.json, tests/test_i18n_placeholder_consistency.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "a023b9c77992596d",
+      "evidence_sha256": "D882993E7C53F7B995FC511EC80449E14950D7D14155EED8EA03379EA56F520E",
+      "view_manifest_sha256": "a25fb394e85d1cc7716efd01fe18ccef882f85b83a52385e6152e84cc9aa45be",
+      "review_verdict_id": "V-dc451a8823b96a863c17d8ac",
+      "handoff_event_id": "he-ff8a3e8bab0771ef359f000e",
+      "note": "i18n 第四类漂移收口（backlog §28）：6 个含字面花括号的 key（install_agent_hook_script / task_plan_template / cli_rule_arg_scope / cli_rule_arg_evidence / cli_rule_arg_context / cli_task_arg_steps）在 zh_CN 与 en_US 内把 { } 改写为 {{ }}，共 12 行值变更；调用点均为 t(key, default=...) 无 kwargs，转义后 format() 输出与转义前基线 12/12 逐字节一致，catalog 叶子总数 2293 不变、仅 6 key 变化。门禁升级为转义感知格式化安全门禁（新增 ESCAPE_TOKEN / _bare_braces / _iter_leaves / _rendered_baseline 与 6 key 双语言基线断言、全量裸花括号扫描、残留白名单反向约束、扫描自检，+175 行）。负向判别：新判定扫描 HEAD catalog 时 zh/en 各恰 6 key 失败，当前 0。验证：本文件 47P + key 存在性 13P = 60P；8 套件 152 用例 148P/4S/0F；check_e2e_matrix_closure PASS。A′ 环：executor 4/4 report -> daemon 自动 review_pending -> reviewer verdict pass -> reviewer_pass handoff -> adjudicator apply/close -> closed/completed/complete/finalize；三角色 lease（executor L-f7d297297350e90a / reviewer L-9a493ea5e672d8fb / adjudicator L-03d08ac12e303816）全部主动 release。残留（§28.5）：3 个既有同类裸花括号 key（complexity_header / largest_fns_header / coupled_fns_header，含合法 {hash:>3} 与字面列宽标签、零静态调用点）未转义，以显式白名单 + 「仍含裸花括号且无引用」测试约束，建议后续文案卡只转义表头字面量并保留 {hash}；另动态拼接 key、_dir 写权限语义、列表值 6 个 task_constraints_*（§26.5）、en 文案打磨待独立卡。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
