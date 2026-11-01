@@ -1837,6 +1837,93 @@ coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形
 - `cw daemon serve` 下线提示的 `return 2` 分支理论上不可达（argparse 不再注册），
   保持原样，避免为死路径引入噪音。
 
+---
+
+## 25. i18n 文案漂移：引用即存在（`T-1793521395642-f45bc274`）
+
+### 25.1 现象与基线（实测 2026-11-01）
+
+`i18n/__init__.py::t()` 的缺 key 语义（`i18n/__init__.py:153-160`）：`default=None`
+时**原样返回 key 字符串**。因此「代码引用了 catalog 不存在的 key 且未传
+`default=`」会把裸 key 直接打印给用户（如 `cli_fts_rebuild_done`），在 zh_CN /
+en_US 两种语言下均不可读。
+
+三组基线实测结论：
+
+| 基线 | 口径 | 结果 |
+| --- | --- | --- |
+| 既有 i18n 门禁 | `pytest tests/test_mcp_i18n_messages.py tests/test_i18n_cleanup_c5.py tests/test_i18n_print_cleanup.py` | `65 passed in 289.23s`，无回潮 |
+| catalog 双向对账 | 扁平化 `zh_CN.json` / `en_US.json` 后取差集 | `1969 / 1969`，`only_zh=[]`、`only_en=[]`（**无双语缺项**） |
+| 引用一致性扫描 | AST 遍历包内 58 个含 `i18n` 的模块；`t(k)` 原样、`get_msg(k)`→`cli.messages.k`、`get_error(k)`→`errors.k`、`get_arg_help(k)`→`cli.args.k`；**跳过带 `default=` 的宽容调用** | **9 处调用 / 8 个唯一 key**，全部位于 `cli/main.py` |
+
+结论：本轮漂移不在 catalog 对账层（双语完全对齐），而在**代码引用层**——
+存在「引用了不存在的 key 且无兜底」的裸 key 出口。既有门禁只验「已知 key
+存在」与「无未走 i18n 的 print」，未覆盖「引用即存在」这一维度。
+
+### 25.2 确认清单（8 key / 9 调用）
+
+| # | 调用点 | key | 现象 |
+| --- | --- | --- | --- |
+| 1 | `cli/main.py:2855` | `cli.args.category` | `guardrail scan` 过滤提示 `cat_info` 拼出裸 key |
+| 2 | `cli/main.py:2885` | `cli.args.category` | `guardrail rules` 过滤提示同上 |
+| 3 | `cli/main.py:6119` | `cli.messages.task_supersede_failed` | daemon 返回 error 时打印裸 key（同文件 6112 处带 default，故只有 error 分支裸 key） |
+| 4 | `cli/main.py:6491` | `cli.messages.task_superseded_failed` | 同上，`task superseded` 的 error 分支 |
+| 5 | `cli/main.py:8482` | `cli_fts_rebuild_done` | `fts rebuild` 成功摘要打印裸 key |
+| 6 | `cli/main.py:8488` | `cli_fts_rebuild_mismatch_warning` | 索引行数不一致告警打印裸 key |
+| 7 | `cli/main.py:8492` | `cli_fts_rebuild_failed` | 重建失败打印裸 key |
+| 8 | `cli/main.py:11987` | `cli.messages.semgrep_incremental_mode` | 增量扫描模式行打印裸 key |
+| 9 | `cli/main.py:12003` | `cli.messages.semgrep_incremental_done` | 增量扫描完成摘要打印裸 key |
+
+同族参照：`cli.args.file`（2854/…）在 catalog 中存在，且与 `category` 采用同样的
+`（{label}: {value}）` 拼接风格；`cli_fts_*` 族其余 key（如 `cli_fts_rebuilding`、
+`cli_fts_status_desc`）在 catalog 中同样缺失，但因调用处带 `default=`（英文兜底）
+不会输出裸 key，属「缺翻译但不露裸 key」，登记为残留（§25.5）。
+
+### 25.3 处置
+
+- `i18n/zh_CN.json` / `i18n/en_US.json`：按 §25.2 清单补 8 个 key（每个文件各 8 条），
+  扁平化键数由 `1969` 增至 `1977`，双向仍零差异。插入位置就近既有同族条目：
+  - `cli.args.category` 紧随 `cli.args.file`（同一 `（{label}: {value}）` 拼接风格）；
+  - `semgrep_incremental_mode` / `semgrep_incremental_done` 紧随 `semgrep_scan_done`；
+  - `task_supersede_failed` / `task_superseded_failed` 紧随 `task_close_failed`；
+  - `cli_fts_rebuild_done` / `_mismatch_warning` / `_failed` 为顶层 flat key，与既有
+    `cli_*` flat 组同区（调用处即 `t("cli_fts_rebuild_*")` 原样形态）。
+  - 占位符与调用 kwargs 严格对应：`{symbols}/{fts_rows}/{triggers}/{elapsed}`、
+    `{base}/{head}`、`{changed}/{scanned}/{saved}/{total}/{stale}`、`{error}`。
+- `cli/main.py`：**零改动**。9 处调用签名已正确（仅 catalog 缺条目），补 key 即修复；
+  避免为「补文案」引入代码面变更与 whitelist 扩张。
+- 新增 `tests/test_i18n_key_existence.py`（11 用例）固化「引用即存在」：
+  - 扫描口径与 §25.1 一致（AST + 前缀映射，跳过带 `default=` 的宽容调用）；
+  - `test_referenced_keys_exist_in_both_catalogs`：无 default 引用的 key 必须双语存在；
+  - `test_catalog_parity`：zh/en key 集合必须完全一致；
+  - `test_scanner_finds_references`：口径自检（防止扫描退化后空跑通过）；
+  - `test_required_keys_translated`：8 个 key 双语存在且值不等于 key 本身。
+
+### 25.4 验证
+
+- `python -m pytest tests/test_i18n_key_existence.py` → `11 passed in 1.78s`。
+- `python -m pytest tests/test_mcp_i18n_messages.py tests/test_i18n_cleanup_c5.py
+  tests/test_i18n_print_cleanup.py tests/test_i18n_key_existence.py`
+  → `76 passed in 22.89s`（既有 65 用例无回潮）。
+- 引用扫描复算：`无 default 且缺 key` 由 `9 处调用 / 8 唯一 key` 降为 `0`。
+- catalog 复算：`zh=1977 / en=1977`，`only_zh=[]`、`only_en=[]`。
+- 渲染实测（`set_language` 后逐 key 取值）：zh_CN 与 en_US 均输出完整文案，无裸 key，
+  占位符全部替换成功（`分类` / `category`、增量模式与完成摘要、supersede 两处失败、
+  fts 完成/不一致/失败三条）。
+
+### 25.5 边界与残留
+
+- `cli_fts_*` 族其余 key（`cli_fts_rebuilding` / `cli_fts_status_desc` /
+  `cli_fts_not_exist` / `cli_fts_status_symbols` 等）在 catalog 中同样缺失，但调用处
+  均带 `default=` 英文兜底 → 不露裸 key，仅表现为 zh 环境下输出英文；同类的
+  `cli.messages.task_supersede_success` / `task_superseded_none` 等亦如此。
+  本卡只收口「裸 key 暴露」；「双语补译（含兜底文案）」属后续翻译完整性批次。
+- 门禁口径只覆盖**静态常量** key；动态拼接 key（`t(variable)`）无法静态判定，
+  扫描中直接跳过，属口径边界，不在本卡扩大。
+- 门禁只验证「key 存在」与「双语集合一致」，不校验占位符一致性（占位符缺项在
+  `t()` 内部会被 `except KeyError` 吞掉并返回未替换文本）；如需，可另立占位符
+  静态校验卡。
+
 
 
 
