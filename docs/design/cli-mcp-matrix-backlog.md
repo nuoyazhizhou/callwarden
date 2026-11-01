@@ -2154,6 +2154,89 @@ en_US 两种语言下均不可读。
 - `t()` 对列表值走 `str(value)` 的 6 个 `task_constraints_*` 未触及，仍属 §26.5
   登记的独立契约卡。
 
+## 28. i18n 字面花括号 6 key 转义与 catalog 格式化安全门禁（T-1793549305665-435643ec）
+
+### 28.1 现象
+
+`t()` 对 catalog 字符串统一执行 `value.format(**kwargs)`（
+[i18n/__init__.py](file:///c:/git_work/callwarden/i18n/__init__.py) 约 L162-L166），
+另有两个异常吞分支：`except (KeyError, ValueError, IndexError)` 直接返回未格式化的原值。
+6 个 key 的 catalog 值是 JSON 示例 / 计划模板 / 整段 Agent hook 脚本，内部含裸 `{` `}`：
+
+| # | key | 花括号性质 | 调用点 |
+| --- | --- | --- | --- |
+| 1 | `cli.messages.install_agent_hook_script` | 整段 Python 脚本：空字典 `{}`、`json.dumps({...})`、f-string `{blocked}` | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L2624-L2625) |
+| 2 | `cli.messages.task_plan_template` | 计划模板中的中/英文填空占位文本 | [db/db_tasks.py](file:///c:/git_work/callwarden/db/db_tasks.py#L3610-L3619) |
+| 3 | `cli_rule_arg_scope` | 作用域 JSON 示例 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L2199) |
+| 4 | `cli_rule_arg_evidence` | 证据 JSON 示例 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L2205) |
+| 5 | `cli_rule_arg_context` | 上下文 JSON 示例 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L2249) |
+| 6 | `cli_task_arg_steps` | 步骤 JSON 数组示例 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L3775) |
+
+当前输出"碰巧正确"：`format()` 因裸 `{` 抛 `ValueError`，或因
+`{根任务标题}` / `{Root task title}` 这类非标识符字段名抛 `KeyError`，被静默吞掉后原样
+返回 catalog 值。但这是格式契约缺口：
+
+1. 这些值永远无法安全接受 kwargs——真传参会先于裸花括号失败或被静默吞掉；
+2. 任何真实占位符拼写错误都会落进同一静默分支，与「值不可格式化」不可区分；
+3. 现有占位符门禁把这类整值按「不可格式化」跳过（`_format_fields` 返回 `None`），
+   属明确的覆盖盲区。
+
+### 28.2 基线（改动前）
+
+| 项 | 口径 | 基线结果 |
+| --- | --- | --- |
+| 6 key × 2 语言存在性 | `i18n.t(key)` 直接取值 | 12/12 存在，均为 `str` |
+| 当前渲染 | `t(key)` 输出 vs catalog 原值逐字节比较 | 12/12 **相等**（异常吞分支原样返回） |
+| 既有转义 | 值内是否已含 `{{` / `}}` | 12/12 无（可直接做机械转义） |
+| 调用面 kwargs | 6 个调用点均为 `t(key, default=...)`，无 kwargs、无 `**` 展开 | 无 |
+| 现有门禁覆盖 | `_format_fields` 对含非标识符花括号的整值返回 `None` | 6 key 全部跳过 |
+
+### 28.3 处置口径（冻结）
+
+1. **只转义 6 个 key 的两套 catalog 值**：把值内每个字面 `{` 替换为 `{{`、`}` 替换为
+   `}}`。这些 key 的花括号全部是字面文本（JSON 示例、模板填空、脚本文本），没有一个是
+   运行时占位符，因此 `format()` 后渲染文本与转义前**逐字节一致**。
+2. **不改调用点**：6 个调用点仍不传 kwargs；不改任何 `default=` 原文；不改 `t()` 的
+   异常容错语义。
+3. **新增转义感知的格式化安全门禁**（`tests/test_i18n_placeholder_consistency.py`）：
+   扫描两套 catalog 的每个叶子字符串，`{{` / `}}` 视为字面量，其余 `{...}` 必须
+   `fullmatch` 于 `{ident}` / `{ident!r}` / `{ident:spec}`；任何裸花括号即失败。
+   同时断言 6 个 key 在 zh/en 下 `t(key)` 输出与冻结基线文本一致（转义前后逐字节）。
+   门禁须含扫描自检：6 个 key 必须被扫描面命中，且转义后无裸花括号残留。
+4. 非目标：不改 `t()` 容错语义；不改 `default=`；不处理动态 key；不重写文案表述；
+   不新增/迁移任何调用点。
+
+### 28.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 转义范围 | `git diff --numstat` 两套 catalog | 每文件 **6 行**值变更（共 12 行），无其他行改动 |
+| 转义正确性 | `json.loads` 后逐值 `value.format()` vs 转义前基线 | 12/12 **逐字节一致** |
+| 真实渲染 | fresh 进程 `i18n.t(key)` vs `git show HEAD:i18n/*.json` 原值 | 12/12 相等且长度不变（zh `2037/429/55/46/55/58`，en `2051/854/60/55/62/73`） |
+| 新门禁 | `pytest tests/test_i18n_placeholder_consistency.py` | `47 passed`（含 6×2 基线断言、全量叶子扫描、扫描自检、9 条正负向样例） |
+| 负向证据 | 用新判定扫描 `HEAD` 版 catalog | 两语言各**恰 6 个** key 被判失败（即本卡 6 key）；当前 catalog 为 **0** |
+| key 存在性门禁 | `pytest tests/test_i18n_key_existence.py` | `13 passed` |
+| 定向回归 | 8 套件（本门禁、key 存在性、cleanup_c5、print_cleanup、mcp_i18n_messages、task_supersede、install_hooks_unified、cli_task_next_remediation） | `152` 用例：`148 passed, 4 skipped, 0 failed` |
+| 语法 | `pytest` 导入测试模块 | 通过 |
+| 验收矩阵 | `C:\Python314\python.exe scripts/check_e2e_matrix_closure.py` | `PASS（收口条件全部满足）` |
+
+### 28.5 边界与残留
+
+- **相邻缺陷（实现期间发现，未纳入本卡转义范围）**：`cli.messages.complexity_header`、
+  `cli.messages.largest_fns_header`、`cli.messages.coupled_fns_header` 三个既有值同时含
+  合法占位符 `{hash:>3}` 与字面列宽标签（`{'行数':>5}` / `{'Cx':>6}` 等），且**零静态调用点**。
+  它们与 6 个目标 key 同类（`format()` 会抛 `KeyError` 后被静默吞掉），但并非纯字面值，
+  整体转义会破坏 `{hash}` 语义，故不在本卡冻结的 6 key 口径内。门禁以显式残留白名单
+  （`LITERAL_BRACE_RESIDUAL`）豁免，并强制「仍含裸花括号 + 无调用引用」；一旦被引用或转义，
+  白名单测试即失败，提示纳入门禁或移除。建议后续文案卡改为
+  `{hash:>3}  {{'行数':>5}} ...` 形式（保留 `{hash}` 占位符，仅转义表头字面量）。
+- `t()` 对「值不可格式化」与「真实占位符拼写错误」的静默等价仍存在：本卡只把 6 个已知
+  值转为可格式化，使其进入门禁覆盖；未改变异常吞语义（属独立契约卡）。
+- 6 个 key 之外若新增含裸花括号的 catalog 值，新门禁会直接失败——这是有意收口。
+- 动态拼接 key（`t(variable)`）仍不可静态判定。
+- 列表值契约（§26.5 的 6 个 `task_constraints_*`）、`_dir` 写权限语义（§27.5）、
+  en 文案打磨仍属独立批次。
+
 
 
 
