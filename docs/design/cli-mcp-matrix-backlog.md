@@ -1924,6 +1924,101 @@ en_US 两种语言下均不可读。
   `t()` 内部会被 `except KeyError` 吞掉并返回未替换文本）；如需，可另立占位符
   静态校验卡。
 
+---
+
+## 26. i18n 翻译完整性：default 兜底缺失条目（`T-1793532165761-916c5e14`）
+
+### 26.1 现象与口径
+
+§25 已收口「裸 key 暴露」（无 `default=` 且 key 缺失）。本卡处置 §25.5 登记的
+方向 1 残留：调用处带 `default=` 的 key 虽不露裸 key，但 zh_CN 环境直接输出英文
+兜底文案，属于「缺翻译而非缺兜底」。本轮口径升级为**静态常量引用必须双语存在**
+——不再按 `default=` 豁免。
+
+### 26.2 实测基线（2026-11-01）
+
+| 基线 | 口径 | 结果 |
+| --- | --- | --- |
+| catalog 对账 | 扁平化 `zh_CN.json` / `en_US.json` 取差集 | `1977 / 1977`，双向零差异 |
+| 引用扫描 | AST 遍历 53 个含 `i18n` 的包内模块；`t`/`get_msg`/`get_error`/`get_arg_help` 前缀映射 | 全量 **2253 处调用 / 1916 个唯一 key**；其中 **337 处 / 304 个唯一 key** 双语缺条目 |
+| 无兜底缺口 | 同扫描，`default` 缺失 | `0`（§25 收口保持） |
+| catalog 可达性 | 按 `t()` 的 `key.split(".")` 逐层 `dict.get` 判定 | 顶层存在 **16 个含点号的字符串键**（`cli.messages.setup_*` / `auto_setup_*`），`t()` 永远不可达；扁平化成员判断会把它们误判为「已存在」 |
+| 非字符串叶子 | 同上 | 6 个键（`task_constraints_*`、`task_plan_root_check_items`）值为列表，`t()` 走 `str(value)`；不在「缺条目」口径内 |
+| 硬编码回归面 | 在 `tests/` 检索 304 条英文兜底片段 | 仅 `tests/fixtures/run_matrix3_fts5.py` 1 处（非 pytest 用例） |
+
+分组（启发式归类，扫描清单为准）：
+
+| 组 | 范围 | 唯一 key 数 | 代表 |
+| --- | --- | --- | --- |
+| A | 参数 help（`cli.args.*`） | 4 | `cli.args.install_agent` / `install_agent_project` / `install_detect_agents` / `install_force_agent` |
+| B | 命令与参数描述（`*_subcommand_desc` / `*_arg_*` / `*_action_*` / `*_desc`） | 187 | `cli.messages.call_chain_subcommand_desc`、`semgrep_arg_*` |
+| C | DB 迁移提示（`migration_v31..v61`） | 31 | `cli.messages.migration_v31` … `v61` |
+| D | 运行时消息（其余） | 82 | `cli_fts_*`、`task_supersede_*`、`install_agent_*`、`git_*`、`semgrep_rules_*` |
+
+其中 292 个 key 的 `default=` 是可直接落地的字面量；12 个是非字面量表达式
+（下表 9 个 + 3 个顶层点号键 `auto_setup_done` / `setup_detected` / `setup_done`
+的 f-string），需人工确定兜底与占位符：
+
+| key | 现兜底表达式 | 占位符 |
+| --- | --- | --- |
+| `cli.messages.task_show_commits_count` | `"Commits ({}):".format(len(commits))` | `{count}` |
+| `cli.messages.task_show_changes_count` | `"Symbol changes ({}):".format(len(changes))` | `{count}` |
+| `cli.messages.task_show_superseded_line` | `"  -> {} (superseded)".format(new_id)` | `{new_id}` |
+| `cli.messages.task_show_superseded_reason` | `"     reason: {}".format(...)` | `{reason}` |
+| `cli.messages.task_show_superseded_actor` | `"     by: {}".format(...)` | `{actor}` |
+| `cli.messages.symbol_history_tasks_count` | `"Tasks ({}):".format(len(related_tasks))` | `{count}` |
+| `cli.messages.git_show_tasks_count` | `"Tasks ({}):".format(len(related_tasks))` | `{count}` |
+| `cli.messages.edit_invalid_symbol_id` | `f"Invalid symbol_id: {symbol_id}"` | `{symbol_id}` |
+| `cli.messages.edit_symbol_id_not_found` | `f"Symbol not found: id={sid}"` | `{sid}` |
+
+### 26.3 处置
+
+- `i18n/zh_CN.json` / `i18n/en_US.json`：各补 304 条（扁平化 `1977` → `2281`）。
+  - en 值 = 现英文兜底原文（保证 en 输出零变化）；zh 值 = 中文翻译。
+  - 12 个非字面量 key 按上表补 `{count}` / `{new_id}` / `{reason}` / `{actor}` /
+    `{symbol_id}` / `{sid}`，与调用 kwargs 严格对应。
+  - 原兜底本身是中文的 20 个 key：10 个非点号键（`cli_test_usage`、`cli_lease_arg_role`、
+    `task_claim_*`、`task_panel_*`、`task_supersede_*`、`task_superseded_*`）的 en 侧由
+    本批改写为英文（否则 en_US 环境输出中文），zh 侧沿用原中文；另 10 个顶层点号键
+    搬迁时沿用其既有 en/zh 值（两套 catalog 原本就有英文）。
+  - `current_locale` 双向落值（zh=`zh_CN` / en=`en_US`）。该键原缺条目，
+    `db_task_evidence.py::_resolve_evidence_message` 恒取 `default="zh_CN"`，
+    导致 en 环境也命中 zh 兜底表。
+- **16 个顶层点号键就地搬迁**：`cli.messages.auto_setup_done` 等原为顶层字符串键，
+  按 `t()` 的 `split(".")` 语义永远不可达（其中 13 个被静态引用）。两套 catalog
+  同步搬入嵌套 `cli.messages`，搬迁后顶层点号键归零，条目总数不变。
+- `tests/test_i18n_key_existence.py`：门禁升级。
+  - 取消「跳过带 `default=` 的宽容调用」，改为**所有静态常量引用**必须双语存在。
+  - 存在性判定改用 `_reach()`（复刻 `t()` 的逐层 `dict.get`），不再用扁平化成员
+    判断（后者会掩盖顶层点号死条目）。
+  - 新增 `test_no_top_level_dotted_keys`，把「顶层无点号键」固化为结构不变量。
+  - 保留 catalog 双向一致与「值不等于 key」自检。
+- `cli/main.py` 及其余业务源码零改动（本批只补 catalog + 门禁）。
+- 6 个列表值 key（`task_constraints_*`、`task_plan_root_check_items`）未改动：
+  它们可达，`t()` 返回 `str(value)`，属既有行为（见 §26.5）。
+
+### 26.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| catalog 规模 | `json` 加载后统计扁平叶子 | `zh_CN 1977 → 2281`、`en_US 1977 → 2281`，双向 key 集合零差异 |
+| 顶层点号键 | 遍历顶层键名含 `.` | 搬迁前 `16 / 16`，搬迁后 `0 / 0` |
+| 占位符一致性 | 逐条比对新增条目 en/zh 的 `{...}` 集合 | 304 条全部相等（脚本断言） |
+| 静态引用可达性 | 与门禁同口径的独立复算 | `2253` 处引用 / `1916` 唯一 key，缺口 `0` |
+| 门禁用例 | `pytest tests/test_i18n_key_existence.py` | `13 passed`（原 11 用例 + 2 个 `no_top_level_dotted_keys` 参数化） |
+| i18n 定向回归 | `pytest test_i18n_key_existence / test_i18n_cleanup_c5 / test_i18n_print_cleanup / test_mcp_i18n_messages` | `78 passed` |
+| CLI help 回归 | `pytest test_cli_subcommand_help_template / test_cli_main_help / test_cli_c9_coverage_help / test_cli_consistency / test_install_hooks_unified` | `151 passed` |
+| 消息链路回归 | `pytest test_capture_diff_auto / test_cli_task_claim_recover / test_task_supersede / test_git_hook_capture / test_cli_task_next_remediation` | `36 passed, 13 skipped` |
+
+### 26.5 边界与残留
+
+- 动态拼接 key（`t(variable)`）仍不可静态判定，门禁继续跳过。
+- en 文案沿用现有兜底原文，不重写英文表述；若英文本身待打磨，另立文案批次。
+- 占位符一致性本批只做人工核对，未升级为通用静态门禁（§25.5 已登记为潜在独立卡）。
+- `t()` 对列表值走 `str(value)`，6 个 `task_constraints_*` 因此在 step instruction
+  里是 Python repr 字符串而非列表；这是 `t()` 的值类型契约缺口，非本条缺翻译问题，
+  建议另开卡（改 `t()` 返回值语义或把该 6 条改为多行字符串）。
+
 
 
 

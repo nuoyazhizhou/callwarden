@@ -1,18 +1,25 @@
-"""i18n 引用一致性门禁（backlog §25 · T-1793521395642-f45bc274）
+"""i18n 引用一致性门禁（backlog §25 · T-1793521395642-f45bc274；§26 升级）
 
-漂移形态：代码引用 catalog 中不存在的 key 且未传 ``default=`` 时，
+漂移形态一（§25）：代码引用 catalog 中不存在的 key 且未传 ``default=`` 时，
 ``i18n.t()`` 会原样返回 key 字符串（见 ``i18n/__init__.py`` 的缺 key 分支），
 用户在 zh_CN / en_US 下都会直接看到裸 key。
 
-本门禁把「引用即存在」固化为 AST 静态扫描口径：
+漂移形态二（§26）：带 ``default=`` 的调用虽不露裸 key，但 key 缺条目时
+zh_CN 环境直接输出代码里的英文兜底文案，属于「缺翻译而非缺兜底」。
+
+本门禁口径（§26 起）：**所有静态常量引用必须双语存在**，不再按 ``default=``
+豁免。key 前缀映射：
 
 - ``t(k)``             -> ``k``（原样）
 - ``get_msg(k)``       -> ``cli.messages.k``
 - ``get_error(k)``     -> ``errors.k``
 - ``get_arg_help(k)``  -> ``cli.args.k``（``-`` 归一为 ``_``）
 
-带 ``default=`` 的宽容调用（含 ``t(k, default)`` 第 2 位置参数）不参与断言，
-因为它们缺 key 时会回退到兜底文案而非裸 key。
+存在性判定必须复刻 ``t()`` 的 ``key.split(".")`` 逐层 ``dict.get`` 语义
+（``_reach``），不能用扁平化成员判断：顶层含点号的字符串键（如
+``"cli.messages.auto_setup_done"``）按扁平化集合会被误判为存在，实际
+``t()`` 永远不可达（§26.2 实测 16 个）。``test_no_top_level_dotted_keys``
+把这条结构不变量固化，防止死条目回流。
 """
 import ast
 import json
@@ -58,14 +65,28 @@ def _flatten(data: dict, prefix: str = "") -> dict:
     return out
 
 
+def _reach(data: dict, key: str):
+    """复刻 ``i18n.t()`` 的查找语义：``key.split(".")`` 逐层 ``dict.get``。
+
+    非 dict 中断即视为不可达；返回 None 表示该 key 在 catalog 中不存在。
+    值不限定为字符串（catalog 中少数条目为列表，``t()`` 会 ``str()`` 返回）。
+    """
+    value = data
+    for part in key.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
 @pytest.fixture(scope="module")
 def zh_catalog():
-    return _flatten(_load_catalog("zh_CN"))
+    return _load_catalog("zh_CN")
 
 
 @pytest.fixture(scope="module")
 def en_catalog():
-    return _flatten(_load_catalog("en_US"))
+    return _load_catalog("en_US")
 
 
 def _resolve_key(func_name: str, raw: str):
@@ -99,7 +120,7 @@ def _iter_i18n_sources():
 
 
 def _collect_references():
-    """收集所有无 default 兜底的静态 key 引用"""
+    """收集所有静态常量 key 引用（含带 ``default=`` 的调用）。"""
     refs = []
     for rel_path, source in _iter_i18n_sources():
         try:
@@ -120,11 +141,6 @@ def _collect_references():
             key = _resolve_key(func_name, raw)
             if key is None:
                 continue
-            has_default = any(kw.arg == "default" for kw in node.keywords)
-            if func_name == "t" and len(node.args) >= 2:
-                has_default = True
-            if has_default:
-                continue
             refs.append((rel_path, node.lineno, func_name, key))
     return refs
 
@@ -136,29 +152,46 @@ def references():
 
 def test_scanner_finds_references(references):
     """扫描口径失效自检：必须能收集到大量引用。"""
-    assert references, "未发现任何无 default 的 i18n 引用，扫描口径可能失效"
+    assert references, "未发现任何 i18n 静态引用，扫描口径可能失效"
     assert len(references) > 100, f"引用数量异常偏少: {len(references)}"
 
 
 def test_referenced_keys_exist_in_both_catalogs(references, zh_catalog, en_catalog):
-    """所有无 default 兜底的 key 引用必须在 zh_CN / en_US 中存在。"""
-    missing_zh = [f"{p}:{n} {k}" for p, n, _, k in references if k not in zh_catalog]
-    missing_en = [f"{p}:{n} {k}" for p, n, _, k in references if k not in en_catalog]
+    """所有静态常量 key 引用必须在 zh_CN / en_US 中可达（不豁免 default）。"""
+    missing_zh = [
+        f"{p}:{n} {k}" for p, n, _, k in references if _reach(zh_catalog, k) is None
+    ]
+    missing_en = [
+        f"{p}:{n} {k}" for p, n, _, k in references if _reach(en_catalog, k) is None
+    ]
     assert not missing_zh, f"zh_CN 缺少被引用的 key: {missing_zh}"
     assert not missing_en, f"en_US 缺少被引用的 key: {missing_en}"
 
 
 def test_catalog_parity(zh_catalog, en_catalog):
     """两个语言 catalog 的 key 集合必须完全一致。"""
-    only_zh = sorted(set(zh_catalog) - set(en_catalog))
-    only_en = sorted(set(en_catalog) - set(zh_catalog))
+    zh_flat = _flatten(zh_catalog)
+    en_flat = _flatten(en_catalog)
+    only_zh = sorted(set(zh_flat) - set(en_flat))
+    only_en = sorted(set(en_flat) - set(zh_flat))
     assert not only_zh, f"仅 zh_CN 存在的 key: {only_zh}"
     assert not only_en, f"仅 en_US 存在的 key: {only_en}"
 
 
+@pytest.mark.parametrize("lang", ["zh_CN", "en_US"])
+def test_no_top_level_dotted_keys(lang):
+    """catalog 顶层不得存在含点号的字符串键（``t()`` 永远不可达的死条目）。"""
+    data = _load_catalog(lang)
+    dotted = sorted(k for k in data if "." in k)
+    assert not dotted, (
+        f"{lang}.json 顶层存在点号键（t() 不可达，应改为嵌套结构）: {dotted}"
+    )
+
+
 @pytest.mark.parametrize("key", REQUIRED_KEYS)
 def test_required_keys_translated(key, zh_catalog, en_catalog):
-    """本卡补齐的 8 个 key 双语齐备，且值不等于 key 本身（确实翻译过）。"""
+    """§25 补齐的 8 个 key 双语齐备，且值不等于 key 本身（确实翻译过）。"""
     for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
-        assert key in catalog, f"{lang} 缺少 key: {key}"
-        assert catalog[key] != key, f"{lang} 的 {key} 值等于 key 本身（未翻译）"
+        value = _reach(catalog, key)
+        assert value is not None, f"{lang} 缺少 key: {key}"
+        assert value != key, f"{lang} 的 {key} 值等于 key 本身（未翻译）"
