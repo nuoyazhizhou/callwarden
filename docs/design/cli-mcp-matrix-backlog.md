@@ -1609,6 +1609,82 @@ AST 盘点 6 个 MCP 运行时模块的非 docstring 中文字面量，收敛为
   （改动面会波及其他交叉引用）。
 - 退出码仅约定 `0/1/2` 三档；细分错误码仍以命令输出正文为准，不进文档表格。
 
+---
+
+## 22. 测试覆盖加强（阶段 3 第三项）· 27 个新增 subcommand handler 端到端测试
+
+### 22.1 现象
+
+`docs/architecture.md` 阶段 1 记录的「新增 27 个 subcommand handler」长期只有
+进程内 dispatch 单测，没有端到端证据：argparse → dispatch → handler → daemon RPC
+→ 渲染输出的整条链路未被锁定。以 `docs/testing/manifests/cli/cli_tree.json`
+（206 个叶子命令）为基准做文本粗测，约 89 个叶子在 `tests/` 下没有任何引用，
+其中既有 Governance 族（lease / assignment / collab / dependency），也有
+C8 新增的 8 个主分类面（workspace / query / call-chain / git / semgrep /
+coverage / diagnostics 部分）。后果：这些 handler 的注册、参数形状、输出结构
+一旦漂移，单测与文档门禁都发现不了。
+
+### 22.2 范围（27 条，按 21 主分类）
+
+| 主分类 | 命令 |
+| --- | --- |
+| Workspace & Database | `workspace scan` |
+| Query & Search | `semantic-search` |
+| Call Chain Analysis | `top-callers` / `detect-cycles` / `export-module-graph` |
+| Git Integration | `git log` / `git stats` / `git destructive-log` |
+| Semgrep | `semgrep list` / `semgrep stats` |
+| Coverage | `coverage fn` / `coverage uncovered` |
+| Diagnostics | `config explain` / `config paths` |
+| Agent Rule Memory | `rule list` / `rule applicable` / `rule extract` / `guardrail rules` |
+| GC | `gc status` / `gc archive-list` / `gc audit-list` |
+| Clone | `clone stats` |
+| Defect | `defect stats` |
+| Audit & Bootstrap | `audit verify` / `bootstrap status` |
+| Assignment & Lease | `lease status` / `assignment show` |
+
+选取口径：优先只读、输出结构稳定、可在隔离空快照上确定性复现的 handler；
+写操作与重操作（`gc purge` / `gc restore` / `clone detect` / `fts rebuild` /
+`semgrep scan` 等）不进本卡，避免测试污染与长耗时。
+
+### 22.3 处置
+
+- 新增 `tests/test_cli_subcommand_e2e.py`（30 个 testcase）：
+  - 27 条 parametrize 用例，每条 spawn `python -u cw.py <argv>` 子进程，
+    断言 `rc=0`、无 `Traceback` / `Subcommand '<x>' failed` 失败标记、
+    输出含该命令的结构化关键字；
+  - `test_frozen_case_count_is_27` 冻结清单数量（增删须同步本节）；
+  - `test_missing_required_arg_exits_2` 锁定 argparse 层退出码（rc=2 + usage）；
+  - `test_leaf_calls_are_read_only` 断言跑完后 `tasks` / `task_workspace_bindings`
+    内容不变。
+- 隔离栈：模块级 fixture 复用 `tests/_w3_harness.py`（模式 A USERPROFILE
+  重定向 + `workspace.register` + 空 codegraph `snapshot.publish`），并 seed
+  已绑定 workspace 的探针任务 `T-CLI-E2E-27`，使 `lease status` /
+  `assignment show` 走通权威 resolver；子进程 env 只定向到隔离 `data_root`，
+  全程不触碰生产库。
+- 前置缺失（无 `cw-daemon` 二进制 / daemon manifest 前退出 / 管道冲突）统一走
+  `tests/_prereq_guard.py` 降级 skip；manifest 后卡死与真实 RPC 失败保持红。
+- `docs/architecture.md` 阶段 3「测试覆盖加强」📋 → ✅。
+
+### 22.4 验证
+
+- `pytest tests/test_cli_subcommand_e2e.py -q` → 30 passed。
+- 手工复核：隔离 daemon（`rust_ext/target/debug/cw-daemon.exe`）+ 空快照下
+  27 条命令全部 `rc=0`，输出与表中关键字一致。
+
+### 22.5 边界与残留
+
+- 本卡只覆盖 27 条；粗测剩余的 ~62 个未引用叶子（`collab publish/verdict/reveal`、
+  `experiment *`、`task contract-bootstrap/contract-revise`、`semgrep scan`、
+  `coverage import` 等）多为写操作或需复杂前置，留待后续任务卡按族分批推进，
+  扩表时同步更新 `CASES` 与本节。
+- 隔离 daemon 依赖本机构建产物（`_w3_harness.find_daemon_binary`），CI 无二进制
+  时整模块 skip，属既有 C7 前置守卫口径，不计入回归失败。
+- 退出码观测以真实行为为准：daemon 业务拒绝当前渲染为 `rc=2`，与
+  `cli_reference.md` 四段式约定的「1=运行时失败」存在口径差；本卡只锁定
+  argparse 层的 2 与成功态的 0，不锁业务失败码，该差异登记为文档残留（阶段 3
+  「`--flag` 移除评估」之外的独立项）。
+
+
 
 
 
