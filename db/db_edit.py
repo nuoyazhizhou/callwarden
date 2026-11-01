@@ -617,7 +617,7 @@ class EditSafetyMixin:
                 "success": False,
                 "status": EDIT_STATUS_FAILED,
                 "symbol_id": symbol_id,
-                "error": t("cli.messages.edit_invalid_symbol_id", default=f"Invalid symbol_id: {symbol_id}"),
+                "error": t("cli.messages.edit_invalid_symbol_id", default=f"Invalid symbol_id: {symbol_id}", symbol_id=symbol_id),
             }
 
         sym = self._get_symbol_snapshot_by_id(sid)
@@ -626,7 +626,7 @@ class EditSafetyMixin:
                 "success": False,
                 "status": EDIT_STATUS_FAILED,
                 "symbol_id": sid,
-                "error": t("cli.messages.edit_symbol_id_not_found", default=f"Symbol not found: id={sid}"),
+                "error": t("cli.messages.edit_symbol_id_not_found", default=f"Symbol not found: id={sid}", sid=sid),
             }
 
         symbol_hash = sym.get("symbol_hash", "")
@@ -660,7 +660,7 @@ class EditSafetyMixin:
                 "status": EDIT_STATUS_FAILED,
                 "symbol_id": sid,
                 "file_path": file_path,
-                "error": t("cli.messages.edit_symbol_line_invalid", default=f"Invalid symbol line range: {sym.get('name', sid)}"),
+                "error": t("cli.messages.edit_symbol_line_invalid", default=f"Invalid symbol line range: {sym.get('name', sid)}", name=sym.get("name", sid)),
             }
 
         mode = (mode or "replace").lower()
@@ -676,7 +676,7 @@ class EditSafetyMixin:
                 "status": EDIT_STATUS_FAILED,
                 "symbol_id": sid,
                 "file_path": file_path,
-                "error": t("cli.messages.edit_invalid_symbol_patch_mode", default=f"Invalid symbol patch mode: {mode}"),
+                "error": t("cli.messages.edit_invalid_symbol_patch_mode", default=f"Invalid symbol patch mode: {mode}", mode=mode),
             }
 
         new_content = self._apply_line_replacement(
@@ -692,7 +692,7 @@ class EditSafetyMixin:
                 "status": EDIT_STATUS_FAILED,
                 "symbol_id": sid,
                 "file_path": file_path,
-                "error": t("cli.messages.edit_invalid_range", default=f"Invalid line range: {range_start}-{range_end} (file has {total} lines)"),
+                "error": t("cli.messages.edit_invalid_range", default=f"Invalid line range: {range_start}-{range_end} (file has {total} lines)", start=range_start, end=range_end, total=total),
             }
 
         guardrail = None

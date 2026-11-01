@@ -620,17 +620,17 @@ class CallWardenInstaller:
                 os.makedirs(cache_parent, exist_ok=True)
 
             if not os.path.isdir(cache_parent):
-                print(t("cli.messages.install_semgrep_prefetch_skip",
+                print(t("cli.messages.install_semgrep_prefetch_skip_dir",
                         default="[Semgrep] Cache parent dir not exists: {dir}. Skip prefetch.",
                         dir=cache_parent))
                 return
             if not os.access(cache_parent, os.W_OK):
-                print(t("cli.messages.install_semgrep_prefetch_skip",
+                print(t("cli.messages.install_semgrep_prefetch_skip_dir",
                         default="[Semgrep] No write permission for cache dir: {dir}. Skip prefetch.",
                         dir=cache_parent))
                 return
         except (OSError, PermissionError) as e:
-            print(t("cli.messages.install_semgrep_prefetch_skip",
+            print(t("cli.messages.install_semgrep_prefetch_skip_error",
                     default="[Semgrep] Cache dir check failed: {error}. Skip prefetch.",
                     error=str(e)))
             return
@@ -650,21 +650,21 @@ class CallWardenInstaller:
                 start_new_session=(os.name != "nt"),
             )
         except FileNotFoundError:
-            print(t("cli.messages.install_semgrep_prefetch_skip",
+            print(t("cli.messages.install_semgrep_prefetch_skip_binary",
                     default="[Semgrep] semgrep binary not found. Skip prefetch."))
             return
         except PermissionError as e:
-            print(t("cli.messages.install_semgrep_prefetch_skip",
+            print(t("cli.messages.install_semgrep_prefetch_skip_permission",
                     default="[Semgrep] Permission denied when launching semgrep: {error}. Skip prefetch.",
                     error=str(e)))
             return
         except OSError as e:
-            print(t("cli.messages.install_semgrep_prefetch_skip",
+            print(t("cli.messages.install_semgrep_prefetch_skip_oserror",
                     default="[Semgrep] OS error when launching semgrep: {error}. Skip prefetch.",
                     error=str(e)))
             return
         except Exception as e:
-            print(t("cli.messages.install_semgrep_prefetch_skip",
+            print(t("cli.messages.install_semgrep_prefetch_skip_unexpected",
                     default="[Semgrep] Unexpected error when launching prefetch: {error}. Skip prefetch.",
                     error=str(e)))
             return
@@ -707,7 +707,7 @@ class CallWardenInstaller:
                                     default="[Semgrep] System-level shared cache ready at {dir}. All users can use it.",
                                     dir=cache_dir))
                         except (OSError, PermissionError) as e:
-                            print(t("cli.messages.install_semgrep_prefetch_skip",
+                            print(t("cli.messages.install_semgrep_prefetch_skip_copy",
                                     default="[Semgrep] Failed to copy rules to system cache: {error}.",
                                     error=str(e)))
             except subprocess.TimeoutExpired:
@@ -1164,7 +1164,7 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
         else:
             print(t(
                 "cli.messages.install_hooks_skipped",
-                path=hook_path,
+                hook=hook_path,
                 default=f"Skipped existing non-Call-Warden hook: {hook_path}",
             ))
             return False

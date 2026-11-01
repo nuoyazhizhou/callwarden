@@ -2019,6 +2019,142 @@ en_US 两种语言下均不可读。
   里是 Python repr 字符串而非列表；这是 `t()` 的值类型契约缺口，非本条缺翻译问题，
   建议另开卡（改 `t()` 返回值语义或把该 6 条改为多行字符串）。
 
+---
+
+## 27. i18n 占位符一致性门禁与缺参修复（`T-1793540468063-993d3638`）
+
+### 27.1 现象与口径
+
+§26 已收口「引用即存在」与「default 兜底缺失」两条漂移。本卡处置 §25.5 / §26.5
+登记的第三类：**catalog 值含占位符，但调用未提供同名 kwargs**。
+
+`t()` 在 [i18n/__init__.py](file:///c:/git_work/callwarden/i18n/__init__.py#L160-L166)
+用 `value.format(**kwargs)` 替换占位符；缺参时抛 `KeyError`，被
+`except (KeyError, ValueError, IndexError)` 吞掉后**原样返回含 `{...}` 的 catalog 值**
+（不再回落到 `default`）。因此用户看到的是裸 `{dir}` / `{error}` / `{id}` /
+`{symbol_id}`，而不是兜底文案。这类缺口不会被「key 存在性」门禁捕获——key 是存在的，
+坏的是调用与 catalog 的形状契约。
+
+本轮口径：
+
+- 只认**静态字面量 key + 显式关键字实参**的调用：AST 取第一个参数为 `str` 常量，
+  再取 `node.keywords` 中具名实参集合。
+- 占位符只认 `{ident}` 形式（`[A-Za-z_][A-Za-z0-9_]*`，允许 `!r` / `:spec` 后缀），
+  避免把文案里的 JSON 示例（如 `{"languages":["python"]}`）误判为占位符。
+- 带 `**kwargs` 展开的调用无法静态判定，豁免（本基线实测 **0 处**）。
+- 多语义共键（同一 key 被 7 种不同失败分支复用、各分支文案不同）按**变体拆分**处理，
+  而不是给 key 堆叠所有占位符。
+
+### 27.2 实测基线（2026-11-01）
+
+| 基线 | 口径 | 结果 |
+| --- | --- | --- |
+| 静态调用面 | 与 §26 同口径（53 个含 `i18n` 的包内模块，`t`/`get_msg`/`get_error`/`get_arg_help` 前缀映射） | `2253` 处调用 / `1916` 个唯一 key |
+| 缺参站点 | catalog 占位符集合 ⊄ 调用 kwargs 集合 | **25 处**；剔除 1 处假阳性（见下）后 **24 处真实站点** |
+| 缺参 key | 同上去重 | **11 个** |
+| `**kwargs` 展开调用 | `node.keywords` 含 `arg=None` | `0` 处（门禁豁免分支本轮无实例） |
+| 假阳性 | `cli.messages.install_agent_hook_script`（`cli/main.py:2625`） | catalog 值是整段 Agent hook Python 脚本，脚本体内 `f"...: {blocked}"` 被识别为占位符；调用本身不需 kwarg，**不修** |
+| 非标识符花括号 | 值内含 JSON/计划模板示例的 key | 6 个：`install_agent_hook_script`、`cli_rule_arg_scope`、`cli_rule_arg_evidence`、`cli_rule_arg_context`、`cli_task_arg_steps`、`task_plan_template`；`format()` 抛 `ValueError` 后原样返回，恰好保留示例花括号，**不在本卡口径** |
+| 顶层点号键 | 遍历顶层键名含 `.` | `0`（§26 搬迁保持） |
+
+24 处真实站点按 key 分组（catalog 占位符取 zh_CN 值，en_US 同形）：
+
+| # | 文件:行 | key | catalog 需要 | 调用已传 | 缺失 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `install.py:633` | `install_semgrep_prefetch_skip` | `{dir}` | `default`,`error` | `dir` |
+| 2 | `install.py:653` | 同上 | `{dir}` | `default` | `dir` |
+| 3 | `install.py:657` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 4 | `install.py:662` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 5 | `install.py:667` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 6 | `install.py:710` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 7 | `server/mcp_server.py:197` | `semgrep_rules_prefetch_skip` | `{dir}` | `default`,`error` | `dir` |
+| 8 | `server/mcp_server.py:232` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 9 | `server/mcp_server.py:264` | 同上 | `{dir}` | `default` | `dir` |
+| 10 | `server/mcp_server.py:273` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 11 | `server/mcp_server.py:283` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 12 | `server/mcp_server.py:294` | 同上 | `{dir}` | `default`,`error` | `dir` |
+| 13 | `install.py:1165` | `install_hooks_skipped` | `{hook}` | `default`,`path` | `hook` |
+| 14 | `cli/main.py:6011` | `task_not_found` | `{id}` | `default` | `id` |
+| 15 | `db/db_tasks.py:2589` | 同上 | `{id}` | `default` | `id` |
+| 16 | `db/db_tasks.py:2854` | 同上 | `{id}` | `default` | `id` |
+| 17 | `db/db_tasks.py:3013` | 同上 | `{id}` | `default` | `id` |
+| 18 | `cli/main.py:6112` | `task_supersede_failed` | `{error}` | `default` | `error` |
+| 19 | `cli/main.py:6484` | `task_superseded_failed` | `{error}` | `default` | `error` |
+| 20 | `db/db_edit.py:620` | `edit_invalid_symbol_id` | `{symbol_id}` | `default` | `symbol_id` |
+| 21 | `db/db_edit.py:629` | `edit_symbol_id_not_found` | `{sid}` | `default` | `sid` |
+| 22 | `db/db_edit.py:663` | `edit_symbol_line_invalid` | `{name}` | `default` | `name` |
+| 23 | `db/db_edit.py:679` | `edit_invalid_symbol_patch_mode` | `{mode}` | `default` | `mode` |
+| 24 | `db/db_edit.py:695` | `edit_invalid_range` | `{start}`,`{end}`,`{total}` | `default` | 三者全缺 |
+
+两族「一 key 多语义」的实质：
+
+- `install_semgrep_prefetch_skip` 与 `semgrep_rules_prefetch_skip` 各被 7 个分支复用
+  （缓存父目录缺失 / 目录检查异常 / semgrep 二进制缺失 / 权限拒绝 / OSError /
+  未知异常 / 规则复制失败）。catalog 只写了「缓存父目录不存在: {dir}」一个变体，
+  其余 6 个分支即使传了 `error` 也会因缺 `dir` 而露出字面 `{dir}`。
+- 两族的「dir」变体本身正常：`install.py:623/628`、`server/mcp_server.py:210/220`
+  传了 `dir=cache_parent`，未列入 24 处。
+- `install_hooks_skipped` 是形参名错位：调用传 `path`，catalog 与 default 都用
+  `{hook}`，KeyError 后返回 catalog 值（`已跳过...: {hook}`）。
+- `db/db_edit.py` 5 处与 `task_not_found` 4 处是「`default` 用 f-string 拼好，
+  但没把变量透传给 `t()`」：default 只在 key 缺失时生效，key 存在时 catalog 必被
+  format，于是必然缺参。
+- `task_supersede_failed` / `task_superseded_failed` 各 1 处是「无响应」早退分支：
+  只传 `default="...(no response)"`，而 catalog 值含 `{error}`。
+
+### 27.3 处置口径（冻结）
+
+1. **两族多语义 key 各拆 7 个变体**：`<family>_dir` / `_error` / `_binary` /
+   `_permission` / `_oserror` / `_unexpected` / `_copy`。原基键
+   `install_semgrep_prefetch_skip` / `semgrep_rules_prefetch_skip` 由 `_dir` 承接后移除；
+   每族 8 个调用点（共 16 个）全部迁移。两套 catalog 各新增 14 条（2 族 × 7），
+   移除 2 个原基键，净叶子数 +12。
+2. `db/db_edit.py` 5 处补实参：`symbol_id` / `sid` / `name` / `mode` /
+   `start`+`end`+`total`，取值用调用点已有变量，不改文案。
+3. `task_not_found` 4 处补 `id`（CLI 传 `opts.task_id`，DB 层传 `task_id`）。
+4. `task_supersede_failed` / `task_superseded_failed` 各 1 处补 `error="no response"`。
+5. `install_hooks_skipped` 改传 `hook=hook_path`（catalog 与 default 不动）。
+6. 新增 `tests/test_i18n_placeholder_consistency.py`：
+   - 门禁规则：字面量 key + 显式 kwargs 时，catalog（zh/en 各一份）占位符集合必须
+     被 kwargs 覆盖；带 `**kwargs` 展开的调用豁免；非标识符花括号值跳过。
+   - 含扫描自检断言：扫描面必须命中已知真实站点，且本卡 24 处修复后缺参数为 0。
+   - 负向用例：构造「catalog 有 `{x}`、调用无 `x`」的样例必须被门禁判失败。
+
+非目标：不重写文案；不改 `t()` 的 KeyError 容错语义；不覆盖动态 key；不处理上述
+6 个含 JSON 示例花括号的 key（另行登记）。
+
+### 27.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| catalog 规模 | `json` 加载后统计扁平叶子 | `zh_CN 2281 → 2293`、`en_US 2281 → 2293`；双向 key 集合零差异 |
+| 变体 key 形状 | 14 个新键逐条比对 zh/en 的 `{...}` 集合 | `14 / 14` 相等；`_dir`={dir}、`_binary`=∅、其余 5 个={error} |
+| 原基键残留引用 | 源码检索 `prefetch_skip"` / `prefetch_skip'` | `0`（16 个调用点全部迁移） |
+| 缺参复算 | 与门禁同口径的独立脚本（2253 处静态调用 / 1916 唯一 key） | 真实缺参 `24 → 0`；仅剩 `install_agent_hook_script` 1 处脚本文本假阳性（非格式占位符） |
+| 语法检查 | `python -m py_compile` 5 个改动模块 | 全部通过 |
+| 新增门禁 | `pytest tests/test_i18n_placeholder_consistency.py` | `23 passed` |
+| key 存在性门禁 | `pytest tests/test_i18n_key_existence.py` | `13 passed` |
+| 定向回归 | `pytest` 新门禁 + `test_i18n_key_existence` / `test_i18n_cleanup_c5` / `test_i18n_print_cleanup` / `test_mcp_i18n_messages` / `test_task_supersede` / `test_install_hooks_unified` | `126` 用例：`122 passed, 4 skipped, 0 failed` |
+| 任务链路回归 | `pytest tests/test_cli_task_next_remediation.py` | `2 passed` |
+
+### 27.5 边界与残留
+
+- **非标识符花括号**：6 个 key（`install_agent_hook_script`、`cli_rule_arg_scope`、
+  `cli_rule_arg_evidence`、`cli_rule_arg_context`、`cli_task_arg_steps`、
+  `task_plan_template`）的值内是 JSON / 计划模板示例。`format()` 因裸 `{` 抛
+  `ValueError` 后原样返回，恰好保留了示例花括号；门禁按「不可格式化」跳过。
+  若后续给这些 key 传 kwargs，仍会静默返回未替换文本，属独立契约问题，另行登记。
+- **`_dir` 兼载两语义**：`install.py:628` 与 `server/mcp_server.py:220` 的
+  「缓存目录无写权限」分支沿用 `_dir`（`{dir}`）文案，实际展示的是「缓存父目录
+  不存在」。这是拆分前的既有展示行为（原基键即 `{dir}` 单值），本卡以「零行为
+  变化」优先，未再扩第 8 个变体；如需区分，建议另立文案批次补
+  `..._write_permission`。
+- 动态拼接 key（`t(variable)`）仍不可静态判定，门禁继续跳过。
+- en 文案沿用各调用点既有 `default` 原文，保证 en 输出零变化；英文表述打磨另立批次。
+- `t()` 对列表值走 `str(value)` 的 6 个 `task_constraints_*` 未触及，仍属 §26.5
+  登记的独立契约卡。
+
+
 
 
 

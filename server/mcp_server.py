@@ -195,7 +195,7 @@ def _ensure_semgrep_rules_cache() -> None:
         except (OSError, PermissionError) as e:
             print(
                 t(
-                    "cli.messages.semgrep_rules_prefetch_skip",
+                    "cli.messages.semgrep_rules_prefetch_skip_copy",
                     default="[Semgrep] Failed to copy from system cache: {error}. Will download on first scan.",
                     error=str(e),
                 ),
@@ -209,7 +209,7 @@ def _ensure_semgrep_rules_cache() -> None:
         if not os.path.isdir(cache_parent):
             print(
                 t(
-                    "cli.messages.semgrep_rules_prefetch_skip",
+                    "cli.messages.semgrep_rules_prefetch_skip_dir",
                     default="[Semgrep] Cache parent dir not exists: {dir}. Will download on first scan.",
                     dir=cache_parent,
                 ),
@@ -220,7 +220,7 @@ def _ensure_semgrep_rules_cache() -> None:
         if not os.access(cache_parent, os.W_OK):
             print(
                 t(
-                    "cli.messages.semgrep_rules_prefetch_skip",
+                    "cli.messages.semgrep_rules_prefetch_skip_dir",
                     default="[Semgrep] No write permission for cache dir: {dir}. Will download on first scan.",
                     dir=cache_parent,
                 ),
@@ -230,7 +230,7 @@ def _ensure_semgrep_rules_cache() -> None:
     except (OSError, PermissionError) as e:
         print(
             t(
-                "cli.messages.semgrep_rules_prefetch_skip",
+                "cli.messages.semgrep_rules_prefetch_skip_error",
                 default="[Semgrep] Cache dir check failed: {error}. Will download on first scan.",
                 error=str(e),
             ),
@@ -262,7 +262,7 @@ def _ensure_semgrep_rules_cache() -> None:
     except FileNotFoundError:
         print(
             t(
-                "cli.messages.semgrep_rules_prefetch_skip",
+                "cli.messages.semgrep_rules_prefetch_skip_binary",
                 default="[Semgrep] semgrep binary not found. Will download on first scan.",
             ),
             file=sys.stderr,
@@ -271,7 +271,7 @@ def _ensure_semgrep_rules_cache() -> None:
     except PermissionError as e:
         print(
             t(
-                "cli.messages.semgrep_rules_prefetch_skip",
+                "cli.messages.semgrep_rules_prefetch_skip_permission",
                 default="[Semgrep] Permission denied when launching semgrep: {error}. Will download on first scan.",
                 error=str(e),
             ),
@@ -281,7 +281,7 @@ def _ensure_semgrep_rules_cache() -> None:
     except OSError as e:
         print(
             t(
-                "cli.messages.semgrep_rules_prefetch_skip",
+                "cli.messages.semgrep_rules_prefetch_skip_oserror",
                 default="[Semgrep] OS error when launching semgrep: {error}. Will download on first scan.",
                 error=str(e),
             ),
@@ -292,7 +292,7 @@ def _ensure_semgrep_rules_cache() -> None:
         # 兜底捕获所有未知异常，绝不阻塞 MCP Server
         print(
             t(
-                "cli.messages.semgrep_rules_prefetch_skip",
+                "cli.messages.semgrep_rules_prefetch_skip_unexpected",
                 default="[Semgrep] Unexpected error when launching prefetch: {error}. Will download on first scan.",
                 error=str(e),
             ),

@@ -6009,7 +6009,7 @@ def _handle_task(args, db):
         }, _local_task_exists)
         if not task_info:
             cprint(t("cli.messages.task_not_found",
-                   default="Task not found"), "red")
+                   default="Task not found", id=opts.task_id), "red")
             print()
             return True
         # 解析 Markdown 计划为子任务定义
@@ -6110,7 +6110,8 @@ def _handle_task(args, db):
             "task.supersede", _sup_params, _local_supersede_forbidden)
         if result is None:
             cprint(t("cli.messages.task_supersede_failed",
-                     default="task.supersede failed (no response)"), "red")
+                     default="task.supersede failed (no response)",
+                     error="no response"), "red")
             # 退出码口径统一：无响应属通信失败，RC=1。
             sys.exit(1)
         if isinstance(result, str):
@@ -6482,7 +6483,8 @@ def _handle_task(args, db):
         }, _local_superseded_forbidden)
         if result is None:
             cprint(t("cli.messages.task_superseded_failed",
-                     default="task.superseded_by failed (no response)"), "red")
+                     default="task.superseded_by failed (no response)",
+                     error="no response"), "red")
             # 退出码口径统一：无响应属通信失败，RC=1。
             sys.exit(1)
         if isinstance(result, str):

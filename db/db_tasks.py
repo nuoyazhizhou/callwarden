@@ -2586,7 +2586,7 @@ class TaskMixin:
         row = cur.fetchone()
         if not row:
             return {
-                "error": t("cli.messages.task_not_found", default="Task not found"),
+                "error": t("cli.messages.task_not_found", default="Task not found", id=task_id),
                 "task_id": task_id,
             }
 
@@ -2851,7 +2851,7 @@ class TaskMixin:
         row = cur.fetchone()
         if not row:
             return {
-                "error": t("cli.messages.task_not_found", default="Task not found"),
+                "error": t("cli.messages.task_not_found", default="Task not found", id=task_id),
                 "task_id": task_id,
             }
 
@@ -3010,7 +3010,7 @@ class TaskMixin:
         row = cur.fetchone()
         if not row:
             return {
-                "error": t("cli.messages.task_not_found", default="Task not found"),
+                "error": t("cli.messages.task_not_found", default="Task not found", id=task_id),
                 "task_id": task_id,
             }
 
