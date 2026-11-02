@@ -11,7 +11,7 @@
 - [x] T4. Python task_close 同语义（db_tasks.py）——24 passed
 - [x] T5. Python 回归用例——`tests/test_task_close.py` 24 passed
 - [x] T6. backlog §34 + 验证矩阵——`check_e2e_matrix_closure.py` PASS
-- [ ] T7. A′ 四角色闭环（建卡/lease/report/verdict/apply/close/commit/台账）
+- [x] T7. A′ 四角色闭环（建卡/lease/report/verdict/apply/close/commit/台账）
 
 ## T1. assignment_queue 收口 helper + 单测（Rust）
 
