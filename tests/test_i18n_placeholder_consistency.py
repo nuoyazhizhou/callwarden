@@ -920,3 +920,210 @@ def test_categories_registry_keys_exist_in_both_catalogs(zh_catalog, en_catalog)
         missing = sorted(k for k in keys if not isinstance(_reach(catalog, k), str))
         assert not missing, f"{lang} 缺少注册表 key: {missing}"
 
+
+# ---------------------------------------------------------------------------
+# §33 message_key 兜底审计与 bundled 双语覆盖冻结（T-1793614942434-83a49fb4）
+# ---------------------------------------------------------------------------
+
+# (标签, 模块路径, 错误码映射属性, 警告码映射属性, bundled 属性, resolver 属性,
+#  emit key 基线数, bundled key 基线数)
+BUNDLED_RESOLVER_SPECS = (
+    ("contracts", "callwarden.db.db_task_contracts", "CONTRACT_I18N_KEYS",
+     "CONTRACT_WARNING_I18N_KEYS", "_CONTRACT_BUNDLED_DEFAULTS",
+     "_resolve_contract_message", 12, 12),
+    ("evidence", "callwarden.db.db_task_evidence", "EVIDENCE_I18N_KEYS",
+     "EVIDENCE_WARNING_I18N_KEYS", "_EVIDENCE_BUNDLED_DEFAULTS",
+     "_resolve_evidence_message", 10, 10),
+    ("gate", "callwarden.db.db_task_gate", "GATE_I18N_KEYS",
+     None, "_GATE_BUNDLED_DEFAULTS", "_resolve_gate_message", 6, 6),
+    ("protocol", "callwarden.experiments.blind_review_protocol",
+     "EXPERIMENT_I18N_KEYS", None, "_BUNDLED_DEFAULTS", "_resolve_message", 10, 10),
+    ("evaluator", "callwarden.experiments.blind_review_evaluator",
+     "EVALUATOR_I18N_KEYS", None, "_EVALUATOR_BUNDLED_DEFAULTS",
+     "_resolve_evaluator_message", 7, 7),
+    ("views", "callwarden.experiments.blind_review_views", "VIEW_I18N_KEYS",
+     None, "_VIEW_BUNDLED_DEFAULTS", "_resolve_view_message", 6, 6),
+)
+
+UNKNOWN_KEY_SENTINEL = "__cw_audit_unknown_message_key__"
+
+# db_task_contracts.py:911 的受保护写路径真实上下文（lease_denied 调用点）。
+LEASE_DENIED_CONTEXT = {
+    "task_id": "T-1",
+    "lease_code": "LEASE_EXPIRED",
+    "lease_detail": "lease expired",
+}
+
+
+def _import_dotted(dotted: str):
+    import importlib
+
+    return importlib.import_module(dotted)
+
+
+def _emitted_keys(module, error_attr: str, warning_attr) -> set:
+    """映射表 values 去重：错误码 + 警告码的全部可 emit message_key。"""
+    keys = set(getattr(module, error_attr).values())
+    if warning_attr:
+        keys |= set(getattr(module, warning_attr).values())
+    return keys
+
+
+def _catalog_string(catalog: dict, key: str):
+    """三路双语可达判定：catalog 嵌套 → daemon_errors 扁平 → 原样扁平。"""
+    value = _reach(catalog, key)
+    if isinstance(value, str) and value:
+        return value
+    flat_section = catalog.get("daemon_errors")
+    if isinstance(flat_section, dict):
+        candidates = [key]
+        if key.startswith("errors."):
+            candidates.insert(0, key[len("errors."):])
+        for candidate in candidates:
+            value = flat_section.get(candidate)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _dict_literal_keys(tree, var_name: str, function=None) -> set:
+    """抽取字典字面量赋值的字符串 key 集合（可按函数限定）。"""
+    scopes = [tree]
+    if function is not None:
+        scopes = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function
+        ]
+    found = set()
+    for scope in scopes:
+        for node in ast.walk(scope):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not isinstance(node.value, ast.Dict):
+                continue
+            if any(isinstance(t, ast.Name) and t.id == var_name
+                   for t in node.targets):
+                found |= {
+                    k.value for k in node.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                }
+    return found
+
+
+def test_bundled_resolvers_cover_all_emitted_keys():
+    """6 个常量映射模块必须满足 emit ⊆ bundled，且集合规模与基线一致。"""
+    for label, dotted, err_attr, warn_attr, bundled_attr, _resolver, emit_n, bundled_n in BUNDLED_RESOLVER_SPECS:
+        module = _import_dotted(dotted)
+        emit = _emitted_keys(module, err_attr, warn_attr)
+        bundled = getattr(module, bundled_attr)
+        assert len(emit) == emit_n, f"{label} emit key 数量漂移: {len(emit)} != {emit_n}"
+        assert len(bundled) == bundled_n, (
+            f"{label} bundled key 数量漂移: {len(bundled)} != {bundled_n}"
+        )
+        missing = sorted(emit - set(bundled))
+        assert not missing, f"{label} emit key 缺少 bundled 兜底: {missing}"
+
+
+def test_emitted_keys_resolve_bilingually(zh_catalog, en_catalog):
+    """每个 emit key 在 zh/en 下至少命中 catalog 或 bundled，不得退化为裸 key。"""
+    for label, dotted, err_attr, warn_attr, bundled_attr, _resolver, _emit_n, _bundled_n in BUNDLED_RESOLVER_SPECS:
+        module = _import_dotted(dotted)
+        emit = _emitted_keys(module, err_attr, warn_attr)
+        bundled = getattr(module, bundled_attr)
+        for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+            unresolved = sorted(
+                key for key in emit
+                if _catalog_string(catalog, key) is None and key not in bundled
+            )
+            assert not unresolved, f"{label} {lang} 存在裸 key 泄漏: {unresolved}"
+
+
+def test_bundled_defaults_are_bilingual_nonempty():
+    """bundled 的每个条目必须同时具备非空 zh_CN 与 en_US。"""
+    for label, dotted, _e, _w, bundled_attr, _r, _en, _bn in BUNDLED_RESOLVER_SPECS:
+        module = _import_dotted(dotted)
+        for key, bundle in getattr(module, bundled_attr).items():
+            for lang in ("zh_CN", "en_US"):
+                value = bundle.get(lang)
+                assert isinstance(value, str) and value.strip(), (
+                    f"{label} bundled {key} 缺少 {lang} 文案"
+                )
+
+
+def test_unknown_message_key_returns_key_without_raising():
+    """未知 key 的可观察兜底终点：原样返回 key，不抛异常、不返回空串。"""
+    for label, dotted, _e, _w, _bundled, resolver_attr, _en, _bn in BUNDLED_RESOLVER_SPECS:
+        module = _import_dotted(dotted)
+        resolver = getattr(module, resolver_attr)
+        assert resolver(UNKNOWN_KEY_SENTINEL, {}) == UNKNOWN_KEY_SENTINEL, (
+            f"{label} 未知 key 兜底行为漂移"
+        )
+
+
+def test_resolver_prefers_catalog_over_bundled(monkeypatch):
+    """catalog 命中时必须优先使用 catalog 文案，bundled 只是缺失时的兜底。"""
+    from callwarden import i18n as i18n_mod
+
+    sentinel = "CATALOG-SENTINEL-DO-NOT-USE-BUNDLED"
+    fake_catalog = {"errors": {"contract_envelope_grammar": sentinel}}
+    monkeypatch.setattr(i18n_mod, "_load_lang", lambda lang: fake_catalog)
+    module = _import_dotted("callwarden.db.db_task_contracts")
+    assert module._resolve_contract_message(
+        "errors.contract_envelope_grammar", {}
+    ) == sentinel
+
+
+def test_lease_denied_placeholders_match_call_site(zh_catalog, en_catalog, monkeypatch):
+    """lease_denied 的 catalog 与 bundled 占位符必须匹配真实调用上下文。"""
+    key = "errors.contract_lease_denied"
+    module = _import_dotted("callwarden.db.db_task_contracts")
+    bundle = module._CONTRACT_BUNDLED_DEFAULTS[key]
+    texts = [
+        _reach(zh_catalog, key),
+        _reach(en_catalog, key),
+        bundle["zh_CN"],
+        bundle["en_US"],
+    ]
+    for text in texts:
+        assert isinstance(text, str) and text, f"{key} 文案缺失"
+        assert _format_fields(text) == {"task_id", "lease_code", "lease_detail"}, (
+            f"{key} 占位符与调用点不一致: {text}"
+        )
+    i18n_mod = _import_dotted("callwarden.i18n")
+    for lang in ("zh_CN", "en_US"):
+        monkeypatch.setattr(i18n_mod, "_current_lang", lang)
+        rendered = module._resolve_contract_message(key, LEASE_DENIED_CONTEXT)
+        assert "{" not in rendered, f"{lang} 渲染残留花括号: {rendered}"
+
+
+def test_cli_structured_default_keys_resolve_in_daemon_errors(zh_catalog, en_catalog):
+    """cli/main.py 的 Structured_Reason 默认 key 必须在 daemon_errors 扁平段双语可达。"""
+    tree = ast.parse(_load_source("cli/main.py"))
+    keys = _dict_literal_keys(tree, "_IDENTITY_REASON_DEFAULTS")
+    keys |= _dict_literal_keys(tree, "_DEFAULTS", function="_collab_output_structured_reason")
+    assert len(keys) == 5, f"cli 结构化默认 key 数量漂移: {sorted(keys)}"
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        flat = catalog.get("daemon_errors", {})
+        missing = sorted(
+            k for k in keys
+            if not isinstance(flat.get(k[len("daemon_errors."):] if k.startswith("daemon_errors.") else k), str)
+        )
+        assert not missing, f"{lang} daemon_errors 缺少: {missing}"
+
+
+def test_mcp_collab_error_response_has_no_call_sites():
+    """MCP 协作错误构造器当前无调用点；新增 emit 点必须同步进入 §33 审计。"""
+    tree = ast.parse(_load_source("server/tools/tools_collab.py"))
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "_collab_error_response")
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == "_collab_error_response")
+        )
+    ]
+    assert len(calls) == 0, (
+        f"_collab_error_response 出现新调用点，必须纳入 §33 兜底审计: {len(calls)}"
+    )
+

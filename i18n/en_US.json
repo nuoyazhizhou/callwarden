@@ -1963,7 +1963,7 @@
         "gc_archive_import_file_not_in_current": "File not found in current workspace (please refresh --all first): {path}",
         "gc_audit_not_found": "Audit record not found: id={id}",
         "db_locked": "Database is busy (another process is writing). Please retry in a few seconds. If it persists, stop the MCP Server (stop/reload it in your IDE, or end the MCP process holding the DB) and try again.",
-        "contract_lease_denied": "Lease validation failed for protected mutation: {reason}",
+        "contract_lease_denied": "Lease validation for protected mutation of task {task_id} failed ({lease_code}): {lease_detail}.",
         "experiment_batch_frozen": "Experiment batch {batch_id} is frozen after first sample admission; in-place protocol changes are forbidden. Rule changes require a new batch.",
         "experiment_protocol_not_locked": "Protocol of experiment batch {batch_id} is not locked; it must be frozen before the first sample admission.",
         "experiment_batch_paused": "Experiment batch {batch_id} is paused (trigger: {trigger}); new admission is rejected fail-safe. The existing review flow is restored.",

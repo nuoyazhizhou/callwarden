@@ -183,6 +183,10 @@ _CONTRACT_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
         "zh_CN": "硬依赖图存在环（contract_id={contract_id}, revision={revision}）；revision 被原子拒绝，cycle_path={cycle_path}（Requirement 9.7）。",
         "en_US": "Hard dependency graph has a cycle (contract_id={contract_id}, revision={revision}); revision atomically rejected, cycle_path={cycle_path} (Requirement 9.7).",
     },
+    "errors.contract_lease_denied": {
+        "zh_CN": "任务 {task_id} 的受保护变更 Lease 校验未通过（{lease_code}）：{lease_detail}。",
+        "en_US": "Lease validation for protected mutation of task {task_id} failed ({lease_code}): {lease_detail}.",
+    },
     "warnings.contract_unscoped_publication": {
         "zh_CN": "Envelope scope 为 unscoped（profile={profile}）；任何磁盘文件改动都会让 Completion_Gate 与 Apply_Gate 按 Requirements 1.6 与 7.12 阻断该任务。在 task step 上声明 target_file 或 target_symbol 即可建立显式 scope。",
         "en_US": "Envelope scope is unscoped (profile={profile}); any on-disk file change will make Completion_Gate and Apply_Gate block the task under Requirements 1.6 and 7.12. Declaring target_file or target_symbol on a task step establishes an explicit scope.",

@@ -1963,7 +1963,7 @@
         "gc_archive_import_file_not_in_current": "当前工作区中找不到该文件（请先 refresh --all 构建图谱）: {path}",
         "gc_audit_not_found": "未找到审计记录: id={id}",
         "db_locked": "数据库正忙（其他进程正在写入），请几秒后重试。若持续失败，可停止 MCP Server（在 IDE 中停止/重载，或结束占用该 DB 的 MCP 进程）后再运行。",
-        "contract_lease_denied": "受保护变更的 Lease 校验未通过：{reason}",
+        "contract_lease_denied": "任务 {task_id} 的受保护变更 Lease 校验未通过（{lease_code}）：{lease_detail}。",
         "experiment_batch_frozen": "实验批次 {batch_id} 已在首次纳样后冻结，禁止原地修改协议；规则变化必须产生新批次。",
         "experiment_protocol_not_locked": "实验批次 {batch_id} 的协议尚未锁定，首次纳样前必须先冻结协议。",
         "experiment_batch_paused": "实验批次 {batch_id} 已暂停（触发器：{trigger}），fail-safe 拒绝新纳样；恢复现有 review 流程。",

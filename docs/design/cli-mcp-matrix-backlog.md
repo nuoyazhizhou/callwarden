@@ -2527,6 +2527,110 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 白名单维护 | 迁移或新增动态调用点必须同步修改 `DYNAMIC_KEY_CALL_SITES`；否则门禁以「新增未登记 / 清单消失」明确报错，不允许静默放行 |
 | 回滚 | 回退 3 文件提交即可；无 catalog 改动、无数据迁移，原有文案与输出不变 |
 
+## 33. message_key 兜底审计与 bundled 双语覆盖冻结（T-1793614942434-83a49fb4）
+
+### 33.1 现象
+
+§32.5 登记的保留问题——「D 类 6 处与 E 类 3 处的 key 在运行时才确定，allowlist
+只能防新增、不能证明取值一定存在」——就是本节的缺口。`DYNAMIC_KEY_CALL_SITES`
+冻结了**调用点形状**，但没有冻结「可 emit 的 key 集合 → 兜底文案」的映射闭环。
+
+9 处解析点的兜底链统一为三层：
+
+1. catalog 嵌套（`i18n/{lang}.json` 的 `errors.*` / `warnings.*`）；
+2. 模块内 bundled 双语默认（`_CONTRACT_BUNDLED_DEFAULTS` /
+   `_EVIDENCE_BUNDLED_DEFAULTS` / `_GATE_BUNDLED_DEFAULTS` /
+   `_BUNDLED_DEFAULTS` / `_EVALUATOR_BUNDLED_DEFAULTS` / `_VIEW_BUNDLED_DEFAULTS`）；
+3. key 本身。
+
+第 3 层是**裸 key 泄漏**：catalog 与 bundled 都缺失时，zh/en 用户看到的都是
+`errors.foo` 这类内部标识，而不是可读文案。既有门禁（§26 引用即存在、§27/§28
+占位符、§30 值类型、§32 动态调用点）都只覆盖 catalog 字面量调用，不检查
+「错误码/警告码 → key」常量表的闭环。
+
+基线审计发现 **1 处真实缺口**：`errors.contract_lease_denied` 是
+`CONTRACT_I18N_KEYS` 的 `LEASE_DENIED` 项，在
+[db/db_task_contracts.py](file:///c:/git_work/callwarden/db/db_task_contracts.py#L904-L916)
+的受保护写路径真实抛出；该 key 在 zh/en catalog 可达，但**未登记**
+`_CONTRACT_BUNDLED_DEFAULTS`。catalog 文件缺失或加载失败时，该失败路径退化为裸 key。
+
+同一 key 还有第二个更隐蔽的缺口：catalog 文案使用 `{reason}`，而调用点实际传
+`lease_code` / `lease_detail` / `task_id`。由于 catalog 优先，`format()` 抛
+`KeyError` 后被静默吞掉，用户看到的是**未替换的裸占位符**
+（`受保护变更的 Lease 校验未通过：{reason}`）。这属 §27.5 登记的「静默等价」
+在动态 key 路径上的实例：静态占位符门禁只覆盖字面量调用，`t(message_key)` 看不到。
+补 bundled 而不修 catalog 无法让修复生效，因此两者同批处置。
+
+### 33.2 基线（改动前）
+
+| 模块 | resolver | emit key | bundled key | emit − bundled | catalog 双语可达 | 未知 key |
+| --- | --- | --- | --- | --- | --- | --- |
+| `db/db_task_contracts.py` | `_resolve_contract_message` | 12 | 11 | **{errors.contract_lease_denied}** | 1/12（仅 lease_denied） | 返回 key 本身 |
+| `db/db_task_evidence.py` | `_resolve_evidence_message` | 10 | 10 | ∅ | 0/10 | 返回 key 本身 |
+| `db/db_task_gate.py` | `_resolve_gate_message` | 6 | 6 | ∅ | 0/6（`error.identity_incomplete` 在 catalog 的 `daemon_errors` 扁平段，嵌套不可达） | 返回 key 本身 |
+| `experiments/blind_review_protocol.py` | `_resolve_message` | 10 | 10 | ∅ | 9/10（`errors.experiment_invalid_protocol` 缺） | 返回 key 本身 |
+| `experiments/blind_review_evaluator.py` | `_resolve_evaluator_message` | 7 | 7 | ∅ | 7/7 | 返回 key 本身 |
+| `experiments/blind_review_views.py` | `_resolve_view_message` | 6 | 6 | ∅ | 6/6 | 返回 key 本身 |
+
+补充基线：
+
+| 项 | 口径 | 基线结果 |
+| --- | --- | --- |
+| bundled 双语完整性 | 6 模块全部 bundled 条目 `zh_CN` / `en_US` 非空 | **0 缺口** |
+| CLI 结构化默认 | `cli/main.py` `_IDENTITY_REASON_DEFAULTS`（3）+ `_DEFAULTS`（2）→ catalog `daemon_errors` 扁平段 | 27 key，zh/en 集合相等；5/5 可达 |
+| `_t_structured` 解析路径 | `t()` 按点拆分无法处理含点扁平 key（`daemon_errors.error.identity_incomplete`） | 依赖 raw-JSON 扁平查找；未知 key 返回 `default` |
+| MCP 协作工具 | `server/tools/tools_collab.py` `_collab_error_response` | **无调用点**（登记豁免，不在运行时 emit 路径） |
+| 基线门禁 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **95 passed** |
+
+### 33.3 处置口径（冻结）
+
+1. **补齐唯一缺口**：为 `errors.contract_lease_denied` 在
+   [db/db_task_contracts.py](file:///c:/git_work/callwarden/db/db_task_contracts.py#L145-L190)
+   的 `_CONTRACT_BUNDLED_DEFAULTS` 增加 `zh_CN` / `en_US` 文案，占位符与调用点一致
+   （`lease_code` / `lease_detail` / `task_id`），使 6 个 resolver 模块全部满足
+   `emit ⊆ bundled`。
+2. **冻结 emit 集合**：门禁显式列出 6 个模块的 `(映射表, bundled 表, resolver, emit 数)`
+   基线；`emit` 取错误码映射表 + 警告码映射表的 values 去重。集合成员或数量变化必须
+   同步更新基线，否则失败。
+3. **双语可达三路判定**：每个 emit key 在 zh/en 下至少命中一条路径——
+   catalog 嵌套、catalog `daemon_errors` 扁平段、bundled；三条都不可达即失败。
+4. **bundled 条目双语非空**：每个 bundled key 必须有非空的 `zh_CN` 与 `en_US`；
+   只补一种语言视为失败。
+5. **未知 key 行为显式化**：对 6 个 resolver 传哨兵 key，断言**返回 key 本身且不抛异常**。
+   这是可观察的兜底终点，不是静默分支；门禁把它固定下来，防止未来改成抛异常或空串。
+6. **catalog 优先**：monkeypatch catalog 加载，断言已收录 key 优先取 catalog 文案而非
+   bundled 文案，保证 bundled 只是兜底、不篡改生产文案。
+7. **语义与顺序不变**：不改 `t()` / `t_list()`，不改 resolver 的三层顺序；catalog 只修
+   `errors.contract_lease_denied` 的占位符契约（`{reason}` 在调用点不存在，属可读性缺陷
+   修复），其余 catalog 文本一律不动。
+
+非目标：`tools_collab._collab_error_response` 死代码清理、en 文案打磨、
+`t()` 其它值类型（`int`/`dict`）通用契约。
+
+### 33.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 语法 | `json.load` 两个 catalog + `py_compile db/db_task_contracts.py` | 通过 |
+| emit ⊆ bundled 复算 | 6 模块映射表 values 去重 | **contracts 12/12**；evidence 10/10；gate 6/6；protocol 10/10；evaluator 7/7；views 6/6 |
+| lease_denied 渲染 | `_resolve_contract_message(key, {task_id, lease_code, lease_detail})` × 双语 | 2/2 非空，**0 残留花括号**（修复前 zh/en 均为 `...{reason}`） |
+| 门禁全量 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py -o addopts='' -q` | **103 passed**（基线 95，新增 8） |
+| 治理回归 | 上述两文件 + `tests/test_cli_governance_gate.py` | **114 passed** |
+| 负向实验 | 临时删除 `_CONTRACT_BUNDLED_DEFAULTS['errors.contract_lease_denied']` | `cover_all_emitted_keys` 报 `bundled key 数量漂移 11 != 12`、`lease_denied_placeholders` 报 `KeyError`；**2 failed / exit=1**；恢复后 **8 passed** |
+| CLI 默认 key | AST 抽取 `_IDENTITY_REASON_DEFAULTS`（3）+ `_collab_output_structured_reason._DEFAULTS`（2） | 5/5 → catalog `daemon_errors` 扁平段双语可达 |
+| MCP 调用点 | AST 扫描 `server/tools/tools_collab.py` | `_collab_error_response` **0 个调用点**（豁免固定） |
+| 验收矩阵 | `python scripts/check_e2e_matrix_closure.py` | **PASS（收口条件全部满足）** |
+
+### 33.5 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | `db/db_task_contracts.py` bundled 1 条 + 两个 catalog 的 `errors.contract_lease_denied` 占位符 + `tests/test_i18n_placeholder_consistency.py` §33 门禁（8 用例）+ backlog §33 |
+| 非目标 | `tools_collab._collab_error_response` 死代码清理；en 文案打磨；`t()` 其它值类型（`int`/`dict`）通用契约 |
+| 保留问题 | 未知 key 仍**原样返回 key**（可观察兜底终点，不升级为 fail-closed）；§27.5「值不可格式化 vs 占位符拼写错误」的静默等价仍未区分；MCP 构造器保留但无 emit 点 |
+| 白名单维护 | `BUNDLED_RESOLVER_SPECS` 的 emit / bundled 数量变更必须同步；新增 `_resolve_*_message` 模块必须纳入清单，否则每个 emit key 失去兜底保证 |
+| 回滚 | 回退 5 文件提交即可；catalog 仅改 1 个 key 的占位符（`{reason}` → `task_id`/`lease_code`/`lease_detail`），无数据迁移、无 key 增删 |
+
 
 
 
