@@ -21,7 +21,7 @@
   },
   "schema_version": 1,
   "description": "Call Warden task_id <-> commit_id 恢复台账（新纪律）。每次完成一个任务即追加/刷新 entry，损失隔离到单任务；不做整批 200+ 重做。",
-  "updated_at": "2026-09-16T10:40:00+08:00",
+  "updated_at": "2026-11-02T22:21:24+08:00",
   "discipline": {
     "rule": "完成一次刷新一次：git commit 后立即把 task_id 与 commit_id 关联写入本台账（并可选同步到 cw 库 task_evidence_events）",
     "loss_isolation": "即便后续 git prune/重建，也能按台账逐任务恢复或重做，而非全部重来"
@@ -2132,6 +2132,19 @@
       "review_verdict_id": "V-6398fe6cd7233562d7a716e0",
       "handoff_event_id": "13017",
       "note": "i18n 第八类兜底收口（backlog §33）：9 处动态 message_key 解析点走「catalog 嵌套 → 模块 bundled 双语默认 → key 本身」三层兜底，此前无门禁。基线审计 6 个 resolver 模块 emit⊆bundled = 12/11（contracts 缺 errors.contract_lease_denied）、10/10、6/6、10/10、7/7、6/6；bundled 双语零缺口；未知 key 6/6 返回 key 且不抛异常；daemon_errors 27 key zh/en 集合相等；tools_collab _collab_error_response 0 调用点。处置：(1) db_task_contracts 补 1 条 errors.contract_lease_denied 双语 bundled，emit⊆bundled 6/6 闭合；(2) 发现第二缺口——catalog 该 key 占位符为 {reason}，调用点传 task_id/lease_code/lease_detail，format() 静默 KeyError 使 zh/en 用户均见裸 {reason}，两套 catalog 各改 1 行对齐调用点；(3) tests 新增 §33 门禁 8 用例（emit 冻结、三路双语可达、bundled 双语非空、未知 key 返回 key、catalog 优先于 bundled、lease_denied 占位符对齐、cli/main.py 5 个 daemon_errors key、MCP 无调用点），BUNDLED_RESOLVER_SPECS 冻结 6 模块 12/10/6/10/7/6 基线。验证：门禁 103P（基线 95，+8）、追加 governance gate 共 114P/0F/0S；两套 catalog JSON 可解析；负向探针删除 bundled 条目后 bundled 数量漂移 11!=12 且 KeyError（2 failed），恢复后定向 8P；reviewer 独立复算 emit⊆bundled 6/6、lease_denied 双语渲染无残留花括号、step3 证据 sha256 一致；check_e2e_matrix_closure PASS exit 0。范围说明：i18n 两文件不在建卡 allowed_edit_scope（步骤只列 db/tests/docs），属建卡漏项；catalog 占位符修复是 bundled 修复生效的必要条件，以 view-manifest scope_note + reviewer attestation + 本台账 scope 留痕。A′ 环：executor 4/4 report（step3 req-5ac696e1af49）-> review_pending -> reviewer 任务级 report req-f6cb439ae534 + verdict V-6398fe6cd7233562d7a716e0 pass findings=0 -> reviewer_pass handoff (event 13017) -> adjudicator reviewer-scope lease L-e8aab58373c13234 f2 apply/close -> closed/completed/COMPLETE/finalize；lease（executor L-76a73272d0399ce7 f1、reviewer L-4da5d4d7b081ed8e f1、adjudicator reviewer-scope L-e8aab58373c13234 f2）全部主动 release。残留：en 文案打磨、t() 其它值类型、tools_collab 死代码清理待独立卡。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793627972400-4a1e4a0c",
+      "commit_id": "c1adc9a74dfca46651b0c77fdf1d2ae348c8732b",
+      "status": "new_in_master",
+      "source": "assignment_close_finalization_20261102",
+      "scope": "rust_ext/src/daemon/assignment_queue.rs, rust_ext/src/daemon/task_collab_lifecycle_apply.rs, rust_ext/src/daemon/task_collab_tests_lease.rs, db/db_tasks.py, tests/test_task_close.py, docs/design/cli-mcp-matrix-backlog.md, docs/specs/assignment-close-finalization/spec.md, docs/specs/assignment-close-finalization/tasks.md, docs/specs/assignment-close-finalization/checklist.md",
+      "snapshot_id": "fc6d5dcf1793d578",
+      "evidence_sha256": "922024A4A28D2913870D38C0EAB083CE54AB088F544605FEE7C542D61E25D62B",
+      "view_manifest_sha256": "37cda155cc3b6aeb466c2d6a37b7730e04a014ad0ccbc1ba142832b7793b4a44",
+      "review_verdict_id": "V-c17b71e906842536d1c06277",
+      "handoff_event_id": "13041",
+      "note": "close 终局 assignment 收口（backlog §34）：daemon handle_task_close / handle_task_cascade_close 与 Python task_close 在同一事务内收敛事件投影与物理 task_assignments，closed 卡不再残留 queued/claimed assignment；响应新增 completed_assignments；旧库 no such table 兼容。验证：cargo test finalize_task_assignments 1 passed、cargo test task_close 11 passed、pytest tests/test_task_close.py 24 passed、check_e2e_matrix_closure PASS exit 0；git diff --check 干净。A′ 环：executor 8/8 report -> review_pending -> reviewer verdict V-c17b71e906842536d1c06277 pass findings=0 -> reviewer_pass handoff (event 13041) -> adjudicator reviewer-scope lease L-8cfe49a87671f423 f2 apply/close -> closed/completed/COMPLETE/finalize；lease（executor L-10b7b821ed341667 f2、reviewer L-7173879d6176981d f1、adjudicator L-8cfe49a87671f423 f2）全部主动 release。残留：本卡 close 由旧 daemon（PID 35836，started_at 1793626075）执行，真实库仍保留 A-2ec419c65223e5f140e7eb92（adjudicator/queued）；新代码部署后后续 close 生效，历史残留按非目标不批量清理。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
