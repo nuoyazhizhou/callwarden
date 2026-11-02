@@ -7913,9 +7913,10 @@ def _handle_gc(args, db):
             save_policy=parsed.save_policy,
         )
         cprint(t("cli.messages.gc_retention_title"), "cyan", bold=True)
-        mode_key = "cli.messages.gc_retention_mode_dry_run" if result[
-            "dry_run"] else "cli.messages.gc_retention_mode_apply"
-        cprint(t(mode_key), "yellow" if result["dry_run"] else "green")
+        if result["dry_run"]:
+            cprint(t("cli.messages.gc_retention_mode_dry_run"), "yellow")
+        else:
+            cprint(t("cli.messages.gc_retention_mode_apply"), "green")
         if result["saved_policy"]:
             cprint(t("cli.messages.gc_retention_policy_saved"), "green")
         cprint(t("cli.messages.gc_retention_candidate_versions",
@@ -8145,9 +8146,10 @@ def _handle_gc(args, db):
             cprint(str(e), "red")
             return False
         cprint(t("cli.messages.gc_archive_import_title"), "cyan", bold=True)
-        mode_key = "cli.messages.gc_archive_import_mode_dry_run" if result[
-            "dry_run"] else "cli.messages.gc_archive_import_mode_apply"
-        cprint(t(mode_key), "yellow" if result["dry_run"] else "green")
+        if result["dry_run"]:
+            cprint(t("cli.messages.gc_archive_import_mode_dry_run"), "yellow")
+        else:
+            cprint(t("cli.messages.gc_archive_import_mode_apply"), "green")
         cprint(t("cli.messages.gc_archive_import_target",
                  target=result["target"], value=result["target_value"]), "dim")
         cprint(t("cli.messages.gc_archive_import_path",

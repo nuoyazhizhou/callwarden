@@ -35,11 +35,18 @@ str 值包成单元素列表，并用 AST 正反扫描保证调用点已全部�
 不存在」），zh 环境把「无写权限」显示成「目录不存在」。本门禁断言两个
 ``*_skip_no_write`` key 双语存在且占位符恰为 ``{dir}``、文案与同族 ``skip_dir``
 不同，并用 AST 扫描确认写权限分支不再引用 ``*_skip_dir``。
+
+§32（T-1793608696517-45fb6034）收口**动态拼接 key 盲区**：静态门禁只覆盖首参为
+字符串字面量的调用，``t(variable)`` 无法在 AST 阶段判定。本门禁把现存动态调用点
+（文件 + 函数限定名 + 函数名 + 实参签名）冻结成显式 allowlist，新增或消失都失败；
+另把两处可枚举的 ``mode_key`` 迁移为字面量 key，并为 ``cli/categories.py`` 注册表的
+``title_key`` / ``desc_key`` 补双语存在性断言。
 """
 import ast
 import json
 import os
 import re
+from collections import Counter
 
 import pytest
 
@@ -702,4 +709,214 @@ def test_write_permission_branch_uses_no_write_key(rel_path, write_key):
     all_keys = set(_literal_t_keys(ast.parse(_load_source(rel_path))))
     assert {k for k in all_keys if k.endswith("_skip_dir")} == {dir_key}
     assert {k for k in all_keys if k.endswith("_skip_no_write")} == {write_key}
+
+
+# ---------------------------------------------------------------------------
+# §32 动态拼接 key 调用点清单化与门禁冻结（T-1793608696517-45fb6034）
+# ---------------------------------------------------------------------------
+
+# 扫描面：tests 之外的全部源码目录 + 两个单文件入口；与 §32.2 基线口径一致。
+DYNAMIC_KEY_TARGETS = (
+    "cli", "db", "server", "i18n", "scripts", "experiments", "tools",
+    "install.py", "cw.py",
+)
+DYNAMIC_KEY_FUNCS = {"t", "t_list", "get_msg", "get_error", "get_arg_help"}
+DYNAMIC_KEY_SKIP_DIRS = {"__pycache__", "tests"}
+
+# 迁移为字面量 key 的两处 mode_key（dry_run / apply × 2 组）。
+MIGRATED_MODE_KEYS = {
+    "cli.messages.gc_retention_mode_dry_run",
+    "cli.messages.gc_retention_mode_apply",
+    "cli.messages.gc_archive_import_mode_dry_run",
+    "cli.messages.gc_archive_import_mode_apply",
+}
+
+# 冻结清单：(文件, 函数限定名, 函数名, 实参签名) -> 保留理由（分类见 backlog §32.1）。
+# 实参签名只取 Name.id / Attribute.attr / <fstring> 等稳定形状，避免引号与换行改写
+# 触发假失败；新增或消失的调用点都必须同步修改本表，否则门禁失败。
+DYNAMIC_KEY_CALL_SITES = {
+    ("cli/main.py", "_collab_output_structured_reason", "t", "msg_key"):
+        "D 结构化 reason：message_key 由 daemon 返回",
+    ("cli/main.py", "_handle_experiment._msg", "t", "key"):
+        "F 实验 CLI 薄包装：29 个调用方均传字面量 key",
+    ("cli/main.py", "_print_main_help", "t", "title_key"):
+        "B 注册表驱动：cli/categories.py title_key（存在性由本段用例兜底）",
+    ("cli/main.py", "_print_main_help", "t", "desc_key"):
+        "B 注册表驱动：cli/categories.py desc_key（存在性由本段用例兜底）",
+    ("cli/main.py", "_t_structured", "t", "message_key"):
+        "D 结构化 reason：daemon Structured_Reason message_key",
+    ("db/db_task_contracts.py", "_resolve_contract_message", "t", "message_key"):
+        "D 常量表：契约错误码 → i18n key",
+    ("db/db_task_evidence.py", "_resolve_evidence_message", "t", "message_key"):
+        "D 常量表：证据错误码 → i18n key",
+    ("db/db_task_gate.py", "_resolve_gate_message", "t", "message_key"):
+        "D GATE_I18N_KEYS 常量表",
+    ("experiments/blind_review_evaluator.py", "_resolve_evaluator_message", "t", "message_key"):
+        "E 盲审协议常量",
+    ("experiments/blind_review_protocol.py", "_resolve_message", "t", "message_key"):
+        "E 盲审协议常量",
+    ("experiments/blind_review_views.py", "_resolve_view_message", "t", "message_key"):
+        "E 盲审协议常量",
+    ("i18n/__init__.py", "get_arg_help", "t", "<fstring>"):
+        "A t() 公开入口包装",
+    ("i18n/__init__.py", "get_error", "t", "<fstring>"):
+        "A t() 公开入口包装",
+    ("i18n/__init__.py", "get_msg", "t", "<fstring>"):
+        "A t() 公开入口包装",
+    ("server/tools/tools_collab.py", "register._collab_error_response", "t", "message_key"):
+        "D MCP 协作工具错误 key",
+}
+
+EXPECTED_DYNAMIC_SITES = 15
+REGISTRY_KEY_MIN = 56  # 12 title_key + 44 desc_key（backlog §32.2）
+
+
+def _iter_dynamic_key_files(root: str):
+    """遍历动态 key 扫描面：目录递归 + 单文件入口。"""
+    for target in DYNAMIC_KEY_TARGETS:
+        path = os.path.join(root, target)
+        if os.path.isfile(path):
+            yield path
+            continue
+        for dirpath, dirnames, filenames in os.walk(path):
+            dirnames[:] = [d for d in dirnames if d not in DYNAMIC_KEY_SKIP_DIRS]
+            for filename in sorted(filenames):
+                if filename.endswith(".py"):
+                    yield os.path.join(dirpath, filename)
+
+
+def _dynamic_arg_signature(node) -> str:
+    """把动态实参归一为稳定签名：Name.id / Attribute.attr / <fstring> 等。"""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.JoinedStr):
+        return "<fstring>"
+    if isinstance(node, ast.Call):
+        return "<call>"
+    if isinstance(node, ast.Subscript):
+        return "<subscript>"
+    return f"<{type(node).__name__}>"
+
+
+class _DynamicKeyVisitor(ast.NodeVisitor):
+    """收集非字面量首参调用：(相对路径, 函数限定名, 函数名, 实参签名)。"""
+
+    def __init__(self, rel_path: str):
+        self.rel_path = rel_path
+        self.stack: list = []
+        self.sites: list = []
+
+    def _visit_scope(self, node):
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+    visit_FunctionDef = _visit_scope
+    visit_AsyncFunctionDef = _visit_scope
+    visit_ClassDef = _visit_scope
+
+    def visit_Call(self, node):
+        func_name = None
+        if isinstance(node.func, ast.Name):
+            func_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+        if func_name in DYNAMIC_KEY_FUNCS and node.args:
+            first = node.args[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                ctx = ".".join(self.stack) or "<module>"
+                self.sites.append(
+                    (self.rel_path, ctx, func_name, _dynamic_arg_signature(first))
+                )
+        self.generic_visit(node)
+
+
+def _scan_dynamic_key_files(files, root: str) -> Counter:
+    found = Counter()
+    for path in files:
+        try:
+            with open(path, encoding="utf-8") as f:
+                source = f.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        rel_path = os.path.relpath(path, root).replace("\\", "/")
+        visitor = _DynamicKeyVisitor(rel_path)
+        visitor.visit(tree)
+        found.update(visitor.sites)
+    return found
+
+
+def _collect_dynamic_key_sites(root: str = PROJECT_ROOT) -> Counter:
+    return _scan_dynamic_key_files(_iter_dynamic_key_files(root), root)
+
+
+def test_dynamic_key_sites_match_frozen_allowlist():
+    """动态 key 调用点必须与冻结 allowlist 完全一致（新增/消失都失败）。"""
+    found = _collect_dynamic_key_sites()
+    allowed = Counter({site: 1 for site in DYNAMIC_KEY_CALL_SITES})
+    added = sorted((found - allowed).elements())
+    removed = sorted((allowed - found).elements())
+    assert not added, f"新增未登记的动态 key 调用点（请改为字面量 key 或更新 §32 清单）: {added}"
+    assert not removed, f"§32 清单中的调用点已消失（请同步更新 allowlist）: {removed}"
+
+
+def test_dynamic_key_scanner_self_check():
+    """扫描口径自检：数量与已知哨兵都必须命中，防止门禁退化成空转。"""
+    found = _collect_dynamic_key_sites()
+    assert sum(found.values()) == EXPECTED_DYNAMIC_SITES, (
+        f"动态 key 调用点数量漂移: {sum(found.values())}"
+    )
+    assert ("i18n/__init__.py", "get_msg", "t", "<fstring>") in found
+    assert ("cli/main.py", "_print_main_help", "t", "title_key") in found
+
+
+def test_dynamic_key_scanner_detects_new_sites(tmp_path):
+    """负向自检：扫描器必须识别新增动态调用，并忽略同文件内的字面量调用。"""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "def outer(k):\n"
+        "    def inner(v):\n"
+        "        return t(v, default='x')\n"
+        "    return t('cli.messages.exact_key'), t(k)\n",
+        encoding="utf-8",
+    )
+    found = _scan_dynamic_key_files([str(sample)], str(tmp_path))
+    assert found == Counter(
+        {
+            ("sample.py", "outer.inner", "t", "v"): 1,
+            ("sample.py", "outer", "t", "k"): 1,
+        }
+    )
+
+
+def test_migrated_mode_keys_are_literal_and_exist(calls, zh_catalog, en_catalog):
+    """迁移后的 4 个 mode key 必须以字面量调用出现，且双语可达。"""
+    literal_keys = {key for _, _, key, _, _ in calls}
+    for key in sorted(MIGRATED_MODE_KEYS):
+        assert key in literal_keys, f"{key} 未以字面量形式出现在静态调用中"
+        for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+            assert isinstance(_reach(catalog, key), str), f"{lang} 缺少 {key}"
+
+
+def test_categories_registry_keys_exist_in_both_catalogs(zh_catalog, en_catalog):
+    """cli/categories.py 注册表的 title_key / desc_key 必须双语可达。"""
+    from cli.categories import COMMAND_CATEGORIES
+
+    keys = []
+    for category in COMMAND_CATEGORIES:
+        if category.title_key:
+            keys.append(category.title_key)
+        for command in category.commands:
+            if command.desc_key:
+                keys.append(command.desc_key)
+    assert len(keys) >= REGISTRY_KEY_MIN, f"注册表 key 数量异常偏少: {len(keys)}"
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        missing = sorted(k for k in keys if not isinstance(_reach(catalog, k), str))
+        assert not missing, f"{lang} 缺少注册表 key: {missing}"
 

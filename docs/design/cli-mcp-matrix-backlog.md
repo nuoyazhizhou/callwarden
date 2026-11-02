@@ -2449,6 +2449,84 @@ AST 口径：写权限分支（`if not os.access(..., os.W_OK)`）内只允许�
 | 保留问题 | §27.5「值不可格式化 vs 占位符拼写错误」的静默等价仍未区分，属独立批次 |
 | 回滚 | 回退 6 文件提交即可；新 key 为纯新增，旧 `*_skip_dir` 值未改动，无数据迁移 |
 
+## 32. i18n 动态拼接 key 调用点清单化与门禁冻结（T-1793608696517-45fb6034）
+
+### 32.1 现象
+
+§26.5 / §28.5 / §30.5 / §31.5 反复登记同一盲区：
+[tests/test_i18n_placeholder_consistency.py](file:///c:/git_work/callwarden/tests/test_i18n_placeholder_consistency.py)
+的静态扫描只收集首个实参为字符串字面量的 `t(...)` / `t_list(...)` 调用，`t(variable)` 在
+AST 阶段不可判定，占位符门禁（§27）与 key 存在性门禁（§26）都静默跳过。后果有两条：
+
+1. 新增动态调用点不会触发任何门禁——即使变量在别处拼出一个不存在、或占位符不足的 key；
+2. 最大数据驱动源 [cli/categories.py](file:///c:/git_work/callwarden/cli/categories.py) 的
+   `title_key` / `desc_key` 以普通字符串存放在注册表数据里，不在任何存在性门禁覆盖内；
+   拼错时 `t()` 原样返回 key（[cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L173-L181)
+   虽有 `default=` 兜底，但中文环境同样退化为内置默认描述）。
+
+基线扫描（tests 之外的 9 个源码目录，158 个 `.py`）共 **17 处**动态调用，归为 6 类：
+
+| 类别 | 处数 | 落点 | key 来源 | 处置 |
+| --- | --- | --- | --- | --- |
+| A 内部 API 包装 | 3 | [i18n/__init__.py](file:///c:/git_work/callwarden/i18n/__init__.py#L217-L227) `get_arg_help` / `get_msg` / `get_error` 的 f-string | 调用方传入 | 保留（`t()` 的公开入口本身） |
+| B 注册表驱动 | 2 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L173-L181) `_print_main_help` 的 `cat.title_key` / `cmd.desc_key` | `cli/categories.py`（12 + 44 个 key） | 保留 + 新增双语存在性断言 |
+| C 局部可枚举 | 2 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L7916-L7918) `_handle_gc` 的 `mode_key`（gc_retention / gc_archive_import） | 各自只有 2 个分支字面量 | **迁移为字面量 key**，清单 17→15 |
+| D 结构化 reason | 6 | `cli/main.py` 的 `_collab_output_structured_reason` / `_t_structured`；`db/db_task_{contracts,evidence,gate}.py`；[server/tools/tools_collab.py](file:///c:/git_work/callwarden/server/tools/tools_collab.py#L77-L105) | daemon 返回的 `message_key` 或常量表 | 保留 + allowlist |
+| E 实验盲审 | 3 | `experiments/blind_review_{evaluator,protocol,views}.py` | 协议常量 | 保留 + allowlist |
+| F 实验 CLI 薄包装 | 1 | [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L14154-L14156) `_handle_experiment._msg` | 29 个调用方全部传字面量 key | 保留 + allowlist |
+
+### 32.2 基线（改动前）
+
+| 项 | 口径 | 基线结果 |
+| --- | --- | --- |
+| 动态调用点 | AST 扫描 `cli` / `db` / `server` / `i18n` / `scripts` / `experiments` / `tools` + `install.py` + `cw.py`（跳过 `tests`、`__pycache__`） | **17 处 / 16 个唯一 (文件, 所在函数, 实参) 组合 / 158 文件** |
+| 注册表 key | `cli.categories.COMMAND_CATEGORIES` 非空 `title_key` / `desc_key` | 21 分类、84 命令、**12 title_key + 44 desc_key = 56** |
+| 注册表 key 覆盖 | 现有 `tests/test_i18n_key_existence.py` | 只校验 zh/en 双语对齐，不校验注册表引用是否可达 |
+| 静态门禁 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py` | **90 passed / 0 failed** |
+
+### 32.3 处置口径（冻结）
+
+1. **冻结而非迁移**其余 15 处动态调用点：
+   [tests/test_i18n_placeholder_consistency.py](file:///c:/git_work/callwarden/tests/test_i18n_placeholder_consistency.py)
+   新增 `DYNAMIC_KEY_CALL_SITES`，键为 `(文件, 函数限定名, 函数名, 实参签名)`，每行附保留理由。
+   实参签名只取 `Name.id` / `Attribute.attr` / `<fstring>` 等稳定形状，避免引号、换行或格式化
+   改动造成假失败。门禁做**双向集合相等**：新增未登记调用点、或清单内调用点消失，都直接失败。
+2. **迁移 2 处可枚举 `mode_key`**：`gc_retention` 与 `gc_archive_import` 的 dry_run/apply 分支
+   改为 `if/else` 内的字面量 `t()` 调用（[cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L7915-L7919)、
+   [cli/main.py](file:///c:/git_work/callwarden/cli/main.py#L8148-L8152)）。颜色与 key 原样保留，
+   输出零变化；清单 17 → 15。
+3. **数据驱动源补存在性断言**：`cli.categories.COMMAND_CATEGORIES` 的 12 个 `title_key` +
+   44 个 `desc_key` 必须双语可达；同时断言 key 数量 ≥ 56，注册表被清空时不会退化成空转。
+4. **零语义改动**：不改 `t()` / `t_list()`，不改任何 catalog 文本，不改 `default=` 兜底。
+5. **扫描面固定**：`cli` / `db` / `server` / `i18n` / `scripts` / `experiments` / `tools` +
+   `install.py` + `cw.py`；`tests` 不计入（测试内的动态调用是断言样本）。
+
+非目标：daemon 提供的 `message_key` 运行时校验（D 类 6 处只能靠 fallback 兜底）、
+en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
+
+### 32.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 语法 | `python -m py_compile cli/main.py` | 通过 |
+| 动态调用点复算 | 同 §32.2 的 AST 口径 | **17 → 15**，减少的 2 处均为 `_handle_gc` 的 `mode_key` |
+| 迁移 key 渲染 | `i18n.t(key)` × 4 key × 双语 | 8/8 均返回非空文本（zh: 预演/执行/预演/应用导入；en: dry run/apply/dry-run/apply import） |
+| 门禁全量 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py` | **95 passed**（基线 90，新增 5） |
+| 治理回归 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py tests/test_cli_governance_gate.py` | **106 passed / 0 failed** |
+| 负向实验 | 临时新增 `cli/_tmp_dyn_probe.py`（`t(k)`） | 门禁失败并报 `[('cli/_tmp_dyn_probe.py', 'probe', 't', 'k')]`；删除探针后复跑 `1 passed` |
+| 注册表基线 | `cli.categories.COMMAND_CATEGORIES` | 21 分类 / 84 命令 / 12 title_key / 44 desc_key = 56，双语 0 缺失 |
+| 验收矩阵 | `python scripts/check_e2e_matrix_closure.py` | **PASS（收口条件全部满足）** |
+
+### 32.5 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | `cli/main.py` 2 处迁移 + `tests/test_i18n_placeholder_consistency.py` §32 门禁（5 用例）+ backlog §32 |
+| 非目标 | daemon `message_key` 的运行时存在性校验；en 文案打磨；`t()` 其它值类型（`int`/`dict`）通用契约 |
+| 保留问题 | D 类 6 处与 E 类 3 处的 key 在运行时才确定，allowlist 只能防新增、不能证明取值一定存在；A 类 3 处是 `t()` 公开入口本身，天然动态 |
+| 白名单维护 | 迁移或新增动态调用点必须同步修改 `DYNAMIC_KEY_CALL_SITES`；否则门禁以「新增未登记 / 清单消失」明确报错，不允许静默放行 |
+| 回滚 | 回退 3 文件提交即可；无 catalog 改动、无数据迁移，原有文案与输出不变 |
+
 
 
 
