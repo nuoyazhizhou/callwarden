@@ -548,6 +548,46 @@ pub(crate) fn complete_assignments(
     Ok(completed)
 }
 
+/// close 终局：把任务的全部 active assignment 收敛为 completed。
+///
+/// 事件投影（权威）与物理表（Python 治理面）必须在同一事务内同时收敛，
+/// 否则 close 后仍可观察到可领取 assignment（T-1793614942434-83a49fb4：
+/// closed 卡残留 queued adjudicator assignment）。
+/// 返回被收敛的事件投影 assignment_id。
+pub(crate) fn finalize_task_assignments(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    actor_identity: &str,
+    actor_session_id: &str,
+    seq: i64,
+    ts: f64,
+) -> Result<Vec<String>, DaemonRpcError> {
+    let completed = complete_assignments(
+        tx,
+        task_id,
+        None,
+        None,
+        actor_identity,
+        actor_session_id,
+        seq,
+        ts,
+    )?;
+    let result = tx.execute(
+        "UPDATE task_assignments SET status = 'completed'
+         WHERE task_id = ?1 AND status = 'active'",
+        params![task_id],
+    );
+    match result {
+        Ok(_) => Ok(completed),
+        // 旧库可能尚无 task_assignments（与 persist_claimed_assignment 同款兼容）；
+        // 事件投影已收敛，物理表缺位不构成漂移。
+        Err(e) if e.to_string().contains("no such table") => Ok(completed),
+        Err(e) => Err(DaemonRpcError::internal_error(format!(
+            "close 收敛 task_assignments 失败: {e}"
+        ))),
+    }
+}
+
 pub(crate) fn heartbeat_assignment(
     tx: &Transaction<'_>,
     task_id: &str,
@@ -859,6 +899,82 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1, "active 与 completed 必须是同一行的更新，不得复制");
+    }
+
+    #[test]
+    fn finalize_task_assignments_completes_projection_and_physical_rows() {
+        // close 终局回归：closed 卡不得残留 queued/claimed assignment
+        // （T-1793614942434-83a49fb4）。事件投影与物理表必须同时收敛。
+        let mut conn = conn();
+        conn.execute_batch(
+            "CREATE TABLE task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                assignment_id TEXT NOT NULL UNIQUE,
+                task_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );",
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        let queued = queue_assignment(
+            &tx, "T-close", Some("S-close"), "executor", "req-queue", None,
+            "actor", "exec-session", 1, 10.0,
+        )
+        .unwrap()
+        .unwrap();
+        let claimed = claim_assignment(
+            &tx, "T-close", Some("S-close"), "reviewer", "rev-agent", "rev-session",
+            "rev-model", "req-claim", "actor", false, 2, 11.0,
+        )
+        .unwrap();
+        // 两条物理 active 行（Python 治理面可观察的「可领取」状态）。
+        persist_claimed_assignment(
+            &tx, 7, "T-close", Some("S-close"),
+            "executor", "exec-agent", "exec-session", "exec-model", "active", 11.0,
+        )
+        .unwrap();
+        persist_claimed_assignment(
+            &tx, 7, "T-close", Some("S-close"),
+            "reviewer", "rev-agent", "rev-session", "rev-model", "active", 11.0,
+        )
+        .unwrap();
+
+        let completed =
+            finalize_task_assignments(&tx, "T-close", "actor", "close-session", 3, 12.0).unwrap();
+        tx.commit().unwrap();
+
+        assert_eq!(completed.len(), 2, "queued 与 claimed 都必须被收敛");
+        assert!(completed.contains(&queued));
+        assert!(completed.contains(&claimed));
+
+        let projection = project_task_assignments(&conn, "T-close").unwrap();
+        assert!(projection.iter().all(|item| !item.is_active()));
+        assert!(projection.iter().all(|item| item.status == "completed"));
+
+        let active_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments
+                 WHERE task_id = 'T-close' AND status = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_rows, 0, "close 后物理表不得残留 active 行");
+        let completed_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments
+                 WHERE task_id = 'T-close' AND status = 'completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(completed_rows, 2);
     }
 
     #[test]

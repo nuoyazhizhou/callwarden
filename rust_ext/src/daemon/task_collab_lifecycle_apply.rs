@@ -352,6 +352,22 @@ impl TaskCollabStore {
         )
         .map_err(|e| DaemonRpcError::internal_error(format!("task_event append 失败: {}", e)))?;
 
+        // S6: close 终局 assignment 收口（T-1793614942434-83a49fb4）——closed
+        // 卡不得残留任何 queued/claimed assignment。事件投影与物理表在同一
+        // 事务内收敛；历史 assignment 事件保持不可变。
+        let close_session = identity
+            .as_ref()
+            .map(|id| id.session_id.clone())
+            .unwrap_or_default();
+        let completed_assignments = assignment_queue::finalize_task_assignments(
+            &tx,
+            task_id,
+            &owner_key,
+            &close_session,
+            self.next_seq(),
+            ts,
+        )?;
+
         if let Some(ref id) = identity {
             record_action_identity(&tx, task_id, id, "state_transition", seq, ts)?;
         }
@@ -368,6 +384,15 @@ impl TaskCollabStore {
             Value::Number(serde_json::Number::from_f64(ts).unwrap()),
         );
         res.insert("reviewer".to_string(), Value::String(reviewer.to_string()));
+        res.insert(
+            "completed_assignments".to_string(),
+            Value::Array(
+                completed_assignments
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
         if verdict_waiver.is_some() {
             res.insert("verdict_waived".to_string(), Value::Bool(true));
         }
@@ -689,6 +714,16 @@ impl TaskCollabStore {
                 ],
             )
             .map_err(|e| DaemonRpcError::internal_error(format!("级联事件写入失败: {e}")))?;
+            // S6: 级联收尾同样终结该节点的全部 active assignment（与 task.close
+            // 同语义），closed 节点不得残留可领取 assignment。
+            assignment_queue::finalize_task_assignments(
+                &tx,
+                node,
+                &owner_key,
+                identity.as_ref().map(|id| id.session_id.as_str()).unwrap_or(""),
+                self.next_seq(),
+                ts,
+            )?;
             closed.push(node.clone());
         }
 

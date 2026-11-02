@@ -2631,6 +2631,45 @@ en 文案打磨、`t()` 其它值类型（`int`/`dict`）通用契约。
 | 白名单维护 | `BUNDLED_RESOLVER_SPECS` 的 emit / bundled 数量变更必须同步；新增 `_resolve_*_message` 模块必须纳入清单，否则每个 emit key 失去兜底保证 |
 | 回滚 | 回退 5 文件提交即可；catalog 仅改 1 个 key 的占位符（`{reason}` → `task_id`/`lease_code`/`lease_detail`），无数据迁移、无 key 增删 |
 
+## 34. close 终局 assignment 收口（T-1793627972400-4a1e4a0c）
 
+### 34.1 现象与根因
 
+- 实证：`T-1793614942434-83a49fb4` 投影为 closed 后，其 adjudicator assignment
+  `A-fbdc95b51dc29015025f5230` 仍为 `queued`——事件投影与物理
+  `task_assignments` 均未收敛。
+- 根因：daemon `handle_task_close` / `handle_task_cascade_close` 与 Python
+  `task_close` 只改任务状态，从不终结 assignment；`complete_assignments`
+  只在 report / handoff / governance 退回路径调用。
+- 影响：closed 卡仍可被「current/active assignment」查询观察到，下一棒派工与
+  治理投影会误判为「仍可领取」。
 
+### 34.2 处置（冻结）
+
+| 层 | 改动 |
+| --- | --- |
+| 事件投影（权威） | 新增 `assignment_queue::finalize_task_assignments`：任务级全量（`step_id=None, role=None`）追加 `assignment_completed` |
+| 物理表（Python 治理面） | 同一事务 `UPDATE task_assignments SET status='completed' WHERE task_id=? AND status='active'` |
+| daemon close | `handle_task_close` 接入，响应新增 `completed_assignments`（assignment_id 数组） |
+| daemon 级联 | `handle_task_cascade_close` 对每个收尾节点接入（响应结构不变） |
+| Python close | `db/db_tasks.py::task_close` 接入 `_finalize_active_assignments`，响应新增 `completed_assignments` |
+| 兼容 | 极旧库无 `task_assignments` 表时事件投影照常收敛，物理写按 `no such table` 跳过（与 `persist_claimed_assignment` 同款） |
+| 测试 | Rust helper 单测 + daemon close 集成测试 + Python close 回归 |
+
+### 34.3 验证
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| Rust helper 单测 | `cargo test --manifest-path rust_ext/Cargo.toml finalize_task_assignments` | **1 passed / 0 failed** |
+| Rust close 回归 | `cargo test --manifest-path rust_ext/Cargo.toml task_close` | **11 passed / 0 failed**（含新增集成测试） |
+| Python close 回归 | `$env:PYTHONPATH='c:\git_work'; C:\Python314\python.exe -m pytest tests/test_task_close.py -o addopts='' -q` | **24 passed** |
+| 验收矩阵 | `python scripts/check_e2e_matrix_closure.py` | **PASS（收口条件全部满足）** |
+
+### 34.4 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | `assignment_queue.rs` + `task_collab_lifecycle_apply.rs` + `task_collab_tests_lease.rs` + `db_tasks.py` + `test_task_close.py` + backlog §34 |
+| 非目标 | 历史已 closed 卡残留 assignment 的批量清理；reopen 后 assignment 重建；`revoked` 语义变更；schema 迁移 |
+| 幂等 | 重复 close 由既有 S1/S2/verdict 门禁拒绝；`finalize_task_assignments` 对无 active 任务为 no-op（不追加事件） |
+| 回滚 | 回退上述 5 个代码/测试文件提交即可；无数据迁移、无表结构变更 |

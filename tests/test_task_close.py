@@ -313,6 +313,58 @@ def test_task_close_applied_to_closed_success():
         db.close()
 
 
+def test_task_close_finalizes_active_assignments():
+    """S6：close 后该任务不得残留 active assignment（物理表收敛为 completed）。
+
+    回归 T-1793614942434-83a49fb4：closed 卡仍残留 queued assignment。
+    """
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create(
+            title="close assignment 收口",
+            description="验证 close 终局收敛 active assignment",
+            steps=[{"action": "annotate", "target_file": "a.py"}],
+        )
+        _set_task_status(db.conn, task_id, TASK_STATUS_REVIEW)
+        db.task_apply(task_id, reviewer="reviewer-llm")
+
+        workspace_row = db.conn.execute(
+            "SELECT id FROM workspaces ORDER BY id LIMIT 1"
+        ).fetchone()
+        assert workspace_row is not None, "测试库应已注册 workspace"
+        workspace_id = workspace_row["id"]
+
+        assignment_id = "ASG-close-fixture"
+        db.conn.execute(
+            "INSERT INTO task_assignments "
+            "(workspace_id, assignment_id, task_id, role, agent_id, session_id, "
+            " model_id, status, created_at) "
+            "VALUES (?, ?, ?, 'executor', 'agent-e', 'sess-e', 'model-e', 'active', ?)",
+            (workspace_id, assignment_id, task_id, time.time()),
+        )
+        db.conn.commit()
+
+        result = db.task_close(task_id, reviewer="closer-llm")
+
+        assert result["status"] == TASK_STATUS_CLOSED
+        assert result["completed_assignments"] == [assignment_id]
+
+        row = db.conn.execute(
+            "SELECT status FROM task_assignments WHERE assignment_id = ?",
+            (assignment_id,),
+        ).fetchone()
+        assert row is not None and row["status"] == "completed"
+
+        active = db.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM task_assignments "
+            "WHERE task_id = ? AND status = 'active'",
+            (task_id,),
+        ).fetchone()["cnt"]
+        assert active == 0, "close 后不得残留 active assignment"
+    finally:
+        db.close()
+
+
 def test_task_close_invalid_status_open():
     """task_close 拒绝 open 状态任务（必须先 applied）。
 

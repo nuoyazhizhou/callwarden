@@ -2776,6 +2776,33 @@ class TaskMixin:
 
         return cascaded
 
+    def _finalize_active_assignments(self, task_id: str) -> List[str]:
+        """close 终局：把该任务全部 active assignment 收敛为 completed。
+
+        与 daemon `task.close` 的 assignment 收口语义对齐：close 后不得残留
+        可领取 assignment（T-1793614942434-83a49fb4）。返回被收敛的
+        assignment_id 列表。
+        """
+        try:
+            cur = self.conn.execute(
+                "SELECT assignment_id FROM task_assignments "
+                "WHERE task_id = ? AND status = 'active'",
+                (task_id,),
+            )
+            ids = [row["assignment_id"] for row in cur.fetchall()]
+            if ids:
+                self.conn.execute(
+                    "UPDATE task_assignments SET status = 'completed' "
+                    "WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                )
+            return ids
+        except sqlite3.OperationalError as exc:
+            # 极旧库可能尚无 task_assignments 表；物理表缺位不阻断 close。
+            if "no such table" in str(exc):
+                return []
+            raise
+
     def task_close(
         self,
         task_id: str,
@@ -2917,6 +2944,9 @@ class TaskMixin:
             "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
             (TASK_STATUS_CLOSED, now, now, task_id),
         )
+        # close 终局：同一事务内收敛该任务的全部 active assignment，
+        # 与 daemon `task.close` 的 S6 语义一致。
+        completed_assignments = self._finalize_active_assignments(task_id)
         self.conn.commit()
 
         # P1: 清除 active_task（防御性：仅当 active_task == task_id 时才清除，
@@ -2928,6 +2958,7 @@ class TaskMixin:
             "status": TASK_STATUS_CLOSED,
             "closed_at": now,
             "reviewer": reviewer,
+            "completed_assignments": completed_assignments,
         }
 
     def task_reopen(

@@ -1009,6 +1009,120 @@ use super::support::*;
     }
 
     #[test]
+    fn test_task_close_finalizes_all_active_assignments() {
+        // S6 回归（T-1793614942434-83a49fb4）：closed 卡不得残留 queued/claimed
+        // assignment；事件投影与物理 `task_assignments` 必须同时收敛。
+        let (_dir, db_path) = temp_db();
+        let store = TaskCollabStore::new(&db_path)
+            .unwrap()
+            .with_clock(Arc::new(AuthoritativeClock::new()));
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        seed_task(&store, "T-CLS", "", "applied", true);
+        seed_reviewer_lease(&store, "T-CLS", "tok-c", 1, "agent-r", "sess-r", "model-r");
+
+        let queued_reason = serde_json::json!({
+            "assignment_id": "A-exec-close",
+            "task_id": "T-CLS",
+            "step_id": "T-CLS-s1",
+            "role": "executor",
+            "status": "queued",
+            "queued_at": 1_700_000_000.0,
+            "source_request_id": "req-close-queue",
+        });
+        let claimed_reason = serde_json::json!({
+            "assignment_id": "A-rev-close",
+            "task_id": "T-CLS",
+            "step_id": "T-CLS-s1",
+            "role": "reviewer",
+            "status": "claimed",
+            "holder_agent_id": "rev-agent",
+            "holder_session_id": "rev-session",
+            "holder_model_id": "rev-model",
+            "queued_at": 1_700_000_000.0,
+            "claimed_at": 1_700_000_001.0,
+            "last_heartbeat_at": 1_700_000_001.0,
+            "source_request_id": "req-close-claim",
+        });
+        {
+            let conn = store.conn.lock().unwrap();
+            for (code, reason, seq) in [
+                ("assignment_queued", queued_reason.to_string(), 1001_i64),
+                ("assignment_claimed", claimed_reason.to_string(), 1002_i64),
+            ] {
+                conn.execute(
+                    "INSERT INTO task_events
+                     (task_id, from_status, to_status, reason_code, reason, actor_identity,
+                      agent_session_id, role, monotonic_seq, authoritative_timestamp)
+                     VALUES ('T-CLS', 'assignment', 'assignment', ?1, ?2, 'seed', 'seed-session',
+                             'seed-role', ?3, 1700000000.0)",
+                    params![code, reason, seq],
+                )
+                .unwrap();
+            }
+            // Python 治理面可观察的两条 active 物理行。
+            for (assignment_id, role, agent, session, model) in [
+                ("A-exec-close", "executor", "agent-e", "sess-e", "model-e"),
+                ("A-rev-close", "reviewer", "rev-agent", "rev-session", "rev-model"),
+            ] {
+                conn.execute(
+                    "INSERT INTO task_assignments
+                     (workspace_id, assignment_id, task_id, role, agent_id, session_id,
+                      model_id, status, created_at)
+                     VALUES (1, ?1, 'T-CLS', ?2, ?3, ?4, ?5, 'active', 1700000000.0)",
+                    params![assignment_id, role, agent, session, model],
+                )
+                .unwrap();
+            }
+        }
+
+        let res = store
+            .handle_task_close(
+                peer,
+                &serde_json::json!({
+                    "task_id": "T-CLS",
+                    "lease_token": "tok-c",
+                    "fencing_counter": 1,
+                }),
+            )
+            .unwrap();
+        assert_eq!(res["status"], "closed");
+
+        let completed = res["completed_assignments"].as_array().unwrap();
+        let completed_ids: Vec<&str> = completed.iter().filter_map(|v| v.as_str()).collect();
+        assert!(completed_ids.contains(&"A-exec-close"));
+        assert!(completed_ids.contains(&"A-rev-close"));
+
+        let conn = store.conn.lock().unwrap();
+        let projection = assignment_queue::project_task_assignments(&conn, "T-CLS").unwrap();
+        assert!(
+            projection.iter().all(|item| !item.is_active()),
+            "close 后事件投影不得残留 active assignment"
+        );
+        assert!(
+            projection.iter().all(|item| item.status == "completed"),
+            "close 后事件投影必须全部为 completed"
+        );
+        let active_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments
+                 WHERE task_id = 'T-CLS' AND status = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_rows, 0, "close 后物理表不得残留 active 行");
+        let completed_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM task_assignments
+                 WHERE task_id = 'T-CLS' AND status = 'completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(completed_rows, 2, "两条物理行都必须收敛为 completed");
+    }
+
+    #[test]
     fn test_task_close_rejects_zero_steps() {
         // S2: 空步骤普通任务不能 close
         let (_dir, db_path) = temp_db();
