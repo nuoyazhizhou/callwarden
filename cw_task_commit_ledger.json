@@ -2080,6 +2080,19 @@
       "review_verdict_id": "V-5b5f05e1dff1130306eca7a0",
       "handoff_event_id": "he-5fa4cd1831250ee395569669",
       "note": "i18n 第四类漂移收口续（backlog §29，承接 §28.5 残留）：3 个表头 key（complexity_header / largest_fns_header / coupled_fns_header）在 zh_CN 与 en_US 内只把字面列宽标签 {'行数':>5} 等改写为 {{'行数':>5}}，保留真实占位符 {hash:>3}，共 6 行值变更；叶子总数 2287 不变、每语言仅 3 key 变化。门禁把 LITERAL_BRACE_RESIDUAL 置空集，全量扫描不再豁免任何 key；新增 3 表头 key 双语言 format(hash='A1B')/t() 与转义前可见文本逐字节断言、扫描自检 6+3=9 key；删除 28 行白名单豁免逻辑并替换为「白名单为空 + 与转义集合互斥 + 表头 key 无裸花括号」更强断言。负向判别：同一裸花括号判定扫描 HEAD catalog 时 zh/en 各恰 3 key 失败，当前 0。验证：本文件 53P + key 存在性 13P = 66P；8 套件 158 用例 154P/4S/0F；py_compile 通过；check_e2e_matrix_closure PASS。A′ 环：executor 4/4 report -> daemon 自动 review_pending -> reviewer verdict pass -> reviewer_pass handoff -> adjudicator apply/close -> closed/completed/complete/finalize；lease（reviewer L-8b4f4b6a1b372b6a / adjudicator reviewer-scope L-f83cb8330d24b686；误取的 executor-scope L-973cb158806d5669 已即时 release）全部主动 release。残留：动态拼接 key、列表值 6 个 task_constraints_*（§26.5）、_dir 写权限语义（§27.5）、en 文案打磨待独立卡。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793598690524-924bef1c",
+      "commit_id": "ffd9db23773b5de0259af622df2effb73d2b0b15",
+      "status": "new_in_master",
+      "source": "i18n_tlist_list_value_contract_20261102",
+      "scope": "i18n/__init__.py, db/db_tasks.py, tests/test_i18n_placeholder_consistency.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "7801003010b4bb7b",
+      "evidence_sha256": "05E583F9B0DA4A351E32E6FD6DB1115CC09EAA38B93D59F0A974918260D486A5",
+      "view_manifest_sha256": "0b09ca8fad6325bdd3b4821aec9336b66056198a46e258c6df8bec3ebde2eac8",
+      "review_verdict_id": "V-ef4608d9cd610c548946ef17",
+      "handoff_event_id": "12916",
+      "note": "i18n 第五类漂移收口（backlog §30，承接 §26.5 值类型契约）：新增 i18n.t_list(key, default=None, **kwargs) -> list —— list 值返回元素副本、str 值返回单元素列表并保留 format 容错、key 缺失回退 default 列表（无 default 返回 []）；db/db_tasks.py 6 处调用点由 t( 迁移为 t_list(（L1416/1426/1436/1445/1455 的 constraints 与 L3571 根任务 check_items），结构化指令的 constraints/check_items 恢复为 list。t() 函数体零 diff（list 值仍走 str(value)），两套 catalog 值零改动（保持 JSON 数组）。门禁新增 18 用例：6 key 双语非空 list[str]、非字符串叶子集合恰为 LIST_VALUE_KEYS、t_list 双语与 catalog 12/12 相等、副本语义、str 值单元素、缺失 key 回退、AST 反向扫描禁止 6 key 经 t()、正向扫描落点唯一 db/db_tasks.py。验证：本文件 72P + key 存在性 13P = 84P/0F；7 套件 192P/0F/0S；py_compile 3 文件通过；check_e2e_matrix_closure PASS exit 0。A′ 环：executor 5/5 report -> review_pending -> reviewer verdict pass -> reviewer_pass handoff (event 12916) -> adjudicator apply/close -> closed/completed/COMPLETE/finalize；lease（executor L-5d60efd64f73ef25 fencing2 / reviewer L-2e4d893a4866b22e fencing1 / adjudicator reviewer-scope L-5ea02b5165293477 fencing2）全部主动 release。残留：动态拼接 key、_dir 写权限语义（§27.5）、en 文案打磨、t() 其它值类型（int/dict）通用契约待独立卡。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
