@@ -2106,6 +2106,19 @@
       "review_verdict_id": "V-2668153f11201d4dcbc23a55",
       "handoff_event_id": "12975",
       "note": "i18n 第六类漂移收口（backlog §31，承接 §27.5 第 8 变体）：install.py 与 server/mcp_server.py 的 os.access(cache_parent, os.W_OK) 分支此前复用 *_skip_dir（zh 文案「缓存父目录不存在」），属「分支语义与文案错位」；新增 2 个 *_skip_no_write key（zh/en 均含 {dir}），迁移两处写权限分支并把 default 收敛为写权限文案；skip_dir 既有值与 isdir/skip_error 分支零改动，t() 零改动。门禁新增 6 用例：VARIANT shape（2 key × 双语）、no_write 与 skip_dir 文案不等、AST 断言写权限分支只引用 no_write / isdir 分支只引用 skip_dir / 两文件变体字面量集合唯一；负向回退 install.py key 后 AST 用例 1 failed/1 passed。验证：门禁 90P（基线 84）、追加 governance gate 共 101P/0F/0S；py_compile 2 文件通过；check_e2e_matrix_closure PASS exit 0。A′ 环：executor 7/7 report（含 release 后重报修正 evidence request_id） -> review_pending -> reviewer verdict pass -> reviewer_pass handoff (event 12975) -> adjudicator apply/close -> closed/completed/COMPLETE/finalize；lease（executor L-a2bfe76810562c95 f1 / L-e00192019b79e108 f2、reviewer L-c2d1a47cbabbcd65 f1、adjudicator reviewer-scope L-50d3d368f5c8d843 f2）全部主动 release。残留：动态拼接 key、en 文案打磨、t() 其它值类型（int/dict）通用契约、§27.5 静默等价待独立卡。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793608696517-45fb6034",
+      "commit_id": "185e33a8ad64a403e050bb54b204f1c97c5263a5",
+      "status": "new_in_master",
+      "source": "i18n_dynamic_key_allowlist_20261102",
+      "scope": "cli/main.py, tests/test_i18n_placeholder_consistency.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "e26eef022c37163a",
+      "evidence_sha256": "73B6167218C69F06D01E0AC25FF23336154481E076CD5B5203A36D8F59759D73",
+      "view_manifest_sha256": "e137ea65eb54d37b903f391c2685a760044c3f80352a579a2191dfe8643ff0bb",
+      "review_verdict_id": "V-336631d0539bed23136cccc3",
+      "handoff_event_id": "12996",
+      "note": "i18n 第七类漂移收口（backlog §32，承接 §26.5/§28.5/§30.5/§31.5 反复登记的同一盲区）：静态门禁只能判定字符串字面量首参，t(variable) 动态 key 完全跳过占位符与存在性校验。处置：(1) tests 新增 §32 门禁——DYNAMIC_KEY_TARGETS 限定 9 个源码目录 + 2 个入口（158 文件）、DYNAMIC_KEY_FUNCS 5 个访问器、allowlist 以（文件 + 函数限定名 + 实参签名）冻结 15 处，双向 Counter 差集使新增/消失均失败；实参签名归一为 Name.id/Attribute.attr/<fstring>/<call>/<subscript>，避免引号换行改写造成假失败。(2) _handle_gc 两处 mode_key（gc_retention / gc_archive_import 的 dry_run/apply）迁移为 if/else 字面量 key，动态清单 17→15，颜色与 key 原样。(3) cli/categories.py 注册表 12 title_key + 44 desc_key = 56 key 补双语存在性断言（空 desc_key 跳过）。零输出变化：两套 catalog 零 diff，t()/t_list() 语义不变。验证：门禁 95P（基线 90，+5）、追加 governance gate 共 106P/0F/0S；py_compile cli/main.py 通过；4 个迁移 key 双语渲染 8/8 非空；注册表 56 key miss_zh/miss_en 均为空；executor 与 reviewer 各做一次独立负向探针（cli/_tmp_dyn_probe.py、db/_tmp_review_probe.py）均被 allowlist 断言报 added，删除后恢复；reviewer 独立递归 AST 扫描 158 文件命中 15 处与清单完全一致；check_e2e_matrix_closure PASS exit 0。A′ 环：executor 4/4 report -> review_pending -> reviewer 任务级 report req-ea048ee32f24 + verdict V-336631d0539bed23136cccc3 pass findings=0 -> reviewer_pass handoff (event 12996) -> adjudicator reviewer-scope lease apply/close -> closed/completed/COMPLETE/finalize；lease（executor L-53040ddb2a21b655 f1、reviewer L-69a1870a50acea90 f1、adjudicator L-6ad072950807286f f1 + reviewer-scope L-c15346bfbb0a8b04 f2）全部主动 release。残留：D 类 6 处 daemon message_key 运行时取值、E 类 3 处盲审协议常量、A 类 3 处 t() 公开入口天然动态；en 文案打磨与 t() 其它值类型（int/dict）通用契约待独立卡。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
