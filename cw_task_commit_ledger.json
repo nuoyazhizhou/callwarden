@@ -2067,6 +2067,19 @@
       "review_verdict_id": "V-dc451a8823b96a863c17d8ac",
       "handoff_event_id": "he-ff8a3e8bab0771ef359f000e",
       "note": "i18n 第四类漂移收口（backlog §28）：6 个含字面花括号的 key（install_agent_hook_script / task_plan_template / cli_rule_arg_scope / cli_rule_arg_evidence / cli_rule_arg_context / cli_task_arg_steps）在 zh_CN 与 en_US 内把 { } 改写为 {{ }}，共 12 行值变更；调用点均为 t(key, default=...) 无 kwargs，转义后 format() 输出与转义前基线 12/12 逐字节一致，catalog 叶子总数 2293 不变、仅 6 key 变化。门禁升级为转义感知格式化安全门禁（新增 ESCAPE_TOKEN / _bare_braces / _iter_leaves / _rendered_baseline 与 6 key 双语言基线断言、全量裸花括号扫描、残留白名单反向约束、扫描自检，+175 行）。负向判别：新判定扫描 HEAD catalog 时 zh/en 各恰 6 key 失败，当前 0。验证：本文件 47P + key 存在性 13P = 60P；8 套件 152 用例 148P/4S/0F；check_e2e_matrix_closure PASS。A′ 环：executor 4/4 report -> daemon 自动 review_pending -> reviewer verdict pass -> reviewer_pass handoff -> adjudicator apply/close -> closed/completed/complete/finalize；三角色 lease（executor L-f7d297297350e90a / reviewer L-9a493ea5e672d8fb / adjudicator L-03d08ac12e303816）全部主动 release。残留（§28.5）：3 个既有同类裸花括号 key（complexity_header / largest_fns_header / coupled_fns_header，含合法 {hash:>3} 与字面列宽标签、零静态调用点）未转义，以显式白名单 + 「仍含裸花括号且无引用」测试约束，建议后续文案卡只转义表头字面量并保留 {hash}；另动态拼接 key、_dir 写权限语义、列表值 6 个 task_constraints_*（§26.5）、en 文案打磨待独立卡。message 内嵌 task_id。"
+    },
+    {
+      "task_id": "T-1793584498885-52bec080",
+      "commit_id": "322d1b3eb43cdd7f035c11ecddfb7fae98cf6d1b",
+      "status": "new_in_master",
+      "source": "i18n_header_brace_escape_20261102",
+      "scope": "i18n/zh_CN.json, i18n/en_US.json, tests/test_i18n_placeholder_consistency.py, docs/design/cli-mcp-matrix-backlog.md",
+      "snapshot_id": "a26da2a5593343ca",
+      "evidence_sha256": "9ED8E05A31737F37C1B35584A7AC76BD9992071F5C1435B0FD973C05F52639EF",
+      "view_manifest_sha256": "bbb582d299e79488e01b9ceed7adcefdd94234b31af877dd42c5e61ccdcbe539",
+      "review_verdict_id": "V-5b5f05e1dff1130306eca7a0",
+      "handoff_event_id": "he-5fa4cd1831250ee395569669",
+      "note": "i18n 第四类漂移收口续（backlog §29，承接 §28.5 残留）：3 个表头 key（complexity_header / largest_fns_header / coupled_fns_header）在 zh_CN 与 en_US 内只把字面列宽标签 {'行数':>5} 等改写为 {{'行数':>5}}，保留真实占位符 {hash:>3}，共 6 行值变更；叶子总数 2287 不变、每语言仅 3 key 变化。门禁把 LITERAL_BRACE_RESIDUAL 置空集，全量扫描不再豁免任何 key；新增 3 表头 key 双语言 format(hash='A1B')/t() 与转义前可见文本逐字节断言、扫描自检 6+3=9 key；删除 28 行白名单豁免逻辑并替换为「白名单为空 + 与转义集合互斥 + 表头 key 无裸花括号」更强断言。负向判别：同一裸花括号判定扫描 HEAD catalog 时 zh/en 各恰 3 key 失败，当前 0。验证：本文件 53P + key 存在性 13P = 66P；8 套件 158 用例 154P/4S/0F；py_compile 通过；check_e2e_matrix_closure PASS。A′ 环：executor 4/4 report -> daemon 自动 review_pending -> reviewer verdict pass -> reviewer_pass handoff -> adjudicator apply/close -> closed/completed/complete/finalize；lease（reviewer L-8b4f4b6a1b372b6a / adjudicator reviewer-scope L-f83cb8330d24b686；误取的 executor-scope L-973cb158806d5669 已即时 release）全部主动 release。残留：动态拼接 key、列表值 6 个 task_constraints_*（§26.5）、_dir 写权限语义（§27.5）、en 文案打磨待独立卡。message 内嵌 task_id。"
     }
   ],
   "known_commits": {
