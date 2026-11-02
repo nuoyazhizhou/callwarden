@@ -29,6 +29,12 @@
 的 ``str(value)`` 分支变成 Python repr 字符串，污染 ``constraints`` / ``check_items``。
 本门禁断言这 6 个 key 均为非空 ``list[str]``、``t_list()`` 返回与 catalog 相等、
 str 值包成单元素列表，并用 AST 正反扫描保证调用点已全部迁移到 ``t_list``。
+
+§31（T-1793601570549-21299a68）收口**分支语义与文案错位**：两处
+``os.access(cache_parent, os.W_OK)`` 分支此前复用 ``*_skip_dir``（文案「缓存父目录
+不存在」），zh 环境把「无写权限」显示成「目录不存在」。本门禁断言两个
+``*_skip_no_write`` key 双语存在且占位符恰为 ``{dir}``、文案与同族 ``skip_dir``
+不同，并用 AST 扫描确认写权限分支不再引用 ``*_skip_dir``。
 """
 import ast
 import json
@@ -67,6 +73,23 @@ VARIANT_FIELDS = {
     "cli.messages.semgrep_rules_prefetch_skip_oserror": {"error"},
     "cli.messages.semgrep_rules_prefetch_skip_unexpected": {"error"},
     "cli.messages.semgrep_rules_prefetch_skip_copy": {"error"},
+    # §31：os.access(..., os.W_OK) 分支的专属变体（原先复用 *_skip_dir）
+    "cli.messages.install_semgrep_prefetch_skip_no_write": {"dir"},
+    "cli.messages.semgrep_rules_prefetch_skip_no_write": {"dir"},
+}
+
+# §31：写权限变体 → 其同族「目录不存在」key 的映射
+NO_WRITE_KEYS = {
+    "cli.messages.install_semgrep_prefetch_skip_no_write":
+        "cli.messages.install_semgrep_prefetch_skip_dir",
+    "cli.messages.semgrep_rules_prefetch_skip_no_write":
+        "cli.messages.semgrep_rules_prefetch_skip_dir",
+}
+
+# §31：写权限分支的调用点（文件 → 应引用的 no_write key）
+NO_WRITE_CALL_SITES = {
+    "install.py": "cli.messages.install_semgrep_prefetch_skip_no_write",
+    "server/mcp_server.py": "cli.messages.semgrep_rules_prefetch_skip_no_write",
 }
 
 # §28 转义的 6 个「纯字面」key（两套 catalog 均已把 { } 写成 {{ }}）
@@ -579,4 +602,104 @@ def test_t_list_migration_covers_all_list_keys(t_list_calls):
     assert not missing, f"list 型 key 未迁移到 t_list: {missing}"
     paths = {rel for rel, _, key in t_list_calls if key in LIST_VALUE_KEYS}
     assert paths == {"db/db_tasks.py"}, f"迁移落点异常: {sorted(paths)}"
+
+
+# ---------------------------------------------------------------------------
+# §31 _dir 写权限语义拆分与 2 处调用点迁移（T-1793601570549-21299a68）
+# ---------------------------------------------------------------------------
+
+
+def _load_source(rel_path: str) -> str:
+    with open(os.path.join(PROJECT_ROOT, rel_path), encoding="utf-8") as f:
+        return f.read()
+
+
+def _os_attr_name(func):
+    """返回 ``os.xxx`` / ``os.path.xxx`` 的 xxx；其它形态返回 None。"""
+    if not isinstance(func, ast.Attribute):
+        return None
+    owner = func.value
+    if isinstance(owner, ast.Name) and owner.id == "os":
+        return func.attr
+    if (
+        isinstance(owner, ast.Attribute)
+        and isinstance(owner.value, ast.Name)
+        and owner.value.id == "os"
+        and owner.attr == "path"
+    ):
+        return func.attr
+    return None
+
+
+def _if_branch_kind(test):
+    """识别 ``if not os.path.isdir(...)`` / ``if not os.access(..., os.W_OK)``。"""
+    if not isinstance(test, ast.UnaryOp) or not isinstance(test.op, ast.Not):
+        return None
+    call = test.operand
+    if not isinstance(call, ast.Call):
+        return None
+    attr = _os_attr_name(call.func)
+    if attr == "isdir":
+        return "isdir"
+    if (
+        attr == "access"
+        and call.args
+        and isinstance(call.args[-1], ast.Attribute)
+        and call.args[-1].attr == "W_OK"
+    ):
+        return "write"
+    return None
+
+
+def _literal_t_keys(node) -> list:
+    """收集子树内 ``t("...")`` 静态字面量 key。"""
+    keys = []
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Call) or not isinstance(sub.func, ast.Name):
+            continue
+        if sub.func.id != "t" or not sub.args:
+            continue
+        raw = sub.args[0]
+        if isinstance(raw, ast.Constant) and isinstance(raw.value, str):
+            keys.append(raw.value)
+    return keys
+
+
+def _collect_branch_keys(rel_path: str) -> dict:
+    """按分支语义收集文件内 ``t()`` 字面量 key：{'isdir': {...}, 'write': {...}}。"""
+    tree = ast.parse(_load_source(rel_path))
+    branches = {"isdir": set(), "write": set()}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            kind = _if_branch_kind(node.test)
+            if kind:
+                branches[kind].update(_literal_t_keys(node))
+    return branches
+
+
+@pytest.mark.parametrize("key", sorted(NO_WRITE_KEYS))
+def test_no_write_text_differs_from_skip_dir(key, zh_catalog, en_catalog):
+    """写权限变体的双语文案与同族「目录不存在」文案必须不同。"""
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        value = _reach(catalog, key)
+        dir_value = _reach(catalog, NO_WRITE_KEYS[key])
+        assert isinstance(value, str) and value.strip(), f"{lang} 的 {key} 为空"
+        assert isinstance(dir_value, str), f"{lang} 缺少 {NO_WRITE_KEYS[key]}"
+        assert value != dir_value, f"{lang} 的 {key} 仍与 skip_dir 文案相同"
+
+
+@pytest.mark.parametrize("rel_path, write_key", sorted(NO_WRITE_CALL_SITES.items()))
+def test_write_permission_branch_uses_no_write_key(rel_path, write_key):
+    """AST 扫描：写权限分支只引用 no_write 变体，isdir 分支只引用 skip_dir。"""
+    dir_key = NO_WRITE_KEYS[write_key]
+    branches = _collect_branch_keys(rel_path)
+    assert branches["write"] == {write_key}, (
+        f"{rel_path} 写权限分支 key 漂移: {sorted(branches['write'])}"
+    )
+    assert branches["isdir"] == {dir_key}, (
+        f"{rel_path} isdir 分支 key 漂移: {sorted(branches['isdir'])}"
+    )
+    all_keys = set(_literal_t_keys(ast.parse(_load_source(rel_path))))
+    assert {k for k in all_keys if k.endswith("_skip_dir")} == {dir_key}
+    assert {k for k in all_keys if k.endswith("_skip_no_write")} == {write_key}
 

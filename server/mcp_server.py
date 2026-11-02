@@ -220,7 +220,7 @@ def _ensure_semgrep_rules_cache() -> None:
         if not os.access(cache_parent, os.W_OK):
             print(
                 t(
-                    "cli.messages.semgrep_rules_prefetch_skip_dir",
+                    "cli.messages.semgrep_rules_prefetch_skip_no_write",
                     default="[Semgrep] No write permission for cache dir: {dir}. Will download on first scan.",
                     dir=cache_parent,
                 ),

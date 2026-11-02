@@ -625,7 +625,7 @@ class CallWardenInstaller:
                         dir=cache_parent))
                 return
             if not os.access(cache_parent, os.W_OK):
-                print(t("cli.messages.install_semgrep_prefetch_skip_dir",
+                print(t("cli.messages.install_semgrep_prefetch_skip_no_write",
                         default="[Semgrep] No write permission for cache dir: {dir}. Skip prefetch.",
                         dir=cache_parent))
                 return

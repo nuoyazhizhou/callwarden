@@ -2382,5 +2382,73 @@ en_US 两种语言下均不可读。
 - **消费方范围**：只迁移 `db/db_tasks.py` 的 `build_structured_instruction`（5 个 constraints）与根任务汇总
   `check_items`（1 个）；未来新增 list 消费点需同步登记 `LIST_VALUE_KEYS`，否则反向扫描不覆盖。
 
+## 31. i18n `_dir` 写权限语义拆分与 2 处调用点迁移（T-1793601570549-21299a68）
+
+### 31.1 现象
+
+§27.5 登记的第 8 变体：两条 **写权限** 分支复用了 **目录不存在** 的文案 key，用户看到的
+原因与实际失败原因不一致（文案漂移，非缺翻译）。
+
+| 调用点 | 分支语义 | 复用的 key | catalog 实值（zh_CN） |
+| --- | --- | --- | --- |
+| [install.py](file:///c:/git_work/callwarden/install.py#L627-L631) `os.access(cache_parent, os.W_OK)` | 缓存目录**无写权限** | `cli.messages.install_semgrep_prefetch_skip_dir` | `[Semgrep] 缓存父目录不存在: {dir}。跳过预取。` |
+| [server/mcp_server.py](file:///c:/git_work/callwarden/server/mcp_server.py#L220-L229) `os.access(cache_parent, os.W_OK)` | 缓存目录**无写权限** | `cli.messages.semgrep_rules_prefetch_skip_dir` | `[Semgrep] 缓存父目录不存在: {dir}。将在首次扫描时下载。` |
+
+两处调用点各自带 `default=` 英文兜底（`No write permission for cache dir: {dir}...`），
+因此 **en_US 用户看到的是正确文案，zh_CN 用户看到的是「缓存父目录不存在」**——只在中文环境暴露，
+属 §25「双语存在但语义错位」的一种变体。
+
+同族目录不存在分支（[install.py](file:///c:/git_work/callwarden/install.py#L622-L626)、
+[server/mcp_server.py](file:///c:/git_work/callwarden/server/mcp_server.py#L209-L218)）
+与 `skip_error` 分支语义正确，本卡不动。
+
+### 31.2 基线
+
+| 项 | 值 |
+| --- | --- |
+| 受影响 key | 2 个 `*_skip_dir`（install / semgrep_rules 各 1） |
+| 受影响调用点 | 2 处（`os.access(..., os.W_OK)` 分支） |
+| 缺失 key | 2 个 `*_skip_no_write`（zh/en 均无） |
+| 现有门禁覆盖 | `test_i18n_key_existence.py` 只校验「静态引用 key 双语存在」，同名 key 存在即通过，**无法发现语义错位** |
+| 既有测试 | `test_i18n_placeholder_consistency.py` 71 + `test_i18n_key_existence.py` 13 = 84 用例（§30 后基线） |
+
+### 31.3 处置口径
+
+1. 两套 catalog 新增 2 个 `*_skip_no_write` key，文案为「缓存目录无写权限」，保留 `{dir}` 占位符；
+2. 2 处 `os.access(..., os.W_OK)` 分支改引新 key，`default` 同步为写权限文案（en 兜底不再与 zh 分叉）；
+3. `*_skip_dir` 两条既有值零改动，目录不存在分支零改动；
+4. 门禁新增：新 key 双语存在、非空、含 `{dir}`、与同族 `skip_dir` 文案不同；AST 扫描断言 2 处写权限分支
+   不再引用 `*_skip_dir`；
+5. 不改 `t()` 语义、不改其它 `_dir` 族调用点。
+
+**非目标**：动态拼接 key；en 文案整体打磨；`t()` 其它值类型（int/dict）通用契约；§27.5 的
+「值不可格式化 vs 占位符拼写错误」静默等价问题。
+
+### 31.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 语法 | `py_compile` install.py、server/mcp_server.py | 通过 |
+| 门禁新增 | `test_no_write_text_differs_from_skip_dir`（2 key × 双语）、`test_write_permission_branch_uses_no_write_key`（2 文件 AST）、VARIANT shape 2 条新参数 | 6 新用例全部通过 |
+| 门禁回归 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py` | 90 passed（基线 84，零回归） |
+| 扩展回归 | 追加 `tests/test_cli_governance_gate.py` | 101 passed |
+| 负向 | 临时把 install.py 写权限分支回退为 `*_skip_dir` | 1 failed / 1 passed：AST 用例按预期捕获回流，文件已还原 |
+| 渲染 | `i18n.t()` 双语渲染新 key（dir=C:\cache） | zh/en 均输出「缓存目录无写权限 / No write permission」，无裸 `{dir}` |
+| 矩阵收口 | `python scripts/check_e2e_matrix_closure.py` | PASS（退出码 0） |
+
+AST 口径：写权限分支（`if not os.access(..., os.W_OK)`）内只允许引用对应
+`*_skip_no_write`；目录存在分支（`if not os.path.isdir(...)`）只允许引用对应 `*_skip_dir`；
+且两个文件内 `*_skip_dir` / `*_skip_no_write` 字面量集合各恰为 1 个，防止新增旁路。
+
+### 31.5 边界
+
+| 类别 | 说明 |
+| --- | --- |
+| 本次范围 | 仅 2 处 `os.access(..., os.W_OK)` 分支 + 2 个新增 key + 门禁 6 用例 |
+| 非目标 | 动态拼接 key；en 文案整体打磨（en 兜底本就与 zh 语义一致）；`t()` 其它值类型（int/dict）通用契约 |
+| 保留问题 | §27.5「值不可格式化 vs 占位符拼写错误」的静默等价仍未区分，属独立批次 |
+| 回滚 | 回退 6 文件提交即可；新 key 为纯新增，旧 `*_skip_dir` 值未改动，无数据迁移 |
+
+
 
 
