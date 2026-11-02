@@ -168,6 +168,50 @@ def t(key: str, default: Optional[str] = None, **kwargs) -> str:
     return str(value)
 
 
+def t_list(key: str, default: Optional[list] = None, **kwargs) -> list:
+    """获取列表型翻译文本（backlog §30）
+
+    ``t()`` 对非字符串叶子走 ``str(value)``，会把 JSON 数组变成 Python repr
+    字符串。列表型 key（``task_constraints_*`` / ``task_plan_root_check_items``）
+    的消费方期望 ``list``，因此提供类型化访问器：
+
+    - catalog 值为 list → 返回元素副本（不暴露缓存对象）；
+    - catalog 值为 str → 返回单元素列表，保留 ``format`` 容错语义；
+    - key 缺失 → 回退 ``default`` 列表；无 default → 空列表。
+
+    Args:
+        key: 点分隔的键路径
+        default: 键不存在或类型不符时的默认列表
+        **kwargs: 占位符参数（仅对 str 值生效）
+
+    Returns:
+        字符串列表
+    """
+    data = _load_lang(_current_lang)
+
+    parts = key.split(".")
+    value = data
+    for part in parts:
+        if isinstance(value, dict):
+            value = value.get(part)
+        else:
+            value = None
+            break
+
+    if isinstance(value, list):
+        return list(value)
+
+    if isinstance(value, str):
+        try:
+            return [value.format(**kwargs)]
+        except (KeyError, ValueError, IndexError):
+            return [value]
+
+    if default is None:
+        return []
+    return list(default) if isinstance(default, (list, tuple)) else [default]
+
+
 def get_arg_help(arg_name: str) -> str:
     """获取 CLI 参数的帮助文本"""
     return t(f"cli.args.{arg_name.replace('-', '_')}", default="")

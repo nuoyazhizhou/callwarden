@@ -19,7 +19,7 @@ import sqlite3
 import time
 from typing import Any, Dict, List, Optional
 
-from ..i18n import t
+from ..i18n import t, t_list
 from .schema import (
     TASK_STATUS_OPEN,
     TASK_STATUS_IN_PROGRESS,
@@ -1413,7 +1413,7 @@ class TaskMixin:
 
         # 根据 action 类型填充不同的约束和检查
         if action in ("annotate_function", "annotate", "add_comment", "comment"):
-            instruction["constraints"] = t(
+            instruction["constraints"] = t_list(
                 "cli.messages.task_constraints_annotate",
                 default=[
                     "Only add comments; do not change function logic",
@@ -1423,7 +1423,7 @@ class TaskMixin:
             )
             instruction["checks"] = ["syntax", "semgrep_quick"]
         elif action in ("refactor", "refactor_function"):
-            instruction["constraints"] = t(
+            instruction["constraints"] = t_list(
                 "cli.messages.task_constraints_refactor",
                 default=[
                     "Keep external behavior unchanged (signature, return value, side effects)",
@@ -1433,7 +1433,7 @@ class TaskMixin:
             )
             instruction["checks"] = ["syntax", "semgrep"]
         elif action in ("fix", "fix_defect", "fix_gate_failure"):
-            instruction["constraints"] = t(
+            instruction["constraints"] = t_list(
                 "cli.messages.task_constraints_fix",
                 default=[
                     "Fix only the reported issue; avoid unrelated changes",
@@ -1442,7 +1442,7 @@ class TaskMixin:
             )
             instruction["checks"] = ["syntax", "semgrep"]
         elif action in ("edit", "propose_edit", "write"):
-            instruction["constraints"] = t(
+            instruction["constraints"] = t_list(
                 "cli.messages.task_constraints_edit",
                 default=[
                     "Use propose_edit for writes; do not write directly to the filesystem",
@@ -1452,7 +1452,7 @@ class TaskMixin:
             )
             instruction["checks"] = ["syntax"]
         else:
-            instruction["constraints"] = t(
+            instruction["constraints"] = t_list(
                 "cli.messages.task_constraints_default",
                 default=["Follow the step check_items"],
             )
@@ -3568,7 +3568,7 @@ class TaskMixin:
                 "action": "verify",
                 "target_file": "",
                 "target_symbol": "",
-                "check_items": t(
+                "check_items": t_list(
                     "cli.messages.task_plan_root_check_items",
                     default=["All subtasks are complete", "Final verification passed"],
                 ),

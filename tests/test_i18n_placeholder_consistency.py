@@ -24,6 +24,11 @@
 §29（T-1793584498885-52bec080）把 §28.5 登记的 3 个表头 key 收口：只转义字面列宽
 标签（``{{'行数':>5}}``），保留真实占位符 ``{hash:>3}``；残留白名单清零，全量扫描
 不再允许任何豁免。
+
+§30（T-1793598690524-924bef1c）收口**值类型契约**：6 个列表型叶子此前经 ``t()``
+的 ``str(value)`` 分支变成 Python repr 字符串，污染 ``constraints`` / ``check_items``。
+本门禁断言这 6 个 key 均为非空 ``list[str]``、``t_list()`` 返回与 catalog 相等、
+str 值包成单元素列表，并用 AST 正反扫描保证调用点已全部迁移到 ``t_list``。
 """
 import ast
 import json
@@ -431,4 +436,147 @@ def test_escape_scan_self_check_hits_all_escaped_keys(zh_catalog, en_catalog):
 def test_bare_brace_detection(value, unsafe):
     """转义感知判定的正/负向样例。"""
     assert bool(_bare_braces(value)) == unsafe
+
+
+# ---------------------------------------------------------------------------
+# §30 列表值契约 t_list 与 6 个 list 型 key（T-1793598690524-924bef1c）
+# ---------------------------------------------------------------------------
+
+LIST_VALUE_KEYS = {
+    "cli.messages.task_constraints_annotate",
+    "cli.messages.task_constraints_refactor",
+    "cli.messages.task_constraints_fix",
+    "cli.messages.task_constraints_edit",
+    "cli.messages.task_constraints_default",
+    "cli.messages.task_plan_root_check_items",
+}
+
+# 用于验证「str 值 → 单元素列表」形状的对照 key（含 ``{title}`` 占位符）
+LIST_VALUE_STR_KEY = "cli.messages.task_plan_subtask_check_item"
+
+
+def _iter_all_leaves(data, prefix: str = ""):
+    """遍历 catalog 全部叶子（不论类型）：(点分 key, 值)。"""
+    if isinstance(data, dict):
+        for name, value in data.items():
+            path = f"{prefix}.{name}" if prefix else name
+            yield from _iter_all_leaves(value, path)
+    else:
+        yield prefix, data
+
+
+def _collect_t_list_calls():
+    """收集 ``t_list`` 静态字面量 key 调用：(path, line, key)。"""
+    calls = []
+    for rel_path, source in _iter_i18n_sources():
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id != "t_list":
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                continue
+            key = node.args[0].value
+            if isinstance(key, str):
+                calls.append((rel_path, node.lineno, key))
+    return calls
+
+
+@pytest.fixture(scope="module")
+def t_list_calls():
+    return _collect_t_list_calls()
+
+
+@pytest.mark.parametrize("key", sorted(LIST_VALUE_KEYS))
+def test_list_value_key_is_nonempty_string_list(key, zh_catalog, en_catalog):
+    """6 个 list 型 key 在两套 catalog 中均为非空 ``list[str]``。"""
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        value = _reach(catalog, key)
+        assert isinstance(value, list), f"{lang} 的 {key} 不是 list: {type(value)}"
+        assert value, f"{lang} 的 {key} 是空列表"
+        assert all(isinstance(item, str) for item in value), (
+            f"{lang} 的 {key} 含非字符串元素"
+        )
+
+
+def test_catalog_non_string_leaves_are_exactly_list_value_keys(zh_catalog, en_catalog):
+    """两套 catalog 的非字符串叶子必须恰为这 6 个 list 型 key。
+
+    新增其它类型的叶子会让 ``t()`` 的 ``str(value)`` 分支再次产出 repr，
+    因此在此收紧口径：非 str 叶子只能来自已迁移的 list key。
+    """
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        actual = {
+            path for path, value in _iter_all_leaves(catalog)
+            if not isinstance(value, str)
+        }
+        assert actual == LIST_VALUE_KEYS, (
+            f"{lang} 非字符串叶子集合漂移: {sorted(actual ^ LIST_VALUE_KEYS)}"
+        )
+
+
+@pytest.mark.parametrize("key", sorted(LIST_VALUE_KEYS))
+def test_t_list_matches_catalog_list(key, active_language, zh_catalog, en_catalog):
+    """``t_list`` 双语返回与 catalog 列表逐项相等。"""
+    import i18n
+
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        active_language(lang)
+        assert i18n.t_list(key) == _reach(catalog, key), (
+            f"{lang} 的 {key} 经 t_list() 后与 catalog 不一致"
+        )
+
+
+def test_t_list_returns_copy_not_catalog_object(active_language, zh_catalog):
+    """``t_list`` 返回元素副本，调用方修改不得污染语言缓存。"""
+    import i18n
+
+    key = "cli.messages.task_constraints_fix"
+    active_language("zh_CN")
+    first = i18n.t_list(key)
+    first.append("__pollute__")
+    assert i18n.t_list(key) == _reach(zh_catalog, key)
+
+
+def test_t_list_str_value_wraps_single_item(active_language, zh_catalog):
+    """catalog 值为 str 时返回单元素列表，并保留 ``format`` 容错语义。"""
+    import i18n
+
+    active_language("zh_CN")
+    value = _reach(zh_catalog, LIST_VALUE_STR_KEY)
+    assert isinstance(value, str)
+    assert i18n.t_list(LIST_VALUE_STR_KEY, title="X") == [value.format(title="X")]
+    # 缺参时 ``format`` 失败被吞掉，原样返回单元素（与 t() 同口径）
+    assert i18n.t_list(LIST_VALUE_STR_KEY) == [value]
+
+
+def test_t_list_missing_key_falls_back(active_language):
+    """key 缺失：有 default 用 default，无 default 返回空列表。"""
+    import i18n
+
+    active_language("zh_CN")
+    missing = "cli.messages.__missing_list_key__"
+    assert i18n.t_list(missing, default=["a", "b"]) == ["a", "b"]
+    assert i18n.t_list(missing) == []
+    assert i18n.t_list(missing, default="single") == ["single"]
+
+
+def test_list_value_keys_not_called_via_t(calls):
+    """AST 反向扫描：6 个 list 型 key 不得再经 ``t()`` 调用。"""
+    referenced = {key for _, _, key, _, _ in calls}
+    leaked = sorted(LIST_VALUE_KEYS & referenced)
+    assert not leaked, f"list 型 key 仍经 t() 调用: {leaked}"
+
+
+def test_t_list_migration_covers_all_list_keys(t_list_calls):
+    """正向扫描：6 个 list 型 key 必须全部已迁移到 ``t_list``。"""
+    covered = {key for _, _, key in t_list_calls}
+    missing = sorted(LIST_VALUE_KEYS - covered)
+    assert not missing, f"list 型 key 未迁移到 t_list: {missing}"
+    paths = {rel for rel, _, key in t_list_calls if key in LIST_VALUE_KEYS}
+    assert paths == {"db/db_tasks.py"}, f"迁移落点异常: {sorted(paths)}"
 

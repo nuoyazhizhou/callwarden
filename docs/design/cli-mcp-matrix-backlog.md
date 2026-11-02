@@ -2306,9 +2306,81 @@ en_US 两种语言下均不可读。
 - 动态拼接 key（`t(variable)`）、列表值契约（§26.5 的 6 个 `task_constraints_*`）、
   `_dir` 写权限语义（§27.5）、en 文案打磨仍属独立批次。
 
+## 30. i18n 列表值契约 `t_list` 与 6 个 list 型 key 迁移（T-1793598690524-924bef1c）
 
+### 30.1 现象
 
+§26.5 登记的 `t()` 值类型契约缺口在 §27–§29 后仍存在：catalog 有 6 个**列表型**叶子，
+`t()` 的 `isinstance(value, str)` 分支不成立，直接走 `return str(value)`（
+[i18n/__init__.py](file:///c:/git_work/callwarden/i18n/__init__.py#L162-L168)）。
+消费方期望的是 `list`：
 
+- `build_structured_instruction` 把 5 个 `task_constraints_*` 赋给
+  `instruction["constraints"]`（[db_tasks.py](file:///c:/git_work/callwarden/db/db_tasks.py#L1416-L1459)），
+  文档契约写明 `constraints: Agent 必须遵守的约束列表`；
+- `task_plan_root_check_items` 直接作为根任务汇总步骤的 `check_items`
+  （[db_tasks.py](file:///c:/git_work/callwarden/db/db_tasks.py#L3571-L3575)）。
+
+结果：结构化指令里出现的是 Python repr 字符串
+`"['只添加注释，不修改函数逻辑', ...]"`，而非数组；下游按列表遍历会逐字符/逐 repr
+处理，属用户可见的输出契约漂移。
+
+### 30.2 基线（改动前）
+
+| key | 类型 | 调用点 | 现状 |
+| --- | --- | --- | --- |
+| `cli.messages.task_constraints_annotate` | list[str]（3 项） | `db_tasks.py:1416` | `t()` 返回 repr 字符串 |
+| `cli.messages.task_constraints_refactor` | list[str]（3 项） | `db_tasks.py:1426` | 同上 |
+| `cli.messages.task_constraints_fix` | list[str]（2 项） | `db_tasks.py:1436` | 同上 |
+| `cli.messages.task_constraints_edit` | list[str]（3 项） | `db_tasks.py:1445` | 同上 |
+| `cli.messages.task_constraints_default` | list[str]（1 项） | `db_tasks.py:1455` | 同上 |
+| `cli.messages.task_plan_root_check_items` | list[str]（2 项） | `db_tasks.py:3571` | `check_items` 为 repr 字符串 |
+
+两套 catalog 各有且仅有这 6 个非字符串叶子（`zh_CN` / `en_US` 均为 2287 叶子）。
+
+### 30.3 处置口径（冻结）
+
+1. **新增类型化访问器**：`i18n.t_list(key, default=None, **kwargs) -> list`
+   - catalog 值为 list → 返回元素副本；
+   - catalog 值为 str → 返回单元素列表（保留 `format` 容错语义）；
+   - key 缺失 → 回退 `default` 列表；无 default → 空列表。
+2. **不改 `t()` 既有语义**（仍是 `-> str`），避免影响 1500+ 既有调用点。
+3. **不改 catalog 值**：6 个 key 继续以 JSON 数组保存列表语义。
+4. **迁移 6 个调用点**：`db_tasks.py` 5 个 constraints + 1 个 root check_items 改用 `t_list`，
+   `constraints` / `check_items` 恢复为 list。
+5. **门禁扩展**：`tests/test_i18n_placeholder_consistency.py` 新增
+   - 两套 catalog 6 key 均为非空 `list[str]`；
+   - `t_list` 双语返回与 catalog 列表相等；
+   - `t_list` 对 str 值返回单元素列表（访问器形状自检）；
+   - AST 反向扫描：6 个 list key 不得再出现在 `t(` 调用中。
+
+非目标：动态拼接 key、`_dir` 写权限语义、en 文案打磨、`t()` 其它值类型（`int`/`dict`）的通用契约。
+
+### 30.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 门禁新增用例 | `pytest tests/test_i18n_placeholder_consistency.py tests/test_i18n_key_existence.py` | **84 passed / 0 failed / 0 error / 0 skipped**（基线 66，新增 18） |
+| catalog 契约 | 两套 catalog 逐 key 断言 | 6 key 均为非空 `list[str]`，元素数 3/3/2/3/1/2；两套共 2293 叶子，非 str 叶子**恰为这 6 个 key** |
+| 访问器等价 | `t_list` 双语 vs `_reach(catalog)` | 12/12 逐项相等；返回副本（append 污染后再次读取仍等于 catalog） |
+| 形状与回退 | str 值 / 缺失 key | `t_list("…task_plan_subtask_check_item", title="X") == ["完成X"]`；缺失 key 有 default 返回 `["a"]`、无 default 返回 `[]` |
+| 负向样例 | `t("cli.messages.task_constraints_fix")` | 仍返回 repr 字符串 `"['只修复报告的问题，不做额外修改', …]"`，证明 `t()` 语义未变、反向扫描口径有效 |
+| AST 反向扫描 | 全仓静态 `t/get_msg/get_error/get_arg_help` 调用 | 6 个 list key **0 命中** |
+| AST 正向扫描 | 全仓静态 `t_list` 调用 | 6 key 全部命中，落点唯一 `db/db_tasks.py` |
+| 消费方冒烟 | `build_structured_instruction` 5 类 action | `constraints` 均为 `list`：annotate 3 / refactor 3 / fix 2 / edit 3 / default 1 |
+| 语法 | `py_compile i18n/__init__.py db/db_tasks.py` | 通过 |
+| 验收矩阵 | `python scripts/check_e2e_matrix_closure.py` | **PASS**，退出码 0（看板卡与遗留卡全部 `[OK]`） |
+
+### 30.5 边界
+
+- **`t()` 语义零改动**：1500+ 既有调用点不受影响；`t()` 对 list 值仍返回 repr（负向样例已固化）。新 list 型 key 必须走
+  `t_list`，否则 `test_catalog_non_string_leaves_are_exactly_list_value_keys` 会先拦住（非 str 叶子集合必须恰为
+  `LIST_VALUE_KEYS`，新增类型叶子必须先登记再迁移）。
+- **仅覆盖静态字面量 key**：动态拼接 key（`t(variable)` / `t_list(variable)`）无法静态判定，仍属独立批次。
+- **`_dir` 写权限语义（§27.5）** 与 en 文案打磨未触及；本卡只做值类型契约，两套 catalog 文本零改动。
+- **`t()` 其它值类型**（`int` / `dict`）未定义通用契约；当前以「非 str 叶子集合 == 6 key」把新增类型挡在门外。
+- **消费方范围**：只迁移 `db/db_tasks.py` 的 `build_structured_instruction`（5 个 constraints）与根任务汇总
+  `check_items`（1 个）；未来新增 list 消费点需同步登记 `LIST_VALUE_KEYS`，否则反向扫描不覆盖。
 
 
 
