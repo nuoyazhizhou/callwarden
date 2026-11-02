@@ -2236,6 +2236,75 @@ en_US 两种语言下均不可读。
 - 动态拼接 key（`t(variable)`）仍不可静态判定。
 - 列表值契约（§26.5 的 6 个 `task_constraints_*`）、`_dir` 写权限语义（§27.5）、
   en 文案打磨仍属独立批次。
+- 上述 3 个表头 key 与 `LITERAL_BRACE_RESIDUAL` 白名单由 §29（`T-1793584498885-52bec080`）
+  承接收口。
+
+## 29. i18n 表头 3 key 裸花括号转义与残留白名单清零（T-1793584498885-52bec080）
+
+### 29.1 现象
+
+§28.5 登记的三个表头值同时含**合法占位符** `{hash:>3}` 与**字面列宽标签**（`{'行数':>5}`
+/ `{'Cx':>6}` 等）。`format()` 解析到字面标签时把 `'行数'` 当作字段名并因非法格式说明抛
+`ValueError`，被 `t()` 的 `except (KeyError, ValueError, IndexError)` 静默吞掉后原样返回
+——当前输出"碰巧正确"，但整值不可安全格式化。
+
+| # | key | zh_CN 值 | en_US 值 | 静态调用点 |
+| --- | --- | --- | --- | --- |
+| 1 | `cli.messages.complexity_header` | `  {hash:>3}  {'复杂度':>6}  {'行数':>5}  {'深度':>4}  函数名` | `  {hash:>3}  {'Cx':>6}  {'Lines':>5}  {'Depth':>4}  Function` | 无 |
+| 2 | `cli.messages.largest_fns_header` | `  {hash:>3}  {'行数':>5}  {'深度':>4}  函数名` | `  {hash:>3}  {'Lines':>5}  {'Depth':>4}  Function` | 无 |
+| 3 | `cli.messages.coupled_fns_header` | `  {hash:>3}  {'扇入':>4}  {'扇出':>4}  {'总计':>4}  函数名` | `  {hash:>3}  {'FanIn':>4}  {'FanOut':>4}  {'Total':>4}  Function` | 无 |
+
+三个 key 在 `cli/main.py`、`db/`、`server/`、`install.py` 中均**零静态引用**（历史表头残留）；
+§28 因冻结口径「只转义 6 个纯字面 key」把它们以 `LITERAL_BRACE_RESIDUAL` 白名单豁免，
+并附加「仍含裸花括号 + 无调用引用」的反向约束。
+
+### 29.2 基线（改动前）
+
+| 项 | 口径 | 基线结果 |
+| --- | --- | --- |
+| 3 key × 2 语言存在性 | `i18n.t(key)` 直接取值 | 6/6 存在，均为 `str` |
+| 当前渲染 | `t(key)` 输出 vs catalog 原值 | 6/6 **相等**（异常吞分支原样返回） |
+| 传参渲染 | `t(key, hash="A1B")` | 6/6 原样返回，`{hash:>3}` **未被替换** |
+| 既有转义 | 值内是否已含 `{{` / `}}` | 6/6 无 |
+| 静态引用 | `grep` 全仓（除 catalog/tests/docs） | **0** |
+| 门禁状态 | `LITERAL_BRACE_RESIDUAL` | 3 key 全部豁免 |
+
+### 29.3 处置口径（冻结）
+
+1. **只转义字面标签**：把三行值中的 `{'...':>N}` 改写为 `{{'...':>N}}`，保留 `{hash:>3}`
+   为真实占位符；`format(hash=...)` 后可见文本与转义前逐字节一致。
+2. **清零残留白名单**：`LITERAL_BRACE_RESIDUAL` 置为空集；残留测试改为断言集合为空，
+   且与 9 个已转义 key 互斥；全量裸花括号扫描结果必须为 0。
+3. **扩充门禁**：新增 `ESCAPED_HEADER_KEYS`（3 key）参数化断言——值含 `{{` / `}}`、
+   `_bare_braces` 为空、`_format_fields == {"hash"}`、`format(hash=..)` 与按 `{hash:>3}`
+   切分的基线拼接逐字节一致、真实 `t(key, hash=..)` 输出一致；扫描自检覆盖 6+3=9 个
+   已转义 key。
+4. 非目标：不改 `t()` 容错语义；不改 `default=`；不动 6 个已字面转义 key；不新增/迁移
+   任何调用点；不处理动态 key。
+
+### 29.4 验证
+
+| 项 | 命令 / 口径 | 结果 |
+| --- | --- | --- |
+| 转义范围 | `git diff --numstat i18n/zh_CN.json i18n/en_US.json` | 每文件 **3 行**值变更（共 6 行），无其他行改动 |
+| 转义正确性 | `json.loads` 后 `format(hash="A1B")` vs `HEAD` 基线（按 `{hash:>3}` 切分拼接） | 6/6 **逐字节一致** |
+| 可见文本 | 去转义（`{{`→`{`、`}}`→`}`）vs `HEAD` 原值 | 6/6 **逐字节相等** |
+| 真实渲染 | fresh 进程 `i18n.t(key, hash="A1B")` | 6/6 一致 |
+| 新门禁 | `pytest tests/test_i18n_placeholder_consistency.py` | `53 passed`（原 47 + 表头 format/t 断言 6） |
+| 负向证据 | 新判定扫描 `HEAD` 版 catalog | zh/en **各恰 3 个** key 失败（本卡 3 key）；当前 **0** |
+| 全量扫描 | 裸花括号扫描（白名单已清空） | zh `0` / en `0` |
+| key 存在性门禁 | `pytest tests/test_i18n_key_existence.py` | `13 passed` |
+| 定向回归 | 8 套件（本门禁、key 存在性、cleanup_c5、print_cleanup、mcp_i18n_messages、task_supersede、install_hooks_unified、cli_task_next_remediation） | `158` 用例：`154 passed, 4 skipped, 0 failed` |
+| 验收矩阵 | `C:\Python314\python.exe scripts/check_e2e_matrix_closure.py` | `PASS（收口条件全部满足）` |
+
+### 29.5 边界
+
+- 3 个 key 仍**零静态调用点**：本卡只修复值的格式化契约，不新增/迁移调用点，因此产品可见
+  输出零变化；未来若在表头渲染处传 `hash=..`，`{hash:>3}` 会正常替换，字面标签保持原样。
+- `LITERAL_BRACE_RESIDUAL` 已为空集；此后任何新增含裸花括号的 catalog 值都会被
+  `test_catalogs_have_no_bare_braces` 直接判失败，不再有白名单豁免。
+- 动态拼接 key（`t(variable)`）、列表值契约（§26.5 的 6 个 `task_constraints_*`）、
+  `_dir` 写权限语义（§27.5）、en 文案打磨仍属独立批次。
 
 
 

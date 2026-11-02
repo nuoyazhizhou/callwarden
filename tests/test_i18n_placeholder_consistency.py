@@ -20,6 +20,10 @@
 ``{...}`` 必须是合法字段 token；任何裸花括号都会让 ``format()`` 抛
 ``ValueError`` 并被静默吞掉，属同一静默分支的不可检测缺口。6 个已转义 key
 另断言 ``format()`` 输出与转义前基线逐字节一致。
+
+§29（T-1793584498885-52bec080）把 §28.5 登记的 3 个表头 key 收口：只转义字面列宽
+标签（``{{'行数':>5}}``），保留真实占位符 ``{hash:>3}``；残留白名单清零，全量扫描
+不再允许任何豁免。
 """
 import ast
 import json
@@ -60,7 +64,7 @@ VARIANT_FIELDS = {
     "cli.messages.semgrep_rules_prefetch_skip_copy": {"error"},
 }
 
-# §28 转义的 6 个「字面花括号」key（两套 catalog 均已把 { } 写成 {{ }}）
+# §28 转义的 6 个「纯字面」key（两套 catalog 均已把 { } 写成 {{ }}）
 ESCAPED_LITERAL_KEYS = {
     "cli.messages.install_agent_hook_script",
     "cli.messages.task_plan_template",
@@ -70,14 +74,21 @@ ESCAPED_LITERAL_KEYS = {
     "cli_task_arg_steps",
 }
 
-# §28.5 登记的相邻缺陷：实现期间发现的既有同类值。它们同时含合法占位符
-# {hash:>3} 与字面列宽标签（如 {'行数':>5}），且无任何静态调用点；本卡按冻结
-# 范围未转义，由后续文案卡处理。白名单只在「仍含裸花括号 + 无调用引用」时成立。
-LITERAL_BRACE_RESIDUAL = {
+# §29 转义的 3 个「表头」key：保留真实占位符 {hash:>3}，只把字面列宽标签
+# （{'行数':>5} 等）写成 {{...}}。
+ESCAPED_HEADER_KEYS = {
     "cli.messages.complexity_header",
     "cli.messages.largest_fns_header",
     "cli.messages.coupled_fns_header",
 }
+
+# 表头值的唯一真实占位符与断言样例
+HEADER_HASH_FIELD = "{hash:>3}"
+HEADER_SAMPLE = "A1B"
+
+# §28.5 登记、§29 已收口的残留白名单。§29 后必须为空：任何裸花括号值都应
+# 先转义再纳入本门禁，不允许再通过白名单豁免。
+LITERAL_BRACE_RESIDUAL: set = set()
 
 # 转义感知 token：{{ / }} 是字面量；其余 {..} 必须是合法字段
 ESCAPE_TOKEN = re.compile(
@@ -284,7 +295,7 @@ def test_non_identifier_braces_are_excluded():
 
 
 # ---------------------------------------------------------------------------
-# §28 转义感知的格式化安全门禁（T-1793549305665-435643ec）
+# §28/§29 转义感知的格式化安全门禁（T-1793549305665-435643ec / T-1793584498885-52bec080）
 # ---------------------------------------------------------------------------
 
 
@@ -330,44 +341,74 @@ def test_escaped_literal_key_t_output_matches_baseline(
         )
 
 
+@pytest.mark.parametrize("key", sorted(ESCAPED_HEADER_KEYS))
+def test_escaped_header_key_formats_with_hash(key, zh_catalog, en_catalog):
+    """§29 表头值：字面标签已转义，仅保留 {hash} 真实占位符。"""
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        value = _reach(catalog, key)
+        assert isinstance(value, str), f"{lang} 缺少 {key}"
+        assert "{{" in value and "}}" in value, f"{lang} 的 {key} 未完成转义"
+        assert not _bare_braces(value), f"{lang} 的 {key} 仍含裸花括号"
+        assert _format_fields(value) == {"hash"}, (
+            f"{lang} 的 {key} 占位符应恰为 {{hash}}，实际 {_format_fields(value)}"
+        )
+        pieces = _rendered_baseline(value).split(HEADER_HASH_FIELD)
+        assert len(pieces) == 2, f"{lang} 的 {key} 应恰含一个 {HEADER_HASH_FIELD}"
+        expected = f"{HEADER_SAMPLE:>3}".join(pieces)
+        assert value.format(hash=HEADER_SAMPLE) == expected, (
+            f"{lang} 的 {key} 格式化结果与转义前基线不一致"
+        )
+
+
+@pytest.mark.parametrize("key", sorted(ESCAPED_HEADER_KEYS))
+def test_escaped_header_key_t_output_matches_baseline(
+    key, active_language, zh_catalog, en_catalog
+):
+    """走真实 ``i18n.t(key, hash=..)`` 路径：渲染文本必须与基线一致。"""
+    import i18n
+
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        active_language(lang)
+        value = _reach(catalog, key)
+        pieces = _rendered_baseline(value).split(HEADER_HASH_FIELD)
+        expected = f"{HEADER_SAMPLE:>3}".join(pieces)
+        assert i18n.t(key, hash=HEADER_SAMPLE) == expected, (
+            f"{lang} 的 {key} 经 t() 渲染后发生文本漂移"
+        )
+
+
 def test_catalogs_have_no_bare_braces(zh_catalog, en_catalog):
-    """全量 catalog 扫描：除登记残留外，任何叶子都不得含裸花括号。"""
+    """全量 catalog 扫描：任何叶子都不得含裸花括号（残留白名单已清零）。"""
     problems = []
     for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
         for path, value in _iter_leaves(catalog):
-            if path in LITERAL_BRACE_RESIDUAL:
-                continue
             bad = _bare_braces(value)
             if bad:
                 problems.append(f"{lang}:{path} -> {bad[:3]!r}")
     assert not problems, "catalog 存在未转义的裸花括号:\n" + "\n".join(problems)
 
 
-def test_residual_literal_brace_keys_are_unreferenced(
-    calls, zh_catalog, en_catalog
-):
-    """残留白名单只允许「仍含裸花括号且无静态调用点」的既有同类值。"""
-    assert LITERAL_BRACE_RESIDUAL.isdisjoint(ESCAPED_LITERAL_KEYS)
-    referenced = {key for _, _, key, _, _ in calls}
-    for key in sorted(LITERAL_BRACE_RESIDUAL):
-        assert key not in referenced, (
-            f"{key} 已被调用引用，必须转义而不能留在残留白名单"
-        )
-        for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+def test_no_residual_literal_brace_keys(zh_catalog, en_catalog):
+    """§29 收口后残留白名单必须为空，3 个表头 key 不得再含裸花括号。"""
+    assert LITERAL_BRACE_RESIDUAL == set(), "残留白名单必须为空"
+    assert LITERAL_BRACE_RESIDUAL.isdisjoint(
+        ESCAPED_LITERAL_KEYS | ESCAPED_HEADER_KEYS
+    )
+    for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
+        for key in sorted(ESCAPED_HEADER_KEYS):
             value = _reach(catalog, key)
-            assert isinstance(value, str), f"{lang} 缺少残留 key: {key}"
-            assert _bare_braces(value), (
-                f"{lang} 的 {key} 已无裸花括号，应从残留白名单移除并纳入门禁"
-            )
+            assert isinstance(value, str), f"{lang} 缺少表头 key: {key}"
+            assert not _bare_braces(value), f"{lang} 的 {key} 仍含裸花括号"
 
 
-def test_escape_scan_self_check_hits_all_six_keys(zh_catalog, en_catalog):
-    """扫描口径自检：6 个 key 必须全部被叶子扫描命中且已转义。"""
+def test_escape_scan_self_check_hits_all_escaped_keys(zh_catalog, en_catalog):
+    """扫描口径自检：6+3=9 个已转义 key 必须全部被叶子扫描命中且已转义。"""
+    escaped = ESCAPED_LITERAL_KEYS | ESCAPED_HEADER_KEYS
     for lang, catalog in (("zh_CN", zh_catalog), ("en_US", en_catalog)):
         leaves = dict(_iter_leaves(catalog))
-        missing = sorted(ESCAPED_LITERAL_KEYS - set(leaves))
+        missing = sorted(escaped - set(leaves))
         assert not missing, f"{lang} 扫描面未命中: {missing}"
-        for key in sorted(ESCAPED_LITERAL_KEYS):
+        for key in sorted(escaped):
             assert "{{" in leaves[key] and "}}" in leaves[key], (
                 f"{lang} 的 {key} 尚未转义"
             )
